@@ -1159,6 +1159,112 @@ describe('Home', () => {
     expect(screen.queryByText('Pat Player highlight')).toBeNull();
   });
 
+  it('restarts downstream Home work when a stale summary refresh changes team scope', async () => {
+    const refreshedHome = {
+      ...baseHome,
+      players: [{
+        ...baseHome.players[0],
+        teamId: 'team-2',
+        teamName: 'Storm',
+        playerId: 'player-2',
+        playerName: 'Second Player'
+      }],
+      teams: [{
+        ...baseHome.teams[0],
+        teamId: 'team-2',
+        teamName: 'Storm',
+        players: [{
+          ...baseHome.teams[0].players[0],
+          teamId: 'team-2',
+          teamName: 'Storm',
+          playerId: 'player-2',
+          playerName: 'Second Player'
+        }]
+      }]
+    };
+    const staleSchedule = { children: [], events: [], marker: 'stale' };
+    const refreshedSchedule = { children: [], events: [], marker: 'refreshed' };
+    const staleSocial = {
+      ...baseSocial,
+      feedItems: [baseFeedItem],
+      metrics: { ...baseSocial.metrics, feedItems: 1 }
+    };
+    const refreshedSocial = {
+      ...baseSocial,
+      feedItems: [{
+        ...baseFeedItem,
+        id: 'post-2',
+        teamId: 'team-2',
+        teamName: 'Storm',
+        playerIds: ['player-2'],
+        playerNames: ['Second Player'],
+        sourceId: 'player-2',
+        title: 'Fresh Storm highlight',
+        detail: 'Player moment · Second Player · Storm',
+        route: '/players/team-2/player-2'
+      }],
+      metrics: { ...baseSocial.metrics, feedItems: 1 }
+    };
+    let staleSummaryOptions: any;
+    let staleSecondaryOptions: any;
+    let resolveRefreshedSecondary!: (value: typeof refreshedHome) => void;
+    homeServiceMocks.loadParentHomeSummaryBootstrap
+      .mockImplementationOnce((_user: unknown, options: any) => {
+        staleSummaryOptions = options;
+        return Promise.resolve({ home: baseHome, schedule: staleSchedule });
+      })
+      .mockResolvedValueOnce({ home: refreshedHome, schedule: refreshedSchedule });
+    homeServiceMocks.loadParentHomeWithSecondaryData
+      .mockImplementationOnce((_user: unknown, options: any) => {
+        staleSecondaryOptions = options;
+        return Promise.resolve(baseHome);
+      })
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolveRefreshedSecondary = resolve;
+      }));
+    socialServiceMocks.loadSocialHome
+      .mockResolvedValueOnce(staleSocial)
+      .mockResolvedValueOnce(refreshedSocial);
+
+    renderHome(signedInAuth, '/home?section=feed');
+
+    expect(await screen.findByText('Pat Player highlight')).toBeTruthy();
+    await waitFor(() => {
+      expect(staleSummaryOptions?.onRefresh).toBeTypeOf('function');
+      expect(staleSecondaryOptions?.onPartial).toBeTypeOf('function');
+    });
+
+    act(() => {
+      staleSummaryOptions.onRefresh({ home: refreshedHome, schedule: refreshedSchedule });
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText('Pat Player highlight')).toBeNull();
+    });
+    expect(homeServiceMocks.loadParentHomeSummaryBootstrap).toHaveBeenCalledTimes(2);
+    expect(homeServiceMocks.loadParentHomeWithSecondaryData).toHaveBeenLastCalledWith(
+      signedInAuth.user,
+      expect.objectContaining({
+        force: true,
+        schedule: refreshedSchedule
+      })
+    );
+
+    act(() => {
+      staleSummaryOptions.onPartial({ home: baseHome, schedule: staleSchedule });
+      staleSecondaryOptions.onPartial(baseHome);
+    });
+
+    expect(screen.queryByText('Pat Player highlight')).toBeNull();
+
+    await act(async () => {
+      resolveRefreshedSecondary(refreshedHome);
+    });
+
+    expect(await screen.findByText('Fresh Storm highlight')).toBeTruthy();
+    expect(screen.queryByText('Pat Player highlight')).toBeNull();
+  });
+
   it('records meaningful Home render without waiting for social data', async () => {
     const largeHome = buildLargeHomeModel();
     let resolveSocial!: (value: typeof baseSocial) => void;

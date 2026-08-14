@@ -122,14 +122,21 @@ describe('appDataCache', () => {
     const secondCache = await loadCacheModule();
     const loader = vi.fn().mockResolvedValue({ version: 2 });
     const onRefresh = vi.fn();
+    const onBackgroundRefresh = vi.fn();
 
-    await expect(secondCache.loadCachedAppData('stale:key', loader, { ttlMs: 1000, staleWhileRevalidate: true, onRefresh })).resolves.toEqual({ version: 1 });
+    await expect(secondCache.loadCachedAppData('stale:key', loader, {
+      ttlMs: 1000,
+      staleWhileRevalidate: true,
+      onRefresh,
+      onBackgroundRefresh
+    })).resolves.toEqual({ version: 1 });
     expect(loader).toHaveBeenCalledTimes(1);
 
     await Promise.resolve();
     await Promise.resolve();
 
     expect(onRefresh).toHaveBeenCalledWith({ version: 2 });
+    expect(onBackgroundRefresh).toHaveBeenCalledWith({ version: 2 });
     expect(secondCache.getCachedAppData('stale:key')).toEqual({ version: 2 });
   });
 

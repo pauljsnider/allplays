@@ -49,8 +49,14 @@ type ParentHomeSummaryOptions = {
   onBackgroundError?: (error: unknown) => void;
 };
 
+type ParentScheduleSummaryOptions = ParentHomeSummaryOptions & {
+  onPartial?: (schedule: ParentScheduleLoadResult) => void;
+  onRefresh?: (schedule: ParentScheduleLoadResult) => void;
+};
+
 type ParentHomeSummaryBootstrapOptions = ParentHomeSummaryOptions & {
   onPartial?: (result: ParentHomeSummaryBootstrapResult) => void;
+  onRefresh?: (result: ParentHomeSummaryBootstrapResult) => void;
 };
 
 type ParentTeamsSummaryBootstrapOptions = {
@@ -176,6 +182,9 @@ export async function loadParentHomeSummaryBootstrap(
     nativeContext,
     ...(options.onPartial ? {
       onPartial: (partialSchedule) => options.onPartial?.(toBootstrapResult(partialSchedule))
+    } : {}),
+    ...(options.onRefresh ? {
+      onRefresh: (refreshedSchedule) => options.onRefresh?.(toBootstrapResult(refreshedSchedule))
     } : {})
   });
   return toBootstrapResult(schedule);
@@ -388,7 +397,7 @@ export async function loadParentHomeWithSecondaryData(
 
 export async function loadParentScheduleSummary(
   user: AuthUser | null,
-  options: ParentHomeSummaryOptions & { onPartial?: (schedule: ParentScheduleLoadResult) => void } = {}
+  options: ParentScheduleSummaryOptions = {}
 ): Promise<ParentScheduleLoadResult> {
   if (!user?.uid) return { children: [], events: [] };
   const hasScopedStaffTeams = Boolean(options.scheduleScope?.staffTeams?.length);
@@ -408,6 +417,7 @@ export async function loadParentScheduleSummary(
       maxStaleMs: homeMaxStaleMs,
       staleWhileRevalidate: true,
       onRefresh: options.onPartial,
+      onBackgroundRefresh: options.onRefresh,
       onRefreshError: options.onBackgroundError,
       shouldCache: (result) => result?.isPartial !== true
     }

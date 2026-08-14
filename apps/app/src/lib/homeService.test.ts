@@ -166,6 +166,52 @@ describe('homeService Teams bootstrap reuse', () => {
         });
     });
 
+    it('reports a complete stale-summary background refresh separately from initial partials', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-08-13T12:00:00.000Z'));
+        const staleSchedule = {
+            children: [],
+            events: [],
+            staffTeams: [{ teamId: 'team-1', teamName: 'Bears' }]
+        } as any;
+        const refreshedSchedule = {
+            children: [],
+            events: [],
+            staffTeams: [{ teamId: 'team-2', teamName: 'Storm' }]
+        } as any;
+        scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(staleSchedule);
+
+        const first = await loadParentHomeSummaryBootstrap(user, { force: true });
+        expect(first.home.teams.map((team) => team.teamId)).toEqual(['team-1']);
+
+        vi.setSystemTime(new Date('2026-08-13T12:00:46.000Z'));
+        const refresh = deferred<typeof refreshedSchedule>();
+        scheduleServiceMocks.loadParentSchedule.mockReturnValueOnce(refresh.promise);
+        const onPartial = vi.fn();
+        const onRefresh = vi.fn();
+
+        const stale = await loadParentHomeSummaryBootstrap(user, { onPartial, onRefresh });
+        expect(stale.home.teams.map((team) => team.teamId)).toEqual(['team-1']);
+        expect(onRefresh).not.toHaveBeenCalled();
+
+        refresh.resolve(refreshedSchedule);
+        await vi.waitFor(() => {
+            expect(onRefresh).toHaveBeenCalledTimes(1);
+        });
+
+        expect(onPartial).toHaveBeenCalledWith(expect.objectContaining({
+            home: expect.objectContaining({
+                teams: [expect.objectContaining({ teamId: 'team-2' })]
+            })
+        }));
+        expect(onRefresh).toHaveBeenCalledWith(expect.objectContaining({
+            schedule: refreshedSchedule,
+            home: expect.objectContaining({
+                teams: [expect.objectContaining({ teamId: 'team-2' })]
+            })
+        }));
+    });
+
     it('renders the last complete Home immediately while refreshing it in the background', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date('2026-08-13T12:00:00.000Z'));

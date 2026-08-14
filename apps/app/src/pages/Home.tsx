@@ -207,7 +207,11 @@ export function Home({ auth }: { auth: AuthState }) {
   const hasHomePreview = Boolean(authUserId) && authUserId === previewHomeUserId;
   const hasLoadedHomeDetails = Boolean(authUserId) && authUserId === loadedHomeDetailsUserId;
 
-  const refreshHome = async ({ force = false }: { force?: boolean } = {}) => {
+  const refreshHome = async ({
+    force = false,
+    forceSecondary = false,
+    preserveCurrentHome = false
+  }: { force?: boolean; forceSecondary?: boolean; preserveCurrentHome?: boolean } = {}) => {
     const user = auth.user;
     if (!user) return;
     const loadGeneration = homeLoadGenerationRef.current + 1;
@@ -217,16 +221,17 @@ export function Home({ auth }: { auth: AuthState }) {
       && homeLoadGenerationRef.current === loadGeneration
     );
     let receivedHomePreview = false;
+    let summaryResultReturned = false;
     const hasExistingHome = loadedHomeDetailsUserId === user.uid;
     clearError();
     setHomeLoadError(null);
     setSocialStatus(null);
-    if (!hasExistingHome) {
+    if (!hasExistingHome && !preserveCurrentHome) {
       setHome(emptyHome());
       setSocial(emptySocialHome());
     }
     const timer = startScreenMountTimer('home', {
-      force,
+      force: force || forceSecondary,
       hasExistingHome
     });
     const handleBackgroundError = (backgroundError: unknown) => {
@@ -243,12 +248,33 @@ export function Home({ auth }: { auth: AuthState }) {
           onBackgroundError: handleBackgroundError,
           onPartial: (partial) => {
             if (!isCurrentHomeLoad()) return;
+            // Once the stale summary has returned, background loader partials
+            // are incomplete intermediate states. Wait for onRefresh's complete
+            // result before replacing downstream work.
+            if (summaryResultReturned) return;
             receivedHomePreview = true;
             setHome(partial.home);
             setPreviewHomeUserId(user.uid);
             setHomeLoadError(null);
+          },
+          onRefresh: (refreshedSummary) => {
+            if (!isCurrentHomeLoad()) return;
+            if (refreshedSummary.schedule.isPartial === true) {
+              handleBackgroundError(new Error('The refreshed Home summary is incomplete.'));
+              return;
+            }
+            receivedHomePreview = true;
+            setHome(refreshedSummary.home);
+            setSocial(emptySocialHome());
+            setPreviewHomeUserId(user.uid);
+            setHomeLoadError(null);
+            // Re-enter through the fresh summary cache while forcing every
+            // downstream slice. Incrementing the Home generation prevents the
+            // stale secondary/social promises from overwriting this scope.
+            void refreshHome({ forceSecondary: true, preserveCurrentHome: true });
           }
         });
+        summaryResultReturned = true;
         if (!isCurrentHomeLoad()) return summary;
         receivedHomePreview = true;
         setHome(summary.home);
@@ -286,7 +312,7 @@ export function Home({ auth }: { auth: AuthState }) {
         void runSecondaryLoad(
           async () => {
             const secondaryHome = await loadParentHomeWithSecondaryData(user, {
-              force,
+              force: force || forceSecondary,
               schedule: summary.schedule,
               nativeContext: summary.nativeContext,
               onBackgroundError: handleBackgroundError,
