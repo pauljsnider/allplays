@@ -577,6 +577,39 @@ describe('hydrateFirebaseUser', () => {
     expect(hydrated.profile.coachOf).toEqual(['team-1', 'team-2']);
     expect(hydrated.user.coachOf).toEqual(['team-1', 'team-2']);
   });
+
+  it('starts independent account bootstrap reads before any one read resolves', async () => {
+    let resolveProfile: ((value: Record<string, unknown>) => void) | undefined;
+    let resolveMembershipRequests: ((value: unknown[]) => void) | undefined;
+    let resolveOwnedTeams: ((value: Array<{ id: string; name: string }>) => void) | undefined;
+    legacyAuthMocks.getUserProfile.mockImplementation(() => new Promise((resolve) => {
+      resolveProfile = resolve;
+    }));
+    legacyAuthMocks.listMyParentMembershipRequests.mockImplementation(() => new Promise((resolve) => {
+      resolveMembershipRequests = resolve;
+    }));
+    legacyAuthMocks.getUserTeams.mockImplementation(() => new Promise((resolve) => {
+      resolveOwnedTeams = resolve;
+    }));
+
+    const hydration = hydrateFirebaseUser({
+      uid: 'coach-1',
+      email: 'coach@example.com'
+    });
+
+    await vi.waitFor(() => expect(legacyAuthMocks.getUserProfile).toHaveBeenCalledTimes(1));
+    try {
+      expect(legacyAuthMocks.listMyParentMembershipRequests).toHaveBeenCalledWith('coach-1');
+      expect(legacyAuthMocks.getUserTeams).toHaveBeenCalledWith('coach-1');
+    } finally {
+      resolveProfile?.({ email: 'coach@example.com', coachOf: ['team-1'] });
+      await vi.waitFor(() => expect(resolveMembershipRequests).toBeTypeOf('function'));
+      resolveMembershipRequests?.([]);
+      await vi.waitFor(() => expect(resolveOwnedTeams).toBeTypeOf('function'));
+      resolveOwnedTeams?.([{ id: 'team-2', name: 'Vipers' }]);
+      await hydration;
+    }
+  });
 });
 
 describe('signOut', () => {

@@ -946,10 +946,28 @@ export async function hydrateFirebaseUser(user: FirebaseUser): Promise<HydratedU
   let profile: Record<string, unknown> = {};
   let profileHydration: ProfileHydrationStatus = 'success';
   const dbModule = await loadLegacyAuthDb();
-  try {
-    profile =
-      (await withTimeout(Promise.resolve(dbModule.getUserProfile(user.uid)), 'Profile load timed out.', profileHydrationTimeoutMs)) || {};
-  } catch (error) {
+  const [profileResult, membershipRequestsResult, ownedTeamsResult] = await Promise.allSettled([
+    withTimeout(
+      Promise.resolve().then(() => dbModule.getUserProfile(user.uid)),
+      'Profile load timed out.',
+      profileHydrationTimeoutMs
+    ),
+    withTimeout(
+      Promise.resolve().then(() => dbModule.listMyParentMembershipRequests(user.uid)),
+      'Parent membership sync timed out.',
+      profileHydrationTimeoutMs
+    ),
+    withTimeout(
+      Promise.resolve().then(() => dbModule.getUserTeams(user.uid)),
+      'Team access load timed out.',
+      profileHydrationTimeoutMs
+    )
+  ]);
+
+  if (profileResult.status === 'fulfilled') {
+    profile = profileResult.value || {};
+  } else {
+    const error = profileResult.reason;
     logger.warn('Failed to load profile; continuing with auth identity.', { error });
     profileHydration = 'fallback';
     profile = {
@@ -958,13 +976,11 @@ export async function hydrateFirebaseUser(user: FirebaseUser): Promise<HydratedU
   }
 
   try {
+    if (membershipRequestsResult.status === 'rejected') {
+      throw membershipRequestsResult.reason;
+    }
     const { mergeApprovedParentMembershipRequests } = await loadLegacyParentMembershipUtils();
-    const approvedRequests = await withTimeout(
-      Promise.resolve(dbModule.listMyParentMembershipRequests(user.uid)),
-      'Parent membership sync timed out.',
-      profileHydrationTimeoutMs
-    );
-    const parentRequestSync = mergeApprovedParentMembershipRequests(profile, approvedRequests);
+    const parentRequestSync = mergeApprovedParentMembershipRequests(profile, membershipRequestsResult.value);
     if (parentRequestSync.changed) {
       await dbModule.updateUserProfile(user.uid, parentRequestSync.userUpdate);
       profile = {
@@ -977,12 +993,10 @@ export async function hydrateFirebaseUser(user: FirebaseUser): Promise<HydratedU
   }
 
   try {
-    const teams = await withTimeout(
-      Promise.resolve(dbModule.getUserTeams(user.uid)),
-      'Team access load timed out.',
-      profileHydrationTimeoutMs
-    );
-    const coachOf = mergeOwnedTeamIds(profile.coachOf, teams);
+    if (ownedTeamsResult.status === 'rejected') {
+      throw ownedTeamsResult.reason;
+    }
+    const coachOf = mergeOwnedTeamIds(profile.coachOf, ownedTeamsResult.value);
     if (coachOf.length > 0) {
       profile = {
         ...profile,
