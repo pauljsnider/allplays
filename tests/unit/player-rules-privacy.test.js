@@ -228,7 +228,10 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('player privacy rules engi
     });
 
     it('retains authorized team-manager contact-list management', async () => {
-        const managerDb = testEnv.authenticatedContext('manager-1', { email: 'manager@example.com' }).firestore();
+        const managerDb = testEnv.authenticatedContext('manager-1', {
+            email: 'manager@example.com',
+            email_verified: true
+        }).firestore();
 
         await assertSucceeds(updateDoc(
             doc(managerDb, 'teams/team-1/players/player-1/private/profile'),

@@ -92,7 +92,10 @@ describe('team entitlement Firestore rules', () => {
         });
 
         it('allows team admins to deactivate an active entitlement but not reactivate it', async () => {
-            const adminDb = testEnv.authenticatedContext('admin-a', { email: 'admin-a@example.com' }).firestore();
+            const adminDb = testEnv.authenticatedContext('admin-a', {
+                email: 'admin-a@example.com',
+                email_verified: true
+            }).firestore();
             const activeRef = doc(adminDb, 'teams/team-a/entitlements/server-active');
 
             await assertSucceeds(updateDoc(activeRef, { status: 'cancelled' }));
@@ -109,7 +112,10 @@ describe('team entitlement Firestore rules', () => {
 
         it('keeps exact team-pass provider requests private from every client role', async () => {
             const ownerDb = testEnv.authenticatedContext('owner-a').firestore();
-            const adminDb = testEnv.authenticatedContext('admin-a', { email: 'admin-a@example.com' }).firestore();
+            const adminDb = testEnv.authenticatedContext('admin-a', {
+                email: 'admin-a@example.com',
+                email_verified: true
+            }).firestore();
             const publicDb = testEnv.unauthenticatedContext().firestore();
             const attemptPath = 'teams/team-a/teamPassCheckoutAttempts/private-attempt';
 
