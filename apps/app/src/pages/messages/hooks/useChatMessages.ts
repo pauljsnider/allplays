@@ -122,6 +122,7 @@ export function useChatMessages({
     if (!cursor) return;
     olderPaginationStartedRef.current = true;
     setLoadingOlder(true);
+    setError(null);
     try {
       const page = await loadOlderTeamChatMessages(teamId, conversationId, cursor);
       setPaginationCursor(page.cursor);
@@ -131,6 +132,8 @@ export function useChatMessages({
         setHasMoreMessages(false);
       }
       setOlderMessages((current) => mergeChatMessageLists(getSortedChatMessages(page.messages), current));
+    } catch (loadError) {
+      setError(getChatMessagesErrorMessage(loadError));
     } finally {
       setLoadingOlder(false);
     }

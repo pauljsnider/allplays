@@ -50,13 +50,11 @@ function nativeCursor(nextPageToken: string | null): NativeChatPageCursor {
 function MessagesProbe({
     conversationId = 'team',
     enabled = true,
-    onMessagesReset,
-    onLoadOlderError
+    onMessagesReset
 }: {
     conversationId?: string;
     enabled?: boolean;
     onMessagesReset?: () => void;
-    onLoadOlderError?: (error: unknown) => void;
 }) {
     const handleBeforeLiveUpdate = useCallback(() => true, []);
     const state = useChatMessages({
@@ -76,7 +74,7 @@ function MessagesProbe({
             <div data-testid="message-ids">{state.messages.map((item) => item.id).join(',')}</div>
             <div data-testid="has-more">{String(state.hasMoreMessages)}</div>
             <div data-testid="error">{state.error || ''}</div>
-            <button type="button" onClick={() => void state.loadOlderMessages().catch(onLoadOlderError)}>Load older</button>
+            <button type="button" onClick={() => void state.loadOlderMessages()}>Load older</button>
             <button type="button" onClick={state.retryMessages}>Retry</button>
         </div>
     );
@@ -308,19 +306,33 @@ describe('useChatMessages', () => {
         expect(getChatMessagesErrorMessage({ code: 'permission-denied' })).toBe("We couldn't open this conversation. Your team access may have changed.");
     });
 
-    it('resets the loading state when loading older messages fails and still rejects to the caller', async () => {
+    it('surfaces older-page failures and preserves the cursor and history for retry', async () => {
         const loadError = new Error('load failed');
-        const onLoadOlderError = vi.fn();
-        vi.mocked(loadOlderTeamChatMessages).mockRejectedValue(loadError);
-        render(<MessagesProbe conversationId="team" onLoadOlderError={onLoadOlderError} />);
+        const cursor = nativeCursor('token-1');
+        vi.mocked(loadOlderTeamChatMessages)
+            .mockRejectedValueOnce(loadError)
+            .mockResolvedValueOnce({
+                messages: [message('older-page', 5)],
+                cursor: nativeCursor(null)
+            });
+        render(<MessagesProbe conversationId="team" />);
         act(() => {
-            liveCallback?.(Array.from({ length: 50 }, (_, index) => message(`live-${index}`, index + 50, index === 49 ? { cursor: 'oldest' } : { id: index })), { cursor: 'oldest' });
+            liveCallback?.([message('live-message', 50, null)], cursor);
         });
 
         await waitFor(() => expect(screen.getByTestId('has-more').textContent).toBe('true'));
         fireEvent.click(screen.getByRole('button', { name: 'Load older' }));
 
-        await waitFor(() => expect(onLoadOlderError).toHaveBeenCalledWith(loadError));
+        await waitFor(() => expect(screen.getByTestId('error').textContent).toBe('load failed'));
         await waitFor(() => expect(screen.getByTestId('loading-older').textContent).toBe('false'));
+        expect(screen.getByTestId('message-ids').textContent).toBe('live-message');
+        expect(screen.getByTestId('has-more').textContent).toBe('true');
+
+        fireEvent.click(screen.getByRole('button', { name: 'Load older' }));
+
+        expect(screen.getByTestId('error').textContent).toBe('');
+        await waitFor(() => expect(loadOlderTeamChatMessages).toHaveBeenNthCalledWith(2, 'team-1', 'team', cursor));
+        await waitFor(() => expect(screen.getByTestId('message-ids').textContent).toBe('older-page,live-message'));
+        expect(screen.getByTestId('has-more').textContent).toBe('false');
     });
 });
