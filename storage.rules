@@ -182,6 +182,12 @@ service firebase.storage {
         contentType.matches('image/.*');
     }
 
+    function isAllowedDrillDiagramUpload(contentType, size) {
+      return size > 0 &&
+        size <= 20 * 1024 * 1024 &&
+        contentType.matches('image/.*');
+    }
+
     function storageGamePath(teamId, gameId) {
       return /databases/(default)/documents/teams/$(teamId)/games/$(gameId);
     }
@@ -358,11 +364,10 @@ service firebase.storage {
       allow get: if canAccessTeamMedia(teamId);
       allow list: if false;
       allow create: if isVerifiedForSensitiveWrite() &&
-        canAccessTeamMedia(teamId) &&
+        isTeamOwnerOrAdmin(teamId) &&
         drillId.size() > 0 &&
         request.auth.uid == userId &&
-        request.resource.size > 0 &&
-        request.resource.size <= 20 * 1024 * 1024;
+        isAllowedDrillDiagramUpload(request.resource.contentType, request.resource.size);
       allow delete: if isVerifiedForSensitiveWrite() &&
         (isTeamOwnerOrAdmin(teamId) || canDeleteOwnTeamScopedUpload(teamId, userId));
       allow update: if false;

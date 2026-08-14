@@ -137,6 +137,14 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
                     new Uint8Array([1]),
                     { contentType: 'image/jpeg' }
                 );
+                await storage.ref('stat-sheets/drills/team-a/legacy-drill/member-a/parent-existing.jpg').put(
+                    new Uint8Array([1]),
+                    { contentType: 'image/jpeg' }
+                );
+                await storage.ref('stat-sheets/drills/team-a/legacy-drill/legacy-uploader/manager-existing.jpg').put(
+                    new Uint8Array([1]),
+                    { contentType: 'image/jpeg' }
+                );
             });
         });
 
@@ -308,6 +316,84 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
                 { contentType: 'image/jpeg' }
             ));
         }, 30000);
+
+        it('allows team owners and admins to upload drill images through the exact 20 MB boundary', async () => {
+            const ownerStorage = testEnv.authenticatedContext('owner-a', {
+                email: 'owner-a@example.com',
+                email_verified: true
+            }).storage();
+            const adminStorage = testEnv.authenticatedContext('admin-a', {
+                email: 'admin-a@example.com',
+                email_verified: true
+            }).storage();
+
+            await assertSucceeds(ownerStorage.ref('stat-sheets/drills/team-a/drill-a/owner-a/owner.jpg').put(
+                new Uint8Array([1]),
+                { contentType: 'image/jpeg' }
+            ));
+            await assertSucceeds(adminStorage.ref('stat-sheets/drills/team-a/drill-a/admin-a/boundary.png').put(
+                new Uint8Array(20 * 1024 * 1024),
+                { contentType: 'image/png' }
+            ));
+        }, 30000);
+
+        it('denies linked parents, outsiders, mismatched uploaders, empty files, non-images, and oversized drill uploads', async () => {
+            const parentStorage = testEnv.authenticatedContext('member-a', {
+                email: 'member-a@example.com',
+                email_verified: true
+            }).storage();
+            const outsiderStorage = testEnv.authenticatedContext('outsider', {
+                email: 'outsider@example.com',
+                email_verified: true
+            }).storage();
+            const ownerStorage = testEnv.authenticatedContext('owner-a', {
+                email: 'owner-a@example.com',
+                email_verified: true
+            }).storage();
+
+            await assertFails(parentStorage.ref('stat-sheets/drills/team-a/drill-a/member-a/parent.jpg').put(
+                new Uint8Array([1]),
+                { contentType: 'image/jpeg' }
+            ));
+            await assertFails(outsiderStorage.ref('stat-sheets/drills/team-a/drill-a/outsider/outsider.jpg').put(
+                new Uint8Array([1]),
+                { contentType: 'image/jpeg' }
+            ));
+            await assertFails(ownerStorage.ref('stat-sheets/drills/team-a/drill-a/another-user/mismatched.jpg').put(
+                new Uint8Array([1]),
+                { contentType: 'image/jpeg' }
+            ));
+            await assertFails(ownerStorage.ref('stat-sheets/drills/team-a/drill-a/owner-a/empty.jpg').put(
+                new Uint8Array(0),
+                { contentType: 'image/jpeg' }
+            ));
+            await assertFails(ownerStorage.ref('stat-sheets/drills/team-a/drill-a/owner-a/not-image.txt').put(
+                new Uint8Array([1]),
+                { contentType: 'text/plain' }
+            ));
+            await assertFails(ownerStorage.ref('stat-sheets/drills/team-a/drill-a/owner-a/oversized.jpg').put(
+                new Uint8Array((20 * 1024 * 1024) + 1),
+                { contentType: 'image/jpeg' }
+            ));
+        }, 30000);
+
+        it('preserves team drill reads and authorized legacy cleanup without reopening creates', async () => {
+            const parentStorage = testEnv.authenticatedContext('member-a', {
+                email: 'member-a@example.com',
+                email_verified: true
+            }).storage();
+            const ownerStorage = testEnv.authenticatedContext('owner-a', {
+                email: 'owner-a@example.com',
+                email_verified: true
+            }).storage();
+            const parentObject = parentStorage.ref('stat-sheets/drills/team-a/legacy-drill/member-a/parent-existing.jpg');
+            const managerObject = ownerStorage.ref('stat-sheets/drills/team-a/legacy-drill/legacy-uploader/manager-existing.jpg');
+
+            await assertSucceeds(parentObject.getMetadata());
+            await assertSucceeds(parentObject.delete());
+            await assertSucceeds(managerObject.getMetadata());
+            await assertSucceeds(managerObject.delete());
+        });
 
         it('allows managers and selected videographers to upload game clips through the exact 50 MB boundary', async () => {
             const ownerStorage = testEnv.authenticatedContext('owner-a', {
