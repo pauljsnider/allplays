@@ -145,8 +145,8 @@ function getFirestoreBaseUrl() {
   return `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(getProjectId())}/databases/(default)/documents`;
 }
 
-async function getNativeHeaders(requestUrl: string) {
-  const token = await getNativeAuthIdToken();
+async function getNativeHeaders(requestUrl: string, forceRefresh = false) {
+  const token = await getNativeAuthIdToken(forceRefresh);
   if (!token) {
     throw new Error('Native auth token is unavailable.');
   }
@@ -160,14 +160,19 @@ async function getNativeHeaders(requestUrl: string) {
 async function nativeFirestoreRequest(path: string, init: RequestInit = {}) {
   const url = `${getFirestoreBaseUrl()}${path}`;
   const runRequest = async () => {
-    const headers = await getNativeHeaders(url);
-    const response = await withTimeout(fetch(url, {
+    const method = String(init.method || 'GET').toUpperCase();
+    const isReadOnly = method === 'GET' || path.includes(':runQuery');
+    const execute = async (forceRefresh: boolean) => withTimeout(fetch(url, {
       ...init,
       headers: {
-        ...headers,
+        ...(await getNativeHeaders(url, forceRefresh)),
         ...(init.headers || {})
       }
     }), 'Firestore REST request');
+    let response = await execute(!isReadOnly);
+    if (response.status === 401) {
+      response = await execute(true);
+    }
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       const error = new Error(payload?.error?.message || `Firestore request failed (${response.status}).`) as Error & { status?: number };
@@ -293,23 +298,31 @@ async function nativeRunQuery(collectionId: string, fieldPath: string, op: 'EQUA
 
 export async function loadManagedTeamsFromNativeCallable(options: { includeChatMetadata?: boolean; timeoutMs?: number } = {}) {
   const timeoutMs = options.timeoutMs ?? profileTimeoutMs;
-  const token = await getNativeAuthIdToken(true);
-  if (!token) throw new Error('Native auth token is unavailable.');
   const requestUrl = `https://us-central1-${getProjectId()}.cloudfunctions.net/listManagedTeams`;
-  const response = await withTimeout(CapacitorHttp.post({
-    url: requestUrl,
-    headers: await getPrimaryAppCheckHeaders({
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json'
-    }, requestUrl) as Record<string, string>,
-    data: { data: options.includeChatMetadata === true ? { includeChatMetadata: true } : {} },
-    connectTimeout: timeoutMs,
-    readTimeout: timeoutMs
-  }), 'Managed team load', timeoutMs);
+  const execute = async (forceRefresh: boolean) => {
+    const token = await getNativeAuthIdToken(forceRefresh);
+    if (!token) throw new Error('Native auth token is unavailable.');
+    return withTimeout(CapacitorHttp.post({
+      url: requestUrl,
+      headers: await getPrimaryAppCheckHeaders({
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      }, requestUrl) as Record<string, string>,
+      data: { data: options.includeChatMetadata === true ? { includeChatMetadata: true } : {} },
+      connectTimeout: timeoutMs,
+      readTimeout: timeoutMs
+    }), 'Managed team load', timeoutMs);
+  };
+  let response = await execute(false);
+  if (response.status === 401) {
+    response = await execute(true);
+  }
   const payload = response.data && typeof response.data === 'object' ? response.data : {};
   const result = payload?.result || payload?.data;
   if (response.status < 200 || response.status >= 300 || !Array.isArray(result?.items)) {
-    throw new Error(payload?.error?.message || 'Managed teams response is invalid.');
+    const error = new Error(payload?.error?.message || 'Managed teams response is invalid.') as Error & { status?: number };
+    error.status = response.status;
+    throw error;
   }
   return {
     teams: result.items.filter((team: any) => team && typeof team === 'object' && !Array.isArray(team)),

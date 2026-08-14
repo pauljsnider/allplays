@@ -186,6 +186,8 @@ export type ChatInboxLoadOptions = {
   includeLastMessages?: boolean;
   onPreview?: (update: ChatInboxPreviewUpdate) => void;
   onPreviewError?: (teamId: string) => void;
+  nativeProfileLoader?: () => Promise<Record<string, any>>;
+  nativeManagedTeamsLoader?: () => Promise<{ teams: Record<string, any>[]; isPartial: boolean }>;
 };
 
 export type ChatConversationLoadOptions = {
@@ -300,12 +302,12 @@ function getFirestoreBaseUrl() {
   return `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(getProjectId())}/databases/(default)/documents`;
 }
 
-async function getNativeHeaders(requestUrl: string) {
+async function getNativeHeaders(requestUrl: string, forceRefresh = false) {
   // Firebase Authentication refreshes an expired token even when forceRefresh
   // is false. Forcing a refresh for every parallel Home read crosses the native
   // bridge twice per request and can exhaust the three-second unread-count
   // budget before Firestore is contacted.
-  const token = await getNativeAuthIdToken(false);
+  const token = await getNativeAuthIdToken(forceRefresh);
   if (!token) {
     throw new Error('Native auth token is unavailable.');
   }
@@ -319,13 +321,19 @@ async function getNativeHeaders(requestUrl: string) {
 async function nativeFirestoreRequest(path: string, init: RequestInit = {}) {
   const url = `${getFirestoreBaseUrl()}${path}`;
   const runRequest = async () => {
-    const response = await withTimeout(fetch(url, {
+    const method = String(init.method || 'GET').toUpperCase();
+    const isReadOnly = method === 'GET' || path.includes(':runQuery') || path.includes(':runAggregationQuery');
+    const execute = async (forceRefresh: boolean) => withTimeout(fetch(url, {
       ...init,
       headers: {
-        ...(await getNativeHeaders(url)),
+        ...(await getNativeHeaders(url, forceRefresh)),
         ...(init.headers || {})
       }
     }), 'Firestore REST request');
+    let response = await execute(!isReadOnly);
+    if (response.status === 401) {
+      response = await execute(true);
+    }
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       const error = new Error(payload?.error?.message || `Firestore request failed (${response.status}).`) as Error & { status?: number };
@@ -1183,7 +1191,9 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
 
   const nativeRuntime = isNativeRuntime();
   const profile = (nativeRuntime
-    ? await nativeGetDocument(`users/${encodeURIComponent(user.uid)}`)
+    ? await (options.nativeProfileLoader
+      ? options.nativeProfileLoader()
+      : nativeGetDocument(`users/${encodeURIComponent(user.uid)}`))
     : await withTimeout(Promise.resolve(getUserProfile(user.uid)), 'Chat profile load')) as Record<string, any> || {};
 
   let teams: Record<string, any>[] = [];
@@ -1191,10 +1201,11 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
   const serverAuthorizedChatTeamIds = new Set<string>();
   if (nativeRuntime) {
     try {
-      // Keep the larger profile adapter out of the web chat module graph. Native
-      // loads it only when the authenticated callable path is actually needed.
-      const { loadManagedTeamsFromNativeCallable } = await import('./profileService');
-      const managedResult = await loadManagedTeamsFromNativeCallable({ includeChatMetadata: true });
+      const managedResult = options.nativeManagedTeamsLoader
+        ? await options.nativeManagedTeamsLoader()
+        : await import('./profileService').then(({ loadManagedTeamsFromNativeCallable }) => (
+          loadManagedTeamsFromNativeCallable({ includeChatMetadata: true })
+        ));
       const map = new Map<string, Record<string, any>>();
       managedResult.teams.forEach((team: any) => {
         if (!team?.id) return;

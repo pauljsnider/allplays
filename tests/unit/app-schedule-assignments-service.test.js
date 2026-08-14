@@ -260,7 +260,7 @@ describe('React app schedule assignment service integration', () => {
         vi.stubGlobal('fetch', fetchMock);
 
         const loaded = await loadParentScheduleAssignments(event());
-        expect(authMocks.getNativeAuthIdToken).toHaveBeenCalledWith(true);
+        expect(authMocks.getNativeAuthIdToken).toHaveBeenCalledWith(false);
         expect(loaded[0]).toMatchObject({
             role: 'Snacks',
             claim: expect.objectContaining({ id: 'Snacks', claimedByName: 'Taylor' })

@@ -22,6 +22,8 @@ type LoadCachedAppDataOptions<T> = {
   maxStaleMs?: number;
   staleWhileRevalidate?: boolean;
   onRefresh?: (value: T) => void;
+  onBackgroundRefresh?: (value: T) => void;
+  onRefreshError?: (error: unknown) => void;
   shouldCache?: (value: T) => boolean;
 };
 
@@ -69,6 +71,8 @@ export function loadCachedAppData<T>(
     maxStaleMs = defaultMaxStaleMs,
     staleWhileRevalidate = false,
     onRefresh,
+    onBackgroundRefresh,
+    onRefreshError,
     shouldCache
   }: LoadCachedAppDataOptions<T> = {}
 ): Promise<T> {
@@ -83,13 +87,24 @@ export function loadCachedAppData<T>(
   if (
     !force
     && staleWhileRevalidate
-    && existing?.hydratedFromStorage
+    && existing
     && hasCachedValue(existing)
     && existing.expiresAt + maxStaleMs > now
   ) {
-    const refreshPromise = loadAndStoreCachedAppData(key, loader, existing, { ttlMs, persist, onRefresh, shouldCache });
+    const refreshPromise = loadAndStoreCachedAppData(key, loader, existing, {
+      ttlMs,
+      persist,
+      onRefresh: onRefresh || onBackgroundRefresh
+        ? (value) => {
+          onRefresh?.(value);
+          onBackgroundRefresh?.(value);
+        }
+        : undefined,
+      shouldCache
+    });
     refreshPromise.catch((error) => {
       logger.warn('Background refresh failed.', { error });
+      onRefreshError?.(error);
     });
     return Promise.resolve(existing.value as T);
   }

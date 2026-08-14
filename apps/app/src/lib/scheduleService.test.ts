@@ -325,6 +325,65 @@ describe('native scoring roster fallback', () => {
       globalThis.fetch = previousFetch;
     }
   });
+
+  it('refreshes a native schedule read once after a 401 response', async () => {
+    const previousWindow = (globalThis as any).window;
+    const previousFetch = globalThis.fetch;
+    vi.clearAllMocks();
+    (globalThis as any).window = { location: { protocol: 'capacitor:' }, setTimeout, clearTimeout } as any;
+    vi.mocked(getPlayers).mockRejectedValueOnce(new Error('SDK roster unavailable'));
+    vi.mocked(getDocs).mockResolvedValue({ docs: [] } as any);
+    vi.mocked(getNativeAuthIdToken)
+      .mockResolvedValueOnce('cached-token')
+      .mockResolvedValueOnce('refreshed-token');
+    (globalThis as any).fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        json: async () => ({ error: { message: 'Unauthenticated.' } })
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ documents: [] })
+      });
+
+    try {
+      await expect(loadHomeScoringPlayers('team-1', 'game-1')).resolves.toEqual([]);
+      expect(getNativeAuthIdToken).toHaveBeenNthCalledWith(1, false);
+      expect(getNativeAuthIdToken).toHaveBeenNthCalledWith(2, true);
+      expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+    } finally {
+      (globalThis as any).window = previousWindow;
+      globalThis.fetch = previousFetch;
+    }
+  });
+
+  it('does not retry a native schedule read after a 403 response', async () => {
+    const previousWindow = (globalThis as any).window;
+    const previousFetch = globalThis.fetch;
+    vi.clearAllMocks();
+    (globalThis as any).window = { location: { protocol: 'capacitor:' }, setTimeout, clearTimeout } as any;
+    vi.mocked(getPlayers).mockRejectedValueOnce(new Error('SDK roster unavailable'));
+    vi.mocked(getDocs).mockResolvedValue({ docs: [] } as any);
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('cached-token');
+    (globalThis as any).fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 403,
+      json: async () => ({ error: { message: 'Missing or insufficient permissions.' } })
+    });
+
+    try {
+      await expect(loadHomeScoringPlayers('team-1', 'game-1'))
+        .rejects.toThrow('Missing or insufficient permissions.');
+      expect(getNativeAuthIdToken).toHaveBeenCalledTimes(1);
+      expect(getNativeAuthIdToken).toHaveBeenCalledWith(false);
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    } finally {
+      (globalThis as any).window = previousWindow;
+      globalThis.fetch = previousFetch;
+    }
+  });
 });
 
 describe('native rideshare request fallback', () => {

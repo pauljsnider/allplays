@@ -366,6 +366,35 @@ describe('native parent-team fallback hydration', () => {
             connectTimeout: 8000,
             readTimeout: 8000
         }));
+        expect(getNativeAuthIdToken).toHaveBeenCalledWith(false);
+    });
+
+    it('refreshes a managed-team read once after a 401 response', async () => {
+        vi.mocked(getNativeAuthIdToken)
+            .mockResolvedValueOnce('cached-token')
+            .mockResolvedValueOnce('refreshed-token');
+        capacitorHttpMocks.post
+            .mockResolvedValueOnce({ status: 401, data: { error: { message: 'Unauthenticated.' } } })
+            .mockResolvedValueOnce({ status: 200, data: { result: { items: [], isPartial: false } } });
+
+        await expect(loadManagedTeamsFromNativeCallable()).resolves.toEqual({ teams: [], isPartial: false });
+
+        expect(getNativeAuthIdToken).toHaveBeenNthCalledWith(1, false);
+        expect(getNativeAuthIdToken).toHaveBeenNthCalledWith(2, true);
+        expect(capacitorHttpMocks.post).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not refresh a managed-team read after a 403 response', async () => {
+        capacitorHttpMocks.post.mockResolvedValue({
+            status: 403,
+            data: { error: { message: 'Missing or insufficient permissions.' } }
+        });
+
+        await expect(loadManagedTeamsFromNativeCallable()).rejects.toThrow('Missing or insufficient permissions.');
+
+        expect(getNativeAuthIdToken).toHaveBeenCalledTimes(1);
+        expect(getNativeAuthIdToken).toHaveBeenCalledWith(false);
+        expect(capacitorHttpMocks.post).toHaveBeenCalledTimes(1);
     });
 
     it('honors a caller-specific timeout for cold managed-team discovery', async () => {

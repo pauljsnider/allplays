@@ -154,9 +154,14 @@ function getHomeSectionRoute(section: HomeSectionId) {
   return section === 'today' ? '/home' : `/home?section=${section}`;
 }
 
+function getHomeTeamScope(home: ParentHomeModel) {
+  return home.teams.map((team) => team.teamId).sort().join('|');
+}
+
 function isHomeSectionReady(section: HomeSectionId, state: { loading: boolean; socialLoading: boolean; hasLoadedHomeDetails: boolean; showBlockingErrorState: boolean }) {
   if (state.loading || state.showBlockingErrorState) return false;
-  if (section === 'today' || section === 'feed' || section === 'friends') {
+  if (section === 'today') return true;
+  if (section === 'feed' || section === 'friends') {
     return state.hasLoadedHomeDetails && !state.socialLoading;
   }
   return state.hasLoadedHomeDetails;
@@ -196,57 +201,146 @@ export function Home({ auth }: { auth: AuthState }) {
   const homeSectionNavRef = useRef<HTMLElement | null>(null);
 
   const authUserId = auth.user?.uid || null;
+  const currentAuthUserIdRef = useRef(authUserId);
+  const homeLoadGenerationRef = useRef(0);
+  currentAuthUserIdRef.current = authUserId;
   const hasHomePreview = Boolean(authUserId) && authUserId === previewHomeUserId;
   const hasLoadedHomeDetails = Boolean(authUserId) && authUserId === loadedHomeDetailsUserId;
 
-  const refreshHome = async ({ force = false }: { force?: boolean } = {}) => {
+  const refreshHome = async ({
+    force = false,
+    forceSecondary = false,
+    preserveCurrentHome = false
+  }: { force?: boolean; forceSecondary?: boolean; preserveCurrentHome?: boolean } = {}) => {
     const user = auth.user;
     if (!user) return;
+    const loadGeneration = homeLoadGenerationRef.current + 1;
+    homeLoadGenerationRef.current = loadGeneration;
+    const isCurrentHomeLoad = () => (
+      currentAuthUserIdRef.current === user.uid
+      && homeLoadGenerationRef.current === loadGeneration
+    );
     let receivedHomePreview = false;
+    let summaryResultReturned = false;
     const hasExistingHome = loadedHomeDetailsUserId === user.uid;
     clearError();
     setHomeLoadError(null);
     setSocialStatus(null);
+    if (!hasExistingHome && !preserveCurrentHome) {
+      setHome(emptyHome());
+      setSocial(emptySocialHome());
+    }
     const timer = startScreenMountTimer('home', {
-      force,
+      force: force || forceSecondary,
       hasExistingHome
     });
+    const handleBackgroundError = (backgroundError: unknown) => {
+      if (!isCurrentHomeLoad()) return;
+      const appError = toAppServiceError(backgroundError, 'Unable to refresh Home details.');
+      setFailedHomeDetailsUserId(user.uid);
+      setHomeLoadError(appError);
+      setSocialStatus({ tone: 'error', message: getHomeSecondaryErrorMessage(appError) });
+    };
     return runPrimaryLoad(
       async () => {
         const summary = await loadParentHomeSummaryBootstrap(user, {
           force,
+          onBackgroundError: handleBackgroundError,
           onPartial: (partial) => {
+            if (!isCurrentHomeLoad()) return;
+            // Once the stale summary has returned, background loader partials
+            // are incomplete intermediate states. Wait for onRefresh's complete
+            // result before replacing downstream work.
+            if (summaryResultReturned) return;
             receivedHomePreview = true;
             setHome(partial.home);
             setPreviewHomeUserId(user.uid);
             setHomeLoadError(null);
+          },
+          onRefresh: (refreshedSummary) => {
+            if (!isCurrentHomeLoad()) return;
+            if (refreshedSummary.schedule.isPartial === true) {
+              handleBackgroundError(new Error('The refreshed Home summary is incomplete.'));
+              return;
+            }
+            receivedHomePreview = true;
+            setHome(refreshedSummary.home);
+            setSocial(emptySocialHome());
+            setPreviewHomeUserId(user.uid);
+            setHomeLoadError(null);
+            // Re-enter through the fresh summary cache while forcing every
+            // downstream slice. Incrementing the Home generation prevents the
+            // stale secondary/social promises from overwriting this scope.
+            void refreshHome({ forceSecondary: true, preserveCurrentHome: true });
           }
         });
+        summaryResultReturned = true;
+        if (!isCurrentHomeLoad()) return summary;
         receivedHomePreview = true;
         setHome(summary.home);
         setPreviewHomeUserId(user.uid);
         setHomeLoadError(null);
         let latestSecondaryHome = summary.home;
+        let secondaryResultReturned = false;
+        let latestSocialRequestId = 0;
+        const summaryTeamScope = getHomeTeamScope(summary.home);
+        let latestRequestedSocialScope = summaryTeamScope;
+        const socialHomePromise = loadSocialHome(user, summary.home)
+          .then((socialHome) => ({ socialHome, error: null }))
+          .catch((socialError: unknown) => ({ socialHome: null, error: socialError }));
+        const loadAndApplySocial = async (
+          targetHome: ParentHomeModel,
+          useSummaryRequest = false
+        ) => {
+          const targetScope = getHomeTeamScope(targetHome);
+          const requestId = latestSocialRequestId + 1;
+          latestSocialRequestId = requestId;
+          latestRequestedSocialScope = targetScope;
+          const socialResult = useSummaryRequest && targetScope === summaryTeamScope
+            ? await socialHomePromise
+            : await loadSocialHome(user, targetHome)
+              .then((socialHome) => ({ socialHome, error: null }))
+              .catch((socialError: unknown) => ({ socialHome: null, error: socialError }));
+          if (!isCurrentHomeLoad() || requestId !== latestSocialRequestId) return null;
+          if (socialResult.error || !socialResult.socialHome) {
+            throw socialResult.error || new Error('Unable to load Home social details.');
+          }
+          setSocial(socialResult.socialHome);
+          return socialResult.socialHome;
+        };
 
         void runSecondaryLoad(
           async () => {
             const secondaryHome = await loadParentHomeWithSecondaryData(user, {
-              force,
+              force: force || forceSecondary,
               schedule: summary.schedule,
+              nativeContext: summary.nativeContext,
+              onBackgroundError: handleBackgroundError,
               // Render each secondary slice (chat badges, fees, hydrated RSVP) as it
               // arrives instead of waiting for all of them (#2037).
               onPartial: (partial) => {
+                if (!isCurrentHomeLoad()) return;
                 latestSecondaryHome = partial;
                 setHome(partial);
+                const partialTeamScope = getHomeTeamScope(partial);
+                if (secondaryResultReturned && partialTeamScope !== latestRequestedSocialScope) {
+                  // Do not retain social records authorized by the stale team
+                  // scope while its background replacement is still loading.
+                  setSocial(emptySocialHome());
+                  void loadAndApplySocial(partial).catch(handleBackgroundError);
+                }
               }
             });
+            if (!isCurrentHomeLoad()) return;
+            secondaryResultReturned = true;
             latestSecondaryHome = secondaryHome;
             setHome(secondaryHome);
             setLoadedHomeDetailsUserId(user.uid);
             setFailedHomeDetailsUserId(null);
             setHomeLoadError(null);
-            const socialHome = await loadSocialHome(user, secondaryHome);
-            setSocial(socialHome);
+            const secondaryTeamScope = getHomeTeamScope(secondaryHome);
+            const socialHome = await loadAndApplySocial(secondaryHome, secondaryTeamScope === summaryTeamScope);
+            if (!isCurrentHomeLoad() || !socialHome) return;
             timer.end({
               hydrated: true,
               playerCount: secondaryHome.players.length,
@@ -260,17 +354,21 @@ export function Home({ auth }: { auth: AuthState }) {
           },
           {
             rethrow: false,
+            ignoreStale: true,
             getErrorMessage: (secondaryError) => getHomeSecondaryErrorMessage(toAppServiceError(secondaryError, 'Unable to refresh Home details.')),
             onError: async (secondaryError) => {
+              if (!isCurrentHomeLoad()) return;
+              secondaryResultReturned = true;
               const appError = toAppServiceError(secondaryError, 'Unable to refresh Home details.');
               try {
-                const socialHome = await loadSocialHome(user, latestSecondaryHome);
-                setSocial(socialHome);
+                const latestTeamScope = getHomeTeamScope(latestSecondaryHome);
+                await loadAndApplySocial(latestSecondaryHome, latestTeamScope === summaryTeamScope);
               } catch {
                 // The Home details error remains the visible retry signal. Social
                 // state is left untouched so a failed independent load cannot
                 // replace the last verified feed with an authoritative empty one.
               }
+              if (!isCurrentHomeLoad()) return;
               timer.end({
                 hydrated: false,
                 playerCount: summary.home.players.length,
@@ -300,7 +398,9 @@ export function Home({ auth }: { auth: AuthState }) {
       {
         getErrorMessage: (loadError) => getHomeLoadErrorMessage(toAppServiceError(loadError, 'Unable to load Home.'), hasExistingHome || receivedHomePreview),
         rethrow: false,
+        ignoreStale: true,
         onError: (loadError) => {
+          if (!isCurrentHomeLoad()) return;
           const appError = toAppServiceError(loadError, 'Unable to load Home.');
           setHomeLoadError(appError);
           timer.end({
@@ -322,10 +422,14 @@ export function Home({ auth }: { auth: AuthState }) {
   useEffect(() => {
     if (!auth.user?.uid) {
       hasStartedInitialHomeLoadRef.current = false;
-      return;
+      homeLoadGenerationRef.current += 1;
+      return undefined;
     }
     hasStartedInitialHomeLoadRef.current = true;
     refreshHome();
+    return () => {
+      homeLoadGenerationRef.current += 1;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid]);
 
@@ -384,7 +488,7 @@ export function Home({ auth }: { auth: AuthState }) {
 
   const hasRenderableHome = !authUserId || hasHomePreview || hasLoadedHomeDetails;
   const showBlockingErrorState = !loading && !hasRenderableHome && Boolean(homeLoadError);
-  const showInitialHomeSkeleton = loading && !hasRenderableHome;
+  const showInitialHomeSkeleton = Boolean(authUserId) && !hasRenderableHome && !homeLoadError;
   const canRenderHomeSections = !loading || hasRenderableHome;
   const displayName = auth.user?.displayName || auth.user?.email || 'ALL PLAYS User';
   const standaloneActionCount = home.actionItems.filter((action) => action.kind === 'assignment' || action.kind === 'rideshare').length;

@@ -59,6 +59,7 @@ const authObserverMocks = vi.hoisted(() => ({
 }));
 
 const nativeAuthenticationMocks = vi.hoisted(() => ({
+  addListener: vi.fn(),
   applyActionCode: vi.fn(),
   createUserWithEmailAndPassword: vi.fn(),
   getCurrentUser: vi.fn(),
@@ -148,7 +149,21 @@ import {
 } from './authService';
 
 describe('getNativeAuthIdToken', () => {
-  afterEach(() => {
+  beforeEach(() => {
+    nativeAuthenticationMocks.addListener.mockResolvedValue({ remove: vi.fn() });
+    nativeAuthenticationMocks.getIdToken.mockReset();
+    nativeAuthenticationMocks.getCurrentUser.mockReset();
+    nativeAuthenticationMocks.getCurrentUser.mockImplementation(async () => {
+      const session = JSON.parse(window.localStorage.getItem('allplays-native-auth-session') || 'null');
+      return {
+        user: session?.uid ? { uid: session.uid, email: session.email || null } : null
+      };
+    });
+    nativeAuthenticationMocks.signOut.mockReset();
+  });
+
+  afterEach(async () => {
+    await signOut();
     authState.currentUser = null;
     window.localStorage.clear();
     vi.mocked(Capacitor.isNativePlatform).mockReturnValue(true);
@@ -189,6 +204,160 @@ describe('getNativeAuthIdToken', () => {
       emailVerified: false,
       provider: 'rest'
     });
+  });
+
+  it('coalesces concurrent native plugin reads and reuses the short-lived in-memory token', async () => {
+    window.localStorage.setItem('allplays-native-auth-session', JSON.stringify({
+      uid: 'native-plugin-user',
+      email: 'native@example.com',
+      provider: 'native-plugin'
+    }));
+    let resolveToken!: (value: { token: string }) => void;
+    nativeAuthenticationMocks.getIdToken.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveToken = resolve;
+    }));
+
+    const reads = Array.from({ length: 20 }, () => getNativeAuthIdToken(false));
+    await vi.waitFor(() => {
+      expect(nativeAuthenticationMocks.getIdToken).toHaveBeenCalledTimes(1);
+    });
+    expect(nativeAuthenticationMocks.getIdToken).toHaveBeenCalledWith({ forceRefresh: false });
+
+    resolveToken({ token: 'shared-native-token' });
+    await expect(Promise.all(reads)).resolves.toEqual(Array(20).fill('shared-native-token'));
+    await expect(getNativeAuthIdToken(false)).resolves.toBe('shared-native-token');
+    expect(nativeAuthenticationMocks.getIdToken).toHaveBeenCalledTimes(1);
+    expect(nativeAuthenticationMocks.getCurrentUser).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not reuse an in-memory native token for another uid', async () => {
+    nativeAuthenticationMocks.getIdToken
+      .mockResolvedValueOnce({ token: 'first-user-token' })
+      .mockResolvedValueOnce({ token: 'second-user-token' });
+    window.localStorage.setItem('allplays-native-auth-session', JSON.stringify({
+      uid: 'first-user',
+      email: 'first@example.com',
+      provider: 'native-plugin'
+    }));
+
+    await expect(getNativeAuthIdToken(false)).resolves.toBe('first-user-token');
+    window.localStorage.setItem('allplays-native-auth-session', JSON.stringify({
+      uid: 'second-user',
+      email: 'second@example.com',
+      provider: 'native-plugin'
+    }));
+
+    await expect(getNativeAuthIdToken(false)).resolves.toBe('second-user-token');
+    expect(nativeAuthenticationMocks.getIdToken).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects a token when the persisted uid does not match the native Firebase user', async () => {
+    window.localStorage.setItem('allplays-native-auth-session', JSON.stringify({
+      uid: 'persisted-user',
+      email: 'persisted@example.com',
+      provider: 'native-plugin'
+    }));
+    nativeAuthenticationMocks.getCurrentUser.mockResolvedValue({
+      user: { uid: 'different-native-user', email: 'different@example.com' }
+    });
+    nativeAuthenticationMocks.getIdToken.mockResolvedValue({ token: 'wrong-user-token' });
+
+    await expect(getNativeAuthIdToken(false)).rejects.toThrow(
+      'Native Firebase auth session does not match the saved app session.'
+    );
+    expect(nativeAuthenticationMocks.getIdToken).not.toHaveBeenCalled();
+  });
+
+  it('does not return a cached token after the native user diverges without an auth event', async () => {
+    window.localStorage.setItem('allplays-native-auth-session', JSON.stringify({
+      uid: 'persisted-user',
+      email: 'persisted@example.com',
+      provider: 'native-plugin'
+    }));
+    nativeAuthenticationMocks.getIdToken.mockResolvedValue({ token: 'persisted-user-token' });
+
+    await expect(getNativeAuthIdToken(false)).resolves.toBe('persisted-user-token');
+    nativeAuthenticationMocks.getCurrentUser.mockResolvedValue({
+      user: { uid: 'different-native-user', email: 'different@example.com' }
+    });
+
+    await expect(getNativeAuthIdToken(false)).rejects.toThrow(
+      'Native Firebase auth session does not match the saved app session.'
+    );
+    expect(nativeAuthenticationMocks.getIdToken).toHaveBeenCalledTimes(1);
+  });
+
+  it('invalidates a reusable token when the native Firebase auth state changes', async () => {
+    nativeAuthenticationMocks.getIdToken
+      .mockResolvedValueOnce({ token: 'first-user-token' })
+      .mockResolvedValueOnce({ token: 'second-user-token' });
+    window.localStorage.setItem('allplays-native-auth-session', JSON.stringify({
+      uid: 'first-user',
+      email: 'first@example.com',
+      provider: 'native-plugin'
+    }));
+
+    await expect(getNativeAuthIdToken(false)).resolves.toBe('first-user-token');
+    const authStateListener = nativeAuthenticationMocks.addListener.mock.calls
+      .find(([eventName]) => eventName === 'authStateChange')?.[1];
+    expect(authStateListener).toBeTypeOf('function');
+
+    window.localStorage.setItem('allplays-native-auth-session', JSON.stringify({
+      uid: 'second-user',
+      email: 'second@example.com',
+      provider: 'native-plugin'
+    }));
+    authStateListener({ user: { uid: 'second-user' } });
+
+    await expect(getNativeAuthIdToken(false)).resolves.toBe('second-user-token');
+    expect(nativeAuthenticationMocks.getIdToken).toHaveBeenCalledTimes(2);
+  });
+
+  it('clears the reusable token at sign-out', async () => {
+    nativeAuthenticationMocks.getIdToken
+      .mockResolvedValueOnce({ token: 'before-sign-out' })
+      .mockResolvedValueOnce({ token: 'after-sign-in' });
+    const session = {
+      uid: 'returning-user',
+      email: 'returning@example.com',
+      provider: 'native-plugin'
+    };
+    window.localStorage.setItem('allplays-native-auth-session', JSON.stringify(session));
+
+    await expect(getNativeAuthIdToken(false)).resolves.toBe('before-sign-out');
+    await signOut();
+    window.localStorage.setItem('allplays-native-auth-session', JSON.stringify(session));
+
+    await expect(getNativeAuthIdToken(false)).resolves.toBe('after-sign-in');
+    expect(nativeAuthenticationMocks.getIdToken).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps a newer forced token when an older read resolves afterward', async () => {
+    window.localStorage.setItem('allplays-native-auth-session', JSON.stringify({
+      uid: 'native-plugin-user',
+      email: 'native@example.com',
+      provider: 'native-plugin'
+    }));
+    nativeAuthenticationMocks.getCurrentUser.mockResolvedValue({
+      user: {
+        uid: 'native-plugin-user',
+        email: 'native@example.com'
+      }
+    });
+    let resolveOlderToken!: (value: { token: string }) => void;
+    nativeAuthenticationMocks.getIdToken
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolveOlderToken = resolve;
+      }))
+      .mockResolvedValueOnce({ token: 'newer-forced-token' });
+
+    const olderRead = getNativeAuthIdToken(false);
+    await expect(getNativeAuthIdToken(true)).resolves.toBe('newer-forced-token');
+    resolveOlderToken({ token: 'older-read-token' });
+    await expect(olderRead).resolves.toBe('older-read-token');
+
+    await expect(getNativeAuthIdToken(false)).resolves.toBe('newer-forced-token');
+    expect(nativeAuthenticationMocks.getIdToken).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -451,6 +620,9 @@ describe('signUpWithEmail', () => {
 
   it('sends native signup verification through the Resend-backed callable', async () => {
     nativeAuthenticationMocks.getIdToken.mockResolvedValue({ token: 'native-signup-id-token' });
+    nativeAuthenticationMocks.getCurrentUser.mockResolvedValue({
+      user: { uid: 'new-user', email: 'player@example.com' }
+    });
     legacySignupFlowMocks.executeEmailPasswordSignup.mockImplementation(async (options: any) => {
       window.localStorage.setItem(
         'allplays-native-auth-session',
@@ -678,6 +850,8 @@ describe('native REST sign-in', () => {
     installTestLocalStorage();
     window.localStorage.clear();
     installIndexedDbMock();
+    nativeAuthenticationMocks.getCurrentUser.mockReset();
+    nativeAuthenticationMocks.getIdToken.mockReset();
     nativeAuthenticationMocks.getCurrentUser.mockResolvedValue({
       user: {
         uid: 'apple-user',
@@ -733,6 +907,14 @@ describe('native REST sign-in', () => {
   });
 
   it('clears cached user data before replacing a persisted native REST session with a different uid', async () => {
+    nativeAuthenticationMocks.getCurrentUser.mockResolvedValue({
+      user: {
+        uid: 'new-user',
+        email: 'new@example.com',
+        displayName: 'New User',
+        emailVerified: true
+      }
+    });
     window.localStorage.setItem(
       'allplays-native-auth-session',
       JSON.stringify({
@@ -753,6 +935,40 @@ describe('native REST sign-in', () => {
     expect(appDataCacheMocks.clearAppDataCache).toHaveBeenCalledTimes(1);
   });
 
+  it('invalidates an in-flight plugin token when native sign-in switches accounts', async () => {
+    nativeAuthenticationMocks.getCurrentUser.mockResolvedValue({
+      user: { uid: 'previous-user', email: 'previous@example.com' }
+    });
+    window.localStorage.setItem(
+      'allplays-native-auth-session',
+      JSON.stringify({
+        uid: 'previous-user',
+        email: 'previous@example.com',
+        provider: 'native-plugin'
+      })
+    );
+    let resolvePreviousToken!: (value: { token: string }) => void;
+    nativeAuthenticationMocks.getIdToken
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolvePreviousToken = resolve;
+      }))
+      .mockResolvedValueOnce({ token: 'new-user-token' });
+
+    const previousToken = getNativeAuthIdToken(false);
+    await vi.waitFor(() => {
+      expect(nativeAuthenticationMocks.getIdToken).toHaveBeenCalledTimes(1);
+    });
+    nativeAuthenticationMocks.getCurrentUser.mockResolvedValue({
+      user: { uid: 'new-user', email: 'new@example.com' }
+    });
+    const result = await signInWithEmail('new@example.com', 'password123');
+    resolvePreviousToken({ token: 'stale-previous-token' });
+
+    expect(result.user.uid).toBe('new-user');
+    await expect(previousToken).rejects.toThrow('session changed');
+    await expect(getNativeAuthIdToken(false)).resolves.toBe('new-user-token');
+  });
+
   it('exposes the persisted native uid when the Firebase JS auth user is unavailable', () => {
     window.localStorage.setItem(
       'allplays-native-auth-session',
@@ -771,6 +987,9 @@ describe('native REST sign-in', () => {
   });
 
   it('authenticates phone-only friend invite validation for an already signed-in native user', async () => {
+    nativeAuthenticationMocks.getCurrentUser.mockResolvedValue({
+      user: { uid: 'phone-user', email: null }
+    });
     window.localStorage.setItem(
       'allplays-native-auth-session',
       JSON.stringify({

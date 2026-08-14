@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearAppDataCache } from './appDataCache';
 
 const chatServiceMocks = vi.hoisted(() => ({
@@ -17,6 +17,15 @@ const feesMocks = vi.hoisted(() => ({
     normalizeParentFeeRecord: vi.fn((value) => value)
 }));
 
+const nativeRuntimeMocks = vi.hoisted(() => ({
+    isNativeRuntime: vi.fn(() => false)
+}));
+
+const profileServiceMocks = vi.hoisted(() => ({
+    loadManagedTeamsFromNativeCallable: vi.fn(),
+    loadProfileDocument: vi.fn()
+}));
+
 vi.mock('./chatService', () => chatServiceMocks);
 vi.mock('./scheduleService', () => scheduleServiceMocks);
 vi.mock('./adapters/legacyHomeFees', () => ({
@@ -25,6 +34,8 @@ vi.mock('./adapters/legacyHomeFees', () => ({
 vi.mock('./parentFeeRecipientsService', () => ({
     listParentTeamFeeRecipientsForApp: feesMocks.listParentTeamFeeRecipients
 }));
+vi.mock('./nativeRuntime', () => nativeRuntimeMocks);
+vi.mock('./profileService', () => profileServiceMocks);
 vi.mock('./uxTiming', () => ({
     startUxTimer: vi.fn(() => ({ end: vi.fn() }))
 }));
@@ -33,6 +44,7 @@ vi.mock('./logger', () => ({
 }));
 
 import {
+    loadParentHomeSummaryBootstrap,
     loadParentHomeSummary,
     loadParentHomeWithSecondaryData,
     loadParentSearchTeamsSummary,
@@ -88,6 +100,175 @@ describe('homeService Teams bootstrap reuse', () => {
         chatServiceMocks.loadChatInbox.mockResolvedValue({ teams: [] });
         feesMocks.listParentTeamFeeRecipients.mockResolvedValue([]);
         scheduleServiceMocks.hydrateParentScheduleDetails.mockImplementation(async (schedule) => schedule);
+        nativeRuntimeMocks.isNativeRuntime.mockReturnValue(false);
+        profileServiceMocks.loadManagedTeamsFromNativeCallable.mockReset();
+        profileServiceMocks.loadProfileDocument.mockReset();
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    it('shares one native profile and managed-team projection across Home schedule and chat', async () => {
+        nativeRuntimeMocks.isNativeRuntime.mockReturnValue(true);
+        const profile = { parentOf: [], coachOf: ['team-owned'] };
+        const managedTeams = [{
+            id: 'team-owned',
+            name: 'Vipers',
+            chatAccessVerified: true,
+            conversations: [{ id: 'team' }]
+        }];
+        profileServiceMocks.loadProfileDocument.mockResolvedValue(profile);
+        profileServiceMocks.loadManagedTeamsFromNativeCallable.mockResolvedValue({
+            teams: managedTeams,
+            isPartial: false
+        });
+        scheduleServiceMocks.loadParentSchedule.mockImplementation(async (_authUser, options) => {
+            const [sharedProfile, sharedTeams] = await Promise.all([
+                options.nativeProfileLoader(),
+                options.nativeStaffTeamsLoader()
+            ]);
+            expect(sharedProfile).toBe(profile);
+            expect(sharedTeams.teams).toBe(managedTeams);
+            return {
+                children: [],
+                events: [],
+                staffTeams: [{ teamId: 'team-owned', teamName: 'Vipers' }]
+            };
+        });
+        chatServiceMocks.loadChatInbox.mockImplementation(async (_authUser, options) => {
+            const [sharedProfile, sharedTeams] = await Promise.all([
+                options.nativeProfileLoader(),
+                options.nativeManagedTeamsLoader()
+            ]);
+            expect(sharedProfile).toBe(profile);
+            expect(sharedTeams.teams).toBe(managedTeams);
+            return {
+                teams: [{ id: 'team-owned', name: 'Vipers', role: 'Coach', unreadCount: 0 }],
+                isPartial: false
+            };
+        });
+        const summary = await loadParentHomeSummaryBootstrap(user, {
+            force: true
+        });
+        await loadParentHomeWithSecondaryData(user, {
+            force: true,
+            schedule: summary.schedule,
+            nativeContext: summary.nativeContext
+        });
+
+        expect(profileServiceMocks.loadProfileDocument).toHaveBeenCalledTimes(1);
+        expect(profileServiceMocks.loadProfileDocument).toHaveBeenCalledWith(user.uid);
+        expect(profileServiceMocks.loadManagedTeamsFromNativeCallable).toHaveBeenCalledTimes(1);
+        expect(profileServiceMocks.loadManagedTeamsFromNativeCallable).toHaveBeenCalledWith({
+            includeChatMetadata: true,
+            timeoutMs: 15000
+        });
+    });
+
+    it('reports a complete stale-summary background refresh separately from initial partials', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-08-13T12:00:00.000Z'));
+        const staleSchedule = {
+            children: [],
+            events: [],
+            staffTeams: [{ teamId: 'team-1', teamName: 'Bears' }]
+        } as any;
+        const refreshedSchedule = {
+            children: [],
+            events: [],
+            staffTeams: [{ teamId: 'team-2', teamName: 'Storm' }]
+        } as any;
+        scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(staleSchedule);
+
+        const first = await loadParentHomeSummaryBootstrap(user, { force: true });
+        expect(first.home.teams.map((team) => team.teamId)).toEqual(['team-1']);
+
+        vi.setSystemTime(new Date('2026-08-13T12:00:46.000Z'));
+        const refresh = deferred<typeof refreshedSchedule>();
+        scheduleServiceMocks.loadParentSchedule.mockReturnValueOnce(refresh.promise);
+        const onPartial = vi.fn();
+        const onRefresh = vi.fn();
+
+        const stale = await loadParentHomeSummaryBootstrap(user, { onPartial, onRefresh });
+        expect(stale.home.teams.map((team) => team.teamId)).toEqual(['team-1']);
+        expect(onRefresh).not.toHaveBeenCalled();
+
+        refresh.resolve(refreshedSchedule);
+        await vi.waitFor(() => {
+            expect(onRefresh).toHaveBeenCalledTimes(1);
+        });
+
+        expect(onPartial).toHaveBeenCalledWith(expect.objectContaining({
+            home: expect.objectContaining({
+                teams: [expect.objectContaining({ teamId: 'team-2' })]
+            })
+        }));
+        expect(onRefresh).toHaveBeenCalledWith(expect.objectContaining({
+            schedule: refreshedSchedule,
+            home: expect.objectContaining({
+                teams: [expect.objectContaining({ teamId: 'team-2' })]
+            })
+        }));
+    });
+
+    it('reports a stale-summary background refresh failure through the bootstrap boundary', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-08-13T12:00:00.000Z'));
+        const staleSchedule = {
+            children: [],
+            events: [],
+            staffTeams: [{ teamId: 'team-1', teamName: 'Bears' }]
+        } as any;
+        scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(staleSchedule);
+
+        await loadParentHomeSummaryBootstrap(user, { force: true });
+
+        vi.setSystemTime(new Date('2026-08-13T12:00:46.000Z'));
+        const refreshError = new Error('summary refresh unavailable');
+        scheduleServiceMocks.loadParentSchedule.mockRejectedValueOnce(refreshError);
+        const onBackgroundError = vi.fn();
+
+        const stale = await loadParentHomeSummaryBootstrap(user, { onBackgroundError });
+        expect(stale.schedule).toBe(staleSchedule);
+
+        await vi.waitFor(() => {
+            expect(onBackgroundError).toHaveBeenCalledWith(refreshError);
+        });
+    });
+
+    it('renders the last complete Home immediately while refreshing it in the background', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-08-13T12:00:00.000Z'));
+        const schedule = { children: [], events: [] } as any;
+        chatServiceMocks.loadChatInbox.mockResolvedValueOnce({
+            teams: [{ id: 'team-1', name: 'Vipers', role: 'Coach', unreadCount: 0 }],
+            isPartial: false
+        });
+        const first = await loadParentHomeWithSecondaryData(user, { schedule, force: true });
+        expect(first.teams.map((team) => team.teamId)).toEqual(['team-1']);
+
+        vi.setSystemTime(new Date('2026-08-13T12:00:31.000Z'));
+        chatServiceMocks.loadChatInbox.mockResolvedValueOnce({
+            teams: [{ id: 'team-2', name: 'Current', role: 'Coach', unreadCount: 0 }],
+            isPartial: false
+        });
+        let resolveUpdated!: () => void;
+        const updated = new Promise<void>((resolve) => {
+            resolveUpdated = resolve;
+        });
+        const stale = await loadParentHomeWithSecondaryData(user, {
+            schedule,
+            onPartial: (home) => {
+                if (home.teams.some((team) => team.teamId === 'team-2')) resolveUpdated();
+            }
+        });
+
+        expect(stale.teams.map((team) => team.teamId)).toEqual(['team-1']);
+        await updated;
+        const refreshed = await loadParentHomeWithSecondaryData(user, { schedule });
+        expect(refreshed.teams.map((team) => team.teamId)).toEqual(['team-2']);
+        vi.useRealTimers();
     });
 
     it('reuses the fast summary schedule scope for teams enrichment without persisting the profile', async () => {

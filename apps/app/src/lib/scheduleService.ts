@@ -454,6 +454,9 @@ export type ParentScheduleLoadOptions = {
   includePastGames?: boolean;
   scheduleRangeByTeam?: ScheduleDateRangeByTeam;
   parentScope?: ParentScheduleScope;
+  /** Request-scoped native Home loaders shared with chat to avoid duplicate profile/access reads. */
+  nativeProfileLoader?: () => Promise<Record<string, unknown>>;
+  nativeStaffTeamsLoader?: () => Promise<{ teams: any[]; isPartial: boolean }>;
   /** Stream the resolved player/team shell and completed team schedules while the full load continues. */
   onPartial?: (result: ParentScheduleLoadResult) => void;
 };
@@ -1035,8 +1038,8 @@ function getFirestoreBaseUrl() {
   return `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(getProjectId())}/databases/(default)/documents`;
 }
 
-async function getNativeHeaders(requestUrl: string) {
-  const token = await getNativeAuthIdToken(true);
+async function getNativeHeaders(requestUrl: string, forceRefresh = false) {
+  const token = await getNativeAuthIdToken(forceRefresh);
   if (!token) {
     throw new Error('Native auth token is unavailable.');
   }
@@ -1050,13 +1053,19 @@ async function getNativeHeaders(requestUrl: string) {
 async function nativeFirestoreRequest(path: string, init: RequestInit = {}) {
   const url = `${getFirestoreBaseUrl()}${path}`;
   const runRequest = async () => {
-    const response = await withTimeout(fetch(url, {
+    const method = String(init.method || 'GET').toUpperCase();
+    const isReadOnly = method === 'GET' || path.includes(':runQuery');
+    const execute = async (forceRefresh: boolean) => withTimeout(fetch(url, {
       ...init,
       headers: {
-        ...(await getNativeHeaders(url)),
+        ...(await getNativeHeaders(url, forceRefresh)),
         ...(init.headers || {})
       }
     }), 'Firestore REST request');
+    let response = await execute(!isReadOnly);
+    if (response.status === 401) {
+      response = await execute(true);
+    }
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       const error = new Error(payload?.error?.message || `Firestore request failed (${response.status}).`) as Error & { status?: number };
@@ -4714,9 +4723,36 @@ async function buildParentScheduleTeamChildren(user: AuthUser, profile: Record<s
     byTeam.get(child.teamId)?.push(child);
   });
 
-  const staffTeamResult: StaffTeamsLoadResult = options.parentScope?.staffTeams
-    ? { teams: options.parentScope.staffTeams, isPartial: options.parentScope.isPartial === true }
-    : await loadStaffTeams(user).catch(() => ({ teams: [], isPartial: true }));
+  let staffTeamResult: StaffTeamsLoadResult;
+  if (options.parentScope?.staffTeams) {
+    staffTeamResult = { teams: options.parentScope.staffTeams, isPartial: options.parentScope.isPartial === true };
+  } else if (options.nativeStaffTeamsLoader) {
+    try {
+      const sharedResult = await options.nativeStaffTeamsLoader();
+      staffTeamResult = {
+        teams: sharedResult.teams.filter((team: any) => team?.id && isTeamActive(team)),
+        isPartial: sharedResult.isPartial,
+        verifiedByHttp: true,
+        httpAttempted: true
+      };
+      if (staffTeamResult.isPartial) {
+        const retryResult = await loadStaffTeams(user);
+        const teamsById = new Map<string, any>();
+        [...staffTeamResult.teams, ...retryResult.teams].forEach((team: any) => {
+          const teamId = compactString(team?.id || team?.teamId);
+          if (teamId) teamsById.set(teamId, team);
+        });
+        staffTeamResult = {
+          ...retryResult,
+          teams: [...teamsById.values()]
+        };
+      }
+    } catch {
+      staffTeamResult = await loadStaffTeams(user).catch(() => ({ teams: [], isPartial: true }));
+    }
+  } else {
+    staffTeamResult = await loadStaffTeams(user).catch(() => ({ teams: [], isPartial: true }));
+  }
   const staffTeams = staffTeamResult.teams.filter((team: any) => (
     !targetTeamId || compactString(team?.id || team?.teamId) === targetTeamId
   ));
@@ -5080,7 +5116,9 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
     const canReuseParentScope = Boolean(options.parentScope && options.parentScope.isPartial !== true);
     const profile = canReuseParentScope
       ? options.parentScope!.profile
-      : await loadProfileDocument(user.uid);
+      : options.nativeProfileLoader
+        ? await options.nativeProfileLoader()
+        : await loadProfileDocument(user.uid);
     const { children, byTeam, staffTeams, isParentScopePartial, targetAccessVerified } = await buildParentScheduleTeamChildren(user, profile as Record<string, unknown>, {
       ...options,
       expandStaffPlayers,
