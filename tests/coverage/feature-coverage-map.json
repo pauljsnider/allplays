@@ -248,6 +248,7 @@
             "cloudFunctions": [
                 "cleanupPublicUserProfileOnAuthDelete",
                 "commentOnSocialPostForCaller",
+                "createParentInvite",
                 "hideSocialPostForCaller",
                 "listPublicTeams",
                 "notifyInviteRedeemed",
@@ -267,6 +268,7 @@
                 "toggleSocialPostReaction"
             ],
             "unitTests": [
+                "functions/test/parent-invite-creation.test.cjs",
                 "functions/test/public-opportunities-callables.test.cjs",
                 "tests/unit/app-friend-profile.test.jsx",
                 "tests/unit/app-home-logic.test.js",

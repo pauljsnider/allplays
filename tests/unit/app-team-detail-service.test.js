@@ -278,7 +278,7 @@ describe('React app team detail model', () => {
         });
     });
 
-    it('emails a coach-created parent invite with the selected relation', async () => {
+    it('confirms parent email delivery when the on-create trigger is delayed', async () => {
         getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1', adminEmails: ['coach@example.com'] });
         getPlayers.mockResolvedValue([]);
         getGames.mockResolvedValue([]);
@@ -304,7 +304,31 @@ describe('React app team detail model', () => {
         });
     });
 
-    it('returns the created parent invite when email queuing fails', async () => {
+    it('confirms delivery already queued by the on-create trigger', async () => {
+        getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1', adminEmails: ['coach@example.com'] });
+        getPlayers.mockResolvedValue([]);
+        getGames.mockResolvedValue([]);
+        getConfigs.mockResolvedValue([]);
+        inviteParent.mockResolvedValue({ code: 'ABCD1234', autoLinked: false, existingUser: false, teamName: 'Bears', playerName: 'Pat Star' });
+        queueInviteEmail.mockResolvedValue({ queued: true, deduplicated: true });
+
+        const result = await createRosterParentInviteForApp(
+            'team-1',
+            { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'] },
+            { id: 'player-1', number: '9' },
+            { email: 'parent@example.com', relation: 'Guardian' }
+        );
+
+        expect(queueInviteEmail).toHaveBeenCalledWith('ABCD1234');
+        expect(result).toMatchObject({
+            emailQueued: true,
+            emailDeduplicated: true,
+            emailSent: true,
+            emailError: null
+        });
+    });
+
+    it('preserves a retryable state when trigger and explicit queue confirmation fail', async () => {
         getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1', adminEmails: ['coach@example.com'] });
         getPlayers.mockResolvedValue([]);
         getGames.mockResolvedValue([]);
@@ -330,7 +354,61 @@ describe('React app team detail model', () => {
         });
     });
 
-    it('keeps an auto-linked invite retryable when its notification email cannot be queued', async () => {
+    it('uses the idempotent queue coordinate to confirm delivery for a reused invite', async () => {
+        getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1', adminEmails: ['coach@example.com'] });
+        getPlayers.mockResolvedValue([]);
+        getGames.mockResolvedValue([]);
+        getConfigs.mockResolvedValue([]);
+        inviteParent.mockResolvedValue({
+            code: 'ABCD1234',
+            created: false,
+            reused: true,
+            autoLinked: false,
+            existingUser: false,
+            teamName: 'Bears',
+            playerName: 'Pat Star'
+        });
+        queueInviteEmail.mockResolvedValue({ queued: true, deduplicated: true });
+
+        const result = await createRosterParentInviteForApp(
+            'team-1',
+            { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'] },
+            { id: 'player-1', number: '9' },
+            { email: 'parent@example.com', relation: 'Guardian' }
+        );
+
+        expect(queueInviteEmail).toHaveBeenCalledWith('ABCD1234');
+        expect(result).toMatchObject({
+            code: 'ABCD1234',
+            created: false,
+            reused: true,
+            emailQueued: true,
+            emailDeduplicated: true,
+            emailSent: true,
+            emailError: null
+        });
+    });
+
+    it('reports callable throttling without claiming an email was sent', async () => {
+        getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1', adminEmails: ['coach@example.com'] });
+        getPlayers.mockResolvedValue([]);
+        getGames.mockResolvedValue([]);
+        getConfigs.mockResolvedValue([]);
+        const throttled = Object.assign(new Error('Too many parent invites.'), {
+            code: 'functions/resource-exhausted'
+        });
+        inviteParent.mockRejectedValue(throttled);
+
+        await expect(createRosterParentInviteForApp(
+            'team-1',
+            { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'] },
+            { id: 'player-1', number: '9' },
+            { email: 'parent@example.com', relation: 'Guardian' }
+        )).rejects.toThrow('Too many parent invites. Please wait and try again. No email was sent.');
+        expect(queueInviteEmail).not.toHaveBeenCalled();
+    });
+
+    it('reports an auto-linked invite as retryable when email queue confirmation fails', async () => {
         getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1', adminEmails: ['coach@example.com'] });
         getPlayers.mockResolvedValue([]);
         getGames.mockResolvedValue([]);
@@ -504,9 +582,7 @@ describe('React app team detail model', () => {
             '14',
             'family@allplays.ai',
             'Parent',
-            {
-                idempotencyKey: 'ai_retry1:invite:ai_retry1_player_1:family@allplays.ai'
-            }
+            { idempotencyKey: 'ai_retry1:invite:ai_retry1_player_1:family@allplays.ai' }
         );
     });
 

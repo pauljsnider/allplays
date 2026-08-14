@@ -68,23 +68,15 @@ describe('access code Firestore rules', () => {
         expect(accessCodeRules).not.toContain("request.resource.data.generatedBy == request.auth.uid &&\n                         request.resource.data.get('type', resource.data.get('type', null)) != 'admin_invite'");
     });
 
-    it('requires team-admin authorization and an explicit schema for parent_invite creation', () => {
-        expect(rules).toContain('function isParentInvitePayloadValid(data)');
-        expect(accessCodeRules).toContain("request.resource.data.get('type', null) == 'parent_invite'");
-        expect(accessCodeRules).toContain('isTeamOwnerOrAdmin(request.resource.data.teamId)');
-        expect(accessCodeRules).toContain('isParentInvitePayloadValid(request.resource.data)');
-        expect(accessCodeRules).toContain('request.resource.data.code == codeId');
-        expect(rules).toContain("'code', 'type', 'teamId', 'playerId', 'playerNum', 'playerName'");
-        expect(rules).toContain("'teamName', 'relation', 'email', 'generatedBy', 'createdAt'");
+    it('requires parent_invite creation to use the protected callable', () => {
+        expect(rules).not.toContain('function isParentInvitePayloadValid(data)');
+        expect(accessCodeRules).not.toContain("request.resource.data.get('type', null) == 'parent_invite'");
+        expect(accessCodeRules).not.toContain('isParentInvitePayloadValid(request.resource.data)');
     });
 
-    it('keeps roster-invite idempotency records manager-only and separate from secret random codes', () => {
+    it('keeps roster-invite idempotency records server-only', () => {
         expect(rules).toContain('match /inviteIdempotency/{idempotencyId}');
-        expect(rules).toContain('allow read: if isTeamOwnerOrAdmin(teamId);');
-        expect(rules).toContain("request.resource.data.keys().hasOnly([\n                                 'accessCode', 'type', 'playerId', 'email'");
-        expect(rules).toContain("request.resource.data.type == 'parent_invite'");
-        expect(rules).toContain('request.resource.data.generatedBy == request.auth.uid');
-        expect(rules).toContain('allow delete: if false;');
+        expect(rules).toContain('allow read, write: if false;');
     });
 
     it('requires co-parent invite creation to use the protected callable', () => {
@@ -225,6 +217,10 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('access code rules engine 
                 count: 1,
                 resetAt: Date.now() + 60_000
             });
+            await setDoc(doc(firestore, 'parentInviteRateLimits/server-owned'), {
+                count: 1,
+                resetAt: Date.now() + 60_000
+            });
             const expiresAt = Timestamp.fromMillis(Date.now() + 7 * 24 * 60 * 60 * 1000);
             await setDoc(doc(firestore, 'accessCodes/PARENTEMAIL'), {
                 code: 'PARENTEMAIL',
@@ -326,21 +322,23 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('access code rules engine 
         ];
 
         for (const clientDb of clients) {
-            await assertFails(getDoc(doc(
-                clientDb,
-                'accessCodeValidationRateLimits/server-owned'
-            )));
-            await assertFails(getDocs(collection(
-                clientDb,
-                'accessCodeValidationRateLimits'
-            )));
-            await assertFails(setDoc(doc(
-                clientDb,
-                'accessCodeValidationRateLimits/client-write'
-            ), {
-                count: 0,
-                resetAt: Date.now()
-            }));
+            for (const collectionName of ['accessCodeValidationRateLimits', 'parentInviteRateLimits']) {
+                await assertFails(getDoc(doc(
+                    clientDb,
+                    `${collectionName}/server-owned`
+                )));
+                await assertFails(getDocs(collection(
+                    clientDb,
+                    collectionName
+                )));
+                await assertFails(setDoc(doc(
+                    clientDb,
+                    `${collectionName}/client-write`
+                ), {
+                    count: 0,
+                    resetAt: Date.now()
+                }));
+            }
         }
     });
 
@@ -438,13 +436,9 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('access code rules engine 
         }));
     });
 
-    it('preserves permitted standard and parent invite creation', async () => {
+    it('preserves standard creation while denying direct parent invites for every client role', async () => {
         const userDb = testEnv.authenticatedContext('standard-user', {
             email: 'standard@example.com',
-            email_verified: true
-        }).firestore();
-        const ownerDb = testEnv.authenticatedContext('owner-a', {
-            email: 'owner@example.com',
             email_verified: true
         }).firestore();
 
@@ -457,17 +451,29 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('access code rules engine 
             usedBy: null,
             usedAt: null
         }));
-        await assertSucceeds(setDoc(doc(ownerDb, 'accessCodes/PARENT12'), {
-            code: 'PARENT12',
-            type: 'parent_invite',
-            teamId: 'team-a',
-            playerId: 'player-a',
-            generatedBy: 'owner-a',
-            createdAt: Timestamp.now(),
-            expiresAt: Timestamp.fromMillis(Date.now() + 7 * 24 * 60 * 60 * 1000),
-            used: false,
-            usedBy: null,
-            usedAt: null
-        }));
+        const clientRoles = [
+            ['owner-a', 'owner@example.com'],
+            ['team-admin', 'team-admin@example.com'],
+            ['unrelated-user', 'unrelated@example.com'],
+            ['platform-admin', 'platform-admin@example.com']
+        ];
+        for (const [uid, email] of clientRoles) {
+            const clientDb = testEnv.authenticatedContext(uid, {
+                email,
+                email_verified: true
+            }).firestore();
+            await assertFails(setDoc(doc(clientDb, `accessCodes/PARENT-${uid}`), {
+                code: `PARENT-${uid}`,
+                type: 'parent_invite',
+                teamId: 'team-a',
+                playerId: 'player-a',
+                generatedBy: uid,
+                createdAt: Timestamp.now(),
+                expiresAt: Timestamp.fromMillis(Date.now() + 7 * 24 * 60 * 60 * 1000),
+                used: false,
+                usedBy: null,
+                usedAt: null
+            }));
+        }
     });
 });

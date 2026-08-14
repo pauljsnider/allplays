@@ -767,7 +767,7 @@ export async function uploadStatSheetPhoto(teamId, gameId, file, options = {}) {
         : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=443347'; // Import resolveZip
+import { resolveZip } from './utils.js?v=443349'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -5507,47 +5507,32 @@ export async function inviteParent(teamId, playerId, playerNum, parentEmail, rel
         throw new Error('You must be signed in to invite a parent');
     }
 
-    // Get team and player info for the invite
-    const [team, players] = await Promise.all([
-        getTeam(teamId),
-        getPlayers(teamId)
-    ]);
-    const player = players.find(p => p.id === playerId);
-
     const normalizedParentEmail = String(parentEmail || '').trim().toLowerCase();
-    const accessCodeData = {
-        type: 'parent_invite',
-        teamId,
-        playerId,
-        playerNum, // Added for quick context
-        playerName: player?.name || null,
-        teamName: team?.name || null,
-        relation,
-        email: normalizedParentEmail || null,
-        generatedBy: currentUser.uid,
-        createdAt: Timestamp.now(),
-        // 7 days from now
-        expiresAt: Timestamp.fromMillis(Date.now() + 7 * 24 * 60 * 60 * 1000),
-        used: false,
-        usedBy: null,
-        usedAt: null
-    };
-    const {
-        id: accessCodeId,
-        code,
-        reused = false,
-        completed = false,
-        existingData = null
-    } = await createUniqueAccessCode(accessCodeData, null, {
-        idempotencyKey: String(options?.idempotencyKey || '').trim()
+    const createParentInvite = httpsCallable(functions, 'createParentInvite');
+    const response = await createParentInvite({
+        teamId: String(teamId || '').trim(),
+        playerId: String(playerId || '').trim(),
+        email: normalizedParentEmail,
+        relation: String(relation || '').trim() || 'Parent',
+        ...(String(options?.idempotencyKey || '').trim()
+            ? { idempotencyKey: String(options.idempotencyKey).trim() }
+            : {})
     });
+    const inviteResult = response?.data || response || {};
+    const accessCodeId = String(inviteResult.id || inviteResult.code || '').trim().toUpperCase();
+    const code = String(inviteResult.code || '').trim().toUpperCase();
+    if (!accessCodeId || !code) {
+        throw new Error('Invite code was not created.');
+    }
+    const reused = inviteResult.reused === true;
+    const completed = inviteResult.completed === true;
 
     // Let the server decide whether a user with this email already exists.
     // Non-global-admin team owners/admins cannot query /users from the client,
     // so a client-side lookup would throw permission-denied here even though
     // the invite code was already created and the invite email already queued.
-    let existingUser = reused && (completed || existingData?.used === true);
-    let autoLinked = existingUser;
+    let autoLinked = inviteResult.autoLinked === true;
+    let existingUser = inviteResult.existingUser === true || autoLinked;
     if (normalizedParentEmail && !completed) {
         try {
             const autoAcceptResult = await autoAcceptParentInviteForExistingUser(accessCodeId);
@@ -5555,7 +5540,7 @@ export async function inviteParent(teamId, playerId, playerNum, parentEmail, rel
             autoLinked = autoAcceptResult.autoLinked;
         } catch (error) {
             // The invite was already created; never fail it on auto-link.
-            // The caller still queues the correct invite-or-linked email.
+            // The server trigger still queues the correct invite-or-linked email.
             console.warn(`Could not auto-link existing parent invite: ${error?.message || 'Unknown error'}`);
         }
     }
@@ -5563,12 +5548,15 @@ export async function inviteParent(teamId, playerId, playerNum, parentEmail, rel
     return {
         id: accessCodeId,
         code,
-        teamName: team?.name || null,
-        playerName: player?.name || null,
+        teamName: inviteResult.teamName || null,
+        playerName: inviteResult.playerName || null,
         existingUser,
         autoLinked,
+        completed,
+        completedBy: completed ? String(inviteResult.completedBy || '').trim() || null : null,
+        completedAt: completed ? inviteResult.completedAt || null : null,
         reused,
-        completed
+        created: inviteResult.created === true
     };
 }
 

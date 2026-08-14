@@ -338,6 +338,8 @@ export type CreateRosterParentInviteForAppResult = {
   emailError: string | null;
   existingUser: boolean;
   autoLinked: boolean;
+  created: boolean;
+  reused: boolean;
   teamName: string | null;
   playerName: string | null;
 };
@@ -1269,25 +1271,29 @@ export async function createRosterParentInviteForApp(
     throw new Error('You do not have permission to invite parents for this team.');
   }
 
-  const idempotencyKey = cleanString(options.idempotencyKey);
-  const inviteResult = idempotencyKey
-    ? await inviteParent(
-        normalizedTeamId,
-        normalizedPlayerId,
-        cleanString(player?.number),
-        normalizedEmail,
-        relation,
-        { idempotencyKey }
-      )
-    : await inviteParent(
+  let inviteResult;
+  try {
+    const inviteArgs = [
         normalizedTeamId,
         normalizedPlayerId,
         cleanString(player?.number),
         normalizedEmail,
         relation
-      );
+      ] as const;
+    inviteResult = cleanString(options.idempotencyKey)
+      ? await inviteParent(...inviteArgs, { idempotencyKey: cleanString(options.idempotencyKey) })
+      : await inviteParent(...inviteArgs);
+  } catch (error: any) {
+    const errorCode = cleanString(error?.code).replace(/^functions\//, '');
+    if (errorCode === 'resource-exhausted') {
+      throw new Error('Too many parent invites. Please wait and try again. No email was sent.');
+    }
+    throw error;
+  }
   const code = cleanString(inviteResult?.code).toUpperCase();
   if (!code) throw new Error('Invite code was not created.');
+  const reused = inviteResult?.reused === true;
+  const created = inviteResult?.created !== false && !reused;
   let emailQueued = false;
   let emailDeduplicated = false;
   let emailError: string | null = null;
@@ -1314,6 +1320,8 @@ export async function createRosterParentInviteForApp(
     emailError,
     existingUser: inviteResult?.existingUser === true,
     autoLinked: inviteResult?.autoLinked === true,
+    created,
+    reused,
     teamName: inviteResult?.teamName || null,
     playerName: inviteResult?.playerName || null
   };
