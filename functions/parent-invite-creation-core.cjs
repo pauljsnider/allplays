@@ -56,6 +56,26 @@ function isCompletedParentInvite(invite = {}, expected = {}) {
     && (invite.used === true || status === 'accepted');
 }
 
+function buildParentInviteResult(snapshot, invite, fallback = {}) {
+  const completed = isCompletedParentInvite(invite, fallback.expected);
+  const autoLinked = completed && invite.autoAccepted === true && Boolean(String(invite.usedBy || '').trim());
+  const completedBy = completed ? String(invite.usedBy || '').trim() || null : null;
+  return {
+    id: snapshot.id,
+    code: invite.code,
+    teamName: invite.teamName || fallback.teamName || null,
+    playerName: invite.playerName || fallback.playerName || null,
+    email: fallback.email || null,
+    existingUser: completed && Boolean(String(invite.usedBy || '').trim()),
+    autoLinked,
+    completed,
+    completedBy,
+    completedAt: completed ? invite.usedAt || invite.autoAcceptedAt || null : null,
+    created: false,
+    reused: true
+  };
+}
+
 function buildParentInviteDocumentId({ teamId, playerId, email, idempotencyKey = '' }) {
   const identity = idempotencyKey
     ? `operation\n${idempotencyKey}`
@@ -153,27 +173,31 @@ function createParentInviteHandler({
     const userRef = firestore.doc(`users/${callerUid}`);
     const teamRef = firestore.doc(`teams/${teamId}`);
     const playerRef = firestore.doc(`teams/${teamId}/players/${playerId}`);
-    const idempotencyRef = firestore.doc(
+    const activeInviteRef = firestore.doc(
+      `teams/${teamId}/inviteIdempotency/${buildParentInviteDocumentId({
+        teamId,
+        playerId,
+        email
+      })}`
+    );
+    const idempotencyRef = idempotencyKey ? firestore.doc(
       `teams/${teamId}/inviteIdempotency/${buildParentInviteDocumentId({
         teamId,
         playerId,
         email,
         idempotencyKey
       })}`
-    );
-    const teamInvitesQuery = firestore.collection('accessCodes')
-      .where('teamId', '==', teamId)
-      .where('playerId', '==', playerId)
-      .where('email', '==', email || null)
-      .limit(10);
+    ) : activeInviteRef;
 
     const createInTransaction = async (transaction) => {
-      const [userSnap, teamSnap, playerSnap, idempotencySnap, inviteQuerySnap] = await Promise.all([
+      const [userSnap, teamSnap, playerSnap, idempotencySnap, activeInviteSnap] = await Promise.all([
         transaction.get(userRef),
         transaction.get(teamRef),
         transaction.get(playerRef),
         transaction.get(idempotencyRef),
-        transaction.get(teamInvitesQuery)
+        idempotencyRef.path === activeInviteRef.path
+          ? transaction.get(idempotencyRef)
+          : transaction.get(activeInviteRef)
       ]);
 
       if (!teamSnap.exists || !playerSnap.exists) {
@@ -208,30 +232,40 @@ function createParentInviteHandler({
           );
         }
       }
-      reusableSnap = reusableSnap || inviteQuerySnap.docs.find((snapshot) => (
-        isActiveParentInvite(snapshot.data() || {}, expected, nowMillis)
-      ));
+      if (!reusableSnap && activeInviteSnap.exists) {
+        const activeCode = String(activeInviteSnap.data()?.accessCode || '').trim().toUpperCase();
+        if (/^[A-Z0-9]{8}$/.test(activeCode)) {
+          const candidateSnap = await transaction.get(firestore.doc(`accessCodes/${activeCode}`));
+          if (candidateSnap.exists
+            && isActiveParentInvite(candidateSnap.data() || {}, expected, nowMillis)) {
+            reusableSnap = candidateSnap;
+          }
+        }
+      }
       if (reusableSnap) {
         const invite = reusableSnap.data() || {};
-        if (!idempotencySnap.exists || idempotencySnap.data()?.accessCode !== invite.code) {
-          transaction.set(idempotencyRef, {
+        const coordinate = {
             accessCode: invite.code,
             type: 'parent_invite',
             teamId,
             playerId,
             email,
             updatedAt: now
-          });
-        }
-        return {
-          id: reusableSnap.id,
-          code: invite.code,
-          teamName: invite.teamName || team.name || null,
-          playerName: invite.playerName || playerSnap.data()?.name || null,
-          email: email || null,
-          created: false,
-          reused: true
         };
+        if (isActiveParentInvite(invite, expected, nowMillis)
+          && (!activeInviteSnap.exists || activeInviteSnap.data()?.accessCode !== invite.code)) {
+          transaction.set(activeInviteRef, coordinate);
+        }
+        if (idempotencyRef.path !== activeInviteRef.path
+          && (!idempotencySnap.exists || idempotencySnap.data()?.accessCode !== invite.code)) {
+          transaction.set(idempotencyRef, coordinate);
+        }
+        return buildParentInviteResult(reusableSnap, invite, {
+          expected,
+          teamName: team.name,
+          playerName: playerSnap.data()?.name,
+          email
+        });
       }
 
       const senderReservation = prepareSenderReservation(`sender\n${callerUid}`, nowMillis);
@@ -296,6 +330,16 @@ function createParentInviteHandler({
         email,
         updatedAt: now
       });
+      if (idempotencyRef.path !== activeInviteRef.path) {
+        transaction.set(activeInviteRef, {
+          accessCode: code,
+          type: 'parent_invite',
+          teamId,
+          playerId,
+          email,
+          updatedAt: now
+        });
+      }
 
       return {
         id: inviteRef.id,
@@ -303,6 +347,11 @@ function createParentInviteHandler({
         teamName: invite.teamName,
         playerName: invite.playerName,
         email: email || null,
+        existingUser: false,
+        autoLinked: false,
+        completed: false,
+        completedBy: null,
+        completedAt: null,
         created: true,
         reused: false
       };

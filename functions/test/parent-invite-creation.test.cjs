@@ -56,7 +56,7 @@ function createFirestore(initialDocs = {}) {
           return query;
         },
         limit(value) {
-          assert.equal(value, 10);
+          query.limitValue = value;
           return query;
         }
       };
@@ -75,7 +75,8 @@ function createFirestore(initialDocs = {}) {
               const matches = [...docs.entries()]
                 .filter(([path, value]) => /^accessCodes\/[^/]+$/.test(path)
                   && target.filters.every(({ field, expected }) => value[field] === expected))
-                .map(([path]) => makeSnapshot(path));
+                .map(([path]) => makeSnapshot(path))
+                .slice(0, target.limitValue ?? Number.POSITIVE_INFINITY);
               return { docs: matches, empty: matches.length === 0 };
             }
             readVersions.set(target.path, versions.get(target.path) || 0);
@@ -254,6 +255,11 @@ test('normalizes the recipient and reuses one active team, player, and recipient
     teamName: 'Tigers',
     playerName: 'Sam',
     email: 'parent@example.com',
+    existingUser: false,
+    autoLinked: false,
+    completed: false,
+    completedBy: null,
+    completedAt: null,
     created: false,
     reused: true
   });
@@ -275,7 +281,9 @@ test('replays the completed auto-linked outcome for the same operation without q
     ...harness.docs.get(accessPath),
     used: true,
     usedBy: 'parent-1',
-    status: 'accepted'
+    status: 'accepted',
+    autoAccepted: true,
+    usedAt: NOW
   });
   const limitsBeforeRetry = clone(getDocsWithPrefix(harness.docs, 'parentInviteRateLimits/'));
 
@@ -287,12 +295,43 @@ test('replays the completed auto-linked outcome for the same operation without q
     teamName: 'Tigers',
     playerName: 'Sam',
     email: 'parent@example.com',
+    existingUser: true,
+    autoLinked: true,
+    completed: true,
+    completedBy: 'parent-1',
+    completedAt: NOW,
     created: false,
     reused: true
   });
   assert.equal(getDocsWithPrefix(harness.docs, 'accessCodes/').length, 1);
   assert.deepEqual(getDocsWithPrefix(harness.docs, 'parentInviteRateLimits/'), limitsBeforeRetry);
   assert.equal(getDocsWithPrefix(harness.docs, 'mail/').length, 0);
+});
+
+test('reuses the server-owned active coordinate beyond ten historical invites', async () => {
+  const historical = Object.fromEntries(Array.from({ length: 12 }, (_, index) => [
+    `accessCodes/HISTORY${String(index).padStart(2, '0')}`,
+    {
+      code: `HISTORY${String(index).padStart(2, '0')}`,
+      type: 'parent_invite',
+      teamId: 'team-1',
+      playerId: 'player-1',
+      email: 'parent@example.com',
+      used: true,
+      status: 'accepted'
+    }
+  ]));
+  const harness = createHarness({ initialDocs: historical });
+  const active = await harness.handler(inviteInput(), harness.ownerContext);
+
+  const repeated = await harness.handler(
+    inviteInput({ idempotencyKey: 'new-bulk-operation' }),
+    harness.ownerContext
+  );
+
+  assert.equal(repeated.code, active.code);
+  assert.equal(repeated.reused, true);
+  assert.equal(getDocsWithPrefix(harness.docs, 'accessCodes/').length, 13);
 });
 
 test('sender exhaustion creates no access code, mail, or partial recipient reservation', async () => {

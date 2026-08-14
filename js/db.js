@@ -5525,14 +5525,15 @@ export async function inviteParent(teamId, playerId, playerNum, parentEmail, rel
         throw new Error('Invite code was not created.');
     }
     const reused = inviteResult.reused === true;
+    const completed = inviteResult.completed === true;
 
     // Let the server decide whether a user with this email already exists.
     // Non-global-admin team owners/admins cannot query /users from the client,
     // so a client-side lookup would throw permission-denied here even though
     // the invite code was already created and the invite email already queued.
-    let existingUser = false;
-    let autoLinked = existingUser;
-    if (normalizedParentEmail) {
+    let autoLinked = inviteResult.autoLinked === true;
+    let existingUser = inviteResult.existingUser === true || autoLinked;
+    if (normalizedParentEmail && !completed) {
         try {
             const autoAcceptResult = await autoAcceptParentInviteForExistingUser(accessCodeId);
             existingUser = autoAcceptResult.existingUser;
@@ -5551,6 +5552,9 @@ export async function inviteParent(teamId, playerId, playerNum, parentEmail, rel
         playerName: inviteResult.playerName || null,
         existingUser,
         autoLinked,
+        completed,
+        completedBy: completed ? String(inviteResult.completedBy || '').trim() || null : null,
+        completedAt: completed ? inviteResult.completedAt || null : null,
         reused,
         created: inviteResult.created === true
     };

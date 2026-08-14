@@ -190,6 +190,45 @@ describe('inviteParent protected callable routing', () => {
         expect(result).toMatchObject({ code: 'PARENT12', created: false, reused: true });
         expect(runTransactionMock).not.toHaveBeenCalled();
     });
+
+    it('replays a completed auto-link without retrying the consumed code', async () => {
+        const { inviteParent } = await import('../../js/db.js');
+        createParentInviteCallableMock.mockResolvedValue({
+            data: {
+                id: 'PARENT12',
+                code: 'PARENT12',
+                teamName: 'First Team',
+                playerName: 'Player One',
+                created: false,
+                reused: true,
+                completed: true,
+                completedBy: 'parent-1',
+                completedAt: '2026-08-14T18:00:00.000Z',
+                existingUser: true,
+                autoLinked: true
+            }
+        });
+
+        const result = await inviteParent(
+            'team-1',
+            'player-1',
+            '1',
+            'dad@allplays.ai',
+            'Father',
+            { idempotencyKey: 'bulk-42:invite:player-1:dad@allplays.ai' }
+        );
+
+        expect(autoAcceptParentInviteCallableMock).not.toHaveBeenCalled();
+        expect(result).toMatchObject({
+            code: 'PARENT12',
+            completed: true,
+            completedBy: 'parent-1',
+            completedAt: '2026-08-14T18:00:00.000Z',
+            existingUser: true,
+            autoLinked: true,
+            reused: true
+        });
+    });
 });
 
 describe('inviteAdmin permission fallback (issue #3844)', () => {
