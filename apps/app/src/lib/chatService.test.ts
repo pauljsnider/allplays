@@ -1444,9 +1444,8 @@ describe('subscribeToTeamChatMessages', () => {
   it('deduplicates equivalent native polls and emits each visible message revision once', async () => {
     vi.useFakeTimers();
     nativeRuntime.isNativePlatform = true;
-    legacyChatServiceMocks.subscribeToChatMessages.mockImplementation(() => {
-      throw new Error('Firestore listener unavailable');
-    });
+    const unsubscribe = vi.fn();
+    legacyChatServiceMocks.subscribeToChatMessages.mockReturnValue(unsubscribe);
     const original = nativeMessageDocument('message-1', { _doc: { cursor: 'first-object' } });
     const equivalent = nativeMessageDocument('message-1', { _doc: { cursor: 'regenerated-object' } });
     const added = nativeMessageDocument('message-2', { text: 'Added message' });
@@ -1479,6 +1478,8 @@ describe('subscribeToTeamChatMessages', () => {
 
     const { subscribeToTeamChatMessages } = await import('./chatService');
     const subscription = subscribeToTeamChatMessages('team-1', 'team', onMessages);
+    const listenerError = legacyChatServiceMocks.subscribeToChatMessages.mock.calls[0][3];
+    listenerError(new Error('WebView listener permission denied'));
     await vi.advanceTimersByTimeAsync(0);
 
     expect(onMessages).toHaveBeenCalledTimes(1);
@@ -1493,6 +1494,8 @@ describe('subscribeToTeamChatMessages', () => {
     }
 
     expect(fetchMock).toHaveBeenCalledTimes(8);
+    expect(legacyChatServiceMocks.subscribeToChatMessages).toHaveBeenCalledTimes(1);
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
     expect(onMessages.mock.calls.map(([messages]) => messages)).toEqual([
       [expect.objectContaining({ id: 'message-1', text: 'Original message' })],
       [expect.objectContaining({ id: 'message-1' }), expect.objectContaining({ id: 'message-2' })],
@@ -1682,9 +1685,7 @@ describe('subscribeToTeamChatMessages', () => {
   it('does not emit or report errors after an in-flight native poll is unsubscribed', async () => {
     vi.useFakeTimers();
     nativeRuntime.isNativePlatform = true;
-    legacyChatServiceMocks.subscribeToChatMessages.mockImplementation(() => {
-      throw new Error('Firestore listener unavailable');
-    });
+    legacyChatServiceMocks.subscribeToChatMessages.mockReturnValue(vi.fn());
     const response = createDeferred<{ ok: boolean; status: number; json: () => Promise<{ documents: ReturnType<typeof nativeMessageDocument>[] }> }>();
     const fetchMock = vi.fn(() => response.promise);
     vi.stubGlobal('fetch', fetchMock);
@@ -1693,6 +1694,8 @@ describe('subscribeToTeamChatMessages', () => {
 
     const { subscribeToTeamChatMessages } = await import('./chatService');
     const subscription = subscribeToTeamChatMessages('team-1', 'team', onMessages, onError);
+    const listenerError = legacyChatServiceMocks.subscribeToChatMessages.mock.calls[0][3];
+    listenerError(new Error('WebView listener permission denied'));
     await vi.advanceTimersByTimeAsync(0);
     subscription.unsubscribe();
     response.resolve({
@@ -1707,7 +1710,25 @@ describe('subscribeToTeamChatMessages', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('forwards async Firestore listener errors to the caller', async () => {
+  it('reuses the authenticated native poller when listener setup throws synchronously', async () => {
+    nativeRuntime.isNativePlatform = true;
+    legacyChatServiceMocks.subscribeToChatMessages.mockImplementation(() => {
+      throw new Error('WebView listener unavailable');
+    });
+    const fetchMock = mockNativePolls([[nativeMessageDocument('message-1')]]);
+    const onMessages = vi.fn();
+    const onError = vi.fn();
+
+    const { subscribeToTeamChatMessages } = await import('./chatService');
+    const subscription = subscribeToTeamChatMessages('team-1', 'team', onMessages, onError);
+    await vi.waitFor(() => expect(onMessages).toHaveBeenCalledTimes(1));
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(onError).not.toHaveBeenCalled();
+    subscription.unsubscribe();
+  });
+
+  it('forwards async web Firestore listener errors to the caller', async () => {
     const unsubscribe = vi.fn();
     const onMessages = vi.fn();
     const onError = vi.fn();
@@ -1720,7 +1741,7 @@ describe('subscribeToTeamChatMessages', () => {
       'team-1',
       { limit: 50, conversationId: 'team' },
       expect.any(Function),
-      onError
+      expect.any(Function)
     );
 
     const forwardedOnError = legacyChatServiceMocks.subscribeToChatMessages.mock.calls[0][3];

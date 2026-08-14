@@ -394,6 +394,7 @@ const {
 } = require('./parent-invite-auto-link-core.cjs');
 const { resolveAuthenticatedFamilyInviteEmail } = require('./family-invite-identity-core.cjs');
 const { createCoParentInviteHandler } = require('./co-parent-invite-core.cjs');
+const { createNativeWebAuthTokenHandler } = require('./native-web-auth-token-core.cjs');
 const {
   authenticatePrimaryCertificateSignatureReferences,
   discoverLegacyImageSignatureReferences,
@@ -413,6 +414,10 @@ if (admin.apps.length === 0) {
 }
 
 const firestore = admin.firestore();
+const createNativeWebAuthToken = createNativeWebAuthTokenHandler({
+  getAuth: () => admin.auth(),
+  HttpsError: functions.https.HttpsError
+});
 const listOfficialLinkedTeamIdsHandler = createOfficialTeamDiscoveryHandler({
   firestore,
   auth: admin.auth(),
@@ -3721,6 +3726,7 @@ const authEmailCallableHandlers = createAuthEmailCallableHandlers({
 });
 
 exports.queuePasswordResetEmail = functions.https.onCall(authEmailCallableHandlers.queuePasswordResetEmail);
+exports.createNativeWebAuthToken = functions.https.onCall(createNativeWebAuthToken);
 exports.queueEmailVerification = functions
   .runWith({ secrets: ['RESEND_API_KEY'] })
   .https.onCall(authEmailCallableHandlers.queueEmailVerification);

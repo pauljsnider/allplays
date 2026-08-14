@@ -26,6 +26,7 @@ const firebaseAuthSdk = vi.hoisted(() => {
     getAuth: vi.fn((app: unknown) => ({ app, auth: true })),
     getRedirectResult: vi.fn(),
     GoogleAuthProvider: class {},
+    inMemoryPersistence: { type: 'inMemoryPersistence' },
     indexedDBLocalPersistence: { type: 'indexedDBLocalPersistence' },
     initializeApp: vi.fn(() => ({ name: '[DEFAULT]', created: true })),
     initializePrimaryAppCheck: vi.fn(() => Promise.resolve({ state: 'ready' })),
@@ -34,10 +35,12 @@ const firebaseAuthSdk = vi.hoisted(() => {
     onAuthStateChanged: vi.fn(),
     resolvePrimaryFirebaseConfig: vi.fn(() => Promise.resolve(resolvedConfig)),
     signInWithEmailAndPassword: vi.fn(),
+    signInWithCustomToken: vi.fn(),
     signInWithEmailLink: vi.fn(),
     signInWithPopup: vi.fn(),
     signInWithRedirect: vi.fn(),
     signOut: vi.fn(),
+    setPersistence: vi.fn(),
     updatePassword: vi.fn(),
     verifyPasswordResetCode: vi.fn()
   };
@@ -72,7 +75,7 @@ describe('firebaseAuthRuntime', () => {
     Object.defineProperty(window, 'indexedDB', { value: originalIndexedDb, writable: true, configurable: true });
   });
 
-  it('uses native auth persistence before the Android bridge is injected at https://localhost', async () => {
+  it('uses memory-only WebView auth before the Android bridge is injected at https://localhost', async () => {
     Object.defineProperty(window, 'location', {
       value: { ...originalLocation, protocol: 'https:', hostname: 'localhost' },
       writable: true,
@@ -93,10 +96,29 @@ describe('firebaseAuthRuntime', () => {
     }));
     expect(firebaseAuthSdk.initializeAuth).toHaveBeenCalledWith(
       { name: '[DEFAULT]', created: true },
-      { persistence: firebaseAuthSdk.indexedDBLocalPersistence }
+      { persistence: firebaseAuthSdk.inMemoryPersistence }
     );
     expect(firebaseAuthSdk.getAuth).not.toHaveBeenCalled();
     expect(runtime.auth).toEqual({ nativeAuth: true });
+  });
+
+  it('scrubs an existing native WebView auth user before moving the reused instance to memory', async () => {
+    Object.defineProperty(window, 'location', {
+      value: { ...originalLocation, protocol: 'capacitor:', hostname: 'localhost' },
+      writable: true,
+      configurable: true
+    });
+    const existingAuth = { app: null, auth: true, existing: true };
+    firebaseAuthSdk.initializeAuth.mockImplementationOnce(() => {
+      throw new Error('already initialized');
+    });
+    firebaseAuthSdk.getAuth.mockReturnValue(existingAuth);
+
+    const runtime = await import('./firebaseAuthRuntime');
+
+    expect(firebaseAuthSdk.signOut).toHaveBeenCalledWith(existingAuth);
+    expect(firebaseAuthSdk.setPersistence).toHaveBeenCalledWith(existingAuth, firebaseAuthSdk.inMemoryPersistence);
+    expect(runtime.auth).toBe(existingAuth);
   });
 
   it('initializes the default app when only named apps are registered', async () => {
