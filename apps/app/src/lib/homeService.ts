@@ -185,6 +185,9 @@ export async function loadParentHomeSummaryBootstrap(
     } : {}),
     ...(options.onRefresh ? {
       onRefresh: (refreshedSchedule) => options.onRefresh?.(toBootstrapResult(refreshedSchedule))
+    } : {}),
+    ...(options.onBackgroundError ? {
+      onBackgroundError: options.onBackgroundError
     } : {})
   });
   return toBootstrapResult(schedule);

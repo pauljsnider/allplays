@@ -212,6 +212,31 @@ describe('homeService Teams bootstrap reuse', () => {
         }));
     });
 
+    it('reports a stale-summary background refresh failure through the bootstrap boundary', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-08-13T12:00:00.000Z'));
+        const staleSchedule = {
+            children: [],
+            events: [],
+            staffTeams: [{ teamId: 'team-1', teamName: 'Bears' }]
+        } as any;
+        scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(staleSchedule);
+
+        await loadParentHomeSummaryBootstrap(user, { force: true });
+
+        vi.setSystemTime(new Date('2026-08-13T12:00:46.000Z'));
+        const refreshError = new Error('summary refresh unavailable');
+        scheduleServiceMocks.loadParentSchedule.mockRejectedValueOnce(refreshError);
+        const onBackgroundError = vi.fn();
+
+        const stale = await loadParentHomeSummaryBootstrap(user, { onBackgroundError });
+        expect(stale.schedule).toBe(staleSchedule);
+
+        await vi.waitFor(() => {
+            expect(onBackgroundError).toHaveBeenCalledWith(refreshError);
+        });
+    });
+
     it('renders the last complete Home immediately while refreshing it in the background', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date('2026-08-13T12:00:00.000Z'));

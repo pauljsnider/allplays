@@ -783,6 +783,26 @@ describe('Home', () => {
     expect(screen.queryByRole('heading', { name: 'Checking today’s actions…' })).toBeNull();
   });
 
+  it('marks Home retryable when a stale summary background refresh fails', async () => {
+    let summaryOptions: any;
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockImplementationOnce((_user: unknown, options: any) => {
+      summaryOptions = options;
+      return Promise.resolve({ home: baseHome, schedule: [] });
+    });
+
+    renderHome(signedInAuth);
+
+    expect(await screen.findByRole('heading', { name: 'All caught up' })).toBeTruthy();
+    expect(summaryOptions?.onBackgroundError).toBeTypeOf('function');
+
+    act(() => {
+      summaryOptions.onBackgroundError(new TypeError('Failed to fetch'));
+    });
+
+    expect(await screen.findByText('Home details could not refresh while offline.')).toBeTruthy();
+    expect(screen.getByText('Needs refresh')).toBeTruthy();
+  });
+
   it('does not expose a raw internal backend code when Home details fail', async () => {
     homeServiceMocks.loadParentHomeWithSecondaryData.mockRejectedValueOnce(new Error('INTERNAL'));
 
