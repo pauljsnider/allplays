@@ -159,7 +159,7 @@ describe('team fee recipient Firestore rules', () => {
         });
 
         function authedFirestore(uid, email) {
-            return testEnv.authenticatedContext(uid, { email }).firestore();
+            return testEnv.authenticatedContext(uid, { email, email_verified: true }).firestore();
         }
 
         function recipientRef(firestore, teamId, batchId, recipientId) {

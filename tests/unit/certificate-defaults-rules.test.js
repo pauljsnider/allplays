@@ -337,7 +337,10 @@ describe('certificate defaults Firestore rules', () => {
 
         it('allows owner/admin reads while denying every client defaults mutation', async () => {
             const ownerDb = testEnv.authenticatedContext('owner-a').firestore();
-            const adminDb = testEnv.authenticatedContext('admin-a', { email: 'admin-a@example.com' }).firestore();
+            const adminDb = testEnv.authenticatedContext('admin-a', {
+                email: 'admin-a@example.com',
+                email_verified: true
+            }).firestore();
             const defaultsPath = 'teams/team-a/settings/certificateDefaults';
 
             await assertSucceeds(getDoc(doc(ownerDb, defaultsPath)));
@@ -349,8 +352,14 @@ describe('certificate defaults Firestore rules', () => {
 
         it('denies both conflicting legacy owner aliases', async () => {
             const defaultsPath = 'teams/conflicting-legacy-team/settings/certificateDefaults';
-            const currentAliasDb = testEnv.authenticatedContext('current-alias', { email: 'current@example.com' }).firestore();
-            const formerAliasDb = testEnv.authenticatedContext('former-alias', { email: 'former@example.com' }).firestore();
+            const currentAliasDb = testEnv.authenticatedContext('current-alias', {
+                email: 'current@example.com',
+                email_verified: true
+            }).firestore();
+            const formerAliasDb = testEnv.authenticatedContext('former-alias', {
+                email: 'former@example.com',
+                email_verified: true
+            }).firestore();
 
             await assertFails(getDoc(doc(currentAliasDb, defaultsPath)));
             await assertFails(getDoc(doc(formerAliasDb, defaultsPath)));

@@ -81,6 +81,7 @@ service cloud.firestore {
       let ownerEmail = team.get('ownerEmail', '');
       let ownerEmailLower = team.get('ownerEmailLower', '');
       return request.auth.token.email != null &&
+             request.auth.token.get('email_verified', false) == true &&
              team.get('ownerId', '') == '' &&
              ownerEmail is string &&
              ownerEmailLower is string &&
@@ -94,6 +95,7 @@ service cloud.firestore {
 
     function currentAuthEmailMatchesAdminList(adminEmails) {
       return request.auth.token.email != null &&
+             request.auth.token.get('email_verified', false) == true &&
              adminEmails is list &&
              (
                request.auth.token.email.lower() in adminEmails ||
