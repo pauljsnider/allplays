@@ -833,6 +833,7 @@ jobs:
           cp _migration/firebase-admin-credential.mjs \
             "$FIREBASE_PRODUCTION_BUNDLE/_migration/firebase-admin-credential.mjs"
           cp scripts/extract-production-functions-handoff.py "$FIREBASE_PRODUCTION_BUNDLE/context/"
+          cp scripts/verify-native-web-auth-iam.mjs "$FIREBASE_PRODUCTION_BUNDLE/context/"
 
       - name: Install isolated Firebase deploy CLI without OIDC or lifecycle scripts
         run: |
@@ -940,6 +941,8 @@ jobs:
           test -f "$bundle/functions-runtime.tar"
           test -f "$bundle/context/extract-production-functions-handoff.py"
           test ! -L "$bundle/context/extract-production-functions-handoff.py"
+          test -f "$bundle/context/verify-native-web-auth-iam.mjs"
+          test ! -L "$bundle/context/verify-native-web-auth-iam.mjs"
           test -f "$bundle/_migration/backfill-admin-user-search-index.mjs"
           test ! -L "$bundle/_migration/backfill-admin-user-search-index.mjs"
           test -f "$bundle/_migration/backfill-legacy-team-owner-ids.mjs"
@@ -973,6 +976,11 @@ jobs:
           printf '%s  %s\n' \
             "$expected_extractor_sha256" \
             "$bundle/context/extract-production-functions-handoff.py" \
+            | sha256sum --check --strict -
+          expected_native_web_auth_iam_verifier_sha256='398ffedd8fbc5bd8e646e0541ab547427448dfe92a03a167e04b3a41da2c4ce5'
+          printf '%s  %s\n' \
+            "$expected_native_web_auth_iam_verifier_sha256" \
+            "$bundle/context/verify-native-web-auth-iam.mjs" \
             | sha256sum --check --strict -
           python3 "$bundle/context/extract-production-functions-handoff.py" \
             "$bundle/functions-runtime.tar" \
@@ -1161,7 +1169,7 @@ jobs:
             "$native_web_auth_runtime_service_account" \
             --project game-flow-c6311 \
             --format=json > "$native_web_auth_runtime_policy"
-          node scripts/verify-native-web-auth-iam.mjs \
+          node "$FIREBASE_PRODUCTION_BUNDLE/context/verify-native-web-auth-iam.mjs" \
             --policy "$native_web_auth_runtime_policy" \
             --service-account "$native_web_auth_runtime_service_account"
           # The Rules API compiled this exact compatibility source after the
