@@ -411,6 +411,40 @@ describe('TeamFees recipient queue', () => {
     }));
   });
 
+  it('shows an actionable whole-roster limit error without success navigation and remains retryable', async () => {
+    teamFeesServiceMocks.loadTeamFeeManagementModel.mockResolvedValue({
+      team: { id: 'team-1', name: 'Bears' },
+      batches: [],
+      selectedBatch: null,
+      canManageFees: true,
+      rosterPlayers: Array.from({ length: 500 }, (_, index) => ({
+        id: `player-${index + 1}`,
+        name: `Player ${index + 1}`,
+        number: ''
+      })),
+      recipients: []
+    });
+    teamFeesServiceMocks.createTeamFeeBatchForApp.mockRejectedValueOnce(
+      new Error('A fee batch can include at most 499 recipients. Split the roster into smaller fee batches and try again.')
+    );
+
+    renderTeamFees('/teams/team-1/fees');
+
+    const titleInput = await screen.findByPlaceholderText('Tournament dues');
+    fireEvent.change(titleInput, { target: { value: 'Large roster fee' } });
+    fireEvent.change(screen.getByPlaceholderText('25.00'), { target: { value: '10.00' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create fee batch' }));
+
+    expect(await screen.findByText('A fee batch can include at most 499 recipients. Split the roster into smaller fee batches and try again.')).toBeTruthy();
+    expect(screen.queryByText(/Created fee batch/)).toBeNull();
+    expect(screen.getByPlaceholderText('Tournament dues')).toHaveValue('Large roster fee');
+    expect(screen.getByRole('button', { name: 'Create fee batch' })).not.toBeDisabled();
+
+    teamFeesServiceMocks.createTeamFeeBatchForApp.mockResolvedValueOnce({ id: 'batch-retry' });
+    fireEvent.click(screen.getByRole('button', { name: 'Create fee batch' }));
+    expect(await screen.findByText('Created fee batch Large roster fee.')).toBeTruthy();
+  });
+
   it('keeps paid recipient controls unmounted until the paid section and recipient are opened', async () => {
     renderTeamFees();
 

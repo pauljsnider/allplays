@@ -53,6 +53,7 @@ import {
 } from './parent-membership-utils.js?v=2';
 import { buildCoachOverrideRsvpDocId, shouldDeleteLegacyRsvpForOverride } from './rsvp-doc-ids.js';
 import { computeEffectiveRsvpSummary } from './rsvp-summary.js?v=2';
+import { assertTeamFeeRecipientLimit, normalizeTeamFeeRecipientRecords } from './team-fee-batch-limits.js?v=1';
 import { buildGameDayRsvpBreakdown } from './game-day-rsvp-breakdown.js?v=3';
 import {
     buildRsvpFallbackPlayerIdsByUser,
@@ -766,7 +767,7 @@ export async function uploadStatSheetPhoto(teamId, gameId, file, options = {}) {
         : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=443346'; // Import resolveZip
+import { resolveZip } from './utils.js?v=443347'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -6187,8 +6188,6 @@ export async function createTeamFeeBatch(teamId, feeDraft, recipients = [], user
     if (!feeDraft?.title) throw new Error('Fee title is required.');
     if (!feeDraft?.amountCents || feeDraft.amountCents <= 0) throw new Error('Fee amount is required.');
     if (!feeDraft?.dueDate) throw new Error('Due date is required.');
-    if (!recipients.length) throw new Error('At least one recipient is required.');
-
     const normalizedCollectionMode = String(feeDraft?.collectionMode || 'offline_manual').trim().toLowerCase();
     const collectionMode = ['online_stripe', 'online', 'stripe', 'stripe_checkout'].includes(normalizedCollectionMode)
         ? 'online_stripe'
@@ -6199,6 +6198,10 @@ export async function createTeamFeeBatch(teamId, feeDraft, recipients = [], user
     if (collectionMode === 'online_stripe' && recipients.some((recipient) => !recipient?.playerId)) {
         throw new Error('Online Stripe collection requires roster recipients with player IDs.');
     }
+
+    const normalizedRecipients = normalizeTeamFeeRecipientRecords(recipients);
+    if (!normalizedRecipients.length) throw new Error('At least one recipient is required.');
+    assertTeamFeeRecipientLimit(normalizedRecipients.length);
 
     const batchRef = doc(collection(db, `teams/${teamId}/feeBatches`));
     const write = writeBatch(db);
@@ -6213,7 +6216,7 @@ export async function createTeamFeeBatch(teamId, feeDraft, recipients = [], user
         amountCents: feeDraft.amountCents,
         dueDate: feeDraft.dueDate,
         notes: feeDraft.notes || '',
-        recipientCount: recipients.length,
+        recipientCount: normalizedRecipients.length,
         status: 'open',
         collectionMode,
         offlinePaymentInstructions,
@@ -6225,8 +6228,7 @@ export async function createTeamFeeBatch(teamId, feeDraft, recipients = [], user
         updatedAt: now
     });
 
-    recipients.forEach((recipient) => {
-        if (!recipient.playerId) return;
+    normalizedRecipients.forEach((recipient) => {
         const recipientRef = doc(db, `teams/${teamId}/feeBatches/${batchRef.id}/feeRecipients/${recipient.playerId}`);
         write.set(recipientRef, {
             ...recipient,
