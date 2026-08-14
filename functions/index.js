@@ -473,7 +473,9 @@ const AUTH_EMAIL_COOLDOWN_MS = 60 * 1000;
 const FAILED_INVITE_SIGNUP_CLEANUP_WINDOW_MS = 30 * 60 * 1000;
 const FAILED_INVITE_SIGNUP_CLEANUP_TYPES = new Set(['parent_invite', 'household_invite', 'coparent_invite']);
 const TEAM_MEDIA_NOTIFICATION_BATCH_WINDOW_MS = 60 * 60 * 1000;
-const TEAM_MEDIA_NOTIFICATION_DISPATCH_LIMIT = 50;
+const TEAM_MEDIA_NOTIFICATION_QUERY_PAGE_SIZE = PRE_EVENT_REMINDER_QUERY_PAGE_SIZE;
+const TEAM_MEDIA_NOTIFICATION_MAX_PAGES_PER_RUN = PRE_EVENT_REMINDER_MAX_PAGES_PER_RUN;
+const TEAM_MEDIA_NOTIFICATION_MAX_RUNTIME_MS = PRE_EVENT_REMINDER_MAX_RUNTIME_MS;
 const FIRESTORE_BATCH_SAFE_WRITE_LIMIT = 450;
 const NOTIFICATION_RECIPIENT_DEVICE_SYNC_CONCURRENCY = 5;
 const NOTIFICATION_INBOX_WRITE_CONCURRENCY = 10;
@@ -10483,63 +10485,107 @@ async function releaseTeamMediaNotificationBatchAfterFailure(batchRef, claimId, 
   });
 }
 
-async function dispatchDueTeamMediaNotificationBatches(now = new Date()) {
-  const dueSnap = await firestore.collection('teamMediaNotificationBatches')
-    .where('status', '==', 'pending')
-    .where('dueAt', '<=', admin.firestore.Timestamp.fromDate(now))
-    .limit(TEAM_MEDIA_NOTIFICATION_DISPATCH_LIMIT)
-    .get();
-  const results = [];
-
-  for (const docSnap of dueSnap.docs) {
-    const batchRef = docSnap.ref;
-    const claimId = `team-media-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const batch = await claimTeamMediaNotificationBatch(batchRef, claimId, now);
-    if (!batch) continue;
-
-    try {
-      const folderSnap = await firestore.doc(`teams/${batch.teamId}/mediaFolders/${batch.folderId}`).get();
-      if (!folderSnap.exists) {
-        await markTeamMediaNotificationBatchSkipped(batchRef, claimId, 'album_not_found');
-        continue;
+async function dispatchDueTeamMediaNotificationBatches(now = new Date(), options = {}) {
+  const drainSummary = await drainDueReminderPages({
+    now,
+    maxPages: options.maxPages || TEAM_MEDIA_NOTIFICATION_MAX_PAGES_PER_RUN,
+    maxRuntimeMs: options.maxRuntimeMs || TEAM_MEDIA_NOTIFICATION_MAX_RUNTIME_MS,
+    loadPage: async ({ dueIso, cursor, limit }) => {
+      let query = firestore.collection('teamMediaNotificationBatches')
+        .where('status', '==', 'pending')
+        .where('dueAt', '<=', admin.firestore.Timestamp.fromDate(new Date(dueIso)))
+        .orderBy('dueAt', 'asc');
+      if (cursor) {
+        query = query.startAfter(cursor);
       }
+      const dueSnap = await query
+        .limit(limit || TEAM_MEDIA_NOTIFICATION_QUERY_PAGE_SIZE)
+        .get();
+      return {
+        docs: dueSnap.docs,
+        nextCursor: dueSnap.docs[dueSnap.docs.length - 1] || null
+      };
+    },
+    processReminder: async (docSnap) => {
+      const batchRef = docSnap.ref;
+      const claimId = `team-media-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const batch = await claimTeamMediaNotificationBatch(batchRef, claimId, now);
+      if (!batch) return null;
 
-      const folder = folderSnap.data() || {};
-      const audienceContext = buildTeamMediaNotificationAudienceContext({
-        ...folder,
-        visibility: folder.visibility || batch.albumVisibility || batch.audienceContext?.albumVisibility
-      });
-      const albumVisibility = audienceContext.albumVisibility;
+      try {
+        const folderSnap = await firestore.doc(`teams/${batch.teamId}/mediaFolders/${batch.folderId}`).get();
+        if (!folderSnap.exists) {
+          await markTeamMediaNotificationBatchSkipped(batchRef, claimId, 'album_not_found');
+          return { status: 'skipped', batchId: batch.id };
+        }
 
-      const payload = buildTeamMediaNotificationPayload({
-        ...batch,
-        albumName: normalizeTeamMediaNotificationText(folder.name || batch.albumName),
-        albumVisibility
-      });
-      const sendResult = await sendCategoryNotification({
-        teamId: batch.teamId,
-        category: 'media',
-        title: payload.title,
-        body: payload.body,
-        dedupKey: `team-media:${batch.id}`,
-        audienceContext
-      });
-      await markTeamMediaNotificationBatchSent(batchRef, claimId, sendResult);
-      results.push({
-        teamId: batch.teamId,
-        folderId: batch.folderId,
-        itemCount: Number(batch.itemCount || 0),
-        successCount: Number(sendResult?.successCount || 0),
-        failureCount: Number(sendResult?.failureCount || 0)
-      });
-    } catch (error) {
-      await releaseTeamMediaNotificationBatchAfterFailure(batchRef, claimId, error);
-      console.error('Failed to dispatch team media notification batch', { batchId: batch.id, error });
-      if (isNotificationAuthResolutionFailure(error)) throw error;
+        const folder = folderSnap.data() || {};
+        const audienceContext = buildTeamMediaNotificationAudienceContext({
+          ...folder,
+          visibility: folder.visibility || batch.albumVisibility || batch.audienceContext?.albumVisibility
+        });
+        const albumVisibility = audienceContext.albumVisibility;
+
+        const payload = buildTeamMediaNotificationPayload({
+          ...batch,
+          albumName: normalizeTeamMediaNotificationText(folder.name || batch.albumName),
+          albumVisibility
+        });
+        const sendResult = await sendCategoryNotification({
+          teamId: batch.teamId,
+          category: 'media',
+          title: payload.title,
+          body: payload.body,
+          dedupKey: `team-media:${batch.id}`,
+          audienceContext
+        });
+        await markTeamMediaNotificationBatchSent(batchRef, claimId, sendResult);
+        return {
+          status: 'sent',
+          batchId: batch.id,
+          result: {
+            teamId: batch.teamId,
+            folderId: batch.folderId,
+            itemCount: Number(batch.itemCount || 0),
+            successCount: Number(sendResult?.successCount || 0),
+            failureCount: Number(sendResult?.failureCount || 0)
+          }
+        };
+      } catch (error) {
+        await releaseTeamMediaNotificationBatchAfterFailure(batchRef, claimId, error);
+        console.error('Failed to dispatch team media notification batch', { batchId: batch.id, error });
+        if (isNotificationAuthResolutionFailure(error)) throw error;
+        return { status: 'releasedPending', batchId: batch.id };
+      }
     }
-  }
-
-  return results;
+  });
+  const processedResults = drainSummary.results.filter(Boolean);
+  const sentResults = processedResults.filter((result) => result.status === 'sent');
+  const skippedCount = processedResults.filter((result) => result.status === 'skipped').length;
+  const releasedPendingCount = processedResults.filter((result) => result.status === 'releasedPending').length;
+  const summary = {
+    ...drainSummary,
+    stoppedBecause: drainSummary.stoppedBecause,
+    results: sentResults.map((result) => result.result),
+    examinedCount: drainSummary.results.length,
+    processedCount: processedResults.length,
+    sentCount: sentResults.length,
+    skippedCount,
+    releasedPendingCount,
+    backlogDrained: drainSummary.stoppedBecause === 'drained' && releasedPendingCount === 0
+  };
+  console.info('Team media notification drain summary', {
+    dueIso: summary.dueIso,
+    pagesAttempted: summary.pagesAttempted,
+    stoppedBecause: summary.stoppedBecause,
+    examinedCount: summary.examinedCount,
+    processedCount: summary.processedCount,
+    sentCount: summary.sentCount,
+    skippedCount: summary.skippedCount,
+    releasedPendingCount: summary.releasedPendingCount,
+    backlogDrained: summary.backlogDrained
+  });
+  return summary;
 }
 
 async function getUserIdsByEmails(emails) {
@@ -10617,6 +10663,10 @@ function isNotificationAuthResolutionFailure(error) {
 }
 
 const retryableNotificationFunctions = functions.runWith({ failurePolicy: true });
+const retryableTeamMediaNotificationFunctions = functions.runWith({
+  failurePolicy: true,
+  timeoutSeconds: 540
+});
 
 async function getCandidateUsersForTeam(teamId) {
   const teamSnap = await firestore.doc(`teams/${teamId}`).get();
@@ -12536,7 +12586,7 @@ exports.queueTeamMediaNotificationBatch = functions.firestore
     return null;
   });
 
-exports.dispatchDueTeamMediaNotificationBatches = retryableNotificationFunctions.pubsub
+exports.dispatchDueTeamMediaNotificationBatches = retryableTeamMediaNotificationFunctions.pubsub
   .schedule('every 15 minutes')
   .timeZone('America/Chicago')
   .onRun(() => dispatchDueTeamMediaNotificationBatches());

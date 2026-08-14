@@ -10,7 +10,7 @@
     "deploy": "firebase deploy --only functions",
     "logs": "firebase functions:log",
     "test": "PAYMENTS_ENABLED=true node --test test/*.test.cjs test/registration-checkout-retry-capacity.test.js test/ssrf.test.js",
-    "test:notifications": "node ../node_modules/vitest/vitest.mjs run test/send-category-notification.test.js test/send-category-notification-load.test.js test/notification-triggers.test.js --environment node"
+    "test:notifications": "node ../node_modules/vitest/vitest.mjs run test/send-category-notification.test.js test/send-category-notification-load.test.js test/notification-triggers.test.js test/team-media-notification-batches.test.js --environment node"
   },
   "dependencies": {
     "@google-cloud/storage": "7.21.0",
