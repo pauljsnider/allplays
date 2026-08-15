@@ -20,9 +20,9 @@ Load the complete authorized schedule scope with database-bound filtering, bound
 8. RSVP projections use bounded batch reads or precomputed authorized summaries rather than one read per returned event.
 9. External and projected calendar reads are isolated by team and source. One failure retains successful native and external results from other sources and records the exact failed coverage entry.
 10. The core retries only failed retryable coverage entries once within the request deadline. It does not repeat completed reads or rerun the language model.
-11. A partial nonempty result may show confirmed events with a visible coverage warning, but it must not populate a cache as a complete result.
+11. A partial nonempty result may show confirmed events with a visible coverage warning, but it must not populate a cache as a complete result. Cache recovery is partitioned by stable team/source coverage entry rather than treating the whole prior brief as one indivisible payload.
 12. A first-load partial empty result triggers the bounded targeted retry. If it remains partial and empty, return a retryable error rather than an empty schedule.
-13. When a prior complete result exists, a repeated partial-empty refresh preserves that complete state and reports that freshness could not be verified.
+13. When a prior complete result exists, a partial refresh authoritatively replaces cached slices for coverage entries that completed, including replacing them with empty slices when events were canceled or removed. It merges without deleting beyond verified coverage for truncated entries, retains prior facts only for failed or unverified entries, labels those retained slices stale, and reports that global completeness and absence could not be verified.
 14. A later unforced load must be allowed to expand a previously shown partial-nonempty result; partial data cannot poison completeness caches.
 15. A complete empty result is cacheable only for its exact principal, normalized scope, contract version, and bounded freshness period. Any access, team, player, source, or event mutation invalidates the relevant entry.
 16. Source adapters distinguish not configured, authoritative not found, denied, timeout, parser failure, pagination overflow, and internal failure. Swallowed exceptions must still mark coverage incomplete.
@@ -41,7 +41,7 @@ Create a plan containing one bounded query group per authorized team and configu
 
 ### Recovery and caching
 
-Retry only retryable failures that fit within the overall deadline. Cache complete results and optionally partial nonempty payloads in separate states; never promote partial state to complete. Keep the last complete client state until a newer complete response replaces it.
+Retry only retryable failures that fit within the overall deadline. Cache complete results and optionally partial nonempty payloads in separate states; never promote partial state to complete. Index cached facts by the same stable team/source coverage keys as the ledger. During a partial refresh, replace every completed slice, merge truncated slices only within verified coverage, and retain only failed or unverified slices from the last complete state with explicit stale provenance. This lets an authoritative source remove or cancel an event without claiming that other sources are complete.
 
 ## Tasks
 
@@ -50,6 +50,6 @@ Retry only retryable failures that fit within the overall deadline. Cache comple
 - [ ] Pass exact temporal and type bounds to every capable data source.
 - [ ] Add bounded concurrency, pagination, deadlines, cancellation, and read-budget accounting.
 - [ ] Add per-source settled-result aggregation and targeted retry.
-- [ ] Add complete and partial cache states with precise invalidation keys.
+- [ ] Add complete and partial cache states with precise coverage-slice keys and invalidation rules.
 - [ ] Add authorization and privacy tests for cross-team, stale alias, ambiguous identity, and log redaction cases.
-- [ ] Add first-load recovery, repeated partial-empty failure, legitimate complete emptiness, partial-nonempty expansion, calendar parser failure, and pagination-overflow regressions.
+- [ ] Add first-load recovery, repeated partial-empty failure, completed-slice event removal, truncated-slice bounded merge, failed-slice stale retention, unverified-slice prior-fact retention with stale provenance, legitimate complete emptiness, partial-nonempty expansion, calendar parser failure, and pagination-overflow regressions.

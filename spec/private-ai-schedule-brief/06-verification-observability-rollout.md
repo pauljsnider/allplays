@@ -13,13 +13,13 @@ Prove the enhancement across existing schedule layers, enforce performance and p
 1. Existing Private AI, schedule service, MCP core, source-contract, and smoke suites are extended rather than replaced. A new focused domain-core suite owns temporal, coverage, and contract invariants.
 2. Regression coverage includes a Friday "What's the weekend look like?" request with matching events across multiple authorized teams.
 3. Tests prove that earlier unrelated events and global limits cannot hide a requested team, player, type, or weekend event.
-4. Tests cover current-question override, launcher fallback when planner args are omitted, exact team resolution, production-shaped full player names, first-name ambiguity including unavailable players, mismatched full names, and conflicting team/player scope.
+4. Tests cover current-question candidate and launcher-context propagation when planner args are omitted, current-question override, incompatible launcher selector removal, exact team resolution, production-shaped full player names, first-name ambiguity including unavailable players, mismatched full names, and conflicts between team/player selectors explicitly supplied by the current question.
 5. Temporal tests cover every day of week, this versus next weekend, explicit date ranges, exclusive end boundaries, caller/server timezone disagreement, daylight-saving gaps and overlaps, and deterministic weekday rendering.
-6. Coverage tests include complete nonempty, legitimate complete empty, truncated nonempty, first-load partial-empty recovery, repeated partial-empty failure, partial-nonempty display, later unforced expansion, access-discovery partiality, direct external-calendar failure, parser failure, pagination overflow, and targeted retry.
+6. Coverage tests include complete nonempty, legitimate complete empty, truncated nonempty, first-load partial-empty recovery, repeated partial-empty failure, completed-source removal of a cached canceled event, truncated-source bounded merging, failed-source stale retention, unverified-source prior-fact retention with stale provenance, partial-nonempty display, later unforced expansion, access-discovery partiality, direct external-calendar failure, parser failure, pagination overflow, and targeted retry.
 7. Contract tests reject any response that confirms absence while partial, failed, or truncated and reject any rendered fact that differs from the normalized event.
 8. Authorization tests cover unauthorized teams and players, stale or conflicting legacy aliases, cross-principal cache isolation, deep-link scoping, and sanitized errors and logs.
 9. Query tests assert date and type bounds reach native source calls before rows are returned, detail hydration stays disabled for listing, completed sources are not retried, and RSVP loading has no per-event N+1 behavior.
-10. App/MCP parity tests run the same fixtures through both transports and compare normalized events, ordering, coverage, truncation, absence, and deterministic text facts.
+10. App/MCP parity tests run the same fixtures through both transports and compare normalized events, ordering, coverage, truncation, absence, and deterministic text facts. MCP compatibility fixtures also prove legacy inclusive `startDate`/`endDate` inputs and defaults map to the new exclusive-instant core contract without changing their historical boundary behavior, including for a non-UTC caller whose supplied bare calendar dates must retain the existing UTC boundaries.
 11. The initial performance budget records source reads, documents read, fanout width, retries, tool latency, total latency, and output size by authorized team count. CI includes a deterministic upper-bound regression rather than a wall-clock-only assertion.
 12. Initial rollout targets should be measured against production-like fixtures before activation: one model routing turn, one domain tool call, no repeated completed reads, and bounded growth as team count increases.
 13. Metrics classify complete, complete-empty, partial-nonempty, partial-empty, ambiguous, unauthorized, truncated, and failed results. Logs contain no raw prompts, email addresses, player names, event titles, locations, RSVP details, or calendar contents.
@@ -32,9 +32,9 @@ Prove the enhancement across existing schedule layers, enforce performance and p
 | Layer | Primary files | Required evidence |
 |---|---|---|
 | Temporal and domain core | New colocated core tests | Range, scope, contract, sorting, deduplication, coverage, and rendering invariants |
-| Private AI routing | `tests/unit/app-private-ai-service.test.js` | Planner omissions, launcher precedence, multi-team weekend, ambiguity, limits, and no factual rewriting |
-| Schedule adapters | `apps/app/src/lib/scheduleService.test.ts` and source-contract tests | Database bounds, source isolation, targeted retry, partial/cache matrix, and read budgets |
-| MCP transport | `tests/unit/chatgpt-mcp-core.test.js` | Shared-core use, structured response, errors, privacy, and app parity |
+| Private AI routing | `tests/unit/app-private-ai-service.test.js` | Candidate/launcher propagation, planner omissions, compatible launcher precedence, multi-team weekend, ambiguity, limits, and no factual rewriting |
+| Schedule adapters | `apps/app/src/lib/scheduleService.test.ts` and source-contract tests | Database bounds, source isolation, targeted retry, per-coverage-slice cache reconciliation, and read budgets |
+| MCP transport | `tests/unit/chatgpt-mcp-core.test.js` | Shared-core use, legacy inclusive-range compatibility, structured response, errors, privacy, and app parity |
 | User flow | `tests/smoke/app-private-ai.spec.js` | Signed-in multi-team weekend answer, correct weekday, partial warning, retry, and no false absence |
 | Server boundary | New callable/flow tests | Auth, App Check policy, schema limits, authorization, timeout, and sanitized telemetry |
 

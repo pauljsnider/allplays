@@ -11,7 +11,7 @@ The enhancement replaces model-owned schedule reasoning with one server-authorit
 - One schedule question should normally cause one typed schedule-brief tool call. Internal database fanout is not additional AI reasoning.
 - Exact dates, weekdays, teams, players, event types, and completeness claims come from deterministic code, never model reconstruction.
 - An unscoped family question includes every authorized team and linked player; it must not silently choose the first team.
-- The exact current question overrides launcher context. Launcher context is a fallback only when the question does not provide a conflicting scope.
+- The exact current question overrides launcher context. The adapter carries both candidate question intent and reauthorized launcher context to the trusted resolver, which drops incompatible lower-precedence launcher selectors.
 - Apply date, team, player, and event-type filters before display limits.
 - Treat partial data as partial. An empty incomplete result can never prove that no event exists.
 - Keep authorization and canonical identity resolution on a trusted server boundary.
@@ -68,8 +68,10 @@ Each implementation must include:
 - Server-authoritative authorization for the complete requested team and player scope.
 - Database-bound date filtering, bounded concurrency, pagination evidence, and deterministic limits.
 - Per-team and per-source coverage, truncation, retry, and `absenceConfirmed` evidence.
+- Coverage-slice recovery that replaces completed source data, merges truncated slices only within verified coverage, retains only failed or unverified source facts as stale, and never leaves a removed event authoritative.
 - Deterministic event fact rendering that cannot change the weekday, date, time, team, or location returned by the core.
 - Equivalent React web, iOS, Android, and MCP behavior through one domain implementation.
+- An MCP compatibility adapter for the existing inclusive `startDate` and `endDate` request schema during migration.
 - Complete, partial-nonempty, partial-empty, legitimate-empty, ambiguity, timezone, and multi-team regressions.
 - Structured metrics and sanitized logs without event titles, player names, emails, or raw prompts.
 - A staged rollout and rollback plan that preserves the last complete user-visible state.
