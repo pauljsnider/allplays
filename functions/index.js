@@ -155,6 +155,12 @@ const {
   buildLiveGameShareMetadata
 } = require('./live-game-share-preview-core.cjs');
 const {
+  buildPlayerShareHtml,
+  buildPlayerShareMetadata,
+  buildPublicPlayerShareProjection,
+  normalizePlayerId
+} = require('./player-share-preview-core.cjs');
+const {
   normalizePublicTeamSearch,
   normalizePageSize,
   searchDatastorePublicTeamPage,
@@ -19376,6 +19382,87 @@ exports.liveGameSharePreview = functions
       });
       res.set('Retry-After', '60');
       res.status(503).send('Live game preview is temporarily unavailable.');
+    }
+  });
+
+exports.playerSharePreview = functions
+  .runWith({ timeoutSeconds: 15, memory: '256MB' })
+  .https
+  .onRequest(async (req, res) => {
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      res.set('Allow', 'GET, HEAD');
+      res.status(405).send('Method not allowed.');
+      return;
+    }
+
+    res.set('Cache-Control', 'private, no-store, max-age=0');
+    res.set('X-Robots-Tag', 'noindex, nofollow');
+
+    const rateLimit = checkPublicOpportunityBrowseRateLimit({
+      ip: `player-share|${getRequestIp(req)}`
+    });
+    if (!rateLimit.allowed) {
+      res.set('Retry-After', String(rateLimit.retryAfterSeconds));
+      res.status(429).send('Too many requests.');
+      return;
+    }
+
+    const teamId = typeof req.query?.teamId === 'string'
+      ? normalizeTeamId(req.query.teamId)
+      : '';
+    const playerId = typeof req.query?.playerId === 'string'
+      ? normalizePlayerId(req.query.playerId)
+      : '';
+    const gameId = typeof req.query?.gameId === 'string'
+      ? req.query.gameId.trim()
+      : '';
+    if (!teamId || !playerId || gameId.length > 1000 || gameId.includes('/')) {
+      res.status(400).send('Valid teamId and playerId values are required.');
+      return;
+    }
+
+    try {
+      const [teamSnap, playerSnap] = await Promise.all([
+        firestore.doc(`teams/${teamId}`).get(),
+        firestore.doc(`teams/${teamId}/players/${playerId}`).get()
+      ]);
+      if (!teamSnap.exists || !playerSnap.exists) {
+        res.status(404).send('Player profile not found.');
+        return;
+      }
+
+      const projection = buildPublicPlayerShareProjection({
+        teamId,
+        team: { id: teamId, ...(teamSnap.data() || {}) },
+        player: { id: playerId, ...(playerSnap.data() || {}) }
+      });
+      if (!projection) {
+        res.status(404).send('Player profile not found.');
+        return;
+      }
+
+      const playerPageParams = new URLSearchParams({ teamId });
+      if (gameId) playerPageParams.set('gameId', gameId);
+      playerPageParams.set('playerId', playerId);
+      const shareParams = new URLSearchParams({ teamId, playerId });
+      if (gameId) shareParams.set('gameId', gameId);
+      const redirectUrl = `https://allplays.ai/player.html#${playerPageParams.toString()}`;
+      const shareUrl = `https://allplays.ai/player-card?${shareParams.toString()}`;
+      const metadata = buildPlayerShareMetadata(projection);
+      const html = buildPlayerShareHtml({ metadata, redirectUrl, shareUrl });
+      res.set('Content-Type', 'text/html; charset=utf-8');
+      if (req.method === 'HEAD') {
+        res.status(200).end();
+        return;
+      }
+      res.status(200).send(html);
+    } catch (error) {
+      functions.logger.warn('Player share preview failed.', {
+        teamId,
+        errorCode: error?.code || error?.name || 'preview-failed'
+      });
+      res.set('Retry-After', '60');
+      res.status(503).send('Player preview is temporarily unavailable.');
     }
   });
 

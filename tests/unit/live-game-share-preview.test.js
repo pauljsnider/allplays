@@ -20,7 +20,7 @@ describe('live game share preview wiring', () => {
             source: '/watch',
             function: 'liveGameSharePreview'
         });
-        expect(rewrites[1]).toEqual({
+        expect(rewrites[2]).toEqual({
             source: '!/app/assets/**',
             destination: '/index.html'
         });

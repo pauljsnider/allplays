@@ -59,12 +59,13 @@ function buildLiveGameShareMetadata({ teamName, opponent, startsAt, timeZone } =
   };
 }
 
-function buildLiveGameShareHtml({ metadata, redirectUrl, shareUrl } = {}) {
-  const title = escapeHtml(metadata?.title || 'Live game on ALL PLAYS');
-  const description = escapeHtml(metadata?.description || 'Watch the live game on ALL PLAYS.');
+function buildSharePreviewHtml({ metadata, redirectUrl, shareUrl, openLabel } = {}) {
+  const title = escapeHtml(metadata?.title || 'ALL PLAYS');
+  const description = escapeHtml(metadata?.description || 'Open on ALL PLAYS.');
   const imageUrl = escapeHtml(metadata?.imageUrl || 'https://allplays.ai/img/logo_large.png');
   const imageAlt = escapeHtml(metadata?.imageAlt || 'ALL PLAYS logo');
   const siteName = escapeHtml(metadata?.siteName || 'ALL PLAYS');
+  const safeOpenLabel = escapeHtml(openLabel || 'Open on ALL PLAYS');
   const safeRedirectUrl = escapeHtml(redirectUrl || 'https://allplays.ai/');
   const safeShareUrl = escapeHtml(shareUrl || redirectUrl || 'https://allplays.ai/');
 
@@ -93,16 +94,25 @@ function buildLiveGameShareHtml({ metadata, redirectUrl, shareUrl } = {}) {
   <meta http-equiv="refresh" content="0;url=${safeRedirectUrl}">
 </head>
 <body>
-  <p><a href="${safeRedirectUrl}">Open the live game on ALL PLAYS</a></p>
+  <p><a href="${safeRedirectUrl}">${safeOpenLabel}</a></p>
   <script>window.location.replace(${JSON.stringify(redirectUrl || 'https://allplays.ai/')});</script>
 </body>
 </html>`;
+}
+
+function buildLiveGameShareHtml(options = {}) {
+  return buildSharePreviewHtml({
+    ...options,
+    openLabel: options.openLabel || 'Open the live game on ALL PLAYS'
+  });
 }
 
 module.exports = {
   DEFAULT_TIME_ZONE,
   buildLiveGameShareHtml,
   buildLiveGameShareMetadata,
+  buildSharePreviewHtml,
+  compactText,
   escapeHtml,
   formatLiveGameStart,
   resolveTimeZone
