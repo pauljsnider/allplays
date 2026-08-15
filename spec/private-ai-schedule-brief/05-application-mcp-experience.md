@@ -43,7 +43,7 @@ Keep MCP authentication and transport concerns in the service, then call the sha
 
 - [ ] Build the shared app response adapter and deterministic formatter.
 - [ ] Add range, day, team, event, coverage-warning, empty, stale, and retry UI states.
-- [ ] Reconcile cached facts per coverage entry across partial-empty refreshes and interrupted navigation, replacing completed slices and retaining only failed or unverified slices as stale.
+- [ ] Reconcile cached facts per coverage entry across partial-empty refreshes and interrupted navigation, replacing completed slices and retaining only failed or unverified slices as stale; add distinct regressions proving failed-slice and unverified-slice prior facts are retained with stale provenance.
 - [ ] Add accessible announcements and keyboard behavior for changed states.
 - [ ] Replace MCP schedule aggregation with the shared domain adapter while preserving and testing legacy inclusive `list_schedule` inputs, UTC boundaries, and defaults.
 - [ ] Route next-game and last-game shortcuts through shared range and presentation helpers.

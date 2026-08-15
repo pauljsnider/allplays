@@ -52,4 +52,4 @@ Retry only retryable failures that fit within the overall deadline. Cache comple
 - [ ] Add per-source settled-result aggregation and targeted retry.
 - [ ] Add complete and partial cache states with precise coverage-slice keys and invalidation rules.
 - [ ] Add authorization and privacy tests for cross-team, stale alias, ambiguous identity, and log redaction cases.
-- [ ] Add first-load recovery, repeated partial-empty failure, completed-slice event removal, truncated-slice bounded merge, failed-slice stale retention, legitimate complete emptiness, partial-nonempty expansion, calendar parser failure, and pagination-overflow regressions.
+- [ ] Add first-load recovery, repeated partial-empty failure, completed-slice event removal, truncated-slice bounded merge, failed-slice stale retention, unverified-slice prior-fact retention with stale provenance, legitimate complete emptiness, partial-nonempty expansion, calendar parser failure, and pagination-overflow regressions.
