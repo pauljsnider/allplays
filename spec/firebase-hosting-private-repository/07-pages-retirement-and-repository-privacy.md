@@ -21,7 +21,7 @@ Retire GitHub Pages without creating a custom-domain takeover path, make the rep
 9. Immediately verify the default branch still has the intended protection, required checks, admin enforcement, force-push/deletion denial, and expected check-source bindings. Missing protection is a release-blocking incident.
 10. Verify environments, environment secrets/variables, OIDC, repository variables/secrets, collaborators, GitHub Apps, webhooks, Dependabot, Actions policies, and security tooling from their authoritative APIs or settings.
 11. Confirm unauthenticated clone/archive/API reads fail, intended collaborators can clone, unintended accounts cannot, and private issue/PR/Actions links require access.
-12. Execute private canaries in order: read-only repository inventory, ordinary branch and PR, stable CI contexts, trusted preview, PaulBot test branch/PR/status/comment, allowlisted-owner-dispatched and environment-approved no-op production release, receipt-bound authenticated post-deploy smoke, recovery health, and nonpublishing mobile identity check.
+12. Execute private canaries in order: read-only repository inventory, ordinary branch and PR, stable CI contexts, trusted preview, PaulBot test branch/PR/status/comment, first-attempt owner-dispatched no-op production release accepted by both workflow and cloud-provider identity gates, receipt-bound authenticated post-deploy smoke, recovery health, and nonpublishing mobile identity check. Exercise required environment-reviewer approval only if the selected private plan proved that optional protection is available.
 13. A failed private integration does not justify republishing the repository. Keep the repository private, freeze the affected capability, and repair it through an owner-controlled private path.
 14. Public forks remain detached and public, existing copied source remains public, stars/watchers may be erased, Pages is automatically unavailable on unsupported private plans, and public code scanning may become unavailable. Completion communications must state these consequences accurately.
 15. Active public external claims and public-fork contributions must be closed, transferred, or explicitly abandoned before privacy. No bot may continue them through a detached repository relationship.
@@ -54,7 +54,7 @@ Dependency graph and Dependabot behavior are rechecked. If code scanning or anot
 | PR CI | Stable contexts on exact private head | Freeze merges; diagnose CI/plan |
 | Preview | Trusted private preview with OIDC | Disable preview; do not broaden secrets |
 | PaulBot | Scoped test operations and gate | Return bot to `private-cutover` |
-| Production no-op | Allowlisted actor/approval and receipt-bound exact-SHA evidence | Freeze releases; repair identity/environment |
+| Production no-op | Workflow and provider owner-ID gates plus receipt-bound exact-SHA evidence | Freeze releases; repair identity/environment |
 | Product smoke | Canonical Firebase origin passes | Firebase rollback/forward fix |
 | Recovery/mobile | Required secrets/roles readable; no external publish | Disable affected lane |
 | Cost | Usage ledger and alerts receive private activity | Enter `budget-guard` |
