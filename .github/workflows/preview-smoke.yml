@@ -53,7 +53,7 @@ jobs:
           # only needs to run when the diff touches something OUTSIDE this set.
           # Anything unrecognized, including smoke runners, staging scripts, and
           # workflow changes under .github/workflows/, runs the smoke.
-          SKIPPABLE='^(functions/|ios/|android/|docs/|_migration/|tests/unit/|tests/parent-census/)|^scripts/(audit-parent-coverage-mailbox|maintain-parent-coverage-invite|parent-coverage-contract|parent-coverage-mailbox|print-parent-coverage-authoring-context|validate-parent-coverage-contract)\.mjs$|^firestore\.(rules|indexes\.json)$|^storage\.rules$|^[A-Za-z0-9_.-]+\.md$'
+          SKIPPABLE='^(functions/|ios/|android/|docs/|spec/|_project-docs/|_migration/|tests/unit/|tests/parent-census/)|^scripts/(audit-parent-coverage-mailbox|maintain-parent-coverage-invite|parent-coverage-contract|parent-coverage-mailbox|print-parent-coverage-authoring-context|validate-parent-coverage-contract)\.mjs$|^firestore\.(rules|indexes\.json)$|^storage\.rules$|^[A-Za-z0-9_.-]+\.md$'
 
           if echo "$CHANGED" | grep -Ev "$SKIPPABLE" | grep -q .; then
             echo "web=true" >> "$GITHUB_OUTPUT"

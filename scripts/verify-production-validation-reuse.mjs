@@ -1,13 +1,18 @@
 import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
+import { SPEC_ONLY_LANE, classifyChangeImpact } from './classify-change-impact.mjs';
+
 const trustedPaulBot = Object.freeze({
     id: 309595148,
     login: 'allplays-paulbot[bot]',
     type: 'Bot'
 });
 
-const successDescription = 'Current-head review, review remediation, and CI passed';
+const successDescriptions = Object.freeze({
+    full: 'Current-head review, review remediation, and CI passed',
+    [SPEC_ONLY_LANE]: 'Spec-only review and required CI passed'
+});
 
 function isSha(value) {
     return /^[0-9a-f]{40}$/.test(String(value || ''));
@@ -66,6 +71,7 @@ export function evaluateProductionValidationReuse({
     pulls,
     mergeCommit,
     headCommit,
+    pullFiles,
     prFastRuns,
     prIntegrationRuns,
     runJobs,
@@ -99,6 +105,19 @@ export function evaluateProductionValidationReuse({
         return { reusable: false, reason: 'production tree differs from the reviewed PR head' };
     }
 
+    const fileRows = Array.isArray(pullFiles) ? pullFiles : [];
+    const fileNames = fileRows.map((file) => file?.filename).filter((name) => typeof name === 'string');
+    const uniqueFileNames = [...new Set(fileNames)];
+    if (!Number.isInteger(pull?.changed_files)
+        || pull.changed_files <= 0
+        || fileRows.length !== pull.changed_files
+        || uniqueFileNames.length !== pull.changed_files) {
+        return { reusable: false, reason: 'complete merged PR file inventory is unavailable' };
+    }
+    const impactPaths = fileRows.flatMap((file) => [file?.filename, file?.previous_filename])
+        .filter((name) => typeof name === 'string');
+    const impact = classifyChangeImpact(impactPaths).lane;
+
     const runIdentity = { repository, prNumber, headBranch, headSha };
     const fastRun = matchingWorkflowRuns(prFastRuns, {
         ...runIdentity,
@@ -106,7 +125,7 @@ export function evaluateProductionValidationReuse({
         title: `pr-fast #${prNumber} -> master @ ${headSha}`
     }).find((run) => requiredJobsPassed(
         runJobs?.[run.id],
-        ['unit-tests', 'cache-bust-guard', 'app-quality']
+        ['change-impact', 'unit-tests', 'cache-bust-guard', 'app-quality']
     ));
     const integrationRun = matchingWorkflowRuns(prIntegrationRuns, {
         ...runIdentity,
@@ -114,12 +133,15 @@ export function evaluateProductionValidationReuse({
         title: `pr-integration #${prNumber} -> master @ ${headSha}`
     }).find((run) => requiredJobsPassed(
         runJobs?.[run.id],
-        [
-            'regression-integration / firebase-rules-deploy-guard',
-            'regression-integration / roster-chat-media-replay-smoke',
-            'mobile-build',
-            'preview-smoke'
-        ]
+        impact === SPEC_ONLY_LANE
+            ? ['change-impact', 'mobile-build', 'preview-smoke']
+            : [
+                'change-impact',
+                'regression-integration / firebase-rules-deploy-guard',
+                'regression-integration / roster-chat-media-replay-smoke',
+                'mobile-build',
+                'preview-smoke'
+            ]
     ));
     if (!fastRun || !integrationRun) {
         return { reusable: false, reason: 'exact PR-bound workflows and required jobs are incomplete' };
@@ -134,7 +156,7 @@ export function evaluateProductionValidationReuse({
         && status?.target_url === expectedTarget
     ));
     const paulBotStatus = latestByUpdatedAt(trustedStatusHistory);
-    if (paulBotStatus?.state !== 'success' || paulBotStatus?.description !== successDescription) {
+    if (paulBotStatus?.state !== 'success' || paulBotStatus?.description !== successDescriptions[impact]) {
         return { reusable: false, reason: 'trusted PR-bound PaulBot approval is missing' };
     }
 
@@ -150,7 +172,8 @@ export function evaluateProductionValidationReuse({
         reusable: true,
         reason: 'identical production tree has exact PR-bound workflow and trusted PaulBot validation',
         prNumber,
-        headSha
+        headSha,
+        impact
     };
 }
 
@@ -177,6 +200,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         pulls: readJson(args.pulls),
         mergeCommit: readJson(args['merge-commit']),
         headCommit: readJson(args['head-commit']),
+        pullFiles: readJson(args['pull-files']),
         prFastRuns: readJson(args['pr-fast-runs']),
         prIntegrationRuns: readJson(args['pr-integration-runs']),
         runJobs: readJson(args['run-jobs']),

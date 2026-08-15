@@ -17,28 +17,77 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  regression-integration:
+  change-impact:
     if: ${{ github.event.pull_request.draft == false }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      lane: ${{ steps.classify.outputs.lane }}
+
+    steps:
+      - name: Checkout complete change history
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+
+      - name: Classify exact pull-request impact
+        id: classify
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: >-
+          node scripts/classify-change-impact.mjs
+          --base "$BASE_SHA"
+          --head "$HEAD_SHA"
+          --github-output "$GITHUB_OUTPUT"
+
+  regression-integration:
+    needs: change-impact
+    if: ${{ github.event.pull_request.draft == false && needs.change-impact.outputs.lane != 'spec-only' }}
     uses: ./.github/workflows/regression-guards.yml
 
   mobile-integration:
-    if: ${{ github.event.pull_request.draft == false }}
+    needs: change-impact
+    if: ${{ github.event.pull_request.draft == false && needs.change-impact.outputs.lane != 'spec-only' }}
     uses: ./.github/workflows/mobile-build.yml
 
   preview-integration:
-    if: ${{ github.event.pull_request.draft == false }}
+    needs: change-impact
+    if: ${{ github.event.pull_request.draft == false && needs.change-impact.outputs.lane != 'spec-only' }}
     uses: ./.github/workflows/preview-smoke.yml
 
   mobile-build:
     name: mobile-build
-    needs: mobile-integration
+    needs: [change-impact, mobile-integration]
     if: ${{ always() && github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     steps:
       - name: Enforce reusable mobile workflow result
         env:
+          IMPACT_RESULT: ${{ needs.change-impact.result }}
+          IMPACT_LANE: ${{ needs.change-impact.outputs.lane }}
           MOBILE_RESULT: ${{ needs.mobile-integration.result }}
         run: |
+          set -euo pipefail
+          if [ "$IMPACT_RESULT" != "success" ]; then
+            echo "Change impact classification did not succeed ($IMPACT_RESULT)." >&2
+            exit 1
+          fi
+          if [ "$IMPACT_LANE" = "spec-only" ]; then
+            if [ "$MOBILE_RESULT" != "skipped" ]; then
+              echo "Spec-only mobile integration was not intentionally skipped ($MOBILE_RESULT)." >&2
+              exit 1
+            fi
+            echo "Product specifications do not change native build inputs."
+            exit 0
+          fi
           if [ "$MOBILE_RESULT" != "success" ]; then
             echo "Mobile integration did not succeed ($MOBILE_RESULT)." >&2
             exit 1
@@ -48,6 +97,7 @@ jobs:
   preview-smoke:
     name: preview-smoke
     needs:
+      - change-impact
       - regression-integration
       - preview-integration
     if: ${{ always() && github.event.pull_request.draft == false }}
@@ -55,10 +105,24 @@ jobs:
     steps:
       - name: Enforce complete integration result
         env:
+          IMPACT_RESULT: ${{ needs.change-impact.result }}
+          IMPACT_LANE: ${{ needs.change-impact.outputs.lane }}
           PREVIEW_RESULT: ${{ needs.preview-integration.result }}
           REGRESSION_RESULT: ${{ needs.regression-integration.result }}
         run: |
           set -euo pipefail
+          if [ "$IMPACT_RESULT" != "success" ]; then
+            echo "Change impact classification did not succeed ($IMPACT_RESULT)." >&2
+            exit 1
+          fi
+          if [ "$IMPACT_LANE" = "spec-only" ]; then
+            if [ "$REGRESSION_RESULT" != "skipped" ] || [ "$PREVIEW_RESULT" != "skipped" ]; then
+              echo "Spec-only integration jobs were not intentionally skipped (regression=$REGRESSION_RESULT preview=$PREVIEW_RESULT)." >&2
+              exit 1
+            fi
+            echo "Product specifications do not change served or regression-tested artifacts."
+            exit 0
+          fi
           if [ "$REGRESSION_RESULT" != "success" ]; then
             echo "Regression integration did not succeed ($REGRESSION_RESULT)." >&2
             exit 1

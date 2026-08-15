@@ -56,6 +56,7 @@ describe('preview-smoke CI workflow', () => {
 
         expect(shouldRun([])).toBe(false);
         expect(shouldRun(['docs/testing.md', 'functions/index.js'])).toBe(false);
+        expect(shouldRun(['spec/league-platform/README.md'])).toBe(false);
         expect(shouldRun([
             'scripts/parent-coverage-contract.mjs',
             'tests/unit/parent-coverage-contract.test.js'
