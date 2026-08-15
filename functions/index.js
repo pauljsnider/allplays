@@ -151,6 +151,10 @@ const {
   serializePublicTeamProfile
 } = require('./public-team-api-core.cjs');
 const {
+  buildLiveGameShareHtml,
+  buildLiveGameShareMetadata
+} = require('./live-game-share-preview-core.cjs');
+const {
   normalizePublicTeamSearch,
   normalizePageSize,
   searchDatastorePublicTeamPage,
@@ -19303,6 +19307,77 @@ exports.getPublicGameProjection = functions.https.onCall(async (data, context = 
   if (!game) throwOpportunityError('not-found', 'Public game not found.');
   return { item: game };
 });
+
+exports.liveGameSharePreview = functions
+  .runWith({ timeoutSeconds: 15, memory: '256MB' })
+  .https
+  .onRequest(async (req, res) => {
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      res.set('Allow', 'GET, HEAD');
+      res.status(405).send('Method not allowed.');
+      return;
+    }
+
+    const rateLimit = checkPublicOpportunityBrowseRateLimit({
+      ip: `live-game-share|${getRequestIp(req)}`
+    });
+    if (!rateLimit.allowed) {
+      res.set('Retry-After', String(rateLimit.retryAfterSeconds));
+      res.status(429).send('Too many requests.');
+      return;
+    }
+
+    const teamId = typeof req.query?.teamId === 'string'
+      ? normalizeTeamId(req.query.teamId)
+      : '';
+    const gameId = typeof req.query?.gameId === 'string'
+      ? req.query.gameId.trim()
+      : '';
+    if (!teamId || !gameId || gameId.length > 1000) {
+      res.status(400).send('Valid teamId and gameId values are required.');
+      return;
+    }
+
+    try {
+      const teamSnap = await firestore.doc(`teams/${teamId}`).get();
+      if (!teamSnap.exists) {
+        res.status(404).send('Live game not found.');
+        return;
+      }
+      const team = { id: teamId, ...(teamSnap.data() || {}) };
+      const game = await getPublicGameProjection(teamId, gameId, team);
+      if (!game) {
+        res.status(404).send('Live game not found.');
+        return;
+      }
+
+      const query = `teamId=${encodeURIComponent(teamId)}&gameId=${encodeURIComponent(gameId)}`;
+      const redirectUrl = `https://allplays.ai/live-game.html?${query}`;
+      const shareUrl = `https://allplays.ai/watch?${query}`;
+      const metadata = buildLiveGameShareMetadata({
+        teamName: game.teamName || team.name,
+        opponent: game.opponent,
+        startsAt: game.startsAt,
+        timeZone: team.timeZone || team.timezone
+      });
+      const html = buildLiveGameShareHtml({ metadata, redirectUrl, shareUrl });
+      res.set('Cache-Control', 'public, max-age=300, s-maxage=300');
+      res.set('Content-Type', 'text/html; charset=utf-8');
+      res.set('X-Robots-Tag', 'noindex, nofollow');
+      if (req.method === 'HEAD') {
+        res.status(200).end();
+        return;
+      }
+      res.status(200).send(html);
+    } catch (error) {
+      functions.logger.warn('Live game share preview failed.', {
+        teamId,
+        errorCode: error?.code || error?.name || 'preview-failed'
+      });
+      res.set('Retry-After', '60');
+      res.status(503).send('Live game preview is temporarily unavailable.');
+    }
+  });
 
 exports.reportPublicOpportunity = functions.https.onCall(async (data, context = {}) => {
   const uid = requireOpportunityAuth(context);

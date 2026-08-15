@@ -786,7 +786,7 @@
         });
 
         function getLiveShareUrl() {
-            return `${window.location.origin}/live-game.html?teamId=${currentTeamId}&gameId=${currentGameId}`;
+            return `${window.location.origin}/watch?teamId=${encodeURIComponent(currentTeamId)}&gameId=${encodeURIComponent(currentGameId)}`;
         }
 
         document.getElementById('shareLiveBtn').addEventListener('click', () => {

@@ -50,6 +50,7 @@ export function buildGameHubDestinations(event: ParentScheduleEvent): ScheduleHu
       detail: 'Live scoreboard, stream, and reactions',
       icon: 'radio',
       url: getPublicLiveHref(event),
+      shareUrl: getPublicLiveShareHref(event),
       actionLabel: 'Watch live',
       shareLabel: 'Live game',
       shareTitle: `${title} live`,
@@ -124,6 +125,13 @@ export function getPublicGameReportHref(event: ParentScheduleEvent) {
 
 export function getPublicLiveHref(event: ParentScheduleEvent) {
   return getPublicHref('/live-game.html', {
+    teamId: event.teamId,
+    gameId: event.id
+  });
+}
+
+export function getPublicLiveShareHref(event: ParentScheduleEvent) {
+  return getPublicHref('/watch', {
     teamId: event.teamId,
     gameId: event.id
   });

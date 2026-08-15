@@ -21,6 +21,10 @@
     ],
     "rewrites": [
       {
+        "source": "/watch",
+        "function": "liveGameSharePreview"
+      },
+      {
         "source": "!/app/assets/**",
         "destination": "/index.html"
       }

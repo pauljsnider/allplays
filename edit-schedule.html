@@ -5229,7 +5229,7 @@ PARSING RULES:
             const btn = event.target.closest('[data-live-link]');
             if (!btn) return;
             const gameId = btn.dataset.liveLink;
-            const url = `${window.location.origin}/live-game.html?teamId=${currentTeamId}&gameId=${gameId}`;
+            const url = `${window.location.origin}/watch?teamId=${encodeURIComponent(currentTeamId)}&gameId=${encodeURIComponent(gameId)}`;
             const game = gamesCache[gameId];
             const shareText = buildLiveShareText(game, url);
             shareOrCopy({
