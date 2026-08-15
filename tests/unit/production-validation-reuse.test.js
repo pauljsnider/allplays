@@ -28,6 +28,19 @@ function workflowRun(name) {
 }
 
 function evidence() {
+    const pullDetail = {
+        number: 4605,
+        state: 'closed',
+        merged_at: '2026-08-12T08:11:00Z',
+        merge_commit_sha: mergeSha,
+        changed_files: 1,
+        base: { ref: 'master', repo: { full_name: 'pauljsnider/allplays' } },
+        head: {
+            sha: headSha,
+            ref: 'codex/production-validation-reuse',
+            repo: { full_name: 'pauljsnider/allplays' }
+        }
+    };
     return {
         repository: 'pauljsnider/allplays',
         mergeSha,
@@ -36,7 +49,6 @@ function evidence() {
             state: 'closed',
             merged_at: '2026-08-12T08:11:00Z',
             merge_commit_sha: mergeSha,
-            changed_files: 1,
             base: { ref: 'master', repo: { full_name: 'pauljsnider/allplays' } },
             head: {
                 sha: headSha,
@@ -44,6 +56,7 @@ function evidence() {
                 repo: { full_name: 'pauljsnider/allplays' }
             }
         }],
+        pullDetail,
         mergeCommit: { sha: mergeSha, tree: { sha: treeSha } },
         headCommit: { sha: headSha, tree: { sha: treeSha } },
         pullFiles: [{ filename: 'js/example.js' }],
@@ -94,7 +107,7 @@ describe('production exact-head validation reuse', () => {
 
     it('accepts a complete spec-only inventory with stable wrapper checks and the typed PaulBot verdict', () => {
         const input = evidence();
-        input.pulls[0].changed_files = 13;
+        input.pullDetail.changed_files = 13;
         input.pullFiles = [
             { filename: 'spec/league-platform/README.md' },
             ...Array.from({ length: 12 }, (_, index) => ({
@@ -114,12 +127,22 @@ describe('production exact-head validation reuse', () => {
 
     it('rejects partial file inventory so omitted runtime paths cannot create a no-op release', () => {
         const input = evidence();
-        input.pulls[0].changed_files = 2;
+        input.pullDetail.changed_files = 2;
         input.pullFiles = [{ filename: 'spec/feature.md' }];
 
         expect(evaluateProductionValidationReuse(input)).toEqual({
             reusable: false,
             reason: 'complete merged PR file inventory is unavailable'
+        });
+    });
+
+    it('requires the detailed pull response for the complete changed-file count', () => {
+        const input = evidence();
+        delete input.pullDetail;
+
+        expect(evaluateProductionValidationReuse(input)).toEqual({
+            reusable: false,
+            reason: 'merged PR identity is incomplete'
         });
     });
 

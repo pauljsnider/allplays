@@ -46,6 +46,8 @@ describe('spec-only workflow routing', () => {
         expect(deploySource).toContain('environment:"production-artifact"');
         expect(deploySource).toContain('release_kind:"no-op"');
         expect(deploySource).toContain('artifact_sha:$artifact_sha');
+        expect(deploySource).toContain('--mode noop-baseline');
+        expect(deploySource).toContain('--workflow-runs "$evidence_dir/workflow-runs.json"');
         expect(deploy.jobs['prepare-deploy'].if).toContain("change_impact != 'spec-only'");
     });
 

@@ -69,6 +69,7 @@ export function evaluateProductionValidationReuse({
     repository,
     mergeSha,
     pulls,
+    pullDetail,
     mergeCommit,
     headCommit,
     pullFiles,
@@ -93,12 +94,24 @@ export function evaluateProductionValidationReuse({
         return { reusable: false, reason: 'production SHA is not bound to exactly one merged same-repository PR' };
     }
 
-    const pull = matchingPulls[0];
-    const prNumber = Number(pull.number);
+    const association = matchingPulls[0];
+    const prNumber = Number(association.number);
+    const pull = pullDetail;
     const headSha = String(pull?.head?.sha || '');
     const headBranch = String(pull?.head?.ref || '');
     if (!Number.isInteger(prNumber) || prNumber <= 0 || !isSha(headSha) || !headBranch) {
         return { reusable: false, reason: 'merged PR identity is incomplete' };
+    }
+    if (pull?.number !== prNumber
+        || pull?.state !== 'closed'
+        || !pull?.merged_at
+        || pull?.merge_commit_sha !== mergeSha
+        || pull?.base?.ref !== 'master'
+        || pull?.base?.repo?.full_name !== repository
+        || pull?.head?.repo?.full_name !== repository
+        || association?.head?.sha !== headSha
+        || association?.head?.ref !== headBranch) {
+        return { reusable: false, reason: 'detailed merged PR identity does not match its commit association' };
     }
     if (mergeCommit?.sha !== mergeSha || headCommit?.sha !== headSha
         || !isSha(mergeCommit?.tree?.sha) || mergeCommit.tree.sha !== headCommit?.tree?.sha) {
@@ -198,6 +211,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         repository: args.repository,
         mergeSha: args['merge-sha'],
         pulls: readJson(args.pulls),
+        pullDetail: readJson(args['pull-detail']),
         mergeCommit: readJson(args['merge-commit']),
         headCommit: readJson(args['head-commit']),
         pullFiles: readJson(args['pull-files']),

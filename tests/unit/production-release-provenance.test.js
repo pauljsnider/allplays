@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+    selectNoopReleaseBaseline,
     selectLatestSuccessfulArtifact,
     verifyProductionReleaseProvenance
 } from '../../scripts/verify-production-release-provenance.mjs';
@@ -31,6 +32,48 @@ describe('production release provenance', () => {
             2: [{ state: 'success' }],
             1: [{ state: 'success' }]
         })).toEqual({ deploymentId: 2, artifactSha });
+    });
+
+    it('permits a no-op only when the latest prior production run proves the current artifact', () => {
+        expect(selectNoopReleaseBaseline({
+            repository: 'pauljsnider/allplays',
+            currentRunId: 200,
+            workflowRuns: { workflow_runs: [{
+                id: 199,
+                status: 'completed',
+                conclusion: 'success',
+                head_sha: releaseSha
+            }] },
+            releaseDeployments: [deployment(10, 'production-release', releaseSha, {
+                release_kind: 'no-op',
+                artifact_sha: artifactSha,
+                validated_head_sha: 'c'.repeat(40)
+            })],
+            artifactDeployments: [artifactDeployment(9, artifactSha)],
+            statusesByDeployment: {
+                10: [{
+                    state: 'success',
+                    log_url: 'https://github.com/pauljsnider/allplays/actions/runs/199'
+                }],
+                9: [{ state: 'success' }]
+            }
+        })).toEqual({ deploymentId: 9, artifactSha });
+    });
+
+    it('blocks a no-op after the latest prior production run failed', () => {
+        expect(() => selectNoopReleaseBaseline({
+            repository: 'pauljsnider/allplays',
+            currentRunId: 200,
+            workflowRuns: { workflow_runs: [{
+                id: 199,
+                status: 'completed',
+                conclusion: 'failure',
+                head_sha: releaseSha
+            }] },
+            releaseDeployments: [],
+            artifactDeployments: [artifactDeployment(9, artifactSha)],
+            statusesByDeployment: { 9: [{ state: 'success' }] }
+        })).toThrow('latest prior production run did not complete successfully');
     });
 
     it('verifies a typed no-op release against its prior successful artifact', () => {

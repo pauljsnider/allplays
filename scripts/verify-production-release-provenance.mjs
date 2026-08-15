@@ -37,6 +37,47 @@ export function selectLatestSuccessfulArtifact(deployments, statusesByDeployment
     throw new Error('No successful production-artifact marker is available.');
 }
 
+export function selectNoopReleaseBaseline({
+    repository,
+    currentRunId,
+    workflowRuns,
+    releaseDeployments,
+    artifactDeployments,
+    statusesByDeployment
+}) {
+    const artifact = selectLatestSuccessfulArtifact(artifactDeployments, statusesByDeployment);
+    const priorRun = (workflowRuns?.workflow_runs || []).find((run) => run?.id !== currentRunId);
+    if (!Number.isInteger(priorRun?.id)
+        || priorRun?.status !== 'completed'
+        || priorRun?.conclusion !== 'success'
+        || !shaPattern.test(String(priorRun?.head_sha || ''))) {
+        throw new Error('The latest prior production run did not complete successfully.');
+    }
+
+    const expectedLogUrl = `https://github.com/${repository}/actions/runs/${priorRun.id}`;
+    const priorRelease = (Array.isArray(releaseDeployments) ? releaseDeployments : []).find((deployment) => {
+        const payload = deployment?.payload;
+        const statuses = statusesByDeployment?.[String(deployment?.id)];
+        return deployment?.environment === 'production-release'
+            && deploymentSha(deployment) === priorRun.head_sha
+            && Number.isInteger(deployment?.id)
+            && payload && typeof payload === 'object' && !Array.isArray(payload)
+            && ['deploy', 'no-op'].includes(payload.release_kind)
+            && payload.artifact_sha === artifact.artifactSha
+            && (payload.release_kind !== 'deploy' || payload.artifact_sha === priorRun.head_sha)
+            && (payload.release_kind !== 'no-op'
+                || (payload.artifact_sha !== priorRun.head_sha
+                    && shaPattern.test(String(payload.validated_head_sha || ''))))
+            && Array.isArray(statuses)
+            && statuses[0]?.state === 'success'
+            && statuses[0]?.log_url === expectedLogUrl;
+    });
+    if (!priorRelease) {
+        throw new Error('The latest successful production run does not prove the current artifact identity.');
+    }
+    return artifact;
+}
+
 export function verifyProductionReleaseProvenance({
     releaseSha,
     releaseDeployments,
@@ -115,6 +156,15 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
             readJson(args['artifact-deployments']),
             readJson(args.statuses)
         );
+    } else if (args.mode === 'noop-baseline') {
+        result = selectNoopReleaseBaseline({
+            repository: args.repository,
+            currentRunId: Number(args['current-run-id']),
+            workflowRuns: readJson(args['workflow-runs']),
+            releaseDeployments: readJson(args['release-deployments']),
+            artifactDeployments: readJson(args['artifact-deployments']),
+            statusesByDeployment: readJson(args.statuses)
+        });
     } else if (args.mode === 'verify-release') {
         result = verifyProductionReleaseProvenance({
             releaseSha: args['release-sha'],
@@ -123,7 +173,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
             statusesByDeployment: readJson(args.statuses)
         });
     } else {
-        throw new Error('Mode must be latest-artifact or verify-release.');
+        throw new Error('Mode must be latest-artifact, noop-baseline, or verify-release.');
     }
     process.stdout.write(`${JSON.stringify(result)}\n`);
 }

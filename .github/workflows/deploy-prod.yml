@@ -89,6 +89,21 @@ jobs:
           mkdir -p "$evidence_dir"
           printf '%s\n' "$pr_json" > "$evidence_dir/pulls.json"
 
+          pull_detail_loaded=false
+          for attempt in 1 2 3; do
+            if gh api --method GET \
+                "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" \
+                > "$evidence_dir/pull-detail.json" 2>/dev/null; then
+              pull_detail_loaded=true
+              break
+            fi
+            sleep $((attempt * 2))
+          done
+          if [[ "$pull_detail_loaded" != "true" ]]; then
+            echo "::warning::Could not load the detailed merged PR; running production validation."
+            exit 0
+          fi
+
           pull_files_loaded=false
           for attempt in 1 2 3; do
             if gh api --method GET --paginate --slurp \
@@ -151,6 +166,7 @@ jobs:
             --repository "$GITHUB_REPOSITORY" \
             --merge-sha "$GITHUB_SHA" \
             --pulls "$evidence_dir/pulls.json" \
+            --pull-detail "$evidence_dir/pull-detail.json" \
             --pull-files "$evidence_dir/pull-files.json" \
             --merge-commit "$evidence_dir/merge-commit.json" \
             --head-commit "$evidence_dir/head-commit.json" \
@@ -342,6 +358,7 @@ jobs:
       needs.validation-source.outputs.change_impact == 'spec-only'
     runs-on: ubuntu-latest
     permissions:
+      actions: read
       contents: read
       deployments: write
 
@@ -368,6 +385,12 @@ jobs:
           gh api --method GET "repos/${GITHUB_REPOSITORY}/deployments" \
             -f environment=production-artifact \
             -F per_page=100 > "$evidence_dir/artifact-deployments.json"
+          gh api --method GET "repos/${GITHUB_REPOSITORY}/deployments" \
+            -f environment=production-release \
+            -F per_page=100 > "$evidence_dir/release-deployments.json"
+          gh api --method GET "repos/${GITHUB_REPOSITORY}/actions/workflows/deploy-prod.yml/runs" \
+            -f branch="$GITHUB_REF_NAME" \
+            -F per_page=20 > "$evidence_dir/workflow-runs.json"
           printf '{}\n' > "$evidence_dir/statuses.json"
           while IFS= read -r deployment_id; do
             [[ "$deployment_id" =~ ^[0-9]+$ ]] || continue
@@ -380,9 +403,24 @@ jobs:
               "$evidence_dir/statuses.json" > "$evidence_dir/statuses.next.json"
             mv "$evidence_dir/statuses.next.json" "$evidence_dir/statuses.json"
           done < <(jq -r '.[].id' "$evidence_dir/artifact-deployments.json")
+          while IFS= read -r deployment_id; do
+            [[ "$deployment_id" =~ ^[0-9]+$ ]] || continue
+            gh api --method GET \
+              "repos/${GITHUB_REPOSITORY}/deployments/${deployment_id}/statuses" \
+              -F per_page=1 > "$evidence_dir/status-${deployment_id}.json"
+            jq --arg id "$deployment_id" \
+              --slurpfile rows "$evidence_dir/status-${deployment_id}.json" \
+              '. + {($id): $rows[0]}' \
+              "$evidence_dir/statuses.json" > "$evidence_dir/statuses.next.json"
+            mv "$evidence_dir/statuses.next.json" "$evidence_dir/statuses.json"
+          done < <(jq -r '.[].id' "$evidence_dir/release-deployments.json")
           artifact_selection="$(
             node scripts/verify-production-release-provenance.mjs \
-              --mode latest-artifact \
+              --mode noop-baseline \
+              --repository "$GITHUB_REPOSITORY" \
+              --current-run-id "$GITHUB_RUN_ID" \
+              --workflow-runs "$evidence_dir/workflow-runs.json" \
+              --release-deployments "$evidence_dir/release-deployments.json" \
               --artifact-deployments "$evidence_dir/artifact-deployments.json" \
               --statuses "$evidence_dir/statuses.json"
           )"
