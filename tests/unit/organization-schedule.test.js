@@ -7,6 +7,7 @@ import {
     buildOrganizationScheduleImportPreview,
     buildOrganizationSharedGamePayload,
     buildVenueAvailabilityPayload,
+    collectSeedOrderedTeams,
     formatBlackoutDateRecord,
     formatOrganizationVenueLocation,
     formatVenueAvailabilityRecord,
@@ -329,6 +330,31 @@ describe('organization schedule helpers', () => {
         expect(draft.draftSlots.every((slot) => slot.homeTeamId && slot.awayTeamId)).toBe(true);
     });
 
+    it('collects selected teams in the explicit UI seed order passed to the generator', () => {
+        const selectedTeams = collectSeedOrderedTeams({
+            selectedOptions: [{ value: 'team-1' }, { value: 'team-2' }, { value: 'team-3' }],
+            organizationTeams: accessibleTeams,
+            seedOrderIds: ['team-3', 'team-1', 'team-2']
+        });
+
+        expect(selectedTeams.map((team) => team.id)).toEqual(['team-3', 'team-1', 'team-2']);
+
+        const draft = buildOrganizationScheduleDraftSlots({
+            selectedTeams,
+            organizationId: 'org-1',
+            scheduleFormat: 'single_elimination',
+            seasonStart: '2026-08-01',
+            seasonEnd: '2026-08-31',
+            venues: [{
+                name: 'Main Field',
+                availability: [{ date: '2026-08-15', startTime: '09:00', endTime: '10:00' }]
+            }]
+        });
+
+        expect(draft.byeTeams.map((team) => team.id)).toEqual(['team-3']);
+        expect(draft.draftSlots[0]).toMatchObject({ homeTeamId: 'team-1', awayTeamId: 'team-2', homeSeed: 2, awaySeed: 3 });
+    });
+
     it('exposes the organization schedule entry point from team schedule', () => {
         const source = readFileSync(new URL('../../edit-schedule.html', import.meta.url), 'utf8');
 
@@ -347,8 +373,8 @@ describe('organization schedule helpers', () => {
     it('loads the current organization schedule module cache key', () => {
         const source = readFileSync(new URL('../../organization-schedule.html', import.meta.url), 'utf8');
 
-        expect(source).toContain("from './js/organization-schedule.js?v=4';");
-        expect(source).not.toContain("from './js/organization-schedule.js?v=3';");
+        expect(source).toContain("from './js/organization-schedule.js?v=5';");
+        expect(source).not.toContain("from './js/organization-schedule.js?v=4';");
     });
 
     it('wires the organization schedule bulk import UI', () => {
@@ -367,6 +393,9 @@ describe('organization schedule helpers', () => {
 
         expect(source).toContain('id="draft-generator-tab"');
         expect(source).toContain('id="draft-team-ids"');
+        expect(source).toContain('id="draft-team-seed-order"');
+        expect(source).toContain('collectSeedOrderedTeams');
+        expect(source).toContain("button.textContent = direction === -1 ? 'Move up' : 'Move down';");
         expect(source).toContain('id="draft-schedule-format"');
         expect(source).toContain('value="single_elimination"');
         expect(source).toContain('id="draft-venue-availability"');

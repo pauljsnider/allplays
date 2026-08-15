@@ -152,6 +152,17 @@ function normalizeTeamList(teams) {
         .map((team) => ({ ...team, id: String(team.id) }));
 }
 
+export function collectSeedOrderedTeams({ selectedOptions = [], organizationTeams = [], seedOrderIds = [] } = {}) {
+    const selectedIds = Array.from(selectedOptions, (option) => String(option?.value || '')).filter(Boolean);
+    const selectedIdSet = new Set(selectedIds);
+    const orderedIds = [
+        ...seedOrderIds.map(String).filter((teamId) => selectedIdSet.has(teamId)),
+        ...selectedIds.filter((teamId) => !seedOrderIds.map(String).includes(teamId))
+    ];
+    const teamsById = new Map(normalizeTeamList(organizationTeams).map((team) => [team.id, team]));
+    return Array.from(new Set(orderedIds)).map((teamId) => teamsById.get(teamId)).filter(Boolean);
+}
+
 function normalizeHeaderLookupValue(value) {
     return String(value || '')
         .replace(/\ufeff/g, '')
