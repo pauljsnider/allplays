@@ -21,6 +21,7 @@ jobs:
       pull-requests: read
       statuses: read
     outputs:
+      change_impact: ${{ steps.source.outputs.change_impact }}
       reuse_pr_validation: ${{ steps.source.outputs.reuse_pr_validation }}
       validated_head_sha: ${{ steps.source.outputs.validated_head_sha }}
 
@@ -37,6 +38,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          echo "change_impact=full" >> "$GITHUB_OUTPUT"
           echo "reuse_pr_validation=false" >> "$GITHUB_OUTPUT"
           echo "validated_head_sha=" >> "$GITHUB_OUTPUT"
 
@@ -87,6 +89,37 @@ jobs:
           mkdir -p "$evidence_dir"
           printf '%s\n' "$pr_json" > "$evidence_dir/pulls.json"
 
+          pull_detail_loaded=false
+          for attempt in 1 2 3; do
+            if gh api --method GET \
+                "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" \
+                > "$evidence_dir/pull-detail.json" 2>/dev/null; then
+              pull_detail_loaded=true
+              break
+            fi
+            sleep $((attempt * 2))
+          done
+          if [[ "$pull_detail_loaded" != "true" ]]; then
+            echo "::warning::Could not load the detailed merged PR; running production validation."
+            exit 0
+          fi
+
+          pull_files_loaded=false
+          for attempt in 1 2 3; do
+            if gh api --method GET --paginate --slurp \
+                "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}/files?per_page=100" \
+                > "$evidence_dir/pull-files-pages.json" 2>/dev/null &&
+              jq '[.[][]]' "$evidence_dir/pull-files-pages.json" > "$evidence_dir/pull-files.json"; then
+              pull_files_loaded=true
+              break
+            fi
+            sleep $((attempt * 2))
+          done
+          if [[ "$pull_files_loaded" != "true" ]]; then
+            echo "::warning::Could not load the complete merged PR file inventory; running production validation."
+            exit 0
+          fi
+
           fetch_json() {
             local output_path="$1"
             shift
@@ -133,6 +166,8 @@ jobs:
             --repository "$GITHUB_REPOSITORY" \
             --merge-sha "$GITHUB_SHA" \
             --pulls "$evidence_dir/pulls.json" \
+            --pull-detail "$evidence_dir/pull-detail.json" \
+            --pull-files "$evidence_dir/pull-files.json" \
             --merge-commit "$evidence_dir/merge-commit.json" \
             --head-commit "$evidence_dir/head-commit.json" \
             --pr-fast-runs "$evidence_dir/pr-fast-runs.json" \
@@ -145,6 +180,7 @@ jobs:
           fi
 
           echo "reuse_pr_validation=true" >> "$GITHUB_OUTPUT"
+          echo "change_impact=$(jq -r '.impact' <<< "$verification")" >> "$GITHUB_OUTPUT"
           echo "validated_head_sha=$head_sha" >> "$GITHUB_OUTPUT"
           echo "Reusing exact-head validation for merged PR #${pr_number} at ${head_sha:0:12}; PR identity, tree, required jobs, and trusted PaulBot approval match."
 
@@ -252,8 +288,11 @@ jobs:
           echo "Fresh production validation passed."
 
   validate-production-smoke-config:
-    needs: production-validation-gate
-    if: always() && needs.production-validation-gate.result == 'success'
+    needs: [validation-source, production-validation-gate]
+    if: >-
+      always() &&
+      needs.production-validation-gate.result == 'success' &&
+      needs.validation-source.outputs.change_impact != 'spec-only'
     runs-on: ubuntu-latest
     environment:
       name: production-smoke
@@ -310,11 +349,133 @@ jobs:
             exit 1
           fi
 
-  prepare-deploy:
-    needs: [production-validation-gate, validate-production-smoke-config]
+  release-noop-marker:
+    needs: [validation-source, production-validation-gate]
     if: >-
       always() &&
       needs.production-validation-gate.result == 'success' &&
+      needs.validation-source.outputs.reuse_pr_validation == 'true' &&
+      needs.validation-source.outputs.change_impact == 'spec-only'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      deployments: write
+
+    steps:
+      - name: Checkout trusted release verifier
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+
+      - name: Record exact-SHA release with unchanged production artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VALIDATED_HEAD_SHA: ${{ needs.validation-source.outputs.validated_head_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$VALIDATED_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          evidence_dir="$RUNNER_TEMP/production-noop-evidence"
+          mkdir -p "$evidence_dir"
+          gh api --method GET "repos/${GITHUB_REPOSITORY}/deployments" \
+            -f environment=production-artifact \
+            -F per_page=100 > "$evidence_dir/artifact-deployments.json"
+          gh api --method GET "repos/${GITHUB_REPOSITORY}/deployments" \
+            -f environment=production-release \
+            -F per_page=100 > "$evidence_dir/release-deployments.json"
+          gh api --method GET "repos/${GITHUB_REPOSITORY}/actions/workflows/deploy-prod.yml/runs" \
+            -f branch="$GITHUB_REF_NAME" \
+            -F per_page=20 > "$evidence_dir/workflow-runs.json"
+          printf '{}\n' > "$evidence_dir/statuses.json"
+          while IFS= read -r deployment_id; do
+            [[ "$deployment_id" =~ ^[0-9]+$ ]] || continue
+            gh api --method GET \
+              "repos/${GITHUB_REPOSITORY}/deployments/${deployment_id}/statuses" \
+              -F per_page=1 > "$evidence_dir/status-${deployment_id}.json"
+            jq --arg id "$deployment_id" \
+              --slurpfile rows "$evidence_dir/status-${deployment_id}.json" \
+              '. + {($id): $rows[0]}' \
+              "$evidence_dir/statuses.json" > "$evidence_dir/statuses.next.json"
+            mv "$evidence_dir/statuses.next.json" "$evidence_dir/statuses.json"
+          done < <(jq -r '.[].id' "$evidence_dir/artifact-deployments.json")
+          while IFS= read -r deployment_id; do
+            [[ "$deployment_id" =~ ^[0-9]+$ ]] || continue
+            gh api --method GET \
+              "repos/${GITHUB_REPOSITORY}/deployments/${deployment_id}/statuses" \
+              -F per_page=1 > "$evidence_dir/status-${deployment_id}.json"
+            jq --arg id "$deployment_id" \
+              --slurpfile rows "$evidence_dir/status-${deployment_id}.json" \
+              '. + {($id): $rows[0]}' \
+              "$evidence_dir/statuses.json" > "$evidence_dir/statuses.next.json"
+            mv "$evidence_dir/statuses.next.json" "$evidence_dir/statuses.json"
+          done < <(jq -r '.[].id' "$evidence_dir/release-deployments.json")
+          artifact_selection="$(
+            node scripts/verify-production-release-provenance.mjs \
+              --mode noop-baseline \
+              --repository "$GITHUB_REPOSITORY" \
+              --current-run-id "$GITHUB_RUN_ID" \
+              --workflow-runs "$evidence_dir/workflow-runs.json" \
+              --release-deployments "$evidence_dir/release-deployments.json" \
+              --artifact-deployments "$evidence_dir/artifact-deployments.json" \
+              --statuses "$evidence_dir/statuses.json"
+          )"
+          artifact_sha="$(jq -r '.artifactSha' <<< "$artifact_selection")"
+
+          deployment_id="$(
+            jq -n \
+              --arg ref "$GITHUB_SHA" \
+              --arg artifact_sha "$artifact_sha" \
+              --arg validated_head_sha "$VALIDATED_HEAD_SHA" \
+              '{
+                ref:$ref,
+                environment:"production-release",
+                auto_merge:false,
+                required_contexts:[],
+                transient_environment:false,
+                production_environment:true,
+                description:"Verified no-op production release",
+                payload:{
+                  release_kind:"no-op",
+                  artifact_sha:$artifact_sha,
+                  validated_head_sha:$validated_head_sha
+                }
+              }' \
+              | gh api --method POST "repos/${GITHUB_REPOSITORY}/deployments" --input - --jq '.id'
+          )"
+          jq -n \
+            --arg log_url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --arg artifact_sha "$artifact_sha" \
+            '{
+              state:"success",
+              description:("Validated spec-only release; production artifact remains at " + $artifact_sha),
+              environment:"production-release",
+              log_url:$log_url,
+              auto_inactive:true
+            }' \
+            | gh api --method POST \
+              "repos/${GITHUB_REPOSITORY}/deployments/${deployment_id}/statuses" \
+              --input - \
+              --jq '.state' \
+              | grep -Fxq success
+          {
+            echo "### Verified production no-op"
+            echo
+            echo "- Release SHA: \`$GITHUB_SHA\`"
+            echo "- Unchanged production artifact SHA: \`$artifact_sha\`"
+            echo "- Validated PR head SHA: \`$VALIDATED_HEAD_SHA\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  prepare-deploy:
+    needs: [validation-source, production-validation-gate, validate-production-smoke-config]
+    if: >-
+      always() &&
+      needs.production-validation-gate.result == 'success' &&
+      needs.validation-source.outputs.change_impact != 'spec-only' &&
       needs.validate-production-smoke-config.result == 'success'
     runs-on: ubuntu-latest
     permissions:
@@ -2207,7 +2368,8 @@ jobs:
                 required_contexts:[],
                 transient_environment:false,
                 production_environment:true,
-                description:"Complete serialized production release"
+                description:"Complete serialized production release",
+                payload:{release_kind:"deploy", artifact_sha:$ref}
               }' \
               | gh api --method POST "repos/${GITHUB_REPOSITORY}/deployments" --input - --jq '.id'
           )"
@@ -2222,6 +2384,36 @@ jobs:
             }' \
             | gh api --method POST \
               "repos/${GITHUB_REPOSITORY}/deployments/${deployment_id}/statuses" \
+              --input - \
+              --jq '.state' \
+              | grep -Fxq success
+
+          artifact_deployment_id="$(
+            jq -n \
+              --arg ref "$GITHUB_SHA" \
+              '{
+                ref:$ref,
+                environment:"production-artifact",
+                auto_merge:false,
+                required_contexts:[],
+                transient_environment:false,
+                production_environment:true,
+                description:"Exact deployed production artifact",
+                payload:{release_kind:"deploy", artifact_sha:$ref}
+              }' \
+              | gh api --method POST "repos/${GITHUB_REPOSITORY}/deployments" --input - --jq '.id'
+          )"
+          jq -n \
+            --arg log_url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            '{
+              state:"success",
+              description:"Production artifact deployed from the exact release SHA.",
+              environment:"production-artifact",
+              log_url:$log_url,
+              auto_inactive:true
+            }' \
+            | gh api --method POST \
+              "repos/${GITHUB_REPOSITORY}/deployments/${artifact_deployment_id}/statuses" \
               --input - \
               --jq '.state' \
               | grep -Fxq success

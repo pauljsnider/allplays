@@ -1075,9 +1075,21 @@ export function validateFirebaseRulesCi() {
     );
     assertIncludes(
         deployProd,
-        'needs: [production-validation-gate, validate-production-smoke-config]',
+        'needs: [validation-source, production-validation-gate, validate-production-smoke-config]',
         'Production deploy gate'
     );
+    assertIncludes(
+        deployProd,
+        "needs.validation-source.outputs.change_impact != 'spec-only'",
+        'Production full-deploy impact gate'
+    );
+    assertIncludes(
+        deployProd,
+        "needs.validation-source.outputs.change_impact == 'spec-only'",
+        'Production no-op impact gate'
+    );
+    assertIncludes(deployProd, 'environment:"production-artifact"', 'Production artifact provenance marker');
+    assertIncludes(deployProd, 'release_kind:"no-op"', 'Production no-op release marker');
 
     assertIncludes(deployPreviewBuild, 'workflow_call:', 'Untrusted preview reusable workflow');
     assertIncludes(prIntegration, 'uses: ./.github/workflows/regression-guards.yml', 'PR integration regression gate');

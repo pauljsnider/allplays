@@ -28,6 +28,19 @@ function workflowRun(name) {
 }
 
 function evidence() {
+    const pullDetail = {
+        number: 4605,
+        state: 'closed',
+        merged_at: '2026-08-12T08:11:00Z',
+        merge_commit_sha: mergeSha,
+        changed_files: 1,
+        base: { ref: 'master', repo: { full_name: 'pauljsnider/allplays' } },
+        head: {
+            sha: headSha,
+            ref: 'codex/production-validation-reuse',
+            repo: { full_name: 'pauljsnider/allplays' }
+        }
+    };
     return {
         repository: 'pauljsnider/allplays',
         mergeSha,
@@ -43,13 +56,15 @@ function evidence() {
                 repo: { full_name: 'pauljsnider/allplays' }
             }
         }],
+        pullDetail,
         mergeCommit: { sha: mergeSha, tree: { sha: treeSha } },
         headCommit: { sha: headSha, tree: { sha: treeSha } },
+        pullFiles: [{ filename: 'js/example.js' }],
         prFastRuns: { workflow_runs: [workflowRun('pr-fast')] },
         prIntegrationRuns: { workflow_runs: [workflowRun('pr-integration')] },
         runJobs: {
             101: {
-                jobs: ['unit-tests', 'cache-bust-guard', 'app-quality'].map((name) => ({
+                jobs: ['change-impact', 'unit-tests', 'cache-bust-guard', 'app-quality'].map((name) => ({
                     name,
                     status: 'completed',
                     conclusion: 'success'
@@ -57,6 +72,7 @@ function evidence() {
             },
             102: {
                 jobs: [
+                    'change-impact',
                     'regression-integration / firebase-rules-deploy-guard',
                     'regression-integration / roster-chat-media-replay-smoke',
                     'mobile-build',
@@ -84,7 +100,63 @@ describe('production exact-head validation reuse', () => {
         expect(evaluateProductionValidationReuse(evidence())).toMatchObject({
             reusable: true,
             prNumber: 4605,
-            headSha
+            headSha,
+            impact: 'full'
+        });
+    });
+
+    it('accepts a complete spec-only inventory with stable wrapper checks and the typed PaulBot verdict', () => {
+        const input = evidence();
+        input.pullDetail.changed_files = 13;
+        input.pullFiles = [
+            { filename: 'spec/league-platform/README.md' },
+            ...Array.from({ length: 12 }, (_, index) => ({
+                filename: `spec/league-platform/${String(index + 1).padStart(2, '0')}-feature.md`
+            }))
+        ];
+        input.runJobs[102].jobs = input.runJobs[102].jobs.filter((job) => (
+            ['change-impact', 'mobile-build', 'preview-smoke'].includes(job.name)
+        ));
+        input.statuses[0].description = 'Spec-only review and required CI passed';
+
+        expect(evaluateProductionValidationReuse(input)).toMatchObject({
+            reusable: true,
+            impact: 'spec-only'
+        });
+    });
+
+    it('rejects partial file inventory so omitted runtime paths cannot create a no-op release', () => {
+        const input = evidence();
+        input.pullDetail.changed_files = 2;
+        input.pullFiles = [{ filename: 'spec/feature.md' }];
+
+        expect(evaluateProductionValidationReuse(input)).toEqual({
+            reusable: false,
+            reason: 'complete merged PR file inventory is unavailable'
+        });
+    });
+
+    it('requires the detailed pull response for the complete changed-file count', () => {
+        const input = evidence();
+        delete input.pullDetail;
+
+        expect(evaluateProductionValidationReuse(input)).toEqual({
+            reusable: false,
+            reason: 'merged PR identity is incomplete'
+        });
+    });
+
+    it('does not classify a runtime file renamed into spec as spec-only', () => {
+        const input = evidence();
+        input.pullFiles = [{
+            filename: 'spec/dashboard.md',
+            previous_filename: 'dashboard.html',
+            status: 'renamed'
+        }];
+
+        expect(evaluateProductionValidationReuse(input)).toMatchObject({
+            reusable: true,
+            impact: 'full'
         });
     });
 
@@ -180,11 +252,11 @@ describe('production exact-head validation reuse', () => {
     });
 
     it('continues the fail-closed deploy chain after reusable validation skips duplicate jobs', () => {
-        expect(workflow.jobs['validate-production-smoke-config'].if).toBe(
-            "always() && needs.production-validation-gate.result == 'success'"
+        expect(workflow.jobs['validate-production-smoke-config'].if).toContain(
+            "needs.validation-source.outputs.change_impact != 'spec-only'"
         );
-        expect(workflow.jobs['prepare-deploy'].if).toBe(
-            "always() && needs.production-validation-gate.result == 'success' && needs.validate-production-smoke-config.result == 'success'"
+        expect(workflow.jobs['prepare-deploy'].if).toContain(
+            "needs.validation-source.outputs.change_impact != 'spec-only'"
         );
         expect(workflow.jobs.deploy.if).toBe(
             "!cancelled() && needs.prepare-deploy.result == 'success'"

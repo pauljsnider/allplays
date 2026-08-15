@@ -32,11 +32,14 @@ describe('pull request CI consolidation', () => {
 
         expect(fast.on.pull_request.types).toContain('ready_for_review');
         expect(integration.on.pull_request.types).toContain('ready_for_review');
+        expect(fast.jobs['change-impact'].if).toBe('${{ github.event.pull_request.draft == false }}');
         for (const jobName of ['cache-bust-guard', 'unit-tests', 'app-quality']) {
-            expect(fast.jobs[jobName].if).toBe('${{ github.event.pull_request.draft == false }}');
+            expect(fast.jobs[jobName].if).toBe('${{ always() && github.event.pull_request.draft == false }}');
         }
+        expect(integration.jobs['change-impact'].if).toBe('${{ github.event.pull_request.draft == false }}');
         for (const jobName of ['regression-integration', 'mobile-integration', 'preview-integration']) {
-            expect(integration.jobs[jobName].if).toBe('${{ github.event.pull_request.draft == false }}');
+            expect(integration.jobs[jobName].if).toContain('github.event.pull_request.draft == false');
+            expect(integration.jobs[jobName].if).toContain("lane != 'spec-only'");
         }
     });
 
@@ -118,6 +121,8 @@ describe('pull request CI consolidation', () => {
             env: {
                 ...process.env,
                 GITHUB_REPOSITORY: 'allplays/allplays',
+                IMPACT_RESULT: 'success',
+                IMPACT_LANE: 'full',
                 ...env
             }
         });
