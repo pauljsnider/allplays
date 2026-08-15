@@ -127,6 +127,60 @@ describe('admin search collection selection', () => {
         vi.useRealTimers();
     });
 
+    it('reuses in-flight and completed results for the same normalized term', async () => {
+        vi.useFakeTimers();
+        let resolveSearch;
+        const search = vi.fn(() => new Promise((resolve) => {
+            resolveSearch = resolve;
+        }));
+        const runSearch = createDebouncedAdminUserSearch({ search, debounceMs: 300 });
+
+        const first = runSearch('  Robin  ');
+        const concurrent = runSearch('robin');
+        expect(concurrent).toBe(first);
+
+        await vi.advanceTimersByTimeAsync(300);
+        expect(search).toHaveBeenCalledTimes(1);
+        resolveSearch([{ id: 'user-1' }]);
+        await expect(first).resolves.toMatchObject({
+            term: 'robin',
+            users: [{ id: 'user-1' }],
+            stale: false,
+            remote: true
+        });
+        await expect(concurrent).resolves.toMatchObject({ stale: false });
+
+        await expect(runSearch('ROBIN')).resolves.toMatchObject({
+            term: 'robin',
+            users: [{ id: 'user-1' }],
+            stale: false,
+            remote: true
+        });
+        expect(search).toHaveBeenCalledTimes(1);
+
+        const changed = runSearch('robins');
+        await vi.advanceTimersByTimeAsync(300);
+        expect(search).toHaveBeenCalledTimes(2);
+        expect(search).toHaveBeenLastCalledWith('robins');
+        resolveSearch([{ id: 'user-2' }]);
+        await expect(changed).resolves.toMatchObject({ term: 'robins', stale: false });
+        vi.useRealTimers();
+    });
+
+    it('reloads the same term after explicit invalidation', async () => {
+        const search = vi.fn().mockResolvedValue([{ id: 'user-1' }]);
+        const runSearch = createDebouncedAdminUserSearch({ search, debounceMs: 0 });
+
+        await expect(runSearch('robin')).resolves.toMatchObject({ stale: false, remote: true });
+        await expect(runSearch('ROBIN')).resolves.toMatchObject({ stale: false, remote: true });
+        expect(search).toHaveBeenCalledTimes(1);
+
+        runSearch.invalidate();
+
+        await expect(runSearch(' robin ')).resolves.toMatchObject({ stale: false, remote: true });
+        expect(search).toHaveBeenCalledTimes(2);
+    });
+
     it('suppresses an in-flight response after the term changes or clears', async () => {
         let resolveSearch;
         const search = vi.fn(() => new Promise((resolve) => {

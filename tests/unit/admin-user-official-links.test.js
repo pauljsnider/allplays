@@ -1,11 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { createDebouncedAdminUserSearch } from '../../js/admin-search.js';
 import {
     buildOfficialLookupCacheKey,
     buildOfficialUserLookup,
     collectOfficialLookupQueryTargets,
     collectOfficialLookupTargets,
     formatOfficialUserSummary,
+    filterAdminUsersForView,
     getOfficialUserSummary,
     matchesOfficialUserSearch
 } from '../../js/admin-user-official-links.js';
@@ -110,8 +112,7 @@ describe('admin users official links', () => {
         expect(dbJs).toContain("where('email', 'in', chunk)");
         expect(adminJs).toContain('buildOfficialUserLookup');
         expect(adminJs).toContain('formatOfficialUserSummary');
-        expect(adminJs).toContain('matchesOfficialUserSearch');
-        expect(adminJs).toContain("officialFilter === 'officials'");
+        expect(adminJs).toContain('filterAdminUsersForView(users, officialUserLookup, officialFilter, term)');
         expect(adminJs).toContain('inline-flex items-center rounded-full bg-emerald-100');
     });
 
@@ -135,7 +136,7 @@ describe('admin users official links', () => {
         expect(renderUsersView).toContain('const users = await getAdminUsersForSearch(term);');
         expect(renderUsersView).toContain('await loadVisibleOfficialUserLinks(users);');
         expect(renderUsersView.indexOf('await loadVisibleOfficialUserLinks(users);')).toBeLessThan(
-            renderUsersView.indexOf('const filtered = users.filter')
+            renderUsersView.indexOf('const filtered = filterAdminUsersForView')
         );
         expect(adminJs).toContain('createDebouncedAdminUserSearch');
         expect(adminJs).toContain('searchAdminUsers');
@@ -145,5 +146,32 @@ describe('admin users official links', () => {
         expect(adminJs).toContain('${escapeHtml(u.phone || \'-\')}');
         expect(adminJs).not.toContain('ensureGlobalAdminUsersForSearch');
         expect(adminJs).not.toContain('fetchPage: getAdminUsersPage,\n            itemsKey: \'users\'');
+        expect(adminJs).toContain('runDebouncedAdminUserSearch.invalidate();');
+        expect(adminJs.match(/invalidateAdminUserSearchState\(\);/g)).toHaveLength(3);
+    });
+
+    it('filters retained search candidates without repeating the remote search', async () => {
+        const users = [
+            { id: 'user-1', fullName: 'Robin Ref', email: 'ref@example.com' },
+            { id: 'user-2', fullName: 'Robin Parent', email: 'parent@example.com' }
+        ];
+        const lookup = buildOfficialUserLookup([{
+            teamId: 'team-1',
+            teamName: 'Blue Jays',
+            official: { email: 'ref@example.com', name: 'Robin Ref' }
+        }]);
+        const search = vi.fn().mockResolvedValue(users);
+        const runSearch = createDebouncedAdminUserSearch({ search, debounceMs: 0 });
+
+        const result = await runSearch('robin');
+        expect(filterAdminUsersForView(result.users, lookup, 'all', result.term))
+            .toEqual(users);
+        expect(filterAdminUsersForView(result.users, lookup, 'officials', result.term))
+            .toEqual([users[0]]);
+        expect(filterAdminUsersForView(result.users, lookup, 'non-officials', result.term))
+            .toEqual([users[1]]);
+
+        await runSearch(' ROBIN ');
+        expect(search).toHaveBeenCalledTimes(1);
     });
 });

@@ -15,10 +15,10 @@ import {
     getTelemetryRouteDaily,
     getTelemetryEventDaily,
     getTelemetrySessions
-} from './db.js?v=4433173';
+} from './db.js?v=4433174';
 import { db, collection, getDocs, doc, setDoc, updateDoc, serverTimestamp, query } from './firebase.js?v=26';
-import { renderHeader, renderFooter, escapeHtml } from './utils.js?v=443349';
-import { checkAuth } from './auth.js?v=4433175';
+import { renderHeader, renderFooter, escapeHtml } from './utils.js?v=443350';
+import { checkAuth } from './auth.js?v=4433176';
 import { DEFAULT_ADMIN_PAGE_SIZE, buildBoundedAdminDashboardScope, loadAdminCollectionPage, loadInitialAdminBootstrap } from './admin-bootstrap.js?v=2';
 import {
     adminRegistrationDefaults,
@@ -33,10 +33,10 @@ import { buildRecentGameResultsRows } from './admin-game-results.js?v=1';
 import {
     buildOfficialLookupCacheKey,
     buildOfficialUserLookup,
+    filterAdminUsersForView,
     formatOfficialUserSummary,
-    getOfficialUserSummary,
-    matchesOfficialUserSearch
-} from './admin-user-official-links.js?v=3';
+    getOfficialUserSummary
+} from './admin-user-official-links.js?v=4';
 import { buildAdminTeamOfficialsSummary } from './admin-team-officials.js?v=1';
 import {
     createDebouncedAdminTeamSearch,
@@ -49,7 +49,7 @@ import {
     normalizeAdminSearchTerm,
     resolveAdminUserSearchResult,
     selectAdminItemById
-} from './admin-search.js?v=7';
+} from './admin-search.js?v=8';
 import {
     buildTrackedWorkflowLoadSummary,
     buildTelemetryPerformanceSummary,
@@ -150,7 +150,14 @@ function applyCurrentUsersPage() {
 
 function resetGlobalAdminSearchCollections() {
     globalSearchTeams = [];
+    invalidateAdminUserSearchState();
+}
+
+function invalidateAdminUserSearchState() {
+    runDebouncedAdminUserSearch.invalidate();
     globalSearchUsers = [];
+    loadedUsersOfficialsKey = '';
+    officialUserLookup = new Map();
 }
 
 async function getAdminTeamsForSearch(searchTerm = '') {
@@ -1283,7 +1290,7 @@ async function saveOfficialsAdmin(event) {
 
     message.textContent = officialId ? 'Official updated.' : 'Official saved.';
     loadedTeamsOfficialsPageKey = '';
-    loadedUsersOfficialsKey = '';
+    invalidateAdminUserSearchState();
     resetOfficialsAdminFormState();
     document.getElementById('officials-admin-form').classList.remove('hidden');
     await loadOfficialsForActiveTeam();
@@ -1310,7 +1317,7 @@ async function handleOfficialsAdminListClick(event) {
             document.getElementById('officials-admin-form').classList.remove('hidden');
         }
         loadedTeamsOfficialsPageKey = '';
-        loadedUsersOfficialsKey = '';
+        invalidateAdminUserSearchState();
         message.textContent = 'Official removed.';
         await loadOfficialsForActiveTeam();
     } catch (error) {
@@ -1701,12 +1708,7 @@ async function renderCurrentUsersView() {
     const refreshedTerm = normalizeAdminSearchTerm(document.getElementById('search-users')?.value || '');
     if (term !== refreshedTerm) return;
 
-    const filtered = users.filter((u) => {
-        const officialSummary = getOfficialUserSummary(u, officialUserLookup);
-        if (officialFilter === 'officials' && !officialSummary) return false;
-        if (officialFilter === 'non-officials' && officialSummary) return false;
-        return matchesOfficialUserSearch(u, officialSummary, term);
-    });
+    const filtered = filterAdminUsersForView(users, officialUserLookup, officialFilter, term);
     renderUsers(filtered);
 }
 
