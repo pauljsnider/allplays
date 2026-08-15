@@ -102,6 +102,10 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
                     parentTeamIds: ['team-a'],
                     parentPlayerKeys: ['team-a::player-a']
                 });
+                await firestore.doc('users/platform-admin').set({
+                    isAdmin: true,
+                    parentTeamIds: []
+                });
                 await firestore.doc('users/revoked-parent').set({
                     isAdmin: false,
                     parentTeamIds: ['team-a'],
@@ -123,6 +127,23 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
                 await firestore.doc('teams/team-a/chatConversations/targeted-a').set({
                     type: 'group',
                     participantIds: ['user:member-a']
+                });
+                await firestore.doc('teams/team-a/chatConversations/accepted-friend-a').set({
+                    type: 'direct',
+                    directAccess: 'accepted_friend',
+                    directUserIds: ['member-a', 'member-b'],
+                    participantIds: ['user:member-a', 'user:member-b']
+                });
+                await firestore.doc('teams/team-a/chatConversations/team-admin-a').set({
+                    type: 'direct',
+                    directAccess: 'team_admin',
+                    directUserIds: ['owner-a', 'member-a'],
+                    participantIds: ['user:owner-a', 'user:member-a']
+                });
+                await firestore.doc('teams/team-a/chatConversations/staff-a').set({
+                    type: 'group',
+                    participantIds: [],
+                    participantRoles: ['staff']
                 });
                 await firestore.doc('teams/team-a/games/game-a').set({ status: 'scheduled', liveStatus: 'live' });
                 await firestore.doc('teams/team-b/games/game-b').set({ status: 'scheduled', liveStatus: 'live' });
@@ -937,6 +958,74 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
                     { contentType: 'image/jpeg' }
                 )
             );
+        });
+
+        it('keeps accepted-friend attachments private from nonparticipant team and platform managers', async () => {
+            const memberAStorage = testEnv.authenticatedContext('member-a', {
+                email: 'member-a@example.com',
+                email_verified: true
+            }).storage();
+            const memberBStorage = testEnv.authenticatedContext('member-b', {
+                email: 'member-b@example.com',
+                email_verified: true
+            }).storage();
+            const privatePathA = 'stat-sheets/team-chat/team-a/accepted-friend-a/member-a/photo-a.jpg';
+            const privatePathB = 'stat-sheets/team-chat/team-a/accepted-friend-a/member-b/photo-b.jpg';
+
+            await assertSucceeds(memberAStorage.ref(privatePathA).put(
+                new Uint8Array([1]),
+                { contentType: 'image/jpeg' }
+            ));
+            await assertSucceeds(memberBStorage.ref(privatePathB).put(
+                new Uint8Array([1]),
+                { contentType: 'image/jpeg' }
+            ));
+            await assertSucceeds(memberAStorage.ref(privatePathB).getMetadata());
+            await assertSucceeds(memberBStorage.ref(privatePathA).getMetadata());
+            await assertFails(memberBStorage.ref(privatePathA).delete());
+            await assertFails(
+                memberAStorage.ref('stat-sheets/team-chat/team-a/accepted-friend-a').listAll()
+            );
+
+            for (const [uid, claims] of [
+                ['owner-a', { email: 'owner-a@example.com', email_verified: true }],
+                ['admin-a', { email: 'admin-a@example.com', email_verified: true }],
+                ['platform-admin', { email: 'platform-admin@example.com', email_verified: true }]
+            ]) {
+                const managerStorage = testEnv.authenticatedContext(uid, claims).storage();
+                await assertFails(managerStorage.ref(privatePathA).getMetadata());
+                await assertFails(managerStorage.ref(
+                    `stat-sheets/team-chat/team-a/accepted-friend-a/${uid}/manager-upload.jpg`
+                ).put(
+                    new Uint8Array([1]),
+                    { contentType: 'image/jpeg' }
+                ));
+                await assertFails(managerStorage.ref(privatePathA).delete());
+            }
+
+            await assertSucceeds(memberAStorage.ref(privatePathA).delete());
+            await assertSucceeds(memberBStorage.ref(privatePathB).delete());
+        });
+
+        it('preserves manager attachment access for staff and team-admin conversations', async () => {
+            const ownerStorage = testEnv.authenticatedContext('owner-a', {
+                email: 'owner-a@example.com',
+                email_verified: true
+            }).storage();
+            const adminStorage = testEnv.authenticatedContext('admin-a', {
+                email: 'admin-a@example.com',
+                email_verified: true
+            }).storage();
+
+            for (const conversationId of ['staff-a', 'team-admin-a']) {
+                const path = `stat-sheets/team-chat/team-a/${conversationId}/owner-a/managed.jpg`;
+                await assertSucceeds(ownerStorage.ref(path).put(
+                    new Uint8Array([1]),
+                    { contentType: 'image/jpeg' }
+                ));
+                await assertSucceeds(adminStorage.ref(path).getMetadata());
+                await assertSucceeds(adminStorage.ref(path).delete());
+            }
         });
 
         it('allows the cached legacy team chat upload path while preserving team and uploader boundaries', async () => {
