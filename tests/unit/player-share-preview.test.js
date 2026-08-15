@@ -42,8 +42,11 @@ describe('public player share preview wiring', () => {
         expect(handler).toContain('buildPublicPlayerShareProjection');
         expect(handler).toContain("res.status(404).send('Player profile not found.')");
         expect(handler).toContain("res.set('Cache-Control', 'private, no-store, max-age=0')");
-        expect(handler).toContain("res.set('Access-Control-Allow-Origin', 'https://allplays.ai')");
-        expect(handler).toContain('const shareUrl = `https://game-flow-c6311.web.app/player-card?${shareParams.toString()}`;');
+        expect(handler).toContain('setPublicSharePreviewCorsHeaders(res)');
+        expect(source).toContain("res.set('Access-Control-Allow-Origin', '*')");
+        expect(handler).toContain("if (req.method === 'OPTIONS')");
+        expect(source).toContain("const PUBLIC_SHARE_PREVIEW_ORIGIN = 'https://game-flow-c6311.web.app'");
+        expect(handler).toContain('`${PUBLIC_SHARE_PREVIEW_ORIGIN}/player-card?${shareParams.toString()}`');
         expect(handler.indexOf("res.set('Cache-Control', 'private, no-store, max-age=0')"))
             .toBeLessThan(handler.indexOf('firestore.doc(`teams/${teamId}`).get()'));
         expect(handler).not.toContain('photoUrl');

@@ -29,12 +29,23 @@ describe('live game share preview wiring', () => {
     it('keeps preview shares on Firebase Hosting until the canonical host cutover', () => {
         const tracker = repoFile('track-live.html');
         const schedule = repoFile('edit-schedule.html');
-        const functions = repoFile('functions/index.js');
+        const cutoverRunbook = repoFile('docs/hosting-cutover-runbook.md');
 
+        expect(cutoverRunbook).toContain('from\nGitHub Pages to the Firebase Hosting candidate');
         expect(tracker).toContain('https://game-flow-c6311.web.app/watch?teamId=${encodeURIComponent(currentTeamId)}&gameId=${encodeURIComponent(currentGameId)}');
         expect(schedule).toContain('https://game-flow-c6311.web.app/watch?teamId=${encodeURIComponent(currentTeamId)}&gameId=${encodeURIComponent(gameId)}');
-        expect(functions).toContain('const shareUrl = `https://game-flow-c6311.web.app/watch?${query}`;');
         expect(tracker).not.toContain('`${window.location.origin}/watch?');
         expect(schedule).not.toContain('`${window.location.origin}/watch?');
+    });
+
+    it('keeps crawler metadata on the deployed candidate origin before DNS cutover', () => {
+        const source = repoFile('functions/index.js');
+        const start = source.indexOf('exports.liveGameSharePreview = functions');
+        const end = source.indexOf('exports.playerSharePreview = functions', start);
+        const handler = source.slice(start, end);
+
+        expect(handler).toContain('setPublicSharePreviewCorsHeaders(res)');
+        expect(handler).toContain('`${PUBLIC_SHARE_PREVIEW_ORIGIN}/watch?${query}`');
+        expect(handler).not.toContain('`https://allplays.ai/watch?${query}`');
     });
 });

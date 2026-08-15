@@ -19314,10 +19314,24 @@ exports.getPublicGameProjection = functions.https.onCall(async (data, context = 
   return { item: game };
 });
 
+const PUBLIC_SHARE_PREVIEW_ORIGIN = 'https://game-flow-c6311.web.app';
+
+function setPublicSharePreviewCorsHeaders(res) {
+  res.set('Access-Control-Allow-Origin', '*');
+  res.set('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+  res.set('Access-Control-Allow-Headers', 'Content-Type');
+  res.set('Access-Control-Max-Age', '86400');
+}
+
 exports.liveGameSharePreview = functions
   .runWith({ timeoutSeconds: 15, memory: '256MB' })
   .https
   .onRequest(async (req, res) => {
+    setPublicSharePreviewCorsHeaders(res);
+    if (req.method === 'OPTIONS') {
+      res.status(204).end();
+      return;
+    }
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       res.set('Allow', 'GET, HEAD');
       res.status(405).send('Method not allowed.');
@@ -19359,7 +19373,7 @@ exports.liveGameSharePreview = functions
 
       const query = `teamId=${encodeURIComponent(teamId)}&gameId=${encodeURIComponent(gameId)}`;
       const redirectUrl = `https://allplays.ai/live-game.html?${query}`;
-      const shareUrl = `https://game-flow-c6311.web.app/watch?${query}`;
+      const shareUrl = `${PUBLIC_SHARE_PREVIEW_ORIGIN}/watch?${query}`;
       const metadata = buildLiveGameShareMetadata({
         teamName: game.teamName || team.name,
         opponent: game.opponent,
@@ -19389,6 +19403,11 @@ exports.playerSharePreview = functions
   .runWith({ timeoutSeconds: 15, memory: '256MB' })
   .https
   .onRequest(async (req, res) => {
+    setPublicSharePreviewCorsHeaders(res);
+    if (req.method === 'OPTIONS') {
+      res.status(204).end();
+      return;
+    }
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       res.set('Allow', 'GET, HEAD');
       res.status(405).send('Method not allowed.');
@@ -19397,8 +19416,6 @@ exports.playerSharePreview = functions
 
     res.set('Cache-Control', 'private, no-store, max-age=0');
     res.set('X-Robots-Tag', 'noindex, nofollow');
-    res.set('Access-Control-Allow-Origin', 'https://allplays.ai');
-
     const rateLimit = checkPublicOpportunityBrowseRateLimit({
       ip: `player-share|${getRequestIp(req)}`
     });
@@ -19448,7 +19465,7 @@ exports.playerSharePreview = functions
       const shareParams = new URLSearchParams({ teamId, playerId });
       if (gameId) shareParams.set('gameId', gameId);
       const redirectUrl = `https://allplays.ai/player.html#${playerPageParams.toString()}`;
-      const shareUrl = `https://game-flow-c6311.web.app/player-card?${shareParams.toString()}`;
+      const shareUrl = `${PUBLIC_SHARE_PREVIEW_ORIGIN}/player-card?${shareParams.toString()}`;
       const metadata = buildPlayerShareMetadata(projection);
       const html = buildPlayerShareHtml({ metadata, redirectUrl, shareUrl });
       res.set('Content-Type', 'text/html; charset=utf-8');

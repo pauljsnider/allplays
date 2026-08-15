@@ -356,7 +356,12 @@ async function installMocks(page, scenario, { playerShareStatus = 200 } = {}) {
     await page.route(/\/js\/team-admin-banner\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: bannerModule }));
     await page.route(/\/js\/team-access\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: teamAccessModule }));
     await page.route(/\/js\/premium-entitlements\.js\?v=\d+$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: premiumModule }));
-    await page.route(/\/player-card(?:\?.*)?$/, (route) => route.fulfill({ status: playerShareStatus, contentType: 'text/html', body: '' }));
+    await page.route(/\/player-card(?:\?.*)?$/, (route) => route.fulfill({
+        status: playerShareStatus,
+        contentType: 'text/html',
+        headers: { 'Access-Control-Allow-Origin': '*' },
+        body: ''
+    }));
 }
 
 async function openRequestedPlayerGame(page, baseURL, scenario) {
@@ -421,8 +426,8 @@ test('public player page shares the clean preview URL after the server approves 
     expect(payload).toEqual({
         title: 'Ava Cole #3 — Comets',
         text: "View Ava Cole's player page on ALL PLAYS.",
-        url: `${baseURL}/player-card?teamId=team-1&playerId=p1&gameId=older-game`,
-        clipboardText: `Ava Cole #3 — Comets\n${baseURL}/player-card?teamId=team-1&playerId=p1&gameId=older-game`
+        url: 'https://game-flow-c6311.web.app/player-card?teamId=team-1&playerId=p1&gameId=older-game',
+        clipboardText: 'Ava Cole #3 — Comets\nhttps://game-flow-c6311.web.app/player-card?teamId=team-1&playerId=p1&gameId=older-game'
     });
 });
 
