@@ -19314,7 +19314,7 @@ exports.getPublicGameProjection = functions.https.onCall(async (data, context = 
   return { item: game };
 });
 
-const PUBLIC_SHARE_PREVIEW_ORIGIN = 'https://game-flow-c6311.web.app';
+const PUBLIC_SHARE_PREVIEW_ORIGIN = 'https://share.allplays.ai';
 
 function setPublicSharePreviewCorsHeaders(res) {
   res.set('Access-Control-Allow-Origin', '*');

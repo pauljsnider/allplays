@@ -28,7 +28,8 @@ describe('public player share preview wiring', () => {
         expect(html).toContain("fetch(shareUrl, { method: 'HEAD', credentials: 'omit' })");
         expect(html).toContain("if (!response.ok) return;");
         expect(html).toContain("container.classList.remove('hidden');");
-        expect(html).toContain("url = new URL('/player-card', 'https://game-flow-c6311.web.app')");
+        expect(html).toContain("url = new URL('/player-card', 'https://share.allplays.ai')");
+        expect(html).not.toContain("url = new URL('/player-card', 'https://game-flow-c6311.web.app')");
         expect(html).not.toContain("url = new URL('/player-card', window.location.origin)");
     });
 
@@ -45,7 +46,8 @@ describe('public player share preview wiring', () => {
         expect(handler).toContain('setPublicSharePreviewCorsHeaders(res)');
         expect(source).toContain("res.set('Access-Control-Allow-Origin', '*')");
         expect(handler).toContain("if (req.method === 'OPTIONS')");
-        expect(source).toContain("const PUBLIC_SHARE_PREVIEW_ORIGIN = 'https://game-flow-c6311.web.app'");
+        expect(source).toContain("const PUBLIC_SHARE_PREVIEW_ORIGIN = 'https://share.allplays.ai'");
+        expect(source).not.toContain("const PUBLIC_SHARE_PREVIEW_ORIGIN = 'https://game-flow-c6311.web.app'");
         expect(handler).toContain('`${PUBLIC_SHARE_PREVIEW_ORIGIN}/player-card?${shareParams.toString()}`');
         expect(handler.indexOf("res.set('Cache-Control', 'private, no-store, max-age=0')"))
             .toBeLessThan(handler.indexOf('firestore.doc(`teams/${teamId}`).get()'));

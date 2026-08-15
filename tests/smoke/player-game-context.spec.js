@@ -426,8 +426,8 @@ test('public player page shares the clean preview URL after the server approves 
     expect(payload).toEqual({
         title: 'Ava Cole #3 — Comets',
         text: "View Ava Cole's player page on ALL PLAYS.",
-        url: 'https://game-flow-c6311.web.app/player-card?teamId=team-1&playerId=p1&gameId=older-game',
-        clipboardText: 'Ava Cole #3 — Comets\nhttps://game-flow-c6311.web.app/player-card?teamId=team-1&playerId=p1&gameId=older-game'
+        url: 'https://share.allplays.ai/player-card?teamId=team-1&playerId=p1&gameId=older-game',
+        clipboardText: 'Ava Cole #3 — Comets\nhttps://share.allplays.ai/player-card?teamId=team-1&playerId=p1&gameId=older-game'
     });
 });
 
