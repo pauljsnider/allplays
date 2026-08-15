@@ -26,19 +26,19 @@ describe('live game share preview wiring', () => {
         });
     });
 
-    it('keeps preview shares on Firebase Hosting until the canonical host cutover', () => {
+    it('uses the branded Firebase Hosting domain for preview shares', () => {
         const tracker = repoFile('track-live.html');
         const schedule = repoFile('edit-schedule.html');
-        const cutoverRunbook = repoFile('docs/hosting-cutover-runbook.md');
 
-        expect(cutoverRunbook).toContain('from\nGitHub Pages to the Firebase Hosting candidate');
-        expect(tracker).toContain('https://game-flow-c6311.web.app/watch?teamId=${encodeURIComponent(currentTeamId)}&gameId=${encodeURIComponent(currentGameId)}');
-        expect(schedule).toContain('https://game-flow-c6311.web.app/watch?teamId=${encodeURIComponent(currentTeamId)}&gameId=${encodeURIComponent(gameId)}');
+        expect(tracker).toContain('https://share.allplays.ai/watch?teamId=${encodeURIComponent(currentTeamId)}&gameId=${encodeURIComponent(currentGameId)}');
+        expect(schedule).toContain('https://share.allplays.ai/watch?teamId=${encodeURIComponent(currentTeamId)}&gameId=${encodeURIComponent(gameId)}');
+        expect(tracker).not.toContain('https://game-flow-c6311.web.app/watch');
+        expect(schedule).not.toContain('https://game-flow-c6311.web.app/watch');
         expect(tracker).not.toContain('`${window.location.origin}/watch?');
         expect(schedule).not.toContain('`${window.location.origin}/watch?');
     });
 
-    it('keeps crawler metadata on the deployed candidate origin before DNS cutover', () => {
+    it('keeps crawler metadata on the branded share origin', () => {
         const source = repoFile('functions/index.js');
         const start = source.indexOf('exports.liveGameSharePreview = functions');
         const end = source.indexOf('exports.playerSharePreview = functions', start);
@@ -47,5 +47,7 @@ describe('live game share preview wiring', () => {
         expect(handler).toContain('setPublicSharePreviewCorsHeaders(res)');
         expect(handler).toContain('`${PUBLIC_SHARE_PREVIEW_ORIGIN}/watch?${query}`');
         expect(handler).not.toContain('`https://allplays.ai/watch?${query}`');
+        expect(source).toContain("const PUBLIC_SHARE_PREVIEW_ORIGIN = 'https://share.allplays.ai'");
+        expect(source).not.toContain("const PUBLIC_SHARE_PREVIEW_ORIGIN = 'https://game-flow-c6311.web.app'");
     });
 });

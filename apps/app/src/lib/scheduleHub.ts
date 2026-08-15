@@ -165,7 +165,7 @@ function getPublicOrigin() {
 }
 
 function getSharePreviewOrigin() {
-  return 'https://game-flow-c6311.web.app';
+  return 'https://share.allplays.ai';
 }
 
 function getPublicHref(path: string, params: Record<string, string>, hash = '') {
