@@ -68,7 +68,7 @@ Define what changes—and what must remain stable—inside each destination afte
 
 ### Acceptance criteria
 
-- Zero-team users see clear Find, Join, and Create next actions.
+- Zero-team users always see clear Find and Join next actions. Create appears only when current authoritative capability permits team creation; otherwise the empty state explains how to find or join a team and does not render a disabled or misleading Create action.
 - Single-team users can still reach the Teams root; context shortcuts may deep-link but must not erase the root.
 - Parent, coach/admin, and mixed-role More sections match current authorization behavior.
 
