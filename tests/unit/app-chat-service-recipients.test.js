@@ -87,6 +87,7 @@ vi.mock('../../apps/app/src/lib/authService.ts', () => ({
     getNativeAuthUserId: vi.fn(() => 'current-1')
 }));
 vi.mock('../../apps/app/src/lib/performanceInstrumentation.ts', () => ({
+    getPerformancePlatform: vi.fn(() => 'web'),
     now: vi.fn(() => 1000),
     startPerformanceSpan: vi.fn(() => ({
         end: vi.fn()

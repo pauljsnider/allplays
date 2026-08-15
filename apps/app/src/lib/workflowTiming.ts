@@ -27,9 +27,12 @@ export function startWorkflowTimer(workflowName: string, baseMeta: WorkflowMeta 
       ...baseMeta
     }
   });
+  let ended = false;
 
   return {
     end(meta: WorkflowMeta = {}) {
+      if (ended) return;
+      ended = true;
       const mergedMeta = {
         category: 'workflow',
         workflowName,

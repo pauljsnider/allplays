@@ -44,8 +44,15 @@ describe('Schedule async operation contract', () => {
     });
 
     it('keeps resume refresh and first meaningful render on the shared loading state', () => {
-        expect(scheduleSource).toContain('useRefreshOnResume(() => { void refreshSchedule(true); }, { enabled: Boolean(auth.user?.uid) });');
+        expect(scheduleSource).toContain('useRefreshOnResume(() => refreshSchedule(true), { enabled: Boolean(auth.user?.uid) });');
         expect(scheduleSource).toContain("recordFirstMeaningfulRender('schedule');");
         expect(scheduleSource).toContain('if (!hasStartedInitialScheduleLoadRef.current || scheduleReadLoading || isInitialScheduleLoad) {');
+    });
+
+    it('cancels superseded screen and initial-load timers', () => {
+        const refreshScheduleSource = getRefreshScheduleSource();
+
+        expect(refreshScheduleSource).toContain("timer.cancel({ reason: 'superseded' });");
+        expect(refreshScheduleSource).toContain("initialLoadTimer?.cancel({ reason: 'superseded' });");
     });
 });

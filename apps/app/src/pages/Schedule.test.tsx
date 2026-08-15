@@ -37,11 +37,13 @@ const appDataCacheMocks = vi.hoisted(() => ({
 
 const uxTimingMocks = vi.hoisted(() => ({
   end: vi.fn(),
+  cancel: vi.fn(),
   recordFirstMeaningfulRender: vi.fn()
 }));
 
 const initialLoadTelemetryMocks = vi.hoisted(() => ({
-  end: vi.fn()
+  end: vi.fn(),
+  cancel: vi.fn()
 }));
 
 const shellLayoutMocks = vi.hoisted(() => ({
@@ -64,13 +66,14 @@ vi.mock('../lib/telemetry', () => ({
   startAppInitialLoadTimer: vi.fn(() => initialLoadTelemetryMocks)
 }));
 vi.mock('../lib/performanceInstrumentation', () => ({
+  getPerformancePlatform: vi.fn(() => 'web'),
   now: vi.fn(() => 0),
   startPerformanceSpan: vi.fn(() => ({ startedAt: 0, end: vi.fn() })),
   recordCompletedPerformanceSpan: vi.fn()
 }));
 vi.mock('../lib/uxTiming', () => ({
   recordFirstMeaningfulRender: uxTimingMocks.recordFirstMeaningfulRender,
-  startScreenMountTimer: vi.fn(() => ({ end: uxTimingMocks.end })),
+  startScreenMountTimer: vi.fn(() => ({ end: uxTimingMocks.end, cancel: uxTimingMocks.cancel })),
   startWarmResumeTimer: vi.fn(() => ({ end: vi.fn() })),
   startUxTimer: vi.fn(() => ({ end: vi.fn(), cancel: vi.fn() }))
 }));

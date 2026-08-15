@@ -33,6 +33,7 @@ const publicActionMocks = vi.hoisted(() => ({
 vi.mock('../../apps/app/src/lib/scheduleService.ts', () => scheduleMocks);
 vi.mock('../../apps/app/src/lib/publicActions.ts', () => publicActionMocks);
 vi.mock('../../apps/app/src/lib/performanceInstrumentation.ts', () => ({
+    getPerformancePlatform: vi.fn(() => 'web'),
     now: vi.fn(() => 0),
     startPerformanceSpan: vi.fn(() => ({ startedAt: 0, end: vi.fn() })),
     recordCompletedPerformanceSpan: vi.fn()
@@ -48,7 +49,7 @@ vi.mock('@capacitor-firebase/performance', () => ({
 }));
 vi.mock('../../apps/app/src/lib/uxTiming.ts', () => ({
     recordFirstMeaningfulRender: vi.fn(),
-    startScreenMountTimer: vi.fn(() => ({ end: vi.fn() })),
+    startScreenMountTimer: vi.fn(() => ({ end: vi.fn(), cancel: vi.fn() })),
     startUxTimer: vi.fn(() => ({ end: vi.fn() }))
 }));
 vi.mock('../../apps/app/src/lib/scheduleAiImport.ts', async () => {
