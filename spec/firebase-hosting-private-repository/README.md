@@ -107,7 +107,7 @@ The migration is complete only when:
 - Post-deploy smoke consumes the deployment receipt and verifies the requested target SHA, deploy run/attempt, and manifest digest rather than inferring release identity from the dispatch ref.
 - Keyless production, preview, smoke, recovery, and mobile identities pass private canaries without broadening claims or storing service-account keys.
 - PaulBot can read, branch, open and update pull requests, report its exact-head gate, refuse unsafe merges, and enter `private-cutover` or `budget-guard` mode fail-closed.
-- A post-privacy seven-day measurement remains at or below the accepted monthly cost forecast, with alerts and workload attribution enabled.
+- A post-privacy seven-day actual remains within its same-period forecast tolerance, and the corresponding normalized monthly run rate including fixed costs remains within the accepted monthly forecast and ceiling, with alerts and workload attribution enabled.
 - The private operator record contains exact DNS, identity, billing, evidence, and rollback data; none of that sensitive material appears in this public history.
 
 ## Public sources

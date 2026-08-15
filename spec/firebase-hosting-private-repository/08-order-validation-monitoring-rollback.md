@@ -115,8 +115,8 @@ Exit gate: every required canary passes and no cost/protection/security alert is
 ### 15. Harden and close out
 
 - At 24 hours, validate product/auth/monitoring and remove temporary dual-host controls.
-- At seven days, reconcile cost and access, rotate transitional credentials, and tighten least privilege.
-- After one billing cycle, reconcile forecast to actual invoice and close or adjust budgets.
+- At seven days, reconcile actual cost against the same seven-day forecast and compare a normalized monthly run rate, including fixed monthly costs, with the monthly forecast and ceiling; also reconcile access, rotate transitional credentials, and tighten least privilege.
+- After one billing cycle, reconcile the monthly forecast and ceiling to the same-period actual invoice and close or adjust budgets.
 - Archive the private operator record according to the accepted retention policy and publish only a sanitized completion summary.
 
 Exit gate: exact production evidence, private repository state, PaulBot health, and billing reconciliation are complete.
@@ -132,7 +132,7 @@ Exit gate: exact production evidence, private repository state, PaulBot health, 
 | Auth/product | Candidate auth/deep-link matrix | Canonical two-network smoke | Authenticated private release smoke |
 | Repository | Plan/capability proof | Pages fully retired | Private access and protections |
 | PaulBot | Public rehearsal | Drained `private-cutover` | Staged private canary and bounded resume |
-| Cost | Seven-day forecast at or below ceiling | Budget alerts active | Seven-day and billing-cycle reconciliation |
+| Cost | Period-normalized forecast at or below ceiling | Budget alerts active | Same-period seven-day, normalized-monthly, and billing-cycle reconciliation |
 | Security | Full-history scan and replacements | Public-only feature disposition | Private security tooling active |
 
 ## Monitoring and alerts

@@ -29,7 +29,7 @@ The private forecast uses completed GitHub-hosted jobs over an owner-approved re
 11. Caches are keyed narrowly, restored only across compatible trust contexts, bounded below the repository cache allowance, and evicted when they no longer reduce more runner cost than they consume in storage or upload time.
 12. Account and repository budget alerts are enabled at privately recorded early-warning, intervention, and critical thresholds. A hard account-level stop is used only if an independently tested emergency release and recovery path remains available.
 13. Cost optimization must not introduce self-hosted runner trust into privileged workflows by default. Any self-hosted alternative requires a separate isolation, patching, secret, persistence, and capacity design and includes the current platform charge in its model.
-14. Seven days after privacy and again after one full billing cycle, actual usage is reconciled against the forecast. Exceeding the accepted ceiling triggers `budget-guard` and a review before optional automation resumes.
+14. Seven days after privacy, actual usage is compared with the forecast for the same seven-day interval and tolerance, and variable usage is normalized to a monthly run rate with monthly fixed costs added before comparison with the monthly forecast and cutover ceiling. After one full billing cycle, the actual invoice is compared with the same-period monthly forecast and ceiling. A breach of either same-period comparison triggers `budget-guard` and a review before optional automation resumes.
 
 ## Design
 
@@ -63,8 +63,8 @@ The repository exposes a cost health state: `normal`, `warning`, `budget-guard`,
 | Forecast | Owner-approved representative interval | Projected total incremental cost passes the private cutover ceiling |
 | Burst | Modeled high-activity day and PaulBot backlog | Budget modes activate before accepted ceiling is exceeded |
 | Retention | Artifact/cache inventory | Every retained class has owner, purpose, and expiry |
-| Post-private | Seven-day actual usage reconciliation | Within forecast tolerance; no unowned cost class |
-| Billing-cycle | Provider invoice/usage export | Variance explained and policy adjusted |
+| Post-private | Seven-day actual versus seven-day forecast, plus normalized monthly run rate | Both same-period gates pass; no unowned cost class |
+| Billing-cycle | Monthly provider invoice versus monthly forecast and ceiling | Same-period gate passes; variance explained and policy adjusted |
 
 ## Tasks
 
