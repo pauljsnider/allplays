@@ -5,6 +5,7 @@ import {
     getPracticeShareText,
     getPublicGameReportHref,
     getPublicLiveHref,
+    getPublicLiveShareHref,
     getPublicPlayerHref,
     getPublicPracticeHref,
     getPublicReplayHref,
@@ -64,7 +65,8 @@ describe('React app schedule More tab hub helpers', () => {
             title: 'Watch live',
             icon: 'radio',
             badge: 'Live',
-            url: 'https://allplays.ai/live-game.html?teamId=team-1&gameId=game-1'
+            url: 'https://allplays.ai/live-game.html?teamId=team-1&gameId=game-1',
+            shareUrl: 'https://game-flow-c6311.web.app/watch?teamId=team-1&gameId=game-1'
         });
         expect(destinations[0].url).not.toContain('replay=true');
     });
@@ -138,6 +140,7 @@ describe('React app schedule More tab hub helpers', () => {
 
         expect(getPublicGameReportHref(game)).toBe('https://allplays.ai/game.html#teamId=team-1&gameId=game-1');
         expect(getPublicLiveHref(game)).toBe('https://allplays.ai/live-game.html?teamId=team-1&gameId=game-1');
+        expect(getPublicLiveShareHref(game)).toBe('https://game-flow-c6311.web.app/watch?teamId=team-1&gameId=game-1');
         expect(getPublicReplayHref(game)).toBe('https://allplays.ai/live-game.html?teamId=team-1&gameId=game-1&replay=true');
         expect(getPublicPlayerHref('team-1', 'game-1', 'player-1')).toBe('https://allplays.ai/player.html#teamId=team-1&gameId=game-1&playerId=player-1');
         expect(getPublicTeamHref(practice)).toBe('https://allplays.ai/team.html#teamId=team-1');

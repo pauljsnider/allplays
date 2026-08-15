@@ -151,6 +151,16 @@ const {
   serializePublicTeamProfile
 } = require('./public-team-api-core.cjs');
 const {
+  buildLiveGameShareHtml,
+  buildLiveGameShareMetadata
+} = require('./live-game-share-preview-core.cjs');
+const {
+  buildPlayerShareHtml,
+  buildPlayerShareMetadata,
+  buildPublicPlayerShareProjection,
+  normalizePlayerId
+} = require('./player-share-preview-core.cjs');
+const {
   normalizePublicTeamSearch,
   normalizePageSize,
   searchDatastorePublicTeamPage,
@@ -19303,6 +19313,176 @@ exports.getPublicGameProjection = functions.https.onCall(async (data, context = 
   if (!game) throwOpportunityError('not-found', 'Public game not found.');
   return { item: game };
 });
+
+const PUBLIC_SHARE_PREVIEW_ORIGIN = 'https://game-flow-c6311.web.app';
+
+function setPublicSharePreviewCorsHeaders(res) {
+  res.set('Access-Control-Allow-Origin', '*');
+  res.set('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+  res.set('Access-Control-Allow-Headers', 'Content-Type');
+  res.set('Access-Control-Max-Age', '86400');
+}
+
+exports.liveGameSharePreview = functions
+  .runWith({ timeoutSeconds: 15, memory: '256MB' })
+  .https
+  .onRequest(async (req, res) => {
+    setPublicSharePreviewCorsHeaders(res);
+    if (req.method === 'OPTIONS') {
+      res.status(204).end();
+      return;
+    }
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      res.set('Allow', 'GET, HEAD');
+      res.status(405).send('Method not allowed.');
+      return;
+    }
+
+    const rateLimit = checkPublicOpportunityBrowseRateLimit({
+      ip: `live-game-share|${getRequestIp(req)}`
+    });
+    if (!rateLimit.allowed) {
+      res.set('Retry-After', String(rateLimit.retryAfterSeconds));
+      res.status(429).send('Too many requests.');
+      return;
+    }
+
+    const teamId = typeof req.query?.teamId === 'string'
+      ? normalizeTeamId(req.query.teamId)
+      : '';
+    const gameId = typeof req.query?.gameId === 'string'
+      ? req.query.gameId.trim()
+      : '';
+    if (!teamId || !gameId || gameId.length > 1000) {
+      res.status(400).send('Valid teamId and gameId values are required.');
+      return;
+    }
+
+    try {
+      const teamSnap = await firestore.doc(`teams/${teamId}`).get();
+      if (!teamSnap.exists) {
+        res.status(404).send('Live game not found.');
+        return;
+      }
+      const team = { id: teamId, ...(teamSnap.data() || {}) };
+      const game = await getPublicGameProjection(teamId, gameId, team);
+      if (!game) {
+        res.status(404).send('Live game not found.');
+        return;
+      }
+
+      const query = `teamId=${encodeURIComponent(teamId)}&gameId=${encodeURIComponent(gameId)}`;
+      const redirectUrl = `https://allplays.ai/live-game.html?${query}`;
+      const shareUrl = `${PUBLIC_SHARE_PREVIEW_ORIGIN}/watch?${query}`;
+      const metadata = buildLiveGameShareMetadata({
+        teamName: game.teamName || team.name,
+        opponent: game.opponent,
+        startsAt: game.startsAt,
+        timeZone: team.timeZone || team.timezone
+      });
+      const html = buildLiveGameShareHtml({ metadata, redirectUrl, shareUrl });
+      res.set('Cache-Control', 'public, max-age=300, s-maxage=300');
+      res.set('Content-Type', 'text/html; charset=utf-8');
+      res.set('X-Robots-Tag', 'noindex, nofollow');
+      if (req.method === 'HEAD') {
+        res.status(200).end();
+        return;
+      }
+      res.status(200).send(html);
+    } catch (error) {
+      functions.logger.warn('Live game share preview failed.', {
+        teamId,
+        errorCode: error?.code || error?.name || 'preview-failed'
+      });
+      res.set('Retry-After', '60');
+      res.status(503).send('Live game preview is temporarily unavailable.');
+    }
+  });
+
+exports.playerSharePreview = functions
+  .runWith({ timeoutSeconds: 15, memory: '256MB' })
+  .https
+  .onRequest(async (req, res) => {
+    setPublicSharePreviewCorsHeaders(res);
+    if (req.method === 'OPTIONS') {
+      res.status(204).end();
+      return;
+    }
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      res.set('Allow', 'GET, HEAD');
+      res.status(405).send('Method not allowed.');
+      return;
+    }
+
+    res.set('Cache-Control', 'private, no-store, max-age=0');
+    res.set('X-Robots-Tag', 'noindex, nofollow');
+    const rateLimit = checkPublicOpportunityBrowseRateLimit({
+      ip: `player-share|${getRequestIp(req)}`
+    });
+    if (!rateLimit.allowed) {
+      res.set('Retry-After', String(rateLimit.retryAfterSeconds));
+      res.status(429).send('Too many requests.');
+      return;
+    }
+
+    const teamId = typeof req.query?.teamId === 'string'
+      ? normalizeTeamId(req.query.teamId)
+      : '';
+    const playerId = typeof req.query?.playerId === 'string'
+      ? normalizePlayerId(req.query.playerId)
+      : '';
+    const gameId = typeof req.query?.gameId === 'string'
+      ? req.query.gameId.trim()
+      : '';
+    if (!teamId || !playerId || gameId.length > 1000 || gameId.includes('/')) {
+      res.status(400).send('Valid teamId and playerId values are required.');
+      return;
+    }
+
+    try {
+      const [teamSnap, playerSnap] = await Promise.all([
+        firestore.doc(`teams/${teamId}`).get(),
+        firestore.doc(`teams/${teamId}/players/${playerId}`).get()
+      ]);
+      if (!teamSnap.exists || !playerSnap.exists) {
+        res.status(404).send('Player profile not found.');
+        return;
+      }
+
+      const projection = buildPublicPlayerShareProjection({
+        teamId,
+        team: { id: teamId, ...(teamSnap.data() || {}) },
+        player: { id: playerId, ...(playerSnap.data() || {}) }
+      });
+      if (!projection) {
+        res.status(404).send('Player profile not found.');
+        return;
+      }
+
+      const playerPageParams = new URLSearchParams({ teamId });
+      if (gameId) playerPageParams.set('gameId', gameId);
+      playerPageParams.set('playerId', playerId);
+      const shareParams = new URLSearchParams({ teamId, playerId });
+      if (gameId) shareParams.set('gameId', gameId);
+      const redirectUrl = `https://allplays.ai/player.html#${playerPageParams.toString()}`;
+      const shareUrl = `${PUBLIC_SHARE_PREVIEW_ORIGIN}/player-card?${shareParams.toString()}`;
+      const metadata = buildPlayerShareMetadata(projection);
+      const html = buildPlayerShareHtml({ metadata, redirectUrl, shareUrl });
+      res.set('Content-Type', 'text/html; charset=utf-8');
+      if (req.method === 'HEAD') {
+        res.status(200).end();
+        return;
+      }
+      res.status(200).send(html);
+    } catch (error) {
+      functions.logger.warn('Player share preview failed.', {
+        teamId,
+        errorCode: error?.code || error?.name || 'preview-failed'
+      });
+      res.set('Retry-After', '60');
+      res.status(503).send('Player preview is temporarily unavailable.');
+    }
+  });
 
 exports.reportPublicOpportunity = functions.https.onCall(async (data, context = {}) => {
   const uid = requireOpportunityAuth(context);

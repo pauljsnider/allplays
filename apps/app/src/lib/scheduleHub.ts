@@ -50,6 +50,7 @@ export function buildGameHubDestinations(event: ParentScheduleEvent): ScheduleHu
       detail: 'Live scoreboard, stream, and reactions',
       icon: 'radio',
       url: getPublicLiveHref(event),
+      shareUrl: getPublicLiveShareHref(event),
       actionLabel: 'Watch live',
       shareLabel: 'Live game',
       shareTitle: `${title} live`,
@@ -129,6 +130,13 @@ export function getPublicLiveHref(event: ParentScheduleEvent) {
   });
 }
 
+export function getPublicLiveShareHref(event: ParentScheduleEvent) {
+  return getSharePreviewHref('/watch', {
+    teamId: event.teamId,
+    gameId: event.id
+  });
+}
+
 export function getPublicReplayHref(event: ParentScheduleEvent) {
   return getPublicHref('/live-game.html', {
     teamId: event.teamId,
@@ -156,12 +164,24 @@ function getPublicOrigin() {
   return 'https://allplays.ai';
 }
 
+function getSharePreviewOrigin() {
+  return 'https://game-flow-c6311.web.app';
+}
+
 function getPublicHref(path: string, params: Record<string, string>, hash = '') {
   const url = new URL(path, getPublicOrigin());
   Object.entries(params).forEach(([key, value]) => {
     if (value) url.searchParams.set(key, value);
   });
   if (hash) url.hash = hash;
+  return url.toString();
+}
+
+function getSharePreviewHref(path: string, params: Record<string, string>) {
+  const url = new URL(path, getSharePreviewOrigin());
+  Object.entries(params).forEach(([key, value]) => {
+    if (value) url.searchParams.set(key, value);
+  });
   return url.toString();
 }
 

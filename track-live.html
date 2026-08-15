@@ -786,7 +786,7 @@
         });
 
         function getLiveShareUrl() {
-            return `${window.location.origin}/live-game.html?teamId=${currentTeamId}&gameId=${currentGameId}`;
+            return `https://game-flow-c6311.web.app/watch?teamId=${encodeURIComponent(currentTeamId)}&gameId=${encodeURIComponent(currentGameId)}`;
         }
 
         document.getElementById('shareLiveBtn').addEventListener('click', () => {
