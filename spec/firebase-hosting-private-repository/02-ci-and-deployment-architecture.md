@@ -15,9 +15,9 @@ Preserve exact-head validation and trusted deployment boundaries after the repos
 3. The untrusted preview builder remains separate from the trusted OIDC deployer. No privileged workflow may execute pull-request code merely because the repository is private.
 4. `pull_request_target`, unchecked artifact downloads, mutable action tags, interpolated untrusted shell input, and write-all token permissions are prohibited.
 5. Every action is pinned to a full commit SHA, top-level and job-level token permissions are deny-by-default, and write permissions are limited to the job that needs them.
-6. Production deployment becomes an explicit owner-authorized `workflow_dispatch` bound to an immutable commit SHA. A push to `master`, a merge, a PaulBot decision, or a scheduled workflow may validate readiness but may not publish production by itself.
+6. Production deployment becomes an explicit owner-authorized `workflow_dispatch` bound to an immutable commit SHA. The authoritative owner set is a change-controlled allowlist of immutable GitHub user IDs in the private operator record and the protected production environment permits approval only by that set. The workflow accepts only a dispatch actor in that allowlist, an approval by an allowed owner, and the workflow version on the current protected `master` ref; it fails closed when any actor, approval, repository, ref, or allowlist lookup is missing or ambiguous. A push to `master`, a merge, a PaulBot decision, a repository writer outside that set, or a scheduled workflow may validate readiness but may not publish production by itself.
 7. The production dispatcher verifies that the requested SHA is reachable from `master`, is the intended exact merge SHA, has the complete trusted validation set, has no newer unaccepted production dependency, and matches the staged artifact manifest.
-8. The production workflow remains the only live writer for Hosting, Functions, Firestore rules/indexes, and Storage rules. Component ordering, partial-failure gates, release markers, and post-deploy smoke remain coupled.
+8. The production workflow remains the only live writer for Hosting, Functions, Firestore rules/indexes, and Storage rules. Component ordering, partial-failure gates, release markers, and post-deploy smoke remain coupled. `deploy-prod` emits an immutable deployment receipt containing the authoritative requested target SHA, deployment run ID/attempt, and staged-manifest digest; the smoke workflow consumes that receipt, checks out and verifies that target SHA, and records the same identities. It must not substitute `workflow_run.head_sha` or the dispatch ref for the requested release SHA.
 9. During DNS observation, the production workflow may publish the same exact staged site artifact to both Firebase and Pages. It must never build a second Pages-specific source tree that can drift.
 10. After the Pages retirement gate, all Pages jobs, artifacts, permissions, environments, CNAME staging, deployment records, and manual publication workflows are removed or converted to nonpublishing validation.
 11. Spec-only pull requests retain their typed no-op release behavior and stable wrapper checks without consuming dependency-heavy suites.
@@ -37,7 +37,7 @@ The same-repository, ready-PR dispatch contract remains: an unprivileged build p
 
 ### Production path
 
-The release controller stages one immutable artifact and deploys components in their established safe order. The owner dispatch supplies or selects the exact merge SHA, and the workflow reuses exact-head PR evidence only when every identity and tree invariant matches. A manual dispatch is required because private Pro environments do not by themselves guarantee every public-repository protection feature, and PaulBot must not gain indirect deployment authority by merging.
+The release controller stages one immutable artifact and deploys components in their established safe order. The owner dispatch supplies or selects the exact merge SHA, and the workflow reuses exact-head PR evidence only when every identity and tree invariant matches. `--ref` selects the trusted workflow version; it does not identify the release candidate. The requested SHA remains a separate validated input and is carried in the deployment receipt into post-deploy smoke and release evidence. A manual dispatch plus the private owner allowlist and protected-environment approval are required because repository write access alone is not production authority, and PaulBot must not gain indirect deployment authority by merging.
 
 ### Pages transition
 
@@ -50,7 +50,7 @@ Before DNS cutover, Pages remains the canonical output and Firebase is the candi
 | PR fast lane | Exact-head stable contexts, spec-only routing, concurrency cancellation, read-only default token |
 | PR integration | Ready-head gating, reusable workflow identities, mobile and preview typed outcomes |
 | Trusted preview | Same-repository PR, current head, passed integration, verified artifact, claim-bound OIDC |
-| Production dispatch | Owner authorization, immutable SHA, reachable merge, complete trusted evidence, one artifact |
+| Production dispatch | Allowlisted actor and environment approval, trusted `master` workflow version, immutable requested SHA, reachable merge, complete trusted evidence, one artifact |
 | Component deploy | Existing safe order, failure blocks later publication, exact component markers |
 | Pages transition | Same artifact during observation; zero Pages publishers after retirement |
 | Private canary | Branch protection rejects missing/foreign checks and accepts complete exact-head evidence |
@@ -59,7 +59,8 @@ Before DNS cutover, Pages remains the canonical output and Firebase is the candi
 
 - [ ] Inventory every workflow trigger, caller, permission, environment, secret/variable dependency, runner OS, artifact, cache, and deployment writer.
 - [ ] Add contract tests that forbid new PR/master-push entrypoints and preserve stable required contexts.
-- [ ] Convert production publication to an owner-authorized exact-SHA dispatch while preserving safe component ordering and no-op releases.
+- [ ] Convert production publication to an allowlisted-owner, protected-environment, exact-SHA dispatch with fail-closed actor/ref/approval checks while preserving safe component ordering and no-op releases.
+- [ ] Emit a deployment receipt from `deploy-prod` and make post-deploy smoke consume and verify its target SHA, run identity, attempt, and manifest digest.
 - [ ] Add artifact-manifest creation and independent trusted verification where current provenance is incomplete.
 - [ ] Pin any remaining mutable action references and remove unnecessary token permissions.
 - [ ] Preserve and test the untrusted-builder/trusted-deployer preview boundary for private PRs.

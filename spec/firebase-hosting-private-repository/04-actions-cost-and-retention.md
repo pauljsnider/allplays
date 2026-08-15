@@ -8,28 +8,17 @@ Depends on: Specifications [1](./01-target-state-and-public-boundaries.md), [2](
 
 Measure the cost created by private-repository Actions, reduce it before privacy, and enforce durable workload and retention budgets without weakening required validation or production recovery.
 
-## Current-state estimate
+## Cost evidence boundary
 
-The planning number is **approximately $490 per month** after privacy.
+Exact workload samples, runner totals, rates, forecasts, invoices, alert thresholds, and the approved cutover ceiling are confidential operational planning data. They are calculated, reviewed, and retained only in the private operator record unless the owner separately approves publication. This public specification defines the measurement and enforcement contract but publishes no amount or sampled usage total.
 
-Methodology, captured August 15, 2026:
-
-- Query completed GitHub-hosted jobs created from August 1 through August 14, 2026.
-- Calculate elapsed runner time from each job's start and completion timestamps.
-- Round every job up to a whole minute, matching GitHub's published billing rule.
-- Price Linux and macOS minutes at the published standard-runner rates effective during the sample.
-- Project the 14-day result to 30 days, apply the recommended GitHub Pro included Actions allowance and plan price, and round to the nearest $10.
-- Assume Firebase Hosting remains within its no-cost storage and transfer allowances and no unrelated account-owned repository consumes the shared included Actions allowance.
-
-The sample contained approximately 14,100 completed jobs, 18,200 elapsed runner minutes, and 26,700 rounded billable minutes. Per-job rounding added roughly 46 percent over elapsed time, making the large number of short orchestration jobs a material cost driver. The 14-day modeled runner cost was approximately $234 before the included allowance.
-
-This is a public-history forecast, not billing evidence. A private billing export must replace it in the operator record before cutover. Vendor pricing, taxes, artifact storage, shared account usage, retries, and a different activity mix may change the invoice.
+The private forecast uses completed GitHub-hosted jobs over an owner-approved representative interval, elapsed and vendor-rounded runner time, current runner pricing, the selected plan and included allowance, shared account usage, storage, retries, taxes where applicable, and expected Firebase Hosting usage. A current private billing export must reconcile the model before cutover; public workflow metadata alone is not billing evidence.
 
 ## Requirements
 
-1. The repository must remain public until a complete seven-day shadow forecast projects no more than $25 per month total incremental cost, including the selected GitHub plan, Actions overage, Actions/Packages storage overage, and expected Firebase Hosting overage.
+1. The repository must remain public until a complete representative shadow forecast passes the owner-approved private cutover ceiling for total incremental cost, including the selected GitHub plan, Actions overage, Actions/Packages storage overage, and expected Firebase Hosting overage.
 2. The forecast uses job-level timestamps and operating systems, rounds each job according to current vendor rules, includes cancelled and failed jobs that consumed runner time, and attributes reusable workflows to the caller that caused them.
-3. The cost report groups usage by workflow, event, runner OS, actor class, pull request, retry/cancellation state, and workload class. Public output contains aggregates only; account-wide usage and billing exports remain private.
+3. The private cost report groups usage by workflow, event, runner OS, actor class, pull request, retry/cancellation state, and workload class. Public output is limited to a sanitized gate result and control state; exact aggregates, account-wide usage, and billing exports remain private unless separately approved for publication by the owner.
 4. Required tests, production deploys, recovery health, security response, and post-deploy smoke may not be silently skipped to satisfy a budget. Cost controls reduce duplication and frequency or block new optional work with a visible typed state.
 5. Superseded pull-request and preview runs use concurrency cancellation. Scheduled controllers do not start work already covered by an active or recently completed exact-head run.
 6. Spec-only and other low-impact changes retain stable required check contexts while avoiding dependency installs, browser suites, native work, previews, and production artifact rebuilds that do not apply.
@@ -38,7 +27,7 @@ This is a public-history forecast, not billing evidence. A private billing expor
 9. PaulBot batches compatible updates, caps concurrent active work, avoids repeated no-change refreshes, and enters `budget-guard` before optional automation can cause overage.
 10. Artifacts use the shortest retention compatible with their purpose. Transient untrusted handoff artifacts default to one day; failure evidence defaults to seven days; production provenance and signed release artifacts retain only the explicitly justified recovery period.
 11. Caches are keyed narrowly, restored only across compatible trust contexts, bounded below the repository cache allowance, and evicted when they no longer reduce more runner cost than they consume in storage or upload time.
-12. Account and repository budget alerts are enabled at early-warning, intervention, and critical thresholds. A hard account-level stop is used only if an independently tested emergency release and recovery path remains available.
+12. Account and repository budget alerts are enabled at privately recorded early-warning, intervention, and critical thresholds. A hard account-level stop is used only if an independently tested emergency release and recovery path remains available.
 13. Cost optimization must not introduce self-hosted runner trust into privileged workflows by default. Any self-hosted alternative requires a separate isolation, patching, secret, persistence, and capacity design and includes the current platform charge in its model.
 14. Seven days after privacy and again after one full billing cycle, actual usage is reconciled against the forecast. Exceeding the accepted ceiling triggers `budget-guard` and a review before optional automation resumes.
 
@@ -71,7 +60,7 @@ The repository exposes a cost health state: `normal`, `warning`, `budget-guard`,
 |---|---|---|
 | Baseline | Complete seven-day job ledger | No missing runner classes or causal workflows |
 | Optimization | Exact-head CI and safety suites | Stable contexts and trust boundaries unchanged |
-| Forecast | Seven consecutive representative days | Projected total incremental cost at or below $25/month |
+| Forecast | Owner-approved representative interval | Projected total incremental cost passes the private cutover ceiling |
 | Burst | Modeled high-activity day and PaulBot backlog | Budget modes activate before accepted ceiling is exceeded |
 | Retention | Artifact/cache inventory | Every retained class has owner, purpose, and expiry |
 | Post-private | Seven-day actual usage reconciliation | Within forecast tolerance; no unowned cost class |
@@ -80,13 +69,13 @@ The repository exposes a cost health state: `normal`, `warning`, `budget-guard`,
 ## Tasks
 
 - [ ] Commit a versioned, test-covered job-cost ledger using public metadata and externally configurable private billing inputs.
-- [ ] Establish per-workflow, per-event, and per-runner baseline attribution for at least seven representative days.
+- [ ] Establish per-workflow, per-event, and per-runner baseline attribution for an owner-approved representative interval.
 - [ ] Add duplicate-trigger, cancellation, impact-routing, macOS-path, and scheduled-work contract tests.
 - [ ] Consolidate safe short-lived jobs without combining trusted and untrusted execution.
 - [ ] Add PaulBot concurrency, batching, no-change suppression, and budget-mode controls.
 - [ ] Inventory every artifact and cache; assign retention, maximum size, purpose, and cleanup behavior.
 - [ ] Configure included-usage and budget alerts with private recipients.
-- [ ] Run a seven-day shadow forecast and obtain explicit acceptance of the monthly ceiling.
+- [ ] Run the private shadow forecast and obtain explicit owner acceptance of its confidential cutover ceiling.
 - [ ] Reconcile seven-day and full-cycle private usage after cutover.
 
 ## Public sources

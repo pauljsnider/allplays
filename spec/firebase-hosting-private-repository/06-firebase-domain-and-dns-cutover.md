@@ -17,7 +17,7 @@ Move the apex and `www` traffic from GitHub Pages to Firebase Hosting with pre-p
 5. Lower only the relevant routing TTLs to the approved cutover value, then wait at least the previous maximum TTL before changing targets. Do not disturb MX, SPF, DKIM, DMARC, or unrelated verification records.
 6. Confirm CAA permits the certificate authorities required by Firebase without broadening it unnecessarily. Firebase must report valid ownership and a cutover-ready domain state before routing changes.
 7. Stage one immutable site artifact from an exact accepted SHA and publish the identical file inventory to Firebase and Pages. Compare content hashes for all deployable static assets, not only the home page.
-8. Parity validation covers routes, clean URL/SPA behavior, 404 behavior, redirects, MIME types, compression, cache control, CSP and security headers, runtime config, well-known files, assets, service workers, and deep links.
+8. Cross-host parity validation covers deployable content hashes, routes, clean URL/SPA behavior, 404 behavior, redirects, MIME types, runtime config, well-known files, assets, service workers, and deep links. Header validation is host-specific: Pages must retain its staged Pages-compatible meta CSP and safe cache behavior, while Firebase must independently satisfy the destination response-header policy, including CSP with `frame-ancestors`, HSTS, `X-Content-Type-Options`, `Permissions-Policy`, compression, and cache control. Missing cross-host header parity is expected and must never be "fixed" by removing Firebase protections.
 9. Auth validation covers popup, popup-to-redirect fallback, redirect completion, email sign-in, verification handoff, reset flow, invited/deep-linked `next` destinations, authorized domains, OAuth redirect origins, and the configured `authDomain` behavior.
 10. App Check remains at its current enforcement state. The migration may add required allowed origins or monitoring, but enforcement is a separate change with separate rollout evidence.
 11. Enter a change freeze before the final same-SHA deployment. PaulBot is drained to `private-cutover`, normal merges stop, and the DNS operator confirms access to Firebase, DNS, GitHub, and rollback evidence.
@@ -35,7 +35,7 @@ Advanced Setup separates proof of control from traffic routing. Publish only Fir
 
 ### Exact-SHA parity
 
-The release manifest is the source of truth. Compare the candidate Firebase default domain and current Pages custom domain against a bounded route/file inventory. Dynamic Firebase reserved namespaces may differ by design, but deployable application content, security behavior, and user flows must match the acceptance matrix.
+The release manifest is the source of truth. Compare the candidate Firebase default domain and current Pages custom domain against a bounded route/file inventory. Dynamic Firebase reserved namespaces and host-managed headers may differ by design. `scripts/stage-pages-bundle.mjs` creates the Pages-compatible meta CSP and cannot reproduce Firebase response headers; `firebase.json` is the destination policy source. The gate therefore proves identical deployable application content and user flows, verifies the intentional Pages policy separately, and requires Firebase to meet its complete configured header policy without weakening it.
 
 ### DNS execution
 
@@ -53,7 +53,7 @@ Monitor both the custom domain and Firebase default domain continuously, sample 
 | `www` DNS | Current target exported | Firebase-supported target authoritative | Permanent apex redirect works |
 | TLS | Firebase readiness checked | Correct certificate begins serving | Valid chain/SAN on two networks |
 | Static content | Firebase/Pages hash parity | Accepted manifest on both | Canonical domain matches manifest |
-| Headers/cache | Candidate parity | No unsafe regression | Browser and command-line checks pass |
+| Headers/cache | Intentional host differences documented; each host policy passes | Firebase destination policy has no missing protection | Browser and command-line destination-policy checks pass |
 | Auth/deep links | Default-domain candidate passes | Custom-origin callback passes | Complete signed-in smoke passes |
 | Monitoring | Baselines captured | DNS/TLS alerts active | Stable through observation window |
 
@@ -62,7 +62,7 @@ Monitor both the custom domain and Firebase default domain continuously, sample 
 - [ ] Add apex and `www` through Firebase Advanced Setup and store exact issued actions privately.
 - [ ] Export and validate the authoritative DNS/CAA/TTL baseline without modifying unrelated records.
 - [ ] Lower relevant TTLs and wait the previous maximum TTL.
-- [ ] Build the exact-SHA route, file-hash, header, redirect, auth, and deep-link parity harness.
+- [ ] Build the exact-SHA route, file-hash, redirect, auth, and deep-link parity harness plus separate Pages and Firebase header-policy assertions.
 - [ ] Validate Firebase default-domain content and custom-domain readiness.
 - [ ] Rehearse cutover and rollback using symbolic public steps plus exact private values.
 - [ ] Freeze changes, drain PaulBot, deploy one exact SHA to both hosts, and capture release evidence.

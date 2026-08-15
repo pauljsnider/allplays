@@ -29,7 +29,8 @@ Exit gate: recommended GitHub Pro capabilities pass. Rollback: cancel the plan c
 ### 3. Make CI and release control private-compatible
 
 - Preserve stable PR entrypoints and contexts.
-- Convert production to owner-authorized exact-SHA manual dispatch.
+- Convert production to exact-SHA manual dispatch restricted to the authoritative private owner allowlist and protected-environment approval, with fail-closed actor/ref/approval checks.
+- Bind post-deploy smoke to the target SHA, deployment run/attempt, and manifest digest emitted by `deploy-prod` rather than to the dispatch ref or `workflow_run.head_sha`.
 - Preserve trusted preview and artifact boundaries.
 - Add Pages observation/retirement states without changing live hosting.
 
@@ -47,7 +48,7 @@ Exit gate: no unresolved live secret and every required capability has a private
 - Implement job attribution, duplicate/no-op suppression, cancellation, impact gating, macOS gating, safe job consolidation, retention limits, and budget states.
 - Observe at least seven representative days.
 
-Exit gate: forecast total incremental cost is at or below $25/month and burst tests activate controls safely. Rollback: revert individual optimizations that break validation; do not proceed at the approximately $490/month baseline.
+Exit gate: the confidential forecast passes the owner-approved private cutover ceiling and burst tests activate controls safely. Rollback: revert individual optimizations that break validation; do not proceed while the private cost gate fails.
 
 ### 6. Prepare PaulBot
 
@@ -63,15 +64,17 @@ Exit gate: Firebase reports cutover-ready ownership/domain state while Pages rem
 
 ### 8. Qualify one exact release candidate
 
-- Stage one exact-SHA artifact, deploy it to Firebase and Pages, compare file hashes, routes, headers, redirects, auth, deep links, and public/private smoke.
+- Stage one exact-SHA artifact and deploy it to Firebase and Pages as a pre-freeze qualification release.
+- Compare file hashes, routes, redirects, auth, deep links, and public/private smoke. Validate the Pages-compatible policy and Firebase destination response-header policy separately; do not require cross-host CSP/security-header equality.
 
-Exit gate: complete parity and production-safety evidence for the exact SHA. Rollback: redeploy the previous accepted exact release to both hosts.
+Exit gate: content/behavior parity and both host-specific security policies pass for the exact SHA. Rollback: redeploy the previous accepted exact release to both hosts.
 
 ### 9. Lower TTLs and rehearse
 
 - Export exact DNS again, lower only relevant TTLs, wait the previous maximum TTL, run a timed no-write rehearsal, freeze changes, and move PaulBot to `private-cutover`.
+- After the freeze is proven, redeploy the qualified artifact to both hosts through the authorized release path and revalidate its target SHA, deployment receipt, manifest digest, host-specific policies, and post-deploy smoke before any DNS mutation.
 
-Exit gate: operator access, witness, timing, rollback values, monitoring, and zero active mutations are proven. Rollback: restore prior TTLs or allow them to expire; no routing changed.
+Exit gate: operator access, witness, timing, rollback values, monitoring, zero active mutations, and the post-freeze same-SHA deployment/provenance evidence are proven. Rollback: restore prior TTLs or allow them to expire; no routing changed.
 
 ### 10. Cut DNS to Firebase
 
@@ -122,9 +125,9 @@ Exit gate: exact production evidence, private repository state, PaulBot health, 
 
 | Domain | Required evidence before DNS | Required evidence before privacy | Required evidence after privacy |
 |---|---|---|---|
-| Source/release | Exact manifest and validation | Firebase release marker and post-deploy smoke | Owner-dispatched private exact-SHA evidence |
+| Source/release | Exact manifest and validation | Receipt-bound Firebase release marker and post-deploy smoke | Allowlisted-owner-dispatched private exact-SHA evidence |
 | CI | Public exact-head checks | Private test-repository proof | Real private PR stable contexts |
-| Hosting | Firebase default-domain parity | Custom-domain stable observation | Firebase rollback capability |
+| Hosting | Content/behavior parity and Firebase destination header policy | Custom-domain stable observation | Firebase rollback capability |
 | DNS/TLS | Export, TTL wait, readiness | No response targets Pages | Ongoing resolver/TLS monitor |
 | Auth/product | Candidate auth/deep-link matrix | Canonical two-network smoke | Authenticated private release smoke |
 | Repository | Plan/capability proof | Pages fully retired | Private access and protections |

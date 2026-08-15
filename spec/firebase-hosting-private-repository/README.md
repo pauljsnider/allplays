@@ -8,14 +8,14 @@ These documents are planning artifacts only. Merging them does not authorize a F
 
 ## Public-documentation boundary
 
-This folder is committed while the repository is public, and the repository's existing public history and detached public forks will remain public after a visibility change. The specifications therefore contain only public product architecture, public workflow and check names, generalized credential roles, dated aggregate cost estimates, and links to public vendor documentation.
+This folder is committed while the repository is public, and the repository's existing public history and detached public forks will remain public after a visibility change. The specifications therefore contain only public product architecture, public workflow and check names, generalized credential roles, qualitative cost-control requirements, and links to public vendor documentation.
 
 The following values belong in a separate private operator record and must never be added to this folder:
 
 - Tokens, private keys, secret values, recovery codes, or raw credential scopes.
 - Service-account addresses, workload-identity resource strings, account or installation identifiers, and provider request payloads.
 - Internal hostnames, IP addresses, SSH aliases, dashboard ports, private filesystem paths, and nonpublic URLs.
-- Exact DNS rollback records, credential locations, billing exports, raw workflow logs, private contacts, and emergency access procedures.
+- Exact DNS rollback records, credential locations, billing exports, workload samples, cost forecasts, budget amounts and alert thresholds, raw workflow logs, private contacts, and emergency access procedures.
 
 The public specifications use symbolic roles such as `production deploy identity`, `repository-scoped automation credential`, and `authoritative DNS export`. An operator must resolve those roles from the private record during an approved migration.
 
@@ -32,13 +32,9 @@ The public specifications use symbolic roles such as `production deploy identity
 - Keep App Check enforcement outside this migration. Origin changes must not be coupled to a new App Check enforcement boundary.
 - Make every consequential step observable, reversible where possible, and conditional on explicit entry and exit evidence.
 
-## Cost TL;DR
+## Cost gate
 
-**Dated current-state estimate: approximately $490 per month after the repository becomes private.**
-
-That is the August 1–14, 2026 workflow run-rate projected to 30 days, with every completed GitHub-hosted job rounded up to a whole minute and priced by runner operating system. The sample contained about 26,700 rounded runner minutes across Linux and macOS. The estimate assumes GitHub Pro, applies its included Actions allowance, includes the plan price, assumes Firebase Hosting remains inside its no-cost storage and transfer allowances, and rounds to the nearest $10. It is a forecast from public workflow history, not a bill or a binding quote; taxes, storage overage, billing-account sharing, and future vendor prices can change it.
-
-The migration must not proceed at that run-rate. The acceptance target is **no more than $25 per month total incremental cost**, including the recommended GitHub plan and forecast Actions overage. The expected Firebase Hosting portion is $0 at current static-site scale, subject to a private usage check. Specification [4](./04-actions-cost-and-retention.md) defines the measurement method and cost gate.
+The migration cannot proceed until a representative private forecast, reconciled with current billing and account-wide usage, passes an explicitly owner-approved confidential cutover ceiling. Exact forecasts, usage totals, budget amounts, and alert thresholds stay in the private operator record unless publication receives separate owner approval. Specification [4](./04-actions-cost-and-retention.md) defines the public measurement and enforcement contract.
 
 ## Specification index
 
@@ -63,7 +59,7 @@ The repository is public and its default branch is protected by stable CI and Pa
 
 ### Chunk 1: Private-compatible control plane
 
-Implement specifications 1–4 without changing production hosting or visibility. Confirm the GitHub plan, preserve branch protection and environments, make release authority manual and exact-SHA-bound, harden identity, optimize CI, and collect an accepted seven-day private-cost forecast.
+Implement specifications 1–4 without changing production hosting or visibility. Confirm the GitHub plan, preserve branch protection and environments, make release authority allowlisted-owner-only and exact-SHA-bound, harden identity, optimize CI, and obtain acceptance of the confidential private cost gate.
 
 ### Chunk 2: PaulBot readiness
 
@@ -71,7 +67,7 @@ Implement specification 5 while the repository remains public. Exercise authenti
 
 ### Chunk 3: Firebase custom-domain cutover
 
-Implement specification 6. Pre-provision Firebase ownership and certificates with Advanced Setup while Pages remains live, deploy the same exact SHA to both hosts, prove parity, lower TTLs, change DNS, and observe Firebase as the canonical host while Pages remains the bounded rollback host.
+Implement specification 6. Pre-provision Firebase ownership and certificates with Advanced Setup while Pages remains live, qualify the same exact SHA on both hosts, lower TTLs, enter the freeze, redeploy and revalidate that artifact after the freeze, change DNS, and observe Firebase as the canonical host while Pages remains the bounded rollback host.
 
 ### Chunk 4: Pages retirement and privacy
 
@@ -82,11 +78,11 @@ Implement specifications 7–8. Retire Pages only after the DNS observation gate
 1. Rebase the implementation plan onto a clean, current default-branch SHA and export current public state into the private operator record.
 2. Select and activate the private-repository GitHub plan before relying on its capabilities.
 3. Make CI, deployments, identities, secrets, recovery workflows, and mobile release private-compatible while the repository is still public.
-4. Reduce and measure Actions usage until the seven-day forecast meets the accepted cost ceiling.
+4. Reduce and measure Actions usage until the representative private forecast passes the confidential owner-approved cost gate.
 5. Put PaulBot into a tested private-ready posture, then pause new work and drain active mutations.
 6. Pre-provision Firebase custom domains, ownership, and TLS without moving production traffic.
-7. Deploy one exact SHA to both hosts and pass content, header, auth, deep-link, and smoke parity.
-8. Lower DNS TTLs, wait out the previous TTL, execute a rehearsal, and enter the change freeze.
+7. Qualify one exact SHA on both hosts with content/behavior parity, separate host-specific security-policy checks, auth, deep-link, and smoke evidence.
+8. Lower DNS TTLs, wait out the previous TTL, execute a rehearsal, enter the change freeze, then redeploy and revalidate the qualified artifact and receipt before DNS mutation.
 9. Point DNS to Firebase, verify authoritative and public resolution plus TLS and product behavior, and observe for the defined window.
 10. Retire every GitHub Pages publication and binding; verify no DNS path can return to Pages.
 11. Make the repository private and execute CI, deployment, security, collaborator, and PaulBot canaries.
@@ -107,7 +103,8 @@ The migration is complete only when:
 - GitHub Pages is unpublished, its workflows and permissions are retired, and no Pages custom-domain takeover path remains.
 - The repository is private, intended collaborators and integrations retain only required access, and public forks/history are documented as still public.
 - Stable CI checks and server-enforced default-branch protection work on private pull requests.
-- Production deployment requires an explicit owner-authorized exact-SHA dispatch and cannot be initiated by PaulBot or an ordinary merge alone.
+- Production deployment requires a dispatch actor and protected-environment approval from the authoritative immutable-ID owner allowlist, uses the protected `master` workflow version, fails closed on ambiguous authorization, and cannot be initiated by PaulBot, another repository writer, or an ordinary merge alone.
+- Post-deploy smoke consumes the deployment receipt and verifies the requested target SHA, deploy run/attempt, and manifest digest rather than inferring release identity from the dispatch ref.
 - Keyless production, preview, smoke, recovery, and mobile identities pass private canaries without broadening claims or storing service-account keys.
 - PaulBot can read, branch, open and update pull requests, report its exact-head gate, refuse unsafe merges, and enter `private-cutover` or `budget-guard` mode fail-closed.
 - A post-privacy seven-day measurement remains at or below the accepted monthly cost forecast, with alerts and workload attribution enabled.
