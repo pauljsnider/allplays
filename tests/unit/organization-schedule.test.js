@@ -344,6 +344,13 @@ describe('organization schedule helpers', () => {
         expect(source).not.toContain('selectEl.innerHTML = teams.map');
     });
 
+    it('loads the current organization schedule module cache key', () => {
+        const source = readFileSync(new URL('../../organization-schedule.html', import.meta.url), 'utf8');
+
+        expect(source).toContain("from './js/organization-schedule.js?v=4';");
+        expect(source).not.toContain("from './js/organization-schedule.js?v=3';");
+    });
+
     it('wires the organization schedule bulk import UI', () => {
         const source = readFileSync(new URL('../../organization-schedule.html', import.meta.url), 'utf8');
 
