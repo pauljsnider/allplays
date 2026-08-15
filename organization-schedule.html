@@ -221,7 +221,19 @@
                         <div>
                             <label for="draft-team-ids" class="block text-sm font-medium text-gray-700">Division / Teams</label>
                             <select id="draft-team-ids" multiple size="6" class="mt-1 block w-full rounded-md border border-gray-300 p-2 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"></select>
-                            <p class="mt-1 text-xs text-gray-500">Select the teams to include in this bounded draft generation pass.</p>
+                            <p class="mt-1 text-xs text-gray-500">Select the teams to include, then use the controls below to set single-elimination seeds.</p>
+                            <div class="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
+                                <p class="text-sm font-medium text-gray-700">Single-elimination seed order</p>
+                                <ol id="draft-team-seed-order" class="mt-2 space-y-2"></ol>
+                            </div>
+                        </div>
+                        <div>
+                            <label for="draft-schedule-format" class="block text-sm font-medium text-gray-700">Schedule Format</label>
+                            <select id="draft-schedule-format" class="mt-1 block w-full rounded-md border border-gray-300 p-2 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                <option value="round_robin" selected>Round robin</option>
+                                <option value="single_elimination">Single elimination</option>
+                            </select>
+                            <p class="mt-1 text-xs text-gray-500">Single elimination publishes only resolved first-round games. BYEs and later TBD rounds remain in preview.</p>
                         </div>
                         <div class="grid gap-4 md:grid-cols-3">
                             <div>
@@ -339,10 +351,11 @@
             formatVenueAvailabilityRecord,
             getOrganizationTeams,
             inferOrganizationScheduleCsvMapping,
+            collectSeedOrderedTeams,
             sortOrganizationVenues,
             validateOrganizationVenueDraft,
             validateOrganizationMatchup
-        } from './js/organization-schedule.js?v=3';
+        } from './js/organization-schedule.js?v=5';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -378,6 +391,7 @@
         const venueError = document.getElementById('organization-venue-error');
         const venuesList = document.getElementById('organization-venues-list');
         const draftTeamSelect = document.getElementById('draft-team-ids');
+        const draftTeamSeedOrder = document.getElementById('draft-team-seed-order');
         const draftErrors = document.getElementById('draft-generator-errors');
         const draftReviewSummary = document.getElementById('draft-review-summary');
         const draftSlotList = document.getElementById('draft-slot-list');
@@ -390,6 +404,7 @@
         let accessibleTeams = [];
         let organizationCsvState = { fileName: '', preview: null };
         let organizationVenues = [];
+        let draftSeedOrderIds = [];
         const availabilityForm = document.getElementById('venue-availability-form');
         const blackoutForm = document.getElementById('blackout-date-form');
         const availabilityDaySelect = document.getElementById('availability-day');
@@ -397,7 +412,7 @@
         const saveAvailabilityButton = document.getElementById('save-venue-availability-btn');
         const saveBlackoutButton = document.getElementById('save-blackout-date-btn');
         const refreshVenueControlsButton = document.getElementById('refresh-venue-controls-btn');
-        let draftGeneratorState = { draftSlots: [], conflicts: [], unassignedTeams: [], generatedSlotCounts: null };
+        let draftGeneratorState = { draftSlots: [], conflicts: [], unassignedTeams: [], generatedSlotCounts: null, format: 'round_robin', bracket: null, byeTeams: [] };
 
         function setButtonBusy(button, busyText, busy) {
             if (!button) return;
@@ -764,9 +779,47 @@
             return Array.isArray(parsed) ? parsed : [];
         }
 
+        function renderDraftSeedOrder() {
+            const selectedTeams = collectSeedOrderedTeams({
+                selectedOptions: draftTeamSelect.selectedOptions,
+                organizationTeams,
+                seedOrderIds: draftSeedOrderIds
+            });
+            draftSeedOrderIds = selectedTeams.map((team) => team.id);
+            const rows = selectedTeams.map((team, index) => {
+                const row = document.createElement('li');
+                row.className = 'flex items-center justify-between gap-3 rounded-md border border-gray-200 bg-white px-3 py-2 text-sm';
+
+                const label = document.createElement('span');
+                label.textContent = `${index + 1}. ${team.name}`;
+
+                const controls = document.createElement('span');
+                controls.className = 'flex gap-2';
+                [-1, 1].forEach((direction) => {
+                    const button = document.createElement('button');
+                    button.type = 'button';
+                    button.className = 'rounded border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700 disabled:opacity-40';
+                    button.textContent = direction === -1 ? 'Move up' : 'Move down';
+                    button.disabled = direction === -1 ? index === 0 : index === selectedTeams.length - 1;
+                    button.addEventListener('click', () => {
+                        const nextIndex = index + direction;
+                        [draftSeedOrderIds[index], draftSeedOrderIds[nextIndex]] = [draftSeedOrderIds[nextIndex], draftSeedOrderIds[index]];
+                        renderDraftSeedOrder();
+                    });
+                    controls.appendChild(button);
+                });
+                row.append(label, controls);
+                return row;
+            });
+            draftTeamSeedOrder.replaceChildren(...rows);
+        }
+
         function getSelectedDraftTeams() {
-            const selectedIds = Array.from(draftTeamSelect.selectedOptions).map((option) => option.value);
-            return organizationTeams.filter((team) => selectedIds.includes(team.id));
+            return collectSeedOrderedTeams({
+                selectedOptions: draftTeamSelect.selectedOptions,
+                organizationTeams,
+                seedOrderIds: draftSeedOrderIds
+            });
         }
 
         function getDraftOrganizationBlackouts() {
@@ -777,7 +830,7 @@
         }
 
         function resetDraftGeneratorState() {
-            draftGeneratorState = { draftSlots: [], conflicts: [], unassignedTeams: [], generatedSlotCounts: null };
+            draftGeneratorState = { draftSlots: [], conflicts: [], unassignedTeams: [], generatedSlotCounts: null, format: 'round_robin', bracket: null, byeTeams: [] };
             draftReviewSummary.className = 'hidden rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700';
             draftReviewSummary.textContent = '';
             draftSlotList.replaceChildren();
@@ -787,12 +840,15 @@
 
         function renderDraftReview() {
             draftSlotList.replaceChildren();
-            const { draftSlots, conflicts, unassignedTeams, generatedSlotCounts } = draftGeneratorState;
+            const { draftSlots, conflicts, unassignedTeams, generatedSlotCounts, format, bracket, byeTeams } = draftGeneratorState;
             draftReviewSummary.className = 'rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700';
             const venueCounts = Object.entries(generatedSlotCounts?.byVenue || {})
                 .map(([venue, count]) => `${venue}: ${count}`)
                 .join(', ') || 'No venues';
-            draftReviewSummary.textContent = `${draftSlots.length} generated slot(s). ${conflicts.length} conflict(s). ${unassignedTeams.length} unassigned team(s). Counts by venue: ${venueCounts}.`;
+            const bracketSummary = format === 'single_elimination'
+                ? ` Single elimination: ${bracket?.games?.filter((game) => game.roundIndex === 0 && game.status === 'scheduled').length || 0} resolved first-round game(s), BYE(s): ${byeTeams.map((team) => team.name).join(', ') || 'none'}, ${bracket?.games?.filter((game) => game.roundIndex > 0).length || 0} downstream TBD game(s).`
+                : '';
+            draftReviewSummary.textContent = `${draftSlots.length} generated slot(s). ${conflicts.length} conflict(s). ${unassignedTeams.length} unassigned team(s). Counts by venue: ${venueCounts}.${bracketSummary}`;
 
             if (conflicts.length || unassignedTeams.length) {
                 showDraftGeneratorErrors([
@@ -811,7 +867,8 @@
                 grid.className = 'grid gap-2 md:grid-cols-[1fr_1fr_1fr_auto]';
 
                 const matchup = document.createElement('input');
-                matchup.value = `${slot.homeTeamName} vs ${slot.awayTeamName}`;
+                const seedLabel = slot.homeSeed && slot.awaySeed ? `Seed ${slot.homeSeed} vs Seed ${slot.awaySeed}: ` : '';
+                matchup.value = `${seedLabel}${slot.homeTeamName} vs ${slot.awayTeamName}`;
                 matchup.className = 'rounded-md border border-gray-300 p-2';
                 matchup.addEventListener('input', () => { slot.notes = matchup.value; });
 
@@ -953,6 +1010,7 @@
             }));
             renderTeamOptions(draftTeamSelect, organizationTeams, anchorTeam.id);
             Array.from(draftTeamSelect.options).forEach((option) => { option.selected = true; });
+            renderDraftSeedOrder();
             resetOrganizationCsvState();
             resetDraftGeneratorState();
             await refreshVenueControls();
@@ -1075,6 +1133,7 @@
         });
 
         draftTab.addEventListener('click', () => showScheduleMode('draft'));
+        draftTeamSelect.addEventListener('change', renderDraftSeedOrder);
 
         document.getElementById('generate-draft-slots-btn').addEventListener('click', () => {
             try {
@@ -1095,7 +1154,9 @@
                     seasonEnd: document.getElementById('draft-season-end').value,
                     venues,
                     organizationBlackoutDates: getDraftOrganizationBlackouts(),
-                    durationMinutes: document.getElementById('draft-game-duration').value
+                    durationMinutes: document.getElementById('draft-game-duration').value,
+                    scheduleFormat: document.getElementById('draft-schedule-format').value,
+                    organizationId: anchorTeam?.id || 'organization'
                 });
                 renderDraftReview();
             } catch (error) {
@@ -1112,7 +1173,10 @@
                 slots: draftGeneratorState.draftSlots,
                 conflicts: draftGeneratorState.conflicts,
                 unassignedTeams: draftGeneratorState.unassignedTeams,
-                generatedSlotCounts: draftGeneratorState.generatedSlotCounts
+                generatedSlotCounts: draftGeneratorState.generatedSlotCounts,
+                format: draftGeneratorState.format,
+                bracket: draftGeneratorState.bracket,
+                byeTeams: draftGeneratorState.byeTeams
             };
             localStorage.setItem(`organizationScheduleDraft:${anchorTeam?.id || 'unknown'}`, JSON.stringify(draft));
             successAlert.className = 'rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm text-emerald-800';
