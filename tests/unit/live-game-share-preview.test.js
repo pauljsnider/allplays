@@ -26,11 +26,15 @@ describe('live game share preview wiring', () => {
         });
     });
 
-    it('uses the preview route from both legacy live-game share controls', () => {
+    it('keeps preview shares on Firebase Hosting until the canonical host cutover', () => {
         const tracker = repoFile('track-live.html');
         const schedule = repoFile('edit-schedule.html');
+        const functions = repoFile('functions/index.js');
 
-        expect(tracker).toContain('/watch?teamId=${encodeURIComponent(currentTeamId)}&gameId=${encodeURIComponent(currentGameId)}');
-        expect(schedule).toContain('/watch?teamId=${encodeURIComponent(currentTeamId)}&gameId=${encodeURIComponent(gameId)}');
+        expect(tracker).toContain('https://game-flow-c6311.web.app/watch?teamId=${encodeURIComponent(currentTeamId)}&gameId=${encodeURIComponent(currentGameId)}');
+        expect(schedule).toContain('https://game-flow-c6311.web.app/watch?teamId=${encodeURIComponent(currentTeamId)}&gameId=${encodeURIComponent(gameId)}');
+        expect(functions).toContain('const shareUrl = `https://game-flow-c6311.web.app/watch?${query}`;');
+        expect(tracker).not.toContain('`${window.location.origin}/watch?');
+        expect(schedule).not.toContain('`${window.location.origin}/watch?');
     });
 });

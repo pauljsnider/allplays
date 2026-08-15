@@ -28,7 +28,8 @@ describe('public player share preview wiring', () => {
         expect(html).toContain("fetch(shareUrl, { method: 'HEAD', credentials: 'omit' })");
         expect(html).toContain("if (!response.ok) return;");
         expect(html).toContain("container.classList.remove('hidden');");
-        expect(html).toContain("url = new URL('/player-card', window.location.origin)");
+        expect(html).toContain("url = new URL('/player-card', 'https://game-flow-c6311.web.app')");
+        expect(html).not.toContain("url = new URL('/player-card', window.location.origin)");
     });
 
     it('keeps the server handler behind the public projection and no-store response boundary', () => {
@@ -41,6 +42,8 @@ describe('public player share preview wiring', () => {
         expect(handler).toContain('buildPublicPlayerShareProjection');
         expect(handler).toContain("res.status(404).send('Player profile not found.')");
         expect(handler).toContain("res.set('Cache-Control', 'private, no-store, max-age=0')");
+        expect(handler).toContain("res.set('Access-Control-Allow-Origin', 'https://allplays.ai')");
+        expect(handler).toContain('const shareUrl = `https://game-flow-c6311.web.app/player-card?${shareParams.toString()}`;');
         expect(handler.indexOf("res.set('Cache-Control', 'private, no-store, max-age=0')"))
             .toBeLessThan(handler.indexOf('firestore.doc(`teams/${teamId}`).get()'));
         expect(handler).not.toContain('photoUrl');

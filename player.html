@@ -434,7 +434,7 @@
         }
 
         function buildPublicPlayerShareUrl(teamId, playerId, gameId = '') {
-            const url = new URL('/player-card', window.location.origin);
+            const url = new URL('/player-card', 'https://game-flow-c6311.web.app');
             url.searchParams.set('teamId', teamId);
             url.searchParams.set('playerId', playerId);
             if (gameId) url.searchParams.set('gameId', gameId);

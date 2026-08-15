@@ -131,7 +131,7 @@ export function getPublicLiveHref(event: ParentScheduleEvent) {
 }
 
 export function getPublicLiveShareHref(event: ParentScheduleEvent) {
-  return getPublicHref('/watch', {
+  return getSharePreviewHref('/watch', {
     teamId: event.teamId,
     gameId: event.id
   });
@@ -164,12 +164,24 @@ function getPublicOrigin() {
   return 'https://allplays.ai';
 }
 
+function getSharePreviewOrigin() {
+  return 'https://game-flow-c6311.web.app';
+}
+
 function getPublicHref(path: string, params: Record<string, string>, hash = '') {
   const url = new URL(path, getPublicOrigin());
   Object.entries(params).forEach(([key, value]) => {
     if (value) url.searchParams.set(key, value);
   });
   if (hash) url.hash = hash;
+  return url.toString();
+}
+
+function getSharePreviewHref(path: string, params: Record<string, string>) {
+  const url = new URL(path, getSharePreviewOrigin());
+  Object.entries(params).forEach(([key, value]) => {
+    if (value) url.searchParams.set(key, value);
+  });
   return url.toString();
 }
 
