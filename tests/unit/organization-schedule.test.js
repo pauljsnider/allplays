@@ -297,6 +297,38 @@ describe('organization schedule helpers', () => {
         ]));
     });
 
+    it('schedules resolved single-elimination first-round games and preserves BYE/TBD preview state', () => {
+        const draft = buildOrganizationScheduleDraftSlots({
+            selectedTeams: accessibleTeams,
+            organizationId: 'org-1',
+            scheduleFormat: 'single_elimination',
+            seasonStart: '2026-08-01',
+            seasonEnd: '2026-08-31',
+            durationMinutes: 60,
+            venues: [{
+                name: 'Main Field',
+                availability: [
+                    { date: '2026-08-15', startTime: '09:00', endTime: '10:00' },
+                    { date: '2026-08-15', startTime: '10:00', endTime: '11:00' }
+                ],
+                blackoutDates: []
+            }]
+        });
+
+        expect(draft.format).toBe('single_elimination');
+        expect(draft.draftSlots).toHaveLength(1);
+        expect(draft.draftSlots[0]).toMatchObject({
+            homeTeamId: 'team-2',
+            awayTeamId: 'team-3',
+            bracketGameId: 'R1G2',
+            homeSeed: 2,
+            awaySeed: 3
+        });
+        expect(draft.byeTeams).toEqual([{ id: 'team-1', name: 'Alpha', ownerId: 'org-1', photoUrl: 'alpha.png' }]);
+        expect(draft.bracket.games.some((game) => game.roundIndex > 0 && game.status === 'pending')).toBe(true);
+        expect(draft.draftSlots.every((slot) => slot.homeTeamId && slot.awayTeamId)).toBe(true);
+    });
+
     it('exposes the organization schedule entry point from team schedule', () => {
         const source = readFileSync(new URL('../../edit-schedule.html', import.meta.url), 'utf8');
 
@@ -328,6 +360,8 @@ describe('organization schedule helpers', () => {
 
         expect(source).toContain('id="draft-generator-tab"');
         expect(source).toContain('id="draft-team-ids"');
+        expect(source).toContain('id="draft-schedule-format"');
+        expect(source).toContain('value="single_elimination"');
         expect(source).toContain('id="draft-venue-availability"');
         expect(source).toContain('id="draft-organization-blackouts"');
         expect(source).toContain('buildOrganizationScheduleDraftSlots');

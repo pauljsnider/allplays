@@ -221,7 +221,15 @@
                         <div>
                             <label for="draft-team-ids" class="block text-sm font-medium text-gray-700">Division / Teams</label>
                             <select id="draft-team-ids" multiple size="6" class="mt-1 block w-full rounded-md border border-gray-300 p-2 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"></select>
-                            <p class="mt-1 text-xs text-gray-500">Select the teams to include in this bounded draft generation pass.</p>
+                            <p class="mt-1 text-xs text-gray-500">Select teams in seed order for single elimination.</p>
+                        </div>
+                        <div>
+                            <label for="draft-schedule-format" class="block text-sm font-medium text-gray-700">Schedule Format</label>
+                            <select id="draft-schedule-format" class="mt-1 block w-full rounded-md border border-gray-300 p-2 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                <option value="round_robin" selected>Round robin</option>
+                                <option value="single_elimination">Single elimination</option>
+                            </select>
+                            <p class="mt-1 text-xs text-gray-500">Single elimination publishes only resolved first-round games. BYEs and later TBD rounds remain in preview.</p>
                         </div>
                         <div class="grid gap-4 md:grid-cols-3">
                             <div>
@@ -397,7 +405,7 @@
         const saveAvailabilityButton = document.getElementById('save-venue-availability-btn');
         const saveBlackoutButton = document.getElementById('save-blackout-date-btn');
         const refreshVenueControlsButton = document.getElementById('refresh-venue-controls-btn');
-        let draftGeneratorState = { draftSlots: [], conflicts: [], unassignedTeams: [], generatedSlotCounts: null };
+        let draftGeneratorState = { draftSlots: [], conflicts: [], unassignedTeams: [], generatedSlotCounts: null, format: 'round_robin', bracket: null, byeTeams: [] };
 
         function setButtonBusy(button, busyText, busy) {
             if (!button) return;
@@ -777,7 +785,7 @@
         }
 
         function resetDraftGeneratorState() {
-            draftGeneratorState = { draftSlots: [], conflicts: [], unassignedTeams: [], generatedSlotCounts: null };
+            draftGeneratorState = { draftSlots: [], conflicts: [], unassignedTeams: [], generatedSlotCounts: null, format: 'round_robin', bracket: null, byeTeams: [] };
             draftReviewSummary.className = 'hidden rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700';
             draftReviewSummary.textContent = '';
             draftSlotList.replaceChildren();
@@ -787,12 +795,15 @@
 
         function renderDraftReview() {
             draftSlotList.replaceChildren();
-            const { draftSlots, conflicts, unassignedTeams, generatedSlotCounts } = draftGeneratorState;
+            const { draftSlots, conflicts, unassignedTeams, generatedSlotCounts, format, bracket, byeTeams } = draftGeneratorState;
             draftReviewSummary.className = 'rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700';
             const venueCounts = Object.entries(generatedSlotCounts?.byVenue || {})
                 .map(([venue, count]) => `${venue}: ${count}`)
                 .join(', ') || 'No venues';
-            draftReviewSummary.textContent = `${draftSlots.length} generated slot(s). ${conflicts.length} conflict(s). ${unassignedTeams.length} unassigned team(s). Counts by venue: ${venueCounts}.`;
+            const bracketSummary = format === 'single_elimination'
+                ? ` Single elimination: ${bracket?.games?.filter((game) => game.roundIndex === 0 && game.status === 'scheduled').length || 0} resolved first-round game(s), BYE(s): ${byeTeams.map((team) => team.name).join(', ') || 'none'}, ${bracket?.games?.filter((game) => game.roundIndex > 0).length || 0} downstream TBD game(s).`
+                : '';
+            draftReviewSummary.textContent = `${draftSlots.length} generated slot(s). ${conflicts.length} conflict(s). ${unassignedTeams.length} unassigned team(s). Counts by venue: ${venueCounts}.${bracketSummary}`;
 
             if (conflicts.length || unassignedTeams.length) {
                 showDraftGeneratorErrors([
@@ -811,7 +822,8 @@
                 grid.className = 'grid gap-2 md:grid-cols-[1fr_1fr_1fr_auto]';
 
                 const matchup = document.createElement('input');
-                matchup.value = `${slot.homeTeamName} vs ${slot.awayTeamName}`;
+                const seedLabel = slot.homeSeed && slot.awaySeed ? `Seed ${slot.homeSeed} vs Seed ${slot.awaySeed}: ` : '';
+                matchup.value = `${seedLabel}${slot.homeTeamName} vs ${slot.awayTeamName}`;
                 matchup.className = 'rounded-md border border-gray-300 p-2';
                 matchup.addEventListener('input', () => { slot.notes = matchup.value; });
 
@@ -1095,7 +1107,9 @@
                     seasonEnd: document.getElementById('draft-season-end').value,
                     venues,
                     organizationBlackoutDates: getDraftOrganizationBlackouts(),
-                    durationMinutes: document.getElementById('draft-game-duration').value
+                    durationMinutes: document.getElementById('draft-game-duration').value,
+                    scheduleFormat: document.getElementById('draft-schedule-format').value,
+                    organizationId: anchorTeam?.id || 'organization'
                 });
                 renderDraftReview();
             } catch (error) {
@@ -1112,7 +1126,10 @@
                 slots: draftGeneratorState.draftSlots,
                 conflicts: draftGeneratorState.conflicts,
                 unassignedTeams: draftGeneratorState.unassignedTeams,
-                generatedSlotCounts: draftGeneratorState.generatedSlotCounts
+                generatedSlotCounts: draftGeneratorState.generatedSlotCounts,
+                format: draftGeneratorState.format,
+                bracket: draftGeneratorState.bracket,
+                byeTeams: draftGeneratorState.byeTeams
             };
             localStorage.setItem(`organizationScheduleDraft:${anchorTeam?.id || 'unknown'}`, JSON.stringify(draft));
             successAlert.className = 'rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm text-emerald-800';

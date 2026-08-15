@@ -1,4 +1,5 @@
 import { normalizeScheduleImportDraft } from './schedule-csv-import.js';
+import { createSingleEliminationBracket } from './bracket-management.js';
 
 export const ORGANIZATION_SCHEDULE_CSV_FIELDS = [
     { key: 'homeTeamName', label: 'Home Team', required: true },
@@ -337,11 +338,37 @@ export function buildOrganizationScheduleDraftSlots({
     seasonEnd = '',
     venues = [],
     organizationBlackoutDates = [],
-    durationMinutes = 60
+    durationMinutes = 60,
+    scheduleFormat = 'round_robin',
+    organizationId = 'organization'
 } = {}) {
     const teams = normalizeTeamList(selectedTeams);
     const duration = Math.max(1, Number(durationMinutes) || 60);
-    const pairs = buildTeamPairs(teams);
+    const format = scheduleFormat === 'single_elimination' ? 'single_elimination' : 'round_robin';
+    let bracket = null;
+    let byeTeams = [];
+    let pairs = buildTeamPairs(teams);
+    if (format === 'single_elimination') {
+        bracket = createSingleEliminationBracket({
+            teamId: organizationId,
+            name: 'Organization Single Elimination',
+            seeds: teams.map((team, index) => ({ seed: index + 1, teamId: team.id, teamName: team.name }))
+        });
+        const firstRoundGames = bracket.games.filter((game) => game.roundIndex === 0);
+        byeTeams = firstRoundGames
+            .filter((game) => game.status === 'completed' && game.completedBy === 'auto_bye')
+            .map((game) => game.homeSlot?.teamId || game.awaySlot?.teamId)
+            .filter(Boolean);
+        pairs = firstRoundGames
+            .filter((game) => game.homeSlot?.teamId && game.awaySlot?.teamId)
+            .map((game) => ({
+                homeTeam: { id: game.homeSlot.teamId, name: game.homeSlot.teamName },
+                awayTeam: { id: game.awaySlot.teamId, name: game.awaySlot.teamName },
+                bracketGameId: game.id,
+                homeSeed: game.homeSlot.seed,
+                awaySeed: game.awaySlot.seed
+            }));
+    }
     const remainingPairs = [...pairs];
     const conflicts = [];
     const teamSlotCounts = new Map(teams.map((team) => [team.id, 0]));
@@ -375,6 +402,9 @@ export function buildOrganizationScheduleDraftSlots({
                 startsAt: cursor.toISOString(),
                 endsAt: endsAt.toISOString(),
                 durationMinutes: duration,
+                bracketGameId: pair.bracketGameId || null,
+                homeSeed: pair.homeSeed || null,
+                awaySeed: pair.awaySeed || null,
                 notes: ''
             });
             teamSlotCounts.set(pair.homeTeam.id, (teamSlotCounts.get(pair.homeTeam.id) || 0) + 1);
@@ -395,7 +425,10 @@ export function buildOrganizationScheduleDraftSlots({
     return {
         draftSlots,
         conflicts,
-        unassignedTeams: teams.filter((team) => (teamSlotCounts.get(team.id) || 0) === 0),
+        format,
+        bracket,
+        byeTeams: teams.filter((team) => byeTeams.includes(team.id)),
+        unassignedTeams: teams.filter((team) => !byeTeams.includes(team.id) && (teamSlotCounts.get(team.id) || 0) === 0),
         generatedSlotCounts: {
             total: draftSlots.length,
             byVenue: draftSlots.reduce((counts, slot) => {
