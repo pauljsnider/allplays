@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
-import { ArrowDown, ArrowLeft, ArrowUp, ExternalLink, Loader2, Plus, RefreshCw, Save, Ticket, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowUp, ExternalLink, Eye, Loader2, Plus, RefreshCw, Save, Ticket, Trash2 } from 'lucide-react';
 import {
+  buildAppRegistrationFormAdminPayload,
   buildRegistrationFormEditorDraft,
   validateRegistrationFormEditorDraft,
   type RegistrationFormEditorDraft
@@ -13,6 +14,7 @@ import {
 } from '../lib/registrationFormAdminService';
 import type { AuthState } from '../lib/types';
 import { arePaymentsEnabled } from '../lib/launchFeatures';
+import { RegistrationFormPreview } from '../components/RegistrationFormPreview';
 
 type DraftRecord = Record<string, any>;
 
@@ -57,6 +59,7 @@ export function TeamRegistrationForms({ auth }: { auth: AuthState }) {
   const [draft, setDraft] = useState<RegistrationFormEditorDraft>(() => createBlankDraft(teamId));
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
@@ -86,6 +89,7 @@ export function TeamRegistrationForms({ auth }: { auth: AuthState }) {
   if (!teamId) return <Navigate to="/teams" replace />;
 
   const canManage = canManageRegistrationFormsForApp(auth.user, teamId);
+  const previewModel = previewOpen ? buildAppRegistrationFormAdminPayload(draft, { teamId }) : null;
 
   const updateDraft = (patch: Partial<RegistrationFormEditorDraft>) => {
     setDraft((current) => ({ ...current, ...patch }));
@@ -199,7 +203,10 @@ export function TeamRegistrationForms({ auth }: { auth: AuthState }) {
                 <h2 className="text-lg font-black text-gray-950">{draft.formId ? 'Edit registration form' : 'New registration form'}</h2>
                 <p className="mt-1 text-xs font-semibold text-gray-500">Existing submissions keep their saved fee/payment snapshots; edits apply to future submissions, matching the website editor.</p>
               </div>
-              {draft.formId ? <Link className="ghost-button !min-h-9 text-xs" to={`/teams/${encodeURIComponent(teamId)}/registrations/${encodeURIComponent(draft.formId)}`}><ExternalLink className="h-4 w-4" />Review queue</Link> : null}
+              <div className="flex flex-wrap gap-2">
+                <button type="button" className="ghost-button !min-h-9 text-xs" onClick={() => setPreviewOpen(true)}><Eye className="h-4 w-4" />Preview as parent</button>
+                {draft.formId ? <Link className="ghost-button !min-h-9 text-xs" to={`/teams/${encodeURIComponent(teamId)}/registrations/${encodeURIComponent(draft.formId)}`}><ExternalLink className="h-4 w-4" />Review queue</Link> : null}
+              </div>
             </div>
 
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -302,6 +309,14 @@ export function TeamRegistrationForms({ auth }: { auth: AuthState }) {
           </section>
         </main>
       </div>
+      {previewModel ? (
+        <RegistrationFormPreview
+          normalizedForm={previewModel.normalizedForm}
+          feeSnapshot={previewModel.feeSnapshot as any}
+          paymentPlans={previewModel.paymentPlans}
+          onClose={() => setPreviewOpen(false)}
+        />
+      ) : null}
     </div>
   );
 }

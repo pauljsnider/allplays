@@ -949,16 +949,16 @@ describe('React app parent tools service', () => {
         expect(dbMocks.getTeam).not.toHaveBeenCalled();
     });
 
-    it('rejects unavailable public registration details with safe errors', async () => {
+    it('rejects public registration details with missing identifiers', async () => {
         await expect(loadPublicRegistrationDetail('', 'form-1')).rejects.toThrow('Team and form are required.');
+    });
 
-        firebaseMocks.getDoc.mockResolvedValue({ exists: () => true, data: () => ({ id: 'form-1', published: false, status: 'published' }) });
-        await expect(loadPublicRegistrationDetail('team-1', 'form-1')).rejects.toThrow('This registration form is not available right now.');
-
-        firebaseMocks.getDoc.mockResolvedValue({ exists: () => true, data: () => ({ id: 'form-1', published: true, status: 'closed' }) });
-        await expect(loadPublicRegistrationDetail('team-1', 'form-1')).rejects.toThrow('This registration form is not available right now.');
-
-        firebaseMocks.getDoc.mockResolvedValue({ exists: () => true, data: () => ({ id: 'form-1', published: true, status: 'archived' }) });
+    it.each([
+        ['draft', false],
+        ['closed', true],
+        ['archived', true]
+    ])('keeps %s registration details unavailable through the public loader', async (status, published) => {
+        firebaseMocks.getDoc.mockResolvedValue({ exists: () => true, data: () => ({ id: 'form-1', published, status }) });
         await expect(loadPublicRegistrationDetail('team-1', 'form-1')).rejects.toThrow('This registration form is not available right now.');
     });
 
