@@ -125,6 +125,7 @@ export function Messages({ auth }: { auth: AuthState }) {
       ]);
       if (inboxRequestIdRef.current !== requestId) {
         cancelPreviewFlush();
+        timer.cancel({ reason: 'superseded' });
         return;
       }
       cancelPreviewFlush();
@@ -149,6 +150,7 @@ export function Messages({ auth }: { auth: AuthState }) {
     } catch (loadError: any) {
       if (inboxRequestIdRef.current !== requestId) {
         cancelPreviewFlush();
+        timer.cancel({ reason: 'superseded' });
         return;
       }
       cancelPreviewFlush();
@@ -208,9 +210,7 @@ export function Messages({ auth }: { auth: AuthState }) {
   }, [auth.user?.uid, shouldLoadInbox, inboxLoadRouteKey]);
 
   useRefreshOnResume(
-    () => {
-      if (shouldLoadInbox) void refreshInbox();
-    },
+    () => shouldLoadInbox ? refreshInbox() : undefined,
     { enabled: Boolean(auth.user?.uid) && shouldLoadInbox }
   );
 

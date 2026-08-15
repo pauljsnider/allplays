@@ -142,6 +142,7 @@ vi.mock('@capacitor-firebase/performance', () => ({
     }
 }));
 vi.mock('../../apps/app/src/lib/performanceInstrumentation.ts', () => ({
+    getPerformancePlatform: vi.fn(() => 'web'),
     now: vi.fn(() => 0),
     startPerformanceSpan: vi.fn(() => ({ startedAt: 0, end: vi.fn() })),
     recordCompletedPerformanceSpan: vi.fn()

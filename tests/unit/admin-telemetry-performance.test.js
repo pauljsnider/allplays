@@ -9,11 +9,12 @@ describe('admin telemetry performance view', () => {
         const document = dom.window.document;
 
         expect(document.querySelector('#telemetry-performance-samples')).toBeTruthy();
-        expect(document.querySelector('#telemetry-performance-p50')).toBeTruthy();
-        expect(document.querySelector('#telemetry-performance-p95')).toBeTruthy();
-        expect(document.querySelector('#telemetry-performance-slow')).toBeTruthy();
+        expect(document.querySelector('#telemetry-performance-budgeted')).toBeTruthy();
+        expect(document.querySelector('#telemetry-performance-within')).toBeTruthy();
+        expect(document.querySelector('#telemetry-performance-over-budget')).toBeTruthy();
+        expect(document.querySelector('#telemetry-performance-coverage')).toBeTruthy();
         expect(document.querySelector('#telemetry-performance-groups')).toBeTruthy();
-        expect(document.querySelector('#telemetry-performance-slow-events')).toBeTruthy();
+        expect(document.querySelector('#telemetry-performance-over-budget-events')).toBeTruthy();
         expect(document.querySelector('#telemetry-performance-tracked-workflows')).toBeTruthy();
 
         const filterValues = Array.from(document.querySelectorAll('#telemetry-event-filter option'))
@@ -27,11 +28,13 @@ describe('admin telemetry performance view', () => {
     it('wires the admin telemetry tab to performance summaries', () => {
         const adminJs = fs.readFileSync('js/admin.js', 'utf8');
 
-        expect(adminJs).toContain("from './telemetry-performance.js?v=3'");
+        expect(adminJs).toContain("from './telemetry-performance.js?v=4'");
         expect(adminJs).toContain('function renderTelemetryPerformance()');
         expect(adminJs).toContain('buildTelemetryPerformanceSummary(telemetryState.events');
         expect(adminJs).toContain('buildTrackedWorkflowLoadSummary(telemetryState.events');
-        expect(adminJs).toContain("setTelemetryText('telemetry-performance-p95', formatPerformanceDuration(summary.p95Ms));");
+        expect(adminJs).toContain("setTelemetryText('telemetry-performance-over-budget', telemetryNumber(summary.overBudgetCount));");
+        expect(adminJs).toContain('telemetryState.rawEventLimitReached');
+        expect(adminJs).toContain('query limit reached; raw-event analysis may not cover the full selected range');
         expect(adminJs).toContain("renderTelemetryList('telemetry-performance-tracked-workflows'");
         expect(adminJs).toContain('renderTelemetryPerformance();');
         expect(adminJs).toContain('renderTelemetryPerformanceEmpty(errorMessage);');

@@ -37,7 +37,7 @@ vi.mock('../lib/useRefreshOnResume', () => ({
   useRefreshOnResume: vi.fn()
 }));
 vi.mock('../lib/uxTiming', () => ({
-  startScreenMountTimer: vi.fn(() => ({ end: vi.fn() }))
+  startScreenMountTimer: vi.fn(() => ({ end: vi.fn(), cancel: vi.fn() }))
 }));
 vi.mock('../lib/parentWorkflowTiming', () => ({
   completeParentCoreWorkflowTimer: vi.fn()

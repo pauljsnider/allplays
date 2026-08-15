@@ -36,8 +36,11 @@ export function startUxTimer(label: string, baseMeta: Record<string, unknown> = 
     meta: baseMeta
   });
   const readsAtStart = snapshotNativeReadMetrics();
+  let settled = false;
   return {
     end(meta: Record<string, unknown> = {}) {
+      if (settled) return;
+      settled = true;
       // Reads-per-mount: how many native Firestore requests this span fanned out
       // (and how many were avoided by dedup). Surfaces over-fetching on
       // multi-team accounts without per-call logging. Only attached when reads
@@ -51,12 +54,12 @@ export function startUxTimer(label: string, baseMeta: Record<string, unknown> = 
       performanceSpan.end(mergedMeta);
     },
     cancel(meta: Record<string, unknown> = {}) {
+      if (settled) return;
+      settled = true;
       // The timed view/interaction was abandoned (e.g. the user navigated away,
       // or the timing key changed, before it became ready). End the underlying
-      // performance span so its active Firebase-trace count is released — a
-      // leaked count makes later spans with the same label look already-active,
-      // so startFirebaseTrace skips them and they never export. Intentionally
-      // does NOT record a completed UX timing.
+      // performance span as abandoned. Intentionally does NOT record a
+      // completed UX timing.
       performanceSpan.end({ ...baseMeta, ...meta, abandoned: true, outcome: 'abandoned' });
     }
   };

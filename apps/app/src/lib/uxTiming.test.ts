@@ -27,6 +27,7 @@ vi.mock('./telemetry', () => ({
 }));
 
 vi.mock('./performanceInstrumentation', () => ({
+  getPerformancePlatform: vi.fn(() => 'web'),
   now: vi.fn(() => 150),
   // The local mock is typed (label: string); cast the passthrough spread to a
   // tuple so it satisfies that parameter (runtime still forwards every arg).
@@ -101,6 +102,17 @@ describe('uxTiming', () => {
       abandoned: true,
       outcome: 'abandoned'
     });
+  });
+
+  it('settles once when completion and cancellation race', () => {
+    const timer = startUxTimer('schedule load', { route: 'schedule' });
+
+    timer.end({ eventRows: 4 });
+    timer.cancel({ source: 'unmount' });
+    timer.end({ eventRows: 8 });
+
+    expect(recordAppUxTiming).toHaveBeenCalledTimes(1);
+    expect(performanceSpanEnd).toHaveBeenCalledTimes(1);
   });
 
   it('startAppStartupTimer tags the span as startup timing', () => {

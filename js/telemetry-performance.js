@@ -4,7 +4,21 @@ const TIMER_EVENT_NAMES = new Set([
     'app_workflow_timing'
 ]);
 
-const WEB_VITAL_DURATION_NAMES = new Set(['FCP', 'INP', 'LCP', 'TTFB']);
+const WEB_VITAL_BUDGETS = new Map([
+    ['CLS', { value: 0.1, unit: 'score' }],
+    ['FCP', { value: 1800, unit: 'ms' }],
+    ['INP', { value: 200, unit: 'ms' }],
+    ['LCP', { value: 2500, unit: 'ms' }],
+    ['TTFB', { value: 800, unit: 'ms' }]
+]);
+
+const UX_BUDGETS_MS = new Map([
+    ['warm resume to interactive', 1500],
+    ['rsvp tap latency', 600],
+    ['chat send latency', 800]
+]);
+
+export const TRACKED_WORKFLOW_LOAD_BUDGET_MS = 1500;
 
 export const TRACKED_WORKFLOW_LOAD_LABELS = [
     'home today load',
@@ -32,18 +46,54 @@ function telemetryDate(value) {
 }
 
 function toFiniteNumber(value) {
+    if (value === null || value === undefined || value === '') return null;
     const numeric = Number(value);
     return Number.isFinite(numeric) ? numeric : null;
 }
 
 export function getTelemetryPerformanceValue(event) {
+    return getTelemetryPerformanceMetric(event)?.value ?? null;
+}
+
+export function getTelemetryPerformanceMetric(event) {
     const properties = event?.properties || {};
     if (TIMER_EVENT_NAMES.has(event?.name)) {
-        return toFiniteNumber(properties.durationMs);
+        const value = toFiniteNumber(properties.durationMs);
+        if (value === null) return null;
+        const budgetValue = getTimerBudgetMs(event);
+        return {
+            value,
+            unit: 'ms',
+            budgetValue,
+            overBudget: budgetValue === null ? null : value > budgetValue
+        };
     }
-    if (event?.name === 'app_web_vital' && WEB_VITAL_DURATION_NAMES.has(String(properties.name || '').toUpperCase())) {
-        return toFiniteNumber(properties.value);
+    if (event?.name === 'app_web_vital') {
+        const vitalName = String(properties.name || '').toUpperCase();
+        const budget = WEB_VITAL_BUDGETS.get(vitalName);
+        const value = toFiniteNumber(properties.value);
+        if (!budget || value === null) return null;
+        return {
+            value,
+            unit: budget.unit,
+            budgetValue: budget.value,
+            overBudget: value > budget.value
+        };
     }
+    return null;
+}
+
+function getTimerBudgetMs(event) {
+    if (event?.name !== 'app_ux_timing') return null;
+    const label = String(event.properties?.label || '');
+    if (label === 'app start to home first meaningful render') {
+        const platform = String(event.properties?.platform || '').toLowerCase();
+        if (platform === 'ios') return 2000;
+        if (platform === 'android') return 3000;
+        return 2500;
+    }
+    if (UX_BUDGETS_MS.has(label)) return UX_BUDGETS_MS.get(label);
+    if (TRACKED_WORKFLOW_LOAD_LABELS.includes(label)) return TRACKED_WORKFLOW_LOAD_BUDGET_MS;
     return null;
 }
 
@@ -70,15 +120,19 @@ export function getTelemetryPerformanceRoute(event) {
 export function getTelemetryPerformanceEvents(events = []) {
     return events
         .map((event) => {
-            const durationMs = getTelemetryPerformanceValue(event);
-            if (durationMs === null) return null;
+            const metric = getTelemetryPerformanceMetric(event);
+            if (!metric) return null;
             const createdAt = telemetryDate(event.createdAt) || telemetryDate(event.clientTimestamp);
             return {
                 event,
                 name: event.name,
                 label: String(getTelemetryPerformanceLabel(event)),
                 route: String(getTelemetryPerformanceRoute(event) || ''),
-                durationMs,
+                value: metric.value,
+                unit: metric.unit,
+                durationMs: metric.unit === 'ms' ? metric.value : null,
+                budgetValue: metric.budgetValue,
+                overBudget: metric.overBudget,
                 createdAt,
                 sessionId: event.sessionId || '',
                 userId: event.userId || '',
@@ -103,54 +157,80 @@ export function formatPerformanceDuration(value) {
     return `${(numeric / 1000).toFixed(numeric >= 10000 ? 1 : 2)} s`;
 }
 
+export function formatPerformanceValue(value, unit = 'ms') {
+    if (unit === 'score') {
+        const numeric = Number(value);
+        return Number.isFinite(numeric) ? numeric.toFixed(3) : '-';
+    }
+    return formatPerformanceDuration(value);
+}
+
 export function buildTelemetryPerformanceSummary(events = [], options = {}) {
-    const slowThresholdMs = Number(options.slowThresholdMs || 1500);
     const groupLimit = Math.max(1, Number(options.groupLimit || 8));
-    const slowLimit = Math.max(1, Number(options.slowLimit || 8));
+    const overBudgetLimit = Math.max(1, Number(options.overBudgetLimit || options.slowLimit || 8));
     const performanceEvents = getTelemetryPerformanceEvents(events);
-    const durations = performanceEvents.map((item) => item.durationMs);
-    const slowEvents = performanceEvents
-        .filter((item) => item.durationMs >= slowThresholdMs)
-        .sort((a, b) => b.durationMs - a.durationMs)
-        .slice(0, slowLimit);
+    const durationEvents = performanceEvents.filter((item) => item.unit === 'ms');
+    const durations = durationEvents.map((item) => item.value);
+    const budgetedEvents = performanceEvents.filter((item) => item.budgetValue !== null);
+    const overBudgetEvents = budgetedEvents
+        .filter((item) => item.overBudget)
+        .sort((a, b) => (
+            (b.value / b.budgetValue) - (a.value / a.budgetValue)
+            || b.value - a.value
+        ))
+        .slice(0, overBudgetLimit);
 
     const groups = new Map();
     performanceEvents.forEach((item) => {
-        const key = item.route ? `${item.label} · ${item.route}` : item.label;
+        const key = [item.name, item.label, item.route, item.platform].filter(Boolean).join(' · ');
         const current = groups.get(key) || {
             key,
+            name: item.name,
             label: item.label,
             route: item.route,
+            platform: item.platform,
+            unit: item.unit,
+            budgetValue: item.budgetValue,
             count: 0,
-            durations: [],
-            slowCount: 0,
-            maxMs: 0
+            values: [],
+            overBudgetCount: 0,
+            maxValue: 0
         };
         current.count += 1;
-        current.durations.push(item.durationMs);
-        current.slowCount += item.durationMs >= slowThresholdMs ? 1 : 0;
-        current.maxMs = Math.max(current.maxMs, item.durationMs);
+        current.values.push(item.value);
+        current.overBudgetCount += item.overBudget ? 1 : 0;
+        current.maxValue = Math.max(current.maxValue, item.value);
         groups.set(key, current);
     });
 
     const groupRows = Array.from(groups.values())
         .map((group) => ({
             ...group,
-            p50Ms: percentile(group.durations, 50),
-            p95Ms: percentile(group.durations, 95)
+            p50Value: percentile(group.values, 50),
+            p95Value: percentile(group.values, 95),
+            p50Ms: group.unit === 'ms' ? percentile(group.values, 50) : null,
+            p95Ms: group.unit === 'ms' ? percentile(group.values, 95) : null,
+            maxMs: group.unit === 'ms' ? group.maxValue : null
         }))
-        .sort((a, b) => b.p95Ms - a.p95Ms || b.count - a.count)
+        .sort((a, b) => (
+            b.overBudgetCount - a.overBudgetCount
+            || (b.budgetValue ? b.p95Value / b.budgetValue : 0) - (a.budgetValue ? a.p95Value / a.budgetValue : 0)
+            || b.count - a.count
+        ))
         .slice(0, groupLimit);
 
     return {
         count: performanceEvents.length,
+        durationCount: durationEvents.length,
         p50Ms: percentile(durations, 50),
         p95Ms: percentile(durations, 95),
         maxMs: durations.length ? Math.max(...durations) : 0,
-        slowThresholdMs,
-        slowCount: performanceEvents.filter((item) => item.durationMs >= slowThresholdMs).length,
+        budgetedCount: budgetedEvents.length,
+        withinBudgetCount: budgetedEvents.filter((item) => !item.overBudget).length,
+        overBudgetCount: budgetedEvents.filter((item) => item.overBudget).length,
+        unbudgetedCount: performanceEvents.length - budgetedEvents.length,
         groups: groupRows,
-        slowEvents
+        overBudgetEvents
     };
 }
 
@@ -168,7 +248,7 @@ export function buildTrackedWorkflowLoadSummary(events = [], options = {}) {
         maxMs: 0,
         slowCount: 0
     }]));
-    const slowThresholdMs = Number(options.slowThresholdMs || 1500);
+    const budgetMs = Number(options.budgetMs || options.slowThresholdMs || TRACKED_WORKFLOW_LOAD_BUDGET_MS);
 
     getTelemetryPerformanceEvents(events)
         .filter((item) => item.name === 'app_ux_timing' && labelSet.has(item.label))
@@ -179,7 +259,7 @@ export function buildTrackedWorkflowLoadSummary(events = [], options = {}) {
             row.durations.push(item.durationMs);
             if (item.route) row.routes.add(item.route);
             row.maxMs = Math.max(row.maxMs, item.durationMs);
-            row.slowCount += item.durationMs >= slowThresholdMs ? 1 : 0;
+            row.slowCount += item.durationMs > budgetMs ? 1 : 0;
             if (item.createdAt && (!row.latestAt || item.createdAt.getTime() > row.latestAt.getTime())) {
                 row.latestAt = item.createdAt;
             }
@@ -194,6 +274,7 @@ export function buildTrackedWorkflowLoadSummary(events = [], options = {}) {
             p95Ms: percentile(row.durations, 95),
             maxMs: row.maxMs,
             slowCount: row.slowCount,
+            budgetMs,
             route: Array.from(row.routes).slice(0, 3).join(', '),
             latestAt: row.latestAt
         };
