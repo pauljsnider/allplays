@@ -109,14 +109,34 @@ describe('telemetry performance summaries', () => {
             durationMs: 2200,
             platform: 'android'
         });
+        const web = telemetryEvent('app_ux_timing', {
+            label: 'app start to home first meaningful render',
+            durationMs: 2700,
+            platform: 'web'
+        });
+        const untagged = telemetryEvent('app_ux_timing', {
+            label: 'app start to home first meaningful render',
+            durationMs: 2700
+        });
+        const unknown = telemetryEvent('app_ux_timing', {
+            label: 'app start to home first meaningful render',
+            durationMs: 2700,
+            platform: 'desktop'
+        });
 
         expect(getTelemetryPerformanceMetric(ios)).toMatchObject({ budgetValue: 2000, overBudget: true });
         expect(getTelemetryPerformanceMetric(android)).toMatchObject({ budgetValue: 3000, overBudget: false });
+        expect(getTelemetryPerformanceMetric(web)).toMatchObject({ budgetValue: 2500, overBudget: true });
+        expect(getTelemetryPerformanceMetric(untagged)).toMatchObject({ budgetValue: null, overBudget: null });
+        expect(getTelemetryPerformanceMetric(unknown)).toMatchObject({ budgetValue: null, overBudget: null });
 
-        const summary = buildTelemetryPerformanceSummary([ios, android], { groupLimit: 10 });
+        const summary = buildTelemetryPerformanceSummary([ios, android, web, untagged, unknown], { groupLimit: 10 });
+        expect(summary.budgetedCount).toBe(3);
+        expect(summary.unbudgetedCount).toBe(2);
         expect(summary.groups).toEqual(expect.arrayContaining([
             expect.objectContaining({ platform: 'ios', budgetValue: 2000, overBudgetCount: 1 }),
-            expect.objectContaining({ platform: 'android', budgetValue: 3000, overBudgetCount: 0 })
+            expect.objectContaining({ platform: 'android', budgetValue: 3000, overBudgetCount: 0 }),
+            expect.objectContaining({ platform: 'web', budgetValue: 2500, overBudgetCount: 1 })
         ]));
     });
 

@@ -90,7 +90,8 @@ function getTimerBudgetMs(event) {
         const platform = String(event.properties?.platform || '').toLowerCase();
         if (platform === 'ios') return 2000;
         if (platform === 'android') return 3000;
-        return 2500;
+        if (platform === 'web') return 2500;
+        return null;
     }
     if (UX_BUDGETS_MS.has(label)) return UX_BUDGETS_MS.get(label);
     if (TRACKED_WORKFLOW_LOAD_LABELS.includes(label)) return TRACKED_WORKFLOW_LOAD_BUDGET_MS;
