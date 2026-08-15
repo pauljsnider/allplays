@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
     FIRESTORE_RULES_DEPLOY_BUDGET_BYTES,
@@ -22,6 +23,22 @@ describe('validate Firebase rules CI helpers', () => {
 
     it('accepts the deployed RSVP note get/list privacy contract', () => {
         expect(() => validateFirebaseRulesCi()).not.toThrow();
+    });
+
+    it('requires chat attachment admin deletes to retain conversation access', () => {
+        const storageRules = readFileSync(new URL('../../storage.rules', import.meta.url), 'utf8');
+        const chatFallbackRules = extractMatchBlock(
+            storageRules,
+            'match /stat-sheets/team-chat/{teamId}/{conversationId}/{userId}/{fileName} {'
+        );
+
+        expect(chatFallbackRules).toContain(`allow delete: if (isVerifiedForSensitiveWrite() &&
+        isTeamOwnerOrAdmin(teamId) &&
+        canAccessChatAttachment(teamId, conversationId)) ||
+        canDeleteOwnChatAttachment(teamId, conversationId, userId);`);
+        expect(chatFallbackRules).not.toContain(
+            'isVerifiedForSensitiveWrite() && isTeamOwnerOrAdmin(teamId)) ||'
+        );
     });
 
     it('scopes legacy game clip assertions to the flat path block', () => {
