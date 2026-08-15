@@ -68,7 +68,7 @@ Each implementation must include:
 - Server-authoritative authorization for the complete requested team and player scope.
 - Database-bound date filtering, bounded concurrency, pagination evidence, and deterministic limits.
 - Per-team and per-source coverage, truncation, retry, and `absenceConfirmed` evidence.
-- Coverage-slice recovery that replaces completed source data, retains only failed-source facts as stale, and never leaves a removed event authoritative.
+- Coverage-slice recovery that replaces completed source data, merges truncated slices only within verified coverage, retains only failed or unverified source facts as stale, and never leaves a removed event authoritative.
 - Deterministic event fact rendering that cannot change the weekday, date, time, team, or location returned by the core.
 - Equivalent React web, iOS, Android, and MCP behavior through one domain implementation.
 - An MCP compatibility adapter for the existing inclusive `startDate` and `endDate` request schema during migration.
