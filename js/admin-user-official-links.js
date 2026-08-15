@@ -144,3 +144,12 @@ export function matchesOfficialUserSearch(user = {}, summary = null, term = '') 
     return haystack.includes(normalizedTerm)
         || (compactTerm.length >= 2 && compactHaystack.includes(compactTerm));
 }
+
+export function filterAdminUsersForView(users = [], lookup = new Map(), officialFilter = 'all', term = '') {
+    return users.filter((user) => {
+        const officialSummary = getOfficialUserSummary(user, lookup);
+        if (officialFilter === 'officials' && !officialSummary) return false;
+        if (officialFilter === 'non-officials' && officialSummary) return false;
+        return matchesOfficialUserSearch(user, officialSummary, term);
+    });
+}
