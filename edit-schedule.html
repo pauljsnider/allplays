@@ -951,6 +951,7 @@
         import { getTeam, getTeams, getGames, getEvents, addGame, updateGame, updateTeam, deleteGame, addPractice, updateEvent, deleteEvent, getConfigs, addCalendarToTeam, removeCalendarFromTeam, getTrackedCalendarEventUids, cancelOccurrence, updateOccurrence, restoreOccurrence, clearOccurrenceOverride, updateSeries, deleteSeries, getUnreadChatCount, getPracticeSessions, cancelGame, getLatestGameAssignments, postChatMessage, getRsvpBreakdownByPlayer, getPlayers, getRsvps, applyTournamentAdvancementPatches, saveTournamentPoolOverride, clearTournamentPoolOverride, getOfficials, addOfficial, updateOfficial, deleteOfficial, createOfficiatingAssignmentNotificationRecords } from './js/db.js?v=4433174';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, formatTimeRange, getDefaultEndTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, getCalendarEventStatus, getCalendarEventTrackingId, isTrackedCalendarEvent, generateSeriesId, expandRecurrence, formatRecurrence, shareOrCopy, escapeHtml } from './js/utils.js?v=443350';
         import { mergeCalendarImportEvents, validateCalendarImportUrl } from './js/edit-schedule-calendar-import.js?v=2';
+        import { materializeCalendarGame } from './js/calendar-game-materialization.js?v=1';
         import { checkAuth } from './js/auth.js?v=4433176';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js?v=443331';
         import { computeOfficiatingCoverageStatus, flagRescheduledOfficiatingSlots, getOfficiatingAssignmentConflictWarnings, normalizeOfficiatingSlots as normalizeAssignmentOfficiatingSlots } from './js/officiating-utils.js?v=3';
@@ -2337,13 +2338,24 @@
             });
 
             container.querySelectorAll('.track-calendar-event-btn').forEach((btn) => {
-                btn.addEventListener('click', (event) => {
+                btn.addEventListener('click', async (event) => {
+                    const button = event.currentTarget;
+                    if (button.disabled) return;
                     const eventIndex = Number.parseInt(event.currentTarget.dataset.calendarEventIndex || '', 10);
                     const calendarEvent = Number.isInteger(eventIndex)
                         ? filteredEvents[eventIndex]?.calendarEvent
                         : null;
                     if (calendarEvent) {
-                        window.trackCalendarEvent(calendarEvent);
+                        button.disabled = true;
+                        button.setAttribute('aria-busy', 'true');
+                        try {
+                            await window.trackCalendarEvent(calendarEvent);
+                        } finally {
+                            if (button.isConnected) {
+                                button.disabled = false;
+                                button.removeAttribute('aria-busy');
+                            }
+                        }
                     }
                 });
             });
@@ -3988,40 +4000,59 @@
             btn.addEventListener('click', () => setScheduleFilter(btn.dataset.scheduleFilter));
         });
 
-        // Track calendar event - create game and redirect to tracker
+        const calendarTrackRequests = new Map();
+
+        // Materialize one tracked game per imported calendar event, then choose a tracker.
         window.trackCalendarEvent = async (calendarEvent) => {
-            try {
-                const opponent = extractOpponent(calendarEvent.summary, currentTeam.name);
-                const configId = getSelectedConfigId();
-
-                // Create game in DB
-                const eventDate = calendarEvent.dtstart;
-                const timestamp = Timestamp.fromDate(new Date(eventDate));
-
-                const gameId = await addGame(currentTeamId, {
-                    type: 'game',
-                    date: timestamp,
-                    opponent: opponent,
-                    location: calendarEvent.location || '',
-                    statTrackerConfigId: configId || null,
-                    status: 'scheduled',
-                    homeScore: 0,
-                    awayScore: 0,
-                    seasonLabel: inferSeasonLabel(eventDate),
-                    competitionType: 'league',
-                    countsTowardSeasonRecord: true,
-                    calendarEventUid: getCalendarEventTrackingId(calendarEvent)
-                });
-
-                const trackingGame = {
-                    statTrackerConfigId: configId || null,
-                    sport: currentTeam?.sport || ''
-                };
-                openTrackerChoiceModal(gameId, isBasketballConfig(configId), isGoalSportForGame(trackingGame));
-            } catch (error) {
-                console.error('Error tracking game:', error);
-                alert('Error tracking game: ' + error.message);
+            const calendarEventId = getCalendarEventTrackingId(calendarEvent);
+            if (calendarTrackRequests.has(calendarEventId)) {
+                return calendarTrackRequests.get(calendarEventId);
             }
+
+            const request = (async () => {
+                try {
+                    const opponent = extractOpponent(calendarEvent.summary, currentTeam.name);
+                    const configId = getSelectedConfigId();
+
+                    const eventDate = new Date(calendarEvent.dtstart);
+                    const timestamp = Timestamp.fromDate(eventDate);
+
+                    const gameId = await materializeCalendarGame({
+                        teamId: currentTeamId,
+                        calendarEventId,
+                        startsAt: eventDate,
+                        gameData: {
+                            type: 'game',
+                            date: timestamp,
+                            opponent: opponent,
+                            location: calendarEvent.location || '',
+                            statTrackerConfigId: configId || null,
+                            status: 'scheduled',
+                            homeScore: 0,
+                            awayScore: 0,
+                            seasonLabel: inferSeasonLabel(eventDate),
+                            competitionType: 'league',
+                            countsTowardSeasonRecord: true
+                        }
+                    });
+
+                    const trackingGame = {
+                        statTrackerConfigId: configId || null,
+                        sport: currentTeam?.sport || ''
+                    };
+                    openTrackerChoiceModal(gameId, isBasketballConfig(configId), isGoalSportForGame(trackingGame));
+                    return gameId;
+                } catch (error) {
+                    console.error('Error tracking game:', error);
+                    alert('Error tracking game: ' + error.message);
+                    return null;
+                } finally {
+                    calendarTrackRequests.delete(calendarEventId);
+                }
+            })();
+
+            calendarTrackRequests.set(calendarEventId, request);
+            return request;
         };
 
         // ===== BULK AI UPDATE FUNCTIONALITY =====
