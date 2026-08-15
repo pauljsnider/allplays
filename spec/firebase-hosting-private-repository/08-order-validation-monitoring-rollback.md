@@ -29,7 +29,8 @@ Exit gate: recommended GitHub Pro capabilities pass. Rollback: cancel the plan c
 ### 3. Make CI and release control private-compatible
 
 - Preserve stable PR entrypoints and contexts.
-- Convert production to first-attempt exact-SHA manual dispatch restricted by both workflow and independently administered cloud-provider checks to the authoritative private immutable owner-ID allowlist, with fail-closed repository/event/workflow/ref/actor checks. Preserve environment branch and secret scoping; add required reviewer approval only if the selected private plan proves it is available.
+- Convert production to first-attempt exact-SHA manual dispatch restricted by both workflow and independently administered cloud-provider checks to the authoritative private immutable owner-ID allowlist. Put the only production token request in a reusable controller invoked by full commit SHA, and require the provider to match its exact `job_workflow_ref` and `job_workflow_sha` in addition to repository/event/actor/run-attempt claims. Preserve environment branch and secret scoping; add required reviewer approval only if the selected private plan proves it is available.
+- Rehearse provider-controlled controller rotation: temporarily allow only the accepted old and new exact SHAs, prove listed acceptance and unlisted denial, switch the full-SHA caller, observe, then remove the old SHA.
 - Bind post-deploy smoke to the target SHA, deployment run/attempt, and manifest digest emitted by `deploy-prod` rather than to the dispatch ref or `workflow_run.head_sha`.
 - Preserve trusted preview and artifact boundaries.
 - Add Pages observation/retirement states without changing live hosting.

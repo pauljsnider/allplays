@@ -11,7 +11,7 @@ Ensure every GitHub, Firebase, Google Cloud, mobile, smoke, recovery, and PaulBo
 ## Requirements
 
 1. No service-account JSON key, private key, long-lived provider token, signing certificate, provisioning profile, or recovery secret may be committed, staged into a site artifact, uploaded as general CI evidence, or copied into this public specification.
-2. GitHub-to-Google production and preview authentication uses workload identity federation or an equivalent short-lived keyless mechanism. Trust conditions bind the exact repository, intended workflow/ref/event, and approved visibility state.
+2. GitHub-to-Google production and preview authentication uses workload identity federation or an equivalent short-lived keyless mechanism. Trust conditions bind the exact repository, intended workflow/ref/event, and approved visibility state. Production additionally binds the exact `job_workflow_ref` and `job_workflow_sha` of the full-SHA reusable release controller; a workflow path or protected branch alone is not an immutable identity.
 3. A change from public to private must not accidentally fail a trust condition that asserts repository visibility, fork status, subject, audience, branch, workflow identity, or environment. Every relevant claim is inventoried and tested before cutover.
 4. Production, preview, smoke, recovery, and mobile release use distinct roles where their authority differs. Read-only validation cannot inherit deployment or administrative permissions.
 5. Nonsecret configuration lives in repository variables or versioned configuration. Secrets remain in the narrowest supported secret store. Environment-scoped material stays environment-scoped on the recommended plan.
@@ -33,7 +33,7 @@ Create a matrix whose rows are workflow capabilities and whose columns are trigg
 
 ### Keyless deployment
 
-The trusted job requests a short-lived GitHub OIDC token only after exact-head and artifact verification. The cloud provider accepts tokens from the exact repository/workflow/ref contract and grants a narrow deploy role. Production and preview must not share a principal if that would let a preview path reach production resources.
+The trusted job requests a short-lived GitHub OIDC token only after exact-head and artifact verification. The cloud provider accepts tokens from the exact repository/workflow/ref contract and grants a narrow deploy role. The production token request exists only in a reusable release controller invoked at a full commit SHA, and the provider matches both that full-SHA `job_workflow_ref` and its `job_workflow_sha`. Production and preview must not share a principal if that would let a preview path reach production resources.
 
 ### Secret location
 
@@ -41,7 +41,7 @@ Environment secrets remain appropriate on GitHub Pro where environment scoping i
 
 ### Rotation and recovery
 
-Every credential class has a dual-validity migration where the provider permits it: provision replacement, canary, switch consumers, observe, then revoke old. For single-active credentials, schedule a bounded freeze and verified rollback. An ambiguous provider response triggers an authoritative read before retry or revocation.
+Every credential class has a dual-validity migration where the provider permits it: provision replacement, canary, switch consumers, observe, then revoke old. The production controller allowlist follows the same rule: an independently authorized provider operator adds only the accepted new exact SHA beside the old exact SHA, proves listed acceptance and unlisted denial, switches the full-SHA caller, then removes the old SHA after bounded recovery validation. For single-active credentials, schedule a bounded freeze and verified rollback. An ambiguous provider response triggers an authoritative read before retry or revocation.
 
 ## Verification matrix
 
@@ -58,7 +58,8 @@ Every credential class has a dual-validity migration where the provider permits 
 ## Tasks
 
 - [ ] Build the private trust inventory for every workflow and external automation capability.
-- [ ] Inspect current OIDC claims and cloud conditions for visibility, subject, repository, ref, workflow, audience, and environment assumptions.
+- [ ] Inspect current OIDC claims and cloud conditions for visibility, subject, repository, ref, workflow, `workflow_sha`, `job_workflow_ref`, `job_workflow_sha`, actor ID, run attempt, audience, and environment assumptions.
+- [ ] Prove the selected provider can enforce the immutable reusable-controller SHA and rehearse provider-controlled rotation plus denial of an unlisted SHA.
 - [ ] Split any shared principal whose permissions cross preview, production, smoke, recovery, mobile, or PaulBot boundaries.
 - [ ] Move nonsecret values to variables and keep secrets in the narrowest supported environment/provider store.
 - [ ] Remove any service-account key fallback and add tests that reject key-shaped secrets and credential files.
@@ -74,5 +75,7 @@ Missing, ignored, unreadable, expired, or ambiguously rotated credentials fail c
 ## Public sources
 
 - [GitHub OIDC security hardening](https://docs.github.com/en/actions/how-tos/security-for-github-actions/security-hardening-your-deployments/about-security-hardening-with-openid-connect)
+- [GitHub OIDC token claims](https://docs.github.com/en/actions/reference/security/oidc)
+- [GitHub OIDC with reusable workflows](https://docs.github.com/en/actions/how-tos/secure-your-work/security-harden-deployments/oidc-with-reusable-workflows)
 - [GitHub Actions secrets](https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions)
 - [Google Cloud workload identity federation for deployment pipelines](https://cloud.google.com/iam/docs/workload-identity-federation-with-deployment-pipelines)
