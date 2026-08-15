@@ -140,6 +140,7 @@ describe('edit schedule calendar import wiring', () => {
 
         expect(source).toMatch(/import \{ getTeam, getTeams, getGames, getEvents, addGame, updateGame, updateTeam, deleteGame, addPractice, updateEvent, deleteEvent, getConfigs, addCalendarToTeam, removeCalendarFromTeam, getTrackedCalendarEventUids, cancelOccurrence, updateOccurrence, restoreOccurrence, clearOccurrenceOverride, updateSeries, deleteSeries, getUnreadChatCount, getPracticeSessions, cancelGame, getLatestGameAssignments, postChatMessage, getRsvpBreakdownByPlayer, getPlayers, getRsvps, applyTournamentAdvancementPatches, saveTournamentPoolOverride, clearTournamentPoolOverride, getOfficials, addOfficial, updateOfficial, deleteOfficial, createOfficiatingAssignmentNotificationRecords \} from '\.\/js\/db\.js\?v=\d+';/);
         expect(source).toContain("import { mergeCalendarImportEvents, validateCalendarImportUrl } from './js/edit-schedule-calendar-import.js?v=2';");
+        expect(source).toContain("import { materializeCalendarGame } from './js/calendar-game-materialization.js?v=1';");
         expect(source).toContain("const validation = validateCalendarImportUrl(document.getElementById('calendar-url-input').value);");
         expect(source).toContain('allEvents.push(...mergeCalendarImportEvents({');
     });
@@ -150,6 +151,19 @@ describe('edit schedule calendar import wiring', () => {
         expect(source).toContain('Plan Practice');
         expect(source).toContain("const practiceTitle = event.title || event.opponent || 'Practice';");
         expect(source).toContain('window.trackCalendarEvent');
+    });
+
+    it('materializes imported games idempotently and guards duplicate in-flight taps', () => {
+        const source = readEditSchedule();
+        const trackStart = source.indexOf('window.trackCalendarEvent = async (calendarEvent) => {');
+        const trackEnd = source.indexOf('// ===== BULK AI UPDATE FUNCTIONALITY =====', trackStart);
+        const trackSource = source.slice(trackStart, trackEnd);
+
+        expect(source).toContain('const calendarTrackRequests = new Map();');
+        expect(source).toContain("button.setAttribute('aria-busy', 'true');");
+        expect(trackSource).toContain('await materializeCalendarGame({');
+        expect(trackSource).toContain('calendarEventId,');
+        expect(trackSource).not.toContain('await addGame(');
     });
 
     it('keeps schedule notification smoke stubs aligned with edit-schedule imports', () => {

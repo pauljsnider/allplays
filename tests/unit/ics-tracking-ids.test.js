@@ -82,7 +82,9 @@ describe('ICS recurring tracking ids', () => {
     it('tracks calendar imports by occurrence id instead of bare uid', () => {
         const source = readEditSchedule();
 
-        expect(source).toContain('calendarEventUid: getCalendarEventTrackingId(calendarEvent)');
+        expect(source).toContain('const calendarEventId = getCalendarEventTrackingId(calendarEvent);');
+        expect(source).toContain('await materializeCalendarGame({');
+        expect(source).toContain('calendarEventId,');
     });
 
     it('bumps utils cache tokens anywhere the new tracking exports are imported', () => {

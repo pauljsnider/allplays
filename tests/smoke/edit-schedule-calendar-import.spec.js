@@ -12,6 +12,24 @@ let server;
 let serverOrigin;
 
 const moduleSources = {
+    '/js/calendar-game-materialization.js': `
+const state = () => window.__editScheduleTestState || {};
+
+export async function materializeCalendarGame({ teamId, calendarEventId, startsAt, gameData }) {
+    const testState = state();
+    testState.materializeCalendarGameCalls = testState.materializeCalendarGameCalls || [];
+    testState.materializeCalendarGameCalls.push({ teamId, calendarEventId, startsAt, gameData });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const key = teamId + ':' + calendarEventId + ':' + new Date(startsAt).toISOString();
+    testState.materializedCalendarGames = testState.materializedCalendarGames || {};
+    testState.createdCalendarGameIds = testState.createdCalendarGameIds || [];
+    if (!testState.materializedCalendarGames[key]) {
+        testState.materializedCalendarGames[key] = 'calendar-created';
+        testState.createdCalendarGameIds.push('calendar-created');
+    }
+    return testState.materializedCalendarGames[key];
+}
+`,
     '/js/db.js': `
 const state = () => window.__editScheduleTestState || {};
 
@@ -519,6 +537,46 @@ test.describe('edit schedule imported calendar rows', () => {
         expect(params.get('eventDuration')).toBe('90');
         expect(params.get('eventLocation')).toBe('Training Field');
         expect(params.get('eventTitle')).toBe('Evening Practice');
+    });
+
+    test('coalesces double taps and reuses the materialized game after cancelling the chooser', async ({ page }) => {
+        const pageErrors = [];
+        page.on('pageerror', (error) => pageErrors.push(error.message));
+        await page.addInitScript((state) => {
+            window.__editScheduleTestState = state;
+            window.HTMLElement.prototype.scrollIntoView = function scrollIntoView() {};
+        }, buildState({
+            calendarEventsByUrl: {
+                'https://calendar.test/team.ics': [
+                    {
+                        uid: 'calendar-game-uid-1',
+                        dtstart: '2030-04-05T18:00:00.000Z',
+                        dtend: '2030-04-05T20:00:00.000Z',
+                        summary: 'Wildcats vs Tigers',
+                        location: 'Field 1'
+                    }
+                ]
+            }
+        }));
+
+        await page.goto(`${serverOrigin}/edit-schedule.html#teamId=team-1`, { waitUntil: 'domcontentloaded' });
+        await page.waitForFunction(() => typeof window.trackCalendarEvent === 'function');
+        expect(pageErrors).toEqual([]);
+
+        const trackButton = page.locator('#schedule-list').getByRole('button', { name: 'Track' });
+        await trackButton.evaluate((button) => {
+            button.click();
+            button.click();
+        });
+        await expect(page.locator('#basketball-tracker-modal')).toBeVisible();
+        await page.waitForFunction(() => window.__editScheduleTestState?.materializeCalendarGameCalls?.length === 1);
+        expect(await page.evaluate(() => window.__editScheduleTestState.createdCalendarGameIds)).toEqual(['calendar-created']);
+
+        await page.locator('#basketball-tracker-cancel').click();
+        await trackButton.click();
+        await page.waitForFunction(() => window.__editScheduleTestState?.materializeCalendarGameCalls?.length === 2);
+        await expect(page.locator('#basketball-tracker-modal')).toBeVisible();
+        expect(await page.evaluate(() => window.__editScheduleTestState.createdCalendarGameIds)).toEqual(['calendar-created']);
     });
 
     test('suppresses tracked, conflicting, and cancelled imports from upcoming schedule filters', async ({ page }) => {
