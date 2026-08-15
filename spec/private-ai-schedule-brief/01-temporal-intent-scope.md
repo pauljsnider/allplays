@@ -48,4 +48,4 @@ When no exact team or player is selected, pass the complete authorized team set 
 - [ ] Implement unique-first-name matching across selectable and unavailable players.
 - [ ] Add ambiguity and privacy-safe error types.
 - [ ] Add Friday, Saturday, Sunday, next-weekend, explicit-range, locale, and daylight-saving tests.
-- [ ] Add regressions for unscoped multi-team scope, conflicting team/player scope, current-question override, and planner-omitted launcher filters.
+- [ ] Add regressions for unscoped multi-team scope, conflicting explicit team/player scope, incompatible launcher selector removal, current-question override, and planner-omitted launcher filters.

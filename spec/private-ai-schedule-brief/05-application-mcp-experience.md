@@ -37,7 +37,7 @@ Key cached slices by principal, normalized scope, contract version, and coverage
 
 ### MCP transport
 
-Keep MCP authentication and transport concerns in the service, then call the shared server/domain boundary. Map domain errors to MCP error codes and return both structured and textual content without maintaining a second event aggregator.
+Keep MCP authentication and transport concerns in the service, then call the shared server/domain boundary. Preserve `list_schedule` as a versioned legacy-input adapter, normalize its inclusive bounds and defaults into the new core contract, and emit deprecation telemetry before removing it. Map domain errors to MCP error codes and return both structured and textual content without maintaining a second event aggregator.
 
 ## Tasks
 
@@ -45,7 +45,7 @@ Keep MCP authentication and transport concerns in the service, then call the sha
 - [ ] Add range, day, team, event, coverage-warning, empty, stale, and retry UI states.
 - [ ] Reconcile cached facts per coverage entry across partial-empty refreshes and interrupted navigation, replacing completed slices and retaining only failed or unverified slices as stale.
 - [ ] Add accessible announcements and keyboard behavior for changed states.
-- [ ] Replace MCP schedule aggregation with the shared domain adapter and structured contract.
+- [ ] Replace MCP schedule aggregation with the shared domain adapter while preserving and testing legacy inclusive `list_schedule` inputs and defaults.
 - [ ] Route next-game and last-game shortcuts through shared range and presentation helpers.
 - [ ] Add app/MCP golden-fixture parity tests.
 - [ ] Add a multi-team weekend smoke test covering at least two teams and two source kinds.

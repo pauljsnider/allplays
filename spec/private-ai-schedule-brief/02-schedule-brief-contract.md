@@ -51,3 +51,4 @@ Produce render-ready day groups and event facts alongside normalized events. Cli
 - [ ] Implement timezone-aware deterministic day groups and fact strings.
 - [ ] Add schema fixtures for complete, complete-empty, truncated, partial-nonempty, partial-empty, and failed responses.
 - [ ] Add contract tests that reject inconsistent evidence such as `absenceConfirmed: true` with a failed source.
+- [ ] Add adapter tests proving omitted planner selectors still preserve current-question candidates and launcher fallback through trusted server resolution.
