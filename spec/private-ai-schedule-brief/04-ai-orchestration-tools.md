@@ -10,7 +10,7 @@ Use AI for bounded intent routing while keeping schedule correctness, authorizat
 
 ## Requirements
 
-1. Private AI exposes one typed read tool, `get_schedule_brief`, for multi-team schedule questions. The tool accepts the normalized schedule-brief request and returns the authoritative response contract.
+1. Private AI exposes one typed read tool, `get_schedule_brief`, for multi-team schedule questions. The tool accepts the adapter envelope containing typed current-question candidate intent and authenticated launcher context; trusted server code resolves it into the normalized schedule-brief request and returns the authoritative response contract.
 2. A normal schedule question uses one model routing step and one schedule tool call. Internal parallel source reads and targeted retries do not consume additional model turns.
 3. A second model-selected tool call is allowed only when the current question genuinely requests another domain action, such as combining a schedule brief with a message or task query.
 4. The model cannot request raw Firestore paths, arbitrary collection scans, provider URLs, or an unauthorized expansion of resolved team/player scope.
@@ -41,7 +41,7 @@ Build the final chat message from deterministic title, day groups, event facts, 
 
 ## Tasks
 
-- [ ] Define and register the typed `get_schedule_brief` tool.
+- [ ] Define and register the typed `get_schedule_brief` adapter envelope, including current-question candidates and authenticated launcher context.
 - [ ] Add deterministic obvious-schedule routing and typed candidate-intent validation.
 - [ ] Add the authenticated server flow with principal and App Check validation.
 - [ ] Connect the flow to the framework-neutral schedule-brief core.

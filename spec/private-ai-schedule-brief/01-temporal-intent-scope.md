@@ -16,10 +16,10 @@ Convert a natural-language schedule question into one explicit, authorized, time
 4. "Next weekend" means the Friday-through-Monday interval immediately after the interval that "this weekend" would select.
 5. Explicit dates, date ranges, days of week, "today," "tomorrow," and relative week phrases normalize to an inclusive start instant and exclusive end instant. Invalid or missing timezone evidence produces a clarification or typed error rather than a guessed range.
 6. Daylight-saving gaps and overlaps are resolved by a documented calendar library policy and covered by tests. Returned instants and rendered local values must round-trip without changing the requested local date.
-7. A team, player, or event type explicitly named in the current question overrides launcher context. Launcher scope is used only when the current question omits that dimension.
+7. A team, player, or event type explicitly named in the current question is authoritative over launcher context. Launcher scope is considered only for an omitted dimension and only when it is compatible with every explicit current-question selector. An explicit team discards a launcher player from another team, and an explicit player discards a different launcher team.
 8. An unscoped family or coach question includes every authorized schedule team. It must not default to the first child, team, managed team, or recently viewed event.
 9. A named team resolves to one authorized canonical team before schedule loading. Zero matches fail closed; multiple normalized-name matches require clarification.
-10. A named player resolves to one authorized canonical team and player before schedule loading. Team and player selectors that refer to different teams fail closed.
+10. A named player resolves to one authorized canonical team and player before schedule loading. Team and player selectors explicitly supplied in the current question that refer to different teams require clarification and fail closed; an incompatible lower-precedence launcher selector is discarded instead of creating a conflict.
 11. A natural first-name possessive may resolve only when exactly one stored full player name has that first name across active, inactive, unlinked, and otherwise unavailable account players. Ambiguity requires the full name; an unmatched full name must not use nearest-match selection.
 12. Event-type terms normalize deterministically to supported categories such as game, practice, meeting, and other. A type filter is applied before limits and never substituted with another category.
 13. The resolved scope records provenance for each dimension as explicit question, launcher fallback, account default, or system default so conflicts and telemetry are explainable.
@@ -33,7 +33,7 @@ Implement a pure resolver that accepts the current instant, IANA timezone, norma
 
 ### Scope precedence
 
-Represent every dimension as a value plus provenance. Resolve current-question selectors first, validate them against the authorized identity index, and use launcher selectors only for missing dimensions. Resolve identity before invoking the event repository so unauthorized or ambiguous names cannot widen the read.
+Represent every dimension as a value plus provenance. Resolve all current-question selectors first and validate them against the authorized identity index. For an omitted dimension, inherit a launcher selector only when it is compatible with the explicit resolved scope; otherwise drop it and leave that dimension unselected. Ask for clarification only when selectors explicitly supplied together in the current question conflict. Resolve identity before invoking the event repository so unauthorized or ambiguous names cannot widen the read.
 
 ### Unscoped aggregation
 

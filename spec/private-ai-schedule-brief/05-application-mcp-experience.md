@@ -16,10 +16,10 @@ Give users the same complete, readable, timezone-correct schedule brief in React
 4. The displayed weekday, date, and time are computed from the event instant and response timezone by the shared deterministic formatter. They cannot be supplied by generated prose.
 5. A complete empty result explicitly says no matching events were found for the resolved range and scope.
 6. A partial nonempty result shows confirmed events and a persistent warning that named teams or sources could not be verified. The warning identifies affected authorized team display names or source categories without leaking hidden resources.
-7. A repeated partial empty result shows a retryable error and preserves the last complete brief. It must not render an empty-state illustration or phrase that implies absence.
+7. A repeated partial empty result shows a retryable error. Cache reconciliation occurs per coverage-ledger entry: an authoritatively completed source replaces its prior cached facts, including replacing them with an empty slice when events were canceled or removed; only facts belonging to failed or otherwise unverified sources are retained and explicitly labeled stale. It must not render an empty-state illustration or phrase that implies absence.
 8. Loading, retry, offline, stale, partial, empty, and fatal states are accessible, keyboard operable, and announced correctly to assistive technology.
 9. The ChatGPT MCP `list_schedule` surface becomes a compatibility alias or thin adapter to the shared `getScheduleBrief` core. It does not retain separate authorization, calendar, RSVP, deduplication, or absence logic.
-10. MCP accepts explicit `startAt`, `endAtExclusive`, and `timeZone` fields and returns the full response as `structuredContent` plus deterministic text generated from the same formatter.
+10. MCP accepts explicit `startAt`, `endAtExclusive`, and `timeZone` fields and returns the full response as `structuredContent` plus deterministic text generated from the same formatter. During compatibility migration, `list_schedule` also continues to accept its optional legacy `startDate` and `endDate` ISO calendar-date fields, with their existing defaults and inclusive semantics. The adapter rejects mixed legacy and instant forms, maps a legacy start to local 00:00 and its inclusive end to local 00:00 on the following calendar day in the verified caller timezone, then passes only `startAt` and `endAtExclusive` to the shared core; removal of the legacy schema requires a separately announced deprecation.
 11. App and MCP adapters pass identical contract fixtures and produce equivalent event ordering, coverage, truncation, and absence evidence.
 12. Deep links use authorized app routes and stable occurrence IDs. Imported events without unsupported detail capabilities do not advertise those actions.
 13. Existing direct "next game" and "last game" shortcuts either call the shared core with explicit bounds and types or prove equivalent coverage and deterministic rendering through shared helpers.
@@ -33,7 +33,7 @@ Add one adapter that converts the versioned domain response into day groups, eve
 
 ### State recovery
 
-Key the last complete brief by principal, normalized scope, and contract version. A partial refresh may overlay a warning and confirmed new facts but cannot erase complete cached facts as though the schedule were empty. A later complete response replaces the stale state atomically.
+Key cached slices by principal, normalized scope, contract version, and coverage-ledger entry (team and source). Reconcile a partial refresh entry by entry: replace facts for each source that completed authoritatively, including a complete-empty slice; merge confirmed facts without deleting beyond verified coverage for a truncated source; and retain prior facts only for failed or unverified sources while marking those retained slices stale. This prevents a completed source's cancellation or removal from being hidden by an unrelated source failure. A later complete response replaces every slice atomically.
 
 ### MCP transport
 
@@ -43,7 +43,7 @@ Keep MCP authentication and transport concerns in the service, then call the sha
 
 - [ ] Build the shared app response adapter and deterministic formatter.
 - [ ] Add range, day, team, event, coverage-warning, empty, stale, and retry UI states.
-- [ ] Preserve the last complete brief across partial-empty refreshes and interrupted navigation.
+- [ ] Reconcile cached facts per coverage entry across partial-empty refreshes and interrupted navigation, replacing completed slices and retaining only failed or unverified slices as stale.
 - [ ] Add accessible announcements and keyboard behavior for changed states.
 - [ ] Replace MCP schedule aggregation with the shared domain adapter and structured contract.
 - [ ] Route next-game and last-game shortcuts through shared range and presentation helpers.
