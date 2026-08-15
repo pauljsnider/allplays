@@ -18,14 +18,22 @@ export type StartedPerformanceSpan = {
 
 type FirebasePerformanceRef = { api: FirebasePerformanceApi };
 type FirebasePerformanceApi = typeof import('@capacitor-firebase/performance').FirebasePerformance;
+type NativeTraceLease = {
+  baseTraceName: string;
+  lane: number;
+  traceName: string;
+};
 
 const logger = createLogger('performance');
 const MAX_FIREBASE_ATTRIBUTE_COUNT = 5;
 const MAX_FIREBASE_METRIC_COUNT = 10;
 const MAX_ATTRIBUTE_VALUE_LENGTH = 100;
+const MAX_NATIVE_TRACE_LANES = 8;
 
 let sequence = 0;
 let firebasePerformancePromise: Promise<FirebasePerformanceRef | null> | null = null;
+const activeNativeTraceLanes = new Map<string, Set<number>>();
+const nativeTraceQueues = new Map<string, Promise<void>>();
 
 export function now() {
   return typeof performance !== 'undefined' && typeof performance.now === 'function'
@@ -39,9 +47,14 @@ export function startPerformanceSpan(label: string, options: PerformanceSpanOpti
   const traceName = buildPerformanceTraceName(label, options.kind);
   const startMark = `allplays:${traceName}:${id}:start`;
   const endMark = `allplays:${traceName}:${id}:end`;
+  const platform = getPerformancePlatform();
+  const nativeTraceLease = platform === 'web' ? null : acquireNativeTraceLease(traceName);
   let ended = false;
 
   mark(startMark);
+  if (nativeTraceLease) {
+    void startNativeFirebaseTrace(nativeTraceLease.traceName, options.meta);
+  }
 
   return {
     label,
@@ -53,12 +66,13 @@ export function startPerformanceSpan(label: string, options: PerformanceSpanOpti
       const durationMs = Math.max(0, Math.round(now() - startedAt));
       mark(endMark);
       measure(`allplays:${traceName}`, startMark, endMark);
-      void recordFirebaseTrace(
-        traceName,
-        getEpochStartTime(startedAt),
-        durationMs,
-        { ...options.meta, ...meta }
-      );
+      const mergedMeta = { ...options.meta, ...meta };
+      if (platform === 'web') {
+        void recordFirebaseTrace(traceName, getEpochStartTime(startedAt), durationMs, mergedMeta);
+      } else if (nativeTraceLease) {
+        void stopNativeFirebaseTrace(nativeTraceLease.traceName, mergedMeta, durationMs);
+        releaseNativeTraceLease(nativeTraceLease);
+      }
     }
   };
 }
@@ -178,7 +192,73 @@ async function ensureNpmFirebaseAppInitialized() {
   }
 }
 
+function acquireNativeTraceLease(baseTraceName: string): NativeTraceLease | null {
+  const activeLanes = activeNativeTraceLanes.get(baseTraceName) || new Set<number>();
+  for (let lane = 0; lane < MAX_NATIVE_TRACE_LANES; lane += 1) {
+    if (activeLanes.has(lane)) continue;
+    activeLanes.add(lane);
+    activeNativeTraceLanes.set(baseTraceName, activeLanes);
+    const suffix = lane === 0 ? '' : `_p${lane + 1}`;
+    return {
+      baseTraceName,
+      lane,
+      traceName: `${baseTraceName.slice(0, 100 - suffix.length)}${suffix}`
+    };
+  }
+  logger.debug('Native Firebase trace concurrency limit reached.', { traceName: baseTraceName });
+  return null;
+}
+
+function releaseNativeTraceLease(lease: NativeTraceLease) {
+  const activeLanes = activeNativeTraceLanes.get(lease.baseTraceName);
+  if (!activeLanes) return;
+  activeLanes.delete(lease.lane);
+  if (!activeLanes.size) {
+    activeNativeTraceLanes.delete(lease.baseTraceName);
+  }
+}
+
+function enqueueNativeTraceOp(traceName: string, operation: () => Promise<void>) {
+  const previous = nativeTraceQueues.get(traceName) || Promise.resolve();
+  const current = previous.then(operation, operation);
+  const queued = current.catch(() => {});
+  nativeTraceQueues.set(traceName, queued);
+  return current.finally(() => {
+    if (nativeTraceQueues.get(traceName) === queued) {
+      nativeTraceQueues.delete(traceName);
+    }
+  });
+}
+
+async function startNativeFirebaseTrace(traceName: string, meta: PerformanceMeta = {}) {
+  await enqueueNativeTraceOp(traceName, async () => {
+    try {
+      const firebasePerformance = await loadFirebasePerformance();
+      if (!firebasePerformance) return;
+      await firebasePerformance.api.startTrace({ traceName });
+      await applyFirebaseAttributes(firebasePerformance.api, traceName, meta);
+    } catch (error) {
+      logger.debug('Firebase native trace start failed.', { error, traceName });
+    }
+  });
+}
+
+async function stopNativeFirebaseTrace(traceName: string, meta: PerformanceMeta = {}, durationMs = 0) {
+  await enqueueNativeTraceOp(traceName, async () => {
+    try {
+      const firebasePerformance = await loadFirebasePerformance();
+      if (!firebasePerformance) return;
+      await applyFirebaseAttributes(firebasePerformance.api, traceName, meta);
+      await applyFirebaseMetrics(firebasePerformance.api, traceName, meta, durationMs);
+      await firebasePerformance.api.stopTrace({ traceName });
+    } catch (error) {
+      logger.debug('Firebase native trace stop failed.', { error, traceName });
+    }
+  });
+}
+
 async function recordFirebaseTrace(traceName: string, startTime: number, durationMs: number, meta: PerformanceMeta = {}) {
+  if (getPerformancePlatform() !== 'web') return;
   try {
     const firebasePerformance = await loadFirebasePerformance();
     if (!firebasePerformance?.api.record) return;
@@ -194,6 +274,24 @@ async function recordFirebaseTrace(traceName: string, startTime: number, duratio
   } catch (error) {
     logger.debug('Firebase trace record failed.', { error, traceName });
   }
+}
+
+async function applyFirebaseAttributes(firebasePerformance: FirebasePerformanceApi, traceName: string, meta: PerformanceMeta) {
+  const attributes = buildFirebaseAttributes(meta);
+  await Promise.all(Object.entries(attributes).map(([attribute, value]) => (
+    firebasePerformance.putAttribute({ traceName, attribute, value }).catch((error) => {
+      logger.debug('Firebase trace attribute failed.', { error, traceName, attribute });
+    })
+  )));
+}
+
+async function applyFirebaseMetrics(firebasePerformance: FirebasePerformanceApi, traceName: string, meta: PerformanceMeta, durationMs: number) {
+  const metrics = buildFirebaseMetrics(meta, durationMs);
+  await Promise.all(Object.entries(metrics).map(([metricName, num]) => (
+    firebasePerformance.putMetric({ traceName, metricName, num }).catch((error) => {
+      logger.debug('Firebase trace metric failed.', { error, traceName, metricName });
+    })
+  )));
 }
 
 function buildFirebaseAttributes(meta: PerformanceMeta = {}) {
