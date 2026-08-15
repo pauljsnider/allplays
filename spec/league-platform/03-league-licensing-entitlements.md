@@ -15,7 +15,7 @@ Control organization access to platform capabilities and capacity through durabl
 3. Existing core records remain readable during grace, suspension, or expiration; restricted mutations return clear recovery guidance.
 4. Administrative overrides require elevated authorization, an expiration, a reason, and an audit trail.
 5. Purchases and renewals must reserve the organization-wide effect before creating an external provider session.
-6. Provider mutations require stable idempotency keys, exact request replay, validated canonical HTTPS destinations, and authoritative reconciliation after ambiguous responses.
+6. Provider mutations require stable idempotency keys, exact request replay, and authoritative reconciliation after ambiguous responses. Canonical HTTPS destinations must pass the same allowlisted provider-host validation when first received, before persistence, and whenever returned from stored attempt state.
 7. Provider session identifiers, payer details, tokens, request payloads, and bearer URLs remain in server-private attempt records for their full lifecycle.
 8. A session created for one principal must never be returned to a different principal; delegated purchasing uses a non-bearer sign-in flow.
 9. Entitlement changes publish idempotent events so dependent services can refresh without polling private provider data.
@@ -29,7 +29,7 @@ Keep the current organization entitlement small and readable by authorized admin
 
 ### Mutation protocol
 
-A server operation creates or reuses a durable reservation, stores the exact provider request and initiating principal, invokes the provider with the reservation ID as the idempotency key, validates the response, and commits the result. After any uncertain write or provider outcome, it re-reads authoritative state before returning, releasing capacity, or retrying.
+A server operation creates or reuses a durable reservation, stores the exact provider request and initiating principal, invokes the provider with the reservation ID as the idempotency key, validates the response, and commits the result. Fresh and replayed destinations pass the same scheme, host, and canonicalization checks at their respective read boundaries. After any uncertain write or provider outcome, the operation re-reads authoritative state before returning, releasing capacity, or retrying.
 
 ### Enforcement
 
@@ -43,5 +43,5 @@ Expose a shared entitlement evaluator to server operations and read-only UI help
 - [ ] Add principal-bound session resolution and non-bearer delegated purchase links.
 - [ ] Add organization settings UI for status, capabilities, capacity, and recovery actions.
 - [ ] Add rules denying client access to private attempt state and bearer fields.
-- [ ] Add concurrency, timeout, false-write, secret-rotation, and cross-principal tests.
+- [ ] Add concurrency, timeout, false-write, secret-rotation, cross-principal, and invalid stored-destination tests.
 - [ ] Add provider event handling, audit history, metrics, and operator reconciliation tools.

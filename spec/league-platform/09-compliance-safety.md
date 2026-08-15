@@ -16,7 +16,7 @@ Track role-specific safety requirements, evidence, review, expiration, and acces
 4. Approval or waiver requires an authorized reviewer, reason, evidence provenance, effective period, and immutable audit history.
 5. Privileged staff actions can require current approved status; enforcement occurs server-side at the action boundary.
 6. Status summaries may be visible to schedulers and team administrators, but underlying reports and sensitive evidence are limited to designated compliance roles.
-7. External verification uses provider-neutral adapters, durable request IDs, idempotent callbacks, and private provider payload storage.
+7. External verification uses provider-neutral adapters and the complete provider-backed mutation protocol: reserve the local owner before the external request, persist and replay the exact request with a stable idempotency key, validate the response, keep attempt state private, and reconcile authoritative state after any ambiguous result. Callbacks are idempotent and bind to the durable request.
 8. Expiration reminders are configurable, deduplicated, and sent only to permitted recipients.
 9. Revocation or expiration identifies affected assignments and access without deleting historical proof.
 10. Retention and deletion policies distinguish audit facts from source documents and satisfy legal-hold overrides when configured.
@@ -33,6 +33,10 @@ Version requirement policies and bind each staff assignment to the applicable ve
 
 A deterministic evaluator combines policy requirements, verified evidence, waivers, and time. Server operations that require cleared staff re-evaluate authoritative data rather than trusting cached UI status. Changes emit an outbox event for access refresh and notifications.
 
+### Provider request protocol
+
+The server creates a principal-bound private reservation before initiating verification and persists the exact request parameters, provider idempotency key, and expected local owner. A validated provider response is committed only to that reservation. Timeout, false-write, and post-commit response failures trigger an authoritative re-read; retries replay the stored request, and compensation occurs only after local persistence is definitively absent.
+
 ### Review experience
 
 Provide compliance staff with queues for pending review, expiring items, provider exceptions, and affected assignments. Coaches see required next actions and status without sensitive reviewer notes. Every decision displays its policy version and audit trail to authorized users.
@@ -41,10 +45,10 @@ Provide compliance staff with queues for pending review, expiring items, provide
 
 - [ ] Define policy, requirement, staff assignment, evidence, decision, waiver, and reminder schemas.
 - [ ] Implement deterministic status evaluation and server-side enforcement hooks.
-- [ ] Implement provider-neutral request and callback adapters with idempotency.
+- [ ] Implement provider-neutral request and callback adapters with durable reservation, exact replay, response validation, reconciliation, and idempotency.
 - [ ] Build compliance configuration, review queue, decision, and exception screens.
 - [ ] Build staff web/mobile status, instructions, submission, and renewal experiences.
 - [ ] Add restricted projections, evidence access rules, retention, and deletion workflows.
 - [ ] Add expiration and access-refresh jobs with deduplicated reminders.
-- [ ] Add incomplete-provider, stale-status, revocation, waiver, privacy, and retention tests.
+- [ ] Add duplicate-request concurrency, timeout, false-write, post-commit response failure, incomplete-provider, stale-status, revocation, waiver, privacy, and retention tests.
 - [ ] Add audit events, operational metrics, and provider reconciliation tools.
