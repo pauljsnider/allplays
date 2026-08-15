@@ -9,7 +9,7 @@ describe('global calendar ICS sync helper', () => {
     it('reuses the loaded game list when resolving tracked calendar UIDs', () => {
         const source = readCalendarPage();
 
-        expect(source).toContain('const games = await getGames(team.id);');
+        expect(source).toContain('const games = [...(calendarGamesByTeam.get(team.id)?.values() || [])];');
         expect(source).toContain('const trackedUids = await getTrackedCalendarEventUids(team.id, games);');
     });
 
@@ -185,6 +185,16 @@ describe('global calendar ICS sync helper', () => {
 });
 
 describe('calendar page shared schedule sync wiring', () => {
+    it('bounds default loading and reserves the only unbounded read for All history', () => {
+        const source = readCalendarPage();
+
+        expect(source).toContain('await loadCalendarRange(getCalendarRangeForCurrentView());');
+        expect(source).toContain('getGames(teamId, range)');
+        expect(source).toContain("if (currentTimeRange === 'all') return null;");
+        expect(source).toContain('const games = await getGames(teamId);');
+        expect(source).not.toContain('const games = await getGames(team.id);');
+    });
+
     it('routes ICS merge behavior through the shared helper', () => {
         const source = readCalendarPage();
 
