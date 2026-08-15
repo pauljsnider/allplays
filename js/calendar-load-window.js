@@ -49,3 +49,24 @@ export function addCalendarLoadedRange(loadedRanges, range) {
     }
     return merged;
 }
+
+export function createLatestCalendarRangeLoader(loadRange) {
+    let pendingRequest = null;
+    let activePromise = null;
+
+    return function requestCalendarRange(range) {
+        pendingRequest = { range };
+        if (!activePromise) {
+            activePromise = (async () => {
+                while (pendingRequest) {
+                    const request = pendingRequest;
+                    pendingRequest = null;
+                    await loadRange(request.range);
+                }
+            })().finally(() => {
+                activePromise = null;
+            });
+        }
+        return activePromise;
+    };
+}

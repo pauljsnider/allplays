@@ -192,7 +192,7 @@
         import { applyRsvpHydration } from './js/rsvp-hydration.js?v=1';
         import { buildAvailabilityNoteRows, canViewAvailabilityNotes, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } from './js/availability-preferences.js?v=1';
         import { getDefaultSchedulePrintOptions, printSchedule, promptSchedulePrintOptions } from './js/schedule-print.js?v=2';
-        import { addCalendarLoadedRange, getMissingCalendarLoadRanges } from './js/calendar-load-window.js?v=1';
+        import { addCalendarLoadedRange, createLatestCalendarRangeLoader, getMissingCalendarLoadRanges } from './js/calendar-load-window.js?v=2';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -213,7 +213,8 @@
         const loadedCalendarRangesByTeam = new Map();
         const calendarGamesByTeam = new Map();
         const fullyLoadedCalendarTeams = new Set();
-        let calendarLoadPromise = null;
+        let renderedCalendarSelection = null;
+        let calendarNavigationToken = 0;
         let renderedRsvpHydrationToken = 0;
         const teamColors = {};
         const colorPalette = ['#6366f1', '#ec4899', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4', '#f97316'];
@@ -454,6 +455,7 @@
 
                 await loadCalendarRange(getCalendarRangeForCurrentView());
                 applyFilters();
+                renderedCalendarSelection = getCalendarSelection();
             } catch (error) {
                 console.error('Calendar init error:', error);
                 document.getElementById('calendar-content').innerHTML = `<div class="text-center py-12 text-red-600">Error loading calendar: ${error.message}</div>`;
@@ -575,9 +577,7 @@
                     return events;
         }
 
-        async function loadCalendarRange(requestedRange) {
-            if (calendarLoadPromise) return calendarLoadPromise;
-            calendarLoadPromise = (async () => {
+        const loadCalendarRange = createLatestCalendarRangeLoader(async (requestedRange) => {
                 const isAllHistory = !requestedRange;
                 const loadPromises = calendarTeams.map(async (team) => {
                     const teamId = team.id;
@@ -607,14 +607,18 @@
                     const games = [...(calendarGamesByTeam.get(team.id)?.values() || [])];
                     return loadTeamEvents(team, games);
                 }));
-                allEvents = results.flat().sort((a, b) => a.date - b.date);
-            })();
-            try {
-                return await calendarLoadPromise;
-            } finally {
-                calendarLoadPromise = null;
-            }
-        }
+                const previousRsvpState = new Map(allEvents
+                    .filter((event) => event.source === 'db' && rsvpHydrationCache.has(`${event.teamId}::${event.id}`))
+                    .map((event) => [`${event.teamId}::${event.id}`, {
+                        myRsvp: event.myRsvp,
+                        rsvpSummary: event.rsvpSummary,
+                        availabilityNotes: event.availabilityNotes
+                    }]));
+                allEvents = results.flat().map((event) => {
+                    const previous = previousRsvpState.get(`${event.teamId}::${event.id}`);
+                    return previous ? { ...event, ...previous } : event;
+                }).sort((a, b) => a.date - b.date);
+        });
 
         function applyFilters() {
             const now = new Date();
@@ -932,27 +936,53 @@
         }
 
         // ===== FILTER HELPERS =====
-        function setView(view) {
-            currentView = view;
+        function getCalendarSelection() {
+            return { view: currentView, timeRange: currentTimeRange, month: calendarMonth, year: calendarYear };
+        }
+
+        function syncCalendarSelectionControls() {
             document.querySelectorAll('#view-detailed, #view-compact, #view-calendar').forEach(btn => {
-                btn.className = btn.id === `view-${view}`
+                btn.className = btn.id === `view-${currentView}`
                     ? 'px-3 py-1.5 text-xs font-semibold bg-primary-600 text-white'
                     : 'px-3 py-1.5 text-xs font-semibold bg-white text-gray-600 hover:bg-gray-50';
             });
-            loadCalendarRange(getCalendarRangeForCurrentView()).then(applyFilters).catch((error) => {
-                console.error('Calendar range load error:', error);
+            document.querySelectorAll('.time-range-btn').forEach(btn => {
+                const isActive = btn.textContent.trim().toLowerCase() === currentTimeRange;
+                btn.className = `time-range-btn px-3 py-1.5 text-xs font-semibold ${isActive ? 'bg-primary-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`;
             });
+        }
+
+        function loadAndRenderCalendarSelection(errorContext) {
+            const navigationToken = ++calendarNavigationToken;
+            return loadCalendarRange(getCalendarRangeForCurrentView()).then(() => {
+                if (navigationToken !== calendarNavigationToken) return;
+                applyFilters();
+                renderedCalendarSelection = getCalendarSelection();
+            }).catch((error) => {
+                if (navigationToken !== calendarNavigationToken) return;
+                console.error(`${errorContext} load error:`, error);
+                if (renderedCalendarSelection) {
+                    currentView = renderedCalendarSelection.view;
+                    currentTimeRange = renderedCalendarSelection.timeRange;
+                    calendarMonth = renderedCalendarSelection.month;
+                    calendarYear = renderedCalendarSelection.year;
+                    syncCalendarSelectionControls();
+                    applyFilters();
+                }
+                alert(`Failed to load calendar: ${error?.message || error}`);
+            });
+        }
+
+        function setView(view) {
+            currentView = view;
+            syncCalendarSelectionControls();
+            return loadAndRenderCalendarSelection('Calendar range');
         }
 
         function setTimeRange(range) {
             currentTimeRange = range;
-            document.querySelectorAll('.time-range-btn').forEach(btn => {
-                const isActive = btn.textContent.trim().toLowerCase() === range;
-                btn.className = `time-range-btn px-3 py-1.5 text-xs font-semibold ${isActive ? 'bg-primary-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`;
-            });
-            loadCalendarRange(getCalendarRangeForCurrentView()).then(applyFilters).catch((error) => {
-                console.error('Calendar range load error:', error);
-            });
+            syncCalendarSelectionControls();
+            return loadAndRenderCalendarSelection('Calendar range');
         }
 
         function setTypeFilter(type) {
@@ -969,9 +999,7 @@
             calendarMonth += delta;
             if (calendarMonth > 11) { calendarMonth = 0; calendarYear++; }
             if (calendarMonth < 0) { calendarMonth = 11; calendarYear--; }
-            loadCalendarRange(getCalendarRangeForCurrentView()).then(applyFilters).catch((error) => {
-                console.error('Calendar month load error:', error);
-            });
+            return loadAndRenderCalendarSelection('Calendar month');
         }
 
         function getCalendarViewEvents(rangeStart, rangeEnd) {

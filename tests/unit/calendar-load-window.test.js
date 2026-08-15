@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
     addCalendarLoadedRange,
+    createLatestCalendarRangeLoader,
     getMissingCalendarLoadRanges,
     normalizeCalendarLoadRange
 } from '../../js/calendar-load-window.js';
@@ -38,5 +39,26 @@ describe('calendar load window', () => {
         allHistory.set('team-1', true);
         expect(allHistory.get('team-1')).toBe(true);
         expect(getMissingCalendarLoadRanges([], range('2026-03-01', '2026-03-31'))).toHaveLength(1);
+    });
+
+    it('loads the latest requested range after an overlapping load completes', async () => {
+        let finishFirstLoad;
+        const loaded = [];
+        const loadRange = createLatestCalendarRangeLoader(async (requestedRange) => {
+            loaded.push(requestedRange);
+            if (loaded.length === 1) {
+                await new Promise((resolve) => { finishFirstLoad = resolve; });
+            }
+        });
+        const january = range('2026-01-01', '2026-01-31');
+        const february = range('2026-02-01', '2026-02-28');
+
+        const firstPromise = loadRange(january);
+        const overlappingPromise = loadRange(february);
+        expect(loaded).toEqual([january]);
+
+        finishFirstLoad();
+        await Promise.all([firstPromise, overlappingPromise]);
+        expect(loaded).toEqual([january, february]);
     });
 });

@@ -195,6 +195,16 @@ describe('calendar page shared schedule sync wiring', () => {
         expect(source).not.toContain('const games = await getGames(team.id);');
     });
 
+    it('queues overlapping navigation and restores the rendered selection on failure', () => {
+        const source = readCalendarPage();
+
+        expect(source).toContain('createLatestCalendarRangeLoader(async (requestedRange) => {');
+        expect(source).toContain('if (navigationToken !== calendarNavigationToken) return;');
+        expect(source).toContain('currentView = renderedCalendarSelection.view;');
+        expect(source).toContain('alert(`Failed to load calendar: ${error?.message || error}`);');
+        expect(source).toContain("rsvpHydrationCache.has(`${event.teamId}::${event.id}`)");
+    });
+
     it('routes ICS merge behavior through the shared helper', () => {
         const source = readCalendarPage();
 

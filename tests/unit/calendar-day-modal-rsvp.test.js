@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { addCalendarLoadedRange, createLatestCalendarRangeLoader, getMissingCalendarLoadRanges } from '../../js/calendar-load-window.js';
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
@@ -129,6 +130,10 @@ const Blob = deps.Blob;
         .replace(
             /import \{ getDefaultSchedulePrintOptions, printSchedule, promptSchedulePrintOptions \} from '\.\/js\/schedule-print\.js\?v=\d+';/,
             'const { getDefaultSchedulePrintOptions, printSchedule, promptSchedulePrintOptions } = deps.schedulePrint;'
+        )
+        .replace(
+            /import \{ addCalendarLoadedRange, createLatestCalendarRangeLoader, getMissingCalendarLoadRanges \} from '\.\/js\/calendar-load-window\.js\?v=\d+';/,
+            'const { addCalendarLoadedRange, createLatestCalendarRangeLoader, getMissingCalendarLoadRanges } = deps.calendarLoadWindow;'
         )
         .replace(/\binit\(\);\s*$/, 'await init();');
 }
@@ -433,6 +438,11 @@ function createDeps(submitRecorder, overrides = {}) {
             printSchedule() {},
             promptSchedulePrintOptions() { return null; }
         },
+        calendarLoadWindow: {
+            addCalendarLoadedRange,
+            createLatestCalendarRangeLoader,
+            getMissingCalendarLoadRanges
+        },
         eventDate,
         initialSummary,
         updatedSummary,
@@ -481,7 +491,7 @@ describe('calendar day modal RSVP refresh', () => {
         expect(getMyRsvpCalls).toEqual([]);
         expect(getRsvpsCalls).toEqual([]);
 
-        window.setTimeRange('all');
+        await window.setTimeRange('all');
 
         expect(elements.get('calendar-content').innerHTML).toContain('0 going · 0 maybe · 0 can\'t go · 1 no response');
         expect(elements.get('calendar-content').innerHTML).toContain('24 going · 0 maybe · 0 can\'t go · 1 no response');
@@ -640,7 +650,7 @@ describe('calendar day modal RSVP refresh', () => {
         });
         await flushCalendarHydration();
         await flushCalendarHydration();
-        window.setTimeRange('all');
+        await window.setTimeRange('all');
 
         expect(elements.get('calendar-content').innerHTML).toContain('bg-yellow-500 text-white border-yellow-500');
         expect(elements.get('calendar-content').innerHTML).not.toContain('bg-green-600 text-white border-green-600');
@@ -763,7 +773,7 @@ describe('calendar day modal RSVP refresh', () => {
     it('keeps the day-detail modal open and refreshes RSVP state after a save', async () => {
         const { elements, submitRecorder, updatedSummary, eventDate, window } = await bootCalendar();
 
-        window.setView('calendar');
+        await window.setView('calendar');
         await window.openDayDetail(eventDate.getUTCFullYear(), eventDate.getUTCMonth(), eventDate.getUTCDate());
 
         const beforeHtml = elements.get('day-modal-content').innerHTML;
@@ -820,7 +830,7 @@ describe('calendar day modal RSVP refresh', () => {
             ]
         });
 
-        window.setTimeRange('all');
+        await window.setTimeRange('all');
 
         const html = elements.get('calendar-content').innerHTML;
         expect(html).toContain('vs. Tracked Opponent');
