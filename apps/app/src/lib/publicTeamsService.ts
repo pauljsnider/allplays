@@ -122,10 +122,16 @@ export type PublicTeamResults = {
     standings: {
         enabled: boolean;
         label: string;
-        rows: Array<Record<string, unknown>>;
-        currentRow: Record<string, unknown> | null;
+        rows: PublicStandingsRow[];
+        currentRow: PublicStandingsRow | null;
     };
     recentResults: PublicTeamRecentResult[];
+};
+
+export type PublicStandingsRow = Record<string, unknown> & {
+    teamId: string;
+    team: string;
+    isCurrentTeam: boolean;
 };
 
 const PUBLIC_RESULTS_LIMIT = 5;
@@ -468,10 +474,15 @@ export async function getPublicTeamResults(team: PublicTeamProfile, now = new Da
         teamNamesByKey.set(String(game.awayTeam), String(game.awayTeamName));
     });
     const currentRowIndex = keyedRows.findIndex((row) => String(row?.team || '').trim() === team.id);
-    const rows = keyedRows.map((row) => ({
-        ...row,
-        team: teamNamesByKey.get(String(row?.team || '')) || row?.team
-    }));
+    const rows: PublicStandingsRow[] = keyedRows.map((row) => {
+        const teamId = String(row?.team || '').trim();
+        return {
+            ...row,
+            teamId,
+            team: teamNamesByKey.get(teamId) || teamId,
+            isCurrentTeam: teamId === team.id
+        };
+    });
 
     return {
         standings: {
@@ -480,9 +491,7 @@ export async function getPublicTeamResults(team: PublicTeamProfile, now = new Da
                 ? (standingsConfig.rankingMode === 'win_pct' ? 'Win percentage' : 'Points table')
                 : (team.leagueUrl ? 'League page configured' : 'No standings configured'),
             rows,
-            currentRow: currentRowIndex >= 0
-                ? rows[currentRowIndex]
-                : rows.find((row) => String(row?.team || '').trim() === team.name) || null
+            currentRow: currentRowIndex >= 0 ? rows[currentRowIndex] : null
         },
         recentResults: finals
             .sort((left, right) => right.date.getTime() - left.date.getTime() || right.id.localeCompare(left.id))

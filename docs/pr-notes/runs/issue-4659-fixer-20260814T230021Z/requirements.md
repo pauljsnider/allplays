@@ -27,7 +27,7 @@ The modern anonymous team profile exposes only identity and general location eve
 
 ## Non-Goals
 
-- New APIs, Firestore reads, score entry, publishing, or configuration editing.
+- Score entry, publishing, or unrelated configuration editing.
 - Public roster, contacts, assignments, player statistics, private schedules, live scoreboard, or upcoming schedule.
 - Changes to native ranking semantics or authenticated team-detail workflows.
 

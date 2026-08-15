@@ -670,10 +670,10 @@ async function mockPublicTeamsBrowseModule(page, { slowSearch = false } = {}) {
                             enabled: true,
                             label: 'Points table',
                             rows: [
-                                { rank: 1, team: 'Atlanta Fire', record: '3-0', points: 9 },
-                                { rank: 2, team: 'Atlanta United 2', record: '2-1', points: 6 }
+                                { rank: 1, teamId: 'search-atl-1', team: 'Atlanta Fire', isCurrentTeam: true, record: '3-0', points: 9 },
+                                { rank: 2, teamId: 'search-atl-2', team: 'Atlanta United 2', isCurrentTeam: false, record: '2-1', points: 6 }
                             ],
-                            currentRow: { rank: 1, team: 'Atlanta Fire', record: '3-0', points: 9 }
+                            currentRow: { rank: 1, teamId: 'search-atl-1', team: 'Atlanta Fire', isCurrentTeam: true, record: '3-0', points: 9 }
                         },
                         recentResults: [
                             { id: 'final-1', date: new Date('2026-08-10T18:00:00.000Z'), opponent: 'Atlanta United 2', teamScore: 3, opponentScore: 1, result: 'Win' }

@@ -6,7 +6,7 @@
 
 ## Proposed Design
 
-- Add a direct callable adapter for `getPublicTeamGamesProjection`; never fall back to Firestore or authenticated loaders.
+- Add direct callable adapters for `getPublicTeamGamesProjection` and a bounded, season-configured league standings projection; never fall back to client Firestore or authenticated loaders.
 - Add a small native-standings adapter so the public route does not import the broad team-detail adapter dependency graph.
 - Extend `PublicTeamProfile` only with validated league and standings metadata.
 - Add an independent `getPublicTeamResults` service operation that requests one bounded projection page, rejects truncation as non-authoritative, defensively filters final games, computes native standings, and returns five recent results.
@@ -23,7 +23,7 @@
 
 ## Data/State Impacts
 
-Read-only. No schema, migration, cache, write, authentication, Functions, or Rules changes. The route adds one bounded anonymous callable after a valid public profile resolves.
+Read-only. No schema, migration, cache, write, authentication, or Rules changes. A bounded anonymous Function aggregates sanitized schedules only for explicitly configured public league teams and reconciles mirrored records conservatively.
 
 ## Security/Permissions Impacts
 
@@ -34,4 +34,5 @@ Functions remain the authorization and sanitization boundary. The page model omi
 - Projection failure or truncation: show a retryable inline state, not authoritative emptiness.
 - Invalid or incomplete games: exclude from standings and results.
 - Narrow screens: contain table width with horizontal overflow and nowrap cells.
-- Name-based current-team matching: retain the existing engine contract; identity-aware standings are out of scope.
+- Duplicate team names: compute with team IDs, preserve the ID/current-team marker through presentation, and use display names only as labels.
+- Conflicting mirrored scores or record-count flags: reconcile the contest once and exclude the disputed result from the table.

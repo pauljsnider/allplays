@@ -154,10 +154,10 @@ describe('PublicTeamDetail', () => {
         enabled: true,
         label: 'Points table',
         rows: [
-          { rank: 1, team: 'Owls', record: '4-1', points: 12 },
-          { rank: 2, team: 'Austin Bats', record: '3-2', points: 9 }
+          { rank: 1, teamId: 'team-owls', team: 'Owls', isCurrentTeam: false, record: '4-1', points: 12 },
+          { rank: 2, teamId: 'team-1', team: 'Austin Bats', isCurrentTeam: true, record: '3-2', points: 9 }
         ],
-        currentRow: { rank: 2, team: 'Austin Bats', record: '3-2', points: 9 }
+        currentRow: { rank: 2, teamId: 'team-1', team: 'Austin Bats', isCurrentTeam: true, record: '3-2', points: 9 }
       },
       recentResults: [
         { id: 'game-2', date: new Date('2026-08-12T18:00:00.000Z'), opponent: 'Owls', teamScore: 5, opponentScore: 3, result: 'Win' },
@@ -186,6 +186,42 @@ describe('PublicTeamDetail', () => {
     expect(screen.getByRole('link', { name: 'League standings' }).getAttribute('rel')).toContain('noreferrer');
     expect(publicTeamMocks.getPublicTeamResults).toHaveBeenCalledWith(expect.objectContaining({ id: 'team-1' }));
     expect(screen.getByText(/Public final scores and standings are loaded/)).toBeTruthy();
+  });
+
+  it('highlights only the current team when league teams share a display name', async () => {
+    publicTeamMocks.getPublicTeamDetail.mockResolvedValue({
+      id: 'team-1',
+      name: 'United',
+      sport: 'Soccer',
+      description: null,
+      photoUrl: null,
+      city: null,
+      state: null,
+      zip: null,
+      location: null,
+      leagueUrl: null,
+      standingsConfig: { enabled: true, rankingMode: 'points' }
+    });
+    const currentRow = { rank: 2, teamId: 'team-1', team: 'United', isCurrentTeam: true, record: '2-1', points: 6 };
+    publicTeamMocks.getPublicTeamResults.mockResolvedValue({
+      standings: {
+        enabled: true,
+        label: 'Points table',
+        rows: [
+          { rank: 1, teamId: 'team-2', team: 'United', isCurrentTeam: false, record: '3-0', points: 9 },
+          currentRow
+        ],
+        currentRow
+      },
+      recentResults: []
+    });
+
+    render(<MemoryRouter initialEntries={['/teams/team-1/public']}><Routes><Route path="/teams/:teamId/public" element={<PublicTeamDetail authUser={null} />} /></Routes></MemoryRouter>);
+
+    const duplicateNameRows = await screen.findAllByRole('row', { name: /United/ });
+    expect(duplicateNameRows).toHaveLength(2);
+    expect(duplicateNameRows[0].getAttribute('aria-current')).toBeNull();
+    expect(duplicateNameRows[1].getAttribute('aria-current')).toBe('true');
   });
 
   it('renders win percentage standings and a useful league fallback when rows are unavailable', async () => {
@@ -235,8 +271,8 @@ describe('PublicTeamDetail', () => {
         standings: {
           enabled: true,
           label: 'Points table',
-          rows: [{ rank: 1, team: 'Austin Bats', record: '1-0', points: 3 }],
-          currentRow: { rank: 1, team: 'Austin Bats', record: '1-0', points: 3 }
+          rows: [{ rank: 1, teamId: 'team-1', team: 'Austin Bats', isCurrentTeam: true, record: '1-0', points: 3 }],
+          currentRow: { rank: 1, teamId: 'team-1', team: 'Austin Bats', isCurrentTeam: true, record: '1-0', points: 3 }
         },
         recentResults: []
       });

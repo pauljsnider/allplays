@@ -265,6 +265,99 @@ test('public league standings aggregate by team ID, keep season labels display-o
   })));
 });
 
+test('public league standings deterministically reconcile mismatched mirrored records', async () => {
+  const teamsById = new Map([
+    ['team-a', { id: 'team-a', name: 'United', isPublic: true }],
+    ['team-b', { id: 'team-b', name: 'United', isPublic: true }]
+  ]);
+  const gamesByTeamId = new Map([
+    ['team-a', [
+      {
+        id: 'score-a',
+        date: '2026-08-10T18:00:00.000Z',
+        opponent: 'United',
+        opponentTeamId: 'team-b',
+        isHome: true,
+        status: 'completed',
+        homeScore: 3,
+        awayScore: 1,
+        countsTowardSeasonRecord: true
+      },
+      {
+        id: 'flag-a',
+        sharedScheduleId: 'shared-flag-conflict',
+        date: '2026-08-20T18:00:00.000Z',
+        opponent: 'United',
+        opponentTeamId: 'team-b',
+        isHome: true,
+        status: 'completed',
+        homeScore: 2,
+        awayScore: 0,
+        countsTowardSeasonRecord: true
+      }
+    ]],
+    ['team-b', [
+      {
+        id: 'score-b',
+        date: '2026-08-10T18:07:00.000Z',
+        opponent: 'United',
+        opponentTeamId: 'team-a',
+        isHome: false,
+        status: 'completed',
+        homeScore: 4,
+        awayScore: 1,
+        countsTowardSeasonRecord: true
+      },
+      {
+        id: 'flag-b',
+        sharedScheduleId: 'shared-flag-conflict',
+        date: '2026-08-20T18:03:00.000Z',
+        opponent: 'United',
+        opponentTeamId: 'team-a',
+        isHome: false,
+        status: 'completed',
+        homeScore: 2,
+        awayScore: 0,
+        countsTowardSeasonRecord: false
+      }
+    ]]
+  ]);
+  const { helper } = loadConfiguredPublicLeagueStandings({ teamsById, gamesByTeamId });
+  const config = {
+    enabled: true,
+    seasonStart: '2026-07-15',
+    seasonEnd: '2026-11-30',
+    leagueTeamIds: ['team-b', 'team-a']
+  };
+
+  const result = await helper('team-a', { standingsConfig: config });
+  const reordered = await helper('team-a', {
+    standingsConfig: { ...config, leagueTeamIds: ['team-a', 'team-b'] }
+  });
+
+  assert.equal(result.games.length, 2);
+  assert.deepEqual(result.games, reordered.games);
+  assert.deepEqual(result.games.map((game) => ({
+    startsAt: game.startsAt,
+    homeScore: game.homeScore,
+    awayScore: game.awayScore,
+    countsTowardSeasonRecord: game.countsTowardSeasonRecord
+  })), [
+    {
+      startsAt: '2026-08-10T18:00:00.000Z',
+      homeScore: 3,
+      awayScore: 1,
+      countsTowardSeasonRecord: false
+    },
+    {
+      startsAt: '2026-08-20T18:00:00.000Z',
+      homeScore: 2,
+      awayScore: 0,
+      countsTowardSeasonRecord: false
+    }
+  ]);
+});
+
 test('public league standings reject private configured teams and truncated schedules', async () => {
   const config = {
     enabled: true,

@@ -606,12 +606,24 @@ describe('publicTeamsService', () => {
         expect(result.standings).toEqual(expect.objectContaining({
             enabled: true,
             label: 'Points table',
-            currentRow: expect.objectContaining({ rank: 1, team: 'Austin Bats', record: '2-0', points: 8 })
+            currentRow: expect.objectContaining({
+                rank: 1,
+                teamId: 'team-public-1',
+                team: 'Austin Bats',
+                isCurrentTeam: true,
+                record: '2-0',
+                points: 8
+            })
         }));
         expect(result.standings.rows.map((row) => [row.rank, row.team, row.record, row.points])).toEqual([
             [1, 'Austin Bats', '2-0', 8],
             [2, 'United', '1-1', 4],
             [3, 'United', '0-2', 0]
+        ]);
+        expect(result.standings.rows.map((row) => [row.teamId, row.isCurrentTeam])).toEqual([
+            ['team-public-1', true],
+            ['team-owls', false],
+            ['team-foxes', false]
         ]);
         expect(result.recentResults).toHaveLength(5);
         expect(result.recentResults.map((game) => game.opponent)).toEqual([

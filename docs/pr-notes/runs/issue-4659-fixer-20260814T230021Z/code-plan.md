@@ -28,7 +28,7 @@ Write service and component regressions first, extend the existing public-team m
 
 ## Risks And Rollback
 
-The main risks are partial projections being presented as authoritative, accidental private-data model expansion, and page-level mobile overflow. The implementation fails closed on truncation, maps only required fields, and contains table overflow. Rollback is a single commit revert because the change is read-only and has no schema or backend impact.
+The main risks are partial projections being presented as authoritative, inconsistent mirrored games affecting records, accidental private-data model expansion, duplicate-name identity loss, and page-level mobile overflow. The implementation fails closed on truncation, excludes disputed mirrored results, preserves team IDs, maps only required fields, and contains table overflow. Rollback is a single commit revert because the change is read-only and has no schema impact.
 
 ## Root Cause
 

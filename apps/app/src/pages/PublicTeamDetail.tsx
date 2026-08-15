@@ -152,9 +152,9 @@ function PublicResultsSection({
                 </thead>
                 <tbody className="divide-y divide-gray-100 bg-white">
                   {rows.map((row) => {
-                    const isCurrent = String(row?.team || '').trim() === team.name;
+                    const isCurrent = results?.standings.currentRow?.teamId === row.teamId;
                     return (
-                      <tr key={`${String(row?.team || '')}:${String(row?.rank || '')}`} className={isCurrent ? 'bg-primary-50/70' : 'bg-white'} aria-current={isCurrent ? 'true' : undefined}>
+                      <tr key={`${row.teamId}:${String(row?.rank || '')}`} className={isCurrent ? 'bg-primary-50/70' : 'bg-white'} aria-current={isCurrent ? 'true' : undefined}>
                         <td className={`whitespace-nowrap px-3 py-2.5 text-sm ${isCurrent ? 'font-black text-primary-800' : 'font-semibold text-gray-700'}`}>{typeof row?.rank === 'number' ? `#${row.rank}` : '—'}</td>
                         <td className={`whitespace-nowrap px-3 py-2.5 text-sm ${isCurrent ? 'font-black text-primary-800' : 'font-semibold text-gray-900'}`}>{String(row?.team || '—')}</td>
                         <td className="whitespace-nowrap px-3 py-2.5 text-sm font-semibold text-gray-700">{standingsRecord(row)}</td>

@@ -8077,6 +8077,92 @@ async function getPublicOpponentStatKeysByGameId(teamId, games = []) {
 }
 
 async function getConfiguredPublicLeagueStandings(teamId, team = {}) {
+  const mirrorMatchWindowMs = 12 * 60 * 60 * 1000;
+
+  function reconcileLeagueGameObservations(observations) {
+    const ordered = [...observations].sort((left, right) =>
+      left.sourceTeamId.localeCompare(right.sourceTeamId) ||
+      String(left.game.id || '').localeCompare(String(right.game.id || '')) ||
+      left.game.startsAt.localeCompare(right.game.startsAt)
+    );
+    const baseline = ordered[0].game;
+    const sameMatch = ordered.every(({ game }) =>
+      game.homeTeamId === baseline.homeTeamId && game.awayTeamId === baseline.awayTeamId
+    );
+    const sameScore = ordered.every(({ game }) =>
+      game.homeScore === baseline.homeScore && game.awayScore === baseline.awayScore
+    );
+    const allCompleted = ordered.every(({ game }) => String(game.status || '').toLowerCase() === 'completed');
+    const countsTowardSeasonRecord = sameMatch && sameScore && allCompleted &&
+      ordered.every(({ game }) => game.countsTowardSeasonRecord !== false);
+    return {
+      ...baseline,
+      startsAt: ordered.map(({ game }) => game.startsAt).sort()[0],
+      status: allCompleted ? 'completed' : 'conflicted',
+      countsTowardSeasonRecord
+    };
+  }
+
+  function reconcileLeagueGames(observations) {
+    const reconciled = [];
+    const sharedGroups = new Map();
+    const fallbackGroups = new Map();
+    observations.forEach((observation) => {
+      if (observation.sharedScheduleId) {
+        const key = `shared:${observation.sharedScheduleId}`;
+        const group = sharedGroups.get(key) || [];
+        group.push(observation);
+        sharedGroups.set(key, group);
+        return;
+      }
+      const teamPair = [observation.game.homeTeamId, observation.game.awayTeamId].sort().join('|');
+      const group = fallbackGroups.get(teamPair) || [];
+      group.push(observation);
+      fallbackGroups.set(teamPair, group);
+    });
+    [...sharedGroups.keys()].sort().forEach((key) => {
+      reconciled.push(reconcileLeagueGameObservations(sharedGroups.get(key)));
+    });
+    [...fallbackGroups.keys()].sort().forEach((key) => {
+      const group = fallbackGroups.get(key).sort((left, right) =>
+        left.game.startsAt.localeCompare(right.game.startsAt) ||
+        left.sourceTeamId.localeCompare(right.sourceTeamId) ||
+        String(left.game.id || '').localeCompare(String(right.game.id || ''))
+      );
+      const candidatePairs = [];
+      for (let leftIndex = 0; leftIndex < group.length; leftIndex += 1) {
+        for (let rightIndex = leftIndex + 1; rightIndex < group.length; rightIndex += 1) {
+          if (group[leftIndex].sourceTeamId === group[rightIndex].sourceTeamId) continue;
+          const delta = Math.abs(
+            Date.parse(group[leftIndex].game.startsAt) - Date.parse(group[rightIndex].game.startsAt)
+          );
+          if (delta <= mirrorMatchWindowMs) {
+            candidatePairs.push({ leftIndex, rightIndex, delta });
+          }
+        }
+      }
+      candidatePairs.sort((left, right) =>
+        left.delta - right.delta || left.leftIndex - right.leftIndex || left.rightIndex - right.rightIndex
+      );
+      const matchedIndexes = new Set();
+      candidatePairs.forEach(({ leftIndex, rightIndex }) => {
+        if (matchedIndexes.has(leftIndex) || matchedIndexes.has(rightIndex)) return;
+        matchedIndexes.add(leftIndex);
+        matchedIndexes.add(rightIndex);
+        reconciled.push(reconcileLeagueGameObservations([group[leftIndex], group[rightIndex]]));
+      });
+      group.forEach((observation, index) => {
+        if (!matchedIndexes.has(index)) reconciled.push(reconcileLeagueGameObservations([observation]));
+      });
+    });
+    return reconciled.sort((left, right) =>
+      left.startsAt.localeCompare(right.startsAt) ||
+      left.homeTeamId.localeCompare(right.homeTeamId) ||
+      left.awayTeamId.localeCompare(right.awayTeamId) ||
+      String(left.id || '').localeCompare(String(right.id || ''))
+    );
+  }
+
   const config = team.standingsConfig || {};
   const seasonStart = String(config.seasonStart || '').trim();
   const seasonEnd = String(config.seasonEnd || '').trim();
@@ -8116,7 +8202,7 @@ async function getConfiguredPublicLeagueStandings(teamId, team = {}) {
     leagueTeamId,
     String(leagueTeams[index]?.name || '').trim()
   ]));
-  const leagueGamesByKey = new Map();
+  const leagueGameObservations = [];
   gamesByTeam.forEach((games, teamIndex) => {
     const sourceTeamId = leagueTeamIds[teamIndex];
     const sourceTeamName = String(leagueTeams[teamIndex]?.name || '').trim();
@@ -8139,24 +8225,21 @@ async function getConfiguredPublicLeagueStandings(teamId, team = {}) {
         status: projection.status,
         countsTowardSeasonRecord: projection.countsTowardSeasonRecord
       };
-      const sharedScheduleId = String(game.sharedScheduleId || '').trim();
-      const fallbackKey = [
-        leagueGame.startsAt,
-        leagueGame.homeTeamId,
-        leagueGame.awayTeamId,
-        leagueGame.homeScore,
-        leagueGame.awayScore
-      ].join('|');
-      leagueGamesByKey.set(sharedScheduleId ? `shared:${sharedScheduleId}` : fallbackKey, leagueGame);
+      leagueGameObservations.push({
+        sourceTeamId,
+        sharedScheduleId: String(game.sharedScheduleId || '').trim(),
+        game: leagueGame
+      });
     });
   });
-  if (leagueGamesByKey.size > 500) {
+  const leagueGames = reconcileLeagueGames(leagueGameObservations);
+  if (leagueGames.length > 500) {
     throwOpportunityError('resource-exhausted', 'Public standings schedule limit exceeded.');
   }
   return {
     range: { from: range.from, to: range.to, truncated: false },
     seasonLabel: seasonLabel || null,
-    games: [...leagueGamesByKey.values()]
+    games: leagueGames
   };
 }
 
