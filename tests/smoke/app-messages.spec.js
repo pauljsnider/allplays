@@ -199,6 +199,39 @@ async function mockMessagesModules(page, options = {}) {
         });
     });
 
+    await page.route(/\/src\/lib\/authService\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                export function getRouteForUser() {
+                    return '/home';
+                }
+            `
+        });
+    });
+
+    await page.route(/\/src\/lib\/notificationInboxServiceLoader\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                export async function loadNotificationInboxService() {
+                    return {
+                        subscribeToUnreadNotificationCount(_uid, onCount) {
+                            onCount(1);
+                            return () => {};
+                        },
+                        subscribeToNotificationInbox(_uid, onItems) {
+                            onItems([]);
+                            return () => {};
+                        }
+                    };
+                }
+            `
+        });
+    });
+
     await page.route(/\/src\/lib\/friendMessageService\.ts(\?.*)?$/, async (route) => {
         await route.fulfill({
             status: 200,
