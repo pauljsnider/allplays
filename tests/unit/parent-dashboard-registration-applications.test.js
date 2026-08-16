@@ -325,6 +325,13 @@ describe('parent dashboard registration application statuses', () => {
         expect(functionSource).toContain('mergeParentRegistrationQueryResults(');
         expect(db).toContain('listParentRegistrationApplicationsPage');
         expect(rules).toContain('isCurrentUserRegistrationGuardian(resource.data)');
+        const guardianHelper = rules.slice(
+            rules.indexOf('function isCurrentUserRegistrationGuardian(data)'),
+            rules.indexOf('function isRegistrationPaymentSettingsPayloadValid')
+        );
+        expect(guardianHelper).toContain("request.auth.token.get('email_verified', false) == true");
+        expect(guardianHelper).toContain("data.get('submittedByUserId', '') == request.auth.uid");
+        expect(guardianHelper).not.toContain('securityPolicies/verifiedEmail');
         const registrationRules = rules.match(/match \/registrations\/\{registrationId\} \{[\s\S]*?allow create:/)[0];
         expect(registrationRules).toContain('allow read: if isTeamOwnerOrAdmin(teamId) || isCurrentUserRegistrationGuardian(resource.data);');
         expect(registrationRules).toContain('allow update: if isTeamOwnerOrAdmin(teamId) &&');
