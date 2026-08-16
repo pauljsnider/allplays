@@ -280,7 +280,7 @@ describe('complete legacy collection helpers', () => {
         });
         pages.forEach((page) => firebaseMocks.listPublicTeams.mockResolvedValueOnce(page));
 
-        const { getTeams } = await import('../../js/db.js?v=4433174-public-team-complete');
+        const { getTeams } = await import('../../js/db.js?v=4433175-public-team-complete');
         const teams = await getTeams({ publicOnly: true });
 
         expect(teams).toHaveLength(1001);
