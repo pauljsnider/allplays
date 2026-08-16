@@ -3,6 +3,7 @@ import {
   getPublicTeamRosterCount as getLegacyPublicTeamRosterCount,
 } from '@legacy/db.js';
 import { functions as legacyFunctions, httpsCallable as legacyHttpsCallable } from '@legacy/firebase.js';
+import { computeNativeStandings as legacyComputeNativeStandings } from '@legacy/native-standings.js';
 
 /**
  * Typed adapter boundary for the legacy js/ public-team discovery helper (#2066).
@@ -53,6 +54,22 @@ export type PublicTeamGamesProjection = {
   team: PublicTeamProjectionIdentity;
   games: PublicTeamProjectedGame[];
 };
+
+export type PublicTeamStandingRow = {
+  team?: unknown;
+  rank?: unknown;
+  record?: unknown;
+  w?: unknown;
+  l?: unknown;
+  t?: unknown;
+  points?: unknown;
+  winPct?: unknown;
+};
+
+export function computeNativeStandings(games: readonly unknown[], config: unknown): PublicTeamStandingRow[] {
+  const rows = legacyComputeNativeStandings([...games], config);
+  return Array.isArray(rows) ? rows : [];
+}
 
 export async function getPublicTeamGamesProjection(teamId: string): Promise<PublicTeamGamesProjection> {
   const callable = legacyHttpsCallable(legacyFunctions, 'getPublicTeamGamesProjection');
