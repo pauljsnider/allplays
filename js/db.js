@@ -67,7 +67,7 @@ import {
     collectOfficialLookupTargets,
     normalizeOfficialLinkEmail,
     normalizeOfficialLinkPhone
-} from './admin-user-official-links.js?v=3';
+} from './admin-user-official-links.js?v=4';
 import {
     ADMIN_OFFICIAL_ENRICHMENT_QUERY_CEILING,
     ADMIN_OFFICIAL_ENRICHMENT_USER_LIMIT,
@@ -76,7 +76,7 @@ import {
     ADMIN_USER_SEARCH_TEAM_LIMIT,
     buildAdminUserSearchStrategies,
     mergeBoundedAdminUserCandidates
-} from './admin-search.js?v=7';
+} from './admin-search.js?v=8';
 import { resolveAvailabilityCutoffEventDate } from './availability-cutoff-date.js?v=1';
 import { normalizeFamilyShareCalendarUrls, normalizeFamilyShareChildren } from './family-share-utils.js?v=2';
 import { normalizeChatAttachments } from './team-chat-media.js';
@@ -767,7 +767,7 @@ export async function uploadStatSheetPhoto(teamId, gameId, file, options = {}) {
         : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=443349'; // Import resolveZip
+import { resolveZip } from './utils.js?v=443350'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();

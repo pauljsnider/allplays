@@ -22,8 +22,10 @@ describe('Home async operation contract', () => {
         expect(homeSource).toContain("import { useAsyncOperation } from '../lib/useAsyncOperation';");
         expect(homeSource).toContain('const { loading, error, clearError, run: runPrimaryLoad } = useAsyncOperation();');
         expect(homeSource).toContain('const { loading: socialLoading, run: runSecondaryLoad } = useAsyncOperation();');
-        expect(refreshHomeSource).toContain('return runPrimaryLoad(');
-        expect(refreshHomeSource).toContain('void runSecondaryLoad(');
+        expect(refreshHomeSource).toContain('const summary = await runPrimaryLoad(');
+        expect(refreshHomeSource).toContain('secondaryLoadPromise = runSecondaryLoad(');
+        expect(refreshHomeSource).toContain('await secondaryLoadPromise;');
+        expect(refreshHomeSource).toContain('return summary;');
         expect(refreshHomeSource).toContain('getErrorMessage: (loadError)');
         expect(refreshHomeSource).toContain('getErrorMessage: (secondaryError)');
         expect(refreshHomeSource).not.toContain('finally {');

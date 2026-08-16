@@ -32,8 +32,10 @@ function canAccessTeamMedia({ authUid, isTeamAdmin = false, isTeamParent = false
     return authUid !== null && (isTeamAdmin || isTeamParent);
 }
 
-function canAccessChatAttachment({ authUid, conversationId = 'team', isTeamAdmin = false, isTeamParent = false, isParticipant = false }) {
+function canAccessChatAttachment({ authUid, conversationId = 'team', directAccess = '', isTeamAdmin = false, isTeamParent = false, isParticipant = false }) {
+    const isParticipantOnlyAcceptedFriend = directAccess === 'accepted_friend';
     return canAccessTeamMedia({ authUid, isTeamAdmin, isTeamParent }) &&
+        (!isParticipantOnlyAcceptedFriend || isParticipant) &&
         (conversationId === 'team' || isTeamAdmin || isParticipant);
 }
 
@@ -67,11 +69,11 @@ function canCreateDrillFallback({ authUid, pathUserId, isTeamAdmin = false, dril
         isAllowedDrillDiagramUpload({ size, contentType });
 }
 
-function canDeleteChatFallback({ authUid, pathUserId, conversationId = 'team', isTeamAdmin = false, isTeamParent = false, isParticipant = false }) {
+function canDeleteChatFallback({ authUid, pathUserId, conversationId = 'team', directAccess = '', isTeamAdmin = false, isTeamParent = false, isParticipant = false }) {
     return authUid !== null &&
-        (isTeamAdmin ||
+        ((isTeamAdmin && canAccessChatAttachment({ authUid, conversationId, directAccess, isTeamAdmin, isParticipant })) ||
             (authUid === pathUserId &&
-                canAccessChatAttachment({ authUid, conversationId, isTeamParent, isParticipant })));
+                canAccessChatAttachment({ authUid, conversationId, directAccess, isTeamParent, isParticipant })));
 }
 
 function canDeleteTeamScopedFallback({ authUid, pathUserId, isTeamAdmin = false, isTeamParent = false }) {
@@ -113,6 +115,8 @@ describe('fallback media paths and Storage rules', () => {
         expect(dbSource).not.toContain('Optional team access query failed');
         expect(rules).toContain("('user:' + request.auth.uid) in participantIds");
         expect(rules).toContain("('email:' + request.auth.token.email.lower()) in participantIds");
+        expect(rules).toContain("conversation.get('directAccess', '') == 'accepted_friend'");
+        expect(rules).toContain("request.auth.uid in firestore.get(chatConversationPath(teamId, conversationId)).data.get('directUserIds', [])");
         expect(chatFallbackRules).toContain("allow create: if ((isSignedIn() && conversationId == 'team') ||\n        isVerifiedForSensitiveWrite()) &&");
         expect(chatFallbackRules.indexOf("conversationId == 'team'")).toBeLessThan(
             chatFallbackRules.indexOf('isVerifiedForSensitiveWrite()')
@@ -120,7 +124,7 @@ describe('fallback media paths and Storage rules', () => {
         expect(chatFallbackRules).toContain('request.auth.uid == userId');
         expect(chatFallbackRules).toContain('isAllowedChatAttachmentUpload(request.resource.contentType, request.resource.size);');
         expect(rules).toContain('function canDeleteOwnChatAttachment(teamId, conversationId, userId)');
-        expect(chatFallbackRules).toContain('allow delete: if (isVerifiedForSensitiveWrite() && isTeamOwnerOrAdmin(teamId)) ||\n        canDeleteOwnChatAttachment(teamId, conversationId, userId);');
+        expect(chatFallbackRules).toContain('allow delete: if (isVerifiedForSensitiveWrite() &&\n        isTeamOwnerOrAdmin(teamId) &&\n        canAccessChatAttachment(teamId, conversationId)) ||\n        canDeleteOwnChatAttachment(teamId, conversationId, userId);');
         expect(chatFallbackRules).not.toContain('allow delete: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;');
         expect(cachedLegacyChatFallbackRules).toContain("allow create: if isSignedIn() &&\n        canAccessChatAttachment(teamId, 'team') &&");
         expect(cachedLegacyChatFallbackRules).toContain('request.auth.uid == userId');
@@ -146,6 +150,37 @@ describe('fallback media paths and Storage rules', () => {
         expect(canDeleteChatFallback({ authUid: 'parent-1', pathUserId: 'parent-1', conversationId: 'direct-1', isTeamParent: true })).toBe(false);
         expect(canDeleteChatFallback({ authUid: 'parent-1', pathUserId: 'parent-1', conversationId: 'direct-1', isTeamParent: true, isParticipant: true })).toBe(true);
         expect(canDeleteChatFallback({ authUid: 'parent-2', pathUserId: 'parent-1', isTeamParent: true })).toBe(false);
+
+        expect(canAccessChatAttachment({
+            authUid: 'coach-1',
+            conversationId: 'accepted-friend-1',
+            directAccess: 'accepted_friend',
+            isTeamAdmin: true,
+            isParticipant: false
+        })).toBe(false);
+        expect(canAccessChatAttachment({
+            authUid: 'parent-1',
+            conversationId: 'accepted-friend-1',
+            directAccess: 'accepted_friend',
+            isTeamParent: true,
+            isParticipant: true
+        })).toBe(true);
+        expect(canDeleteChatFallback({
+            authUid: 'coach-1',
+            pathUserId: 'parent-1',
+            conversationId: 'accepted-friend-1',
+            directAccess: 'accepted_friend',
+            isTeamAdmin: true,
+            isParticipant: false
+        })).toBe(false);
+        expect(canDeleteChatFallback({
+            authUid: 'coach-1',
+            pathUserId: 'parent-1',
+            conversationId: 'team-admin-1',
+            directAccess: 'team_admin',
+            isTeamAdmin: true,
+            isParticipant: false
+        })).toBe(true);
     });
 
     it('restricts fallback chat creates to image/video uploads no larger than 5 MB', () => {

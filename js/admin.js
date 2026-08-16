@@ -15,10 +15,10 @@ import {
     getTelemetryRouteDaily,
     getTelemetryEventDaily,
     getTelemetrySessions
-} from './db.js?v=4433173';
+} from './db.js?v=4433174';
 import { db, collection, getDocs, doc, setDoc, updateDoc, serverTimestamp, query } from './firebase.js?v=26';
-import { renderHeader, renderFooter, escapeHtml } from './utils.js?v=443349';
-import { checkAuth } from './auth.js?v=4433175';
+import { renderHeader, renderFooter, escapeHtml } from './utils.js?v=443350';
+import { checkAuth } from './auth.js?v=4433176';
 import { DEFAULT_ADMIN_PAGE_SIZE, buildBoundedAdminDashboardScope, loadAdminCollectionPage, loadInitialAdminBootstrap } from './admin-bootstrap.js?v=2';
 import {
     adminRegistrationDefaults,
@@ -33,10 +33,10 @@ import { buildRecentGameResultsRows } from './admin-game-results.js?v=1';
 import {
     buildOfficialLookupCacheKey,
     buildOfficialUserLookup,
+    filterAdminUsersForView,
     formatOfficialUserSummary,
-    getOfficialUserSummary,
-    matchesOfficialUserSearch
-} from './admin-user-official-links.js?v=3';
+    getOfficialUserSummary
+} from './admin-user-official-links.js?v=4';
 import { buildAdminTeamOfficialsSummary } from './admin-team-officials.js?v=1';
 import {
     createDebouncedAdminTeamSearch,
@@ -49,12 +49,13 @@ import {
     normalizeAdminSearchTerm,
     resolveAdminUserSearchResult,
     selectAdminItemById
-} from './admin-search.js?v=7';
+} from './admin-search.js?v=8';
 import {
     buildTrackedWorkflowLoadSummary,
     buildTelemetryPerformanceSummary,
-    formatPerformanceDuration
-} from './telemetry-performance.js?v=3';
+    formatPerformanceDuration,
+    formatPerformanceValue
+} from './telemetry-performance.js?v=4';
 import { createAdminPremiumAccessControl } from './admin-premium-access-control.js?v=4';
 
 let allTeams = [];
@@ -150,7 +151,14 @@ function applyCurrentUsersPage() {
 
 function resetGlobalAdminSearchCollections() {
     globalSearchTeams = [];
+    invalidateAdminUserSearchState();
+}
+
+function invalidateAdminUserSearchState() {
+    runDebouncedAdminUserSearch.invalidate();
     globalSearchUsers = [];
+    loadedUsersOfficialsKey = '';
+    officialUserLookup = new Map();
 }
 
 async function getAdminTeamsForSearch(searchTerm = '') {
@@ -239,6 +247,8 @@ let telemetryState = {
     loading: false,
     error: null,
     days: 7,
+    eventLimit: 0,
+    rawEventLimitReached: false,
     events: [],
     daily: [],
     pages: [],
@@ -498,6 +508,8 @@ async function loadTelemetryData({ silent = false } = {}) {
             loaded: true,
             loading: false,
             days,
+            eventLimit: maxEvents,
+            rawEventLimitReached: events.length >= maxEvents,
             events,
             daily,
             pages,
@@ -506,7 +518,9 @@ async function loadTelemetryData({ silent = false } = {}) {
             sessions
         };
         if (status) {
-            status.textContent = `Loaded ${events.length.toLocaleString()} recent raw events plus aggregate summaries.`;
+            status.textContent = events.length >= maxEvents
+                ? `Loaded the newest ${events.length.toLocaleString()} raw events (query limit reached; raw-event analysis may not cover the full selected range), plus aggregate summaries.`
+                : `Loaded ${events.length.toLocaleString()} raw events for the selected range plus aggregate summaries.`;
         }
     } catch (error) {
         console.error('Error loading telemetry:', error);
@@ -515,6 +529,8 @@ async function loadTelemetryData({ silent = false } = {}) {
             loading: false,
             loaded: false,
             error: error.message || 'Telemetry could not be loaded',
+            eventLimit: 0,
+            rawEventLimitReached: false,
             events: [],
             daily: [],
             pages: [],
@@ -897,20 +913,26 @@ function setTelemetryText(id, value) {
 
 function renderTelemetryPerformanceEmpty(message = 'No app performance telemetry has been recorded for this range.') {
     setTelemetryText('telemetry-performance-samples', '0');
-    setTelemetryText('telemetry-performance-p50', '-');
-    setTelemetryText('telemetry-performance-p95', '-');
-    setTelemetryText('telemetry-performance-slow', '0');
+    setTelemetryText('telemetry-performance-budgeted', '0');
+    setTelemetryText('telemetry-performance-within', '0');
+    setTelemetryText('telemetry-performance-over-budget', '0');
     renderEmptyTelemetry('telemetry-performance-groups', message);
-    renderEmptyTelemetry('telemetry-performance-slow-events', message);
+    renderEmptyTelemetry('telemetry-performance-over-budget-events', message);
     renderEmptyTelemetry('telemetry-performance-tracked-workflows', message);
 }
 
 function renderTelemetryPerformance() {
     const summary = buildTelemetryPerformanceSummary(telemetryState.events, {
-        slowThresholdMs: 1500,
         groupLimit: 8,
-        slowLimit: 8
+        overBudgetLimit: 8
     });
+
+    setTelemetryText(
+        'telemetry-performance-coverage',
+        telemetryState.rawEventLimitReached
+            ? `Showing performance metrics from the newest ${telemetryNumber(telemetryState.eventLimit)} raw events only; this sample may not cover the full ${telemetryNumber(telemetryState.days)}-day range.`
+            : `Performance metrics cover all ${telemetryNumber(telemetryState.events.length)} raw events loaded for this range.`
+    );
 
     if (!summary.count) {
         renderTelemetryPerformanceEmpty();
@@ -918,27 +940,24 @@ function renderTelemetryPerformance() {
     }
 
     setTelemetryText('telemetry-performance-samples', telemetryNumber(summary.count));
-    setTelemetryText('telemetry-performance-p50', formatPerformanceDuration(summary.p50Ms));
-    setTelemetryText('telemetry-performance-p95', formatPerformanceDuration(summary.p95Ms));
-    setTelemetryText(
-        'telemetry-performance-slow',
-        `${telemetryNumber(summary.slowCount)} >= ${formatPerformanceDuration(summary.slowThresholdMs)}`
-    );
+    setTelemetryText('telemetry-performance-budgeted', telemetryNumber(summary.budgetedCount));
+    setTelemetryText('telemetry-performance-within', telemetryNumber(summary.withinBudgetCount));
+    setTelemetryText('telemetry-performance-over-budget', telemetryNumber(summary.overBudgetCount));
 
     renderTelemetryList('telemetry-performance-groups', summary.groups, (group) => `
         <div class="border-b border-gray-100 pb-2 last:border-0">
             <div class="flex items-start justify-between gap-3">
                 <div class="min-w-0">
                     <p class="text-sm font-medium text-gray-900 truncate">${escapeHtml(group.label)}</p>
-                    <p class="text-xs text-gray-500 truncate">${escapeHtml(group.route || '-')}</p>
+                    <p class="text-xs text-gray-500 truncate">${escapeHtml([group.route, group.platform].filter(Boolean).join(' · ') || '-')}</p>
                 </div>
-                <span class="text-xs font-semibold text-gray-900 whitespace-nowrap">P95 ${escapeHtml(formatPerformanceDuration(group.p95Ms))}</span>
+                <span class="text-xs font-semibold text-gray-900 whitespace-nowrap">P95 ${escapeHtml(formatPerformanceValue(group.p95Value, group.unit))}</span>
             </div>
-            <p class="text-xs text-gray-500 mt-1">${telemetryNumber(group.count)} samples · ${telemetryNumber(group.slowCount)} slow · max ${escapeHtml(formatPerformanceDuration(group.maxMs))}</p>
+            <p class="text-xs text-gray-500 mt-1">${telemetryNumber(group.count)} samples · ${telemetryNumber(group.overBudgetCount)} over budget · max ${escapeHtml(formatPerformanceValue(group.maxValue, group.unit))}${group.budgetValue !== null ? ` · budget ≤ ${escapeHtml(formatPerformanceValue(group.budgetValue, group.unit))}` : ' · no budget assigned'}</p>
         </div>
     `, 'No app performance telemetry has been recorded for this range.');
 
-    renderTelemetryList('telemetry-performance-slow-events', summary.slowEvents, (item) => {
+    renderTelemetryList('telemetry-performance-over-budget-events', summary.overBudgetEvents, (item) => {
         const createdAt = item.createdAt;
         const owner = item.userId ? `User ${item.userId}` : `Session ${item.sessionId || '-'}`;
         return `
@@ -948,16 +967,14 @@ function renderTelemetryPerformance() {
                         <p class="text-sm font-medium text-gray-900 truncate">${escapeHtml(item.label)}</p>
                         <p class="text-xs text-gray-500 truncate">${escapeHtml(item.route || '-')}</p>
                     </div>
-                    <span class="text-xs font-semibold text-gray-900 whitespace-nowrap">${escapeHtml(formatPerformanceDuration(item.durationMs))}</span>
+                    <span class="text-xs font-semibold text-gray-900 whitespace-nowrap">${escapeHtml(formatPerformanceValue(item.value, item.unit))}</span>
                 </div>
-                <p class="text-xs text-gray-500 mt-1">${escapeHtml(owner)}${createdAt ? ` · ${escapeHtml(createdAt.toLocaleString())}` : ''}</p>
+                <p class="text-xs text-gray-500 mt-1">Budget ≤ ${escapeHtml(formatPerformanceValue(item.budgetValue, item.unit))} · ${escapeHtml(owner)}${createdAt ? ` · ${escapeHtml(createdAt.toLocaleString())}` : ''}</p>
             </div>
         `;
-    }, 'No slow app performance examples have been recorded for this range.');
+    }, 'No over-budget app performance examples have been recorded for this range.');
 
-    const trackedRows = buildTrackedWorkflowLoadSummary(telemetryState.events, {
-        slowThresholdMs: summary.slowThresholdMs
-    });
+    const trackedRows = buildTrackedWorkflowLoadSummary(telemetryState.events);
     renderTelemetryList('telemetry-performance-tracked-workflows', trackedRows, (row) => {
         const latest = telemetryDate(row.latestAt);
         return `
@@ -969,7 +986,7 @@ function renderTelemetryPerformance() {
                     </div>
                     <span class="text-xs font-semibold text-gray-900 whitespace-nowrap">P95 ${escapeHtml(row.count ? formatPerformanceDuration(row.p95Ms) : '-')}</span>
                 </div>
-                <p class="text-xs text-gray-500 mt-1">${telemetryNumber(row.count)} samples · P50 ${escapeHtml(row.count ? formatPerformanceDuration(row.p50Ms) : '-')} · max ${escapeHtml(row.count ? formatPerformanceDuration(row.maxMs) : '-')}${latest ? ` · latest ${escapeHtml(latest.toLocaleString())}` : ''}</p>
+                <p class="text-xs text-gray-500 mt-1">${telemetryNumber(row.count)} samples · P50 ${escapeHtml(row.count ? formatPerformanceDuration(row.p50Ms) : '-')} · ${telemetryNumber(row.slowCount)} over ${escapeHtml(formatPerformanceDuration(row.budgetMs))} · max ${escapeHtml(row.count ? formatPerformanceDuration(row.maxMs) : '-')}${latest ? ` · latest ${escapeHtml(latest.toLocaleString())}` : ''}</p>
             </div>
         `;
     }, 'No tracked workflow timers have been recorded for this range.');
@@ -1283,7 +1300,7 @@ async function saveOfficialsAdmin(event) {
 
     message.textContent = officialId ? 'Official updated.' : 'Official saved.';
     loadedTeamsOfficialsPageKey = '';
-    loadedUsersOfficialsKey = '';
+    invalidateAdminUserSearchState();
     resetOfficialsAdminFormState();
     document.getElementById('officials-admin-form').classList.remove('hidden');
     await loadOfficialsForActiveTeam();
@@ -1310,7 +1327,7 @@ async function handleOfficialsAdminListClick(event) {
             document.getElementById('officials-admin-form').classList.remove('hidden');
         }
         loadedTeamsOfficialsPageKey = '';
-        loadedUsersOfficialsKey = '';
+        invalidateAdminUserSearchState();
         message.textContent = 'Official removed.';
         await loadOfficialsForActiveTeam();
     } catch (error) {
@@ -1701,12 +1718,7 @@ async function renderCurrentUsersView() {
     const refreshedTerm = normalizeAdminSearchTerm(document.getElementById('search-users')?.value || '');
     if (term !== refreshedTerm) return;
 
-    const filtered = users.filter((u) => {
-        const officialSummary = getOfficialUserSummary(u, officialUserLookup);
-        if (officialFilter === 'officials' && !officialSummary) return false;
-        if (officialFilter === 'non-officials' && officialSummary) return false;
-        return matchesOfficialUserSearch(u, officialSummary, term);
-    });
+    const filtered = filterAdminUsersForView(users, officialUserLookup, officialFilter, term);
     renderUsers(filtered);
 }
 

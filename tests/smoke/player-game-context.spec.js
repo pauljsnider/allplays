@@ -41,6 +41,7 @@ function createScenario({ requestedGameHasStats = true, playerHasParticipatedGam
             id: 'team-1',
             name: 'Comets',
             sport: 'Basketball',
+            isPublic: true,
             ownerId: 'coach-1',
             adminEmails: ['coach@example.com']
         },
@@ -131,7 +132,7 @@ function createScenario({ requestedGameHasStats = true, playerHasParticipatedGam
     };
 }
 
-async function installMocks(page, scenario) {
+async function installMocks(page, scenario, { playerShareStatus = 200 } = {}) {
     await page.addInitScript(({ storeKey, value }) => {
         localStorage.setItem(storeKey, JSON.stringify(value));
     }, { storeKey: STORE_KEY, value: scenario });
@@ -308,6 +309,11 @@ async function installMocks(page, scenario) {
                 .replace(/"/g, '&quot;')
                 .replace(/'/g, '&#39;');
         }
+
+        export async function shareOrCopy(payload) {
+            window.__lastPlayerShare = payload;
+            return { status: 'copied' };
+        }
     `;
 
     const authModule = `
@@ -350,6 +356,12 @@ async function installMocks(page, scenario) {
     await page.route(/\/js\/team-admin-banner\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: bannerModule }));
     await page.route(/\/js\/team-access\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: teamAccessModule }));
     await page.route(/\/js\/premium-entitlements\.js\?v=\d+$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: premiumModule }));
+    await page.route(/\/player-card(?:\?.*)?$/, (route) => route.fulfill({
+        status: playerShareStatus,
+        contentType: 'text/html',
+        headers: { 'Access-Control-Allow-Origin': '*' },
+        body: ''
+    }));
 }
 
 async function openRequestedPlayerGame(page, baseURL, scenario) {
@@ -399,4 +411,33 @@ test('normal player page does not synthesize a current game card without partici
     await expect(page.locator('#game-stats')).toContainText('No statistics available');
     await expect(page.locator('#game-stats')).not.toContainText('vs. Owls');
     await expect(page.locator('#game-stats')).not.toContainText('Current');
+});
+
+test('public player page shares the clean preview URL after the server approves it', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    await openRequestedPlayerGame(page, baseURL, createScenario({ requestedGameHasStats: true }));
+
+    expect(pageErrors).toEqual([]);
+    await expect(page.locator('#player-share-action')).toBeVisible();
+    await page.locator('#share-player-page').click();
+    await expect(page.locator('#player-share-status')).toHaveText('Player link copied.');
+    const payload = await page.evaluate(() => window.__lastPlayerShare);
+    expect(payload).toEqual({
+        title: 'Ava Cole #3 — Comets',
+        text: "View Ava Cole's player page on ALL PLAYS.",
+        url: 'https://share.allplays.ai/player-card?teamId=team-1&playerId=p1&gameId=older-game',
+        clipboardText: 'Ava Cole #3 — Comets\nhttps://share.allplays.ai/player-card?teamId=team-1&playerId=p1&gameId=older-game'
+    });
+});
+
+test('public player page keeps sharing hidden when the server rejects the preview', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    await installMocks(page, createScenario(), { playerShareStatus: 404 });
+    await page.goto(`${baseURL}/player.html#teamId=team-1&playerId=p1`, { waitUntil: 'domcontentloaded' });
+
+    expect(pageErrors).toEqual([]);
+    await expect(page.locator('#player-header')).toContainText('Ava Cole');
+    await expect(page.locator('#player-share-action')).toBeHidden();
 });

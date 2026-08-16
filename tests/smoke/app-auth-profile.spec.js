@@ -101,6 +101,10 @@ async function mockAppModules(page, { user = null, emailLink = false, friendInvi
                     return window.performance.now();
                 }
 
+                export function getPerformancePlatform() {
+                    return 'web';
+                }
+
                 export function startPerformanceSpan() {
                     return {
                         startedAt: now(),

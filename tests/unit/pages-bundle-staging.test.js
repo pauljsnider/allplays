@@ -249,7 +249,7 @@ describe('pages bundle staging', () => {
             .map((match) => match[1]);
 
         expect(dbModuleKeys).toHaveLength(38);
-        expect(new Set(dbModuleKeys)).toEqual(new Set(['4433173']));
+        expect(new Set(dbModuleKeys)).toEqual(new Set(['4433174']));
         expect(fs.readFileSync(path.join(destinationDir, 'team.html'), 'utf8')).toContain(
             'getPublicTeamCalendarEvents, getConfigs'
         );
@@ -372,12 +372,23 @@ describe('pages bundle staging', () => {
         expect(config.hosting.ignore).not.toContain('**/.*');
         expect(config.hosting.rewrites).toEqual([
             {
+                source: '/watch',
+                function: 'liveGameSharePreview'
+            },
+            {
+                source: '/player-card',
+                function: 'playerSharePreview'
+            },
+            {
                 source: '!/app/assets/**',
                 destination: '/index.html'
             }
         ]);
+        const appFallbackRewrite = config.hosting.rewrites.find(
+            rewrite => typeof rewrite.destination === 'string'
+        );
         expect(fs.existsSync(
-            path.join(destinationDir, config.hosting.rewrites[0].destination)
+            path.join(destinationDir, appFallbackRewrite.destination)
         )).toBe(true);
     });
 

@@ -21,6 +21,14 @@
     ],
     "rewrites": [
       {
+        "source": "/watch",
+        "function": "liveGameSharePreview"
+      },
+      {
+        "source": "/player-card",
+        "function": "playerSharePreview"
+      },
+      {
         "source": "!/app/assets/**",
         "destination": "/index.html"
       }

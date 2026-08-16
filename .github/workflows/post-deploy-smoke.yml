@@ -16,43 +16,94 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  post-deploy-smoke:
+  release-proof:
     if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'master'
+    runs-on: ubuntu-latest
+    outputs:
+      artifact_sha: ${{ steps.release.outputs.artifact_sha }}
+      release_kind: ${{ steps.release.outputs.release_kind }}
+
+    steps:
+      - name: Checkout trusted release verifier
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+
+      - name: Verify complete exact-SHA release marker
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          evidence_dir="$RUNNER_TEMP/production-release-evidence"
+          mkdir -p "$evidence_dir"
+          gh api --method GET "repos/${GITHUB_REPOSITORY}/deployments" \
+            -f environment=production-release \
+            -f sha="$RELEASE_SHA" \
+            -F per_page=20 > "$evidence_dir/release-deployments.json"
+          gh api --method GET "repos/${GITHUB_REPOSITORY}/deployments" \
+            -f environment=production-artifact \
+            -F per_page=100 > "$evidence_dir/artifact-deployments.json"
+          printf '{}\n' > "$evidence_dir/statuses.json"
+          while IFS= read -r deployment_id; do
+            [[ "$deployment_id" =~ ^[0-9]+$ ]] || continue
+            gh api --method GET \
+              "repos/${GITHUB_REPOSITORY}/deployments/${deployment_id}/statuses" \
+              -F per_page=1 > "$evidence_dir/status-${deployment_id}.json"
+            jq --arg id "$deployment_id" \
+              --slurpfile rows "$evidence_dir/status-${deployment_id}.json" \
+              '. + {($id): $rows[0]}' \
+              "$evidence_dir/statuses.json" > "$evidence_dir/statuses.next.json"
+            mv "$evidence_dir/statuses.next.json" "$evidence_dir/statuses.json"
+          done < <(jq -rs 'add | .[].id' \
+            "$evidence_dir/release-deployments.json" \
+            "$evidence_dir/artifact-deployments.json" | sort -u)
+          verification="$(
+            node scripts/verify-production-release-provenance.mjs \
+              --mode verify-release \
+              --release-sha "$RELEASE_SHA" \
+              --release-deployments "$evidence_dir/release-deployments.json" \
+              --artifact-deployments "$evidence_dir/artifact-deployments.json" \
+              --statuses "$evidence_dir/statuses.json"
+          )"
+          release_kind="$(jq -r '.releaseKind' <<< "$verification")"
+          artifact_sha="$(jq -r '.artifactSha' <<< "$verification")"
+          echo "artifact_sha=$artifact_sha" >> "$GITHUB_OUTPUT"
+          echo "release_kind=$release_kind" >> "$GITHUB_OUTPUT"
+
+  post-deploy-noop:
+    needs: release-proof
+    if: needs.release-proof.outputs.release_kind == 'no-op'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm unchanged production artifact
+        env:
+          ARTIFACT_SHA: ${{ needs.release-proof.outputs.artifact_sha }}
+          RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          {
+            echo "### Production no-op verified"
+            echo
+            echo "- Release SHA: \`$RELEASE_SHA\`"
+            echo "- Live artifact SHA: \`$ARTIFACT_SHA\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  post-deploy-smoke:
+    needs: release-proof
+    if: needs.release-proof.outputs.release_kind == 'deploy'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment:
       name: production-smoke
 
     steps:
-      - name: Verify complete exact-SHA release marker
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
-        run: |
-          set -euo pipefail
-          deployment_ids="$(
-            gh api --method GET "repos/${GITHUB_REPOSITORY}/deployments" \
-              -f environment=production-release \
-              -f sha="$RELEASE_SHA" \
-              -F per_page=20 \
-              --jq '.[].id'
-          )"
-          [[ -n "$deployment_ids" ]]
-          release_current=false
-          while IFS= read -r deployment_id; do
-            [[ "$deployment_id" =~ ^[0-9]+$ ]] || continue
-            state="$(
-              gh api --method GET \
-                "repos/${GITHUB_REPOSITORY}/deployments/${deployment_id}/statuses" \
-                -F per_page=1 \
-                --jq '.[0].state // ""'
-            )"
-            if [[ "$state" == "success" ]]; then
-              release_current=true
-              break
-            fi
-          done <<<"$deployment_ids"
-          [[ "$release_current" == "true" ]]
 
       - name: Checkout
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5

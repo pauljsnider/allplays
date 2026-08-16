@@ -90,8 +90,19 @@ service firebase.storage {
           ('email:' + request.auth.token.email.lower()) in participantIds));
     }
 
+    function isParticipantOnlyAcceptedFriendChatConversation(teamId, conversationId) {
+      let conversationPath = chatConversationPath(teamId, conversationId);
+      let conversation = firestore.get(conversationPath).data;
+      return conversationId.size() > 0 &&
+        firestore.exists(conversationPath) &&
+        conversation.get('type', '') == 'direct' &&
+        conversation.get('directAccess', '') == 'accepted_friend';
+    }
+
     function canAccessChatAttachment(teamId, conversationId) {
       return canAccessTeamMedia(teamId) &&
+        (!isParticipantOnlyAcceptedFriendChatConversation(teamId, conversationId) ||
+         request.auth.uid in firestore.get(chatConversationPath(teamId, conversationId)).data.get('directUserIds', [])) &&
         (conversationId == 'team' ||
          isTeamOwnerOrAdmin(teamId) ||
          isChatConversationParticipant(teamId, conversationId));
@@ -309,7 +320,9 @@ service firebase.storage {
         canAccessChatAttachment(teamId, conversationId) &&
         request.auth.uid == userId &&
         isAllowedChatAttachmentUpload(request.resource.contentType, request.resource.size);
-      allow delete: if (isVerifiedForSensitiveWrite() && isTeamOwnerOrAdmin(teamId)) ||
+      allow delete: if (isVerifiedForSensitiveWrite() &&
+        isTeamOwnerOrAdmin(teamId) &&
+        canAccessChatAttachment(teamId, conversationId)) ||
         canDeleteOwnChatAttachment(teamId, conversationId, userId);
       allow update: if false;
     }

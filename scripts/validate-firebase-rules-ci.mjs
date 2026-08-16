@@ -1075,9 +1075,21 @@ export function validateFirebaseRulesCi() {
     );
     assertIncludes(
         deployProd,
-        'needs: [production-validation-gate, validate-production-smoke-config]',
+        'needs: [validation-source, production-validation-gate, validate-production-smoke-config]',
         'Production deploy gate'
     );
+    assertIncludes(
+        deployProd,
+        "needs.validation-source.outputs.change_impact != 'spec-only'",
+        'Production full-deploy impact gate'
+    );
+    assertIncludes(
+        deployProd,
+        "needs.validation-source.outputs.change_impact == 'spec-only'",
+        'Production no-op impact gate'
+    );
+    assertIncludes(deployProd, 'environment:"production-artifact"', 'Production artifact provenance marker');
+    assertIncludes(deployProd, 'release_kind:"no-op"', 'Production no-op release marker');
 
     assertIncludes(deployPreviewBuild, 'workflow_call:', 'Untrusted preview reusable workflow');
     assertIncludes(prIntegration, 'uses: ./.github/workflows/regression-guards.yml', 'PR integration regression gate');
@@ -1113,7 +1125,7 @@ export function validateFirebaseRulesCi() {
     assertIncludes(storageRules, "teamPermission(teamId, 'teamMediaManagement').get('mode', '') == 'selected'", 'Storage team media manager selected permission');
     assertIncludes(storageRules, "request.auth.uid in teamPermission(teamId, 'teamMediaManagement').get('memberIds', [])", 'Storage team media manager member ID check');
     assertIncludes(teamMediaRules, 'allow delete: if isVerifiedForSensitiveWrite() &&\n        (canManageTeamMedia(teamId) || canDeleteOwnTeamMediaObject(teamId, folderId, userId));', 'Team media scoped Storage delete rules');
-    assertIncludes(chatFallbackRules, 'allow delete: if (isVerifiedForSensitiveWrite() && isTeamOwnerOrAdmin(teamId)) ||\n        canDeleteOwnChatAttachment(teamId, conversationId, userId);', 'Chat fallback scoped Storage delete rules');
+    assertIncludes(chatFallbackRules, 'allow delete: if (isVerifiedForSensitiveWrite() &&\n        isTeamOwnerOrAdmin(teamId) &&\n        canAccessChatAttachment(teamId, conversationId)) ||\n        canDeleteOwnChatAttachment(teamId, conversationId, userId);', 'Chat fallback scoped Storage delete rules');
     for (const [label, block] of [
         ['Legacy chat fallback scoped Storage delete rules', legacyChatFallbackRules],
         ['Stat sheet scoped Storage delete rules', statSheetFallbackRules],

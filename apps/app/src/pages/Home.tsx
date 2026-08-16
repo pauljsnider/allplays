@@ -220,6 +220,7 @@ export function Home({ auth }: { auth: AuthState }) {
       currentAuthUserIdRef.current === user.uid
       && homeLoadGenerationRef.current === loadGeneration
     );
+    let secondaryLoadPromise: Promise<unknown> | null = null;
     let receivedHomePreview = false;
     let summaryResultReturned = false;
     const hasExistingHome = loadedHomeDetailsUserId === user.uid;
@@ -241,7 +242,7 @@ export function Home({ auth }: { auth: AuthState }) {
       setHomeLoadError(appError);
       setSocialStatus({ tone: 'error', message: getHomeSecondaryErrorMessage(appError) });
     };
-    return runPrimaryLoad(
+    const summary = await runPrimaryLoad(
       async () => {
         const summary = await loadParentHomeSummaryBootstrap(user, {
           force,
@@ -309,7 +310,7 @@ export function Home({ auth }: { auth: AuthState }) {
           return socialResult.socialHome;
         };
 
-        void runSecondaryLoad(
+        secondaryLoadPromise = runSecondaryLoad(
           async () => {
             const secondaryHome = await loadParentHomeWithSecondaryData(user, {
               force: force || forceSecondary,
@@ -417,6 +418,8 @@ export function Home({ auth }: { auth: AuthState }) {
         }
       }
     );
+    await secondaryLoadPromise;
+    return summary;
   };
 
   useEffect(() => {
@@ -433,7 +436,7 @@ export function Home({ auth }: { auth: AuthState }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid]);
 
-  useRefreshOnResume(() => { void refreshHome({ force: true }); }, { enabled: Boolean(auth.user?.uid) });
+  useRefreshOnResume(() => refreshHome({ force: true }), { enabled: Boolean(auth.user?.uid) });
 
   useEffect(() => {
     if (!hasStartedInitialHomeLoadRef.current) {

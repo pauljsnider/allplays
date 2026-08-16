@@ -82,16 +82,18 @@ describe('ICS recurring tracking ids', () => {
     it('tracks calendar imports by occurrence id instead of bare uid', () => {
         const source = readEditSchedule();
 
-        expect(source).toContain('calendarEventUid: getCalendarEventTrackingId(calendarEvent)');
+        expect(source).toContain('const calendarEventId = getCalendarEventTrackingId(calendarEvent);');
+        expect(source).toContain('await materializeCalendarGame({');
+        expect(source).toContain('calendarEventId,');
     });
 
     it('bumps utils cache tokens anywhere the new tracking exports are imported', () => {
-        expect(readEditSchedule()).toContain("./js/utils.js?v=443349");
-        expect(readParentDashboard()).toContain("./js/utils.js?v=443349");
-        expect(readFamilyPage()).toContain("./js/utils.js?v=443349");
-        expect(readTeamPage()).toContain("./js/utils.js?v=443349");
-        expect(readGamePlan()).toContain("./js/utils.js?v=443349");
-        expect(readCalendarPage()).toContain("./js/utils.js?v=443349");
+        expect(readEditSchedule()).toContain("./js/utils.js?v=443350");
+        expect(readParentDashboard()).toContain("./js/utils.js?v=443350");
+        expect(readFamilyPage()).toContain("./js/utils.js?v=443350");
+        expect(readTeamPage()).toContain("./js/utils.js?v=443350");
+        expect(readGamePlan()).toContain("./js/utils.js?v=443350");
+        expect(readCalendarPage()).toContain("./js/utils.js?v=443350");
     });
 
     it('declares each calendar tracking helper only once in utils before the ICS event mapper', () => {

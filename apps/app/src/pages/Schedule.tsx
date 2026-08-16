@@ -608,8 +608,14 @@ export function Schedule({ auth }: { auth: AuthState }) {
         },
         rethrow: false,
         onSuccess: (result) => {
-          if (activeUserIdRef.current !== requestedUserId) return;
-          if (scheduleRefreshVersionRef.current !== refreshVersion) return;
+          if (
+            activeUserIdRef.current !== requestedUserId
+            || scheduleRefreshVersionRef.current !== refreshVersion
+          ) {
+            timer.cancel({ reason: 'superseded' });
+            initialLoadTimer?.cancel({ reason: 'superseded' });
+            return;
+          }
           const authoritativeResult = refreshedStaffTeams === null
             ? mergePartialScheduleScope(
                 result.children,
@@ -678,8 +684,14 @@ export function Schedule({ auth }: { auth: AuthState }) {
           });
         },
         onError: (loadError) => {
-          if (activeUserIdRef.current !== requestedUserId) return;
-          if (scheduleRefreshVersionRef.current !== refreshVersion) return;
+          if (
+            activeUserIdRef.current !== requestedUserId
+            || scheduleRefreshVersionRef.current !== refreshVersion
+          ) {
+            timer.cancel({ reason: 'superseded' });
+            initialLoadTimer?.cancel({ reason: 'superseded' });
+            return;
+          }
           const mappedError = toAppServiceError(loadError, 'Unable to load schedule.');
           setScheduleLoadError(mappedError);
           if (!hasExistingSchedule) {
@@ -739,7 +751,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filter, hasLoadedSchedule]);
 
-  useRefreshOnResume(() => { void refreshSchedule(true); }, { enabled: Boolean(auth.user?.uid) });
+  useRefreshOnResume(() => refreshSchedule(true), { enabled: Boolean(auth.user?.uid) });
 
   useEffect(() => {
     if (!hasStartedInitialScheduleLoadRef.current || scheduleReadLoading || isInitialScheduleLoad) {
