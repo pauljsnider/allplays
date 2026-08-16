@@ -46,6 +46,18 @@ async function mockTeamsModules(page, { scenario = '', managedTeam = false, rost
         window.__teamRosterPlayerCount = teamRosterPlayerCount;
     }, { scenarioName: scenario, shouldManageTeam: managedTeam, teamRosterPlayerCount: rosterPlayerCount });
 
+    await page.route(/\/src\/lib\/authService\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                export function getRouteForUser() {
+                    return '/home';
+                }
+            `
+        });
+    });
+
     await page.route(/\/src\/lib\/useAuth\.ts(\?.*)?$/, async (route) => {
         await route.fulfill({
             status: 200,
