@@ -256,8 +256,8 @@ export function Schedule({ auth }: { auth: AuthState }) {
   activeUserIdRef.current = auth.user?.uid || null;
   const rsvpHydrationScopeVersionRef = useRef(0);
   const lastRsvpHydrationScopeRef = useRef('');
-  const hydratedRsvpGroupKeysRef = useRef(new Set<string>());
-  const inFlightRsvpGroupKeysRef = useRef(new Map<string, string>());
+  const hydratedRsvpEventKeysRef = useRef(new Set<string>());
+  const inFlightRsvpEventKeysRef = useRef(new Map<string, string>());
   const activeRsvpHydrationCountsRef = useRef(new Map<string, number>());
   const bulkRsvpQueryHandledRef = useRef(false);
   const pendingRsvpEventKeysRef = useRef(new Set<string>());
@@ -367,10 +367,9 @@ export function Schedule({ auth }: { auth: AuthState }) {
       initialHydration ? upcomingListPageSize : visibleGroupLimit
     );
     const rsvpEvents = candidateEvents.filter((event) => {
-      const groupKey = `${event.teamId}::${event.id}`;
       if (
-        hydratedRsvpGroupKeysRef.current.has(groupKey)
-        || inFlightRsvpGroupKeysRef.current.get(groupKey) === hydrationRequestScopeKey
+        hydratedRsvpEventKeysRef.current.has(event.eventKey)
+        || inFlightRsvpEventKeysRef.current.get(event.eventKey) === hydrationRequestScopeKey
       ) return false;
       return true;
     });
@@ -378,9 +377,9 @@ export function Schedule({ auth }: { auth: AuthState }) {
       setRsvpHydrationPending((activeRsvpHydrationCountsRef.current.get(hydrationRequestScopeKey) || 0) > 0);
       return;
     }
-    const reservedGroupKeys = rsvpEvents.map((event) => `${event.teamId}::${event.id}`);
-    reservedGroupKeys.forEach((groupKey) => {
-      inFlightRsvpGroupKeysRef.current.set(groupKey, hydrationRequestScopeKey);
+    const reservedEventKeys = rsvpEvents.map((event) => event.eventKey);
+    reservedEventKeys.forEach((eventKey) => {
+      inFlightRsvpEventKeysRef.current.set(eventKey, hydrationRequestScopeKey);
     });
     activeRsvpHydrationCountsRef.current.set(
       hydrationRequestScopeKey,
@@ -392,7 +391,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
       if (
         hydrationScopeVersion !== rsvpHydrationScopeVersionRef.current
         || lastRsvpHydrationScopeRef.current !== hydrationScopeKey
-        || auth.user?.uid !== user.uid
+        || activeUserIdRef.current !== user.uid
       ) return;
       const hydratedByKey = new Map(hydratedEvents.map((event) => [event.eventKey, event]));
       updateScheduleEvents((current) => current.map((event) => {
@@ -419,17 +418,17 @@ export function Schedule({ auth }: { auth: AuthState }) {
         if (
           hydrationScopeVersion === rsvpHydrationScopeVersionRef.current
           && lastRsvpHydrationScopeRef.current === hydrationScopeKey
-          && auth.user?.uid === user.uid
+          && activeUserIdRef.current === user.uid
         ) {
-          reservedGroupKeys.forEach((groupKey) => hydratedRsvpGroupKeysRef.current.add(groupKey));
+          reservedEventKeys.forEach((eventKey) => hydratedRsvpEventKeysRef.current.add(eventKey));
           mergeHydratedEvents(hydrated.events);
         }
       } catch (error) {
         logger.warn('Unable to hydrate schedule RSVPs in the background.', { error });
       } finally {
-        reservedGroupKeys.forEach((groupKey) => {
-          if (inFlightRsvpGroupKeysRef.current.get(groupKey) === hydrationRequestScopeKey) {
-            inFlightRsvpGroupKeysRef.current.delete(groupKey);
+        reservedEventKeys.forEach((eventKey) => {
+          if (inFlightRsvpEventKeysRef.current.get(eventKey) === hydrationRequestScopeKey) {
+            inFlightRsvpEventKeysRef.current.delete(eventKey);
           }
         });
         const remainingCount = Math.max(
@@ -444,7 +443,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
         if (
           hydrationScopeVersion === rsvpHydrationScopeVersionRef.current
           && lastRsvpHydrationScopeRef.current === hydrationScopeKey
-          && auth.user?.uid === user.uid
+          && activeUserIdRef.current === user.uid
         ) {
           setRsvpHydrationPending(remainingCount > 0);
         }
@@ -776,16 +775,17 @@ export function Schedule({ auth }: { auth: AuthState }) {
   };
 
   useEffect(() => {
+    rsvpHydrationScopeVersionRef.current += 1;
+    lastRsvpHydrationScopeRef.current = '';
     hasLoadedScheduleRef.current = false;
     hasStartedInitialScheduleLoadRef.current = false;
-    hydratedRsvpGroupKeysRef.current.clear();
-    inFlightRsvpGroupKeysRef.current.clear();
+    hydratedRsvpEventKeysRef.current.clear();
+    inFlightRsvpEventKeysRef.current.clear();
     activeRsvpHydrationCountsRef.current.clear();
     pastHistoryLoadedRef.current = false;
     setPastHistoryHasMore(false);
     setRsvpHydrationPending(Boolean(auth.user?.uid));
     if (!auth.user?.uid) {
-      hydratedRsvpGroupKeysRef.current.clear();
       setLoadedScheduleUserId(null);
       applyScheduleResult({ children: [], events: [] });
       return;
