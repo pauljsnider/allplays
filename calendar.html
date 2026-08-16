@@ -193,6 +193,7 @@
         import { buildAvailabilityNoteRows, canViewAvailabilityNotes, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } from './js/availability-preferences.js?v=1';
         import { getDefaultSchedulePrintOptions, printSchedule, promptSchedulePrintOptions } from './js/schedule-print.js?v=2';
         import { addCalendarLoadedRange, createLatestCalendarRangeLoader, getMissingCalendarLoadRanges } from './js/calendar-load-window.js?v=2';
+        import { fetchLegacyCalendarFeed } from './js/calendar-feed-loading.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -439,6 +440,7 @@
                 [...coachTeams, ...parentTeams].forEach(t => teamsMap.set(t.id, t));
                 const teams = Array.from(teamsMap.values());
                 calendarTeams = teams;
+                calendarEventsByTeam.clear();
 
                 // Assign colors to teams
                 teams.forEach((team, i) => {
@@ -463,24 +465,6 @@
             }
         }
 
-        function waitForCalendarImportCapacity() {
-            return new Promise((resolve) => setTimeout(resolve, 250));
-        }
-
-        async function fetchLegacyCalendarFeed(calUrl) {
-            const retryDeadline = Date.now() + 30000;
-            while (true) {
-                try {
-                    return await fetchAndParseCalendar(calUrl);
-                } catch (error) {
-                    if (error?.code !== 'CALENDAR_IMPORT_QUEUE_FULL' || Date.now() >= retryDeadline) {
-                        throw error;
-                    }
-                    await waitForCalendarImportCapacity();
-                }
-            }
-        }
-
         function publishCalendarEvents() {
             const previousRsvpState = new Map(allEvents
                 .filter((event) => event.source === 'db' && rsvpHydrationCache.has(`${event.teamId}::${event.id}`))
@@ -489,7 +473,7 @@
                     rsvpSummary: event.rsvpSummary,
                     availabilityNotes: event.availabilityNotes
                 }]));
-            allEvents = [...calendarEventsByTeam.values()].flat().map((event) => {
+            allEvents = calendarTeams.flatMap((team) => calendarEventsByTeam.get(team.id) || []).map((event) => {
                 const previous = previousRsvpState.get(`${event.teamId}::${event.id}`);
                 return previous ? { ...event, ...previous } : event;
             }).sort((a, b) => a.date - b.date);
@@ -594,7 +578,7 @@
                         const trackedUids = await getTrackedCalendarEventUids(team.id, games);
                         for (const calUrl of calendarUrls) {
                             try {
-                                const icsEvents = await fetchLegacyCalendarFeed(calUrl);
+                                const icsEvents = await fetchLegacyCalendarFeed(calUrl, fetchAndParseCalendar);
                                 events.push(...mergeGlobalCalendarIcsEvents({
                                     team,
                                     teamColor: teamColors[team.id],

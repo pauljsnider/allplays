@@ -1,9 +1,14 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { fetchLegacyCalendarFeed } from '../../js/calendar-feed-loading.js';
 
 function readCalendarPage() {
     return readFileSync(new URL('../../calendar.html', import.meta.url), 'utf8');
 }
+
+afterEach(() => {
+    vi.useRealTimers();
+});
 
 describe('calendar page ICS cancellation handling', () => {
     it('delegates synced ICS event mapping to the shared global calendar helper', () => {
@@ -23,26 +28,43 @@ describe('calendar page ICS cancellation handling', () => {
 });
 
 describe('legacy calendar external-feed loading', () => {
-    it('publishes stored events before queued feeds finish and retries queue-capacity outcomes', () => {
+    it('publishes stored events only for the authoritative team set before queued feeds finish', () => {
         const source = readCalendarPage();
         const storedEventsPublish = source.indexOf('onEvents?.(events);');
-        const firstExternalFetch = source.indexOf('const icsEvents = await fetchLegacyCalendarFeed(calUrl);');
+        const firstExternalFetch = source.indexOf('const icsEvents = await fetchLegacyCalendarFeed(calUrl, fetchAndParseCalendar);');
 
         expect(storedEventsPublish).toBeGreaterThan(-1);
         expect(firstExternalFetch).toBeGreaterThan(storedEventsPublish);
-        expect(source).toContain("error?.code !== 'CALENDAR_IMPORT_QUEUE_FULL'");
-        expect(source).toContain('await waitForCalendarImportCapacity();');
+        expect(source).toContain('calendarEventsByTeam.clear();');
+        expect(source).toContain('calendarTeams.flatMap((team) => calendarEventsByTeam.get(team.id) || [])');
         expect(source).toContain('calendarEventsByTeam.set(team.id, events);');
         expect(source).toContain('publishCalendarEvents();');
     });
 
-    it('does not convert a local import queue-capacity outcome into a partial schedule state', () => {
-        const source = readCalendarPage();
-        const externalLoader = source.match(/async function fetchLegacyCalendarFeed[\s\S]*?\n        }\n\n        function publishCalendarEvents/);
+    it('continues retrying when queue capacity remains exhausted beyond the old deadline', async () => {
+        vi.useFakeTimers();
+        const queueFullError = Object.assign(new Error('queue full'), { code: 'CALENDAR_IMPORT_QUEUE_FULL' });
+        let attempts = 0;
+        const fetchCalendar = async () => {
+            attempts += 1;
+            if (attempts <= 121) throw queueFullError;
+            return [{ uid: 'event-after-capacity' }];
+        };
+        const resultPromise = fetchLegacyCalendarFeed('https://example.com/team.ics', fetchCalendar);
 
-        expect(externalLoader?.[0]).toContain('CALENDAR_IMPORT_QUEUE_FULL');
-        expect(externalLoader?.[0]).toContain('retryDeadline');
-        expect(source).toContain('console.warn(\'Failed to load ICS calendar:\', e);');
-        expect(source).not.toContain('partial');
+        await vi.advanceTimersByTimeAsync(30250);
+
+        await expect(resultPromise).resolves.toEqual([{ uid: 'event-after-capacity' }]);
+        expect(attempts).toBe(122);
+    });
+
+    it('still rejects non-capacity feed failures', async () => {
+        const invalidFeedError = new Error('invalid calendar');
+
+        await expect(fetchLegacyCalendarFeed(
+            'https://example.com/team.ics',
+            async () => { throw invalidFeedError; },
+            async () => {}
+        )).rejects.toBe(invalidFeedError);
     });
 });
