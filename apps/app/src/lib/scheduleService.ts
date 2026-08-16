@@ -165,6 +165,13 @@ const MAX_SCHEDULE_TRACKER_CONFIG_OPTIONS = 100;
 // service load timer). 6 covers typical multi-team accounts in one wave.
 const parentScheduleTeamConcurrency = 6;
 const parentSchedulePlayerConcurrency = 8;
+// Keep React schedule fan-out aligned with the shared external calendar
+// importer. The importer queues work above this active limit, so callers must
+// not turn queued feeds into local failures by starting an unbounded burst
+// across multiple teams.
+const calendarImportConcurrency = 50;
+const calendarImportWaiters: Array<() => void> = [];
+let activeCalendarImports = 0;
 const scheduleHydrationCacheTtlMs = 30 * 1000;
 const parentHomeHydrationLookAheadMs = 14 * 24 * 60 * 60 * 1000;
 const parentHomeHydrationLookBehindMs = 12 * 60 * 60 * 1000;
@@ -1746,6 +1753,20 @@ async function mapWithConcurrency<T, R>(
   }));
 
   return results;
+}
+
+async function withCalendarImportSlot<T>(work: () => Promise<T>): Promise<T> {
+  if (activeCalendarImports >= calendarImportConcurrency) {
+    await new Promise<void>((resolve) => calendarImportWaiters.push(resolve));
+  }
+  activeCalendarImports += 1;
+  try {
+    return await work();
+  } finally {
+    const next = calendarImportWaiters.shift();
+    if (next) next();
+    else activeCalendarImports -= 1;
+  }
 }
 
 export function normalizeGameScoreValue(value: unknown) {
@@ -3971,7 +3992,7 @@ async function buildTeamSchedule(
     if (calendarUrls.length > 0) {
       const calendarResults = await Promise.all(calendarUrls.map(async (calendarUrl: string) => {
         try {
-          return await fetchAndParseCalendar(calendarUrl);
+          return await withCalendarImportSlot(() => fetchAndParseCalendar(calendarUrl));
         } catch (error) {
           logScheduleWarning('Unable to load team calendar.', 'team-calendar-load', error, { teamId, calendarUrl });
           options.onSourcePartial?.();

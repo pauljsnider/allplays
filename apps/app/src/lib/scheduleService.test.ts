@@ -5468,6 +5468,76 @@ describe('partial parent schedule team failures (#3021)', () => {
     });
   });
 
+  it('drains queued calendar imports across teams without hiding stored events', async () => {
+    const calendarUrlsByTeam = {
+      'team-1': Array.from({ length: 26 }, (_, index) => `https://calendar.example.com/team-1-${index}.ics`),
+      'team-2': Array.from({ length: 26 }, (_, index) => `https://calendar.example.com/team-2-${index}.ics`)
+    };
+    const pendingImports: Array<{ url: string; resolve: (events: any[]) => void }> = [];
+    let activeImports = 0;
+    let maximumActiveImports = 0;
+    vi.mocked(getTeam).mockImplementation(async (teamId: string) => ({
+      id: teamId,
+      name: teamId === 'team-1' ? 'Team One' : 'Team Two',
+      calendarUrls: calendarUrlsByTeam[teamId as keyof typeof calendarUrlsByTeam]
+    }) as any);
+    vi.mocked(getGames).mockImplementation(async (teamId: string) => [{
+      id: `stored-${teamId}`,
+      type: 'game',
+      date: new Date('2026-08-01T18:00:00.000Z'),
+      opponent: 'Stored Opponent'
+    }] as any);
+    vi.mocked(fetchAndParseCalendar).mockImplementation((url: string) => {
+      if (activeImports >= 50) {
+        return Promise.reject(new Error('Too many calendar imports are already in progress.'));
+      }
+      activeImports += 1;
+      maximumActiveImports = Math.max(maximumActiveImports, activeImports);
+      return new Promise((resolve) => {
+        pendingImports.push({
+          url,
+          resolve: (events) => {
+            activeImports -= 1;
+            resolve(events);
+          }
+        });
+      });
+    });
+
+    const schedulePromise = loadParentSchedule(parentUser, { hydrateDetails: false, expandStaffPlayers: false });
+    await vi.waitFor(() => expect(pendingImports).toHaveLength(50));
+    expect(maximumActiveImports).toBe(50);
+    expect(schedulePromise).toBeInstanceOf(Promise);
+
+    for (const pendingImport of pendingImports.splice(0)) {
+      pendingImport.resolve([{
+        uid: pendingImport.url,
+        dtstart: new Date(`2026-08-${String((pendingImports.length % 26) + 2).padStart(2, '0')}T18:00:00.000Z`),
+        summary: 'Imported game',
+        location: 'Imported Field'
+      }]);
+    }
+    await vi.waitFor(() => expect(pendingImports).toHaveLength(2));
+    for (const pendingImport of pendingImports.splice(0)) {
+      pendingImport.resolve([{
+        uid: pendingImport.url,
+        dtstart: new Date('2026-09-01T18:00:00.000Z'),
+        summary: 'Queued imported game',
+        location: 'Queued Field'
+      }]);
+    }
+
+    const result = await schedulePromise;
+    expect(fetchAndParseCalendar).toHaveBeenCalledTimes(52);
+    expect(result.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'stored-team-1', isDbGame: true }),
+      expect.objectContaining({ id: 'stored-team-2', isDbGame: true }),
+      expect.objectContaining({ sourceType: 'calendar', isImported: true })
+    ]));
+    expect(result.events.filter((event) => event.sourceType === 'calendar')).toHaveLength(52);
+    expect(result.isPartial).toBe(false);
+  });
+
   it('marks an event-detail calendar fallback partial when the requested event cannot load', async () => {
     vi.mocked(getTeam).mockResolvedValue({
       id: 'team-1',
