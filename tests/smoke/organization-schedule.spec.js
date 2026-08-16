@@ -298,7 +298,7 @@ test('ignores an overlapping pre-cancellation refresh after verified cancellatio
     await expect(row).toBeVisible();
     expect(bootIssues).toEqual([]);
     await page.evaluate(() => { window.__organizationScheduleTestState.delayPreCancellationRefresh = true; });
-    await page.getByRole('button', { name: 'Refresh published matchups' }).click();
+    await page.locator('#refresh-published-matchups-btn').click();
     await expect.poll(() => page.evaluate(() => window.__organizationScheduleTestState.delayedRefreshCaptures)).toBe(2);
 
     page.once('dialog', (dialog) => dialog.accept());
