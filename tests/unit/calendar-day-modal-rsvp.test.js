@@ -135,6 +135,10 @@ const Blob = deps.Blob;
             /import \{ addCalendarLoadedRange, createLatestCalendarRangeLoader, getMissingCalendarLoadRanges \} from '\.\/js\/calendar-load-window\.js\?v=\d+';/,
             'const { addCalendarLoadedRange, createLatestCalendarRangeLoader, getMissingCalendarLoadRanges } = deps.calendarLoadWindow;'
         )
+        .replace(
+            /import \{ fetchLegacyCalendarFeed \} from '\.\/js\/calendar-feed-loading\.js\?v=\d+';/,
+            'const { fetchLegacyCalendarFeed } = deps.calendarFeed;'
+        )
         .replace(/\binit\(\);\s*$/, 'await init();');
 }
 
@@ -442,6 +446,11 @@ function createDeps(submitRecorder, overrides = {}) {
             addCalendarLoadedRange,
             createLatestCalendarRangeLoader,
             getMissingCalendarLoadRanges
+        },
+        calendarFeed: {
+            async fetchLegacyCalendarFeed(_calendarUrl, fetchCalendar) {
+                return fetchCalendar();
+            }
         },
         eventDate,
         initialSummary,
