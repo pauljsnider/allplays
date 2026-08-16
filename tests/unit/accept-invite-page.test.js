@@ -122,7 +122,7 @@ const setTimeout = deps.setTimeout;
             'const { createInviteProcessor, getInviteDashboardUrl, isInviteAlreadyRedeemedError } = deps.acceptInviteFlow;'
         )
         .replace(
-            "import { renderHeader, renderFooter } from './js/utils.js?v=443350';",
+            "import { renderHeader, renderFooter } from './js/utils.js?v=443351';",
             'const { renderHeader, renderFooter } = deps.utils;'
         )
         .replace(/\binit\(\);\s*$/, 'await init();');

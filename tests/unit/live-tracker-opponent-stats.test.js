@@ -485,7 +485,7 @@ describe('live tracker opponent stats harness', () => {
         "import {\n  getTeam,\n  getTeams,\n  getGame,\n  getPlayers,\n  getConfigs,\n  updateGame,\n  collection,\n  getDocs,\n  deleteDoc,\n  query,\n  broadcastLiveEvent,\n  subscribeLiveChat,\n  postLiveChatMessage,\n  setGameLiveStatus\n} from './db.js?v=4433174';"
       )
       .replace('./firebase.js?v=26', './firebase.js?v=26')
-      .replace('./utils.js?v=443350', './utils.js?v=443350')
+      .replace('./utils.js?v=443351', './utils.js?v=443351')
       .replace('./auth.js?v=4433176', './auth.js?v=4433176');
 
     const rewritten = buildModuleSource(source);

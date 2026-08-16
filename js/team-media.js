@@ -1,4 +1,4 @@
-import { checkAuth } from './auth.js?v=4433176';
+import { checkAuth } from './auth.js?v=4433177';
 import {
     getDelegatedTeamContext,
     getTeamMediaFolders,
@@ -16,7 +16,7 @@ import {
     bulkDeleteTeamMediaItems,
     setTeamMediaAlbumCover,
     updateTeamMediaItem
-} from './db.js?v=4433174';
+} from './db.js?v=4433175';
 import {
     canContributeTeamMedia,
     canDeleteTeamMediaItem,
@@ -31,7 +31,7 @@ import {
     isTeamMediaDocument,
     normalizeTeamMediaVideoDraft,
     sortByMediaOrder
-} from './team-media-utils.js?v=44338';
+} from './team-media-utils.js?v=44339';
 import { validateTeamMediaUploadBatch } from './team-media-upload-limits.js?v=44531';
 
 const state = {

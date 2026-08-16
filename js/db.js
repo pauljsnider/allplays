@@ -45,12 +45,12 @@ import {
     buildUserProfilePhotoPath,
     validateProfilePhotoFile
 } from './profile-photo-paths.js?v=3';
-import { isAccessCodeExpired } from './access-code-utils.js?v=1';
+import { isAccessCodeExpired } from './access-code-utils.js?v=2';
 import {
     buildParentMembershipRequestId,
     buildParentMembershipRequestUpdate,
     mergeApprovedParentMembershipRequests
-} from './parent-membership-utils.js?v=2';
+} from './parent-membership-utils.js?v=3';
 import { buildCoachOverrideRsvpDocId, shouldDeleteLegacyRsvpForOverride } from './rsvp-doc-ids.js';
 import { computeEffectiveRsvpSummary } from './rsvp-summary.js?v=2';
 import { assertTeamFeeRecipientLimit, normalizeTeamFeeRecipientRecords } from './team-fee-batch-limits.js?v=1';
@@ -78,7 +78,7 @@ import {
     mergeBoundedAdminUserCandidates
 } from './admin-search.js?v=8';
 import { resolveAvailabilityCutoffEventDate } from './availability-cutoff-date.js?v=1';
-import { normalizeFamilyShareCalendarUrls, normalizeFamilyShareChildren } from './family-share-utils.js?v=2';
+import { normalizeFamilyShareCalendarUrls, normalizeFamilyShareChildren } from './family-share-utils.js?v=3';
 import { normalizeChatAttachments } from './team-chat-media.js';
 import {
     DEFAULT_TEAM_CONVERSATION_ID,
@@ -112,7 +112,7 @@ import {
     collectAthleteProfileMediaCleanupPaths,
     summarizeAthleteProfileCareer,
     collectAthleteGameClipsForPlayer
-} from './athlete-profile-utils.js?v=2';
+} from './athlete-profile-utils.js?v=3';
 import {
     isTeamActive,
     filterTeamsByActive,
@@ -235,14 +235,14 @@ import {
     loadVolunteerScreeningTargetRegistrations
 } from './volunteer-screening-access.js?v=2';
 import { buildTournamentGroupOverrideKey, buildTournamentPoolOverrideKey, matchesTournamentStandingsGroup } from './tournament-standings.js?v=4';
-import { buildBulkDeleteUpdates, buildMoveUpdates, buildReorderUpdates, isSafeTeamMediaUrl, isSupportedTeamMediaDocument, isSupportedTeamMediaImage, normalizeTeamMediaFolderDraft, normalizeTeamMediaVideoDraft, normalizeAlbumVisibility, sortByMediaOrder } from './team-media-utils.js?v=44338';
+import { buildBulkDeleteUpdates, buildMoveUpdates, buildReorderUpdates, isSafeTeamMediaUrl, isSupportedTeamMediaDocument, isSupportedTeamMediaImage, normalizeTeamMediaFolderDraft, normalizeTeamMediaVideoDraft, normalizeAlbumVisibility, sortByMediaOrder } from './team-media-utils.js?v=44339';
 import { getApp } from './vendor/firebase-app.js';
 import {
     computeOfficiatingCoverageStatus,
     updateOfficiatingSlotResponse,
     updateOfficiatingSlotResult
-} from './officiating-utils.js?v=4';
-import { buildOfficiatingNotificationRecord } from './officiating-notifications.js?v=2';
+} from './officiating-utils.js?v=5';
+import { buildOfficiatingNotificationRecord } from './officiating-notifications.js?v=3';
 import {
     getTeamEmailAttachmentTotalBytes,
     normalizeTeamEmailAttachments
@@ -767,7 +767,7 @@ export async function uploadStatSheetPhoto(teamId, gameId, file, options = {}) {
         : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=443350'; // Import resolveZip
+import { resolveZip } from './utils.js?v=443351'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
