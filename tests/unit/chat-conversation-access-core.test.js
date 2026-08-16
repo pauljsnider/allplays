@@ -3,9 +3,65 @@ import { describe, expect, it } from 'vitest';
 
 const require = createRequire(import.meta.url);
 const {
+    buildCanonicalConversationId,
     canProjectChatConversation,
+    resolveCanonicalConversationParticipants,
     serializeChatConversationProjection
 } = require('../../functions/chat-conversation-access-core.cjs');
+
+describe('chat conversation participant canonicalization', () => {
+    const authUsers = {
+        'parent-1': { uid: 'parent-1', email: 'parent@example.test' },
+        'friend-1': { uid: 'friend-1', email: 'friend@example.test' },
+        'member-3': { uid: 'member-3', email: 'member3@example.test' }
+    };
+    const resolveUserByUid = async (uid) => authUsers[uid] || null;
+    const resolveUserByEmail = async (email) => Object.values(authUsers)
+        .find((user) => user.email === email) || null;
+
+    it.each([
+        {
+            label: 'classifies two canonical users as direct',
+            selectors: ['user:friend-1'],
+            type: 'direct',
+            ids: ['friend-1', 'parent-1']
+        },
+        {
+            label: 'deduplicates UID and email aliases for one recipient',
+            selectors: ['user:friend-1', 'email:friend@example.test'],
+            type: 'direct',
+            ids: ['friend-1', 'parent-1']
+        },
+        {
+            label: 'classifies three canonical users as a group',
+            selectors: ['friend-1', 'email:member3@example.test'],
+            type: 'group',
+            ids: ['friend-1', 'member-3', 'parent-1']
+        }
+    ])('$label', async ({ selectors, type, ids }) => {
+        const result = await resolveCanonicalConversationParticipants({
+            callerUid: 'parent-1',
+            participantSelectors: selectors,
+            resolveUserByUid,
+            resolveUserByEmail
+        });
+
+        expect(result.type).toBe(type);
+        expect(result.participantIds).toEqual(ids);
+        expect(buildCanonicalConversationId(result.type, result.participantIds)).toBe(
+            `${type}_${ids.map(encodeURIComponent).join('__')}`
+        );
+    });
+
+    it('fails closed when aliases collapse to only the caller', async () => {
+        await expect(resolveCanonicalConversationParticipants({
+            callerUid: 'parent-1',
+            participantSelectors: ['email:parent@example.test'],
+            resolveUserByUid,
+            resolveUserByEmail
+        })).rejects.toThrow(/between 2 and 50/i);
+    });
+});
 
 function canProject(overrides = {}) {
     return canProjectChatConversation({
