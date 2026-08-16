@@ -546,8 +546,8 @@ describe('Schedule', () => {
       }))
     };
     const hydrationResolvers: Array<() => void> = [];
-    const deferHydration = (hydrationSchedule: typeof schedule) => (
-      new Promise((resolve) => hydrationResolvers.push(() => resolve(hydrationSchedule)))
+    const deferHydration = (hydrationSchedule: unknown, _user?: unknown, _options?: unknown) => (
+      new Promise<unknown>((resolve) => hydrationResolvers.push(() => resolve(hydrationSchedule)))
     );
     scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(schedule);
     scheduleServiceMocks.hydrateParentScheduleRsvps
@@ -580,8 +580,8 @@ describe('Schedule', () => {
       events: Array.from({ length: 20 }, (_, index) => buildPracticePacketEvent(index + 1, { isDbGame: true }))
     };
     const hydrationResolvers: Array<() => void> = [];
-    const deferHydration = (hydrationSchedule: typeof schedule) => (
-      new Promise((resolve) => hydrationResolvers.push(() => resolve(hydrationSchedule)))
+    const deferHydration = (hydrationSchedule: unknown, _user?: unknown, _options?: unknown) => (
+      new Promise<unknown>((resolve) => hydrationResolvers.push(() => resolve(hydrationSchedule)))
     );
     scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(schedule);
     scheduleServiceMocks.hydrateParentScheduleRsvps
