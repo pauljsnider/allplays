@@ -35,6 +35,18 @@
             <div id="organization-access-alert" class="hidden rounded-xl border px-4 py-3 text-sm"></div>
             <div id="organization-success" class="hidden rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm text-emerald-800"></div>
 
+            <section class="rounded-2xl bg-white p-6 shadow-md" aria-labelledby="published-matchups-heading">
+                <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                        <h2 id="published-matchups-heading" class="text-xl font-bold text-gray-900">Published Matchups</h2>
+                        <p class="mt-2 text-sm text-gray-600">Review upcoming reciprocal games once and manage cancellation for both team schedules.</p>
+                    </div>
+                    <button id="refresh-published-matchups-btn" type="button" class="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">Refresh</button>
+                </div>
+                <div id="published-matchups-status" class="mt-4 text-sm text-gray-600">Loading published matchups…</div>
+                <div id="published-matchups-list" class="mt-4 space-y-3"></div>
+            </section>
+
             <section class="rounded-2xl bg-white p-6 shadow-md">
                 <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                     <div>
@@ -331,7 +343,8 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { addGame, createOrganizationBlackout, createVenueAvailability, createVenueBlackout, getTeam, getTeams, getUserTeamsWithAccess, listOrganizationScheduleControls } from './js/db.js?v=4433174';
+        import { addGame, cancelGame, createOrganizationBlackout, createVenueAvailability, createVenueBlackout, getGame, getGames, getTeam, getTeams, getUserTeamsWithAccess, listOrganizationScheduleControls, postChatMessage } from './js/db.js?v=4433174';
+        import { cancelScheduledGame } from './js/edit-schedule-cancel-game.js?v=3';
         import { parseCsvText } from './js/schedule-csv-import.js?v=2';
         import { renderHeader, renderFooter, getUrlParams } from './js/utils.js?v=443350';
         import { checkAuth } from './js/auth.js?v=4433176';
@@ -344,6 +357,7 @@
             buildOrganizationScheduleCsvTemplate,
             buildOrganizationScheduleDraftSlots,
             buildOrganizationScheduleImportPreview,
+            buildOrganizationPublishedMatchups,
             buildOrganizationSharedGamePayload,
             buildVenueAvailabilityPayload,
             formatBlackoutDateRecord,
@@ -355,12 +369,15 @@
             sortOrganizationVenues,
             validateOrganizationVenueDraft,
             validateOrganizationMatchup
-        } from './js/organization-schedule.js?v=5';
+        } from './js/organization-schedule.js?v=6';
 
         renderFooter(document.getElementById('footer-container'));
 
         const accessAlert = document.getElementById('organization-access-alert');
         const successAlert = document.getElementById('organization-success');
+        const publishedMatchupsList = document.getElementById('published-matchups-list');
+        const publishedMatchupsStatus = document.getElementById('published-matchups-status');
+        const refreshPublishedMatchupsButton = document.getElementById('refresh-published-matchups-btn');
         const form = document.getElementById('organization-game-form');
         const singleTab = document.getElementById('single-matchup-tab');
         const bulkTab = document.getElementById('bulk-import-tab');
@@ -405,6 +422,9 @@
         let organizationCsvState = { fileName: '', preview: null };
         let organizationVenues = [];
         let draftSeedOrderIds = [];
+        let lastCompletePublishedMatchups = [];
+        const publishedCancellationInFlight = new Set();
+        const PUBLISHED_MATCHUP_HORIZON_DAYS = 365;
         const availabilityForm = document.getElementById('venue-availability-form');
         const blackoutForm = document.getElementById('blackout-date-form');
         const availabilityDaySelect = document.getElementById('availability-day');
@@ -537,6 +557,7 @@
             singleTab.disabled = true;
             bulkTab.disabled = true;
             draftTab.disabled = true;
+            refreshPublishedMatchupsButton.disabled = true;
             refreshVenueControlsButton.disabled = true;
             availabilityForm.querySelectorAll('input, select, button').forEach((control) => {
                 control.disabled = true;
@@ -915,6 +936,233 @@
             accessAlert.textContent = message;
         }
 
+        function setPublishedMatchupsStatus(message = '', variant = 'normal') {
+            if (!message) {
+                publishedMatchupsStatus.className = 'hidden mt-4 text-sm';
+                publishedMatchupsStatus.textContent = '';
+                return;
+            }
+            publishedMatchupsStatus.className = variant === 'error'
+                ? 'mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800'
+                : 'mt-4 text-sm text-gray-600';
+            publishedMatchupsStatus.textContent = message;
+        }
+
+        function buildPublishedScheduleLink(team) {
+            const link = document.createElement('a');
+            link.href = `edit-schedule.html#teamId=${encodeURIComponent(team.id)}`;
+            link.className = 'inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50';
+            link.textContent = `Open ${team.name} schedule`;
+            return link;
+        }
+
+        function formatPublishedMatchupDate(date) {
+            return date.toLocaleString('en-US', {
+                weekday: 'short',
+                month: 'short',
+                day: 'numeric',
+                year: 'numeric',
+                hour: 'numeric',
+                minute: '2-digit'
+            });
+        }
+
+        function hasFullTeamAccess(teamId) {
+            const team = organizationTeams.find((candidate) => candidate.id === teamId);
+            if (!team || !currentUser) return false;
+            const accessInfo = getTeamAccessInfo(currentUser, team);
+            return accessInfo.hasAccess && accessInfo.accessLevel === 'full';
+        }
+
+        function canCancelPublishedMatchup(matchup) {
+            return matchup.status !== 'cancelled'
+                && hasFullTeamAccess(matchup.sourceTeamId)
+                && hasFullTeamAccess(matchup.counterpartTeamId);
+        }
+
+        function isCancelledGameRecord(game) {
+            const status = String(game?.status || '').trim().toLowerCase();
+            const liveStatus = String(game?.liveStatus || '').trim().toLowerCase();
+            return ['cancelled', 'canceled'].includes(status) || ['cancelled', 'canceled'].includes(liveStatus);
+        }
+
+        async function cancelAndVerifyPublishedMatchup(matchup, teamId, gameId, userId) {
+            await cancelGame(teamId, gameId, userId);
+            const [source, counterpart] = await Promise.all([
+                await getGame(teamId, gameId),
+                await getGame(matchup.counterpartTeamId, matchup.counterpartGameId)
+            ]);
+            const remainsReciprocal = source && counterpart
+                && String(source.sharedScheduleId || '').trim() === matchup.sharedScheduleId
+                && String(counterpart.sharedScheduleId || '').trim() === matchup.sharedScheduleId
+                && String(source.sharedScheduleOpponentTeamId || '').trim() === matchup.counterpartTeamId
+                && String(source.sharedScheduleOpponentGameId || '').trim() === matchup.counterpartGameId
+                && String(counterpart.sharedScheduleOpponentTeamId || '').trim() === matchup.sourceTeamId
+                && String(counterpart.sharedScheduleOpponentGameId || '').trim() === matchup.sourceGameId;
+            if (!remainsReciprocal || !isCancelledGameRecord(source) || !isCancelledGameRecord(counterpart)) {
+                throw new Error('Cancellation is incomplete. Please retry.');
+            }
+        }
+
+        async function handlePublishedMatchupCancellation(matchup, button) {
+            if (!canCancelPublishedMatchup(matchup) || publishedCancellationInFlight.has(matchup.sharedScheduleId)) return;
+            const dateLabel = formatPublishedMatchupDate(matchup.date);
+            if (!window.confirm(`Cancel ${matchup.homeTeam.name} vs. ${matchup.awayTeam.name} on ${dateLabel}? Both team communities will be notified.`)) return;
+
+            publishedCancellationInFlight.add(matchup.sharedScheduleId);
+            button.disabled = true;
+            button.textContent = 'Cancelling…';
+            successAlert.className = 'hidden rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm text-emerald-800';
+            successAlert.textContent = '';
+            setAlert('');
+
+            try {
+                const result = await cancelScheduledGame({
+                    teamId: matchup.sourceTeamId,
+                    gameId: matchup.sourceGameId,
+                    user: currentUser,
+                    game: matchup.sourceGame,
+                    cancelGame: (teamId, gameId, userId) => cancelAndVerifyPublishedMatchup(matchup, teamId, gameId, userId),
+                    postChatMessage,
+                    counterpartTeamId: matchup.counterpartTeamId,
+                    counterpartOpponent: organizationTeams.find((team) => team.id === matchup.sourceTeamId)?.name || matchup.homeTeam.name
+                });
+
+                if (!result.cancelled) {
+                    await refreshPublishedMatchups();
+                    setAlert(`Cancellation is incomplete. Please retry. ${result.error || ''}`.trim());
+                    return;
+                }
+
+                const refreshed = await refreshPublishedMatchups();
+                if (result.notificationError) {
+                    setAlert(`Matchup cancelled, but team notifications were incomplete. Please retry the notification from team chat. ${result.notificationError}`);
+                    return;
+                }
+                if (!refreshed) {
+                    setAlert('Matchup cancelled, but the organization list could not refresh. Please retry the refresh.');
+                    return;
+                }
+
+                successAlert.className = 'rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm text-emerald-800';
+                successAlert.textContent = 'Shared matchup cancelled on both team schedules. Both team communities were notified.';
+            } finally {
+                publishedCancellationInFlight.delete(matchup.sharedScheduleId);
+                if (button.isConnected) {
+                    button.disabled = false;
+                    button.textContent = matchup.cancellationIncomplete ? 'Retry cancellation' : 'Cancel';
+                }
+            }
+        }
+
+        function renderPublishedMatchups(matchups) {
+            const cards = matchups.map((matchup) => {
+                const card = document.createElement('article');
+                card.dataset.sharedScheduleId = matchup.sharedScheduleId;
+                card.className = 'rounded-xl border border-gray-200 bg-gray-50 p-4';
+
+                const header = document.createElement('div');
+                header.className = 'flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between';
+                const details = document.createElement('div');
+                const title = document.createElement('h3');
+                title.className = 'font-semibold text-gray-900';
+                title.textContent = `${matchup.homeTeam.name} vs. ${matchup.awayTeam.name}`;
+                const date = document.createElement('p');
+                date.className = 'mt-1 text-sm text-gray-700';
+                date.textContent = formatPublishedMatchupDate(matchup.date);
+                const location = document.createElement('p');
+                location.className = 'mt-1 text-sm text-gray-600';
+                location.textContent = matchup.location;
+                details.append(title, date, location);
+
+                const status = document.createElement('span');
+                status.className = matchup.status === 'cancelled'
+                    ? 'inline-flex rounded-full bg-gray-200 px-2.5 py-1 text-xs font-semibold text-gray-700'
+                    : matchup.cancellationIncomplete
+                        ? 'inline-flex rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-800'
+                        : 'inline-flex rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-800';
+                status.textContent = matchup.status === 'cancelled'
+                    ? 'Cancelled'
+                    : matchup.cancellationIncomplete
+                        ? 'Cancellation incomplete'
+                        : 'Scheduled';
+                header.append(details, status);
+
+                const actions = document.createElement('div');
+                actions.className = 'mt-4 flex flex-wrap gap-2';
+                actions.append(
+                    buildPublishedScheduleLink(matchup.homeTeam),
+                    buildPublishedScheduleLink(matchup.awayTeam)
+                );
+                if (canCancelPublishedMatchup(matchup)) {
+                    const cancelButton = document.createElement('button');
+                    cancelButton.type = 'button';
+                    cancelButton.className = 'rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-sm font-semibold text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60';
+                    cancelButton.textContent = matchup.cancellationIncomplete ? 'Retry cancellation' : 'Cancel';
+                    cancelButton.addEventListener('click', () => handlePublishedMatchupCancellation(matchup, cancelButton));
+                    actions.appendChild(cancelButton);
+                }
+
+                card.append(header, actions);
+                return card;
+            });
+
+            publishedMatchupsList.replaceChildren(...cards);
+            if (matchups.length === 0) {
+                setPublishedMatchupsStatus('No upcoming published matchups were found.');
+            } else {
+                setPublishedMatchupsStatus('');
+            }
+        }
+
+        function getPublishedMatchupWindow() {
+            const startDate = new Date();
+            startDate.setHours(0, 0, 0, 0);
+            const endDate = new Date(startDate);
+            endDate.setDate(endDate.getDate() + PUBLISHED_MATCHUP_HORIZON_DAYS);
+            return { startDate, endDate };
+        }
+
+        async function loadPublishedGamesByTeam() {
+            const { startDate, endDate } = getPublishedMatchupWindow();
+            const gamesByTeam = {};
+            const chunkSize = 4;
+            for (let index = 0; index < organizationTeams.length; index += chunkSize) {
+                const chunk = organizationTeams.slice(index, index + chunkSize);
+                const results = await Promise.all(chunk.map(async (team) => [
+                    team.id,
+                    await getGames(team.id, { startDate, endDate })
+                ]));
+                results.forEach(([teamId, games]) => { gamesByTeam[teamId] = games; });
+            }
+            return { gamesByTeam, startDate };
+        }
+
+        async function refreshPublishedMatchups() {
+            setButtonBusy(refreshPublishedMatchupsButton, 'Refreshing…', true);
+            if (lastCompletePublishedMatchups.length === 0) {
+                setPublishedMatchupsStatus('Loading published matchups…');
+            }
+            try {
+                const { gamesByTeam, startDate } = await loadPublishedGamesByTeam();
+                const matchups = buildOrganizationPublishedMatchups({
+                    organizationTeams,
+                    gamesByTeam,
+                    now: startDate
+                });
+                lastCompletePublishedMatchups = matchups;
+                renderPublishedMatchups(matchups);
+                return true;
+            } catch (error) {
+                console.error('Published organization matchup load failed:', error);
+                renderPublishedMatchups(lastCompletePublishedMatchups);
+                setPublishedMatchupsStatus('Published matchups could not be loaded completely. Please retry.', 'error');
+                return false;
+            } finally {
+                setButtonBusy(refreshPublishedMatchupsButton, 'Refreshing…', false);
+            }
+        }
+
         function renderSuccess(homeTeam, awayTeam) {
             successAlert.className = 'rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm text-emerald-800';
             successAlert.replaceChildren();
@@ -970,6 +1218,7 @@
             anchorTeam = await getTeam(teamId);
             if (!anchorTeam) {
                 setAlert('That team could not be loaded.');
+                setPublishedMatchupsStatus('Published matchups are unavailable for this team.', 'error');
                 disableScheduleInputs();
                 return;
             }
@@ -977,6 +1226,7 @@
             const accessInfo = getTeamAccessInfo(currentUser, anchorTeam);
             if (!accessInfo.hasAccess || accessInfo.accessLevel !== 'full') {
                 setAlert('You do not have organization schedule access for this team.');
+                setPublishedMatchupsStatus('Published matchups require full organization schedule access.', 'error');
                 disableScheduleInputs();
                 return;
             }
@@ -996,6 +1246,7 @@
 
             if (organizationTeams.length < 2) {
                 setAlert('You need at least two teams in the same organization to create a shared matchup.', 'warning');
+                renderPublishedMatchups([]);
                 disableScheduleInputs();
                 return;
             }
@@ -1013,11 +1264,13 @@
             renderDraftSeedOrder();
             resetOrganizationCsvState();
             resetDraftGeneratorState();
+            await refreshPublishedMatchups();
             await refreshVenueControls();
         }
 
 
 
+        refreshPublishedMatchupsButton.addEventListener('click', refreshPublishedMatchups);
         refreshVenueControlsButton.addEventListener('click', refreshVenueControls);
 
         availabilityForm.addEventListener('submit', async (event) => {
@@ -1282,6 +1535,10 @@
                     }
                 }
 
+                if (successfulRows.length > 0) {
+                    await refreshPublishedMatchups();
+                }
+
                 if (failedRows.length > 0) {
                     organizationCsvState.preview = {
                         errors: [],
@@ -1335,6 +1592,7 @@
                 });
 
                 await addGame(validation.homeTeam.id, gameData);
+                await refreshPublishedMatchups();
                 form.reset();
                 homeTeamSelect.value = validation.homeTeam.id;
                 awayTeamSelect.value = validation.awayTeam.id;
@@ -1380,6 +1638,7 @@
 
                 successAlert.className = 'rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm text-emerald-800';
                 successAlert.textContent = `Published ${result.data.publishedCount || draftGeneratorState.draftSlots.length} draft schedule slot${(result.data.publishedCount || draftGeneratorState.draftSlots.length) === 1 ? '' : 's'} to team schedules.`;
+                await refreshPublishedMatchups();
 
             } catch (error) {
                 console.error('Error publishing organization schedule draft:', error);

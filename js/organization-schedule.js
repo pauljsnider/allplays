@@ -459,6 +459,113 @@ export function getOrganizationTeams({ accessibleTeams = [], organizationOwnerId
     });
 }
 
+function coercePublishedMatchupDate(value) {
+    if (!value) return null;
+    const candidate = typeof value?.toDate === 'function' ? value.toDate() : value;
+    const date = candidate instanceof Date ? new Date(candidate.getTime()) : new Date(candidate);
+    return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function isCancelledSharedGame(game = {}) {
+    const status = String(game.status || '').trim().toLowerCase();
+    const liveStatus = String(game.liveStatus || '').trim().toLowerCase();
+    return status === 'cancelled'
+        || status === 'canceled'
+        || liveStatus === 'cancelled'
+        || liveStatus === 'canceled';
+}
+
+export function buildOrganizationPublishedMatchups({
+    organizationTeams = [],
+    gamesByTeam = {},
+    now = new Date()
+} = {}) {
+    const teams = normalizeTeamList(organizationTeams);
+    const teamsById = new Map(teams.map((team) => [team.id, team]));
+    const earliestDate = coercePublishedMatchupDate(now) || new Date();
+    const uniqueRecords = new Map();
+    const entries = gamesByTeam instanceof Map
+        ? Array.from(gamesByTeam.entries())
+        : Object.entries(gamesByTeam || {});
+
+    entries.forEach(([teamIdValue, games]) => {
+        const teamId = String(teamIdValue || '').trim();
+        if (!teamsById.has(teamId)) return;
+        (Array.isArray(games) ? games : []).forEach((game) => {
+            const gameId = String(game?.id || '').trim();
+            const sharedScheduleId = String(game?.sharedScheduleId || '').trim();
+            if (!gameId || !sharedScheduleId || String(game?.type || 'game') !== 'game') return;
+            const recordKey = `${teamId}/${gameId}`;
+            if (!uniqueRecords.has(recordKey)) {
+                uniqueRecords.set(recordKey, { ...game, id: gameId, teamId, sharedScheduleId });
+            }
+        });
+    });
+
+    const recordsBySharedScheduleId = new Map();
+    uniqueRecords.forEach((record) => {
+        const records = recordsBySharedScheduleId.get(record.sharedScheduleId) || [];
+        records.push(record);
+        recordsBySharedScheduleId.set(record.sharedScheduleId, records);
+    });
+
+    const matchups = [];
+    recordsBySharedScheduleId.forEach((records, sharedScheduleId) => {
+        if (records.length !== 2 || records[0].teamId === records[1].teamId) return;
+        const [first, second] = records;
+        const firstPointsToSecond = String(first.sharedScheduleOpponentTeamId || '').trim() === second.teamId
+            && String(first.sharedScheduleOpponentGameId || '').trim() === second.id;
+        const secondPointsToFirst = String(second.sharedScheduleOpponentTeamId || '').trim() === first.teamId
+            && String(second.sharedScheduleOpponentGameId || '').trim() === first.id;
+        if (!firstPointsToSecond || !secondPointsToFirst) return;
+
+        const declaredSourceTeamIds = new Set(records
+            .map((record) => String(record.sharedScheduleSourceTeamId || '').trim())
+            .filter(Boolean));
+        if (declaredSourceTeamIds.size !== 1) return;
+        const [sourceTeamId] = declaredSourceTeamIds;
+        if (!teamsById.has(sourceTeamId)) return;
+        const source = records.find((record) => record.teamId === sourceTeamId);
+        const counterpart = records.find((record) => record.teamId !== sourceTeamId);
+        if (!source || !counterpart) return;
+
+        const date = coercePublishedMatchupDate(source.date);
+        if (!date || date < earliestDate) return;
+
+        const sourceCancelled = isCancelledSharedGame(source);
+        const counterpartCancelled = isCancelledSharedGame(counterpart);
+        const cancellationIncomplete = sourceCancelled !== counterpartCancelled;
+        const status = cancellationIncomplete
+            ? 'incomplete'
+            : sourceCancelled && counterpartCancelled
+                ? 'cancelled'
+                : 'scheduled';
+        const sourceTeam = teamsById.get(source.teamId);
+        const counterpartTeam = teamsById.get(counterpart.teamId);
+        const sourceIsHome = source.isHome !== false;
+
+        matchups.push({
+            sharedScheduleId,
+            sourceTeamId: source.teamId,
+            sourceGameId: source.id,
+            counterpartTeamId: counterpart.teamId,
+            counterpartGameId: counterpart.id,
+            sourceGame: source,
+            counterpartGame: counterpart,
+            homeTeam: sourceIsHome ? sourceTeam : counterpartTeam,
+            awayTeam: sourceIsHome ? counterpartTeam : sourceTeam,
+            date,
+            location: String(source.location || counterpart.location || '').trim() || 'Location TBD',
+            status,
+            cancellationIncomplete
+        });
+    });
+
+    return matchups.sort((left, right) => (
+        left.date - right.date || left.sharedScheduleId.localeCompare(right.sharedScheduleId)
+    ));
+}
+
 export function validateOrganizationMatchup({
     homeTeamId,
     awayTeamId,
