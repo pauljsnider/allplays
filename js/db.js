@@ -134,6 +134,8 @@ export async function normalizeParentScopeLinks(parentLinks = []) {
     const playerCache = new Map();
     const seenKeys = new Set();
 
+    // Deduplicate first so each team and player document is fetched at most once.
+    const pendingLinks = [];
     for (const link of (Array.isArray(parentLinks) ? parentLinks : [])) {
         const teamId = String(link?.teamId || '').trim();
         const playerId = String(link?.playerId || '').trim();
@@ -143,33 +145,45 @@ export async function normalizeParentScopeLinks(parentLinks = []) {
         if (seenKeys.has(playerKey)) continue;
         seenKeys.add(playerKey);
 
-        let team = teamCache.get(teamId);
-        if (team === undefined) {
-            team = await getTeam(teamId, { includeInactive: true });
-            teamCache.set(teamId, team || null);
-        }
+        pendingLinks.push({ link, teamId, playerId, playerKey });
+    }
+
+    // Fetch every team concurrently rather than one round trip per link.
+    await Promise.all([...new Set(pendingLinks.map((entry) => entry.teamId))].map(async (teamId) => {
+        teamCache.set(teamId, await getTeam(teamId, { includeInactive: true }) || null);
+    }));
+
+    // Player documents are only readable for active teams, so restrict the second
+    // concurrent pass to those links to keep the original read pattern intact.
+    await Promise.all(pendingLinks
+        .filter((entry) => {
+            const team = teamCache.get(entry.teamId);
+            return team && isTeamActive(team);
+        })
+        .map(async ({ teamId, playerId, playerKey }) => {
+            try {
+                playerCache.set(playerKey, await getDoc(doc(db, `teams/${teamId}/players`, playerId)));
+            } catch (error) {
+                if (error?.code === 'permission-denied') {
+                    console.warn('[parent-scope] Preserving legacy player link while roster permissions are being repaired:', error);
+                    playerCache.set(playerKey, { blockedByPermissions: true });
+                } else {
+                    throw error;
+                }
+            }
+        }));
+
+    for (const { link, teamId, playerId, playerKey } of pendingLinks) {
+        const team = teamCache.get(teamId);
         if (!team || !isTeamActive(team)) {
             staleLinkCount += 1;
             continue;
         }
 
-        let playerSnap = playerCache.get(playerKey);
-        if (playerSnap === undefined) {
-            try {
-                playerSnap = await getDoc(doc(db, `teams/${teamId}/players`, playerId));
-            } catch (error) {
-                if (error?.code === 'permission-denied') {
-                    console.warn('[parent-scope] Preserving legacy player link while roster permissions are being repaired:', error);
-                    blockedLinkCount += 1;
-                    playerSnap = { blockedByPermissions: true };
-                } else {
-                    throw error;
-                }
-            }
-            playerCache.set(playerKey, playerSnap);
-        }
+        const playerSnap = playerCache.get(playerKey);
 
         if (playerSnap?.blockedByPermissions) {
+            blockedLinkCount += 1;
             const normalizedLink = {
                 ...link,
                 teamId,
@@ -767,7 +781,7 @@ export async function uploadStatSheetPhoto(teamId, gameId, file, options = {}) {
         : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=443351'; // Import resolveZip
+import { resolveZip } from './utils.js?v=443352'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();

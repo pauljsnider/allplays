@@ -420,4 +420,44 @@ describe('parent scope normalization', () => {
             }
         ]);
     });
+
+    it('fans out team reads concurrently instead of one round trip per link', async () => {
+        const pendingTeamReads = [];
+        const getTeam = vi.fn(() => new Promise((resolve) => {
+            pendingTeamReads.push(resolve);
+        }));
+        const getDoc = vi.fn().mockResolvedValue({
+            exists: () => true,
+            id: 'player-1',
+            data: () => ({ name: 'Player One', number: '1', active: true })
+        });
+        const normalizeParentScopeLinks = buildNormalizeParentScopeLinks({
+            getTeam,
+            getDoc,
+            doc: vi.fn(),
+            db: {},
+            isTeamActive: () => true
+        });
+
+        const pending = normalizeParentScopeLinks([
+            { teamId: 'team-a', playerId: 'player-1' },
+            { teamId: 'team-b', playerId: 'player-2' },
+            { teamId: 'team-c', playerId: 'player-3' }
+        ]);
+
+        // Let the fan-out register before any read settles. A serial loop would
+        // have issued only the first read while awaiting it.
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(getTeam).toHaveBeenCalledTimes(3);
+
+        pendingTeamReads.forEach((resolveTeam, index) => resolveTeam({
+            id: `team-${index}`,
+            name: `Team ${index}`,
+            active: true
+        }));
+
+        const result = await pending;
+        expect(result.parentTeamIds).toHaveLength(3);
+    });
 });

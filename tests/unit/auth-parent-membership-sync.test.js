@@ -38,7 +38,7 @@ const dbMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../js/firebase.js?v=26', () => firebaseMocks);
-vi.mock('../../js/db.js?v=4433175', () => dbMocks);
+vi.mock('../../js/db.js?v=4433176', () => dbMocks);
 vi.mock('../../js/signup-flow.js?v=14', () => ({
     executeEmailPasswordSignup: vi.fn()
 }));
@@ -118,7 +118,7 @@ describe('auth parent membership sync', () => {
         expect(callback).toHaveBeenCalledWith(expect.objectContaining({
             email: null,
             profileEmail: 'stale-admin@example.com'
-        }));
+        }), expect.anything());
     });
 
     it('filters parent scope migrations down to active team and player links', async () => {
@@ -168,7 +168,7 @@ describe('auth parent membership sync', () => {
                 expect.objectContaining({ teamId: 'team-active', playerId: 'player-active' }),
                 expect.objectContaining({ teamId: 'team-inactive', playerId: 'player-inactive' })
             ])
-        }));
+        }), expect.anything());
     });
 
     it('self-syncs approved parent membership requests into the signed-in user profile', async () => {
@@ -222,6 +222,6 @@ describe('auth parent membership sync', () => {
                 playerId: 'player-9'
             })],
             roles: ['member', 'parent']
-        }));
+        }), expect.anything());
     });
 });

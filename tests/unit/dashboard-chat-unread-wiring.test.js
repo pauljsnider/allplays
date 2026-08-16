@@ -15,8 +15,11 @@ describe('dashboard chat unread wiring', () => {
         expect(html).not.toContain('email: user.email || profile?.email');
         expect(html).toContain('const conversationLookupByTeam = allTeams.reduce((acc, team) => {');
         expect(html).toContain("canModerate: team._access === 'full'");
-        expect(html).toContain('await getUnreadChatCounts(user.uid, teamIds, { conversationLookupByTeam })');
+        expect(html).toContain('getUnreadChatCounts(user.uid, teamIds, { conversationLookupByTeam })');
         expect(html).not.toContain('await getUnreadChatCounts(user.uid, teamIds) : {}');
+        // Unread badges must never gate the team render; they are patched in after.
+        expect(html).not.toContain('const unreadCounts = teamIds.length > 0 ? await getUnreadChatCounts');
+        expect(html).toContain('unreadCountsReady.then((counts) => {');
     });
 
     it('keeps Firebase Auth email authoritative for dashboard team access', () => {

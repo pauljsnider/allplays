@@ -21,10 +21,10 @@ describe('dashboard parent membership sync', () => {
     const html = readRepoFile('dashboard.html');
 
     it('uses the rich auth path before loading parent-linked teams', () => {
-        expect(html).toContain("import { getTeams, getUserTeamsWithAccess, getParentTeams, deleteTeam, getUserProfile, getUnreadChatCounts } from './js/db.js?v=4433175';");
-        expect(html).toContain("import { checkAuth } from './js/auth.js?v=4433177';");
+        expect(html).toContain("import { getTeams, getUserTeamsWithAccess, getParentTeams, deleteTeam, getUnreadChatCounts } from './js/db.js?v=4433176';");
+        expect(html).toContain("import { checkAuth } from './js/auth.js?v=4433178';");
         expect(html).toContain('function requireSyncedAuth()');
-        expect(html).toContain('const user = await requireSyncedAuth();');
+        expect(html).toContain('const { user, profile } = await requireSyncedAuth();');
         expect(html).toContain('getParentTeams(user.uid)');
         expect(html).not.toContain('requireAuth as authRequireAuth');
     });
@@ -32,12 +32,15 @@ describe('dashboard parent membership sync', () => {
     it('unsubscribes when checkAuth invokes the user callback synchronously', async () => {
         const user = { uid: 'parent-1' };
         const unsubscribe = vi.fn();
+        const profile = { isAdmin: true };
         const checkAuth = vi.fn((callback) => {
-            callback(user);
+            callback(user, profile);
             return unsubscribe;
         });
 
-        await expect(runRequireSyncedAuth(checkAuth)).resolves.toBe(user);
+        // The profile checkAuth already read is handed through so the dashboard
+        // does not re-read the same document before rendering.
+        await expect(runRequireSyncedAuth(checkAuth)).resolves.toEqual({ user, profile });
 
         expect(unsubscribe).toHaveBeenCalledTimes(1);
     });
@@ -65,7 +68,7 @@ describe('dashboard parent membership sync', () => {
             return unsubscribe;
         });
 
-        await expect(runRequireSyncedAuth(checkAuth)).resolves.toBe(user);
+        await expect(runRequireSyncedAuth(checkAuth)).resolves.toMatchObject({ user });
 
         expect(unsubscribe).toHaveBeenCalledTimes(1);
     });

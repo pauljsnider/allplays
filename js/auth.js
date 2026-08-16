@@ -12,7 +12,7 @@ import {
     signInWithEmailLink,
     updatePassword
 } from './firebase.js?v=26';
-import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, redeemFriendInvite, rollbackParentInviteRedemption, getUserProfile, getUserTeams, getTeam, listMyParentMembershipRequests, normalizeParentScopeLinks } from './db.js?v=4433175';
+import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, redeemFriendInvite, rollbackParentInviteRedemption, getUserProfile, getUserTeams, getTeam, listMyParentMembershipRequests, normalizeParentScopeLinks } from './db.js?v=4433176';
 import { executeEmailPasswordSignup } from './signup-flow.js?v=14';
 import { redeemAdminInviteAcceptance, redeemAdminInviteAtomically } from './admin-invite.js?v=9';
 import { mergeApprovedParentMembershipRequests } from './parent-membership-utils.js?v=3';
@@ -408,20 +408,33 @@ export function checkAuth(callback, options = {}) {
     const { skipEmailVerificationCheck = true } = options;
 
     return onAuthStateChanged(auth, async (user) => {
+        let profile = null;
+        let runDeferredParentScopeMigration = null;
+
         if (user) {
             try {
-                let profile = await getUserProfile(user.uid) || {};
+                // The membership-request query does not depend on the profile, so
+                // both reads are started together instead of run back to back.
+                const profileRead = getUserProfile(user.uid);
+                const approvedRequestsRead = listMyParentMembershipRequests(user.uid).catch((err) => {
+                    console.warn('[auth] Failed to sync approved parent membership requests:', err);
+                    return null;
+                });
+
+                profile = await profileRead || {};
 
                 try {
-                    const approvedRequests = await listMyParentMembershipRequests(user.uid);
-                    const parentRequestSync = mergeApprovedParentMembershipRequests(profile, approvedRequests);
-                    if (parentRequestSync.changed) {
-                        await updateUserProfile(user.uid, parentRequestSync.userUpdate);
-                        profile = {
-                            ...profile,
-                            ...parentRequestSync.userUpdate
-                        };
-                        console.log('[auth] Synced approved parent membership requests to user profile');
+                    const approvedRequests = await approvedRequestsRead;
+                    if (approvedRequests) {
+                        const parentRequestSync = mergeApprovedParentMembershipRequests(profile, approvedRequests);
+                        if (parentRequestSync.changed) {
+                            await updateUserProfile(user.uid, parentRequestSync.userUpdate);
+                            profile = {
+                                ...profile,
+                                ...parentRequestSync.userUpdate
+                            };
+                            console.log('[auth] Synced approved parent membership requests to user profile');
+                        }
                     }
                 } catch (err) {
                     console.warn('[auth] Failed to sync approved parent membership requests:', err);
@@ -438,25 +451,13 @@ export function checkAuth(callback, options = {}) {
                     if (teamMediaUploadTeamIds) user.teamMediaUploadTeamIds = teamMediaUploadTeamIds;
                     if (mediaUploadTeamIds) user.mediaUploadTeamIds = mediaUploadTeamIds;
 
-                    // Auto-migrate: ensure parent scope fields only reflect active team/player links
+                    // Auto-migrate: ensure parent scope fields only reflect active team/player
+                    // links. This is a background repair whose result is never read back onto
+                    // `user`, so it is deferred until after the callback has rendered rather
+                    // than held in front of it.
                     if (Array.isArray(profile.parentOf) || Array.isArray(profile.parentTeamIds) || Array.isArray(profile.parentPlayerKeys)) {
-                        const normalizedParentScope = await normalizeParentScopeLinks(profile.parentOf || []);
-                        const expectedTeamIds = normalizedParentScope.parentTeamIds.slice().sort();
-                        const expectedParentPlayerKeys = normalizedParentScope.parentPlayerKeys.slice().sort();
-                        const currentTeamIds = (profile.parentTeamIds || []).slice().sort();
-                        const currentParentPlayerKeys = (profile.parentPlayerKeys || []).slice().sort();
-                        if (JSON.stringify(expectedTeamIds) !== JSON.stringify(currentTeamIds) ||
-                            JSON.stringify(expectedParentPlayerKeys) !== JSON.stringify(currentParentPlayerKeys)) {
-                            try {
-                                await updateUserProfile(user.uid, {
-                                    parentTeamIds: expectedTeamIds,
-                                    parentPlayerKeys: expectedParentPlayerKeys
-                                });
-                                console.log('[auth] Auto-migrated parentTeamIds/parentPlayerKeys for user');
-                            } catch (err) {
-                                console.warn('[auth] Failed to auto-migrate parent parent scope fields:', err);
-                            }
-                        }
+                        const migrationProfile = profile;
+                        runDeferredParentScopeMigration = () => migrateParentScopeFields(user.uid, migrationProfile);
                     }
 
                     if (profile.coachOf) {
@@ -494,8 +495,37 @@ export function checkAuth(callback, options = {}) {
                 console.error('Error fetching user profile for auth check:', e);
             }
         }
-        callback(user);
+
+        // Callers render from here, so nothing slower than the profile read belongs
+        // above this line. The profile is handed over to save callers a second read.
+        callback(user, profile);
+
+        if (runDeferredParentScopeMigration) {
+            runDeferredParentScopeMigration();
+        }
     });
+}
+
+// Background repair of parent scope fields. Runs after the auth callback has
+// rendered; failures are logged and never surfaced to the caller.
+async function migrateParentScopeFields(uid, profile) {
+    try {
+        const normalizedParentScope = await normalizeParentScopeLinks(profile.parentOf || []);
+        const expectedTeamIds = normalizedParentScope.parentTeamIds.slice().sort();
+        const expectedParentPlayerKeys = normalizedParentScope.parentPlayerKeys.slice().sort();
+        const currentTeamIds = (profile.parentTeamIds || []).slice().sort();
+        const currentParentPlayerKeys = (profile.parentPlayerKeys || []).slice().sort();
+        if (JSON.stringify(expectedTeamIds) !== JSON.stringify(currentTeamIds) ||
+            JSON.stringify(expectedParentPlayerKeys) !== JSON.stringify(currentParentPlayerKeys)) {
+            await updateUserProfile(uid, {
+                parentTeamIds: expectedTeamIds,
+                parentPlayerKeys: expectedParentPlayerKeys
+            });
+            console.log('[auth] Auto-migrated parentTeamIds/parentPlayerKeys for user');
+        }
+    } catch (err) {
+        console.warn('[auth] Failed to auto-migrate parent parent scope fields:', err);
+    }
 }
 
 export function resetPassword(email) {
