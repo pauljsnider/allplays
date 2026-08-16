@@ -33,7 +33,7 @@ const dbMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../js/firebase.js?v=26', () => firebaseMocks);
-vi.mock('../../js/db.js?v=4433174', () => dbMocks);
+vi.mock('../../js/db.js?v=4433175', () => dbMocks);
 vi.mock('../../js/signup-flow.js?v=14', () => ({
     executeEmailPasswordSignup: vi.fn()
 }));
@@ -41,7 +41,7 @@ vi.mock('../../js/admin-invite.js?v=9', () => ({
     redeemAdminInviteAcceptance: vi.fn(),
     redeemAdminInviteAtomically: vi.fn()
 }));
-vi.mock('../../js/parent-membership-utils.js?v=2', () => ({
+vi.mock('../../js/parent-membership-utils.js?v=3', () => ({
     mergeApprovedParentMembershipRequests: vi.fn()
 }));
 vi.mock('../../js/accept-invite-flow.js?v=443314', () => ({

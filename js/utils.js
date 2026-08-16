@@ -180,7 +180,7 @@ export function renderHeader(container, user) {
 
     // Keep shared-header logout on the same auth bundle as page consumers.
     navLogout.addEventListener('click', async () => {
-      const { logout } = await import('./auth.js?v=4433176');
+      const { logout } = await import('./auth.js?v=4433177');
       await logout();
       window.location.href = 'index.html';
     });
@@ -192,7 +192,7 @@ export function renderHeader(container, user) {
   // Keep telemetry available on new pages that use the shared header but miss
   // the global module tag.
   try {
-    import('./telemetry.js?v=4').catch((e) => console.warn('[Telemetry] Failed to load:', e));
+    import('./telemetry.js?v=5').catch((e) => console.warn('[Telemetry] Failed to load:', e));
   } catch (e) {
     console.warn('[Telemetry] Failed to initialize:', e);
   }
@@ -200,7 +200,7 @@ export function renderHeader(container, user) {
   // Global search: injected into the shared header in one place.
   // Lazy-import to avoid adding weight to initial render and to avoid circular deps.
   try {
-    import('./global-search.js?v=443337')
+    import('./global-search.js?v=443338')
       .then(({ setupHeaderSearch }) => {
         if (typeof setupHeaderSearch === 'function') {
           setupHeaderSearch({ user, headerContainer: container });
@@ -288,6 +288,7 @@ const MAX_CALENDAR_FUNCTION_BYTES = MAX_REMOTE_ICS_BYTES + (64 * 1024);
 const CALENDAR_ATTEMPT_TIMEOUT_MS = 5000;
 const CALENDAR_TOTAL_TIMEOUT_MS = 15_000;
 const MAX_CONCURRENT_CALENDAR_IMPORTS = 50;
+const MAX_PENDING_CALENDAR_IMPORTS = 50;
 export const DEFAULT_CALENDAR_FETCH_FUNCTION_URL = 'https://us-central1-game-flow-c6311.cloudfunctions.net/fetchCalendarIcs';
 export const MAX_ICS_PARSE_BYTES = MAX_REMOTE_ICS_BYTES;
 export const MAX_ICS_RAW_EVENTS = 5_000;
@@ -295,6 +296,8 @@ export const MAX_ICS_TOTAL_RECURRENCE_OCCURRENCES = 10_000;
 export const MAX_ICS_OUTPUT_EVENTS = 12_000;
 export const MAX_ICS_RECURRENCE_OCCURRENCES = 366;
 const calendarFetchInFlight = new Map();
+const calendarFetchPending = [];
+let activeCalendarFetches = 0;
 
 function createCalendarParseLimitError(message) {
   const error = new Error(message);
@@ -608,24 +611,62 @@ async function fetchAndParseCalendarOnce(normalizedUrl, options = {}) {
  * @param {string} url - URL to the .ics file
  * @returns {Promise<Array>} Array of parsed calendar events
  */
-export async function fetchAndParseCalendar(url, options = {}) {
-  const normalizedUrl = normalizeRemoteCalendarUrl(url);
+function drainCalendarFetchQueue() {
+  while (activeCalendarFetches < MAX_CONCURRENT_CALENDAR_IMPORTS && calendarFetchPending.length > 0) {
+    startCalendarFetch(calendarFetchPending.shift());
+  }
+}
+
+function startCalendarFetch(job) {
+  activeCalendarFetches += 1;
+  Promise.resolve()
+    .then(() => fetchAndParseCalendarOnce(job.normalizedUrl, { forceRefresh: job.forceRefresh }))
+    .then(
+      (events) => job.resolve(events),
+      (error) => job.reject(error)
+    )
+    .then(() => {
+      activeCalendarFetches -= 1;
+      if (calendarFetchInFlight.get(job.inFlightKey) === job.promise) {
+        calendarFetchInFlight.delete(job.inFlightKey);
+      }
+      drainCalendarFetchQueue();
+    });
+}
+
+export function fetchAndParseCalendar(url, options = {}) {
+  let normalizedUrl;
+  try {
+    normalizedUrl = normalizeRemoteCalendarUrl(url);
+  } catch (error) {
+    return Promise.reject(error);
+  }
   const forceRefresh = options?.forceRefresh === true;
   const inFlightKey = `${forceRefresh ? 'refresh' : 'normal'}:${normalizedUrl}`;
   const existing = calendarFetchInFlight.get(inFlightKey);
   if (existing) return existing;
-  if (calendarFetchInFlight.size >= MAX_CONCURRENT_CALENDAR_IMPORTS) {
-    throw new Error('Too many calendar imports are already in progress');
+
+  if (activeCalendarFetches >= MAX_CONCURRENT_CALENDAR_IMPORTS &&
+      calendarFetchPending.length >= MAX_PENDING_CALENDAR_IMPORTS) {
+    const error = new Error('Calendar import queue is full');
+    error.code = 'CALENDAR_IMPORT_QUEUE_FULL';
+    return Promise.reject(error);
   }
 
-  const request = fetchAndParseCalendarOnce(normalizedUrl, { forceRefresh })
-    .finally(() => {
-      if (calendarFetchInFlight.get(inFlightKey) === request) {
-        calendarFetchInFlight.delete(inFlightKey);
-      }
-    });
-  calendarFetchInFlight.set(inFlightKey, request);
-  return request;
+  let resolve;
+  let reject;
+  const promise = new Promise((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  const job = { normalizedUrl, forceRefresh, inFlightKey, promise, resolve, reject };
+  calendarFetchInFlight.set(inFlightKey, promise);
+  if (activeCalendarFetches < MAX_CONCURRENT_CALENDAR_IMPORTS) {
+    startCalendarFetch(job);
+  } else {
+    calendarFetchPending.push(job);
+  }
+  return promise;
 }
 
 /**

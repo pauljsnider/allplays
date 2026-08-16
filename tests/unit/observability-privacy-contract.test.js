@@ -32,8 +32,8 @@ describe('privacy-preserving observability contract', () => {
                 .join('\n');
 
         expect(trackedSources).not.toContain('telemetry.js?v=3');
-        expect(trackedSources).toContain('telemetry.js?v=4');
-        expect(client).toContain("from './telemetry-utils.js?v=2'");
+        expect(trackedSources).toContain('telemetry.js?v=5');
+        expect(client).toContain("from './telemetry-utils.js?v=3'");
     });
 
     it('hashes identifiers, templates paths, samples, and deduplicates', () => {

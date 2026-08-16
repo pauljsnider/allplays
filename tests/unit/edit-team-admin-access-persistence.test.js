@@ -386,7 +386,7 @@ function extractEditTeamModule() {
             'const { renderTeamAdminBanner } = deps.teamAdminBanner;'
         )
         .replace(
-            "import { normalizeYouTubeEmbedUrl } from './js/live-stream-utils.js?v=1';",
+            "import { normalizeYouTubeEmbedUrl } from './js/live-stream-utils.js?v=2';",
             'const { normalizeYouTubeEmbedUrl } = deps.liveStreamUtils;'
         )
         .replace(

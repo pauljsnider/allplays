@@ -358,4 +358,101 @@ describe('fetchAndParseCalendar', () => {
     expect(secondEvents[0].uid).toBe('coalesced');
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  it('queues the 51st distinct import and drains it after an active import settles', async () => {
+    const deferreds = [];
+    const fetchMock = vi.fn(() => new Promise((resolve, reject) => {
+      deferreds.push({ resolve, reject });
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const requests = Array.from({ length: 51 }, (_, index) =>
+      fetchAndParseCalendar(`https://example.com/queued-${index}.ics`)
+    );
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(50));
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('queued-50.ics'))).toBe(false);
+
+    deferreds[0].resolve(makeJsonResponse({ ok: true, icsText: sampleIcs('queued-0') }));
+    for (let index = 1; index < 50; index += 1) {
+      deferreds[index].resolve(makeJsonResponse({ ok: true, icsText: sampleIcs(`queued-${index}`) }));
+    }
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(51));
+    deferreds[50].resolve(makeJsonResponse({ ok: true, icsText: sampleIcs('queued-50') }));
+    await Promise.all(requests);
+  });
+
+  it('drains the FIFO queue after an active import fails', async () => {
+    const deferreds = [];
+    const fetchMock = vi.fn(() => new Promise((resolve, reject) => {
+      deferreds.push({ resolve, reject });
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const requests = Array.from({ length: 51 }, (_, index) =>
+      fetchAndParseCalendar(`https://example.com/failure-queue-${index}.ics`)
+    );
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(50));
+    const firstFailure = expect(requests[0]).rejects.toThrow('controlled failure');
+    deferreds[0].reject(new Error('controlled failure'));
+    for (let index = 1; index < 50; index += 1) {
+      deferreds[index].resolve(makeJsonResponse({ ok: true, icsText: sampleIcs(`failure-queue-${index}`) }));
+    }
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(51));
+    deferreds[50].resolve(makeJsonResponse({ ok: true, icsText: sampleIcs('failure-queue-50') }));
+    await firstFailure;
+    await Promise.all(requests.slice(1));
+  });
+
+  it('coalesces duplicates while queued and keeps force refresh separate', async () => {
+    const deferreds = [];
+    const fetchMock = vi.fn(() => new Promise((resolve, reject) => {
+      deferreds.push({ resolve, reject });
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const active = Array.from({ length: 50 }, (_, index) =>
+      fetchAndParseCalendar(`https://example.com/active-${index}.ics`)
+    );
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(50));
+    const queued = fetchAndParseCalendar('https://example.com/duplicate.ics');
+    const duplicate = fetchAndParseCalendar('https://example.com/duplicate.ics');
+    const refresh = fetchAndParseCalendar('https://example.com/duplicate.ics', { forceRefresh: true });
+    expect(duplicate).toBe(queued);
+    expect(fetchMock).toHaveBeenCalledTimes(50);
+
+    deferreds[0].resolve(makeJsonResponse({ ok: true, icsText: sampleIcs('active-0') }));
+    for (let index = 1; index < 50; index += 1) {
+      deferreds[index].resolve(makeJsonResponse({ ok: true, icsText: sampleIcs(`active-${index}`) }));
+    }
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(52));
+    deferreds[50].resolve(makeJsonResponse({ ok: true, icsText: sampleIcs('duplicate') }));
+    deferreds[51].resolve(makeJsonResponse({ ok: true, icsText: sampleIcs('duplicate-refresh') }));
+    await Promise.all([queued, refresh, ...active.slice(1)]);
+  });
+
+  it('returns a distinct capacity error only after the pending queue budget is exhausted', async () => {
+    const deferreds = [];
+    const fetchMock = vi.fn(() => new Promise((resolve) => {
+      deferreds.push(resolve);
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const active = Array.from({ length: 50 }, (_, index) =>
+      fetchAndParseCalendar(`https://example.com/capacity-active-${index}.ics`)
+    );
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(50));
+    const queued = Array.from({ length: 50 }, (_, index) =>
+      fetchAndParseCalendar(`https://example.com/capacity-queued-${index}.ics`)
+    );
+    await expect(fetchAndParseCalendar('https://example.com/capacity-overflow.ics'))
+      .rejects.toMatchObject({ code: 'CALENDAR_IMPORT_QUEUE_FULL' });
+    for (let index = 0; index < 50; index += 1) {
+      deferreds[index](makeJsonResponse({ ok: true, icsText: sampleIcs(`capacity-${index}`) }));
+    }
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(100));
+    for (let index = 50; index < deferreds.length; index += 1) {
+      deferreds[index](makeJsonResponse({ ok: true, icsText: sampleIcs(`capacity-${index}`) }));
+    }
+    await Promise.all([...active, ...queued]);
+  });
 });

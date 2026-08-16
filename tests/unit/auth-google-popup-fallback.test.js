@@ -24,7 +24,7 @@ vi.mock('../../js/firebase.js?v=26', () => ({
     updatePassword: vi.fn()
 }));
 
-vi.mock('../../js/db.js?v=4433174', () => ({
+vi.mock('../../js/db.js?v=4433175', () => ({
     validateAccessCode: validateAccessCodeMock,
     markAccessCodeAsUsed: markAccessCodeAsUsedMock,
     updateUserProfile: vi.fn(),
@@ -50,7 +50,7 @@ vi.mock('../../js/admin-invite.js?v=9', () => ({
     redeemAdminInviteAtomically: vi.fn()
 }));
 
-vi.mock('../../js/parent-membership-utils.js?v=2', () => ({
+vi.mock('../../js/parent-membership-utils.js?v=3', () => ({
     mergeApprovedParentMembershipRequests: vi.fn(() => ({ changed: false, userUpdate: {} }))
 }));
 
