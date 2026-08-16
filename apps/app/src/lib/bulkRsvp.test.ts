@@ -5,6 +5,7 @@ import {
   getBulkRsvpCandidates,
   getBulkRsvpNoteReadyCandidates,
   getBulkRsvpResultMessage,
+  getInitialBulkRsvpCandidates,
   getNeededBulkRsvpEventKeys,
   groupBulkRsvpEvents,
   groupBulkRsvpSubmissions,
@@ -61,6 +62,26 @@ describe('bulk RSVP helpers', () => {
 
     expect(candidates).toHaveLength(maxBulkRsvpEvents);
     expect(getNeededBulkRsvpEventKeys(withResponse)).toHaveLength(maxBulkRsvpEvents - 1);
+  });
+
+  it('limits initial hydration to visible groups while retaining every sibling child row', () => {
+    const visibleGroups = Array.from({ length: 10 }, (_, index) => event(index + 1));
+    const offscreenGroups = Array.from({ length: 2 }, (_, index) => event(index + 11));
+    const lateSibling = event(1, {
+      eventKey: 'team-1::game-1::player-99',
+      childId: 'player-99',
+      childName: 'Player 99'
+    });
+
+    expect(getInitialBulkRsvpCandidates(
+      [...visibleGroups, ...offscreenGroups, lateSibling],
+      10,
+      new Date('2100-01-01T00:00:00Z')
+    ).map((candidate) => candidate.eventKey)).toEqual([
+      visibleGroups[0]?.eventKey,
+      lateSibling.eventKey,
+      ...visibleGroups.slice(1).map((candidate) => candidate.eventKey)
+    ]);
   });
 
   it('excludes rows whose private RSVP note did not finish hydrating', () => {
