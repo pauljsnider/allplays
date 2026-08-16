@@ -5468,7 +5468,7 @@ describe('partial parent schedule team failures (#3021)', () => {
     });
   });
 
-  it('drains queued calendar imports across teams without hiding stored events', async () => {
+  it('restores calendar import capacity after each queued cross-team wave', async () => {
     const calendarUrlsByTeam = {
       'team-1': Array.from({ length: 26 }, (_, index) => `https://calendar.example.com/team-1-${index}.ics`),
       'team-2': Array.from({ length: 26 }, (_, index) => `https://calendar.example.com/team-2-${index}.ics`)
@@ -5504,38 +5504,45 @@ describe('partial parent schedule team failures (#3021)', () => {
       });
     });
 
-    const schedulePromise = loadParentSchedule(parentUser, { hydrateDetails: false, expandStaffPlayers: false });
-    await vi.waitFor(() => expect(pendingImports).toHaveLength(50));
-    expect(maximumActiveImports).toBe(50);
-    expect(schedulePromise).toBeInstanceOf(Promise);
+    const loadAndDrainWave = async () => {
+      maximumActiveImports = 0;
+      const schedulePromise = loadParentSchedule(parentUser, { hydrateDetails: false, expandStaffPlayers: false });
+      await vi.waitFor(() => expect(pendingImports).toHaveLength(50));
+      expect(activeImports).toBe(50);
+      expect(maximumActiveImports).toBe(50);
 
-    for (const pendingImport of pendingImports.splice(0)) {
-      pendingImport.resolve([{
-        uid: pendingImport.url,
-        dtstart: new Date(`2026-08-${String((pendingImports.length % 26) + 2).padStart(2, '0')}T18:00:00.000Z`),
-        summary: 'Imported game',
-        location: 'Imported Field'
-      }]);
-    }
-    await vi.waitFor(() => expect(pendingImports).toHaveLength(2));
-    for (const pendingImport of pendingImports.splice(0)) {
-      pendingImport.resolve([{
-        uid: pendingImport.url,
-        dtstart: new Date('2026-09-01T18:00:00.000Z'),
-        summary: 'Queued imported game',
-        location: 'Queued Field'
-      }]);
-    }
+      for (const pendingImport of pendingImports.splice(0)) {
+        pendingImport.resolve([{
+          uid: pendingImport.url,
+          dtstart: new Date('2026-08-02T18:00:00.000Z'),
+          summary: 'Imported game',
+          location: 'Imported Field'
+        }]);
+      }
+      await vi.waitFor(() => expect(pendingImports).toHaveLength(2));
+      for (const pendingImport of pendingImports.splice(0)) {
+        pendingImport.resolve([{
+          uid: pendingImport.url,
+          dtstart: new Date('2026-09-01T18:00:00.000Z'),
+          summary: 'Queued imported game',
+          location: 'Queued Field'
+        }]);
+      }
 
-    const result = await schedulePromise;
-    expect(fetchAndParseCalendar).toHaveBeenCalledTimes(52);
-    expect(result.events).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 'stored-team-1', isDbGame: true }),
-      expect.objectContaining({ id: 'stored-team-2', isDbGame: true }),
-      expect.objectContaining({ sourceType: 'calendar', isImported: true })
-    ]));
-    expect(result.events.filter((event) => event.sourceType === 'calendar')).toHaveLength(52);
-    expect(result.isPartial).toBe(false);
+      const result = await schedulePromise;
+      expect(activeImports).toBe(0);
+      expect(result.events).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 'stored-team-1', isDbGame: true }),
+        expect.objectContaining({ id: 'stored-team-2', isDbGame: true }),
+        expect.objectContaining({ sourceType: 'calendar', isImported: true })
+      ]));
+      expect(result.events.filter((event) => event.sourceType === 'calendar')).toHaveLength(52);
+      expect(result.isPartial).toBe(false);
+    };
+
+    await loadAndDrainWave();
+    await loadAndDrainWave();
+    expect(fetchAndParseCalendar).toHaveBeenCalledTimes(104);
   });
 
   it('marks an event-detail calendar fallback partial when the requested event cannot load', async () => {

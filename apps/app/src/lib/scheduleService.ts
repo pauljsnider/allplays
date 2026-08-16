@@ -1758,8 +1758,9 @@ async function mapWithConcurrency<T, R>(
 async function withCalendarImportSlot<T>(work: () => Promise<T>): Promise<T> {
   if (activeCalendarImports >= calendarImportConcurrency) {
     await new Promise<void>((resolve) => calendarImportWaiters.push(resolve));
+  } else {
+    activeCalendarImports += 1;
   }
-  activeCalendarImports += 1;
   try {
     return await work();
   } finally {
