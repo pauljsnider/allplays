@@ -14,6 +14,8 @@ import {
 } from '../../services/chatgpt-mcp/src/oauthStore.js';
 
 const REDIRECT = 'https://chatgpt.com/connector_platform_oauth_redirect';
+const CURRENT_REDIRECT = 'https://chatgpt.com/connector/oauth/allplays-diagnostic';
+const OTHER_CURRENT_REDIRECT = 'https://chatgpt.com/connector/oauth/another-connection';
 const VERIFIER = 'test-verifier-string-with-plenty-of-entropy-1234567890';
 
 function registeredBroker(overrides = {}) {
@@ -69,12 +71,96 @@ describe('chatgpt-mcp oauth: registration', () => {
         });
     });
 
+    it('registers current ChatGPT callbacks with an exact client binding', () => {
+        const broker = createOAuthBroker();
+        const currentClient = broker.registerClient({ redirect_uris: [CURRENT_REDIRECT] });
+        const otherClient = broker.registerClient({ redirect_uris: [OTHER_CURRENT_REDIRECT] });
+        const recreatedClient = createOAuthBroker().registerClient({
+            redirect_uris: [CURRENT_REDIRECT]
+        });
+        const valid = {
+            client_id: currentClient.client_id,
+            redirect_uri: CURRENT_REDIRECT,
+            response_type: 'code',
+            code_challenge: s256Challenge(VERIFIER),
+            code_challenge_method: 'S256'
+        };
+
+        expect(currentClient.redirect_uris).toEqual([CURRENT_REDIRECT]);
+        expect(recreatedClient.client_id).toBe(currentClient.client_id);
+        expect(currentClient.client_id).not.toBe(otherClient.client_id);
+        expect(broker.validateAuthorizeRequest(valid)).toMatchObject({
+            clientId: currentClient.client_id,
+            redirectUri: CURRENT_REDIRECT
+        });
+        expect(() => broker.validateAuthorizeRequest({
+            ...valid,
+            redirect_uri: OTHER_CURRENT_REDIRECT
+        })).toThrow(/redirect_uri/);
+        expect(() => broker.validateAuthorizeRequest({
+            ...valid,
+            client_id: otherClient.client_id
+        })).toThrow(/redirect_uri/);
+    });
+
     it('rejects untrusted redirect uris regardless of scheme', () => {
         const broker = createOAuthBroker();
         expect(() => broker.registerClient({ redirect_uris: ['https://evil.example/cb'] })).toThrow(OAuthError);
         expect(() => broker.registerClient({ redirect_uris: ['http://localhost:3000/cb'] })).toThrow(OAuthError);
         expect(() => broker.registerClient({ redirect_uris: ['http://evil.example/cb'] })).toThrow(OAuthError);
+        expect(() => broker.registerClient({ redirect_uris: ['https://chatgpt.com.evil.example/connector/oauth/id'] })).toThrow(OAuthError);
+        expect(() => broker.registerClient({ redirect_uris: ['https://chatgpt.com/connector/oauth/id/extra'] })).toThrow(OAuthError);
+        expect(() => broker.registerClient({ redirect_uris: ['https://chatgpt.com/connector/oauth/id?next=evil'] })).toThrow(OAuthError);
+        expect(() => broker.registerClient({ redirect_uris: ['https://chatgpt.com/connector/oauth/id#fragment'] })).toThrow(OAuthError);
+        expect(() => broker.registerClient({ redirect_uris: ['https://chatgpt.com:444/connector/oauth/id'] })).toThrow(OAuthError);
+        expect(() => broker.registerClient({ redirect_uris: [REDIRECT, CURRENT_REDIRECT] })).toThrow(OAuthError);
         expect(() => broker.registerClient({})).toThrow(OAuthError);
+    });
+
+    it('serves the sign-in page for a newly registered current ChatGPT callback', async () => {
+        const previousProjectId = process.env.FIREBASE_PROJECT_ID;
+        const previousApiKey = process.env.FIREBASE_WEB_API_KEY;
+        process.env.FIREBASE_PROJECT_ID = 'test-project';
+        process.env.FIREBASE_WEB_API_KEY = 'test-api-key';
+        const { app } = await import('../../services/chatgpt-mcp/src/server.js');
+        const server = createServer(app);
+        await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+
+        try {
+            const { port } = server.address();
+            const baseUrl = `http://127.0.0.1:${port}`;
+            const registration = await fetch(`${baseUrl}/oauth/register`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ redirect_uris: [CURRENT_REDIRECT] })
+            });
+            expect(registration.status).toBe(201);
+            const client = await registration.json();
+            const query = new URLSearchParams({
+                client_id: client.client_id,
+                redirect_uri: CURRENT_REDIRECT,
+                response_type: 'code',
+                code_challenge: s256Challenge(VERIFIER),
+                code_challenge_method: 'S256'
+            });
+
+            const response = await fetch(`${baseUrl}/oauth/authorize?${query}`);
+            expect(response.status).toBe(200);
+            await expect(response.text()).resolves.toContain('<title>Sign in to ALL PLAYS</title>');
+
+            query.set('redirect_uri', OTHER_CURRENT_REDIRECT);
+            const mismatched = await fetch(`${baseUrl}/oauth/authorize?${query}`);
+            expect(mismatched.status).toBe(400);
+            await expect(mismatched.text()).resolves.toContain(
+                'redirect_uri is not registered for this client.'
+            );
+        } finally {
+            await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+            if (previousProjectId === undefined) delete process.env.FIREBASE_PROJECT_ID;
+            else process.env.FIREBASE_PROJECT_ID = previousProjectId;
+            if (previousApiKey === undefined) delete process.env.FIREBASE_WEB_API_KEY;
+            else process.env.FIREBASE_WEB_API_KEY = previousApiKey;
+        }
     });
 
     it('rejects untrusted redirects and reuses one bounded client at the registration endpoint', async () => {
@@ -286,6 +372,28 @@ describe('chatgpt-mcp oauth: authorize validation', () => {
 });
 
 describe('chatgpt-mcp oauth: code exchange', () => {
+    it('exchanges a current callback code only for its registered client and redirect', async () => {
+        const broker = createOAuthBroker();
+        const client = broker.registerClient({ redirect_uris: [CURRENT_REDIRECT] });
+        const code = await broker.approveAuthorization({
+            clientId: client.client_id,
+            redirectUri: CURRENT_REDIRECT,
+            codeChallenge: s256Challenge(VERIFIER),
+            firebaseRefreshToken: 'firebase-current-callback'
+        });
+        const tokens = await broker.exchange({
+            grant_type: 'authorization_code',
+            code,
+            code_verifier: VERIFIER,
+            client_id: client.client_id,
+            redirect_uri: CURRENT_REDIRECT
+        });
+
+        await expect(broker.resolveAccessToken(tokens.access_token)).resolves.toEqual({
+            firebaseRefreshToken: 'firebase-current-callback'
+        });
+    });
+
     it('exchanges a code with the right PKCE verifier for tokens bound to the Firebase credential', async () => {
         const { broker, clientId } = registeredBroker();
         const code = await authorize(broker, clientId, 'firebase-rt-42');
