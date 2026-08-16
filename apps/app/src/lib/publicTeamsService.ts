@@ -1,4 +1,4 @@
-import { discoverPublicTeams, getPublicTeamProfile, getPublicTeamRosterCount, type PublicTeamRosterCount } from './adapters/legacyPublicTeamsDb';
+import { discoverPublicTeams, getPublicTeamGamesProjection, getPublicTeamProfile, getPublicTeamRosterCount, type PublicTeamProjectedGame, type PublicTeamRosterCount } from './adapters/legacyPublicTeamsDb';
 import { type ParentHomeTeam } from './homeLogic';
 
 const PUBLIC_ROSTER_COUNT_CONCURRENCY = 6;
@@ -90,6 +90,39 @@ export type PublicTeamProfile = {
     state: string | null;
     zip: string | null;
     location: string | null;
+    leagueUrl: string | null;
+    standingsConfig: PublicStandingsConfig | null;
+};
+
+export type PublicStandingsConfig = {
+    enabled: boolean;
+    rankingMode: 'points' | 'win_pct';
+    points: {
+        win: number | null;
+        tie: number | null;
+        loss: number | null;
+    } | null;
+    maxGoalDiff: number | null;
+    tiebreakers: string[];
+    twoTeamTiebreakers: string[];
+    multiTeamTiebreakers: string[];
+};
+
+export type PublicStandingsTournament = {
+    divisionName?: string;
+    division?: string;
+    poolName?: string;
+};
+
+export type PublicTeamStandingsInput = {
+    id: string;
+    date: Date;
+    homeTeam: string;
+    awayTeam: string;
+    homeScore: number;
+    awayScore: number;
+    status: 'completed';
+    tournament?: PublicStandingsTournament;
 };
 
 function normalizePublicTeamSearchText(value: string | null | undefined): string {
@@ -100,6 +133,109 @@ function teamLocation(team: { city?: string | null; state?: string | null; zip?:
     if (team.city && team.state) return `${team.city}, ${team.state}`;
     if (team.zip) return team.zip;
     return null;
+}
+
+function publicHttpUrl(value: unknown): string | null {
+    if (typeof value !== 'string' || !value.trim()) return null;
+    try {
+        const url = new URL(value.trim());
+        return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password
+            ? url.toString()
+            : null;
+    } catch {
+        return null;
+    }
+}
+
+function finiteNumber(value: unknown): number | null {
+    return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function publicStringList(value: unknown, maxItems = 20, maxLength = 40): string[] {
+    if (!Array.isArray(value)) return [];
+    return value
+        .filter((item): item is string => typeof item === 'string')
+        .map((item) => item.trim().slice(0, maxLength))
+        .filter(Boolean)
+        .slice(0, maxItems);
+}
+
+function normalizePublicStandingsConfig(value: unknown): PublicStandingsConfig | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const config = value as Record<string, unknown>;
+    const points = config.points && typeof config.points === 'object' && !Array.isArray(config.points)
+        ? config.points as Record<string, unknown>
+        : null;
+    const maxGoalDiff = finiteNumber(config.maxGoalDiff);
+    return {
+        enabled: config.enabled === true,
+        rankingMode: config.rankingMode === 'win_pct' ? 'win_pct' : 'points',
+        points: points ? {
+            win: finiteNumber(points.win),
+            tie: finiteNumber(points.tie),
+            loss: finiteNumber(points.loss)
+        } : null,
+        maxGoalDiff: maxGoalDiff !== null && maxGoalDiff > 0 ? maxGoalDiff : null,
+        tiebreakers: publicStringList(config.tiebreakers),
+        twoTeamTiebreakers: publicStringList(config.twoTeamTiebreakers),
+        multiTeamTiebreakers: publicStringList(config.multiTeamTiebreakers)
+    };
+}
+
+function publicTournamentText(value: unknown): string {
+    return typeof value === 'string' ? value.trim().slice(0, 160) : '';
+}
+
+function normalizePublicStandingsTournament(value: unknown): PublicStandingsTournament | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const tournament = value as Record<string, unknown>;
+    const normalized: PublicStandingsTournament = {};
+    const divisionName = publicTournamentText(tournament.divisionName);
+    const division = publicTournamentText(tournament.division);
+    const poolName = publicTournamentText(tournament.poolName);
+    if (divisionName) normalized.divisionName = divisionName;
+    if (division) normalized.division = division;
+    if (poolName) normalized.poolName = poolName;
+    return Object.keys(normalized).length ? normalized : null;
+}
+
+function normalizePublicStandingsGame(
+    value: PublicTeamProjectedGame,
+    teamId: string,
+    teamName: string
+): PublicTeamStandingsInput | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const status = String(value.status || '').trim().toLowerCase();
+    const liveStatus = String(value.liveStatus || '').trim().toLowerCase();
+    const type = String(value.type || '').trim().toLowerCase();
+    const visibility = String(value.visibility || '').trim().toLowerCase();
+    const completedStatuses = ['completed', 'complete', 'final', 'finished'];
+    if (!completedStatuses.includes(status)) return null;
+    if (liveStatus && !completedStatuses.includes(liveStatus)) return null;
+    if (type && type !== 'game') return null;
+    if (visibility === 'private' || value.isPrivate === true || value.private === true || value.deleted === true) return null;
+    if (value.teamId && String(value.teamId).trim() !== teamId) return null;
+
+    const id = String(value.id || '').trim();
+    const opponent = String(value.opponent || '').trim();
+    const teamScore = finiteNumber(value.teamScore);
+    const opponentScore = finiteNumber(value.opponentScore);
+    const date = new Date(String(value.startsAt || ''));
+    if (!id || !teamName || !opponent || teamScore === null || opponentScore === null) return null;
+    if (teamScore < 0 || opponentScore < 0 || Number.isNaN(date.getTime())) return null;
+
+    const isHome = value.isHome !== false;
+    const tournament = normalizePublicStandingsTournament(value.tournament);
+    return {
+        id,
+        date,
+        homeTeam: isHome ? teamName : opponent,
+        awayTeam: isHome ? opponent : teamName,
+        homeScore: isHome ? teamScore : opponentScore,
+        awayScore: isHome ? opponentScore : teamScore,
+        status: 'completed',
+        ...(tournament ? { tournament } : {})
+    };
 }
 
 type PublicTeamSearchResult = {
@@ -238,7 +374,10 @@ export async function getPublicTeamDetail(teamId: string): Promise<PublicTeamPro
     const normalizedTeamId = String(teamId || '').trim();
     if (!normalizedTeamId) throw new Error('Team ID is required.');
     const team = await getPublicTeamProfile(normalizedTeamId);
-    if (!team?.id || !team?.name) throw new Error('Public team not found.');
+    const status = String(team?.status || '').trim().toLowerCase();
+    if (String(team?.id || '').trim() !== normalizedTeamId || !team?.name || team.isPublic !== true || team.active === false || team.archived === true || ['archived', 'inactive', 'disabled'].includes(status)) {
+        throw new Error('Public team not found.');
+    }
     return {
         id: String(team.id),
         name: String(team.name),
@@ -248,6 +387,22 @@ export async function getPublicTeamDetail(teamId: string): Promise<PublicTeamPro
         city: team.city ? String(team.city) : null,
         state: team.state ? String(team.state) : null,
         zip: team.zip ? String(team.zip) : null,
-        location: teamLocation(team)
+        location: teamLocation(team),
+        leagueUrl: publicHttpUrl(team.leagueUrl),
+        standingsConfig: normalizePublicStandingsConfig(team.standingsConfig)
     };
+}
+
+export async function getPublicTeamStandingsInputs(teamId: string): Promise<PublicTeamStandingsInput[]> {
+    const normalizedTeamId = String(teamId || '').trim();
+    if (!normalizedTeamId) throw new Error('Team ID is required.');
+    const projection = await getPublicTeamGamesProjection(normalizedTeamId);
+    const projectionTeamId = String(projection?.team?.id || '').trim();
+    const teamName = String(projection?.team?.name || '').trim();
+    if (projectionTeamId !== normalizedTeamId || !teamName) {
+        throw new Error('Public team not found.');
+    }
+    return (Array.isArray(projection.games) ? projection.games : [])
+        .map((game) => normalizePublicStandingsGame(game, normalizedTeamId, teamName))
+        .filter((game): game is PublicTeamStandingsInput => game !== null);
 }
