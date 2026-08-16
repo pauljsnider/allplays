@@ -11,6 +11,13 @@ export async function getTeams() { return state().teams; }
 export async function getUserTeamsWithAccess() { return state().teams; }
 export async function getGames(teamId) {
     const testState = state();
+    if (testState.delayPreCancellationRefresh && testState.cancelCalls.length === 0) {
+        const games = (testState.gamesByTeam[teamId] || []).map((game) => ({ ...game }));
+        testState.delayedRefreshCaptures += 1;
+        await new Promise((resolve) => testState.delayedRefreshResolvers.push(resolve));
+        testState.delayedRefreshReturns += 1;
+        return games;
+    }
     if (testState.failRefreshAfterCancellation && testState.cancelCalls.length > 0) {
         throw new Error('Schedule refresh unavailable');
     }
@@ -177,7 +184,11 @@ async function seedState(page, {
             notificationTeamIds: [],
             failNotifications: options.failNotifications,
             failRefreshAfterCancellation: options.failRefreshAfterCancellation,
-            sourceOnlyCancellation: options.sourceOnlyCancellation
+            sourceOnlyCancellation: options.sourceOnlyCancellation,
+            delayPreCancellationRefresh: false,
+            delayedRefreshCaptures: 0,
+            delayedRefreshReturns: 0,
+            delayedRefreshResolvers: []
         };
     }, { failNotifications, failRefreshAfterCancellation, sourceOnlyCancellation });
 }
@@ -275,4 +286,33 @@ test('keeps verified cancellation disabled when the organization refresh fails',
     await expect(page.locator('#organization-success')).toBeHidden();
     await expect(row).toContainText('Cancelled');
     await expect(row.getByRole('button', { name: /Cancel/ })).toHaveCount(0);
+});
+
+test('ignores an overlapping pre-cancellation refresh after verified cancellation', async ({ page, baseURL }) => {
+    await mockModules(page);
+    await seedState(page, { failRefreshAfterCancellation: true });
+    const bootIssues = createBootIssueCollector(page, { baseURL });
+    await page.goto(buildUrl(baseURL, '/organization-schedule.html#teamId=team-1'), { waitUntil: 'domcontentloaded' });
+
+    const row = page.locator('[data-shared-schedule-id="shared-team-1-source-1"]');
+    await expect(row).toBeVisible();
+    expect(bootIssues).toEqual([]);
+    await page.evaluate(() => { window.__organizationScheduleTestState.delayPreCancellationRefresh = true; });
+    await page.getByRole('button', { name: 'Refresh published matchups' }).click();
+    await expect.poll(() => page.evaluate(() => window.__organizationScheduleTestState.delayedRefreshCaptures)).toBe(2);
+
+    page.once('dialog', (dialog) => dialog.accept());
+    await row.getByRole('button', { name: 'Cancel' }).click();
+    await expect(row).toContainText('Cancelled');
+
+    await page.evaluate(() => {
+        const testState = window.__organizationScheduleTestState;
+        testState.delayPreCancellationRefresh = false;
+        testState.delayedRefreshResolvers.splice(0).forEach((resolve) => resolve());
+    });
+    await expect.poll(() => page.evaluate(() => window.__organizationScheduleTestState.delayedRefreshReturns)).toBe(2);
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => resolve())));
+    await expect(row).toContainText('Cancelled');
+    await expect(row.getByRole('button', { name: /Cancel/ })).toHaveCount(0);
+    expect(await page.evaluate(() => window.__organizationScheduleTestState.cancelCalls)).toHaveLength(1);
 });

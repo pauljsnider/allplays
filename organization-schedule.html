@@ -423,6 +423,7 @@
         let organizationVenues = [];
         let draftSeedOrderIds = [];
         let lastCompletePublishedMatchups = [];
+        let publishedMatchupsRefreshGeneration = 0;
         const publishedCancellationInFlight = new Set();
         const PUBLISHED_MATCHUP_HORIZON_DAYS = 365;
         const availabilityForm = document.getElementById('venue-availability-form');
@@ -986,6 +987,16 @@
             return ['cancelled', 'canceled'].includes(status) || ['cancelled', 'canceled'].includes(liveStatus);
         }
 
+        function retainVerifiedPublishedMatchupCancellation(sharedScheduleId) {
+            publishedMatchupsRefreshGeneration += 1;
+            lastCompletePublishedMatchups = lastCompletePublishedMatchups.map((candidate) => (
+                candidate.sharedScheduleId === sharedScheduleId
+                    ? { ...candidate, status: 'cancelled', cancellationIncomplete: false }
+                    : candidate
+            ));
+            renderPublishedMatchups(lastCompletePublishedMatchups);
+        }
+
         async function cancelAndVerifyPublishedMatchup(matchup, teamId, gameId, userId) {
             await cancelGame(teamId, gameId, userId);
             const [source, counterpart] = await Promise.all([
@@ -1002,6 +1013,7 @@
             if (!remainsReciprocal || !isCancelledGameRecord(source) || !isCancelledGameRecord(counterpart)) {
                 throw new Error('Cancellation is incomplete. Please retry.');
             }
+            retainVerifiedPublishedMatchupCancellation(matchup.sharedScheduleId);
         }
 
         async function handlePublishedMatchupCancellation(matchup, button) {
@@ -1034,9 +1046,6 @@
                     return;
                 }
 
-                matchup.status = 'cancelled';
-                matchup.cancellationIncomplete = false;
-                renderPublishedMatchups(lastCompletePublishedMatchups);
                 const refreshed = await refreshPublishedMatchups();
                 if (result.notificationError) {
                     setAlert(`Matchup cancelled, but team notifications were incomplete. Please retry the notification from team chat. ${result.notificationError}`);
@@ -1142,7 +1151,10 @@
         }
 
         async function refreshPublishedMatchups() {
-            setButtonBusy(refreshPublishedMatchupsButton, 'Refreshing…', true);
+            const refreshGeneration = ++publishedMatchupsRefreshGeneration;
+            if (!refreshPublishedMatchupsButton.disabled) {
+                setButtonBusy(refreshPublishedMatchupsButton, 'Refreshing…', true);
+            }
             if (lastCompletePublishedMatchups.length === 0) {
                 setPublishedMatchupsStatus('Loading published matchups…');
             }
@@ -1153,16 +1165,20 @@
                     gamesByTeam,
                     now: startDate
                 });
+                if (refreshGeneration !== publishedMatchupsRefreshGeneration) return true;
                 lastCompletePublishedMatchups = matchups;
                 renderPublishedMatchups(matchups);
                 return true;
             } catch (error) {
+                if (refreshGeneration !== publishedMatchupsRefreshGeneration) return true;
                 console.error('Published organization matchup load failed:', error);
                 renderPublishedMatchups(lastCompletePublishedMatchups);
                 setPublishedMatchupsStatus('Published matchups could not be loaded completely. Please retry.', 'error');
                 return false;
             } finally {
-                setButtonBusy(refreshPublishedMatchupsButton, 'Refreshing…', false);
+                if (refreshGeneration === publishedMatchupsRefreshGeneration) {
+                    setButtonBusy(refreshPublishedMatchupsButton, 'Refreshing…', false);
+                }
             }
         }
 
