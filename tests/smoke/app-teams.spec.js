@@ -624,8 +624,25 @@ async function mockPublicTeamsBrowseModule(page, { slowSearch = false } = {}) {
                         city: 'Atlanta',
                         state: 'GA',
                         zip: '30303',
-                        location: 'Atlanta, GA'
+                        location: 'Atlanta, GA',
+                        standingsConfig: null
                     };
+                }
+
+                export async function getPublicTeamStandingsInputs() {
+                    return [];
+                }
+            `
+        });
+    });
+
+    await page.route(/\/src\/lib\/adapters\/legacyPublicTeamsDb\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                export function computeNativeStandings() {
+                    return [];
                 }
             `
         });
@@ -760,6 +777,8 @@ test.describe('mobile My Teams', () => {
     });
 
     test('browse teams paginates searched results on mobile without clearing the query', async ({ page, baseURL }) => {
+        const pageErrors = [];
+        page.on('pageerror', (error) => pageErrors.push(error.message));
         await mockTeamsModules(page, { scenario: 'empty' });
         await mockPublicTeamsBrowseModule(page, { slowSearch: true });
         await page.goto(appUrl(baseURL, '/teams/browse'), { waitUntil: 'domcontentloaded' });
@@ -792,6 +811,7 @@ test.describe('mobile My Teams', () => {
         await expect.poll(async () => atlantaFireLink.evaluate((node) => node.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44);
         await atlantaFireLink.click();
 
+        expect(pageErrors).toEqual([]);
         await expect(page.getByRole('heading', { name: 'Atlanta Fire' })).toBeVisible();
         await expect(page.getByRole('link', { name: 'Back to team search' })).toHaveAttribute('href', '#/teams/browse');
         await expect(page.getByRole('link', { name: 'Enter a join code' })).toHaveAttribute('href', '#/accept-invite');
