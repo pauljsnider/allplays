@@ -51,7 +51,8 @@ describe('certificate legacy signature inventory backfill', () => {
                 env: { GOOGLE_OAUTH_ACCESS_TOKEN: 'oidc-access-token' }
             });
             expect(bucket.name).toBe('game-flow-img.firebasestorage.app');
-            expect(bucket.storage.authClient.cachedCredential.credentials.access_token)
+            const storageAuthClient = await bucket.storage.authClient.getClient();
+            expect(storageAuthClient.credentials.access_token)
                 .toBe('oidc-access-token');
         } finally {
             await deleteApp(app);
