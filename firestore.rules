@@ -2575,10 +2575,10 @@ service cloud.firestore {
                  !isCanonicalStaffChatConversation(conversationId) &&
                  !isStaffRoleChatConversation(conversationData) &&
                  conversationData.get('type', '') == 'group' &&
+                 conversationData.get('participantIds', []).size() >= 3 &&
                  data.get('targetType', 'full_team') == 'individuals' &&
                  hasValidNestedChatRecipientIds(conversationData, data) &&
-                 data.get('targetRole', null) == null &&
-                 data.recipientIds == conversationData.get('participantIds', [])
+                 data.get('targetRole', null) == null
                )
              );
     }
@@ -4335,7 +4335,8 @@ service cloud.firestore {
         allow list: if canListChatConversation(teamId, conversationId, resource.data);
         allow create: if canUseTeamChat(teamId) &&
                          isChatConversationPayloadValid(request.resource.data) &&
-                         isDirectConversationCreateAuthorized(teamId, request.resource.data) &&
+                         isCanonicalStaffChatConversationPayload(conversationId, request.resource.data) &&
+                         isTeamOwnerOrAdmin(teamId) &&
                          canAccessChatConversation(teamId, conversationId, request.resource.data);
         // Keep the narrowly-scoped legacy repair on its own allow path so it
         // does not spend the expression budget evaluating unrelated updates.

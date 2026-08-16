@@ -4,7 +4,9 @@ const Stripe = require('stripe');
 const { Resend } = require('resend');
 const crypto = require('node:crypto');
 const {
+  buildCanonicalConversationId,
   canProjectChatConversation,
+  resolveCanonicalConversationParticipants,
   serializeChatConversationProjection
 } = require('./chat-conversation-access-core.cjs');
 const {
@@ -17657,6 +17659,159 @@ exports.checkAcceptedFriendMessageAccess = functions.https.onCall(
     HttpsError: functions.https.HttpsError
   })
 );
+
+exports.createAuthorizedChatConversation = functions.https.onCall(async (data, context = {}) => {
+  await assertSensitiveEmailVerified(context, 'create-authorized-chat-conversation');
+  const callerUid = requireOpportunityAuth(context);
+  assertOpportunityRateLimit(checkPublicOpportunityMessageRateLimit, context, `chat-conversation:${callerUid}`);
+  const teamId = normalizeDirectChatId(data?.teamId, 'team');
+  let canonical;
+  try {
+    canonical = await resolveCanonicalConversationParticipants({
+      callerUid,
+      participantSelectors: data?.participantSelectors,
+      resolveUserByUid: (uid) => admin.auth().getUser(uid),
+      resolveUserByEmail: (email) => admin.auth().getUserByEmail(email)
+    });
+  } catch (_error) {
+    throwOpportunityError('invalid-argument', 'Every conversation recipient must resolve to an active account.');
+  }
+
+  const conversationId = buildCanonicalConversationId(canonical.type, canonical.participantIds);
+  if (!conversationId) {
+    throwOpportunityError('invalid-argument', 'Choose at least one current team member.');
+  }
+  const conversationRef = firestore.doc(`teams/${teamId}/chatConversations/${conversationId}`);
+  const teamRef = firestore.doc(`teams/${teamId}`);
+  const participantRefs = canonical.participantIds.map((uid) => firestore.doc(`users/${uid}`));
+  const friendshipId = canonical.type === 'direct' ? canonical.participantIds.join('__') : '';
+  const friendshipRef = friendshipId ? firestore.doc(`friendships/${friendshipId}`) : null;
+  const requestedName = cleanOpportunityText(data?.name, 200) || null;
+  const now = admin.firestore.Timestamp.now();
+
+  return firestore.runTransaction(async (transaction) => {
+    const [conversationSnap, teamSnap, ...remainingSnaps] = await Promise.all([
+      transaction.get(conversationRef),
+      transaction.get(teamRef),
+      ...participantRefs.map((ref) => transaction.get(ref)),
+      ...(friendshipRef ? [transaction.get(friendshipRef)] : [])
+    ]);
+    if (!teamSnap.exists) {
+      throwOpportunityError('permission-denied', 'Every participant must have current team access.');
+    }
+    const participantSnaps = remainingSnaps.slice(0, participantRefs.length);
+    const friendshipSnap = friendshipRef ? remainingSnaps[participantRefs.length] : null;
+    const team = teamSnap.data() || {};
+    const teamWithId = { ...team, id: teamId };
+    const participantsByUid = new Map(canonical.participants.map((participant) => [participant.uid, participant]));
+    const profilesByUid = new Map();
+    participantSnaps.forEach((participantSnap, index) => {
+      if (!participantSnap.exists) return;
+      profilesByUid.set(canonical.participantIds[index], participantSnap.data() || {});
+    });
+    const inaccessibleParticipant = canonical.participantIds.find((uid) => {
+      const authUser = participantsByUid.get(uid);
+      const profile = profilesByUid.get(uid);
+      return !profile || !hasCurrentTeamAccess({
+        team: teamWithId,
+        user: profile,
+        userId: uid,
+        email: authUser?.email || ''
+      });
+    });
+    if (inaccessibleParticipant) {
+      throwOpportunityError('permission-denied', 'Every participant must have current team access.');
+    }
+
+    const callerProfile = profilesByUid.get(callerUid) || {};
+    const callerAuth = participantsByUid.get(callerUid) || {};
+    const callerCanManage = hasTeamAdminAccess({
+      team,
+      user: callerProfile,
+      uid: callerUid,
+      email: callerAuth.email || ''
+    });
+    const existing = conversationSnap.exists ? conversationSnap.data() || {} : {};
+    let directMetadata = {};
+    if (canonical.type === 'direct') {
+      const existingInitiatorUid = normalizeDirectChatUserId(existing.initiatedBy);
+      const existingInitiatorProfile = profilesByUid.get(existingInitiatorUid) || {};
+      const existingInitiatorAuth = participantsByUid.get(existingInitiatorUid) || {};
+      const existingAdminDirectIsCurrent = existing.directAccess === 'team_admin' &&
+        canonical.participantIds.includes(existingInitiatorUid) &&
+        hasTeamAdminAccess({
+          team,
+          user: existingInitiatorProfile,
+          uid: existingInitiatorUid,
+          email: existingInitiatorAuth.email || ''
+        });
+      if (existingAdminDirectIsCurrent) {
+        directMetadata = {
+          directAccess: 'team_admin',
+          directUserIds: canonical.participantIds,
+          friendshipId: null,
+          initiatedBy: existingInitiatorUid
+        };
+      } else if (callerCanManage) {
+        directMetadata = {
+          directAccess: 'team_admin',
+          directUserIds: canonical.participantIds,
+          friendshipId: null,
+          initiatedBy: callerUid
+        };
+      } else {
+        const recipientId = canonical.participantIds.find((uid) => uid !== callerUid);
+        const friendship = friendshipSnap?.exists ? friendshipSnap.data() || {} : {};
+        if (!recipientId || !friendshipSnap?.exists || !canMessageAcceptedFriendForTeam({
+          friendship,
+          team,
+          sender: callerProfile,
+          recipient: profilesByUid.get(recipientId) || {},
+          senderId: callerUid,
+          recipientId,
+          teamId,
+          senderEmail: callerAuth.email || '',
+          recipientEmail: participantsByUid.get(recipientId)?.email || ''
+        })) {
+          throwOpportunityError('permission-denied', 'This direct conversation is not authorized.');
+        }
+        directMetadata = {
+          directAccess: 'accepted_friend',
+          directUserIds: canonical.participantIds,
+          friendshipId,
+          initiatedBy: null
+        };
+      }
+    }
+
+    const payload = {
+      type: canonical.type,
+      participantIds: canonical.participantIds,
+      participantRoles: [],
+      mutedBy: [],
+      ...(canonical.type === 'group' && requestedName ? { name: requestedName } : {}),
+      ...directMetadata,
+      updatedAt: now
+    };
+    if (conversationSnap.exists) {
+      const existingParticipantIds = Array.isArray(existing.participantIds)
+        ? [...new Set(existing.participantIds)].sort()
+        : [];
+      if (existing.type !== canonical.type ||
+          existingParticipantIds.join('|') !== canonical.participantIds.join('|')) {
+        throwOpportunityError('failed-precondition', 'The existing conversation does not match this audience.');
+      }
+      transaction.set(conversationRef, {
+        ...directMetadata,
+        updatedAt: now
+      }, { merge: true });
+      return { id: conversationId, ...existing, ...directMetadata, updatedAt: now };
+    }
+    const created = { ...payload, createdAt: now };
+    transaction.create(conversationRef, created);
+    return { id: conversationId, ...created };
+  });
+});
 
 function normalizeDirectChatId(value, label) {
   const normalized = String(value || '').trim();

@@ -511,6 +511,7 @@
             ],
             "cloudFunctions": [
                 "checkAcceptedFriendMessageAccess",
+                "createAuthorizedChatConversation",
                 "listAuthorizedChatConversations",
                 "markAllNotificationInboxRead",
                 "markNotificationInboxItemRead",

@@ -1280,11 +1280,9 @@ describe('React app chat recipient service', () => {
         expect(progress).toEqual(['uploading', 'uploading', 'posting']);
         expect(dbMocks.uploadChatImage).toHaveBeenNthCalledWith(1, 'team-1', photo, { conversationId: 'group-player-coach' });
         expect(dbMocks.uploadChatImage).toHaveBeenNthCalledWith(2, 'team-1', video, { conversationId: 'group-player-coach' });
-        expect(dbMocks.upsertChatConversation).toHaveBeenCalledWith('team-1', expect.objectContaining({
-            type: 'group',
-            participantIds: expect.arrayContaining(['user-1', 'user:coach-1', 'user:parent-2', 'email:guardian@example.com']),
-            participantRoles: []
-        }));
+        expect(dbMocks.upsertChatConversation).toHaveBeenCalledWith('team-1', {
+            participantIds: expect.arrayContaining(['user-1', 'user:coach-1', 'user:parent-2', 'email:guardian@example.com'])
+        });
         expect(dbMocks.upsertChatConversation.mock.calls[0][1].participantIds).toHaveLength(4);
         expect(dbMocks.postChatMessage).toHaveBeenCalledWith('team-1', expect.objectContaining({
             text: '@ALL PLAYS summarize this thread',
@@ -1334,10 +1332,9 @@ describe('React app chat recipient service', () => {
         });
 
         expect(dbMocks.getUsersByParentPlayerKey).toHaveBeenCalledWith('team-1::player-1');
-        expect(dbMocks.upsertChatConversation).toHaveBeenCalledWith('team-1', expect.objectContaining({
-            type: 'group',
+        expect(dbMocks.upsertChatConversation).toHaveBeenCalledWith('team-1', {
             participantIds: ['coach-1', 'user:parent-1', 'email:guardian@example.com']
-        }));
+        });
         expect(dbMocks.postChatMessage).toHaveBeenCalledWith('team-1', expect.objectContaining({
             conversationId: 'group-linked-parent'
         }));

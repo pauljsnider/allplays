@@ -767,7 +767,7 @@ export async function uploadStatSheetPhoto(teamId, gameId, file, options = {}) {
         : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=443351'; // Import resolveZip
+import { resolveZip } from './utils.js?v=443352'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -7695,6 +7695,16 @@ export async function getChatConversations(teamId, user = null, {
 /**
  * Create or update a lightweight conversation record.
  */
+export async function createAuthorizedChatConversation(teamId, participantSelectors = [], { name = null } = {}) {
+    const createConversation = httpsCallable(functions, 'createAuthorizedChatConversation');
+    const response = await createConversation({
+        teamId,
+        participantSelectors: normalizeConversationParticipantIds(participantSelectors),
+        name: name || null
+    });
+    return response.data;
+}
+
 export async function upsertChatConversation(teamId, conversation = {}) {
     const {
         type = 'group',
@@ -7714,6 +7724,15 @@ export async function upsertChatConversation(teamId, conversation = {}) {
         .map((role) => String(role || '').trim())
         .filter(Boolean)))
         .sort();
+    const isCanonicalStaffConversation = normalizedType === 'group' &&
+        normalizedParticipantIds.length === 0 &&
+        normalizedParticipantRoles.length === 1 &&
+        normalizedParticipantRoles[0] === 'staff';
+    if (!isCanonicalStaffConversation &&
+        normalizedParticipantIds.length > 0 &&
+        (normalizedType === 'direct' || normalizedType === 'group')) {
+        return createAuthorizedChatConversation(teamId, normalizedParticipantIds, { name });
+    }
     const conversationId = buildConversationId(normalizedType, normalizedParticipantIds, normalizedParticipantRoles);
     const now = Timestamp.now();
     const conversationRef = doc(db, 'teams', teamId, 'chatConversations', conversationId);
@@ -7736,11 +7755,6 @@ export async function upsertChatConversation(teamId, conversation = {}) {
             initiatedBy: normalizedDirectAccess === 'team_admin' ? normalizedInitiatedBy : null
         }
         : {};
-    const isCanonicalStaffConversation = normalizedType === 'group' &&
-        normalizedParticipantIds.length === 0 &&
-        normalizedParticipantRoles.length === 1 &&
-        normalizedParticipantRoles[0] === 'staff';
-
     const payload = {
         type: normalizedType,
         participantIds: normalizedParticipantIds,

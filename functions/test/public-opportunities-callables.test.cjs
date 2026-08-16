@@ -2465,6 +2465,98 @@ test('direct-message callable rechecks friendship and team access on the write p
     );
 });
 
+test('conversation creation canonicalizes aliases and denies a non-friend two-user audience', async () => {
+    const seed = {
+        'users/parent': { email: 'parent@example.com', isAdmin: false, parentTeamIds: ['team-1'] },
+        'users/other': { email: 'other@example.com', isAdmin: false, parentTeamIds: ['team-1'] },
+        'teams/team-1': { ownerId: 'owner', adminEmails: [] }
+    };
+    const { firestore, callables } = loadCallables(seed, {
+        authUsers: {
+            parent: { email: 'parent@example.com', disabled: false },
+            other: { email: 'other@example.com', disabled: false }
+        }
+    });
+
+    await assert.rejects(
+        callables.createAuthorizedChatConversation({
+            teamId: 'team-1',
+            participantSelectors: ['user:other', 'email:other@example.com']
+        }, authContext('parent', { email: 'parent@example.com' })),
+        (error) => error.code === 'permission-denied'
+    );
+    assert.equal(firestore.snapshot('teams/team-1/chatConversations/direct_other__parent'), undefined);
+});
+
+test('conversation creation revalidates accepted-friend, team-admin, and current-team authority', async () => {
+    const seed = {
+        'users/parent': { email: 'parent@example.com', isAdmin: false, parentTeamIds: ['team-1'] },
+        'users/friend': { email: 'friend@example.com', isAdmin: false, parentTeamIds: ['team-1'] },
+        'users/member-3': { email: 'member3@example.com', isAdmin: false, parentTeamIds: ['team-1'] },
+        'users/outsider': { email: 'outsider@example.com', isAdmin: false, parentTeamIds: ['team-2'] },
+        'users/owner': { email: 'owner@example.com', isAdmin: false, parentTeamIds: [] },
+        'teams/team-1': { ownerId: 'owner', adminEmails: [] },
+        'friendships/friend__parent': {
+            status: 'accepted',
+            memberIds: ['friend', 'parent'],
+            sharedTeamIds: ['team-1'],
+            blockedBy: []
+        }
+    };
+    const authUsers = {
+        parent: { email: 'parent@example.com', disabled: false },
+        friend: { email: 'friend@example.com', disabled: false },
+        'member-3': { email: 'member3@example.com', disabled: false },
+        outsider: { email: 'outsider@example.com', disabled: false },
+        owner: { email: 'owner@example.com', disabled: false }
+    };
+    const { firestore, callables } = loadCallables(seed, { authUsers });
+
+    const friendDirect = await callables.createAuthorizedChatConversation({
+        teamId: 'team-1',
+        participantSelectors: ['user:friend', 'email:friend@example.com']
+    }, authContext('parent', { email: 'parent@example.com' }));
+    assert.equal(friendDirect.type, 'direct');
+    assert.deepEqual(friendDirect.participantIds, ['friend', 'parent']);
+    assert.equal(friendDirect.directAccess, 'accepted_friend');
+    assert.equal(friendDirect.friendshipId, 'friend__parent');
+
+    const adminDirect = await callables.createAuthorizedChatConversation({
+        teamId: 'team-1',
+        participantSelectors: ['parent']
+    }, authContext('owner', { email: 'owner@example.com' }));
+    assert.equal(adminDirect.type, 'direct');
+    assert.equal(adminDirect.directAccess, 'team_admin');
+    assert.equal(adminDirect.initiatedBy, 'owner');
+
+    const adminDirectReply = await callables.createAuthorizedChatConversation({
+        teamId: 'team-1',
+        participantSelectors: ['owner']
+    }, authContext('parent', { email: 'parent@example.com' }));
+    assert.equal(adminDirectReply.id, adminDirect.id);
+    assert.equal(adminDirectReply.directAccess, 'team_admin');
+    assert.equal(adminDirectReply.initiatedBy, 'owner');
+
+    const group = await callables.createAuthorizedChatConversation({
+        teamId: 'team-1',
+        participantSelectors: ['friend', 'email:member3@example.com']
+    }, authContext('parent', { email: 'parent@example.com' }));
+    assert.equal(group.type, 'group');
+    assert.deepEqual(group.participantIds, ['friend', 'member-3', 'parent']);
+    assert.deepEqual(
+        firestore.snapshot('teams/team-1/chatConversations/group_friend__member-3__parent').participantIds,
+        ['friend', 'member-3', 'parent']
+    );
+
+    await assert.rejects(
+        callables.createAuthorizedChatConversation({
+            teamId: 'team-1',
+            participantSelectors: ['friend', 'outsider']
+        }, authContext('parent', { email: 'parent@example.com' })),
+        (error) => error.code === 'permission-denied'
+    );
+});
+
 test('direct-message transaction observes a friendship revoked immediately before commit and writes nothing', async () => {
     const conversationPath = 'teams/team-1/chatConversations/direct_sender__user%3Arecipient';
     const messagePath = `${conversationPath}/chatMessages/sender__revoked-before-commit`;
