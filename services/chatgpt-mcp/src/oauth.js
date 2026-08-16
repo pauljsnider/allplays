@@ -18,9 +18,9 @@ const ACCESS_TOKEN_TTL_MS = 60 * 60 * 1000;
 const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_STORED_GRANTS = 1000;
 const DEFAULT_TRUSTED_CLIENT_ID = 'allplays-chatgpt-connector';
-const TRUSTED_REDIRECT_URIS = new Set([
-    'https://chatgpt.com/connector_platform_oauth_redirect'
-]);
+const LEGACY_CHATGPT_REDIRECT_URI = 'https://chatgpt.com/connector_platform_oauth_redirect';
+const CHATGPT_REDIRECT_PATH = /^\/connector\/oauth\/[A-Za-z0-9._~-]{1,256}$/;
+const REDIRECT_CLIENT_ID_DIGEST = /^[A-Za-z0-9_-]{43}$/;
 
 export class OAuthError extends Error {
     constructor(code, message) {
@@ -35,7 +35,35 @@ export function s256Challenge(verifier) {
 }
 
 function isAllowedRedirectUri(uri) {
-    return typeof uri === 'string' && TRUSTED_REDIRECT_URIS.has(uri);
+    if (typeof uri !== 'string') return false;
+    if (uri === LEGACY_CHATGPT_REDIRECT_URI) return true;
+    try {
+        const parsed = new URL(uri);
+        return parsed.protocol === 'https:'
+            && parsed.hostname === 'chatgpt.com'
+            && parsed.port === ''
+            && parsed.username === ''
+            && parsed.password === ''
+            && parsed.search === ''
+            && parsed.hash === ''
+            && CHATGPT_REDIRECT_PATH.test(parsed.pathname);
+    } catch {
+        return false;
+    }
+}
+
+function clientIdForRedirectUri(trustedClientId, redirectUri) {
+    if (redirectUri === LEGACY_CHATGPT_REDIRECT_URI) return trustedClientId;
+    const redirectDigest = createHash('sha256')
+        .update(`allplays-chatgpt-redirect\0${redirectUri}`, 'utf8')
+        .digest('base64url');
+    return `${trustedClientId}.${redirectDigest}`;
+}
+
+function hasKnownClientIdShape(trustedClientId, clientId) {
+    if (clientId === trustedClientId) return true;
+    if (typeof clientId !== 'string' || !clientId.startsWith(`${trustedClientId}.`)) return false;
+    return REDIRECT_CLIENT_ID_DIGEST.test(clientId.slice(trustedClientId.length + 1));
 }
 
 export function createOAuthBroker({
@@ -61,22 +89,22 @@ export function createOAuthBroker({
     ) {
         throw new Error('grantStore must implement the OAuth grant store contract.');
     }
-    const registeredClient = {
-        clientId: trustedClientId.trim(),
-        redirectUris: [...TRUSTED_REDIRECT_URIS]
-    };
+    const configuredClientId = trustedClientId.trim();
     function registerClient({ redirect_uris: redirectUris } = {}) {
-        if (!Array.isArray(redirectUris) || redirectUris.length === 0) {
-            throw new OAuthError('invalid_request', 'redirect_uris is required.');
+        if (!Array.isArray(redirectUris) || redirectUris.length !== 1) {
+            throw new OAuthError('invalid_request', 'Exactly one redirect_uri is required.');
         }
-        if (!redirectUris.every(isAllowedRedirectUri)) {
+        const [redirectUri] = redirectUris;
+        if (!isAllowedRedirectUri(redirectUri)) {
             throw new OAuthError('invalid_request', 'redirect_uris must use an approved ChatGPT callback.');
         }
-        // This broker only serves one trusted public client. Its configured ID
-        // is stable across instances.
+        // Bind each current ChatGPT callback to a stable, stateless client ID.
+        // This remains deterministic across Cloud Run instances without letting
+        // one connector reuse another connector's redirect URI. Published apps
+        // keep the configured client ID through the legacy callback.
         return {
-            client_id: registeredClient.clientId,
-            redirect_uris: registeredClient.redirectUris,
+            client_id: clientIdForRedirectUri(configuredClientId, redirectUri),
+            redirect_uris: [redirectUri],
             token_endpoint_auth_method: 'none',
             grant_types: ['authorization_code', 'refresh_token'],
             response_types: ['code']
@@ -84,10 +112,13 @@ export function createOAuthBroker({
     }
 
     function validateAuthorizeRequest({ client_id: clientId, redirect_uri: redirectUri, response_type: responseType, code_challenge: codeChallenge, code_challenge_method: method }) {
-        if (clientId !== registeredClient.clientId) {
+        if (!hasKnownClientIdShape(configuredClientId, clientId)) {
             throw new OAuthError('invalid_client', 'Unknown client_id.');
         }
-        if (!registeredClient.redirectUris.includes(redirectUri)) {
+        if (
+            !isAllowedRedirectUri(redirectUri)
+            || clientId !== clientIdForRedirectUri(configuredClientId, redirectUri)
+        ) {
             throw new OAuthError('invalid_request', 'redirect_uri is not registered for this client.');
         }
         if (responseType !== 'code') throw new OAuthError('invalid_request', 'Only response_type=code is supported.');
