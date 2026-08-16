@@ -1963,23 +1963,17 @@ export async function sendTeamChatMessage({
       const participantIds = targetMetadata.targetType === 'staff'
         ? []
         : await resolveConversationParticipantIds(teamId, user.uid, targetMetadata.recipientIds);
-      const participantRoles = targetMetadata.targetType === 'staff' ? ['staff'] : [];
-      const conversationType = participantIds.length === 2
-        && getDirectUserIds(user.uid, participantIds).length === 2
-        ? 'direct'
-        : 'group';
-      const directMetadata = conversationType === 'direct'
-        ? await resolveDirectConversationMetadata({ teamId, user, participantIds, canModerate })
-        : {};
-      createdConversation = await withTimeout(Promise.resolve(upsertChatConversation(teamId, {
-        type: conversationType,
-        participantIds,
-        participantRoles,
-        mutedBy: [],
-        name: targetMetadata.targetType === 'staff' ? 'Staff only' : null,
-        ...(conversationType === 'direct' ? { createOnly: true } : {}),
-        ...directMetadata
-      })), 'Chat conversation create') as ChatConversation;
+      createdConversation = await withTimeout(Promise.resolve(
+        targetMetadata.targetType === 'staff'
+          ? upsertChatConversation(teamId, {
+            type: 'group',
+            participantIds: [],
+            participantRoles: ['staff'],
+            mutedBy: [],
+            name: 'Staff only'
+          })
+          : upsertChatConversation(teamId, { participantIds })
+      ), 'Chat conversation create') as ChatConversation;
       conversationId = createdConversation.id;
       if (targetMetadata.targetType === 'individuals') {
         targetMetadata = {

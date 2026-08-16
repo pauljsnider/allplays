@@ -183,6 +183,7 @@ describe('nested team chat message payload contracts', () => {
 describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message rules engine coverage', () => {
     let testEnv;
     const directConversationId = 'direct_parent-1__user-2';
+    const legacyTwoPersonGroupId = 'group_parent-1__user-2';
     const friendDirectConversationId = 'direct_parent-1__user%3Auser-2';
     const staffConversationId = 'group_role%3Astaff';
 
@@ -246,6 +247,12 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
                 status: 'accepted'
             });
             await setDoc(doc(firestore, `teams/team-1/chatConversations/${directConversationId}`), {
+                type: 'group',
+                participantIds: ['parent-1', 'user-2', 'user-3'],
+                participantRoles: [],
+                mutedBy: []
+            });
+            await setDoc(doc(firestore, `teams/team-1/chatConversations/${legacyTwoPersonGroupId}`), {
                 type: 'group',
                 participantIds: ['parent-1', 'user-2'],
                 participantRoles: [],
@@ -394,7 +401,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
             aiQuestion: null,
             aiMeta: null,
             targetType: 'individuals',
-            recipientIds: ['parent-1', 'user-2'],
+            recipientIds: ['parent-1', 'user-2', 'user-3'],
             targetRole: null,
             conversationId: directConversationId,
             ...overrides
@@ -432,6 +439,22 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
         })));
         await assertSucceeds(setDoc(messageRef(parentDb, directConversationId, 'valid-direct-no-email'), directWithoutStoredEmail));
         await assertSucceeds(setDoc(messageRef(coachDb, staffConversationId, 'valid-staff'), staffPayload()));
+    });
+
+    it('allows one server-created three-member group message', async () => {
+        const parentDb = authedFirestore('parent-1', 'parent@example.com');
+        await assertSucceeds(setDoc(
+            messageRef(parentDb, directConversationId, 'three-member-positive'),
+            directPayload()
+        ));
+    });
+
+    it('allows a server-created three-member group message with canonical presentation', async () => {
+        const parentDb = authedFirestore('parent-1', 'parent@example.com');
+        await assertSucceeds(setDoc(
+            messageRef(parentDb, directConversationId, 'three-member-presentation'),
+            directPayload({ senderPhotoUrl: 'https://example.com/parent.jpg' })
+        ));
     });
 
     it('enforces verified email for nested message creates without changing observe-mode access', async () => {
@@ -518,7 +541,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
         })));
     });
 
-    it('authorizes direct conversation creation from current friendship or team-admin state', async () => {
+    it('denies participant-scoped client creation regardless of the submitted type or aliases', async () => {
         const parentDb = authedFirestore('parent-1', 'parent@example.com');
         const ownerDb = authedFirestore('owner-1', 'owner@example.com');
         const newFriendConversationRef = doc(
@@ -527,7 +550,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
         );
 
         await assertFails(getDoc(newFriendConversationRef));
-        await assertSucceeds(setDoc(newFriendConversationRef, directConversationPayload()));
+        await assertFails(setDoc(newFriendConversationRef, directConversationPayload()));
         await assertFails(setDoc(
             doc(parentDb, 'teams/team-1/chatConversations/direct-forged-admin'),
             directConversationPayload({
@@ -538,7 +561,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
                 initiatedBy: 'parent-1'
             })
         ));
-        await assertSucceeds(setDoc(
+        await assertFails(setDoc(
             doc(ownerDb, 'teams/team-1/chatConversations/direct-owner-parent'),
             directConversationPayload({
                 participantIds: ['owner-1', 'user:parent-1'],
@@ -549,12 +572,39 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
             })
         ));
 
-        await testEnv.withSecurityRulesDisabled(async (context) => {
-            await updateDoc(doc(context.firestore(), 'friendships/parent-1__user-2'), { status: 'removed' });
-        });
         await assertFails(setDoc(
-            doc(parentDb, 'teams/team-1/chatConversations/direct-revoked-friend'),
-            directConversationPayload()
+            doc(parentDb, 'teams/team-1/chatConversations/group-two-aliases'),
+            {
+                type: 'group',
+                participantIds: ['parent-1', 'user:user-2', 'email:user2@example.com'],
+                participantRoles: [],
+                mutedBy: [],
+                createdAt: serverTimestamp(),
+                updatedAt: serverTimestamp()
+            }
+        ));
+        await assertFails(setDoc(
+            doc(parentDb, 'teams/team-1/chatConversations/group-three-members'),
+            {
+                type: 'group',
+                participantIds: ['parent-1', 'user-2', 'user-3'],
+                participantRoles: [],
+                mutedBy: [],
+                createdAt: serverTimestamp(),
+                updatedAt: serverTimestamp()
+            }
+        ));
+    });
+
+    it('keeps legacy two-person groups readable but denies new nested messages', async () => {
+        const parentDb = authedFirestore('parent-1', 'parent@example.com');
+        await assertSucceeds(getDoc(doc(parentDb, `teams/team-1/chatConversations/${legacyTwoPersonGroupId}`)));
+        await assertFails(setDoc(
+            messageRef(parentDb, legacyTwoPersonGroupId, 'legacy-two-person-write'),
+            directPayload({
+                conversationId: legacyTwoPersonGroupId,
+                recipientIds: ['parent-1', 'user-2']
+            })
         ));
     });
 

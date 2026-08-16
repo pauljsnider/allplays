@@ -17,6 +17,7 @@ function buildUpsertChatConversation({
     normalizeConversationType,
     normalizeConversationParticipantIds,
     buildConversationId,
+    createAuthorizedChatConversation,
     Timestamp,
     doc,
     db,
@@ -30,6 +31,7 @@ function buildUpsertChatConversation({
         'normalizeConversationType',
         'normalizeConversationParticipantIds',
         'buildConversationId',
+        'createAuthorizedChatConversation',
         'Timestamp',
         'doc',
         'db',
@@ -40,6 +42,7 @@ function buildUpsertChatConversation({
         normalizeConversationType,
         normalizeConversationParticipantIds,
         buildConversationId,
+        createAuthorizedChatConversation,
         Timestamp,
         doc,
         db,
@@ -55,257 +58,75 @@ function makeSnapshot(data) {
     };
 }
 
+function buildDependencies(overrides = {}) {
+    return {
+        normalizeConversationType: vi.fn((value) => value),
+        normalizeConversationParticipantIds: vi.fn((ids) => [...ids].sort()),
+        buildConversationId: vi.fn(() => 'group_role%3Astaff'),
+        createAuthorizedChatConversation: vi.fn(),
+        Timestamp: { now: vi.fn(() => ({ seconds: 456 })) },
+        doc: vi.fn(() => ({ path: 'teams/team-1/chatConversations/group_role%3Astaff' })),
+        db: {},
+        getDoc: vi.fn().mockResolvedValue(makeSnapshot(null)),
+        setDoc: vi.fn().mockResolvedValue(undefined),
+        ...overrides
+    };
+}
+
 describe('upsertChatConversation', () => {
-    it('creates a first-time private conversation without pre-reading the missing document', async () => {
-        const now = { seconds: 123 };
-        const getDoc = vi.fn().mockRejectedValue(new Error('missing private conversation reads are denied'));
-        const setDoc = vi.fn().mockResolvedValue(undefined);
-        const conversationRef = { path: 'teams/team-1/chatConversations/direct-user-1-user-2' };
-        const upsertChatConversation = buildUpsertChatConversation({
-            normalizeConversationType: vi.fn((value) => value),
-            normalizeConversationParticipantIds: vi.fn((ids) => [...ids].sort()),
-            buildConversationId: vi.fn(() => 'direct-user-1-user-2'),
-            Timestamp: { now: vi.fn(() => now) },
-            doc: vi.fn(() => conversationRef),
-            db: {},
-            getDoc,
-            setDoc
-        });
-
-        const result = await upsertChatConversation('team-1', {
+    it('routes participant-scoped creation to the server without forwarding a client classification', async () => {
+        const serverConversation = {
+            id: 'direct_friend-1__user-1',
             type: 'direct',
-            participantIds: ['user-2', 'user-1'],
-            directAccess: 'accepted_friend',
-            directUserIds: ['user-2', 'user-1'],
-            friendshipId: 'user-1__user-2',
-            createOnly: true
-        });
-
-        expect(getDoc).not.toHaveBeenCalled();
-        expect(setDoc).toHaveBeenCalledWith(conversationRef, expect.objectContaining({
-            type: 'direct',
-            participantIds: ['user-1', 'user-2'],
-            directAccess: 'accepted_friend',
-            directUserIds: ['user-1', 'user-2'],
-            friendshipId: 'user-1__user-2',
-            createdAt: now,
-            updatedAt: now
-        }));
-        expect(result).toEqual(expect.objectContaining({
-            id: 'direct-user-1-user-2',
-            directAccess: 'accepted_friend',
-            friendshipId: 'user-1__user-2'
-        }));
-    });
-
-    it('falls back to an existing participant-readable thread after a concurrent create wins', async () => {
-        const now = { seconds: 123 };
-        const existingConversation = {
-            type: 'direct',
-            participantIds: ['user-1', 'user-2'],
-            participantRoles: [],
-            mutedBy: ['user-2'],
-            directAccess: 'accepted_friend',
-            directUserIds: ['user-1', 'user-2'],
-            friendshipId: 'user-1__user-2',
-            initiatedBy: null,
-            createdAt: { seconds: 100 },
-            updatedAt: { seconds: 101 }
+            participantIds: ['friend-1', 'user-1'],
+            directAccess: 'accepted_friend'
         };
-        const getDoc = vi.fn().mockResolvedValue(makeSnapshot(existingConversation));
-        const setDoc = vi.fn().mockRejectedValueOnce(new Error('conversation already exists'));
-        const conversationRef = { path: 'teams/team-1/chatConversations/direct-user-1-user-2' };
-        const upsertChatConversation = buildUpsertChatConversation({
-            normalizeConversationType: vi.fn((value) => value),
-            normalizeConversationParticipantIds: vi.fn((ids) => [...ids].sort()),
-            buildConversationId: vi.fn(() => 'direct-user-1-user-2'),
-            Timestamp: { now: vi.fn(() => now) },
-            doc: vi.fn(() => conversationRef),
-            db: {},
-            getDoc,
-            setDoc
+        const dependencies = buildDependencies({
+            createAuthorizedChatConversation: vi.fn().mockResolvedValue(serverConversation)
         });
-
-        const result = await upsertChatConversation('team-1', {
-            type: 'direct',
-            participantIds: ['user-2', 'user-1'],
-            directAccess: 'accepted_friend',
-            directUserIds: ['user-2', 'user-1'],
-            friendshipId: 'user-1__user-2',
-            createOnly: true
-        });
-
-        expect(getDoc).toHaveBeenCalledWith(conversationRef);
-        expect(setDoc).toHaveBeenCalledTimes(1);
-        expect(result).toEqual({ id: 'direct-user-1-user-2', ...existingConversation, name: null });
-    });
-
-    it('creates a new targeted conversation with participant membership on first write', async () => {
-        const now = { seconds: 123 };
-        const getDoc = vi.fn().mockResolvedValue(makeSnapshot(null));
-        const setDoc = vi.fn().mockResolvedValue(undefined);
-        const conversationRef = { path: 'teams/team-1/chatConversations/direct-user-1-user-2' };
-        const upsertChatConversation = buildUpsertChatConversation({
-            normalizeConversationType: vi.fn((value) => value),
-            normalizeConversationParticipantIds: vi.fn((ids) => [...ids].sort()),
-            buildConversationId: vi.fn(() => 'direct-user-1-user-2'),
-            Timestamp: { now: vi.fn(() => now) },
-            doc: vi.fn(() => conversationRef),
-            db: {},
-            getDoc,
-            setDoc
-        });
-
-        const result = await upsertChatConversation('team-1', {
-            type: 'direct',
-            participantIds: ['user-2', 'user-1'],
-            participantRoles: ['staff', 'staff'],
-            mutedBy: ['user-1', 'user-1'],
-            name: 'Private chat',
-            directAccess: 'accepted_friend',
-            directUserIds: ['user-2', 'user-1'],
-            friendshipId: 'user-1__user-2'
-        });
-
-        expect(setDoc).toHaveBeenCalledWith(conversationRef, {
-            type: 'direct',
-            participantIds: ['user-1', 'user-2'],
-            participantRoles: ['staff'],
-            mutedBy: ['user-1'],
-            directAccess: 'accepted_friend',
-            directUserIds: ['user-1', 'user-2'],
-            friendshipId: 'user-1__user-2',
-            initiatedBy: null,
-            name: 'Private chat',
-            updatedAt: now,
-            createdAt: now
-        }, { merge: true });
-        expect(result).toEqual({
-            id: 'direct-user-1-user-2',
-            type: 'direct',
-            participantIds: ['user-1', 'user-2'],
-            participantRoles: ['staff'],
-            mutedBy: ['user-1'],
-            directAccess: 'accepted_friend',
-            directUserIds: ['user-1', 'user-2'],
-            friendshipId: 'user-1__user-2',
-            initiatedBy: null,
-            name: 'Private chat',
-            updatedAt: now,
-            createdAt: now
-        });
-    });
-
-    it('persists mutable metadata for an existing conversation without rewriting immutable membership fields', async () => {
-        const now = { seconds: 999 };
-        const conversationRef = { path: 'teams/team-1/chatConversations/group-user-1-user-2' };
-        const getDoc = vi.fn().mockResolvedValue(makeSnapshot({
-            type: 'group',
-            participantIds: ['user-1', 'user-2'],
-            participantRoles: [],
-            mutedBy: ['user-2'],
-            name: 'Existing chat',
-            createdAt: { seconds: 1 },
-            updatedAt: { seconds: 2 }
-        }));
-        const setDoc = vi.fn().mockResolvedValue(undefined);
-        const upsertChatConversation = buildUpsertChatConversation({
-            normalizeConversationType: vi.fn((value) => value),
-            normalizeConversationParticipantIds: vi.fn((ids) => [...ids].sort()),
-            buildConversationId: vi.fn(() => 'group-user-1-user-2'),
-            Timestamp: { now: vi.fn(() => now) },
-            doc: vi.fn(() => conversationRef),
-            db: {},
-            getDoc,
-            setDoc
-        });
+        const upsertChatConversation = buildUpsertChatConversation(dependencies);
 
         const result = await upsertChatConversation('team-1', {
             type: 'group',
-            participantIds: ['user-2', 'user-1', 'user-3'],
-            participantRoles: ['staff'],
-            mutedBy: [],
-            name: 'Renamed by participant'
+            participantIds: ['user:user-1', 'email:friend@example.test'],
+            directAccess: 'forged-client-value',
+            name: 'Parents'
         });
 
-        expect(setDoc).toHaveBeenCalledWith(conversationRef, {
-            mutedBy: [],
-            updatedAt: now
-        }, { merge: true });
-        expect(result).toEqual({
-            id: 'group-user-1-user-2',
-            type: 'group',
-            participantIds: ['user-1', 'user-2'],
-            participantRoles: [],
-            mutedBy: [],
-            name: 'Existing chat',
-            createdAt: { seconds: 1 },
-            updatedAt: now
-        });
+        expect(dependencies.createAuthorizedChatConversation).toHaveBeenCalledWith(
+            'team-1',
+            ['email:friend@example.test', 'user:user-1'],
+            { name: 'Parents' }
+        );
+        expect(dependencies.buildConversationId).not.toHaveBeenCalled();
+        expect(dependencies.setDoc).not.toHaveBeenCalled();
+        expect(result).toEqual(serverConversation);
     });
 
-    it('backfills a missing display name on an existing targeted conversation', async () => {
-        const now = { seconds: 321 };
-        const conversationRef = { path: 'teams/team-1/chatConversations/direct-user-1-user-2' };
-        const getDoc = vi.fn().mockResolvedValue(makeSnapshot({
-            type: 'direct',
-            participantIds: ['user-1', 'user-2'],
-            participantRoles: [],
-            mutedBy: [],
-            createdAt: { seconds: 1 },
-            updatedAt: { seconds: 2 }
-        }));
-        const setDoc = vi.fn().mockResolvedValue(undefined);
-        const upsertChatConversation = buildUpsertChatConversation({
-            normalizeConversationType: vi.fn((value) => value),
-            normalizeConversationParticipantIds: vi.fn((ids) => [...ids].sort()),
-            buildConversationId: vi.fn(() => 'direct-user-1-user-2'),
-            Timestamp: { now: vi.fn(() => now) },
-            doc: vi.fn(() => conversationRef),
-            db: {},
-            getDoc,
-            setDoc
+    it('fails closed when the server-authoritative participant create is denied', async () => {
+        const denied = new Error('not authorized');
+        const dependencies = buildDependencies({
+            createAuthorizedChatConversation: vi.fn().mockRejectedValue(denied)
         });
+        const upsertChatConversation = buildUpsertChatConversation(dependencies);
 
-        const result = await upsertChatConversation('team-1', {
+        await expect(upsertChatConversation('team-1', {
             type: 'direct',
-            participantIds: ['user-2', 'user-1'],
-            participantRoles: [],
-            name: 'Avery Parent'
-        });
-
-        expect(setDoc).toHaveBeenCalledWith(conversationRef, {
-            name: 'Avery Parent',
-            updatedAt: now
-        }, { merge: true });
-        expect(result).toEqual({
-            id: 'direct-user-1-user-2',
-            type: 'direct',
-            participantIds: ['user-1', 'user-2'],
-            participantRoles: [],
-            mutedBy: [],
-            name: 'Avery Parent',
-            createdAt: { seconds: 1 },
-            updatedAt: now
-        });
+            participantIds: ['user-1', 'user-2']
+        })).rejects.toBe(denied);
+        expect(dependencies.getDoc).not.toHaveBeenCalled();
+        expect(dependencies.setDoc).not.toHaveBeenCalled();
     });
 
     it('builds one stable conversation id for staff-only role conversations', async () => {
         const now = { seconds: 456 };
-        const getDoc = vi.fn().mockResolvedValue(makeSnapshot(null));
-        const setDoc = vi.fn().mockResolvedValue(undefined);
         const conversationRef = { path: 'teams/team-1/chatConversations/group_role%3Astaff' };
-        const buildConversationId = vi.fn(() => 'group_role%3Astaff');
-        const upsertChatConversation = buildUpsertChatConversation({
-            normalizeConversationType: vi.fn((value) => value),
+        const dependencies = buildDependencies({
             normalizeConversationParticipantIds: vi.fn(() => []),
-            buildConversationId,
             Timestamp: { now: vi.fn(() => now) },
-            doc: vi.fn(() => conversationRef),
-            db: {},
-            getDoc,
-            setDoc
+            doc: vi.fn(() => conversationRef)
         });
+        const upsertChatConversation = buildUpsertChatConversation(dependencies);
 
         const result = await upsertChatConversation('team-1', {
             type: 'group',
@@ -315,8 +136,9 @@ describe('upsertChatConversation', () => {
             name: 'Staff only'
         });
 
-        expect(buildConversationId).toHaveBeenCalledWith('group', [], ['staff']);
-        expect(setDoc).toHaveBeenCalledWith(conversationRef, {
+        expect(dependencies.createAuthorizedChatConversation).not.toHaveBeenCalled();
+        expect(dependencies.buildConversationId).toHaveBeenCalledWith('group', [], ['staff']);
+        expect(dependencies.setDoc).toHaveBeenCalledWith(conversationRef, {
             type: 'group',
             participantIds: [],
             participantRoles: ['staff'],
@@ -340,26 +162,21 @@ describe('upsertChatConversation', () => {
     it('repairs legacy participant-scoped data on the canonical staff conversation', async () => {
         const now = { seconds: 789 };
         const conversationRef = { path: 'teams/team-1/chatConversations/group_role%3Astaff' };
-        const getDoc = vi.fn().mockResolvedValue(makeSnapshot({
-            type: 'group',
-            participantIds: ['coach-1'],
-            participantRoles: ['staff', 'coach'],
-            mutedBy: ['coach-2'],
-            name: 'Staff only',
-            createdAt: { seconds: 1 },
-            updatedAt: { seconds: 2 }
-        }));
-        const setDoc = vi.fn().mockResolvedValue(undefined);
-        const upsertChatConversation = buildUpsertChatConversation({
-            normalizeConversationType: vi.fn((value) => value),
+        const dependencies = buildDependencies({
             normalizeConversationParticipantIds: vi.fn(() => []),
-            buildConversationId: vi.fn(() => 'group_role%3Astaff'),
             Timestamp: { now: vi.fn(() => now) },
             doc: vi.fn(() => conversationRef),
-            db: {},
-            getDoc,
-            setDoc
+            getDoc: vi.fn().mockResolvedValue(makeSnapshot({
+                type: 'group',
+                participantIds: ['coach-1'],
+                participantRoles: ['staff', 'coach'],
+                mutedBy: ['coach-2'],
+                name: 'Staff only',
+                createdAt: { seconds: 1 },
+                updatedAt: { seconds: 2 }
+            }))
         });
+        const upsertChatConversation = buildUpsertChatConversation(dependencies);
 
         const result = await upsertChatConversation('team-1', {
             type: 'group',
@@ -368,7 +185,7 @@ describe('upsertChatConversation', () => {
             name: 'Staff only'
         });
 
-        expect(setDoc).toHaveBeenCalledWith(conversationRef, {
+        expect(dependencies.setDoc).toHaveBeenCalledWith(conversationRef, {
             type: 'group',
             participantIds: [],
             participantRoles: ['staff'],
