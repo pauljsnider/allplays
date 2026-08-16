@@ -65,6 +65,7 @@ import { loadScheduleStaffTools } from '../components/schedule/loadScheduleStaff
 import {
   applyBulkRsvpResponse,
   getBulkRsvpCandidates,
+  getInitialBulkRsvpCandidates,
   getBulkRsvpNoteReadyCandidates,
   getBulkRsvpResultMessage,
   getNeededBulkRsvpEventKeys,
@@ -335,7 +336,10 @@ export function Schedule({ auth }: { auth: AuthState }) {
     setEvents(mergedEvents);
   };
 
-  const hydrateScheduleRsvpsInBackground = (result: { children: ParentScheduleChild[]; events: ParentScheduleEvent[] }) => {
+  const hydrateScheduleRsvpsInBackground = (
+    result: { children: ParentScheduleChild[]; events: ParentScheduleEvent[] },
+    initialHydration = false
+  ) => {
     const user = auth.user;
     if (!user) {
       setRsvpHydrationPending(false);
@@ -350,7 +354,9 @@ export function Schedule({ auth }: { auth: AuthState }) {
       teamId: selectedTeamId,
       timeRange: 'all'
     });
-    const rsvpEvents = getBulkRsvpCandidates(scopedEvents);
+    const rsvpEvents = initialHydration
+      ? getInitialBulkRsvpCandidates(scopedEvents, upcomingListPageSize)
+      : getBulkRsvpCandidates(scopedEvents);
     setRsvpHydrationPending(true);
     if (!rsvpEvents.length) {
       setRsvpHydrationPending(false);
@@ -634,7 +640,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
           setLoadedScheduleUserId(auth.user?.uid || null);
           setScheduleLoadError(null);
           applyScheduleResult(authoritativeResult);
-          hydrateScheduleRsvpsInBackground(authoritativeResult);
+          hydrateScheduleRsvpsInBackground(authoritativeResult, true);
           completeParentCoreWorkflowTimer('schedule', {
             targetPage: 'schedule',
             teamId: selectedTeamId || '',
