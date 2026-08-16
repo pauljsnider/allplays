@@ -21,3 +21,28 @@ describe('calendar page ICS cancellation handling', () => {
         expect(source).toContain("isCancelled ? '<span class=\"text-[10px] font-bold text-red-700 bg-red-100 px-1.5 py-0.5 rounded\">CANCELLED</span>' : ''");
     });
 });
+
+describe('legacy calendar external-feed loading', () => {
+    it('publishes stored events before queued feeds finish and retries queue-capacity outcomes', () => {
+        const source = readCalendarPage();
+        const storedEventsPublish = source.indexOf('onEvents?.(events);');
+        const firstExternalFetch = source.indexOf('const icsEvents = await fetchLegacyCalendarFeed(calUrl);');
+
+        expect(storedEventsPublish).toBeGreaterThan(-1);
+        expect(firstExternalFetch).toBeGreaterThan(storedEventsPublish);
+        expect(source).toContain("error?.code !== 'CALENDAR_IMPORT_QUEUE_FULL'");
+        expect(source).toContain('await waitForCalendarImportCapacity();');
+        expect(source).toContain('calendarEventsByTeam.set(team.id, events);');
+        expect(source).toContain('publishCalendarEvents();');
+    });
+
+    it('does not convert a local import queue-capacity outcome into a partial schedule state', () => {
+        const source = readCalendarPage();
+        const externalLoader = source.match(/async function fetchLegacyCalendarFeed[\s\S]*?\n        }\n\n        function publishCalendarEvents/);
+
+        expect(externalLoader?.[0]).toContain('CALENDAR_IMPORT_QUEUE_FULL');
+        expect(externalLoader?.[0]).toContain('retryDeadline');
+        expect(source).toContain('console.warn(\'Failed to load ICS calendar:\', e);');
+        expect(source).not.toContain('partial');
+    });
+});

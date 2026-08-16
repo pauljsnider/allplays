@@ -212,6 +212,7 @@
         const rsvpHydrationCache = new Map();
         const loadedCalendarRangesByTeam = new Map();
         const calendarGamesByTeam = new Map();
+        const calendarEventsByTeam = new Map();
         const fullyLoadedCalendarTeams = new Set();
         let renderedCalendarSelection = null;
         let calendarNavigationToken = 0;
@@ -462,7 +463,40 @@
             }
         }
 
-        async function loadTeamEvents(team, games) {
+        function waitForCalendarImportCapacity() {
+            return new Promise((resolve) => setTimeout(resolve, 250));
+        }
+
+        async function fetchLegacyCalendarFeed(calUrl) {
+            const retryDeadline = Date.now() + 30000;
+            while (true) {
+                try {
+                    return await fetchAndParseCalendar(calUrl);
+                } catch (error) {
+                    if (error?.code !== 'CALENDAR_IMPORT_QUEUE_FULL' || Date.now() >= retryDeadline) {
+                        throw error;
+                    }
+                    await waitForCalendarImportCapacity();
+                }
+            }
+        }
+
+        function publishCalendarEvents() {
+            const previousRsvpState = new Map(allEvents
+                .filter((event) => event.source === 'db' && rsvpHydrationCache.has(`${event.teamId}::${event.id}`))
+                .map((event) => [`${event.teamId}::${event.id}`, {
+                    myRsvp: event.myRsvp,
+                    rsvpSummary: event.rsvpSummary,
+                    availabilityNotes: event.availabilityNotes
+                }]));
+            allEvents = [...calendarEventsByTeam.values()].flat().map((event) => {
+                const previous = previousRsvpState.get(`${event.teamId}::${event.id}`);
+                return previous ? { ...event, ...previous } : event;
+            }).sort((a, b) => a.date - b.date);
+            applyFilters();
+        }
+
+        async function loadTeamEvents(team, games, onEvents = null) {
                     const events = [];
                     const email = currentUser?.email || null;
                     const availabilityPreferences = normalizeAvailabilityPreferences(team.availabilityPreferences);
@@ -552,13 +586,15 @@
                         }
                     }
 
+                    onEvents?.(events);
+
                     // Load ICS calendar events
                     const calendarUrls = Array.isArray(team.calendarUrls) ? team.calendarUrls : [];
                     if (calendarUrls.length > 0) {
                         const trackedUids = await getTrackedCalendarEventUids(team.id, games);
                         for (const calUrl of calendarUrls) {
                             try {
-                                const icsEvents = await fetchAndParseCalendar(calUrl);
+                                const icsEvents = await fetchLegacyCalendarFeed(calUrl);
                                 events.push(...mergeGlobalCalendarIcsEvents({
                                     team,
                                     teamColor: teamColors[team.id],
@@ -568,6 +604,7 @@
                                     isTrackedCalendarEvent,
                                     buildGlobalCalendarIcsEvent
                                 }));
+                                onEvents?.(events);
                             } catch (e) {
                                 console.warn('Failed to load ICS calendar:', e);
                             }
@@ -603,21 +640,14 @@
                     }
                 });
                 await Promise.all(loadPromises);
-                const results = await Promise.all(calendarTeams.map(async (team) => {
+                await Promise.all(calendarTeams.map(async (team) => {
                     const games = [...(calendarGamesByTeam.get(team.id)?.values() || [])];
-                    return loadTeamEvents(team, games);
+                    return loadTeamEvents(team, games, (events) => {
+                        calendarEventsByTeam.set(team.id, events);
+                        publishCalendarEvents();
+                    });
                 }));
-                const previousRsvpState = new Map(allEvents
-                    .filter((event) => event.source === 'db' && rsvpHydrationCache.has(`${event.teamId}::${event.id}`))
-                    .map((event) => [`${event.teamId}::${event.id}`, {
-                        myRsvp: event.myRsvp,
-                        rsvpSummary: event.rsvpSummary,
-                        availabilityNotes: event.availabilityNotes
-                    }]));
-                allEvents = results.flat().map((event) => {
-                    const previous = previousRsvpState.get(`${event.teamId}::${event.id}`);
-                    return previous ? { ...event, ...previous } : event;
-                }).sort((a, b) => a.date - b.date);
+                publishCalendarEvents();
         });
 
         function applyFilters() {
