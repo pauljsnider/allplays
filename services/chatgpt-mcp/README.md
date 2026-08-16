@@ -78,13 +78,20 @@ Ask: "What does my family have this weekend?" — ChatGPT should call
 dynamic client registration, authorization code + PKCE (S256 only), refresh
 grant, and opaque access tokens that map to the signed-in user's Firebase
 refresh token. Codes are single-use with a 10-minute TTL; access tokens last
-1 hour. The trusted ChatGPT client registration is configuration-backed and
-stable across instances. Access and refresh grants use Firestore in production,
-so they survive restarts and resolve across Cloud Run instances. Authorization
-codes use the same durable store, retain their PKCE/client/redirect/expiry
-binding, and are atomically consumed before token-exchange validation.
+1 hour. Current ChatGPT callbacks use a deterministic client ID derived from
+the exact registered redirect URI, so registrations remain stable across Cloud
+Run instances without allowing one connector to substitute another connector's
+callback. The legacy published-app callback retains the configured client ID.
+Access and refresh grants use Firestore in production, so they survive restarts
+and resolve across Cloud Run instances. Authorization codes use the same durable
+store, retain their PKCE/client/redirect/expiry binding, and are atomically
+consumed before token-exchange validation.
 Refresh-token consume-and-reissue and authorization-code consumption use
 conditional Firestore commits, so concurrent reuse has one winner.
+
+After upgrading from the legacy-only registration behavior, remove and recreate
+any ChatGPT connection that cached the old client ID with a current
+`https://chatgpt.com/connector/oauth/{callback_id}` redirect.
 
 Raw broker tokens and authorization codes are not stored. Firestore document IDs
 contain SHA-256 digests, and the Firebase refresh-token binding is encrypted
