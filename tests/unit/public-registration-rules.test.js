@@ -20,17 +20,19 @@ const rules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'u
 const projectId = process.env.FIRESTORE_EMULATOR_PROJECT_ID || `allplays-public-registration-rules-${Date.now()}`;
 
 describe('public registration Firestore boundary', () => {
-  it('keeps registration writes server-only and stages verified guardian read enforcement', () => {
+  it('keeps registration writes server-only and requires verified guardian-email ownership', () => {
     const helper = rules.slice(
-      rules.indexOf('function canUseRegistrationGuardianEmailClaim()'),
+      rules.indexOf('function isCurrentUserRegistrationGuardian(data)'),
       rules.indexOf('function isRegistrationPaymentSettingsPayloadValid')
     );
     const registrationBlock = rules.slice(
       rules.indexOf('match /registrationForms/{formId}'),
       rules.indexOf('match /trackingItems/{itemId}')
     );
-    expect(helper).toContain("get(policyPath).data.get('mode', 'observe') != 'enforce'");
+    expect(helper).toContain("request.auth.token.get('email_verified', false) == true");
     expect(helper).toContain("data.get('submittedByUserId', '') == request.auth.uid");
+    expect(helper).not.toContain('securityPolicies/verifiedEmail');
+    expect(rules).not.toContain('function canUseRegistrationGuardianEmailClaim()');
     expect(registrationBlock).toContain('hasNoServerOwnedRegistrationCheckoutFields(request.resource.data);');
     expect(registrationBlock).toContain('hasNoChangedServerOwnedRegistrationCheckoutFields();');
     expect(registrationBlock).toContain('match /checkoutAttempts/{attemptId}');
@@ -52,7 +54,7 @@ describe('public registration Firestore boundary', () => {
         const db = context.firestore();
         await setDoc(doc(db, 'teams', 'team-1'), {
           ownerId: 'owner-1',
-          adminEmails: [],
+          adminEmails: ['manager@example.com'],
           isPublic: true
         });
         await setDoc(doc(db, 'teams', 'team-1', 'registrationForms', 'published-form'), {
@@ -91,9 +93,13 @@ describe('public registration Firestore boundary', () => {
       ));
     });
 
-    it('lets team owners review registrations without letting clients forge checkout reservations', async () => {
+    it('keeps team owner and administrator review access without letting clients forge checkout reservations', async () => {
       const ownerDb = testEnv.authenticatedContext('owner-1', {
         email: 'owner@example.com',
+        email_verified: true
+      }).firestore();
+      const managerDb = testEnv.authenticatedContext('manager-1', {
+        email: 'manager@example.com',
         email_verified: true
       }).firestore();
       const existingRef = doc(
@@ -101,6 +107,10 @@ describe('public registration Firestore boundary', () => {
         'teams', 'team-1', 'registrationForms', 'published-form', 'registrations', 'email-owned'
       );
 
+      await assertSucceeds(getDoc(doc(
+        managerDb,
+        'teams', 'team-1', 'registrationForms', 'published-form', 'registrations', 'email-owned'
+      )));
       await assertSucceeds(updateDoc(existingRef, { decisionNote: 'Reviewed by coach' }));
       await assertFails(updateDoc(existingRef, {
         checkoutCreationReservationId: 'forged-reservation',
@@ -143,27 +153,22 @@ describe('public registration Firestore boundary', () => {
       }));
     });
 
-    it('preserves current guardian reads until enforcement is explicitly enabled', async () => {
-      const unverifiedDb = testEnv.authenticatedContext('unverified-1', {
-        email: 'victim@example.com',
-        email_verified: false
-      }).firestore();
-      await assertSucceeds(getDoc(doc(
-        unverifiedDb,
-        'teams', 'team-1', 'registrationForms', 'published-form', 'registrations', 'email-owned'
-      )));
-    });
-
-    it('requires verified email claims in enforce mode while preserving authoritative submitter ownership', async () => {
-      await testEnv.withSecurityRulesDisabled(async (context) => {
-        await setDoc(doc(context.firestore(), 'securityPolicies', 'verifiedEmail'), {
-          mode: 'enforce',
-          exemptUserIds: []
+    it.each([
+      ['missing', null],
+      ['disabled', { mode: 'disabled', exemptUserIds: ['unverified-1'] }],
+      ['observe', { mode: 'observe', exemptUserIds: ['unverified-1'] }],
+      ['enforce', { mode: 'enforce', exemptUserIds: ['unverified-1'] }]
+    ])('requires verified guardian-email ownership with the policy %s for direct and collection-group reads', async (_state, policy) => {
+      if (policy) {
+        await testEnv.withSecurityRulesDisabled(async (context) => {
+          await setDoc(doc(context.firestore(), 'securityPolicies', 'verifiedEmail'), policy);
         });
-      });
+      }
       const registrationPath = ['teams', 'team-1', 'registrationForms', 'published-form', 'registrations', 'email-owned'];
       const unverifiedDb = testEnv.authenticatedContext('unverified-1', {
-        email: 'victim@example.com', email_verified: false
+        email: 'victim@example.com',
+        email_verified: false,
+        email_verification_exempt: true
       }).firestore();
       const verifiedDb = testEnv.authenticatedContext('verified-1', {
         email: 'victim@example.com', email_verified: true
@@ -174,6 +179,18 @@ describe('public registration Firestore boundary', () => {
       const submitterDb = testEnv.authenticatedContext('submitter-1', {
         email: 'unverified@example.com', email_verified: false
       }).firestore();
+      const guardianApplications = (db, email = 'victim@example.com') => query(
+        collectionGroup(db, 'registrations'),
+        where('guardian.email', '==', email),
+        orderBy(documentId(), 'desc'),
+        limit(10)
+      );
+      const submitterApplications = query(
+        collectionGroup(submitterDb, 'registrations'),
+        where('submittedByUserId', '==', 'submitter-1'),
+        orderBy(documentId(), 'desc'),
+        limit(10)
+      );
 
       await assertFails(getDoc(doc(unverifiedDb, ...registrationPath)));
       await assertSucceeds(getDoc(doc(verifiedDb, ...registrationPath)));
@@ -182,6 +199,10 @@ describe('public registration Firestore boundary', () => {
         submitterDb,
         'teams', 'team-1', 'registrationForms', 'published-form', 'registrations', 'uid-owned'
       )));
+      await assertFails(getDocs(guardianApplications(unverifiedDb)));
+      await assertSucceeds(getDocs(guardianApplications(verifiedDb)));
+      await assertFails(getDocs(guardianApplications(wrongVerifiedDb)));
+      await assertSucceeds(getDocs(submitterApplications));
     });
 
     it('includes legacy registrations without submittedAt across document-id pages', async () => {
