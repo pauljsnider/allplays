@@ -106,7 +106,6 @@ export type PublicStandingsConfig = {
     seasonLabel: string | null;
     seasonStart: string | null;
     seasonEnd: string | null;
-    leagueTeamIds: string[];
 };
 
 export type PublicTeamRecentResult = {
@@ -201,8 +200,7 @@ function normalizeStandingsConfig(value: unknown): PublicStandingsConfig | null 
             ? config.seasonLabel.trim().slice(0, 100)
             : null,
         seasonStart: publicDateOnly(config.seasonStart),
-        seasonEnd: publicDateOnly(config.seasonEnd),
-        leagueTeamIds: publicStringList(config.leagueTeamIds, 32)
+        seasonEnd: publicDateOnly(config.seasonEnd)
     };
 }
 
@@ -274,8 +272,7 @@ function hasCompletePublicStandingsConfig(config: PublicStandingsConfig | null):
         config?.enabled &&
         config.seasonStart &&
         config.seasonEnd &&
-        config.seasonStart <= config.seasonEnd &&
-        config.leagueTeamIds.length
+        config.seasonStart <= config.seasonEnd
     );
 }
 

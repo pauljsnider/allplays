@@ -274,6 +274,7 @@ test('public league standings deterministically reconcile mismatched mirrored re
     ['team-a', [
       {
         id: 'score-a',
+        sharedScheduleId: 'shared-score-conflict',
         date: '2026-08-10T18:00:00.000Z',
         opponent: 'United',
         opponentTeamId: 'team-b',
@@ -299,6 +300,7 @@ test('public league standings deterministically reconcile mismatched mirrored re
     ['team-b', [
       {
         id: 'score-b',
+        sharedScheduleId: 'shared-score-conflict',
         date: '2026-08-10T18:07:00.000Z',
         opponent: 'United',
         opponentTeamId: 'team-a',
@@ -355,6 +357,43 @@ test('public league standings deterministically reconcile mismatched mirrored re
       awayScore: 0,
       countsTowardSeasonRecord: false
     }
+  ]);
+});
+
+test('public league standings preserve same-day contests and asymmetric schedules', async () => {
+  const teamsById = new Map([
+    ['team-a', { id: 'team-a', name: 'Bats', isPublic: true }],
+    ['team-b', { id: 'team-b', name: 'Owls', isPublic: true }]
+  ]);
+  const gamesByTeamId = new Map([
+    ['team-a', [
+      { id: 'a-first', date: '2026-08-10T10:00:00.000Z', opponent: 'Owls', opponentTeamId: 'team-b', isHome: true, status: 'completed', homeScore: 3, awayScore: 1 },
+      { id: 'a-second', date: '2026-08-10T16:00:00.000Z', opponent: 'Owls', opponentTeamId: 'team-b', isHome: true, status: 'completed', homeScore: 2, awayScore: 0 },
+      { id: 'a-unmirrored', date: '2026-08-10T20:00:00.000Z', opponent: 'Owls', opponentTeamId: 'team-b', isHome: true, status: 'completed', homeScore: 4, awayScore: 2 }
+    ]],
+    ['team-b', [
+      { id: 'b-first', date: '2026-08-10T10:00:00.000Z', opponent: 'Bats', opponentTeamId: 'team-a', isHome: false, status: 'completed', homeScore: 3, awayScore: 1 },
+      { id: 'b-second', date: '2026-08-10T16:00:00.000Z', opponent: 'Bats', opponentTeamId: 'team-a', isHome: false, status: 'completed', homeScore: 2, awayScore: 0 },
+      { id: 'b-unmirrored', date: '2026-08-10T12:00:00.000Z', opponent: 'Bats', opponentTeamId: 'team-a', isHome: false, status: 'completed', homeScore: 1, awayScore: 5 }
+    ]]
+  ]);
+  const { helper } = loadConfiguredPublicLeagueStandings({ teamsById, gamesByTeamId });
+
+  const result = await helper('team-a', {
+    standingsConfig: {
+      enabled: true,
+      seasonStart: '2026-08-01',
+      seasonEnd: '2026-08-31',
+      leagueTeamIds: ['team-a', 'team-b']
+    }
+  });
+
+  assert.equal(result.games.length, 4);
+  assert.deepEqual(result.games.map((game) => [game.startsAt, game.homeScore, game.awayScore]), [
+    ['2026-08-10T10:00:00.000Z', 3, 1],
+    ['2026-08-10T12:00:00.000Z', 1, 5],
+    ['2026-08-10T16:00:00.000Z', 2, 0],
+    ['2026-08-10T20:00:00.000Z', 4, 2]
   ]);
 });
 

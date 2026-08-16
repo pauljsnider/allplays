@@ -8077,8 +8077,6 @@ async function getPublicOpponentStatKeysByGameId(teamId, games = []) {
 }
 
 async function getConfiguredPublicLeagueStandings(teamId, team = {}) {
-  const mirrorMatchWindowMs = 12 * 60 * 60 * 1000;
-
   function reconcileLeagueGameObservations(observations) {
     const ordered = [...observations].sort((left, right) =>
       left.sourceTeamId.localeCompare(right.sourceTeamId) ||
@@ -8124,35 +8122,42 @@ async function getConfiguredPublicLeagueStandings(teamId, team = {}) {
       reconciled.push(reconcileLeagueGameObservations(sharedGroups.get(key)));
     });
     [...fallbackGroups.keys()].sort().forEach((key) => {
-      const group = fallbackGroups.get(key).sort((left, right) =>
-        left.game.startsAt.localeCompare(right.game.startsAt) ||
-        left.sourceTeamId.localeCompare(right.sourceTeamId) ||
-        String(left.game.id || '').localeCompare(String(right.game.id || ''))
-      );
-      const candidatePairs = [];
-      for (let leftIndex = 0; leftIndex < group.length; leftIndex += 1) {
-        for (let rightIndex = leftIndex + 1; rightIndex < group.length; rightIndex += 1) {
-          if (group[leftIndex].sourceTeamId === group[rightIndex].sourceTeamId) continue;
-          const delta = Math.abs(
-            Date.parse(group[leftIndex].game.startsAt) - Date.parse(group[rightIndex].game.startsAt)
-          );
-          if (delta <= mirrorMatchWindowMs) {
-            candidatePairs.push({ leftIndex, rightIndex, delta });
-          }
-        }
-      }
-      candidatePairs.sort((left, right) =>
-        left.delta - right.delta || left.leftIndex - right.leftIndex || left.rightIndex - right.rightIndex
-      );
-      const matchedIndexes = new Set();
-      candidatePairs.forEach(({ leftIndex, rightIndex }) => {
-        if (matchedIndexes.has(leftIndex) || matchedIndexes.has(rightIndex)) return;
-        matchedIndexes.add(leftIndex);
-        matchedIndexes.add(rightIndex);
-        reconciled.push(reconcileLeagueGameObservations([group[leftIndex], group[rightIndex]]));
+      const exactGroups = new Map();
+      fallbackGroups.get(key).forEach((observation) => {
+        const game = observation.game;
+        const exactKey = [
+          game.startsAt,
+          game.homeTeamId,
+          game.awayTeamId,
+          game.homeScore,
+          game.awayScore,
+          String(game.status || '').toLowerCase(),
+          game.countsTowardSeasonRecord !== false
+        ].join('|');
+        const group = exactGroups.get(exactKey) || [];
+        group.push(observation);
+        exactGroups.set(exactKey, group);
       });
-      group.forEach((observation, index) => {
-        if (!matchedIndexes.has(index)) reconciled.push(reconcileLeagueGameObservations([observation]));
+      [...exactGroups.keys()].sort().forEach((exactKey) => {
+        const observationsBySource = new Map();
+        exactGroups.get(exactKey).forEach((observation) => {
+          const sourceObservations = observationsBySource.get(observation.sourceTeamId) || [];
+          sourceObservations.push(observation);
+          observationsBySource.set(observation.sourceTeamId, sourceObservations);
+        });
+        const sources = [...observationsBySource.keys()].sort();
+        const left = observationsBySource.get(sources[0]) || [];
+        const right = observationsBySource.get(sources[1]) || [];
+        const mirroredCount = Math.min(left.length, right.length);
+        for (let index = 0; index < mirroredCount; index += 1) {
+          reconciled.push(reconcileLeagueGameObservations([left[index], right[index]]));
+        }
+        left.slice(mirroredCount).forEach((observation) => {
+          reconciled.push(reconcileLeagueGameObservations([observation]));
+        });
+        right.slice(mirroredCount).forEach((observation) => {
+          reconciled.push(reconcileLeagueGameObservations([observation]));
+        });
       });
     });
     return reconciled.sort((left, right) =>
@@ -8207,7 +8212,7 @@ async function getConfiguredPublicLeagueStandings(teamId, team = {}) {
     const sourceTeamId = leagueTeamIds[teamIndex];
     const sourceTeamName = String(leagueTeams[teamIndex]?.name || '').trim();
     games.forEach((game) => {
-      const projection = serializePublicGame(game);
+      const projection = serializePublicGame(game, { includeTeamIdentifiers: true });
       const opponentTeamId = normalizeTeamId(projection?.opponentTeamId);
       if (!projection || !sourceTeamName || !opponentTeamId || !leagueTeamIdSet.has(opponentTeamId)) return;
       if (projection.startsAt < range.fromDate.toISOString() || projection.startsAt > range.toDate.toISOString()) return;

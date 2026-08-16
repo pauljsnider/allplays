@@ -466,7 +466,7 @@ describe('publicTeamsService', () => {
                 seasonLabel: 'Fall 2026',
                 seasonStart: '2026-07-15',
                 seasonEnd: '2026-11-30',
-                leagueTeamIds: ['team-public-1', 'team-owls', 'team-foxes']
+                leagueTeamIds: ['team-public-1', 'team-private-opponent']
             },
             ownerId: 'private-owner',
             adminEmails: ['private@example.com']
@@ -493,8 +493,7 @@ describe('publicTeamsService', () => {
                 multiTeamTiebreakers: ['group_head_to_head', 'point_diff'],
                 seasonLabel: 'Fall 2026',
                 seasonStart: '2026-07-15',
-                seasonEnd: '2026-11-30',
-                leagueTeamIds: ['team-public-1', 'team-owls', 'team-foxes']
+                seasonEnd: '2026-11-30'
             }
         });
         expect(dbMocks.getPublicTeamProfile).toHaveBeenCalledWith('team-public-1');
@@ -526,8 +525,7 @@ describe('publicTeamsService', () => {
                 multiTeamTiebreakers: [],
                 seasonLabel: null,
                 seasonStart: null,
-                seasonEnd: null,
-                leagueTeamIds: []
+                seasonEnd: null
             }
         }));
     });

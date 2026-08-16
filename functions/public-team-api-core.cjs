@@ -59,12 +59,7 @@ function serializePublicStandingsConfig(value) {
     multiTeamTiebreakers: publicTextArray(value.multiTeamTiebreakers, 20, 40),
     seasonLabel: nullableText(value.seasonLabel, 100),
     seasonStart: parseDateOnly(value.seasonStart) ? compactText(value.seasonStart, 10) : null,
-    seasonEnd: parseDateOnly(value.seasonEnd) ? compactText(value.seasonEnd, 10) : null,
-    leagueTeamIds: Array.from(new Set(
-      (Array.isArray(value.leagueTeamIds) ? value.leagueTeamIds : [])
-        .map(normalizeTeamId)
-        .filter(Boolean)
-    )).slice(0, 32)
+    seasonEnd: parseDateOnly(value.seasonEnd) ? compactText(value.seasonEnd, 10) : null
   };
 }
 
@@ -432,7 +427,7 @@ function serializePublicGame(game = {}, options = {}) {
     countsTowardSeasonRecord: game?.countsTowardSeasonRecord !== false,
     summary: nullableText(game?.summary || game?.publicSummary, 2000),
     videoUrl: publicHttpUrl(game?.videoUrl),
-    ...(opponentTeamId ? { opponentTeamId } : {}),
+    ...(options.includeTeamIdentifiers === true && opponentTeamId ? { opponentTeamId } : {}),
     ...(tournament ? { tournament } : {}),
     ...(Object.keys(opponentStats).length ? { opponentStats } : {}),
     ...(teamName ? { teamName } : {}),

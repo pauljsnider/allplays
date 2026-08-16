@@ -168,8 +168,7 @@ test('public team profile preserves public page features through a bounded allow
       multiTeamTiebreakers: [],
       seasonLabel: 'Fall 2026',
       seasonStart: '2026-07-15',
-      seasonEnd: '2026-11-30',
-      leagueTeamIds: ['team-public', 'team-owls']
+      seasonEnd: '2026-11-30'
     },
     tournament: {
       divisions: [{ divisionName: '10U Gold' }],
@@ -186,6 +185,7 @@ test('public team profile preserves public page features through a bounded allow
     }
   });
   const serialized = JSON.stringify(profile);
+  assert.equal(serialized.includes('team-owls'), false);
   for (const privateMarker of [
     'ownerId',
     'ownerEmail',
@@ -201,6 +201,36 @@ test('public team profile preserves public page features through a bounded allow
   ]) {
     assert.equal(serialized.includes(privateMarker), false);
   }
+});
+
+test('anonymous profile and games omit unverified referenced team identifiers', () => {
+  const profile = serializePublicTeamProfile('team-public', {
+    name: 'Current',
+    isPublic: true,
+    active: true,
+    standingsConfig: {
+      enabled: true,
+      seasonStart: '2026-07-15',
+      seasonEnd: '2026-11-30',
+      leagueTeamIds: ['team-public', 'team-private-opponent']
+    }
+  });
+  const games = buildPublicGamesResponse({
+    teamId: 'team-public',
+    team: { name: 'Current' },
+    from: '2026-07-15',
+    to: '2026-11-30',
+    games: [{
+      id: 'private-opponent-game',
+      date: '2026-08-03T20:00:00Z',
+      opponent: 'Private Opponent',
+      opponentTeamId: 'team-private-opponent'
+    }]
+  });
+
+  assert.equal(Object.hasOwn(profile.standingsConfig, 'leagueTeamIds'), false);
+  assert.equal(Object.hasOwn(games.games[0], 'opponentTeamId'), false);
+  assert.equal(JSON.stringify({ profile, games }).includes('team-private-opponent'), false);
 });
 
 test('public calendar projection hides feed credentials and keeps only event presentation fields', () => {
@@ -384,7 +414,7 @@ test('games omit private/deleted/non-game events and remove imported assignment 
   assert.equal(response.games[1].location, 'Swope Soccer Village');
   assert.equal(response.games[1].teamScore, 3);
   assert.equal(response.games[1].opponentScore, 1);
-  assert.equal(response.games[1].opponentTeamId, 'team-tigers');
+  assert.equal(response.games[1].opponentTeamId, undefined);
   assert.equal(response.games[1].result, 'win');
   assert.equal(response.games[1].summary, 'A strong finish.');
   assert.deepEqual(response.games[1].tournament, {
@@ -422,6 +452,12 @@ test('games omit private/deleted/non-game events and remove imported assignment 
     opponent: 'Tigers',
     opponentTeamId: 'private/path'
   }).opponentTeamId, undefined);
+  assert.equal(serializePublicGame({
+    id: 'internal-standings-game',
+    date: '2026-08-03T20:00:00Z',
+    opponent: 'Tigers',
+    opponentTeamId: 'team-tigers'
+  }, { includeTeamIdentifiers: true }).opponentTeamId, 'team-tigers');
 });
 
 test('opponent stats allow explicitly public custom definitions and reject private definitions', () => {
