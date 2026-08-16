@@ -256,6 +256,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
   activeUserIdRef.current = auth.user?.uid || null;
   const rsvpHydrationVersionRef = useRef(0);
   const lastRsvpHydrationScopeRef = useRef('');
+  const hydratedRsvpGroupKeysRef = useRef(new Set<string>());
   const bulkRsvpQueryHandledRef = useRef(false);
   const pendingRsvpEventKeysRef = useRef(new Set<string>());
   const exportPendingRef = useRef(false);
@@ -338,7 +339,8 @@ export function Schedule({ auth }: { auth: AuthState }) {
 
   const hydrateScheduleRsvpsInBackground = (
     result: { children: ParentScheduleChild[]; events: ParentScheduleEvent[] },
-    initialHydration = false
+    initialHydration = false,
+    visibleGroupLimit = upcomingListPageSize
   ) => {
     const user = auth.user;
     if (!user) {
@@ -354,9 +356,15 @@ export function Schedule({ auth }: { auth: AuthState }) {
       teamId: selectedTeamId,
       timeRange: 'all'
     });
-    const rsvpEvents = initialHydration
-      ? getInitialBulkRsvpCandidates(scopedEvents, upcomingListPageSize)
-      : getBulkRsvpCandidates(scopedEvents);
+    const candidateEvents = getInitialBulkRsvpCandidates(
+      scopedEvents,
+      initialHydration ? upcomingListPageSize : visibleGroupLimit
+    );
+    const rsvpEvents = candidateEvents.filter((event) => {
+      const groupKey = `${event.teamId}::${event.id}`;
+      if (hydratedRsvpGroupKeysRef.current.has(groupKey)) return false;
+      return true;
+    });
     setRsvpHydrationPending(true);
     if (!rsvpEvents.length) {
       setRsvpHydrationPending(false);
@@ -384,7 +392,14 @@ export function Schedule({ auth }: { auth: AuthState }) {
       { children: result.children, events: rsvpEvents },
       user,
       { onProgress: mergeHydratedEvents }
-    ).then((hydrated) => mergeHydratedEvents(hydrated.events))
+    ).then((hydrated) => {
+      if (hydrationVersion === rsvpHydrationVersionRef.current && auth.user?.uid === user.uid) {
+        rsvpEvents.forEach((event) => {
+          hydratedRsvpGroupKeysRef.current.add(`${event.teamId}::${event.id}`);
+        });
+      }
+      mergeHydratedEvents(hydrated.events);
+    })
       .catch((error) => {
         logger.warn('Unable to hydrate schedule RSVPs in the background.', { error });
       })
@@ -721,10 +736,12 @@ export function Schedule({ auth }: { auth: AuthState }) {
   useEffect(() => {
     hasLoadedScheduleRef.current = false;
     hasStartedInitialScheduleLoadRef.current = false;
+    hydratedRsvpGroupKeysRef.current.clear();
     pastHistoryLoadedRef.current = false;
     setPastHistoryHasMore(false);
     setRsvpHydrationPending(Boolean(auth.user?.uid));
     if (!auth.user?.uid) {
+      hydratedRsvpGroupKeysRef.current.clear();
       setLoadedScheduleUserId(null);
       applyScheduleResult({ children: [], events: [] });
       return;
@@ -742,7 +759,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     hydrateScheduleRsvpsInBackground({
       children: childrenRef.current,
       events: eventsRef.current
-    });
+    }, false, upcomingListPageSize);
     // The hydration helper intentionally reads the latest refs and owns its
     // stale-request guard. Filter changes are the only trigger needed here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -871,7 +888,12 @@ export function Schedule({ auth }: { auth: AuthState }) {
 
   const handleShowMore = async () => {
     if (visibleListCount < windowedListEntries.totalCount) {
-      setVisibleListCount((current) => Math.min(current + listPageSize, windowedListEntries.totalCount));
+      const nextVisibleCount = Math.min(visibleListCount + listPageSize, windowedListEntries.totalCount);
+      setVisibleListCount(nextVisibleCount);
+      hydrateScheduleRsvpsInBackground({
+        children: childrenRef.current,
+        events: eventsRef.current
+      }, false, nextVisibleCount);
       return;
     }
     if (filter !== 'past-all' || !pastHistoryHasMore || loadingPastHistory) {
@@ -884,7 +906,12 @@ export function Schedule({ auth }: { auth: AuthState }) {
   };
   const handleShowMorePackets = async () => {
     if (visibleListCount < packetWindow.totalCount) {
-      setVisibleListCount((current) => Math.min(current + listPageSize, packetWindow.totalCount));
+      const nextVisibleCount = Math.min(visibleListCount + listPageSize, packetWindow.totalCount);
+      setVisibleListCount(nextVisibleCount);
+      hydrateScheduleRsvpsInBackground({
+        children: childrenRef.current,
+        events: eventsRef.current
+      }, false, nextVisibleCount);
       return;
     }
     if (filter !== 'past-all' || !pastHistoryHasMore || loadingPastHistory) {
