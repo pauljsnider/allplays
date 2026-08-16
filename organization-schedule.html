@@ -1034,6 +1034,9 @@
                     return;
                 }
 
+                matchup.status = 'cancelled';
+                matchup.cancellationIncomplete = false;
+                renderPublishedMatchups(lastCompletePublishedMatchups);
                 const refreshed = await refreshPublishedMatchups();
                 if (result.notificationError) {
                     setAlert(`Matchup cancelled, but team notifications were incomplete. Please retry the notification from team chat. ${result.notificationError}`);

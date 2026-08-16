@@ -9,7 +9,13 @@ export async function getTeam(teamId) {
 }
 export async function getTeams() { return state().teams; }
 export async function getUserTeamsWithAccess() { return state().teams; }
-export async function getGames(teamId) { return state().gamesByTeam[teamId] || []; }
+export async function getGames(teamId) {
+    const testState = state();
+    if (testState.failRefreshAfterCancellation && testState.cancelCalls.length > 0) {
+        throw new Error('Schedule refresh unavailable');
+    }
+    return testState.gamesByTeam[teamId] || [];
+}
 export async function getGame(teamId, gameId) {
     return (state().gamesByTeam[teamId] || []).find((game) => game.id === gameId) || null;
 }
@@ -23,7 +29,7 @@ export async function cancelGame(teamId, gameId, userId) {
             .find((game) => game.id === source.sharedScheduleOpponentGameId)
         : null;
     if (source) source.status = 'cancelled';
-    if (counterpart) counterpart.status = 'cancelled';
+    if (counterpart && !testState.sourceOnlyCancellation) counterpart.status = 'cancelled';
 }
 export async function postChatMessage(teamId) {
     state().notificationTeamIds.push(teamId);
@@ -131,8 +137,12 @@ async function mockModules(page) {
     }
 }
 
-async function seedState(page, { failNotifications = false } = {}) {
-    await page.addInitScript((shouldFailNotifications) => {
+async function seedState(page, {
+    failNotifications = false,
+    failRefreshAfterCancellation = false,
+    sourceOnlyCancellation = false
+} = {}) {
+    await page.addInitScript((options) => {
         const source = {
             id: 'source-1',
             type: 'game',
@@ -165,9 +175,11 @@ async function seedState(page, { failNotifications = false } = {}) {
             cancelCalls: [],
             helperCalls: [],
             notificationTeamIds: [],
-            failNotifications: shouldFailNotifications
+            failNotifications: options.failNotifications,
+            failRefreshAfterCancellation: options.failRefreshAfterCancellation,
+            sourceOnlyCancellation: options.sourceOnlyCancellation
         };
-    }, failNotifications);
+    }, { failNotifications, failRefreshAfterCancellation, sourceOnlyCancellation });
 }
 
 test('reviews and cancels one reciprocal organization matchup', async ({ page, baseURL }) => {
@@ -223,4 +235,44 @@ test('reports notification partial failure without claiming cancellation success
     await expect(page.locator('#organization-access-alert')).toContainText('Matchup cancelled, but team notifications were incomplete.');
     await expect(page.locator('#organization-success')).toBeHidden();
     await expect(row).toContainText('Cancelled');
+});
+
+test('reports one-sided cancellation for retry without notifications or success', async ({ page, baseURL }) => {
+    await mockModules(page);
+    await seedState(page, { sourceOnlyCancellation: true });
+    const bootIssues = createBootIssueCollector(page, { baseURL });
+    await page.goto(buildUrl(baseURL, '/organization-schedule.html#teamId=team-1'), { waitUntil: 'domcontentloaded' });
+
+    const row = page.locator('[data-shared-schedule-id="shared-team-1-source-1"]');
+    await expect(row).toBeVisible();
+    expect(bootIssues).toEqual([]);
+    page.once('dialog', (dialog) => dialog.accept());
+    await row.getByRole('button', { name: 'Cancel' }).click();
+
+    await expect(page.locator('#organization-access-alert')).toContainText('Cancellation is incomplete. Please retry.');
+    await expect(page.locator('#organization-success')).toBeHidden();
+    await expect(row).toContainText('Cancellation incomplete');
+    await expect(row.getByRole('button', { name: 'Retry cancellation' })).toBeEnabled();
+    const state = await page.evaluate(() => window.__organizationScheduleTestState);
+    expect(state.notificationTeamIds).toEqual([]);
+    expect(state.gamesByTeam['team-1'][0].status).toBe('cancelled');
+    expect(state.gamesByTeam['team-2'][0].status).toBe('scheduled');
+});
+
+test('keeps verified cancellation disabled when the organization refresh fails', async ({ page, baseURL }) => {
+    await mockModules(page);
+    await seedState(page, { failRefreshAfterCancellation: true });
+    const bootIssues = createBootIssueCollector(page, { baseURL });
+    await page.goto(buildUrl(baseURL, '/organization-schedule.html#teamId=team-1'), { waitUntil: 'domcontentloaded' });
+
+    const row = page.locator('[data-shared-schedule-id="shared-team-1-source-1"]');
+    await expect(row).toBeVisible();
+    expect(bootIssues).toEqual([]);
+    page.once('dialog', (dialog) => dialog.accept());
+    await row.getByRole('button', { name: 'Cancel' }).click();
+
+    await expect(page.locator('#organization-access-alert')).toContainText('Matchup cancelled, but the organization list could not refresh.');
+    await expect(page.locator('#organization-success')).toBeHidden();
+    await expect(row).toContainText('Cancelled');
+    await expect(row.getByRole('button', { name: /Cancel/ })).toHaveCount(0);
 });
