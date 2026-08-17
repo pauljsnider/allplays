@@ -1,4 +1,4 @@
-import { collection, db, doc, getDoc, getDocs, runTransaction, serverTimestamp, setDoc } from './adapters/legacyRegistrationFormAdminDb';
+import { collection, db, doc, documentId, getDoc, getDocs, limit, orderBy, query, runTransaction, serverTimestamp, setDoc, startAfter } from './adapters/legacyRegistrationFormAdminDb';
 import { buildRegistrationOptionCountKey } from './adapters/legacyRegistrationFormAdmin';
 import {
   buildAppRegistrationFormAdminPayload,
@@ -20,6 +20,14 @@ export type SaveRegistrationFormEditorForAppResult = RegistrationFormAdminPayloa
   formId: string;
   created: boolean;
 };
+
+export type RegistrationFormEditorPage = {
+  forms: RegistrationFormEditorDraft[];
+  lastDoc: unknown | null;
+  hasMore: boolean;
+};
+
+const REGISTRATION_FORM_EDITOR_PAGE_SIZE = 25;
 
 function buildInitialRegistrationOptionCounts(
   registrationOptions: Array<Record<string, unknown>>
@@ -58,13 +66,20 @@ function buildMissingRegistrationOptionCountUpdates(
 
 export async function listRegistrationFormEditorsForApp(
   user: AuthUser | null,
-  teamId: string
-): Promise<RegistrationFormEditorDraft[]> {
+  teamId: string,
+  afterDoc: unknown | null = null
+): Promise<RegistrationFormEditorPage> {
   const normalizedTeamId = compactString(teamId);
   assertCanManageRegistrationForms(user, normalizedTeamId);
 
-  const snapshot = await getDocs(collection(db, 'teams', normalizedTeamId, 'registrationForms'));
-  return (snapshot?.docs || [])
+  const formsRef = collection(db, 'teams', normalizedTeamId, 'registrationForms');
+  const constraints = [orderBy(documentId())];
+  if (afterDoc) constraints.push(startAfter(afterDoc));
+  constraints.push(limit(REGISTRATION_FORM_EDITOR_PAGE_SIZE + 1));
+  const snapshot = await getDocs(query(formsRef, ...constraints));
+  const pageDocs = (snapshot?.docs || []);
+  return {
+    forms: pageDocs.slice(0, REGISTRATION_FORM_EDITOR_PAGE_SIZE)
     .map((formDoc: any) => buildRegistrationFormEditorDraft({
       ...(formDoc?.data?.() || {}),
       id: compactString(formDoc?.id)
@@ -74,7 +89,10 @@ export async function listRegistrationFormEditorsForApp(
     }))
     .sort((left: RegistrationFormEditorDraft, right: RegistrationFormEditorDraft) => (
       left.title.localeCompare(right.title, undefined, { sensitivity: 'base' })
-    ));
+    )),
+    lastDoc: pageDocs[Math.min(REGISTRATION_FORM_EDITOR_PAGE_SIZE - 1, pageDocs.length - 1)] || null,
+    hasMore: pageDocs.length > REGISTRATION_FORM_EDITOR_PAGE_SIZE
+  };
 }
 
 export async function loadRegistrationFormEditorForApp(

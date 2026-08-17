@@ -65,7 +65,7 @@ describe('TeamRegistrationForms', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     serviceMocks.canManageRegistrationFormsForApp.mockReturnValue(true);
-    serviceMocks.listRegistrationFormEditorsForApp.mockResolvedValue([existingDraft]);
+    serviceMocks.listRegistrationFormEditorsForApp.mockResolvedValue({ forms: [existingDraft], lastDoc: null, hasMore: false });
     serviceMocks.saveRegistrationFormEditorForApp.mockImplementation(async ({ draft }: any) => ({
       formId: 'form-1',
       created: false,
@@ -118,7 +118,7 @@ describe('TeamRegistrationForms', () => {
   });
 
   it('previews current unsaved parent-visible values without saving or exposing submission controls', async () => {
-    serviceMocks.listRegistrationFormEditorsForApp.mockResolvedValue([{
+    serviceMocks.listRegistrationFormEditorsForApp.mockResolvedValue({ forms: [{
       ...existingDraft,
       registrationOptions: [
         { ...existingDraft.registrationOptions[0], description: 'Original option description.' },
@@ -128,7 +128,7 @@ describe('TeamRegistrationForms', () => {
         { id: 'sibling', type: 'quantity', label: 'Sibling savings', amountType: 'fixed', amountValue: 25, minimumQuantity: 2, active: true },
         { id: 'hidden', type: 'quantity', label: 'Hidden discount', amountType: 'percent', amountValue: 50, minimumQuantity: 2, active: false }
       ]
-    }]);
+    }], lastDoc: null, hasMore: false });
     renderPage();
 
     expect(await screen.findByDisplayValue('Spring Soccer')).toBeTruthy();
@@ -175,14 +175,14 @@ describe('TeamRegistrationForms', () => {
   });
 
   it.each(['draft', 'published', 'closed'] as const)('opens an authorized parent preview for a %s form', async (status) => {
-    serviceMocks.listRegistrationFormEditorsForApp.mockResolvedValue([{
+    serviceMocks.listRegistrationFormEditorsForApp.mockResolvedValue({ forms: [{
       ...existingDraft,
       title: `${status} registration`,
       status,
       published: status === 'published',
       isOpen: status === 'published',
       isClosed: status === 'closed'
-    }]);
+    }], lastDoc: null, hasMore: false });
     renderPage();
 
     expect(await screen.findByDisplayValue(`${status} registration`)).toBeTruthy();
@@ -193,7 +193,7 @@ describe('TeamRegistrationForms', () => {
   });
 
   it('opens an authorized parent preview for a new unsaved form', async () => {
-    serviceMocks.listRegistrationFormEditorsForApp.mockResolvedValue([]);
+    serviceMocks.listRegistrationFormEditorsForApp.mockResolvedValue({ forms: [], lastDoc: null, hasMore: false });
     renderPage();
 
     await screen.findByText('No saved forms yet.');
@@ -205,7 +205,7 @@ describe('TeamRegistrationForms', () => {
   });
 
   it('blocks save when all registration options are removed', async () => {
-    serviceMocks.listRegistrationFormEditorsForApp.mockResolvedValue([]);
+    serviceMocks.listRegistrationFormEditorsForApp.mockResolvedValue({ forms: [], lastDoc: null, hasMore: false });
     renderPage();
 
     await screen.findByText('No saved forms yet.');
@@ -226,5 +226,23 @@ describe('TeamRegistrationForms', () => {
     expect(await screen.findByText('Admin access is required to manage registration forms.')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Save form' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Preview as parent' })).toBeNull();
+  });
+
+  it('loads another page without duplicates or replacing the selected draft', async () => {
+    const secondDraft = { ...existingDraft, formId: 'form-2', title: 'Summer Camp' };
+    const firstCursor = { id: 'form-1' };
+    serviceMocks.listRegistrationFormEditorsForApp
+      .mockResolvedValueOnce({ forms: [existingDraft], lastDoc: firstCursor, hasMore: true })
+      .mockResolvedValueOnce({ forms: [existingDraft, secondDraft], lastDoc: { id: 'form-2' }, hasMore: false });
+
+    renderPage();
+    expect(await screen.findByDisplayValue('Spring Soccer')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
+
+    expect(await screen.findByRole('button', { name: /Summer Camp/ })).toBeTruthy();
+    expect(screen.getAllByRole('button', { name: /Spring Soccer/ })).toHaveLength(1);
+    expect(screen.getByDisplayValue('Spring Soccer')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Load more' })).toBeNull();
+    expect(serviceMocks.listRegistrationFormEditorsForApp).toHaveBeenLastCalledWith(auth.user, 'team-1', firstCursor);
   });
 });
