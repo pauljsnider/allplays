@@ -56,7 +56,7 @@ async function mockRegistrationEditor(page) {
             body: `
                 export function canManageRegistrationFormsForApp() { return true; }
                 export async function listRegistrationFormEditorsForApp() {
-                    return [{
+                    return { forms: [{
                         teamId: 'team-1',
                         formId: 'form-1',
                         title: 'Mobile parent preview',
@@ -76,7 +76,7 @@ async function mockRegistrationEditor(page) {
                         published: false,
                         isOpen: false,
                         isClosed: false
-                    }];
+                    }], lastDoc: null, hasMore: false };
                 }
                 export async function saveRegistrationFormEditorForApp(input) {
                     window.__registrationFormSaveCalls.push(input);

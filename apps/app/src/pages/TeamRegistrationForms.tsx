@@ -58,26 +58,40 @@ export function TeamRegistrationForms({ auth }: { auth: AuthState }) {
   const [forms, setForms] = useState<RegistrationFormEditorDraft[]>([]);
   const [draft, setDraft] = useState<RegistrationFormEditorDraft>(() => createBlankDraft(teamId));
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [lastFormDoc, setLastFormDoc] = useState<unknown | null>(null);
+  const [hasMoreForms, setHasMoreForms] = useState(false);
   const [saving, setSaving] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
-  const loadForms = useCallback(async () => {
+  const loadForms = useCallback(async (afterDoc: unknown | null = null) => {
     if (!teamId) return;
-    setLoading(true);
+    if (afterDoc) setLoadingMore(true);
+    else setLoading(true);
     setError('');
     try {
-      const nextForms = await listRegistrationFormEditorsForApp(auth.user, teamId);
-      setForms(nextForms);
-      setDraft((current) => {
-        const selected = current.formId ? nextForms.find((form) => form.formId === current.formId) : null;
-        return selected || nextForms[0] || createBlankDraft(teamId);
+      const page = await listRegistrationFormEditorsForApp(auth.user, teamId, afterDoc);
+      setForms((current) => {
+        if (!afterDoc) return page.forms;
+        const formsById = new Map(current.map((form) => [form.formId, form]));
+        page.forms.forEach((form) => formsById.set(form.formId, form));
+        return sortDrafts(Array.from(formsById.values()));
       });
+      setLastFormDoc(page.lastDoc);
+      setHasMoreForms(page.hasMore);
+      if (!afterDoc) {
+        setDraft((current) => {
+          const selected = current.formId ? page.forms.find((form) => form.formId === current.formId) : null;
+          return selected || page.forms[0] || createBlankDraft(teamId);
+        });
+      }
     } catch (loadError: any) {
       setError(loadError?.message || 'Unable to load registration forms.');
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
   }, [auth.user, teamId]);
 
@@ -165,7 +179,7 @@ export function TeamRegistrationForms({ auth }: { auth: AuthState }) {
           <h1 className="mt-2 flex items-center gap-2 text-2xl font-black text-gray-950"><Ticket className="h-6 w-6 text-primary-600" />Registration setup</h1>
           <p className="mt-1 text-sm font-semibold text-gray-500">Create or edit the same forms used by the app and registration website.</p>
         </div>
-        <button type="button" className="ghost-button" onClick={() => void loadForms()} disabled={loading || saving}>
+        <button type="button" className="ghost-button" onClick={() => void loadForms()} disabled={loading || loadingMore || saving}>
           <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />Refresh
         </button>
       </div>
@@ -193,6 +207,9 @@ export function TeamRegistrationForms({ auth }: { auth: AuthState }) {
                 <div className="mt-1 text-xs font-bold uppercase tracking-wide text-gray-500">{form.status}</div>
               </button>
             ))}
+            {hasMoreForms ? <button type="button" className="ghost-button mt-2 w-full justify-center" onClick={() => void loadForms(lastFormDoc)} disabled={loadingMore || saving}>
+              {loadingMore ? <Loader2 className="h-4 w-4 animate-spin" /> : null}Load more
+            </button> : null}
           </div>
         </aside>
 
