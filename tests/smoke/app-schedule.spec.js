@@ -153,39 +153,6 @@ async function mockScheduleModules(page, options = {}) {
         });
     });
 
-    await page.route(/\/src\/lib\/authService\.ts(\?.*)?$/, async (route) => {
-        await route.fulfill({
-            status: 200,
-            contentType: 'application/javascript',
-            body: `
-                export function getRouteForUser() {
-                    return '/home';
-                }
-            `
-        });
-    });
-
-    await page.route(/\/src\/lib\/notificationInboxServiceLoader\.ts(\?.*)?$/, async (route) => {
-        await route.fulfill({
-            status: 200,
-            contentType: 'application/javascript',
-            body: `
-                export async function loadNotificationInboxService() {
-                    return {
-                        subscribeToUnreadNotificationCount(_uid, onCount) {
-                            onCount(0);
-                            return () => {};
-                        },
-                        subscribeToNotificationInbox(_uid, onItems) {
-                            onItems([]);
-                            return () => {};
-                        }
-                    };
-                }
-            `
-        });
-    });
-
     await page.route(/\/src\/lib\/scheduleService\.ts(\?.*)?$/, async (route) => {
         await route.fulfill({
             status: 200,
