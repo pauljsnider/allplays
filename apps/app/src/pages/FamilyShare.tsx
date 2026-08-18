@@ -10,11 +10,17 @@ import {
   type FamilyShareViewModel
 } from '../lib/familyShareViewerService';
 
+type FamilyShareErrorState = {
+  title: string;
+  detail: string;
+  retryable?: boolean;
+};
+
 export function FamilyShare() {
   const { token = '' } = useParams();
   const [model, setModel] = useState<FamilyShareViewModel | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<{ title: string; detail: string } | null>(null);
+  const [error, setError] = useState<FamilyShareErrorState | null>(null);
 
   const refresh = useCallback(() => {
     let active = true;
@@ -58,6 +64,12 @@ export function FamilyShare() {
           </div>
           <h1 className="mt-3 text-2xl font-black text-gray-950">{state.title}</h1>
           <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">{state.detail}</p>
+          {state.retryable ? (
+            <button type="button" className="primary-button mx-auto mt-5 w-fit justify-center text-xs" onClick={() => { refresh(); }}>
+              <RefreshCw className="h-4 w-4" aria-hidden="true" />
+              Retry family page
+            </button>
+          ) : null}
           <Link to="/home" className="secondary-button mx-auto mt-5 w-fit justify-center text-xs">Open ALL PLAYS</Link>
         </section>
       </div>
@@ -219,8 +231,18 @@ function getFamilyEventTitle(event: FamilyShareEvent) {
   return event.opponent && event.opponent !== 'TBD' ? `vs ${event.opponent}` : 'Game';
 }
 
-function getFamilyShareErrorState(error: unknown) {
+function getFamilyShareErrorState(error: unknown): FamilyShareErrorState {
   if (error instanceof FamilyShareTokenError) {
+    if (error.reason === 'throttled') {
+      const retryDetail = error.retryAfterSeconds
+        ? `Please wait about ${error.retryAfterSeconds} seconds, then retry.`
+        : 'Please wait a moment, then retry.';
+      return {
+        title: 'Family page temporarily busy',
+        detail: retryDetail,
+        retryable: true
+      };
+    }
     if (error.reason === 'expired') {
       return {
         title: 'This link has expired',

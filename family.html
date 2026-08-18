@@ -257,6 +257,11 @@
       return ['invalid', 'revoked', 'expired'].includes(reason) ? reason : '';
     }
 
+    function isFamilyShareRateLimitError(error) {
+      const code = String(error?.code || '').trim().toLowerCase();
+      return code === 'resource-exhausted' || code.endsWith('/resource-exhausted');
+    }
+
     async function init() {
       if (!tokenId) {
         showError();
@@ -277,6 +282,14 @@
           token = await getFamilyShareToken(tokenId);
         }
       } catch (err) {
+        if (isFamilyShareRateLimitError(err)) {
+          const retryAfterSeconds = Number(err?.details?.retryAfterSeconds);
+          const retryDetail = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+            ? `Please wait about ${Math.ceil(retryAfterSeconds)} seconds, then retry.`
+            : 'Please wait a moment, then retry.';
+          showError('Family page temporarily busy', retryDetail);
+          return;
+        }
         const authoritativeReason = getAuthoritativeFamilyShareProjectionErrorReason(err);
         if (authoritativeReason) {
           const messages = {

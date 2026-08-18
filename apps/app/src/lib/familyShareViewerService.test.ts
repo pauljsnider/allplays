@@ -205,6 +205,26 @@ describe('familyShareViewerService', () => {
     expect(familyShareMocks.getFamilyShareToken).not.toHaveBeenCalled();
   });
 
+  it('propagates a throttled view projection without invoking any fallback reader', async () => {
+    const viewCallable = vi.fn(async () => {
+      throw { code: 'functions/resource-exhausted', details: { retryAfterSeconds: 37 } };
+    });
+    familyShareMocks.httpsCallable.mockImplementation((_functions, name) => {
+      expect(name).toBe('getFamilyShareView');
+      return viewCallable;
+    });
+
+    await expect(loadFamilyShareView('token-throttled-projection')).rejects.toMatchObject({
+      name: 'FamilyShareTokenError',
+      reason: 'throttled',
+      retryAfterSeconds: 37
+    });
+    expect(viewCallable).toHaveBeenCalledTimes(1);
+    expect(familyShareMocks.getFamilyShareToken).not.toHaveBeenCalled();
+    expect(familyShareMocks.resolveFamilyShareTokenChildren).not.toHaveBeenCalled();
+    expect(familyShareMocks.httpsCallable).toHaveBeenCalledTimes(1);
+  });
+
   it('honors a successful empty server projection without trusting stored token children', async () => {
     const scheduleCallable = vi.fn(async () => ({
       data: {
