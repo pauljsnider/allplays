@@ -11,15 +11,17 @@ import {
 import { isCalendarOccurrenceTracked } from './calendarOccurrence';
 import { getCalendarLocationDetail } from './scheduleLogic';
 
-export type FamilyShareTokenErrorReason = 'missing' | 'invalid' | 'revoked' | 'expired' | 'load-failed';
+export type FamilyShareTokenErrorReason = 'missing' | 'invalid' | 'revoked' | 'expired' | 'throttled' | 'load-failed';
 
 export class FamilyShareTokenError extends Error {
   readonly reason: FamilyShareTokenErrorReason;
+  readonly retryAfterSeconds: number | null;
 
-  constructor(reason: FamilyShareTokenErrorReason, message: string) {
+  constructor(reason: FamilyShareTokenErrorReason, message: string, retryAfterSeconds: number | null = null) {
     super(message);
     this.name = 'FamilyShareTokenError';
     this.reason = reason;
+    this.retryAfterSeconds = retryAfterSeconds;
   }
 }
 
@@ -189,6 +191,7 @@ async function loadFamilyShareViewProjection(tokenId: string): Promise<FamilySha
       calendarWarnings: uniqueStrings(Array.isArray(data.calendarWarnings) ? data.calendarWarnings : [])
     };
   } catch (error: any) {
+    throwIfFamilyShareRateLimited(error);
     const reason = compactString(error?.details?.reason);
     if (['invalid', 'revoked', 'expired'].includes(reason)) {
       const messages = {
@@ -265,7 +268,8 @@ async function resolveTokenChildren(tokenId: string, token: Record<string, any>)
 
   try {
     return normalizeFamilyShareChildren(await resolveFamilyShareTokenChildren(tokenId));
-  } catch {
+  } catch (error) {
+    throwIfFamilyShareRateLimited(error);
     return [];
   }
 }
@@ -279,9 +283,21 @@ async function loadFamilyShareScheduleProjection(tokenId: string): Promise<Famil
       children: normalizeFamilyShareChildren(data.children),
       teams: normalizeScheduleProjectionTeams(data.teams)
     };
-  } catch {
+  } catch (error) {
+    throwIfFamilyShareRateLimited(error);
     return null;
   }
+}
+
+function throwIfFamilyShareRateLimited(error: any): void {
+  const code = compactString(error?.code).toLowerCase();
+  if (code !== 'resource-exhausted' && !code.endsWith('/resource-exhausted')) return;
+  const retryAfterSeconds = Number(error?.details?.retryAfterSeconds);
+  throw new FamilyShareTokenError(
+    'throttled',
+    'Too many family page requests. Please wait and try again.',
+    Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0 ? Math.ceil(retryAfterSeconds) : null
+  );
 }
 
 function buildFamilyTeams(children: FamilyShareChild[]): FamilyShareTeam[] {

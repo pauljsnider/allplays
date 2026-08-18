@@ -121,3 +121,65 @@ test('legacy family page does not reopen raw token reads after an authoritative 
   expect(evidence.projectionCalls).toBe(1);
   expect(evidence.rawTokenCalls).toBe(0);
 });
+
+test('legacy family page shows a retry message without fallback reads after projection throttling', async ({ page, baseURL }) => {
+  await page.addInitScript(() => {
+    window.__familyShareProjectionSmoke = { projectionCalls: 0, rawTokenCalls: 0, childCalls: 0, scheduleReads: 0 };
+  });
+  await page.route(/https:\/\/www\.googletagmanager\.com\/.*/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: '' }));
+  await page.route(/https:\/\/cdn\.tailwindcss\.com\/.*/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: '' }));
+  await page.route(/\/js\/telemetry\.js(\?.*)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: '' }));
+  await page.route(/\/js\/schedule-watch-cta\.js(\?.*)?$/, (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/javascript',
+    body: 'export function resolveScheduleWatchCta() { return null; }'
+  }));
+  await page.route(/\/js\/utils\.js(\?.*)?$/, (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/javascript',
+    body: `
+      export function renderHeader() {}
+      export function renderFooter() {}
+      export function escapeHtml(value) { return String(value || ''); }
+      export async function fetchAndParseCalendar() { throw new Error('calendar fallback forbidden'); }
+      export function extractOpponent(value) { return String(value || ''); }
+      export function isPracticeEvent() { return false; }
+      export function expandRecurrence() { return []; }
+      export function getCalendarEventTrackingId() { return ''; }
+      export function isTrackedCalendarEvent() { return false; }
+    `
+  }));
+  await page.route(/\/js\/db\.js(\?.*)?$/, (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/javascript',
+    body: `
+      export async function getFamilyShareView() {
+        window.__familyShareProjectionSmoke.projectionCalls += 1;
+        throw { code: 'functions/resource-exhausted', details: { retryAfterSeconds: 29 } };
+      }
+      export async function getFamilyShareToken() {
+        window.__familyShareProjectionSmoke.rawTokenCalls += 1;
+        throw new Error('raw token fallback forbidden');
+      }
+      export async function resolveFamilyShareTokenChildren() {
+        window.__familyShareProjectionSmoke.childCalls += 1;
+        return [];
+      }
+      export async function getTeam() { window.__familyShareProjectionSmoke.scheduleReads += 1; return null; }
+      export async function getGames() { window.__familyShareProjectionSmoke.scheduleReads += 1; return []; }
+      export async function getTrackedCalendarEventUids() { window.__familyShareProjectionSmoke.scheduleReads += 1; return []; }
+    `
+  }));
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`${baseURL}/family.html?token=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`, { waitUntil: 'domcontentloaded' });
+
+  await expect(page.getByRole('heading', { name: 'Family page temporarily busy' })).toBeVisible();
+  await expect(page.getByText('Please wait about 29 seconds, then retry.')).toBeVisible();
+  expect(await page.evaluate(() => window.__familyShareProjectionSmoke)).toEqual({
+    projectionCalls: 1,
+    rawTokenCalls: 0,
+    childCalls: 0,
+    scheduleReads: 0
+  });
+});

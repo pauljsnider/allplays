@@ -119,4 +119,17 @@ describe('FamilyShare', () => {
     expect(await screen.findByRole('heading', { name: 'This link has expired' })).toBeTruthy();
     expect(screen.getByText('Ask the parent to create a new family share link. Expired links never load player, team, or schedule details.')).toBeTruthy();
   });
+
+  it('shows a retryable throttled state instead of an empty family schedule', async () => {
+    const throttledError = new FamilyShareTokenError('throttled', 'Busy');
+    Object.assign(throttledError, { retryAfterSeconds: 42 });
+    familyShareMocks.loadFamilyShareView.mockRejectedValue(throttledError);
+
+    render(<MemoryRouter initialEntries={['/family/throttled-token']}><Routes><Route path="/family/:token" element={<FamilyShare />} /></Routes></MemoryRouter>);
+
+    expect(await screen.findByRole('heading', { name: 'Family page temporarily busy' })).toBeTruthy();
+    expect(screen.getByText('Please wait about 42 seconds, then retry.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Retry family page' })).toBeTruthy();
+    expect(screen.queryByText('No upcoming events')).toBeNull();
+  });
 });

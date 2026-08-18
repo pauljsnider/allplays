@@ -48,6 +48,8 @@ function clone(value) {
 function makeFirestore(seed = {}, metrics = {}) {
   const state = new Map(Object.entries(seed).map(([path, value]) => [path, clone(value)]));
   metrics.queryReadCount = 0;
+  metrics.docReadCount = 0;
+  metrics.rateLimitReadCount = 0;
   metrics.queries = [];
   metrics.activeQueryCount = 0;
   metrics.maxConcurrentQueries = 0;
@@ -57,6 +59,11 @@ function makeFirestore(seed = {}, metrics = {}) {
       path,
       id: path.split('/').pop(),
       get: async () => {
+        if (path.startsWith('familyShareRequestRateLimits/')) {
+          metrics.rateLimitReadCount += 1;
+        } else {
+          metrics.docReadCount += 1;
+        }
         const value = state.get(path);
         return {
           id: path.split('/').pop(),
@@ -71,6 +78,7 @@ function makeFirestore(seed = {}, metrics = {}) {
 
   function collection(path, limitCount = Number.POSITIVE_INFINITY) {
     const group = {
+      doc: (id) => doc(`${path}/${id}`),
       limit(count) {
         return collection(path, Math.max(0, Math.floor(Number(count) || 0)));
       },
@@ -142,7 +150,15 @@ function makeFirestore(seed = {}, metrics = {}) {
     return group;
   }
 
-  return { doc, collection, collectionGroup };
+  return {
+    doc,
+    collection,
+    collectionGroup,
+    runTransaction: async (operation) => operation({
+      get: (ref) => ref.get(),
+      set: (ref, value) => state.set(ref.path, clone(value))
+    })
+  };
 }
 
 function makeFunctionsStub() {
@@ -183,9 +199,9 @@ function makeFunctionsStub() {
   };
 }
 
-function loadCallables(seed = {}, { metrics = {}, securityUtils = null } = {}) {
+function loadCallables(seed = {}, { metrics = {}, securityUtils = null, firestore: firestoreOverride = null } = {}) {
   delete require.cache[repoIndexPath];
-  const firestore = makeFirestore(seed, metrics);
+  const firestore = firestoreOverride || makeFirestore(seed, metrics);
   adminStub = {
     apps: [true],
     initializeApp() {},
@@ -356,6 +372,118 @@ test('family share schedule callable validates bearer token and projects private
       awayScore: 2
     }
   ]);
+});
+
+for (const [callableName, tokenId] of [
+  ['getFamilyShareView', '5555555555555555555555555555555555555555'],
+  ['getFamilyShareSchedule', '6666666666666666666666666666666666666666'],
+  ['resolveFamilyShareTokenChildren', '7777777777777777777777777777777777777777']
+]) {
+  test(`${callableName} rejects an exhausted shared family request bucket before datastore reads`, async () => {
+    const metrics = {};
+    const callables = loadCallables({
+      [`familyShareTokens/${tokenId}`]: {
+        active: true,
+        ownerUserId: 'quota-parent',
+        children: [{ teamId: 'quota-team', playerId: 'quota-player' }]
+      },
+      'users/quota-parent': { parentPlayerKeys: ['quota-team::quota-player'] },
+      'teams/quota-team': { name: 'Quota Team', isPublic: false },
+      'teams/quota-team/players/quota-player': { name: 'Quota Player' }
+    }, { metrics });
+    const context = { rawRequest: { ip: `203.0.113.${callableName.length}` } };
+
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      await callables[callableName]({ tokenId }, context);
+    }
+    const readsBeforeRejection = {
+      docReadCount: metrics.docReadCount,
+      queryReadCount: metrics.queryReadCount,
+      rateLimitReadCount: metrics.rateLimitReadCount
+    };
+
+    await assert.rejects(
+      callables[callableName]({ tokenId }, context),
+      (error) => error.code === 'resource-exhausted'
+        && Number.isFinite(error.details?.retryAfterSeconds)
+        && error.details.retryAfterSeconds > 0
+    );
+    assert.deepEqual({
+      docReadCount: metrics.docReadCount,
+      queryReadCount: metrics.queryReadCount
+    }, {
+      docReadCount: readsBeforeRejection.docReadCount,
+      queryReadCount: readsBeforeRejection.queryReadCount
+    });
+    assert.equal(metrics.rateLimitReadCount, readsBeforeRejection.rateLimitReadCount + 1);
+  });
+}
+
+test('alternating family share callables across independently loaded handlers cannot multiply the shared request allowance', async () => {
+  const tokenId = '8888888888888888888888888888888888888888';
+  const metrics = {};
+  const seed = {
+    [`familyShareTokens/${tokenId}`]: {
+      active: true,
+      ownerUserId: 'alternating-parent',
+      children: [{ teamId: 'alternating-team', playerId: 'alternating-player' }]
+    },
+    'users/alternating-parent': { parentPlayerKeys: ['alternating-team::alternating-player'] },
+    'teams/alternating-team': { name: 'Alternating Team', isPublic: false },
+    'teams/alternating-team/players/alternating-player': { name: 'Alternating Player' }
+  };
+  const sharedFirestore = makeFirestore(seed, metrics);
+  const firstHandler = loadCallables({}, { metrics, firestore: sharedFirestore });
+  const secondHandler = loadCallables({}, { metrics, firestore: sharedFirestore });
+  const handlers = [firstHandler, secondHandler];
+  const callableNames = ['getFamilyShareView', 'getFamilyShareSchedule', 'resolveFamilyShareTokenChildren'];
+  const context = { rawRequest: { ip: '203.0.113.90' } };
+
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    const handler = handlers[attempt % handlers.length];
+    await handler[callableNames[attempt % callableNames.length]]({ tokenId }, context);
+  }
+  const readsBeforeRejection = {
+    docReadCount: metrics.docReadCount,
+    queryReadCount: metrics.queryReadCount,
+    rateLimitReadCount: metrics.rateLimitReadCount
+  };
+
+  await assert.rejects(
+    secondHandler.getFamilyShareSchedule({ tokenId }, context),
+    (error) => error.code === 'resource-exhausted'
+  );
+  assert.deepEqual({
+    docReadCount: metrics.docReadCount,
+    queryReadCount: metrics.queryReadCount
+  }, {
+    docReadCount: readsBeforeRejection.docReadCount,
+    queryReadCount: readsBeforeRejection.queryReadCount
+  });
+  assert.equal(metrics.rateLimitReadCount, readsBeforeRejection.rateLimitReadCount + 1);
+});
+
+test('family share child resolution rejects links outside the owner scope', async () => {
+  const tokenId = '9999999999999999999999999999999999999999';
+  const callables = loadCallables({
+    [`familyShareTokens/${tokenId}`]: {
+      active: true,
+      ownerUserId: 'scope-parent',
+      children: [{ teamId: 'other-team', playerId: 'other-player' }]
+    },
+    'users/scope-parent': { parentPlayerKeys: ['owned-team::owned-player'] },
+    'teams/owned-team': { name: 'Owned Team' },
+    'teams/owned-team/players/owned-player': { name: 'Owned Player' },
+    'teams/other-team': { name: 'Other Team' },
+    'teams/other-team/players/other-player': { name: 'Other Player' }
+  });
+
+  const result = await callables.resolveFamilyShareTokenChildren(
+    { tokenId },
+    { rawRequest: { ip: '203.0.113.91' } }
+  );
+
+  assert.deepEqual(result, { children: [] });
 });
 
 test('family share view projection omits owner UID and raw calendar URLs from the network payload', async () => {

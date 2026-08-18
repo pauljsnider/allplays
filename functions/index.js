@@ -581,10 +581,11 @@ const checkCalendarTargetFetchRateLimit = createInMemoryRateLimiter({
   maxRequests: 30,
   maxKeys: 10_000
 });
-const checkFamilyShareViewRateLimit = createInMemoryRateLimiter({
+const checkFamilyShareRequestRateLimit = createFirestoreFixedWindowRateLimiter({
+  firestore,
+  collectionName: 'familyShareRequestRateLimits',
   windowMs: 60_000,
-  maxRequests: 60,
-  maxKeys: 10_000
+  maxRequests: 60
 });
 const checkFamilyShareCalendarTargetRateLimit = createInMemoryRateLimiter({
   windowMs: 60_000,
@@ -8859,20 +8860,23 @@ async function loadFamilyShareScheduleTeams(children, {
   }));
 }
 
-exports.resolveFamilyShareTokenChildren = functions.https.onCall(async (data) => {
+exports.resolveFamilyShareTokenChildren = functions.https.onCall(async (data, context) => {
+  await assertFamilyShareRequestRateLimit(context);
   const token = await loadReadableFamilyShareToken(requireFamilyShareTokenId(data));
   return { children: await resolveReadableFamilyShareChildren(token) };
 });
 
-exports.getFamilyShareSchedule = functions.https.onCall(async (data) => {
+exports.getFamilyShareSchedule = functions.https.onCall(async (data, context) => {
+  await assertFamilyShareRequestRateLimit(context);
   const token = await loadReadableFamilyShareToken(requireFamilyShareTokenId(data));
   const children = await resolveReadableFamilyShareChildren(token);
   const teams = await loadFamilyShareScheduleTeams(children);
   return { children, teams };
 });
 
-function assertFamilyShareViewRateLimit(context) {
-  const result = checkFamilyShareViewRateLimit(context?.rawRequest || {});
+async function assertFamilyShareRequestRateLimit(context) {
+  const requestIp = getRequestIp(context?.rawRequest || {});
+  const result = await checkFamilyShareRequestRateLimit(`family-share:${requestIp}`);
   if (!result.allowed) {
     throw new functions.https.HttpsError('resource-exhausted', 'Too many family page requests. Try again shortly.', {
       retryAfterSeconds: result.retryAfterSeconds
@@ -8992,7 +8996,7 @@ exports.getFamilyShareView = functions
   .runWith({ timeoutSeconds: 30, memory: '256MB' })
   .https
   .onCall(async (data, context) => {
-    assertFamilyShareViewRateLimit(context);
+    await assertFamilyShareRequestRateLimit(context);
     const token = await loadReadableFamilyShareToken(requireFamilyShareTokenId(data));
     const children = await resolveReadableFamilyShareChildren(token);
     const teams = await loadFamilyShareScheduleTeams(children, {
