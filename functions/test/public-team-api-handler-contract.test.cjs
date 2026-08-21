@@ -39,6 +39,33 @@ function loadPublicTeamDataAccess(firestore) {
   );
 }
 
+function loadPublicTeamCalendarTrackingEvents(firestore, admin) {
+  const start = source.indexOf('async function getPublicTeamCalendarTrackingEvents');
+  const end = source.indexOf('exports.getPublicTeamCalendarProjection', start);
+  assert.notEqual(start, -1, 'calendar tracking data access helper must exist');
+  const implementation = [
+    source.slice(start, end),
+    'return getPublicTeamCalendarTrackingEvents;'
+  ].join('\n');
+
+  return new Function(
+    'firestore',
+    'admin',
+    'scanBoundedPublicCalendarTrackingEvents',
+    'normalizeFamilyShareText',
+    'canTrackedCalendarEventSuppressPublicProjection',
+    'PUBLIC_TEAM_API_MAX_GAME_SCAN_DOCUMENTS',
+    implementation
+  )(
+    firestore,
+    admin,
+    require('../public-team-api-core.cjs').scanBoundedPublicCalendarTrackingEvents,
+    (value) => String(value || '').trim(),
+    require('../public-team-api-core.cjs').canTrackedCalendarEventSuppressPublicProjection,
+    5000
+  );
+}
+
 function makeQuerySnapshot(docs) {
   return {
     docs,
@@ -157,6 +184,113 @@ test('public team handlers use bounded games reads and field-whitelisting serial
   assert.match(apiSource, /isPublicProjectionItemAfterCursor\(projection, cursor\)/);
   assert.match(apiSource, /where\('date', '>=', queryFromDate\)/);
   assert.doesNotMatch(apiSource, /collection\(`teams\/\$\{request\.teamId\}\/games`\)\.get\(\)/);
+});
+
+test('public calendar tracking query filters non-empty UIDs and paginates by document cursor', async () => {
+  const untrackedGames = Array.from({ length: 5000 }, (_, index) => (
+    makeDoc(`untracked-${index}`, { date: `untracked-${index}` })
+  ));
+  const trackedGames = Array.from({ length: 501 }, (_, index) => (
+    makeDoc(`tracked-${index}`, {
+      calendarEventUid: `uid-${String(index).padStart(3, '0')}`,
+      date: `tracked-date-${index}`
+    })
+  ));
+  const metrics = { whereCalls: [], orderByCalls: [], startAfterIds: [], getCalls: 0, reads: 0 };
+  const allGames = [...untrackedGames, ...trackedGames];
+
+  function makeTrackingQuery({ filtered = allGames, after = null, limit = allGames.length } = {}) {
+    return {
+      where(field, operator, value) {
+        metrics.whereCalls.push([field, operator, value]);
+        assert.deepEqual([field, operator, value], ['calendarEventUid', '!=', '']);
+        return makeTrackingQuery({
+          filtered: filtered.filter((doc) => doc.data().calendarEventUid),
+          after,
+          limit
+        });
+      },
+      orderBy(field) {
+        metrics.orderByCalls.push(field);
+        return this;
+      },
+      select() {
+        return this;
+      },
+      startAfter(doc) {
+        metrics.startAfterIds.push(doc.id);
+        return makeTrackingQuery({ filtered, after: doc, limit });
+      },
+      limit(count) {
+        return makeTrackingQuery({ filtered, after, limit: count });
+      },
+      async get() {
+        metrics.getCalls += 1;
+        const start = after ? filtered.indexOf(after) + 1 : 0;
+        const docs = filtered.slice(start, start + limit);
+        metrics.reads += docs.length;
+        return makeQuerySnapshot(docs);
+      }
+    };
+  }
+
+  const firestore = {
+    collection(path) {
+      assert.equal(path, 'teams/team-1/games');
+      return makeTrackingQuery();
+    }
+  };
+  const documentId = Symbol('document-id');
+  const loadTrackingEvents = loadPublicTeamCalendarTrackingEvents(firestore, {
+    firestore: { FieldPath: { documentId: () => documentId } }
+  });
+
+  const events = await loadTrackingEvents('team-1');
+  assert.equal(events.length, 501);
+  assert.deepEqual(metrics.whereCalls, [
+    ['calendarEventUid', '!=', ''],
+    ['calendarEventUid', '!=', '']
+  ]);
+  assert.deepEqual(metrics.orderByCalls, [
+    'calendarEventUid', documentId,
+    'calendarEventUid', documentId
+  ]);
+  assert.deepEqual(metrics.startAfterIds, ['tracked-499']);
+  assert.equal(metrics.getCalls, 2);
+  assert.equal(metrics.reads, 501);
+});
+
+test('public calendar tracking query returns one empty page for 5,000 untracked games', async () => {
+  const metrics = { getCalls: 0 };
+  const query = {
+    where(field, operator, value) {
+      assert.deepEqual([field, operator, value], ['calendarEventUid', '!=', '']);
+      return this;
+    },
+    orderBy() {
+      return this;
+    },
+    select() {
+      return this;
+    },
+    limit() {
+      return this;
+    },
+    async get() {
+      metrics.getCalls += 1;
+      return makeQuerySnapshot([]);
+    }
+  };
+  const loadTrackingEvents = loadPublicTeamCalendarTrackingEvents({
+    collection() {
+      return query;
+    }
+  }, {
+    firestore: { FieldPath: { documentId: () => '__name__' } }
+  });
+
+  assert.deepEqual(await loadTrackingEvents('team-1'), []);
+  assert.equal(metrics.getCalls, 1);
 });
 
 test('public roster handler bounds its player scan before filtering sensitive documents', () => {
