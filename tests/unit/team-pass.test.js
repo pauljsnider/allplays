@@ -33,6 +33,16 @@ function mockFirebaseForDocs(docs) {
 const premiumClosed = async () => ({ state: 'ready', openToAll: false, reason: 'entitlement-required' });
 const premiumOpen = async () => ({ state: 'ready', openToAll: true, reason: 'global-open' });
 
+function createDeferred() {
+    let resolve;
+    let reject;
+    const promise = new Promise((resolvePromise, rejectPromise) => {
+        resolve = resolvePromise;
+        reject = rejectPromise;
+    });
+    return { promise, resolve, reject };
+}
+
 describe('team pass UI helpers', () => {
     it('accepts only canonical Stripe Checkout destinations before navigation', () => {
         expect(getCanonicalStripeCheckoutUrl('https://checkout.stripe.com/c/pay/team-pass')).toBe('https://checkout.stripe.com/c/pay/team-pass');
@@ -203,18 +213,108 @@ describe('team pass UI helpers', () => {
         expect(markup).not.toContain('Buy Team Pass');
     });
 
-    it('renders and wires the eligible checkout CTA to the existing checkout flow', async () => {
+    it('disables the checkout CTA and exposes loading state while creation is pending', async () => {
         document.body.innerHTML = buildTeamPassMarkup({
             team: TEAM,
             access: { isStaff: true, canPurchase: true },
             pass: { status: 'missing', label: 'Missing' }
         });
-        const redirect = vi.fn().mockResolvedValue({ checkoutUrl: 'https://checkout.stripe.com/c/pay/session' });
+        const deferred = createDeferred();
+        const redirect = vi.fn(() => deferred.promise);
         const container = document.querySelector('#team-pass');
+        const button = container.querySelector('[data-team-pass-checkout]');
+        const feedback = container.querySelector('[data-team-pass-checkout-feedback]');
         bindTeamPassCheckoutButton(container, { team: TEAM, deps: { redirectToTeamPassCheckout: redirect } });
 
-        document.querySelector('[data-team-pass-checkout]').click();
+        button.click();
+
+        expect(button.disabled).toBe(true);
+        expect(button.getAttribute('aria-busy')).toBe('true');
+        expect(button.textContent).toBe('Starting checkout...');
+        expect(feedback.textContent).toBe('');
         await vi.waitFor(() => expect(redirect).toHaveBeenCalledWith({ teamId: 'team-1', seasonId: '2026' }));
+
+        button.dispatchEvent(new MouseEvent('click'));
+        expect(redirect).toHaveBeenCalledTimes(1);
+
+        deferred.resolve({ checkoutUrl: 'https://checkout.stripe.com/c/pay/session' });
+        await deferred.promise;
+    });
+
+    it('shows a retryable checkout error and restores the CTA after creation fails', async () => {
+        document.body.innerHTML = buildTeamPassMarkup({
+            team: TEAM,
+            access: { isStaff: true, canPurchase: true },
+            pass: { status: 'missing', label: 'Missing' }
+        });
+        const redirect = vi.fn().mockRejectedValue(new Error('Stripe is temporarily unavailable.'));
+        const container = document.querySelector('#team-pass');
+        const button = container.querySelector('[data-team-pass-checkout]');
+        const feedback = container.querySelector('[data-team-pass-checkout-feedback]');
+        bindTeamPassCheckoutButton(container, { team: TEAM, deps: { redirectToTeamPassCheckout: redirect } });
+
+        button.click();
+
+        await vi.waitFor(() => expect(button.disabled).toBe(false));
+        expect(button.hasAttribute('aria-busy')).toBe(false);
+        expect(button.textContent).toBe('Buy Team Pass');
+        expect(feedback.textContent).toBe('Stripe is temporarily unavailable. Please try again.');
+    });
+
+    it('clears stale errors and invokes validated checkout creation again on retry', async () => {
+        document.body.innerHTML = buildTeamPassMarkup({
+            team: TEAM,
+            access: { isStaff: true, canPurchase: true },
+            pass: { status: 'missing', label: 'Missing' }
+        });
+        const retryDeferred = createDeferred();
+        const redirect = vi.fn()
+            .mockRejectedValueOnce(new Error('Checkout creation failed.'))
+            .mockImplementationOnce(() => retryDeferred.promise);
+        const container = document.querySelector('#team-pass');
+        const button = container.querySelector('[data-team-pass-checkout]');
+        const feedback = container.querySelector('[data-team-pass-checkout-feedback]');
+        bindTeamPassCheckoutButton(container, { team: TEAM, deps: { redirectToTeamPassCheckout: redirect } });
+
+        button.click();
+        await vi.waitFor(() => expect(button.disabled).toBe(false));
+        expect(feedback.textContent).toContain('Checkout creation failed.');
+
+        button.click();
+
+        expect(button.disabled).toBe(true);
+        expect(button.getAttribute('aria-busy')).toBe('true');
+        expect(feedback.textContent).toBe('');
+        expect(redirect).toHaveBeenCalledTimes(2);
+        expect(redirect).toHaveBeenNthCalledWith(1, { teamId: 'team-1', seasonId: '2026' });
+        expect(redirect).toHaveBeenNthCalledWith(2, { teamId: 'team-1', seasonId: '2026' });
+
+        retryDeferred.resolve({ checkoutUrl: 'https://checkout.stripe.com/c/pay/retry-session' });
+        await retryDeferred.promise;
+    });
+
+    it('recovers for another retry when canonical destination validation fails', async () => {
+        document.body.innerHTML = buildTeamPassMarkup({
+            team: TEAM,
+            access: { isStaff: true, canPurchase: true },
+            pass: { status: 'missing', label: 'Missing' }
+        });
+        const redirect = vi.fn()
+            .mockRejectedValueOnce(new Error('Checkout creation failed.'))
+            .mockRejectedValueOnce(new Error('Stripe returned an invalid checkout destination.'));
+        const container = document.querySelector('#team-pass');
+        const button = container.querySelector('[data-team-pass-checkout]');
+        const feedback = container.querySelector('[data-team-pass-checkout-feedback]');
+        bindTeamPassCheckoutButton(container, { team: TEAM, deps: { redirectToTeamPassCheckout: redirect } });
+
+        button.click();
+        await vi.waitFor(() => expect(button.disabled).toBe(false));
+        button.click();
+
+        await vi.waitFor(() => expect(redirect).toHaveBeenCalledTimes(2));
+        await vi.waitFor(() => expect(button.disabled).toBe(false));
+        expect(button.hasAttribute('aria-busy')).toBe(false);
+        expect(feedback.textContent).toBe('Stripe returned an invalid checkout destination. Please try again.');
     });
 
     it('renders read-only team access without staff metadata controls', () => {
