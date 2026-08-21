@@ -239,33 +239,111 @@ describe('notificationInboxService', () => {
         expect(onError).toHaveBeenCalledTimes(1);
     });
 
-    it('polls the bounded unread query with native auth instead of the signed-out web SDK', async () => {
+    it.each([0, 1, 42, 99, 100])('polls the bounded native aggregation unread count (%s)', async (count) => {
         nativeRuntimeMocks.isNativePlatform.mockReturnValue(true);
         const callback = vi.fn();
         const fetchMock = vi.fn().mockResolvedValue({
             ok: true,
             status: 200,
-            json: vi.fn().mockResolvedValue([
-                { document: { name: 'projects/demo-allplays/databases/(default)/documents/users/user-123/notificationInbox/item-1', fields: {} } },
-                { document: { name: 'projects/demo-allplays/databases/(default)/documents/users/user-123/notificationInbox/item-2', fields: {} } }
-            ])
+            json: vi.fn().mockResolvedValue([{ result: { aggregateFields: {
+                notificationCount: { integerValue: String(count) }
+            } } }])
         });
         vi.stubGlobal('fetch', fetchMock);
 
         const unsubscribe = subscribeToUnreadNotificationCount('user-123', callback);
-        await vi.waitFor(() => expect(callback).toHaveBeenCalledWith(2));
+        await vi.waitFor(() => expect(callback).toHaveBeenCalledWith(count));
 
         expect(onSnapshot).not.toHaveBeenCalled();
         expect(authMocks.getNativeAuthIdToken).toHaveBeenCalledWith(true);
+        expect(fetchMock.mock.calls[0][0]).toContain(':runAggregationQuery');
         const [, request] = fetchMock.mock.calls[0];
         const body = JSON.parse(String(request.body));
-        expect(body.structuredQuery.where.fieldFilter).toEqual({
+        expect(body.structuredAggregationQuery.structuredQuery.where.fieldFilter).toEqual({
             field: { fieldPath: 'readAt' },
             op: 'EQUAL',
             value: { nullValue: 'NULL_VALUE' }
         });
-        expect(body.structuredQuery.limit).toBe(100);
+        expect(body.structuredAggregationQuery.structuredQuery.limit).toBe(100);
+        expect(body.structuredAggregationQuery.aggregations).toEqual([
+            { alias: 'notificationCount', count: {} }
+        ]);
         unsubscribe();
+    });
+
+    it('reports malformed native aggregation responses', async () => {
+        nativeRuntimeMocks.isNativePlatform.mockReturnValue(true);
+        const onError = vi.fn();
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+            ok: true,
+            status: 200,
+            json: vi.fn().mockResolvedValue([{ result: { aggregateFields: {} } }])
+        }));
+
+        const unsubscribe = subscribeToUnreadNotificationCount('user-123', vi.fn(), onError);
+        await vi.waitFor(() => expect(onError).toHaveBeenCalledWith(
+            expect.objectContaining({ message: 'Native notification unread count response was invalid.' })
+        ));
+        unsubscribe();
+    });
+
+    it('reports native aggregation HTTP failures', async () => {
+        nativeRuntimeMocks.isNativePlatform.mockReturnValue(true);
+        const onError = vi.fn();
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+            ok: false,
+            status: 503,
+            json: vi.fn().mockResolvedValue({ error: { message: 'Firestore unavailable' } })
+        }));
+
+        const unsubscribe = subscribeToUnreadNotificationCount('user-123', vi.fn(), onError);
+        await vi.waitFor(() => expect(onError).toHaveBeenCalledWith(
+            expect.objectContaining({ message: 'Firestore unavailable' })
+        ));
+        unsubscribe();
+    });
+
+    it('aborts a native aggregation request at the existing timeout', async () => {
+        nativeRuntimeMocks.isNativePlatform.mockReturnValue(true);
+        vi.useFakeTimers();
+        const onError = vi.fn();
+        const fetchMock = vi.fn().mockImplementation((_url, request: RequestInit) => new Promise((_resolve, reject) => {
+            request.signal?.addEventListener('abort', () => reject(new Error('request aborted')));
+        }));
+        vi.stubGlobal('fetch', fetchMock);
+
+        const unsubscribe = subscribeToUnreadNotificationCount('user-123', vi.fn(), onError);
+        await vi.advanceTimersByTimeAsync(8_000);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(fetchMock.mock.calls[0][1].signal.aborted).toBe(true);
+        expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'request aborted' }));
+        unsubscribe();
+        vi.useRealTimers();
+    });
+
+    it('does not emit a native aggregation result after unsubscribe', async () => {
+        nativeRuntimeMocks.isNativePlatform.mockReturnValue(true);
+        let resolveResponse!: (response: Response) => void;
+        vi.stubGlobal('fetch', vi.fn().mockReturnValue(new Promise((resolve) => {
+            resolveResponse = resolve;
+        })));
+
+        const callback = vi.fn();
+        const onError = vi.fn();
+        const unsubscribe = subscribeToUnreadNotificationCount('user-123', callback, onError);
+        unsubscribe();
+        resolveResponse({
+            ok: true,
+            status: 200,
+            json: vi.fn().mockResolvedValue([{ result: { aggregateFields: {
+                notificationCount: { integerValue: '7' }
+            } } }])
+        } as never);
+
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(callback).not.toHaveBeenCalled();
+        expect(onError).not.toHaveBeenCalled();
     });
 
     it('loads and maps the ordered native inbox without emitting an empty result on permission failure', async () => {

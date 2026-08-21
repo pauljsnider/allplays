@@ -163,6 +163,43 @@ async function nativeNotificationQuery(uid: string, { unreadOnly }: { unreadOnly
     });
 }
 
+async function nativeUnreadNotificationCount(uid: string) {
+    const requestUrl = `https://firestore.googleapis.com/v1/projects/${getProjectId()}/databases/(default)/documents/users/${encodeURIComponent(uid)}:runAggregationQuery`;
+    const structuredQuery = {
+        from: [{ collectionId: 'notificationInbox' }],
+        where: {
+            fieldFilter: {
+                field: { fieldPath: 'readAt' },
+                op: 'EQUAL',
+                value: { nullValue: 'NULL_VALUE' }
+            }
+        },
+        limit: unreadNotificationCountLimit
+    };
+    const response = await nativeFetch(requestUrl, {
+        method: 'POST',
+        headers: await getNativeHeaders(requestUrl),
+        body: JSON.stringify({
+            structuredAggregationQuery: {
+                structuredQuery,
+                aggregations: [{ alias: 'notificationCount', count: {} }]
+            }
+        })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new Error(payload?.error?.message || `Notification inbox request failed (${response.status}).`);
+    }
+    const rows = Array.isArray(payload) ? payload : [payload];
+    const rawCount = rows.find((entry: any) => entry?.result?.aggregateFields?.notificationCount)
+        ?.result?.aggregateFields?.notificationCount?.integerValue;
+    const count = Number(rawCount);
+    if (rawCount === undefined || !Number.isInteger(count) || count < 0) {
+        throw new Error('Native notification unread count response was invalid.');
+    }
+    return count;
+}
+
 function subscribeToNativeNotificationQuery<T>(
     load: () => Promise<T>,
     callback: (value: T) => void,
@@ -203,7 +240,7 @@ export function subscribeToUnreadNotificationCount(
 ): () => void {
     if (isNativeRuntime()) {
         return subscribeToNativeNotificationQuery(
-            () => nativeNotificationQuery(uid, { unreadOnly: true }).then((items) => items.length),
+            () => nativeUnreadNotificationCount(uid),
             callback,
             onError
         );
