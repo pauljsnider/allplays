@@ -452,6 +452,7 @@ async function deleteAccountStoragePaths({
 async function deleteAccountMediaStoragePages({
   uid,
   queries = [],
+  profilePhotoUrls = [],
   primaryBucket,
   imageBucket,
   documentIdField,
@@ -460,6 +461,15 @@ async function deleteAccountMediaStoragePages({
 }) {
   let documentsProcessed = 0;
   let pagesRead = 0;
+
+  const profilePaths = classifyAccountStoragePaths(uid, [], profilePhotoUrls);
+  await deleteAccountStoragePaths({
+    primaryBucket,
+    imageBucket,
+    primaryPaths: profilePaths.primaryPaths,
+    imagePaths: profilePaths.imagePaths,
+    maxConcurrentDeletes
+  });
 
   for (const baseQuery of queries) {
     let cursor = null;

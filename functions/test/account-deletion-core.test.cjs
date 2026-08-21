@@ -422,6 +422,36 @@ test('pages account media cleanup with deterministic cursors and bounded storage
   assert.ok(deletedPrimaryPaths.every((path) => path.includes('/user-1/')));
 });
 
+test('deletes both account profile URL sources during paginated media cleanup', async () => {
+  const deletedImagePaths = [];
+  const imageBucket = {
+    file: (storagePath) => ({
+      delete: async (options) => {
+        assert.deepEqual(options, { ignoreNotFound: true });
+        deletedImagePaths.push(storagePath);
+      }
+    })
+  };
+
+  const result = await deleteAccountMediaStoragePages({
+    uid: 'user-1',
+    queries: [],
+    profilePhotoUrls: [
+      'https://firebasestorage.googleapis.com/v0/b/game-flow-img.firebasestorage.app/o/user-photos%2Fuser-1%2Ffirestore-profile.jpg?alt=media',
+      'https://firebasestorage.googleapis.com/v0/b/game-flow-img.firebasestorage.app/o/user-photos%2Fuser-1%2Fauth-profile.jpg?alt=media'
+    ],
+    primaryBucket: { file: () => ({ delete: async () => {} }) },
+    imageBucket,
+    documentIdField: 'document-id'
+  });
+
+  assert.deepEqual(result, { documentsProcessed: 0, pagesRead: 0 });
+  assert.deepEqual(deletedImagePaths, [
+    'user-photos/user-1/firestore-profile.jpg',
+    'user-photos/user-1/auth-profile.jpg'
+  ]);
+});
+
 test('treats missing account media objects as idempotent during retry cleanup', async () => {
   const documents = [{
     id: 'media-1',
@@ -791,6 +821,8 @@ test('gives the deletion worker extended runtime and automatic event retries', (
   assert.match(mediaCleanupSource, /collectionGroup\('mediaItems'\)\.where\('uploadedBy', '==', uid\)/);
   assert.match(mediaCleanupSource, /collectionGroup\('chatMessages'\)\.where\('senderId', '==', uid\)/);
   assert.match(mediaCleanupSource, /collection\('socialPosts'\)\.where\('authorId', '==', uid\)/);
+  assert.match(mediaCleanupSource, /userDoc\.data\(\)\?\.photoUrl/);
+  assert.match(mediaCleanupSource, /authUser\?\.photoURL/);
   assert.doesNotMatch(mediaCleanupSource, /\.get\(\)/);
   assert.match(functionsSource, /deleteAccountMediaStoragePages\([\s\S]*FieldPath\.documentId\(\)/);
   assert.match(functionsSource, /deleteAccountQuery[\s\S]*firestore\.recursiveDelete\(docSnapshot\.ref\)/);

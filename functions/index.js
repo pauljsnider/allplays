@@ -20083,7 +20083,7 @@ async function deleteAccountQuery(query) {
   }
 }
 
-async function deleteAccountStorage(uid, mediaQueries) {
+async function deleteAccountStorage(uid, mediaQueries, profilePhotoUrls = []) {
   const primaryBucket = admin.storage().bucket();
   const imageBucket = admin.storage().bucket(
     process.env.IMAGE_STORAGE_BUCKET || 'game-flow-img.firebasestorage.app'
@@ -20099,6 +20099,7 @@ async function deleteAccountStorage(uid, mediaQueries) {
   await deleteAccountMediaStoragePages({
     uid,
     queries: mediaQueries,
+    profilePhotoUrls,
     primaryBucket,
     imageBucket,
     documentIdField: admin.firestore.FieldPath.documentId()
@@ -20344,6 +20345,9 @@ exports.processAccountDeletionRequest = functions
         firestore.collectionGroup('mediaItems').where('uploadedBy', '==', uid),
         firestore.collectionGroup('chatMessages').where('senderId', '==', uid),
         firestore.collection('socialPosts').where('authorId', '==', uid)
+      ], [
+        userDoc.data()?.photoUrl,
+        authUser?.photoURL
       ]);
       await scrubAccountTeamGrants(uid, ownerEmail, userDoc.data() || {});
       await scrubAccountChatConversationMembership(uid, ownerEmail);
