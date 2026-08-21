@@ -62,10 +62,11 @@ describe('team pass UI helpers', () => {
         expect(getTeamPassAccess({ uid: 'owner-1' }, TEAM).canPurchase).toBe(true);
     });
 
-    it('keeps parents and fans in read-only mode without staff metadata controls', () => {
+    it('keeps confirmed parents non-staff while allowing Team Pass purchase', () => {
         expect(getTeamPassAccess({ uid: 'parent-1', parentOf: [{ teamId: 'team-1', playerId: 'p1' }] }, TEAM)).toMatchObject({
             isStaff: false,
-            canReadStatus: false,
+            canPurchase: true,
+            canReadStatus: true,
             label: 'Team member access',
             mode: 'readonly'
         });
@@ -77,6 +78,22 @@ describe('team pass UI helpers', () => {
             label: 'Read-only preview',
             mode: 'readonly'
         });
+    });
+
+    it('shows the inactive-pass CTA only for a confirmed parent associated with the team', () => {
+        const eligibleParentAccess = getTeamPassAccess({ uid: 'parent-1', parentTeamIds: ['team-1'] }, TEAM);
+        const unrelatedParentAccess = getTeamPassAccess({ uid: 'parent-2', parentTeamIds: ['team-2'] }, TEAM);
+        const fanAccess = getTeamPassAccess({ uid: 'fan-1', email: 'fan@example.com' }, TEAM);
+        const inactivePass = { status: 'missing' };
+
+        expect(eligibleParentAccess).toMatchObject({ isStaff: false, canPurchase: true, canReadStatus: true });
+        expect(shouldShowTeamPassCheckout({ access: eligibleParentAccess, pass: inactivePass })).toBe(true);
+        expect(buildTeamPassMarkup({ team: TEAM, access: eligibleParentAccess, pass: inactivePass })).toContain('Buy Team Pass');
+
+        expect(unrelatedParentAccess.canPurchase).toBe(false);
+        expect(shouldShowTeamPassCheckout({ access: unrelatedParentAccess, pass: inactivePass })).toBe(false);
+        expect(fanAccess.canPurchase).toBe(false);
+        expect(shouldShowTeamPassCheckout({ access: fanAccess, pass: inactivePass })).toBe(false);
     });
 
     it.each([
