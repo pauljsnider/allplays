@@ -5,7 +5,7 @@ import {
     assertSucceeds,
     initializeTestEnvironment
 } from '@firebase/rules-unit-testing';
-import { doc, getDoc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
+import { deleteField, doc, getDoc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 
 const rules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
 const trustedPhoto = 'https://lh3.googleusercontent.com/a/trusted-photo';
@@ -69,6 +69,12 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('stored image URL rules en
                 createdBy: 'owner-1',
                 title: 'Legacy drill',
                 publishedToCommunity: false,
+                youtubeUrl: 'javascript:alert(1)',
+                attribution: {
+                    source: 'Legacy source',
+                    license: '',
+                    url: '//legacy.example/source'
+                },
                 diagramUrls: ['javascript:alert(1)', attackerFirebaseDiagram, 'https://legacy.example/diagram.png']
             });
         });
@@ -278,11 +284,15 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('stored image URL rules en
         await assertFails(updateDoc(drillRef, { 'attribution.url': '//unsafe.example.test/source' }));
     });
 
-    it('preserves unrelated legacy updates and removal-only cleanup without admitting new unsafe URLs', async () => {
+    it('preserves unrelated legacy updates and incremental URL cleanup without admitting new unsafe URLs', async () => {
         const db = ownerDb();
         const legacyRef = doc(db, 'drillLibrary/legacy-drill');
 
         await assertSucceeds(updateDoc(legacyRef, { title: 'Legacy drill renamed' }));
+        await assertSucceeds(updateDoc(legacyRef, { youtubeUrl: deleteField() }));
+        await assertSucceeds(updateDoc(legacyRef, { 'attribution.url': deleteField() }));
+        await assertFails(updateDoc(legacyRef, { youtubeUrl: 'data:text/html,unsafe' }));
+        await assertFails(updateDoc(legacyRef, { 'attribution.url': 'javascript:alert(1)' }));
         await assertSucceeds(updateDoc(legacyRef, { diagramUrls: ['https://legacy.example/diagram.png'] }));
         await assertFails(updateDoc(legacyRef, {
             diagramUrls: Array(5).fill('https://legacy.example/diagram.png')

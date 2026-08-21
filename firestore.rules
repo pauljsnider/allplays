@@ -2407,6 +2407,20 @@ service cloud.firestore {
               (attribution is map && isNullableDrillExternalUrl(attribution.get('url', null))));
     }
 
+    function hasSafeDrillExternalUrlUpdate() {
+      let affectedKeys = request.resource.data.diff(resource.data).affectedKeys();
+      let existingAttribution = resource.data.get('attribution', null);
+      let nextAttribution = request.resource.data.get('attribution', null);
+      return (!affectedKeys.hasAny(['youtubeUrl']) ||
+              isNullableDrillExternalUrl(request.resource.data.get('youtubeUrl', null))) &&
+             (!affectedKeys.hasAny(['attribution']) ||
+              nextAttribution == null ||
+              (nextAttribution is map &&
+               (isNullableDrillExternalUrl(nextAttribution.get('url', null)) ||
+                (existingAttribution is map &&
+                 nextAttribution.get('url', null) == existingAttribution.get('url', null)))));
+    }
+
     function hasSafeDrillDiagramUrlUpdate() {
       let affectedKeys = request.resource.data.diff(resource.data).affectedKeys();
       let existingDiagramUrls = resource.data.get('diagramUrls', []);
@@ -3276,7 +3290,7 @@ service cloud.firestore {
       // Update: global admin for community, team owner/admin for custom
       allow update: if isVerifiedForSensitiveWrite() &&
                       hasSafeDrillDiagramUrlUpdate() &&
-                      hasValidDrillExternalUrls(request.resource.data) &&
+                      hasSafeDrillExternalUrlUpdate() &&
                       (
                         (resource.data.source == 'community' && isGlobalAdmin()) ||
                         (

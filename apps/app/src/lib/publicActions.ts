@@ -34,7 +34,11 @@ function appendUrlToShareText(text: string, url: string) {
 export async function openPublicUrl(url: string) {
   if (!url) return;
   const candidate = String(url).trim();
-  if (!candidate || /[\u0000-\u001f\u007f]/.test(candidate)) {
+  const hasControlCharacter = [...candidate].some((character) => {
+    const code = character.charCodeAt(0);
+    return code <= 31 || code === 127;
+  });
+  if (!candidate || hasControlCharacter) {
     throw new Error('Unsupported URL scheme.');
   }
 

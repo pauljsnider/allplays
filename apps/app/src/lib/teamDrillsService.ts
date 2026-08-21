@@ -76,7 +76,11 @@ function normalizeString(value: unknown) {
 export function normalizeAbsoluteHttpUrl(value: unknown) {
   if (typeof value !== 'string') return null;
   const candidate = value.trim();
-  if (!candidate || /[\u0000-\u001f\u007f]/.test(candidate)) return null;
+  const hasControlCharacter = [...candidate].some((character) => {
+    const code = character.charCodeAt(0);
+    return code <= 31 || code === 127;
+  });
+  if (!candidate || hasControlCharacter) return null;
 
   try {
     const parsed = new URL(candidate);
