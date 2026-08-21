@@ -1942,6 +1942,14 @@ async function fetchManagedTeamsViaRest() {
     return { items: result.items, isPartial: result.isPartial === true };
 }
 
+function requireCompleteManagedTeamsResult(result) {
+    if (result?.isPartial !== true) return result;
+    const error = new Error('Managed team discovery returned partial results.');
+    error.code = 'managed-team-discovery-partial';
+    error.partialResult = result;
+    throw error;
+}
+
 // Cold instances of listManagedTeams have been observed taking 4-5s+ in
 // production. Rather than always waiting on the SDK callable, start an
 // authenticated REST hedge shortly after if it hasn't resolved yet, and take
@@ -1950,16 +1958,19 @@ async function fetchManagedTeamsViaRest() {
 async function raceManagedTeamsDiscovery(callPromise) {
     let hedgeTimerId;
     let hedgePromise = null;
+    const completeCallPromise = callPromise.then(requireCompleteManagedTeamsResult);
     const hedgeAfterDelay = new Promise((resolve) => {
         hedgeTimerId = setTimeout(() => {
-            hedgePromise = fetchManagedTeamsViaRest();
+            hedgePromise = fetchManagedTeamsViaRest().then(requireCompleteManagedTeamsResult);
             resolve(hedgePromise);
         }, MANAGED_TEAMS_HTTP_HEDGE_DELAY_MS);
     });
 
     try {
-        return await Promise.any([callPromise, hedgeAfterDelay]);
+        return await Promise.any([completeCallPromise, hedgeAfterDelay]);
     } catch (aggregateError) {
+        const partialError = aggregateError?.errors?.find((error) => error?.partialResult);
+        if (partialError) return partialError.partialResult;
         throw aggregateError?.errors?.[0] || aggregateError;
     } finally {
         clearTimeout(hedgeTimerId);

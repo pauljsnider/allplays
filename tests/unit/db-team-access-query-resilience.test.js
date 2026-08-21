@@ -215,6 +215,42 @@ describe('team access query resilience', () => {
     }
   });
 
+  it('keeps racing when the REST hedge is partial and the SDK callable later returns a complete result', async () => {
+    vi.useFakeTimers();
+    const originalFetch = globalThis.fetch;
+    try {
+      let resolveCallable;
+      firebaseMocks.listManagedTeams.mockReturnValue(new Promise((resolve) => {
+        resolveCallable = resolve;
+      }));
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          result: {
+            items: [{ id: 'partial-1', name: 'Incomplete team' }],
+            isPartial: true
+          }
+        })
+      });
+
+      const resultPromise = getUserTeamsWithAccess('owner-1', 'coach@example.com');
+      await vi.advanceTimersByTimeAsync(2000);
+      resolveCallable({
+        data: {
+          items: [{ id: 'owned-1', name: 'Falcons', ownerId: 'owner-1' }],
+          isPartial: false
+        }
+      });
+
+      await expect(resultPromise).resolves.toEqual([
+        { id: 'owned-1', name: 'Falcons', ownerId: 'owner-1' }
+      ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+      vi.useRealTimers();
+    }
+  });
+
   it('never fires the REST hedge when the SDK callable answers before the delay elapses', async () => {
     vi.useFakeTimers();
     const originalFetch = globalThis.fetch;
