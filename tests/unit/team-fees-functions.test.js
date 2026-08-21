@@ -448,15 +448,15 @@ describe('team fee checkout function helpers', () => {
         })).toBe(8000);
     });
 
-    it('resolves private Stripe payment refs from admin billing metadata', () => {
+    it('resolves only explicit server-fetched Stripe payment refs', () => {
         expect(getTeamFeeStripePaymentRefs({
             adminBilling: {
                 stripePaymentIntentId: 'pi_private',
                 stripeChargeId: 'ch_private'
             }
         })).toEqual({
-            paymentIntentId: 'pi_private',
-            chargeId: 'ch_private'
+            paymentIntentId: '',
+            chargeId: ''
         });
         expect(getTeamFeeStripePaymentRefs({}, [{
             stripePaymentIntentId: 'pi_from_entry'
@@ -471,11 +471,11 @@ describe('team fee checkout function helpers', () => {
             recipient: {
                 amountCents: 12500,
                 paidAmountCents: 12500,
-                refundedAmountCents: 2500,
-                adminBilling: {
-                    stripePaymentIntentId: 'pi_123',
-                    stripeChargeId: 'ch_123'
-                }
+                refundedAmountCents: 2500
+            },
+            paymentBilling: {
+                stripePaymentIntentId: 'pi_123',
+                stripeChargeId: 'ch_123'
             },
             refund: {
                 id: 're_123',
@@ -551,7 +551,9 @@ describe('team fee checkout function helpers', () => {
         expect(source).toContain("recipientRef.collection('refundIntents').doc(refundRequestId)");
         expect(source).toContain('idempotencyKey: buildTeamFeeRefundIdempotencyKey(input, refundRequestId)');
         expect(source).toContain('fetchTeamFeePaymentAdminBilling(recipientRef)');
-        expect(source).toContain('getTeamFeeStripePaymentRefs(recipient, paymentAdminBilling)');
+        expect(source).toContain('getTeamFeeStripePaymentRefs(paymentAdminBilling)');
+        expect(source).toContain('retrieveTeamFeeRefundAuthority(stripe');
+        expect(source).toContain('getTeamFeeRefundAuthorityFailure({');
         expect(source).toContain("buildTeamFeeAdminBillingRef(recipientRef, 'latest')");
         expect(source).toContain('const actualRefundAmount = Math.round(Number(refund.amount || 0));');
         expect(source).toContain("stripeRefundStatus !== 'succeeded'");
