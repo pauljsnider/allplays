@@ -284,6 +284,10 @@ async function mockSearchModules(page) {
             status: 200,
             contentType: 'application/javascript',
             body: `
+                export async function createTeamPassCheckoutForApp() {
+                    return 'https://checkout.stripe.com/c/pay/team-pass';
+                }
+
                 export async function inviteTeamAdminForApp() {
                     return { status: 'sent', email: 'coach@example.com' };
                 }

@@ -285,6 +285,10 @@ async function mockTeamsModules(page, { scenario = '', managedTeam = false, rost
             status: 200,
             contentType: 'application/javascript',
             body: `
+                export async function createTeamPassCheckoutForApp() {
+                    return 'https://checkout.stripe.com/c/pay/team-pass';
+                }
+
                 export async function inviteTeamAdminForApp() {
                     return { status: 'sent', email: 'coach@example.com' };
                 }

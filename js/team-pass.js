@@ -154,18 +154,24 @@ function compareByUpdatedAtDesc(a, b) {
 
 export function getTeamPassAccess(user, team) {
     const teamId = team?.id;
-    const isStaff = hasFullTeamAccess(user, team) || arrayIncludesTeamId(user?.coachOf, teamId);
+    const hasFullAccess = hasFullTeamAccess(user, team);
     const isConfirmedParent = arrayIncludesTeamId(user?.parentOf, teamId) || arrayIncludesTeamId(user?.parentTeamIds, teamId);
+    const canPurchase = hasFullAccess || isConfirmedParent;
+    const isStaff = hasFullAccess || arrayIncludesTeamId(user?.coachOf, teamId);
 
     if (isStaff) {
-        return { isStaff: true, canReadStatus: true, label: 'Coach/Admin access', mode: 'staff' };
+        return { isStaff: true, canPurchase, canReadStatus: true, label: 'Coach/Admin access', mode: 'staff' };
     }
 
     if (isConfirmedParent) {
-        return { isStaff: false, canReadStatus: false, label: 'Team member access', mode: 'readonly' };
+        return { isStaff: false, canPurchase: true, canReadStatus: true, label: 'Team member access', mode: 'readonly' };
     }
 
-    return { isStaff: false, canReadStatus: false, label: 'Read-only preview', mode: 'readonly' };
+    return { isStaff: false, canPurchase: false, canReadStatus: false, label: 'Read-only preview', mode: 'readonly' };
+}
+
+export function shouldShowTeamPassCheckout({ access, pass } = {}) {
+    return access?.canPurchase === true && ['missing', 'expired', 'revoked'].includes(pass?.status);
 }
 
 export function normalizeTeamPassStatus(record, { team = {}, now = new Date() } = {}) {
@@ -283,6 +289,7 @@ export function buildTeamPassMarkup({ team = {}, access = getTeamPassAccess(null
     const label = escapeTeamPassHtml(pass?.label || 'Read-only');
     const statusClasses = getStatusClasses(status);
     const showStaffMetadata = access?.isStaff;
+    const showCheckout = shouldShowTeamPassCheckout({ access, pass });
 
     return `
         <section id="team-pass" class="mb-8 bg-white rounded-2xl shadow-lg border border-primary-200 overflow-hidden">
@@ -314,7 +321,8 @@ export function buildTeamPassMarkup({ team = {}, access = getTeamPassAccess(null
                             </div>
                             ` : ''}
                         </dl>
-                        ${showStaffMetadata && status === 'missing' ? '<div class="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-800">Checkout is not available yet. Configure this Team Pass later when entitlement setup is ready.</div>' : ''}
+                        ${showCheckout ? '<div class="mt-4"><button type="button" data-team-pass-checkout class="inline-flex items-center justify-center rounded-lg bg-primary-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2">Buy Team Pass</button><p data-team-pass-checkout-feedback class="mt-2 text-xs text-red-700" aria-live="polite"></p></div>' : ''}
+                        ${showStaffMetadata && status === 'missing' && !showCheckout ? '<div class="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-800">Checkout is not available yet. Configure this Team Pass later when entitlement setup is ready.</div>' : ''}
                         ${status === 'open' ? '<div class="mt-4 rounded-lg border border-indigo-200 bg-indigo-50 p-3 text-xs font-semibold text-indigo-800">Global premium access is on. Existing entitlements stay saved for later enforcement.</div>' : ''}
                     </div>
                 </div>
@@ -323,10 +331,28 @@ export function buildTeamPassMarkup({ team = {}, access = getTeamPassAccess(null
     `;
 }
 
+export function bindTeamPassCheckoutButton(container, { team = {}, deps = {} } = {}) {
+    const button = container?.querySelector?.('[data-team-pass-checkout]');
+    if (!button) return;
+
+    button.addEventListener('click', async () => {
+        button.disabled = true;
+        const feedback = container.querySelector('[data-team-pass-checkout-feedback]');
+        try {
+            const redirect = deps.redirectToTeamPassCheckout || redirectToTeamPassCheckout;
+            await redirect({ teamId: team.id, seasonId: resolveTeamPassSeasonId(team) });
+        } catch (error) {
+            button.disabled = false;
+            if (feedback) feedback.textContent = error?.message || 'Unable to start Team Pass checkout.';
+        }
+    });
+}
+
 export async function renderTeamPassCard(container, { user, team, deps = {} } = {}) {
     if (!container) return;
     const access = getTeamPassAccess(user, team);
     container.innerHTML = buildTeamPassMarkup({ team, access, pass: { status: 'loading', label: 'Loading' } });
     const pass = await readTeamPassStatus({ team, access, deps });
     container.innerHTML = buildTeamPassMarkup({ team, access, pass });
+    bindTeamPassCheckoutButton(container, { team, deps });
 }

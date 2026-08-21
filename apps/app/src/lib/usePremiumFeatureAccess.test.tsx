@@ -70,4 +70,31 @@ describe('usePremiumFeatureAccess', () => {
       user: { uid: 'user-2' }
     }));
   });
+
+  it('reloads the same current-season entitlement when the refresh version changes', async () => {
+    serviceMocks.loadPremiumFeatureAccess
+      .mockResolvedValueOnce({ state: 'locked', reason: 'missing-valid-entitlement' })
+      .mockResolvedValueOnce({ state: 'unlocked', reason: 'valid-team-entitlement' });
+    const { result, rerender } = renderHook(
+      ({ refreshVersion }) => usePremiumFeatureAccess({
+        scope: PREMIUM_SCOPES.TEAM,
+        feature: PREMIUM_FEATURES.TEAM_ANALYTICS,
+        user: { uid: 'user-1' } as AuthUser,
+        normalAccess: true,
+        teamId: 'team-1',
+        currentSeasonId: 'summer-2100',
+        refreshVersion
+      }),
+      { initialProps: { refreshVersion: 0 } }
+    );
+
+    await waitFor(() => expect(result.current).toMatchObject({ state: 'locked' }));
+    rerender({ refreshVersion: 1 });
+    await waitFor(() => expect(result.current).toMatchObject({ state: 'unlocked' }));
+    expect(serviceMocks.loadPremiumFeatureAccess).toHaveBeenCalledTimes(2);
+    expect(serviceMocks.loadPremiumFeatureAccess).toHaveBeenLastCalledWith(expect.objectContaining({
+      teamId: 'team-1',
+      currentSeasonId: 'summer-2100'
+    }));
+  });
 });
