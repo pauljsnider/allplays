@@ -1214,14 +1214,26 @@ service cloud.firestore {
     }
 
     function hasNoPrivateTeamFeeBillingFields(data) {
-      return !data.keys().hasAny([
+      let privateFields = [
                'stripeCheckoutSessionId',
+               'checkoutSessionId',
+               'lastPaidStripeCheckoutSessionId',
                'stripePaymentIntentId',
+               'paymentIntentId',
                'stripeCustomerId',
+               'customerId',
                'stripeChargeId',
+               'chargeId',
+               'stripeLatestChargeId',
                'stripeRefundId',
                'stripeLastRefundId',
+               'refundId',
                'stripeEventId',
+               'eventId',
+               'provider',
+               'adminBilling',
+               'adminBillingEntries',
+               'receiptMetadata',
                'receiptEmail',
                'refundedBy',
                'recordedBy',
@@ -1229,7 +1241,8 @@ service cloud.firestore {
                'internalNote',
                'adminNote',
                'reason'
-             ]);
+             ];
+      return !data.keys().hasAny(privateFields);
     }
 
     function hasNoServerOwnedTeamFeeCheckoutFields(data) {
@@ -1323,21 +1336,58 @@ service cloud.firestore {
     }
 
     function hasNoIntroducedPrivateTeamFeeBillingFields() {
-      let affectedKeys = request.resource.data.diff(resource.data).affectedKeys();
-      return (!affectedKeys.hasAny(['stripeCheckoutSessionId']) || request.resource.data.get('stripeCheckoutSessionId', null) == null) &&
-             (!affectedKeys.hasAny(['stripePaymentIntentId']) || request.resource.data.get('stripePaymentIntentId', null) == null) &&
-             (!affectedKeys.hasAny(['stripeCustomerId']) || request.resource.data.get('stripeCustomerId', null) == null) &&
-             (!affectedKeys.hasAny(['stripeChargeId']) || request.resource.data.get('stripeChargeId', null) == null) &&
-             (!affectedKeys.hasAny(['stripeRefundId']) || request.resource.data.get('stripeRefundId', null) == null) &&
-             (!affectedKeys.hasAny(['stripeLastRefundId']) || request.resource.data.get('stripeLastRefundId', null) == null) &&
-             (!affectedKeys.hasAny(['stripeEventId']) || request.resource.data.get('stripeEventId', null) == null) &&
-             (!affectedKeys.hasAny(['receiptEmail']) || request.resource.data.get('receiptEmail', null) == null) &&
-             (!affectedKeys.hasAny(['refundedBy']) || request.resource.data.get('refundedBy', null) == null) &&
-             (!affectedKeys.hasAny(['recordedBy']) || request.resource.data.get('recordedBy', null) == null) &&
-             (!affectedKeys.hasAny(['latestAuditActorId']) || request.resource.data.get('latestAuditActorId', null) == null) &&
-             (!affectedKeys.hasAny(['internalNote']) || request.resource.data.get('internalNote', null) == null) &&
-             (!affectedKeys.hasAny(['adminNote']) || request.resource.data.get('adminNote', null) == null) &&
-             (!affectedKeys.hasAny(['reason']) || request.resource.data.get('reason', null) == null);
+      let privateFields = [
+        'stripeCheckoutSessionId', 'checkoutSessionId', 'lastPaidStripeCheckoutSessionId',
+        'stripePaymentIntentId', 'paymentIntentId',
+        'stripeCustomerId', 'customerId',
+        'stripeChargeId', 'chargeId', 'stripeLatestChargeId',
+        'stripeRefundId', 'stripeLastRefundId', 'refundId',
+        'stripeEventId', 'eventId', 'provider',
+        'adminBilling', 'adminBillingEntries', 'receiptMetadata',
+        'receiptEmail', 'refundedBy', 'recordedBy', 'latestAuditActorId',
+        'internalNote', 'adminNote', 'reason'
+      ];
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(privateFields);
+    }
+
+    function isClientWritableTeamFeeAdminBilling(data, teamId, batchId, recipientId) {
+      let clientFields = [
+        'type', 'teamId', 'batchId', 'recipientId', 'updatedAt',
+        'amountPaidCents', 'paidAt', 'note', 'recordedBy',
+        'amountCents', 'previousAmountDueCents', 'amountDueCents', 'reason', 'adjustedBy',
+        'refundAmountCents', 'refundType', 'refundMethod', 'methodLabel', 'canceledBy'
+      ];
+      return data.keys().hasOnly(clientFields) &&
+             data.keys().hasAll(['type', 'teamId', 'batchId', 'recipientId']) &&
+             data.type in ['offline_payment', 'balance_adjustment', 'offline_refund', 'cancellation'] &&
+             data.teamId == teamId &&
+             data.batchId == batchId &&
+             data.recipientId == recipientId &&
+             (!data.keys().hasAny(['updatedAt']) || data.updatedAt is timestamp) &&
+             (!data.keys().hasAny(['amountPaidCents']) || data.amountPaidCents is number) &&
+             (!data.keys().hasAny(['amountCents']) || data.amountCents is number) &&
+             (!data.keys().hasAny(['previousAmountDueCents']) || data.previousAmountDueCents is number) &&
+             (!data.keys().hasAny(['amountDueCents']) || data.amountDueCents is number) &&
+             (!data.keys().hasAny(['refundAmountCents']) || data.refundAmountCents is number) &&
+             (!data.keys().hasAny(['paidAt']) || data.paidAt is string || data.paidAt is timestamp) &&
+             (!data.keys().hasAny(['note']) || (data.note is string && data.note.size() <= 2000)) &&
+             (!data.keys().hasAny(['reason']) || (data.reason is string && data.reason.size() <= 2000)) &&
+             (!data.keys().hasAny(['refundType']) || data.refundType in ['full', 'partial']) &&
+             (!data.keys().hasAny(['refundMethod']) || data.refundMethod in ['cash', 'check']) &&
+             (!data.keys().hasAny(['methodLabel']) || data.methodLabel in ['Cash', 'Check']) &&
+             (!data.keys().hasAny(['recordedBy']) || data.recordedBy == null || data.recordedBy == request.auth.uid) &&
+             (!data.keys().hasAny(['adjustedBy']) || data.adjustedBy == null || data.adjustedBy == request.auth.uid) &&
+             (!data.keys().hasAny(['canceledBy']) || data.canceledBy == null || data.canceledBy == request.auth.uid);
+    }
+
+    function hasOnlyClientWritableTeamFeeAdminBillingChanges(teamId, batchId, recipientId) {
+      let clientFields = [
+        'updatedAt', 'amountPaidCents', 'paidAt', 'note', 'recordedBy',
+        'amountCents', 'previousAmountDueCents', 'amountDueCents', 'reason', 'adjustedBy',
+        'refundAmountCents', 'refundType', 'refundMethod', 'methodLabel', 'canceledBy'
+      ];
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(clientFields) &&
+             isClientWritableTeamFeeAdminBilling(request.resource.data, teamId, batchId, recipientId);
     }
 
     function isPublishedSponsor(data) {
@@ -4205,10 +4255,17 @@ service cloud.firestore {
           allow delete: if isTeamOwnerOrAdmin(teamId) &&
                            resource.data.teamId == teamId &&
                            resource.data.batchId == batchId &&
-                           hasNoServerOwnedTeamFeeCheckoutFields(resource.data);
+                           hasNoServerOwnedTeamFeeCheckoutFields(resource.data) &&
+                           hasNoPrivateTeamFeeBillingFields(resource.data);
 
           match /adminBilling/{billingId} {
-            allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);
+            allow read: if isTeamOwnerOrAdmin(teamId);
+            allow create: if isTeamOwnerOrAdmin(teamId) &&
+                             isClientWritableTeamFeeAdminBilling(request.resource.data, teamId, batchId, recipientId);
+            allow update: if isTeamOwnerOrAdmin(teamId) &&
+                             hasOnlyClientWritableTeamFeeAdminBillingChanges(teamId, batchId, recipientId);
+            allow delete: if isTeamOwnerOrAdmin(teamId) &&
+                             isClientWritableTeamFeeAdminBilling(resource.data, teamId, batchId, recipientId);
           }
 
           // Exact Stripe requests include payer identity and provider
