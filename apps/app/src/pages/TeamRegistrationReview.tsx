@@ -18,7 +18,8 @@ import {
   submitOfflineRegistration,
   type ParentRegistrationCard,
   type ParentRegistrationDetailModel,
-  type TeamRegistrationQueueModel
+  type TeamRegistrationQueueModel,
+  type TeamRegistrationRosterPlayer
 } from '../lib/parentRegistrationsService';
 import {
   calculateRegistrationFeeSnapshot,
@@ -87,6 +88,8 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
   const [selectedPaymentPlanId, setSelectedPaymentPlanId] = useState('pay_full');
   const [currentPublicCheckoutCapability, setCurrentPublicCheckoutCapability] = useState(returnPublicCheckoutCapability);
   const [queue, setQueue] = useState<TeamRegistrationQueueModel | null>(null);
+  const [rosterPlayers, setRosterPlayers] = useState<TeamRegistrationRosterPlayer[]>([]);
+  const [rosterLoading, setRosterLoading] = useState(staffReview && Boolean(teamId));
   const [selectedReviewId, setSelectedReviewId] = useState('');
   const [selectedMergePlayerId, setSelectedMergePlayerId] = useState('');
   const [lastDoc, setLastDoc] = useState<any>(null);
@@ -95,8 +98,39 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
   const [waitlistedHasMore, setWaitlistedHasMore] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const formRef = useRef<HTMLFormElement | null>(null);
+  const rosterTeamIdRef = useRef('');
+  const rosterMutationVersionRef = useRef(0);
   const cancelledCheckoutReleaseKeyRef = useRef('');
   const submissionAttemptRef = useRef<RegistrationSubmissionAttempt | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    rosterTeamIdRef.current = staffReview ? teamId : '';
+    rosterMutationVersionRef.current = 0;
+    setRosterPlayers([]);
+    setRosterLoading(staffReview && Boolean(teamId));
+    if (!staffReview || !teamId) return;
+    const mutationVersion = rosterMutationVersionRef.current;
+
+    void loadTeamRegistrationRosterPlayers(auth.user, teamId)
+      .then((players) => {
+        if (!cancelled && rosterTeamIdRef.current === teamId && rosterMutationVersionRef.current === mutationVersion) {
+          setRosterPlayers(players);
+        }
+      })
+      .catch(() => {
+        if (!cancelled && rosterTeamIdRef.current === teamId && rosterMutationVersionRef.current === mutationVersion) {
+          setRosterPlayers([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled && rosterTeamIdRef.current === teamId) setRosterLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.user, staffReview, teamId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -118,15 +152,14 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
         }
         setForm(applyRegistrationPaymentLaunchState(nextForm));
         if (staffReview) {
-          const [nextPage, waitlistedPage, rosterPlayers] = await Promise.all([
+          const [nextPage, waitlistedPage] = await Promise.all([
             loadTeamRegistrationQueuePage(teamId, formId),
-            loadTeamRegistrationQueuePage(teamId, formId, { status: 'waitlisted' }),
-            loadTeamRegistrationRosterPlayers(auth.user, teamId).catch(() => [])
+            loadTeamRegistrationQueuePage(teamId, formId, { status: 'waitlisted' })
           ]);
           if (cancelled) return;
           const nextQueue: TeamRegistrationQueueModel = {
             reviews: nextPage.reviews,
-            rosterPlayers,
+            rosterPlayers: [],
             waitlistedReviews: waitlistedPage.reviews,
             totalWaitlisted: getTotalWaitlistedCount(nextForm.registrationOptionCounts, waitlistedPage.reviews.length)
           };
@@ -387,14 +420,21 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
   };
 
   const handleApprove = async () => {
-    if (!selectedReview || saving) return;
+    if (!selectedReview || saving || rosterLoading || rosterTeamIdRef.current !== teamId) return;
     setSaving(true);
     setError('');
     setMessage('');
     try {
-      await approveTeamRegistrationForApp(auth.user, teamId, formId, selectedReview.id, {
+      const result = await approveTeamRegistrationForApp(auth.user, teamId, formId, selectedReview.id, {
         playerId: selectedMergePlayerId || undefined
       });
+      const approvedPlayerId = String(result?.playerId || '').trim();
+      if (!selectedMergePlayerId && approvedPlayerId && rosterTeamIdRef.current === teamId) {
+        rosterMutationVersionRef.current += 1;
+        setRosterPlayers((current) => current.some((player) => player.id === approvedPlayerId)
+          ? current
+          : [...current, { id: approvedPlayerId, name: selectedReview.participantName || 'Player' }]);
+      }
       setMessage('Registration approved. Roster and parent links were updated using the legacy approval flow.');
       setReloadKey((current) => current + 1);
     } catch (actionError: any) {
@@ -605,9 +645,9 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
                 {canApproveSelectedReview ? (
                   <label className="min-w-0">
                     <span className="app-label">Merge into existing roster player</span>
-                    <select className="auth-input mt-1" aria-label="Merge into existing roster player" value={selectedMergePlayerId} onChange={(event) => setSelectedMergePlayerId(event.target.value)} disabled={saving}>
-                      <option value="">Create a new roster player</option>
-                      {(queue?.rosterPlayers || []).map((player) => <option key={player.id} value={player.id}>{player.number ? `#${player.number} ` : ''}{player.name}</option>)}</select>
+                    <select className="auth-input mt-1" aria-label="Merge into existing roster player" value={selectedMergePlayerId} onChange={(event) => setSelectedMergePlayerId(event.target.value)} disabled={saving || rosterLoading || rosterTeamIdRef.current !== teamId}>
+                      <option value="">{rosterLoading || rosterTeamIdRef.current !== teamId ? 'Loading roster choices…' : 'Create a new roster player'}</option>
+                      {rosterPlayers.map((player) => <option key={player.id} value={player.id}>{player.number ? `#${player.number} ` : ''}{player.name}</option>)}</select>
                   </label>
                 ) : null}
 
@@ -623,7 +663,7 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
                       Mark accepted
                     </button>
                   ) : (
-                    <button type="button" className="primary-button" onClick={handleApprove} disabled={saving || !canApproveSelectedReview}>
+                    <button type="button" className="primary-button" onClick={handleApprove} disabled={saving || rosterLoading || rosterTeamIdRef.current !== teamId || !canApproveSelectedReview}>
                       {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <UserPlus className="h-4 w-4" aria-hidden="true" />}
                       Approve application
                     </button>
