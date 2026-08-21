@@ -19344,6 +19344,36 @@ exports.getPublicTeamGamesProjection = functions.https.onCall(async (data, conte
   });
 });
 
+async function getPublicTeamCalendarTrackingEvents(teamId) {
+  return (await scanBoundedPublicCalendarTrackingEvents(async ({ after, limit }) => {
+    let query = firestore.collection(`teams/${teamId}/games`)
+      .where('calendarEventUid', '!=', '')
+      .orderBy('calendarEventUid')
+      .orderBy(admin.firestore.FieldPath.documentId())
+      .select('calendarEventUid', 'date', 'type', 'location', 'opponent', 'title', 'visibility', 'isPrivate', 'private', 'deleted', 'status', 'liveStatus');
+    if (after) query = query.startAfter(after);
+    const snapshot = await query.limit(limit).get();
+    return {
+      documents: snapshot.docs.map((gameSnap) => ({
+        calendarEventUid: normalizeFamilyShareText(gameSnap.data()?.calendarEventUid),
+        date: gameSnap.data()?.date || null,
+        type: normalizeFamilyShareText(gameSnap.data()?.type),
+        location: normalizeFamilyShareText(gameSnap.data()?.location),
+        opponent: normalizeFamilyShareText(gameSnap.data()?.opponent),
+        title: normalizeFamilyShareText(gameSnap.data()?.title),
+        visibility: normalizeFamilyShareText(gameSnap.data()?.visibility),
+        isPrivate: gameSnap.data()?.isPrivate === true,
+        private: gameSnap.data()?.private === true,
+        deleted: gameSnap.data()?.deleted === true,
+        status: normalizeFamilyShareText(gameSnap.data()?.status),
+        liveStatus: normalizeFamilyShareText(gameSnap.data()?.liveStatus)
+      })),
+      nextCursor: snapshot.docs[snapshot.docs.length - 1] || null
+    };
+  }, { maxDocuments: PUBLIC_TEAM_API_MAX_GAME_SCAN_DOCUMENTS }))
+    .filter(canTrackedCalendarEventSuppressPublicProjection);
+}
+
 exports.getPublicTeamCalendarProjection = functions
   .runWith({ timeoutSeconds: 30, memory: '256MB' })
   .https.onCall(async (data, context = {}) => {
@@ -19386,31 +19416,7 @@ exports.getPublicTeamCalendarProjection = functions
       };
     }
 
-    const trackedCalendarEvents = (await scanBoundedPublicCalendarTrackingEvents(async ({ after, limit }) => {
-      let query = firestore.collection(`teams/${teamId}/games`)
-        .orderBy(admin.firestore.FieldPath.documentId())
-        .select('calendarEventUid', 'date', 'type', 'location', 'opponent', 'title', 'visibility', 'isPrivate', 'private', 'deleted', 'status', 'liveStatus');
-      if (after) query = query.startAfter(after);
-      const snapshot = await query.limit(limit).get();
-      return {
-        documents: snapshot.docs.map((gameSnap) => ({
-          calendarEventUid: normalizeFamilyShareText(gameSnap.data()?.calendarEventUid),
-          date: gameSnap.data()?.date || null,
-          type: normalizeFamilyShareText(gameSnap.data()?.type),
-          location: normalizeFamilyShareText(gameSnap.data()?.location),
-          opponent: normalizeFamilyShareText(gameSnap.data()?.opponent),
-          title: normalizeFamilyShareText(gameSnap.data()?.title),
-          visibility: normalizeFamilyShareText(gameSnap.data()?.visibility),
-          isPrivate: gameSnap.data()?.isPrivate === true,
-          private: gameSnap.data()?.private === true,
-          deleted: gameSnap.data()?.deleted === true,
-          status: normalizeFamilyShareText(gameSnap.data()?.status),
-          liveStatus: normalizeFamilyShareText(gameSnap.data()?.liveStatus)
-        })),
-        nextCursor: snapshot.docs[snapshot.docs.length - 1] || null
-      };
-    }, { maxDocuments: PUBLIC_TEAM_API_MAX_GAME_SCAN_DOCUMENTS }))
-      .filter(canTrackedCalendarEventSuppressPublicProjection);
+    const trackedCalendarEvents = await getPublicTeamCalendarTrackingEvents(teamId);
 
     const settled = await Promise.allSettled(calendarUrls.map((url, index) => (
       fetchFamilyShareCalendarEvents({
