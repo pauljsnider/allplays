@@ -283,6 +283,10 @@ function hrefs(container) {
 
 beforeEach(() => {
     vi.clearAllMocks();
+    teamDetailMocks.loadParentTeamDetail.mockReset();
+    teamDetailMocks.loadParentTeamDetailBootstrap.mockReset();
+    teamDetailMocks.loadTeamDetailInsights.mockReset();
+    teamDetailMocks.loadTeamDetailSponsors.mockReset();
     window.scrollTo = vi.fn();
     window.requestAnimationFrame = (callback) => {
         callback(0);
@@ -350,8 +354,10 @@ describe('React app TeamDetail page', () => {
     it('loads parent-facing team.html features with team and player photos', async () => {
         const { container } = await renderTeamDetail();
 
-        expect(teamDetailMocks.loadParentTeamDetailBootstrap).not.toHaveBeenCalled();
-        expect(teamDetailMocks.loadParentTeamDetail).toHaveBeenCalledWith('team-1', auth.user, { includeDeferredData: false });
+        expect(teamDetailMocks.loadParentTeamDetailBootstrap).toHaveBeenCalledTimes(1);
+        expect(teamDetailMocks.loadParentTeamDetailBootstrap).toHaveBeenCalledWith('team-1', auth.user);
+        expect(teamDetailMocks.loadParentTeamDetail).not.toHaveBeenCalled();
+        expect(teamDetailMocks.loadTeamDetailInsights).not.toHaveBeenCalled();
         expect(container.textContent).toContain('Bears');
         expect(container.querySelector('img[src="https://img.example.test/team.png"]')).toBeTruthy();
         expect(container.textContent).toContain('Season record (2100)');
@@ -373,6 +379,8 @@ describe('React app TeamDetail page', () => {
         expect(container.textContent).toContain('88');
 
         await clickButton(container, 'More');
+        await waitFor(() => expect(teamDetailMocks.loadParentTeamDetail).toHaveBeenCalledTimes(1));
+        expect(teamDetailMocks.loadParentTeamDetail).toHaveBeenCalledWith('team-1', auth.user, { includeDeferredData: false });
         expect(teamDetailMocks.loadTeamDetailSponsors).toHaveBeenCalledTimes(1);
         expect(teamDetailMocks.loadTeamDetailSponsors).toHaveBeenCalledWith('team-1');
         expect(container.textContent).toContain('Website team page');
@@ -648,24 +656,25 @@ describe('React app TeamDetail page', () => {
     it('loads deferred insights and sponsors once, then reuses them across tab switches', async () => {
         const { container } = await renderTeamDetail();
 
-        expect(teamDetailMocks.loadParentTeamDetail).toHaveBeenCalledTimes(1);
-        expect(teamDetailMocks.loadTeamDetailInsights).toHaveBeenCalledTimes(1);
+        expect(teamDetailMocks.loadParentTeamDetailBootstrap).toHaveBeenCalledTimes(1);
+        expect(teamDetailMocks.loadParentTeamDetail).not.toHaveBeenCalled();
+        expect(teamDetailMocks.loadTeamDetailInsights).not.toHaveBeenCalled();
         expect(teamDetailMocks.loadTeamDetailSponsors).not.toHaveBeenCalled();
 
         await clickButton(container, 'Insights');
-        expect(teamDetailMocks.loadParentTeamDetail).toHaveBeenCalledTimes(1);
-        expect(teamDetailMocks.loadTeamDetailInsights).toHaveBeenCalledTimes(1);
-        expect(container.textContent).toContain('Bring ball');
+        expect(teamDetailMocks.loadParentTeamDetail).not.toHaveBeenCalled();
+        await waitFor(() => expect(teamDetailMocks.loadTeamDetailInsights).toHaveBeenCalledTimes(1));
+        await waitFor(() => expect(container.textContent).toContain('Bring ball'));
 
         await clickButton(container, 'Overview');
         await clickButton(container, 'Insights');
-        expect(teamDetailMocks.loadParentTeamDetail).toHaveBeenCalledTimes(1);
+        expect(teamDetailMocks.loadParentTeamDetail).not.toHaveBeenCalled();
         expect(teamDetailMocks.loadTeamDetailInsights).toHaveBeenCalledTimes(1);
 
         await clickButton(container, 'More');
-        expect(teamDetailMocks.loadParentTeamDetail).toHaveBeenCalledTimes(1);
-        expect(teamDetailMocks.loadTeamDetailSponsors).toHaveBeenCalledTimes(1);
-        expect(container.textContent).toContain('Pizza Place');
+        await waitFor(() => expect(teamDetailMocks.loadParentTeamDetail).toHaveBeenCalledTimes(1));
+        await waitFor(() => expect(teamDetailMocks.loadTeamDetailSponsors).toHaveBeenCalledTimes(1));
+        await waitFor(() => expect(container.textContent).toContain('Pizza Place'));
 
         await clickButton(container, 'Schedule');
         await clickButton(container, 'More');
@@ -686,7 +695,7 @@ describe('React app TeamDetail page', () => {
         const { container } = await renderTeamDetail();
 
         await clickButton(container, 'Insights');
-        expect(container.textContent).toContain('Loading player tracking…');
+        expect(container.textContent).toMatch(/Loading (?:insights|player tracking)…/);
 
         await act(async () => {
             resolveInsights(deferredInsightsModel());
@@ -708,17 +717,22 @@ describe('React app TeamDetail page', () => {
         expect(container.textContent).not.toContain('Loading local attractions and sponsors…');
     });
 
-    it('retries a failed background insights prefetch when the user opens Insights', async () => {
+    it('retries a failed insights load when the user reopens Insights', async () => {
         teamDetailMocks.loadTeamDetailInsights
             .mockRejectedValueOnce(new Error('Prefetch offline'))
             .mockResolvedValueOnce(deferredInsightsModel());
 
         const { container } = await renderTeamDetail();
 
-        expect(teamDetailMocks.loadTeamDetailInsights).toHaveBeenCalledTimes(1);
+        expect(teamDetailMocks.loadTeamDetailInsights).not.toHaveBeenCalled();
         await clickButton(container, 'Insights');
-        expect(teamDetailMocks.loadTeamDetailInsights).toHaveBeenCalledTimes(2);
-        expect(container.textContent).toContain('Bring ball');
+        await waitFor(() => expect(teamDetailMocks.loadTeamDetailInsights).toHaveBeenCalledTimes(1));
+        await waitFor(() => expect(container.textContent).toContain('Prefetch offline'));
+
+        await clickButton(container, 'Overview');
+        await clickButton(container, 'Insights');
+        await waitFor(() => expect(teamDetailMocks.loadTeamDetailInsights).toHaveBeenCalledTimes(2));
+        await waitFor(() => expect(container.textContent).toContain('Bring ball'));
         expect(container.textContent).not.toContain('Prefetch offline');
     });
 
@@ -731,16 +745,16 @@ describe('React app TeamDetail page', () => {
         expect(container.textContent).toContain('Season record (2100)');
 
         await clickButton(container, 'Insights');
+        await waitFor(() => expect(container.textContent).toContain('Insights offline'));
         expect(container.textContent).toContain('Player checklist unavailable');
-        expect(container.textContent).toContain('Insights offline');
         expect(container.textContent).toContain('Leaderboards unavailable');
 
         await clickButton(container, 'Overview');
         expect(container.textContent).toContain('Season record (2100)');
 
         await clickButton(container, 'More');
+        await waitFor(() => expect(container.textContent).toContain('Sponsors offline'));
         expect(container.textContent).toContain('Sponsors unavailable');
-        expect(container.textContent).toContain('Sponsors offline');
         expect(container.textContent).toContain('Website team page');
     });
 
@@ -855,11 +869,11 @@ describe('React app TeamDetail page', () => {
         expect(container.textContent).toContain('Missing config (cfg-deleted)');
 
         await clickButton(container, 'View config');
+        await waitFor(() => expect(container.textContent).toContain('Missing config assignments'));
         expect(container.textContent).toContain('Stat tracker configs');
         expect(container.textContent).toContain('Basketball tracker routing');
         expect(container.textContent).toContain('4 columns · PTS, REB, AST +1');
         expect(container.textContent).toContain('vs. Falcons · Tue, Jun 1');
-        expect(container.textContent).toContain('Missing config assignments');
 
         teamDetailMocks.loadParentTeamDetailBootstrap.mockResolvedValueOnce(model());
         teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(model());
@@ -914,22 +928,22 @@ describe('React app TeamDetail page', () => {
         await clickButton(container, 'Schedule');
         expect(container.textContent).toContain('No team events found.');
         await clickButton(container, 'Roster');
-        expect(container.textContent).toContain('No players have been added yet.');
+        await waitFor(() => expect(container.textContent).toContain('No players have been added yet.'));
         await clickButton(container, 'Insights');
-        expect(container.textContent).toContain('No parent-visible tracking items for your players yet.');
+        await waitFor(() => expect(container.textContent).toContain('No parent-visible tracking items for your players yet.'));
         expect(container.textContent).toContain('Leaderboards appear after public stat configs and completed tracked games exist.');
         await clickButton(container, 'More');
-        expect(container.textContent).toContain('Team links');
+        await waitFor(() => expect(container.textContent).toContain('Team links'));
         expect(container.textContent).not.toContain('Registration provider');
         expect(container.textContent).not.toContain('Local attractions and sponsors');
         expect(container.textContent).not.toContain('Loading team');
     });
 
     it('shows the team unavailable state with a route back to teams', async () => {
-        teamDetailMocks.loadParentTeamDetail.mockRejectedValueOnce(new Error('No team access'));
+        teamDetailMocks.loadParentTeamDetailBootstrap.mockRejectedValueOnce(new Error('No team access'));
         const { container } = await renderTeamDetail();
 
-        expect(container.textContent).toContain('Team unavailable');
+        await waitFor(() => expect(container.textContent).toContain('Team unavailable'));
         expect(container.textContent).toContain('No team access');
         expect(hrefs(container)).toContain('/teams');
         expect(container.textContent).not.toContain('Loading team');
