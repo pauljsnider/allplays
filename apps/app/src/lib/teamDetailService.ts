@@ -2049,6 +2049,15 @@ export async function loadParentTeamDetailBootstrap(teamId: string, user: AuthUs
 
   const accessUser = await hydrateTeamDetailAccessUser(user, teamId, players);
   const linkedPlayerIds = getLinkedPlayerIds(accessUser, teamId, players);
+  const overviewSchedule = await loadTeamDetailOverviewSchedule(teamId, cleanString(team?.name) || teamId, accessUser)
+    .catch((error) => {
+      logger.warn('Unable to merge imported calendar events into team overview.', {
+        operation: 'team-overview-schedule-load',
+        teamId,
+        error
+      });
+      return null;
+    });
 
   return buildTeamDetailModel({
     teamId,
@@ -2056,6 +2065,7 @@ export async function loadParentTeamDetailBootstrap(teamId: string, user: AuthUs
     players,
     games: [],
     configs: [],
+    scheduleEvents: accessUser?.uid && overviewSchedule ? overviewSchedule : undefined,
     user: accessUser,
     linkedPlayerIds,
     seasonStatsByPlayerId: {},

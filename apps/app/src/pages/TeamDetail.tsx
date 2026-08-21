@@ -209,13 +209,10 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
       setLoading(true);
       setError(null);
       try {
-        const shouldHydrateOverviewCollections = activeTabRef.current === 'overview' || activeTabRef.current === 'insights';
-        const nextModel = shouldHydrateOverviewCollections
-          ? await loadParentTeamDetail(teamId, authUserRef.current, { includeDeferredData: false })
-          : await loadParentTeamDetailBootstrap(teamId, authUserRef.current);
+        const nextModel = await loadParentTeamDetailBootstrap(teamId, authUserRef.current);
         if (!cancelled) {
           setModel(nextModel);
-          setDetailCollectionsLoaded(shouldHydrateOverviewCollections);
+          setDetailCollectionsLoaded(false);
           setDetailCollectionsLoading(false);
           setDetailCollectionsError('');
           setDetailCollectionsReloadVersion(0);
@@ -332,7 +329,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
   useEffect(() => {
     let cancelled = false;
     async function loadInsightsForTab() {
-      if (!teamId || !hasTeamModel || insightsLoaded || insightsLoadingRef.current) return;
+      if (!teamId || activeTab !== 'insights' || !hasTeamModel || insightsLoaded || insightsLoadingRef.current) return;
       setInsightsLoading(true);
       setInsightsError('');
       try {
@@ -352,7 +349,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [authUserId, hasTeamModel, insightsLoaded, insightsReloadVersion, teamId]);
+  }, [activeTab, authUserId, hasTeamModel, insightsLoaded, insightsReloadVersion, teamId]);
 
   useEffect(() => {
     let cancelled = false;
