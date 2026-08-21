@@ -361,6 +361,21 @@ describe('TeamDrills', () => {
     expect(teamDrillsServiceMocks.loadTeamDrillLibraryPage).toHaveBeenCalledTimes(1);
   });
 
+  it('reloads favorites with the current user when the signed-in user changes', async () => {
+    const initialAuth: AuthState = { ...auth, user: { ...auth.user! } as AuthState['user'] };
+    const nextAuth: AuthState = { ...auth, user: { ...auth.user!, uid: 'coach-2' } as AuthState['user'] };
+    const view = renderTeamDrills(initialAuth);
+
+    expect(await screen.findByText('Rondo 4v2')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Favorites (1)' }));
+    await waitFor(() => expect(teamDrillsServiceMocks.loadFavoriteDrills).toHaveBeenCalledTimes(1));
+
+    rerenderTeamDrills(view, nextAuth);
+
+    await waitFor(() => expect(teamDrillsServiceMocks.loadFavoriteDrills).toHaveBeenCalledTimes(2));
+    expect(teamDrillsServiceMocks.loadFavoriteDrills).toHaveBeenLastCalledWith('team-1', nextAuth.user);
+  });
+
   it('generates an editable AI coach proposal and waits for acceptance before saving the timeline', async () => {
     renderTeamDrills();
 

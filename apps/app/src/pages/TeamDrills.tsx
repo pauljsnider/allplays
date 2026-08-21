@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { Link, Navigate, useParams, useSearchParams } from 'react-router-dom';
 import { ChevronLeft, ExternalLink, Heart, Loader2, Save, Search, Shield, Sparkles } from 'lucide-react';
 import { DRILL_LEVELS, DRILL_TYPES, DRILL_TYPE_COLORS } from '../lib/adapters/legacyDrills';
@@ -60,11 +60,16 @@ export function TeamDrills({ auth }: { auth: AuthState }) {
   const [coachSaving, setCoachSaving] = useState(false);
   const [coachStatus, setCoachStatus] = useState('');
   const { error: loadError, clearError: clearLoadError, run: runLoadOperation } = useAppAsyncOperation();
+  const authUserRef = useRef(auth.user);
   const authAccessKey = [
     auth.user?.uid || '',
     String(auth.user?.email || '').trim().toLowerCase(),
     auth.user?.isAdmin === true ? 'admin' : 'user'
   ].join('|');
+
+  useEffect(() => {
+    authUserRef.current = auth.user;
+  }, [auth.user]);
 
   useEffect(() => {
     let cancelled = false;
@@ -74,7 +79,7 @@ export function TeamDrills({ auth }: { auth: AuthState }) {
       setLoading(true);
       setError('');
       await runLoadOperation(
-        () => loadTeamDrillLibraryPage(teamId, auth.user, {
+        () => loadTeamDrillLibraryPage(teamId, authUserRef.current, {
           searchText,
           type: typeFilter,
           level: levelFilter
@@ -110,7 +115,7 @@ export function TeamDrills({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [authAccessKey, levelFilter, searchText, teamId, typeFilter]);
+  }, [authAccessKey, levelFilter, runLoadOperation, searchText, teamId, typeFilter]);
 
   useEffect(() => {
     let cancelled = false;
@@ -120,7 +125,7 @@ export function TeamDrills({ auth }: { auth: AuthState }) {
       setFavoritesLoading(true);
       setError('');
       try {
-        const model = await loadFavoriteDrills(teamId, auth.user);
+        const model = await loadFavoriteDrills(teamId, authUserRef.current);
         if (cancelled) return;
         setFavoriteIds(model.favoriteIds);
         setFavoriteDrills(model.drills);
