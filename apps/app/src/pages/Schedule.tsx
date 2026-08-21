@@ -70,6 +70,7 @@ import {
   getBulkRsvpResultMessage,
   getNeededBulkRsvpEventKeys,
   groupBulkRsvpSubmissions,
+  maxBulkRsvpEvents,
   runBulkRsvpSubmissionQueue
 } from '../lib/bulkRsvp';
 
@@ -240,6 +241,10 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const [staffToolsRequested, setStaffToolsRequested] = useState(false);
   const [bulkRsvpOpen, setBulkRsvpOpen] = useState(false);
   const [bulkRsvpResult, setBulkRsvpResult] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
+  const [bulkRsvpFullScopeRequested, setBulkRsvpFullScopeRequested] = useState(false);
+  const [bulkRsvpFullScopePending, setBulkRsvpFullScopePending] = useState(false);
+  const [bulkRsvpFullScopeKey, setBulkRsvpFullScopeKey] = useState('');
+  const [bulkRsvpOpenRequested, setBulkRsvpOpenRequested] = useState(false);
   const [rsvpHydrationPending, setRsvpHydrationPending] = useState(true);
   const [loadedScheduleUserId, setLoadedScheduleUserId] = useState<string | null>(null);
   const [pastHistoryHasMore, setPastHistoryHasMore] = useState(false);
@@ -260,6 +265,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const inFlightRsvpEventKeysRef = useRef(new Map<string, string>());
   const activeRsvpHydrationCountsRef = useRef(new Map<string, number>());
   const bulkRsvpQueryHandledRef = useRef(false);
+  const bulkRsvpScopeRef = useRef<{ key: string; eventKeys: string[] }>({ key: '', eventKeys: [] });
   const pendingRsvpEventKeysRef = useRef(new Set<string>());
   const exportPendingRef = useRef(false);
   const updateScheduleEvents = (updater: (current: ParentScheduleEvent[]) => ParentScheduleEvent[]) => {
@@ -342,12 +348,13 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const hydrateScheduleRsvpsInBackground = (
     result: { children: ParentScheduleChild[]; events: ParentScheduleEvent[] },
     initialHydration = false,
-    visibleGroupLimit = upcomingListPageSize
+    visibleGroupLimit = upcomingListPageSize,
+    fullScope = false
   ) => {
     const user = auth.user;
     if (!user) {
       setRsvpHydrationPending(false);
-      return;
+      return Promise.resolve(result);
     }
     const hydrationScopeKey = `${user.uid}::${selectedTeamId}::${selectedPlayerId}`;
     if (lastRsvpHydrationScopeRef.current !== hydrationScopeKey) {
@@ -364,7 +371,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     });
     const candidateEvents = getInitialBulkRsvpCandidates(
       scopedEvents,
-      initialHydration ? upcomingListPageSize : visibleGroupLimit
+      fullScope ? maxBulkRsvpEvents : (initialHydration ? upcomingListPageSize : visibleGroupLimit)
     );
     const rsvpEvents = candidateEvents.filter((event) => {
       if (
@@ -375,7 +382,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     });
     if (!rsvpEvents.length) {
       setRsvpHydrationPending((activeRsvpHydrationCountsRef.current.get(hydrationRequestScopeKey) || 0) > 0);
-      return;
+      return Promise.resolve(result);
     }
     const reservedEventKeys = rsvpEvents.map((event) => event.eventKey);
     reservedEventKeys.forEach((eventKey) => {
@@ -408,7 +415,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
       }));
     };
 
-    void (async () => {
+    const hydrationPromise = (async () => {
       try {
         const hydrated = await hydrateParentScheduleRsvps(
           { children: result.children, events: rsvpEvents },
@@ -423,8 +430,10 @@ export function Schedule({ auth }: { auth: AuthState }) {
           reservedEventKeys.forEach((eventKey) => hydratedRsvpEventKeysRef.current.add(eventKey));
           mergeHydratedEvents(hydrated.events);
         }
+        return hydrated;
       } catch (error) {
         logger.warn('Unable to hydrate schedule RSVPs in the background.', { error });
+        return null;
       } finally {
         reservedEventKeys.forEach((eventKey) => {
           if (inFlightRsvpEventKeysRef.current.get(eventKey) === hydrationRequestScopeKey) {
@@ -449,6 +458,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
         }
       }
     })();
+    return hydrationPromise;
   };
 
   const buildPastScheduleRangeByTeam = () => {
@@ -563,6 +573,12 @@ export function Schedule({ auth }: { auth: AuthState }) {
 
   const refreshSchedule = async (force = false) => {
     if (!auth.user) return null;
+    rsvpHydrationScopeVersionRef.current += 1;
+    lastRsvpHydrationScopeRef.current = '';
+    hydratedRsvpEventKeysRef.current.clear();
+    inFlightRsvpEventKeysRef.current.clear();
+    activeRsvpHydrationCountsRef.current.clear();
+    setBulkRsvpFullScopeKey('');
     clearScheduleReadError();
     setScheduleLoadError(null);
     setStatusMessage(null);
@@ -857,6 +873,54 @@ export function Schedule({ auth }: { auth: AuthState }) {
     [allBulkRsvpCandidates]
   );
   const unavailableBulkRsvpCount = allBulkRsvpCandidates.length - bulkRsvpCandidates.length;
+  const bulkRsvpCandidateKey = JSON.stringify(allBulkRsvpCandidates.map((event) => event.eventKey));
+  const bulkRsvpScopeKey = `${auth.user?.uid || ''}::${selectedTeamId}::${selectedPlayerId}::${scheduleRefreshVersionRef.current}::${bulkRsvpCandidateKey}`;
+  bulkRsvpScopeRef.current = {
+    key: bulkRsvpScopeKey,
+    eventKeys: allBulkRsvpCandidates.map((event) => event.eventKey)
+  };
+  useEffect(() => {
+    if (!bulkRsvpFullScopeRequested || bulkRsvpFullScopePending || !hasLoadedSchedule || scheduleReadLoading) return;
+    const requestedScopeKey = bulkRsvpScopeKey;
+    const requestedScheduleGeneration = scheduleRefreshVersionRef.current;
+    setBulkRsvpFullScopePending(true);
+    void hydrateScheduleRsvpsInBackground({
+      children: childrenRef.current,
+      events: eventsRef.current
+    }, false, maxBulkRsvpEvents, true).then((hydrated) => {
+      const currentScope = bulkRsvpScopeRef.current;
+      if (
+        scheduleRefreshVersionRef.current !== requestedScheduleGeneration
+        || currentScope.key !== requestedScopeKey
+      ) {
+        setBulkRsvpFullScopeRequested(false);
+        setBulkRsvpOpenRequested(false);
+        return;
+      }
+      const currentEventsByKey = new Map(eventsRef.current.map((event) => [event.eventKey, event]));
+      const hydratedCandidates = currentScope.eventKeys
+        .map((eventKey) => currentEventsByKey.get(eventKey))
+        .filter((event): event is ParentScheduleEvent => Boolean(event));
+      const fullScopeComplete = hydrated !== null
+        && hydratedCandidates.length === currentScope.eventKeys.length
+        && getBulkRsvpNoteReadyCandidates(hydratedCandidates).length === hydratedCandidates.length;
+      if (!fullScopeComplete) {
+        setBulkRsvpFullScopeRequested(false);
+        setBulkRsvpOpenRequested(false);
+        return;
+      }
+      setBulkRsvpFullScopeKey(currentScope.key);
+      setBulkRsvpFullScopeRequested(false);
+      if (bulkRsvpOpenRequested && allBulkRsvpCandidates.length >= 2) {
+        setBulkRsvpOpenRequested(false);
+        setBulkRsvpResult(null);
+        setBulkRsvpOpen(true);
+      }
+    }).finally(() => setBulkRsvpFullScopePending(false));
+    // The hydration helper intentionally reads the latest refs and owns its
+    // stale-request guard. The current bulk scope is the only trigger needed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allBulkRsvpCandidates, bulkRsvpFullScopeRequested, bulkRsvpFullScopePending, bulkRsvpOpenRequested, bulkRsvpScopeKey, hasLoadedSchedule, scheduleReadLoading, searchParams]);
 
   useEffect(() => {
     if (searchParams.get('bulkRsvp') !== '1') {
@@ -864,11 +928,29 @@ export function Schedule({ auth }: { auth: AuthState }) {
       return;
     }
     if (bulkRsvpQueryHandledRef.current || rsvpHydrationPending || scheduleReadLoading) return;
+    if (bulkRsvpFullScopeKey !== bulkRsvpScopeKey) {
+      bulkRsvpQueryHandledRef.current = true;
+      setBulkRsvpOpenRequested(true);
+      setBulkRsvpFullScopeRequested(true);
+      return;
+    }
     bulkRsvpQueryHandledRef.current = true;
     if (bulkRsvpCandidates.length < 2) return;
     setBulkRsvpResult(null);
     setBulkRsvpOpen(true);
-  }, [bulkRsvpCandidates.length, rsvpHydrationPending, scheduleReadLoading, searchParams]);
+  }, [bulkRsvpCandidates.length, bulkRsvpFullScopeKey, bulkRsvpScopeKey, rsvpHydrationPending, scheduleReadLoading, searchParams]);
+
+  const requestBulkRsvpOpen = () => {
+    if (rsvpHydrationPending || bulkRsvpFullScopePending) return;
+    if (bulkRsvpFullScopeKey !== bulkRsvpScopeKey) {
+      setBulkRsvpOpenRequested(true);
+      setBulkRsvpFullScopeRequested(true);
+      return;
+    }
+    setBulkRsvpResult(null);
+    setBulkRsvpOpen(true);
+  };
+
   const scheduleRoute = `/schedule${searchParams.toString() ? `?${searchParams.toString()}` : ''}`;
 
   useViewLoadTimer({
@@ -1355,12 +1437,8 @@ export function Schedule({ auth }: { auth: AuthState }) {
             <BulkRsvpLauncher
               eventCount={bulkRsvpCandidates.length}
               neededCount={getNeededBulkRsvpEventKeys(bulkRsvpCandidates).length}
-              hydrating={rsvpHydrationPending}
-              onOpen={() => {
-                if (rsvpHydrationPending) return;
-                setBulkRsvpResult(null);
-                setBulkRsvpOpen(true);
-              }}
+              hydrating={rsvpHydrationPending || bulkRsvpFullScopePending || bulkRsvpFullScopeRequested}
+              onOpen={requestBulkRsvpOpen}
             />
           ) : null}
           {!isDesktopWeb && !scheduleReadLoading && !isInitialScheduleLoad ? (
