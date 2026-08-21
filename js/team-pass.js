@@ -335,15 +335,29 @@ export function bindTeamPassCheckoutButton(container, { team = {}, deps = {} } =
     const button = container?.querySelector?.('[data-team-pass-checkout]');
     if (!button) return;
 
+    const feedback = container.querySelector('[data-team-pass-checkout-feedback]');
+    const originalLabel = button.textContent;
+    let inFlight = false;
+
     button.addEventListener('click', async () => {
+        if (inFlight) return;
+        inFlight = true;
         button.disabled = true;
-        const feedback = container.querySelector('[data-team-pass-checkout-feedback]');
+        button.setAttribute('aria-busy', 'true');
+        button.textContent = 'Starting checkout...';
+        if (feedback) feedback.textContent = '';
         try {
             const redirect = deps.redirectToTeamPassCheckout || redirectToTeamPassCheckout;
             await redirect({ teamId: team.id, seasonId: resolveTeamPassSeasonId(team) });
         } catch (error) {
+            inFlight = false;
             button.disabled = false;
-            if (feedback) feedback.textContent = error?.message || 'Unable to start Team Pass checkout.';
+            button.removeAttribute('aria-busy');
+            button.textContent = originalLabel;
+            if (feedback) {
+                const message = error?.message || 'Unable to start Team Pass checkout.';
+                feedback.textContent = `${message} Please try again.`;
+            }
         }
     });
 }
