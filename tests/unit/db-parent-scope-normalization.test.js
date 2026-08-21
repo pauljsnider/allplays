@@ -117,6 +117,50 @@ describe('parent scope normalization', () => {
         });
     });
 
+    it('resolves team and player reads concurrently instead of one link at a time', async () => {
+        // Regression coverage for the dashboard load-performance fix: this used to
+        // await each link's team, then that link's player, before moving to the
+        // next link — serializing every parent's page load behind N round trips.
+        let concurrentTeamReads = 0;
+        let maxConcurrentTeamReads = 0;
+        const getTeam = vi.fn((teamId) => new Promise((resolve) => {
+            concurrentTeamReads += 1;
+            maxConcurrentTeamReads = Math.max(maxConcurrentTeamReads, concurrentTeamReads);
+            setTimeout(() => {
+                concurrentTeamReads -= 1;
+                resolve({ id: teamId, name: teamId, active: true });
+            }, 0);
+        }));
+
+        let concurrentPlayerReads = 0;
+        let maxConcurrentPlayerReads = 0;
+        const getDoc = vi.fn((ref) => new Promise((resolve) => {
+            concurrentPlayerReads += 1;
+            maxConcurrentPlayerReads = Math.max(maxConcurrentPlayerReads, concurrentPlayerReads);
+            setTimeout(() => {
+                concurrentPlayerReads -= 1;
+                resolve(makeSnap(ref.path, { name: 'Player', active: true }));
+            }, 0);
+        }));
+        const doc = vi.fn((_db, collectionPath, playerId) => ({ path: `${collectionPath}/${playerId}` }));
+        const normalizeParentScopeLinks = buildNormalizeParentScopeLinks({
+            getTeam,
+            getDoc,
+            doc,
+            db: {},
+            isTeamActive: (team) => team?.active !== false
+        });
+
+        await normalizeParentScopeLinks([
+            { teamId: 'team-a', playerId: 'player-a' },
+            { teamId: 'team-b', playerId: 'player-b' },
+            { teamId: 'team-c', playerId: 'player-c' }
+        ]);
+
+        expect(maxConcurrentTeamReads).toBe(3);
+        expect(maxConcurrentPlayerReads).toBe(3);
+    });
+
     it('preserves legacy parent links when roster reads are blocked during key repair', async () => {
         const getTeam = vi.fn(async (teamId) => ({
             'team-active': { id: 'team-active', name: 'Active Team', active: true }

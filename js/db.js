@@ -34,6 +34,7 @@ import {
     getDownloadURL,
     deleteObject
 } from './firebase.js?v=26';
+import { getPrimaryAppCheckHeaders } from './firebase-app-check-rest.js?v=1';
 import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=11';
 import { uploadBytesResumable } from './vendor/firebase-storage.js';
 import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=3';
@@ -126,14 +127,9 @@ import {
 import { commitCertificateDefaults } from './certificates/persistence.js?v=4';
 
 export async function normalizeParentScopeLinks(parentLinks = []) {
-    const activeLinks = [];
-    const accessLinks = [];
-    let blockedLinkCount = 0;
-    let staleLinkCount = 0;
-    const teamCache = new Map();
-    const playerCache = new Map();
+    // Dedupe first (no I/O) so every remaining link is fetched exactly once.
     const seenKeys = new Set();
-
+    const uniqueEntries = [];
     for (const link of (Array.isArray(parentLinks) ? parentLinks : [])) {
         const teamId = String(link?.teamId || '').trim();
         const playerId = String(link?.playerId || '').trim();
@@ -142,34 +138,53 @@ export async function normalizeParentScopeLinks(parentLinks = []) {
         const playerKey = `${teamId}::${playerId}`;
         if (seenKeys.has(playerKey)) continue;
         seenKeys.add(playerKey);
+        uniqueEntries.push({ link, teamId, playerId, playerKey });
+    }
 
-        let team = teamCache.get(teamId);
-        if (team === undefined) {
-            team = await getTeam(teamId, { includeInactive: true });
-            teamCache.set(teamId, team || null);
-        }
+    // Team reads gate whether a player read is needed at all, so fetch all
+    // unique teams in parallel first, then only the players whose team is
+    // still active — instead of resolving each link's team+player one at a
+    // time, which serializes every parent's page load behind N round trips.
+    const uniqueTeamIds = [...new Set(uniqueEntries.map((entry) => entry.teamId))];
+    const teamResults = await Promise.all(
+        uniqueTeamIds.map((teamId) => getTeam(teamId, { includeInactive: true }))
+    );
+    const teamById = new Map(uniqueTeamIds.map((teamId, index) => [teamId, teamResults[index] || null]));
+
+    let staleLinkCount = 0;
+    const activeEntries = [];
+    uniqueEntries.forEach((entry) => {
+        const team = teamById.get(entry.teamId);
         if (!team || !isTeamActive(team)) {
             staleLinkCount += 1;
-            continue;
+            return;
         }
+        activeEntries.push({ ...entry, team });
+    });
 
-        let playerSnap = playerCache.get(playerKey);
-        if (playerSnap === undefined) {
+    const playerSnaps = await Promise.all(
+        activeEntries.map(async ({ teamId, playerId }) => {
             try {
-                playerSnap = await getDoc(doc(db, `teams/${teamId}/players`, playerId));
+                return await getDoc(doc(db, `teams/${teamId}/players`, playerId));
             } catch (error) {
                 if (error?.code === 'permission-denied') {
                     console.warn('[parent-scope] Preserving legacy player link while roster permissions are being repaired:', error);
-                    blockedLinkCount += 1;
-                    playerSnap = { blockedByPermissions: true };
-                } else {
-                    throw error;
+                    return { blockedByPermissions: true };
                 }
+                throw error;
             }
-            playerCache.set(playerKey, playerSnap);
-        }
+        })
+    );
+
+    const activeLinks = [];
+    const accessLinks = [];
+    let blockedLinkCount = 0;
+
+    activeEntries.forEach(({ link, teamId, playerId, team }, index) => {
+        const playerSnap = playerSnaps[index];
 
         if (playerSnap?.blockedByPermissions) {
+            blockedLinkCount += 1;
             const normalizedLink = {
                 ...link,
                 teamId,
@@ -181,12 +196,12 @@ export async function normalizeParentScopeLinks(parentLinks = []) {
             };
             activeLinks.push(normalizedLink);
             accessLinks.push(normalizedLink);
-            continue;
+            return;
         }
 
         if (!playerSnap?.exists()) {
             staleLinkCount += 1;
-            continue;
+            return;
         }
 
         const player = { id: playerSnap.id, ...playerSnap.data() };
@@ -202,12 +217,12 @@ export async function normalizeParentScopeLinks(parentLinks = []) {
 
         if (player.active === false) {
             accessLinks.push(normalizedLink);
-            continue;
+            return;
         }
 
         activeLinks.push(normalizedLink);
         accessLinks.push(normalizedLink);
-    }
+    });
 
     return {
         activeLinks,
@@ -597,6 +612,18 @@ async function canUseLegacyImageStorage(label) {
     }
 }
 
+async function withDeadline(operation, timeoutMs, message) {
+    let timeoutId;
+    const timeoutPromise = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
+    });
+    try {
+        return await Promise.race([operation, timeoutPromise]);
+    } finally {
+        clearTimeout(timeoutId);
+    }
+}
+
 const CHAT_MEDIA_UPLOAD_TIMEOUT_MS = 25000;
 
 async function withChatMediaTimeout(operation) {
@@ -767,7 +794,7 @@ export async function uploadStatSheetPhoto(teamId, gameId, file, options = {}) {
         : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=443352'; // Import resolveZip
+import { resolveZip } from './utils.js?v=443353'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -1886,6 +1913,73 @@ export async function getUserTeams(userId, options = {}) {
     return filterTeamsByActive(teams, includeInactive);
 }
 
+const MANAGED_TEAMS_HTTP_HEDGE_DELAY_MS = 2000;
+
+// The SDK callable and this authenticated REST endpoint reach the same
+// server-authorized listManagedTeams function, so either result is equally
+// authoritative — this exists purely so a cold SDK transport doesn't have to
+// be the only thing standing between the caller and an answer.
+async function fetchManagedTeamsViaRest() {
+    const user = auth.currentUser;
+    if (!user) throw new Error('Sign in to load your teams.');
+    const token = await user.getIdToken();
+    const projectId = auth.app?.options?.projectId;
+    if (!projectId) throw new Error('Firebase project ID is not configured.');
+    const requestUrl = `https://us-central1-${projectId}.cloudfunctions.net/listManagedTeams`;
+    const response = await fetch(requestUrl, {
+        method: 'POST',
+        headers: await getPrimaryAppCheckHeaders({
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+        }, requestUrl),
+        body: JSON.stringify({ data: {} })
+    });
+    const payload = await response.json().catch(() => ({}));
+    const result = payload.result || payload.data;
+    if (!response.ok || payload.error || !Array.isArray(result?.items)) {
+        throw new Error(payload.error?.message || 'Managed teams response is invalid.');
+    }
+    return { items: result.items, isPartial: result.isPartial === true };
+}
+
+function requireCompleteManagedTeamsResult(result) {
+    if (result?.isPartial !== true) return result;
+    const error = new Error('Managed team discovery returned partial results.');
+    error.code = 'managed-team-discovery-partial';
+    error.partialResult = result;
+    throw error;
+}
+
+// Cold instances of listManagedTeams have been observed taking 4-5s+ in
+// production. Rather than always waiting on the SDK callable, start an
+// authenticated REST hedge shortly after if it hasn't resolved yet, and take
+// whichever source actually answers first. The hedge timer is cleared once
+// either side wins, so the common (warm) case never fires the extra request.
+async function raceManagedTeamsDiscovery(callPromise) {
+    let hedgeTimerId;
+    let hedgePromise = null;
+    const completeCallPromise = callPromise.then(requireCompleteManagedTeamsResult);
+    const hedgeAfterDelay = new Promise((resolve) => {
+        hedgeTimerId = setTimeout(() => {
+            hedgePromise = fetchManagedTeamsViaRest().then(requireCompleteManagedTeamsResult);
+            resolve(hedgePromise);
+        }, MANAGED_TEAMS_HTTP_HEDGE_DELAY_MS);
+    });
+
+    try {
+        return await Promise.any([completeCallPromise, hedgeAfterDelay]);
+    } catch (aggregateError) {
+        const partialError = aggregateError?.errors?.find((error) => error?.partialResult);
+        if (partialError) return partialError.partialResult;
+        throw aggregateError?.errors?.[0] || aggregateError;
+    } finally {
+        clearTimeout(hedgeTimerId);
+        // Surface an unhandled rejection from whichever source lost the race
+        // as a quiet warning instead of letting it hit the console unhandled.
+        if (hedgePromise) hedgePromise.catch(() => {});
+    }
+}
+
 export async function getUserTeamsWithAccess(userId, email, options = {}) {
     const includeInactive = !!options.includeInactive;
     if (!String(userId || '').trim()) return [];
@@ -1893,16 +1987,22 @@ export async function getUserTeamsWithAccess(userId, email, options = {}) {
     // proving ownerId is absent on every possible result. Discover managed
     // teams through the server, which evaluates each canonical document.
     const callable = httpsCallable(functions, 'listManagedTeams');
-    const response = await callable({});
-    const items = response?.data?.items;
-    if (!Array.isArray(items)) {
+    const callPromise = callable({}).then((response) => ({
+        items: response?.data?.items,
+        isPartial: response?.data?.isPartial === true
+    }));
+    const racePromise = raceManagedTeamsDiscovery(callPromise);
+    const result = Number.isFinite(options.timeoutMs) && options.timeoutMs > 0
+        ? await withDeadline(racePromise, options.timeoutMs, 'Managed team discovery timed out.')
+        : await racePromise;
+    if (!Array.isArray(result?.items)) {
         throw new Error('Managed teams response is invalid.');
     }
-    const teams = items
+    const teams = result.items
         .filter((team) => team && typeof team === 'object' && !Array.isArray(team))
         .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
     const activeTeams = filterTeamsByActive(teams, includeInactive);
-    if (response?.data?.isPartial === true) {
+    if (result.isPartial === true) {
         const error = new Error('Managed team discovery returned partial results.');
         error.code = 'managed-team-discovery-partial';
         error.partialTeams = activeTeams;
@@ -1917,12 +2017,15 @@ export async function getUserTeamsWithAccess(userId, email, options = {}) {
  */
 export async function getParentTeams(userId, options = {}) {
     const includeInactive = !!options.includeInactive;
-    const profile = await getUserProfile(userId);
-    if (!profile || !Array.isArray(profile.parentOf) || profile.parentOf.length === 0) {
+    // Callers that already fetched the profile this page load (e.g. an auth
+    // check that ran moments ago) can pass its parentOf directly to skip a
+    // redundant read; everyone else falls back to fetching it here.
+    const parentOf = Array.isArray(options.parentOf) ? options.parentOf : (await getUserProfile(userId))?.parentOf;
+    if (!Array.isArray(parentOf) || parentOf.length === 0) {
         return [];
     }
 
-    const teamIds = [...new Set(profile.parentOf.map(p => p.teamId).filter(Boolean))];
+    const teamIds = [...new Set(parentOf.map(p => p.teamId).filter(Boolean))];
     if (teamIds.length === 0) return [];
 
     const teams = (await Promise.all(

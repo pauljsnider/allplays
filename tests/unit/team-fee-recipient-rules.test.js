@@ -96,9 +96,16 @@ describe('team fee recipient Firestore rules', () => {
         expect(rules).toContain("'latestAuditActorId'");
         expect(rules).toContain('hasNoPrivateTeamFeeBillingFields(request.resource.data)');
         expect(rules).toContain('hasNoIntroducedPrivateTeamFeeBillingFields()');
-        expect(rules).toContain("request.resource.data.get('stripePaymentIntentId', null) == null");
+        expect(rules).toContain("'adminBilling'");
+        expect(rules).toContain("'adminBillingEntries'");
+        expect(rules).toContain("!request.resource.data.diff(resource.data).affectedKeys().hasAny(privateFields)");
+        expect(rules).toContain('function isClientWritableTeamFeeAdminBilling(data, teamId, batchId, recipientId)');
+        expect(rules).toContain('function hasOnlyClientWritableTeamFeeAdminBillingChanges(teamId, batchId, recipientId)');
         expect(rules).toContain('match /adminBilling/{billingId} {');
-        expect(rules).toContain('allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);');
+        expect(nestedRecipientBlock).toContain('allow read: if isTeamOwnerOrAdmin(teamId);');
+        expect(nestedRecipientBlock).toContain('isClientWritableTeamFeeAdminBilling(request.resource.data, teamId, batchId, recipientId)');
+        expect(nestedRecipientBlock).toContain('hasOnlyClientWritableTeamFeeAdminBillingChanges(teamId, batchId, recipientId)');
+        expect(nestedRecipientBlock).toContain('isClientWritableTeamFeeAdminBilling(resource.data, teamId, batchId, recipientId)');
     });
 
     it('keeps exact checkout requests in an Admin-SDK-only attempt document', () => {
@@ -227,6 +234,60 @@ describe('team fee recipient Firestore rules', () => {
                 await setDoc(doc(context.firestore(), path), data);
             });
         }
+
+        it('denies nested and subcollection provider references while preserving bounded offline reconciliation', async () => {
+            const adminDb = authedFirestore('admin-a', 'admin-a@example.com');
+            const recipientId = 'provider-boundary';
+            const parentRef = recipientRef(adminDb, 'team-a', 'batch-a', recipientId);
+            const billingRef = doc(adminDb, `teams/team-a/feeBatches/batch-a/feeRecipients/${recipientId}/adminBilling/latest`);
+
+            await assertFails(setDoc(parentRef, {
+                ...recipientPayload(),
+                adminBilling: { stripePaymentIntentId: 'provider-reference' }
+            }));
+            await seedRecipient(parentRef.path, recipientPayload());
+            await assertFails(updateDoc(parentRef, {
+                adminBilling: { stripePaymentIntentId: 'provider-reference' }
+            }));
+
+            await assertSucceeds(setDoc(billingRef, {
+                type: 'offline_payment',
+                teamId: 'team-a',
+                batchId: 'batch-a',
+                recipientId,
+                amountPaidCents: 2500,
+                paidAt: '2026-08-21',
+                note: 'Check received',
+                recordedBy: 'admin-a',
+                updatedAt: serverTimestamp()
+            }));
+            await assertSucceeds(updateDoc(billingRef, { note: 'Check reconciled' }));
+
+            for (const field of [
+                'stripePaymentIntentId',
+                'stripeChargeId',
+                'stripeCheckoutSessionId',
+                'stripeCustomerId',
+                'stripeEventId',
+                'stripeRefundId'
+            ]) {
+                await assertFails(updateDoc(billingRef, { [field]: 'provider-reference' }));
+            }
+            await assertFails(updateDoc(billingRef, {
+                note: { stripePaymentIntentId: 'nested-provider-reference' }
+            }));
+
+            await seedRecipient(billingRef.path, {
+                type: 'stripe_checkout_paid',
+                provider: 'stripe',
+                teamId: 'team-a',
+                batchId: 'batch-a',
+                recipientId,
+                stripePaymentIntentId: 'server-reference'
+            });
+            await assertFails(updateDoc(billingRef, { note: 'Client mutation denied' }));
+            await assertFails(deleteDoc(billingRef));
+        });
 
         it('denies cross-team create, update, and delete even when embedded teamId names the attacker team', async () => {
             const attackerDb = authedFirestore('admin-b', 'admin-b@example.com');
