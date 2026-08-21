@@ -21,10 +21,15 @@ describe('dashboard chat unread wiring', () => {
 
     it('keeps Firebase Auth email authoritative for dashboard team access', () => {
         const html = readRepoFile('dashboard.html');
+        const authJs = readRepoFile('js/auth.js');
 
-        expect(html).toContain('user.profileEmail = profile.email;');
+        // checkAuth() (js/auth.js) is the sole place that merges profile.email onto
+        // the user object now — dashboard.html no longer refetches the profile
+        // itself, so it must not reintroduce a competing assignment.
+        expect(authJs).toContain('user.profileEmail = profile.email;');
+        expect(html).not.toContain('profile.email');
         expect(html).not.toContain('user.email = profile.email;');
-        expect(html).toContain('getUserTeamsWithAccess(user.uid, user.email)');
+        expect(html).toContain('getUserTeamsWithAccess(user.uid, user.email, { timeoutMs: 10000 })');
         expect(html).not.toContain('getUserTeamsWithAccess(user.uid, user.email || profile?.email)');
     });
 

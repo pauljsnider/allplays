@@ -55,4 +55,27 @@ describe('getParentTeams', () => {
             { id: 'team-c', name: 'Charlie' }
         ]);
     });
+
+    it('skips the profile read when the caller already has parentOf', async () => {
+        const getUserProfile = vi.fn();
+        const getTeam = vi.fn().mockResolvedValue({ id: 'team-a', name: 'Alpha' });
+        const getParentTeams = buildGetParentTeams({ getUserProfile, getTeam });
+
+        await expect(getParentTeams('parent-1', {
+            parentOf: [{ teamId: 'team-a' }]
+        })).resolves.toEqual([{ id: 'team-a', name: 'Alpha' }]);
+
+        expect(getUserProfile).not.toHaveBeenCalled();
+        expect(getTeam).toHaveBeenCalledWith('team-a', { includeInactive: false });
+    });
+
+    it('falls back to fetching the profile when parentOf is not provided', async () => {
+        const getUserProfile = vi.fn().mockResolvedValue({ parentOf: [{ teamId: 'team-a' }] });
+        const getTeam = vi.fn().mockResolvedValue({ id: 'team-a', name: 'Alpha' });
+        const getParentTeams = buildGetParentTeams({ getUserProfile, getTeam });
+
+        await expect(getParentTeams('parent-1')).resolves.toEqual([{ id: 'team-a', name: 'Alpha' }]);
+
+        expect(getUserProfile).toHaveBeenCalledWith('parent-1');
+    });
 });
