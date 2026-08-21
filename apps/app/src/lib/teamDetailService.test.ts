@@ -68,6 +68,9 @@ const nativeFirestoreMutationMocks = vi.hoisted(() => ({
   commitNativeFirestoreWrites: vi.fn(),
   createNativeFirestoreDocumentId: vi.fn(() => 'native-player-1')
 }));
+const nativeCallableMocks = vi.hoisted(() => ({
+  callNativeFirebaseFunction: vi.fn()
+}));
 
 const seasonRecordMocks = vi.hoisted(() => ({
   calculateSeasonRecord: vi.fn(() => ({ wins: 0, losses: 0, ties: 0 })),
@@ -128,7 +131,11 @@ vi.mock('../../../../js/player-tracking-summary.js', () => ({
 }));
 vi.mock('../../../../js/team-access.js', () => ({
   hasFullTeamAccess: vi.fn(() => true),
-  normalizeAdminEmailList: vi.fn(() => [])
+  normalizeAdminEmailList: vi.fn((adminEmails: unknown) => Array.from(new Set(
+    (Array.isArray(adminEmails) ? adminEmails : [])
+      .map((email) => String(email || '').trim().toLowerCase())
+      .filter(Boolean)
+  )))
 }));
 vi.mock('../../../../js/team-staff-permissions.js', () => ({ buildTeamStaffPermissionsViewModel: vi.fn(() => ({ staff: [], pendingInvites: [], helperPermissions: [], hasAnyStaff: false })) }));
 vi.mock('./authService', () => authServiceMocks);
@@ -136,6 +143,7 @@ vi.mock('./inviteUrls', () => ({ buildAppAcceptInviteUrl: vi.fn(() => 'https://a
 vi.mock('./nativeRuntime', () => ({ isNativeRuntime: () => nativeRuntimeState.isNative }));
 vi.mock('./nativeStorageUpload', () => nativeStorageMocks);
 vi.mock('./nativeFirestoreMutation', () => nativeFirestoreMutationMocks);
+vi.mock('./nativeCallable', () => nativeCallableMocks);
 vi.mock('./nativeRestLogging', () => ({ sanitizeErrorForLogging: vi.fn((error) => error) }));
 vi.mock('./profileService', () => ({ loadProfileDocument: vi.fn(async () => ({})) }));
 vi.mock('./scheduleService', () => scheduleServiceMocks);
@@ -145,6 +153,7 @@ import {
   addRosterPlayerForApp,
   buildTeamAnalytics,
   buildTeamDetailModel,
+  createTeamPassCheckoutForApp,
   createStatTrackerConfigForApp,
   loadParentTeamDetail,
   loadParentTeamDetailBootstrap,
@@ -279,6 +288,48 @@ beforeEach(() => {
     Array.isArray(options.players) ? options.players : dbMocks.getPlayers(_teamId, options)
   ));
   dbMocks.getPlayerPrivateProfile.mockResolvedValue(null);
+});
+
+describe('createTeamPassCheckoutForApp', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    nativeRuntimeState.isNative = false;
+  });
+
+  it('creates a web checkout for the exact team and current season', async () => {
+    const callable = vi.fn().mockResolvedValue({ data: { checkoutUrl: 'https://checkout.stripe.com/c/pay/team-pass' } });
+    firebaseMocks.httpsCallable.mockReturnValue(callable);
+
+    await expect(createTeamPassCheckoutForApp('team-1', 'summer-2100')).resolves.toBe('https://checkout.stripe.com/c/pay/team-pass');
+    expect(firebaseMocks.httpsCallable).toHaveBeenCalledWith(firebaseMocks.functions, 'createStripeTeamPassCheckout');
+    expect(callable).toHaveBeenCalledWith({ teamId: 'team-1', seasonId: 'summer-2100', tier: 'team-pass' });
+  });
+
+  it('uses the authenticated native callable transport', async () => {
+    nativeRuntimeState.isNative = true;
+    nativeCallableMocks.callNativeFirebaseFunction.mockResolvedValue({ checkoutUrl: 'https://checkout.stripe.com/c/pay/native-team-pass' });
+
+    await expect(createTeamPassCheckoutForApp('team-1', 'summer-2100')).resolves.toBe('https://checkout.stripe.com/c/pay/native-team-pass');
+    expect(nativeCallableMocks.callNativeFirebaseFunction).toHaveBeenCalledWith(
+      'createStripeTeamPassCheckout',
+      { teamId: 'team-1', seasonId: 'summer-2100', tier: 'team-pass' },
+      { errorLabel: 'Team Pass checkout' }
+    );
+  });
+
+  it.each([
+    '',
+    ' https://checkout.stripe.com/c/pay/space',
+    'http://checkout.stripe.com/c/pay/insecure',
+    'https://checkout.stripe.com.attacker.example/c/pay/lookalike',
+    'https://user:password@checkout.stripe.com/c/pay/credentialed',
+    'https://checkout.stripe.com:8443/c/pay/port',
+    'https://checkout.stripe.com/'
+  ])('rejects an untrusted fresh checkout destination %j', async (checkoutUrl) => {
+    firebaseMocks.httpsCallable.mockReturnValue(vi.fn().mockResolvedValue({ data: { checkoutUrl } }));
+
+    await expect(createTeamPassCheckoutForApp('team-1', 'summer-2100')).rejects.toThrow('invalid checkout destination');
+  });
 });
 
 describe('createStatTrackerConfigForApp', () => {
@@ -1446,6 +1497,23 @@ describe('buildTeamDetailModel registration provider', () => {
     });
 
     expect(built.team.currentSeasonId).toBe('summer-2026');
+  });
+
+  it.each([
+    ['canonical owner', { uid: 'owner-1', email: 'owner@example.com' }, { ownerId: 'owner-1' }, true],
+    ['current-email team admin', { uid: 'admin-1', email: 'ADMIN@example.com' }, { ownerId: 'owner-1', adminEmails: ['admin@example.com'] }, true],
+    ['confirmed parent', { uid: 'parent-1', email: 'parent@example.com', parentTeamIds: ['team-1'] }, { ownerId: 'owner-1' }, true],
+    ['platform-admin-only user', { uid: 'platform-1', email: 'platform@example.com', isAdmin: true }, { ownerId: 'owner-1' }, false],
+    ['legacy email-only owner', { uid: 'legacy-1', email: 'legacy@example.com' }, { ownerEmail: 'legacy@example.com' }, false],
+    ['wrong-team parent', { uid: 'parent-1', email: 'parent@example.com', parentTeamIds: ['team-2'] }, { ownerId: 'owner-1' }, false]
+  ])('projects Team Pass eligibility for a %s', (_label, user, team, expected) => {
+    const built = buildTeamDetailModel({
+      teamId: 'team-1',
+      team: { id: 'team-1', name: 'Bears', currentSeasonId: 'summer-2026', ...team },
+      user: user as any
+    });
+
+    expect(built.canPurchaseTeamPass).toBe(expected);
   });
 
   it('returns no registration provider rows when the team has no registration source', () => {

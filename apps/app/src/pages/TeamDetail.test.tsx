@@ -16,6 +16,7 @@ const teamDetailServiceMocks = vi.hoisted(() => ({
   canExposePublicFanFeed: vi.fn(() => true),
   createStatTrackerConfigForApp: vi.fn(),
   createRosterParentInviteForApp: vi.fn(),
+  createTeamPassCheckoutForApp: vi.fn(),
   deactivateRosterPlayerForApp: vi.fn(),
   grantScorekeeperAccessForApp: vi.fn(),
   grantTeamMediaManagerAccessForApp: vi.fn(),
@@ -81,8 +82,19 @@ const premiumAccessMocks = vi.hoisted(() => ({
   usePremiumFeatureAccess: vi.fn(() => ({ state: 'unlocked', reason: 'global-open' }))
 }));
 
+const publicActionsMocks = vi.hoisted(() => ({
+  copyPublicText: vi.fn(),
+  openPublicUrl: vi.fn(),
+  sharePublicUrl: vi.fn()
+}));
+
+const refreshOnResumeMocks = vi.hoisted(() => ({
+  useRefreshOnResume: vi.fn()
+}));
+
 vi.mock('../lib/teamDetailService', () => teamDetailServiceMocks);
 vi.mock('../lib/usePremiumFeatureAccess', () => premiumAccessMocks);
+vi.mock('../lib/useRefreshOnResume', () => refreshOnResumeMocks);
 vi.mock('../lib/rosterAiImport', () => rosterAiImportMocks);
 vi.mock('./team-detail/insightsTabLoader', () => insightsTabLoaderMocks);
 vi.mock('./team-detail/moreTabLoader', () => moreTabLoaderMocks);
@@ -97,11 +109,7 @@ vi.mock('./team-detail/MoreTab', async (importOriginal) => {
   };
 });
 vi.mock('./team-detail/rosterTabLoader', () => rosterTabLoaderMocks);
-vi.mock('../lib/publicActions', () => ({
-  copyPublicText: vi.fn(),
-  openPublicUrl: vi.fn(),
-  sharePublicUrl: vi.fn()
-}));
+vi.mock('../lib/publicActions', () => publicActionsMocks);
 vi.mock('../lib/homeLogic', () => ({
   getEventDetailPath: vi.fn(() => '/schedule/team-1/game-next')
 }));
@@ -231,16 +239,19 @@ const model = {
   statTrackerConfigs: [],
   canManageTeam: false,
   canManageAdmins: false,
+  canPurchaseTeamPass: false,
   staffPermissions: null,
   counts: { games: 0, practices: 0, completedGames: 0 }
 };
 
 function createDeferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((nextResolve) => {
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((nextResolve, nextReject) => {
     resolve = nextResolve;
+    reject = nextReject;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 describe('calculateRosterRenderWindow', () => {
@@ -296,6 +307,10 @@ describe('TeamDetail', () => {
       writable: true
     });
     teamDetailServiceMocks.loadParentTeamDetail.mockReset().mockResolvedValue(model);
+    teamDetailServiceMocks.createTeamPassCheckoutForApp.mockResolvedValue('https://checkout.stripe.com/c/pay/team-pass');
+    publicActionsMocks.openPublicUrl.mockResolvedValue(undefined);
+    premiumAccessMocks.usePremiumFeatureAccess.mockReturnValue({ state: 'unlocked', reason: 'global-open' });
+    refreshOnResumeMocks.useRefreshOnResume.mockImplementation(() => undefined);
     teamDetailServiceMocks.loadParentTeamDetailBootstrap.mockImplementation((...args: any[]) => teamDetailServiceMocks.loadParentTeamDetail(...args));
     teamDetailServiceMocks.loadRosterFieldDefinitionsForApp.mockResolvedValue([]);
     teamDetailServiceMocks.loadRosterImportContextForApp.mockResolvedValue({
@@ -436,6 +451,129 @@ describe('TeamDetail', () => {
         normalAccess: true
       })
     ));
+  });
+
+  it('shows eligible staff the current-season Team Pass checkout action', async () => {
+    premiumAccessMocks.usePremiumFeatureAccess.mockReturnValue({ state: 'locked', reason: 'missing-valid-entitlement' });
+    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue({ ...model, canManageTeam: true, canPurchaseTeamPass: true });
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    const checkoutButton = await screen.findByRole('button', { name: 'Buy Team Pass' });
+    fireEvent.click(checkoutButton);
+
+    await waitFor(() => expect(teamDetailServiceMocks.createTeamPassCheckoutForApp).toHaveBeenCalledWith('team-1', 'summer-2100'));
+    expect(publicActionsMocks.openPublicUrl).toHaveBeenCalledWith('https://checkout.stripe.com/c/pay/team-pass');
+  });
+
+  it('shows confirmed parents the Team Pass checkout action', async () => {
+    premiumAccessMocks.usePremiumFeatureAccess.mockReturnValue({ state: 'locked', reason: 'missing-valid-entitlement' });
+    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue({ ...model, canPurchaseTeamPass: true });
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={{ ...auth, user: { ...auth.user!, parentTeamIds: ['team-1'] } }} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('button', { name: 'Buy Team Pass' })).toBeTruthy();
+  });
+
+  it.each([
+    ['an ineligible fan', { ...model, linkedPlayers: [], canPurchaseTeamPass: false }, { state: 'locked', reason: 'missing-valid-entitlement' }],
+    ['an active current-season pass', { ...model, canPurchaseTeamPass: true }, { state: 'unlocked', reason: 'valid-team-entitlement' }],
+    ['globally open premium access', { ...model, canPurchaseTeamPass: true }, { state: 'unlocked', reason: 'global-open' }],
+    ['unavailable entitlement status', { ...model, canPurchaseTeamPass: true }, { state: 'unavailable', reason: 'premium-access-read-failed' }],
+    ['a missing current season', { ...model, team: { ...model.team, currentSeasonId: '' }, canPurchaseTeamPass: true }, { state: 'locked', reason: 'missing-valid-entitlement' }]
+  ])('suppresses Team Pass checkout for %s', async (_label, nextModel, access) => {
+    premiumAccessMocks.usePremiumFeatureAccess.mockReturnValue(access);
+    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue(nextModel);
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Buy Team Pass' })).toBeNull();
+  });
+
+  it('disables duplicate checkout attempts while pending and allows retry after failure', async () => {
+    premiumAccessMocks.usePremiumFeatureAccess.mockReturnValue({ state: 'locked', reason: 'missing-valid-entitlement' });
+    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue({ ...model, canPurchaseTeamPass: true });
+    const checkout = createDeferred<string>();
+    teamDetailServiceMocks.createTeamPassCheckoutForApp.mockReturnValueOnce(checkout.promise);
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    const checkoutButton = await screen.findByRole('button', { name: 'Buy Team Pass' });
+    fireEvent.click(checkoutButton);
+    fireEvent.click(checkoutButton);
+    expect(await screen.findByRole('button', { name: 'Opening checkout…' })).toBeDisabled();
+    expect(teamDetailServiceMocks.createTeamPassCheckoutForApp).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      checkout.reject(new Error('Checkout is temporarily unavailable.'));
+      await checkout.promise.catch(() => undefined);
+    });
+    expect(await screen.findByText('Checkout is temporarily unavailable.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Buy Team Pass' })).toBeEnabled();
+    expect(publicActionsMocks.openPublicUrl).not.toHaveBeenCalled();
+
+    teamDetailServiceMocks.createTeamPassCheckoutForApp.mockResolvedValueOnce('https://checkout.stripe.com/c/pay/retry');
+    fireEvent.click(screen.getByRole('button', { name: 'Buy Team Pass' }));
+    await waitFor(() => expect(publicActionsMocks.openPublicUrl).toHaveBeenCalledWith('https://checkout.stripe.com/c/pay/retry'));
+  });
+
+  it('refreshes current-season entitlement after returning from launched checkout', async () => {
+    premiumAccessMocks.usePremiumFeatureAccess.mockReturnValue({ state: 'locked', reason: 'missing-valid-entitlement' });
+    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue({ ...model, canPurchaseTeamPass: true });
+    let refreshOnResume: (() => void) | undefined;
+    refreshOnResumeMocks.useRefreshOnResume.mockImplementation((refresh) => {
+      refreshOnResume = refresh;
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    await act(async () => {
+      refreshOnResume?.();
+    });
+    expect(premiumAccessMocks.usePremiumFeatureAccess).toHaveBeenLastCalledWith(expect.objectContaining({ refreshVersion: 0 }));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Buy Team Pass' }));
+    await waitFor(() => expect(publicActionsMocks.openPublicUrl).toHaveBeenCalled());
+    await act(async () => {
+      refreshOnResume?.();
+    });
+
+    expect(premiumAccessMocks.usePremiumFeatureAccess).toHaveBeenLastCalledWith(expect.objectContaining({
+      teamId: 'team-1',
+      currentSeasonId: 'summer-2100',
+      refreshVersion: 1
+    }));
   });
 
   it('loads the extracted MoreTab module once, only after More is selected', async () => {
