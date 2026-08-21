@@ -600,7 +600,10 @@ describe('Schedule', () => {
     const refreshedDialog = await screen.findByRole('dialog', { name: 'Respond to multiple events' });
     expect(within(refreshedDialog).getByText('12 selected')).toBeTruthy();
     expect(scheduleServiceMocks.hydrateParentScheduleRsvps.mock.calls.length).toBeGreaterThan(refreshHydrationCount);
-    expect((scheduleServiceMocks.hydrateParentScheduleRsvps.mock.calls.at(-1)?.[0] as any).events).toHaveLength(2);
+    const lastHydrationCall = scheduleServiceMocks.hydrateParentScheduleRsvps.mock.calls[
+      scheduleServiceMocks.hydrateParentScheduleRsvps.mock.calls.length - 1
+    ];
+    expect((lastHydrationCall?.[0] as any).events).toHaveLength(2);
   });
 
   it('revalidates the current candidate scope when full hydration finishes', async () => {
