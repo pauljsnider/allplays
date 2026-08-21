@@ -979,6 +979,12 @@ function buildTeamFeeCheckoutCreationRequest({
   const playerName = recipient.playerName || recipient.childName || '';
   const description = playerName ? `${title} for ${playerName}` : title;
   const customerEmail = String(email || recipient.parentEmail || recipient.email || '').trim();
+  const metadata = buildTeamFeeCheckoutMetadata({
+    ...input,
+    payerUid: uid,
+    checkoutAttemptToken,
+    checkoutAmountCents: amountCents
+  });
   return {
     version: 1,
     idempotencyKey: buildTeamFeeCheckoutIdempotencyKey(input, reservationId),
@@ -997,12 +1003,8 @@ function buildTeamFeeCheckoutCreationRequest({
       cancel_url: cancelUrl,
       ...(customerEmail ? { customer_email: customerEmail } : {}),
       client_reference_id: `${input.teamId}:${input.batchId}:${input.recipientId}`,
-      metadata: buildTeamFeeCheckoutMetadata({
-        ...input,
-        payerUid: uid,
-        checkoutAttemptToken,
-        checkoutAmountCents: amountCents
-      })
+      metadata,
+      payment_intent_data: { metadata }
     }
   };
 }
@@ -1269,7 +1271,7 @@ async function fetchTeamFeePaymentAdminBilling(recipientRef) {
   const latest = latestSnap.exists ? (latestSnap.data() || {}) : {};
   const latestRefs = getTeamFeeStripePaymentRefs(latest);
   if (latestRefs.paymentIntentId || latestRefs.chargeId) {
-    return latest;
+    return { ...latest, __billingId: 'latest' };
   }
 
   const querySnap = await recipientRef.collection('adminBilling')
@@ -1280,10 +1282,109 @@ async function fetchTeamFeePaymentAdminBilling(recipientRef) {
     const data = doc.data() || {};
     const refs = getTeamFeeStripePaymentRefs(data);
     if (refs.paymentIntentId || refs.chargeId) {
-      return data;
+      return { ...data, __billingId: doc.id };
     }
   }
   return {};
+}
+
+function getStripeObjectId(value) {
+  return typeof value === 'string' ? value.trim() : String(value?.id || '').trim();
+}
+
+function hasStripeTeamFeeBindingMetadata(metadata = {}) {
+  return ['product', 'teamId', 'batchId', 'recipientId', 'checkoutAmountCents']
+    .some((field) => metadata?.[field] != null && String(metadata[field]).trim() !== '');
+}
+
+function stripeTeamFeeBindingMatches(metadata = {}, input, amountCents) {
+  return metadata?.product === 'team_fee'
+    && metadata?.teamId === input.teamId
+    && metadata?.batchId === input.batchId
+    && metadata?.recipientId === input.recipientId
+    && String(metadata?.checkoutAmountCents || '') === String(amountCents);
+}
+
+function getTeamFeeRefundAuthorityFailure({ input, recipient = {}, billing = {}, session = {}, paymentIntent = null, charge = null }) {
+  const recordedAmountCents = Math.round(Number(billing.amountPaidCents || 0));
+  const expectedCurrency = String(
+    recipient.receiptMetadata?.currency
+    || billing.currency
+    || recipient.currency
+    || 'usd'
+  ).trim().toLowerCase();
+  const sessionPaymentIntentId = getStripeObjectId(session.payment_intent);
+  const paymentIntentId = getStripeObjectId(paymentIntent);
+  const chargeId = getStripeObjectId(charge);
+  const latestChargeId = getStripeObjectId(paymentIntent?.latest_charge);
+
+  if (!recordedAmountCents || recordedAmountCents < 1) return 'recorded_amount_missing';
+  if (!expectedCurrency || !/^[a-z]{3}$/.test(expectedCurrency)) return 'recorded_currency_invalid';
+  if (getStripeObjectId(session) !== String(billing.stripeCheckoutSessionId || '').trim()) return 'checkout_session_mismatch';
+  if (session.payment_status !== 'paid' || session.status !== 'complete') return 'checkout_not_paid';
+  if (!stripeTeamFeeBindingMatches(session.metadata, input, recordedAmountCents)) return 'checkout_metadata_mismatch';
+  if (session.client_reference_id !== `${input.teamId}:${input.batchId}:${input.recipientId}`) return 'checkout_reference_mismatch';
+  if (Math.round(Number(session.amount_total || 0)) !== recordedAmountCents) return 'checkout_amount_mismatch';
+  if (String(session.currency || '').trim().toLowerCase() !== expectedCurrency) return 'checkout_currency_mismatch';
+  if (Math.round(Number(recipient.stripePaymentAmountCents || 0)) !== recordedAmountCents) return 'recipient_payment_amount_mismatch';
+  if (Math.round(Number(recipient.receiptMetadata?.amountPaidCents || 0)) !== recordedAmountCents) return 'recipient_receipt_amount_mismatch';
+  if (String(recipient.receiptMetadata?.currency || '').trim().toLowerCase() !== expectedCurrency) return 'recipient_currency_mismatch';
+
+  if (paymentIntent) {
+    if (!paymentIntentId || paymentIntentId !== String(billing.stripePaymentIntentId || '').trim()) return 'payment_intent_mismatch';
+    if (sessionPaymentIntentId !== paymentIntentId) return 'checkout_payment_intent_mismatch';
+    if (paymentIntent.status !== 'succeeded') return 'payment_intent_not_paid';
+    if (Math.round(Number(paymentIntent.amount_received || paymentIntent.amount || 0)) !== recordedAmountCents) return 'payment_intent_amount_mismatch';
+    if (String(paymentIntent.currency || '').trim().toLowerCase() !== expectedCurrency) return 'payment_intent_currency_mismatch';
+    if (hasStripeTeamFeeBindingMetadata(paymentIntent.metadata)
+      && !stripeTeamFeeBindingMatches(paymentIntent.metadata, input, recordedAmountCents)) return 'payment_intent_metadata_mismatch';
+    if (billing.stripeChargeId && latestChargeId !== String(billing.stripeChargeId).trim()) return 'payment_intent_charge_mismatch';
+  } else if (charge) {
+    if (!chargeId || chargeId !== String(billing.stripeChargeId || '').trim()) return 'charge_mismatch';
+    if (!sessionPaymentIntentId || getStripeObjectId(charge.payment_intent) !== sessionPaymentIntentId) return 'checkout_charge_mismatch';
+    if (charge.paid !== true || charge.status !== 'succeeded') return 'charge_not_paid';
+    if (Math.round(Number(charge.amount || 0)) !== recordedAmountCents) return 'charge_amount_mismatch';
+    if (String(charge.currency || '').trim().toLowerCase() !== expectedCurrency) return 'charge_currency_mismatch';
+    if (hasStripeTeamFeeBindingMetadata(charge.metadata)
+      && !stripeTeamFeeBindingMatches(charge.metadata, input, recordedAmountCents)) return 'charge_metadata_mismatch';
+  } else {
+    return 'payment_reference_missing';
+  }
+
+  return '';
+}
+
+async function retrieveTeamFeeRefundAuthority(stripe, { input, recipient, billing }) {
+  const sessionId = String(billing.stripeCheckoutSessionId || '').trim();
+  const { paymentIntentId, chargeId } = getTeamFeeStripePaymentRefs(billing);
+  if (!sessionId || (!paymentIntentId && !chargeId)) {
+    throw new functions.https.HttpsError('failed-precondition', 'This payment is missing server-verified payment authority.');
+  }
+
+  let session;
+  let paymentIntent = null;
+  let charge = null;
+  try {
+    [session, paymentIntent, charge] = await Promise.all([
+      stripe.checkout.sessions.retrieve(sessionId),
+      paymentIntentId ? stripe.paymentIntents.retrieve(paymentIntentId, { expand: ['latest_charge'] }) : null,
+      !paymentIntentId && chargeId ? stripe.charges.retrieve(chargeId) : null
+    ]);
+  } catch (error) {
+    functions.logger.warn('Stripe team fee refund authority lookup failed.', {
+      providerCode: String(error?.code || ''),
+      providerStatus: Number(error?.statusCode || 0) || null
+    });
+    throw new functions.https.HttpsError('unavailable', 'The payment authority could not be verified. Try again later.');
+  }
+
+  const failure = getTeamFeeRefundAuthorityFailure({ input, recipient, billing, session, paymentIntent, charge });
+  if (failure) {
+    functions.logger.warn('Stripe team fee refund authority mismatch.', { reason: failure });
+    throw new functions.https.HttpsError('failed-precondition', 'The payment reference does not match this fee recipient.');
+  }
+
+  return { paymentIntentId, chargeId, session, paymentIntent, charge };
 }
 
 function buildTeamFeeRefundRequestId(input, uid) {
@@ -6256,7 +6357,7 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
   }
 
   const paymentAdminBilling = await fetchTeamFeePaymentAdminBilling(recipientRef);
-  const { paymentIntentId, chargeId } = getTeamFeeStripePaymentRefs(recipient, paymentAdminBilling);
+  const { paymentIntentId, chargeId } = getTeamFeeStripePaymentRefs(paymentAdminBilling);
   if (!paymentIntentId && !chargeId) {
     throw new functions.https.HttpsError('failed-precondition', 'This payment is missing a Stripe payment intent or charge reference.');
   }
@@ -6268,6 +6369,29 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
 
   const refundRequestId = buildTeamFeeRefundRequestId(input, context.auth.uid);
   const refundIntentRef = recipientRef.collection('refundIntents').doc(refundRequestId);
+  const recordedIntentSnap = await refundIntentRef.get();
+  if (recordedIntentSnap.exists) {
+    const recordedIntent = recordedIntentSnap.data() || {};
+    if (Number(recordedIntent.amountCents || 0) !== input.amountCents) {
+      throw new functions.https.HttpsError('already-exists', 'Refund request ID already exists for a different amount.');
+    }
+    if (recordedIntent.status === 'recorded' && recordedIntent.stripeRefundId) {
+      return {
+        refundId: recordedIntent.stripeRefundId,
+        status: recordedIntent.stripeRefundStatus || 'succeeded',
+        amountCents: Number(recordedIntent.amountCents || input.amountCents)
+      };
+    }
+  }
+
+  const stripe = createStripeClient();
+  const refundAuthority = await retrieveTeamFeeRefundAuthority(stripe, {
+    input,
+    recipient,
+    billing: paymentAdminBilling
+  });
+
+  const paymentAdminBillingRef = buildTeamFeeAdminBillingRef(recipientRef, paymentAdminBilling.__billingId || 'latest');
   let existingRefundResult = null;
   await firestore.runTransaction(async (transaction) => {
     const latestSnap = await transaction.get(recipientRef);
@@ -6281,6 +6405,22 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
     }
     if (latestRecipient.paymentProvider !== 'stripe') {
       throw new functions.https.HttpsError('failed-precondition', 'Only Stripe team fee payments can be refunded online.');
+    }
+
+    const latestPaymentAdminBillingSnap = await transaction.get(paymentAdminBillingRef);
+    const latestPaymentAdminBilling = latestPaymentAdminBillingSnap.exists
+      ? (latestPaymentAdminBillingSnap.data() || {})
+      : {};
+    const authorityFailure = getTeamFeeRefundAuthorityFailure({
+      input,
+      recipient: latestRecipient,
+      billing: latestPaymentAdminBilling,
+      session: refundAuthority.session,
+      paymentIntent: refundAuthority.paymentIntent,
+      charge: refundAuthority.charge
+    });
+    if (authorityFailure) {
+      throw new functions.https.HttpsError('failed-precondition', 'The payment authority changed before the refund could be reserved.');
     }
 
     const intentSnap = await transaction.get(refundIntentRef);
@@ -6320,7 +6460,6 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
     return existingRefundResult;
   }
 
-  const stripe = createStripeClient();
   let refund;
   try {
     refund = await stripe.refunds.create({
@@ -6404,7 +6543,8 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
       }
 
       const { ledgerEntries = [], adminBilling, ...update } = buildTeamFeeStripeRefundUpdate({
-        recipient: { ...latestRecipient, adminBilling: paymentAdminBilling },
+        recipient: latestRecipient,
+        paymentBilling: paymentAdminBilling,
         refund,
         amountCents: actualRefundAmount,
         actorId: context.auth.uid,

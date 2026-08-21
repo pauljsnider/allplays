@@ -626,8 +626,6 @@ function getTeamFeeStripePaymentRefs(...sources) {
             return { paymentIntentId, chargeId };
         }
 
-        if (source.adminBilling) pending.unshift(source.adminBilling);
-        if (Array.isArray(source.adminBillingEntries)) pending.unshift(...source.adminBillingEntries);
     }
 
     return { paymentIntentId: '', chargeId: '' };
@@ -653,7 +651,7 @@ function getChangedTeamFeeFinancialFields(previous = {}, next = {}) {
     ));
 }
 
-function buildTeamFeeStripeRefundUpdate({ recipient = {}, refund = {}, amountCents = 0, actorId = '', reason = '', refundedAt, ledgerRefundedAt = refundedAt }) {
+function buildTeamFeeStripeRefundUpdate({ recipient = {}, paymentBilling = {}, refund = {}, amountCents = 0, actorId = '', reason = '', refundedAt, ledgerRefundedAt = refundedAt }) {
     const refundAmountCents = Math.round(Number(amountCents || refund.amount || 0));
     const previousPaidCents = getTeamFeePaidCents(recipient);
     const previousRefundedCents = getTeamFeeRefundedCents(recipient);
@@ -662,7 +660,7 @@ function buildTeamFeeStripeRefundUpdate({ recipient = {}, refund = {}, amountCen
     const balanceDueCents = Math.max(0, getTeamFeeTotalCents(recipient) - paidAmountCents);
     const status = paidAmountCents <= 0 ? 'unpaid' : balanceDueCents > 0 ? 'partial' : 'paid';
     const refundStatus = normalizeString(refund.status || 'pending').toLowerCase() || 'pending';
-    const paymentRefs = getTeamFeeStripePaymentRefs(recipient);
+    const paymentRefs = getTeamFeeStripePaymentRefs(paymentBilling);
 
     return {
         status,
