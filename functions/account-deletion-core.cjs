@@ -5,6 +5,8 @@ const crypto = require('node:crypto');
 const ACCOUNT_DELETION_CONFIRMATION = 'DELETE';
 const ACCOUNT_DELETION_MAX_DAYS = 30;
 const ACCOUNT_DELETION_MAX_AUTH_AGE_SECONDS = 5 * 60;
+const ACCOUNT_MEDIA_CLEANUP_PAGE_SIZE = 250;
+const ACCOUNT_STORAGE_DELETE_CONCURRENCY = 10;
 
 function normalizeConfirmation(value) {
   return String(value || '').trim().toUpperCase();
@@ -419,6 +421,87 @@ function collectAccountMediaStoragePaths(mediaRecords = []) {
   });
 }
 
+function isStorageObjectNotFound(error) {
+  return error?.code === 404 ||
+    error?.code === '404' ||
+    error?.code === 'storage/object-not-found';
+}
+
+async function deleteAccountStoragePaths({
+  primaryBucket,
+  imageBucket,
+  primaryPaths = [],
+  imagePaths = [],
+  maxConcurrentDeletes = ACCOUNT_STORAGE_DELETE_CONCURRENCY
+}) {
+  const deleteTargets = [
+    ...primaryPaths.map((storagePath) => ({ bucket: primaryBucket, storagePath })),
+    ...imagePaths.map((storagePath) => ({ bucket: imageBucket, storagePath }))
+  ];
+  for (let index = 0; index < deleteTargets.length; index += maxConcurrentDeletes) {
+    await Promise.all(deleteTargets.slice(index, index + maxConcurrentDeletes).map(async ({ bucket, storagePath }) => {
+      try {
+        await bucket.file(storagePath).delete({ ignoreNotFound: true });
+      } catch (error) {
+        if (!isStorageObjectNotFound(error)) throw error;
+      }
+    }));
+  }
+}
+
+async function deleteAccountMediaStoragePages({
+  uid,
+  queries = [],
+  profilePhotoUrls = [],
+  primaryBucket,
+  imageBucket,
+  documentIdField,
+  pageSize = ACCOUNT_MEDIA_CLEANUP_PAGE_SIZE,
+  maxConcurrentDeletes = ACCOUNT_STORAGE_DELETE_CONCURRENCY
+}) {
+  let documentsProcessed = 0;
+  let pagesRead = 0;
+
+  const profilePaths = classifyAccountStoragePaths(uid, [], profilePhotoUrls);
+  await deleteAccountStoragePaths({
+    primaryBucket,
+    imageBucket,
+    primaryPaths: profilePaths.primaryPaths,
+    imagePaths: profilePaths.imagePaths,
+    maxConcurrentDeletes
+  });
+
+  for (const baseQuery of queries) {
+    let cursor = null;
+    while (true) {
+      let pageQuery = baseQuery.orderBy(documentIdField).limit(pageSize);
+      if (cursor) pageQuery = pageQuery.startAfter(cursor);
+      const snapshot = await pageQuery.get();
+      if (snapshot.empty) break;
+
+      const documents = snapshot.docs || [];
+      pagesRead += 1;
+      documentsProcessed += documents.length;
+      const { primaryPaths, imagePaths } = classifyAccountStoragePaths(
+        uid,
+        collectAccountMediaStoragePaths(documents.map((document) => document.data() || {}))
+      );
+      await deleteAccountStoragePaths({
+        primaryBucket,
+        imageBucket,
+        primaryPaths,
+        imagePaths,
+        maxConcurrentDeletes
+      });
+
+      if (documents.length < pageSize) break;
+      cursor = documents[documents.length - 1];
+    }
+  }
+
+  return { documentsProcessed, pagesRead };
+}
+
 function getAccountTeamPermissionQueryFields() {
   return [
     'teamPermissions.scorekeeping.memberIds',
@@ -622,6 +705,8 @@ module.exports = {
   ACCOUNT_DELETION_CONFIRMATION,
   ACCOUNT_DELETION_MAX_AUTH_AGE_SECONDS,
   ACCOUNT_DELETION_MAX_DAYS,
+  ACCOUNT_MEDIA_CLEANUP_PAGE_SIZE,
+  ACCOUNT_STORAGE_DELETE_CONCURRENCY,
   accountUsesAppleProvider,
   assertDeletionRequest,
   assertRecentAuthentication,
@@ -635,6 +720,7 @@ module.exports = {
   collectAccountTeamIds,
   collectAccountMediaStoragePaths,
   createAccountDeletionRequestHandler,
+  deleteAccountMediaStoragePages,
   extractAccountProfileStoragePath,
   getAccountEmailQueryCandidates,
   getCurrentEnabledAuthEmail,

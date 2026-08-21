@@ -374,11 +374,10 @@ const {
   buildRegistrationAccountScrubPlan,
   buildRosterParentScrubPlan,
   buildTeamAccountGrantScrubPlan,
-  classifyAccountStoragePaths,
   collectAccountRosterScopes,
   collectAccountTeamIds,
-  collectAccountMediaStoragePaths,
   createAccountDeletionRequestHandler,
+  deleteAccountMediaStoragePages,
   getAccountDeletionCollectionQueries,
   getAccountDeletionCollectionGroupQueries,
   getAccountEmailQueryCandidates,
@@ -20084,7 +20083,7 @@ async function deleteAccountQuery(query) {
   }
 }
 
-async function deleteAccountStorage(uid, mediaDocuments, profilePhotoUrls = []) {
+async function deleteAccountStorage(uid, mediaQueries, profilePhotoUrls = []) {
   const primaryBucket = admin.storage().bucket();
   const imageBucket = admin.storage().bucket(
     process.env.IMAGE_STORAGE_BUCKET || 'game-flow-img.firebasestorage.app'
@@ -20097,20 +20096,14 @@ async function deleteAccountStorage(uid, mediaDocuments, profilePhotoUrls = []) 
     imageBucket.deleteFiles({ prefix: athletePrefix, force: true }),
     imageBucket.deleteFiles({ prefix: `user-photos/${uid}/`, force: true })
   ]);
-
-  const { primaryPaths, imagePaths } = classifyAccountStoragePaths(
+  await deleteAccountMediaStoragePages({
     uid,
-    collectAccountMediaStoragePaths(mediaDocuments.map((document) => document.data() || {})),
-    profilePhotoUrls
-  );
-  await Promise.all([
-    ...primaryPaths.map((storagePath) => (
-      primaryBucket.file(storagePath).delete({ ignoreNotFound: true })
-    )),
-    ...imagePaths.map((storagePath) => (
-      imageBucket.file(storagePath).delete({ ignoreNotFound: true })
-    ))
-  ]);
+    queries: mediaQueries,
+    profilePhotoUrls,
+    primaryBucket,
+    imageBucket,
+    documentIdField: admin.firestore.FieldPath.documentId()
+  });
 }
 
 async function loadAccountRosterPlayerDocuments(uid, userData = {}) {
@@ -20347,17 +20340,11 @@ exports.processAccountDeletionRequest = functions
         throw migrationError;
       }
 
-      const [legacyTeamMedia, teamMediaItems, chatMessages, socialPosts] = await Promise.all([
-        firestore.collectionGroup('media').where('uploadedBy', '==', uid).get(),
-        firestore.collectionGroup('mediaItems').where('uploadedBy', '==', uid).get(),
-        firestore.collectionGroup('chatMessages').where('senderId', '==', uid).get(),
-        firestore.collection('socialPosts').where('authorId', '==', uid).get()
-      ]);
       await deleteAccountStorage(uid, [
-        ...(legacyTeamMedia.docs || []),
-        ...(teamMediaItems.docs || []),
-        ...(chatMessages.docs || []),
-        ...(socialPosts.docs || [])
+        firestore.collectionGroup('media').where('uploadedBy', '==', uid),
+        firestore.collectionGroup('mediaItems').where('uploadedBy', '==', uid),
+        firestore.collectionGroup('chatMessages').where('senderId', '==', uid),
+        firestore.collection('socialPosts').where('authorId', '==', uid)
       ], [
         userDoc.data()?.photoUrl,
         authUser?.photoURL
