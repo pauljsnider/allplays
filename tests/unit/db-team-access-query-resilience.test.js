@@ -92,15 +92,17 @@ const {
   getGameDayTeamContext,
   getTeams,
   getUserTeamsWithAccess
-} = await import('../../js/db.js?v=4433176');
+} = await import('../../js/db.js?v=4433177');
 
 describe('team access query resilience', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     firebaseMocks.auth.currentUser = {
       uid: 'owner-1',
-      email: 'coach@example.com'
+      email: 'coach@example.com',
+      getIdToken: vi.fn().mockResolvedValue('fake-id-token')
     };
+    firebaseMocks.auth.app = { options: { projectId: 'game-flow-c6311' } };
     firebaseMocks.listPublicTeams.mockResolvedValue({
       data: { items: [], nextCursor: null }
     });
@@ -154,6 +156,120 @@ describe('team access query resilience', () => {
     ]);
     expect(firebaseMocks.listManagedTeams).toHaveBeenCalledWith({});
     expect(firebaseMocks.getDocs).not.toHaveBeenCalled();
+  });
+
+  it('lets a slow managed-team discovery run to completion when no timeout is requested', async () => {
+    let resolveCallable;
+    firebaseMocks.listManagedTeams.mockReturnValue(new Promise((resolve) => {
+      resolveCallable = resolve;
+    }));
+
+    const resultPromise = getUserTeamsWithAccess('owner-1', 'coach@example.com');
+    resolveCallable({ data: { items: [{ id: 'owned-1', name: 'Falcons', ownerId: 'owner-1' }], isPartial: false } });
+
+    await expect(resultPromise).resolves.toEqual([{ id: 'owned-1', name: 'Falcons', ownerId: 'owner-1' }]);
+  });
+
+  it('bounds managed-team discovery to an explicit timeoutMs instead of hanging indefinitely', async () => {
+    vi.useFakeTimers();
+    try {
+      firebaseMocks.listManagedTeams.mockReturnValue(new Promise(() => {})); // never resolves
+      const resultPromise = getUserTeamsWithAccess('owner-1', 'coach@example.com', { timeoutMs: 10000 });
+      const assertion = expect(resultPromise).rejects.toThrow('Managed team discovery timed out.');
+      await vi.advanceTimersByTimeAsync(10000);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('resolves from the authenticated REST hedge when the SDK callable is still cold at the 2s mark', async () => {
+    vi.useFakeTimers();
+    const originalFetch = globalThis.fetch;
+    try {
+      firebaseMocks.listManagedTeams.mockReturnValue(new Promise(() => {})); // never resolves in this test
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          result: {
+            items: [{ id: 'owned-1', name: 'Falcons', ownerId: 'owner-1' }],
+            isPartial: false
+          }
+        })
+      });
+
+      const resultPromise = getUserTeamsWithAccess('owner-1', 'coach@example.com');
+      await vi.advanceTimersByTimeAsync(2000);
+      await expect(resultPromise).resolves.toEqual([{ id: 'owned-1', name: 'Falcons', ownerId: 'owner-1' }]);
+
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        'https://us-central1-game-flow-c6311.cloudfunctions.net/listManagedTeams',
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({ Authorization: 'Bearer fake-id-token' })
+        })
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps racing when the REST hedge is partial and the SDK callable later returns a complete result', async () => {
+    vi.useFakeTimers();
+    const originalFetch = globalThis.fetch;
+    try {
+      let resolveCallable;
+      firebaseMocks.listManagedTeams.mockReturnValue(new Promise((resolve) => {
+        resolveCallable = resolve;
+      }));
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          result: {
+            items: [{ id: 'partial-1', name: 'Incomplete team' }],
+            isPartial: true
+          }
+        })
+      });
+
+      const resultPromise = getUserTeamsWithAccess('owner-1', 'coach@example.com');
+      await vi.advanceTimersByTimeAsync(2000);
+      resolveCallable({
+        data: {
+          items: [{ id: 'owned-1', name: 'Falcons', ownerId: 'owner-1' }],
+          isPartial: false
+        }
+      });
+
+      await expect(resultPromise).resolves.toEqual([
+        { id: 'owned-1', name: 'Falcons', ownerId: 'owner-1' }
+      ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+      vi.useRealTimers();
+    }
+  });
+
+  it('never fires the REST hedge when the SDK callable answers before the delay elapses', async () => {
+    vi.useFakeTimers();
+    const originalFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = vi.fn();
+      firebaseMocks.listManagedTeams.mockResolvedValue({
+        data: { items: [{ id: 'owned-1', name: 'Falcons', ownerId: 'owner-1' }], isPartial: false }
+      });
+
+      const resultPromise = getUserTeamsWithAccess('owner-1', 'coach@example.com');
+      await vi.advanceTimersByTimeAsync(0);
+      await expect(resultPromise).resolves.toEqual([{ id: 'owned-1', name: 'Falcons', ownerId: 'owner-1' }]);
+
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+    } finally {
+      globalThis.fetch = originalFetch;
+      vi.useRealTimers();
+    }
   });
 
   it('rejects partial managed-team discovery instead of returning an authoritative incomplete array', async () => {
