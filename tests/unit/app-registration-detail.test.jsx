@@ -456,6 +456,9 @@ describe('RegistrationDetail page', () => {
       { playerId: 'player-9' }
     );
     await waitForText(container, 'Registration approved. Roster and parent links were updated using the legacy approval flow.');
+    await flush();
+    expect(parentRegistrationsServiceMocks.loadTeamRegistrationQueuePage).toHaveBeenCalledTimes(4);
+    expect(parentRegistrationsServiceMocks.loadTeamRegistrationRosterPlayers).toHaveBeenCalledTimes(1);
   });
 
   it('allows staff review for closed registration forms', async () => {
