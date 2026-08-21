@@ -154,16 +154,17 @@ function compareByUpdatedAtDesc(a, b) {
 
 export function getTeamPassAccess(user, team) {
     const teamId = team?.id;
-    const canPurchase = hasFullTeamAccess(user, team);
-    const isStaff = canPurchase || arrayIncludesTeamId(user?.coachOf, teamId);
+    const hasFullAccess = hasFullTeamAccess(user, team);
     const isConfirmedParent = arrayIncludesTeamId(user?.parentOf, teamId) || arrayIncludesTeamId(user?.parentTeamIds, teamId);
+    const canPurchase = hasFullAccess || isConfirmedParent;
+    const isStaff = hasFullAccess || arrayIncludesTeamId(user?.coachOf, teamId);
 
     if (isStaff) {
         return { isStaff: true, canPurchase, canReadStatus: true, label: 'Coach/Admin access', mode: 'staff' };
     }
 
     if (isConfirmedParent) {
-        return { isStaff: false, canPurchase: false, canReadStatus: false, label: 'Team member access', mode: 'readonly' };
+        return { isStaff: false, canPurchase: true, canReadStatus: true, label: 'Team member access', mode: 'readonly' };
     }
 
     return { isStaff: false, canPurchase: false, canReadStatus: false, label: 'Read-only preview', mode: 'readonly' };
