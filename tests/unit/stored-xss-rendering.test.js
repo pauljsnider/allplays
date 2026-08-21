@@ -40,4 +40,11 @@ describe('stored image URL XSS rendering contracts', () => {
         expect(drillsSource).not.toContain('overlay.innerHTML = `<img');
         expect(drillsSource).not.toContain('src="${escapeHtml(url)}"');
     });
+
+    it('normalizes legacy drill resource URLs before creating an anchor href', () => {
+        expect(drillsSource).toContain('const externalUrl = normalizeHttpUrl(drill.youtubeUrl);');
+        expect(drillsSource).toContain('const safeExternalUrl = escapeHtml(externalUrl);');
+        expect(drillsSource).toContain('href="${safeExternalUrl}"');
+        expect(drillsSource).not.toContain("const externalUrl = drill.youtubeUrl ? escapeHtml(drill.youtubeUrl) : '';");
+    });
 });

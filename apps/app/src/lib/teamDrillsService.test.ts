@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildPracticeAiCoachPrompt } from './practiceAiCoachService';
-import { filterDrillSummaries, loadFavoriteDrills, loadTeamDrillLibraryPage, setTeamDrillFavorite } from './teamDrillsService';
+import { filterDrillSummaries, loadFavoriteDrills, loadTeamDrillLibraryPage, normalizeAbsoluteHttpUrl, setTeamDrillFavorite } from './teamDrillsService';
 
 const dbMocks = vi.hoisted(() => ({
   addDrillFavorite: vi.fn(),
@@ -54,6 +54,49 @@ describe('teamDrillsService', () => {
     dbMocks.addDrillFavorite.mockResolvedValue(undefined);
     dbMocks.removeDrillFavorite.mockResolvedValue(undefined);
     teamAccessMocks.hasFullTeamAccess.mockReturnValue(true);
+  });
+
+  it.each([
+    [' https://video.example.test/watch?v=123 ', 'https://video.example.test/watch?v=123'],
+    ['http://source.example.test/drills/press', 'http://source.example.test/drills/press']
+  ])('normalizes absolute HTTP drill URLs', (value, expected) => {
+    expect(normalizeAbsoluteHttpUrl(value)).toBe(expected);
+  });
+
+  it.each([
+    'javascript:alert(1)',
+    'data:text/html,unsafe',
+    '//video.example.test/watch?v=123',
+    'https://',
+    'https://video.example.test/\nwatch',
+    '/relative/drill-resource'
+  ])('omits an unsafe or malformed drill URL', (value) => {
+    expect(normalizeAbsoluteHttpUrl(value)).toBeNull();
+  });
+
+  it('omits unsafe legacy video and attribution URLs when reading published drills', async () => {
+    dbMocks.getDrills.mockResolvedValue({ drills: [], lastDoc: null });
+    dbMocks.getPublishedDrills.mockResolvedValue([{
+      id: 'unsafe-published-drill',
+      title: 'Legacy published drill',
+      sport: 'Soccer',
+      youtubeUrl: 'javascript:alert(1)',
+      attribution: {
+        source: 'Legacy source',
+        license: 'CC BY',
+        url: '//unsafe.example.test/source'
+      }
+    }]);
+
+    const result = await loadTeamDrillLibraryPage('team-1', { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] });
+
+    expect(result.drills).toEqual([
+      expect.objectContaining({
+        id: 'unsafe-published-drill',
+        youtubeUrl: null,
+        attribution: expect.objectContaining({ url: null })
+      })
+    ]);
   });
 
   it('filters drill fixtures by search text, type, and level', () => {

@@ -5,7 +5,7 @@ import {
     assertSucceeds,
     initializeTestEnvironment
 } from '@firebase/rules-unit-testing';
-import { doc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
+import { deleteField, doc, getDoc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 
 const rules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
 const trustedPhoto = 'https://lh3.googleusercontent.com/a/trusted-photo';
@@ -50,6 +50,11 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('stored image URL rules en
                 adminEmails: [],
                 isPublic: true
             });
+            await setDoc(doc(db, 'teams/team-2'), {
+                ownerId: 'owner-2',
+                adminEmails: [],
+                isPublic: true
+            });
             await setDoc(doc(db, 'users/owner-1'), {
                 displayName: 'Owner One',
                 photoUrl: trustedPhoto
@@ -64,6 +69,12 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('stored image URL rules en
                 createdBy: 'owner-1',
                 title: 'Legacy drill',
                 publishedToCommunity: false,
+                youtubeUrl: 'javascript:alert(1)',
+                attribution: {
+                    source: 'Legacy source',
+                    license: '',
+                    url: '//legacy.example/source'
+                },
                 diagramUrls: ['javascript:alert(1)', attackerFirebaseDiagram, 'https://legacy.example/diagram.png']
             });
         });
@@ -78,6 +89,14 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('stored image URL rules en
             email: 'owner@example.com',
             name: 'Owner One',
             picture
+        }).firestore();
+    }
+
+    function otherTeamOwnerDb() {
+        return testEnv.authenticatedContext('owner-2', {
+            email: 'other-owner@example.com',
+            email_verified: true,
+            name: 'Owner Two'
         }).firestore();
     }
 
@@ -174,11 +193,106 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('stored image URL rules en
         }
     });
 
-    it('preserves unrelated legacy updates and removal-only cleanup without admitting new unsafe URLs', async () => {
+    it('allows safe published drill links across teams while denying cross-team updates', async () => {
+        const db = ownerDb();
+        const drillRef = doc(db, 'drillLibrary/published-safe-links');
+        await assertSucceeds(setDoc(drillRef, {
+            source: 'custom',
+            teamId: 'team-1',
+            createdBy: 'owner-1',
+            authorId: 'owner-1',
+            title: 'Published safe links',
+            publishedToCommunity: true,
+            youtubeUrl: 'https://video.example.test/watch?v=123',
+            attribution: {
+                source: 'Coaching library',
+                license: 'CC BY',
+                url: 'http://source.example.test/drills/press'
+            }
+        }));
+
+        const otherDb = otherTeamOwnerDb();
+        await assertSucceeds(getDoc(doc(otherDb, 'drillLibrary/published-safe-links')));
+        await assertFails(updateDoc(doc(otherDb, 'drillLibrary/published-safe-links'), {
+            title: 'Cross-team edit denied'
+        }));
+    });
+
+    it('accepts absent and null external drill links', async () => {
+        const db = ownerDb();
+        await assertSucceeds(setDoc(doc(db, 'drillLibrary/absent-external-links'), {
+            source: 'custom',
+            teamId: 'team-1',
+            createdBy: 'owner-1',
+            title: 'Absent links',
+            publishedToCommunity: false
+        }));
+        await assertSucceeds(setDoc(doc(db, 'drillLibrary/null-external-links'), {
+            source: 'custom',
+            teamId: 'team-1',
+            createdBy: 'owner-1',
+            title: 'Null links',
+            publishedToCommunity: false,
+            youtubeUrl: null,
+            attribution: { source: 'Internal', license: '', url: null }
+        }));
+    });
+
+    it.each([
+        'javascript:alert(1)',
+        'data:text/html,unsafe',
+        '//unsafe.example.test/drill',
+        'https://',
+        'https://video.example.test/\nwatch'
+    ])('rejects unsafe external drill URL writes', async (payload) => {
+        const db = ownerDb();
+        await assertFails(setDoc(doc(db, `drillLibrary/rejected-external-${Math.random().toString(36).slice(2)}`), {
+            source: 'custom',
+            teamId: 'team-1',
+            createdBy: 'owner-1',
+            title: 'Rejected external link',
+            publishedToCommunity: false,
+            youtubeUrl: payload
+        }));
+        await assertFails(setDoc(doc(db, `drillLibrary/rejected-attribution-${Math.random().toString(36).slice(2)}`), {
+            source: 'custom',
+            teamId: 'team-1',
+            createdBy: 'owner-1',
+            title: 'Rejected attribution link',
+            publishedToCommunity: false,
+            attribution: { source: 'Unsafe', license: '', url: payload }
+        }));
+    });
+
+    it('rejects unsafe external drill URL updates', async () => {
+        const db = ownerDb();
+        const drillRef = doc(db, 'drillLibrary/safe-external-update');
+        await assertSucceeds(setDoc(drillRef, {
+            source: 'custom',
+            teamId: 'team-1',
+            createdBy: 'owner-1',
+            title: 'Safe external update',
+            publishedToCommunity: false,
+            youtubeUrl: 'https://video.example.test/original'
+        }));
+
+        await assertSucceeds(updateDoc(drillRef, {
+            youtubeUrl: 'http://video.example.test/replacement',
+            'attribution.url': 'https://source.example.test/drill'
+        }));
+        await assertFails(updateDoc(drillRef, { youtubeUrl: 'javascript:alert(1)' }));
+        await assertFails(updateDoc(drillRef, { 'attribution.url': '//unsafe.example.test/source' }));
+    });
+
+    it('preserves unrelated legacy updates and incremental URL cleanup without admitting new unsafe URLs', async () => {
         const db = ownerDb();
         const legacyRef = doc(db, 'drillLibrary/legacy-drill');
 
         await assertSucceeds(updateDoc(legacyRef, { title: 'Legacy drill renamed' }));
+        await assertSucceeds(updateDoc(legacyRef, { youtubeUrl: deleteField() }));
+        await assertSucceeds(updateDoc(legacyRef, { 'attribution.url': deleteField() }));
+        await assertFails(updateDoc(legacyRef, { youtubeUrl: 'data:text/html,unsafe' }));
+        await assertFails(updateDoc(legacyRef, { 'attribution.url': 'javascript:alert(1)' }));
         await assertSucceeds(updateDoc(legacyRef, { diagramUrls: ['https://legacy.example/diagram.png'] }));
         await assertFails(updateDoc(legacyRef, {
             diagramUrls: Array(5).fill('https://legacy.example/diagram.png')

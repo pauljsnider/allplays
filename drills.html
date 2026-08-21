@@ -1733,9 +1733,14 @@ ${JSON.stringify({
         function normalizeHttpUrl(url) {
             if (!url) return null;
             const trimmed = String(url).trim();
-            if (!trimmed) return null;
-            if (/^https?:\/\//i.test(trimmed)) return trimmed;
-            return null;
+            if (!trimmed || /[\u0000-\u001f\u007f]/.test(trimmed)) return null;
+            try {
+                const parsed = new URL(trimmed);
+                if (!['http:', 'https:'].includes(parsed.protocol) || !parsed.hostname || parsed.username || parsed.password) return null;
+                return parsed.href;
+            } catch {
+                return null;
+            }
         }
 
         function getPracticeBlockResourceSnapshot(block) {
@@ -1930,16 +1935,17 @@ ${JSON.stringify({
                     <p class="text-sm text-blue-700">${escapeHtml(drill.homeVariant)}</p>
                 </div>` : ''}
                 ${(() => {
-                    const embedUrl = getYoutubeEmbedUrl(drill.youtubeUrl);
-                    const externalUrl = drill.youtubeUrl ? escapeHtml(drill.youtubeUrl) : '';
+                    const externalUrl = normalizeHttpUrl(drill.youtubeUrl);
+                    const embedUrl = getYoutubeEmbedUrl(externalUrl);
+                    const safeExternalUrl = escapeHtml(externalUrl);
                     return embedUrl ? `<div class="mb-6">
                         <h3 class="text-sm font-semibold text-gray-700 mb-3">Video Demonstration</h3>
                         <div class="relative w-full" style="padding-bottom:56.25%;">
                             <iframe class="absolute inset-0 w-full h-full rounded-xl" src="${embedUrl}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
                         </div>
-                    </div>` : (externalUrl ? `<div class="mb-6">
+                    </div>` : (safeExternalUrl ? `<div class="mb-6">
                         <h3 class="text-sm font-semibold text-gray-700 mb-3">External Drill Resource</h3>
-                        <a href="${externalUrl}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-2 text-sm text-primary-700 font-medium underline break-all">${externalUrl}</a>
+                        <a href="${safeExternalUrl}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-2 text-sm text-primary-700 font-medium underline break-all">${safeExternalUrl}</a>
                     </div>` : '');
                 })()}
                 ${(Array.isArray(drill.diagramUrls) && drill.diagramUrls.length) ? `<div class="mb-6">

@@ -13,12 +13,12 @@ export type TeamDrillSummary = {
   skills: string[];
   description: string;
   instructions: string;
-  youtubeUrl: string;
+  youtubeUrl: string | null;
   diagramUrls: string[];
   attribution: {
     source: string;
     license: string;
-    url: string;
+    url: string | null;
   } | null;
   setup: {
     duration: number;
@@ -71,6 +71,24 @@ type TeamDrillLibraryCursor = {
 
 function normalizeString(value: unknown) {
   return String(value || '').trim();
+}
+
+export function normalizeAbsoluteHttpUrl(value: unknown) {
+  if (typeof value !== 'string') return null;
+  const candidate = value.trim();
+  const hasControlCharacter = [...candidate].some((character) => {
+    const code = character.charCodeAt(0);
+    return code <= 31 || code === 127;
+  });
+  if (!candidate || hasControlCharacter) return null;
+
+  try {
+    const parsed = new URL(candidate);
+    if (!['http:', 'https:'].includes(parsed.protocol) || !parsed.hostname || parsed.username || parsed.password) return null;
+    return parsed.href;
+  } catch {
+    return null;
+  }
 }
 
 function normalizeWholeNumber(value: unknown, fallback: number) {
@@ -282,12 +300,12 @@ function toTeamDrillSummary(drill: any): TeamDrillSummary {
     skills: normalizeSkills(drill?.skills),
     description: normalizeString(drill?.description),
     instructions: normalizeString(drill?.instructions),
-    youtubeUrl: normalizeString(drill?.youtubeUrl),
+    youtubeUrl: normalizeAbsoluteHttpUrl(drill?.youtubeUrl),
     diagramUrls: Array.isArray(drill?.diagramUrls) ? drill.diagramUrls.filter(Boolean).map((url: unknown) => String(url)) : [],
     attribution: drill?.attribution ? {
       source: normalizeString(drill.attribution.source),
       license: normalizeString(drill.attribution.license),
-      url: normalizeString(drill.attribution.url)
+      url: normalizeAbsoluteHttpUrl(drill.attribution.url)
     } : null,
     setup: {
       duration: Math.max(1, normalizeWholeNumber(drill?.setup?.duration, 10)),
