@@ -542,6 +542,32 @@ describe('TeamDetail', () => {
     await waitFor(() => expect(publicActionsMocks.openPublicUrl).toHaveBeenCalledWith('https://checkout.stripe.com/c/pay/retry'));
   });
 
+  it('does not open a delayed Team Pass checkout after the card unmounts', async () => {
+    premiumAccessMocks.usePremiumFeatureAccess.mockReturnValue({ state: 'locked', reason: 'missing-valid-entitlement' });
+    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue({ ...model, canPurchaseTeamPass: true });
+    const checkout = createDeferred<string>();
+    teamDetailServiceMocks.createTeamPassCheckoutForApp.mockReturnValueOnce(checkout.promise);
+
+    const { unmount } = render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Buy Team Pass' }));
+    await waitFor(() => expect(teamDetailServiceMocks.createTeamPassCheckoutForApp).toHaveBeenCalledTimes(1));
+    unmount();
+
+    await act(async () => {
+      checkout.resolve('https://checkout.stripe.com/c/pay/delayed');
+      await checkout.promise;
+    });
+
+    expect(publicActionsMocks.openPublicUrl).not.toHaveBeenCalled();
+  });
+
   it('refreshes current-season entitlement after returning from launched checkout', async () => {
     premiumAccessMocks.usePremiumFeatureAccess.mockReturnValue({ state: 'locked', reason: 'missing-valid-entitlement' });
     teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue({ ...model, canPurchaseTeamPass: true });

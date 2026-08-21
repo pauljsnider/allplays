@@ -1127,6 +1127,10 @@ function TeamPassCard({ model, premiumAccess, onCheckoutOpening, onCheckoutOpenF
     checkoutPendingRef.current = false;
     setCheckoutPending(false);
     setCheckoutError('');
+    return () => {
+      checkoutScopeRef.current = '';
+      checkoutPendingRef.current = false;
+    };
   }, [checkoutScope]);
 
   async function startCheckout() {
