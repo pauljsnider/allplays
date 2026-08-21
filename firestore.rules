@@ -2389,6 +2389,24 @@ service cloud.firestore {
               (diagramUrls.size() <= 4 || isAllowedFirebaseStorageImageUrl(diagramUrls[4])));
     }
 
+    function isAllowedDrillExternalUrl(value) {
+      return value is string &&
+             value.size() > 0 &&
+             value.size() <= 2048 &&
+             value.matches('[Hh][Tt][Tt][Pp][Ss]?://[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]{1,5})?([/?#][A-Za-z0-9._~:/?#@!$&()*+,;=%-]*)?');
+    }
+
+    function isNullableDrillExternalUrl(value) {
+      return value == null || isAllowedDrillExternalUrl(value);
+    }
+
+    function hasValidDrillExternalUrls(data) {
+      let attribution = data.get('attribution', null);
+      return isNullableDrillExternalUrl(data.get('youtubeUrl', null)) &&
+             (attribution == null ||
+              (attribution is map && isNullableDrillExternalUrl(attribution.get('url', null))));
+    }
+
     function hasSafeDrillDiagramUrlUpdate() {
       let affectedKeys = request.resource.data.diff(resource.data).affectedKeys();
       let existingDiagramUrls = resource.data.get('diagramUrls', []);
@@ -3241,6 +3259,7 @@ service cloud.firestore {
       // Create: global admin for community, team owner/admin for custom
       allow create: if isVerifiedForSensitiveWrite() &&
                       hasValidDrillDiagramUrls(request.resource.data) &&
+                      hasValidDrillExternalUrls(request.resource.data) &&
                       (
                         (request.resource.data.source == 'community' && isGlobalAdmin()) ||
                         (
@@ -3257,6 +3276,7 @@ service cloud.firestore {
       // Update: global admin for community, team owner/admin for custom
       allow update: if isVerifiedForSensitiveWrite() &&
                       hasSafeDrillDiagramUrlUpdate() &&
+                      hasValidDrillExternalUrls(request.resource.data) &&
                       (
                         (resource.data.source == 'community' && isGlobalAdmin()) ||
                         (

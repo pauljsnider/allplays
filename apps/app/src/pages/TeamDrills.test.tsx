@@ -21,6 +21,16 @@ const teamDrillsServiceMocks = vi.hoisted(() => ({
   }),
   loadFavoriteDrills: vi.fn(),
   loadTeamDrillLibraryPage: vi.fn(),
+  normalizeAbsoluteHttpUrl: vi.fn((value) => {
+    const candidate = String(value || '').trim();
+    if (!candidate || /[\u0000-\u001f\u007f]/.test(candidate)) return null;
+    try {
+      const parsed = new URL(candidate);
+      return ['http:', 'https:'].includes(parsed.protocol) && parsed.hostname && !parsed.username && !parsed.password ? parsed.href : null;
+    } catch {
+      return null;
+    }
+  }),
   setTeamDrillFavorite: vi.fn()
 }));
 
@@ -290,6 +300,28 @@ describe('TeamDrills', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Favorite' }));
 
     await waitFor(() => expect(teamDrillsServiceMocks.setTeamDrillFavorite).toHaveBeenCalledWith('team-1', auth.user, 'drill-1', true));
+  });
+
+  it('does not render or dispatch actions for unsafe legacy drill URLs', async () => {
+    teamDrillsServiceMocks.loadTeamDrillLibraryPage.mockResolvedValue(createPage({
+      drills: [createDrill({
+        youtubeUrl: 'javascript:alert(1)',
+        attribution: {
+          source: 'Legacy source',
+          license: 'CC BY',
+          url: '//unsafe.example.test/source'
+        }
+      })],
+      favoriteIds: []
+    }));
+
+    renderTeamDrills();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Rondo 4v2' }));
+    expect(await screen.findByText('Attribution')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Video link' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Open source' })).toBeNull();
+    expect(publicActionsMocks.openPublicUrl).not.toHaveBeenCalled();
   });
 
   it('loads favorites lazily and applies client-side search/filtering there too', async () => {

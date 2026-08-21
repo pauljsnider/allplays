@@ -6,7 +6,7 @@ import type { PracticeAiCoachPlanResult } from '../lib/practiceAiCoachService';
 import { getPracticeTimelineTotalMinutes, loadPracticeTimelineModel, savePracticeTimelineForApp, type PracticeTimelineBlock, type PracticeTimelineModel } from '../lib/practiceTimelineService';
 import { isRetryableAppServiceError, toAppServiceError } from '../lib/appErrors';
 import { openPublicUrl } from '../lib/publicActions';
-import { filterDrillSummaries, loadFavoriteDrills, loadTeamDrillLibraryPage, setTeamDrillFavorite, type TeamDrillSummary } from '../lib/teamDrillsService';
+import { filterDrillSummaries, loadFavoriteDrills, loadTeamDrillLibraryPage, normalizeAbsoluteHttpUrl, setTeamDrillFavorite, type TeamDrillSummary } from '../lib/teamDrillsService';
 import { useAppAsyncOperation } from '../lib/useAsyncOperation';
 import type { AuthState } from '../lib/types';
 
@@ -678,6 +678,8 @@ function DrillDetailModal({
   onToggleFavorite: () => void;
 }) {
   const badgeColors = DRILL_TYPE_COLORS[drill.type as keyof typeof DRILL_TYPE_COLORS] || DRILL_TYPE_COLORS.Technical;
+  const videoUrl = normalizeAbsoluteHttpUrl(drill.youtubeUrl);
+  const attributionUrl = normalizeAbsoluteHttpUrl(drill.attribution?.url);
   const setupRows = [
     ['Duration', `${drill.setup.duration} min`],
     ['Players', drill.setup.players],
@@ -704,8 +706,8 @@ function DrillDetailModal({
             {favoriteBusy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Heart className={`h-4 w-4 ${isFavorite ? 'fill-current' : ''}`} aria-hidden="true" />}
             {isFavorite ? 'Favorited' : 'Favorite'}
           </button>
-          {drill.youtubeUrl ? (
-            <button type="button" className="secondary-button !min-h-9 text-xs" onClick={() => openPublicUrl(drill.youtubeUrl)}>
+          {videoUrl ? (
+            <button type="button" className="secondary-button !min-h-9 text-xs" onClick={() => openPublicUrl(videoUrl)}>
               Video link
               <ExternalLink className="h-4 w-4" aria-hidden="true" />
             </button>
@@ -748,12 +750,12 @@ function DrillDetailModal({
           </div>
         ) : null}
 
-        {drill.attribution?.license || drill.attribution?.source || drill.attribution?.url ? (
+        {drill.attribution?.license || drill.attribution?.source || attributionUrl ? (
           <div className="mt-5 rounded-2xl border border-primary-100 bg-primary-50 p-3 text-xs font-semibold text-primary-900">
             <div className="font-black">Attribution</div>
-            <div className="mt-1">{[drill.attribution.source, drill.attribution.license].filter(Boolean).join(' · ')}</div>
-            {drill.attribution.url ? (
-              <button type="button" className="ghost-button mt-2 !min-h-8 px-0 text-xs text-primary-700" onClick={() => openPublicUrl(drill.attribution!.url)}>
+            <div className="mt-1">{[drill.attribution?.source, drill.attribution?.license].filter(Boolean).join(' · ')}</div>
+            {attributionUrl ? (
+              <button type="button" className="ghost-button mt-2 !min-h-8 px-0 text-xs text-primary-700" onClick={() => openPublicUrl(attributionUrl)}>
                 Open source
                 <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
               </button>
