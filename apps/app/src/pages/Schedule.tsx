@@ -353,7 +353,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     const user = auth.user;
     if (!user) {
       setRsvpHydrationPending(false);
-      return Promise.resolve();
+      return Promise.resolve(result);
     }
     const hydrationScopeKey = `${user.uid}::${selectedTeamId}::${selectedPlayerId}`;
     if (lastRsvpHydrationScopeRef.current !== hydrationScopeKey) {
@@ -381,7 +381,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     });
     if (!rsvpEvents.length) {
       setRsvpHydrationPending((activeRsvpHydrationCountsRef.current.get(hydrationRequestScopeKey) || 0) > 0);
-      return Promise.resolve();
+      return Promise.resolve(result);
     }
     const reservedEventKeys = rsvpEvents.map((event) => event.eventKey);
     reservedEventKeys.forEach((eventKey) => {
@@ -429,8 +429,10 @@ export function Schedule({ auth }: { auth: AuthState }) {
           reservedEventKeys.forEach((eventKey) => hydratedRsvpEventKeysRef.current.add(eventKey));
           mergeHydratedEvents(hydrated.events);
         }
+        return hydrated;
       } catch (error) {
         logger.warn('Unable to hydrate schedule RSVPs in the background.', { error });
+        return null;
       } finally {
         reservedEventKeys.forEach((eventKey) => {
           if (inFlightRsvpEventKeysRef.current.get(eventKey) === hydrationRequestScopeKey) {
@@ -864,15 +866,19 @@ export function Schedule({ auth }: { auth: AuthState }) {
     [allBulkRsvpCandidates]
   );
   const unavailableBulkRsvpCount = allBulkRsvpCandidates.length - bulkRsvpCandidates.length;
-  const bulkRsvpScopeKey = `${auth.user?.uid || ''}::${selectedTeamId}::${selectedPlayerId}`;
+  const bulkRsvpCandidateKey = JSON.stringify(allBulkRsvpCandidates.map((event) => event.eventKey));
+  const bulkRsvpScopeKey = `${auth.user?.uid || ''}::${selectedTeamId}::${selectedPlayerId}::${bulkRsvpCandidateKey}`;
   useEffect(() => {
     if (!bulkRsvpFullScopeRequested || bulkRsvpFullScopePending || !hasLoadedSchedule || scheduleReadLoading) return;
     setBulkRsvpFullScopePending(true);
     void hydrateScheduleRsvpsInBackground({
       children: childrenRef.current,
       events: eventsRef.current
-    }, false, maxBulkRsvpEvents, true).then(() => {
-      const fullScopeComplete = getBulkRsvpNoteReadyCandidates(allBulkRsvpCandidates).length === allBulkRsvpCandidates.length;
+    }, false, maxBulkRsvpEvents, true).then((hydrated) => {
+      const hydratedByKey = new Map((hydrated?.events || []).map((event) => [event.eventKey, event]));
+      const hydratedCandidates = allBulkRsvpCandidates.map((event) => hydratedByKey.get(event.eventKey) || event);
+      const fullScopeComplete = hydrated !== null
+        && getBulkRsvpNoteReadyCandidates(hydratedCandidates).length === hydratedCandidates.length;
       if (!fullScopeComplete) {
         setBulkRsvpFullScopeRequested(false);
         setBulkRsvpOpenRequested(false);
