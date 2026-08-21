@@ -39,7 +39,7 @@ describe('public opportunity callable wiring', () => {
 
   it('deduplicates public calendar projections against tracked team games before serialization', () => {
     const calendarProjection = source.slice(
-      source.indexOf('exports.getPublicTeamCalendarProjection'),
+      source.indexOf('async function getPublicTeamCalendarTrackingEvents'),
       source.indexOf('exports.getPublicGameProjection')
     );
     expect(calendarProjection).toContain("firestore.collection(`teams/${teamId}/games`)");

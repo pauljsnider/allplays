@@ -20,24 +20,48 @@ const {
 } = require('../public-team-api-core.cjs');
 const { isFamilyShareCalendarEventTracked } = require('../family-share-view-core.cjs');
 
-test('paginates calendar tracking scans and fails closed at the document cap', async () => {
-  const pages = [
-    { documents: [{ date: 'ordinary-1' }, { date: 'ordinary-2' }], nextCursor: 'page-2' },
-    { documents: [{ calendarEventUid: 'tracked-later', date: 'game-date' }], nextCursor: null }
-  ];
+test('paginates more than 500 tracked calendar documents with a stable cursor', async () => {
+  const trackedDocuments = Array.from({ length: 501 }, (_, index) => ({
+    calendarEventUid: `tracked-${String(index).padStart(3, '0')}`,
+    date: `game-date-${index}`
+  }));
+  const cursors = [];
   const tracked = await scanBoundedPublicCalendarTrackingEvents(
-    async () => pages.shift(),
-    { maxDocuments: 4, pageSize: 2 }
+    async ({ after, limit }) => {
+      cursors.push(after);
+      const start = after === null ? 0 : Number(after) + 1;
+      const documents = trackedDocuments.slice(start, start + limit);
+      return {
+        documents,
+        nextCursor: documents.length ? String(start + documents.length - 1) : null
+      };
+    },
+    { maxDocuments: 5000, pageSize: 500 }
   );
-  assert.deepEqual(tracked, [{ calendarEventUid: 'tracked-later', date: 'game-date' }]);
 
+  assert.equal(tracked.length, 501);
+  assert.deepEqual(cursors, [null, '499']);
+  assert.equal(tracked[500].calendarEventUid, 'tracked-500');
+});
+
+test('fails closed after scanning the 5,000 tracked-document safety cap', async () => {
+  let calls = 0;
   await assert.rejects(
     scanBoundedPublicCalendarTrackingEvents(
-      async ({ after }) => ({ documents: [{ calendarEventUid: `tracked-${after || 1}` }], nextCursor: 'next' }),
-      { maxDocuments: 2, pageSize: 1 }
+      async ({ limit }) => {
+        calls += 1;
+        return {
+          documents: Array.from({ length: limit }, (_, index) => ({
+            calendarEventUid: `tracked-${calls}-${index}`
+          })),
+          nextCursor: `page-${calls}`
+        };
+      },
+      { maxDocuments: 5000, pageSize: 500 }
     ),
     /tracking scan limit exceeded/
   );
+  assert.equal(calls, 10);
 });
 
 test('keeps a moved tracked occurrence available to suppress its original in-range calendar event', async () => {
