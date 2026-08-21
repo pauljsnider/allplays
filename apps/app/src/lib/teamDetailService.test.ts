@@ -861,6 +861,33 @@ describe('team detail bootstrap loading', () => {
     expect(dbMocks.getConfigs).not.toHaveBeenCalled();
   });
 
+  it('uses the bounded overview schedule during bootstrap without hydrating games', async () => {
+    scheduleServiceMocks.loadTeamOverviewSchedule.mockResolvedValueOnce([{
+      eventKey: 'team-1::calendar-practice::staff-team-team-1',
+      id: 'calendar-practice',
+      teamId: 'team-1',
+      teamName: 'Bears',
+      type: 'practice',
+      title: 'Bears Practice',
+      date: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      isDbGame: false,
+      isCancelled: false,
+      assignments: [],
+      openAssignmentCount: 0
+    }]);
+
+    const model = await loadParentTeamDetailBootstrap('team-1', { uid: 'parent-1' } as any);
+
+    expect(model.upcomingEvents).toEqual([expect.objectContaining({ id: 'calendar-practice' })]);
+    expect(scheduleServiceMocks.loadTeamOverviewSchedule).toHaveBeenCalledWith(
+      'team-1',
+      'Bears',
+      expect.objectContaining({ uid: 'parent-1' })
+    );
+    expect(dbMocks.getGames).not.toHaveBeenCalled();
+    expect(dbMocks.getConfigs).not.toHaveBeenCalled();
+  });
+
   it('recovers management access from the authoritative REST document when the web SDK returns a public projection', async () => {
     const previousFetch = globalThis.fetch;
     dbMocks.getTeam.mockResolvedValueOnce({

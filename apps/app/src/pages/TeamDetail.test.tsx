@@ -585,7 +585,7 @@ describe('TeamDetail', () => {
     );
 
     expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
-    await waitFor(() => expect(teamDetailServiceMocks.loadTeamDetailInsights).toHaveBeenCalledWith('team-1', auth.user));
+    expect(teamDetailServiceMocks.loadTeamDetailInsights).not.toHaveBeenCalled();
     expect(insightsTabLoaderMocks.loadInsightsTab).not.toHaveBeenCalled();
     expect(screen.queryByText('Team performance')).toBeNull();
 
@@ -593,6 +593,7 @@ describe('TeamDetail', () => {
     expect(insightsTabLoaderMocks.loadInsightsTab).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole('button', { name: /insights/i }));
+    await waitFor(() => expect(teamDetailServiceMocks.loadTeamDetailInsights).toHaveBeenCalledWith('team-1', auth.user));
     expect(screen.getByRole('status', { name: 'Loading insights' })).toBeTruthy();
     expect(insightsTabLoaderMocks.loadInsightsTab).toHaveBeenCalledTimes(1);
 
@@ -707,7 +708,7 @@ describe('TeamDetail', () => {
       statTrackerConfigExists: false,
       statTrackerConfigIsBasketball: false
     };
-    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue({
+    teamDetailServiceMocks.loadParentTeamDetailBootstrap.mockResolvedValue({
       ...model,
       upcomingEvents: [nextEvent],
       recentResults: [{
@@ -747,8 +748,8 @@ describe('TeamDetail', () => {
 
     expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
     expect(screen.getByText(/Bears vs Tigers/i)).toBeTruthy();
-    expect(teamDetailServiceMocks.loadParentTeamDetailBootstrap).not.toHaveBeenCalled();
-    expect(teamDetailServiceMocks.loadParentTeamDetail).toHaveBeenCalledTimes(1);
+    expect(teamDetailServiceMocks.loadParentTeamDetailBootstrap).toHaveBeenCalledTimes(1);
+    expect(teamDetailServiceMocks.loadParentTeamDetail).not.toHaveBeenCalled();
   });
 
   it('links team overview summary stats and cards to their matching workflows', async () => {
@@ -1082,17 +1083,41 @@ describe('TeamDetail', () => {
     await waitFor(() => expect(window.scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'auto' }));
   });
 
-  it('prefetches insights after the base team model renders', async () => {
-    render(
-      <MemoryRouter initialEntries={['/teams/team-1']}>
-        <Routes>
-          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
-        </Routes>
-      </MemoryRouter>
-    );
+  it('defers insights until the Insights tab is selected', async () => {
+    const router = createMemoryRouter([
+      { path: '/teams/:teamId', element: <TeamDetail auth={auth} /> }
+    ], { initialEntries: ['/teams/team-1'] });
+
+    render(<RouterProvider router={router} />);
 
     expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    expect(teamDetailServiceMocks.loadTeamDetailInsights).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: /insights/i }));
     await waitFor(() => expect(teamDetailServiceMocks.loadTeamDetailInsights).toHaveBeenCalledWith('team-1', auth.user));
+    expect(teamDetailServiceMocks.loadTeamDetailInsights).toHaveBeenCalledTimes(1);
+  });
+
+  it('reuses an in-flight insights load when the tab is left and reselected', async () => {
+    const insights = createDeferred<any>();
+    teamDetailServiceMocks.loadTeamDetailInsights.mockReturnValue(insights.promise);
+    const router = createMemoryRouter([
+      { path: '/teams/:teamId', element: <TeamDetail auth={auth} /> }
+    ], { initialEntries: ['/teams/team-1?tab=insights'] });
+
+    render(<RouterProvider router={router} />);
+
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    await waitFor(() => expect(teamDetailServiceMocks.loadTeamDetailInsights).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole('button', { name: /overview/i }));
+    await waitFor(() => expect(router.state.location.search).toBe(''));
+    fireEvent.click(screen.getByRole('button', { name: /insights/i }));
+    expect(teamDetailServiceMocks.loadTeamDetailInsights).toHaveBeenCalledTimes(1);
+
+    insights.resolve({ leaderboards: [], trackingSummaries: [], teamAnalytics: model.teamAnalytics });
+
+    expect(await screen.findByText('Team performance appears after a completed game has a final score.')).toBeTruthy();
+    expect(screen.queryByText('Loading team performance…')).toBeNull();
   });
 
   it('renders team performance metrics and accessible score graphs in Insights', async () => {
