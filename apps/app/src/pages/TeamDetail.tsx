@@ -159,6 +159,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
   const detailCollectionsLoadingRef = useRef(detailCollectionsLoading);
   const staffPermissionsLoadingRef = useRef(staffPermissionsLoading);
   const insightsLoadingRef = useRef(insightsLoading);
+  const insightsRequestRef = useRef<{ key: string; request: ReturnType<typeof loadTeamDetailInsights> } | null>(null);
   const sponsorsLoadingRef = useRef(sponsorsLoading);
   const hasTeamModel = Boolean(model);
   const canManageTeam = Boolean(model?.canManageTeam);
@@ -209,13 +210,10 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
       setLoading(true);
       setError(null);
       try {
-        const shouldHydrateOverviewCollections = activeTabRef.current === 'overview' || activeTabRef.current === 'insights';
-        const nextModel = shouldHydrateOverviewCollections
-          ? await loadParentTeamDetail(teamId, authUserRef.current, { includeDeferredData: false })
-          : await loadParentTeamDetailBootstrap(teamId, authUserRef.current);
+        const nextModel = await loadParentTeamDetailBootstrap(teamId, authUserRef.current);
         if (!cancelled) {
           setModel(nextModel);
-          setDetailCollectionsLoaded(shouldHydrateOverviewCollections);
+          setDetailCollectionsLoaded(false);
           setDetailCollectionsLoading(false);
           setDetailCollectionsError('');
           setDetailCollectionsReloadVersion(0);
@@ -332,11 +330,16 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
   useEffect(() => {
     let cancelled = false;
     async function loadInsightsForTab() {
-      if (!teamId || !hasTeamModel || insightsLoaded || insightsLoadingRef.current) return;
+      if (!teamId || activeTab !== 'insights' || !hasTeamModel || insightsLoaded) return;
       setInsightsLoading(true);
       setInsightsError('');
+      const requestKey = `${teamId}:${authUserId}:${insightsReloadVersion}`;
+      const activeRequest = insightsRequestRef.current?.key === requestKey
+        ? insightsRequestRef.current
+        : { key: requestKey, request: loadTeamDetailInsights(teamId, authUserRef.current) };
+      insightsRequestRef.current = activeRequest;
       try {
-        const insights = await loadTeamDetailInsights(teamId, authUserRef.current);
+        const insights = await activeRequest.request;
         if (!cancelled) {
           setModel((currentModel) => currentModel ? { ...currentModel, ...insights } : currentModel);
           setInsightsLoaded(true);
@@ -344,6 +347,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
       } catch (loadError: any) {
         if (!cancelled) setInsightsError(loadError?.message || 'Unable to load team insights.');
       } finally {
+        if (insightsRequestRef.current === activeRequest) insightsRequestRef.current = null;
         if (!cancelled) setInsightsLoading(false);
       }
     }
@@ -352,7 +356,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [authUserId, hasTeamModel, insightsLoaded, insightsReloadVersion, teamId]);
+  }, [activeTab, authUserId, hasTeamModel, insightsLoaded, insightsReloadVersion, teamId]);
 
   useEffect(() => {
     let cancelled = false;
