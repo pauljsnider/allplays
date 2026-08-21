@@ -15,6 +15,7 @@ const {
   collectAccountTeamIds,
   collectAccountMediaStoragePaths,
   createAccountDeletionRequestHandler,
+  deleteAccountMediaStoragePages,
   extractAccountProfileStoragePath,
   getAccountEmailQueryCandidates,
   getCurrentEnabledAuthEmail,
@@ -342,6 +343,158 @@ test('collects current and legacy storage fields from account-owned media record
   ]);
 });
 
+test('pages account media cleanup with deterministic cursors and bounded storage deletes', async () => {
+  const documentIdField = Symbol('document-id');
+  const records = Array.from({ length: 501 }, (_, index) => ({
+    id: `media-${String(index).padStart(3, '0')}`,
+    data: () => ({
+      storagePath: `team-media/team-1/folder-1/user-1/file-${index}.jpg`,
+      attachments: [
+        { path: `team-media/team-1/folder-1/user-1/file-${index}.jpg` },
+        { path: `team-media/team-1/folder-1/other-user/unrelated-${index}.jpg` }
+      ],
+      imagePath: index === 0 ? 'athlete-profile-media/user-1/player-1/photo.jpg' : ''
+    })
+  }));
+  const queryState = {
+    cursors: [],
+    limits: [],
+    orderFields: [],
+    pageReads: 0
+  };
+  const createQuery = (cursor = null, pageLimit = null) => ({
+    orderBy(field) {
+      queryState.orderFields.push(field);
+      return createQuery(cursor, pageLimit);
+    },
+    limit(limit) {
+      queryState.limits.push(limit);
+      return createQuery(cursor, limit);
+    },
+    startAfter(document) {
+      queryState.cursors.push(document.id);
+      return createQuery(document, pageLimit);
+    },
+    async get() {
+      queryState.pageReads += 1;
+      const startIndex = cursor ? records.findIndex((record) => record.id === cursor.id) + 1 : 0;
+      const docs = records.slice(startIndex, startIndex + pageLimit);
+      return { docs, empty: docs.length === 0 };
+    }
+  });
+
+  let activeDeletes = 0;
+  let maximumActiveDeletes = 0;
+  const deletedPrimaryPaths = [];
+  const deletedImagePaths = [];
+  const createBucket = (deletedPaths) => ({
+    file: (storagePath) => ({
+      delete: async (options) => {
+        assert.deepEqual(options, { ignoreNotFound: true });
+        activeDeletes += 1;
+        maximumActiveDeletes = Math.max(maximumActiveDeletes, activeDeletes);
+        await new Promise((resolve) => setImmediate(resolve));
+        activeDeletes -= 1;
+        deletedPaths.push(storagePath);
+      }
+    })
+  });
+
+  const result = await deleteAccountMediaStoragePages({
+    uid: 'user-1',
+    queries: [createQuery()],
+    primaryBucket: createBucket(deletedPrimaryPaths),
+    imageBucket: createBucket(deletedImagePaths),
+    documentIdField,
+    pageSize: 250,
+    maxConcurrentDeletes: 7
+  });
+
+  assert.deepEqual(result, { documentsProcessed: 501, pagesRead: 3 });
+  assert.equal(queryState.pageReads, 3);
+  assert.deepEqual(queryState.limits, [250, 250, 250]);
+  assert.deepEqual(queryState.cursors, ['media-249', 'media-499']);
+  assert.deepEqual(queryState.orderFields, [documentIdField, documentIdField, documentIdField]);
+  assert.equal(maximumActiveDeletes, 7);
+  assert.equal(new Set(deletedPrimaryPaths).size, 501);
+  assert.equal(deletedPrimaryPaths.length, 501);
+  assert.deepEqual(deletedImagePaths, ['athlete-profile-media/user-1/player-1/photo.jpg']);
+  assert.ok(deletedPrimaryPaths.every((path) => path.includes('/user-1/')));
+});
+
+test('deletes both account profile URL sources during paginated media cleanup', async () => {
+  const deletedImagePaths = [];
+  const imageBucket = {
+    file: (storagePath) => ({
+      delete: async (options) => {
+        assert.deepEqual(options, { ignoreNotFound: true });
+        deletedImagePaths.push(storagePath);
+      }
+    })
+  };
+
+  const result = await deleteAccountMediaStoragePages({
+    uid: 'user-1',
+    queries: [],
+    profilePhotoUrls: [
+      'https://firebasestorage.googleapis.com/v0/b/game-flow-img.firebasestorage.app/o/user-photos%2Fuser-1%2Ffirestore-profile.jpg?alt=media',
+      'https://firebasestorage.googleapis.com/v0/b/game-flow-img.firebasestorage.app/o/user-photos%2Fuser-1%2Fauth-profile.jpg?alt=media'
+    ],
+    primaryBucket: { file: () => ({ delete: async () => {} }) },
+    imageBucket,
+    documentIdField: 'document-id'
+  });
+
+  assert.deepEqual(result, { documentsProcessed: 0, pagesRead: 0 });
+  assert.deepEqual(deletedImagePaths, [
+    'user-photos/user-1/firestore-profile.jpg',
+    'user-photos/user-1/auth-profile.jpg'
+  ]);
+});
+
+test('treats missing account media objects as idempotent during retry cleanup', async () => {
+  const documents = [{
+    id: 'media-1',
+    data: () => ({
+      storagePath: 'team-media/team-1/folder-1/user-1/already-deleted.jpg',
+      attachments: [{ path: 'team-media/team-1/folder-1/user-1/remaining.jpg' }]
+    })
+  }];
+  const deletedPaths = [];
+  const query = {
+    orderBy: () => ({
+      limit: () => ({
+        get: async () => ({ docs: documents, empty: false })
+      })
+    })
+  };
+  const primaryBucket = {
+    file: (storagePath) => ({
+      delete: async () => {
+        if (storagePath.endsWith('already-deleted.jpg')) {
+          const error = new Error('Object not found');
+          error.code = 404;
+          throw error;
+        }
+        deletedPaths.push(storagePath);
+      }
+    })
+  };
+
+  const result = await deleteAccountMediaStoragePages({
+    uid: 'user-1',
+    queries: [query],
+    primaryBucket,
+    imageBucket: { file: () => ({ delete: async () => {} }) },
+    documentIdField: 'document-id',
+    pageSize: 250,
+    maxConcurrentDeletes: 2
+  });
+
+  assert.deepEqual(result, { documentsProcessed: 1, pagesRead: 1 });
+  assert.deepEqual(deletedPaths, ['team-media/team-1/folder-1/user-1/remaining.jpg']);
+});
+
 test('deletes account-owned share links and invite records', () => {
   const queries = getAccountDeletionCollectionQueries();
   assert.ok(queries.some(([collection, field]) => collection === 'socialReports' && field === 'reporterId'));
@@ -660,6 +813,18 @@ test('gives the deletion worker extended runtime and automatic event retries', (
     workerSource,
     /authUser\?\.email \|\| userDoc\.data\(\)\?\.email \|\| snapshot\.data\(\)\?\.email/
   );
+  const mediaCleanupSource = workerSource.slice(
+    workerSource.indexOf('await deleteAccountStorage(uid'),
+    workerSource.indexOf('await scrubAccountTeamGrants(')
+  );
+  assert.match(mediaCleanupSource, /collectionGroup\('media'\)\.where\('uploadedBy', '==', uid\)/);
+  assert.match(mediaCleanupSource, /collectionGroup\('mediaItems'\)\.where\('uploadedBy', '==', uid\)/);
+  assert.match(mediaCleanupSource, /collectionGroup\('chatMessages'\)\.where\('senderId', '==', uid\)/);
+  assert.match(mediaCleanupSource, /collection\('socialPosts'\)\.where\('authorId', '==', uid\)/);
+  assert.match(mediaCleanupSource, /userDoc\.data\(\)\?\.photoUrl/);
+  assert.match(mediaCleanupSource, /authUser\?\.photoURL/);
+  assert.doesNotMatch(mediaCleanupSource, /\.get\(\)/);
+  assert.match(functionsSource, /deleteAccountMediaStoragePages\([\s\S]*FieldPath\.documentId\(\)/);
   assert.match(functionsSource, /deleteAccountQuery[\s\S]*firestore\.recursiveDelete\(docSnapshot\.ref\)/);
   assert.ok(workerSource.indexOf('await scrubAccountTeamGrants(') < workerSource.indexOf('admin.auth().deleteUser(uid)'));
   assert.ok(workerSource.indexOf('await scrubAccountChatConversationMembership(') < workerSource.indexOf('admin.auth().deleteUser(uid)'));

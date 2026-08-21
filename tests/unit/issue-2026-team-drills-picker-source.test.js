@@ -13,7 +13,8 @@ describe('issue 2026 team drills picker source contract', () => {
     it('keeps the native team drill library wired to search, filters, pagination, and favorites', () => {
         expect(teamDrillsPageSource).toContain("type DrillTab = 'community' | 'favorites';");
         expect(teamDrillsPageSource).toContain('loadTeamDrillLibraryPage(teamId, auth.user, {');
-        expect(teamDrillsPageSource).toContain('loadFavoriteDrills(teamId, auth.user)');
+        expect(teamDrillsPageSource).toContain('authUserRef.current = auth.user;');
+        expect(teamDrillsPageSource).toContain('loadFavoriteDrills(teamId, authUserRef.current)');
         expect(teamDrillsPageSource).toContain('filterDrillSummaries(favoriteDrills || [], {');
         expect(teamDrillsPageSource).toContain('await setTeamDrillFavorite(teamId, auth.user, drill.id, !isFavorite);');
         expect(teamDrillsPageSource).toContain('Team-scoped favorites sync with drills.html automatically.');

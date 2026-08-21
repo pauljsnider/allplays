@@ -33,29 +33,52 @@ function appendUrlToShareText(text: string, url: string) {
 
 export async function openPublicUrl(url: string) {
   if (!url) return;
-  const scheme = url.match(/^([a-z][a-z0-9+.-]*):/i)?.[1]?.toLowerCase();
+  const candidate = String(url).trim();
+  const hasControlCharacter = [...candidate].some((character) => {
+    const code = character.charCodeAt(0);
+    return code <= 31 || code === 127;
+  });
+  if (!candidate || hasControlCharacter) {
+    throw new Error('Unsupported URL scheme.');
+  }
+
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(candidate);
+  } catch {
+    throw new Error('Unsupported URL scheme.');
+  }
+
+  const scheme = parsedUrl.protocol.slice(0, -1).toLowerCase();
   const isWebUrl = scheme === 'http' || scheme === 'https';
+  if (isWebUrl && (!parsedUrl.hostname || parsedUrl.username || parsedUrl.password)) {
+    throw new Error('Unsupported URL scheme.');
+  }
+  const normalizedUrl = parsedUrl.href;
   if (isWebUrl && isNativePluginAvailable('Browser')) {
-    await Browser.open({ url });
+    await Browser.open({ url: normalizedUrl });
     return;
   }
   if (scheme === 'webcal' && Capacitor.isNativePlatform()) {
+    if (!parsedUrl.hostname) {
+      throw new Error('Unsupported URL scheme.');
+    }
     if (!isNativePluginAvailable('AppLauncher')) {
       throw new Error('No application is available to open this URL.');
     }
-    const result = await AppLauncher.openUrl({ url });
+    const result = await AppLauncher.openUrl({ url: normalizedUrl });
     if (!result.completed) {
       throw new Error('No application is available to open this URL.');
     }
     return;
   }
-  if (scheme && !isWebUrl && Capacitor.isNativePlatform()) {
+  if (!isWebUrl) {
     throw new Error('Unsupported URL scheme.');
   }
 
-  const opened = window.open(url, '_blank', 'noopener,noreferrer');
+  const opened = window.open(normalizedUrl, '_blank', 'noopener,noreferrer');
   if (!opened) {
-    window.location.href = url;
+    window.location.href = normalizedUrl;
   }
 }
 
