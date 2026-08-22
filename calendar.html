@@ -210,7 +210,12 @@
         let activeDayDetail = null;
         let linkedPlayersByTeam = new Map();
         let calendarTeams = [];
+        const RSVP_HYDRATION_CONCURRENCY = 6;
         const rsvpHydrationCache = new Map();
+        const rsvpHydrationTasks = new Map();
+        const rsvpHydrationQueue = [];
+        const prioritizedRsvpHydrationQueue = [];
+        let activeRsvpHydrationTasks = 0;
         const loadedCalendarRangesByTeam = new Map();
         const calendarGamesByTeam = new Map();
         const calendarEventsByTeam = new Map();
@@ -283,55 +288,136 @@
             if (summary) cached.summary = Promise.resolve(summary);
         }
 
-        async function hydrateRsvpEvents(events, { includeNotes = false, includeMissingSummary = false } = {}) {
+        async function hydrateRsvpEvent(eventForPrefs, { includeNotes, includeMissingSummary }) {
+            const key = `${eventForPrefs.teamId}::${eventForPrefs.id}`;
+            const cached = getRsvpHydrationCacheEntry(eventForPrefs.teamId, eventForPrefs.id);
+            const linkedPlayerIds = getLinkedPlayersForTeam(eventForPrefs.teamId).map((player) => player.playerId).filter(Boolean);
+            if (!cached.myRsvp) {
+                cached.myRsvp = getMyRsvp(eventForPrefs.teamId, eventForPrefs.id, currentUserId, linkedPlayerIds)
+                    .then((myRsvp) => myRsvp ? myRsvp.response : null);
+            }
+            if (includeMissingSummary && eventForPrefs.isTeamAdmin && !eventForPrefs.rsvpSummary && !cached.summary) {
+                cached.summary = getRsvpSummaries(eventForPrefs.teamId, [eventForPrefs.id])
+                    .then((summaries) => summaries?.get(eventForPrefs.id) || null);
+            }
+            if (includeNotes && eventForPrefs.notesVisible && !cached.rsvps) {
+                cached.rsvps = eventForPrefs.isTeamAdmin
+                    ? getRsvps(eventForPrefs.teamId, eventForPrefs.id)
+                    : getMyRsvps(eventForPrefs.teamId, eventForPrefs.id, currentUserId, linkedPlayerIds);
+            }
+
+            const myRsvpPromise = cached.myRsvp;
+            const summaryCachePromise = cached.summary;
+            const rsvpsCachePromise = cached.rsvps;
+            const summaryPromise = summaryCachePromise || Promise.resolve(null);
+            const rsvpsPromise = includeNotes && eventForPrefs.notesVisible ? (rsvpsCachePromise || Promise.resolve([])) : Promise.resolve([]);
+
+            try {
+                const [myRsvp, summary, rsvps] = await Promise.all([
+                    myRsvpPromise,
+                    summaryPromise,
+                    rsvpsPromise
+                ]);
+                if (cached.myRsvp !== myRsvpPromise || cached.summary !== summaryCachePromise) return;
+                applyRsvpHydration(allEvents, eventForPrefs.teamId, eventForPrefs.id, {
+                    myRsvp,
+                    summary
+                });
+                if (includeNotes && eventForPrefs.notesVisible) {
+                    const availabilityNotes = buildAvailabilityNoteRows(rsvps, eventForPrefs.availabilityPreferences, !!eventForPrefs.isTeamAdmin);
+                    allEvents.forEach((ev) => {
+                        if (ev.teamId === eventForPrefs.teamId && ev.id === eventForPrefs.id) {
+                            ev.availabilityNotes = availabilityNotes;
+                        }
+                    });
+                }
+            } catch (error) {
+                if (rsvpHydrationCache.get(key) === cached) {
+                    if (cached.myRsvp === myRsvpPromise) delete cached.myRsvp;
+                    if (cached.summary === summaryCachePromise) delete cached.summary;
+                    if (cached.rsvps === rsvpsCachePromise) delete cached.rsvps;
+                    if (Object.keys(cached).length === 0) rsvpHydrationCache.delete(key);
+                }
+                throw error;
+            }
+        }
+
+        function runQueuedRsvpHydrationTasks() {
+            while (activeRsvpHydrationTasks < RSVP_HYDRATION_CONCURRENCY) {
+                const task = prioritizedRsvpHydrationQueue.shift() || rsvpHydrationQueue.shift();
+                if (!task) return;
+
+                task.state = 'active';
+                task.startedIncludeNotes = task.includeNotes;
+                task.startedIncludeMissingSummary = task.includeMissingSummary;
+                activeRsvpHydrationTasks += 1;
+                Promise.resolve()
+                    .then(() => hydrateRsvpEvent(task.event, {
+                        includeNotes: task.startedIncludeNotes,
+                        includeMissingSummary: task.startedIncludeMissingSummary
+                    }))
+                    .catch(() => {
+                        task.failed = true;
+                    })
+                    .finally(() => {
+                        activeRsvpHydrationTasks -= 1;
+                        if (rsvpHydrationTasks.get(task.key) === task) {
+                            rsvpHydrationTasks.delete(task.key);
+                        }
+                        task.resolve();
+                        runQueuedRsvpHydrationTasks();
+                    });
+            }
+        }
+
+        function scheduleRsvpEventHydration(event, { includeNotes, includeMissingSummary, prioritize }) {
+            const key = `${event.teamId}::${event.id}`;
+            let task = rsvpHydrationTasks.get(key);
+            if (!task) {
+                task = {
+                    key,
+                    event,
+                    includeNotes,
+                    includeMissingSummary,
+                    prioritize,
+                    state: 'queued',
+                    failed: false
+                };
+                task.promise = new Promise((resolve) => {
+                    task.resolve = resolve;
+                });
+                rsvpHydrationTasks.set(key, task);
+                (prioritize ? prioritizedRsvpHydrationQueue : rsvpHydrationQueue).push(task);
+                runQueuedRsvpHydrationTasks();
+            } else {
+                task.includeNotes ||= includeNotes;
+                task.includeMissingSummary ||= includeMissingSummary;
+                if (prioritize && !task.prioritize && task.state === 'queued') {
+                    task.prioritize = true;
+                    const queuedIndex = rsvpHydrationQueue.indexOf(task);
+                    if (queuedIndex >= 0) rsvpHydrationQueue.splice(queuedIndex, 1);
+                    prioritizedRsvpHydrationQueue.push(task);
+                }
+            }
+
+            return task.promise.then(() => {
+                if (task.failed) return;
+                if ((includeNotes && !task.startedIncludeNotes)
+                    || (includeMissingSummary && !task.startedIncludeMissingSummary)) {
+                    return scheduleRsvpEventHydration(event, { includeNotes, includeMissingSummary, prioritize });
+                }
+            });
+        }
+
+        async function hydrateRsvpEvents(events, { includeNotes = false, includeMissingSummary = false, prioritize = false } = {}) {
             const dbEvents = getDbRsvpEvents(events);
             if (dbEvents.length === 0) return;
 
-            await Promise.all(dbEvents.map(async (eventForPrefs) => {
-                const cached = getRsvpHydrationCacheEntry(eventForPrefs.teamId, eventForPrefs.id);
-                const linkedPlayerIds = getLinkedPlayersForTeam(eventForPrefs.teamId).map((player) => player.playerId).filter(Boolean);
-                if (!cached.myRsvp) {
-                    cached.myRsvp = getMyRsvp(eventForPrefs.teamId, eventForPrefs.id, currentUserId, linkedPlayerIds)
-                        .then((myRsvp) => myRsvp ? myRsvp.response : null);
-                }
-                if (includeMissingSummary && eventForPrefs.isTeamAdmin && !eventForPrefs.rsvpSummary && !cached.summary) {
-                    cached.summary = getRsvpSummaries(eventForPrefs.teamId, [eventForPrefs.id])
-                        .then((summaries) => summaries?.get(eventForPrefs.id) || null);
-                }
-                if (includeNotes && eventForPrefs.notesVisible && !cached.rsvps) {
-                    cached.rsvps = eventForPrefs.isTeamAdmin
-                        ? getRsvps(eventForPrefs.teamId, eventForPrefs.id)
-                        : getMyRsvps(eventForPrefs.teamId, eventForPrefs.id, currentUserId, linkedPlayerIds);
-                }
-
-                const myRsvpPromise = cached.myRsvp;
-                const summaryCachePromise = cached.summary;
-                const summaryPromise = summaryCachePromise || Promise.resolve(null);
-                const rsvpsPromise = includeNotes && eventForPrefs.notesVisible ? (cached.rsvps || Promise.resolve([])) : Promise.resolve([]);
-
-                try {
-                    const [myRsvp, summary, rsvps] = await Promise.all([
-                        myRsvpPromise,
-                        summaryPromise,
-                        rsvpsPromise
-                    ]);
-                    if (cached.myRsvp !== myRsvpPromise || cached.summary !== summaryCachePromise) return;
-                    applyRsvpHydration(allEvents, eventForPrefs.teamId, eventForPrefs.id, {
-                        myRsvp,
-                        summary
-                    });
-                    if (includeNotes && eventForPrefs.notesVisible) {
-                        const availabilityNotes = buildAvailabilityNoteRows(rsvps, eventForPrefs.availabilityPreferences, !!eventForPrefs.isTeamAdmin);
-                        allEvents.forEach((ev) => {
-                            if (ev.teamId === eventForPrefs.teamId && ev.id === eventForPrefs.id) {
-                                ev.availabilityNotes = availabilityNotes;
-                            }
-                        });
-                    }
-                } catch (_) {
-                    rsvpHydrationCache.delete(`${eventForPrefs.teamId}::${eventForPrefs.id}`);
-                }
-            }));
+            await Promise.all(dbEvents.map((event) => scheduleRsvpEventHydration(event, {
+                includeNotes,
+                includeMissingSummary,
+                prioritize
+            })));
         }
 
         async function hydrateRenderedRsvpEvents() {
@@ -903,7 +989,7 @@
 
             modal.classList.remove('hidden');
 
-            await hydrateRsvpEvents(dayEvents, { includeNotes: true, includeMissingSummary: true });
+            await hydrateRsvpEvents(dayEvents, { includeNotes: true, includeMissingSummary: true, prioritize: true });
             if (activeDayDetail?.year === year && activeDayDetail?.month === month && activeDayDetail?.day === day && !modal.classList.contains('hidden')) {
                 renderDayDetailEvents(getDayDetailEvents(year, month, day), content);
             }
