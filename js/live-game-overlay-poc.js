@@ -5,8 +5,9 @@ import {
     createOverlayState,
     formatOverlayClock,
     getOverlayLineup,
+    normalizeOverlayEvent,
     replaceOverlayChat
-} from './live-game-overlay-model.js?v=1';
+} from './live-game-overlay-model.js?v=2';
 
 const elements = {
     body: document.body,
@@ -43,6 +44,7 @@ const elements = {
     demoLabClose: document.querySelector('#demo-lab-close'),
     demoActions: [...document.querySelectorAll('[data-action]')],
     connectionMessage: document.querySelector('#connection-message'),
+    reactionsOverlay: document.querySelector('#reactions-overlay'),
     screenReaderUpdate: document.querySelector('#screen-reader-update')
 };
 
@@ -58,6 +60,8 @@ const uiState = {
     activeMobilePanel: null,
     desktopPanels: { plays: true, insights: true },
     activeInsight: 'lineup',
+    liveEventsFirstLoad: true,
+    reactionIds: new Set(),
     unsubscribers: []
 };
 
@@ -74,6 +78,14 @@ function getQueryParams() {
 
 function isMobileLayout() {
     return window.matchMedia('(max-width: 900px)').matches;
+}
+
+function getTimestampMs(value) {
+    if (Number.isFinite(value)) return Number(value);
+    if (value && typeof value.toMillis === 'function') return value.toMillis();
+    if (value && typeof value.toDate === 'function') return value.toDate().getTime();
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function setConnectionMessage(message = '', tone = 'warning') {
@@ -260,6 +272,114 @@ function renderAll() {
     renderLineup();
     renderLeaders();
     renderChat();
+}
+
+function resetOverlayFromGame(game = {}, stateTools, message = 'Game reset. Waiting for plays…') {
+    const liveLineup = game.liveLineup || {};
+    const next = stateTools.applyResetEventState(uiState.game, {
+        period: game.period || uiState.game.period,
+        homeScore: Number.isFinite(game.homeScore) ? game.homeScore : 0,
+        awayScore: Number.isFinite(game.awayScore) ? game.awayScore : 0,
+        gameClockMs: Number.isFinite(game.liveClockMs) ? game.liveClockMs : Number(game.gameClockMs) || 0,
+        sport: game.sport || uiState.game.sport,
+        periods: Array.isArray(game.periods) ? game.periods : uiState.game.periods,
+        onCourt: Array.isArray(liveLineup.onCourt) ? liveLineup.onCourt : [],
+        bench: Array.isArray(liveLineup.bench) ? liveLineup.bench : []
+    });
+    Object.assign(uiState.game, next, { latestEvent: null });
+    uiState.latestRenderedEventId = null;
+    renderAll();
+    const placeholder = elements.eventList.querySelector('.empty-state');
+    if (placeholder) placeholder.textContent = message;
+}
+
+function processLiveEventSnapshot(events = [], stateTools, { preserveSeededOpponentGoalStats = false } = {}) {
+    const visibleEvents = stateTools.collectVisibleLiveEventsSequentially(events, {
+        seenIds: uiState.game.eventIds,
+        resetBoundaryMs: uiState.game.lastResetAt
+    });
+
+    visibleEvents.forEach((rawEvent, index) => {
+        const event = normalizeOverlayEvent(rawEvent, index);
+        uiState.game.eventIds.add(event.id);
+
+        if (event.type === 'reset') {
+            const resetAt = getTimestampMs(event.createdAt) || Date.now();
+            uiState.game.lastResetAt = Math.max(uiState.game.lastResetAt || 0, resetAt);
+            const next = stateTools.applyResetEventState(uiState.game, event);
+            Object.assign(uiState.game, next, { latestEvent: null });
+            uiState.game.eventIds.add(event.id);
+            uiState.latestRenderedEventId = null;
+            return;
+        }
+
+        const previousEvents = [...uiState.game.events];
+        const transition = stateTools.applyViewerEventToState(
+            { ...uiState.game, events: [] },
+            event,
+            { preserveSeededOpponentGoalStats }
+        );
+        Object.assign(uiState.game, transition.state);
+        uiState.game.events = previousEvents;
+
+        if (transition.shouldRenderPlayByPlay) {
+            uiState.game.events = [event, ...previousEvents]
+                .sort((left, right) => right.createdAtMs - left.createdAtMs)
+                .slice(0, 60);
+            uiState.game.latestEvent = event;
+        }
+    });
+
+    renderAll();
+}
+
+function getReactionEmoji(type) {
+    const reactions = {
+        fire: '🔥',
+        clap: '👏',
+        wow: '😲',
+        heart: '❤️',
+        hundred: '💯'
+    };
+    return reactions[String(type || '').toLowerCase()] || '🔥';
+}
+
+function showFloatingReaction(reaction = {}) {
+    if (!elements.reactionsOverlay) return;
+    const reactionId = String(reaction.id || '').trim();
+    if (reactionId && uiState.reactionIds.has(reactionId)) return;
+    if (reactionId) uiState.reactionIds.add(reactionId);
+
+    const bubble = createTextElement('span', 'floating-reaction', getReactionEmoji(reaction.type || reaction.reaction));
+    bubble.style.setProperty('--reaction-x', `${18 + Math.round(Math.random() * 64)}%`);
+    bubble.addEventListener('animationend', () => bubble.remove(), { once: true });
+    elements.reactionsOverlay.appendChild(bubble);
+}
+
+async function loadReplaySnapshot(database, stateTools, teamId, gameId) {
+    uiState.game.liveStatus = 'replay';
+    setConnectionMessage('Loading saved plays and conversation…', 'info');
+    const [eventsResult, chatResult] = await Promise.allSettled([
+        database.getLiveEvents(teamId, gameId),
+        database.getLiveChatHistory(teamId, gameId)
+    ]);
+
+    if (eventsResult.status === 'fulfilled') {
+        processLiveEventSnapshot(eventsResult.value, stateTools, { preserveSeededOpponentGoalStats: true });
+    }
+    if (chatResult.status === 'fulfilled') {
+        replaceOverlayChat(uiState.game, chatResult.value);
+        renderChat();
+    }
+
+    uiState.game.liveStatus = 'replay';
+    renderScoreboard();
+    if (eventsResult.status === 'rejected' || chatResult.status === 'rejected') {
+        console.warn('Some overlay replay history could not be loaded:', eventsResult.reason || chatResult.reason);
+        setConnectionMessage('Some replay context is unavailable. The saved video and loaded game data are still usable.');
+    } else {
+        setConnectionMessage('');
+    }
 }
 
 function resetVideoElements() {
@@ -501,16 +621,17 @@ async function startRealMode(params) {
     const gameId = String(params.gameId || '').trim();
     if (!teamId || !gameId) {
         showVideoFallback('Add teamId and gameId to load a real game, or add ?demo=1 to explore the prototype.');
-        setConnectionMessage('This prototype needs a teamId and gameId. Add ?demo=1 for the interactive local demo.');
+        setConnectionMessage('This broadcast view needs a teamId and gameId. Add ?demo=1 for the interactive local demo.');
         setStatus('scheduled');
         return;
     }
 
     setConnectionMessage('Connecting to the game, event feed, and chat…', 'info');
     try {
-        const [database, videoTools] = await Promise.all([
+        const [database, videoTools, stateTools] = await Promise.all([
             import('./db.js?v=4433176'),
-            import('./live-game-video.js?v=443315')
+            import('./live-game-video.js?v=443315'),
+            import('./live-game-state.js?v=28')
         ]);
         const teamPromise = database.getGameDayTeamContext(teamId, gameId, { includeInactive: true }).catch(() => ({}));
         const playersPromise = database.getPlayers(teamId, { includeInactive: true }).catch(() => []);
@@ -518,34 +639,82 @@ async function startRealMode(params) {
         if (!game) throw new Error('Game not found.');
 
         uiState.game = createOverlayState({ team: team || {}, game, players });
+        // The canonical viewer derives home-player stats from the ordered event
+        // stream. Keep the demo fixture's seeded stats, but avoid double-counting
+        // persisted liveStats when the initial live snapshot arrives.
+        uiState.game.stats = {};
+        const isReplay = params.replay === 'true';
+        if (isReplay) uiState.game.liveStatus = 'replay';
         renderAll();
-        const renderVideo = () => {
-            const options = videoTools.resolveReplayVideoOptions({
-                team: uiState.game.team,
-                game: uiState.game.game,
-                players: uiState.game.players,
-                isReplay: params.replay === 'true'
-            });
-            if (options.mode === 'embed' && options.sourceUrl) showEmbedVideo(options.sourceUrl, options.publicUrl);
-            else if (options.mode === 'recorded' && options.sourceUrl) showRecordedVideo(options.sourceUrl, options.publicUrl);
-            else showVideoFallback(options.replayState?.message || 'No video feed is configured for this game yet.');
+        const renderVideoSafely = () => {
+            try {
+                const options = videoTools.resolveReplayVideoOptions({
+                    team: uiState.game.team,
+                    game: uiState.game.game,
+                    players: uiState.game.players,
+                    isReplay
+                });
+                if (options.mode === 'embed' && options.sourceUrl) showEmbedVideo(options.sourceUrl, options.publicUrl);
+                else if (options.mode === 'recorded' && options.sourceUrl) showRecordedVideo(options.sourceUrl, options.publicUrl);
+                else showVideoFallback(options.replayState?.message || 'No video feed is configured for this game yet.');
+                return true;
+            } catch (error) {
+                console.warn('Overlay video refresh failed:', error);
+                if (elements.iframe.hidden && elements.recordedVideo.hidden) {
+                    showVideoFallback('The video feed is temporarily unavailable. Live score and play updates remain connected.');
+                }
+                setConnectionMessage('Video refresh is delayed. Score, clock, plays, and chat continue independently.');
+                return false;
+            }
         };
-        renderVideo();
-        setConnectionMessage('');
+        if (renderVideoSafely()) setConnectionMessage('');
+
+        if (isReplay) {
+            await loadReplaySnapshot(database, stateTools, teamId, gameId);
+            return;
+        }
 
         uiState.unsubscribers.push(database.subscribeGame(teamId, gameId, (updatedGame) => {
             if (!updatedGame) return;
-            applyOverlayGame(uiState.game, updatedGame);
-            renderAll();
-            renderVideo();
+            try {
+                const resetAt = getTimestampMs(updatedGame.liveResetAt);
+                const crossedResetBoundary = resetAt > (uiState.game.lastResetAt || 0);
+                if (crossedResetBoundary) uiState.game.lastResetAt = resetAt;
+                applyOverlayGame(uiState.game, updatedGame, { preserveEventState: uiState.game.events.length > 0 });
+                if (crossedResetBoundary) {
+                    resetOverlayFromGame(updatedGame, stateTools);
+                } else if (stateTools.shouldResetViewerFromGameDoc(updatedGame, uiState.game)) {
+                    resetOverlayFromGame(updatedGame, stateTools);
+                } else {
+                    renderAll();
+                }
+                if (renderVideoSafely()) setConnectionMessage('');
+            } catch (error) {
+                console.warn('Overlay game update could not be applied:', error);
+                setConnectionMessage('A score refresh was skipped. Existing video, score, and play data remain available.');
+            }
         }, (error) => {
             console.warn('Overlay game subscription failed:', error);
             setConnectionMessage('Live score refresh is delayed. The video remains available; try refreshing if it does not recover.');
         }, { publicProjection: game.isPublicProjection === true }));
 
         uiState.unsubscribers.push(database.subscribeLiveEvents(teamId, gameId, (events) => {
-            applyOverlayEvents(uiState.game, events);
-            renderAll();
+            try {
+                const isInitialLoad = uiState.liveEventsFirstLoad;
+                const hadLiveState = uiState.game.events.length > 0 ||
+                    Object.keys(uiState.game.stats || {}).length > 0 ||
+                    Object.keys(uiState.game.opponentStats || {}).length > 0;
+                uiState.liveEventsFirstLoad = false;
+                if (!isInitialLoad && events.length === 0 && hadLiveState) {
+                    resetOverlayFromGame(uiState.game.game, stateTools);
+                    return;
+                }
+                processLiveEventSnapshot(events, stateTools, { preserveSeededOpponentGoalStats: isInitialLoad });
+                setConnectionMessage('');
+            } catch (error) {
+                console.warn('Overlay event update could not be applied:', error);
+                setConnectionMessage('One play update was skipped. Video, scoreboard refresh, and chat continue independently.');
+            }
         }, (error) => {
             console.warn('Overlay event subscription failed:', error);
             setConnectionMessage('Play-by-play is temporarily unavailable. Video and scoreboard updates continue independently.');
@@ -557,10 +726,16 @@ async function startRealMode(params) {
         }, (error) => {
             console.warn('Overlay chat subscription failed:', error);
         }));
+
+        uiState.unsubscribers.push(database.subscribeReactions(teamId, gameId, (reaction) => {
+            showFloatingReaction(reaction);
+        }, (error) => {
+            console.warn('Overlay reaction subscription failed:', error);
+        }));
     } catch (error) {
-        console.warn('Overlay prototype failed to connect:', error);
+        console.warn('Overlay broadcast failed to connect:', error);
         showVideoFallback('The real game could not be loaded in this local environment. Demo mode remains available.');
-        setConnectionMessage(`Could not load this game here. Open ${window.location.pathname}?demo=1 to use the interactive local prototype.`);
+        setConnectionMessage(`Could not load this game here. Open ${window.location.pathname}?demo=1 to use the interactive local demo.`);
         setStatus('scheduled');
     }
 }
@@ -574,7 +749,7 @@ async function init() {
 }
 
 init().catch((error) => {
-    console.error('Overlay prototype failed to start:', error);
-    showVideoFallback('The overlay prototype could not start. Refresh the page to try again.');
-    setConnectionMessage('The overlay prototype could not start. Refresh the page to try again.');
+    console.error('Overlay broadcast failed to start:', error);
+    showVideoFallback('The overlay broadcast could not start. Refresh the page to try again.');
+    setConnectionMessage('The overlay broadcast could not start. Refresh the page to try again.');
 });

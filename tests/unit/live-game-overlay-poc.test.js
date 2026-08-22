@@ -12,18 +12,29 @@ describe('live game overlay prototype page', () => {
         expect(html).toContain('id="score-bug"');
         expect(html).toContain('id="plays-panel"');
         expect(html).toContain('id="insights-panel"');
+        expect(html).toContain('id="reactions-overlay"');
         expect(html).toContain('aria-live="polite"');
-        expect(html).toContain('js/live-game-overlay-poc.js?v=1');
+        expect(html).toContain('js/live-game-overlay-poc.js?v=2');
     });
 
-    it('keeps the local demo isolated while wiring the real read-only subscriptions', () => {
+    it('keeps the local demo isolated while wiring the canonical real read-only subscriptions', () => {
         expect(source).toContain("params.demo === '1'");
         expect(source).toContain("import('./db.js?v=4433176')");
+        expect(source).toContain("import('./live-game-state.js?v=28')");
+        expect(source).toContain('stateTools.applyViewerEventToState');
+        expect(source).toContain('stateTools.applyResetEventState');
+        expect(source).toContain('stateTools.collectVisibleLiveEventsSequentially');
+        expect(source).toContain('stateTools.shouldResetViewerFromGameDoc');
         expect(source).toContain('database.subscribeGame');
         expect(source).toContain('database.subscribeLiveEvents');
         expect(source).toContain('database.subscribeLiveChat');
+        expect(source).toContain('database.subscribeReactions');
+        expect(source).toContain('database.getLiveEvents');
+        expect(source).toContain('database.getLiveChatHistory');
         expect(source).not.toContain('updateGame(');
         expect(source).not.toContain('postLiveChatMessage(');
+        expect(source).not.toContain('trackViewerPresence(');
+        expect(source).not.toContain('sendReaction(');
     });
 
     it('provides focus, panel, keyboard, and demo interactions without changing live-game.html', () => {

@@ -97,31 +97,44 @@ export function createOverlayState({ team = {}, game = {}, players = [], events 
         period: toText(game.period, DEFAULT_PERIOD),
         gameClockMs: Math.max(0, toFiniteNumber(game.liveClockMs ?? game.gameClockMs)),
         liveStatus: toText(game.liveStatus || game.status, 'scheduled').toLowerCase(),
-        viewerCount: Math.max(0, toFiniteNumber(game.viewerCount)),
+        viewerCount: Math.max(0, toFiniteNumber(game.liveViewerCount ?? game.viewerCount)),
         onCourt: Array.isArray(game.liveLineup?.onCourt) ? [...game.liveLineup.onCourt] : [],
         bench: Array.isArray(game.liveLineup?.bench) ? [...game.liveLineup.bench] : [],
         stats: { ...(game.liveStats || game.stats || {}) },
+        opponentStats: { ...(game.opponentStats || {}) },
         events: normalizedEvents,
         eventIds: new Set(normalizedEvents.map((event) => event.id)),
         chatMessages: normalizedChat,
-        latestEvent: normalizedEvents[0] || null
+        latestEvent: normalizedEvents[0] || null,
+        lastResetAt: getTimestampMs(game.liveResetAt),
+        lastStatChange: null,
+        scoringRun: { team: null, points: 0 },
+        lastRunAnnounced: 0,
+        sport: game.sport || team.sport || null,
+        periods: Array.isArray(game.periods) ? [...game.periods] : null
     };
 }
 
-export function applyOverlayGame(state, game = {}) {
+export function applyOverlayGame(state, game = {}, { preserveEventState = false } = {}) {
     if (!state) return state;
     state.game = { ...state.game, ...game };
     state.awayName = toText(game.opponent || game.opponentTeamName || game.awayTeamName, state.awayName);
-    if (game.homeScore !== undefined) state.homeScore = toFiniteNumber(game.homeScore, state.homeScore);
-    if (game.awayScore !== undefined) state.awayScore = toFiniteNumber(game.awayScore, state.awayScore);
-    if (game.period) state.period = toText(game.period, state.period);
-    if (game.liveClockMs !== undefined || game.gameClockMs !== undefined) {
-        state.gameClockMs = Math.max(0, toFiniteNumber(game.liveClockMs ?? game.gameClockMs, state.gameClockMs));
+    if (!preserveEventState) {
+        if (game.homeScore !== undefined) state.homeScore = toFiniteNumber(game.homeScore, state.homeScore);
+        if (game.awayScore !== undefined) state.awayScore = toFiniteNumber(game.awayScore, state.awayScore);
+        if (game.period) state.period = toText(game.period, state.period);
+        if (game.liveClockMs !== undefined || game.gameClockMs !== undefined) {
+            state.gameClockMs = Math.max(0, toFiniteNumber(game.liveClockMs ?? game.gameClockMs, state.gameClockMs));
+        }
     }
     if (game.liveStatus || game.status) state.liveStatus = toText(game.liveStatus || game.status, state.liveStatus).toLowerCase();
-    if (game.viewerCount !== undefined) state.viewerCount = Math.max(0, toFiniteNumber(game.viewerCount));
+    if (game.liveViewerCount !== undefined || game.viewerCount !== undefined) {
+        state.viewerCount = Math.max(0, toFiniteNumber(game.liveViewerCount ?? game.viewerCount));
+    }
     if (Array.isArray(game.liveLineup?.onCourt)) state.onCourt = [...game.liveLineup.onCourt];
     if (Array.isArray(game.liveLineup?.bench)) state.bench = [...game.liveLineup.bench];
+    if (game.sport) state.sport = game.sport;
+    if (Array.isArray(game.periods)) state.periods = [...game.periods];
     return state;
 }
 

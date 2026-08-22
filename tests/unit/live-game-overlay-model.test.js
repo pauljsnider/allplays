@@ -58,6 +58,38 @@ describe('live game overlay model', () => {
         expect(getOverlayLineup(state, 'bench').map((player) => player.name)).toEqual(['Jordan']);
     });
 
+    it('uses the canonical live viewer count and preserves event-authoritative score during document refreshes', () => {
+        const state = createOverlayState({
+            game: {
+                homeScore: 4,
+                awayScore: 2,
+                liveClockMs: 690_000,
+                viewerCount: 3,
+                liveViewerCount: 27,
+                opponentStats: { away9: { name: 'Riley', goals: 1 } },
+                liveResetAt: { toMillis: () => 12_345 }
+            }
+        });
+
+        applyOverlayGame(state, {
+            homeScore: 0,
+            awayScore: 0,
+            liveClockMs: 0,
+            liveViewerCount: 31,
+            liveLineup: { onCourt: ['p1'], bench: [] }
+        }, { preserveEventState: true });
+
+        expect(state).toMatchObject({
+            homeScore: 4,
+            awayScore: 2,
+            gameClockMs: 690_000,
+            viewerCount: 31,
+            lastResetAt: 12_345,
+            onCourt: ['p1'],
+            opponentStats: { away9: { name: 'Riley', goals: 1 } }
+        });
+    });
+
     it('deduplicates event snapshots while applying absolute score and player stats', () => {
         const state = createOverlayState({
             team: { name: 'Vipers' },

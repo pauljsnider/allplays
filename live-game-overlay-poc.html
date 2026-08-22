@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="robots" content="noindex,nofollow">
-  <title>Live Game Overlay Lab - ALL PLAYS</title>
-  <meta name="description" content="A local ALL PLAYS prototype for layering live game context over a video feed.">
+  <title>Live Game Broadcast - ALL PLAYS</title>
+  <meta name="description" content="Watch an ALL PLAYS live game with score, clock, plays, lineup, and chat layered over the video.">
   <link rel="icon" type="image/png" href="img/logo_small.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -515,6 +515,26 @@
       text-align: center;
     }
 
+    .reactions-overlay {
+      position: absolute;
+      inset: 0;
+      z-index: 10;
+      overflow: hidden;
+      pointer-events: none;
+    }
+
+    .floating-reaction {
+      position: absolute;
+      left: var(--reaction-x, 50%);
+      bottom: 118px;
+      display: block;
+      font-size: clamp(30px, 4vw, 54px);
+      filter: drop-shadow(0 8px 16px rgba(0, 0, 0, 0.55));
+      animation: reaction-rise 2.2s ease-out forwards;
+      transform: translateX(-50%);
+      will-change: opacity, transform;
+    }
+
     .hero-event {
       position: absolute;
       left: 50%;
@@ -825,6 +845,12 @@
       100% { color: var(--paper); transform: scale(1); }
     }
 
+    @keyframes reaction-rise {
+      0% { opacity: 0; transform: translate(-50%, 24px) scale(0.72) rotate(-8deg); }
+      18% { opacity: 1; transform: translate(-50%, 0) scale(1.08) rotate(4deg); }
+      100% { opacity: 0; transform: translate(-50%, -46vh) scale(1.22) rotate(-3deg); }
+    }
+
     @media (max-width: 1180px) {
       .edge-panel {
         width: 280px;
@@ -1017,7 +1043,7 @@
   </style>
 </head>
 <body data-focus="false">
-  <main id="broadcast-stage" class="broadcast-stage" aria-label="ALL PLAYS live game overlay prototype">
+  <main id="broadcast-stage" class="broadcast-stage" aria-label="ALL PLAYS live game broadcast">
     <div class="video-layer" aria-label="Game video">
       <iframe
         id="overlay-video"
@@ -1037,6 +1063,7 @@
     </div>
     <div class="stage-shade" aria-hidden="true"></div>
     <div class="stage-grain" aria-hidden="true"></div>
+    <div id="reactions-overlay" class="reactions-overlay" aria-hidden="true"></div>
 
     <header class="broadcast-topbar">
       <div class="status-cluster">
@@ -1134,7 +1161,7 @@
       <button class="panel-toggle" type="button" data-panel="chat" aria-pressed="false">Chat</button>
     </nav>
 
-    <p id="mode-note" class="mode-note">Prototype view · score and context are visual overlays only. They do not modify the source video.</p>
+    <p id="mode-note" class="mode-note">Broadcast view · score and context update from the live game without modifying the source video.</p>
     <div id="connection-message" class="connection-message" role="status" hidden></div>
 
     <section id="demo-lab" class="demo-lab" aria-labelledby="demo-lab-heading" hidden>
@@ -1158,6 +1185,6 @@
   </main>
 
   <span id="screen-reader-update" class="visually-hidden" aria-live="polite"></span>
-  <script type="module" src="js/live-game-overlay-poc.js?v=1"></script>
+  <script type="module" src="js/live-game-overlay-poc.js?v=2"></script>
 </body>
 </html>
