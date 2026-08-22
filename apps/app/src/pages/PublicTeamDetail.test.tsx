@@ -4,7 +4,7 @@ import { Link, MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PublicTeamDetail } from './PublicTeamDetail';
 
-const publicTeamMocks = vi.hoisted(() => ({ getPublicTeamDetail: vi.fn(), getPublicTeamRecentResults: vi.fn() }));
+const publicTeamMocks = vi.hoisted(() => ({ getPublicTeamDetail: vi.fn(), getPublicTeamRecentResults: vi.fn(), getPublicTeamStandingsInputs: vi.fn() }));
 vi.mock('../lib/publicTeamsService', () => publicTeamMocks);
 vi.mock('lucide-react', () => {
   const Icon = () => null;
@@ -17,7 +17,9 @@ describe('PublicTeamDetail', () => {
   beforeEach(() => {
     publicTeamMocks.getPublicTeamDetail.mockReset();
     publicTeamMocks.getPublicTeamRecentResults.mockReset();
+    publicTeamMocks.getPublicTeamStandingsInputs.mockReset();
     publicTeamMocks.getPublicTeamRecentResults.mockResolvedValue([]);
+    publicTeamMocks.getPublicTeamStandingsInputs.mockResolvedValue([]);
   });
 
   it('announces loading while the public team request is pending', () => {
@@ -78,6 +80,26 @@ describe('PublicTeamDetail', () => {
     expect(screen.getByText('Win')).toBeTruthy();
     expect(screen.getByText('Draw')).toBeTruthy();
     expect(publicTeamMocks.getPublicTeamRecentResults).toHaveBeenCalledWith('team-1');
+  });
+
+  it('renders standings rows and highlights the current team', async () => {
+    publicTeamMocks.getPublicTeamDetail.mockResolvedValue({ id: 'team-1', name: 'Austin Bats', sport: 'Baseball', description: null, photoUrl: null, city: null, state: null, zip: null, location: null, standingsConfig: { enabled: true, rankingMode: 'points', points: { win: 3, tie: 1, loss: 0 }, maxGoalDiff: null, tiebreakers: [], twoTeamTiebreakers: [], multiTeamTiebreakers: [] } });
+    publicTeamMocks.getPublicTeamStandingsInputs.mockResolvedValue([{ id: 'game-1', date: new Date(), homeTeam: 'Austin Bats', awayTeam: 'Northside Owls', homeScore: 4, awayScore: 1, status: 'completed' }]);
+
+    render(<MemoryRouter initialEntries={['/teams/team-1/public']}><Routes><Route path="/teams/:teamId/public" element={<PublicTeamDetail authUser={null} />} /></Routes></MemoryRouter>);
+
+    expect(await screen.findByTestId('public-standings-table')).toBeTruthy();
+    expect(screen.getAllByText('Austin Bats').find((element) => element.closest('tr'))?.closest('tr')).toHaveAttribute('aria-current', 'true');
+    expect(screen.getByText('Northside Owls')).toBeTruthy();
+  });
+
+  it('renders the standings empty state and configured league link', async () => {
+    publicTeamMocks.getPublicTeamDetail.mockResolvedValue({ id: 'team-1', name: 'Austin Bats', sport: null, description: null, photoUrl: null, city: null, state: null, zip: null, location: null, leagueUrl: 'https://league.example.test/standings', standingsConfig: { enabled: true, rankingMode: 'points', points: { win: 3, tie: 1, loss: 0 }, maxGoalDiff: null, tiebreakers: [], twoTeamTiebreakers: [], multiTeamTiebreakers: [] } });
+
+    render(<MemoryRouter initialEntries={['/teams/team-1/public']}><Routes><Route path="/teams/:teamId/public" element={<PublicTeamDetail authUser={null} />} /></Routes></MemoryRouter>);
+
+    expect(await screen.findByText('No standings rows are available yet.')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'League page' })).toHaveAttribute('href', 'https://league.example.test/standings');
   });
 
   it('shows an explicit empty state when there are no completed public results', async () => {
