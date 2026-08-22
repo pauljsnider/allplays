@@ -1,5 +1,5 @@
 import { canTrustScoreLogForFinalization, reconcileFinalScoreFromLog } from './live-tracker-integrity.js';
-import { splitPlayerStatsByVisibility, getPrivatePlayerStatIds } from './stat-leaderboards.js?v=2';
+import { splitPlayerStatsByVisibility, getPrivatePlayerStatIds } from './stat-leaderboards.js?v=4';
 
 export function buildScoreReconciliationNote(requestedHome, requestedAway, finalHome, finalAway) {
   return `Score reconciled from ${requestedHome}-${requestedAway} to ${finalHome}-${finalAway} based on scoring events`;

@@ -473,6 +473,40 @@ export function buildPlayerLeaderboardSnapshot({
   };
 }
 
+export function buildRosterStatisticsTable({
+  config = {},
+  players = [],
+  seasonStatsByPlayerId = {}
+} = {}) {
+  const normalizedConfig = normalizeStatTrackerConfig(config);
+  const columns = normalizedConfig.statDefinitions
+    .filter((definition) => definition.scope === 'player' && definition.visibility === 'public')
+    .map((definition) => ({
+      id: definition.id,
+      label: definition.label,
+      format: definition.format,
+      precision: definition.precision
+    }));
+  const rows = (Array.isArray(players) ? players : []).map((player) => {
+    const stats = seasonStatsByPlayerId?.[player.id] || {};
+    return {
+      playerId: player.id,
+      playerName: player.name || 'Player',
+      playerNumber: player.number || '',
+      values: columns.reduce((values, column) => {
+        const definition = normalizedConfig.statDefinitions.find((item) => item.id === column.id);
+        const value = resolveDefinitionValue(definition, stats);
+        values[column.id] = {
+          value,
+          formattedValue: formatStatValue(value, definition)
+        };
+        return values;
+      }, {})
+    };
+  });
+  return { columns, rows };
+}
+
 export function summarizePlayerTopStats(snapshot = {}, playerId = '') {
   return (Array.isArray(snapshot?.topStats) ? snapshot.topStats : [])
     .map((stat) => {

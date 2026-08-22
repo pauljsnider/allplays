@@ -166,6 +166,7 @@ import {
 } from './teamDetailService';
 import { computeNativeStandings } from '../../../../js/native-standings.js';
 import { hasFullTeamAccess } from '../../../../js/team-access.js';
+import { buildPlayerLeaderboardSnapshot, selectAnalyticsConfig } from '../../../../js/stat-leaderboards.js';
 
 describe('buildTeamAnalytics', () => {
   it('builds chronological score trends, recent form, averages, and differential', () => {
@@ -1280,6 +1281,59 @@ describe('team detail bootstrap loading', () => {
     expect(insights.teamAnalytics.seasonLabel).toBe('2026');
     expect(insights.teamAnalytics.completedGameCount).toBe(0);
     expect(insights.teamAnalytics.availableSeasons).toEqual(['2026', '2025']);
+  });
+
+  it('keeps leaderboards aggregated across all completed games while roster statistics stay season scoped', async () => {
+    __resetTeamDetailBaseSnapshotCacheForTests();
+    seasonRecordMocks.listSeasonLabels.mockReturnValue(['2026', '2025']);
+    dbMocks.getTeam.mockResolvedValue({ id: 'team-1', sport: 'Basketball' });
+    dbMocks.getPlayers.mockResolvedValue([
+      { id: 'player-1', name: 'Pat Star', number: '9', active: true },
+      { id: 'player-2', name: 'Sam Bench', number: '12', active: true }
+    ]);
+    dbMocks.getGames.mockResolvedValue([
+      { id: 'current-game', status: 'completed', seasonLabel: '2026', date: '2026-03-01', homeScore: 1, awayScore: 0 },
+      { id: 'old-game', status: 'completed', seasonLabel: '2025', date: '2025-03-01', homeScore: 1, awayScore: 0 }
+    ]);
+    const config = { id: 'config-1', columns: ['PTS'], statDefinitions: [{ id: 'pts', label: 'PTS', scope: 'player', visibility: 'public' }] };
+    dbMocks.getConfigs.mockResolvedValue([config]);
+    vi.mocked(selectAnalyticsConfig).mockReturnValueOnce(config as any).mockReturnValueOnce(config as any);
+    dbMocks.getAggregatedStatsForGames.mockImplementation(async (_teamId: string, gameIds: string[]) => {
+      if (gameIds.length === 2) return { 'player-1': { pts: 16 } };
+      return gameIds.includes('current-game') ? { 'player-1': { pts: 12 } } : { 'player-1': { pts: 4 } };
+    });
+
+    const insights = await loadTeamDetailInsights('team-1', { uid: 'parent-1' } as any);
+
+    expect(insights.rosterStatistics.seasons.map((season) => season.rows.map((row) => row.values.pts.value))).toEqual([[12, 0], [4, 0]]);
+    expect(buildPlayerLeaderboardSnapshot).toHaveBeenCalledWith(expect.objectContaining({
+      seasonStatsByPlayerId: { 'player-1': { pts: 16 } }
+    }));
+    expect(dbMocks.getAggregatedStatsForGames).toHaveBeenCalledWith('team-1', ['current-game', 'old-game']);
+    expect(dbMocks.getAggregatedStatsForGames).toHaveBeenCalledWith('team-1', ['current-game']);
+    expect(dbMocks.getAggregatedStatsForGames).toHaveBeenCalledWith('team-1', ['old-game']);
+  });
+
+  it('marks only the season whose roster aggregation fails as unavailable', async () => {
+    __resetTeamDetailBaseSnapshotCacheForTests();
+    seasonRecordMocks.listSeasonLabels.mockReturnValue(['2026', '2025']);
+    dbMocks.getTeam.mockResolvedValue({ id: 'team-1', sport: 'Basketball' });
+    dbMocks.getPlayers.mockResolvedValue([{ id: 'player-1', name: 'Pat Star', number: '9', active: true }]);
+    dbMocks.getGames.mockResolvedValue([
+      { id: 'current-game', status: 'completed', seasonLabel: '2026', date: '2026-03-01', homeScore: 1, awayScore: 0 },
+      { id: 'old-game', status: 'completed', seasonLabel: '2025', date: '2025-03-01', homeScore: 1, awayScore: 0 }
+    ]);
+    dbMocks.getConfigs.mockResolvedValue([{ id: 'config-1', columns: ['PTS'], statDefinitions: [{ id: 'pts', label: 'PTS', scope: 'player', visibility: 'public' }] }]);
+    dbMocks.getAggregatedStatsForGames.mockImplementation(async (_teamId: string, gameIds: string[]) => {
+      if (gameIds.includes('old-game')) throw new Error('aggregation unavailable');
+      return { 'player-1': { pts: 12 } };
+    });
+
+    const insights = await loadTeamDetailInsights('team-1', { uid: 'parent-1' } as any);
+
+    expect(insights.rosterStatistics.unavailableSeasons).toEqual(['2025']);
+    expect(insights.rosterStatistics.seasons[0].rows[0].values.pts.value).toBe(12);
+    expect(insights.rosterStatistics.seasons[1].rows).toEqual([]);
   });
 
   it('never hydrates or returns private roster contacts for a non-manager', async () => {
