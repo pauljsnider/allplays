@@ -17,7 +17,7 @@ function parseParentPlayerKey(value) {
 function normalizeParentLink(link = {}) {
   if (!link || typeof link !== 'object' || Array.isArray(link)) return null;
   const teamId = normalizeParentScopeId(link.teamId);
-  const playerId = normalizeParentScopeId(link.playerId);
+  const playerId = normalizeParentScopeId(link.playerId || link.childId);
   if (!teamId || !playerId) return null;
   return { ...link, teamId, playerId };
 }

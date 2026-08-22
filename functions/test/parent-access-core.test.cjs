@@ -26,6 +26,23 @@ test('canonical player keys are exact and stale parent metadata cannot restore a
   });
 });
 
+test('legacy parent links normalize childId as the canonical playerId', () => {
+  assert.deepEqual(resolveCanonicalParentAccess({
+    parentOf: [{ teamId: 'team-1', childId: 'player-1', playerName: 'Legacy child' }]
+  }), {
+    parentLinks: [{
+      teamId: 'team-1',
+      childId: 'player-1',
+      playerId: 'player-1',
+      playerName: 'Legacy child'
+    }],
+    parentTeamIds: ['team-1'],
+    parentPlayerKeys: ['team-1::player-1'],
+    hasCanonicalParentTeamIds: false,
+    hasCanonicalParentPlayerKeys: false
+  });
+});
+
 test('present malformed and team-only canonical fields fail closed for child links', () => {
   const result = resolveCanonicalParentAccess({
     parentOf: [{ teamId: 'team-1', playerId: 'player-stale' }],
