@@ -63,6 +63,17 @@ function buildGetUnreadChatCounts({ db, getDoc, doc, getUnreadChatCount, getChat
         .replace('export const UNREAD_CHAT_COUNT_CONCURRENCY', 'const UNREAD_CHAT_COUNT_CONCURRENCY');
     const functionSource = getFunctionSource('getUnreadChatCounts')
         .replace('export async function getUnreadChatCounts', 'return async function getUnreadChatCounts');
+    const withDeadline = async (operation, timeoutMs, message) => {
+        let timeoutId;
+        const timeout = new Promise((_, reject) => {
+            timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
+        });
+        try {
+            return await Promise.race([operation, timeout]);
+        } finally {
+            clearTimeout(timeoutId);
+        }
+    };
 
     return new Function(
         'db',
@@ -73,6 +84,7 @@ function buildGetUnreadChatCounts({ db, getDoc, doc, getUnreadChatCount, getChat
         'console',
         'DEFAULT_TEAM_CONVERSATION_ID',
         'isDefaultTeamConversation',
+        'withDeadline',
         `${schedulerSource}\n${functionSource}`
     )(
         db,
@@ -82,7 +94,8 @@ function buildGetUnreadChatCounts({ db, getDoc, doc, getUnreadChatCount, getChat
         getChatConversations,
         console,
         DEFAULT_TEAM_CONVERSATION_ID,
-        isDefaultTeamConversation
+        isDefaultTeamConversation,
+        withDeadline
     );
 }
 
@@ -361,7 +374,7 @@ describe('chat unread count helpers', () => {
         expect(getCountFromServer).not.toHaveBeenCalled();
     });
 
-    it('reuses one user profile read and passes latest-message hints across teams', async () => {
+    it('reuses one user profile read while leaving a failed team unknown', async () => {
         const getUnreadChatCount = vi.fn()
             .mockResolvedValueOnce(3)
             .mockRejectedValueOnce(new Error('index pending'));
@@ -385,10 +398,7 @@ describe('chat unread count helpers', () => {
                 'team-a': { seconds: 150 },
                 'team-b': { seconds: 250 }
             }
-        })).resolves.toEqual({
-            'team-a': 3,
-            'team-b': 0
-        });
+        })).resolves.toEqual({ 'team-a': 3 });
         expect(getDoc).toHaveBeenCalledTimes(1);
         expect(getUnreadChatCount).toHaveBeenCalledTimes(2);
         expect(getUnreadChatCount).toHaveBeenNthCalledWith(1, 'user-3', 'team-a', expect.objectContaining({
@@ -449,7 +459,7 @@ describe('chat unread count helpers', () => {
         expect(warn).not.toHaveBeenCalled();
     });
 
-    it('aggregates sibling conversations while isolating one failed conversation', async () => {
+    it('keeps a team unknown when any sibling conversation fails', async () => {
         const getUnreadChatCount = vi.fn()
             .mockResolvedValueOnce(1)
             .mockResolvedValueOnce(2)
@@ -486,10 +496,7 @@ describe('chat unread count helpers', () => {
                 'team-a': ['team', 'staff-conversation', 'direct-conversation'],
                 'team-b': ['team']
             }
-        })).resolves.toEqual({
-            'team-a': 3,
-            'team-b': 4
-        });
+        })).resolves.toEqual({ 'team-b': 4 });
 
         expect(getChatConversations).not.toHaveBeenCalled();
         expect(getUnreadChatCount).toHaveBeenNthCalledWith(1, 'user-5', 'team-a', expect.objectContaining({
@@ -617,6 +624,33 @@ describe('chat unread count helpers', () => {
         await expect(getUnreadChatCounts('user-4', ['team-a', 'team-b'])).resolves.toEqual({});
         expect(getUnreadChatCount).not.toHaveBeenCalled();
         expect(warn).toHaveBeenCalledWith('Failed to load chat state for user user-4:', expect.any(Error));
+    });
+
+    it('bounds a stalled shared profile read and leaves every team unknown', async () => {
+        vi.useFakeTimers();
+        try {
+            const getUnreadChatCount = vi.fn();
+            const warn = vi.fn();
+            const getUnreadChatCounts = buildGetUnreadChatCounts({
+                db: {},
+                getDoc: vi.fn(() => new Promise(() => {})),
+                doc: vi.fn(() => ({ path: 'users/user-4' })),
+                getUnreadChatCount,
+                getChatConversations: vi.fn(),
+                console: { warn }
+            });
+
+            const counts = getUnreadChatCounts('user-4', ['team-a'], {
+                deadlineAt: Date.now() + 100
+            });
+            await vi.advanceTimersByTimeAsync(100);
+
+            await expect(counts).resolves.toEqual({});
+            expect(getUnreadChatCount).not.toHaveBeenCalled();
+            expect(warn).toHaveBeenCalledWith('Failed to load chat state for user user-4:', expect.any(Error));
+        } finally {
+            vi.useRealTimers();
+        }
     });
 });
 

@@ -12,7 +12,7 @@ import {
     signInWithEmailLink,
     updatePassword
 } from './firebase.js?v=26';
-import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, redeemFriendInvite, rollbackParentInviteRedemption, getUserProfile, getUserTeams, getTeam, listMyParentMembershipRequests, normalizeParentScopeLinks } from './db.js?v=4433180';
+import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, redeemFriendInvite, rollbackParentInviteRedemption, getUserProfile, getUserTeams, getTeam, listMyParentMembershipRequests, normalizeParentScopeLinks } from './db.js?v=4433181';
 import { executeEmailPasswordSignup } from './signup-flow.js?v=14';
 import { redeemAdminInviteAcceptance, redeemAdminInviteAtomically } from './admin-invite.js?v=9';
 import { mergeApprovedParentMembershipRequests } from './parent-membership-utils.js?v=3';
@@ -473,42 +473,65 @@ export function checkAuth(callback, options = {}) {
             try {
                 const approvedRequestsRead = trackSettlement(listMyParentMembershipRequests(user.uid));
                 const ownedTeamsRead = trackSettlement(getUserTeams(user.uid));
+                const accessEnrichmentDeadline = waitForAccessEnrichment([
+                    approvedRequestsRead.task,
+                    ownedTeamsRead.task
+                ]);
                 let profile = await loadAuthProfile(user) || {};
 
-                const syncApprovedRequests = (result, updateUserImmediately) => {
+                const syncApprovedRequests = (result) => {
                     if (result.status === 'rejected') {
                         console.warn('[auth] Failed to sync approved parent membership requests:', result.reason);
                         return false;
                     }
                     const parentRequestSync = mergeApprovedParentMembershipRequests(profile, result.value);
-                    if (!parentRequestSync.changed) return false;
-                    if (updateUserImmediately) {
-                        profile = {
-                            ...profile,
-                            ...parentRequestSync.userUpdate
-                        };
-                    }
+                    if (!parentRequestSync.changed) return { changed: false, persistence: Promise.resolve() };
+                    profile = {
+                        ...profile,
+                        ...parentRequestSync.userUpdate
+                    };
                     if (Array.isArray(parentRequestSync.userUpdate?.parentOf)) {
                         user.parentOf = parentRequestSync.userUpdate.parentOf;
                     }
                     if (Array.isArray(parentRequestSync.userUpdate?.roles)) {
                         user.roles = parentRequestSync.userUpdate.roles;
                     }
-                    Promise.resolve(updateUserProfile(user.uid, parentRequestSync.userUpdate))
+                    const persistence = Promise.resolve(updateUserProfile(user.uid, parentRequestSync.userUpdate))
                         .then(() => console.log('[auth] Synced approved parent membership requests to user profile'))
                         .catch((err) => console.warn('[auth] Failed to persist synced parent membership requests:', err));
-                    return true;
+                    return { changed: true, persistence };
+                };
+
+                const mergeOwnedTeams = (result) => {
+                    if (result.status === 'rejected') {
+                        console.warn('Error fetching owned teams in auth check:', result.reason);
+                        return false;
+                    }
+                    const coachOf = Array.isArray(profile.coachOf) ? [...profile.coachOf] : [];
+                    result.value?.forEach((team) => {
+                        if (team?.id && !coachOf.includes(team.id)) coachOf.push(team.id);
+                    });
+                    const previousCoachOf = Array.isArray(user.coachOf) ? user.coachOf : [];
+                    const changed = coachOf.length !== previousCoachOf.length
+                        || coachOf.some((teamId, index) => teamId !== previousCoachOf[index]);
+                    profile = { ...profile, coachOf };
+                    user.coachOf = coachOf;
+                    return changed;
                 };
 
                 // These are authoritative access reads. Wait only for the
                 // bounded enrichment window so delayed successes reach this
                 // callback without restoring an unbounded dashboard spinner.
-                await waitForAccessEnrichment([approvedRequestsRead.task, ownedTeamsRead.task]);
+                await accessEnrichmentDeadline;
                 if (approvedRequestsRead.state.result) {
-                    syncApprovedRequests(approvedRequestsRead.state.result, true);
+                    syncApprovedRequests(approvedRequestsRead.state.result);
                 } else {
-                    void approvedRequestsRead.task.then((result) => {
-                        if (syncApprovedRequests(result, true)) publishLateAccess();
+                    void approvedRequestsRead.task.then(async (result) => {
+                        const syncResult = syncApprovedRequests(result);
+                        if (syncResult?.changed) {
+                            await syncResult.persistence;
+                            publishLateAccess();
+                        }
                     });
                 }
 
@@ -550,29 +573,12 @@ export function checkAuth(callback, options = {}) {
                             .catch((err) => console.warn('[auth] Failed to auto-migrate parent parent scope fields:', err));
                     }
 
-                    const mergeOwnedTeams = (result) => {
-                        if (result.status === 'fulfilled') {
-                            const coachOf = Array.isArray(user.coachOf)
-                                ? [...user.coachOf]
-                                : Array.isArray(profile.coachOf) ? [...profile.coachOf] : [];
-                            result.value?.forEach((team) => {
-                                if (team?.id && !coachOf.includes(team.id)) coachOf.push(team.id);
-                            });
-                            const previousCoachOf = Array.isArray(user.coachOf) ? user.coachOf : [];
-                            const changed = coachOf.length !== previousCoachOf.length
-                                || coachOf.some((teamId, index) => teamId !== previousCoachOf[index]);
-                            if (coachOf.length > 0) {
-                                user.coachOf = coachOf;
-                                profile.coachOf = coachOf;
-                            }
-                            return changed;
-                        } else {
-                            console.warn('Error fetching owned teams in auth check:', result.reason);
-                        }
-                        return false;
-                    };
-                    if (ownedTeamsRead.state.result) {
-                        mergeOwnedTeams(ownedTeamsRead.state.result);
+                    if (Array.isArray(profile.coachOf)) {
+                        user.coachOf = [...profile.coachOf];
+                    }
+                    const ownedTeamsResult = ownedTeamsRead.state.result;
+                    if (ownedTeamsResult) {
+                        mergeOwnedTeams(ownedTeamsResult);
                     } else {
                         void ownedTeamsRead.task.then((result) => {
                             if (mergeOwnedTeams(result)) publishLateAccess();

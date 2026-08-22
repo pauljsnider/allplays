@@ -224,11 +224,11 @@ function createEnvironment() {
 function buildModuleSource() {
     return readFileSync(new URL('../../js/live-game.js', import.meta.url), 'utf8')
         .replace(
-            "import {\n  getGameDayTeamContext,\n  getGame,\n  getPlayers,\n  subscribeLiveEvents,\n  subscribeLiveChat,\n  postLiveChatMessage,\n  subscribeReactions,\n  sendReaction,\n  trackViewerPresence,\n  getLiveEvents,\n  getLiveChatHistory,\n  getLiveReactions,\n  getConfigs,\n  getMyRsvp,\n  subscribeGame,\n  updateGame,\n  uploadGameClip,\n  deleteUploadedMediaObjects\n} from './db.js?v=4433180';",
+            "import {\n  getGameDayTeamContext,\n  getGame,\n  getPlayers,\n  subscribeLiveEvents,\n  subscribeLiveChat,\n  postLiveChatMessage,\n  subscribeReactions,\n  sendReaction,\n  trackViewerPresence,\n  getLiveEvents,\n  getLiveChatHistory,\n  getLiveReactions,\n  getConfigs,\n  getMyRsvp,\n  subscribeGame,\n  updateGame,\n  uploadGameClip,\n  deleteUploadedMediaObjects\n} from './db.js?v=4433181';",
             'const { getGameDayTeamContext, getGame, getPlayers, subscribeLiveEvents, subscribeLiveChat, postLiveChatMessage, subscribeReactions, sendReaction, trackViewerPresence, getLiveEvents, getLiveChatHistory, getLiveReactions, getConfigs, getMyRsvp, subscribeGame, updateGame, uploadGameClip, deleteUploadedMediaObjects } = deps.db;'
         )
         .replace(
-            "import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=443355';",
+            "import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=443356';",
             'const { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } = deps.utils;'
         )
         .replace(

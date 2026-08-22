@@ -1,4 +1,4 @@
-import { checkAuth } from '../auth.js?v=4433183';
+import { checkAuth } from '../auth.js?v=4433184';
 import {
     getTeam,
     getUserProfile,
@@ -22,9 +22,9 @@ import {
     archiveCertificate,
     canAccessCertificates,
     canViewSavedCertificate
-} from '../db.js?v=4433180';
-import { renderHeader, renderFooter, escapeHtml, shareOrCopy } from '../utils.js?v=443355';
-import { renderTeamAdminBanner, getTeamAccessInfo } from '../team-admin-banner.js?v=443336';
+} from '../db.js?v=4433181';
+import { renderHeader, renderFooter, escapeHtml, shareOrCopy } from '../utils.js?v=443356';
+import { renderTeamAdminBanner, getTeamAccessInfo } from '../team-admin-banner.js?v=443337';
 import { TEMPLATES } from './templates.js?v=2';
 import { CERTIFICATE_FONT_OPTIONS, renderCertificate, createPreviewDraft, resolveColors, getContrastWarning } from './renderer.js?v=2';
 import { buildDefaultSigners, normalizeSigners } from './signers.js?v=2';

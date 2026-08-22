@@ -5,6 +5,7 @@ export function startBoundedRetry({
     maxAttempts = 3,
     retryDelayMs = (attempt) => 5000 * (2 ** (attempt - 1)),
     onError = () => {},
+    onExhausted = () => {},
     schedule = setTimeout,
     cancelSchedule = clearTimeout
 }) {
@@ -18,13 +19,19 @@ export function startBoundedRetry({
         try {
             const result = await run(value, attempt);
             const retryValue = shouldRetry(result, value);
-            if (!cancelled && retryValue !== undefined && attempt < maxAttempts) {
-                timerId = schedule(() => void execute(retryValue), retryDelayMs(attempt));
+            if (!cancelled && retryValue !== undefined) {
+                if (attempt < maxAttempts) {
+                    timerId = schedule(() => void execute(retryValue), retryDelayMs(attempt));
+                } else {
+                    onExhausted(retryValue, null, attempt);
+                }
             }
         } catch (error) {
             onError(error, attempt);
             if (!cancelled && attempt < maxAttempts) {
                 timerId = schedule(() => void execute(value), retryDelayMs(attempt));
+            } else if (!cancelled) {
+                onExhausted(value, error, attempt);
             }
         }
     };

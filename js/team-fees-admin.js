@@ -1,4 +1,4 @@
-import { escapeHtml, getUrlParams, renderFooter, renderHeader } from './utils.js?v=443355';
+import { escapeHtml, getUrlParams, renderFooter, renderHeader } from './utils.js?v=443356';
 import { assertTeamFeeRecipientLimit, normalizeTeamFeeRecipientIds } from './team-fee-batch-limits.js?v=1';
 
 export const OFFLINE_TEAM_FEE_LABEL = 'Offline/manual collection only';
@@ -1255,8 +1255,8 @@ async function initTeamFeesAdminPage() {
     renderFooter(document.getElementById('footer-container'));
 
     const [{ getTeam, getPlayers, getUserProfile, createTeamFeeBatch, getTeamFeeBatch, listTeamFeeBatches, listTeamFeeRecipients, updateTeamFeeRecipient, canModerateChat }, { requireAuth }] = await Promise.all([
-        import('./db.js?v=4433180'),
-        import('./auth.js?v=4433183')
+        import('./db.js?v=4433181'),
+        import('./auth.js?v=4433184')
     ]);
 
     try {

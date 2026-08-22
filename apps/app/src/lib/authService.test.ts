@@ -901,6 +901,101 @@ describe('hydrateFirebaseUser', () => {
     }));
   });
 
+  it('starts the access deadline beside a slow profile read instead of adding another wait', async () => {
+    vi.useFakeTimers();
+    legacyAuthMocks.getUserProfile.mockImplementation(() => new Promise(() => {}));
+    legacyAuthMocks.listMyParentMembershipRequests.mockImplementation(() => new Promise(() => {}));
+    legacyAuthMocks.getUserTeams.mockImplementation(() => new Promise(() => {}));
+    profileRestMocks.loadAuthProfileViaRest.mockResolvedValue({
+      email: 'coach@example.com',
+      coachOf: ['team-rest']
+    });
+
+    const hydration = hydrateFirebaseUser({
+      uid: 'coach-1',
+      email: 'coach@example.com',
+      getIdToken: vi.fn().mockResolvedValue('token')
+    });
+    let settled = false;
+    void hydration.then(() => { settled = true; });
+
+    await vi.advanceTimersByTimeAsync(1499);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+
+    await expect(hydration).resolves.toEqual(expect.objectContaining({
+      user: expect.objectContaining({ coachOf: ['team-rest'] }),
+      profileHydration: 'success'
+    }));
+  });
+
+  it('publishes an approved membership that succeeds after the access deadline', async () => {
+    vi.useFakeTimers();
+    let resolveMembershipRequests: ((value: unknown[]) => void) | undefined;
+    const onAccessEnrichment = vi.fn();
+    legacyAuthMocks.listMyParentMembershipRequests.mockImplementation(() => new Promise((resolve) => {
+      resolveMembershipRequests = resolve;
+    }));
+    parentMembershipMocks.mergeApprovedParentMembershipRequests.mockReturnValue({
+      changed: true,
+      userUpdate: {
+        roles: ['member', 'parent'],
+        parentOf: [{ teamId: 'team-late', playerId: 'player-late' }]
+      }
+    });
+
+    const hydration = hydrateFirebaseUser(
+      { uid: 'parent-1', email: 'parent@example.com' },
+      { onAccessEnrichment }
+    );
+    await vi.advanceTimersByTimeAsync(1500);
+    await expect(hydration).resolves.toEqual(expect.objectContaining({
+      user: expect.not.objectContaining({
+        parentOf: [{ teamId: 'team-late', playerId: 'player-late' }]
+      })
+    }));
+
+    resolveMembershipRequests?.([{ status: 'approved', teamId: 'team-late' }]);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(onAccessEnrichment).toHaveBeenCalledWith(expect.objectContaining({
+      user: expect.objectContaining({
+        roles: expect.arrayContaining(['parent']),
+        parentOf: [{ teamId: 'team-late', playerId: 'player-late' }]
+      })
+    }));
+    expect(legacyAuthMocks.updateUserProfile).toHaveBeenCalledWith('parent-1', expect.objectContaining({
+      parentOf: [{ teamId: 'team-late', playerId: 'player-late' }]
+    }));
+  });
+
+  it('publishes owned teams that succeed after the access deadline', async () => {
+    vi.useFakeTimers();
+    let resolveOwnedTeams: ((value: Array<{ id: string; name: string }>) => void) | undefined;
+    const onAccessEnrichment = vi.fn();
+    legacyAuthMocks.getUserProfile.mockResolvedValue({ email: 'coach@example.com' });
+    legacyAuthMocks.getUserTeams.mockImplementation(() => new Promise((resolve) => {
+      resolveOwnedTeams = resolve;
+    }));
+
+    const hydration = hydrateFirebaseUser(
+      { uid: 'coach-1', email: 'coach@example.com' },
+      { onAccessEnrichment }
+    );
+    await vi.advanceTimersByTimeAsync(1500);
+    await expect(hydration).resolves.toEqual(expect.objectContaining({
+      user: expect.not.objectContaining({ coachOf: ['team-late'] })
+    }));
+
+    resolveOwnedTeams?.([{ id: 'team-late', name: 'Vipers' }]);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(onAccessEnrichment).toHaveBeenCalledWith(expect.objectContaining({
+      user: expect.objectContaining({ coachOf: ['team-late'] }),
+      profile: expect.objectContaining({ coachOf: ['team-late'] })
+    }));
+  });
+
   it('uses authenticated REST after the SDK profile read exceeds the hedge delay', async () => {
     vi.useFakeTimers();
     legacyAuthMocks.getUserProfile.mockImplementation(() => new Promise(() => {}));

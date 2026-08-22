@@ -82,13 +82,14 @@ type UserCredential = {
 };
 
 type HydratedUser = {
-  user: AuthUser;
-  profile: Record<string, unknown>;
-  profileHydration: ProfileHydrationStatus;
+    user: AuthUser;
+    profile: Record<string, unknown>;
+    profileHydration: ProfileHydrationStatus;
 };
 
-type HydrationOptions = {
+type HydrateFirebaseUserOptions = {
   onAccessEnriched?: (hydrated: HydratedUser) => void;
+  onAccessEnrichment?: (hydrated: HydratedUser) => void;
 };
 
 type NativeAuthSession = {
@@ -1080,7 +1081,7 @@ async function cleanupFailedNewUser(user: FirebaseUser | null, context: string, 
 
 export async function hydrateFirebaseUser(
   user: FirebaseUser,
-  options: HydrationOptions = {}
+  options: HydrateFirebaseUserOptions = {}
 ): Promise<HydratedUser> {
   let profile: Record<string, unknown> = {};
   let profileHydration: ProfileHydrationStatus = 'success';
@@ -1107,6 +1108,15 @@ export async function hydrateFirebaseUser(
       ownedTeamsResult = result;
       return result;
     });
+  let accessEnrichmentTimer: number | undefined;
+  const accessEnrichmentDeadline = Promise.race([
+    Promise.all([membershipRequestsTask, ownedTeamsTask]),
+    new Promise<void>((resolve) => {
+      accessEnrichmentTimer = window.setTimeout(resolve, accessEnrichmentTimeoutMs);
+    })
+  ]).finally(() => {
+    if (accessEnrichmentTimer !== undefined) window.clearTimeout(accessEnrichmentTimer);
+  });
 
   try {
     const profileResult = await raceFirstSuccessfulRead({
@@ -1134,18 +1144,11 @@ export async function hydrateFirebaseUser(
   // Give them a bounded opportunity to enrich this hydration result so
   // one-shot route consumers receive delayed successes without an unbounded
   // signed-in shell wait.
-  let accessEnrichmentTimer: number | undefined;
-  await Promise.race([
-    Promise.all([membershipRequestsTask, ownedTeamsTask]),
-    new Promise<void>((resolve) => {
-      accessEnrichmentTimer = window.setTimeout(resolve, accessEnrichmentTimeoutMs);
-    })
-  ]).finally(() => {
-    if (accessEnrichmentTimer) window.clearTimeout(accessEnrichmentTimer);
-  });
+  await accessEnrichmentDeadline;
 
   const syncApprovedMemberships = async (
-    result: PromiseSettledResult<unknown[]>
+    result: PromiseSettledResult<unknown[]>,
+    awaitPersistence = false
   ): Promise<boolean> => {
     try {
       if (result.status === 'rejected') throw result.reason;
@@ -1153,9 +1156,11 @@ export async function hydrateFirebaseUser(
       const parentRequestSync = mergeApprovedParentMembershipRequests(profile, result.value);
       if (!parentRequestSync.changed) return false;
       Object.assign(profile, parentRequestSync.userUpdate);
-      void dbModulePromise
+      const persistence = dbModulePromise
         .then((dbModule) => dbModule.updateUserProfile(user.uid, parentRequestSync.userUpdate))
         .catch((error) => logger.warn('Failed to persist approved parent membership sync.', { error }));
+      if (awaitPersistence) await persistence;
+      else void persistence;
       return true;
     } catch (error) {
       logger.warn('Failed to sync approved parent membership requests.', { error });
@@ -1163,11 +1168,15 @@ export async function hydrateFirebaseUser(
     }
   };
 
-  const mergeOwnedTeams = (result: PromiseSettledResult<Array<Record<string, unknown>>>): boolean => {
+  const mergeOwnedTeams = (
+    result: PromiseSettledResult<Array<Record<string, unknown>>>
+  ): boolean => {
     try {
       if (result.status === 'rejected') throw result.reason;
-      const coachOf = mergeOwnedTeamIds(profile.coachOf, result.value);
-      const previousCoachOf = Array.isArray(profile.coachOf) ? profile.coachOf : [];
+      const previousCoachOf = Array.isArray(profile.coachOf)
+        ? profile.coachOf.filter((teamId): teamId is string => typeof teamId === 'string')
+        : [];
+      const coachOf = mergeOwnedTeamIds(previousCoachOf, result.value);
       if (coachOf.length === previousCoachOf.length
         && coachOf.every((teamId, index) => teamId === previousCoachOf[index])) {
         return false;
@@ -1194,21 +1203,24 @@ export async function hydrateFirebaseUser(
     profileHydration
   };
 
-  // Preserve the bounded initial hydration, but publish a fresh value when an
-  // authoritative access read settles later. React and routing consumers do
-  // not observe mutations to an object they have already consumed.
   const publishAccessEnrichment = () => {
-    const enriched = {
-      user: toAuthUser(user, profile),
-      profile: { ...profile },
-      profileHydration
-    };
-    options.onAccessEnriched?.(enriched);
+    const enrichedUser = toAuthUser(user, profile);
+    const callback = options.onAccessEnriched ?? options.onAccessEnrichment;
+    if (!callback) return;
+    try {
+      callback({
+        user: enrichedUser,
+        profile: { ...profile },
+        profileHydration
+      });
+    } catch (error) {
+      logger.warn('Failed to publish late auth access enrichment.', { error });
+    }
   };
 
   if (!membershipRequestsResult) {
     void membershipRequestsTask.then(async (result) => {
-      if (await syncApprovedMemberships(result)) publishAccessEnrichment();
+      if (await syncApprovedMemberships(result, true)) publishAccessEnrichment();
     });
   }
   if (!ownedTeamsResult) {

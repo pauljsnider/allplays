@@ -74,6 +74,10 @@
                     </a>
                 </div>
             </div>
+            <p id="unread-chat-status" class="hidden text-sm text-amber-800" role="status">
+                Some unread message counts could not be loaded.
+                <button id="retry-unread-chat" type="button" class="font-semibold underline hover:text-amber-950">Try again</button>
+            </p>
         </div>
 
         <!-- Teams Grid -->
@@ -88,18 +92,31 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeams, getUserTeamsWithAccess, getParentTeams, deleteTeam, getUnreadChatCounts } from './js/db.js?v=4433180';
-        import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=443355';
-        import { checkAuth } from './js/auth.js?v=4433183';
-        import { startBoundedRetry } from './js/bounded-retry.js?v=1';
+        import { getTeams, getUserTeamsWithAccess, getParentTeams, deleteTeam, getUnreadChatCounts } from './js/db.js?v=4433181';
+        import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=443356';
+        import { checkAuth } from './js/auth.js?v=4433184';
+        import { startBoundedRetry } from './js/bounded-retry.js?v=2';
 
         renderFooter(document.getElementById('footer-container'));
+        let authEnrichmentReloadScheduled = false;
+        window.addEventListener('allplays-dashboard-parent-access-enriched', () => {
+            if (authEnrichmentReloadScheduled) return;
+            authEnrichmentReloadScheduled = true;
+            window.location.reload();
+        });
 
         function requireSyncedAuth() {
             return new Promise((resolve, reject) => {
                 let unsubscribe = null;
                 let cleanupRequestedBeforeSubscribeReturned = false;
                 let settled = false;
+                let initialParentAccessFingerprint = '';
+
+                function parentAccessFingerprint(user) {
+                    return JSON.stringify((Array.isArray(user?.parentOf) ? user.parentOf : [])
+                        .map((entry) => `${entry?.teamId || ''}::${entry?.playerId || ''}`)
+                        .sort());
+                }
 
                 function cleanup() {
                     if (typeof unsubscribe === 'function') {
@@ -113,8 +130,15 @@
                 }
 
                 unsubscribe = checkAuth((user) => {
-                    if (settled) return;
+                    const nextParentAccessFingerprint = parentAccessFingerprint(user);
+                    if (settled) {
+                        if (nextParentAccessFingerprint !== initialParentAccessFingerprint) {
+                            window.dispatchEvent(new CustomEvent('allplays-dashboard-parent-access-enriched'));
+                        }
+                        return;
+                    }
                     settled = true;
+                    initialParentAccessFingerprint = nextParentAccessFingerprint;
                     cleanup();
                     if (user) {
                         resolve(user);
@@ -192,6 +216,8 @@
                     return acc;
                 }, {});
                 let unreadCounts = {};
+                const unavailableUnreadTeamIds = new Set();
+                let cancelUnreadChatRetries = () => {};
 
                 function renderNoTeamsState() {
                     return `
@@ -214,11 +240,12 @@
                 function renderTeamCard(team) {
                     const hasFullAccess = team._access === 'full';
                     const unreadKnown = Object.prototype.hasOwnProperty.call(unreadCounts, team.id);
+                    const unreadUnavailable = unavailableUnreadTeamIds.has(team.id);
                     const unread = unreadKnown ? unreadCounts[team.id] || 0 : 0;
                     const unreadBadge = unread > 0
                         ? `<span data-unread-chat-badge class="absolute -top-1 -right-1 inline-flex items-center justify-center w-5 h-5 text-xs font-bold text-white bg-red-500 rounded-full">${unread > 99 ? '99+' : unread}</span>`
                         : !unreadKnown
-                            ? '<span data-unread-chat-unknown class="absolute -top-1 -right-1 w-2.5 h-2.5 bg-gray-300 rounded-full animate-pulse" title="Unread messages are still loading"></span>'
+                            ? `<span data-unread-chat-unknown class="absolute -top-1 -right-1 w-2.5 h-2.5 ${unreadUnavailable ? 'bg-amber-400' : 'bg-gray-300 animate-pulse'} rounded-full" title="${unreadUnavailable ? 'Unread messages are unavailable' : 'Unread messages are still loading'}"></span>`
                             : '';
                     const chatHighlight = unread > 0 ? 'border-primary-400 bg-primary-50' : 'border-gray-200 hover:border-primary-300 hover:bg-primary-50';
                     return `
@@ -390,6 +417,7 @@
                     container.querySelectorAll('[data-team-chat-link]').forEach((link) => {
                         const teamId = link.dataset.teamChatLink;
                         const unreadKnown = Object.prototype.hasOwnProperty.call(unreadCounts, teamId);
+                        const unreadUnavailable = unavailableUnreadTeamIds.has(teamId);
                         const unread = unreadKnown ? Math.max(0, Number(unreadCounts[teamId] || 0) || 0) : 0;
                         const hasUnread = unread > 0;
                         link.classList.toggle('border-primary-400', hasUnread);
@@ -409,8 +437,10 @@
                         } else if (!unreadKnown) {
                             const unknown = document.createElement('span');
                             unknown.dataset.unreadChatUnknown = '';
-                            unknown.className = 'absolute -top-1 -right-1 w-2.5 h-2.5 bg-gray-300 rounded-full animate-pulse';
-                            unknown.title = 'Unread messages are still loading';
+                            unknown.className = `absolute -top-1 -right-1 w-2.5 h-2.5 ${unreadUnavailable ? 'bg-amber-400' : 'bg-gray-300 animate-pulse'} rounded-full`;
+                            unknown.title = unreadUnavailable
+                                ? 'Unread messages are unavailable'
+                                : 'Unread messages are still loading';
                             link.prepend(unknown);
                         }
 
@@ -479,25 +509,49 @@
                 // Team access is the critical result. Render it immediately,
                 // then enrich chat badges in the background with a hard bound.
                 renderTeamLists();
-                const cancelUnreadChatRetries = teamIds.length > 0 ? startBoundedRetry({
-                    initialValue: teamIds,
-                    maxAttempts: 3,
-                    run: (pendingTeamIds) => getUnreadChatCounts(user.uid, pendingTeamIds, {
-                        conversationLookupByTeam,
-                        deadlineAt: Date.now() + 5000
-                    }).then((counts) => {
-                        unreadCounts = { ...unreadCounts, ...(counts || {}) };
-                        updateUnreadChatBadges();
-                        return pendingTeamIds.filter((teamId) => (
-                            !Object.prototype.hasOwnProperty.call(unreadCounts, teamId)
-                        ));
-                    }),
-                    shouldRetry: (unknownTeamIds) => unknownTeamIds.length > 0 ? unknownTeamIds : undefined,
-                    onError: (error) => {
-                        console.warn('Unable to load dashboard unread counts:', error);
-                    }
-                }) : () => {};
-                window.addEventListener('pagehide', cancelUnreadChatRetries, { once: true });
+                const unreadStatus = document.getElementById('unread-chat-status');
+                const retryUnreadButton = document.getElementById('retry-unread-chat');
+                function setUnreadStatusVisible(visible) {
+                    unreadStatus?.classList.toggle('hidden', !visible);
+                }
+                function startUnreadChatBadges(pendingTeamIds) {
+                    cancelUnreadChatRetries();
+                    pendingTeamIds.forEach((teamId) => unavailableUnreadTeamIds.delete(teamId));
+                    setUnreadStatusVisible(false);
+                    updateUnreadChatBadges();
+                    cancelUnreadChatRetries = startBoundedRetry({
+                        initialValue: pendingTeamIds,
+                        maxAttempts: 3,
+                        run: (requestedTeamIds) => getUnreadChatCounts(user.uid, requestedTeamIds, {
+                            conversationLookupByTeam,
+                            deadlineAt: Date.now() + 5000
+                        }).then((counts) => {
+                            unreadCounts = { ...unreadCounts, ...(counts || {}) };
+                            Object.keys(counts || {}).forEach((teamId) => unavailableUnreadTeamIds.delete(teamId));
+                            updateUnreadChatBadges();
+                            return requestedTeamIds.filter((teamId) => (
+                                !Object.prototype.hasOwnProperty.call(unreadCounts, teamId)
+                            ));
+                        }),
+                        shouldRetry: (unknownTeamIds) => unknownTeamIds.length > 0
+                            ? unknownTeamIds
+                            : undefined,
+                        onExhausted: (unavailableTeamIds, error) => {
+                            unavailableTeamIds.forEach((teamId) => unavailableUnreadTeamIds.add(teamId));
+                            updateUnreadChatBadges();
+                            setUnreadStatusVisible(true);
+                            console.warn('Unable to load dashboard unread counts after bounded retries:', error || unavailableTeamIds);
+                        }
+                    });
+                }
+                retryUnreadButton?.addEventListener('click', () => {
+                    const pendingTeamIds = teamIds.filter((teamId) => (
+                        !Object.prototype.hasOwnProperty.call(unreadCounts, teamId)
+                    ));
+                    if (pendingTeamIds.length > 0) startUnreadChatBadges(pendingTeamIds);
+                });
+                window.addEventListener('pagehide', () => cancelUnreadChatRetries(), { once: true });
+                if (teamIds.length > 0) startUnreadChatBadges(teamIds);
 
             } catch (error) {
                 console.error(error);
