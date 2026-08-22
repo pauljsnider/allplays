@@ -48,6 +48,12 @@ import { loadRosterTab } from './team-detail/rosterTabLoader';
 
 type TeamTab = 'overview' | 'schedule' | 'roster' | 'insights' | 'more';
 
+type AuthoritativeTeamSchedule = {
+  teamId: string;
+  userId: string;
+  events: ParentScheduleEvent[];
+};
+
 const initialStandingsRowLimit = 5;
 
 const tabs: Array<{ id: TeamTab; label: string; icon: LucideIcon }> = [
@@ -162,7 +168,10 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
   const [detailCollectionsLoading, setDetailCollectionsLoading] = useState(false);
   const [detailCollectionsError, setDetailCollectionsError] = useState('');
   const [detailCollectionsReloadVersion, setDetailCollectionsReloadVersion] = useState(0);
-  const [authoritativeUpcomingCount, setAuthoritativeUpcomingCount] = useState<number | null>(null);
+  const [authoritativeSchedule, setAuthoritativeSchedule] = useState<AuthoritativeTeamSchedule | null>(null);
+  const [authoritativeScheduleLoading, setAuthoritativeScheduleLoading] = useState(false);
+  const [authoritativeScheduleError, setAuthoritativeScheduleError] = useState('');
+  const [authoritativeScheduleReloadVersion, setAuthoritativeScheduleReloadVersion] = useState(0);
   const authUserRef = useRef(auth.user);
   const activeTabRef = useRef(activeTab);
   const detailCollectionsLoadingRef = useRef(detailCollectionsLoading);
@@ -174,13 +183,43 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
   const canManageTeam = Boolean(model?.canManageTeam);
   const hasStaffPermissions = Boolean(model?.staffPermissions);
 
+  const authoritativeTeamSchedule = authoritativeSchedule?.teamId === teamId && authoritativeSchedule.userId === authUserId
+    ? authoritativeSchedule
+    : null;
+  const authoritativeScheduleSummary = useMemo(() => {
+    if (!authoritativeTeamSchedule) return null;
+    const now = Date.now();
+    return {
+      upcomingCount: countUpcomingTeamScheduleEvents(authoritativeTeamSchedule.events, teamId, now),
+      nextEvent: getNextTeamScheduleEvent(authoritativeTeamSchedule.events, teamId, now)
+    };
+  }, [authoritativeTeamSchedule, teamId]);
+  const authoritativeUpcomingCount = authoritativeScheduleSummary?.upcomingCount ?? null;
+  const authoritativeNextEvent = authoritativeScheduleSummary ? authoritativeScheduleSummary.nextEvent : undefined;
+  const authoritativeSchedulePending = authoritativeScheduleLoading || Boolean(
+    authUserId
+    && model?.team.id === teamId
+    && !authoritativeTeamSchedule
+    && !authoritativeScheduleError
+  );
+
   useEffect(() => {
-    setAuthoritativeUpcomingCount(null);
-  }, [teamId]);
+    setAuthoritativeSchedule(null);
+    setAuthoritativeScheduleLoading(false);
+    setAuthoritativeScheduleError('');
+    setAuthoritativeScheduleReloadVersion(0);
+  }, [authUserId, teamId]);
+
+  useEffect(() => {
+    const previousTab = activeTabRef.current;
+    activeTabRef.current = activeTab;
+    if (activeTab === 'schedule' && previousTab !== 'schedule') {
+      setAuthoritativeScheduleReloadVersion((current) => current + 1);
+    }
+  }, [activeTab]);
 
   useEffect(() => {
     authUserRef.current = auth.user;
-    activeTabRef.current = activeTab;
     detailCollectionsLoadingRef.current = detailCollectionsLoading;
     staffPermissionsLoadingRef.current = staffPermissionsLoading;
     insightsLoadingRef.current = insightsLoading;
@@ -278,6 +317,52 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
       cancelled = true;
     };
   }, [authUserId, teamId, reloadVersion]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadAuthoritativeTeamSchedule() {
+      if (!teamId || !authUserId || model?.team.id !== teamId) return;
+      setAuthoritativeScheduleLoading(true);
+      setAuthoritativeScheduleError('');
+      try {
+        const loadOptions = {
+          hydrateDetails: false,
+          expandStaffPlayers: false,
+          targetTeamId: teamId,
+          includePastGames: true
+        } as const;
+        let result = await loadParentSchedule(authUserRef.current, loadOptions);
+        if (cancelled) return;
+        if (result.isPartial !== false) {
+          result = await loadParentSchedule(authUserRef.current, loadOptions);
+        }
+        if (result.isPartial !== false) {
+          throw new Error('The complete team schedule could not be loaded. Retry to avoid showing missing events.');
+        }
+        if (!cancelled) {
+          setAuthoritativeSchedule({
+            teamId,
+            userId: authUserId,
+            events: result.events.filter((event) => event.teamId === teamId)
+          });
+        }
+      } catch (loadError) {
+        if (!cancelled) {
+          setAuthoritativeScheduleError(loadError instanceof Error && loadError.message
+            ? loadError.message
+            : 'Unable to load the team schedule.');
+        }
+      } finally {
+        if (!cancelled) setAuthoritativeScheduleLoading(false);
+      }
+    }
+
+    void loadAuthoritativeTeamSchedule();
+    return () => {
+      cancelled = true;
+    };
+  }, [authUserId, authoritativeScheduleReloadVersion, model?.team.id, reloadVersion, teamId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -513,7 +598,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
 
   const tabBadges = useMemo(() => ({
     overview: 0,
-    schedule: authoritativeUpcomingCount ?? model?.upcomingEvents.length ?? 0,
+    schedule: authoritativeUpcomingCount ?? 0,
     roster: 0,
     insights: (model?.leaderboards.length || 0) + (model?.trackingSummaries.length || 0),
     more: model?.sponsors.length || 0
@@ -556,7 +641,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
       teamId,
       tab: activeTab,
       playerCount: model?.players.length || 0,
-      upcomingEventCount: model?.upcomingEvents.length || 0,
+      upcomingEventCount: authoritativeUpcomingCount ?? undefined,
       recentResultCount: model?.recentResults.length || 0,
       leaderboardCount: model?.leaderboards.length || 0,
       trackingSummaryCount: model?.trackingSummaries.length || 0,
@@ -623,6 +708,9 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
       {activeTab === 'overview' ? (
         <OverviewTab
           model={model}
+          nextEvent={authoritativeNextEvent ?? null}
+          scheduleLoading={authoritativeSchedulePending}
+          scheduleError={authoritativeScheduleError}
           premiumAccess={teamPremiumAccess}
           onTeamPassCheckoutOpening={() => {
             teamPassCheckoutReturnArmedRef.current = true;
@@ -632,7 +720,17 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
           }}
         />
       ) : null}
-      {activeTab === 'schedule' ? <ScheduleTab model={model} auth={auth} onScheduleLoaded={setAuthoritativeUpcomingCount} onOpenStatTrackerConfigs={() => navigateToTab('more')} /> : null}
+      {activeTab === 'schedule' ? (
+        <ScheduleTab
+          model={model}
+          auth={auth}
+          authoritativeEvents={authoritativeTeamSchedule?.events || null}
+          scheduleLoading={authoritativeSchedulePending}
+          scheduleError={authoritativeScheduleError}
+          onScheduleRetry={() => setAuthoritativeScheduleReloadVersion((current) => current + 1)}
+          onOpenStatTrackerConfigs={() => navigateToTab('more')}
+        />
+      ) : null}
       {activeTab === 'roster' ? (
         <ErrorBoundary name="team-detail-roster" onRetry={() => setRosterTabRetryVersion((current) => current + 1)}>
           <Suspense fallback={<div className="app-card p-4 text-sm font-semibold text-gray-500" role="status" aria-label="Loading roster" aria-live="polite">Loading roster…</div>}>
@@ -663,7 +761,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
   );
 }
 
-function TeamHero({ model, upcomingCount = null }: { model: TeamDetailModel; upcomingCount?: number | null }) {
+function TeamHero({ model, upcomingCount }: { model: TeamDetailModel; upcomingCount: number | null }) {
   const { team } = model;
   return (
     <section className="app-card overflow-hidden">
@@ -694,19 +792,50 @@ function TeamHero({ model, upcomingCount = null }: { model: TeamDetailModel; upc
       <div className="grid grid-cols-3 gap-2 p-3">
         <SummaryStat icon={Trophy} label="Record" value={formatRecord(model.record)} to={`/schedule?teamId=${encodeURIComponent(model.team.id)}&filter=recent-results`} />
         <SummaryStat icon={Users} label="Roster" value={String(model.players.length)} to={`/teams/${encodeURIComponent(model.team.id)}?tab=roster`} />
-        <SummaryStat icon={CalendarDays} label="Upcoming" value={String(upcomingCount ?? model.upcomingEvents.length)} to={`/teams/${encodeURIComponent(model.team.id)}?tab=schedule`} />
+        <SummaryStat icon={CalendarDays} label="Upcoming" value={upcomingCount === null ? '—' : String(upcomingCount)} to={`/teams/${encodeURIComponent(model.team.id)}?tab=schedule`} />
       </div>
       {team.description ? <p className="border-t border-gray-100 px-4 py-3 text-sm font-semibold leading-6 text-gray-600">{team.description}</p> : null}
     </section>
   );
 }
 
-function OverviewTab({ model, premiumAccess, onTeamPassCheckoutOpening, onTeamPassCheckoutOpenFailed }: { model: TeamDetailModel; premiumAccess: PremiumAccessResult; onTeamPassCheckoutOpening: () => void; onTeamPassCheckoutOpenFailed: () => void }) {
+function OverviewTab({
+  model,
+  nextEvent,
+  scheduleLoading,
+  scheduleError,
+  premiumAccess,
+  onTeamPassCheckoutOpening,
+  onTeamPassCheckoutOpenFailed
+}: {
+  model: TeamDetailModel;
+  nextEvent: TeamDetailEvent | null;
+  scheduleLoading: boolean;
+  scheduleError: string;
+  premiumAccess: PremiumAccessResult;
+  onTeamPassCheckoutOpening: () => void;
+  onTeamPassCheckoutOpenFailed: () => void;
+}) {
+  const nextEventValue = nextEvent
+    ? formatEventDate(nextEvent.date)
+    : scheduleLoading
+      ? 'Checking schedule…'
+      : scheduleError
+        ? 'Schedule unavailable'
+        : 'No upcoming';
+  const nextEventDetail = nextEvent
+    ? `${nextEvent.title} · ${nextEvent.locationDetail || nextEvent.location}`
+    : scheduleLoading
+      ? 'Loading the latest team events.'
+      : scheduleError
+        ? 'Open the schedule to retry.'
+        : 'Schedule is clear for now';
+
   return (
     <div className="space-y-4">
       <section className="grid gap-3 sm:grid-cols-2">
         <InfoCard icon={Trophy} title={`Season record (${model.record.label})`} value={formatRecord(model.record)} detail={model.record.gamesPlayed ? `${model.record.gamesPlayed} completed ${model.record.gamesPlayed === 1 ? 'game' : 'games'}${model.record.winPercentage !== null ? ` · ${model.record.winPercentage}%` : ''}` : 'No completed games yet'} to={`/schedule?teamId=${encodeURIComponent(model.team.id)}&filter=recent-results`} />
-        <InfoCard icon={CalendarDays} title="Next event" value={model.nextEvent ? formatEventDate(model.nextEvent.date) : 'No upcoming'} detail={model.nextEvent ? `${model.nextEvent.title} · ${model.nextEvent.locationDetail || model.nextEvent.location}` : 'Schedule is clear for now'} to={`/schedule?teamId=${encodeURIComponent(model.team.id)}`} />
+        <InfoCard icon={CalendarDays} title="Next event" value={nextEventValue} detail={nextEventDetail} to={`/schedule?teamId=${encodeURIComponent(model.team.id)}`} />
         <InfoCard icon={Users} title="Roster size" value={`${model.players.length}`} detail={`${model.linkedPlayers.length || 0} linked to your account`} to={`/teams/${encodeURIComponent(model.team.id)}?tab=roster`} />
         <InfoCard icon={BarChart3} title="Standings" value={getStandingValue(model)} detail={getStandingDetail(model)} href={model.team.leagueUrl || undefined} />
       </section>
@@ -941,7 +1070,8 @@ export function buildTeamSchedulePreviewEvents(
   scheduleEvents: ParentScheduleEvent[],
   modelEvents: TeamDetailEvent[],
   teamId: string,
-  now = Date.now()
+  now = Date.now(),
+  options: { includeModelOnlyEvents?: boolean } = {}
 ) {
   const modelEventsByIdentity = new Map(
     modelEvents.map((event) => [`${event.id}:${event.date.getTime()}`, event])
@@ -960,6 +1090,7 @@ export function buildTeamSchedulePreviewEvents(
       title: scheduleEvent.title?.trim() || (scheduleEvent.type === 'practice' ? 'Practice' : `vs. ${scheduleEvent.opponent?.trim() || 'TBD'}`),
       date: scheduleEvent.date,
       location: scheduleEvent.location?.trim() || 'TBD',
+      locationDetail: scheduleEvent.locationDetail?.trim() || existingEvent?.locationDetail || null,
       opponent: scheduleEvent.opponent?.trim() || 'TBD',
       status: scheduleEvent.status?.trim() || (scheduleEvent.isCancelled ? 'cancelled' : 'scheduled'),
       liveStatus: scheduleEvent.liveStatus?.trim() || '',
@@ -971,6 +1102,7 @@ export function buildTeamSchedulePreviewEvents(
       homeScore: scheduleEvent.homeScore ?? null,
       awayScore: scheduleEvent.awayScore ?? null,
       isCancelled: scheduleEvent.isCancelled,
+      sourceLabel: scheduleEvent.sourceLabel?.trim() || existingEvent?.sourceLabel || null,
       statTrackerConfigId: scheduleEvent.statTrackerConfigId?.trim() || existingEvent?.statTrackerConfigId || '',
       statTrackerConfigLabel: existingEvent?.statTrackerConfigLabel || 'No config assigned',
       statTrackerConfigBaseType: existingEvent?.statTrackerConfigBaseType || '',
@@ -979,14 +1111,16 @@ export function buildTeamSchedulePreviewEvents(
     });
   }
 
-  for (const modelEvent of modelEvents) {
-    const identity = `${modelEvent.id}:${modelEvent.date.getTime()}`;
-    if (!uniqueEvents.has(identity)) uniqueEvents.set(identity, modelEvent);
+  if (options.includeModelOnlyEvents !== false) {
+    for (const modelEvent of modelEvents) {
+      const identity = `${modelEvent.id}:${modelEvent.date.getTime()}`;
+      if (!uniqueEvents.has(identity)) uniqueEvents.set(identity, modelEvent);
+    }
   }
 
   const events = [...uniqueEvents.values()];
   const upcoming = events
-    .filter((event) => !event.isCancelled && event.status.toLowerCase() !== 'completed' && event.date.getTime() >= now - 3 * 60 * 60 * 1000)
+    .filter((event) => isUpcomingTeamDetailEvent(event, now))
     .sort((a, b) => a.date.getTime() - b.date.getTime())
     .slice(0, 8);
   const recent = events
@@ -995,6 +1129,17 @@ export function buildTeamSchedulePreviewEvents(
     .slice(0, 3);
 
   return [...upcoming, ...recent];
+}
+
+function isUpcomingTeamDetailEvent(event: TeamDetailEvent, now = Date.now()) {
+  return !event.isCancelled
+    && event.status.toLowerCase() !== 'completed'
+    && event.date.getTime() >= now - 3 * 60 * 60 * 1000;
+}
+
+function getNextTeamScheduleEvent(scheduleEvents: ParentScheduleEvent[], teamId: string, now = Date.now()) {
+  return buildTeamSchedulePreviewEvents(scheduleEvents, [], teamId, now)
+    .find((event) => isUpcomingTeamDetailEvent(event, now)) || null;
 }
 
 function countUpcomingTeamScheduleEvents(scheduleEvents: ParentScheduleEvent[], teamId: string, now = Date.now()) {
@@ -1013,49 +1158,35 @@ function countUpcomingTeamScheduleEvents(scheduleEvents: ParentScheduleEvent[], 
   return identities.size;
 }
 
-function ScheduleTab({ model, auth, onScheduleLoaded, onOpenStatTrackerConfigs }: { model: TeamDetailModel; auth: AuthState; onScheduleLoaded: (upcomingCount: number) => void; onOpenStatTrackerConfigs: () => void }) {
-  const [authoritativeEvents, setAuthoritativeEvents] = useState<ParentScheduleEvent[] | null>(null);
-  const [scheduleLoading, setScheduleLoading] = useState(true);
-  const [scheduleError, setScheduleError] = useState('');
-  const [scheduleReloadVersion, setScheduleReloadVersion] = useState(0);
+function ScheduleTab({
+  model,
+  auth,
+  authoritativeEvents,
+  scheduleLoading,
+  scheduleError,
+  onScheduleRetry,
+  onOpenStatTrackerConfigs
+}: {
+  model: TeamDetailModel;
+  auth: AuthState;
+  authoritativeEvents: ParentScheduleEvent[] | null;
+  scheduleLoading: boolean;
+  scheduleError: string;
+  onScheduleRetry: () => void;
+  onOpenStatTrackerConfigs: () => void;
+}) {
   const modelEvents = useMemo(() => [...model.upcomingEvents, ...model.recentResults], [model.recentResults, model.upcomingEvents]);
   const events = useMemo(
-    () => buildTeamSchedulePreviewEvents(authoritativeEvents || [], modelEvents, model.team.id),
+    () => buildTeamSchedulePreviewEvents(
+      authoritativeEvents || [],
+      modelEvents,
+      model.team.id,
+      Date.now(),
+      { includeModelOnlyEvents: authoritativeEvents === null }
+    ),
     [authoritativeEvents, model.team.id, modelEvents]
   );
   const reminderPreviewLoader = useMemo(() => createStaffRsvpReminderPreviewLoader(), []);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function loadTeamSchedule() {
-      setScheduleLoading(true);
-      setScheduleError('');
-      try {
-        const result = await loadParentSchedule(auth.user, {
-          hydrateDetails: false,
-          expandStaffPlayers: false,
-          targetTeamId: model.team.id,
-          includePastGames: true
-        });
-        if (result.isPartial === true) {
-          throw new Error('The complete team schedule could not be loaded. Retry to avoid showing missing events.');
-        }
-        if (!cancelled) {
-          const teamEvents = result.events.filter((event) => event.teamId === model.team.id);
-          setAuthoritativeEvents(teamEvents);
-          onScheduleLoaded(countUpcomingTeamScheduleEvents(teamEvents, model.team.id));
-        }
-      } catch (loadError: any) {
-        if (!cancelled) setScheduleError(loadError?.message || 'Unable to load the team schedule.');
-      } finally {
-        if (!cancelled) setScheduleLoading(false);
-      }
-    }
-    void loadTeamSchedule();
-    return () => {
-      cancelled = true;
-    };
-  }, [auth.user, model.team.id, onScheduleLoaded, scheduleReloadVersion]);
 
   return (
     <section className="app-card p-4">
@@ -1072,7 +1203,7 @@ function ScheduleTab({ model, auth, onScheduleLoaded, onOpenStatTrackerConfigs }
           <div className="rounded-xl border border-rose-200 bg-rose-50 p-4">
             <div className="text-sm font-black text-gray-950">Team schedule unavailable</div>
             <div className="mt-1 text-xs font-semibold text-rose-700">{scheduleError}</div>
-            <button type="button" className="secondary-button mt-3 !min-h-9 text-xs" onClick={() => setScheduleReloadVersion((current) => current + 1)}>
+            <button type="button" className="secondary-button mt-3 !min-h-9 text-xs" onClick={onScheduleRetry}>
               Retry schedule
             </button>
           </div>

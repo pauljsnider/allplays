@@ -6,6 +6,8 @@ import { buildTeamSchedulePreviewEvents, TeamDetail } from './TeamDetail';
 import { calculateRosterRenderWindow, rosterRenderLimits } from './team-detail/RosterTab';
 import { clearScrollRestorationForTests, ScrollRestoration } from '../components/ScrollRestoration';
 import { buildPrivateAiLaunchPrompt, parsePrivateAiLaunchContext } from '../lib/privateAiLaunch';
+import type { ParentScheduleLoadResult } from '../lib/scheduleService';
+import type { TeamDetailEvent } from '../lib/teamDetailService';
 import type { AuthState } from '../lib/types';
 
 const teamDetailServiceMocks = vi.hoisted(() => ({
@@ -254,6 +256,105 @@ function createDeferred<T>() {
   return { promise, resolve, reject };
 }
 
+function createParentScheduleEvent({
+  id,
+  title,
+  date,
+  location = 'Main Gym',
+  locationDetail = null,
+  isDbGame = false,
+  type = 'game',
+  opponent = 'Tigers',
+  teamId = 'team-1',
+  teamName = 'Bears'
+}: {
+  id: string;
+  title: string;
+  date: Date;
+  location?: string;
+  locationDetail?: string | null;
+  isDbGame?: boolean;
+  type?: 'game' | 'practice';
+  opponent?: string | null;
+  teamId?: string;
+  teamName?: string;
+}): ParentScheduleLoadResult['events'][number] {
+  return {
+    eventKey: `${teamId}:${id}`,
+    id,
+    teamId,
+    teamName,
+    title,
+    type,
+    date,
+    location,
+    locationDetail,
+    opponent,
+    childId: '',
+    childName: '',
+    isDbGame,
+    status: 'scheduled',
+    homeScore: null,
+    awayScore: null,
+    isCancelled: false,
+    assignments: [],
+    openAssignmentCount: 0
+  };
+}
+
+function createTeamDetailEvent({
+  id,
+  title,
+  date,
+  location = 'Main Gym',
+  isDbGame = false
+}: {
+  id: string;
+  title: string;
+  date: Date;
+  location?: string;
+  isDbGame?: boolean;
+}): TeamDetailEvent {
+  return {
+    id,
+    title,
+    type: 'game',
+    date,
+    location,
+    opponent: 'Tigers',
+    status: 'scheduled',
+    liveStatus: '',
+    visibility: 'public',
+    isPrivate: false,
+    isPublic: true,
+    shareable: true,
+    publicCalendar: true,
+    homeScore: null,
+    awayScore: null,
+    isCancelled: false,
+    isDbGame,
+    statTrackerConfigId: '',
+    statTrackerConfigLabel: 'No config assigned',
+    statTrackerConfigBaseType: '',
+    statTrackerConfigExists: false,
+    statTrackerConfigIsBasketball: false
+  };
+}
+
+function createScheduleLoadResult(
+  events: ParentScheduleLoadResult['events'],
+  isPartial: boolean
+): ParentScheduleLoadResult {
+  const teamId = events[0]?.teamId || 'team-1';
+  const teamName = events[0]?.teamName || 'Bears';
+  return {
+    children: [],
+    staffTeams: [{ teamId, teamName }],
+    events,
+    isPartial
+  };
+}
+
 describe('calculateRosterRenderWindow', () => {
   it('bounds the first active roster page and advances by page size', () => {
     expect(calculateRosterRenderWindow(120, rosterRenderLimits.activePlayers, rosterRenderLimits.activePlayers)).toEqual({
@@ -351,7 +452,8 @@ describe('TeamDetail', () => {
     scheduleServiceMocks.loadParentSchedule.mockReset().mockResolvedValue({
       children: [],
       events: [],
-      staffTeams: []
+      staffTeams: [],
+      isPartial: false
     });
     scheduleServiceMocks.createStaffRsvpReminderPreviewLoader.mockReset();
     scheduleServiceMocks.sendStaffRsvpReminder.mockReset();
@@ -794,7 +896,13 @@ describe('TeamDetail', () => {
     expect(rosterTabLoaderMocks.loadRosterTab).toHaveBeenCalledTimes(2);
   });
 
-  it('uses the lightweight bootstrap on roster and loads the authoritative schedule when schedule opens', async () => {
+  it('uses the lightweight bootstrap and shares the complete schedule across team tabs', async () => {
+    const scheduleEvent = createParentScheduleEvent({
+      id: 'game-next',
+      title: 'Bears vs Tigers',
+      date: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      locationDetail: 'Court 2'
+    });
     teamDetailServiceMocks.loadParentTeamDetailBootstrap.mockResolvedValue({
       ...model,
       canManageTeam: true,
@@ -802,30 +910,7 @@ describe('TeamDetail', () => {
       recentResults: [],
       statTrackerConfigs: []
     });
-    scheduleServiceMocks.loadParentSchedule.mockResolvedValue({
-      children: [],
-      staffTeams: [{ teamId: 'team-1', teamName: 'Bears' }],
-      events: [{
-        eventKey: 'team-1:game-next',
-        id: 'game-next',
-        teamId: 'team-1',
-        teamName: 'Bears',
-        title: 'Bears vs Tigers',
-        type: 'game',
-        date: new Date(Date.now() + 24 * 60 * 60 * 1000),
-        location: 'Main Gym',
-        opponent: 'Tigers',
-        childId: '',
-        childName: '',
-        isDbGame: false,
-        status: 'scheduled',
-        homeScore: null,
-        awayScore: null,
-        isCancelled: false,
-        assignments: [],
-        openAssignmentCount: 0
-      }]
-    });
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValue(createScheduleLoadResult([scheduleEvent], false));
 
     render(
       <MemoryRouter initialEntries={['/teams/team-1?tab=roster']}>
@@ -838,14 +923,356 @@ describe('TeamDetail', () => {
     expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
     expect(teamDetailServiceMocks.loadParentTeamDetailBootstrap).toHaveBeenCalledTimes(1);
     expect(teamDetailServiceMocks.loadParentTeamDetail).not.toHaveBeenCalled();
+    await waitFor(() => expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(1));
 
     fireEvent.click(screen.getByRole('button', { name: /schedule/i }));
 
-    await waitFor(() => expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(2));
     expect(await screen.findByText('Bears vs Tigers')).toBeTruthy();
     expect(screen.getByRole('link', { name: /1\s+Upcoming/ })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Review reminder' })).toBeNull();
     expect(teamDetailServiceMocks.loadParentTeamDetail).not.toHaveBeenCalled();
+
+    fireEvent.click(within(screen.getByRole('navigation', { name: 'Team detail sections' })).getByRole('button', { name: /overview/i }));
+
+    const nextEventCard = screen.getByRole('link', { name: /Next event/i });
+    expect(nextEventCard).toHaveTextContent('Bears vs Tigers');
+    expect(nextEventCard).toHaveTextContent('Court 2');
+    expect(screen.queryByText('Schedule is clear for now')).toBeNull();
+  });
+
+  it('loads the complete targeted schedule before confirming an empty team overview', async () => {
+    const scheduleEvent = createParentScheduleEvent({
+      id: 'game-next',
+      title: 'Bears vs Tigers',
+      date: new Date(Date.now() + 24 * 60 * 60 * 1000)
+    });
+    teamDetailServiceMocks.loadParentTeamDetailBootstrap.mockResolvedValue({
+      ...model,
+      upcomingEvents: [],
+      recentResults: [],
+      nextEvent: null,
+      statTrackerConfigs: []
+    });
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValue(createScheduleLoadResult([scheduleEvent], false));
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    expect(screen.queryByText('Schedule is clear for now')).toBeNull();
+    await waitFor(() => expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledWith(auth.user, {
+      hydrateDetails: false,
+      expandStaffPlayers: false,
+      targetTeamId: 'team-1',
+      includePastGames: true
+    }));
+    const nextEventCard = await screen.findByRole('link', { name: /Next event/i });
+    expect(nextEventCard).toHaveTextContent('Bears vs Tigers');
+    expect(nextEventCard).toHaveTextContent('Main Gym');
+    expect(screen.getByRole('link', { name: /1\s+Upcoming/ })).toBeTruthy();
+    expect(screen.queryByText('Schedule is clear for now')).toBeNull();
+  });
+
+  it('confirms a legitimate empty overview only after the targeted schedule completes', async () => {
+    const scheduleLoad = createDeferred<ParentScheduleLoadResult>();
+    teamDetailServiceMocks.loadParentTeamDetailBootstrap.mockResolvedValue({
+      ...model,
+      upcomingEvents: [],
+      recentResults: [],
+      nextEvent: null
+    });
+    scheduleServiceMocks.loadParentSchedule.mockReturnValue(scheduleLoad.promise);
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('Checking schedule…')).toBeTruthy();
+    expect(screen.queryByText('Schedule is clear for now')).toBeNull();
+    expect(screen.getByRole('link', { name: /Upcoming/ })).toHaveTextContent('—');
+
+    await act(async () => scheduleLoad.resolve({
+      children: [],
+      staffTeams: [{ teamId: 'team-1', teamName: 'Bears' }],
+      events: [],
+      isPartial: false
+    }));
+
+    expect(await screen.findByText('Schedule is clear for now')).toBeTruthy();
+    expect(screen.getByRole('link', { name: /0\s+Upcoming/ })).toBeTruthy();
+  });
+
+  it('automatically retries a partial-empty first load and recovers the complete overview', async () => {
+    const scheduleEvent = createParentScheduleEvent({
+      id: 'game-recovered',
+      title: 'Recovered schedule game',
+      date: new Date(Date.now() + 24 * 60 * 60 * 1000)
+    });
+    teamDetailServiceMocks.loadParentTeamDetailBootstrap.mockResolvedValue({
+      ...model,
+      upcomingEvents: [],
+      recentResults: [],
+      nextEvent: null
+    });
+    scheduleServiceMocks.loadParentSchedule
+      .mockResolvedValueOnce(createScheduleLoadResult([], true))
+      .mockResolvedValueOnce(createScheduleLoadResult([scheduleEvent], false));
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    const nextEventCard = await screen.findByRole('link', { name: /Next event/i });
+    await waitFor(() => expect(nextEventCard).toHaveTextContent('Recovered schedule game'));
+    expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole('link', { name: /1\s+Upcoming/ })).toBeTruthy();
+    expect(screen.queryByText('Schedule unavailable')).toBeNull();
+    expect(screen.queryByText('Schedule is clear for now')).toBeNull();
+  });
+
+  it('expands a partial nonempty bootstrap with an earlier event on the automatic complete retry', async () => {
+    const laterDate = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000);
+    const earlierDate = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    const laterModelEvent = createTeamDetailEvent({
+      id: 'game-later',
+      title: 'Later schedule game',
+      date: laterDate
+    });
+    const laterScheduleEvent = createParentScheduleEvent({
+      id: 'game-later',
+      title: 'Later schedule game',
+      date: laterDate
+    });
+    const earlierScheduleEvent = createParentScheduleEvent({
+      id: 'game-earlier',
+      title: 'Earlier recovered game',
+      date: earlierDate
+    });
+    teamDetailServiceMocks.loadParentTeamDetailBootstrap.mockResolvedValue({
+      ...model,
+      upcomingEvents: [laterModelEvent],
+      recentResults: [],
+      nextEvent: laterModelEvent
+    });
+    scheduleServiceMocks.loadParentSchedule
+      .mockResolvedValueOnce(createScheduleLoadResult([laterScheduleEvent], true))
+      .mockResolvedValueOnce(createScheduleLoadResult([laterScheduleEvent, earlierScheduleEvent], false));
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1?tab=schedule']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('Earlier recovered game')).toBeTruthy();
+    expect(screen.getByText('Later schedule game')).toBeTruthy();
+    expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole('link', { name: /2\s+Upcoming/ })).toBeTruthy();
+    expect(screen.queryByText('Team schedule unavailable')).toBeNull();
+
+    fireEvent.click(within(screen.getByRole('navigation', { name: 'Team detail sections' })).getByRole('button', { name: /overview/i }));
+    expect(screen.getByRole('link', { name: /Next event/i })).toHaveTextContent('Earlier recovered game');
+  });
+
+  it('lets a complete empty schedule replace a stale bootstrap event', async () => {
+    const staleEvent = createTeamDetailEvent({
+      id: 'game-stale',
+      title: 'Stale bootstrap game',
+      date: new Date(Date.now() + 24 * 60 * 60 * 1000)
+    });
+    teamDetailServiceMocks.loadParentTeamDetailBootstrap.mockResolvedValue({
+      ...model,
+      upcomingEvents: [staleEvent],
+      recentResults: [],
+      nextEvent: staleEvent
+    });
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValue(createScheduleLoadResult([], false));
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1?tab=schedule']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('No team events found.')).toBeTruthy();
+    expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('link', { name: /0\s+Upcoming/ })).toBeTruthy();
+    expect(screen.queryByText('Stale bootstrap game')).toBeNull();
+
+    fireEvent.click(within(screen.getByRole('navigation', { name: 'Team detail sections' })).getByRole('button', { name: /overview/i }));
+    expect(screen.getByText('Schedule is clear for now')).toBeTruthy();
+    expect(screen.queryByText('Stale bootstrap game')).toBeNull();
+  });
+
+  it('keeps repeated empty loads without an explicit completeness flag retryable', async () => {
+    teamDetailServiceMocks.loadParentTeamDetailBootstrap.mockResolvedValue({
+      ...model,
+      upcomingEvents: [],
+      recentResults: [],
+      nextEvent: null
+    });
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValue({
+      children: [],
+      staffTeams: [{ teamId: 'team-1', teamName: 'Bears' }],
+      events: []
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1?tab=schedule']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('The complete team schedule could not be loaded. Retry to avoid showing missing events.')).toBeTruthy();
+    await waitFor(() => expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText('No team events found.')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Retry schedule' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: /Upcoming/ })).toHaveTextContent('—');
+
+    fireEvent.click(within(screen.getByRole('navigation', { name: 'Team detail sections' })).getByRole('button', { name: /overview/i }));
+    expect(screen.getByText('Schedule unavailable')).toBeTruthy();
+    expect(screen.getByText('Open the schedule to retry.')).toBeTruthy();
+    expect(screen.queryByText('Schedule is clear for now')).toBeNull();
+  });
+
+  it('preserves the last complete schedule when a later tab refresh stays partial', async () => {
+    const eventDate = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    const modelEvent = createTeamDetailEvent({
+      id: 'game-known',
+      title: 'Known complete game',
+      date: eventDate
+    });
+    const scheduleEvent = createParentScheduleEvent({
+      id: 'game-known',
+      title: 'Known complete game',
+      date: eventDate
+    });
+    teamDetailServiceMocks.loadParentTeamDetailBootstrap.mockResolvedValue({
+      ...model,
+      upcomingEvents: [modelEvent],
+      recentResults: [],
+      nextEvent: modelEvent
+    });
+    scheduleServiceMocks.loadParentSchedule
+      .mockResolvedValueOnce(createScheduleLoadResult([scheduleEvent], false))
+      .mockResolvedValue(createScheduleLoadResult([], true));
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1?tab=schedule']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('link', { name: /1\s+Upcoming/ })).toBeTruthy();
+    expect(screen.getByText('Known complete game')).toBeTruthy();
+    expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(1);
+
+    const tabNavigation = within(screen.getByRole('navigation', { name: 'Team detail sections' }));
+    fireEvent.click(tabNavigation.getByRole('button', { name: /overview/i }));
+    expect(screen.getByRole('link', { name: /Next event/i })).toHaveTextContent('Known complete game');
+
+    fireEvent.click(tabNavigation.getByRole('button', { name: /schedule/i }));
+    expect(await screen.findByText('The complete team schedule could not be loaded. Retry to avoid showing missing events.')).toBeTruthy();
+    await waitFor(() => expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(3));
+    expect(screen.getByText('Known complete game')).toBeTruthy();
+    expect(screen.getByRole('link', { name: /1\s+Upcoming/ })).toBeTruthy();
+    expect(screen.queryByText('No team events found.')).toBeNull();
+
+    fireEvent.click(tabNavigation.getByRole('button', { name: /overview/i }));
+    expect(screen.getByRole('link', { name: /Next event/i })).toHaveTextContent('Known complete game');
+    expect(screen.queryByText('Schedule is clear for now')).toBeNull();
+  });
+
+  it('ignores out-of-order schedule results and errors after the team route changes', async () => {
+    const staleTeamOneLoad = createDeferred<ParentScheduleLoadResult>();
+    const staleTeamOneError = createDeferred<ParentScheduleLoadResult>();
+    const staleTeamOneEvent = createParentScheduleEvent({
+      id: 'game-stale-team-one',
+      title: 'Stale Bears game',
+      date: new Date(Date.now() + 24 * 60 * 60 * 1000)
+    });
+    const teamTwoEvent = createParentScheduleEvent({
+      id: 'game-team-two',
+      title: 'Current Tigers game',
+      date: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000),
+      teamId: 'team-2',
+      teamName: 'Tigers'
+    });
+    teamDetailServiceMocks.loadParentTeamDetailBootstrap.mockImplementation(async (requestedTeamId: string) => ({
+      ...model,
+      team: {
+        ...model.team,
+        id: requestedTeamId,
+        name: requestedTeamId === 'team-2' ? 'Tigers' : 'Bears'
+      },
+      upcomingEvents: [],
+      recentResults: [],
+      nextEvent: null
+    }));
+    let teamOneLoadCount = 0;
+    scheduleServiceMocks.loadParentSchedule.mockImplementation((_user: unknown, options: { targetTeamId?: string }) => {
+      if (options.targetTeamId === 'team-1') {
+        teamOneLoadCount += 1;
+        return teamOneLoadCount === 1 ? staleTeamOneLoad.promise : staleTeamOneError.promise;
+      }
+      return Promise.resolve(createScheduleLoadResult([teamTwoEvent], false));
+    });
+
+    const router = createMemoryRouter(
+      [{ path: '/teams/:teamId', element: <TeamDetail auth={auth} /> }],
+      { initialEntries: ['/teams/team-1'] }
+    );
+    render(<RouterProvider router={router} />);
+
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    await waitFor(() => expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole('button', { name: /schedule/i }));
+    await waitFor(() => expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(2));
+
+    await act(async () => {
+      await router.navigate('/teams/team-2');
+    });
+
+    expect(await screen.findByRole('heading', { name: 'Tigers' })).toBeTruthy();
+    await waitFor(() => expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(3));
+    const nextEventCard = await screen.findByRole('link', { name: /Next event/i });
+    await waitFor(() => expect(nextEventCard).toHaveTextContent('Current Tigers game'));
+
+    await act(async () => {
+      staleTeamOneLoad.resolve(createScheduleLoadResult([staleTeamOneEvent], false));
+      staleTeamOneError.reject(new Error('Stale Bears schedule failure'));
+      await Promise.resolve();
+    });
+
+    expect(screen.getByRole('heading', { name: 'Tigers' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: /Next event/i })).toHaveTextContent('Current Tigers game');
+    expect(screen.getByRole('link', { name: /1\s+Upcoming/ })).toBeTruthy();
+    expect(screen.queryByText('Stale Bears game')).toBeNull();
+    expect(screen.queryByText('Stale Bears schedule failure')).toBeNull();
+    expect(screen.queryByText('Schedule unavailable')).toBeNull();
   });
 
   it('hydrates overview collections before rendering the default team hub stats', async () => {
@@ -901,6 +1328,14 @@ describe('TeamDetail', () => {
       nextEvent,
       counts: { games: 2, practices: 0, completedGames: 1 }
     });
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValue(createScheduleLoadResult([
+      createParentScheduleEvent({
+        id: nextEvent.id,
+        title: nextEvent.title,
+        date: nextEvent.date,
+        isDbGame: true
+      })
+    ], false));
 
     render(
       <MemoryRouter initialEntries={['/teams/team-1']}>
@@ -911,19 +1346,20 @@ describe('TeamDetail', () => {
     );
 
     expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
-    expect(screen.getByText(/Bears vs Tigers/i)).toBeTruthy();
+    expect(await screen.findByText(/Bears vs Tigers/i)).toBeTruthy();
     expect(teamDetailServiceMocks.loadParentTeamDetailBootstrap).toHaveBeenCalledTimes(1);
     expect(teamDetailServiceMocks.loadParentTeamDetail).not.toHaveBeenCalled();
   });
 
   it('links team overview summary stats and cards to their matching workflows', async () => {
+    const futureDate = new Date(Date.now() + 24 * 60 * 60 * 1000);
     teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue({
       ...model,
       upcomingEvents: [{
         id: 'game-next',
         title: 'Bears vs Tigers',
         type: 'game',
-        date: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        date: futureDate,
         location: 'Main Gym',
         opponent: 'Tigers',
         status: 'scheduled',
@@ -946,7 +1382,7 @@ describe('TeamDetail', () => {
         id: 'game-next',
         title: 'Bears vs Tigers',
         type: 'game',
-        date: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        date: futureDate,
         location: 'Main Gym',
         opponent: 'Tigers',
         status: 'scheduled',
@@ -966,6 +1402,14 @@ describe('TeamDetail', () => {
         statTrackerConfigIsBasketball: false
       }
     });
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValue(createScheduleLoadResult([
+      createParentScheduleEvent({
+        id: 'game-next',
+        title: 'Bears vs Tigers',
+        date: futureDate,
+        isDbGame: true
+      })
+    ], false));
 
     render(
       <MemoryRouter initialEntries={['/teams/team-1']}>
@@ -978,7 +1422,7 @@ describe('TeamDetail', () => {
     expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
     expect(screen.getByRole('link', { name: /4-2\s+Record/ }).getAttribute('href')).toBe('/schedule?teamId=team-1&filter=recent-results');
     expect(screen.getByRole('link', { name: /1\s+Roster/ }).getAttribute('href')).toBe('/teams/team-1?tab=roster');
-    expect(screen.getByRole('link', { name: /1\s+Upcoming/ }).getAttribute('href')).toBe('/teams/team-1?tab=schedule');
+    expect((await screen.findByRole('link', { name: /1\s+Upcoming/ })).getAttribute('href')).toBe('/teams/team-1?tab=schedule');
     expect(screen.getByRole('link', { name: /Season record \(2100\)/ }).getAttribute('href')).toBe('/schedule?teamId=team-1&filter=recent-results');
     expect(screen.getByRole('link', { name: /Next event/ }).getAttribute('href')).toBe('/schedule?teamId=team-1');
     expect(screen.getByRole('link', { name: /Roster size/ }).getAttribute('href')).toBe('/teams/team-1?tab=roster');
@@ -1033,7 +1477,8 @@ describe('TeamDetail', () => {
           isCancelled: false,
           assignments: [],
           openAssignmentCount: 0
-        }]
+        }],
+        isPartial: false
       });
 
     render(
@@ -1110,6 +1555,14 @@ describe('TeamDetail', () => {
       }]
     };
     teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue(managedModel);
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValue(createScheduleLoadResult([
+      createParentScheduleEvent({
+        id: 'game-next',
+        title: 'Bears vs Tigers',
+        date: futureDate,
+        isDbGame: true
+      })
+    ], false));
     scheduleServiceMocks.loadPreview
       .mockRejectedValueOnce(new Error('Reminder preview temporarily unavailable.'))
       .mockResolvedValueOnce({
@@ -1162,6 +1615,17 @@ describe('TeamDetail', () => {
         statTrackerConfigIsBasketball: false
       }]
     });
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValue(createScheduleLoadResult([
+      createParentScheduleEvent({
+        id: 'imported-practice',
+        title: 'Bears Practice',
+        date: futureDate,
+        location: 'Soccer Complex',
+        type: 'practice',
+        opponent: null,
+        isDbGame: false
+      })
+    ], false));
 
     render(
       <MemoryRouter initialEntries={['/teams/team-1?tab=schedule']}>
