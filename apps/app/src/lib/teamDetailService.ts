@@ -92,6 +92,7 @@ export type TeamDetailPlayer = {
   photoUrl: string | null;
   photoPath?: string | null;
   position: string;
+  ageClassification?: string;
   isLinked: boolean;
   active: boolean;
   parentContacts?: TeamRosterParentContact[];
@@ -2708,6 +2709,7 @@ function normalizePlayer(player: any, linked: Set<string>, includeParentContacts
     photoUrl: getFirstUrl(player?.photoUrl, player?.imageUrl, player?.headshotUrl),
     photoPath: cleanString(player?.photoPath) || null,
     position: cleanString(player?.position || player?.primaryPosition || player?.profile?.customFields?.position || player?.customFields?.position),
+    ...(includeParentContacts ? { ageClassification: deriveAgeClassification(player) || undefined } : {}),
     isLinked: linked.has(id),
     active: player?.active !== false
   };
@@ -2718,6 +2720,32 @@ function normalizePlayer(player: any, linked: Set<string>, includeParentContacts
     }) as TeamRosterParentContact[];
   }
   return normalizedPlayer;
+}
+
+export function deriveAgeClassification(player: any = {}): string {
+  const publicSources = [player, player?.rosterFieldValues, player?.customFields, player?.profile?.rosterFields, player?.profile?.customFields];
+  const privateFields = player?.privateProfileRosterFields && typeof player.privateProfileRosterFields === 'object'
+    ? player.privateProfileRosterFields
+    : {};
+  const readValue = (keys: string[], allowFullDate = false) => {
+    for (const source of [...publicSources, privateFields]) {
+      if (!source || typeof source !== 'object') continue;
+      for (const key of keys) {
+        const value = cleanString(source[key]);
+        if (value && (allowFullDate || !/^\d{4}-\d{2}-\d{2}$/.test(value))) return value;
+      }
+    }
+    return '';
+  };
+  const ageGroup = readValue(['ageClassification', 'ageGroup', 'ageClass', 'ageLevel']);
+  if (ageGroup) return ageGroup;
+  const birthYear = readValue(['birthYear', 'yearOfBirth']);
+  if (/^\d{4}$/.test(birthYear)) return `Birth year ${birthYear}`;
+  const grade = readValue(['grade']);
+  if (grade) return /^grade\b/i.test(grade) ? grade : `Grade ${grade}`;
+  const birthDate = readValue(['birthDate'], true);
+  const derivedBirthYear = birthDate.match(/^(\d{4})-\d{2}-\d{2}/)?.[1] || birthDate.match(/^(\d{4})\//)?.[1] || '';
+  return derivedBirthYear ? `Birth year ${derivedBirthYear}` : '';
 }
 
 function buildPermissionGrantTargets(team: Record<string, any>, players: any[], permissionKey: string, confirmedTeamMembers: any[] = [], teamId = ''): TeamScorekeeperGrantTarget[] {

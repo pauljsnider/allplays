@@ -1,5 +1,22 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { deriveAgeClassification } from './teamDetailService';
+
+describe('deriveAgeClassification', () => {
+  it('uses age group, birth year, grade, then birth date year in precedence order', () => {
+    expect(deriveAgeClassification({ ageGroup: 'U12', birthYear: '2014', grade: '6', birthDate: '2014-02-03' })).toBe('U12');
+    expect(deriveAgeClassification({ birthYear: '2014', grade: '6', birthDate: '2014-02-03' })).toBe('Birth year 2014');
+    expect(deriveAgeClassification({ grade: '6', birthDate: '2014-02-03' })).toBe('Grade 6');
+    expect(deriveAgeClassification({ birthDate: '2014-02-03' })).toBe('Birth year 2014');
+  });
+
+  it('uses privileged roster values without returning the full birth date', () => {
+    const classification = deriveAgeClassification({ privateProfileRosterFields: { grade: '6', birthDate: '2014-02-03' } });
+    expect(classification).toBe('Grade 6');
+    expect(classification).not.toContain('2014-02-03');
+    expect(deriveAgeClassification({ privateProfileRosterFields: {} })).toBe('');
+  });
+});
 
 const dbMocks = vi.hoisted(() => ({
   addPlayer: vi.fn(),
