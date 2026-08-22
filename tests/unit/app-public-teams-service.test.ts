@@ -9,7 +9,7 @@ const dbMocks = vi.hoisted(() => ({
 
 vi.mock('../../apps/app/src/lib/adapters/legacyPublicTeamsDb', () => dbMocks);
 
-import { getPublicTeamDetail, getPublicTeamStandingsInputs, getPublicTeamsByLocation, getPublicTeamsPage, hydratePublicTeamRosterCounts } from '../../apps/app/src/lib/publicTeamsService';
+import { getPublicTeamDetail, getPublicTeamRecentResults, getPublicTeamStandingsInputs, getPublicTeamsByLocation, getPublicTeamsPage, hydratePublicTeamRosterCounts } from '../../apps/app/src/lib/publicTeamsService';
 
 describe('publicTeamsService', () => {
     beforeEach(() => {
@@ -600,6 +600,62 @@ describe('publicTeamsService', () => {
             }
         ]);
         expect(dbMocks.getPublicTeamGamesProjection).toHaveBeenCalledWith('team-public-1');
+    });
+
+    it('returns the five newest completed public results from the current team perspective', async () => {
+        dbMocks.getPublicTeamGamesProjection.mockResolvedValue({
+            team: { id: 'team-public-1', name: 'Austin Bats' },
+            games: [
+                { id: 'oldest', startsAt: '2026-08-01T18:00:00.000Z', opponent: 'Old Owls', status: 'completed', teamScore: 1, opponentScore: 0 },
+                { id: 'loss', startsAt: '2026-08-05T18:00:00.000Z', opponent: 'Foxes', isHome: false, status: 'completed', teamScore: 1, opponentScore: 3 },
+                { id: 'win', startsAt: '2026-08-04T18:00:00.000Z', opponent: 'Bears', status: 'final', teamScore: 4, opponentScore: 2 },
+                { id: 'newest-draw', startsAt: '2026-08-06T18:00:00.000Z', opponent: 'Cats', status: 'completed', teamScore: 2, opponentScore: 2 },
+                { id: 'draw', startsAt: '2026-08-03T18:00:00.000Z', opponent: 'Hawks', status: 'finished', teamScore: 0, opponentScore: 0 },
+                { id: 'older-loss', startsAt: '2026-08-02T18:00:00.000Z', opponent: 'Wolves', status: 'complete', teamScore: 2, opponentScore: 5 }
+            ]
+        });
+
+        await expect(getPublicTeamRecentResults('team-public-1')).resolves.toEqual([
+            { id: 'newest-draw', date: new Date('2026-08-06T18:00:00.000Z'), opponent: 'Cats', teamScore: 2, opponentScore: 2, result: 'draw' },
+            { id: 'loss', date: new Date('2026-08-05T18:00:00.000Z'), opponent: 'Foxes', teamScore: 1, opponentScore: 3, result: 'loss' },
+            { id: 'win', date: new Date('2026-08-04T18:00:00.000Z'), opponent: 'Bears', teamScore: 4, opponentScore: 2, result: 'win' },
+            { id: 'draw', date: new Date('2026-08-03T18:00:00.000Z'), opponent: 'Hawks', teamScore: 0, opponentScore: 0, result: 'draw' },
+            { id: 'older-loss', date: new Date('2026-08-02T18:00:00.000Z'), opponent: 'Wolves', teamScore: 2, opponentScore: 5, result: 'loss' }
+        ]);
+    });
+
+    it('excludes scheduled, live, private, and practice games from recent results', async () => {
+        const completedGame = {
+            startsAt: '2026-08-01T18:00:00.000Z',
+            opponent: 'Owls',
+            status: 'completed',
+            teamScore: 2,
+            opponentScore: 1
+        };
+        dbMocks.getPublicTeamGamesProjection.mockResolvedValue({
+            team: { id: 'team-public-1', name: 'Austin Bats' },
+            games: [
+                { ...completedGame, id: 'valid' },
+                { ...completedGame, id: 'scheduled', status: 'scheduled' },
+                { ...completedGame, id: 'live', status: 'live' },
+                { ...completedGame, id: 'live-marker', liveStatus: 'live' },
+                { ...completedGame, id: 'private', visibility: 'private' },
+                { ...completedGame, id: 'practice', type: 'practice' }
+            ]
+        });
+
+        await expect(getPublicTeamRecentResults('team-public-1')).resolves.toEqual([
+            { id: 'valid', date: new Date('2026-08-01T18:00:00.000Z'), opponent: 'Owls', teamScore: 2, opponentScore: 1, result: 'win' }
+        ]);
+    });
+
+    it('returns an empty recent-results list when no public games are completed', async () => {
+        dbMocks.getPublicTeamGamesProjection.mockResolvedValue({
+            team: { id: 'team-public-1', name: 'Austin Bats' },
+            games: []
+        });
+
+        await expect(getPublicTeamRecentResults('team-public-1')).resolves.toEqual([]);
     });
 
     it('excludes non-public, non-final, practice, private, mismatched, and malformed projections', async () => {

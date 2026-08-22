@@ -631,6 +631,19 @@ async function mockPublicTeamsBrowseModule(page, { slowSearch = false } = {}) {
                         location: 'Atlanta, GA'
                     };
                 }
+
+                export async function getPublicTeamRecentResults() {
+                    return [
+                        {
+                            id: 'result-1',
+                            date: new Date('2026-08-06T18:00:00.000Z'),
+                            opponent: 'North Atlanta Community Soccer Academy Owls',
+                            teamScore: 4,
+                            opponentScore: 1,
+                            result: 'win'
+                        }
+                    ];
+                }
             `
         });
     });
@@ -764,6 +777,12 @@ test.describe('mobile My Teams', () => {
     });
 
     test('browse teams paginates searched results on mobile without clearing the query', async ({ page, baseURL }) => {
+        const pageErrors = [];
+        page.on('pageerror', (error) => {
+            if (!error.message.startsWith('Installations: Create Installation request failed')) {
+                pageErrors.push(error.message);
+            }
+        });
         await mockTeamsModules(page, { scenario: 'empty' });
         await mockPublicTeamsBrowseModule(page, { slowSearch: true });
         await page.goto(appUrl(baseURL, '/teams/browse'), { waitUntil: 'domcontentloaded' });
@@ -796,7 +815,18 @@ test.describe('mobile My Teams', () => {
         await expect.poll(async () => atlantaFireLink.evaluate((node) => node.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44);
         await atlantaFireLink.click();
 
+        expect(pageErrors).toEqual([]);
         await expect(page.getByRole('heading', { name: 'Atlanta Fire' })).toBeVisible();
+        await expect(page.getByRole('heading', { name: 'Recent results' })).toBeVisible();
+        const recentResult = page.getByTestId('public-recent-result');
+        await expect(recentResult).toContainText('North Atlanta Community Soccer Academy Owls');
+        await expect(recentResult).toContainText('4');
+        await expect(recentResult).toContainText('1');
+        await expect(recentResult).toContainText('Win');
+        await expect.poll(async () => recentResult.evaluate((node) => {
+            const bounds = node.getBoundingClientRect();
+            return bounds.left >= 0 && bounds.right <= window.innerWidth + 1;
+        })).toBe(true);
         await expect(page.getByRole('link', { name: 'Back to team search' })).toHaveAttribute('href', '#/teams/browse');
         await expect(page.getByRole('link', { name: 'Enter a join code' })).toHaveAttribute('href', '#/accept-invite');
         await expect(page.getByRole('link', { name: 'Sign in' })).toHaveCount(0);

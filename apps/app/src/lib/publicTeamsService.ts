@@ -125,6 +125,22 @@ export type PublicTeamStandingsInput = {
     tournament?: PublicStandingsTournament;
 };
 
+export type PublicTeamRecentResult = {
+    id: string;
+    date: Date;
+    opponent: string;
+    teamScore: number;
+    opponentScore: number;
+    result: 'win' | 'loss' | 'draw';
+};
+
+type NormalizedPublicCompletedGame = {
+    standings: PublicTeamStandingsInput;
+    recentResult: PublicTeamRecentResult;
+};
+
+const PUBLIC_TEAM_RECENT_RESULTS_LIMIT = 5;
+
 function normalizePublicTeamSearchText(value: string | null | undefined): string {
     return String(value || '').trim().toLowerCase();
 }
@@ -199,11 +215,11 @@ function normalizePublicStandingsTournament(value: unknown): PublicStandingsTour
     return Object.keys(normalized).length ? normalized : null;
 }
 
-function normalizePublicStandingsGame(
+function normalizePublicCompletedGame(
     value: PublicTeamProjectedGame,
     teamId: string,
     teamName: string
-): PublicTeamStandingsInput | null {
+): NormalizedPublicCompletedGame | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
     const status = String(value.status || '').trim().toLowerCase();
     const liveStatus = String(value.liveStatus || '').trim().toLowerCase();
@@ -227,14 +243,24 @@ function normalizePublicStandingsGame(
     const isHome = value.isHome !== false;
     const tournament = normalizePublicStandingsTournament(value.tournament);
     return {
-        id,
-        date,
-        homeTeam: isHome ? teamName : opponent,
-        awayTeam: isHome ? opponent : teamName,
-        homeScore: isHome ? teamScore : opponentScore,
-        awayScore: isHome ? opponentScore : teamScore,
-        status: 'completed',
-        ...(tournament ? { tournament } : {})
+        standings: {
+            id,
+            date,
+            homeTeam: isHome ? teamName : opponent,
+            awayTeam: isHome ? opponent : teamName,
+            homeScore: isHome ? teamScore : opponentScore,
+            awayScore: isHome ? opponentScore : teamScore,
+            status: 'completed',
+            ...(tournament ? { tournament } : {})
+        },
+        recentResult: {
+            id,
+            date,
+            opponent,
+            teamScore,
+            opponentScore,
+            result: teamScore > opponentScore ? 'win' : teamScore < opponentScore ? 'loss' : 'draw'
+        }
     };
 }
 
@@ -393,7 +419,7 @@ export async function getPublicTeamDetail(teamId: string): Promise<PublicTeamPro
     };
 }
 
-export async function getPublicTeamStandingsInputs(teamId: string): Promise<PublicTeamStandingsInput[]> {
+async function getNormalizedPublicCompletedGames(teamId: string): Promise<NormalizedPublicCompletedGame[]> {
     const normalizedTeamId = String(teamId || '').trim();
     if (!normalizedTeamId) throw new Error('Team ID is required.');
     const projection = await getPublicTeamGamesProjection(normalizedTeamId);
@@ -403,6 +429,17 @@ export async function getPublicTeamStandingsInputs(teamId: string): Promise<Publ
         throw new Error('Public team not found.');
     }
     return (Array.isArray(projection.games) ? projection.games : [])
-        .map((game) => normalizePublicStandingsGame(game, normalizedTeamId, teamName))
-        .filter((game): game is PublicTeamStandingsInput => game !== null);
+        .map((game) => normalizePublicCompletedGame(game, normalizedTeamId, teamName))
+        .filter((game): game is NormalizedPublicCompletedGame => game !== null);
+}
+
+export async function getPublicTeamStandingsInputs(teamId: string): Promise<PublicTeamStandingsInput[]> {
+    return (await getNormalizedPublicCompletedGames(teamId)).map((game) => game.standings);
+}
+
+export async function getPublicTeamRecentResults(teamId: string): Promise<PublicTeamRecentResult[]> {
+    return (await getNormalizedPublicCompletedGames(teamId))
+        .map((game) => game.recentResult)
+        .sort((left, right) => right.date.getTime() - left.date.getTime() || left.id.localeCompare(right.id))
+        .slice(0, PUBLIC_TEAM_RECENT_RESULTS_LIMIT);
 }
