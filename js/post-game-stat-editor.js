@@ -1,5 +1,5 @@
 import { buildConfiguredStatFields } from './game-report-stats.js?v=1';
-import { normalizeStatTrackerConfig } from './stat-leaderboards.js?v=2';
+import { normalizeStatTrackerConfig } from './stat-leaderboards.js?v=4';
 
 const DEFAULT_POST_GAME_STAT_FIELDS = [
     { fieldName: 'pts', label: 'PTS' },
