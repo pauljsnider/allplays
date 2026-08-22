@@ -2133,23 +2133,28 @@ export function loadTeamDetailInsights(teamId: string, user: AuthUser | null): P
       completedGamesBySeason.set(label, ids);
     });
 
-    const [leaderboardStatsByPlayerId, seasonStatsResults] = await Promise.all([
-      completedGameIds.length
+    const seasonEntries = Array.from(completedGamesBySeason.entries());
+    const seasonStatsResultsPromise = Promise.all(seasonEntries.map(async ([label, gameIds]) => {
+      try {
+        return { label, stats: gameIds.length ? await Promise.resolve(getAggregatedStatsForGames(normalizedTeamId, gameIds)) : {}, unavailable: false };
+      } catch (error) {
+        logger.warn('Unable to load roster statistics for season.', {
+          operation: 'team-roster-season-statistics-load',
+          teamId: normalizedTeamId,
+          seasonLabel: label,
+          error
+        });
+        return { label, stats: {}, unavailable: true };
+      }
+    }));
+    const leaderboardStatsPromise = seasonEntries.length === 1
+      ? seasonStatsResultsPromise.then(([result]) => result?.stats || {})
+      : completedGameIds.length
         ? Promise.resolve(getAggregatedStatsForGames(normalizedTeamId, completedGameIds)).catch(() => ({}))
-        : Promise.resolve({}),
-      Promise.all(Array.from(completedGamesBySeason.entries()).map(async ([label, gameIds]) => {
-        try {
-          return { label, stats: gameIds.length ? await Promise.resolve(getAggregatedStatsForGames(normalizedTeamId, gameIds)) : {}, unavailable: false };
-        } catch (error) {
-          logger.warn('Unable to load roster statistics for season.', {
-            operation: 'team-roster-season-statistics-load',
-            teamId: normalizedTeamId,
-            seasonLabel: label,
-            error
-          });
-          return { label, stats: {}, unavailable: true };
-        }
-      }))
+        : Promise.resolve({});
+    const [leaderboardStatsByPlayerId, seasonStatsResults] = await Promise.all([
+      leaderboardStatsPromise,
+      seasonStatsResultsPromise
     ]);
     const seasonStatsBySeason = Object.fromEntries(seasonStatsResults.map(({ label, stats }) => [label, stats]));
     const unavailableSeasons = seasonStatsResults.filter(({ unavailable }) => unavailable).map(({ label }) => label);
