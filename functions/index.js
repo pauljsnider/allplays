@@ -18825,10 +18825,12 @@ exports.listManagedPublicOpportunityTeams = functions.https.onCall(async (_data,
 });
 
 function getCallableParentTeamScope(user = {}) {
-  const rawTeamIds = [
-    ...(Array.isArray(user.parentTeamIds) ? user.parentTeamIds : []),
-    ...(Array.isArray(user.parentOf) ? user.parentOf.map((link) => link?.teamId) : [])
-  ];
+  // parentTeamIds is the normalized, revocable source of truth once present.
+  // Fall back to parentOf only for legacy profiles that have not received the
+  // canonical field yet; unioning both can restore a revoked legacy link.
+  const rawTeamIds = Array.isArray(user.parentTeamIds)
+    ? user.parentTeamIds
+    : (Array.isArray(user.parentOf) ? user.parentOf.map((link) => link?.teamId) : []);
   const normalizedTeamIds = rawTeamIds.map(normalizeStablePrincipalUid);
   return {
     teamIds: Array.from(new Set(normalizedTeamIds.filter(Boolean))),
@@ -18982,7 +18984,7 @@ exports.listManagedTeams = functions.https.onCall(async (data, context = {}) => 
   const includeChatMetadata = data?.includeChatMetadata === true;
   const [staffTeams, parentTeamResult] = await Promise.all([
     includeAllTeams ? listPlatformAdminTeamDocuments(caller) : listStaffTeamDocuments(caller),
-    includeParentTeams || includeChatMetadata
+    !includeAllTeams && (includeParentTeams || includeChatMetadata)
       ? listCallableParentTeamDocuments(caller)
       : Promise.resolve({ teamSnaps: [], isPartial: false })
   ]);

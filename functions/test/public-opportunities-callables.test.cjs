@@ -712,9 +712,48 @@ test('dashboard team discovery marks malformed parent scope partial instead of c
     assert.deepEqual(result.parentItems.map((team) => team.id), ['team-parent']);
 });
 
+test('dashboard team discovery treats canonical parentTeamIds as authoritative over stale parentOf links', async () => {
+    const { callables } = loadCallables({
+        'users/parent-1': {
+            parentTeamIds: ['team-current'],
+            parentOf: [
+                { teamId: 'team-current', playerId: 'player-current' },
+                { teamId: 'team-revoked', playerId: 'player-revoked' }
+            ]
+        },
+        'teams/team-current': {
+            name: 'Current Bears',
+            ownerId: 'other-owner',
+            active: true
+        },
+        'teams/team-revoked': {
+            name: 'Revoked Cougars',
+            ownerId: 'other-owner',
+            active: true,
+            isPublic: false
+        }
+    });
+
+    const result = await callables.listManagedTeams(
+        { includeParentTeams: true },
+        authContext('parent-1')
+    );
+
+    assert.equal(result.isPartial, false);
+    assert.deepEqual(result.parentItems.map((team) => team.id), ['team-current']);
+    assert.equal(result.parentItems.some((team) => team.id === 'team-revoked'), false);
+});
+
 test('platform-admin dashboard discovery loads every team and acknowledges completeness', async () => {
     const { callables } = loadCallables({
-        'users/platform-admin': { isAdmin: true },
+        'users/platform-admin': {
+            isAdmin: true,
+            parentTeamIds: [
+                ...Array.from({ length: 181 }, (_value, index) => `parent-team-${index}`),
+                'not/a/team-id'
+            ],
+            parentOf: [{ teamId: 'legacy-parent-team', playerId: 'legacy-player' }]
+        },
         'teams/team-owned-elsewhere': {
             name: 'Alpha',
             ownerId: 'owner-1',
