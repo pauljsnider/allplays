@@ -96,7 +96,7 @@ export function PublicTeamDetail({ authUser }: { authUser: AuthState['user'] }) 
           <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-4 text-sm font-semibold leading-6 text-emerald-900"><div className="flex items-center gap-2 font-black"><ShieldCheck className="h-5 w-5" />Public-safe profile</div><p className="mt-1">This page shows team identity, general location, and completed public game results. Rosters, private schedules, contacts, and member data are not loaded.</p></div>
         </div>
       </section>
-      {team.standings?.rows.length ? <PublicStandingsSection standings={team.standings} /> : null}
+      <PublicStandingsSection standings={team.standings} leagueUrl={team.leagueUrl} />
       <section className="app-card p-5 sm:p-6" aria-labelledby="recent-results-heading">
         <h2 id="recent-results-heading" className="text-lg font-black text-gray-950">Recent results</h2>
         {recentResultsError ? (
@@ -142,16 +142,22 @@ export function PublicTeamDetail({ authUser }: { authUser: AuthState['user'] }) 
   );
 }
 
-function PublicStandingsSection({ standings }: { standings: NonNullable<PublicTeamProfile['standings']> }) {
-  const highlightKey = getPublicStandingsRowKey(standings.currentRow);
+function PublicStandingsSection({ standings, leagueUrl }: { standings: PublicTeamProfile['standings']; leagueUrl: string | null }) {
+  const highlightKey = getPublicStandingsRowKey(standings?.currentRow ?? null);
 
   return (
     <section className="app-card p-5 sm:p-6" aria-labelledby="public-standings-heading">
       <div>
         <h2 id="public-standings-heading" className="text-lg font-black text-gray-950">Standings</h2>
-        <p className="mt-1 text-sm font-semibold text-gray-500">{standings.label || 'Current league standings'}</p>
+        <p className="mt-1 text-sm font-semibold text-gray-500">{standings?.label || 'Current league standings'}</p>
       </div>
-      <div className="mt-3 overflow-x-auto rounded-xl border border-gray-200">
+      {!standings?.rows.length ? (
+        <div className="mt-3 min-w-0 rounded-xl border border-dashed border-gray-200 bg-gray-50 p-4">
+          <div className="text-sm font-black text-gray-900">Standings are currently unavailable</div>
+          <p className="mt-1 text-sm font-semibold text-gray-600">There are no published standings for this team yet.</p>
+          {leagueUrl ? <a href={leagueUrl} target="_blank" rel="noreferrer" className="mt-3 inline-block max-w-full break-words text-sm font-black text-primary-700 underline">View league standings</a> : null}
+        </div>
+      ) : <div className="mt-3 overflow-x-auto rounded-xl border border-gray-200">
         <table className="min-w-full divide-y divide-gray-200 text-left">
           <thead className="bg-gray-50">
             <tr className="text-[11px] font-black uppercase tracking-[0.04em] text-gray-500">
@@ -175,7 +181,7 @@ function PublicStandingsSection({ standings }: { standings: NonNullable<PublicTe
             })}
           </tbody>
         </table>
-      </div>
+      </div>}
     </section>
   );
 }
