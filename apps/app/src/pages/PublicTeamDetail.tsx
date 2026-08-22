@@ -33,18 +33,20 @@ export function PublicTeamDetail({ authUser }: { authUser: AuthState['user'] }) 
         if (!active) return;
         setTeam(item);
         setLoading(false);
-        try {
-          const inputs = await getPublicTeamStandingsInputs(teamId);
-          if (active) setStandings(buildPublicStandingsViewModel(item, inputs));
-        } catch {
-          if (active) setStandingsError(true);
-        }
-        try {
-          const results = await getPublicTeamRecentResults(teamId);
-          if (active) setRecentResults(results);
-        } catch {
-          if (active) setRecentResultsError(true);
-        }
+        void getPublicTeamStandingsInputs(teamId)
+          .then((inputs) => {
+            if (active) setStandings(buildPublicStandingsViewModel(item, inputs));
+          })
+          .catch(() => {
+            if (active) setStandingsError(true);
+          });
+        void getPublicTeamRecentResults(teamId)
+          .then((results) => {
+            if (active) setRecentResults(results);
+          })
+          .catch(() => {
+            if (active) setRecentResultsError(true);
+          });
       } catch (loadError: any) {
         if (active) {
           setTeam(null);
