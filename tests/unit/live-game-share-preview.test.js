@@ -56,23 +56,23 @@ describe('live game share preview wiring', () => {
         expect(source).not.toContain("const PUBLIC_SHARE_PREVIEW_ORIGIN = 'https://game-flow-c6311.web.app'");
     });
 
-    it('uses public metadata when available and a generic redirect for private reports', () => {
+    it('keeps public report metadata behind the public projection while private links still redirect', () => {
         const source = repoFile('functions/index.js');
         const start = source.indexOf('exports.gameReportSharePreview = functions');
         const end = source.indexOf('exports.playerSharePreview = functions', start);
         const handler = source.slice(start, end);
-        const projectionStart = handler.indexOf('const game = await getPublicGameProjection(teamId, gameId, team);');
-        const paramsStart = handler.indexOf('const params = new URLSearchParams', projectionStart);
-        const privateProjectionBranch = handler.slice(projectionStart, paramsStart);
 
         expect(start).toBeGreaterThan(-1);
         expect(handler).toContain('getPublicGameProjection(teamId, gameId, team)');
-        expect(privateProjectionBranch).not.toContain("res.status(404).send('Game report not found.')");
-        expect(handler).toContain(': buildGameReportShareMetadata();');
         expect(handler).toContain("ip: `game-report-share|${getRequestIp(req)}`");
         expect(handler).toContain('`${PUBLIC_SHARE_PREVIEW_ORIGIN}/report?${query}`');
         expect(handler).toContain('`https://allplays.ai/game.html#${query}`');
+        expect(handler).toContain("teamSnap.exists ? { id: teamId, ...(teamSnap.data() || {}) } : null");
+        expect(handler).toContain('const game = team ? await getPublicGameProjection(teamId, gameId, team) : null');
+        expect(handler).toContain(': buildGameReportShareMetadata()');
+        expect(handler).toContain("game ? 'public, max-age=300, s-maxage=300' : 'private, no-store, max-age=0'");
         expect(handler).toContain("res.set('X-Robots-Tag', 'noindex, nofollow')");
+        expect(handler).not.toContain("res.status(404).send('Game report not found.')");
         expect(handler).not.toContain('getPlayers(');
     });
 });

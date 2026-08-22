@@ -19751,18 +19751,13 @@ exports.gameReportSharePreview = functions
     }
 
     try {
-      const teamSnap = await firestore.doc(`teams/${teamId}`).get();
-      if (!teamSnap.exists) {
-        res.status(404).send('Game report not found.');
-        return;
-      }
-      const team = { id: teamId, ...(teamSnap.data() || {}) };
-      const game = await getPublicGameProjection(teamId, gameId, team);
-
       const params = new URLSearchParams({ teamId, gameId });
       const query = params.toString();
       const redirectUrl = `https://allplays.ai/game.html#${query}`;
       const shareUrl = `${PUBLIC_SHARE_PREVIEW_ORIGIN}/report?${query}`;
+      const teamSnap = await firestore.doc(`teams/${teamId}`).get();
+      const team = teamSnap.exists ? { id: teamId, ...(teamSnap.data() || {}) } : null;
+      const game = team ? await getPublicGameProjection(teamId, gameId, team) : null;
       const metadata = game
         ? buildGameReportShareMetadata({
           teamName: game.teamName || team.name,
@@ -19772,7 +19767,10 @@ exports.gameReportSharePreview = functions
         })
         : buildGameReportShareMetadata();
       const html = buildGameReportShareHtml({ metadata, redirectUrl, shareUrl });
-      res.set('Cache-Control', 'public, max-age=300, s-maxage=300');
+      res.set(
+        'Cache-Control',
+        game ? 'public, max-age=300, s-maxage=300' : 'private, no-store, max-age=0'
+      );
       res.set('Content-Type', 'text/html; charset=utf-8');
       res.set('X-Robots-Tag', 'noindex, nofollow');
       if (req.method === 'HEAD') {

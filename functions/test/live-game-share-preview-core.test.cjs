@@ -100,3 +100,17 @@ test('builds a branded report preview that redirects to the direct report', () =
   assert.match(html, /property="og:url" content="https:\/\/share\.allplays\.ai\/report\?teamId=team-1&amp;gameId=game-1"/);
   assert.match(html, /https:\/\/allplays\.ai\/game\.html#teamId=team-1&amp;gameId=game-1/);
 });
+
+test('builds a generic report preview without private matchup metadata', () => {
+  const html = buildGameReportShareHtml({
+    metadata: buildGameReportShareMetadata(),
+    redirectUrl: 'https://allplays.ai/game.html#teamId=private-team&gameId=private-game',
+    shareUrl: 'https://share.allplays.ai/report?teamId=private-team&gameId=private-game'
+  });
+
+  assert.match(html, /<title>ALL PLAYS game report<\/title>/);
+  assert.match(html, /View the game report on ALL PLAYS\./);
+  assert.match(html, /Open the game report on ALL PLAYS/);
+  assert.doesNotMatch(html, /Vipers|Premier White/);
+  assert.match(html, /https:\/\/allplays\.ai\/game\.html#teamId=private-team&amp;gameId=private-game/);
+});
