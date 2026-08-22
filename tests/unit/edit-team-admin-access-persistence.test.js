@@ -1474,7 +1474,7 @@ describe('edit team admin access persistence', () => {
         }
     });
 
-  it('normalizes an invited existing-team admin email without granting access before redemption', async () => {
+  it('does not rewrite normalized admin emails during an existing-team metadata save', async () => {
         const initialState = {
             currentUser: { uid: 'owner-1', email: 'owner@example.com' },
             team: {
@@ -1501,9 +1501,7 @@ describe('edit team admin access persistence', () => {
             await env.elements.get('team-form').requestSubmit();
 
             expect(env.state.updateCalls).toHaveLength(1);
-            expect(env.state.updateCalls[0].teamData.adminEmails).toEqual([
-                'existing@example.com'
-            ]);
+            expect(env.state.updateCalls[0].teamData).not.toHaveProperty('adminEmails');
         } finally {
             env.cleanup();
         }
@@ -1548,7 +1546,7 @@ describe('edit team admin access persistence', () => {
             await env.elements.get('team-form').requestSubmit();
 
             expect(env.state.updateCalls).toHaveLength(1);
-            expect(env.state.updateCalls[0].teamData.adminEmails).toEqual(['existing@example.com']);
+            expect(env.state.updateCalls[0].teamData).not.toHaveProperty('adminEmails');
             expect(env.elements.get('admin-list').textContent).not.toContain('pending@example.com');
         } finally {
             env.cleanup();
