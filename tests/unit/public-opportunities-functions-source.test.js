@@ -244,7 +244,8 @@ describe('public opportunity callable wiring', () => {
     );
     expect(platformAdminTeamSource).not.toContain(".orderBy('name')");
     expect(source).toContain('async function listCallableParentTeamDocuments(caller)');
-    expect(source).toContain('const rawTeamIds = Array.isArray(user.parentTeamIds)');
+    expect(source).toContain("const hasCanonicalTeamIds = Object.prototype.hasOwnProperty.call(user, 'parentTeamIds');");
+    expect(source).toContain('hasCanonicalTeamIds && !canonicalTeamIdsAreValid');
     expect(source).toContain('const MAX_DASHBOARD_PARENT_TEAMS = 180;');
     expect(listManagedTeamsSource).toContain('includeAllTeams && !isOpportunityPlatformAdmin(caller)');
     expect(listManagedTeamsSource).toContain('!includeAllTeams && (includeParentTeams || includeChatMetadata)');

@@ -744,6 +744,29 @@ test('dashboard team discovery treats canonical parentTeamIds as authoritative o
     assert.equal(result.parentItems.some((team) => team.id === 'team-revoked'), false);
 });
 
+test('dashboard team discovery fails closed when canonical parentTeamIds is malformed', async () => {
+    const { callables } = loadCallables({
+        'users/parent-1': {
+            parentTeamIds: 'team-current',
+            parentOf: [{ teamId: 'team-revoked', playerId: 'player-revoked' }]
+        },
+        'teams/team-revoked': {
+            name: 'Revoked Bears',
+            ownerId: 'other-owner',
+            active: true
+        }
+    });
+
+    const result = await callables.listManagedTeams(
+        { includeParentTeams: true },
+        authContext('parent-1')
+    );
+
+    assert.equal(result.isPartial, true);
+    assert.deepEqual(result.items, []);
+    assert.deepEqual(result.parentItems, []);
+});
+
 test('platform-admin dashboard discovery loads every team and acknowledges completeness', async () => {
     const { callables } = loadCallables({
         'users/platform-admin': {

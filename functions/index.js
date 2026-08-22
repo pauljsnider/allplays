@@ -18828,13 +18828,18 @@ function getCallableParentTeamScope(user = {}) {
   // parentTeamIds is the normalized, revocable source of truth once present.
   // Fall back to parentOf only for legacy profiles that have not received the
   // canonical field yet; unioning both can restore a revoked legacy link.
-  const rawTeamIds = Array.isArray(user.parentTeamIds)
-    ? user.parentTeamIds
-    : (Array.isArray(user.parentOf) ? user.parentOf.map((link) => link?.teamId) : []);
+  const hasCanonicalTeamIds = Object.prototype.hasOwnProperty.call(user, 'parentTeamIds');
+  const canonicalTeamIdsAreValid = Array.isArray(user.parentTeamIds);
+  const legacyParentLinksAreValid = Array.isArray(user.parentOf);
+  const rawTeamIds = hasCanonicalTeamIds
+    ? (canonicalTeamIdsAreValid ? user.parentTeamIds : [])
+    : (legacyParentLinksAreValid ? user.parentOf.map((link) => link?.teamId) : []);
   const normalizedTeamIds = rawTeamIds.map(normalizeStablePrincipalUid);
   return {
     teamIds: Array.from(new Set(normalizedTeamIds.filter(Boolean))),
-    isPartial: normalizedTeamIds.some((teamId) => !teamId)
+    isPartial: (hasCanonicalTeamIds && !canonicalTeamIdsAreValid)
+      || (!hasCanonicalTeamIds && user.parentOf !== undefined && !legacyParentLinksAreValid)
+      || normalizedTeamIds.some((teamId) => !teamId)
   };
 }
 
