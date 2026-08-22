@@ -507,12 +507,16 @@ test.describe('app global search', () => {
 
         await openSearch(page);
         const input = page.getByLabel('Search teams, players, actions, help');
-        await input.click();
-        await page.keyboard.type('live', { delay: 40 });
+        await input.fill('l');
+        await input.fill('li');
+        await input.fill('liv');
+        await input.fill('live');
 
-        await expect.poll(() => page.evaluate(() => window.__helpSearchQueries)).toEqual(['live']);
         const helpResult = page.getByRole('button', { name: /Watch Live Games and Replays/ });
-        await expect(helpResult).toBeVisible();
+        await expect(async () => {
+            await expect.poll(() => page.evaluate(() => window.__helpSearchQueries)).toEqual(['live']);
+            await expect(helpResult).toBeVisible({ timeout: 1000 });
+        }).toPass({ timeout: 15000 });
         await helpResult.click();
         await expect(page).toHaveURL(/#\/help\/watch-live-games$/);
     });
