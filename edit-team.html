@@ -605,6 +605,7 @@
         let currentPhotoPath = '';
         let currentUserProfile = null;
         let adminEmails = [];
+        let loadedAdminEmails = [];
         let streamVolunteerEmails = [];
 
         function syncAdvancedTeamSetupDisclosure() {
@@ -1574,6 +1575,7 @@
                 }
                 streamInput.dispatchEvent(new Event('input')); // trigger detection badge
                 adminEmails = normalizeAdminEmailList(team.adminEmails);
+                loadedAdminEmails = [...adminEmails];
                 pendingAdminInviteEmails = await loadPendingAdminInviteEmails({
                     teamId: initialTeamId,
                     getTeamAccessCodes
@@ -2026,6 +2028,8 @@
                     : standingsTiebreakers;
 
                 const normalizedAdminEmails = normalizeAdminEmailList(adminEmails);
+                const adminEmailsChanged = normalizedAdminEmails.length !== loadedAdminEmails.length ||
+                    normalizedAdminEmails.some((email, index) => email !== loadedAdminEmails[index]);
                 const normalizedStreamVolunteerEmails = normalizeStreamVolunteerEmailList(streamVolunteerEmails);
                 const registrationSourcePayload = buildRegistrationSourcePayload();
                 adminEmails = normalizedAdminEmails;
@@ -2069,7 +2073,9 @@
                         ...currentTeamPassConfig,
                         recordedReplayPaywallEnabled: document.getElementById('teamPassRecordedReplayPaywallEnabled').checked
                     },
-                    adminEmails: rolloverStaffUpdate ? rolloverStaffUpdate.adminEmails : normalizedAdminEmails,
+                    ...(!currentTeamId || adminEmailsChanged ? {
+                        adminEmails: rolloverStaffUpdate ? rolloverStaffUpdate.adminEmails : normalizedAdminEmails
+                    } : {}),
                     registrationSource: registrationSourcePayload,
                     ...(createMode === 'registration' && selectedRegistrationTeam && registrationSourcePayload ? {
                         season: selectedRegistrationTeam.season || null,
@@ -2153,6 +2159,7 @@
                         });
                     }
                     currentTeamSport = teamData.sport;
+                    loadedAdminEmails = [...normalizedAdminEmails];
                 } else {
                     const newTeamId = await createTeam(teamData);
                     currentTeamId = newTeamId;

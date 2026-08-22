@@ -12,14 +12,12 @@ describe('team update Firestore rules', () => {
         expect(rules).toContain("request.resource.data.get('isPlatformAdmin', false) == resource.data.get('isPlatformAdmin', false)");
     });
 
-    it('allows ordinary team admins to save normalized legacy adminEmails without expanding the list', () => {
-        expect(rules).toContain('function keepsCurrentAdminInNormalizedAdminEmailList()');
+    it('requires ordinary team admins to preserve the exact adminEmails grant set', () => {
         expect(rules).toContain("request.resource.data.get('ownerEmail', '') == resource.data.get('ownerEmail', '')");
         expect(rules).toContain("request.resource.data.get('ownerEmailLower', '') == resource.data.get('ownerEmailLower', '')");
         expect(rules).toContain("request.resource.data.get('adminEmails', []) == resource.data.get('adminEmails', [])");
-        expect(rules).toContain('request.auth.token.email.lower() in existingAdminEmails');
-        expect(rules).toContain('request.auth.token.email.lower() in nextAdminEmails');
-        expect(rules).toContain('nextAdminEmails.size() <= existingAdminEmails.size()');
+        expect(rules).not.toContain('function keepsCurrentAdminInNormalizedAdminEmailList()');
+        expect(rules).not.toContain('nextAdminEmails.size() <= existingAdminEmails.size()');
         expect(rules).toContain('(isTeamOwnerOrAdmin(teamId) && keepsTeamPrivilegeFieldsImmutable())');
     });
 
