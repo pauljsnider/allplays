@@ -57,13 +57,13 @@
     "@sentry/browser": "^10.70.0",
     "@testing-library/react": "^16.3.2",
     "firebase-admin": "^14.2.0",
-    "firebase-tools": "^15.26.0",
+    "firebase-tools": "^15.27.0",
     "fontkit": "2.0.4",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-router-dom": "^7.18.2",
     "sharp": "0.35.3",
-    "vitest": "^4.1.10",
+    "vitest": "^4.1.11",
     "yaml": "^2.8.3"
   },
   "dependencies": {
