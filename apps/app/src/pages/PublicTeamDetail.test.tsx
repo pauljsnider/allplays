@@ -80,6 +80,30 @@ describe('PublicTeamDetail', () => {
     expect(publicTeamMocks.getPublicTeamRecentResults).toHaveBeenCalledWith('team-1');
   });
 
+  it('renders populated standings rows and highlights the current team', async () => {
+    const standingsRows = [
+      { rank: 1, team: 'Austin Bats', w: 8, l: 1, t: 0, points: 16 },
+      { rank: 2, team: 'Northside Owls', w: 7, l: 2, t: 0, points: 14 }
+    ];
+    publicTeamMocks.getPublicTeamDetail.mockResolvedValue({
+      id: 'team-1', name: 'Austin Bats', sport: 'Baseball', description: null, photoUrl: null,
+      city: 'Austin', state: 'TX', zip: '78701', location: 'Austin, TX',
+      standings: { label: 'Points table', rows: standingsRows, currentRow: standingsRows[0] }
+    });
+
+    render(<MemoryRouter initialEntries={['/teams/team-1/public']}><Routes><Route path="/teams/:teamId/public" element={<PublicTeamDetail authUser={null} />} /></Routes></MemoryRouter>);
+
+    expect(await screen.findByRole('heading', { name: 'Standings' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Rank' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Team' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Record' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'PTS' })).toBeTruthy();
+    expect(screen.getByText('Northside Owls')).toBeTruthy();
+    expect(screen.getByText('8-1')).toBeTruthy();
+    expect(screen.getByText('16')).toBeTruthy();
+    expect(screen.getAllByText('Austin Bats').find((element) => element.closest('tr')?.getAttribute('aria-current') === 'true')).toBeTruthy();
+  });
+
   it('shows an explicit empty state when there are no completed public results', async () => {
     publicTeamMocks.getPublicTeamDetail.mockResolvedValue({ id: 'team-1', name: 'Austin Bats', sport: null, description: null, photoUrl: null, city: null, state: null, zip: null, location: null });
 

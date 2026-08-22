@@ -92,6 +92,13 @@ export type PublicTeamProfile = {
     location: string | null;
     leagueUrl: string | null;
     standingsConfig: PublicStandingsConfig | null;
+    standings: PublicTeamStandings | null;
+};
+
+export type PublicTeamStandings = {
+    label: string;
+    rows: Array<Record<string, any>>;
+    currentRow: Record<string, any> | null;
 };
 
 export type PublicStandingsConfig = {
@@ -195,6 +202,23 @@ function normalizePublicStandingsConfig(value: unknown): PublicStandingsConfig |
         tiebreakers: publicStringList(config.tiebreakers),
         twoTeamTiebreakers: publicStringList(config.twoTeamTiebreakers),
         multiTeamTiebreakers: publicStringList(config.multiTeamTiebreakers)
+    };
+}
+
+function normalizePublicStandings(value: unknown): PublicTeamStandings | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const standings = value as Record<string, unknown>;
+    const rows = Array.isArray(standings.rows)
+        ? standings.rows.filter((row): row is Record<string, any> => Boolean(row) && typeof row === 'object' && !Array.isArray(row))
+        : [];
+    if (!rows.length) return null;
+    const currentRow = standings.currentRow && typeof standings.currentRow === 'object' && !Array.isArray(standings.currentRow)
+        ? standings.currentRow as Record<string, any>
+        : null;
+    return {
+        label: typeof standings.label === 'string' ? standings.label : '',
+        rows,
+        currentRow
     };
 }
 
@@ -415,7 +439,8 @@ export async function getPublicTeamDetail(teamId: string): Promise<PublicTeamPro
         zip: team.zip ? String(team.zip) : null,
         location: teamLocation(team),
         leagueUrl: publicHttpUrl(team.leagueUrl),
-        standingsConfig: normalizePublicStandingsConfig(team.standingsConfig)
+        standingsConfig: normalizePublicStandingsConfig(team.standingsConfig),
+        standings: normalizePublicStandings(team.standings)
     };
 }
 
