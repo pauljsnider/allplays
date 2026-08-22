@@ -876,6 +876,55 @@ function startDemoClock() {
     }, 1000);
 }
 
+async function startDemoReplayMode(params) {
+    const fixture = createOverlayDemoFixture();
+    const replayStartAt = 1_000_000;
+    fixture.game = {
+        ...fixture.game,
+        homeScore: 2,
+        awayScore: 1,
+        period: 'H2',
+        liveClockMs: 15_000,
+        liveStatus: 'completed',
+        status: 'completed'
+    };
+    const replayEvents = [
+        { id: 'demo-replay-start', type: 'clock_sync', homeScore: 0, awayScore: 0, period: 'H1', gameClockMs: 0, createdAt: replayStartAt },
+        { id: 'demo-replay-lineup', type: 'lineup', onCourt: ['p11', 'p7', 'p4', 'p1'], bench: ['p9', 'p18'], period: 'H1', gameClockMs: 1_000, createdAt: replayStartAt + 1_000 },
+        { id: 'demo-replay-goal-1', type: 'goal', description: 'Kurtz opens the scoring from the top of the box', playerId: 'p11', playerName: 'Bennett Kurtz', playerNumber: '11', statKey: 'goals', value: 1, homeScore: 1, awayScore: 0, period: 'H1', gameClockMs: 3_000, createdAt: replayStartAt + 3_000 },
+        { id: 'demo-replay-away', type: 'goal', description: 'Union KC equalizes from the penalty spot', playerId: 'opponent', isOpponent: true, statKey: 'goals', value: 1, homeScore: 1, awayScore: 1, period: 'H2', gameClockMs: 7_000, createdAt: replayStartAt + 7_000 },
+        { id: 'demo-replay-goal-2', type: 'goal', description: 'Persell finds the winner on the counterattack', playerId: 'p7', playerName: 'Dominic Persell', playerNumber: '7', statKey: 'goals', value: 1, homeScore: 2, awayScore: 1, period: 'H2', gameClockMs: 12_000, createdAt: replayStartAt + 12_000 },
+        { id: 'demo-replay-final', type: 'clock_sync', homeScore: 2, awayScore: 1, period: 'H2', gameClockMs: 15_000, createdAt: replayStartAt + 15_000 }
+    ];
+    const replayChat = [
+        { id: 'demo-replay-chat-1', senderName: 'Soccer Dad', text: 'What a finish!', createdAt: replayStartAt + 4_000 },
+        { id: 'demo-replay-chat-2', senderName: 'Coach Sarah', text: 'Great recovery shape in the second half.', createdAt: replayStartAt + 10_000 }
+    ];
+    const replayReactions = [
+        { id: 'demo-replay-reaction-1', type: 'clap', createdAt: replayStartAt + 3_500 },
+        { id: 'demo-replay-reaction-2', type: 'heart', createdAt: replayStartAt + 12_500 }
+    ];
+
+    uiState.isDemo = true;
+    uiState.isReplay = true;
+    uiState.game = createOverlayState({ team: fixture.team, game: fixture.game, players: fixture.players });
+    uiState.game.stats = {};
+    renderAll();
+    const videoId = getDemoVideoId(params);
+    showEmbedVideo(
+        `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&playsinline=1`,
+        `https://www.youtube.com/watch?v=${videoId}`,
+        { controllableReplay: true }
+    );
+    uiState.videoDurationMs = 15_000;
+    const stateTools = await import('./live-game-state.js?v=28');
+    await loadReplaySnapshot({
+        getLiveEvents: async () => replayEvents,
+        getLiveChatHistory: async () => replayChat,
+        getLiveReactions: async () => replayReactions
+    }, stateTools, fixture.team.id, fixture.game.id);
+}
+
 function bindInteractions() {
     elements.panelToggles.forEach((button) => button.addEventListener('click', () => togglePanel(button.dataset.panel)));
     elements.insightTabs.forEach((tab) => tab.addEventListener('click', () => selectInsight(tab.id.replace('-tab', ''))));
@@ -921,7 +970,11 @@ function bindInteractions() {
     });
 }
 
-function startDemoMode(params) {
+async function startDemoMode(params) {
+    if (params.replay === 'true') {
+        await startDemoReplayMode(params);
+        return;
+    }
     uiState.isDemo = true;
     elements.demoLabToggle.hidden = false;
     resetDemo();
@@ -1068,7 +1121,7 @@ async function init() {
     bindInteractions();
     renderPanelVisibility();
     const params = getQueryParams();
-    if (params.demo === '1' || params.demo === 'true') startDemoMode(params);
+    if (params.demo === '1' || params.demo === 'true') await startDemoMode(params);
     else await startRealMode(params);
 }
 

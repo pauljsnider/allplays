@@ -17,11 +17,13 @@ describe('live game overlay prototype page', () => {
         expect(html).toContain('id="replay-progress"');
         expect(html).toContain('data-replay-speed="4"');
         expect(html).toContain('aria-live="polite"');
-        expect(html).toContain('js/live-game-overlay-poc.js?v=3');
+        expect(html).toContain('js/live-game-overlay-poc.js?v=4');
     });
 
     it('keeps the local demo isolated while wiring the canonical real read-only subscriptions', () => {
         expect(source).toContain("params.demo === '1'");
+        expect(source).toContain("params.replay === 'true'");
+        expect(source).toContain('startDemoReplayMode');
         expect(source).toContain("import('./db.js?v=4433176')");
         expect(source).toContain("import('./live-game-state.js?v=28')");
         expect(source).toContain('stateTools.applyViewerEventToState');

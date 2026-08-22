@@ -72,6 +72,27 @@ test('mobile overlay turns edge context into one-at-a-time bottom sheets without
     expect(pageErrors).toEqual([]);
 });
 
+test('local replay demo exposes the complete playback flow without Firebase', async ({ page, baseURL }) => {
+    const pageErrors = collectPageErrors(page);
+    await stubYouTubeEmbed(page);
+    await page.goto(`${baseURL}/live-game-overlay-poc.html?demo=1&replay=true&videoId=PK1HyC37doc`, { waitUntil: 'domcontentloaded' });
+
+    await expect(page.locator('#live-status')).toHaveText('REPLAY');
+    await expect(page.locator('#replay-controls')).toBeVisible();
+    await expect(page.locator('#replay-duration')).toHaveText('0:15');
+    await page.getByRole('button', { name: 'Pause replay' }).click();
+    await page.locator('#replay-progress').evaluate((input) => {
+        input.value = '100';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await expect(page.locator('#home-score')).toHaveText('2');
+    await expect(page.locator('#away-score')).toHaveText('1');
+    await expect(page.locator('#event-list')).toContainText('Persell finds the winner');
+    await page.locator('#chat-tab').click();
+    await expect(page.locator('#chat-list')).toContainText('Great recovery shape');
+    expect(pageErrors).toEqual([]);
+});
+
 async function stubRealOverlayModules(page) {
     await page.route(/\/js\/db\.js(?:\?.*)?$/, (route) => route.fulfill({
         status: 200,
