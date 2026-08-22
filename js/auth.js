@@ -12,7 +12,7 @@ import {
     signInWithEmailLink,
     updatePassword
 } from './firebase.js?v=26';
-import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, redeemFriendInvite, rollbackParentInviteRedemption, getUserProfile, getUserTeams, getTeam, listMyParentMembershipRequests, normalizeParentScopeLinks } from './db.js?v=4433178';
+import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, redeemFriendInvite, rollbackParentInviteRedemption, getUserProfile, getUserTeams, getTeam, listMyParentMembershipRequests, normalizeParentScopeLinks } from './db.js?v=4433179';
 import { executeEmailPasswordSignup } from './signup-flow.js?v=14';
 import { redeemAdminInviteAcceptance, redeemAdminInviteAtomically } from './admin-invite.js?v=9';
 import { mergeApprovedParentMembershipRequests } from './parent-membership-utils.js?v=3';
@@ -22,6 +22,41 @@ import {
     queueInviteSignInEmail,
     queuePasswordResetEmail
 } from './auth-email.js?v=4';
+import { loadAuthProfileViaRest } from './auth-profile-rest.js?v=1';
+import { raceFirstSuccessfulRead } from './hedged-read.js?v=1';
+
+const AUTH_PROFILE_REST_HEDGE_DELAY_MS = 750;
+const AUTH_PROFILE_PRIMARY_TIMEOUT_MS = 8000;
+
+async function loadAuthProfile(user) {
+    const result = await raceFirstSuccessfulRead({
+        primary: () => getUserProfile(user.uid),
+        fallback: () => loadAuthProfileViaRest({
+            auth,
+            user,
+            timeoutMs: AUTH_PROFILE_PRIMARY_TIMEOUT_MS
+        }),
+        label: 'Profile load',
+        fallbackDelayMs: AUTH_PROFILE_REST_HEDGE_DELAY_MS,
+        primaryTimeoutMs: AUTH_PROFILE_PRIMARY_TIMEOUT_MS
+    });
+    if (result.source === 'fallback') {
+        console.warn('[auth] Loaded profile through authenticated REST after the SDK read was slow.');
+    }
+    return result.value;
+}
+
+function trackSettlement(promise) {
+    const state = { result: undefined };
+    const task = Promise.resolve(promise).then(
+        (value) => ({ status: 'fulfilled', value }),
+        (reason) => ({ status: 'rejected', reason })
+    ).then((result) => {
+        state.result = result;
+        return result;
+    });
+    return { state, task };
+}
 
 async function cleanupFailedNewUser(user, context, options = {}) {
     const activationCode = String(options.activationCode || '').trim().toUpperCase();
@@ -410,21 +445,38 @@ export function checkAuth(callback, options = {}) {
     return onAuthStateChanged(auth, async (user) => {
         if (user) {
             try {
-                let profile = await getUserProfile(user.uid) || {};
+                const approvedRequestsRead = trackSettlement(listMyParentMembershipRequests(user.uid));
+                let profile = await loadAuthProfile(user) || {};
 
-                try {
-                    const approvedRequests = await listMyParentMembershipRequests(user.uid);
-                    const parentRequestSync = mergeApprovedParentMembershipRequests(profile, approvedRequests);
-                    if (parentRequestSync.changed) {
-                        await updateUserProfile(user.uid, parentRequestSync.userUpdate);
+                const syncApprovedRequests = (result, updateUserImmediately) => {
+                    if (result.status === 'rejected') {
+                        console.warn('[auth] Failed to sync approved parent membership requests:', result.reason);
+                        return;
+                    }
+                    const parentRequestSync = mergeApprovedParentMembershipRequests(profile, result.value);
+                    if (!parentRequestSync.changed) return;
+                    if (updateUserImmediately) {
                         profile = {
                             ...profile,
                             ...parentRequestSync.userUpdate
                         };
-                        console.log('[auth] Synced approved parent membership requests to user profile');
                     }
-                } catch (err) {
-                    console.warn('[auth] Failed to sync approved parent membership requests:', err);
+                    if (Array.isArray(parentRequestSync.userUpdate?.parentOf)) {
+                        user.parentOf = parentRequestSync.userUpdate.parentOf;
+                    }
+                    Promise.resolve(updateUserProfile(user.uid, parentRequestSync.userUpdate))
+                        .then(() => console.log('[auth] Synced approved parent membership requests to user profile'))
+                        .catch((err) => console.warn('[auth] Failed to persist synced parent membership requests:', err));
+                };
+
+                // Already-completed repair reads enrich this callback. A slow
+                // historical repair continues in the background and never
+                // holds the signed-in shell or dashboard spinner open.
+                await Promise.resolve();
+                if (approvedRequestsRead.state.result) {
+                    syncApprovedRequests(approvedRequestsRead.state.result, true);
+                } else {
+                    void approvedRequestsRead.task.then((result) => syncApprovedRequests(result, false));
                 }
 
                 if (profile) {
@@ -432,45 +484,50 @@ export function checkAuth(callback, options = {}) {
                         user.profileEmail = profile.email;
                     }
                     if (profile.isAdmin) user.isAdmin = true;
-                    if (profile.parentOf) user.parentOf = profile.parentOf;
+                    // A successfully loaded profile is authoritative even when
+                    // it has no parent links. Preserve that complete emptiness
+                    // so dashboard callers do not issue a redundant SDK read.
+                    user.parentOf = Array.isArray(profile.parentOf) ? profile.parentOf : [];
                     const teamMediaUploadTeamIds = getStringArray(profile.teamMediaUploadTeamIds);
                     const mediaUploadTeamIds = getStringArray(profile.mediaUploadTeamIds);
                     if (teamMediaUploadTeamIds) user.teamMediaUploadTeamIds = teamMediaUploadTeamIds;
                     if (mediaUploadTeamIds) user.mediaUploadTeamIds = mediaUploadTeamIds;
 
-                    // Auto-migrate: ensure parent scope fields only reflect active team/player links
+                    // Auto-migrate denormalized parent scope in the background.
+                    // Authorization continues to use the complete parentOf links
+                    // that were already loaded above.
                     if (Array.isArray(profile.parentOf) || Array.isArray(profile.parentTeamIds) || Array.isArray(profile.parentPlayerKeys)) {
-                        const normalizedParentScope = await normalizeParentScopeLinks(profile.parentOf || []);
-                        const expectedTeamIds = normalizedParentScope.parentTeamIds.slice().sort();
-                        const expectedParentPlayerKeys = normalizedParentScope.parentPlayerKeys.slice().sort();
                         const currentTeamIds = (profile.parentTeamIds || []).slice().sort();
                         const currentParentPlayerKeys = (profile.parentPlayerKeys || []).slice().sort();
-                        if (JSON.stringify(expectedTeamIds) !== JSON.stringify(currentTeamIds) ||
-                            JSON.stringify(expectedParentPlayerKeys) !== JSON.stringify(currentParentPlayerKeys)) {
-                            try {
-                                await updateUserProfile(user.uid, {
+                        normalizeParentScopeLinks(profile.parentOf || [])
+                            .then((normalizedParentScope) => {
+                                const expectedTeamIds = normalizedParentScope.parentTeamIds.slice().sort();
+                                const expectedParentPlayerKeys = normalizedParentScope.parentPlayerKeys.slice().sort();
+                                if (JSON.stringify(expectedTeamIds) === JSON.stringify(currentTeamIds) &&
+                                    JSON.stringify(expectedParentPlayerKeys) === JSON.stringify(currentParentPlayerKeys)) {
+                                    return null;
+                                }
+                                return Promise.resolve(updateUserProfile(user.uid, {
                                     parentTeamIds: expectedTeamIds,
                                     parentPlayerKeys: expectedParentPlayerKeys
-                                });
-                                console.log('[auth] Auto-migrated parentTeamIds/parentPlayerKeys for user');
-                            } catch (err) {
-                                console.warn('[auth] Failed to auto-migrate parent parent scope fields:', err);
-                            }
-                        }
+                                })).then(() => console.log('[auth] Auto-migrated parentTeamIds/parentPlayerKeys for user'));
+                            })
+                            .catch((err) => console.warn('[auth] Failed to auto-migrate parent parent scope fields:', err));
                     }
 
                     if (profile.coachOf) {
                         user.coachOf = profile.coachOf;
                     } else {
-                        // Dynamic check for owned teams (backward compatibility)
-                        try {
-                            const ownedTeams = await getUserTeams(user.uid);
-                            if (ownedTeams && ownedTeams.length > 0) {
-                                user.coachOf = ownedTeams.map(t => t.id);
+                        // Dynamic ownerId fallback is authoritative but not
+                        // required to render. Enrich the same user object when
+                        // it completes without blocking this callback.
+                        void Promise.resolve(getUserTeams(user.uid)).then((ownedTeams) => {
+                            if (ownedTeams?.length > 0) {
+                                user.coachOf = ownedTeams.map((team) => team.id);
                             }
-                        } catch (err) {
+                        }).catch((err) => {
                             console.warn('Error fetching owned teams in auth check:', err);
-                        }
+                        });
                     }
 
                     if (profile.roles) user.roles = profile.roles;

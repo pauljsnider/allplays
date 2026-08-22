@@ -15,7 +15,14 @@ describe('dashboard chat unread wiring', () => {
         expect(html).not.toContain('email: user.email || profile?.email');
         expect(html).toContain('const conversationLookupByTeam = allTeams.reduce((acc, team) => {');
         expect(html).toContain("canModerate: team._access === 'full'");
-        expect(html).toContain('await getUnreadChatCounts(user.uid, teamIds, { conversationLookupByTeam })');
+        expect(html).toContain('let unreadCounts = {};');
+        expect(html).toContain('renderTeamLists();');
+        expect(html).toContain('void getUnreadChatCounts(user.uid, teamIds, {');
+        expect(html).toContain('deadlineAt: Date.now() + 5000');
+        expect(html).toContain('updateUnreadChatBadges();');
+        expect(html).toContain('data-team-chat-link=');
+        expect(html).not.toContain('unreadCounts = counts || {};\n                        renderTeamLists();');
+        expect(html).not.toContain('const unreadCounts = teamIds.length > 0 ? await getUnreadChatCounts');
         expect(html).not.toContain('await getUnreadChatCounts(user.uid, teamIds) : {}');
     });
 

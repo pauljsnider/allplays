@@ -49,6 +49,9 @@ const legacyAuthEmailMocks = vi.hoisted(() => ({
 const parentMembershipMocks = vi.hoisted(() => ({
   mergeApprovedParentMembershipRequests: vi.fn()
 }));
+const profileRestMocks = vi.hoisted(() => ({
+  loadAuthProfileViaRest: vi.fn()
+}));
 
 const appDataCacheMocks = vi.hoisted(() => ({
   clearAppDataCache: vi.fn()
@@ -126,6 +129,8 @@ vi.mock('./adapters/legacyAuth', () => ({
 vi.mock('./appDataCache', () => ({
   clearAppDataCache: appDataCacheMocks.clearAppDataCache
 }));
+
+vi.mock('./adapters/legacyAuthProfileRest', () => profileRestMocks);
 
 vi.mock('./nativeCallable', () => nativeCallableMocks);
 
@@ -662,6 +667,7 @@ describe('hydrateFirebaseUser', () => {
     legacyAuthMocks.listMyParentMembershipRequests.mockReset();
     legacyAuthMocks.updateUserProfile.mockReset();
     legacyAuthMocks.getUserTeams.mockReset();
+    profileRestMocks.loadAuthProfileViaRest.mockReset();
     parentMembershipMocks.mergeApprovedParentMembershipRequests.mockReset();
     legacyAuthMocks.getUserProfile.mockResolvedValue({
       email: 'coach@example.com',
@@ -669,9 +675,14 @@ describe('hydrateFirebaseUser', () => {
     });
     legacyAuthMocks.listMyParentMembershipRequests.mockResolvedValue([]);
     legacyAuthMocks.getUserTeams.mockResolvedValue([]);
+    profileRestMocks.loadAuthProfileViaRest.mockResolvedValue(null);
     parentMembershipMocks.mergeApprovedParentMembershipRequests.mockReturnValue({
       changed: false
     });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('loads stored profile roles for native REST fallback users before routing decisions', async () => {
@@ -707,6 +718,7 @@ describe('hydrateFirebaseUser', () => {
 
   it('marks auth identity data as fallback when the profile document cannot be loaded', async () => {
     legacyAuthMocks.getUserProfile.mockRejectedValue(new Error('profile unavailable'));
+    profileRestMocks.loadAuthProfileViaRest.mockRejectedValue(new Error('REST profile unavailable'));
 
     const hydrated = await hydrateFirebaseUser({
       uid: 'coach-1',
@@ -764,6 +776,42 @@ describe('hydrateFirebaseUser', () => {
       resolveOwnedTeams?.([{ id: 'team-2', name: 'Vipers' }]);
       await hydration;
     }
+  });
+
+  it('returns after the profile is authoritative even when supplementary repair reads remain stalled', async () => {
+    legacyAuthMocks.listMyParentMembershipRequests.mockImplementation(() => new Promise(() => {}));
+    legacyAuthMocks.getUserTeams.mockImplementation(() => new Promise(() => {}));
+
+    await expect(hydrateFirebaseUser({
+      uid: 'coach-1',
+      email: 'coach@example.com'
+    })).resolves.toEqual(expect.objectContaining({
+      user: expect.objectContaining({ uid: 'coach-1', coachOf: ['team-1'] }),
+      profileHydration: 'success'
+    }));
+  });
+
+  it('uses authenticated REST after the SDK profile read exceeds the hedge delay', async () => {
+    vi.useFakeTimers();
+    legacyAuthMocks.getUserProfile.mockImplementation(() => new Promise(() => {}));
+    profileRestMocks.loadAuthProfileViaRest.mockResolvedValue({
+      email: 'coach@example.com',
+      coachOf: ['team-rest']
+    });
+
+    const hydration = hydrateFirebaseUser({
+      uid: 'coach-1',
+      email: 'coach@example.com',
+      getIdToken: vi.fn().mockResolvedValue('token')
+    });
+    await vi.advanceTimersByTimeAsync(749);
+    expect(profileRestMocks.loadAuthProfileViaRest).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+
+    await expect(hydration).resolves.toEqual(expect.objectContaining({
+      user: expect.objectContaining({ coachOf: ['team-rest'] }),
+      profileHydration: 'success'
+    }));
   });
 });
 

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { afterEach, describe, it, expect, vi, beforeEach } from 'vitest';
 
 const firebaseMocks = vi.hoisted(() => ({
     auth: { currentUser: null },
@@ -36,9 +36,13 @@ const dbMocks = vi.hoisted(() => ({
     listMyParentMembershipRequests: vi.fn(),
     normalizeParentScopeLinks: vi.fn()
 }));
+const profileRestMocks = vi.hoisted(() => ({
+    loadAuthProfileViaRest: vi.fn()
+}));
 
 vi.mock('../../js/firebase.js?v=26', () => firebaseMocks);
-vi.mock('../../js/db.js?v=4433178', () => dbMocks);
+vi.mock('../../js/db.js?v=4433179', () => dbMocks);
+vi.mock('../../js/auth-profile-rest.js?v=1', () => profileRestMocks);
 vi.mock('../../js/signup-flow.js?v=14', () => ({
     executeEmailPasswordSignup: vi.fn()
 }));
@@ -53,10 +57,62 @@ describe('auth parent membership sync', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         firebaseMocks.auth.currentUser = null;
+        profileRestMocks.loadAuthProfileViaRest.mockResolvedValue(null);
         dbMocks.normalizeParentScopeLinks.mockResolvedValue({
             activeLinks: [],
             parentTeamIds: [],
             parentPlayerKeys: []
+        });
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    it('uses authenticated REST after the SDK profile read stalls without waiting for its timeout', async () => {
+        vi.useFakeTimers();
+        const user = { uid: 'parent-1', email: 'parent@example.com' };
+        const callback = vi.fn();
+        dbMocks.getUserProfile.mockImplementation(() => new Promise(() => {}));
+        dbMocks.listMyParentMembershipRequests.mockImplementation(() => new Promise(() => {}));
+        dbMocks.getUserTeams.mockImplementation(() => new Promise(() => {}));
+        profileRestMocks.loadAuthProfileViaRest.mockResolvedValue({
+            email: 'parent@example.com',
+            roles: ['parent'],
+            parentOf: [{ teamId: 'team-1', playerId: 'player-9' }]
+        });
+        firebaseMocks.onAuthStateChanged.mockImplementation((_auth, handler) => {
+            void handler(user);
+            return vi.fn();
+        });
+
+        checkAuth(callback);
+        await vi.advanceTimersByTimeAsync(749);
+        expect(profileRestMocks.loadAuthProfileViaRest).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1);
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(callback).toHaveBeenCalledWith(expect.objectContaining({
+            parentOf: [{ teamId: 'team-1', playerId: 'player-9' }]
+        }));
+        expect(dbMocks.getUserTeams).toHaveBeenCalledWith('parent-1');
+    });
+
+    it('preserves complete profile emptiness without forcing a second parent-profile read', async () => {
+        const user = { uid: 'coach-1', email: 'coach@example.com' };
+        const callback = vi.fn();
+        dbMocks.getUserProfile.mockResolvedValue({ email: 'coach@example.com' });
+        dbMocks.listMyParentMembershipRequests.mockResolvedValue([]);
+        dbMocks.getUserTeams.mockResolvedValue([]);
+        firebaseMocks.onAuthStateChanged.mockImplementation((_auth, handler) => {
+            void handler(user);
+            return vi.fn();
+        });
+
+        checkAuth(callback);
+        await vi.waitFor(() => {
+            expect(callback).toHaveBeenCalledWith(expect.objectContaining({ parentOf: [] }));
         });
     });
 

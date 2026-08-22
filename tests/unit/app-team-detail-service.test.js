@@ -131,6 +131,38 @@ describe('React app team detail model', () => {
         });
 
         expect(source).toContain("from './adapters/legacyTeamDetail';");
+        expect(source).toContain("from './adapters/legacyHedgedRead';");
+        const readFallbackSource = source.slice(
+            source.indexOf('async function readWithNativeFallback'),
+            source.indexOf('async function writeWithNativeFallback')
+        );
+        expect(readFallbackSource).toContain('raceFirstSuccessfulRead({');
+        expect(readFallbackSource).not.toContain('if (!isNativeRuntime()) throw error;');
+        const nativeListSource = source.slice(
+            source.indexOf('async function nativeListCollection'),
+            source.indexOf('function encodeFirestoreValue')
+        );
+        expect(nativeListSource).toContain('listNativeFirestoreCollectionPages(');
+        expect(nativeListSource).not.toContain('payload.documents');
+        const nativeRequestSource = source.slice(
+            source.indexOf('async function nativeFirestoreRequest'),
+            source.indexOf('function decodeFirestoreValue')
+        );
+        expect(nativeRequestSource).toContain("const isReadOnly = method === 'GET' || path.includes(':runQuery');");
+        expect(nativeRequestSource).toContain('if (response.status === 401)');
+        const privateRosterFallbackSource = source.slice(
+            source.indexOf('async function loadPrivateTeamPlayersViaRest'),
+            source.indexOf('async function loadTeamGames')
+        );
+        expect(privateRosterFallbackSource).toContain('/private/profile`');
+        expect(privateRosterFallbackSource).toContain('photoOwnershipLoaded: true');
+        expect(privateRosterFallbackSource).toContain('() => loadPrivateTeamPlayersViaRest(normalizedTeamId, publicPlayers)');
+        expect(privateRosterFallbackSource).not.toContain('() => Promise.resolve(publicPlayers)');
+        const configFallbackSource = source.slice(
+            source.indexOf('async function loadTeamConfigs'),
+            source.indexOf('async function loadTeamTrackingItems')
+        );
+        expect(configFallbackSource).not.toContain('.catch(() => [])');
         expect(adapterSource).toContain("from '@legacy/firebase.js';");
         expect(source).not.toContain("firebase.js?v=");
         expect(adapterSource).not.toContain("firebase.js?v=");
