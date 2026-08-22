@@ -134,6 +134,94 @@ describe('useAuth profile hydration', () => {
     expect(result.current.isParent).toBe(true);
   });
 
+  it('does not overwrite access enrichment published before initial hydration resolves', async () => {
+    let resolveHydration: ((value: any) => void) | undefined;
+    const initialHydration = {
+      user: {
+        uid: 'user-1',
+        email: 'coach@example.com',
+        displayName: 'Casey Coach',
+        roles: ['member'],
+        coachOf: []
+      },
+      profile: { roles: ['member'], coachOf: [] },
+      profileHydration: 'success' as const
+    };
+    const enrichedHydration = {
+      user: {
+        ...initialHydration.user,
+        roles: ['member', 'coach'],
+        coachOf: ['team-late']
+      },
+      profile: { roles: ['member', 'coach'], coachOf: ['team-late'] },
+      profileHydration: 'success' as const
+    };
+    authServiceMocks.observeFirebaseUser.mockImplementation((callback: (user: unknown) => void) => {
+      callback({ uid: 'user-1' });
+      return () => undefined;
+    });
+    authServiceMocks.hydrateFirebaseUser.mockImplementation((_user, options) => {
+      options.onAccessEnriched(enrichedHydration);
+      return new Promise((resolve) => {
+        resolveHydration = resolve;
+      });
+    });
+
+    const { result } = renderHook(() => useAuth());
+    await waitFor(() => expect(result.current.user?.coachOf).toEqual(['team-late']));
+
+    await act(async () => {
+      resolveHydration?.(initialHydration);
+    });
+
+    expect(result.current.loading).toBe(false);
+    expect(result.current.user?.coachOf).toEqual(['team-late']);
+    expect(result.current.isCoach).toBe(true);
+  });
+
+  it('returns and preserves access enrichment published before refresh hydration resolves', async () => {
+    let observation = 0;
+    let resolveHydration: ((value: any) => void) | undefined;
+    const initialHydration = {
+      user: { uid: 'user-1', email: 'coach@example.com', roles: ['member'], coachOf: [] },
+      profile: { roles: ['member'], coachOf: [] },
+      profileHydration: 'success' as const
+    };
+    const enrichedHydration = {
+      user: { ...initialHydration.user, roles: ['member', 'coach'], coachOf: ['team-late'] },
+      profile: { roles: ['member', 'coach'], coachOf: ['team-late'] },
+      profileHydration: 'success' as const
+    };
+    authServiceMocks.observeFirebaseUser.mockImplementation((callback: (user: unknown) => void) => {
+      callback(observation++ === 0 ? null : { uid: 'user-1' });
+      return () => undefined;
+    });
+    authServiceMocks.hydrateFirebaseUser.mockImplementation((_user, options) => {
+      options.onAccessEnriched(enrichedHydration);
+      return new Promise((resolve) => {
+        resolveHydration = resolve;
+      });
+    });
+
+    const { result } = renderHook(() => useAuth());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    let refreshResult: unknown;
+    let refreshPromise: Promise<unknown> | undefined;
+    act(() => {
+      refreshPromise = result.current.refresh();
+    });
+    await waitFor(() => expect(result.current.user?.coachOf).toEqual(['team-late']));
+
+    await act(async () => {
+      resolveHydration?.(initialHydration);
+      refreshResult = await refreshPromise;
+    });
+
+    expect(refreshResult).toEqual(enrichedHydration.user);
+    expect(result.current.user?.coachOf).toEqual(['team-late']);
+    expect(result.current.isCoach).toBe(true);
+  });
+
   it('ignores post-timeout enrichment after the consumer signs out', async () => {
     authServiceMocks.observeFirebaseUser.mockImplementation((callback: (user: unknown) => void) => {
       callback({ uid: 'user-1' });

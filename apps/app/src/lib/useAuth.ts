@@ -7,6 +7,7 @@ import { createLogger } from './logger';
 const logger = createLogger('app-auth');
 
 type PerUserCacheResetLoader = () => Promise<() => void>;
+type HydratedAuthUser = Awaited<ReturnType<typeof hydrateFirebaseUser>>;
 
 const perUserCacheResetLoaders: PerUserCacheResetLoader[] = [
   async () => (await import('./searchService')).resetAppSearchCache,
@@ -45,7 +46,7 @@ export function useAuth(): AuthState {
   const [error, setError] = useState<string | null>(null);
   const hydrationGeneration = useRef(0);
 
-  const applyHydratedUser = useCallback((hydrated: Awaited<ReturnType<typeof hydrateFirebaseUser>>) => {
+  const applyHydratedUser = useCallback((hydrated: HydratedAuthUser) => {
     setUser(hydrated.user);
     setProfile(hydrated.profile);
     setProfileHydration(hydrated.profileHydration);
@@ -76,13 +77,17 @@ export function useAuth(): AuthState {
 
     const generation = ++hydrationGeneration.current;
     try {
+      let latestAccessEnrichment: HydratedAuthUser | null = null;
       const hydrated = await hydrateFirebaseUser(currentUser, {
         onAccessEnriched: (enriched) => {
+          latestAccessEnrichment = enriched;
           if (hydrationGeneration.current === generation) applyHydratedUser(enriched);
         }
       });
-      if (hydrationGeneration.current === generation) applyHydratedUser(hydrated);
-      return hydrated.user;
+      if (hydrationGeneration.current === generation && !latestAccessEnrichment) {
+        applyHydratedUser(hydrated);
+      }
+      return (latestAccessEnrichment || hydrated).user;
     } catch (hydrateError: any) {
       if (hydrationGeneration.current === generation) {
         setError(hydrateError?.message || 'Unable to load account profile.');
@@ -113,12 +118,16 @@ export function useAuth(): AuthState {
       }
 
       try {
+        let latestAccessEnrichment: HydratedAuthUser | null = null;
         const hydrated = await hydrateFirebaseUser(firebaseUser, {
           onAccessEnriched: (enriched) => {
+            latestAccessEnrichment = enriched;
             if (hydrationGeneration.current === generation) applyHydratedUser(enriched);
           }
         });
-        if (hydrationGeneration.current === generation) applyHydratedUser(hydrated);
+        if (hydrationGeneration.current === generation && !latestAccessEnrichment) {
+          applyHydratedUser(hydrated);
+        }
       } catch (hydrateError: any) {
         if (hydrationGeneration.current === generation) {
           setError(hydrateError?.message || 'Unable to load account profile.');
