@@ -1,5 +1,58 @@
-import { describe, expect, it } from 'vitest';
+// @vitest-environment jsdom
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
+
+const adminDbMocks = vi.hoisted(() => ({
+    getAdminTeamsPage: vi.fn(),
+    getAdminUsersPage: vi.fn(),
+    searchAdminUsers: vi.fn(),
+    getGames: vi.fn(),
+    getOfficials: vi.fn(),
+    getOfficialsForUsers: vi.fn(),
+    addOfficial: vi.fn(),
+    updateOfficial: vi.fn(),
+    deleteOfficial: vi.fn(),
+    deleteTeam: vi.fn(),
+    getTelemetryEvents: vi.fn(),
+    getTelemetryDaily: vi.fn(),
+    getTelemetryPageDaily: vi.fn(),
+    getTelemetryRouteDaily: vi.fn(),
+    getTelemetryEventDaily: vi.fn(),
+    getTelemetrySessions: vi.fn()
+}));
+const adminFirebaseMocks = vi.hoisted(() => ({
+    db: {},
+    collection: vi.fn((database, path) => ({ database, path })),
+    documentId: vi.fn(() => 'documentId'),
+    getDocs: vi.fn(),
+    doc: vi.fn(),
+    limit: vi.fn((value) => ({ type: 'limit', value })),
+    orderBy: vi.fn((field) => ({ type: 'orderBy', field })),
+    query: vi.fn((...parts) => ({ parts })),
+    setDoc: vi.fn(),
+    startAfter: vi.fn((value) => ({ type: 'startAfter', value })),
+    updateDoc: vi.fn(),
+    serverTimestamp: vi.fn(),
+    where: vi.fn()
+}));
+const adminAuthMocks = vi.hoisted(() => ({
+    callback: null,
+    checkAuth: vi.fn((callback) => {
+        adminAuthMocks.callback = callback;
+    })
+}));
+
+vi.mock('../../js/db.js?v=4433182', () => adminDbMocks);
+vi.mock('../../js/firebase.js?v=26', () => adminFirebaseMocks);
+vi.mock('../../js/utils.js?v=443358', () => ({
+    renderHeader: vi.fn(),
+    renderFooter: vi.fn(),
+    escapeHtml: (value) => String(value || '')
+}));
+vi.mock('../../js/auth.js?v=4433186', () => adminAuthMocks);
+vi.mock('../../js/admin-premium-access-control.js?v=4', () => ({
+    createAdminPremiumAccessControl: () => ({ load: vi.fn() })
+}));
 import {
     ADMIN_REGISTRATION_FORMS_PAGE_SIZE,
     buildAdminRegistrationFormPayload,
@@ -30,6 +83,11 @@ import {
 } from '../../js/registration-flow.js';
 
 describe('admin registration form setup', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        adminAuthMocks.callback = null;
+    });
+
     it('builds a valid minimal form with the default participant and guardian fields', () => {
         const payload = buildAdminRegistrationFormPayload({
             title: 'Spring Soccer',
@@ -256,7 +314,7 @@ describe('admin registration form setup', () => {
     });
 
     it('preserves blank capacity inputs when rerendering registration options', () => {
-        const adminSource = fs.readFileSync(new URL('../../js/admin.js', import.meta.url), 'utf8');
+        const adminSource = fs.readFileSync('js/admin.js', 'utf8');
 
         expect(adminSource).toContain("option.capacityLimit === null || option.capacityLimit === undefined || option.capacityLimit === '' ? '' : Number(option.capacityLimit)");
     });
@@ -476,14 +534,52 @@ describe('admin registration form setup', () => {
         expect(state.lastDoc).toEqual({ id: 'form-04' });
     });
 
-    it('preserves loaded rows and exposes a retryable error when loading more fails', () => {
-        const adminPage = fs.readFileSync('admin.html', 'utf8');
-        const adminJs = fs.readFileSync('js/admin.js', 'utf8');
+    it('preserves loaded rows and exposes a retryable error when loading more fails', async () => {
+        const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+        document.documentElement.innerHTML = fs.readFileSync('admin.html', 'utf8');
+        adminDbMocks.getAdminTeamsPage.mockResolvedValue({
+            teams: [{ id: 'team-1', name: 'Test Team' }],
+            nextCursor: null
+        });
+        adminDbMocks.getAdminUsersPage.mockResolvedValue({ users: [], nextCursor: null });
+        adminDbMocks.getGames.mockResolvedValue([]);
+        adminDbMocks.getOfficials.mockResolvedValue([]);
+        adminDbMocks.getOfficialsForUsers.mockResolvedValue([]);
+        adminDbMocks.getTelemetryEvents.mockResolvedValue([]);
+        adminDbMocks.getTelemetryDaily.mockResolvedValue([]);
+        adminDbMocks.getTelemetryPageDaily.mockResolvedValue([]);
+        adminDbMocks.getTelemetryRouteDaily.mockResolvedValue([]);
+        adminDbMocks.getTelemetryEventDaily.mockResolvedValue([]);
+        adminDbMocks.getTelemetrySessions.mockResolvedValue([]);
 
-        expect(adminPage).toContain('id="registration-forms-load-more-error" role="alert"');
-        expect(adminPage).toContain('Failed to load more registration forms. Select Load more to retry.');
-        expect(adminJs).toContain('if (append) {\n                setRegistrationFormsLoadMoreError(true);');
-        expect(adminJs).not.toContain('registrationFormsRequestVersion === requestVersion && !append');
+        const firstPageDocs = Array.from({ length: 26 }, (_, index) => ({
+            id: `form-${index + 1}`,
+            data: () => ({ title: `Form ${index + 1}` })
+        }));
+        adminFirebaseMocks.getDocs
+            .mockResolvedValueOnce({ docs: firstPageDocs })
+            .mockRejectedValueOnce(new Error('appended page failed'));
+
+        vi.resetModules();
+        await import('../../js/admin.js');
+        await adminAuthMocks.callback({ uid: 'admin-1', email: 'admin@example.com', isAdmin: true });
+        await window.openRegistrationFormsAdmin('team-1');
+
+        const list = document.getElementById('registration-forms-list');
+        const error = document.getElementById('registration-forms-load-more-error');
+        const loadMore = document.getElementById('registration-forms-load-more');
+        const loadedRows = list.innerHTML;
+
+        expect(list.children).toHaveLength(25);
+        expect(loadMore.classList.contains('hidden')).toBe(false);
+        await window.loadMoreRegistrationFormsAdmin();
+
+        expect(list.innerHTML).toBe(loadedRows);
+        expect(error.classList.contains('hidden')).toBe(false);
+        expect(loadMore.disabled).toBe(false);
+        expect(loadMore.textContent).toBe('Load more');
+        expect(consoleError).toHaveBeenCalledWith('Error loading registration forms:', expect.any(Error));
+        consoleError.mockRestore();
     });
 
     it('resets registration pagination per team and ignores stale page merges', () => {
