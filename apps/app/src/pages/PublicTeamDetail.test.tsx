@@ -106,6 +106,32 @@ describe('PublicTeamDetail', () => {
     expect(screen.getAllByText('Austin Bats').find((element) => element.closest('tr')?.getAttribute('aria-current') === 'true')).toBeTruthy();
   });
 
+  it('explains unavailable standings and links to the league when configured', async () => {
+    publicTeamMocks.getPublicTeamDetail.mockResolvedValue({
+      id: 'team-1', name: 'Austin Bats', sport: 'Baseball', description: null, photoUrl: null,
+      city: 'Austin', state: 'TX', zip: '78701', location: 'Austin, TX', leagueUrl: 'https://league.example.test/standings', standings: null
+    });
+
+    render(<MemoryRouter initialEntries={['/teams/team-1/public']}><Routes><Route path="/teams/:teamId/public" element={<PublicTeamDetail authUser={null} />} /></Routes></MemoryRouter>);
+
+    expect(await screen.findByText('Standings are currently unavailable')).toBeTruthy();
+    const leagueLink = screen.getByRole('link', { name: 'View league standings' });
+    expect(leagueLink.getAttribute('href')).toBe('https://league.example.test/standings');
+    expect(leagueLink.getAttribute('target')).toBe('_blank');
+  });
+
+  it('omits the league link when standings are unavailable and no league is configured', async () => {
+    publicTeamMocks.getPublicTeamDetail.mockResolvedValue({
+      id: 'team-1', name: 'Austin Bats', sport: 'Baseball', description: null, photoUrl: null,
+      city: 'Austin', state: 'TX', zip: '78701', location: 'Austin, TX', leagueUrl: null, standings: null
+    });
+
+    render(<MemoryRouter initialEntries={['/teams/team-1/public']}><Routes><Route path="/teams/:teamId/public" element={<PublicTeamDetail authUser={null} />} /></Routes></MemoryRouter>);
+
+    expect(await screen.findByText('Standings are currently unavailable')).toBeTruthy();
+    expect(screen.queryByRole('link', { name: 'View league standings' })).toBeNull();
+  });
+
   it('shows an explicit empty state when there are no completed public results', async () => {
     publicTeamMocks.getPublicTeamDetail.mockResolvedValue({ id: 'team-1', name: 'Austin Bats', sport: null, description: null, photoUrl: null, city: null, state: null, zip: null, location: null });
 
