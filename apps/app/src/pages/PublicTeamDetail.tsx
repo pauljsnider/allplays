@@ -87,6 +87,7 @@ export function PublicTeamDetail({ authUser }: { authUser: AuthState['user'] }) 
           <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-4 text-sm font-semibold leading-6 text-emerald-900"><div className="flex items-center gap-2 font-black"><ShieldCheck className="h-5 w-5" />Public-safe profile</div><p className="mt-1">This page shows team identity, general location, and completed public game results. Rosters, private schedules, contacts, and member data are not loaded.</p></div>
         </div>
       </section>
+      {team.standings?.rows.length ? <PublicStandingsSection standings={team.standings} /> : null}
       <section className="app-card p-5 sm:p-6" aria-labelledby="recent-results-heading">
         <h2 id="recent-results-heading" className="text-lg font-black text-gray-950">Recent results</h2>
         {recentResultsError ? (
@@ -130,4 +131,65 @@ export function PublicTeamDetail({ authUser }: { authUser: AuthState['user'] }) 
       </section>
     </div>
   );
+}
+
+function PublicStandingsSection({ standings }: { standings: NonNullable<PublicTeamProfile['standings']> }) {
+  const highlightKey = getPublicStandingsRowKey(standings.currentRow);
+
+  return (
+    <section className="app-card p-5 sm:p-6" aria-labelledby="public-standings-heading">
+      <div>
+        <h2 id="public-standings-heading" className="text-lg font-black text-gray-950">Standings</h2>
+        <p className="mt-1 text-sm font-semibold text-gray-500">{standings.label || 'Current league standings'}</p>
+      </div>
+      <div className="mt-3 overflow-x-auto rounded-xl border border-gray-200">
+        <table className="min-w-full divide-y divide-gray-200 text-left">
+          <thead className="bg-gray-50">
+            <tr className="text-[11px] font-black uppercase tracking-[0.04em] text-gray-500">
+              <th className="px-3 py-2.5">Rank</th>
+              <th className="px-3 py-2.5">Team</th>
+              <th className="px-3 py-2.5">Record</th>
+              <th className="px-3 py-2.5">{getPublicStandingsContextLabel(standings.rows)}</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100 bg-white">
+            {standings.rows.map((row, index) => {
+              const isHighlighted = getPublicStandingsRowKey(row) === highlightKey;
+              return (
+                <tr key={`${getPublicStandingsRowKey(row)}-${index}`} className={isHighlighted ? 'bg-primary-50/70' : 'bg-white'} aria-current={isHighlighted ? 'true' : undefined}>
+                  <td className={`whitespace-nowrap px-3 py-2.5 text-sm ${isHighlighted ? 'font-black text-primary-800' : 'font-semibold text-gray-700'}`}>{typeof row.rank === 'number' ? `#${row.rank}` : '—'}</td>
+                  <td className={`whitespace-nowrap px-3 py-2.5 text-sm ${isHighlighted ? 'font-black text-primary-800' : 'font-semibold text-gray-900'}`}>{String(row.team || '—')}</td>
+                  <td className="whitespace-nowrap px-3 py-2.5 text-sm font-semibold text-gray-700">{formatPublicStandingsRecord(row)}</td>
+                  <td className="whitespace-nowrap px-3 py-2.5 text-sm font-semibold text-gray-700">{formatPublicStandingsContext(row, standings.rows)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function getPublicStandingsRowKey(row: Record<string, any> | null) {
+  return `${String(row?.team || '').trim() || 'team'}::${String(row?.rank || '').trim() || 'rank'}`;
+}
+
+function formatPublicStandingsRecord(row: Record<string, any>) {
+  if (row.record !== undefined && row.record !== null && String(row.record).trim()) return String(row.record);
+  const wins = Number.isFinite(Number(row.w)) ? Number(row.w) : null;
+  const losses = Number.isFinite(Number(row.l)) ? Number(row.l) : null;
+  const ties = Number.isFinite(Number(row.t)) ? Number(row.t) : null;
+  if (wins === null && losses === null && ties === null) return '—';
+  return `${wins ?? 0}-${losses ?? 0}${ties ? `-${ties}` : ''}`;
+}
+
+function getPublicStandingsContextLabel(rows: Array<Record<string, any>>) {
+  return rows.some((row) => Number.isFinite(Number(row.points))) ? 'PTS' : 'PCT';
+}
+
+function formatPublicStandingsContext(row: Record<string, any>, rows: Array<Record<string, any>>) {
+  if (getPublicStandingsContextLabel(rows) === 'PTS') return row.points ?? '—';
+  if (typeof row.winPct === 'number' && Number.isFinite(row.winPct)) return row.winPct.toFixed(3);
+  return row.winPct ? String(row.winPct) : '—';
 }
