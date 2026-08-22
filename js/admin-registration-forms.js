@@ -28,9 +28,17 @@ export function mergeAdminRegistrationFormsPage(state, page = {}) {
         appendedForms.push(form);
     }
 
+    const forms = [...state.forms, ...appendedForms].sort((left, right) =>
+        String(left.programName || left.title || '').localeCompare(
+            String(right.programName || right.title || ''),
+            undefined,
+            { sensitivity: 'base' }
+        )
+    );
+
     return {
         ...state,
-        forms: [...state.forms, ...appendedForms],
+        forms,
         lastDoc: page.lastDoc || null,
         hasMore: page.hasMore === true
     };

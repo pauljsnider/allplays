@@ -1582,6 +1582,7 @@ function resetRegistrationFormsPagination(teamId = '') {
     registrationFormsLoading = false;
     registrationFormsPageState = createAdminRegistrationFormsPageState(teamId);
     activeRegistrationForms = [];
+    setRegistrationFormsLoadMoreError(false);
     updateRegistrationFormsLoadMoreControl();
 }
 
@@ -1591,6 +1592,11 @@ function updateRegistrationFormsLoadMoreControl() {
     button.classList.toggle('hidden', !registrationFormsPageState.hasMore);
     button.disabled = registrationFormsLoading;
     button.textContent = registrationFormsLoading ? 'Loading...' : 'Load more';
+}
+
+function setRegistrationFormsLoadMoreError(visible) {
+    const error = document.getElementById('registration-forms-load-more-error');
+    if (error) error.classList.toggle('hidden', !visible);
 }
 
 window.loadMoreRegistrationFormsAdmin = async function () {
@@ -1611,6 +1617,7 @@ async function loadRegistrationFormsForActiveTeam({ append = false } = {}) {
     if (!append) {
         list.innerHTML = '<p class="text-sm text-gray-500">Loading registration forms...</p>';
     }
+    setRegistrationFormsLoadMoreError(false);
     registrationFormsLoading = true;
     updateRegistrationFormsLoadMoreControl();
     try {
@@ -1630,8 +1637,12 @@ async function loadRegistrationFormsForActiveTeam({ append = false } = {}) {
         renderRegistrationFormsList();
     } catch (error) {
         console.error('Error loading registration forms:', error);
-        if (activeRegistrationTeam?.id === teamId && registrationFormsRequestVersion === requestVersion && !append) {
-            list.innerHTML = '<p class="text-sm text-red-600">Failed to load registration forms. Please try again.</p>';
+        if (activeRegistrationTeam?.id === teamId && registrationFormsRequestVersion === requestVersion) {
+            if (append) {
+                setRegistrationFormsLoadMoreError(true);
+            } else {
+                list.innerHTML = '<p class="text-sm text-red-600">Failed to load registration forms. Please try again.</p>';
+            }
         }
     } finally {
         if (activeRegistrationTeam?.id === teamId && registrationFormsRequestVersion === requestVersion) {
