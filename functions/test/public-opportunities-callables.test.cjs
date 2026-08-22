@@ -114,6 +114,9 @@ function makeFirestore(seed = {}, { queryFailures = [], beforeTransaction = null
             orderBy(field, direction = 'asc') {
                 return makeQuery(path, filters, [...orders, { field, direction }], limitCount, cursor, collectionGroupName);
             },
+            select() {
+                return query;
+            },
             limit(count) {
                 return makeQuery(path, filters, orders, Number(count), cursor, collectionGroupName);
             },
@@ -152,6 +155,10 @@ function makeFirestore(seed = {}, { queryFailures = [], beforeTransaction = null
                     if (operator === 'in') return Array.isArray(value) && value.includes(actual);
                     throw new Error(`Unsupported query operator: ${operator}`);
                 }));
+
+                snapshots = snapshots.filter((snapshot) => orders.every(({ field }) => (
+                    field === '__name__' || getNested(snapshot.data(), field) !== undefined
+                )));
 
                 function compareSnapshotToValues(snapshot, values) {
                     for (let index = 0; index < orders.length; index += 1) {
@@ -637,6 +644,192 @@ test('managed-team callables return access fields only to current managers', asy
     assert.equal(stalePublicProfile.item.name, 'Stale Public Bears');
     assert.equal('ownerEmailLower' in stalePublicProfile.item, false);
     assert.equal('privateBillingCustomerId' in stalePublicProfile.item, false);
+});
+
+test('dashboard team discovery returns managed and parent-only teams in separate complete projections', async () => {
+    const { callables } = loadCallables({
+        'users/coach-parent': {
+            coachOf: ['team-managed'],
+            parentOf: [
+                { teamId: 'team-managed', playerId: 'player-1' },
+                { teamId: 'team-parent', playerId: 'player-2' }
+            ]
+        },
+        'teams/team-managed': {
+            name: 'Managed Bears',
+            ownerId: 'coach-parent',
+            adminEmails: ['coach@example.com'],
+            active: true,
+            privateBillingCustomerId: 'must-not-leak'
+        },
+        'teams/team-parent': {
+            name: 'Parent Cougars',
+            ownerId: 'other-owner',
+            adminEmails: ['other@example.com'],
+            active: true,
+            privateBillingCustomerId: 'must-not-leak'
+        }
+    });
+
+    const result = await callables.listManagedTeams(
+        { includeParentTeams: true },
+        authContext('coach-parent', { email: 'coach@example.com' })
+    );
+
+    assert.equal(result.dashboardTeamLoadVersion, 1);
+    assert.equal(result.includesAllTeams, false);
+    assert.equal(result.isPartial, false);
+    assert.deepEqual(result.items.map((team) => team.id), ['team-managed']);
+    assert.deepEqual(result.parentItems.map((team) => team.id), ['team-parent']);
+    assert.equal(result.items[0].ownerId, 'coach-parent');
+    assert.equal('adminEmails' in result.items[0], false);
+    assert.equal('ownerEmail' in result.items[0], false);
+    assert.equal('ownerId' in result.parentItems[0], false);
+    assert.equal('adminEmails' in result.parentItems[0], false);
+    assert.equal('privateBillingCustomerId' in result.items[0], false);
+    assert.equal('privateBillingCustomerId' in result.parentItems[0], false);
+});
+
+test('dashboard team discovery marks malformed parent scope partial instead of confirming absence', async () => {
+    const { callables } = loadCallables({
+        'users/parent-1': {
+            parentTeamIds: ['team-parent', 'not/a/team-id']
+        },
+        'teams/team-parent': {
+            name: 'Parent Bears',
+            ownerId: 'other-owner',
+            active: true
+        }
+    });
+
+    const result = await callables.listManagedTeams(
+        { includeParentTeams: true },
+        authContext('parent-1')
+    );
+
+    assert.equal(result.isPartial, true);
+    assert.deepEqual(result.items, []);
+    assert.deepEqual(result.parentItems.map((team) => team.id), ['team-parent']);
+});
+
+test('dashboard team discovery treats canonical parentTeamIds as authoritative over stale parentOf links', async () => {
+    const { callables } = loadCallables({
+        'users/parent-1': {
+            parentTeamIds: ['team-current'],
+            parentOf: [
+                { teamId: 'team-current', playerId: 'player-current' },
+                { teamId: 'team-revoked', playerId: 'player-revoked' }
+            ]
+        },
+        'teams/team-current': {
+            name: 'Current Bears',
+            ownerId: 'other-owner',
+            active: true
+        },
+        'teams/team-revoked': {
+            name: 'Revoked Cougars',
+            ownerId: 'other-owner',
+            active: true,
+            isPublic: false
+        }
+    });
+
+    const result = await callables.listManagedTeams(
+        { includeParentTeams: true },
+        authContext('parent-1')
+    );
+
+    assert.equal(result.isPartial, false);
+    assert.deepEqual(result.parentItems.map((team) => team.id), ['team-current']);
+    assert.equal(result.parentItems.some((team) => team.id === 'team-revoked'), false);
+});
+
+test('dashboard team discovery fails closed when canonical parentTeamIds is malformed', async () => {
+    const { callables } = loadCallables({
+        'users/parent-1': {
+            parentTeamIds: 'team-current',
+            parentOf: [{ teamId: 'team-revoked', playerId: 'player-revoked' }]
+        },
+        'teams/team-revoked': {
+            name: 'Revoked Bears',
+            ownerId: 'other-owner',
+            active: true
+        }
+    });
+
+    const result = await callables.listManagedTeams(
+        { includeParentTeams: true },
+        authContext('parent-1')
+    );
+
+    assert.equal(result.isPartial, true);
+    assert.deepEqual(result.items, []);
+    assert.deepEqual(result.parentItems, []);
+});
+
+test('platform-admin dashboard discovery loads every team and acknowledges completeness', async () => {
+    const { callables } = loadCallables({
+        'users/platform-admin': {
+            isAdmin: true,
+            parentTeamIds: [
+                ...Array.from({ length: 181 }, (_value, index) => `parent-team-${index}`),
+                'not/a/team-id'
+            ],
+            parentOf: [{ teamId: 'legacy-parent-team', playerId: 'legacy-player' }]
+        },
+        'teams/team-owned-elsewhere': {
+            name: 'Alpha',
+            ownerId: 'owner-1',
+            active: true,
+            privateBillingCustomerId: 'must-not-leak'
+        },
+        'teams/team-private': {
+            name: 'Bravo',
+            ownerId: 'owner-2',
+            active: true,
+            isPublic: false
+        },
+        'teams/team-legacy': {
+            teamName: 'Charlie',
+            ownerId: 'owner-3',
+            active: true,
+            isPublic: false
+        }
+    });
+
+    const result = await callables.listManagedTeams(
+        { includeAllTeams: true, includeParentTeams: true },
+        authContext('platform-admin', { email: 'platform@example.com' })
+    );
+
+    assert.equal(result.dashboardTeamLoadVersion, 1);
+    assert.equal(result.includesAllTeams, true);
+    assert.equal(result.isPartial, false);
+    assert.deepEqual(result.items.map((team) => ({ id: team.id, name: team.name })), [
+        { id: 'team-owned-elsewhere', name: 'Alpha' },
+        { id: 'team-private', name: 'Bravo' },
+        { id: 'team-legacy', name: 'Charlie' }
+    ]);
+    assert.deepEqual(result.parentItems, []);
+    assert.equal(result.items[0].ownerId, 'owner-1');
+    assert.equal('adminEmails' in result.items[0], false);
+    assert.equal('ownerEmail' in result.items[0], false);
+    assert.equal('privateBillingCustomerId' in result.items[0], false);
+});
+
+test('non-admin callers cannot request the platform-wide dashboard projection', async () => {
+    const { callables } = loadCallables({
+        'users/coach-1': {},
+        'teams/team-1': { name: 'Bears', ownerId: 'coach-1', active: true }
+    });
+
+    await assert.rejects(
+        callables.listManagedTeams(
+            { includeAllTeams: true, includeParentTeams: true },
+            authContext('coach-1')
+        ),
+        (error) => error.code === 'permission-denied'
+    );
 });
 
 test('email-derived opportunity access requires a verified current token claim', async () => {

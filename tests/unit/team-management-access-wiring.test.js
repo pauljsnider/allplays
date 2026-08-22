@@ -6,11 +6,14 @@ function readRepoFile(relativePath) {
 }
 
 describe('team management page access wiring', () => {
-    it('loads all active teams for platform admins on the dashboard', () => {
+    it('loads dashboard staff and parent teams through one bounded server-authoritative request', () => {
         const html = readRepoFile('dashboard.html');
-        expect(html).toContain('import { getTeams, getUserTeamsWithAccess');
-        expect(html).toContain('const canManageAllTeams = user.isAdmin === true;');
-        expect(html).toContain('canManageAllTeams\n                        ? getTeams({ includePrivate: true })\n                        // listManagedTeams cold starts have been observed taking 4-5s+ in\n                        // production; bound the wait instead of leaving the page\'s loading\n                        // spinner up indefinitely.\n                        : getUserTeamsWithAccess(user.uid, user.email, { timeoutMs: 10000 })');
+        expect(html).toContain("import { loadDashboardTeams } from './js/dashboard-team-load.js?v=1';");
+        expect(html).toContain('const { fullAccessTeams: coachTeams, parentTeams } = await loadDashboardTeams({');
+        expect(html).toContain('includeAllTeams: user.isAdmin === true,');
+        expect(html).toContain('timeoutMs: 10000');
+        expect(html).not.toContain('getTeams({ includePrivate: true })');
+        expect(html).not.toContain('getParentTeams(user.uid');
     });
 
     it('backs dashboard platform-admin access with protected Firestore admin state', () => {
@@ -26,9 +29,9 @@ describe('team management page access wiring', () => {
         expect(rules).toContain('canReadTeamDocument(teamId, resource.data)');
     });
 
-    it('uses only the authenticated email when loading non-admin dashboard team access', () => {
+    it('does not restore dashboard team access from a mutable profile email', () => {
         const html = readRepoFile('dashboard.html');
-        expect(html).toContain('getUserTeamsWithAccess(user.uid, user.email, { timeoutMs: 10000 })');
+        expect(html).not.toContain('getUserTeamsWithAccess(');
         expect(html).not.toContain('getUserTeamsWithAccess(user.uid, user.email || profile?.email)');
     });
 

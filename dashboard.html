@@ -92,7 +92,8 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeams, getUserTeamsWithAccess, getParentTeams, deleteTeam, getUnreadChatCounts } from './js/db.js?v=4433182';
+        import { deleteTeam, getUnreadChatCounts } from './js/db.js?v=4433182';
+        import { loadDashboardTeams } from './js/dashboard-team-load.js?v=1';
         import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=443358';
         import { checkAuth } from './js/auth.js?v=4433186';
         import { startBoundedRetry } from './js/bounded-retry.js?v=2';
@@ -171,16 +172,10 @@
                 // would be a redundant read on every page load.
                 renderHeader(document.getElementById('header-container'), user);
 
-                const canManageAllTeams = user.isAdmin === true;
-                const [coachTeams, parentTeams] = await Promise.all([
-                    canManageAllTeams
-                        ? getTeams({ includePrivate: true })
-                        // listManagedTeams cold starts have been observed taking 4-5s+ in
-                        // production; bound the wait instead of leaving the page's loading
-                        // spinner up indefinitely.
-                        : getUserTeamsWithAccess(user.uid, user.email, { timeoutMs: 10000 }),
-                    getParentTeams(user.uid, { parentOf: user.parentOf })
-                ]);
+                const { fullAccessTeams: coachTeams, parentTeams } = await loadDashboardTeams({
+                    includeAllTeams: user.isAdmin === true,
+                    timeoutMs: 10000
+                });
 
                 const fullAccessMap = new Map();
                 coachTeams.forEach(t => {
