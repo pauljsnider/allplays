@@ -470,6 +470,15 @@ describe('live game replay video helpers', () => {
         });
 
         expect(url).toBe('https://allplays.example/live-game.html?teamId=team-1&gameId=game-1&replay=true&clipStart=12000&clipEnd=72000');
+
+        expect(buildHighlightShareUrl({
+            origin: 'https://share.allplays.ai',
+            pathname: '/watch',
+            teamId: 'team-1',
+            gameId: 'game-1',
+            startMs: 12_000,
+            endMs: 72_000
+        })).toBe('https://share.allplays.ai/watch?teamId=team-1&gameId=game-1&replay=true&clipStart=12000&clipEnd=72000');
     });
 
     it('keeps embedded playback running when the source is unchanged', () => {

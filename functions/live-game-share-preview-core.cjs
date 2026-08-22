@@ -1,6 +1,7 @@
 'use strict';
 
 const DEFAULT_TIME_ZONE = 'America/Chicago';
+const MAX_SHARE_CLIP_MS = 24 * 60 * 60 * 1000;
 
 function compactText(value, maxLength) {
   return String(value || '').replace(/\s+/g, ' ').trim().slice(0, maxLength);
@@ -43,20 +44,66 @@ function formatLiveGameStart(value, timeZoneValue = DEFAULT_TIME_ZONE) {
   return `${dateLabel} at ${timeLabel}`;
 }
 
-function buildLiveGameShareMetadata({ teamName, opponent, startsAt, timeZone } = {}) {
+function buildLiveGameShareMetadata({ teamName, opponent, startsAt, timeZone, mode = 'live' } = {}) {
   const safeTeamName = compactText(teamName, 100) || 'ALL PLAYS';
   const safeOpponent = compactText(opponent, 100);
+  const fallbackLabel = mode === 'highlight'
+    ? 'game highlight'
+    : mode === 'replay'
+      ? 'game replay'
+      : 'live game';
   const matchup = safeOpponent && safeOpponent.toLowerCase() !== 'tbd'
     ? `${safeTeamName} vs ${safeOpponent}`
-    : `${safeTeamName} live game`;
+    : `${safeTeamName} ${fallbackLabel}`;
   const when = formatLiveGameStart(startsAt, timeZone);
   return {
     title: compactText(when ? `${matchup} — ${when}` : matchup, 220),
-    description: 'Watch the live game on ALL PLAYS.',
+    description: mode === 'highlight'
+      ? 'Watch this game highlight on ALL PLAYS.'
+      : mode === 'replay'
+        ? 'Watch the game replay on ALL PLAYS.'
+        : 'Watch the live game on ALL PLAYS.',
     imageUrl: 'https://allplays.ai/img/logo_large.png',
     imageAlt: 'ALL PLAYS logo',
     siteName: 'ALL PLAYS'
   };
+}
+
+function buildGameReportShareMetadata({ teamName, opponent, startsAt, timeZone } = {}) {
+  const safeTeamName = compactText(teamName, 100) || 'ALL PLAYS';
+  const safeOpponent = compactText(opponent, 100);
+  const matchup = safeOpponent && safeOpponent.toLowerCase() !== 'tbd'
+    ? `${safeTeamName} vs ${safeOpponent}`
+    : `${safeTeamName} game report`;
+  const when = formatLiveGameStart(startsAt, timeZone);
+  return {
+    title: compactText(when ? `${matchup} — ${when}` : matchup, 220),
+    description: 'View the game report on ALL PLAYS.',
+    imageUrl: 'https://allplays.ai/img/logo_large.png',
+    imageAlt: 'ALL PLAYS logo',
+    siteName: 'ALL PLAYS'
+  };
+}
+
+function normalizeShareClipMs(value) {
+  const raw = typeof value === 'string' ? value.trim() : String(value ?? '').trim();
+  if (!/^\d{1,8}$/.test(raw)) return null;
+  const normalized = Number(raw);
+  return normalized <= MAX_SHARE_CLIP_MS ? normalized : null;
+}
+
+function buildLiveGameShareParams({ teamId, gameId, replay, clipStart, clipEnd } = {}) {
+  const params = new URLSearchParams({ teamId, gameId });
+  const clipStartMs = normalizeShareClipMs(clipStart);
+  const clipEndMs = normalizeShareClipMs(clipEnd);
+  const hasClipRange = clipStartMs !== null && clipEndMs !== null && clipEndMs > clipStartMs;
+
+  if (replay === true || replay === 'true' || hasClipRange) params.set('replay', 'true');
+  if (hasClipRange) {
+    params.set('clipStart', String(clipStartMs));
+    params.set('clipEnd', String(clipEndMs));
+  }
+  return params;
 }
 
 function buildSharePreviewHtml({ metadata, redirectUrl, shareUrl, openLabel } = {}) {
@@ -107,10 +154,21 @@ function buildLiveGameShareHtml(options = {}) {
   });
 }
 
+function buildGameReportShareHtml(options = {}) {
+  return buildSharePreviewHtml({
+    ...options,
+    openLabel: options.openLabel || 'Open the game report on ALL PLAYS'
+  });
+}
+
 module.exports = {
   DEFAULT_TIME_ZONE,
+  MAX_SHARE_CLIP_MS,
+  buildGameReportShareHtml,
+  buildGameReportShareMetadata,
   buildLiveGameShareHtml,
   buildLiveGameShareMetadata,
+  buildLiveGameShareParams,
   buildSharePreviewHtml,
   compactText,
   escapeHtml,

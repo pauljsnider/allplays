@@ -231,7 +231,14 @@ function normalizeHighlightClips(teamId: string, gameId: string, game: GameRepor
     const startMs = Number.isFinite(Number(clip.startMs)) ? Number(clip.startMs) : null;
     const endMs = Number.isFinite(Number(clip.endMs)) ? Number(clip.endMs) : null;
     const fallbackUrl = startMs !== null && endMs !== null
-      ? buildHighlightShareUrl({ origin: 'https://allplays.ai', teamId, gameId, startMs, endMs })
+      ? buildHighlightShareUrl({
+          origin: 'https://share.allplays.ai',
+          pathname: '/watch',
+          teamId,
+          gameId,
+          startMs,
+          endMs
+        })
       : '';
     return {
       title: String(clip.title || 'Highlight'),

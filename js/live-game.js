@@ -34,7 +34,8 @@ import {
   getReplayTimestampMs,
   rebaseReplayStartTimeMs
 } from './live-game-replay.js?v=3';
-import { BROADCAST_SETUP_STATUSES, BROADCAST_STREAM_STATUSES, MAX_HIGHLIGHT_CLIP_MS, buildBroadcastSetupSession, buildHighlightShareUrl, buildStreamScoreContext, canAccessNativeCameraCapture, canSaveBroadcastSetupSession, createHighlightClipDraft, resolveBroadcastProviderMetadata, resolveBroadcastStreamControlState, resolveReplayVideoOptions, shouldReloadVideoPlayback } from './live-game-video.js?v=443314';
+import { BROADCAST_SETUP_STATUSES, BROADCAST_STREAM_STATUSES, MAX_HIGHLIGHT_CLIP_MS, buildBroadcastSetupSession, buildHighlightShareUrl, buildStreamScoreContext, canAccessNativeCameraCapture, canSaveBroadcastSetupSession, createHighlightClipDraft, resolveBroadcastProviderMetadata, resolveBroadcastStreamControlState, resolveReplayVideoOptions, shouldReloadVideoPlayback } from './live-game-video.js?v=443315';
+import { buildGameReportShareUrl, buildGameWatchShareUrl } from './game-share-links.js?v=1';
 import { TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, isRecordedReplayTeamPassGateEnabled, resolveTeamEntitlementSeasonId } from './team-entitlements.js?v=6';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
@@ -971,7 +972,8 @@ function buildMediaHubHighlightUrl(clip) {
   if (clip?.videoUrl) return clip.videoUrl;
   if (!canPlayMediaHubHighlight(clip)) return null;
   return buildHighlightShareUrl({
-    origin: window.location.origin,
+    origin: 'https://share.allplays.ai',
+    pathname: '/watch',
     teamId: state.teamId,
     gameId: state.gameId,
     startMs: clip.startMs,
@@ -1366,7 +1368,8 @@ function renderRecordedReplayTools() {
 
 async function shareHighlightClip(clip) {
   const url = buildHighlightShareUrl({
-    origin: window.location.origin,
+    origin: 'https://share.allplays.ai',
+    pathname: '/watch',
     teamId: state.teamId,
     gameId: state.gameId,
     startMs: clip.startMs,
@@ -2896,8 +2899,8 @@ async function init() {
     els.shareGameBtn.addEventListener('click', async () => {
       const isReport = state.isReplay || state.game?.status === 'completed' || state.game?.liveStatus === 'completed';
       const url = isReport
-        ? `${window.location.origin}/game.html#teamId=${state.teamId}&gameId=${state.gameId}`
-        : `${window.location.origin}/live-game.html?teamId=${state.teamId}&gameId=${state.gameId}`;
+        ? buildGameReportShareUrl({ teamId: state.teamId, gameId: state.gameId })
+        : buildGameWatchShareUrl({ teamId: state.teamId, gameId: state.gameId });
       const shareText = buildShareText(isReport ? 'report' : 'live', url);
       const result = await shareOrCopy({
         title: isReport ? 'Game report' : 'Watch game',
