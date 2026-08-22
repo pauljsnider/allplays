@@ -16,19 +16,35 @@ import {
     getTelemetryEventDaily,
     getTelemetrySessions
 } from './db.js?v=4433183';
-import { db, collection, getDocs, doc, setDoc, updateDoc, serverTimestamp, query } from './firebase.js?v=27';
+import {
+    db,
+    collection,
+    documentId,
+    getDocs,
+    doc,
+    limit,
+    orderBy,
+    query,
+    setDoc,
+    startAfter,
+    updateDoc,
+    serverTimestamp
+} from './firebase.js?v=27';
 import { renderHeader, renderFooter, escapeHtml } from './utils.js?v=443359';
 import { checkAuth } from './auth.js?v=4433187';
 import { DEFAULT_ADMIN_PAGE_SIZE, buildBoundedAdminDashboardScope, loadAdminCollectionPage, loadInitialAdminBootstrap } from './admin-bootstrap.js?v=2';
 import {
     adminRegistrationDefaults,
     buildAdminRegistrationFormPayload,
+    createAdminRegistrationFormsPageState,
     formatFieldLabels,
     formatRegistrationDiscountRulesText,
     parseRegistrationDiscountRulesText,
     getAdminRegistrationShareUrl,
+    loadAdminRegistrationFormsPage,
+    mergeAdminRegistrationFormsPage,
     validateAdminRegistrationFormPayload
-} from './admin-registration-forms.js?v=3';
+} from './admin-registration-forms.js?v=4';
 import { buildRecentGameResultsRows } from './admin-game-results.js?v=1';
 import {
     buildOfficialLookupCacheKey,
@@ -73,6 +89,9 @@ let activeOfficials = [];
 let activeRegistrationTeam = null;
 let activeRegistrationForms = [];
 let activeRegistrationOptions = [];
+let registrationFormsPageState = createAdminRegistrationFormsPageState();
+let registrationFormsLoading = false;
+let registrationFormsRequestVersion = 0;
 let activeTab = 'dashboard';
 
 const teamPageState = {
@@ -1404,6 +1423,7 @@ window.openRegistrationFormsAdmin = async function (teamId) {
     activeRegistrationTeam = getAdminTeamById(teamId);
     if (!activeRegistrationTeam) return;
 
+    resetRegistrationFormsPagination(activeRegistrationTeam.id);
     document.getElementById('registration-team-name').textContent = activeRegistrationTeam.name || 'Team';
     document.getElementById('registration-form-editor').classList.add('hidden');
     document.getElementById('registration-forms-modal').classList.remove('hidden');
@@ -1412,6 +1432,8 @@ window.openRegistrationFormsAdmin = async function (teamId) {
 
 window.closeRegistrationFormsAdmin = function () {
     document.getElementById('registration-forms-modal').classList.add('hidden');
+    activeRegistrationTeam = null;
+    resetRegistrationFormsPagination();
 };
 
 function hasAdvancedRegistrationSettings(form = {}) {
@@ -1555,25 +1577,66 @@ window.copyRegistrationLinkAdmin = async function (teamId, formId) {
     }
 };
 
-async function loadRegistrationFormsForActiveTeam() {
+function resetRegistrationFormsPagination(teamId = '') {
+    registrationFormsRequestVersion += 1;
+    registrationFormsLoading = false;
+    registrationFormsPageState = createAdminRegistrationFormsPageState(teamId);
+    activeRegistrationForms = [];
+    updateRegistrationFormsLoadMoreControl();
+}
+
+function updateRegistrationFormsLoadMoreControl() {
+    const button = document.getElementById('registration-forms-load-more');
+    if (!button) return;
+    button.classList.toggle('hidden', !registrationFormsPageState.hasMore);
+    button.disabled = registrationFormsLoading;
+    button.textContent = registrationFormsLoading ? 'Loading...' : 'Load more';
+}
+
+window.loadMoreRegistrationFormsAdmin = async function () {
+    await loadRegistrationFormsForActiveTeam({ append: true });
+};
+
+async function loadRegistrationFormsForActiveTeam({ append = false } = {}) {
     const team = activeRegistrationTeam;
     const teamId = team?.id;
     if (!teamId) return;
+    if (registrationFormsLoading) return;
+    if (append && !registrationFormsPageState.hasMore) return;
+
+    if (!append) resetRegistrationFormsPagination(teamId);
+    const requestVersion = registrationFormsRequestVersion;
 
     const list = document.getElementById('registration-forms-list');
-    list.innerHTML = '<p class="text-sm text-gray-500">Loading registration forms...</p>';
+    if (!append) {
+        list.innerHTML = '<p class="text-sm text-gray-500">Loading registration forms...</p>';
+    }
+    registrationFormsLoading = true;
+    updateRegistrationFormsLoadMoreControl();
     try {
-        const snapshot = await getDocs(collection(db, `teams/${teamId}/registrationForms`));
+        const page = await loadAdminRegistrationFormsPage({
+            teamId,
+            afterDoc: append ? registrationFormsPageState.lastDoc : null,
+            firestore: { db, collection, documentId, getDocs, limit, orderBy, query, startAfter }
+        });
         if (activeRegistrationTeam?.id !== teamId) return;
+        if (registrationFormsRequestVersion !== requestVersion) return;
 
-        activeRegistrationForms = snapshot.docs
-            .map(formDoc => ({ id: formDoc.id, ...formDoc.data() }))
-            .sort((a, b) => String(a.programName || a.title || '').localeCompare(String(b.programName || b.title || '')));
+        registrationFormsPageState = mergeAdminRegistrationFormsPage(registrationFormsPageState, {
+            teamId,
+            ...page
+        });
+        activeRegistrationForms = registrationFormsPageState.forms;
         renderRegistrationFormsList();
     } catch (error) {
         console.error('Error loading registration forms:', error);
-        if (activeRegistrationTeam?.id === teamId) {
+        if (activeRegistrationTeam?.id === teamId && registrationFormsRequestVersion === requestVersion && !append) {
             list.innerHTML = '<p class="text-sm text-red-600">Failed to load registration forms. Please try again.</p>';
+        }
+    } finally {
+        if (activeRegistrationTeam?.id === teamId && registrationFormsRequestVersion === requestVersion) {
+            registrationFormsLoading = false;
+            updateRegistrationFormsLoadMoreControl();
         }
     }
 }
@@ -1582,6 +1645,7 @@ function renderRegistrationFormsList() {
     const list = document.getElementById('registration-forms-list');
     if (!activeRegistrationForms.length) {
         list.innerHTML = '<p class="text-sm text-gray-500">No registration forms yet.</p>';
+        updateRegistrationFormsLoadMoreControl();
         return;
     }
 
@@ -1606,6 +1670,7 @@ function renderRegistrationFormsList() {
             </div>
         `;
     }).join('');
+    updateRegistrationFormsLoadMoreControl();
 }
 
 function getRegistrationAdminStatus(form = {}) {
@@ -1685,6 +1750,7 @@ async function saveRegistrationForm(event) {
         ? 'Registration form saved and closed.'
         : payload.published ? 'Registration form saved and published.' : 'Registration form saved as draft.';
     if (activeRegistrationTeam?.id === teamId) {
+        resetRegistrationFormsPagination(teamId);
         await loadRegistrationFormsForActiveTeam();
         document.getElementById('registration-form-editor').classList.add('hidden');
     }

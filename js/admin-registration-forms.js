@@ -5,6 +5,63 @@ const DEFAULT_PAYMENT_SETTINGS = {
     onlineCheckoutEnabled: false
 };
 const ADMIN_REGISTRATION_FORM_STATUSES = ['draft', 'published', 'closed'];
+export const ADMIN_REGISTRATION_FORMS_PAGE_SIZE = 25;
+
+export function createAdminRegistrationFormsPageState(teamId = '') {
+    return {
+        teamId: String(teamId || ''),
+        forms: [],
+        lastDoc: null,
+        hasMore: false
+    };
+}
+
+export function mergeAdminRegistrationFormsPage(state, page = {}) {
+    const teamId = String(page.teamId || '');
+    if (!state || state.teamId !== teamId) return state;
+
+    const seenIds = new Set(state.forms.map((form) => form.id));
+    const appendedForms = [];
+    for (const form of Array.isArray(page.forms) ? page.forms : []) {
+        if (!form?.id || seenIds.has(form.id)) continue;
+        seenIds.add(form.id);
+        appendedForms.push(form);
+    }
+
+    return {
+        ...state,
+        forms: [...state.forms, ...appendedForms],
+        lastDoc: page.lastDoc || null,
+        hasMore: page.hasMore === true
+    };
+}
+
+export async function loadAdminRegistrationFormsPage({ teamId, afterDoc = null, firestore }) {
+    const normalizedTeamId = String(teamId || '').trim();
+    if (!normalizedTeamId) {
+        throw new Error('Team is required.');
+    }
+
+    const formsRef = firestore.collection(firestore.db, `teams/${normalizedTeamId}/registrationForms`);
+    const constraints = [firestore.orderBy(firestore.documentId())];
+    if (afterDoc) constraints.push(firestore.startAfter(afterDoc));
+    constraints.push(firestore.limit(ADMIN_REGISTRATION_FORMS_PAGE_SIZE + 1));
+    const snapshot = await firestore.getDocs(firestore.query(formsRef, ...constraints));
+    const pageDocs = Array.isArray(snapshot?.docs) ? snapshot.docs : [];
+    const visibleDocs = pageDocs.slice(0, ADMIN_REGISTRATION_FORMS_PAGE_SIZE);
+
+    return {
+        forms: visibleDocs
+            .map((formDoc) => ({ id: formDoc.id, ...formDoc.data() }))
+            .sort((left, right) => String(left.programName || left.title || '').localeCompare(
+                String(right.programName || right.title || ''),
+                undefined,
+                { sensitivity: 'base' }
+            )),
+        lastDoc: visibleDocs[visibleDocs.length - 1] || null,
+        hasMore: pageDocs.length > ADMIN_REGISTRATION_FORMS_PAGE_SIZE
+    };
+}
 
 export function fieldLabelsToDefinitions(labels = [], prefix = 'field') {
     return labels
