@@ -338,8 +338,10 @@ async function mockMessagesModules(page, options = {}) {
                 }
 
                 export async function loadChatConversations() {
-                    if (${options.conversationDelayMs || 0} > 0) {
-                        await new Promise((resolve) => setTimeout(resolve, ${options.conversationDelayMs || 0}));
+                    if (${Boolean(options.deferConversations)}) {
+                        await new Promise((resolve) => {
+                            window.__releaseChatConversations = resolve;
+                        });
                     }
                     return [
                         { id: 'team', type: 'team', name: 'Bears Team Chat', participantIds: [], participantRoles: ['team'] },
@@ -671,7 +673,7 @@ test('@visual messages inbox and team chat exercise real migrated chat UX', asyn
 });
 
 test('messages team thread renders before deferred conversation hydration finishes', async ({ page, baseURL }) => {
-    await mockMessagesModules(page, { conversationDelayMs: 1500 });
+    await mockMessagesModules(page, { deferConversations: true });
     await page.goto(appUrl(baseURL, '/messages/team-1'), { waitUntil: 'domcontentloaded' });
 
     await waitForMessagesRoute(page, page.getByPlaceholder('Message Bears'));
@@ -682,7 +684,9 @@ test('messages team thread renders before deferred conversation hydration finish
 
     await page.getByRole('button', { name: 'Team chat' }).click();
     await expect(page.getByRole('dialog', { name: 'Conversations' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Staff only Group conversation' })).toBeVisible({ timeout: 5000 });
+    await expect.poll(() => page.evaluate(() => typeof window.__releaseChatConversations)).toBe('function');
+    await page.evaluate(() => window.__releaseChatConversations());
+    await waitForMessagesRoute(page, page.getByRole('button', { name: 'Staff only Group conversation' }));
     await expect(page.getByText('Latest ride update.')).toBeVisible();
 });
 
