@@ -1306,6 +1306,28 @@ describe('team detail bootstrap loading', () => {
     expect(dbMocks.getAggregatedStatsForGames).toHaveBeenCalledWith('team-1', ['old-game']);
   });
 
+  it('marks only the season whose roster aggregation fails as unavailable', async () => {
+    __resetTeamDetailBaseSnapshotCacheForTests();
+    seasonRecordMocks.listSeasonLabels.mockReturnValue(['2026', '2025']);
+    dbMocks.getTeam.mockResolvedValue({ id: 'team-1', sport: 'Basketball' });
+    dbMocks.getPlayers.mockResolvedValue([{ id: 'player-1', name: 'Pat Star', number: '9', active: true }]);
+    dbMocks.getGames.mockResolvedValue([
+      { id: 'current-game', status: 'completed', seasonLabel: '2026', date: '2026-03-01', homeScore: 1, awayScore: 0 },
+      { id: 'old-game', status: 'completed', seasonLabel: '2025', date: '2025-03-01', homeScore: 1, awayScore: 0 }
+    ]);
+    dbMocks.getConfigs.mockResolvedValue([{ id: 'config-1', columns: ['PTS'], statDefinitions: [{ id: 'pts', label: 'PTS', scope: 'player', visibility: 'public' }] }]);
+    dbMocks.getAggregatedStatsForGames.mockImplementation(async (_teamId: string, gameIds: string[]) => {
+      if (gameIds.includes('old-game')) throw new Error('aggregation unavailable');
+      return { 'player-1': { pts: 12 } };
+    });
+
+    const insights = await loadTeamDetailInsights('team-1', { uid: 'parent-1' } as any);
+
+    expect(insights.rosterStatistics.unavailableSeasons).toEqual(['2025']);
+    expect(insights.rosterStatistics.seasons[0].rows[0].values.pts.value).toBe(12);
+    expect(insights.rosterStatistics.seasons[1].rows).toEqual([]);
+  });
+
   it('never hydrates or returns private roster contacts for a non-manager', async () => {
     dbMocks.getPlayers.mockResolvedValue([{
       id: 'player-1',

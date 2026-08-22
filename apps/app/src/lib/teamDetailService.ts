@@ -440,6 +440,7 @@ export type TeamDetailModel = {
   rosterStatistics?: {
     seasonLabel: string;
     availableSeasons: string[];
+    unavailableSeasons: string[];
     seasons: TeamDetailRosterStatisticsTable[];
   };
   sponsors: TeamDetailSponsor[];
@@ -493,6 +494,7 @@ export type TeamDetailInsightsPayload = {
   rosterStatistics: {
     seasonLabel: string;
     availableSeasons: string[];
+    unavailableSeasons: string[];
     seasons: TeamDetailRosterStatisticsTable[];
   };
 };
@@ -2127,20 +2129,34 @@ export function loadTeamDetailInsights(teamId: string, user: AuthUser | null): P
       completedGamesBySeason.set(label, ids);
     });
 
-    const seasonStatsEntries = await Promise.all(Array.from(completedGamesBySeason.entries()).map(async ([label, gameIds]) => [
-      label,
-      gameIds.length ? await Promise.resolve(getAggregatedStatsForGames(normalizedTeamId, gameIds)).catch(() => ({})) : {}
-    ] as const));
-    const seasonStatsBySeason = Object.fromEntries(seasonStatsEntries);
+    const seasonStatsResults = await Promise.all(Array.from(completedGamesBySeason.entries()).map(async ([label, gameIds]) => {
+      try {
+        return { label, stats: gameIds.length ? await Promise.resolve(getAggregatedStatsForGames(normalizedTeamId, gameIds)) : {}, unavailable: false };
+      } catch (error) {
+        logger.warn('Unable to load roster statistics for season.', {
+          operation: 'team-roster-season-statistics-load',
+          teamId: normalizedTeamId,
+          seasonLabel: label,
+          error
+        });
+        return { label, stats: {}, unavailable: true };
+      }
+    }));
+    const seasonStatsBySeason = Object.fromEntries(seasonStatsResults.map(({ label, stats }) => [label, stats]));
+    const unavailableSeasons = seasonStatsResults.filter(({ unavailable }) => unavailable).map(({ label }) => label);
+    const unavailableSeasonSet = new Set(unavailableSeasons);
     const seasonStatsByPlayerId = seasonStatsBySeason[seasonLabel] || {};
     const rosterConfig = selectAnalyticsConfig(configs, team?.sport) || (Array.isArray(configs) ? configs[0] : null);
     const rosterStatistics = {
       seasonLabel,
       availableSeasons: seasonLabels,
-      seasons: seasonLabels.map((label: string) => ({
-        seasonLabel: label,
-        ...buildRosterStatisticsTable({ config: rosterConfig || {}, players: normalizedPlayers, seasonStatsByPlayerId: seasonStatsBySeason[label] || {} })
-      }))
+      unavailableSeasons,
+      seasons: seasonLabels.map((label: string) => unavailableSeasonSet.has(label)
+        ? { seasonLabel: label, columns: [], rows: [] }
+        : {
+          seasonLabel: label,
+          ...buildRosterStatisticsTable({ config: rosterConfig || {}, players: normalizedPlayers, seasonStatsByPlayerId: seasonStatsBySeason[label] || {} })
+        })
     };
 
     const [trackingItems, trackingStatuses] = await Promise.all([

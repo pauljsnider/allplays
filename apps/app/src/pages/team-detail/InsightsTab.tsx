@@ -316,16 +316,18 @@ function TeamPerformanceCard({ model, loading, error, selectedSeason, availableS
 function RosterStatisticsCard({ model, loading, error, selectedSeason }: { model: TeamDetailModel; loading: boolean; error: string; selectedSeason: string }) {
   const root = model.rosterStatistics;
   const table: TeamDetailRosterStatisticsTable | undefined = root?.seasons?.find((season) => season.seasonLabel === selectedSeason) || root?.seasons?.[0];
+  const seasonUnavailable = root?.unavailableSeasons?.includes(selectedSeason) === true;
   return <section className="app-card p-4" aria-labelledby="roster-statistics-heading">
     <div id="roster-statistics-heading" className="text-sm font-black text-gray-950">Roster statistics</div>
     <div className="mt-0.5 text-xs font-semibold text-gray-500">Season totals from completed tracked games.</div>
     <div className="mt-3">
       {loading ? <InlineDeferredLoading copy="Loading roster statistics…" /> : null}
       {!loading && error ? <InlineDeferredError title="Roster statistics unavailable" message={error} /> : null}
-      {!loading && !error && table?.columns.length ? <div className="overflow-x-auto rounded-xl border border-gray-200">
+      {!loading && !error && seasonUnavailable ? <InlineDeferredError title="Roster statistics unavailable" message={`Statistics for the ${selectedSeason} season could not be loaded.`} /> : null}
+      {!loading && !error && !seasonUnavailable && table?.columns.length ? <div className="overflow-x-auto rounded-xl border border-gray-200">
         <table className="min-w-max w-full text-left text-xs"><thead className="bg-gray-50 text-[10px] font-black uppercase tracking-wide text-gray-500"><tr><th className="sticky left-0 bg-gray-50 px-3 py-2">Player</th>{table.columns.map((column) => <th key={column.id} className="whitespace-nowrap px-3 py-2">{column.label}</th>)}</tr></thead><tbody>{table.rows.map((row) => <tr key={row.playerId} className="border-t border-gray-100"><th className="sticky left-0 bg-white px-3 py-2 font-black text-gray-900">{row.playerNumber ? `#${row.playerNumber} ` : ''}{row.playerName}</th>{table.columns.map((column) => <td key={column.id} className="px-3 py-2 font-bold text-gray-700">{row.values[column.id]?.formattedValue || '0'}</td>)}</tr>)}</tbody></table>
       </div> : null}
-      {!loading && !error && !table?.columns.length ? <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">Roster statistics appear after public player stats are configured.</div> : null}
+      {!loading && !error && !seasonUnavailable && !table?.columns.length ? <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">Roster statistics appear after public player stats are configured.</div> : null}
     </div>
   </section>;
 }
