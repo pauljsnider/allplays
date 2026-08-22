@@ -3,7 +3,8 @@ import { Loader2, MapPin, ShieldCheck, Users } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
 import { Status } from '../components/TeamSummaryPrimitives';
 import { formatShortDate } from '../lib/datetime';
-import { getPublicTeamDetail, getPublicTeamRecentResults, type PublicTeamProfile, type PublicTeamRecentResult } from '../lib/publicTeamsService';
+import { getPublicTeamDetail, getPublicTeamRecentResults, getPublicTeamStandingsInputs, type PublicTeamProfile, type PublicTeamRecentResult } from '../lib/publicTeamsService';
+import { computeNativeStandings } from '../lib/adapters/legacyTeamDetail';
 import type { AuthState } from '../lib/types';
 
 export function PublicTeamDetail({ authUser }: { authUser: AuthState['user'] }) {
@@ -11,6 +12,8 @@ export function PublicTeamDetail({ authUser }: { authUser: AuthState['user'] }) 
   const [team, setTeam] = useState<PublicTeamProfile | null>(null);
   const [recentResults, setRecentResults] = useState<PublicTeamRecentResult[] | null>(null);
   const [recentResultsError, setRecentResultsError] = useState(false);
+  const [standings, setStandings] = useState<PublicStandingsViewModel | null>(null);
+  const [standingsError, setStandingsError] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [loadAttempt, setLoadAttempt] = useState(0);
@@ -21,6 +24,8 @@ export function PublicTeamDetail({ authUser }: { authUser: AuthState['user'] }) 
     setTeam(null);
     setRecentResults(null);
     setRecentResultsError(false);
+    setStandings(null);
+    setStandingsError(false);
     setError('');
     void (async () => {
       try {
@@ -28,6 +33,12 @@ export function PublicTeamDetail({ authUser }: { authUser: AuthState['user'] }) 
         if (!active) return;
         setTeam(item);
         setLoading(false);
+        try {
+          const inputs = await getPublicTeamStandingsInputs(teamId);
+          if (active) setStandings(buildPublicStandingsViewModel(item, inputs));
+        } catch {
+          if (active) setStandingsError(true);
+        }
         try {
           const results = await getPublicTeamRecentResults(teamId);
           if (active) setRecentResults(results);
@@ -128,6 +139,48 @@ export function PublicTeamDetail({ authUser }: { authUser: AuthState['user'] }) 
           </ul>
         )}
       </section>
+      <PublicStandingsSection team={team} standings={standings} error={standingsError} />
     </div>
+  );
+}
+
+type PublicStandingsRow = Record<string, any>;
+type PublicStandingsViewModel = {
+  rows: PublicStandingsRow[];
+  currentRow: PublicStandingsRow | null;
+  contextLabel: string;
+};
+
+function buildPublicStandingsViewModel(team: PublicTeamProfile, inputs: Parameters<typeof computeNativeStandings>[0]): PublicStandingsViewModel {
+  const config = team.standingsConfig;
+  const rows = config?.enabled ? computeNativeStandings(inputs, config) : [];
+  return {
+    rows,
+    currentRow: rows.find((row: PublicStandingsRow) => row.team === team.name) || null,
+    contextLabel: config?.rankingMode === 'win_pct' ? 'PCT' : 'PTS'
+  };
+}
+
+function PublicStandingsSection({ team, standings, error }: { team: PublicTeamProfile; standings: PublicStandingsViewModel | null; error: boolean }) {
+  const hasRows = Boolean(standings?.rows.length);
+  if (error) {
+    return <section className="app-card p-5 sm:p-6" aria-labelledby="standings-heading"><h2 id="standings-heading" className="text-lg font-black text-gray-950">Standings</h2><p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-900">Standings are temporarily unavailable.</p></section>;
+  }
+  return (
+    <section className="app-card p-5 sm:p-6" aria-labelledby="standings-heading">
+      <div className="flex items-start justify-between gap-3">
+        <div><h2 id="standings-heading" className="text-lg font-black text-gray-950">Standings</h2><p className="mt-1 text-sm font-semibold text-gray-600">{hasRows ? 'Current league standings with this team highlighted.' : 'Standings are unavailable for this team.'}</p></div>
+        {!hasRows && team.leagueUrl ? <a href={team.leagueUrl} className="secondary-button !min-h-9 shrink-0 text-xs" target="_blank" rel="noreferrer">League page</a> : null}
+      </div>
+      {standings === null ? <div className="mt-3 flex items-center gap-2 text-sm font-semibold text-gray-600" role="status"><Loader2 className="h-4 w-4 animate-spin text-primary-600" aria-hidden="true" />Loading standings</div> : hasRows ? (
+        <div className="mt-3 overflow-hidden rounded-xl border border-gray-200">
+          <table className="w-full table-fixed divide-y divide-gray-200 text-left" data-testid="public-standings-table">
+            <colgroup><col className="w-[15%]" /><col className="w-[43%]" /><col className="w-[24%]" /><col className="w-[18%]" /></colgroup>
+            <thead className="bg-gray-50"><tr className="text-[10px] font-black uppercase tracking-wide text-gray-500"><th className="px-2 py-2 sm:px-3">Rank</th><th className="px-2 py-2 sm:px-3">Team</th><th className="px-2 py-2 sm:px-3">Record</th><th className="px-2 py-2 sm:px-3">{standings.contextLabel}</th></tr></thead>
+            <tbody className="divide-y divide-gray-100 bg-white">{standings.rows.map((row) => { const highlighted = row === standings.currentRow; return <tr key={`${row.team}-${row.rank}`} className={highlighted ? 'bg-primary-50/70' : 'bg-white'} aria-current={highlighted ? 'true' : undefined}><td className="whitespace-nowrap px-2 py-2 text-xs font-semibold text-gray-700 sm:px-3">{typeof row.rank === 'number' ? `#${row.rank}` : '—'}</td><td className={`break-words px-2 py-2 text-xs sm:px-3 ${highlighted ? 'font-black text-primary-800' : 'font-semibold text-gray-900'}`}>{row.team || '—'}</td><td className="whitespace-nowrap px-2 py-2 text-xs font-semibold text-gray-700 sm:px-3">{row.record || '—'}</td><td className="whitespace-nowrap px-2 py-2 text-xs font-semibold text-gray-700 sm:px-3">{standings.contextLabel === 'PCT' ? (typeof row.winPct === 'number' ? row.winPct.toFixed(3) : '—') : (row.points ?? '—')}</td></tr>; })}</tbody>
+          </table>
+        </div>
+      ) : <div className="mt-3 rounded-xl border border-dashed border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-600">No standings rows are available yet.</div>}
+    </section>
   );
 }
