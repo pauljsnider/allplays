@@ -93,7 +93,7 @@ describe('post-game stat editor helpers', () => {
             { fieldName: 'coacheffort', label: 'Coach Effort' },
             { fieldName: 'fouls', label: 'FOULS' }
         ]));
-        expect(gameHtml).toContain("import { resolveLiveStatConfig } from './js/live-game-state.js?v=32';");
+        expect(gameHtml).toContain("import { resolveLiveStatConfig } from './js/live-game-state.js?v=33';");
     });
 
     it('builds an absolute stat payload and zeroes the row when a player did not play', () => {
@@ -255,7 +255,7 @@ describe('post-game stat editor helpers', () => {
         expect(pageSource).toContain('id="stats-save-next-btn"');
         expect(pageSource).toContain('resolvePostGameEditorDidNotPlay');
         expect(pageSource).toContain('setCompletedGamePlayerStats');
-        expect(pageSource).toContain("from './js/db.js?v=4433181'");
+        expect(pageSource).toContain("from './js/db.js?v=4433182'");
         expect(dbSource).toContain('participated: !didNotPlay');
         expect(dbSource).toContain("participationStatus: didNotPlay ? 'did-not-appear' : (statsPayload.participationStatus || 'appeared')");
         expect(dbSource).toContain('await deleteDoc(privateDocRef);');
