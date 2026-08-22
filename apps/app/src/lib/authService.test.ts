@@ -785,7 +785,7 @@ describe('hydrateFirebaseUser', () => {
     }));
   });
 
-  it('publishes and persists an approved-membership repair that settles after the access timeout', async () => {
+  it('publishes an approved-membership repair without waiting for stalled persistence', async () => {
     vi.useFakeTimers();
     let resolveMembershipRequests: ((value: unknown[]) => void) | undefined;
     const onAccessEnriched = vi.fn();
@@ -797,6 +797,7 @@ describe('hydrateFirebaseUser', () => {
       changed: true,
       userUpdate: { roles: ['member', 'parent'], parentOf: [{ teamId: 'team-late', playerId: 'player-late' }] }
     });
+    legacyAuthMocks.updateUserProfile.mockImplementation(() => new Promise(() => {}));
 
     const hydrationPromise = hydrateFirebaseUser(
       { uid: 'parent-1', email: 'parent@example.com' },

@@ -33,7 +33,7 @@ describe('dashboard chat unread wiring', () => {
         expect(html).not.toContain('const unreadCounts = teamIds.length > 0 ? await getUnreadChatCounts');
         expect(html).not.toContain('await getUnreadChatCounts(user.uid, teamIds) : {}');
         expect(html).toContain("window.addEventListener('allplays-dashboard-parent-access-enriched'");
-        expect(html).toContain("window.dispatchEvent(new CustomEvent('allplays-dashboard-parent-access-enriched'));");
+        expect(html).toContain("window.dispatchEvent(new window.CustomEvent('allplays-dashboard-parent-access-enriched'));");
     });
 
     it('keeps Firebase Auth email authoritative for dashboard team access', () => {

@@ -1147,8 +1147,7 @@ export async function hydrateFirebaseUser(
   await accessEnrichmentDeadline;
 
   const syncApprovedMemberships = async (
-    result: PromiseSettledResult<unknown[]>,
-    awaitPersistence = false
+    result: PromiseSettledResult<unknown[]>
   ): Promise<boolean> => {
     try {
       if (result.status === 'rejected') throw result.reason;
@@ -1159,8 +1158,7 @@ export async function hydrateFirebaseUser(
       const persistence = dbModulePromise
         .then((dbModule) => dbModule.updateUserProfile(user.uid, parentRequestSync.userUpdate))
         .catch((error) => logger.warn('Failed to persist approved parent membership sync.', { error }));
-      if (awaitPersistence) await persistence;
-      else void persistence;
+      void persistence;
       return true;
     } catch (error) {
       logger.warn('Failed to sync approved parent membership requests.', { error });
@@ -1220,7 +1218,7 @@ export async function hydrateFirebaseUser(
 
   if (!membershipRequestsResult) {
     void membershipRequestsTask.then(async (result) => {
-      if (await syncApprovedMemberships(result, true)) publishAccessEnrichment();
+      if (await syncApprovedMemberships(result)) publishAccessEnrichment();
     });
   }
   if (!ownedTeamsResult) {

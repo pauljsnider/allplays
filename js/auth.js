@@ -526,10 +526,9 @@ export function checkAuth(callback, options = {}) {
                 if (approvedRequestsRead.state.result) {
                     syncApprovedRequests(approvedRequestsRead.state.result);
                 } else {
-                    void approvedRequestsRead.task.then(async (result) => {
+                    void approvedRequestsRead.task.then((result) => {
                         const syncResult = syncApprovedRequests(result);
                         if (syncResult?.changed) {
-                            await syncResult.persistence;
                             publishLateAccess();
                         }
                     });

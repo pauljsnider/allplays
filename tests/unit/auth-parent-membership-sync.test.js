@@ -352,7 +352,7 @@ describe('auth parent membership sync', () => {
         expect(callback).toHaveBeenCalledWith(expect.objectContaining({ coachOf: ['team-stored'] }));
     });
 
-    it('publishes a membership repair that succeeds after the access deadline', async () => {
+    it('publishes a membership repair without waiting for stalled persistence', async () => {
         vi.useFakeTimers();
         let resolveMembershipRequests;
         const user = { uid: 'parent-1', email: 'parent@example.com' };
@@ -362,7 +362,7 @@ describe('auth parent membership sync', () => {
             resolveMembershipRequests = resolve;
         }));
         dbMocks.getUserTeams.mockResolvedValue([]);
-        dbMocks.updateUserProfile.mockResolvedValue(undefined);
+        dbMocks.updateUserProfile.mockImplementation(() => new Promise(() => {}));
         firebaseMocks.onAuthStateChanged.mockImplementation((_auth, handler) => {
             void handler(user);
             return vi.fn();

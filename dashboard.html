@@ -94,7 +94,7 @@
     <script type="module">
         import { getTeams, getUserTeamsWithAccess, getParentTeams, deleteTeam, getUnreadChatCounts } from './js/db.js?v=4433181';
         import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=443356';
-        import { checkAuth } from './js/auth.js?v=4433184';
+        import { checkAuth } from './js/auth.js?v=4433185';
         import { startBoundedRetry } from './js/bounded-retry.js?v=2';
 
         renderFooter(document.getElementById('footer-container'));
@@ -123,26 +123,34 @@
                         const stop = unsubscribe;
                         unsubscribe = null;
                         cleanupRequestedBeforeSubscribeReturned = false;
+                        window.removeEventListener('pagehide', cleanup);
                         stop();
                     } else {
                         cleanupRequestedBeforeSubscribeReturned = true;
                     }
                 }
 
+                window.addEventListener('pagehide', cleanup, { once: true });
                 unsubscribe = checkAuth((user) => {
                     const nextParentAccessFingerprint = parentAccessFingerprint(user);
                     if (settled) {
+                        if (!user) {
+                            cleanup();
+                            window.location.href = '/app/#/auth';
+                            return;
+                        }
                         if (nextParentAccessFingerprint !== initialParentAccessFingerprint) {
-                            window.dispatchEvent(new CustomEvent('allplays-dashboard-parent-access-enriched'));
+                            cleanup();
+                            window.dispatchEvent(new window.CustomEvent('allplays-dashboard-parent-access-enriched'));
                         }
                         return;
                     }
                     settled = true;
                     initialParentAccessFingerprint = nextParentAccessFingerprint;
-                    cleanup();
                     if (user) {
                         resolve(user);
                     } else {
+                        cleanup();
                         window.location.href = '/app/#/auth';
                         reject('Not authenticated');
                     }
