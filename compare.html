@@ -252,7 +252,7 @@
     // then upgrade to the auth-aware version on the deployed site. Firebase is disabled on localhost.
     import { renderHeader } from './js/utils.js?v=443355';
     renderHeader(document.getElementById('header-container'), null);
-    import('./js/auth.js?v=4433182')
+    import('./js/auth.js?v=4433183')
       .then(({ checkAuth }) => checkAuth((user) => renderHeader(document.getElementById('header-container'), user)))
       .catch(() => { /* Firebase unavailable locally; header already rendered */ });
   </script>

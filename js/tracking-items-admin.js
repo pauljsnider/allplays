@@ -205,7 +205,7 @@ async function initTrackingItemsAdminPage() {
 
     const [dbModule, authModule, firebaseModule] = await Promise.all([
         import('./db.js?v=4433180'),
-        import('./auth.js?v=4433182'),
+        import('./auth.js?v=4433183'),
         import('./firebase.js?v=26')
     ]);
     const { getTeam, getUserProfile, canModerateChat } = dbModule;

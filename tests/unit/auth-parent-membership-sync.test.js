@@ -330,4 +330,52 @@ describe('auth parent membership sync', () => {
 
         expect(callback).toHaveBeenCalledWith(expect.objectContaining({ coachOf: ['team-owned'] }));
     });
+
+    it('applies and persists a membership repair that settles after the access timeout', async () => {
+        vi.useFakeTimers();
+        let resolveMembershipRequests;
+        const user = { uid: 'parent-late', email: 'parent@example.com' };
+        const callback = vi.fn();
+        dbMocks.getUserProfile.mockResolvedValue({ email: 'parent@example.com', roles: ['member'] });
+        dbMocks.listMyParentMembershipRequests.mockImplementation(() => new Promise((resolve) => {
+            resolveMembershipRequests = resolve;
+        }));
+        dbMocks.getUserTeams.mockResolvedValue([]);
+        dbMocks.updateUserProfile.mockResolvedValue(undefined);
+        firebaseMocks.onAuthStateChanged.mockImplementation(async (_auth, handler) => handler(user));
+
+        const authCheck = checkAuth(callback);
+        await vi.advanceTimersByTimeAsync(1500);
+        await authCheck;
+        resolveMembershipRequests([{
+            status: 'approved', requesterUserId: 'parent-late', teamId: 'team-late', playerId: 'player-late'
+        }]);
+
+        await vi.waitFor(() => expect(user.parentOf).toEqual([
+            expect.objectContaining({ teamId: 'team-late', playerId: 'player-late' })
+        ]));
+        expect(dbMocks.updateUserProfile).toHaveBeenCalledWith('parent-late', expect.objectContaining({
+            parentOf: [expect.objectContaining({ teamId: 'team-late', playerId: 'player-late' })]
+        }));
+    });
+
+    it('applies owned-team discovery that settles after the access timeout', async () => {
+        vi.useFakeTimers();
+        let resolveOwnedTeams;
+        const user = { uid: 'coach-late', email: 'coach@example.com' };
+        const callback = vi.fn();
+        dbMocks.getUserProfile.mockResolvedValue({ email: 'coach@example.com' });
+        dbMocks.listMyParentMembershipRequests.mockResolvedValue([]);
+        dbMocks.getUserTeams.mockImplementation(() => new Promise((resolve) => {
+            resolveOwnedTeams = resolve;
+        }));
+        firebaseMocks.onAuthStateChanged.mockImplementation(async (_auth, handler) => handler(user));
+
+        const authCheck = checkAuth(callback);
+        await vi.advanceTimersByTimeAsync(1500);
+        await authCheck;
+        resolveOwnedTeams([{ id: 'team-late' }]);
+
+        await vi.waitFor(() => expect(user.coachOf).toEqual(['team-late']));
+    });
 });

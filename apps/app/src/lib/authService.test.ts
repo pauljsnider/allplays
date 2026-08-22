@@ -785,6 +785,48 @@ describe('hydrateFirebaseUser', () => {
     }));
   });
 
+  it('applies and persists an approved-membership repair that settles after the access timeout', async () => {
+    vi.useFakeTimers();
+    let resolveMembershipRequests: ((value: unknown[]) => void) | undefined;
+    legacyAuthMocks.listMyParentMembershipRequests.mockImplementation(() => new Promise((resolve) => {
+      resolveMembershipRequests = resolve;
+    }));
+    parentMembershipMocks.mergeApprovedParentMembershipRequests.mockReturnValue({
+      changed: true,
+      userUpdate: { roles: ['member', 'parent'], parentOf: [{ teamId: 'team-late', playerId: 'player-late' }] }
+    });
+
+    const hydrationPromise = hydrateFirebaseUser({ uid: 'parent-1', email: 'parent@example.com' });
+    await vi.advanceTimersByTimeAsync(1500);
+    const hydrated = await hydrationPromise;
+    resolveMembershipRequests?.([{ status: 'approved', teamId: 'team-late' }]);
+
+    await vi.waitFor(() => expect(hydrated.user.parentOf).toEqual([
+      { teamId: 'team-late', playerId: 'player-late' }
+    ]));
+    expect(hydrated.profile.parentOf).toEqual([{ teamId: 'team-late', playerId: 'player-late' }]);
+    expect(legacyAuthMocks.updateUserProfile).toHaveBeenCalledWith('parent-1', expect.objectContaining({
+      parentOf: [{ teamId: 'team-late', playerId: 'player-late' }]
+    }));
+  });
+
+  it('applies owned-team discovery that settles after the access timeout', async () => {
+    vi.useFakeTimers();
+    let resolveOwnedTeams: ((value: Array<{ id: string }>) => void) | undefined;
+    legacyAuthMocks.getUserProfile.mockResolvedValue({ email: 'coach@example.com' });
+    legacyAuthMocks.getUserTeams.mockImplementation(() => new Promise((resolve) => {
+      resolveOwnedTeams = resolve;
+    }));
+
+    const hydrationPromise = hydrateFirebaseUser({ uid: 'coach-1', email: 'coach@example.com' });
+    await vi.advanceTimersByTimeAsync(1500);
+    const hydrated = await hydrationPromise;
+    resolveOwnedTeams?.([{ id: 'team-late' }]);
+
+    await vi.waitFor(() => expect(hydrated.user.coachOf).toEqual(['team-late']));
+    expect(hydrated.profile.coachOf).toEqual(['team-late']);
+  });
+
   it('starts independent account bootstrap reads before any one read resolves', async () => {
     let resolveProfile: ((value: Record<string, unknown>) => void) | undefined;
     let resolveMembershipRequests: ((value: unknown[]) => void) | undefined;

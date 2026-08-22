@@ -489,6 +489,8 @@ export function checkAuth(callback, options = {}) {
                 await waitForAccessEnrichment([approvedRequestsRead.task, ownedTeamsRead.task]);
                 if (approvedRequestsRead.state.result) {
                     syncApprovedRequests(approvedRequestsRead.state.result, true);
+                } else {
+                    void approvedRequestsRead.task.then((result) => syncApprovedRequests(result, true));
                 }
 
                 if (profile) {
@@ -527,16 +529,24 @@ export function checkAuth(callback, options = {}) {
                             .catch((err) => console.warn('[auth] Failed to auto-migrate parent parent scope fields:', err));
                     }
 
-                    const coachOf = Array.isArray(profile.coachOf) ? [...profile.coachOf] : [];
-                    const ownedTeamsResult = ownedTeamsRead.state.result;
-                    if (ownedTeamsResult?.status === 'fulfilled') {
-                        ownedTeamsResult.value?.forEach((team) => {
-                            if (team?.id && !coachOf.includes(team.id)) coachOf.push(team.id);
-                        });
-                    } else if (ownedTeamsResult?.status === 'rejected') {
-                        console.warn('Error fetching owned teams in auth check:', ownedTeamsResult.reason);
+                    const mergeOwnedTeams = (result) => {
+                        if (result.status === 'fulfilled') {
+                            const coachOf = Array.isArray(user.coachOf)
+                                ? [...user.coachOf]
+                                : Array.isArray(profile.coachOf) ? [...profile.coachOf] : [];
+                            result.value?.forEach((team) => {
+                                if (team?.id && !coachOf.includes(team.id)) coachOf.push(team.id);
+                            });
+                            if (coachOf.length > 0) user.coachOf = coachOf;
+                        } else {
+                            console.warn('Error fetching owned teams in auth check:', result.reason);
+                        }
+                    };
+                    if (ownedTeamsRead.state.result) {
+                        mergeOwnedTeams(ownedTeamsRead.state.result);
+                    } else {
+                        void ownedTeamsRead.task.then(mergeOwnedTeams);
                     }
-                    if (coachOf.length > 0) user.coachOf = coachOf;
 
                     if (profile.roles) user.roles = profile.roles;
                 }

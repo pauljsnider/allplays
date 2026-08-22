@@ -90,7 +90,8 @@
     <script type="module">
         import { getTeams, getUserTeamsWithAccess, getParentTeams, deleteTeam, getUnreadChatCounts } from './js/db.js?v=4433180';
         import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=443355';
-        import { checkAuth } from './js/auth.js?v=4433182';
+        import { checkAuth } from './js/auth.js?v=4433183';
+        import { startBoundedRetry } from './js/bounded-retry.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -478,25 +479,25 @@
                 // Team access is the critical result. Render it immediately,
                 // then enrich chat badges in the background with a hard bound.
                 renderTeamLists();
-                function loadUnreadChatBadges(pendingTeamIds) {
-                    void getUnreadChatCounts(user.uid, pendingTeamIds, {
+                const cancelUnreadChatRetries = teamIds.length > 0 ? startBoundedRetry({
+                    initialValue: teamIds,
+                    maxAttempts: 3,
+                    run: (pendingTeamIds) => getUnreadChatCounts(user.uid, pendingTeamIds, {
                         conversationLookupByTeam,
                         deadlineAt: Date.now() + 5000
                     }).then((counts) => {
                         unreadCounts = { ...unreadCounts, ...(counts || {}) };
                         updateUnreadChatBadges();
-                        const unknownTeamIds = pendingTeamIds.filter((teamId) => (
+                        return pendingTeamIds.filter((teamId) => (
                             !Object.prototype.hasOwnProperty.call(unreadCounts, teamId)
                         ));
-                        if (unknownTeamIds.length > 0) {
-                            setTimeout(() => loadUnreadChatBadges(unknownTeamIds), 5000);
-                        }
-                    }).catch((error) => {
+                    }),
+                    shouldRetry: (unknownTeamIds) => unknownTeamIds.length > 0 ? unknownTeamIds : undefined,
+                    onError: (error) => {
                         console.warn('Unable to load dashboard unread counts:', error);
-                        setTimeout(() => loadUnreadChatBadges(pendingTeamIds), 5000);
-                    });
-                }
-                if (teamIds.length > 0) loadUnreadChatBadges(teamIds);
+                    }
+                }) : () => {};
+                window.addEventListener('pagehide', cancelUnreadChatRetries, { once: true });
 
             } catch (error) {
                 console.error(error);

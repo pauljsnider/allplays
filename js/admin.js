@@ -18,7 +18,7 @@ import {
 } from './db.js?v=4433180';
 import { db, collection, getDocs, doc, setDoc, updateDoc, serverTimestamp, query } from './firebase.js?v=26';
 import { renderHeader, renderFooter, escapeHtml } from './utils.js?v=443355';
-import { checkAuth } from './auth.js?v=4433182';
+import { checkAuth } from './auth.js?v=4433183';
 import { DEFAULT_ADMIN_PAGE_SIZE, buildBoundedAdminDashboardScope, loadAdminCollectionPage, loadInitialAdminBootstrap } from './admin-bootstrap.js?v=2';
 import {
     adminRegistrationDefaults,

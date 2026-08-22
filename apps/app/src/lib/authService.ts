@@ -1138,20 +1138,14 @@ export async function hydrateFirebaseUser(user: FirebaseUser): Promise<HydratedU
   });
 
   const syncApprovedMemberships = async (
-    result: PromiseSettledResult<unknown[]>,
-    updateCurrentProfile: boolean
+    result: PromiseSettledResult<unknown[]>
   ) => {
     try {
       if (result.status === 'rejected') throw result.reason;
       const { mergeApprovedParentMembershipRequests } = await loadLegacyParentMembershipUtils();
       const parentRequestSync = mergeApprovedParentMembershipRequests(profile, result.value);
       if (!parentRequestSync.changed) return;
-      if (updateCurrentProfile) {
-        profile = {
-          ...profile,
-          ...parentRequestSync.userUpdate
-        };
-      }
+      Object.assign(profile, parentRequestSync.userUpdate);
       void dbModulePromise
         .then((dbModule) => dbModule.updateUserProfile(user.uid, parentRequestSync.userUpdate))
         .catch((error) => logger.warn('Failed to persist approved parent membership sync.', { error }));
@@ -1160,30 +1154,48 @@ export async function hydrateFirebaseUser(user: FirebaseUser): Promise<HydratedU
     }
   };
 
-  if (membershipRequestsResult) {
-    await syncApprovedMemberships(membershipRequestsResult, true);
-  }
-
-  if (ownedTeamsResult) {
+  const mergeOwnedTeams = (result: PromiseSettledResult<Array<Record<string, unknown>>>) => {
     try {
-      if (ownedTeamsResult.status === 'rejected') throw ownedTeamsResult.reason;
-      const coachOf = mergeOwnedTeamIds(profile.coachOf, ownedTeamsResult.value);
-      if (coachOf.length > 0) {
-        profile = {
-          ...profile,
-          coachOf
-        };
-      }
+      if (result.status === 'rejected') throw result.reason;
+      const coachOf = mergeOwnedTeamIds(profile.coachOf, result.value);
+      if (coachOf.length > 0) profile.coachOf = coachOf;
     } catch (error) {
       logger.warn('Failed to load owned teams.', { error });
     }
+  };
+
+  if (membershipRequestsResult) {
+    await syncApprovedMemberships(membershipRequestsResult);
   }
 
-  return {
+  if (ownedTeamsResult) {
+    mergeOwnedTeams(ownedTeamsResult);
+  }
+
+  const hydrated = {
     user: toAuthUser(user, profile),
     profile,
     profileHydration
   };
+
+  // Preserve the bounded initial hydration, but do not discard authoritative
+  // access reads that settle after it. Mutating the returned hydration object
+  // lets its current consumer observe the repair and the persisted membership
+  // makes the next hydration reliable.
+  if (!membershipRequestsResult) {
+    void membershipRequestsTask.then(async (result) => {
+      await syncApprovedMemberships(result);
+      Object.assign(hydrated.user, toAuthUser(user, profile));
+    });
+  }
+  if (!ownedTeamsResult) {
+    void ownedTeamsTask.then((result) => {
+      mergeOwnedTeams(result);
+      Object.assign(hydrated.user, toAuthUser(user, profile));
+    });
+  }
+
+  return hydrated;
 }
 
 export function observeFirebaseUser(callback: (user: FirebaseUser | null) => void) {
