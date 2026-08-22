@@ -19758,21 +19758,19 @@ exports.gameReportSharePreview = functions
       }
       const team = { id: teamId, ...(teamSnap.data() || {}) };
       const game = await getPublicGameProjection(teamId, gameId, team);
-      if (!game) {
-        res.status(404).send('Game report not found.');
-        return;
-      }
 
       const params = new URLSearchParams({ teamId, gameId });
       const query = params.toString();
       const redirectUrl = `https://allplays.ai/game.html#${query}`;
       const shareUrl = `${PUBLIC_SHARE_PREVIEW_ORIGIN}/report?${query}`;
-      const metadata = buildGameReportShareMetadata({
-        teamName: game.teamName || team.name,
-        opponent: game.opponent,
-        startsAt: game.startsAt,
-        timeZone: team.timeZone || team.timezone
-      });
+      const metadata = game
+        ? buildGameReportShareMetadata({
+          teamName: game.teamName || team.name,
+          opponent: game.opponent,
+          startsAt: game.startsAt,
+          timeZone: team.timeZone || team.timezone
+        })
+        : buildGameReportShareMetadata();
       const html = buildGameReportShareHtml({ metadata, redirectUrl, shareUrl });
       res.set('Cache-Control', 'public, max-age=300, s-maxage=300');
       res.set('Content-Type', 'text/html; charset=utf-8');

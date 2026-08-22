@@ -56,14 +56,19 @@ describe('live game share preview wiring', () => {
         expect(source).not.toContain("const PUBLIC_SHARE_PREVIEW_ORIGIN = 'https://game-flow-c6311.web.app'");
     });
 
-    it('keeps report previews behind the same public game projection', () => {
+    it('uses public metadata when available and a generic redirect for private reports', () => {
         const source = repoFile('functions/index.js');
         const start = source.indexOf('exports.gameReportSharePreview = functions');
         const end = source.indexOf('exports.playerSharePreview = functions', start);
         const handler = source.slice(start, end);
+        const projectionStart = handler.indexOf('const game = await getPublicGameProjection(teamId, gameId, team);');
+        const paramsStart = handler.indexOf('const params = new URLSearchParams', projectionStart);
+        const privateProjectionBranch = handler.slice(projectionStart, paramsStart);
 
         expect(start).toBeGreaterThan(-1);
         expect(handler).toContain('getPublicGameProjection(teamId, gameId, team)');
+        expect(privateProjectionBranch).not.toContain("res.status(404).send('Game report not found.')");
+        expect(handler).toContain(': buildGameReportShareMetadata();');
         expect(handler).toContain("ip: `game-report-share|${getRequestIp(req)}`");
         expect(handler).toContain('`${PUBLIC_SHARE_PREVIEW_ORIGIN}/report?${query}`');
         expect(handler).toContain('`https://allplays.ai/game.html#${query}`');
