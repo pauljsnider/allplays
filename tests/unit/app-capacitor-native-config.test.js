@@ -173,10 +173,10 @@ describe('Capacitor native config', () => {
         const appPackageLock = JSON.parse(readProjectFile('apps/app/package-lock.json'));
         const appPnpmLock = parseYaml(readProjectFile('apps/app/pnpm-lock.yaml'));
         const expectedDependencies = {
-            'lucide-react': { group: 'dependencies', specifier: '^1.31.0', version: '1.31.0' },
+            'lucide-react': { group: 'dependencies', specifier: '^1.32.0', version: '1.32.0' },
             'react-router-dom': { group: 'dependencies', specifier: '7.18.2', version: '7.18.2' },
-            'web-vitals': { group: 'dependencies', specifier: '^6.0.1', version: '6.1.0' },
-            globals: { group: 'devDependencies', specifier: '^17.10.0', version: '17.10.0' },
+            'web-vitals': { group: 'dependencies', specifier: '^6.1.1', version: '6.1.1' },
+            globals: { group: 'devDependencies', specifier: '^17.11.0', version: '17.11.0' },
             postcss: { group: 'devDependencies', specifier: '^8.5.26', version: '8.5.26' }
         };
 
@@ -323,7 +323,7 @@ describe('Capacitor native config', () => {
         const expectedDependencies = {
             '@capacitor/camera': { specifier: '^8.2.2', version: '8.2.2' },
             firebase: { specifier: '12.17.1', version: '12.17.1' },
-            'web-vitals': { specifier: '^6.0.1', version: '6.1.0' }
+            'web-vitals': { specifier: '^6.1.1', version: '6.1.1' }
         };
 
         Object.entries(expectedDependencies).forEach(([dependency, expected]) => {
@@ -338,7 +338,7 @@ describe('Capacitor native config', () => {
         expect(appPnpmLock).toContain("'@capacitor/camera@8.2.2':");
         expect(appPnpmLock).toContain('firebase@12.17.1:');
         expect(appPnpmLock).not.toContain('firebase@12.17.0:');
-        expect(appPnpmLock).toContain('web-vitals@6.1.0:');
+        expect(appPnpmLock).toContain('web-vitals@6.1.1:');
         const expectedPluginVersions = {
             '@capacitor-firebase/app-check': '8.4.0',
             '@capacitor-firebase/authentication': '8.4.0',
