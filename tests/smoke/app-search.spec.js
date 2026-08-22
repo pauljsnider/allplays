@@ -101,27 +101,29 @@ async function mockSearchModules(page) {
             status: 200,
             contentType: 'application/javascript',
             body: `
+                const user = {
+                    uid: 'user-1',
+                    email: 'parent@example.com',
+                    displayName: 'Pat Parent',
+                    roles: ['parent'],
+                    parentOf: [{ teamId: 'team-2', teamName: 'Rockets', sport: 'Soccer', zip: '64114', playerId: 'player-1' }]
+                };
+                const auth = {
+                    user,
+                    profile: { parentOf: user.parentOf },
+                    loading: false,
+                    error: null,
+                    roles: user.roles,
+                    isParent: true,
+                    isCoach: false,
+                    isAdmin: false,
+                    isPlatformAdmin: false,
+                    refresh: async () => {},
+                    signOut: async () => {}
+                };
+
                 export function useAuth() {
-                    const user = {
-                        uid: 'user-1',
-                        email: 'parent@example.com',
-                        displayName: 'Pat Parent',
-                        roles: ['parent'],
-                        parentOf: [{ teamId: 'team-2', teamName: 'Rockets', sport: 'Soccer', zip: '64114', playerId: 'player-1' }]
-                    };
-                    return {
-                        user,
-                        profile: { parentOf: user.parentOf },
-                        loading: false,
-                        error: null,
-                        roles: user.roles,
-                        isParent: true,
-                        isCoach: false,
-                        isAdmin: false,
-                        isPlatformAdmin: false,
-                        refresh: async () => {},
-                        signOut: async () => {}
-                    };
+                    return auth;
                 }
             `
         });
