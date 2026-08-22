@@ -20,12 +20,13 @@ describe('PublicTeamDetail', () => {
     publicTeamMocks.getPublicTeamRecentResults.mockResolvedValue([]);
   });
 
-  it('announces loading while the public team request is pending', () => {
+  it('shows the standings loading state while the public team request is pending', () => {
     publicTeamMocks.getPublicTeamDetail.mockImplementation(() => new Promise(() => {}));
 
     render(<MemoryRouter initialEntries={['/teams/team-1/public']}><Routes><Route path="/teams/:teamId/public" element={<PublicTeamDetail authUser={null} />} /></Routes></MemoryRouter>);
 
     expect(screen.getByRole('status').textContent).toContain('Loading public team');
+    expect(screen.getByText('Loading standings')).toBeTruthy();
   });
 
   it('renders an allow-listed public team profile without private collections', async () => {
@@ -94,6 +95,7 @@ describe('PublicTeamDetail', () => {
     render(<MemoryRouter initialEntries={['/teams/team-1/public']}><Routes><Route path="/teams/:teamId/public" element={<PublicTeamDetail authUser={null} />} /></Routes></MemoryRouter>);
 
     expect(await screen.findByRole('heading', { name: 'Standings' })).toBeTruthy();
+    expect(screen.queryByText('Loading standings')).toBeNull();
     expect(screen.getByRole('columnheader', { name: 'Rank' })).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: 'Team' })).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: 'Record' })).toBeTruthy();
