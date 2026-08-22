@@ -8,8 +8,11 @@ import {
 import { doc, setDoc, updateDoc } from 'firebase/firestore';
 
 const rules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
+const describeWithFirestoreEmulator = process.env.FIRESTORE_EMULATOR_HOST
+    ? describe
+    : describe.skip;
 
-describe('team admin email mutation Firestore rules', () => {
+describeWithFirestoreEmulator('team admin email mutation Firestore rules', () => {
     let testEnv;
 
     beforeAll(async () => {
@@ -40,7 +43,7 @@ describe('team admin email mutation Firestore rules', () => {
     });
 
     afterAll(async () => {
-        await testEnv.cleanup();
+        await testEnv?.cleanup();
     });
 
     function verifiedDb(uid, email) {
