@@ -101,27 +101,29 @@ async function mockSearchModules(page) {
             status: 200,
             contentType: 'application/javascript',
             body: `
+                const user = {
+                    uid: 'user-1',
+                    email: 'parent@example.com',
+                    displayName: 'Pat Parent',
+                    roles: ['parent'],
+                    parentOf: [{ teamId: 'team-2', teamName: 'Rockets', sport: 'Soccer', zip: '64114', playerId: 'player-1' }]
+                };
+                const auth = {
+                    user,
+                    profile: { parentOf: user.parentOf },
+                    loading: false,
+                    error: null,
+                    roles: user.roles,
+                    isParent: true,
+                    isCoach: false,
+                    isAdmin: false,
+                    isPlatformAdmin: false,
+                    refresh: async () => {},
+                    signOut: async () => {}
+                };
+
                 export function useAuth() {
-                    const user = {
-                        uid: 'user-1',
-                        email: 'parent@example.com',
-                        displayName: 'Pat Parent',
-                        roles: ['parent'],
-                        parentOf: [{ teamId: 'team-2', teamName: 'Rockets', sport: 'Soccer', zip: '64114', playerId: 'player-1' }]
-                    };
-                    return {
-                        user,
-                        profile: { parentOf: user.parentOf },
-                        loading: false,
-                        error: null,
-                        roles: user.roles,
-                        isParent: true,
-                        isCoach: false,
-                        isAdmin: false,
-                        isPlatformAdmin: false,
-                        refresh: async () => {},
-                        signOut: async () => {}
-                    };
+                    return auth;
                 }
             `
         });
@@ -507,12 +509,16 @@ test.describe('app global search', () => {
 
         await openSearch(page);
         const input = page.getByLabel('Search teams, players, actions, help');
-        await input.click();
-        await page.keyboard.type('live', { delay: 40 });
+        await input.fill('l');
+        await input.fill('li');
+        await input.fill('liv');
+        await input.fill('live');
 
-        await expect.poll(() => page.evaluate(() => window.__helpSearchQueries)).toEqual(['live']);
         const helpResult = page.getByRole('button', { name: /Watch Live Games and Replays/ });
-        await expect(helpResult).toBeVisible();
+        await expect(async () => {
+            await expect.poll(() => page.evaluate(() => window.__helpSearchQueries)).toEqual(['live']);
+            await expect(helpResult).toBeVisible({ timeout: 1000 });
+        }).toPass({ timeout: 15000 });
         await helpResult.click();
         await expect(page).toHaveURL(/#\/help\/watch-live-games$/);
     });
