@@ -166,6 +166,7 @@ import {
 } from './teamDetailService';
 import { computeNativeStandings } from '../../../../js/native-standings.js';
 import { hasFullTeamAccess } from '../../../../js/team-access.js';
+import { buildPlayerLeaderboardSnapshot, selectAnalyticsConfig } from '../../../../js/stat-leaderboards.js';
 
 describe('buildTeamAnalytics', () => {
   it('builds chronological score trends, recent form, averages, and differential', () => {
@@ -1282,7 +1283,7 @@ describe('team detail bootstrap loading', () => {
     expect(insights.teamAnalytics.availableSeasons).toEqual(['2026', '2025']);
   });
 
-  it('builds roster statistics from completed games in each selected season', async () => {
+  it('keeps leaderboards aggregated across all completed games while roster statistics stay season scoped', async () => {
     __resetTeamDetailBaseSnapshotCacheForTests();
     seasonRecordMocks.listSeasonLabels.mockReturnValue(['2026', '2025']);
     dbMocks.getTeam.mockResolvedValue({ id: 'team-1', sport: 'Basketball' });
@@ -1294,14 +1295,21 @@ describe('team detail bootstrap loading', () => {
       { id: 'current-game', status: 'completed', seasonLabel: '2026', date: '2026-03-01', homeScore: 1, awayScore: 0 },
       { id: 'old-game', status: 'completed', seasonLabel: '2025', date: '2025-03-01', homeScore: 1, awayScore: 0 }
     ]);
-    dbMocks.getConfigs.mockResolvedValue([{ id: 'config-1', columns: ['PTS'], statDefinitions: [{ id: 'pts', label: 'PTS', scope: 'player', visibility: 'public' }] }]);
-    dbMocks.getAggregatedStatsForGames.mockImplementation(async (_teamId: string, gameIds: string[]) => gameIds.includes('current-game')
-      ? { 'player-1': { pts: 12 } }
-      : { 'player-1': { pts: 4 } });
+    const config = { id: 'config-1', columns: ['PTS'], statDefinitions: [{ id: 'pts', label: 'PTS', scope: 'player', visibility: 'public' }] };
+    dbMocks.getConfigs.mockResolvedValue([config]);
+    vi.mocked(selectAnalyticsConfig).mockReturnValueOnce(config as any).mockReturnValueOnce(config as any);
+    dbMocks.getAggregatedStatsForGames.mockImplementation(async (_teamId: string, gameIds: string[]) => {
+      if (gameIds.length === 2) return { 'player-1': { pts: 16 } };
+      return gameIds.includes('current-game') ? { 'player-1': { pts: 12 } } : { 'player-1': { pts: 4 } };
+    });
 
     const insights = await loadTeamDetailInsights('team-1', { uid: 'parent-1' } as any);
 
     expect(insights.rosterStatistics.seasons.map((season) => season.rows.map((row) => row.values.pts.value))).toEqual([[12, 0], [4, 0]]);
+    expect(buildPlayerLeaderboardSnapshot).toHaveBeenCalledWith(expect.objectContaining({
+      seasonStatsByPlayerId: { 'player-1': { pts: 16 } }
+    }));
+    expect(dbMocks.getAggregatedStatsForGames).toHaveBeenCalledWith('team-1', ['current-game', 'old-game']);
     expect(dbMocks.getAggregatedStatsForGames).toHaveBeenCalledWith('team-1', ['current-game']);
     expect(dbMocks.getAggregatedStatsForGames).toHaveBeenCalledWith('team-1', ['old-game']);
   });

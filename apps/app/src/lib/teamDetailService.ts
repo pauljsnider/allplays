@@ -2121,31 +2121,39 @@ export function loadTeamDetailInsights(teamId: string, user: AuthUser | null): P
     const seasonLabel = seasonLabels.includes(currentYearLabel) ? currentYearLabel : (seasonLabels[0] || currentYearLabel);
     const normalizedPlayers = normalizePlayers(players, linkedPlayerIds);
     const completedGamesBySeason = new Map<string, string[]>();
+    const completedGameIds: string[] = [];
     (Array.isArray(games) ? games : []).filter(isCompletedGame).forEach((game: any) => {
       const label = getAnalyticsSeasonLabel(game, toDate(game?.date));
       const ids = completedGamesBySeason.get(label) || [];
       const id = cleanString(game.id || game.gameId);
-      if (id) ids.push(id);
+      if (id) {
+        ids.push(id);
+        completedGameIds.push(id);
+      }
       completedGamesBySeason.set(label, ids);
     });
 
-    const seasonStatsResults = await Promise.all(Array.from(completedGamesBySeason.entries()).map(async ([label, gameIds]) => {
-      try {
-        return { label, stats: gameIds.length ? await Promise.resolve(getAggregatedStatsForGames(normalizedTeamId, gameIds)) : {}, unavailable: false };
-      } catch (error) {
-        logger.warn('Unable to load roster statistics for season.', {
-          operation: 'team-roster-season-statistics-load',
-          teamId: normalizedTeamId,
-          seasonLabel: label,
-          error
-        });
-        return { label, stats: {}, unavailable: true };
-      }
-    }));
+    const [leaderboardStatsByPlayerId, seasonStatsResults] = await Promise.all([
+      completedGameIds.length
+        ? Promise.resolve(getAggregatedStatsForGames(normalizedTeamId, completedGameIds)).catch(() => ({}))
+        : Promise.resolve({}),
+      Promise.all(Array.from(completedGamesBySeason.entries()).map(async ([label, gameIds]) => {
+        try {
+          return { label, stats: gameIds.length ? await Promise.resolve(getAggregatedStatsForGames(normalizedTeamId, gameIds)) : {}, unavailable: false };
+        } catch (error) {
+          logger.warn('Unable to load roster statistics for season.', {
+            operation: 'team-roster-season-statistics-load',
+            teamId: normalizedTeamId,
+            seasonLabel: label,
+            error
+          });
+          return { label, stats: {}, unavailable: true };
+        }
+      }))
+    ]);
     const seasonStatsBySeason = Object.fromEntries(seasonStatsResults.map(({ label, stats }) => [label, stats]));
     const unavailableSeasons = seasonStatsResults.filter(({ unavailable }) => unavailable).map(({ label }) => label);
     const unavailableSeasonSet = new Set(unavailableSeasons);
-    const seasonStatsByPlayerId = seasonStatsBySeason[seasonLabel] || {};
     const rosterConfig = selectAnalyticsConfig(configs, team?.sport) || (Array.isArray(configs) ? configs[0] : null);
     const rosterStatistics = {
       seasonLabel,
@@ -2165,7 +2173,7 @@ export function loadTeamDetailInsights(teamId: string, user: AuthUser | null): P
     ]);
 
     return {
-      leaderboards: buildLeaderboards(configs, normalizedPlayers, seasonStatsByPlayerId, team?.sport),
+      leaderboards: buildLeaderboards(configs, normalizedPlayers, leaderboardStatsByPlayerId, team?.sport),
       rosterStatistics,
       trackingSummaries: buildTrackingSummaries(normalizedPlayers, linkedPlayerIds, trackingItems, trackingStatuses),
       teamAnalytics: buildTeamAnalytics(games, seasonLabel)
