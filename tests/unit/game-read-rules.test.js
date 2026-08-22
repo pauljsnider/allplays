@@ -21,6 +21,15 @@ const eventsMatch = teamGamesRules.match(/match \/events\/\{eventId} \{[\s\S]*?\
 const aggregatedStatsMatch = teamGamesRules.match(/match \/aggregatedStats\/\{statId} \{[\s\S]*?\n\s*}/);
 const eventsRules = eventsMatch?.[0] || '';
 const aggregatedStatsRules = aggregatedStatsMatch?.[0] || '';
+const authorizedOfficialHelper = rules.match(
+    /function isAuthorizedOfficialForGame\(data\) \{[\s\S]*?\n\s*}/
+)?.[0] || '';
+const officialUpdateHelper = rules.match(
+    /function isOfficialForGame\(\) \{[\s\S]*?\n\s*}/
+)?.[0] || '';
+const officiatingNotificationRules = rules.match(
+    /match \/officiatingNotifications\/\{notificationId} \{[\s\S]*?\n\s*}/
+)?.[0] || '';
 
 describe('game Firestore read rules', () => {
     it('keeps staff assignment-array updates on the team-admin game write path', () => {
@@ -76,6 +85,27 @@ describe('game Firestore read rules', () => {
         expect(rules).toContain('canVideographGame(teamId, gameId)');
         expect(rules).toContain('isAuthorizedOfficialForGame(data)');
         expect(rules).toContain("request.auth.uid in data.get('officiatingAuthorizedUserIds', [])");
+    });
+
+    it('requires verified ownership for every email-derived officiating grant', () => {
+        expect(authorizedOfficialHelper).toContain(
+            "verifiedAuthEmailMatchesAny(data.get('officiatingAuthorizedEmails', []))"
+        );
+        expect(officialUpdateHelper).toContain(
+            "verifiedAuthEmailMatchesAny(resource.data.get('officiatingAuthorizedEmails', []))"
+        );
+        expect(officiatingNotificationRules).toContain(
+            "verifiedAuthEmailMatches(resource.data.get('recipientOfficialEmail', null))"
+        );
+    });
+
+    it('keeps canonical UID-derived officiating grants independent of email matching', () => {
+        expect(authorizedOfficialHelper).toContain(
+            "request.auth.uid in data.get('officiatingAuthorizedUserIds', [])"
+        );
+        expect(officialUpdateHelper).toContain(
+            "request.auth.uid in resource.data.get('officiatingAuthorizedUserIds', [])"
+        );
     });
 
     it('keeps shared-game documents private while preserving sanitized live subcollection access', () => {

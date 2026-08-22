@@ -141,6 +141,14 @@ service cloud.firestore {
              request.auth.token.email.lower() == email.lower();
     }
 
+    function verifiedAuthEmailMatchesAny(emails) {
+      return isSignedIn() &&
+             request.auth.token.get('email_verified', false) == true &&
+             request.auth.token.email is string &&
+             emails is list &&
+             request.auth.token.email.lower() in emails;
+    }
+
     function currentAuthPhoneCanReadAccessCode(data) {
       let familyInviteHasNoTargetEmail = !data.keys().hasAny(['email']) ||
               data.email == null ||
@@ -1446,8 +1454,7 @@ service cloud.firestore {
     function isAuthorizedOfficialForGame(data) {
       return isSignedIn() && (
         request.auth.uid in data.get('officiatingAuthorizedUserIds', []) ||
-        (request.auth.token.email != null &&
-         request.auth.token.email.lower() in data.get('officiatingAuthorizedEmails', []))
+        verifiedAuthEmailMatchesAny(data.get('officiatingAuthorizedEmails', []))
       );
     }
 
@@ -1582,8 +1589,7 @@ service cloud.firestore {
     function isOfficialForGame() {
       return isSignedIn() && (
         request.auth.uid in resource.data.get('officiatingAuthorizedUserIds', []) ||
-        (request.auth.token.email != null &&
-         request.auth.token.email.lower() in resource.data.get('officiatingAuthorizedEmails', []))
+        verifiedAuthEmailMatchesAny(resource.data.get('officiatingAuthorizedEmails', []))
       );
     }
 
@@ -3712,8 +3718,7 @@ service cloud.firestore {
       match /officiatingNotifications/{notificationId} {
         allow read: if isTeamOwnerOrAdmin(teamId) ||
                       (isSignedIn() && resource.data.recipientOfficialUserId == request.auth.uid) ||
-                      (isSignedIn() && request.auth.token.email != null &&
-                       resource.data.recipientOfficialEmail == request.auth.token.email.lower());
+                      verifiedAuthEmailMatches(resource.data.get('recipientOfficialEmail', null));
         allow create: if isTeamOwnerOrAdmin(teamId);
         allow update, delete: if isTeamOwnerOrAdmin(teamId);
       }
