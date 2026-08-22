@@ -1282,6 +1282,30 @@ describe('team detail bootstrap loading', () => {
     expect(insights.teamAnalytics.availableSeasons).toEqual(['2026', '2025']);
   });
 
+  it('builds roster statistics from completed games in each selected season', async () => {
+    __resetTeamDetailBaseSnapshotCacheForTests();
+    seasonRecordMocks.listSeasonLabels.mockReturnValue(['2026', '2025']);
+    dbMocks.getTeam.mockResolvedValue({ id: 'team-1', sport: 'Basketball' });
+    dbMocks.getPlayers.mockResolvedValue([
+      { id: 'player-1', name: 'Pat Star', number: '9', active: true },
+      { id: 'player-2', name: 'Sam Bench', number: '12', active: true }
+    ]);
+    dbMocks.getGames.mockResolvedValue([
+      { id: 'current-game', status: 'completed', seasonLabel: '2026', date: '2026-03-01', homeScore: 1, awayScore: 0 },
+      { id: 'old-game', status: 'completed', seasonLabel: '2025', date: '2025-03-01', homeScore: 1, awayScore: 0 }
+    ]);
+    dbMocks.getConfigs.mockResolvedValue([{ id: 'config-1', columns: ['PTS'], statDefinitions: [{ id: 'pts', label: 'PTS', scope: 'player', visibility: 'public' }] }]);
+    dbMocks.getAggregatedStatsForGames.mockImplementation(async (_teamId: string, gameIds: string[]) => gameIds.includes('current-game')
+      ? { 'player-1': { pts: 12 } }
+      : { 'player-1': { pts: 4 } });
+
+    const insights = await loadTeamDetailInsights('team-1', { uid: 'parent-1' } as any);
+
+    expect(insights.rosterStatistics.seasons.map((season) => season.rows.map((row) => row.values.pts.value))).toEqual([[12, 0], [4, 0]]);
+    expect(dbMocks.getAggregatedStatsForGames).toHaveBeenCalledWith('team-1', ['current-game']);
+    expect(dbMocks.getAggregatedStatsForGames).toHaveBeenCalledWith('team-1', ['old-game']);
+  });
+
   it('never hydrates or returns private roster contacts for a non-manager', async () => {
     dbMocks.getPlayers.mockResolvedValue([{
       id: 'player-1',

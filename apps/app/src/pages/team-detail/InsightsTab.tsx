@@ -3,7 +3,7 @@ import { Loader2 } from 'lucide-react';
 import { AvatarImage } from '../../components/AvatarImage';
 import { PremiumGate } from '../../components/PremiumGate';
 import type { PremiumAccessResult } from '../../lib/premiumAccessService';
-import type { TeamDetailAnalytics, TeamDetailAnalyticsSnapshot, TeamDetailModel } from '../../lib/teamDetailService';
+import type { TeamDetailAnalytics, TeamDetailAnalyticsSnapshot, TeamDetailModel, TeamDetailRosterStatisticsTable } from '../../lib/teamDetailService';
 
 const EMPTY_TEAM_ANALYTICS: TeamDetailAnalytics = {
   seasonLabel: '',
@@ -21,10 +21,20 @@ const EMPTY_TEAM_ANALYTICS: TeamDetailAnalytics = {
 };
 
 export function InsightsTab({ model, loading, error, premiumAccess }: { model: TeamDetailModel; loading: boolean; error: string; premiumAccess: PremiumAccessResult }) {
+  const analyticsRoot = model.teamAnalytics || EMPTY_TEAM_ANALYTICS;
+  const availableSeasons = analyticsRoot.availableSeasons || [];
+  const [selectedSeason, setSelectedSeason] = useState(analyticsRoot.seasonLabel);
+  useEffect(() => {
+    if (availableSeasons.length && !availableSeasons.includes(selectedSeason)) setSelectedSeason(analyticsRoot.seasonLabel);
+  }, [analyticsRoot.seasonLabel, availableSeasons, selectedSeason]);
   return (
     <div className="space-y-4">
       <PremiumGate access={premiumAccess} label="team performance analytics">
-        <TeamPerformanceCard model={model} loading={loading} error={error} />
+        <TeamPerformanceCard model={model} loading={loading} error={error} selectedSeason={selectedSeason} availableSeasons={availableSeasons} onSeasonChange={setSelectedSeason} />
+      </PremiumGate>
+
+      <PremiumGate access={premiumAccess} label="roster statistics">
+        <RosterStatisticsCard model={model} loading={loading} error={error} selectedSeason={selectedSeason} />
       </PremiumGate>
 
       <section className="app-card p-4">
@@ -112,10 +122,9 @@ export function InsightsTab({ model, loading, error, premiumAccess }: { model: T
   );
 }
 
-function TeamPerformanceCard({ model, loading, error }: { model: TeamDetailModel; loading: boolean; error: string }) {
+function TeamPerformanceCard({ model, loading, error, selectedSeason, availableSeasons, onSeasonChange }: { model: TeamDetailModel; loading: boolean; error: string; selectedSeason: string; availableSeasons: string[]; onSeasonChange: (season: string) => void }) {
   const analyticsRoot = model.teamAnalytics || EMPTY_TEAM_ANALYTICS;
-  const [selectedSeason, setSelectedSeason] = useState(analyticsRoot.seasonLabel);
-  const availableSeasons = useMemo(() => analyticsRoot.availableSeasons || [], [analyticsRoot.availableSeasons]);
+  const seasons = useMemo(() => analyticsRoot.availableSeasons || [], [analyticsRoot.availableSeasons]);
   const analytics = (analyticsRoot.seasons || []).find((season) => season.seasonLabel === selectedSeason) || analyticsRoot;
   const scoringLabels = getTeamScoringLabels(model.team.sport);
   const maxAverage = Math.max(analytics.averagePointsFor, analytics.averagePointsAgainst, 1);
@@ -126,12 +135,6 @@ function TeamPerformanceCard({ model, loading, error }: { model: TeamDetailModel
     L: 'bg-rose-100 text-rose-800',
     T: 'bg-gray-200 text-gray-700'
   } as const;
-
-  useEffect(() => {
-    if (availableSeasons.length && !availableSeasons.includes(selectedSeason)) {
-      setSelectedSeason(analyticsRoot.seasonLabel);
-    }
-  }, [analyticsRoot.seasonLabel, availableSeasons, selectedSeason]);
 
   return (
     <section className="app-card p-4" aria-labelledby="team-performance-heading">
@@ -149,9 +152,9 @@ function TeamPerformanceCard({ model, loading, error }: { model: TeamDetailModel
               <select
                 className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs font-black tracking-normal text-gray-800 normal-case"
                 value={selectedSeason}
-                onChange={(event) => setSelectedSeason(event.target.value)}
+                onChange={(event) => onSeasonChange(event.target.value)}
               >
-                {availableSeasons.map((season) => (
+                {seasons.map((season) => (
                   <option key={season} value={season}>
                     {season}
                   </option>
@@ -308,6 +311,23 @@ function TeamPerformanceCard({ model, loading, error }: { model: TeamDetailModel
       ) : null}
     </section>
   );
+}
+
+function RosterStatisticsCard({ model, loading, error, selectedSeason }: { model: TeamDetailModel; loading: boolean; error: string; selectedSeason: string }) {
+  const root = model.rosterStatistics;
+  const table: TeamDetailRosterStatisticsTable | undefined = root?.seasons?.find((season) => season.seasonLabel === selectedSeason) || root?.seasons?.[0];
+  return <section className="app-card p-4" aria-labelledby="roster-statistics-heading">
+    <div id="roster-statistics-heading" className="text-sm font-black text-gray-950">Roster statistics</div>
+    <div className="mt-0.5 text-xs font-semibold text-gray-500">Season totals from completed tracked games.</div>
+    <div className="mt-3">
+      {loading ? <InlineDeferredLoading copy="Loading roster statistics…" /> : null}
+      {!loading && error ? <InlineDeferredError title="Roster statistics unavailable" message={error} /> : null}
+      {!loading && !error && table?.columns.length ? <div className="overflow-x-auto rounded-xl border border-gray-200">
+        <table className="min-w-max w-full text-left text-xs"><thead className="bg-gray-50 text-[10px] font-black uppercase tracking-wide text-gray-500"><tr><th className="sticky left-0 bg-gray-50 px-3 py-2">Player</th>{table.columns.map((column) => <th key={column.id} className="whitespace-nowrap px-3 py-2">{column.label}</th>)}</tr></thead><tbody>{table.rows.map((row) => <tr key={row.playerId} className="border-t border-gray-100"><th className="sticky left-0 bg-white px-3 py-2 font-black text-gray-900">{row.playerNumber ? `#${row.playerNumber} ` : ''}{row.playerName}</th>{table.columns.map((column) => <td key={column.id} className="px-3 py-2 font-bold text-gray-700">{row.values[column.id]?.formattedValue || '0'}</td>)}</tr>)}</tbody></table>
+      </div> : null}
+      {!loading && !error && !table?.columns.length ? <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">Roster statistics appear after public player stats are configured.</div> : null}
+    </div>
+  </section>;
 }
 
 function TeamMetric({ label, value, tone }: { label: string; value: string; tone: string }) {

@@ -1318,7 +1318,12 @@ describe('TeamDetail', () => {
         progression: [{ id: 'older-game', date: new Date('2025-10-01'), dateLabel: 'Oct 1', seasonLabel: '2025', opponent: 'Foxes', pointsFor: 5, pointsAgainst: 0, differential: 5, result: 'W' as const }]
       }]
     };
-    teamDetailServiceMocks.loadTeamDetailInsights.mockResolvedValue({ leaderboards: [], trackingSummaries: [], teamAnalytics });
+    teamDetailServiceMocks.loadTeamDetailInsights.mockResolvedValue({ leaderboards: [], trackingSummaries: [], teamAnalytics, rosterStatistics: {
+      seasonLabel: '2026', availableSeasons: ['2026', '2025'], seasons: [
+        { seasonLabel: '2026', columns: [{ id: 'pts', label: 'PTS' }], rows: [{ playerId: 'player-1', playerName: 'Pat Star', playerNumber: '9', values: { pts: { value: 12, formattedValue: '12' } } }] },
+        { seasonLabel: '2025', columns: [{ id: 'pts', label: 'PTS' }], rows: [{ playerId: 'player-1', playerName: 'Pat Star', playerNumber: '9', values: { pts: { value: 4, formattedValue: '4' } } }] }
+      ]
+    } });
 
     render(
       <MemoryRouter initialEntries={['/teams/team-1?tab=insights']}>
@@ -1334,9 +1339,12 @@ describe('TeamDetail', () => {
     expect(screen.getByText('Season pulse')).toBeTruthy();
     expect(screen.getByLabelText('W against Bears, 4 to 1')).toBeTruthy();
     expect(screen.getByLabelText('Mar 2 against Cats: 1 point for and 3 points against')).toBeTruthy();
+    expect(screen.getByText('Roster statistics')).toBeTruthy();
+    expect(screen.getByText('12')).toBeTruthy();
     fireEvent.change(screen.getByLabelText('Season'), { target: { value: '2025' } });
     expect(await screen.findByText('Positive margin: +5 points per game')).toBeTruthy();
     expect(screen.getByLabelText('W against Foxes, 5 to 0')).toBeTruthy();
+    expect(screen.getByText('4')).toBeTruthy();
   });
 
   it('renders an explicit team performance empty state in Insights', async () => {

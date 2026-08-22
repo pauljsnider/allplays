@@ -292,6 +292,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
             ...nextModel,
             leaderboards: currentModel.leaderboards,
             trackingSummaries: currentModel.trackingSummaries,
+            rosterStatistics: currentModel.rosterStatistics,
             sponsors: currentModel.sponsors,
             staffPermissions: currentModel.staffPermissions || nextModel.staffPermissions
           } : nextModel);
@@ -465,6 +466,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
       leaderboards: model?.leaderboards || nextModel.leaderboards,
       trackingSummaries: model?.trackingSummaries || nextModel.trackingSummaries,
       teamAnalytics: model?.teamAnalytics || nextModel.teamAnalytics,
+      rosterStatistics: model?.rosterStatistics || nextModel.rosterStatistics,
       sponsors: model?.sponsors || nextModel.sponsors,
       staffPermissions: model?.staffPermissions || nextModel.staffPermissions
     };
