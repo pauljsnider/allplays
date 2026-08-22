@@ -8466,7 +8466,10 @@ function enqueueUnreadChatCountJob(run, deadlineAt) {
 
 export async function getUnreadChatCounts(userId, teamIds, options = {}) {
     const uniqueTeamIds = Array.from(new Set(teamIds));
-    const counts = Object.fromEntries(uniqueTeamIds.map((teamId) => [teamId, 0]));
+    // Missing keys are intentionally unknown. Only publish zero after every
+    // job for that team has completed, so deadline results cannot hide unread
+    // messages behind an authoritative-looking partial zero.
+    const counts = {};
     const latestMessageAtByTeam = options?.latestMessageAtByTeam || {};
     const latestMessageAtByConversationByTeam = options?.latestMessageAtByConversationByTeam || {};
     const conversationIdsByTeam = options?.conversationIdsByTeam || {};

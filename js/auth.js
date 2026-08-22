@@ -12,7 +12,7 @@ import {
     signInWithEmailLink,
     updatePassword
 } from './firebase.js?v=26';
-import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, redeemFriendInvite, rollbackParentInviteRedemption, getUserProfile, getUserTeams, getTeam, listMyParentMembershipRequests, normalizeParentScopeLinks } from './db.js?v=4433179';
+import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, redeemFriendInvite, rollbackParentInviteRedemption, getUserProfile, getUserTeams, getTeam, listMyParentMembershipRequests, normalizeParentScopeLinks } from './db.js?v=4433180';
 import { executeEmailPasswordSignup } from './signup-flow.js?v=14';
 import { redeemAdminInviteAcceptance, redeemAdminInviteAtomically } from './admin-invite.js?v=9';
 import { mergeApprovedParentMembershipRequests } from './parent-membership-utils.js?v=3';
@@ -27,6 +27,7 @@ import { raceFirstSuccessfulRead } from './hedged-read.js?v=1';
 
 const AUTH_PROFILE_REST_HEDGE_DELAY_MS = 750;
 const AUTH_PROFILE_PRIMARY_TIMEOUT_MS = 8000;
+const AUTH_ACCESS_ENRICHMENT_TIMEOUT_MS = 1500;
 
 async function loadAuthProfile(user) {
     const result = await raceFirstSuccessfulRead({
@@ -56,6 +57,18 @@ function trackSettlement(promise) {
         return result;
     });
     return { state, task };
+}
+
+async function waitForAccessEnrichment(tasks) {
+    let timeoutId;
+    await Promise.race([
+        Promise.all(tasks),
+        new Promise((resolve) => {
+            timeoutId = setTimeout(resolve, AUTH_ACCESS_ENRICHMENT_TIMEOUT_MS);
+        })
+    ]).finally(() => {
+        if (timeoutId) clearTimeout(timeoutId);
+    });
 }
 
 async function cleanupFailedNewUser(user, context, options = {}) {
@@ -446,6 +459,7 @@ export function checkAuth(callback, options = {}) {
         if (user) {
             try {
                 const approvedRequestsRead = trackSettlement(listMyParentMembershipRequests(user.uid));
+                const ownedTeamsRead = trackSettlement(getUserTeams(user.uid));
                 let profile = await loadAuthProfile(user) || {};
 
                 const syncApprovedRequests = (result, updateUserImmediately) => {
@@ -469,14 +483,12 @@ export function checkAuth(callback, options = {}) {
                         .catch((err) => console.warn('[auth] Failed to persist synced parent membership requests:', err));
                 };
 
-                // Already-completed repair reads enrich this callback. A slow
-                // historical repair continues in the background and never
-                // holds the signed-in shell or dashboard spinner open.
-                await Promise.resolve();
+                // These are authoritative access reads. Wait only for the
+                // bounded enrichment window so delayed successes reach this
+                // callback without restoring an unbounded dashboard spinner.
+                await waitForAccessEnrichment([approvedRequestsRead.task, ownedTeamsRead.task]);
                 if (approvedRequestsRead.state.result) {
                     syncApprovedRequests(approvedRequestsRead.state.result, true);
-                } else {
-                    void approvedRequestsRead.task.then((result) => syncApprovedRequests(result, false));
                 }
 
                 if (profile) {
@@ -515,20 +527,16 @@ export function checkAuth(callback, options = {}) {
                             .catch((err) => console.warn('[auth] Failed to auto-migrate parent parent scope fields:', err));
                     }
 
-                    if (profile.coachOf) {
-                        user.coachOf = profile.coachOf;
-                    } else {
-                        // Dynamic ownerId fallback is authoritative but not
-                        // required to render. Enrich the same user object when
-                        // it completes without blocking this callback.
-                        void Promise.resolve(getUserTeams(user.uid)).then((ownedTeams) => {
-                            if (ownedTeams?.length > 0) {
-                                user.coachOf = ownedTeams.map((team) => team.id);
-                            }
-                        }).catch((err) => {
-                            console.warn('Error fetching owned teams in auth check:', err);
+                    const coachOf = Array.isArray(profile.coachOf) ? [...profile.coachOf] : [];
+                    const ownedTeamsResult = ownedTeamsRead.state.result;
+                    if (ownedTeamsResult?.status === 'fulfilled') {
+                        ownedTeamsResult.value?.forEach((team) => {
+                            if (team?.id && !coachOf.includes(team.id)) coachOf.push(team.id);
                         });
+                    } else if (ownedTeamsResult?.status === 'rejected') {
+                        console.warn('Error fetching owned teams in auth check:', ownedTeamsResult.reason);
                     }
+                    if (coachOf.length > 0) user.coachOf = coachOf;
 
                     if (profile.roles) user.roles = profile.roles;
                 }

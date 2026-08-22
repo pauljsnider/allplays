@@ -664,7 +664,7 @@
       initOptions: { renderHeader, formatDate, formatTime },
       loadDependencies: async () => {
         const [{ checkAuth, getRedirectUrl }, { getPublicHomepageGames }, { initHomepage }] = await Promise.all([
-          import('./js/auth.js?v=4433181'),
+          import('./js/auth.js?v=4433182'),
           import('./js/public-homepage-games.js?v=2'),
           import('./js/homepage.js?v=5')
         ]);

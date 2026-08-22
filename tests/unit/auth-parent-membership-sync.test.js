@@ -41,7 +41,7 @@ const profileRestMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../js/firebase.js?v=26', () => firebaseMocks);
-vi.mock('../../js/db.js?v=4433179', () => dbMocks);
+vi.mock('../../js/db.js?v=4433180', () => dbMocks);
 vi.mock('../../js/auth-profile-rest.js?v=1', () => profileRestMocks);
 vi.mock('../../js/signup-flow.js?v=14', () => ({
     executeEmailPasswordSignup: vi.fn()
@@ -90,6 +90,7 @@ describe('auth parent membership sync', () => {
         await vi.advanceTimersByTimeAsync(749);
         expect(profileRestMocks.loadAuthProfileViaRest).not.toHaveBeenCalled();
         await vi.advanceTimersByTimeAsync(1);
+        await vi.advanceTimersByTimeAsync(1500);
         await Promise.resolve();
         await Promise.resolve();
 
@@ -279,5 +280,54 @@ describe('auth parent membership sync', () => {
             })],
             roles: ['member', 'parent']
         }));
+    });
+
+    it('waits within the access bound so a delayed membership repair reaches the callback', async () => {
+        let resolveMembershipRequests;
+        const user = { uid: 'parent-1', email: 'parent@example.com' };
+        const callback = vi.fn();
+        dbMocks.getUserProfile.mockResolvedValue({ email: 'parent@example.com', roles: ['member'] });
+        dbMocks.listMyParentMembershipRequests.mockImplementation(() => new Promise((resolve) => {
+            resolveMembershipRequests = resolve;
+        }));
+        dbMocks.getUserTeams.mockResolvedValue([]);
+        dbMocks.updateUserProfile.mockResolvedValue(undefined);
+        firebaseMocks.onAuthStateChanged.mockImplementation(async (_auth, handler) => {
+            await handler(user);
+            return vi.fn();
+        });
+
+        const authCheck = checkAuth(callback);
+        await vi.waitFor(() => expect(resolveMembershipRequests).toBeTypeOf('function'));
+        resolveMembershipRequests([{
+            status: 'approved', requesterUserId: 'parent-1', teamId: 'team-2', playerId: 'player-2'
+        }]);
+        await authCheck;
+
+        expect(callback).toHaveBeenCalledWith(expect.objectContaining({
+            parentOf: [expect.objectContaining({ teamId: 'team-2', playerId: 'player-2' })]
+        }));
+    });
+
+    it('waits within the access bound so delayed ownerId discovery reaches the callback', async () => {
+        let resolveOwnedTeams;
+        const user = { uid: 'coach-1', email: 'coach@example.com' };
+        const callback = vi.fn();
+        dbMocks.getUserProfile.mockResolvedValue({ email: 'coach@example.com' });
+        dbMocks.listMyParentMembershipRequests.mockResolvedValue([]);
+        dbMocks.getUserTeams.mockImplementation(() => new Promise((resolve) => {
+            resolveOwnedTeams = resolve;
+        }));
+        firebaseMocks.onAuthStateChanged.mockImplementation(async (_auth, handler) => {
+            await handler(user);
+            return vi.fn();
+        });
+
+        const authCheck = checkAuth(callback);
+        await vi.waitFor(() => expect(resolveOwnedTeams).toBeTypeOf('function'));
+        resolveOwnedTeams([{ id: 'team-owned', name: 'Vipers' }]);
+        await authCheck;
+
+        expect(callback).toHaveBeenCalledWith(expect.objectContaining({ coachOf: ['team-owned'] }));
     });
 });

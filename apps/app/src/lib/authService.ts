@@ -50,6 +50,7 @@ const nativeWebAuthBridgeRetryBaseMs = 2000;
 const nativeWebAuthBridgeRetryMaxMs = 30000;
 const profileHydrationTimeoutMs = 8000;
 const profileRestHedgeDelayMs = 750;
+const accessEnrichmentTimeoutMs = 1500;
 const signOutCleanupTimeoutMs = 2500;
 const firebaseAuthStorageDb = 'firebaseLocalStorageDb';
 const firebaseAuthStorageStore = 'firebaseLocalStorage';
@@ -1122,9 +1123,19 @@ export async function hydrateFirebaseUser(user: FirebaseUser): Promise<HydratedU
     };
   }
 
-  // Give already-completed supplementary reads one microtask to publish their
-  // result. Slow repair/discovery work must not hold the signed-in shell open.
-  await Promise.resolve();
+  // Membership repair and ownerId discovery are authoritative access reads.
+  // Give them a bounded opportunity to enrich this hydration result so
+  // one-shot route consumers receive delayed successes without an unbounded
+  // signed-in shell wait.
+  let accessEnrichmentTimer: number | undefined;
+  await Promise.race([
+    Promise.all([membershipRequestsTask, ownedTeamsTask]),
+    new Promise<void>((resolve) => {
+      accessEnrichmentTimer = window.setTimeout(resolve, accessEnrichmentTimeoutMs);
+    })
+  ]).finally(() => {
+    if (accessEnrichmentTimer) window.clearTimeout(accessEnrichmentTimer);
+  });
 
   const syncApprovedMemberships = async (
     result: PromiseSettledResult<unknown[]>,
@@ -1151,8 +1162,6 @@ export async function hydrateFirebaseUser(user: FirebaseUser): Promise<HydratedU
 
   if (membershipRequestsResult) {
     await syncApprovedMemberships(membershipRequestsResult, true);
-  } else {
-    void membershipRequestsTask.then((result) => syncApprovedMemberships(result, false));
   }
 
   if (ownedTeamsResult) {
@@ -1168,12 +1177,6 @@ export async function hydrateFirebaseUser(user: FirebaseUser): Promise<HydratedU
     } catch (error) {
       logger.warn('Failed to load owned teams.', { error });
     }
-  } else {
-    void ownedTeamsTask.then((result) => {
-      if (result.status === 'rejected') {
-        logger.warn('Failed to load owned teams.', { error: result.reason });
-      }
-    });
   }
 
   return {

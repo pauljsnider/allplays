@@ -88,9 +88,9 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeams, getUserTeamsWithAccess, getParentTeams, deleteTeam, getUnreadChatCounts } from './js/db.js?v=4433179';
+        import { getTeams, getUserTeamsWithAccess, getParentTeams, deleteTeam, getUnreadChatCounts } from './js/db.js?v=4433180';
         import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=443355';
-        import { checkAuth } from './js/auth.js?v=4433181';
+        import { checkAuth } from './js/auth.js?v=4433182';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -212,10 +212,13 @@
 
                 function renderTeamCard(team) {
                     const hasFullAccess = team._access === 'full';
-                    const unread = unreadCounts[team.id] || 0;
+                    const unreadKnown = Object.prototype.hasOwnProperty.call(unreadCounts, team.id);
+                    const unread = unreadKnown ? unreadCounts[team.id] || 0 : 0;
                     const unreadBadge = unread > 0
                         ? `<span data-unread-chat-badge class="absolute -top-1 -right-1 inline-flex items-center justify-center w-5 h-5 text-xs font-bold text-white bg-red-500 rounded-full">${unread > 99 ? '99+' : unread}</span>`
-                        : '';
+                        : !unreadKnown
+                            ? '<span data-unread-chat-unknown class="absolute -top-1 -right-1 w-2.5 h-2.5 bg-gray-300 rounded-full animate-pulse" title="Unread messages are still loading"></span>'
+                            : '';
                     const chatHighlight = unread > 0 ? 'border-primary-400 bg-primary-50' : 'border-gray-200 hover:border-primary-300 hover:bg-primary-50';
                     return `
                     <div class="group bg-white rounded-2xl shadow-md hover:shadow-xl transition duration-300 border border-gray-200 hover:border-primary-300 overflow-hidden" data-team-card="${team.id}">
@@ -385,7 +388,8 @@
                 function updateUnreadChatBadges() {
                     container.querySelectorAll('[data-team-chat-link]').forEach((link) => {
                         const teamId = link.dataset.teamChatLink;
-                        const unread = Math.max(0, Number(unreadCounts[teamId] || 0) || 0);
+                        const unreadKnown = Object.prototype.hasOwnProperty.call(unreadCounts, teamId);
+                        const unread = unreadKnown ? Math.max(0, Number(unreadCounts[teamId] || 0) || 0) : 0;
                         const hasUnread = unread > 0;
                         link.classList.toggle('border-primary-400', hasUnread);
                         link.classList.toggle('bg-primary-50', hasUnread);
@@ -394,12 +398,19 @@
                         link.classList.toggle('hover:bg-primary-50', !hasUnread);
 
                         link.querySelector('[data-unread-chat-badge]')?.remove();
+                        link.querySelector('[data-unread-chat-unknown]')?.remove();
                         if (hasUnread) {
                             const badge = document.createElement('span');
                             badge.dataset.unreadChatBadge = '';
                             badge.className = 'absolute -top-1 -right-1 inline-flex items-center justify-center w-5 h-5 text-xs font-bold text-white bg-red-500 rounded-full';
                             badge.textContent = unread > 99 ? '99+' : String(unread);
                             link.prepend(badge);
+                        } else if (!unreadKnown) {
+                            const unknown = document.createElement('span');
+                            unknown.dataset.unreadChatUnknown = '';
+                            unknown.className = 'absolute -top-1 -right-1 w-2.5 h-2.5 bg-gray-300 rounded-full animate-pulse';
+                            unknown.title = 'Unread messages are still loading';
+                            link.prepend(unknown);
                         }
 
                         const icon = link.querySelector('[data-team-chat-icon]');
@@ -467,17 +478,25 @@
                 // Team access is the critical result. Render it immediately,
                 // then enrich chat badges in the background with a hard bound.
                 renderTeamLists();
-                if (teamIds.length > 0) {
-                    void getUnreadChatCounts(user.uid, teamIds, {
+                function loadUnreadChatBadges(pendingTeamIds) {
+                    void getUnreadChatCounts(user.uid, pendingTeamIds, {
                         conversationLookupByTeam,
                         deadlineAt: Date.now() + 5000
                     }).then((counts) => {
-                        unreadCounts = counts || {};
+                        unreadCounts = { ...unreadCounts, ...(counts || {}) };
                         updateUnreadChatBadges();
+                        const unknownTeamIds = pendingTeamIds.filter((teamId) => (
+                            !Object.prototype.hasOwnProperty.call(unreadCounts, teamId)
+                        ));
+                        if (unknownTeamIds.length > 0) {
+                            setTimeout(() => loadUnreadChatBadges(unknownTeamIds), 5000);
+                        }
                     }).catch((error) => {
                         console.warn('Unable to load dashboard unread counts:', error);
+                        setTimeout(() => loadUnreadChatBadges(pendingTeamIds), 5000);
                     });
                 }
+                if (teamIds.length > 0) loadUnreadChatBadges(teamIds);
 
             } catch (error) {
                 console.error(error);

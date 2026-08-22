@@ -561,7 +561,7 @@ describe('chat unread count helpers', () => {
         expect(peak).toBe(6);
     });
 
-    it('stops dequeuing at the deadline and returns zero for unfinished teams', async () => {
+    it('stops dequeuing at the deadline and leaves unfinished teams unknown', async () => {
         vi.useFakeTimers();
         try {
             const pending = Array.from({ length: 12 }, () => deferred());
@@ -590,7 +590,7 @@ describe('chat unread count helpers', () => {
             expect(getUnreadChatCount).toHaveBeenCalledTimes(10);
 
             await vi.advanceTimersByTimeAsync(100);
-            await expect(countsPromise).resolves.toEqual({ 'team-a': 4, 'team-b': 0 });
+            await expect(countsPromise).resolves.toEqual({ 'team-a': 4 });
             pending.slice(4, 10).forEach((entry) => entry.resolve(1));
             await vi.advanceTimersByTimeAsync(0);
             expect(getUnreadChatCount).toHaveBeenCalledTimes(10);
@@ -599,7 +599,7 @@ describe('chat unread count helpers', () => {
         }
     });
 
-    it('returns zero counts when the shared user profile read fails', async () => {
+    it('leaves counts unknown when the shared user profile read fails', async () => {
         const getUnreadChatCount = vi.fn();
         const getChatConversations = vi.fn();
         const getDoc = vi.fn().mockRejectedValue(new Error('permission denied'));
@@ -614,10 +614,7 @@ describe('chat unread count helpers', () => {
             console: { warn }
         });
 
-        await expect(getUnreadChatCounts('user-4', ['team-a', 'team-b'])).resolves.toEqual({
-            'team-a': 0,
-            'team-b': 0
-        });
+        await expect(getUnreadChatCounts('user-4', ['team-a', 'team-b'])).resolves.toEqual({});
         expect(getUnreadChatCount).not.toHaveBeenCalled();
         expect(warn).toHaveBeenCalledWith('Failed to load chat state for user user-4:', expect.any(Error));
     });

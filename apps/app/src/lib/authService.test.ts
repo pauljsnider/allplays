@@ -745,6 +745,46 @@ describe('hydrateFirebaseUser', () => {
     expect(hydrated.user.coachOf).toEqual(['team-1', 'team-2']);
   });
 
+  it('includes a delayed approved-membership repair in the current hydration result', async () => {
+    let resolveMembershipRequests: ((value: unknown[]) => void) | undefined;
+    legacyAuthMocks.listMyParentMembershipRequests.mockImplementation(() => new Promise((resolve) => {
+      resolveMembershipRequests = resolve;
+    }));
+    parentMembershipMocks.mergeApprovedParentMembershipRequests.mockReturnValue({
+      changed: true,
+      userUpdate: {
+        roles: ['member', 'parent'],
+        parentOf: [{ teamId: 'team-2', playerId: 'player-2' }]
+      }
+    });
+
+    const hydration = hydrateFirebaseUser({ uid: 'parent-1', email: 'parent@example.com' });
+    await vi.waitFor(() => expect(resolveMembershipRequests).toBeTypeOf('function'));
+    resolveMembershipRequests?.([{ status: 'approved', teamId: 'team-2' }]);
+
+    await expect(hydration).resolves.toEqual(expect.objectContaining({
+      user: expect.objectContaining({
+        parentOf: [{ teamId: 'team-2', playerId: 'player-2' }]
+      })
+    }));
+  });
+
+  it('includes delayed ownerId team discovery in the current hydration result', async () => {
+    let resolveOwnedTeams: ((value: Array<{ id: string; name: string }>) => void) | undefined;
+    legacyAuthMocks.getUserProfile.mockResolvedValue({ email: 'coach@example.com' });
+    legacyAuthMocks.getUserTeams.mockImplementation(() => new Promise((resolve) => {
+      resolveOwnedTeams = resolve;
+    }));
+
+    const hydration = hydrateFirebaseUser({ uid: 'coach-1', email: 'coach@example.com' });
+    await vi.waitFor(() => expect(resolveOwnedTeams).toBeTypeOf('function'));
+    resolveOwnedTeams?.([{ id: 'team-owned', name: 'Vipers' }]);
+
+    await expect(hydration).resolves.toEqual(expect.objectContaining({
+      user: expect.objectContaining({ coachOf: ['team-owned'] })
+    }));
+  });
+
   it('starts independent account bootstrap reads before any one read resolves', async () => {
     let resolveProfile: ((value: Record<string, unknown>) => void) | undefined;
     let resolveMembershipRequests: ((value: unknown[]) => void) | undefined;
@@ -779,13 +819,21 @@ describe('hydrateFirebaseUser', () => {
   });
 
   it('returns after the profile is authoritative even when supplementary repair reads remain stalled', async () => {
+    vi.useFakeTimers();
     legacyAuthMocks.listMyParentMembershipRequests.mockImplementation(() => new Promise(() => {}));
     legacyAuthMocks.getUserTeams.mockImplementation(() => new Promise(() => {}));
 
-    await expect(hydrateFirebaseUser({
+    const hydration = hydrateFirebaseUser({
       uid: 'coach-1',
       email: 'coach@example.com'
-    })).resolves.toEqual(expect.objectContaining({
+    });
+    await vi.advanceTimersByTimeAsync(1499);
+    let settled = false;
+    void hydration.then(() => { settled = true; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(hydration).resolves.toEqual(expect.objectContaining({
       user: expect.objectContaining({ uid: 'coach-1', coachOf: ['team-1'] }),
       profileHydration: 'success'
     }));
