@@ -369,7 +369,8 @@ async function mockAppModules(page, { user = null, emailLink = false, friendInvi
 
                 export async function loadNotificationPreferences(userId, teamId) {
                     window.__appProfileCalls.notificationLoads.push({ userId, teamId });
-                    const queue = window.__mockNotificationPreferenceResponses || [];
+                    const teamQueues = window.__mockNotificationPreferenceResponsesByTeam || {};
+                    const queue = teamQueues[teamId] || window.__mockNotificationPreferenceResponses || [];
                     if (queue.length > 1) {
                         const next = queue.shift();
                         if (next?.error) {
@@ -936,16 +937,21 @@ test('profile keeps destructive alert actions disabled until a failed team load 
     };
     await mockAppModules(page, { user });
     await page.addInitScript(() => {
-        window.__mockNotificationPreferenceResponses = [
-            { value: { liveChat: true, liveScore: false, schedule: true } },
-            { error: 'temporary outage' },
-            { value: { liveChat: false, liveScore: true, schedule: false } }
-        ];
+        window.__mockNotificationPreferenceResponsesByTeam = {
+            'team-1': [
+                { value: { liveChat: true, liveScore: false, schedule: true } }
+            ],
+            'team-2': [
+                { error: 'temporary outage' },
+                { value: { liveChat: false, liveScore: true, schedule: false } }
+            ]
+        };
     });
     await page.goto(appUrl(baseURL, '/profile/settings'), { waitUntil: 'domcontentloaded' });
 
     await page.getByRole('link', { name: 'Notifications', exact: true }).click();
     await expect(page.getByLabel('Team')).toHaveValue('team-1');
+    await expect.poll(async () => page.evaluate(() => window.__appProfileCalls.notificationLoads.filter(({ teamId }) => teamId === 'team-1').length)).toBe(1);
     await page.getByLabel('Team').selectOption('team-2');
 
     await expect(page.getByText('Alerts unavailable', { exact: true })).toBeVisible();
@@ -957,7 +963,7 @@ test('profile keeps destructive alert actions disabled until a failed team load 
 
     await page.getByRole('button', { name: 'Retry alerts' }).click();
 
-    await expect.poll(async () => page.evaluate(() => window.__appProfileCalls.notificationLoads.length)).toBe(3);
+    await expect.poll(async () => page.evaluate(() => window.__appProfileCalls.notificationLoads.filter(({ teamId }) => teamId === 'team-2').length)).toBe(2);
     await expect(page.getByText('temporary outage')).toHaveCount(0);
     await expect(page.getByLabel('Live Chat')).toBeVisible();
     await expect(page.getByLabel('Live Chat')).not.toBeChecked();
