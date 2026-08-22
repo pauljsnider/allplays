@@ -22,7 +22,7 @@ const EMPTY_TEAM_ANALYTICS: TeamDetailAnalytics = {
 
 export function InsightsTab({ model, loading, error, premiumAccess }: { model: TeamDetailModel; loading: boolean; error: string; premiumAccess: PremiumAccessResult }) {
   const analyticsRoot = model.teamAnalytics || EMPTY_TEAM_ANALYTICS;
-  const availableSeasons = analyticsRoot.availableSeasons || [];
+  const availableSeasons = useMemo(() => analyticsRoot.availableSeasons || [], [analyticsRoot.availableSeasons]);
   const [selectedSeason, setSelectedSeason] = useState(analyticsRoot.seasonLabel);
   useEffect(() => {
     if (availableSeasons.length && !availableSeasons.includes(selectedSeason)) setSelectedSeason(analyticsRoot.seasonLabel);
