@@ -88,4 +88,90 @@ describe('useAuth profile hydration', () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.profileHydration).toBe(profileHydration);
   });
+
+  it('publishes post-timeout access enrichment to an already-rendered consumer', async () => {
+    authServiceMocks.observeFirebaseUser.mockImplementation((callback: (user: unknown) => void) => {
+      callback({ uid: 'user-1' });
+      return () => undefined;
+    });
+    authServiceMocks.hydrateFirebaseUser.mockResolvedValue({
+      user: {
+        uid: 'user-1',
+        email: 'parent@example.com',
+        displayName: 'Pat Parent',
+        roles: ['member'],
+        parentOf: []
+      },
+      profile: { roles: ['member'], parentOf: [] },
+      profileHydration: 'success'
+    });
+
+    const { result } = renderHook(() => useAuth());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.user?.parentOf).toEqual([]);
+
+    const options = authServiceMocks.hydrateFirebaseUser.mock.calls[0]?.[1];
+    act(() => {
+      options.onAccessEnriched({
+        user: {
+          uid: 'user-1',
+          email: 'parent@example.com',
+          displayName: 'Pat Parent',
+          roles: ['member', 'parent'],
+          parentOf: [{ teamId: 'team-late', playerId: 'player-late' }]
+        },
+        profile: {
+          roles: ['member', 'parent'],
+          parentOf: [{ teamId: 'team-late', playerId: 'player-late' }]
+        },
+        profileHydration: 'success'
+      });
+    });
+
+    expect(result.current.user?.parentOf).toEqual([
+      { teamId: 'team-late', playerId: 'player-late' }
+    ]);
+    expect(result.current.isParent).toBe(true);
+  });
+
+  it('ignores post-timeout enrichment after the consumer signs out', async () => {
+    authServiceMocks.observeFirebaseUser.mockImplementation((callback: (user: unknown) => void) => {
+      callback({ uid: 'user-1' });
+      return () => undefined;
+    });
+    authServiceMocks.hydrateFirebaseUser.mockResolvedValue({
+      user: {
+        uid: 'user-1',
+        email: 'coach@example.com',
+        displayName: 'Casey Coach',
+        roles: ['parent'],
+        coachOf: []
+      },
+      profile: { coachOf: [] },
+      profileHydration: 'success'
+    });
+
+    const { result } = renderHook(() => useAuth());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const options = authServiceMocks.hydrateFirebaseUser.mock.calls[0]?.[1];
+
+    await act(async () => {
+      await result.current.signOut();
+    });
+    act(() => {
+      options.onAccessEnriched({
+        user: {
+          uid: 'user-1',
+          email: 'coach@example.com',
+          displayName: 'Casey Coach',
+          roles: ['coach'],
+          coachOf: ['team-late']
+        },
+        profile: { coachOf: ['team-late'] },
+        profileHydration: 'success'
+      });
+    });
+
+    expect(result.current.user).toBeNull();
+  });
 });

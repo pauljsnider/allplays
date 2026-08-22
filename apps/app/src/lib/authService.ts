@@ -87,6 +87,10 @@ type HydratedUser = {
   profileHydration: ProfileHydrationStatus;
 };
 
+type HydrationOptions = {
+  onAccessEnriched?: (hydrated: HydratedUser) => void;
+};
+
 type NativeAuthSession = {
   uid: string;
   email: string;
@@ -1074,7 +1078,10 @@ async function cleanupFailedNewUser(user: FirebaseUser | null, context: string, 
   }
 }
 
-export async function hydrateFirebaseUser(user: FirebaseUser): Promise<HydratedUser> {
+export async function hydrateFirebaseUser(
+  user: FirebaseUser,
+  options: HydrationOptions = {}
+): Promise<HydratedUser> {
   let profile: Record<string, unknown> = {};
   let profileHydration: ProfileHydrationStatus = 'success';
   const dbModulePromise = loadLegacyAuthDb();
@@ -1139,28 +1146,37 @@ export async function hydrateFirebaseUser(user: FirebaseUser): Promise<HydratedU
 
   const syncApprovedMemberships = async (
     result: PromiseSettledResult<unknown[]>
-  ) => {
+  ): Promise<boolean> => {
     try {
       if (result.status === 'rejected') throw result.reason;
       const { mergeApprovedParentMembershipRequests } = await loadLegacyParentMembershipUtils();
       const parentRequestSync = mergeApprovedParentMembershipRequests(profile, result.value);
-      if (!parentRequestSync.changed) return;
+      if (!parentRequestSync.changed) return false;
       Object.assign(profile, parentRequestSync.userUpdate);
       void dbModulePromise
         .then((dbModule) => dbModule.updateUserProfile(user.uid, parentRequestSync.userUpdate))
         .catch((error) => logger.warn('Failed to persist approved parent membership sync.', { error }));
+      return true;
     } catch (error) {
       logger.warn('Failed to sync approved parent membership requests.', { error });
+      return false;
     }
   };
 
-  const mergeOwnedTeams = (result: PromiseSettledResult<Array<Record<string, unknown>>>) => {
+  const mergeOwnedTeams = (result: PromiseSettledResult<Array<Record<string, unknown>>>): boolean => {
     try {
       if (result.status === 'rejected') throw result.reason;
       const coachOf = mergeOwnedTeamIds(profile.coachOf, result.value);
-      if (coachOf.length > 0) profile.coachOf = coachOf;
+      const previousCoachOf = Array.isArray(profile.coachOf) ? profile.coachOf : [];
+      if (coachOf.length === previousCoachOf.length
+        && coachOf.every((teamId, index) => teamId === previousCoachOf[index])) {
+        return false;
+      }
+      profile.coachOf = coachOf;
+      return true;
     } catch (error) {
       logger.warn('Failed to load owned teams.', { error });
+      return false;
     }
   };
 
@@ -1178,20 +1194,26 @@ export async function hydrateFirebaseUser(user: FirebaseUser): Promise<HydratedU
     profileHydration
   };
 
-  // Preserve the bounded initial hydration, but do not discard authoritative
-  // access reads that settle after it. Mutating the returned hydration object
-  // lets its current consumer observe the repair and the persisted membership
-  // makes the next hydration reliable.
+  // Preserve the bounded initial hydration, but publish a fresh value when an
+  // authoritative access read settles later. React and routing consumers do
+  // not observe mutations to an object they have already consumed.
+  const publishAccessEnrichment = () => {
+    const enriched = {
+      user: toAuthUser(user, profile),
+      profile: { ...profile },
+      profileHydration
+    };
+    options.onAccessEnriched?.(enriched);
+  };
+
   if (!membershipRequestsResult) {
     void membershipRequestsTask.then(async (result) => {
-      await syncApprovedMemberships(result);
-      Object.assign(hydrated.user, toAuthUser(user, profile));
+      if (await syncApprovedMemberships(result)) publishAccessEnrichment();
     });
   }
   if (!ownedTeamsResult) {
     void ownedTeamsTask.then((result) => {
-      mergeOwnedTeams(result);
-      Object.assign(hydrated.user, toAuthUser(user, profile));
+      if (mergeOwnedTeams(result)) publishAccessEnrichment();
     });
   }
 

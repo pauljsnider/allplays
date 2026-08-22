@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AuthState, AuthUser, ProfileHydrationStatus } from './types';
 import { clearAuthBootstrapHint, writeAuthBootstrapHint } from './authBootstrapHint';
 import { hydrateFirebaseUser, observeFirebaseUser, signOut } from './authService';
@@ -43,6 +43,14 @@ export function useAuth(): AuthState {
   const [profileHydration, setProfileHydration] = useState<ProfileHydrationStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const hydrationGeneration = useRef(0);
+
+  const applyHydratedUser = useCallback((hydrated: Awaited<ReturnType<typeof hydrateFirebaseUser>>) => {
+    setUser(hydrated.user);
+    setProfile(hydrated.profile);
+    setProfileHydration(hydrated.profileHydration);
+    writeAuthBootstrapHint(hydrated.user);
+  }, []);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -57,6 +65,7 @@ export function useAuth(): AuthState {
     });
 
     if (!currentUser) {
+      hydrationGeneration.current += 1;
       setUser(null);
       setProfile(null);
       setProfileHydration(null);
@@ -65,27 +74,32 @@ export function useAuth(): AuthState {
       return null;
     }
 
+    const generation = ++hydrationGeneration.current;
     try {
-      const hydrated = await hydrateFirebaseUser(currentUser);
-      setUser(hydrated.user);
-      setProfile(hydrated.profile);
-      setProfileHydration(hydrated.profileHydration);
-      writeAuthBootstrapHint(hydrated.user);
+      const hydrated = await hydrateFirebaseUser(currentUser, {
+        onAccessEnriched: (enriched) => {
+          if (hydrationGeneration.current === generation) applyHydratedUser(enriched);
+        }
+      });
+      if (hydrationGeneration.current === generation) applyHydratedUser(hydrated);
       return hydrated.user;
     } catch (hydrateError: any) {
-      setError(hydrateError?.message || 'Unable to load account profile.');
-      setUser(null);
-      setProfile(null);
-      setProfileHydration(null);
-      clearAuthBootstrapHint();
+      if (hydrationGeneration.current === generation) {
+        setError(hydrateError?.message || 'Unable to load account profile.');
+        setUser(null);
+        setProfile(null);
+        setProfileHydration(null);
+        clearAuthBootstrapHint();
+      }
       return null;
     } finally {
-      setLoading(false);
+      if (hydrationGeneration.current === generation) setLoading(false);
     }
-  }, []);
+  }, [applyHydratedUser]);
 
   useEffect(() => {
     const unsubscribe = observeFirebaseUser(async (firebaseUser) => {
+      const generation = ++hydrationGeneration.current;
       setLoading(true);
       setError(null);
 
@@ -99,26 +113,33 @@ export function useAuth(): AuthState {
       }
 
       try {
-        const hydrated = await hydrateFirebaseUser(firebaseUser);
-        setUser(hydrated.user);
-        setProfile(hydrated.profile);
-        setProfileHydration(hydrated.profileHydration);
-        writeAuthBootstrapHint(hydrated.user);
+        const hydrated = await hydrateFirebaseUser(firebaseUser, {
+          onAccessEnriched: (enriched) => {
+            if (hydrationGeneration.current === generation) applyHydratedUser(enriched);
+          }
+        });
+        if (hydrationGeneration.current === generation) applyHydratedUser(hydrated);
       } catch (hydrateError: any) {
-        setError(hydrateError?.message || 'Unable to load account profile.');
-        setUser(null);
-        setProfile(null);
-        setProfileHydration(null);
-        clearAuthBootstrapHint();
+        if (hydrationGeneration.current === generation) {
+          setError(hydrateError?.message || 'Unable to load account profile.');
+          setUser(null);
+          setProfile(null);
+          setProfileHydration(null);
+          clearAuthBootstrapHint();
+        }
       } finally {
-        setLoading(false);
+        if (hydrationGeneration.current === generation) setLoading(false);
       }
     });
 
-    return unsubscribe;
-  }, []);
+    return () => {
+      hydrationGeneration.current += 1;
+      unsubscribe();
+    };
+  }, [applyHydratedUser]);
 
   const signOutAndClear = useCallback(async () => {
+    hydrationGeneration.current += 1;
     setError(null);
     const cleanup = signOut();
     const cacheCleanup = clearPerUserCaches();

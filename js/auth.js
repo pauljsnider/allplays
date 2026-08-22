@@ -454,8 +454,21 @@ export function getRedirectUrl(user) {
 
 export function checkAuth(callback, options = {}) {
     const { skipEmailVerificationCheck = true } = options;
+    let active = true;
+    let authGeneration = 0;
 
-    return onAuthStateChanged(auth, async (user) => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+        const generation = ++authGeneration;
+        let initialCallbackDelivered = false;
+        let lateAccessChanged = false;
+        const publishLateAccess = () => {
+            if (!active || generation !== authGeneration) return;
+            if (!initialCallbackDelivered) {
+                lateAccessChanged = true;
+                return;
+            }
+            callback(user);
+        };
         if (user) {
             try {
                 const approvedRequestsRead = trackSettlement(listMyParentMembershipRequests(user.uid));
@@ -465,10 +478,10 @@ export function checkAuth(callback, options = {}) {
                 const syncApprovedRequests = (result, updateUserImmediately) => {
                     if (result.status === 'rejected') {
                         console.warn('[auth] Failed to sync approved parent membership requests:', result.reason);
-                        return;
+                        return false;
                     }
                     const parentRequestSync = mergeApprovedParentMembershipRequests(profile, result.value);
-                    if (!parentRequestSync.changed) return;
+                    if (!parentRequestSync.changed) return false;
                     if (updateUserImmediately) {
                         profile = {
                             ...profile,
@@ -478,9 +491,13 @@ export function checkAuth(callback, options = {}) {
                     if (Array.isArray(parentRequestSync.userUpdate?.parentOf)) {
                         user.parentOf = parentRequestSync.userUpdate.parentOf;
                     }
+                    if (Array.isArray(parentRequestSync.userUpdate?.roles)) {
+                        user.roles = parentRequestSync.userUpdate.roles;
+                    }
                     Promise.resolve(updateUserProfile(user.uid, parentRequestSync.userUpdate))
                         .then(() => console.log('[auth] Synced approved parent membership requests to user profile'))
                         .catch((err) => console.warn('[auth] Failed to persist synced parent membership requests:', err));
+                    return true;
                 };
 
                 // These are authoritative access reads. Wait only for the
@@ -490,7 +507,9 @@ export function checkAuth(callback, options = {}) {
                 if (approvedRequestsRead.state.result) {
                     syncApprovedRequests(approvedRequestsRead.state.result, true);
                 } else {
-                    void approvedRequestsRead.task.then((result) => syncApprovedRequests(result, true));
+                    void approvedRequestsRead.task.then((result) => {
+                        if (syncApprovedRequests(result, true)) publishLateAccess();
+                    });
                 }
 
                 if (profile) {
@@ -506,6 +525,8 @@ export function checkAuth(callback, options = {}) {
                     const mediaUploadTeamIds = getStringArray(profile.mediaUploadTeamIds);
                     if (teamMediaUploadTeamIds) user.teamMediaUploadTeamIds = teamMediaUploadTeamIds;
                     if (mediaUploadTeamIds) user.mediaUploadTeamIds = mediaUploadTeamIds;
+                    const storedCoachOf = getStringArray(profile.coachOf);
+                    if (storedCoachOf) user.coachOf = storedCoachOf;
 
                     // Auto-migrate denormalized parent scope in the background.
                     // Authorization continues to use the complete parentOf links
@@ -537,15 +558,25 @@ export function checkAuth(callback, options = {}) {
                             result.value?.forEach((team) => {
                                 if (team?.id && !coachOf.includes(team.id)) coachOf.push(team.id);
                             });
-                            if (coachOf.length > 0) user.coachOf = coachOf;
+                            const previousCoachOf = Array.isArray(user.coachOf) ? user.coachOf : [];
+                            const changed = coachOf.length !== previousCoachOf.length
+                                || coachOf.some((teamId, index) => teamId !== previousCoachOf[index]);
+                            if (coachOf.length > 0) {
+                                user.coachOf = coachOf;
+                                profile.coachOf = coachOf;
+                            }
+                            return changed;
                         } else {
                             console.warn('Error fetching owned teams in auth check:', result.reason);
                         }
+                        return false;
                     };
                     if (ownedTeamsRead.state.result) {
                         mergeOwnedTeams(ownedTeamsRead.state.result);
                     } else {
-                        void ownedTeamsRead.task.then(mergeOwnedTeams);
+                        void ownedTeamsRead.task.then((result) => {
+                            if (mergeOwnedTeams(result)) publishLateAccess();
+                        });
                     }
 
                     if (profile.roles) user.roles = profile.roles;
@@ -569,8 +600,17 @@ export function checkAuth(callback, options = {}) {
                 console.error('Error fetching user profile for auth check:', e);
             }
         }
+        if (!active || generation !== authGeneration) return;
         callback(user);
+        initialCallbackDelivered = true;
+        if (lateAccessChanged && active && generation === authGeneration) callback(user);
     });
+
+    if (typeof unsubscribe !== 'function') return unsubscribe;
+    return () => {
+        active = false;
+        unsubscribe();
+    };
 }
 
 export function resetPassword(email) {
