@@ -2037,24 +2037,24 @@ test('schedule failure states show errors without trapping users in spinners', a
     const scheduleError = page.getByText('Unable to load schedule while offline. Check your connection and try again.');
     await waitForScheduleRoute(page, scheduleError);
     await expect(page.getByText('Loading schedule')).toHaveCount(0);
+});
 
-    const errorPage = await page.context().newPage();
-    await errorPage.setViewportSize({ width: 390, height: 844 });
-    await mockScheduleModules(errorPage, {
+test('event detail failure states show errors without trapping users in spinners', async ({ page, baseURL }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await mockScheduleModules(page, {
         rideshareLoadError: 'Rideshare unavailable.',
         assignmentClaimError: 'Slot already taken.'
     });
-    await errorPage.goto(appUrl(baseURL, '/schedule/team-1/game-1?childId=player-1'), { waitUntil: 'domcontentloaded' });
+    await page.goto(appUrl(baseURL, '/schedule/team-1/game-1?childId=player-1'), { waitUntil: 'domcontentloaded' });
 
-    const rideshareTab = errorPage.getByRole('button', { name: 'Rideshare', exact: true });
-    await waitForScheduleRoute(errorPage, rideshareTab);
+    const rideshareTab = page.getByRole('button', { name: 'Rideshare', exact: true });
+    await waitForScheduleRoute(page, rideshareTab);
     await rideshareTab.click();
-    await expect(errorPage.getByText('Rideshare unavailable.')).toBeVisible({ timeout: 15000 });
-    await expect(errorPage.getByText('Loading rideshare offers')).toHaveCount(0);
+    await expect(page.getByText('Rideshare unavailable.')).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText('Loading rideshare offers')).toHaveCount(0);
 
-    await errorPage.getByRole('button', { name: 'Assignments', exact: true }).click();
-    const assignmentsSection = errorPage.locator('section').filter({ has: errorPage.getByRole('heading', { name: 'Assignments' }) });
+    await page.getByRole('button', { name: 'Assignments', exact: true }).click();
+    const assignmentsSection = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Assignments' }) });
     await assignmentsSection.locator('article').filter({ hasText: 'Snacks' }).getByRole('button', { name: 'Sign up' }).click();
     await expect(assignmentsSection.getByText('Slot already taken.')).toBeVisible({ timeout: 15000 });
-    await errorPage.close();
 });
