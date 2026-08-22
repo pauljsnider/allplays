@@ -488,7 +488,8 @@ describe('publicTeamsService', () => {
                 tiebreakers: ['head_to_head', 'point_diff'],
                 twoTeamTiebreakers: ['head_to_head'],
                 multiTeamTiebreakers: ['group_head_to_head', 'point_diff']
-            }
+            },
+            standings: null
         });
         expect(dbMocks.getPublicTeamProfile).toHaveBeenCalledWith('team-public-1');
     });
