@@ -18933,7 +18933,6 @@ async function listPlatformAdminTeamDocuments(caller) {
     throw new functions.https.HttpsError('permission-denied', 'Platform admin access is required to load every team.');
   }
   const snapshot = await firestore.collection('teams')
-    .orderBy('name')
     .select(...DASHBOARD_TEAM_FIELD_PATHS)
     .get();
   const teams = new Map(snapshot.docs.map((teamSnap) => [teamSnap.id, teamSnap]));

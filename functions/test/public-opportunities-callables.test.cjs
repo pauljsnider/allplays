@@ -156,6 +156,10 @@ function makeFirestore(seed = {}, { queryFailures = [], beforeTransaction = null
                     throw new Error(`Unsupported query operator: ${operator}`);
                 }));
 
+                snapshots = snapshots.filter((snapshot) => orders.every(({ field }) => (
+                    field === '__name__' || getNested(snapshot.data(), field) !== undefined
+                )));
+
                 function compareSnapshotToValues(snapshot, values) {
                     for (let index = 0; index < orders.length; index += 1) {
                         const { field, direction } = orders[index];
@@ -722,6 +726,12 @@ test('platform-admin dashboard discovery loads every team and acknowledges compl
             ownerId: 'owner-2',
             active: true,
             isPublic: false
+        },
+        'teams/team-legacy': {
+            teamName: 'Charlie',
+            ownerId: 'owner-3',
+            active: true,
+            isPublic: false
         }
     });
 
@@ -733,7 +743,11 @@ test('platform-admin dashboard discovery loads every team and acknowledges compl
     assert.equal(result.dashboardTeamLoadVersion, 1);
     assert.equal(result.includesAllTeams, true);
     assert.equal(result.isPartial, false);
-    assert.deepEqual(result.items.map((team) => team.id), ['team-owned-elsewhere', 'team-private']);
+    assert.deepEqual(result.items.map((team) => ({ id: team.id, name: team.name })), [
+        { id: 'team-owned-elsewhere', name: 'Alpha' },
+        { id: 'team-private', name: 'Bravo' },
+        { id: 'team-legacy', name: 'Charlie' }
+    ]);
     assert.deepEqual(result.parentItems, []);
     assert.equal(result.items[0].ownerId, 'owner-1');
     assert.equal('adminEmails' in result.items[0], false);
