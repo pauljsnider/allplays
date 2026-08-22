@@ -18880,6 +18880,22 @@ async function requireCallableSocialPostAccess(transaction, postRef, caller) {
 const MAX_MANAGED_CHAT_METADATA_QUERIES = 30;
 const MAX_MANAGED_CHAT_METADATA_DOCUMENTS = 1000;
 const MAX_CALLABLE_DISCOVERY_CONCURRENCY = 6;
+const MAX_DASHBOARD_PARENT_TEAMS = 180;
+const DASHBOARD_TEAM_LOAD_VERSION = 1;
+const DASHBOARD_TEAM_FIELD_PATHS = Object.freeze([
+  'name',
+  'teamName',
+  'sport',
+  'photoUrl',
+  'teamPhotoUrl',
+  'logoUrl',
+  'teamLogoUrl',
+  'imageUrl',
+  'active',
+  'archived',
+  'status',
+  'ownerId'
+]);
 
 function chunkCallableValues(values, size = 30) {
   const chunks = [];
@@ -18912,12 +18928,67 @@ async function runSettledWithConcurrencyLimit(items, limit, worker) {
   });
 }
 
+async function listPlatformAdminTeamDocuments(caller) {
+  if (!isOpportunityPlatformAdmin(caller)) {
+    throw new functions.https.HttpsError('permission-denied', 'Platform admin access is required to load every team.');
+  }
+  const snapshot = await firestore.collection('teams')
+    .orderBy('name')
+    .select(...DASHBOARD_TEAM_FIELD_PATHS)
+    .get();
+  const teams = new Map(snapshot.docs.map((teamSnap) => [teamSnap.id, teamSnap]));
+  teams.discoveryQueryCount = 1;
+  teams.successfulDiscoveryQueryCount = 1;
+  teams.discoveryErrors = [];
+  teams.isPartial = false;
+  return teams;
+}
+
+async function listCallableParentTeamDocuments(caller) {
+  const parentScope = getCallableParentTeamScope(caller.user);
+  const parentTeamIdsAreIncomplete = parentScope.teamIds.length > MAX_DASHBOARD_PARENT_TEAMS;
+  const parentTeamIds = parentScope.teamIds.slice(0, MAX_DASHBOARD_PARENT_TEAMS);
+  const results = await runSettledWithConcurrencyLimit(
+    parentTeamIds,
+    MAX_CALLABLE_DISCOVERY_CONCURRENCY,
+    (teamId) => firestore.doc(`teams/${teamId}`).get()
+  );
+  return {
+    teamSnaps: results
+      .filter((result) => result.status === 'fulfilled')
+      .map((result) => result.value)
+      .filter((teamSnap) => teamSnap.exists && hasCallableChatTeamAccess(caller, teamSnap.id, teamSnap.data() || {})),
+    isPartial: parentScope.isPartial
+      || parentTeamIdsAreIncomplete
+      || results.some((result) => result.status === 'rejected')
+  };
+}
+
+function serializeDashboardManagedTeamProfile(teamId, team = {}) {
+  const summary = serializeStaffTeamProfile(teamId, team);
+  if (!summary) return null;
+  return {
+    ...summary,
+    ownerId: normalizeStablePrincipalUid(team.ownerId) || null
+  };
+}
+
 exports.listManagedTeams = functions.https.onCall(async (data, context = {}) => {
   const caller = getVerifiedEmailAuthorizationCaller(await getOpportunityCaller(context), context);
-  const staffTeams = await listStaffTeamDocuments(caller);
-  const conversationLimit = 100;
+  const includeAllTeams = data?.includeAllTeams === true;
+  const includeParentTeams = data?.includeParentTeams === true;
+  if (includeAllTeams && !isOpportunityPlatformAdmin(caller)) {
+    throw new functions.https.HttpsError('permission-denied', 'Platform admin access is required to load every team.');
+  }
   const includeChatMetadata = data?.includeChatMetadata === true;
-  let chatTeamDiscoveryPartial = false;
+  const [staffTeams, parentTeamResult] = await Promise.all([
+    includeAllTeams ? listPlatformAdminTeamDocuments(caller) : listStaffTeamDocuments(caller),
+    includeParentTeams || includeChatMetadata
+      ? listCallableParentTeamDocuments(caller)
+      : Promise.resolve({ teamSnaps: [], isPartial: false })
+  ]);
+  const conversationLimit = 100;
+  const chatTeamDiscoveryPartial = includeChatMetadata && parentTeamResult.isPartial;
   const teamSnapsById = new Map();
   if (includeChatMetadata) {
     staffTeams.forEach((teamSnap) => {
@@ -18925,30 +18996,19 @@ exports.listManagedTeams = functions.https.onCall(async (data, context = {}) => 
         teamSnapsById.set(teamSnap.id, teamSnap);
       }
     });
-    const parentTeamLimit = 180;
-    const parentTeamScope = getCallableParentTeamScope(caller.user);
-    if (parentTeamScope.isPartial) chatTeamDiscoveryPartial = true;
-    const allParentTeamIds = parentTeamScope.teamIds;
-    if (allParentTeamIds.length > parentTeamLimit) chatTeamDiscoveryPartial = true;
-    const parentTeamIds = allParentTeamIds.slice(0, parentTeamLimit);
-    const parentTeamResults = await runSettledWithConcurrencyLimit(
-      parentTeamIds,
-      MAX_CALLABLE_DISCOVERY_CONCURRENCY,
-      (teamId) => firestore.doc(`teams/${teamId}`).get()
-    );
-    parentTeamResults.forEach((result) => {
-      if (result.status === 'rejected') {
-        chatTeamDiscoveryPartial = true;
-        return;
-      }
-      const teamSnap = result.value;
-      if (teamSnap.exists && hasCallableChatTeamAccess(caller, teamSnap.id, teamSnap.data() || {})) {
-        teamSnapsById.set(teamSnap.id, teamSnap);
-      }
+    parentTeamResult.teamSnaps.forEach((teamSnap) => {
+      teamSnapsById.set(teamSnap.id, teamSnap);
     });
   } else {
     staffTeams.forEach((teamSnap) => teamSnapsById.set(teamSnap.id, teamSnap));
   }
+  const parentItems = includeParentTeams
+    ? parentTeamResult.teamSnaps
+      .filter((teamSnap) => !staffTeams.has(teamSnap.id))
+      .map((teamSnap) => serializeStaffTeamProfile(teamSnap.id, teamSnap.data() || {}))
+      .filter(Boolean)
+      .sort((left, right) => String(left.name || '').localeCompare(String(right.name || '')))
+    : [];
   const teamSnaps = Array.from(teamSnapsById.values());
   const conversationTeamSnaps = includeChatMetadata
     ? teamSnaps.slice(0, MAX_MANAGED_CHAT_METADATA_QUERIES)
@@ -18973,9 +19033,13 @@ exports.listManagedTeams = functions.https.onCall(async (data, context = {}) => 
     .map((teamSnap, index) => {
       const team = teamSnap.data() || {};
       const canManage = hasOpportunityTeamAdminAccess(caller, team);
-      const item = canManage
-        ? serializeManagedTeamDocument(teamSnap.id, team)
-        : serializeStaffTeamProfile(teamSnap.id, team);
+      const item = includeAllTeams || includeParentTeams
+        ? (canManage
+            ? serializeDashboardManagedTeamProfile(teamSnap.id, team)
+            : serializeStaffTeamProfile(teamSnap.id, team))
+        : (canManage
+            ? serializeManagedTeamDocument(teamSnap.id, team)
+            : serializeStaffTeamProfile(teamSnap.id, team));
       if (!item) return null;
       const conversationResult = conversationResults[index];
       if (includeChatMetadata && conversationResult?.status !== 'fulfilled') chatMetadataPartial = true;
@@ -19018,7 +19082,13 @@ exports.listManagedTeams = functions.https.onCall(async (data, context = {}) => 
     .sort((left, right) => String(left.name || '').localeCompare(String(right.name || '')));
   return {
     items,
-    isPartial: staffTeams.isPartial === true || chatTeamDiscoveryPartial || chatMetadataPartial
+    ...(includeParentTeams ? { parentItems } : {}),
+    dashboardTeamLoadVersion: DASHBOARD_TEAM_LOAD_VERSION,
+    includesAllTeams: includeAllTeams,
+    isPartial: staffTeams.isPartial === true
+      || (includeParentTeams && parentTeamResult.isPartial)
+      || chatTeamDiscoveryPartial
+      || chatMetadataPartial
   };
 });
 

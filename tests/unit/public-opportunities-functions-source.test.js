@@ -228,6 +228,25 @@ describe('public opportunity callable wiring', () => {
     expect(listManagedTeamsSource).toContain(': serializeStaffTeamProfile(teamSnap.id, team)');
   });
 
+  it('serves the bounded dashboard team projection from protected server state', () => {
+    const listManagedTeamsSource = source.slice(
+      source.indexOf('exports.listManagedTeams'),
+      source.indexOf('\nexports.getPublicTeamProfile')
+    );
+
+    expect(source).toContain('async function listPlatformAdminTeamDocuments(caller)');
+    expect(source).toContain("const snapshot = await firestore.collection('teams')");
+    expect(source).toContain(".orderBy('name')");
+    expect(source).toContain('.select(...DASHBOARD_TEAM_FIELD_PATHS)');
+    expect(source).toContain('function serializeDashboardManagedTeamProfile(teamId, team = {})');
+    expect(source).toContain('async function listCallableParentTeamDocuments(caller)');
+    expect(source).toContain('const MAX_DASHBOARD_PARENT_TEAMS = 180;');
+    expect(listManagedTeamsSource).toContain('includeAllTeams && !isOpportunityPlatformAdmin(caller)');
+    expect(listManagedTeamsSource).toContain('.map((teamSnap) => serializeStaffTeamProfile(teamSnap.id, teamSnap.data() || {}))');
+    expect(listManagedTeamsSource).toContain('dashboardTeamLoadVersion: DASHBOARD_TEAM_LOAD_VERSION');
+    expect(listManagedTeamsSource).toContain('(includeParentTeams && parentTeamResult.isPartial)');
+  });
+
   it('declares the bounded legacy coach invite-evidence indexes', () => {
     const accessCodeIndexes = firestoreIndexes.indexes.filter((index) => (
       index.collectionGroup === 'accessCodes' && index.queryScope === 'COLLECTION'
