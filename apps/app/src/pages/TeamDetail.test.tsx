@@ -1409,6 +1409,32 @@ describe('TeamDetail', () => {
     expect(router.state.location.pathname).toBe('/players/team-1/player-1');
   });
 
+  it('shows age classification to staff and suppresses it for non-managers', async () => {
+    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValueOnce({
+      ...model,
+      canManageTeam: true,
+      players: [{ ...model.players[0], ageClassification: 'Grade 6' }]
+    });
+    const staffRouter = createMemoryRouter([
+      { path: '/teams/:teamId', element: <TeamDetail auth={auth} /> }
+    ], { initialEntries: ['/teams/team-1?tab=roster'] });
+    render(<RouterProvider router={staffRouter} />);
+    expect(await screen.findByText('Grade 6 · Guard')).toHaveTextContent('Guard');
+
+    cleanup();
+    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValueOnce({
+      ...model,
+      players: [{ ...model.players[0], ageClassification: 'Grade 6' }]
+    });
+    const parentRouter = createMemoryRouter([
+      { path: '/teams/:teamId', element: <TeamDetail auth={auth} /> }
+    ], { initialEntries: ['/teams/team-1?tab=roster'] });
+    render(<RouterProvider router={parentRouter} />);
+    expect(await screen.findByTestId('roster-player-row')).toBeTruthy();
+    expect(screen.queryByText('Grade 6')).toBeNull();
+    expect(screen.getByText('Guard')).toBeVisible();
+  });
+
   it('steps back to team overview before leaving the team hub', async () => {
     const router = createMemoryRouter(
       [
