@@ -67,12 +67,32 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('public canonical Firestor
                 status: 'scheduled',
                 liveStatus: 'scheduled'
             });
+            await setDoc(doc(firestore, 'teams/public-team/games/private-officiating-game'), {
+                type: 'game',
+                visibility: 'private',
+                status: 'scheduled',
+                liveStatus: 'scheduled',
+                officiatingAuthorizedUserIds: ['official-1'],
+                officiatingAuthorizedEmails: ['official@example.com']
+            });
             await setDoc(doc(firestore, 'teams/public-team/games/game-2/rsvps/confirmed-scorekeeper'), {
                 response: 'confirmed'
             });
             await setDoc(doc(firestore, 'teams/public-team/games/game-1/liveEvents/event-1'), {
                 type: 'score',
                 points: 1
+            });
+            await setDoc(doc(
+                firestore,
+                'teams/public-team/games/private-officiating-game/events/private-event-1'
+            ), {
+                type: 'score',
+                points: 1
+            });
+            await setDoc(doc(firestore, 'teams/public-team/officiatingNotifications/notification-1'), {
+                recipientOfficialUserId: 'official-1',
+                recipientOfficialEmail: 'official@example.com',
+                type: 'officiating_assignment'
             });
             await setDoc(doc(firestore, 'tournaments/tournament-1/sharedGames/shared-1'), {
                 type: 'game',
@@ -118,8 +138,11 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('public canonical Firestor
         await testEnv?.cleanup();
     });
 
-    function authedDb(uid, email = `${uid}@example.com`) {
-        return testEnv.authenticatedContext(uid, { email, email_verified: true }).firestore();
+    function authedDb(uid, email = `${uid}@example.com`, emailVerified = true) {
+        return testEnv.authenticatedContext(uid, {
+            email,
+            email_verified: emailVerified
+        }).firestore();
     }
 
     it('denies anonymous and unrelated reads of public canonical team and game documents', async () => {
@@ -196,6 +219,84 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('public canonical Firestor
         const confirmedVideographerDb = authedDb('confirmed-videographer');
         await assertSucceeds(getDoc(doc(confirmedVideographerDb, 'teams/public-team/games/game-1')));
         await assertFails(getDoc(doc(authedDb('unrelated-1'), 'teams/public-team/games/game-1')));
+    });
+
+    it('denies unverified email-only officials game, protected event, notification, and update access', async () => {
+        const unverifiedOfficialDb = authedDb('email-only-official', 'official@example.com', false);
+        const gameRef = doc(unverifiedOfficialDb, 'teams/public-team/games/private-officiating-game');
+
+        await assertFails(getDoc(gameRef));
+        await assertFails(getDoc(doc(
+            unverifiedOfficialDb,
+            'teams/public-team/games/private-officiating-game/events/private-event-1'
+        )));
+        await assertFails(getDoc(doc(
+            unverifiedOfficialDb,
+            'teams/public-team/officiatingNotifications/notification-1'
+        )));
+
+        for (const update of [
+            { homeScore: 7 },
+            { status: 'completed' },
+            { liveStatus: 'live' },
+            { officiatingSlots: [] },
+            { officiatingCoverageStatus: 'covered' }
+        ]) {
+            await assertFails(updateDoc(gameRef, update));
+        }
+    });
+
+    it('preserves verified email-derived officiating access', async () => {
+        const verifiedOfficialDb = authedDb('email-only-official', 'official@example.com', true);
+        const gameRef = doc(verifiedOfficialDb, 'teams/public-team/games/private-officiating-game');
+
+        await assertSucceeds(getDoc(gameRef));
+        await assertSucceeds(getDoc(doc(
+            verifiedOfficialDb,
+            'teams/public-team/games/private-officiating-game/events/private-event-1'
+        )));
+        await assertSucceeds(getDoc(doc(
+            verifiedOfficialDb,
+            'teams/public-team/officiatingNotifications/notification-1'
+        )));
+        await assertSucceeds(updateDoc(gameRef, { homeScore: 2 }));
+    });
+
+    it('preserves UID-derived officiating access without a verified email claim', async () => {
+        const uidAssignedOfficialDb = authedDb('official-1', 'other@example.com', false);
+        const gameRef = doc(uidAssignedOfficialDb, 'teams/public-team/games/private-officiating-game');
+
+        await assertSucceeds(getDoc(gameRef));
+        await assertSucceeds(getDoc(doc(
+            uidAssignedOfficialDb,
+            'teams/public-team/games/private-officiating-game/events/private-event-1'
+        )));
+        await assertSucceeds(getDoc(doc(
+            uidAssignedOfficialDb,
+            'teams/public-team/officiatingNotifications/notification-1'
+        )));
+        await assertSucceeds(updateDoc(gameRef, { awayScore: 1 }));
+    });
+
+    it('preserves team-manager and platform-admin access to private officiating records', async () => {
+        for (const [uid, email] of [
+            ['team-admin-1', 'team-admin@example.com'],
+            ['admin-1', 'admin-1@example.com']
+        ]) {
+            const authorizedDb = authedDb(uid, email);
+            const gameRef = doc(authorizedDb, 'teams/public-team/games/private-officiating-game');
+
+            await assertSucceeds(getDoc(gameRef));
+            await assertSucceeds(getDoc(doc(
+                authorizedDb,
+                'teams/public-team/games/private-officiating-game/events/private-event-1'
+            )));
+            await assertSucceeds(getDoc(doc(
+                authorizedDb,
+                'teams/public-team/officiatingNotifications/notification-1'
+            )));
+            await assertSucceeds(updateDoc(gameRef, { homeScore: uid === 'admin-1' ? 4 : 3 }));
+        }
     });
 
     it('keeps intended public live-event reads without exposing the containing game document', async () => {
