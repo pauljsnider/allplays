@@ -1419,7 +1419,7 @@ describe('TeamDetail', () => {
       { path: '/teams/:teamId', element: <TeamDetail auth={auth} /> }
     ], { initialEntries: ['/teams/team-1?tab=roster'] });
     render(<RouterProvider router={staffRouter} />);
-    expect(await screen.findByText('Grade 6')).toBeTruthy();
+    expect(await screen.findByText('Grade 6 · Guard')).toHaveTextContent('Guard');
 
     cleanup();
     teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValueOnce({
@@ -1432,6 +1432,7 @@ describe('TeamDetail', () => {
     render(<RouterProvider router={parentRouter} />);
     expect(await screen.findByTestId('roster-player-row')).toBeTruthy();
     expect(screen.queryByText('Grade 6')).toBeNull();
+    expect(screen.getByText('Guard')).toBeVisible();
   });
 
   it('steps back to team overview before leaving the team hub', async () => {

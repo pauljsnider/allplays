@@ -669,7 +669,7 @@ function PlayerRow({
               {!player.active ? <span className="rounded-full bg-gray-200 px-2 py-0.5 text-[10px] font-black text-gray-700">Inactive</span> : null}
             </span>
             <span className="mt-0.5 block truncate text-xs font-semibold text-gray-500">
-              {canManageTeam && player.ageClassification ? player.ageClassification : (player.position || 'Player profile')}
+              {canManageTeam && player.ageClassification ? `${player.ageClassification} · ` : ''}{player.position || 'Player profile'}
             </span>
           </span>
           <ChevronRight className="h-4 w-4 flex-none text-gray-300" aria-hidden="true" />
