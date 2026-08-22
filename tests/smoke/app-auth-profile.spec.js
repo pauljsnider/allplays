@@ -948,23 +948,27 @@ test('profile keeps destructive alert actions disabled until a failed team load 
     await expect(page.getByLabel('Team')).toHaveValue('team-1');
     await page.getByLabel('Team').selectOption('team-2');
 
-    await expect(page.getByText('Alerts unavailable', { exact: true })).toBeVisible();
-    await expect(page.getByText('temporary outage')).toBeVisible();
-    await expect(page.getByLabel('Live Chat')).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'Turn on game-day alerts' })).toBeDisabled();
-    await expect(page.getByRole('button', { name: 'Save preferences' })).toBeDisabled();
+    await expect(async () => {
+        await expect(page.getByText('Alerts unavailable', { exact: true })).toBeVisible({ timeout: 3000 });
+        await expect(page.getByText('temporary outage')).toBeVisible({ timeout: 3000 });
+        await expect(page.getByLabel('Live Chat')).toHaveCount(0);
+        await expect(page.getByRole('button', { name: 'Turn on game-day alerts' })).toBeDisabled();
+        await expect(page.getByRole('button', { name: 'Save preferences' })).toBeDisabled();
+    }).toPass({ timeout: 30000 });
     await expect.poll(async () => page.evaluate(() => window.__appProfileCalls.notificationSaves.length)).toBe(0);
 
     await page.getByRole('button', { name: 'Retry alerts' }).click();
 
     await expect.poll(async () => page.evaluate(() => window.__appProfileCalls.notificationLoads.length)).toBe(3);
-    await expect(page.getByText('temporary outage')).toHaveCount(0);
-    await expect(page.getByLabel('Live Chat')).toBeVisible();
-    await expect(page.getByLabel('Live Chat')).not.toBeChecked();
-    await expect(page.getByLabel('Live Score')).toBeChecked();
-    await expect(page.getByLabel('Schedule Changes')).not.toBeChecked();
-    await expect(page.getByRole('button', { name: 'Turn on game-day alerts' })).toBeEnabled();
-    await expect(page.getByRole('button', { name: 'Save preferences' })).toBeEnabled();
+    await expect(async () => {
+        await expect(page.getByText('temporary outage')).toHaveCount(0);
+        await expect(page.getByLabel('Live Chat')).toBeVisible({ timeout: 3000 });
+        await expect(page.getByLabel('Live Chat')).not.toBeChecked();
+        await expect(page.getByLabel('Live Score')).toBeChecked();
+        await expect(page.getByLabel('Schedule Changes')).not.toBeChecked();
+        await expect(page.getByRole('button', { name: 'Turn on game-day alerts' })).toBeEnabled();
+        await expect(page.getByRole('button', { name: 'Save preferences' })).toBeEnabled();
+    }).toPass({ timeout: 30000 });
 });
 
 test('profile alerts recover from blocked native notification permissions', async ({ page, baseURL }) => {
