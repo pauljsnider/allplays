@@ -82,6 +82,20 @@ describe('PublicTeamDetail', () => {
     expect(publicTeamMocks.getPublicTeamRecentResults).toHaveBeenCalledWith('team-1');
   });
 
+  it('renders recent results while standings are still pending', async () => {
+    publicTeamMocks.getPublicTeamDetail.mockResolvedValue({ id: 'team-1', name: 'Austin Bats', sport: null, description: null, photoUrl: null, city: null, state: null, zip: null, location: null });
+    publicTeamMocks.getPublicTeamStandingsInputs.mockImplementation(() => new Promise(() => {}));
+    publicTeamMocks.getPublicTeamRecentResults.mockResolvedValue([
+      { id: 'game-1', date: new Date('2026-08-06T18:00:00.000Z'), opponent: 'Northside Owls', teamScore: 4, opponentScore: 1, result: 'win' }
+    ]);
+
+    render(<MemoryRouter initialEntries={['/teams/team-1/public']}><Routes><Route path="/teams/:teamId/public" element={<PublicTeamDetail authUser={null} />} /></Routes></MemoryRouter>);
+
+    expect(await screen.findByText('Northside Owls')).toBeTruthy();
+    expect(screen.getByText('Loading standings')).toBeTruthy();
+    expect(publicTeamMocks.getPublicTeamRecentResults).toHaveBeenCalledWith('team-1');
+  });
+
   it('renders standings rows and highlights the current team', async () => {
     publicTeamMocks.getPublicTeamDetail.mockResolvedValue({ id: 'team-1', name: 'Austin Bats', sport: 'Baseball', description: null, photoUrl: null, city: null, state: null, zip: null, location: null, standingsConfig: { enabled: true, rankingMode: 'points', points: { win: 3, tie: 1, loss: 0 }, maxGoalDiff: null, tiebreakers: [], twoTeamTiebreakers: [], multiTeamTiebreakers: [] } });
     publicTeamMocks.getPublicTeamStandingsInputs.mockResolvedValue([{ id: 'game-1', date: new Date(), homeTeam: 'Austin Bats', awayTeam: 'Northside Owls', homeScore: 4, awayScore: 1, status: 'completed' }]);
