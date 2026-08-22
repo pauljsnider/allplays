@@ -366,11 +366,11 @@ function extractEditTeamModule() {
             'const { validateProfilePhotoFile } = deps.profilePhotoPaths;'
         )
         .replace(
-            "import { getDefaultStatConfigForSport } from './js/stat-config-presets.js?v=2';",
+            "import { getDefaultStatConfigForSport } from './js/stat-config-presets.js?v=3';",
             'const { getDefaultStatConfigForSport } = deps.statConfigPresets;'
         )
         .replace(
-            "import { buildTeamSportConfigMigrationPlan } from './js/team-stat-config-migration.js?v=2';",
+            "import { buildTeamSportConfigMigrationPlan } from './js/team-stat-config-migration.js?v=3';",
             'const { buildTeamSportConfigMigrationPlan } = deps.teamStatConfigMigration;'
         )
         .replace(

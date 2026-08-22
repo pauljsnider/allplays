@@ -232,7 +232,7 @@ export async function normalizeParentScopeLinks(parentLinks = []) {
         staleLinkCount
     };
 }
-import { normalizeStatTrackerConfig, splitPlayerStatsByVisibility } from './stat-leaderboards.js?v=2';
+import { normalizeStatTrackerConfig, splitPlayerStatsByVisibility } from './stat-leaderboards.js?v=4';
 import { buildPublishedBracketView } from './bracket-management.js?v=1';
 import { buildRolloverPlayerCopy, buildRolloverPrivateRosterFields } from './team-rollover.js?v=4';
 import { isPublicTrackingItem, normalizeTrackingItem, normalizeTrackingStatus } from './player-tracking-summary.js?v=1';
@@ -794,7 +794,7 @@ export async function uploadStatSheetPhoto(teamId, gameId, file, options = {}) {
         : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=443353'; // Import resolveZip
+import { resolveZip } from './utils.js?v=443354'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();

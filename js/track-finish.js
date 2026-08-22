@@ -1,4 +1,4 @@
-import { splitPlayerStatsByVisibility } from './stat-leaderboards.js?v=2';
+import { splitPlayerStatsByVisibility } from './stat-leaderboards.js?v=4';
 
 export const STANDARD_TRACKER_MAX_PRIMARY_BATCH_WRITES = 500;
 export const STANDARD_TRACKER_MAX_EVENT_BATCH_WRITES = 500;

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   aggregateSeasonStatsByPlayerId,
+  buildRosterStatisticsTable,
   buildPlayerLeaderboardSnapshot,
   evaluateDerivedFormula,
   normalizeStatTrackerConfig,
@@ -12,6 +13,28 @@ import {
 } from '../../js/stat-leaderboards.js';
 
 describe('stat leaderboard helpers', () => {
+  it('builds every public player stat for every roster player, including zeroes', () => {
+    const table = buildRosterStatisticsTable({
+      config: {
+        columns: ['PTS', 'AST'],
+        statDefinitions: [
+          { label: 'PTS', id: 'pts', scope: 'player', visibility: 'public' },
+          { label: 'AST', id: 'ast', scope: 'player', visibility: 'public' },
+          { label: 'Private', id: 'private', scope: 'player', visibility: 'private' },
+          { label: 'Team', id: 'team', scope: 'team', visibility: 'public' }
+        ]
+      },
+      players: [{ id: 'p1', name: 'Ava Cole' }, { id: 'p2', name: 'Mia Brooks' }],
+      seasonStatsByPlayerId: { p1: { pts: 12, ast: 3, private: 99, team: 7 } }
+    });
+
+    expect(table.columns.map((column) => column.id)).toEqual(['pts', 'ast']);
+    expect(table.rows).toEqual([
+      expect.objectContaining({ playerId: 'p1', values: { pts: expect.objectContaining({ value: 12, formattedValue: '12' }), ast: expect.objectContaining({ value: 3, formattedValue: '3' }) } }),
+      expect.objectContaining({ playerId: 'p2', values: { pts: expect.objectContaining({ value: 0, formattedValue: '0' }), ast: expect.objectContaining({ value: 0, formattedValue: '0' }) } })
+    ]);
+  });
+
   it('aggregates team leaderboard stats only for the selected season', async () => {
     const games = [
       { id: 'spring-1', status: 'completed', seasonLabel: 'Spring 2026', date: '2026-03-01' },

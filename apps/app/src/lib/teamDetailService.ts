@@ -2,6 +2,7 @@ import {
   addTeamAdminEmail,
   applyRosterCsvImportOperations,
   buildPlayerLeaderboardSnapshot,
+  buildRosterStatisticsTable,
   buildTeamStaffPermissionsViewModel,
   buildTrackingStatusPayload,
   calculateSeasonRecord,
@@ -253,6 +254,17 @@ export type TeamDetailLeaderboard = {
   }>;
 };
 
+export type TeamDetailRosterStatisticsTable = {
+  seasonLabel: string;
+  columns: Array<{ id: string; label: string; format?: string; precision?: number }>;
+  rows: Array<{
+    playerId: string;
+    playerName: string;
+    playerNumber: string;
+    values: Record<string, { value: number; formattedValue: string }>;
+  }>;
+};
+
 export type TeamDetailTrackingSummary = {
   playerId: string;
   playerName: string;
@@ -425,6 +437,12 @@ export type TeamDetailModel = {
   leaderboards: TeamDetailLeaderboard[];
   trackingSummaries: TeamDetailTrackingSummary[];
   teamAnalytics: TeamDetailAnalytics;
+  rosterStatistics?: {
+    seasonLabel: string;
+    availableSeasons: string[];
+    unavailableSeasons: string[];
+    seasons: TeamDetailRosterStatisticsTable[];
+  };
   sponsors: TeamDetailSponsor[];
   statTrackerConfigs: TeamDetailStatTrackerConfig[];
   canManageTeam: boolean;
@@ -473,6 +491,12 @@ export type TeamDetailInsightsPayload = {
   leaderboards: TeamDetailLeaderboard[];
   trackingSummaries: TeamDetailTrackingSummary[];
   teamAnalytics: TeamDetailAnalytics;
+  rosterStatistics: {
+    seasonLabel: string;
+    availableSeasons: string[];
+    unavailableSeasons: string[];
+    seasons: TeamDetailRosterStatisticsTable[];
+  };
 };
 
 export type TeamDetailSponsorsPayload = {
@@ -2095,20 +2119,67 @@ export function loadTeamDetailInsights(teamId: string, user: AuthUser | null): P
     const seasonLabels = listSeasonLabels(games);
     const currentYearLabel = String(new Date().getFullYear());
     const seasonLabel = seasonLabels.includes(currentYearLabel) ? currentYearLabel : (seasonLabels[0] || currentYearLabel);
-    const completedGameIds = (Array.isArray(games) ? games : [])
-      .filter(isCompletedGame)
-      .map((game: any) => cleanString(game.id || game.gameId))
-      .filter(Boolean);
+    const normalizedPlayers = normalizePlayers(players, linkedPlayerIds);
+    const completedGamesBySeason = new Map<string, string[]>();
+    const completedGameIds: string[] = [];
+    (Array.isArray(games) ? games : []).filter(isCompletedGame).forEach((game: any) => {
+      const label = getAnalyticsSeasonLabel(game, toDate(game?.date));
+      const ids = completedGamesBySeason.get(label) || [];
+      const id = cleanString(game.id || game.gameId);
+      if (id) {
+        ids.push(id);
+        completedGameIds.push(id);
+      }
+      completedGamesBySeason.set(label, ids);
+    });
 
-    const [seasonStatsByPlayerId, trackingItems, trackingStatuses] = await Promise.all([
-      completedGameIds.length ? Promise.resolve(getAggregatedStatsForGames(normalizedTeamId, completedGameIds)).catch(() => ({})) : Promise.resolve({}),
+    const seasonEntries = Array.from(completedGamesBySeason.entries());
+    const seasonStatsResultsPromise = Promise.all(seasonEntries.map(async ([label, gameIds]) => {
+      try {
+        return { label, stats: gameIds.length ? await Promise.resolve(getAggregatedStatsForGames(normalizedTeamId, gameIds)) : {}, unavailable: false };
+      } catch (error) {
+        logger.warn('Unable to load roster statistics for season.', {
+          operation: 'team-roster-season-statistics-load',
+          teamId: normalizedTeamId,
+          seasonLabel: label,
+          error
+        });
+        return { label, stats: {}, unavailable: true };
+      }
+    }));
+    const leaderboardStatsPromise = seasonEntries.length === 1
+      ? seasonStatsResultsPromise.then(([result]) => result?.stats || {})
+      : completedGameIds.length
+        ? Promise.resolve(getAggregatedStatsForGames(normalizedTeamId, completedGameIds)).catch(() => ({}))
+        : Promise.resolve({});
+    const [leaderboardStatsByPlayerId, seasonStatsResults] = await Promise.all([
+      leaderboardStatsPromise,
+      seasonStatsResultsPromise
+    ]);
+    const seasonStatsBySeason = Object.fromEntries(seasonStatsResults.map(({ label, stats }) => [label, stats]));
+    const unavailableSeasons = seasonStatsResults.filter(({ unavailable }) => unavailable).map(({ label }) => label);
+    const unavailableSeasonSet = new Set(unavailableSeasons);
+    const rosterConfig = selectAnalyticsConfig(configs, team?.sport) || (Array.isArray(configs) ? configs[0] : null);
+    const rosterStatistics = {
+      seasonLabel,
+      availableSeasons: seasonLabels,
+      unavailableSeasons,
+      seasons: seasonLabels.map((label: string) => unavailableSeasonSet.has(label)
+        ? { seasonLabel: label, columns: [], rows: [] }
+        : {
+          seasonLabel: label,
+          ...buildRosterStatisticsTable({ config: rosterConfig || {}, players: normalizedPlayers, seasonStatsByPlayerId: seasonStatsBySeason[label] || {} })
+        })
+    };
+
+    const [trackingItems, trackingStatuses] = await Promise.all([
       linkedPlayerIds.length ? Promise.resolve(getPublicTrackingItems(normalizedTeamId)).catch(() => []) : Promise.resolve([]),
       linkedPlayerIds.length ? Promise.resolve(getPlayerTrackingStatuses(normalizedTeamId, linkedPlayerIds)).catch(() => []) : Promise.resolve([])
     ]);
 
-    const normalizedPlayers = normalizePlayers(players, linkedPlayerIds);
     return {
-      leaderboards: buildLeaderboards(configs, normalizedPlayers, seasonStatsByPlayerId, team?.sport),
+      leaderboards: buildLeaderboards(configs, normalizedPlayers, leaderboardStatsByPlayerId, team?.sport),
+      rosterStatistics,
       trackingSummaries: buildTrackingSummaries(normalizedPlayers, linkedPlayerIds, trackingItems, trackingStatuses),
       teamAnalytics: buildTeamAnalytics(games, seasonLabel)
     };

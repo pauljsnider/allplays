@@ -1,4 +1,4 @@
-import { normalizeStatTrackerConfig } from './stat-leaderboards.js?v=2';
+import { normalizeStatTrackerConfig } from './stat-leaderboards.js?v=4';
 
 const DIAMOND_STAT_COLUMNS = ['AB', 'H', 'R', 'RBI', 'BB', 'FP'];
 

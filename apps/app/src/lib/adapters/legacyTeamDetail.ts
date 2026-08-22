@@ -9,7 +9,7 @@ import { collectRosterParentContacts as legacy_collectRosterParentContacts, getR
 import { describeScheduleReminderWindow as legacy_describeScheduleReminderWindow, normalizeScheduleNotificationSettings as legacy_normalizeScheduleNotificationSettings } from '@legacy/schedule-notifications.js';
 import { calculateSeasonRecord as legacy_calculateSeasonRecord, getTeamScorePair as legacy_getTeamScorePair, listSeasonLabels as legacy_listSeasonLabels } from '@legacy/season-record.js';
 import { computeNativeStandings as legacy_computeNativeStandings } from '@legacy/native-standings.js';
-import { buildPlayerLeaderboardSnapshot as legacy_buildPlayerLeaderboardSnapshot, normalizeStatTrackerConfig as legacy_normalizeStatTrackerConfig, selectAnalyticsConfig as legacy_selectAnalyticsConfig } from '@legacy/stat-leaderboards.js';
+import { buildPlayerLeaderboardSnapshot as legacy_buildPlayerLeaderboardSnapshot, buildRosterStatisticsTable as legacy_buildRosterStatisticsTable, normalizeStatTrackerConfig as legacy_normalizeStatTrackerConfig, selectAnalyticsConfig as legacy_selectAnalyticsConfig } from '@legacy/stat-leaderboards.js';
 import { getVisiblePlayerTrackingSummary as legacy_getVisiblePlayerTrackingSummary, normalizeTrackingStatus as legacy_normalizeTrackingStatus } from '@legacy/player-tracking-summary.js';
 import { hasFullTeamAccess as legacy_hasFullTeamAccess, normalizeAdminEmailList as legacy_normalizeAdminEmailList } from '@legacy/team-access.js';
 import { buildTeamStaffPermissionsViewModel as legacy_buildTeamStaffPermissionsViewModel } from '@legacy/team-staff-permissions.js';
@@ -98,6 +98,7 @@ export const getTeamScorePair = legacy_getTeamScorePair as (...args: any[]) => a
 export const listSeasonLabels = legacy_listSeasonLabels as (...args: any[]) => any;
 export const computeNativeStandings = legacy_computeNativeStandings as (...args: any[]) => any;
 export const buildPlayerLeaderboardSnapshot = legacy_buildPlayerLeaderboardSnapshot as (...args: any[]) => any;
+export const buildRosterStatisticsTable = legacy_buildRosterStatisticsTable as (...args: any[]) => any;
 export const normalizeStatTrackerConfig = legacy_normalizeStatTrackerConfig as (...args: any[]) => any;
 export const selectAnalyticsConfig = legacy_selectAnalyticsConfig as (...args: any[]) => any;
 export const getVisiblePlayerTrackingSummary = legacy_getVisiblePlayerTrackingSummary as (...args: any[]) => any;
