@@ -448,6 +448,44 @@ describe('admin registration form setup', () => {
         expect(state.hasMore).toBe(false);
     });
 
+    it('sorts registration forms globally after merging pages', () => {
+        let state = mergeAdminRegistrationFormsPage(
+            createAdminRegistrationFormsPageState('team-1'),
+            {
+                teamId: 'team-1',
+                forms: [
+                    { id: 'form-01', title: 'Bravo' },
+                    { id: 'form-02', title: 'Zulu' }
+                ],
+                lastDoc: { id: 'form-02' },
+                hasMore: true
+            }
+        );
+
+        state = mergeAdminRegistrationFormsPage(state, {
+            teamId: 'team-1',
+            forms: [
+                { id: 'form-03', title: 'Alpha' },
+                { id: 'form-04', title: 'Charlie' }
+            ],
+            lastDoc: { id: 'form-04' },
+            hasMore: false
+        });
+
+        expect(state.forms.map((form) => form.title)).toEqual(['Alpha', 'Bravo', 'Charlie', 'Zulu']);
+        expect(state.lastDoc).toEqual({ id: 'form-04' });
+    });
+
+    it('preserves loaded rows and exposes a retryable error when loading more fails', () => {
+        const adminPage = fs.readFileSync('admin.html', 'utf8');
+        const adminJs = fs.readFileSync('js/admin.js', 'utf8');
+
+        expect(adminPage).toContain('id="registration-forms-load-more-error" role="alert"');
+        expect(adminPage).toContain('Failed to load more registration forms. Select Load more to retry.');
+        expect(adminJs).toContain('if (append) {\n                setRegistrationFormsLoadMoreError(true);');
+        expect(adminJs).not.toContain('registrationFormsRequestVersion === requestVersion && !append');
+    });
+
     it('resets registration pagination per team and ignores stale page merges', () => {
         const teamOne = mergeAdminRegistrationFormsPage(
             createAdminRegistrationFormsPageState('team-1'),
