@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import {
+    ADMIN_REGISTRATION_FORMS_PAGE_SIZE,
     buildAdminRegistrationFormPayload,
     buildRegistrationOptionCountKey,
+    createAdminRegistrationFormsPageState,
     fieldLabelsToDefinitions,
     formatRegistrationDiscountRulesText,
     getAdminRegistrationShareUrl,
@@ -14,6 +16,8 @@ import {
     normalizeInstallmentPlan,
     normalizeRegistrationDiscountRules,
     normalizeRegistrationOptions,
+    loadAdminRegistrationFormsPage,
+    mergeAdminRegistrationFormsPage,
     parseAdminRegistrationFeeAmountCents,
     parseRegistrationDiscountRulesText,
     validateAdminRegistrationFormPayload
@@ -336,6 +340,8 @@ describe('admin registration form setup', () => {
         const adminJs = fs.readFileSync('js/admin.js', 'utf8');
 
         expect(adminPage).toContain('registration-forms-modal');
+        expect(adminPage).toContain('registration-forms-load-more');
+        expect(adminPage).toContain('src="js/admin.js?v=443354"');
         expect(adminPage).toContain('registration-advanced-settings');
         expect(adminPage).toContain('Advanced registration settings');
         expect(adminPage).toContain('registration-participant-fields');
@@ -376,6 +382,100 @@ describe('admin registration form setup', () => {
         expect(adminJs).toContain('try {');
         expect(adminJs).toContain('inlineJsString');
         expect(adminJs).toContain('copyRegistrationLinkAdmin');
+        expect(adminJs).toContain('window.loadMoreRegistrationFormsAdmin');
+        expect(adminJs).toContain("from './admin-registration-forms.js?v=4'");
+    });
+
+    it('loads bounded legacy registration-form pages with deterministic cursors', async () => {
+        const firstPageDocs = Array.from({ length: 26 }, (_, index) => ({
+            id: `form-${String(index + 1).padStart(2, '0')}`,
+            data: () => ({ title: `Form ${index + 1}` })
+        }));
+        const secondPageDocs = [
+            { id: 'form-25', data: () => ({ title: 'Duplicate form' }) },
+            { id: 'form-27', data: () => ({ title: 'Later form' }) }
+        ];
+        const snapshots = [{ docs: firstPageDocs }, { docs: secondPageDocs }];
+        const calls = [];
+        const firestore = {
+            db: { id: 'db' },
+            collection: (...args) => ({ type: 'collection', args }),
+            documentId: () => 'documentId',
+            orderBy: (...args) => ({ type: 'orderBy', args }),
+            startAfter: (value) => ({ type: 'startAfter', value }),
+            limit: (value) => ({ type: 'limit', value }),
+            query: (reference, ...constraints) => {
+                calls.push({ reference, constraints });
+                return { reference, constraints };
+            },
+            getDocs: async () => snapshots.shift()
+        };
+
+        const firstPage = await loadAdminRegistrationFormsPage({ teamId: 'team-1', firestore });
+        expect(firstPage.forms).toHaveLength(ADMIN_REGISTRATION_FORMS_PAGE_SIZE);
+        expect(firstPage.hasMore).toBe(true);
+        expect(firstPage.lastDoc).toBe(firstPageDocs[24]);
+        expect(calls[0]).toEqual({
+            reference: { type: 'collection', args: [{ id: 'db' }, 'teams/team-1/registrationForms'] },
+            constraints: [
+                { type: 'orderBy', args: ['documentId'] },
+                { type: 'limit', value: 26 }
+            ]
+        });
+
+        let state = mergeAdminRegistrationFormsPage(
+            createAdminRegistrationFormsPageState('team-1'),
+            { teamId: 'team-1', ...firstPage }
+        );
+        expect(state.forms).toHaveLength(25);
+
+        const secondPage = await loadAdminRegistrationFormsPage({
+            teamId: 'team-1',
+            afterDoc: state.lastDoc,
+            firestore
+        });
+        state = mergeAdminRegistrationFormsPage(state, { teamId: 'team-1', ...secondPage });
+
+        expect(calls[1].constraints).toEqual([
+            { type: 'orderBy', args: ['documentId'] },
+            { type: 'startAfter', value: firstPageDocs[24] },
+            { type: 'limit', value: 26 }
+        ]);
+        expect(state.forms).toHaveLength(26);
+        expect(state.forms.filter((form) => form.id === 'form-25')).toHaveLength(1);
+        const laterPageForm = state.forms.find((form) => form.id === 'form-27');
+        expect(laterPageForm?.title).toBe('Later form');
+        expect(state.hasMore).toBe(false);
+    });
+
+    it('resets registration pagination per team and ignores stale page merges', () => {
+        const teamOne = mergeAdminRegistrationFormsPage(
+            createAdminRegistrationFormsPageState('team-1'),
+            {
+                teamId: 'team-1',
+                forms: [{ id: 'form-1', title: 'First form' }],
+                lastDoc: { id: 'form-1' },
+                hasMore: true
+            }
+        );
+        const teamTwo = createAdminRegistrationFormsPageState('team-2');
+        const afterStaleMerge = mergeAdminRegistrationFormsPage(teamTwo, {
+            teamId: 'team-1',
+            forms: [{ id: 'stale-form', title: 'Stale form' }],
+            lastDoc: { id: 'stale-form' },
+            hasMore: false
+        });
+
+        expect(teamOne.forms).toHaveLength(1);
+        expect(teamTwo).toEqual({ teamId: 'team-2', forms: [], lastDoc: null, hasMore: false });
+        expect(afterStaleMerge).toBe(teamTwo);
+    });
+
+    it('does not retain a bare legacy registrationForms collection read', () => {
+        const adminJs = fs.readFileSync('js/admin.js', 'utf8');
+
+        expect(adminJs).not.toContain('getDocs(collection(db, `teams/${teamId}/registrationForms`))');
+        expect(adminJs).toContain('loadAdminRegistrationFormsPage({');
     });
 
     it('keeps first-run basics outside the advanced registration disclosure', () => {
