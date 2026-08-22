@@ -36,6 +36,36 @@ test('buildMergedParentAccount unions parent links, roles, and notification fiel
   assert.deepEqual(merged.notificationPreferences.schedule, { email: true, push: true });
 });
 
+test('buildMergedParentAccount never restores stale links from either account', () => {
+  const merged = buildMergedParentAccount(
+    {
+      parentOf: [
+        { teamId: 'team-a', playerId: 'player-a' },
+        { teamId: 'team-a', playerId: 'player-revoked' }
+      ],
+      parentTeamIds: ['team-a'],
+      parentPlayerKeys: ['team-a::player-a'],
+      roles: ['parent']
+    },
+    {
+      parentOf: [
+        { teamId: 'team-b', playerId: 'player-b' },
+        { teamId: 'team-old', playerId: 'player-old' }
+      ],
+      parentTeamIds: ['team-b'],
+      parentPlayerKeys: ['team-b::player-b'],
+      roles: ['parent']
+    }
+  );
+
+  assert.deepEqual(merged.parentOf, [
+    { teamId: 'team-a', playerId: 'player-a' },
+    { teamId: 'team-b', playerId: 'player-b' }
+  ]);
+  assert.deepEqual(merged.parentTeamIds, ['team-a', 'team-b']);
+  assert.deepEqual(merged.parentPlayerKeys, ['team-a::player-a', 'team-b::player-b']);
+});
+
 test('buildMergedPlayerParents rewrites source uid and deduplicates idempotent retries', () => {
   const first = buildMergedPlayerParents([
     { userId: 'source', email: 'old@example.com', relation: 'parent' },

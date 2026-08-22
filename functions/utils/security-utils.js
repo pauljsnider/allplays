@@ -89,6 +89,8 @@ function isPrivateIpAddress(ip) {
     if (parts[0] === 169 && parts[1] === 254) return true;
     if (parts[0] === 192 && parts[1] === 168) return true;
     if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
+    if (parts[0] === 198 && (parts[1] === 18 || parts[1] === 19)) return true; // RFC 2544 benchmarking
+    if (parts[0] >= 224) return true; // multicast, reserved, and limited broadcast
     return false;
   }
 
@@ -101,6 +103,7 @@ function isPrivateIpAddress(ip) {
   if (normalized === '::1' || normalized === '::') return true;
   if (isIpv6LinkLocalAddress(normalized)) return true;
   if (normalized.startsWith('fc') || normalized.startsWith('fd')) return true;
+  if (normalized.startsWith('ff')) return true; // IPv6 multicast ff00::/8
   const siteLocalPrefix = normalized.slice(0, 3);
   if (siteLocalPrefix >= 'fec' && siteLocalPrefix <= 'fef') return true;
   return false;
@@ -161,9 +164,9 @@ async function normalizeTargetUrl(rawUrl) {
   if (!cleaned || cleaned.length > MAX_CALENDAR_URL_LENGTH) {
     throw new Error('Calendar URL is too long');
   }
-  if (cleaned.startsWith('webcal://')) {
-    cleaned = cleaned.replace(/^webcal:\/\//i, 'https://');
-  } else if (cleaned.startsWith('http://')) {
+  if (/^webcals?:\/\//i.test(cleaned)) {
+    cleaned = cleaned.replace(/^webcals?:\/\//i, 'https://');
+  } else if (/^http:\/\//i.test(cleaned)) {
     cleaned = cleaned.replace(/^http:\/\//i, 'https://');
   }
 

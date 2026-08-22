@@ -184,6 +184,7 @@ import {
 import { computeNativeStandings } from '../../../../js/native-standings.js';
 import { hasFullTeamAccess } from '../../../../js/team-access.js';
 import { buildPlayerLeaderboardSnapshot, selectAnalyticsConfig } from '../../../../js/stat-leaderboards.js';
+import { loadProfileDocument } from './profileService';
 
 describe('buildTeamAnalytics', () => {
   it('builds chronological score trends, recent form, averages, and differential', () => {
@@ -311,6 +312,7 @@ beforeEach(() => {
 describe('createTeamPassCheckoutForApp', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(loadProfileDocument).mockReset().mockResolvedValue({});
     nativeRuntimeState.isNative = false;
   });
 
@@ -905,6 +907,7 @@ describe('addRosterPlayerForApp browser photo scope', () => {
 describe('team detail bootstrap loading', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(loadProfileDocument).mockReset().mockResolvedValue({});
     vi.mocked(hasFullTeamAccess).mockImplementation((user: any, team: any) => user?.uid === team?.ownerId);
     dbMocks.getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1', name: 'Bears', sport: 'Basketball' });
     dbMocks.getPlayersWithPrivateRosterContacts.mockImplementation((_teamId: string, options: any = {}) => (
@@ -913,7 +916,13 @@ describe('team detail bootstrap loading', () => {
     dbMocks.getPlayers.mockResolvedValue([{ id: 'player-1', name: 'Pat Star', active: true }]);
     dbMocks.getGames.mockResolvedValue([{ id: 'game-1', type: 'game', status: 'scheduled' }]);
     dbMocks.getConfigs.mockResolvedValue([{ id: 'config-1', name: 'Config' }]);
-    scheduleServiceMocks.loadTeamOverviewSchedule.mockResolvedValue(null);
+    scheduleServiceMocks.loadTeamOverviewSchedule.mockImplementation((_teamId: string, _teamName: string, user: any) => Promise.resolve({
+      events: [],
+      isPartial: false,
+      accessVerified: Boolean(user?.uid),
+      accessUid: user?.uid || null,
+      sourceKey: user?.uid ? 'no-external-calendar:v1' : null
+    }));
     __resetTeamDetailBaseSnapshotCacheForTests();
   });
 
@@ -930,24 +939,81 @@ describe('team detail bootstrap loading', () => {
     expect(dbMocks.getConfigs).not.toHaveBeenCalled();
   });
 
+  it('uses current canonical parent scope instead of stale same-team sibling metadata', async () => {
+    dbMocks.getPlayers.mockResolvedValue([
+      { id: 'player-1', name: 'Current Child', active: true },
+      { id: 'player-2', name: 'Revoked Sibling', active: true }
+    ]);
+    vi.mocked(loadProfileDocument).mockResolvedValue({
+      parentTeamIds: ['team-1'],
+      parentPlayerKeys: ['team-1::player-1'],
+      parentOf: [
+        { teamId: 'team-1', playerId: 'player-1' },
+        { teamId: 'team-1', playerId: 'player-2' }
+      ]
+    });
+
+    const nextModel = await loadParentTeamDetailBootstrap('team-1', {
+      uid: 'parent-1',
+      parentTeamIds: ['team-1'],
+      parentPlayerKeys: ['team-1::player-1', 'team-1::player-2'],
+      parentOf: [{ teamId: 'team-1', playerId: 'player-2' }]
+    } as any);
+
+    expect(nextModel.linkedPlayers.map((player) => player.id)).toEqual(['player-1']);
+    expect(nextModel.players.find((player) => player.id === 'player-2')?.isLinked).toBe(false);
+    expect(scheduleServiceMocks.loadTeamOverviewSchedule).toHaveBeenCalledWith(
+      'team-1',
+      'Bears',
+      expect.objectContaining({ parentPlayerKeys: ['team-1::player-1'] })
+    );
+  });
+
+  it('treats current empty canonical parent scope as revocation in the team model', async () => {
+    vi.mocked(loadProfileDocument).mockResolvedValue({
+      parentTeamIds: [],
+      parentPlayerKeys: [],
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
+    });
+
+    const nextModel = await loadParentTeamDetailBootstrap('team-1', {
+      uid: 'parent-1',
+      parentTeamIds: ['team-1'],
+      parentPlayerKeys: ['team-1::player-1'],
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
+    } as any);
+
+    expect(nextModel.linkedPlayers).toEqual([]);
+    expect(nextModel.players[0].isLinked).toBe(false);
+  });
+
   it('uses the bounded overview schedule during bootstrap without hydrating games', async () => {
-    scheduleServiceMocks.loadTeamOverviewSchedule.mockResolvedValueOnce([{
-      eventKey: 'team-1::calendar-practice::staff-team-team-1',
-      id: 'calendar-practice',
-      teamId: 'team-1',
-      teamName: 'Bears',
-      type: 'practice',
-      title: 'Bears Practice',
-      date: new Date(Date.now() + 24 * 60 * 60 * 1000),
-      isDbGame: false,
-      isCancelled: false,
-      assignments: [],
-      openAssignmentCount: 0
-    }]);
+    scheduleServiceMocks.loadTeamOverviewSchedule.mockResolvedValueOnce({
+      events: [{
+        eventKey: 'team-1::calendar-practice::staff-team-team-1',
+        id: 'calendar-practice',
+        teamId: 'team-1',
+        teamName: 'Bears',
+        type: 'practice',
+        title: 'Bears Practice',
+        date: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        isDbGame: false,
+        isCancelled: false,
+        assignments: [],
+        openAssignmentCount: 0
+      }],
+      isPartial: false,
+      accessVerified: true,
+      accessUid: 'parent-1',
+      sourceKey: 'direct-calendar:v1:test-parent'
+    });
 
     const model = await loadParentTeamDetailBootstrap('team-1', { uid: 'parent-1' } as any);
 
     expect(model.upcomingEvents).toEqual([expect.objectContaining({ id: 'calendar-practice' })]);
+    expect(model.scheduleIsPartial).toBe(false);
+    expect(model.scheduleAccessVerified).toBe(true);
+    expect(model.scheduleAccessUserId).toBe('parent-1');
     expect(scheduleServiceMocks.loadTeamOverviewSchedule).toHaveBeenCalledWith(
       'team-1',
       'Bears',
@@ -1117,7 +1183,13 @@ describe('team detail bootstrap loading', () => {
       openAssignmentCount: 0
     };
     dbMocks.getGames.mockResolvedValueOnce([]);
-    scheduleServiceMocks.loadTeamOverviewSchedule.mockResolvedValueOnce([importedPractice]);
+    scheduleServiceMocks.loadTeamOverviewSchedule.mockResolvedValueOnce({
+      events: [importedPractice],
+      isPartial: false,
+      accessVerified: true,
+      accessUid: 'owner-1',
+      sourceKey: 'direct-calendar:v1:test-owner'
+    });
 
     const model = await loadParentTeamDetail('team-1', { uid: 'owner-1' } as any, { includeDeferredData: false });
 
@@ -1130,6 +1202,139 @@ describe('team detail bootstrap loading', () => {
       locationDetail: 'Field 7 NE',
       isDbGame: false,
       sourceLabel: 'Imported calendar'
+    });
+    expect(model.scheduleIsPartial).toBe(false);
+    expect(model.scheduleAccessVerified).toBe(true);
+    expect(model.scheduleAccessUserId).toBe('owner-1');
+  });
+
+  it('preserves known Team Detail events while exposing an incomplete overview schedule', async () => {
+    const importedPractice = {
+      eventKey: 'team-1::known-calendar-practice::staff-team-team-1',
+      id: 'known-calendar-practice',
+      teamId: 'team-1',
+      teamName: 'Bears',
+      type: 'practice',
+      title: 'Known calendar practice',
+      date: new Date('2099-08-05T18:00:00.000Z'),
+      location: 'Field 2',
+      opponent: null,
+      childId: 'staff-team-team-1',
+      childName: 'Bears',
+      isDbGame: false,
+      isCancelled: false,
+      assignments: [],
+      openAssignmentCount: 0
+    };
+    scheduleServiceMocks.loadTeamOverviewSchedule.mockResolvedValueOnce({
+      events: [importedPractice],
+      isPartial: true,
+      accessVerified: true,
+      accessUid: 'owner-1',
+      sourceKey: 'direct-calendar:v1:test-owner'
+    });
+
+    const model = await loadParentTeamDetailBootstrap('team-1', { uid: 'owner-1' } as any);
+
+    expect(model.scheduleIsPartial).toBe(true);
+    expect(model.scheduleAccessVerified).toBe(true);
+    expect(model.scheduleAccessUserId).toBe('owner-1');
+    expect(model.upcomingEvents).toEqual([
+      expect.objectContaining({ id: 'known-calendar-practice', title: 'Known calendar practice' })
+    ]);
+  });
+
+  it('distinguishes a partial-empty overview from a complete empty schedule', async () => {
+    scheduleServiceMocks.loadTeamOverviewSchedule
+      .mockResolvedValueOnce({ events: [], isPartial: true, accessVerified: true, accessUid: 'owner-1', sourceKey: 'direct-calendar:v1:test-owner' })
+      .mockResolvedValueOnce({ events: [], isPartial: false, accessVerified: true, accessUid: 'owner-1', sourceKey: 'direct-calendar:v1:test-owner' });
+
+    const partial = await loadParentTeamDetailBootstrap('team-1', { uid: 'owner-1' } as any);
+    const complete = await loadParentTeamDetailBootstrap('team-1', { uid: 'owner-1' } as any);
+
+    expect(partial).toMatchObject({ scheduleIsPartial: true, scheduleAccessVerified: true, scheduleAccessUserId: 'owner-1', upcomingEvents: [], nextEvent: null });
+    expect(complete).toMatchObject({ scheduleIsPartial: false, scheduleAccessVerified: true, scheduleAccessUserId: 'owner-1', upcomingEvents: [], nextEvent: null });
+  });
+
+  it('drops schedule events when current access is not positively verified', async () => {
+    scheduleServiceMocks.loadTeamOverviewSchedule.mockResolvedValueOnce({
+      events: [{
+        eventKey: 'team-1::stale-private-event::staff-team-team-1',
+        id: 'stale-private-event',
+        teamId: 'team-1',
+        teamName: 'Bears',
+        type: 'practice',
+        title: 'Stale private practice',
+        date: new Date('2099-08-06T18:00:00.000Z'),
+        childId: 'staff-team-team-1',
+        childName: 'Bears',
+        isDbGame: false,
+        isCancelled: false,
+        assignments: [],
+        openAssignmentCount: 0
+      }],
+      isPartial: true,
+      accessVerified: false,
+      accessUid: null,
+      sourceKey: null
+    });
+
+    const result = await loadParentTeamDetailBootstrap('team-1', { uid: 'owner-1' } as any);
+
+    expect(result).toMatchObject({
+      scheduleIsPartial: true,
+      scheduleAccessVerified: false,
+      scheduleAccessUserId: null,
+      upcomingEvents: [],
+      nextEvent: null
+    });
+  });
+
+  it('drops schedule events when verified access belongs to a different auth principal', async () => {
+    scheduleServiceMocks.loadTeamOverviewSchedule.mockResolvedValueOnce({
+      events: [{
+        eventKey: 'team-1::other-user-private-event::staff-team-team-1',
+        id: 'other-user-private-event',
+        teamId: 'team-1',
+        teamName: 'Bears',
+        type: 'practice',
+        title: 'Other user private practice',
+        date: new Date('2099-08-07T18:00:00.000Z'),
+        childId: 'staff-team-team-1',
+        childName: 'Bears',
+        isDbGame: false,
+        isCancelled: false,
+        assignments: [],
+        openAssignmentCount: 0
+      }],
+      isPartial: true,
+      accessVerified: true,
+      accessUid: 'different-user',
+      sourceKey: 'direct-calendar:v1:other-user'
+    });
+
+    const result = await loadParentTeamDetailBootstrap('team-1', { uid: 'owner-1' } as any);
+
+    expect(result).toMatchObject({
+      scheduleIsPartial: true,
+      scheduleAccessVerified: false,
+      scheduleAccessUserId: null,
+      upcomingEvents: [],
+      nextEvent: null
+    });
+  });
+
+  it('fails partial when the overview schedule omits completeness evidence', async () => {
+    scheduleServiceMocks.loadTeamOverviewSchedule.mockResolvedValueOnce([]);
+
+    const result = await loadParentTeamDetailBootstrap('team-1', { uid: 'owner-1' } as any);
+
+    expect(result).toMatchObject({
+      scheduleIsPartial: true,
+      scheduleAccessVerified: false,
+      scheduleAccessUserId: null,
+      upcomingEvents: [],
+      nextEvent: null
     });
   });
 
@@ -1146,7 +1351,13 @@ describe('team detail bootstrap loading', () => {
       awayScore: 40
     };
     dbMocks.getGames.mockResolvedValueOnce([historicalGame]);
-    scheduleServiceMocks.loadTeamOverviewSchedule.mockResolvedValueOnce([]);
+    scheduleServiceMocks.loadTeamOverviewSchedule.mockResolvedValueOnce({
+      events: [],
+      isPartial: false,
+      accessVerified: true,
+      accessUid: 'owner-1',
+      sourceKey: 'no-external-calendar:v1'
+    });
 
     const model = await loadParentTeamDetail('team-1', { uid: 'owner-1' } as any, { includeDeferredData: false });
 
@@ -1287,7 +1498,10 @@ describe('team detail bootstrap loading', () => {
       await vi.advanceTimersByTimeAsync(1500);
 
       await expect(modelPromise).resolves.toMatchObject({
-        upcomingEvents: [expect.objectContaining({ id: 'game-1', isDbGame: true })]
+        upcomingEvents: [expect.objectContaining({ id: 'game-1', isDbGame: true })],
+        scheduleIsPartial: true,
+        scheduleAccessVerified: false,
+        scheduleAccessUserId: null
       });
     } finally {
       vi.useRealTimers();

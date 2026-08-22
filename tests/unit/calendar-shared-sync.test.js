@@ -10,7 +10,8 @@ describe('global calendar ICS sync helper', () => {
         const source = readCalendarPage();
 
         expect(source).toContain('const games = [...(calendarGamesByTeam.get(team.id)?.values() || [])];');
-        expect(source).toContain('const trackedUids = await getTrackedCalendarEventUids(team.id, games);');
+        expect(source).toContain('trackedUids = await getTrackedCalendarEventUids(team.id, games);');
+        expect(source).toContain('if (calendarUrls.length > 0) {');
     });
 
     it('suppresses tracked and already imported ICS events while keeping distinct same-slot imports', async () => {

@@ -21,8 +21,8 @@ describe('co-parent invite workflow regression', () => {
         const acceptInviteSource = readFileSync(resolve(process.cwd(), 'accept-invite.html'), 'utf8');
 
         expect(acceptInviteSource).toContain('redeemCoParentInvite');
-        expect(acceptInviteSource).toContain("./js/db.js?v=4433182");
-        expect(acceptInviteSource).toContain("./js/accept-invite-flow.js?v=443314");
+        expect(acceptInviteSource).toContain("./js/db.js?v=4433183");
+        expect(acceptInviteSource).toContain("./js/accept-invite-flow.js?v=443315");
     });
 
     it('routes co-parent membership grants through a callable instead of browser membership writes', () => {
@@ -47,9 +47,11 @@ describe('co-parent invite workflow regression', () => {
         expect(handlerSource).toContain('firestore.runTransaction(async (transaction) =>');
         expect(handlerSource).toContain("codeData.type !== 'coparent_invite'");
         expect(handlerSource).toContain('userId !== context.auth.uid');
-        expect(handlerSource).toContain('parentOf: appendUniqueParentLink');
-        expect(handlerSource).toContain('parentTeamIds: appendUniqueValue');
-        expect(handlerSource).toContain('parentPlayerKeys: appendUniqueValue');
+        expect(handlerSource).toContain('const parentAccess = addCanonicalParentAccessLink(userData, parentLink);');
+        expect(handlerSource).toContain('...parentAccess');
+        expect(handlerSource).toContain('parentOf: nextUserData.parentOf');
+        expect(handlerSource).toContain('parentTeamIds: nextUserData.parentTeamIds');
+        expect(handlerSource).toContain('parentPlayerKeys: nextUserData.parentPlayerKeys');
         expect(handlerSource).toContain('admin.firestore.FieldValue.arrayUnion');
         expect(handlerSource).toContain('const publicProfileRef = firestore.doc(`publicUserProfiles/${userId}`);');
         expect(handlerSource).toContain('const nextUserData = {');

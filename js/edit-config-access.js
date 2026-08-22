@@ -1,4 +1,4 @@
-import { getTeamAccessInfo } from './team-access.js?v=44338';
+import { getTeamAccessInfo } from './team-access.js?v=44339';
 
 function hasRulesCompatibleConfigWriteAccess(user, team) {
     if (!user || !team) return false;

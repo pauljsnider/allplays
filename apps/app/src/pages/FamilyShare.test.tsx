@@ -132,4 +132,36 @@ describe('FamilyShare', () => {
     expect(screen.getByRole('button', { name: 'Retry family page' })).toBeTruthy();
     expect(screen.queryByText('No upcoming events')).toBeNull();
   });
+
+  it('shows a retryable load error rather than treating an unavailable projection as an invalid link', async () => {
+    familyShareMocks.loadFamilyShareView.mockRejectedValue(new FamilyShareTokenError('load-failed', 'Unavailable'));
+
+    render(<MemoryRouter initialEntries={['/family/unavailable-token']}><Routes><Route path="/family/:token" element={<FamilyShare />} /></Routes></MemoryRouter>);
+
+    expect(await screen.findByRole('heading', { name: 'Family page temporarily unavailable' })).toBeTruthy();
+    expect(screen.getByText('The complete schedule could not be loaded. Retry to avoid showing an incomplete calendar.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Retry family page' })).toBeTruthy();
+    expect(screen.queryByText('No upcoming events')).toBeNull();
+  });
+
+  it('does not claim there are no upcoming events when the server reports a partial calendar load', async () => {
+    familyShareMocks.loadFamilyShareView.mockResolvedValue({
+      tokenId: 'partial-token',
+      label: 'Grandma schedule',
+      expiresAt: null,
+      children: [],
+      teams: [],
+      events: [],
+      upcomingEvents: [],
+      recentResults: [],
+      calendarWarnings: ['Bears could not be loaded.']
+    });
+
+    render(<MemoryRouter initialEntries={['/family/partial-token']}><Routes><Route path="/family/:token" element={<FamilyShare />} /></Routes></MemoryRouter>);
+
+    expect(await screen.findByText('Schedule incomplete')).toBeTruthy();
+    expect(screen.getByText('An external calendar did not load, so upcoming-event absence cannot be confirmed.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Refresh schedule' })).toBeTruthy();
+    expect(screen.queryByText('No upcoming events')).toBeNull();
+  });
 });

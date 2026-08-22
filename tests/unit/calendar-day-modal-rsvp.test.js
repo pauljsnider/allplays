@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { addCalendarLoadedRange, createLatestCalendarRangeLoader, getMissingCalendarLoadRanges } from '../../js/calendar-load-window.js';
+import { resolveCanonicalParentScopeInput } from '../../js/parent-membership-utils.js';
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
@@ -116,6 +117,10 @@ const Blob = deps.Blob;
             'const { requireAuth, checkAuth } = deps.auth;'
         )
         .replace(
+            /import \{ resolveCanonicalParentScopeInput \} from '\.\/js\/parent-membership-utils\.js\?v=\d+';/,
+            'const { resolveCanonicalParentScopeInput } = deps.parentMembership;'
+        )
+        .replace(
             /import \{ buildLinkedPlayersByTeam, resolveCalendarRsvpSubmission \} from '\.\/js\/calendar-rsvp\.js\?v=\d+';/,
             'const { buildLinkedPlayersByTeam, resolveCalendarRsvpSubmission } = deps.calendarRsvp;'
         )
@@ -150,6 +155,7 @@ function createEnvironment() {
         'header-container',
         'team-filter',
         'calendar-content',
+        'calendar-load-warning',
         'month-nav',
         'month-label',
         'view-detailed',
@@ -266,8 +272,18 @@ function createDeps(submitRecorder, overrides = {}) {
             async getGames() {
                 return games;
             },
-            async getTeam() {
-                return null;
+            async getTeam(teamId) {
+                if (typeof overrides.getTeam === 'function') {
+                    return overrides.getTeam(teamId);
+                }
+                const accessibleTeams = overrides.parentTeams || [
+                    {
+                        id: 'team-1',
+                        name: 'Tigers',
+                        calendarUrls: ['https://example.com/team.ics']
+                    }
+                ];
+                return accessibleTeams.find((team) => team.id === teamId) || null;
             },
             async getTrackedCalendarEventUids() {
                 return trackedUids;
@@ -418,6 +434,9 @@ function createDeps(submitRecorder, overrides = {}) {
                     submitMode: 'user'
                 };
             }
+        },
+        parentMembership: {
+            resolveCanonicalParentScopeInput
         },
         availabilityPreferences: {
             buildAvailabilityNoteRows(rsvps) {

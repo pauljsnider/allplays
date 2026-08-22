@@ -58,7 +58,8 @@ describe('Home async operation contract', () => {
         expect(refreshHomeSource).toContain('const isCurrentHomeLoad = () => (');
         expect(refreshHomeSource).toContain('currentAuthUserIdRef.current === user.uid');
         expect(refreshHomeSource).toContain('if (!isCurrentHomeLoad()) return;');
-        expect(refreshHomeSource).toContain('if (summaryResultReturned) return;');
+        expect(refreshHomeSource).toContain('if (summaryResultReturned) {');
+        expect(refreshHomeSource).toContain('mergePartialHomeSchedule(current, partial.home)');
         expect(refreshHomeSource).toContain('onRefresh: (refreshedSummary) => {');
         expect(refreshHomeSource).toContain('void refreshHome({ forceSecondary: true, preserveCurrentHome: true });');
         expect(refreshHomeSource).toContain('force: force || forceSecondary');

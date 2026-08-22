@@ -12,11 +12,11 @@ import {
     signInWithEmailLink,
     updatePassword
 } from './firebase.js?v=26';
-import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, redeemFriendInvite, rollbackParentInviteRedemption, getUserProfile, getUserTeams, getTeam, listMyParentMembershipRequests, normalizeParentScopeLinks } from './db.js?v=4433182';
+import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, redeemFriendInvite, rollbackParentInviteRedemption, getUserProfile, getUserTeams, getTeam, listMyParentMembershipRequests, normalizeParentScopeLinks } from './db.js?v=4433183';
 import { executeEmailPasswordSignup } from './signup-flow.js?v=14';
 import { redeemAdminInviteAcceptance, redeemAdminInviteAtomically } from './admin-invite.js?v=9';
-import { mergeApprovedParentMembershipRequests } from './parent-membership-utils.js?v=3';
-import { createInviteProcessor } from './accept-invite-flow.js?v=443314';
+import { mergeApprovedParentMembershipRequests, resolveCanonicalParentScopeInput } from './parent-membership-utils.js?v=4';
+import { createInviteProcessor } from './accept-invite-flow.js?v=443315';
 import {
     queueCurrentUserVerificationEmail,
     queueInviteSignInEmail,
@@ -539,10 +539,17 @@ export function checkAuth(callback, options = {}) {
                         user.profileEmail = profile.email;
                     }
                     if (profile.isAdmin) user.isAdmin = true;
-                    // A successfully loaded profile is authoritative even when
-                    // it has no parent links. Preserve that complete emptiness
-                    // so dashboard callers do not issue a redundant SDK read.
-                    user.parentOf = Array.isArray(profile.parentOf) ? profile.parentOf : [];
+                    // Canonical team/player fields are revocable authorization.
+                    // parentOf is metadata and may only fill legacy profiles
+                    // whose canonical field has never been created.
+                    const canonicalParentScope = resolveCanonicalParentScopeInput(profile);
+                    user.parentOf = canonicalParentScope.parentLinks;
+                    if (canonicalParentScope.hasCanonicalParentTeamIds) {
+                        user.parentTeamIds = canonicalParentScope.parentTeamIds;
+                    }
+                    if (canonicalParentScope.hasCanonicalParentPlayerKeys) {
+                        user.parentPlayerKeys = canonicalParentScope.parentPlayerKeys;
+                    }
                     const teamMediaUploadTeamIds = getStringArray(profile.teamMediaUploadTeamIds);
                     const mediaUploadTeamIds = getStringArray(profile.mediaUploadTeamIds);
                     if (teamMediaUploadTeamIds) user.teamMediaUploadTeamIds = teamMediaUploadTeamIds;
@@ -550,24 +557,22 @@ export function checkAuth(callback, options = {}) {
                     const storedCoachOf = getStringArray(profile.coachOf);
                     if (storedCoachOf) user.coachOf = storedCoachOf;
 
-                    // Auto-migrate denormalized parent scope in the background.
-                    // Authorization continues to use the complete parentOf links
-                    // that were already loaded above.
+                    // Backfill only fields that are genuinely absent. A present
+                    // empty or malformed canonical field is a revocation and
+                    // must never be rebuilt from stale parentOf metadata.
                     if (Array.isArray(profile.parentOf) || Array.isArray(profile.parentTeamIds) || Array.isArray(profile.parentPlayerKeys)) {
-                        const currentTeamIds = (profile.parentTeamIds || []).slice().sort();
-                        const currentParentPlayerKeys = (profile.parentPlayerKeys || []).slice().sort();
-                        normalizeParentScopeLinks(profile.parentOf || [])
+                        normalizeParentScopeLinks(profile)
                             .then((normalizedParentScope) => {
-                                const expectedTeamIds = normalizedParentScope.parentTeamIds.slice().sort();
-                                const expectedParentPlayerKeys = normalizedParentScope.parentPlayerKeys.slice().sort();
-                                if (JSON.stringify(expectedTeamIds) === JSON.stringify(currentTeamIds) &&
-                                    JSON.stringify(expectedParentPlayerKeys) === JSON.stringify(currentParentPlayerKeys)) {
-                                    return null;
+                                const parentAccessBackfill = {};
+                                if (!normalizedParentScope.hasCanonicalParentTeamIds) {
+                                    parentAccessBackfill.parentTeamIds = normalizedParentScope.parentTeamIds;
                                 }
-                                return Promise.resolve(updateUserProfile(user.uid, {
-                                    parentTeamIds: expectedTeamIds,
-                                    parentPlayerKeys: expectedParentPlayerKeys
-                                })).then(() => console.log('[auth] Auto-migrated parentTeamIds/parentPlayerKeys for user'));
+                                if (!normalizedParentScope.hasCanonicalParentPlayerKeys) {
+                                    parentAccessBackfill.parentPlayerKeys = normalizedParentScope.parentPlayerKeys;
+                                }
+                                if (Object.keys(parentAccessBackfill).length === 0) return null;
+                                return Promise.resolve(updateUserProfile(user.uid, parentAccessBackfill))
+                                    .then(() => console.log('[auth] Auto-migrated missing parent access fields for user'));
                             })
                             .catch((err) => console.warn('[auth] Failed to auto-migrate parent parent scope fields:', err));
                     }

@@ -32,7 +32,7 @@ vi.mock('../../js/firebase.js?v=26', () => ({
     updatePassword: vi.fn()
 }));
 
-vi.mock('../../js/db.js?v=4433182', () => ({
+vi.mock('../../js/db.js?v=4433183', () => ({
     validateAccessCode: validateAccessCodeMock,
     markAccessCodeAsUsed: markAccessCodeAsUsedMock,
     updateUserProfile: updateUserProfileMock,
@@ -58,8 +58,15 @@ vi.mock('../../js/admin-invite.js?v=9', () => ({
     redeemAdminInviteAtomically: vi.fn()
 }));
 
-vi.mock('../../js/parent-membership-utils.js?v=3', () => ({
-    mergeApprovedParentMembershipRequests: vi.fn(() => ({ changed: false, userUpdate: {} }))
+vi.mock('../../js/parent-membership-utils.js?v=4', () => ({
+    mergeApprovedParentMembershipRequests: vi.fn(() => ({ changed: false, userUpdate: {} })),
+    resolveCanonicalParentScopeInput: vi.fn((profile = {}) => ({
+        parentLinks: Array.isArray(profile.parentOf) ? profile.parentOf : [],
+        parentTeamIds: Array.isArray(profile.parentTeamIds) ? profile.parentTeamIds : [],
+        parentPlayerKeys: Array.isArray(profile.parentPlayerKeys) ? profile.parentPlayerKeys : [],
+        hasCanonicalParentTeamIds: Object.prototype.hasOwnProperty.call(profile, 'parentTeamIds'),
+        hasCanonicalParentPlayerKeys: Object.prototype.hasOwnProperty.call(profile, 'parentPlayerKeys')
+    }))
 }));
 
 describe('loginWithGoogle parent invite failure cleanup', () => {

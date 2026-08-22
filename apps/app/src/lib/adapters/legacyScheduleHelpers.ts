@@ -35,6 +35,11 @@ type LegacyCalendarEvent = LegacyRecord & {
     dtstart?: string | Date;
 };
 
+export type CalendarFetchOptions = {
+    teamId?: string;
+    forceRefresh?: boolean;
+};
+
 type LegacyPracticeOccurrence = LegacyRecord & {
     masterId?: string;
     instanceDate?: string;
@@ -202,8 +207,8 @@ export function extractOpponent(summary: unknown, teamName: unknown): string {
     return String(legacyExtractOpponent(summary, teamName) || '').trim();
 }
 
-export async function fetchAndParseCalendar(url: string): Promise<LegacyCalendarEvent[]> {
-    return normalizeArray<LegacyCalendarEvent>(await Promise.resolve(legacyFetchAndParseCalendar(url)) as LegacyCalendarEvent[]);
+export async function fetchAndParseCalendar(url: string, options: CalendarFetchOptions = {}): Promise<LegacyCalendarEvent[]> {
+    return normalizeArray<LegacyCalendarEvent>(await Promise.resolve(legacyFetchAndParseCalendar(url, options)) as LegacyCalendarEvent[]);
 }
 
 export function getCalendarEventTrackingId(event: unknown): string {

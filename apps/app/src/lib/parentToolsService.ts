@@ -67,6 +67,7 @@ import { canonicalizeAppAcceptInviteUrl } from './inviteUrls';
 import { formatCurrencyFromCents as formatCurrency } from './money';
 import { requireTrustedStripeCheckoutUrl } from './stripeCheckoutUrl';
 import { listParentTeamFeeRecipientsForApp } from './parentFeeRecipientsService';
+import { collectCanonicalParentAccessLinks } from './parentAccessScope';
 import { loadParentScheduleSummary } from './homeService';
 import { formatEventDateLabel, formatEventTimeLabel, getScheduleLocationLabel, getScheduleTitle, type ParentScheduleEvent } from './scheduleLogic';
 import type { AuthUser } from './types';
@@ -412,7 +413,7 @@ export async function submitParentAccessRequest(teamId: string, playerId: string
 
 export async function loadParentFeesForApp(user: AuthUser | null): Promise<ParentFeeAppRecord[]> {
   if (!user?.uid) return [];
-  const rawFees = await listParentTeamFeeRecipientsForApp(user.uid, user.parentOf || []);
+  const rawFees = await listParentTeamFeeRecipientsForApp(user.uid, getCanonicalParentChildren(user));
   return sortParentFeeRecords(rawFees || []).map((fee: any) => toParentFeeAppRecord(fee));
 }
 
@@ -552,7 +553,7 @@ export function getGoogleCalendarFeedUrl(feedUrl: string) {
 export async function loadParentHouseholdInviteModel(user: AuthUser | null): Promise<{ linkedPlayers: ParentHouseholdLinkedPlayer[]; members: ParentHouseholdFamilyMember[] }> {
   if (!user?.uid) return { linkedPlayers: [], members: [] };
   const [linkedPlayers, members] = await Promise.all([
-    Promise.resolve(normalizeFamilyChildren(user.parentOf || []) as ParentHouseholdLinkedPlayer[]),
+    Promise.resolve(getCanonicalParentChildren(user) as ParentHouseholdLinkedPlayer[]),
     Promise.resolve(readFamilyMembers(user.uid))
   ]);
   return {
@@ -570,7 +571,7 @@ export async function loadParentHouseholdInviteModel(user: AuthUser | null): Pro
 
 export async function createParentHouseholdMemberInvite(user: AuthUser | null, request: ParentHouseholdInviteRequest): Promise<ParentHouseholdInviteResult> {
   if (!user?.uid) throw new Error('Sign in before creating a household invite.');
-  const linkedPlayers = normalizeFamilyChildren(user.parentOf || []) as ParentHouseholdLinkedPlayer[];
+  const linkedPlayers = getCanonicalParentChildren(user) as ParentHouseholdLinkedPlayer[];
   if (!linkedPlayers.length) throw new Error('No linked players are available for household invites.');
   const selected = linkedPlayers.find((player) => `${player.teamId}::${player.playerId}` === request.playerKey);
   if (!selected) throw new Error('Choose a linked player to share.');
@@ -605,7 +606,7 @@ export async function createParentHouseholdMemberInvite(user: AuthUser | null, r
 
 export async function loadFamilyShareModel(user: AuthUser | null): Promise<{ children: any[]; tokens: FamilyShareTokenCard[] }> {
   if (!user?.uid) return { children: [], tokens: [] };
-  const children = normalizeFamilyChildren(user.parentOf || []);
+  const children = getCanonicalParentChildren(user);
   const tokens = await Promise.resolve(listFamilyShareTokens(user.uid));
   return {
     children,
@@ -621,7 +622,7 @@ export async function loadFamilyShareModel(user: AuthUser | null): Promise<{ chi
 
 export async function createParentFamilyShare(user: AuthUser | null, label: string, extraCalendarUrls: string[] = []) {
   if (!user?.uid) throw new Error('Sign in before creating a family share link.');
-  const tokenId = await createFamilyShareToken(user.uid, normalizeFamilyChildren(user.parentOf || []), label, extraCalendarUrls);
+  const tokenId = await createFamilyShareToken(user.uid, getCanonicalParentChildren(user), label, extraCalendarUrls);
   return { tokenId, url: getFamilyShareUrl(tokenId) };
 }
 
@@ -753,7 +754,7 @@ export async function acceptTeamRegistrationOfferForApp(
 }
 
 export async function loadParentCertificates(user: AuthUser | null): Promise<ParentCertificateCard[]> {
-  const children = normalizeFamilyChildren(user?.parentOf || []);
+  const children = getCanonicalParentChildren(user);
   const rows = await Promise.all(children.map(async (child: any) => {
     const [team, certificates] = await Promise.all([
       Promise.resolve(getTeam(child.teamId)).catch(() => null),
@@ -849,7 +850,7 @@ export async function loadTeamMediaForApp(
   if (!teamId) throw new Error('Team is required.');
   const team = await Promise.resolve(getTeam(teamId));
   if (!team) throw new Error('Team not found.');
-  const appUser = user ? { ...user, parentOf: user.parentOf || [] } : null;
+  const appUser = user ? { ...user, parentOf: getCanonicalParentChildren(user) } : null;
   const teamWithId = { ...team, id: teamId };
   const canManage = canManageTeamMedia(appUser, teamWithId);
   const canContribute = canContributeTeamMedia(appUser, teamWithId);
@@ -1147,9 +1148,13 @@ function normalizeFamilyChildren(children: any[]) {
     }));
 }
 
+function getCanonicalParentChildren(user: AuthUser | null) {
+  return normalizeFamilyChildren(collectCanonicalParentAccessLinks(user));
+}
+
 function getLinkedTeamIds(user: AuthUser | null) {
   return [...new Set([
-    ...(Array.isArray(user?.parentOf) ? user!.parentOf.map((entry: any) => compactString(entry.teamId)) : []),
+    ...getCanonicalParentChildren(user).map((entry) => compactString(entry.teamId)),
     ...(Array.isArray(user?.coachOf) ? user!.coachOf.map(compactString) : [])
   ].filter(Boolean))];
 }

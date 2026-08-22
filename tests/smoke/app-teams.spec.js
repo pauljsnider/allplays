@@ -37,14 +37,31 @@ async function waitForTeamDetailRoute(page, teamName) {
     }).toPass({ timeout: 45000 });
 }
 
-async function mockTeamsModules(page, { scenario = '', managedTeam = false, rosterPlayerCount = 2 } = {}) {
-    await page.addInitScript(({ scenarioName, shouldManageTeam, teamRosterPlayerCount }) => {
+async function mockTeamsModules(page, {
+    scenario = '',
+    managedTeam = false,
+    rosterPlayerCount = 2,
+    teamDetailScheduleScenario = ''
+} = {}) {
+    await page.addInitScript(({
+        scenarioName,
+        shouldManageTeam,
+        teamRosterPlayerCount,
+        teamDetailScheduleScenarioName
+    }) => {
         window.__openedPublicUrls = [];
         window.__homeLoads = 0;
         window.__teamsScenario = scenarioName;
         window.__managedTeam = shouldManageTeam;
         window.__teamRosterPlayerCount = teamRosterPlayerCount;
-    }, { scenarioName: scenario, shouldManageTeam: managedTeam, teamRosterPlayerCount: rosterPlayerCount });
+        window.__teamDetailScheduleScenario = teamDetailScheduleScenarioName;
+        window.__teamDetailOverviewLoads = 0;
+    }, {
+        scenarioName: scenario,
+        shouldManageTeam: managedTeam,
+        teamRosterPlayerCount: rosterPlayerCount,
+        teamDetailScheduleScenarioName: teamDetailScheduleScenario
+    });
 
     await page.route(/\/src\/lib\/useAuth\.ts(\?.*)?$/, async (route) => {
         await route.fulfill({
@@ -387,7 +404,21 @@ async function mockTeamsModules(page, { scenario = '', managedTeam = false, rost
                 }
 
                 export async function loadParentTeamDetailBootstrap(teamId) {
-                    return loadParentTeamDetail(teamId);
+                    const model = await loadParentTeamDetail(teamId);
+                    if (window.__teamDetailScheduleScenario !== 'partial-empty-recovery') {
+                        return model;
+                    }
+                    window.__teamDetailOverviewLoads += 1;
+                    // React StrictMode intentionally runs the initial effect twice in dev.
+                    if (window.__teamDetailOverviewLoads <= 2) {
+                        return {
+                            ...model,
+                            scheduleIsPartial: true,
+                            upcomingEvents: [],
+                            nextEvent: null
+                        };
+                    }
+                    return { ...model, scheduleIsPartial: false };
                 }
 
                 export async function loadParentTeamDetail(teamId) {
@@ -422,6 +453,10 @@ async function mockTeamsModules(page, { scenario = '', managedTeam = false, rost
                             players: [],
                             inactivePlayers: [],
                             linkedPlayers: [],
+                            scheduleIsPartial: false,
+                            scheduleAccessVerified: true,
+                            scheduleAccessUserId: 'user-1',
+                            scheduleSourceKey: 'no-external-calendar:v1',
                             upcomingEvents: [],
                             recentResults: [],
                             nextEvent: null,
@@ -475,6 +510,10 @@ async function mockTeamsModules(page, { scenario = '', managedTeam = false, rost
                         linkedPlayers: [
                             { id: 'player-1', name: 'Pat Star', number: '9', photoUrl: 'https://img.example.test/player.png', position: 'Guard', isLinked: true, active: true }
                         ],
+                        scheduleIsPartial: false,
+                        scheduleAccessVerified: true,
+                        scheduleAccessUserId: 'user-1',
+                        scheduleSourceKey: 'no-external-calendar:v1',
                         upcomingEvents: [
                             { id: 'game-next', type: 'game', title: 'vs. Falcons', date: nextDate, location: 'Main Gym', opponent: 'Falcons', status: '', homeScore: null, awayScore: null, isCancelled: false }
                         ],
@@ -517,8 +556,13 @@ async function mockTeamsModules(page, { scenario = '', managedTeam = false, rost
                     });
                 }
 
-                export async function loadParentSchedule() {
-                    return { events: [] };
+                export async function loadParentSchedule(_user, options = {}) {
+                    const teamId = options.targetTeamId || 'team-1';
+                    return {
+                        events: [],
+                        isPartial: false,
+                        sourceKeysByTeam: { [teamId]: 'no-external-calendar:v1' }
+                    };
                 }
 
                 export async function enableRsvpForImportedCalendarEvent() {
@@ -978,6 +1022,37 @@ test.describe('mobile My Teams', () => {
         await page.getByRole('link', { name: /Pizza Place/ }).click();
         await expect.poll(() => page.evaluate(() => window.__openedPublicUrls.at(-1))).toBe('https://pizza.example.test');
         await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+    });
+
+    test('does not present a partial-empty team overview schedule as authoritative and recovers on retry', async ({ page, baseURL }) => {
+        const pageErrors = [];
+        page.on('pageerror', (error) => {
+            if (!error.message.startsWith('Installations: Create Installation request failed')) {
+                pageErrors.push(error.message);
+            }
+        });
+        await mockTeamsModules(page, { teamDetailScheduleScenario: 'partial-empty-recovery' });
+        await page.goto(appUrl(baseURL, '/teams/team-1'), { waitUntil: 'domcontentloaded' });
+        await page.waitForFunction(() => (
+            !document.body.textContent?.includes('Loading ALL PLAYS')
+            && document.body.textContent?.includes('Team schedule incomplete')
+        ));
+
+        expect(pageErrors).toEqual([]);
+        const upcomingSummary = page.locator('a[href="#/teams/team-1?tab=schedule"]')
+            .filter({ has: page.getByText('Upcoming', { exact: true }) });
+        await expect(upcomingSummary).toContainText('—');
+        await expect(page.getByText('Team schedule incomplete', { exact: true })).toBeVisible();
+        await expect(page.getByText('No upcoming', { exact: true })).toHaveCount(0);
+        await expect(page.getByText('Schedule is clear for now', { exact: true })).toHaveCount(0);
+
+        await page.getByRole('button', { name: 'Retry team schedule' }).click();
+
+        await expect.poll(() => page.evaluate(() => window.__teamDetailOverviewLoads)).toBeGreaterThanOrEqual(3);
+        await expect(page.getByText('Team schedule incomplete', { exact: true })).toHaveCount(0);
+        await expect(upcomingSummary).toContainText('1');
+        await expect(page.getByText(/vs\. Falcons/).first()).toBeVisible();
+        expect(pageErrors).toEqual([]);
     });
 
     test('team detail tab routes preserve back navigation inside the team page', async ({ page, baseURL }) => {

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { resolveCanonicalParentScopeInput } from '../../js/parent-membership-utils.js';
 
 const dbSource = readFileSync(new URL('../../js/db.js', import.meta.url), 'utf8');
 
@@ -13,7 +14,12 @@ function buildGetParentTeams({ getUserProfile, getTeam }) {
         .slice(start, end)
         .replace('export async function getParentTeams', 'return async function getParentTeams');
 
-    return new Function('getUserProfile', 'getTeam', functionSource)(getUserProfile, getTeam);
+    return new Function(
+        'getUserProfile',
+        'getTeam',
+        'resolveCanonicalParentScopeInput',
+        functionSource
+    )(getUserProfile, getTeam, resolveCanonicalParentScopeInput);
 }
 
 describe('getParentTeams', () => {
@@ -21,10 +27,10 @@ describe('getParentTeams', () => {
         const pendingTeamReads = [];
         const getUserProfile = vi.fn().mockResolvedValue({
             parentOf: [
-                { teamId: 'team-b' },
-                { teamId: 'team-a' },
-                { teamId: 'team-b' },
-                { teamId: 'team-c' }
+                { teamId: 'team-b', playerId: 'player-b' },
+                { teamId: 'team-a', playerId: 'player-a' },
+                { teamId: 'team-b', playerId: 'player-b-2' },
+                { teamId: 'team-c', playerId: 'player-c' }
             ]
         });
         const getTeam = vi.fn((teamId, options) => new Promise((resolve) => {
@@ -70,12 +76,60 @@ describe('getParentTeams', () => {
     });
 
     it('falls back to fetching the profile when parentOf is not provided', async () => {
-        const getUserProfile = vi.fn().mockResolvedValue({ parentOf: [{ teamId: 'team-a' }] });
+        const getUserProfile = vi.fn().mockResolvedValue({ parentOf: [{ teamId: 'team-a', playerId: 'player-a' }] });
         const getTeam = vi.fn().mockResolvedValue({ id: 'team-a', name: 'Alpha' });
         const getParentTeams = buildGetParentTeams({ getUserProfile, getTeam });
 
         await expect(getParentTeams('parent-1')).resolves.toEqual([{ id: 'team-a', name: 'Alpha' }]);
 
         expect(getUserProfile).toHaveBeenCalledWith('parent-1');
+    });
+
+    it('uses present canonical team ids instead of stale parentOf teams', async () => {
+        const getUserProfile = vi.fn();
+        const getTeam = vi.fn(async (teamId) => ({ id: teamId, name: teamId }));
+        const getParentTeams = buildGetParentTeams({ getUserProfile, getTeam });
+
+        await expect(getParentTeams('parent-1', {
+            profile: {
+                parentOf: [
+                    { teamId: 'team-current', playerId: 'player-current' },
+                    { teamId: 'team-revoked', playerId: 'player-old' }
+                ],
+                parentTeamIds: ['team-current'],
+                parentPlayerKeys: ['team-current::player-current']
+            }
+        })).resolves.toEqual([{ id: 'team-current', name: 'team-current' }]);
+
+        expect(getUserProfile).not.toHaveBeenCalled();
+        expect(getTeam).toHaveBeenCalledTimes(1);
+        expect(getTeam).toHaveBeenCalledWith('team-current', { includeInactive: false });
+    });
+
+    it('derives teams from strict canonical player keys when team ids are absent', async () => {
+        const getTeam = vi.fn(async (teamId) => ({ id: teamId, name: teamId }));
+        const getParentTeams = buildGetParentTeams({ getUserProfile: vi.fn(), getTeam });
+
+        await expect(getParentTeams('parent-1', {
+            profile: {
+                parentOf: [{ teamId: 'team-revoked', playerId: 'player-old' }],
+                parentPlayerKeys: ['team-current::player-current', 'team-bad::player::extra']
+            }
+        })).resolves.toEqual([{ id: 'team-current', name: 'team-current' }]);
+    });
+
+    it('treats present empty or malformed canonical team evidence as no parent teams', async () => {
+        const getTeam = vi.fn();
+        const getParentTeams = buildGetParentTeams({ getUserProfile: vi.fn(), getTeam });
+
+        await expect(getParentTeams('parent-1', {
+            profile: {
+                parentOf: [{ teamId: 'team-stale', playerId: 'player-stale' }],
+                parentTeamIds: [123],
+                parentPlayerKeys: ['team-stale::player-stale']
+            }
+        })).resolves.toEqual([]);
+
+        expect(getTeam).not.toHaveBeenCalled();
     });
 });

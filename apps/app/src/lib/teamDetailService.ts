@@ -72,6 +72,10 @@ import { getPrimaryAppCheckHeaders } from './adapters/legacyFirebaseAppCheck';
 import { isRetryableReadTransportError, raceFirstSuccessfulRead } from './adapters/legacyHedgedRead';
 import { buildAppAcceptInviteUrl } from './inviteUrls';
 import { createLogger } from './logger';
+import {
+  applyCurrentParentAccessProfile,
+  collectCanonicalParentAccessLinks
+} from './parentAccessScope';
 import { getNativeRestDedupKey, loadDedupedNativeRestRequest, shouldDedupNativeRestRequest } from './nativeRestDedup';
 import { callNativeFirebaseFunction } from './nativeCallable';
 import { isNativeRuntime as isNativeAppRuntime } from './nativeRuntime';
@@ -220,6 +224,7 @@ export type TeamDetailEvent = {
   awayScore: number | null;
   isCancelled: boolean;
   isDbGame?: boolean;
+  sourceType?: string | null;
   sourceLabel?: string | null;
   statTrackerConfigId: string;
   statTrackerConfigLabel: string;
@@ -420,6 +425,14 @@ export type TeamDetailModel = {
   players: TeamDetailPlayer[];
   inactivePlayers: TeamDetailPlayer[];
   linkedPlayers: TeamDetailPlayer[];
+  /** True when current schedule access or one or more authorized sources remain incomplete. */
+  scheduleIsPartial: boolean;
+  /** True only when current authenticated access to this exact team schedule was resolved. */
+  scheduleAccessVerified: boolean;
+  /** Authenticated principal for which schedule access was verified; null otherwise. */
+  scheduleAccessUserId: string | null;
+  /** Non-secret fingerprint of the external-calendar source state used by this schedule. */
+  scheduleSourceKey: string | null;
   upcomingEvents: TeamDetailEvent[];
   recentResults: TeamDetailEvent[];
   nextEvent: TeamDetailEvent | null;
@@ -2076,7 +2089,7 @@ export async function loadParentTeamDetail(
         teamId,
         error
       });
-      return null;
+      return { events: [], isPartial: true, accessVerified: false, accessUid: null, sourceKey: null };
     });
 
   return buildTeamDetailModel({
@@ -2085,7 +2098,11 @@ export async function loadParentTeamDetail(
     players,
     games,
     configs,
-    scheduleEvents: accessUser?.uid && overviewSchedule ? overviewSchedule : undefined,
+    scheduleEvents: accessUser?.uid && overviewSchedule.accessVerified ? overviewSchedule.events : undefined,
+    scheduleIsPartial: Boolean(accessUser?.uid && overviewSchedule.isPartial),
+    scheduleAccessVerified: Boolean(accessUser?.uid && overviewSchedule.accessVerified),
+    scheduleAccessUserId: overviewSchedule.accessVerified ? overviewSchedule.accessUid : null,
+    scheduleSourceKey: overviewSchedule.accessVerified ? overviewSchedule.sourceKey : null,
     user: accessUser,
     linkedPlayerIds,
     seasonStatsByPlayerId,
@@ -2099,11 +2116,34 @@ export async function loadParentTeamDetail(
 
 async function loadTeamDetailOverviewSchedule(teamId: string, teamName: string, user: AuthUser | null) {
   const { loadTeamOverviewSchedule } = await import('./scheduleService');
-  return withTimeout(
+  const result = await withTimeout(
     loadTeamOverviewSchedule(teamId, teamName, user),
     'Optional team calendar',
     optionalCalendarTimeoutMs
   );
+  if (
+    !result
+    || !Array.isArray(result.events)
+    || typeof result.isPartial !== 'boolean'
+    || typeof result.accessVerified !== 'boolean'
+    || !Object.prototype.hasOwnProperty.call(result, 'sourceKey')
+    || (result.sourceKey !== null && typeof result.sourceKey !== 'string')
+  ) {
+    return { events: [], isPartial: true, accessVerified: false, accessUid: null, sourceKey: null };
+  }
+  const requestedUid = cleanString(user?.uid);
+  const resultAccessUid = typeof result.accessUid === 'string' ? cleanString(result.accessUid) : '';
+  const accessVerified = result.accessVerified === true
+    && Boolean(requestedUid)
+    && resultAccessUid === requestedUid;
+  const sourceKey = typeof result.sourceKey === 'string' ? cleanString(result.sourceKey) || null : null;
+  return {
+    events: accessVerified ? result.events : [],
+    isPartial: result.isPartial || !accessVerified,
+    accessVerified,
+    accessUid: accessVerified ? requestedUid : null,
+    sourceKey: accessVerified ? sourceKey : null
+  };
 }
 
 export async function loadParentTeamDetailBootstrap(teamId: string, user: AuthUser | null): Promise<TeamDetailModel> {
@@ -2123,7 +2163,7 @@ export async function loadParentTeamDetailBootstrap(teamId: string, user: AuthUs
         teamId,
         error
       });
-      return null;
+      return { events: [], isPartial: true, accessVerified: false, accessUid: null, sourceKey: null };
     });
 
   return buildTeamDetailModel({
@@ -2132,7 +2172,11 @@ export async function loadParentTeamDetailBootstrap(teamId: string, user: AuthUs
     players,
     games: [],
     configs: [],
-    scheduleEvents: accessUser?.uid && overviewSchedule ? overviewSchedule : undefined,
+    scheduleEvents: accessUser?.uid && overviewSchedule.accessVerified ? overviewSchedule.events : undefined,
+    scheduleIsPartial: Boolean(accessUser?.uid && overviewSchedule.isPartial),
+    scheduleAccessVerified: Boolean(accessUser?.uid && overviewSchedule.accessVerified),
+    scheduleAccessUserId: overviewSchedule.accessVerified ? overviewSchedule.accessUid : null,
+    scheduleSourceKey: overviewSchedule.accessVerified ? overviewSchedule.sourceKey : null,
     user: accessUser,
     linkedPlayerIds,
     seasonStatsByPlayerId: {},
@@ -2155,7 +2199,8 @@ export function loadTeamDetailInsights(teamId: string, user: AuthUser | null): P
 
     if (!team) throw new Error('Team not found.');
 
-    const linkedPlayerIds = getLinkedPlayerIds(user, normalizedTeamId, players);
+    const accessUser = await hydrateTeamDetailAccessUser(user, normalizedTeamId, players);
+    const linkedPlayerIds = getLinkedPlayerIds(accessUser, normalizedTeamId, players);
     const seasonLabels = listSeasonLabels(games);
     const currentYearLabel = String(new Date().getFullYear());
     const seasonLabel = seasonLabels.includes(currentYearLabel) ? currentYearLabel : (seasonLabels[0] || currentYearLabel);
@@ -2225,9 +2270,10 @@ export function loadTeamDetailInsights(teamId: string, user: AuthUser | null): P
     };
   })();
   teamDetailInsightsCache.set(cacheKey, request);
-  request.catch(() => {
+  const releaseRequest = () => {
     if (teamDetailInsightsCache.get(cacheKey) === request) teamDetailInsightsCache.delete(cacheKey);
-  });
+  };
+  void request.then(releaseRequest, releaseRequest);
   return request;
 }
 
@@ -2400,6 +2446,10 @@ export function buildTeamDetailModel({
   players = [],
   games = [],
   scheduleEvents,
+  scheduleIsPartial = false,
+  scheduleAccessVerified = false,
+  scheduleAccessUserId = null,
+  scheduleSourceKey = null,
   configs = [],
   user = null,
   linkedPlayerIds = getLinkedPlayerIds(user, teamId, players),
@@ -2417,6 +2467,10 @@ export function buildTeamDetailModel({
   players?: any[];
   games?: any[];
   scheduleEvents?: ParentScheduleEvent[];
+  scheduleIsPartial?: boolean;
+  scheduleAccessVerified?: boolean;
+  scheduleAccessUserId?: string | null;
+  scheduleSourceKey?: string | null;
   configs?: any[];
   user?: AuthUser | null;
   linkedPlayerIds?: string[];
@@ -2477,6 +2531,10 @@ export function buildTeamDetailModel({
     players: normalizedPlayers,
     inactivePlayers: normalizedInactivePlayers,
     linkedPlayers: normalizedPlayers.filter((player) => player.isLinked),
+    scheduleIsPartial: scheduleIsPartial === true,
+    scheduleAccessVerified: scheduleAccessVerified === true,
+    scheduleAccessUserId: scheduleAccessVerified === true ? cleanString(scheduleAccessUserId) || null : null,
+    scheduleSourceKey: scheduleAccessVerified === true ? cleanString(scheduleSourceKey) || null : null,
     upcomingEvents: normalizedEvents.upcoming,
     recentResults: normalizedEvents.recent,
     nextEvent: normalizedEvents.upcoming[0] || null,
@@ -2609,23 +2667,9 @@ export function buildRosterParentInviteSummaries({
 function getAcceptedParentPlayerIds(member: any, teamId: string) {
   const normalizedTeamId = cleanString(teamId);
   if (!normalizedTeamId) return [] as string[];
-
-  const linkedPlayerIds = new Set<string>();
-  (Array.isArray(member?.parentOf) ? member.parentOf : []).forEach((link: any) => {
-    if (cleanString(link?.teamId) !== normalizedTeamId) return;
-    const playerId = cleanString(link?.playerId);
-    if (playerId) linkedPlayerIds.add(playerId);
-  });
-
-  const parentPlayerKeys = Array.isArray(member?.parentPlayerKeys) ? member.parentPlayerKeys : [];
-  parentPlayerKeys.forEach((value: any) => {
-    const [keyTeamId, keyPlayerId] = cleanString(value).split('::');
-    if (keyTeamId === normalizedTeamId && keyPlayerId) {
-      linkedPlayerIds.add(keyPlayerId);
-    }
-  });
-
-  return [...linkedPlayerIds];
+  return collectCanonicalParentAccessLinks(member)
+    .filter((link) => link.teamId === normalizedTeamId)
+    .map((link) => link.playerId);
 }
 
 function buildTeamStaffPermissionsSummary({
@@ -2967,6 +3011,7 @@ function normalizeEvents(games: any[], configById: Map<string, TeamDetailStatTra
         awayScore: toNullableNumber(game?.awayScore),
         isCancelled: game?.isCancelled === true || cleanString(game?.status).toLowerCase() === 'cancelled',
         isDbGame: game?.isDbGame !== false,
+        sourceType: cleanString(game?.sourceType) || null,
         sourceLabel: cleanString(game?.sourceLabel) || null,
         statTrackerConfigId,
         statTrackerConfigLabel: statTrackerConfigId
@@ -3119,12 +3164,10 @@ function getLinkedPlayerIds(user: AuthUser | null, teamId: string, players: any[
       ids.add(playerId);
     }
   };
-  (Array.isArray(user?.parentOf) ? user?.parentOf : []).forEach(addLink);
+  collectCanonicalParentAccessLinks(user)
+    .filter((link) => link.teamId === normalizedTeamId)
+    .forEach((link) => ids.add(link.playerId));
   (Array.isArray((user as any)?.playerOf) ? (user as any).playerOf : []).forEach(addLink);
-  (Array.isArray(user?.parentPlayerKeys) ? user.parentPlayerKeys : [])
-    .map((key: string) => String(key || '').split('::'))
-    .filter(([linkedTeamId, playerId]: string[]) => linkedTeamId === normalizedTeamId && playerId)
-    .forEach(([, playerId]: string[]) => ids.add(playerId));
   (Array.isArray((user as any)?.playerKeys) ? (user as any).playerKeys : [])
     .map((key: string) => String(key || '').split('::'))
     .filter(([linkedTeamId, playerId]: string[]) => linkedTeamId === normalizedTeamId && playerId)
@@ -3135,16 +3178,17 @@ function getLinkedPlayerIds(user: AuthUser | null, teamId: string, players: any[
   return Array.from(ids);
 }
 
-async function hydrateTeamDetailAccessUser(user: AuthUser | null, teamId: string, players: any[]): Promise<AuthUser | null> {
+async function hydrateTeamDetailAccessUser(user: AuthUser | null, _teamId: string, _players: any[]): Promise<AuthUser | null> {
   if (!user?.uid) return user;
-  if (getLinkedPlayerIds(user, teamId, players).length > 0) return user;
-  const profile = await loadProfileDocument(user.uid).catch(() => null);
+  const profile = await loadProfileDocument(user.uid).catch(() => ({
+    parentOf: [],
+    parentTeamIds: [],
+    parentPlayerKeys: []
+  }));
   if (!profile) return user;
+  const parentAccessUser = applyCurrentParentAccessProfile(user, profile as Record<string, unknown>);
   return {
-    ...user,
-    parentOf: mergeAccessArray(user.parentOf, (profile as any).parentOf),
-    parentTeamIds: mergeAccessArray(user.parentTeamIds, (profile as any).parentTeamIds),
-    parentPlayerKeys: mergeAccessArray(user.parentPlayerKeys, (profile as any).parentPlayerKeys),
+    ...parentAccessUser,
     coachOf: mergeAccessArray(user.coachOf, (profile as any).coachOf)
   };
 }

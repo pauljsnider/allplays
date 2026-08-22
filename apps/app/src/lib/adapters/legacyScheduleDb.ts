@@ -122,11 +122,44 @@ export async function getPracticeSessions(teamId: string, options: PracticeSessi
     return await Promise.resolve(legacyGetPracticeSessions(teamId, options));
 }
 
+export type PublicTeamCalendarEvent = {
+    id: string;
+    uid: string;
+    type: 'game' | 'practice';
+    dtstart: Date;
+    dtend: Date | null;
+    summary: string;
+    location: string;
+    status: string;
+    isPublicProjection: true;
+};
+
+export type PublicTeamCalendarProjection = {
+    events: PublicTeamCalendarEvent[];
+    warnings: string[];
+    complete: boolean;
+};
+
 export async function getPublicTeamCalendarEvents(
     teamId: string,
     options: { startDate?: Date | null; endDate?: Date | null } = {}
-) {
-    return await Promise.resolve(legacyGetPublicTeamCalendarEvents(teamId, options));
+): Promise<PublicTeamCalendarProjection> {
+    const projection = await Promise.resolve(legacyGetPublicTeamCalendarEvents(teamId, options));
+    if (
+        !projection
+        || typeof projection !== 'object'
+        || Array.isArray(projection)
+        || !Array.isArray(projection.events)
+        || !Array.isArray(projection.warnings)
+        || typeof projection.complete !== 'boolean'
+    ) {
+        throw new Error('Public team calendar projection response is invalid.');
+    }
+    return {
+        events: projection.events as PublicTeamCalendarEvent[],
+        warnings: projection.warnings.filter((warning: unknown): warning is string => typeof warning === 'string' && Boolean(warning.trim())),
+        complete: projection.complete
+    };
 }
 
 export async function updatePracticeSession(teamId: string, sessionId: string, payload: Record<string, unknown>) {

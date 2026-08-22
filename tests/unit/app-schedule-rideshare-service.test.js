@@ -217,8 +217,8 @@ beforeEach(() => {
         parentOf: [
             { teamId: 'team-1', playerId: 'player-1', playerName: 'Pat' }
         ],
-        parentTeamIds: [],
-        parentPlayerKeys: []
+        parentTeamIds: ['team-1'],
+        parentPlayerKeys: ['team-1::player-1']
     });
     profileMocks.saveProfileDocument.mockResolvedValue(undefined);
 });
@@ -263,10 +263,7 @@ describe('React app schedule rideshare service integration', () => {
             direction: 'round-trip',
             note: ' Leaving after snacks '
         });
-        expect(profileMocks.saveProfileDocument).toHaveBeenCalledWith('user-1', expect.objectContaining({
-            parentTeamIds: ['team-1'],
-            parentPlayerKeys: ['team-1::player-1']
-        }));
+        expect(profileMocks.saveProfileDocument).not.toHaveBeenCalled();
         expect(dbMocks.createRideOffer).toHaveBeenCalledWith('team-1', 'game-1', {
             seatCapacity: 4,
             direction: 'round-trip',

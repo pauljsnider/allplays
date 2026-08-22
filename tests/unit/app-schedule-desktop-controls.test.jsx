@@ -13,10 +13,13 @@ const scheduleMocks = vi.hoisted(() => ({
     createScheduleImportGame: vi.fn(),
     createScheduleImportPractice: vi.fn(),
     finalizeScheduleImportBatch: vi.fn(),
+    hasRawExternalScheduleEvents: vi.fn(() => false),
+    isParentScheduleCacheSafe: vi.fn(() => true),
     loadParentSchedule: vi.fn(),
     loadParentScheduleScope: vi.fn(),
     loadScheduleStatTrackerConfigsForApp: vi.fn(),
     removeTeamCalendarUrl: vi.fn(),
+    reconcileParentSchedulePartial: vi.fn((_current, next) => next),
     generateScheduleAiImportRows: vi.fn(),
     aiModuleLoads: 0,
     csvModuleLoads: 0
@@ -692,6 +695,15 @@ describe('React app desktop Schedule controls', () => {
     });
 
     it('reuses the cached schedule when the route remounts', async () => {
+        scheduleMocks.loadParentScheduleScope.mockResolvedValue({
+            profile: {},
+            children: [
+                { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' },
+                { playerId: 'player-2', playerName: 'Sam', teamId: 'team-1', teamName: 'Bears' }
+            ],
+            staffTeams: [],
+            isPartial: false
+        });
         const first = await renderSchedule();
         await waitForText(first.container, 'Main Gym');
 
@@ -734,6 +746,15 @@ describe('React app desktop Schedule controls', () => {
     });
 
     it('keeps the last loaded schedule visible when refresh fails', async () => {
+        scheduleMocks.loadParentScheduleScope.mockResolvedValue({
+            profile: {},
+            children: [
+                { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' },
+                { playerId: 'player-2', playerName: 'Sam', teamId: 'team-1', teamName: 'Bears' }
+            ],
+            staffTeams: [],
+            isPartial: false
+        });
         const { container } = await renderSchedule();
         await waitForText(container, 'Main Gym');
 

@@ -31,12 +31,12 @@ describe('Schedule lazy-load guards', () => {
 
         expect(refreshSource).toContain("const timer = startScreenMountTimer('schedule', {");
         expect(refreshSource).toContain('const cacheKey = getParentScheduleSummaryCacheKey(auth.user.uid);');
-        expect(refreshSource).toContain('const cached = getCachedAppData(cacheKey);');
+        expect(refreshSource).toContain('let cached = getCachedAppData(cacheKey)');
         expect(refreshSource).toContain('return runScheduleRead(');
-        expect(refreshSource).toContain('() => loadCachedAppData(');
-        expect(refreshSource).toContain('const parentScope = await parentScopePromise;');
+        expect(refreshSource).toContain('const verifiedParentScope = await parentScopePromise;');
+        expect(refreshSource).toContain('return loadCachedAppData(');
         expect(refreshSource).toContain('return loadParentSchedule(auth.user, {');
-        expect(refreshSource).toContain('...(parentScope && parentScope.isPartial !== true ? { parentScope } : {})');
+        expect(refreshSource).toContain('...(verifiedParentScope && verifiedParentScope.isPartial !== true ? { parentScope: verifiedParentScope } : {})');
         expect(refreshSource).toContain("getScheduleLoadErrorMessage(toAppServiceError(loadError, 'Unable to load schedule.'), hasExistingSchedule)");
         expect(refreshSource).toContain('onSuccess: (result) => {');
         expect(refreshSource).toContain('children: refreshedChildren!');
@@ -45,7 +45,7 @@ describe('Schedule lazy-load guards', () => {
         expect(refreshSource).toContain('cacheHit: Boolean(cached) && !force');
         expect(refreshSource).toContain('onError: (loadError) => {');
         expect(refreshSource).toContain("const mappedError = toAppServiceError(loadError, 'Unable to load schedule.');");
-        expect(refreshSource).toContain('if (!hasExistingSchedule) {\n            applyScheduleResult({ children: [], events: [] });\n          }');
+        expect(refreshSource).toContain('if (!hasExistingSchedule && !hasAppliedSettledPartialEvidence) {\n            applyScheduleResult({ children: [], events: [] });\n          }');
         expect(refreshSource).not.toContain('setLoading(');
         expect(refreshSource).not.toContain('finally {');
     });

@@ -4,7 +4,8 @@ import { CalendarDays, ChevronDown, ChevronLeft, ClipboardCheck, Users } from 'l
 import {
   loadParentScheduleEventDetail,
   hydrateParentScheduleEventOptionalDetails,
-  resolveCachedParentScheduleEvents,
+  isTerminalScheduleAccessError,
+  invalidateParentScheduleReadCaches,
   createStaffRsvpAvailabilityLoader,
   enableRsvpForImportedCalendarEvent,
   type ParentPracticePacket,
@@ -139,8 +140,8 @@ function getEventDetailSections(event?: ParentScheduleEvent | null): Array<{ id:
 function getScheduleEventDetailLoadErrorMessage(error: AppServiceError, hasExistingEvent: boolean) {
   if (hasExistingEvent) {
     if (error.type === 'network') return 'Unable to refresh this event while offline. Showing the last loaded details.';
-    if (error.type === 'permission') return 'Unable to refresh this event because access was denied. Showing the last loaded details.';
-    if (error.type === 'not_found') return 'Unable to refresh this event because it is no longer available. Showing the last loaded details.';
+    if (error.type === 'permission') return 'Access to this event was denied. Previously loaded details were cleared.';
+    if (error.type === 'not_found') return 'This event is no longer available. Previously loaded details were cleared.';
     if (error.type === 'validation') return error.message;
     return 'Unable to refresh this event. Showing the last loaded details. Try again.';
   }
@@ -222,6 +223,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [availabilityNote, setAvailabilityNote] = useState('');
   const [initialLoadPending, setInitialLoadPending] = useState(() => !initialHandoffRef.current);
+  const [eventLoadIncomplete, setEventLoadIncomplete] = useState(false);
   const hasLoadedEventRef = useRef(Boolean(initialHandoffRef.current?.events.length));
   const loadGenerationRef = useRef(0);
   const { loading, error, clearError, setError, run: runPrimaryLoad } = useAsyncOperation();
@@ -318,6 +320,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
     }
     setStatusMessage(null);
     clearError();
+    setEventLoadIncomplete(false);
     const hasExistingEvent = hasLoadedEventRef.current;
     try {
       await runPrimaryLoad(
@@ -333,10 +336,16 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
           ),
           rethrow: false,
           onSuccess: (result) => {
+            setEventLoadIncomplete(false);
             applyLoadedEvent(result, loadGeneration);
           },
-          onError: () => {
-            if (!hasExistingEvent) {
+          onError: (loadError) => {
+            setEventLoadIncomplete(true);
+            const terminalAccessLoss = isTerminalScheduleAccessError(loadError);
+            if (terminalAccessLoss) {
+              invalidateParentScheduleReadCaches(auth.user, { teamId: decodedTeamId, id: decodedEventId });
+            }
+            if (!hasExistingEvent || terminalAccessLoss) {
               setEvents([]);
               hasLoadedEventRef.current = false;
             }
@@ -377,24 +386,12 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
       setInitialLoadPending(false);
       return;
     }
-    // Warm-start from cached parent schedule data when the same event was just
-    // rendered in Schedule/Home, so in-app navigation shows content immediately
-    // and only true cold loads fall back to the full-page skeleton (#2649).
-    const cachedEvents = auth.user?.uid
-      ? resolveCachedParentScheduleEvents(auth.user.uid, decodedTeamId, decodedEventId)
-      : [];
-    if (cachedEvents.length > 0) {
-      setEvents(cachedEvents);
-      hasLoadedEventRef.current = true;
-      if (!selectedChildId && cachedEvents[0]?.childId) {
-        setSelectedChildId(cachedEvents[0].childId);
-      }
-      setInitialLoadPending(false);
-    } else {
-      setEvents([]);
-      hasLoadedEventRef.current = false;
-      setInitialLoadPending(true);
-    }
+    // Cached summary rows are not current access evidence. Keep the route cold
+    // until its authoritative scoped read succeeds; explicit navigation handoff
+    // above remains request-scoped and is still revalidated in the background.
+    setEvents([]);
+    hasLoadedEventRef.current = false;
+    setInitialLoadPending(true);
     void loadEvent();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid, decodedTeamId, decodedEventId]);
@@ -660,7 +657,20 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
 
       <div className="event-detail-content space-y-3">
         {statusMessage ? <Status tone="success" message={statusMessage} /> : null}
-        {error ? <Status tone="error" message={error} /> : null}
+        {error ? (
+          <div className="space-y-2">
+            <Status tone="error" message={error} />
+            {eventLoadIncomplete ? (
+              <button
+                type="button"
+                className="secondary-button min-h-9 w-fit px-3 text-xs"
+                onClick={() => void loadEvent()}
+              >
+                Try again
+              </button>
+            ) : null}
+          </div>
+        ) : null}
 
         {resolvedActiveSection === 'availability' ? (
           <AvailabilitySection

@@ -1,6 +1,6 @@
 import { auth } from './firebase.js?v=26';
 import { getPrimaryAppCheckHeaders } from './firebase-app-check-rest.js?v=1';
-import { hasFullTeamAccess } from './team-access.js?v=44338';
+import { hasFullTeamAccess } from './team-access.js?v=44339';
 import { PREMIUM_FEATURES, resolvePremiumAccess } from './premium-access-core.js?v=1';
 import { readPremiumAccessConfig } from './premium-access.js?v=4';
 

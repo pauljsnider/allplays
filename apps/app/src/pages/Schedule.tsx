@@ -8,14 +8,18 @@ import { hasFamilyScheduleAccess, hasStaffScheduleAccess, ScheduleRoleSubmenu } 
 import { useScheduleAccessReporter } from '../components/ScheduleAccessReporting';
 import {
   hydrateParentScheduleRsvps,
+  hasRawExternalScheduleEvents,
+  isParentScheduleCacheSafe,
   loadParentSchedule,
   loadParentScheduleScope,
+  reconcileParentSchedulePartial,
   submitParentScheduleRsvp,
   submitParentScheduleRsvpForChildren,
   type ParentScheduleChild,
+  type ParentScheduleLoadResult,
   type ParentScheduleStaffTeam
 } from '../lib/scheduleService';
-import { getCachedAppData, getParentScheduleSummaryCacheKey, loadCachedAppData } from '../lib/appDataCache';
+import { getCachedAppData, getParentScheduleSummaryCacheKey, invalidateCachedAppData, loadCachedAppData } from '../lib/appDataCache';
 import { toAppServiceError, type AppServiceError } from '../lib/appErrors';
 import { createLogger } from '../lib/logger';
 import { startAppInitialLoadTimer } from '../lib/telemetry';
@@ -140,8 +144,15 @@ function applyAuthoritativeScheduleScope(
     ...staffTeams.map((team) => team.teamId)
   ]);
   const staffTeamIds = new Set(staffTeams.map((team) => team.teamId));
+  const childKeys = new Set(children.map((child) => `${child.teamId}::${child.playerId}`));
   return events
-    .filter((event) => accessibleTeamIds.has(event.teamId))
+    .filter((event) => (
+      accessibleTeamIds.has(event.teamId)
+      && (
+        staffTeamIds.has(event.teamId)
+        || childKeys.has(`${event.teamId}::${event.childId}`)
+      )
+    ))
     .map((event) => {
       const isTeamStaff = staffTeamIds.has(event.teamId);
       return event.isTeamStaff === isTeamStaff ? event : { ...event, isTeamStaff };
@@ -149,34 +160,16 @@ function applyAuthoritativeScheduleScope(
 }
 
 function mergePartialScheduleScope(
-  currentChildren: ParentScheduleChild[],
+  _currentChildren: ParentScheduleChild[],
   currentEvents: ParentScheduleEvent[],
-  currentStaffTeams: ParentScheduleStaffTeam[],
+  _currentStaffTeams: ParentScheduleStaffTeam[],
   partialChildren: ParentScheduleChild[],
   partialStaffTeams: ParentScheduleStaffTeam[]
 ) {
-  const childrenByKey = new Map(
-    currentChildren.map((child) => [`${child.teamId}::${child.playerId}`, child])
-  );
-  partialChildren.forEach((child) => {
-    childrenByKey.set(`${child.teamId}::${child.playerId}`, child);
-  });
-
-  const staffTeamsById = new Map(currentStaffTeams.map((team) => [team.teamId, team]));
-  partialStaffTeams.forEach((team) => {
-    staffTeamsById.set(team.teamId, team);
-  });
-  const mergedStaffTeams = [...staffTeamsById.values()];
-  const discoveredStaffTeamIds = new Set(partialStaffTeams.map((team) => team.teamId));
-
   return {
-    children: [...childrenByKey.values()],
-    events: currentEvents.map((event) => (
-      discoveredStaffTeamIds.has(event.teamId) && event.isTeamStaff !== true
-        ? { ...event, isTeamStaff: true }
-        : event
-    )),
-    staffTeams: mergedStaffTeams
+    children: partialChildren,
+    events: applyAuthoritativeScheduleScope(currentEvents, partialChildren, partialStaffTeams),
+    staffTeams: partialStaffTeams
   };
 }
 
@@ -216,6 +209,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     staffTeams.length
   );
   const [scheduleLoadError, setScheduleLoadError] = useState<AppServiceError | null>(null);
+  const [scheduleIncomplete, setScheduleIncomplete] = useState(false);
   const {
     loading: scheduleReadLoading,
     error: scheduleReadError,
@@ -254,6 +248,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const childrenRef = useRef<ParentScheduleChild[]>([]);
   const eventsRef = useRef<ParentScheduleEvent[]>([]);
   const staffTeamsRef = useRef<ParentScheduleStaffTeam[]>([]);
+  const sourceKeysByTeamRef = useRef<Record<string, string | null>>({});
   const activeScheduleScopeRef = useRef<'family' | 'staff'>(scheduleScope);
   activeScheduleScopeRef.current = scheduleScope;
   const activeUserIdRef = useRef<string | null>(auth.user?.uid || null);
@@ -273,10 +268,11 @@ export function Schedule({ auth }: { auth: AuthState }) {
     eventsRef.current = nextEvents;
     setEvents(nextEvents);
   };
-  const applyScheduleResult = (data: { children: ParentScheduleChild[]; events: ParentScheduleEvent[]; staffTeams?: ParentScheduleStaffTeam[]; }) => {
+  const applyScheduleResult = (data: ParentScheduleLoadResult) => {
     childrenRef.current = data.children;
     eventsRef.current = data.events;
     staffTeamsRef.current = data.staffTeams ?? [];
+    sourceKeysByTeamRef.current = data.sourceKeysByTeam ?? {};
     activeScheduleScopeRef.current = resolveScheduleScope(
       auth,
       requestedScheduleScope,
@@ -581,6 +577,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     setBulkRsvpFullScopeKey('');
     clearScheduleReadError();
     setScheduleLoadError(null);
+    setScheduleIncomplete(false);
     setStatusMessage(null);
     const hasExistingSchedule = hasLoadedScheduleRef.current;
     const initialLoadTimer = !hasExistingSchedule
@@ -592,14 +589,22 @@ export function Schedule({ auth }: { auth: AuthState }) {
     });
     const cacheKey = getParentScheduleSummaryCacheKey(auth.user.uid);
     const scheduleCacheTtlMs = 60 * 1000 * 5;
-    const scheduleCacheOptions = { ttlMs: scheduleCacheTtlMs, force };
-    const cached = getCachedAppData(cacheKey);
+    let cached = getCachedAppData(cacheKey) as ParentScheduleLoadResult | null;
+    if (hasRawExternalScheduleEvents(cached)) {
+      invalidateCachedAppData(cacheKey);
+      cached = null;
+    }
+    const scheduleCacheOptions = {
+      ttlMs: scheduleCacheTtlMs,
+      force: force || Boolean(cached && !isParentScheduleCacheSafe(cached))
+    };
     const requestedUserId = auth.user.uid;
     const refreshVersion = ++scheduleRefreshVersionRef.current;
     let refreshedChildren: ParentScheduleChild[] | null = null;
     let refreshedStaffTeams: ParentScheduleStaffTeam[] | null = null;
     let partialScopeChildren: ParentScheduleChild[] = [];
     let partialScopeStaffTeams: ParentScheduleStaffTeam[] = [];
+    let hasAppliedSettledPartialEvidence = false;
     const parentScopePromise = loadParentScheduleScope(auth.user).catch(() => null);
     void parentScopePromise
       .then((parentScope) => {
@@ -628,6 +633,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
             ).staffTeams
           ));
           updateScheduleEvents(() => mergedScope.events);
+          setScheduleIncomplete(true);
           return;
         }
         refreshedChildren = parentScope.children ?? [];
@@ -659,27 +665,41 @@ export function Schedule({ auth }: { auth: AuthState }) {
       });
 
     return runScheduleRead(
-      () => loadCachedAppData(
+      async () => {
+        const verifiedParentScope = await parentScopePromise;
+        return loadCachedAppData(
           cacheKey,
           async () => {
-            const parentScope = await parentScopePromise;
             return loadParentSchedule(auth.user, {
               hydrateDetails: false,
               expandStaffPlayers: false,
-              ...(parentScope && parentScope.isPartial !== true ? { parentScope } : {}),
+              ...(verifiedParentScope && verifiedParentScope.isPartial !== true ? { parentScope: verifiedParentScope } : {}),
               onPartial: (partialResult) => {
                 if (activeUserIdRef.current !== requestedUserId) return;
                 if (scheduleRefreshVersionRef.current !== refreshVersion) return;
-                if (!partialResult.events.length && eventsRef.current.length) return;
-                applyScheduleResult(partialResult);
+                const hasSettledTeamEvidence = Object.values(partialResult.teamLoadStates || {})
+                  .some((loadState) => loadState !== 'pending');
+                if (hasExistingSchedule && !hasSettledTeamEvidence) return;
+                const safePartialResult = reconcileParentSchedulePartial({
+                  children: childrenRef.current,
+                  events: eventsRef.current,
+                  staffTeams: staffTeamsRef.current,
+                  sourceKeysByTeam: sourceKeysByTeamRef.current,
+                  isPartial: true
+                }, partialResult);
+                applyScheduleResult(safePartialResult);
+                hasAppliedSettledPartialEvidence = hasSettledTeamEvidence;
+                if (hasSettledTeamEvidence) setScheduleIncomplete(true);
               }
             });
           },
           {
             ...scheduleCacheOptions,
-            shouldCache: (loadedResult) => loadedResult?.isPartial !== true
+            force: scheduleCacheOptions.force || !verifiedParentScope || verifiedParentScope.isPartial === true,
+            shouldCache: (loadedResult) => isParentScheduleCacheSafe(loadedResult)
           }
-        ),
+        );
+      },
       {
         getErrorMessage: (loadError) => {
           return getScheduleLoadErrorMessage(toAppServiceError(loadError, 'Unable to load schedule.'), hasExistingSchedule);
@@ -694,23 +714,41 @@ export function Schedule({ auth }: { auth: AuthState }) {
             initialLoadTimer?.cancel({ reason: 'superseded' });
             return;
           }
-          const authoritativeResult = refreshedStaffTeams === null
-            ? mergePartialScheduleScope(
-                result.children,
-                result.events,
-                result.staffTeams ?? [],
-                partialScopeChildren,
-                partialScopeStaffTeams
-              )
-            : {
+          const authoritativeResult = refreshedStaffTeams !== null ? {
                 ...result,
                 children: refreshedChildren!,
                 events: applyAuthoritativeScheduleScope(result.events, refreshedChildren!, refreshedStaffTeams),
                 staffTeams: refreshedStaffTeams
-              };
+              } : result;
+          if (result.isPartial === true) {
+            setLoadedScheduleUserId(auth.user?.uid || null);
+            setScheduleIncomplete(true);
+            setRsvpHydrationPending(false);
+            const safePartialResult = reconcileParentSchedulePartial({
+              children: childrenRef.current,
+              events: eventsRef.current,
+              staffTeams: staffTeamsRef.current,
+              sourceKeysByTeam: sourceKeysByTeamRef.current,
+              isPartial: true
+            }, { ...authoritativeResult, isPartial: true });
+            applyScheduleResult(safePartialResult);
+            timer.end({
+              cacheHit: false,
+              force,
+              childCount: result.children.length,
+              eventRowCount: result.events.length,
+              isPartial: true
+            });
+            initialLoadTimer?.end({
+              force,
+              error: 'The complete schedule could not be loaded.'
+            });
+            return;
+          }
           hasLoadedScheduleRef.current = true;
           setLoadedScheduleUserId(auth.user?.uid || null);
           setScheduleLoadError(null);
+          setScheduleIncomplete(false);
           applyScheduleResult(authoritativeResult);
           hydrateScheduleRsvpsInBackground(authoritativeResult, true);
           completeParentCoreWorkflowTimer('schedule', {
@@ -771,8 +809,9 @@ export function Schedule({ auth }: { auth: AuthState }) {
             return;
           }
           const mappedError = toAppServiceError(loadError, 'Unable to load schedule.');
+          setScheduleIncomplete(hasAppliedSettledPartialEvidence);
           setScheduleLoadError(mappedError);
-          if (!hasExistingSchedule) {
+          if (!hasExistingSchedule && !hasAppliedSettledPartialEvidence) {
             applyScheduleResult({ children: [], events: [] });
           }
           setLoadedScheduleUserId(auth.user?.uid || null);
@@ -800,6 +839,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     activeRsvpHydrationCountsRef.current.clear();
     pastHistoryLoadedRef.current = false;
     setPastHistoryHasMore(false);
+    setScheduleIncomplete(false);
     setRsvpHydrationPending(Boolean(auth.user?.uid));
     if (!auth.user?.uid) {
       setLoadedScheduleUserId(null);
@@ -1297,7 +1337,11 @@ export function Schedule({ auth }: { auth: AuthState }) {
             </div>
           </div>
 
-          <ScheduleNextUpCard event={webInsights.nextEvent} preferGameHubForStaff={!isDesktopWeb} />
+          <ScheduleNextUpCard
+            event={webInsights.nextEvent}
+            preferGameHubForStaff={!isDesktopWeb}
+            incomplete={scheduleIncomplete}
+          />
         </div>
 
       </section>
@@ -1409,7 +1453,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
                 setTimeRange('all');
               }}
             />
-            <ScheduleActionQueue events={visibleEvents} />
+            <ScheduleActionQueue events={visibleEvents} hideWhenEmpty={scheduleIncomplete} />
           </aside>
         ) : null}
 
@@ -1433,7 +1477,14 @@ export function Schedule({ auth }: { auth: AuthState }) {
             <Status tone="error" message={`${unavailableBulkRsvpCount} ${unavailableBulkRsvpCount === 1 ? 'RSVP is' : 'RSVPs are'} waiting for private note data. Refresh before updating ${unavailableBulkRsvpCount === 1 ? 'it' : 'them'}.`} />
           ) : null}
           {scheduleReadError ? <Status tone="error" message={scheduleLoadError ? getScheduleLoadErrorMessage(scheduleLoadError, hasLoadedSchedule) : scheduleReadError} /> : null}
-          {bulkRsvpCandidates.length > 1 ? (
+          {scheduleIncomplete ? (
+            <ScheduleIncompleteStatus
+              preservingCompleteSchedule={hasLoadedSchedule}
+              loading={scheduleReadLoading}
+              onRetry={() => refreshSchedule(true)}
+            />
+          ) : null}
+          {!scheduleIncomplete && bulkRsvpCandidates.length > 1 ? (
             <BulkRsvpLauncher
               eventCount={bulkRsvpCandidates.length}
               neededCount={getNeededBulkRsvpEventKeys(bulkRsvpCandidates).length}
@@ -1441,7 +1492,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
               onOpen={requestBulkRsvpOpen}
             />
           ) : null}
-          {!isDesktopWeb && !scheduleReadLoading && !isInitialScheduleLoad ? (
+          {!scheduleIncomplete && !isDesktopWeb && !scheduleReadLoading && !isInitialScheduleLoad ? (
             <ScheduleActionQueue events={visibleEvents} compact hideWhenEmpty preferGameHubForStaff />
           ) : null}
 
@@ -1456,6 +1507,8 @@ export function Schedule({ auth }: { auth: AuthState }) {
 
           {(scheduleReadLoading || isInitialScheduleLoad) && !events.length ? (
             <LoadingSchedule />
+          ) : scheduleIncomplete && !visibleEvents.length ? (
+            <ScheduleIncompleteEmpty onRetry={() => refreshSchedule(true)} loading={scheduleReadLoading} />
           ) : view === 'calendar' ? (
             <CalendarSchedule
               month={calendarMonth}
@@ -1875,6 +1928,32 @@ function Status({ tone, message }: { tone: 'success' | 'error'; message: string 
   );
 }
 
+function ScheduleIncompleteStatus({ preservingCompleteSchedule, loading, onRetry }: {
+  preservingCompleteSchedule: boolean;
+  loading: boolean;
+  onRetry: () => void;
+}) {
+  return (
+    <div className="rounded-xl border border-amber-200 bg-amber-50 p-3" role="alert">
+      <div className="flex items-start gap-2">
+        <AlertCircle className="mt-0.5 h-4 w-4 flex-none text-amber-700" aria-hidden="true" />
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-black text-amber-950">Schedule incomplete</div>
+          <div className="mt-1 text-xs font-semibold text-amber-800">
+            {preservingCompleteSchedule
+              ? 'The latest refresh was incomplete. Showing the last complete schedule.'
+              : 'Only verified events are shown. Retry before relying on missing events or an empty filter.'}
+          </div>
+          <button type="button" className="secondary-button mt-3 !min-h-9 text-xs" onClick={onRetry} disabled={loading}>
+            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />
+            Retry complete schedule
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function getScheduleLoadErrorMessage(error: AppServiceError, hasExistingSchedule: boolean) {
   if (hasExistingSchedule) {
     if (error.type === 'network') return 'Unable to refresh schedule while offline. Showing the last loaded schedule.';
@@ -1898,13 +1977,19 @@ type ScheduleWebInsights = {
   rideRequests: number;
 };
 
-function ScheduleNextUpCard({ event, preferGameHubForStaff }: { event: ParentScheduleEvent | null; preferGameHubForStaff: boolean }) {
+function ScheduleNextUpCard({ event, preferGameHubForStaff, incomplete = false }: {
+  event: ParentScheduleEvent | null;
+  preferGameHubForStaff: boolean;
+  incomplete?: boolean;
+}) {
   if (!event) {
     return (
       <div className="schedule-next-card rounded-xl border border-dashed border-gray-300 bg-gray-50 p-4">
         <div className="app-label">Next up</div>
-        <div className="mt-2 text-lg font-black text-gray-950">Nothing scheduled</div>
-        <div className="mt-1 text-sm font-semibold leading-6 text-gray-500">Try another filter or player.</div>
+        <div className="mt-2 text-lg font-black text-gray-950">{incomplete ? 'Schedule incomplete' : 'Nothing scheduled'}</div>
+        <div className="mt-1 text-sm font-semibold leading-6 text-gray-500">
+          {incomplete ? 'Refresh before relying on an empty schedule.' : 'Try another filter or player.'}
+        </div>
       </div>
     );
   }
@@ -2168,6 +2253,22 @@ function ScheduleActionQueue({ events, compact = false, hideWhenEmpty = false, p
 
 function LoadingSchedule() {
   return <SchedulePageSkeleton />;
+}
+
+function ScheduleIncompleteEmpty({ onRetry, loading }: { onRetry: () => void; loading: boolean }) {
+  return (
+    <div className="app-card p-8 text-center">
+      <AlertCircle className="mx-auto h-10 w-10 text-amber-400" aria-hidden="true" />
+      <div className="mt-3 text-sm font-black text-gray-900">Complete schedule unavailable</div>
+      <div className="mt-1 text-xs font-semibold text-gray-500">
+        The events currently loaded cannot confirm that this schedule or filter is empty.
+      </div>
+      <button type="button" className="secondary-button mx-auto mt-4 !min-h-9 text-xs" onClick={onRetry} disabled={loading}>
+        <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />
+        Retry schedule
+      </button>
+    </div>
+  );
 }
 
 function ScheduleProgressLoading() {

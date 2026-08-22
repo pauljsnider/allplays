@@ -1032,6 +1032,26 @@ test('managed-team chat discovery includes parentOf-only teams and their convers
     }]);
 });
 
+test('managed-team chat discovery cannot restore a revoked team from stale parent metadata', async () => {
+    const { callables } = loadCallables({
+        'users/parent-1': {
+            parentOf: [{ teamId: 'team-revoked', playerId: 'player-old' }],
+            parentTeamIds: [],
+            parentPlayerKeys: []
+        },
+        'teams/team-revoked': { name: 'Revoked Team', ownerId: 'owner-1', active: true },
+        'teams/team-revoked/chatConversations/group-1': { type: 'group' }
+    });
+
+    const managed = await callables.listManagedTeams(
+        { includeChatMetadata: true },
+        authContext('parent-1')
+    );
+
+    assert.deepEqual(managed.items, []);
+    assert.equal(managed.isPartial, false);
+});
+
 test('managed-team chat discovery excludes legacy coach-only grants without current chat access', async () => {
     const { callables } = loadCallables({
         'users/coach-1': { coachOf: ['team-legacy'] },
@@ -1261,6 +1281,35 @@ test('parent fee discovery returns bounded modern and legacy player assignments 
     const feeQueries = firestore._queryLog.filter(({ path }) => path === '**/feeRecipients');
     assert.ok(feeQueries.length > 0);
     assert.ok(feeQueries.every(({ limitCount }) => limitCount === 101));
+});
+
+test('parent fee discovery does not restore a revoked sibling from stale parent metadata', async () => {
+    const { callables } = loadCallables({
+        'users/parent-1': {
+            parentTeamIds: ['team-1'],
+            parentPlayerKeys: ['team-1::player-1'],
+            parentOf: [
+                { teamId: 'team-1', playerId: 'player-1' },
+                { teamId: 'team-1', playerId: 'player-revoked' }
+            ]
+        },
+        'teams/team-1/feeBatches/batch-1/feeRecipients/current': {
+            teamId: 'team-1',
+            playerId: 'player-1',
+            playerKey: 'team-1::player-1',
+            amountDueCents: 2500
+        },
+        'teams/team-1/feeBatches/batch-1/feeRecipients/revoked': {
+            teamId: 'team-1',
+            playerId: 'player-revoked',
+            playerKey: 'team-1::player-revoked',
+            amountDueCents: 9999
+        }
+    });
+
+    const result = await callables.listParentTeamFeeRecipients({}, authContext('parent-1'));
+
+    assert.deepEqual(result.items.map((item) => item.id), ['current']);
 });
 
 test('parent fee discovery fails closed when a bounded query overflows', async () => {

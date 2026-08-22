@@ -99,7 +99,8 @@ function createHarness({
   actorEmail = 'owner@example.com',
   authEmail = actorEmail,
   team = {},
-  includeParent = true
+  includeParent = true,
+  parent = {}
 } = {}) {
   const initialDocs = {
     'accessCodes/code-1': {
@@ -134,7 +135,8 @@ function createHarness({
       roles: ['fan'],
       parentOf: [],
       parentTeamIds: [],
-      parentPlayerKeys: []
+      parentPlayerKeys: [],
+      ...parent
     };
   }
 
@@ -291,6 +293,30 @@ test('existing user is linked to the player and invite atomically in one transac
     autoAccepted: true,
     autoAcceptedAt: NOW
   });
+});
+
+test('auto-linking a new invite does not restore stale canonical parent metadata', async () => {
+  const harness = createHarness({
+    parent: {
+      roles: ['parent'],
+      parentOf: [
+        { teamId: 'team-current', playerId: 'player-current' },
+        { teamId: 'team-revoked', playerId: 'player-revoked' }
+      ],
+      parentTeamIds: ['team-current'],
+      parentPlayerKeys: ['team-current::player-current']
+    }
+  });
+
+  await harness.handler({ codeId: 'code-1' }, harness.context);
+
+  const parent = harness.read('users/parent-1');
+  assert.deepEqual(parent.parentOf.map((link) => `${link.teamId}::${link.playerId}`), [
+    'team-current::player-current',
+    'team-1::player-1'
+  ]);
+  assert.deepEqual(parent.parentTeamIds, ['team-current', 'team-1']);
+  assert.deepEqual(parent.parentPlayerKeys, ['team-current::player-current', 'team-1::player-1']);
 });
 
 test('a repeated auto-link call returns the completed result without another transaction', async () => {

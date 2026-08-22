@@ -94,6 +94,44 @@ describe('team access helpers', () => {
     });
   });
 
+  it('treats canonical parent fields as authoritative over stale parent metadata', () => {
+    expect(getTeamAccessInfo({
+      uid: 'u4',
+      parentOf: [{ teamId: 'team-1', playerId: 'revoked-player' }],
+      parentTeamIds: [],
+      parentPlayerKeys: []
+    }, TEAM)).toEqual({
+      hasAccess: false,
+      accessLevel: null,
+      exitUrl: 'index.html'
+    });
+  });
+
+  it('supports exact team-only canonical parent access without inventing a child', () => {
+    expect(getTeamAccessInfo({
+      uid: 'u4',
+      parentOf: [{ teamId: 'other-team', playerId: 'stale-player' }],
+      parentTeamIds: ['team-1']
+    }, TEAM)).toEqual({
+      hasAccess: true,
+      accessLevel: 'parent',
+      exitUrl: 'parent-dashboard.html'
+    });
+  });
+
+  it('rejects malformed canonical parent identifiers without coercion', () => {
+    expect(getTeamAccessInfo({
+      uid: 'u4',
+      parentOf: [{ teamId: 'team-1', playerId: 'stale-player' }],
+      parentTeamIds: [123, 'team-1/child'],
+      parentPlayerKeys: ['team-1::stale-player::extra']
+    }, TEAM)).toEqual({
+      hasAccess: false,
+      accessLevel: null,
+      exitUrl: 'index.html'
+    });
+  });
+
   it('does not grant parent access from parent player keys for another team', () => {
     expect(getTeamAccessInfo({ uid: 'u4', parentPlayerKeys: ['team-2::p1'] }, TEAM)).toEqual({
       hasAccess: false,

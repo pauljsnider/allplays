@@ -11,6 +11,8 @@ import {
   getParentHomeSecondaryCacheKey,
   getParentScheduleSummaryCacheKey,
   getTeamsSummaryBootstrapCacheKey,
+  getCachedAppData,
+  invalidateCachedAppData,
   loadCachedAppData
 } from './appDataCache';
 import { toAppServiceError } from './appErrors';
@@ -18,8 +20,11 @@ import { listParentTeamFeeRecipientsForApp } from './parentFeeRecipientsService'
 import { isNativeRuntime } from './nativeRuntime';
 import {
   hydrateParentScheduleDetails,
+  hasRawExternalScheduleEvents,
+  isParentScheduleCacheSafe,
   loadParentSchedule,
   loadParentScheduleScope,
+  reconcileParentSchedulePartial,
   type ParentScheduleLoadResult,
   type ParentScheduleScope
 } from './scheduleService';
@@ -59,6 +64,54 @@ type ParentHomeSummaryBootstrapOptions = ParentHomeSummaryOptions & {
   onRefresh?: (result: ParentHomeSummaryBootstrapResult) => void;
 };
 
+type ParentScheduleScopeProjection = {
+  children?: ParentScheduleLoadResult['children'];
+  staffTeams?: ParentScheduleLoadResult['staffTeams'];
+};
+
+function getParentScheduleChildScopeKeys(schedule: ParentScheduleScopeProjection | null | undefined) {
+  return new Set((schedule?.children || []).map((child) => `${child.teamId}::${child.playerId}`));
+}
+
+function getParentScheduleStaffScopeKeys(schedule: ParentScheduleScopeProjection | null | undefined) {
+  return new Set((schedule?.staffTeams || []).map((team) => team.teamId));
+}
+
+function setsMatch(left: Set<string>, right: Set<string>) {
+  return left.size === right.size && [...left].every((value) => right.has(value));
+}
+
+function cachedScheduleMatchesCurrentScope(
+  cached: ParentScheduleLoadResult,
+  currentScope: ParentScheduleScope
+) {
+  if (currentScope.isPartial === true || (currentScope.accessLostTeamIds || []).length > 0) {
+    return false;
+  }
+  return setsMatch(
+    getParentScheduleChildScopeKeys(cached),
+    getParentScheduleChildScopeKeys(currentScope)
+  ) && setsMatch(
+    getParentScheduleStaffScopeKeys(cached),
+    getParentScheduleStaffScopeKeys(currentScope)
+  );
+}
+
+function partialScheduleInvalidatesCachedScope(
+  current: ParentScheduleLoadResult | null | undefined,
+  next: ParentScheduleLoadResult
+) {
+  if (next.isPartial !== true) return false;
+  if (next.scopeIsPartial !== false) return true;
+  if ((next.accessLostTeamIds || []).length > 0) return true;
+  if (Object.values(next.teamLoadStates || {}).some((state) => state === 'access-lost')) return true;
+  if (!current) return false;
+  const nextChildren = getParentScheduleChildScopeKeys(next);
+  const nextStaffTeams = getParentScheduleStaffScopeKeys(next);
+  return [...getParentScheduleChildScopeKeys(current)].some((key) => !nextChildren.has(key))
+    || [...getParentScheduleStaffScopeKeys(current)].some((key) => !nextStaffTeams.has(key));
+}
+
 type ParentTeamsSummaryBootstrapOptions = {
   force?: boolean;
   onPartial?: (home: ParentHomeModel) => void;
@@ -95,6 +148,26 @@ function requireCompleteChatInbox<T extends { isPartial?: boolean }>(chatInbox: 
     throw new Error('Home chat access is incomplete. Try loading Home again.');
   }
   return chatInbox;
+}
+
+function requireCompleteSchedule<T extends ParentScheduleLoadResult>(schedule: T): T {
+  if (schedule.isPartial === true) {
+    throw new Error('The complete schedule could not be loaded. Retry before relying on missing events.');
+  }
+  return schedule;
+}
+
+function hasRawExternalHomeEvents(home: ParentHomeModel | null | undefined) {
+  const events = [
+    ...(home?.upcomingEvents || []),
+    ...(home?.feedGames || []),
+    ...(home?.players || []).map((player) => player.nextEvent).filter(Boolean),
+    ...(home?.teams || []).map((team) => team.nextEvent).filter(Boolean)
+  ];
+  return events.some((event) => (
+    event?.isDbGame !== true && event?.sourceType === 'calendar'
+    || Array.isArray(event?.calendarUrls) && event.calendarUrls.some((url) => Boolean(String(url || '').trim()))
+  ));
 }
 
 export async function loadParentHome(user: AuthUser | null): Promise<ParentHomeModel> {
@@ -209,8 +282,30 @@ export async function loadParentTeamsSummaryBootstrap(
     };
   }
 
+  const cacheKey = getTeamsSummaryBootstrapCacheKey(user.uid);
+  const cachedBootstrap = getCachedAppData<{ home: ParentHomeModel; scheduleScope: ParentScheduleScope }>(cacheKey);
+  let currentScheduleScope: ParentScheduleScope | null = null;
+  if (cachedBootstrap) {
+    try {
+      currentScheduleScope = await loadParentScheduleScope(user);
+    } catch (error) {
+      invalidateCachedAppData(cacheKey);
+      throw toAppServiceError(error, 'Unable to load teams.');
+    }
+    if (!cachedScheduleMatchesCurrentScope(
+      {
+        children: cachedBootstrap.scheduleScope.children,
+        staffTeams: cachedBootstrap.scheduleScope.staffTeams,
+        events: []
+      },
+      currentScheduleScope
+    )) {
+      invalidateCachedAppData(cacheKey);
+    }
+  }
+
   return loadCachedAppData(
-    getTeamsSummaryBootstrapCacheKey(user.uid),
+    cacheKey,
     async () => {
       const timer = startUxTimer('teams summary load');
       try {
@@ -243,7 +338,7 @@ export async function loadParentTeamsSummaryBootstrap(
               chatInbox: { teams: [] },
               error: toAppServiceError(error, 'Unable to load team chat.')
             })),
-          loadParentScheduleScope(user)
+          (currentScheduleScope ? Promise.resolve(currentScheduleScope) : loadParentScheduleScope(user))
             .then((scheduleScope) => {
               availableScheduleScope = scheduleScope;
               emitAvailableTeams();
@@ -317,8 +412,14 @@ export async function loadParentHomeWithSecondaryData(
 
   const onPartial = typeof options.onPartial === 'function' ? options.onPartial : null;
   const cacheKey = getParentHomeSecondaryCacheKey(user.uid);
+  const cachedSecondary = getCachedAppData<ParentHomeModel>(cacheKey);
+  if (hasRawExternalHomeEvents(cachedSecondary)) invalidateCachedAppData(cacheKey);
+  let sourceScheduleCacheSafe = false;
   return loadCachedAppData(cacheKey, async () => {
-    const schedule = options.schedule || await loadParentScheduleSummary(user, { force: options.force });
+    const schedule = requireCompleteSchedule(
+      options.schedule || await loadParentScheduleSummary(user, { force: options.force })
+    );
+    sourceScheduleCacheSafe = isParentScheduleCacheSafe(schedule);
     const { children, events } = schedule;
     let partialState = {
       children,
@@ -390,11 +491,12 @@ export async function loadParentHomeWithSecondaryData(
     });
   }, {
     ttlMs: homeSecondaryTtlMs,
-    force: options.force,
+    force: options.force || hasRawExternalHomeEvents(cachedSecondary),
     maxStaleMs: homeMaxStaleMs,
     staleWhileRevalidate: true,
     onRefresh: onPartial || undefined,
-    onRefreshError: options.onBackgroundError
+    onRefreshError: options.onBackgroundError,
+    shouldCache: (result) => sourceScheduleCacheSafe && !hasRawExternalHomeEvents(result)
   });
 }
 
@@ -404,25 +506,66 @@ export async function loadParentScheduleSummary(
 ): Promise<ParentScheduleLoadResult> {
   if (!user?.uid) return { children: [], events: [] };
   const hasScopedStaffTeams = Boolean(options.scheduleScope?.staffTeams?.length);
+  const cacheKey = getParentScheduleSummaryCacheKey(user.uid);
+  let currentScheduleScope = options.scheduleScope;
+  let preservationBase = getCachedAppData<ParentScheduleLoadResult>(cacheKey);
+  if (hasRawExternalScheduleEvents(preservationBase)) {
+    invalidateCachedAppData(cacheKey);
+    preservationBase = null;
+  }
+  if (preservationBase && isParentScheduleCacheSafe(preservationBase)) {
+    try {
+      // A caller-provided scope may itself have come from a fresh-looking cache.
+      // Re-read current access before allowing a cached private schedule to render.
+      currentScheduleScope = await loadParentScheduleScope(user);
+    } catch (error) {
+      invalidateCachedAppData(cacheKey);
+      invalidateCachedAppData(getParentHomeSecondaryCacheKey(user.uid));
+      throw error;
+    }
+    if (!cachedScheduleMatchesCurrentScope(preservationBase, currentScheduleScope)) {
+      invalidateCachedAppData(cacheKey);
+      invalidateCachedAppData(getParentHomeSecondaryCacheKey(user.uid));
+      preservationBase = null;
+    }
+  }
+  const emitPartial = (partial: ParentScheduleLoadResult) => {
+    const previousSchedule = preservationBase;
+    const safePartial = reconcileParentSchedulePartial(previousSchedule, partial);
+    if (partialScheduleInvalidatesCachedScope(previousSchedule, partial)) {
+      invalidateCachedAppData(cacheKey);
+      invalidateCachedAppData(getParentHomeSecondaryCacheKey(user.uid));
+    }
+    preservationBase = safePartial;
+    options.onPartial?.(safePartial);
+  };
   return loadCachedAppData(
-    getParentScheduleSummaryCacheKey(user.uid),
+    cacheKey,
     () => loadParentSchedule(user, {
       hydrateDetails: false,
       expandStaffPlayers: false,
-      parentScope: options.scheduleScope,
+      parentScope: currentScheduleScope,
       nativeProfileLoader: options.nativeContext?.loadProfile,
       nativeStaffTeamsLoader: options.nativeContext?.loadManagedTeams,
-      ...(options.onPartial ? { onPartial: options.onPartial } : {})
+      onPartial: emitPartial
+    }).then((schedule) => {
+      if (schedule.isPartial === true) emitPartial(schedule);
+      return requireCompleteSchedule(schedule);
     }),
     {
       ttlMs: homeSummaryTtlMs,
-      force: options.force || hasScopedStaffTeams,
+      force: options.force || hasScopedStaffTeams || Boolean(
+        preservationBase && !isParentScheduleCacheSafe(preservationBase)
+      ),
       maxStaleMs: homeMaxStaleMs,
       staleWhileRevalidate: true,
-      onRefresh: options.onPartial,
+      onRefresh: (schedule) => {
+        preservationBase = schedule;
+        options.onPartial?.(schedule);
+      },
       onBackgroundRefresh: options.onRefresh,
       onRefreshError: options.onBackgroundError,
-      shouldCache: (result) => result?.isPartial !== true
+      shouldCache: (result) => isParentScheduleCacheSafe(result)
     }
   );
 }

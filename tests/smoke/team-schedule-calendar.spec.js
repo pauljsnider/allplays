@@ -62,11 +62,15 @@ export async function getGames() {
 }
 
 export async function getPublicTeamCalendarEvents() {
-    return clone(publicCalendarEvents).map((event) => ({
-        ...event,
-        dtstart: new Date(event.dtstart),
-        dtend: event.dtend ? new Date(event.dtend) : null
-    }));
+    return {
+        events: clone(publicCalendarEvents).map((event) => ({
+            ...event,
+            dtstart: new Date(event.dtstart),
+            dtend: event.dtend ? new Date(event.dtend) : null
+        })),
+        warnings: [],
+        complete: true
+    };
 }
 
 export async function getConfigs() {

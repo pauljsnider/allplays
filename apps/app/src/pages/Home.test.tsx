@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { Link, MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Home } from './Home';
+import { Home, replaceHomeForUnverifiedPartialScope, shouldDiscardHomeSecondaryForPartialScope } from './Home';
 import type { AuthState } from '../lib/types';
 
 const homeServiceMocks = vi.hoisted(() => ({
@@ -476,6 +476,85 @@ describe('Home', () => {
     expect(screen.getByText('Checking responses…')).toBeTruthy();
     expect(screen.queryByText('Loading Home')).toBeNull();
     expect(uxTimingMocks.recordFirstMeaningfulRender).toHaveBeenCalledWith('home');
+  });
+
+  it('does not claim there are no upcoming events when a partial schedule preview ends in failure', async () => {
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockImplementationOnce((_user: unknown, options: any) => {
+      options?.onPartial?.({
+        home: baseHome,
+        schedule: { children: [], events: [], isPartial: true }
+      });
+      return Promise.reject(new Error('The complete schedule could not be loaded.'));
+    });
+
+    renderHome(signedInAuth);
+
+    expect(await screen.findByText('Checking upcoming events…')).toBeTruthy();
+    expect(screen.queryByText('No upcoming events')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Refresh Home' })).toBeTruthy();
+  });
+
+  it('drops fee and message slices when a partial scope omits a known sibling', () => {
+    const sibling = {
+      ...baseHome.players[0],
+      playerId: 'player-2',
+      playerName: 'Revoked Sibling'
+    };
+    const current = {
+      ...baseHome,
+      players: [...baseHome.players, sibling],
+      teams: baseHome.teams.map((team) => ({ ...team, players: [...team.players, sibling] })),
+      actionItems: [
+        { id: 'fee:p2', kind: 'fee', tone: 'rose', title: 'Sibling fee', detail: 'Revoked Sibling', to: '/fees', priority: 50, date: null },
+        { id: 'message:p2', kind: 'message', tone: 'blue', title: 'Sibling message', detail: 'Revoked Sibling', to: '/messages', priority: 60, date: null }
+      ],
+      fees: [{ id: 'fee-p2', teamId: 'team-1', playerId: 'player-2', playerName: 'Revoked Sibling' }]
+    } as any;
+    const partial = {
+      ...baseHome,
+      teams: baseHome.teams.map((team) => ({ ...team, players: [...team.players] })),
+      actionItems: current.actionItems,
+      fees: current.fees,
+      metrics: { ...baseHome.metrics, unreadMessages: 1 }
+    } as any;
+    const schedule = {
+      children: [{ teamId: 'team-1', playerId: 'player-1' }],
+      events: [],
+      scopeIsPartial: true,
+      isPartial: true
+    } as any;
+
+    expect(shouldDiscardHomeSecondaryForPartialScope(current, partial, schedule)).toBe(true);
+    const replaced = replaceHomeForUnverifiedPartialScope(partial);
+    expect(replaced.actionItems.filter((action) => action.kind === 'fee' || action.kind === 'message')).toEqual([]);
+    expect(replaced.fees).toEqual([]);
+    expect(replaced.metrics.unreadMessages).toBe(0);
+  });
+
+  it('clears stale social data as soon as current parent scope becomes incomplete', async () => {
+    let summaryOptions: any;
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockImplementationOnce((_user: unknown, options: any) => {
+      summaryOptions = options;
+      return Promise.resolve({ home: baseHome, schedule: { children: [], events: [], isPartial: false } });
+    });
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValueOnce(baseHome);
+    socialServiceMocks.loadSocialHome.mockResolvedValueOnce({
+      ...baseSocial,
+      feedItems: [{ ...baseFeedItem, id: 'revoked-post', title: 'Revoked sibling post', playerIds: ['player-2'] }],
+      metrics: { ...baseSocial.metrics, feedItems: 1 }
+    });
+
+    renderHome(signedInAuth, '/home?section=feed');
+    expect(await screen.findByText('Revoked sibling post')).toBeTruthy();
+
+    act(() => {
+      summaryOptions.onPartial({
+        home: baseHome,
+        schedule: { children: [], events: [], scopeIsPartial: true, isPartial: true }
+      });
+    });
+
+    expect(screen.queryByText('Revoked sibling post')).toBeNull();
   });
 
   it('renders a dedicated welcome instead of personalized Home for signed-out users', async () => {

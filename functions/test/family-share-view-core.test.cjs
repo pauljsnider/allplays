@@ -2,8 +2,10 @@ const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const test = require('node:test');
 const {
+  FAMILY_SHARE_PROJECTION_INCOMPLETE_WARNING,
   MAX_FAMILY_SHARE_CALENDAR_URLS,
   MAX_FAMILY_SHARE_DB_EVENTS,
+  MAX_FAMILY_SHARE_EVENTS,
   buildExternalCalendarEvents,
   getFamilyShareCalendarDedupTimestamps,
   hashFamilyShareCalendarEventUid,
@@ -329,7 +331,7 @@ test('applies recurrence COUNT before EXDATE removal', () => {
   ]);
 });
 
-test('caps recurrence allocation across the feed and keeps raw UIDs private', () => {
+test('rejects source expansion that would silently omit recurring events', () => {
   const rows = ['BEGIN:VCALENDAR'];
   for (let index = 0; index < 200; index += 1) {
     rows.push(
@@ -343,17 +345,28 @@ test('caps recurrence allocation across the feed and keeps raw UIDs private', ()
   }
   rows.push('END:VCALENDAR');
 
-  const events = buildExternalCalendarEvents(rows.join('\r\n'), { sourceId: 'safe-source' });
-  const payload = JSON.stringify(events);
+  assert.throws(
+    () => buildExternalCalendarEvents(rows.join('\r\n'), { sourceId: 'safe-source' }),
+    (error) => error.statusCode === 413 && /source event limit/i.test(error.message)
+  );
+});
 
-  assert.equal(events.length, 400);
-  assert.equal(payload.includes('SENTINEL_UID_EMAIL'), false);
-  assert.equal(payload.includes('@private.example.test'), false);
-  assert.ok(events.every((event) => /^[a-f0-9]{32}$/.test(event.id)));
-  assert.ok(events.every((event) => /^[a-f0-9]{32}$/.test(event.eventKey)));
-  assert.notEqual(
-    events[0].id,
-    hashFamilyShareCalendarEventUid('SENTINEL_UID_EMAIL_0@private.example.test')
+test('rejects a recurrence beyond the per-event cap and accepts one ending exactly at it', () => {
+  const buildRecurrence = (count) => [
+    'BEGIN:VCALENDAR',
+    'BEGIN:VEVENT',
+    `UID:bounded-series-${count}`,
+    'DTSTART:20260720T180000Z',
+    `RRULE:FREQ=DAILY;COUNT=${count}`,
+    'SUMMARY:Practice',
+    'END:VEVENT',
+    'END:VCALENDAR'
+  ].join('\r\n');
+
+  assert.equal(buildExternalCalendarEvents(buildRecurrence(366), { sourceId: 'safe-source' }).length, 366);
+  assert.throws(
+    () => buildExternalCalendarEvents(buildRecurrence(367), { sourceId: 'safe-source' }),
+    (error) => error.statusCode === 413 && /per-event occurrence limit/i.test(error.message)
   );
 });
 
@@ -363,7 +376,7 @@ test('bounds child references copied onto every external event', () => {
     'BEGIN:VEVENT',
     'UID:bounded-child-fanout',
     'DTSTART:20260720T180000Z',
-    'RRULE:FREQ=DAILY;COUNT=400',
+    'RRULE:FREQ=DAILY;COUNT=366',
     'SUMMARY:Practice',
     'END:VEVENT',
     'END:VCALENDAR'
@@ -417,10 +430,26 @@ test('bounds and allowlists database schedule projection fields', () => {
 
   assert.equal(response.children.length, 50);
   assert.equal(response.teams[0].games.length, MAX_FAMILY_SHARE_DB_EVENTS);
+  assert.deepEqual(response.calendarWarnings, [FAMILY_SHARE_PROJECTION_INCOMPLETE_WARNING]);
   const payload = JSON.stringify(response);
   assert.equal(payload.includes('private@example.test'), false);
   assert.equal(payload.includes('SENTINEL_DB_OWNER'), false);
   assert.equal(payload.includes('SENTINEL_DB_URL'), false);
   assert.equal(payload.includes('SENTINEL_DB_CALENDAR_UID'), false);
   assert.equal(Object.hasOwn(response.teams[0].games[0], 'calendarEventUid'), false);
+});
+
+test('retains known external events while warning when the family response cap omits later events', () => {
+  const response = sanitizeFamilyShareViewResponse({
+    token: { label: 'Family' },
+    externalEvents: Array.from({ length: MAX_FAMILY_SHARE_EVENTS + 1 }, (_, index) => ({
+      id: `external-${index}`,
+      eventKey: `external-${index}`,
+      date: new Date(Date.UTC(2026, 6, 20, 18, index)).toISOString(),
+      type: 'game'
+    }))
+  });
+
+  assert.equal(response.externalEvents.length, MAX_FAMILY_SHARE_EVENTS);
+  assert.deepEqual(response.calendarWarnings, [FAMILY_SHARE_PROJECTION_INCOMPLETE_WARNING]);
 });

@@ -168,13 +168,28 @@ describe('parseICS recurrence expansion', () => {
         expect(events[19].dtstart.toISOString()).toBe('2044-12-08T18:00:00.000Z');
     });
 
-    it('bounds recurrence expansion for each source event', () => {
+    it('rejects a recurrence that exceeds the per-event cap instead of returning a false complete prefix', () => {
         const ics = [
             'BEGIN:VCALENDAR',
             'BEGIN:VEVENT',
             'UID:bounded-series',
             'DTSTART:20260101T180000Z',
             'RRULE:FREQ=DAILY;COUNT=100000',
+            'SUMMARY:Bounded Practice',
+            'END:VEVENT',
+            'END:VCALENDAR'
+        ].join('\n');
+
+        expectCalendarParseLimit(ics, 'per-event occurrence limit');
+    });
+
+    it('accepts a recurrence that ends exactly at the per-event cap', () => {
+        const ics = [
+            'BEGIN:VCALENDAR',
+            'BEGIN:VEVENT',
+            'UID:exactly-bounded-series',
+            'DTSTART:20260101T180000Z',
+            `RRULE:FREQ=DAILY;COUNT=${MAX_ICS_RECURRENCE_OCCURRENCES}`,
             'SUMMARY:Bounded Practice',
             'END:VEVENT',
             'END:VCALENDAR'

@@ -5,62 +5,43 @@ function readRepoFile(path) {
     return readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8');
 }
 
-describe('legacy empty family share tokens', () => {
-    it('wires a callable fallback before rendering family page children', () => {
+describe('legacy family page server projection', () => {
+    it('uses only the versioned callable response before rendering family data', () => {
         const familyPage = readRepoFile('family.html');
-        const dbSource = readRepoFile('js/db.js');
 
-        expect(dbSource).toContain('export async function resolveFamilyShareTokenChildren(tokenId)');
-        expect(dbSource).toContain("httpsCallable(functions, 'resolveFamilyShareTokenChildren')");
-        expect(dbSource).toContain('return normalizeFamilyShareChildren(response?.data?.children || []);');
-
-        expect(familyPage).toContain('getFamilyShareToken, getFamilyShareView, resolveFamilyShareTokenChildren, getTeam');
+        expect(familyPage).toContain("import { getFamilyShareView } from './js/db.js");
         expect(familyPage).toContain('viewProjection = await getFamilyShareView(tokenId)');
+        expect(familyPage).toContain('function isUsableFamilyShareViewProjection(projection)');
+        expect(familyPage).toContain('Number(projection?.projectionVersion) !== 2');
+        expect(familyPage).toContain('!Array.isArray(team.games)');
+        expect(familyPage).toContain("!toDateSafe(game.date)");
+        expect(familyPage).toContain("!['game', 'practice'].includes(event.type)");
+        expect(familyPage).toContain('new Set(normalizedWarnings).size !== projection.calendarWarnings.length');
         expect(familyPage).toContain('function normalizeFamilyPageChildren(children = [])');
-        expect(familyPage).toContain('async function resolveFamilyPageChildren(token)');
-        expect(familyPage).toContain('const storedChildren = normalizeFamilyPageChildren(token?.children);');
-        expect(familyPage).toContain('if (storedChildren.length > 0) return storedChildren;');
-        expect(familyPage).toContain('return normalizeFamilyPageChildren(await resolveFamilyShareTokenChildren(tokenId));');
-        expect(familyPage).toContain('? normalizeFamilyPageChildren(viewProjection.children)');
+        expect(familyPage).toContain('const children = normalizeFamilyPageChildren(viewProjection.children);');
+        expect(familyPage).not.toContain('getFamilyShareToken');
+        expect(familyPage).not.toContain('resolveFamilyShareTokenChildren');
+        expect(familyPage).not.toContain('extraCalendarUrls');
+        expect(familyPage).not.toContain('getTeam(');
+        expect(familyPage).not.toContain('getGames(');
     });
 
-    it('registers a backend resolver that validates the bearer token before reading owner scope', () => {
-        const functionsSource = readRepoFile('functions/index.js');
-
-        expect(functionsSource).toContain('exports.resolveFamilyShareTokenChildren = functions.https.onCall');
-        expect(functionsSource).toContain('isFamilyShareTokenReadable(token)');
-        expect(functionsSource).toContain('firestore.doc(`users/${ownerUserId}`).get()');
-        expect(functionsSource).toContain('resolveFamilyShareChildrenFromOwnerProfile(ownerSnap.data() || {},');
-        expect(functionsSource).toContain('firestore.doc(`teams/${teamId}/players/${playerId}`).get()');
-    });
-});
-
-describe('family page normalizeFamilyPageChildren edge cases', () => {
-    it('filters children without both teamId and playerId', () => {
+    it('filters children without both IDs and rejects duplicate links', () => {
         const familyPage = readRepoFile('family.html');
 
-        expect(familyPage).toContain("filter(child => child.teamId && child.playerId)");
+        expect(familyPage).toContain('if (!child.teamId || !child.playerId) return false;');
+        expect(familyPage).toContain('if (seen.has(childKey)) return false;');
     });
 
-    it('uses token.children when present and non-empty, skipping the Cloud Function fallback', () => {
+    it('fails retryably when the complete v2 projection is unavailable', () => {
         const familyPage = readRepoFile('family.html');
 
-        expect(familyPage).toContain('if (storedChildren.length > 0) return storedChildren;');
-    });
-
-    it('reads the server projection before retaining the staged Firestore compatibility path', () => {
-        const familyPage = readRepoFile('family.html');
-
-        expect(familyPage.indexOf('viewProjection = await getFamilyShareView(tokenId)'))
-            .toBeLessThan(familyPage.indexOf('token = await getFamilyShareToken(tokenId)'));
         expect(familyPage).toContain("const authoritativeReason = getAuthoritativeFamilyShareProjectionErrorReason(err)");
         expect(familyPage).toContain("return ['invalid', 'revoked', 'expired'].includes(reason) ? reason : '';");
-        const projectionLoadIndex = familyPage.indexOf('viewProjection = await getFamilyShareView(tokenId)');
-        const projectionCatchIndex = familyPage.indexOf('} catch (err)', projectionLoadIndex);
-        expect(familyPage.indexOf('if (authoritativeReason)', projectionCatchIndex))
-            .toBeLessThan(familyPage.indexOf('token = await getFamilyShareToken(tokenId)', projectionCatchIndex));
-        expect(familyPage).toContain("if (!token || token.active === false)");
-        expect(familyPage).toContain("if (isFamilyShareTokenExpired(token))");
+        expect(familyPage).toContain("id=\"page-error-retry\"");
+        expect(familyPage).toContain("showError('Family page temporarily busy', retryDetail, { retryable: true });");
+        expect(familyPage).toContain("'The complete family page could not be loaded. Please retry in a moment.'");
+        expect(familyPage).toContain("document.getElementById('page-error-retry')?.addEventListener('click'");
     });
 
     it('creates tokens with a 30-day expiry window', () => {

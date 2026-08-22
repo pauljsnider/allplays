@@ -105,6 +105,7 @@ import { loadProfileDocument } from '../../apps/app/src/lib/profileService.ts';
 beforeEach(() => {
     __resetTeamDetailBaseSnapshotCacheForTests();
     vi.clearAllMocks();
+    loadProfileDocument.mockResolvedValue({});
     getPlayersWithPrivateRosterContacts.mockImplementation((teamId, options = {}) => (
         Array.isArray(options.players) ? options.players : getPlayers(teamId, options)
     ));
@@ -1713,6 +1714,11 @@ describe('React app team detail model', () => {
         getAggregatedStatsForGames.mockResolvedValue({ 'player-1': { pts: 88 } });
         getPublicTrackingItems.mockResolvedValue([{ id: 'item-1', title: 'Bring ball', public: true }]);
         getPlayerTrackingStatuses.mockResolvedValue([{ itemId: 'item-1', playerId: 'player-1', status: 'complete', public: true }]);
+        loadProfileDocument.mockResolvedValue({
+            parentOf: [{ teamId: 'team-1', playerId: 'player-1' }],
+            parentTeamIds: ['team-1'],
+            parentPlayerKeys: ['team-1::player-1']
+        });
         getDoc.mockImplementation(async (ref) => {
             if (ref.path === 'users/coach-1') {
                 return { id: 'coach-1', exists: () => true, data: () => ({ email: 'coach@example.com', fullName: 'Coach Owner' }) };
@@ -1904,6 +1910,11 @@ describe('React app team detail model', () => {
         getAggregatedStatsForGames.mockResolvedValue({ 'player-1': { pts: 88 } });
         getPublicTrackingItems.mockResolvedValue([{ id: 'item-1', title: 'Bring ball', public: true }]);
         getPlayerTrackingStatuses.mockResolvedValue([{ itemId: 'item-1', playerId: 'player-1', status: 'complete', public: true }]);
+        loadProfileDocument.mockResolvedValue({
+            parentOf: [{ teamId: 'team-1', playerId: 'player-1' }],
+            parentTeamIds: ['team-1'],
+            parentPlayerKeys: ['team-1::player-1']
+        });
         getLocalAttractionSponsors.mockResolvedValue([{ id: 'local-1', name: 'Museum', description: 'Visit downtown', imageUrl: null, websiteUrl: 'https://museum.example.test' }]);
         getAdSpaceSponsors.mockResolvedValue([{ id: 'ad-1', name: 'Pizza Place', description: 'After game', imageUrl: null, websiteUrl: 'https://pizza.example.test' }]);
 

@@ -33,6 +33,14 @@ const scheduleServiceMocks = vi.hoisted(() => ({
   loadParentScheduleAssignments: vi.fn(),
   loadParentScheduleEventDetail: vi.fn(),
   hydrateParentScheduleEventOptionalDetails: vi.fn<(...args: any[]) => Promise<any>>((result) => Promise.resolve(result)),
+  isTerminalScheduleAccessError: vi.fn((error: any) => (
+    error?.type === 'permission'
+    || error?.type === 'not_found'
+    || [401, 403, 404].includes(Number(error?.status))
+    || ['permission-denied', 'unauthenticated', 'not-found'].includes(String(error?.code || '').split('/').pop() || '')
+    || /you do not have permission/i.test(String(error?.message || ''))
+  )),
+  invalidateParentScheduleReadCaches: vi.fn(),
   resolveCachedParentScheduleEvents: vi.fn<(...args: any[]) => any[]>(() => [] as any[]),
   resolveParentGameRoute: vi.fn(),
   loadParentScheduleRideOffers: vi.fn(),
@@ -692,11 +700,14 @@ describe('ScheduleEventDetail loading states', () => {
     expect(scheduleServiceMocks.loadParentScheduleEventDetail).toHaveBeenCalledTimes(1);
   });
 
-  it('warm-starts from cached schedule events without a full-page skeleton (#2649)', () => {
+  it('does not render an unverified cached sibling before the authoritative detail load succeeds', async () => {
     scheduleServiceMocks.resolveCachedParentScheduleEvents.mockReturnValue([
-      buildEvent({ childId: 'player-1', childName: 'Avery Smith' })
+      buildEvent({ childId: 'player-2', childName: 'Possibly Revoked Player' })
     ]);
-    scheduleServiceMocks.loadParentScheduleEventDetail.mockReturnValue(new Promise(() => {}));
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({ childId: 'player-1', childName: 'Current Player' })],
+      children: []
+    });
 
     render(
       <MemoryRouter initialEntries={['/schedule/team-1/game-1']}>
@@ -706,32 +717,95 @@ describe('ScheduleEventDetail loading states', () => {
       </MemoryRouter>
     );
 
-    expect(screen.queryByRole('status', { name: 'Loading event' })).toBeNull();
-    expect(screen.getAllByText(/Avery Smith/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Possibly Revoked Player/)).toBeNull();
+    await screen.findAllByText(/Current Player/);
+    expect(screen.queryByText(/Possibly Revoked Player/)).toBeNull();
+    expect(scheduleServiceMocks.resolveCachedParentScheduleEvents).not.toHaveBeenCalled();
   });
 
-  it('clears a cached previous event while cold-loading a new route (#2649)', async () => {
-    scheduleServiceMocks.resolveCachedParentScheduleEvents.mockImplementation((_userId, _teamId, eventId) => (
-      eventId === 'game-1'
-        ? [buildEvent({ id: 'game-1', childId: 'player-1', childName: 'Cached Smith' })]
-        : []
-    ));
-    scheduleServiceMocks.loadParentScheduleEventDetail.mockReturnValue(new Promise(() => {}));
+  it('clears a cached event when the current authoritative read is terminally denied', async () => {
+    let cacheActive = true;
+    scheduleServiceMocks.resolveCachedParentScheduleEvents.mockImplementation(() => cacheActive
+      ? [buildEvent({ childId: 'player-1', childName: 'Cached Private Player' })]
+      : []);
+    scheduleServiceMocks.invalidateParentScheduleReadCaches.mockImplementation(() => {
+      cacheActive = false;
+    });
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockRejectedValue(
+      new Error('You do not have permission to load this team schedule.')
+    );
+
+    const view = render(
+      <MemoryRouter initialEntries={['/schedule/team-1/game-1']}>
+        <Routes>
+          <Route path="/schedule/:teamId/:eventId" element={<ScheduleEventDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(screen.queryByText(/Cached Private Player/)).toBeNull();
+    await screen.findByText('You do not have permission to view this event.');
+    expect(screen.queryByText(/Cached Private Player/)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy();
+    expect(scheduleServiceMocks.invalidateParentScheduleReadCaches).toHaveBeenCalledWith(
+      auth.user,
+      { teamId: 'team-1', id: 'game-1' }
+    );
+
+    view.unmount();
+    render(
+      <MemoryRouter initialEntries={['/schedule/team-1/game-1']}>
+        <Routes>
+          <Route path="/schedule/:teamId/:eventId" element={<ScheduleEventDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+    expect(scheduleServiceMocks.resolveCachedParentScheduleEvents).not.toHaveBeenCalled();
+    expect(screen.queryByText(/Cached Private Player/)).toBeNull();
+  });
+
+  it('does not expose a cached event when current access verification is transiently partial', async () => {
+    scheduleServiceMocks.resolveCachedParentScheduleEvents.mockReturnValue([
+      buildEvent({ childId: 'player-1', childName: 'Cached Known Player' })
+    ]);
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockRejectedValue(
+      Object.assign(new Error('Unable to verify access to this team schedule. Retry the load.'), { code: 'unavailable' })
+    );
+
+    render(
+      <MemoryRouter initialEntries={['/schedule/team-1/game-1']}>
+        <Routes>
+          <Route path="/schedule/:teamId/:eventId" element={<ScheduleEventDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    await screen.findByText(/Unable to verify access to this team schedule/);
+    expect(screen.queryByText(/Cached Known Player/)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy();
+  });
+
+  it('clears a previously authorized event while cold-loading a new route (#2649)', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail
+      .mockResolvedValueOnce({
+        events: [buildEvent({ id: 'game-1', childId: 'player-1', childName: 'Loaded Smith' })],
+        children: []
+      })
+      .mockReturnValueOnce(new Promise(() => {}));
 
     renderScheduleEventDetailWithRouteControls();
 
-    expect(screen.queryByRole('status', { name: 'Loading event' })).toBeNull();
-    expect(screen.getAllByText(/Cached Smith/).length).toBeGreaterThan(0);
+    await screen.findAllByText(/Loaded Smith/);
 
     fireEvent.click(screen.getByText('Switch game'));
 
     await waitFor(() => {
       expect(screen.getByRole('status', { name: 'Loading event' })).toBeTruthy();
     });
-    expect(screen.queryByText(/Cached Smith/)).toBeNull();
+    expect(screen.queryByText(/Loaded Smith/)).toBeNull();
   });
 
-  it('reconciles a cached seed with the refreshed event details (#2649)', async () => {
+  it('renders only the current authoritative event details when a stale cache seed exists (#2649)', async () => {
     scheduleServiceMocks.resolveCachedParentScheduleEvents.mockReturnValue([
       buildEvent({ childId: 'player-1', childName: 'Avery Smith' })
     ]);
@@ -750,7 +824,7 @@ describe('ScheduleEventDetail loading states', () => {
       </MemoryRouter>
     );
 
-    expect(screen.getAllByText(/Avery Smith/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Avery Smith/)).toBeNull();
     await waitFor(() => {
       expect(screen.getAllByText(/Refreshed Smith/).length).toBeGreaterThan(0);
     });
@@ -837,7 +911,7 @@ describe('ScheduleEventDetail loading states', () => {
         </Routes>
       </MemoryRouter>
     );
-    await screen.findByText(/Unable to refresh this event/);
+    await screen.findByText(/Unable to load this event/);
     expect(scheduleServiceMocks.hydrateParentScheduleEventOptionalDetails).toHaveBeenCalledTimes(1);
 
     await act(async () => resolveStaleHydration());
@@ -882,7 +956,7 @@ describe('ScheduleEventDetail loading states', () => {
         </Routes>
       </MemoryRouter>
     );
-    await screen.findByText(/Unable to refresh this event/);
+    await screen.findByText(/Unable to load this event/);
     expect(scheduleServiceMocks.hydrateParentScheduleEventOptionalDetails).toHaveBeenCalledTimes(1);
 
     await act(async () => resolveStaleHydration());

@@ -28,6 +28,25 @@ describe('calendar function CORS origins', () => {
     expect(writeCorsSource).toContain("res.set('Access-Control-Allow-Origin', origin);");
   });
 
+  it('scopes the temporary native compatibility bridge to exact calendar origins', () => {
+    const calendarSetStart = functionsSource.indexOf('const calendarAllowedOriginSet = new Set([');
+    const calendarSetEnd = functionsSource.indexOf(']);', calendarSetStart) + 3;
+    const calendarSetSource = functionsSource.slice(calendarSetStart, calendarSetEnd);
+    const originCheckStart = functionsSource.indexOf('function isAllowedOrigin(origin)');
+    const originCheckEnd = functionsSource.indexOf('function writeCorsHeaders', originCheckStart);
+    const originCheckSource = functionsSource.slice(originCheckStart, originCheckEnd);
+
+    expect(calendarSetStart).toBeGreaterThanOrEqual(0);
+    expect(calendarSetEnd).toBeGreaterThan(calendarSetStart);
+    expect(calendarSetSource).toContain("'https://localhost'");
+    expect(calendarSetSource).toContain("'capacitor://localhost'");
+    expect(calendarSetSource).not.toContain("'http://localhost'");
+    expect(calendarSetSource).not.toContain("'*'");
+    expect(originCheckSource).toContain('calendarAllowedOriginSet.has(origin)');
+    expect(originCheckSource).not.toContain('startsWith(');
+    expect(originCheckSource).not.toContain('includes(origin)');
+  });
+
   it('allows both local app and legacy development origins', () => {
     expect(functionsSource).toContain("'http://localhost:8000'");
     expect(functionsSource).toContain("'http://127.0.0.1:8000'");

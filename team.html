@@ -243,6 +243,9 @@
                         <span id="schedule-calendar-month-label" class="text-base font-bold text-gray-900"></span>
                         <button id="schedule-calendar-next" class="px-3 py-1.5 rounded-lg bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 text-sm font-medium">Next &rarr;</button>
                     </div>
+                    <div id="team-schedule-load-warning" class="hidden mx-4 mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800" role="status" aria-live="polite">
+                        This schedule is incomplete because a team calendar could not be loaded. Saved ALL PLAYS events are still shown. Retry to load the complete schedule.
+                    </div>
                     <div id="schedule-list" class="p-4 space-y-4">
                         <!-- Games will be displayed here -->
                     </div>
@@ -324,27 +327,28 @@
     </div>
 
     <script type="module">
-        import { getTeam, getPlayers, getGames, getPublicTeamCalendarEvents, getConfigs, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile, getAllUsers, saveTeamAvailabilityPreferences, grantScorekeeperAccess, revokeScorekeeperAccess, grantStreamScoreAccess, revokeStreamScoreAccess, getRsvps, getMyRsvps, getRsvpSummaries, submitRsvp, getMyRsvp, getLocalAttractionSponsors, getAdSpaceSponsors, postChatMessage, getPublicTrackingItems, getPlayerTrackingStatuses } from './js/db.js?v=4433182';
+        import { getTeam, getPlayers, getGames, getPublicTeamCalendarEvents, getConfigs, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile, getAllUsers, saveTeamAvailabilityPreferences, grantScorekeeperAccess, revokeScorekeeperAccess, grantStreamScoreAccess, revokeStreamScoreAccess, getRsvps, getMyRsvps, getRsvpSummaries, submitRsvp, getMyRsvp, getLocalAttractionSponsors, getAdSpaceSponsors, postChatMessage, getPublicTrackingItems, getPlayerTrackingStatuses } from './js/db.js?v=4433183';
         import { normalizeExternalWebsiteUrl, selectRotatingSponsor } from './js/local-attractions.js?v=2';
-        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, isTrackedCalendarEvent, expandRecurrence, escapeHtml, shareOrCopy } from './js/utils.js?v=443358';
+        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, isTrackedCalendarEvent, expandRecurrence, escapeHtml, shareOrCopy } from './js/utils.js?v=443359';
         import { buildGameReportShareUrl, buildGameWatchShareUrl } from './js/game-share-links.js?v=1';
         import { fetchLeagueStandings } from './js/league-standings.js?v=1';
         import { computeNativeStandings } from './js/native-standings.js?v=1';
         import { computeTournamentPoolStandings } from './js/tournament-standings.js?v=4';
         import { aggregateSeasonStatsByPlayerId, buildPlayerLeaderboardSnapshot, selectAnalyticsConfig } from './js/stat-leaderboards.js?v=4';
         import { calculateSeasonRecord, listSeasonLabels } from './js/season-record.js';
-        import { checkAuth } from './js/auth.js?v=4433186';
+        import { checkAuth } from './js/auth.js?v=4433187';
         import { collection, getDocs, query, where } from "./js/firebase.js?v=26";
         import { db } from './js/firebase.js?v=26';
-        import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=443338';
+        import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=443339';
         import { getVisibleRosterFieldValues } from './js/roster-field-privacy.js';
         import { buildAvailabilityNoteRows, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } from './js/availability-preferences.js?v=1';
         import { buildAvailabilityReminderRecipients, buildRsvpReminderMessage } from './js/schedule-notifications.js?v=6';
         import { readTeamPremiumEntitlement, renderPremiumGateState } from './js/premium-entitlements.js?v=5';
-        import { renderTeamPassCard } from './js/team-pass.js?v=44344';
+        import { renderTeamPassCard } from './js/team-pass.js?v=44345';
         import { getVisiblePlayerTrackingSummary } from './js/player-tracking-summary.js?v=1';
-        import { renderTeamStaffPermissionsSection } from './js/team-staff-permissions.js?v=443336';
+        import { renderTeamStaffPermissionsSection } from './js/team-staff-permissions.js?v=443337';
         import { getDefaultSchedulePrintOptions, printSchedule, promptSchedulePrintOptions } from './js/schedule-print.js?v=2';
+        import { resolveCanonicalParentScopeInput } from './js/parent-membership-utils.js?v=4';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -384,6 +388,75 @@
         let scheduleCalendarMonth = new Date().getMonth();
         let scheduleCalendarYear = new Date().getFullYear();
         let seasonFilterLabel = String(new Date().getFullYear());
+        let teamScheduleIncomplete = false;
+        const lastCompleteExternalScheduleEventsByTeam = new Map();
+
+        function getCurrentParentScopeFingerprint(user = currentUser) {
+            const scope = resolveCanonicalParentScopeInput(user || {});
+            return JSON.stringify({
+                teams: [...scope.parentTeamIds].sort(),
+                players: scope.parentLinks
+                    .map((link) => `${link.teamId}::${link.playerId}`)
+                    .sort()
+            });
+        }
+
+        function applyCurrentParentAccessProfile(profile) {
+            if (!currentUser) return;
+            const before = getCurrentParentScopeFingerprint(currentUser);
+            const scope = resolveCanonicalParentScopeInput(profile || {
+                parentTeamIds: [],
+                parentPlayerKeys: []
+            });
+            currentUser.parentOf = scope.parentLinks;
+            currentUser.parentTeamIds = scope.parentTeamIds;
+            currentUser.parentPlayerKeys = scope.parentPlayerKeys;
+            if (before !== getCurrentParentScopeFingerprint(currentUser) && currentTeamId) {
+                lastCompleteExternalScheduleEventsByTeam.delete(currentTeamId);
+            }
+        }
+
+        async function refreshCurrentParentAccessForTeam() {
+            if (!currentUser?.uid) return false;
+            try {
+                const profile = await getUserProfile(currentUser.uid);
+                if (!profile) throw new Error('Current parent profile is unavailable.');
+                applyCurrentParentAccessProfile(profile);
+                currentTeamAccessInfo = getTeamAccessInfo(currentUser, { ...currentTeam, id: currentTeamId });
+                return true;
+            } catch (error) {
+                applyCurrentParentAccessProfile(null);
+                currentTeamAccessInfo = getTeamAccessInfo(currentUser, { ...currentTeam, id: currentTeamId });
+                if (currentTeamId) lastCompleteExternalScheduleEventsByTeam.delete(currentTeamId);
+                console.warn('Unable to verify current parent schedule access:', error);
+                return false;
+            }
+        }
+
+        function isCalendarAccessOrSourceLossError(error) {
+            const code = String(error?.code || '').trim().toLowerCase().replace(/^functions\//, '');
+            return code === 'unauthenticated' || code === 'permission-denied' || code === 'not-found';
+        }
+
+        function resolveTeamExternalCalendarEventsForLoad(cache, cacheKey, sourceKey, loadedEvents, loadComplete, scopeVerified = true) {
+            const currentEvents = Array.isArray(loadedEvents) ? loadedEvents.map((event) => ({ ...event })) : [];
+            if (!scopeVerified) {
+                cache.delete(cacheKey);
+                return currentEvents;
+            }
+            if (loadComplete) {
+                cache.set(cacheKey, {
+                    sourceKey,
+                    events: currentEvents.map((event) => ({ ...event }))
+                });
+                return currentEvents;
+            }
+            const previous = cache.get(cacheKey);
+            if (currentEvents.length === 0 && previous?.sourceKey === sourceKey && Array.isArray(previous.events)) {
+                return previous.events.map((event) => ({ ...event }));
+            }
+            return currentEvents;
+        }
 
         window.setScheduleFilter = setScheduleFilter;
         window.setScheduleView = setScheduleView;
@@ -1712,14 +1785,17 @@
                         const profile = await getUserProfile(currentUser.uid);
                         if (profile) {
                             if (profile.isAdmin) currentUser.isAdmin = true;
-                            if (profile.parentOf) currentUser.parentOf = profile.parentOf;
+                            applyCurrentParentAccessProfile(profile);
                             if (profile.playerKeys) currentUser.playerKeys = profile.playerKeys;
                             if (profile.playerOf) currentUser.playerOf = profile.playerOf;
                             if (profile.coachOf) currentUser.coachOf = profile.coachOf;
                             if (profile.teamMediaUploadTeamIds) currentUser.teamMediaUploadTeamIds = profile.teamMediaUploadTeamIds;
                             if (profile.mediaUploadTeamIds) currentUser.mediaUploadTeamIds = profile.mediaUploadTeamIds;
+                        } else {
+                            applyCurrentParentAccessProfile(null);
                         }
                     } catch (e) {
+                        applyCurrentParentAccessProfile(null);
                         console.error('Error loading user profile for banner:', e);
                     }
 
@@ -2258,8 +2334,29 @@
         }
 
         async function getAllEvents(team, dbGames) {
+            teamScheduleIncomplete = false;
+            const parentScopeVerified = await refreshCurrentParentAccessForTeam();
             let allEvents = [];
             const scheduleEntries = [];
+            const configuredCalendarUrls = (Array.isArray(team.calendarUrls) ? team.calendarUrls : [])
+                .map((url) => typeof url === 'string' ? url.trim() : '')
+                .filter(Boolean);
+            const externalSourcesConfigured = Boolean(team.hasCalendarSources || configuredCalendarUrls.length);
+            const externalCalendarSourceKey = configuredCalendarUrls.length
+                ? `raw:${JSON.stringify(Array.from(new Set(configuredCalendarUrls)).sort())}`
+                : team.hasCalendarSources ? 'public-projection' : 'none';
+            let calendarTrackingIncomplete = false;
+            let externalCalendarLoadIncomplete = false;
+            const currentAccessIsVerified = Boolean(
+                currentUser?.uid && currentTeamAccessInfo?.hasAccess && (
+                    currentTeamAccessInfo.accessLevel !== 'parent' || parentScopeVerified
+                )
+            );
+            let externalCalendarScopeVerified = configuredCalendarUrls.length === 0 || currentAccessIsVerified;
+
+            if (!externalCalendarScopeVerified) {
+                lastCompleteExternalScheduleEventsByTeam.delete(currentTeamId);
+            }
 
             for (const game of (dbGames || [])) {
                 const id = game.id || game.gameId;
@@ -2289,19 +2386,49 @@
                 });
             }
 
-            const trackedUids = await getTrackedCalendarEventUids(currentTeamId);
+            let trackedUids = [];
+            if (externalSourcesConfigured) {
+                try {
+                    trackedUids = await getTrackedCalendarEventUids(currentTeamId);
+                } catch (error) {
+                    teamScheduleIncomplete = true;
+                    calendarTrackingIncomplete = true;
+                    if (isCalendarAccessOrSourceLossError(error)) {
+                        externalCalendarScopeVerified = false;
+                    }
+                    console.warn('Calendar tracking state unavailable for team schedule:', error);
+                }
+            }
 
-            const publicCalendarEvents = team.hasCalendarSources && !team.calendarUrls?.length
-                ? await getPublicTeamCalendarEvents(currentTeamId)
-                : [];
-            const calendarSources = team.calendarUrls?.length
-                ? team.calendarUrls.map((calendarUrl) => ({ calendarUrl }))
+            let publicCalendarEvents = [];
+            if (team.hasCalendarSources && configuredCalendarUrls.length === 0) {
+                try {
+                    const publicCalendarProjection = await getPublicTeamCalendarEvents(currentTeamId);
+                    publicCalendarEvents = publicCalendarProjection.events;
+                    if (!publicCalendarProjection.complete || publicCalendarProjection.warnings.length > 0) {
+                        teamScheduleIncomplete = true;
+                        externalCalendarLoadIncomplete = true;
+                        // The public projection intentionally withholds raw URLs and
+                        // does not expose an exact source-set fingerprint. A partial
+                        // projection therefore cannot prove it still represents the
+                        // same provider sources as a prior complete response.
+                        externalCalendarScopeVerified = false;
+                    }
+                } catch (error) {
+                    teamScheduleIncomplete = true;
+                    externalCalendarLoadIncomplete = true;
+                    externalCalendarScopeVerified = false;
+                    console.warn('Public calendar projection unavailable for team schedule:', error);
+                }
+            }
+            const calendarSources = configuredCalendarUrls.length
+                ? configuredCalendarUrls.map((calendarUrl) => ({ calendarUrl }))
                 : [{ calendarEvents: publicCalendarEvents }];
             for (const calendarSource of calendarSources) {
                 const calendarUrl = calendarSource.calendarUrl || '';
                 try {
                     const calendarEvents = calendarSource.calendarEvents ||
-                        await fetchAndParseCalendar(calendarUrl);
+                        await fetchAndParseCalendar(calendarUrl, { teamId: currentTeamId });
 
                     calendarEvents.forEach(event => {
                         if (isTrackedCalendarEvent(event, trackedUids)) return;
@@ -2333,8 +2460,33 @@
                         });
                     });
                 } catch (error) {
-                    console.warn('Calendar import unavailable:', calendarUrl || 'public projection', error);
+                    teamScheduleIncomplete = true;
+                    externalCalendarLoadIncomplete = true;
+                    if (isCalendarAccessOrSourceLossError(error)) {
+                        externalCalendarScopeVerified = false;
+                    }
+                    console.warn('Calendar import unavailable for team schedule:', error);
                 }
+            }
+
+            const externalSnapshotComplete = !externalCalendarLoadIncomplete && (
+                !externalSourcesConfigured || !calendarTrackingIncomplete
+            );
+            const resolvedExternalEvents = resolveTeamExternalCalendarEventsForLoad(
+                lastCompleteExternalScheduleEventsByTeam,
+                currentTeamId,
+                externalCalendarSourceKey,
+                allEvents,
+                externalSnapshotComplete,
+                externalCalendarScopeVerified
+            );
+            if (allEvents.length === 0 && resolvedExternalEvents.length > 0) {
+                allEvents.push(...resolvedExternalEvents
+                    .filter((event) => {
+                        if (!calendarTrackingIncomplete && isTrackedCalendarEvent(event.calendarEvent, trackedUids)) return false;
+                        return !scheduleEntries.some((entry) => Math.abs(entry.date - event.date) < 60000);
+                    })
+                    .map((event) => ({ ...event })));
             }
 
             const availabilityPreferences = normalizeAvailabilityPreferences(team?.availabilityPreferences);
@@ -2417,6 +2569,7 @@
 
         async function renderSchedule(team, dbGames) {
             allScheduleEvents = await getAllEvents(team, dbGames);
+            document.getElementById('team-schedule-load-warning')?.classList.toggle('hidden', !teamScheduleIncomplete);
             setScheduleFilter('all-upcoming');
         }
 

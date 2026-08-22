@@ -1,15 +1,9 @@
+const {
+  removeCanonicalParentAccessLinks
+} = require('./parent-access-core.cjs');
+
 function compactString(value) {
   return value == null ? '' : String(value).trim();
-}
-
-function uniqueStrings(values = []) {
-  return [...new Set((Array.isArray(values) ? values : [])
-    .map(compactString)
-    .filter(Boolean))];
-}
-
-function isTargetParentLink(link = {}, teamId, playerId) {
-  return compactString(link.teamId) === teamId && compactString(link.playerId) === playerId;
 }
 
 function buildRevokedParentAccess(userData = {}, target = {}) {
@@ -19,21 +13,7 @@ function buildRevokedParentAccess(userData = {}, target = {}) {
     throw new Error('Household access revocation requires a team and player.');
   }
 
-  const parentOf = (Array.isArray(userData.parentOf) ? userData.parentOf : [])
-    .filter((link) => !isTargetParentLink(link, teamId, playerId));
-  const parentTeamIds = uniqueStrings(parentOf.map((link) => link?.teamId));
-  const parentPlayerKeys = uniqueStrings(parentOf.map((link) => (
-    link?.teamId && link?.playerId ? `${link.teamId}::${link.playerId}` : ''
-  )));
-  const roles = uniqueStrings(userData.roles)
-    .filter((role) => role !== 'parent' || parentOf.length > 0);
-
-  return {
-    parentOf,
-    parentTeamIds,
-    parentPlayerKeys,
-    roles
-  };
+  return removeCanonicalParentAccessLinks(userData, [{ teamId, playerId }]);
 }
 
 function buildRevokedPrivatePlayerAccess(privateProfile = {}, invitedUserId) {

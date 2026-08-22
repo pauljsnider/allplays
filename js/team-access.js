@@ -1,3 +1,5 @@
+import { resolveCanonicalParentScopeInput } from './parent-membership-utils.js?v=4';
+
 function getNormalizedUserEmail(user) {
   // Access by email must reflect the current Auth identity, not a mutable
   // profile field that can outlive an Auth email change.
@@ -183,16 +185,9 @@ export function hasTeamMediaAccess(user, team) {
  */
 function hasParentTeamAccess(user, teamId) {
   if (!user || !teamId) return false;
-
-  if ((Array.isArray(user.parentOf) ? user.parentOf : []).some((p) => p?.teamId === teamId)) {
-    return true;
-  }
-
-  return (Array.isArray(user.parentPlayerKeys) ? user.parentPlayerKeys : []).some((key) => {
-    const raw = String(key || '');
-    const separatorIndex = raw.indexOf('::');
-    return separatorIndex > 0 && raw.slice(0, separatorIndex) === teamId;
-  });
+  const parentScope = resolveCanonicalParentScopeInput(user);
+  return parentScope.parentTeamIds.includes(teamId) ||
+    parentScope.parentLinks.some((link) => link?.teamId === teamId);
 }
 
 export function getTeamAccessInfo(user, team, options = {}) {

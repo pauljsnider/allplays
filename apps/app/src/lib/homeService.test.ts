@@ -1,15 +1,28 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { clearAppDataCache } from './appDataCache';
+import { clearAppDataCache, getCachedAppData, getParentScheduleSummaryCacheKey } from './appDataCache';
 
 const chatServiceMocks = vi.hoisted(() => ({
     loadChatInbox: vi.fn()
 }));
 
 const scheduleServiceMocks = vi.hoisted(() => ({
+    hasRawExternalScheduleEvents: vi.fn((schedule: any) => Boolean(schedule?.events?.some((event: any) => (
+        event.isDbGame !== true && event.sourceType === 'calendar'
+        || Array.isArray(event.calendarUrls) && event.calendarUrls.some((url: unknown) => Boolean(String(url || '').trim()))
+    )))),
+    isParentScheduleCacheSafe: vi.fn((schedule: any) => schedule?.isPartial !== true && !schedule?.events?.some((event: any) => (
+        event.isDbGame !== true && event.sourceType === 'calendar'
+        || Array.isArray(event.calendarUrls) && event.calendarUrls.some((url: unknown) => Boolean(String(url || '').trim()))
+    ))),
     hydrateParentScheduleDetails: vi.fn(),
     loadParentSchedule: vi.fn(),
-    loadParentScheduleScope: vi.fn()
+    loadParentScheduleScope: vi.fn(),
+    reconcileParentSchedulePartial: vi.fn((current: any, next: any) => (
+        current && next?.isPartial === true && !next.events?.length
+            ? { ...next, events: current.events || [] }
+            : next
+    ))
 }));
 
 const feesMocks = vi.hoisted(() => ({
@@ -100,6 +113,12 @@ describe('homeService Teams bootstrap reuse', () => {
         chatServiceMocks.loadChatInbox.mockResolvedValue({ teams: [] });
         feesMocks.listParentTeamFeeRecipients.mockResolvedValue([]);
         scheduleServiceMocks.hydrateParentScheduleDetails.mockImplementation(async (schedule) => schedule);
+        scheduleServiceMocks.loadParentScheduleScope.mockResolvedValue({
+            profile: {},
+            children: [],
+            staffTeams: [],
+            isPartial: false
+        });
         nativeRuntimeMocks.isNativeRuntime.mockReturnValue(false);
         profileServiceMocks.loadManagedTeamsFromNativeCallable.mockReset();
         profileServiceMocks.loadProfileDocument.mockReset();
@@ -237,6 +256,215 @@ describe('homeService Teams bootstrap reuse', () => {
         });
     });
 
+    it('preserves the last complete Home schedule when a background refresh is partial', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-08-13T12:00:00.000Z'));
+        const completeSchedule = {
+            children: [],
+            events: [{ id: 'verified-event' }],
+            isPartial: false
+        } as any;
+        scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(completeSchedule);
+
+        await loadParentScheduleSummary(user, { force: true });
+
+        vi.setSystemTime(new Date('2026-08-13T12:00:46.000Z'));
+        scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+            children: [],
+            events: [],
+            scopeIsPartial: false,
+            isPartial: true
+        });
+        const onBackgroundError = vi.fn();
+
+        const stale = await loadParentScheduleSummary(user, { onBackgroundError });
+
+        expect(stale).toBe(completeSchedule);
+        await vi.waitFor(() => {
+            expect(onBackgroundError).toHaveBeenCalledWith(expect.objectContaining({
+                message: expect.stringContaining('complete schedule could not be loaded')
+            }));
+        });
+    });
+
+    it.each([
+        {
+            label: 'terminal player denial',
+            partial: {
+                children: [],
+                events: [],
+                scopeIsPartial: false,
+                accessLostTeamIds: ['team-1'],
+                teamLoadStates: { 'team-1': 'access-lost' },
+                isPartial: true
+            }
+        },
+        {
+            label: 'transient omitted scope',
+            partial: {
+                children: [],
+                events: [],
+                scopeIsPartial: true,
+                teamLoadStates: {},
+                isPartial: true
+            }
+        }
+    ])('invalidates cached private rows after $label', async ({ partial }) => {
+        const completeSchedule = {
+            children: [{ teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat' }],
+            staffTeams: [],
+            events: [{ id: 'private-event', teamId: 'team-1', childId: 'player-1', date: new Date('2100-01-01') }],
+            sourceKeysByTeam: { 'team-1': 'no-external-calendar:v1' },
+            isPartial: false
+        } as any;
+        scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(completeSchedule);
+        await loadParentScheduleSummary(user, { force: true });
+
+        scheduleServiceMocks.loadParentSchedule.mockImplementationOnce(async (_user, options) => {
+            options.onPartial?.(partial as any);
+            throw new Error('current schedule incomplete');
+        });
+        await expect(loadParentScheduleSummary(user, {
+            force: true,
+            onPartial: vi.fn()
+        })).rejects.toThrow('current schedule incomplete');
+
+        expect(getCachedAppData(getParentScheduleSummaryCacheKey(user.uid))).toBeNull();
+        const recovered = { children: [], events: [], staffTeams: [], sourceKeysByTeam: {}, isPartial: false } as any;
+        scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(recovered);
+        await expect(loadParentScheduleSummary(user)).resolves.toBe(recovered);
+        expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(3);
+    });
+
+    it('never restores the old sibling cache when a scope-shrink partial is followed by a complete load', async () => {
+        const child = (playerId: string) => ({ teamId: 'team-1', teamName: 'Bears', playerId, playerName: playerId });
+        const event = (playerId: string) => ({
+            id: `event-${playerId}`,
+            teamId: 'team-1',
+            childId: playerId,
+            date: new Date('2100-01-01')
+        });
+        const oldComplete = {
+            children: [child('p1'), child('p2')],
+            staffTeams: [],
+            events: [event('p1'), event('p2')],
+            sourceKeysByTeam: { 'team-1': 'no-external-calendar:v1' },
+            isPartial: false
+        } as any;
+        const newComplete = {
+            ...oldComplete,
+            children: [child('p1')],
+            events: [event('p1')]
+        } as any;
+        scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(oldComplete);
+        await loadParentScheduleSummary(user, { force: true });
+
+        scheduleServiceMocks.loadParentScheduleScope.mockResolvedValueOnce({
+            profile: { parentTeamIds: ['team-1'], parentPlayerKeys: ['team-1::p1', 'team-1::p2'] },
+            children: [child('p1'), child('p2')],
+            staffTeams: [],
+            isPartial: false
+        });
+        scheduleServiceMocks.loadParentSchedule.mockImplementationOnce(async (_user, options) => {
+            options.onPartial?.({
+                children: [child('p1')],
+                staffTeams: [],
+                events: [],
+                scopeIsPartial: false,
+                pendingTeamIds: ['team-1'],
+                teamLoadStates: { 'team-1': 'pending' },
+                sourceKeysByTeam: { 'team-1': 'no-external-calendar:v1' },
+                isPartial: true
+            });
+            return newComplete;
+        });
+        await expect(loadParentScheduleSummary(user, { force: true })).resolves.toBe(newComplete);
+
+        const cachedAfterRefresh = getCachedAppData<any>(getParentScheduleSummaryCacheKey(user.uid));
+        expect(cachedAfterRefresh?.children || []).not.toContainEqual(child('p2'));
+        expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(2);
+    });
+
+    it('validates a fresh cached summary against current scope before returning revoked sibling rows', async () => {
+        const child = (playerId: string) => ({ teamId: 'team-1', teamName: 'Bears', playerId, playerName: playerId });
+        const event = (playerId: string) => ({
+            id: `event-${playerId}`,
+            teamId: 'team-1',
+            childId: playerId,
+            date: new Date('2100-01-01')
+        });
+        const oldComplete = {
+            children: [child('p1'), child('p2')],
+            staffTeams: [],
+            events: [event('p1'), event('p2')],
+            sourceKeysByTeam: { 'team-1': 'no-external-calendar:v1' },
+            isPartial: false
+        } as any;
+        const currentComplete = {
+            ...oldComplete,
+            children: [child('p1')],
+            events: [event('p1')]
+        } as any;
+        scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(oldComplete);
+        await loadParentScheduleSummary(user, { force: true });
+
+        scheduleServiceMocks.loadParentScheduleScope.mockResolvedValueOnce({
+            profile: { parentTeamIds: ['team-1'], parentPlayerKeys: ['team-1::p1'] },
+            children: [child('p1')],
+            staffTeams: [],
+            isPartial: false
+        });
+        scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(currentComplete);
+
+        await expect(loadParentScheduleSummary(user)).resolves.toBe(currentComplete);
+        expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(2);
+        expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenLastCalledWith(
+            user,
+            expect.objectContaining({
+                parentScope: expect.objectContaining({ children: [child('p1')] })
+            })
+        );
+        expect(getCachedAppData<any>(getParentScheduleSummaryCacheKey(user.uid))?.events).toEqual([event('p1')]);
+    });
+
+    it('does not persist or reuse a DB-only schedule row carrying a raw calendar URL', async () => {
+        const privateUrl = 'https://calendar.example.com/private-token.ics';
+        const unsafeSchedule = {
+            children: [{ teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat' }],
+            staffTeams: [],
+            sourceKeysByTeam: { 'team-1': `direct-calendar:v1:${'a'.repeat(64)}` },
+            events: [{
+                id: 'db-game',
+                eventKey: 'team-1:db-game:player-1',
+                teamId: 'team-1',
+                childId: 'player-1',
+                type: 'game',
+                date: new Date('2100-06-01T18:00:00.000Z'),
+                isDbGame: true,
+                sourceType: 'db',
+                calendarUrls: [privateUrl]
+            }],
+            isPartial: false
+        } as any;
+        const safeSchedule = {
+            ...unsafeSchedule,
+            sourceKeysByTeam: { 'team-1': 'no-external-calendar:v1' },
+            events: []
+        };
+        scheduleServiceMocks.loadParentSchedule
+            .mockResolvedValueOnce(unsafeSchedule)
+            .mockResolvedValueOnce(safeSchedule);
+
+        await expect(loadParentScheduleSummary(user, { force: true })).resolves.toBe(unsafeSchedule);
+        expect(window.localStorage.setItem).not.toHaveBeenCalledWith(
+            expect.any(String),
+            expect.stringContaining(privateUrl)
+        );
+
+        await expect(loadParentScheduleSummary(user)).resolves.toBe(safeSchedule);
+        expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(2);
+    });
+
     it('renders the last complete Home immediately while refreshing it in the background', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date('2026-08-13T12:00:00.000Z'));
@@ -302,6 +530,38 @@ describe('homeService Teams bootstrap reuse', () => {
             parentScope: scheduleScope
         }));
         expect(window.localStorage.getItem('allplays:appDataCache:teams-summary-bootstrap%3Aparent-1')).toBeNull();
+    });
+
+    it('revalidates a fresh Teams bootstrap cache before returning a revoked sibling', async () => {
+        const child = (playerId: string) => ({
+            teamId: 'team-1',
+            teamName: 'Bears',
+            playerId,
+            playerName: playerId
+        });
+        const oldScope = {
+            profile: { parentTeamIds: ['team-1'], parentPlayerKeys: ['team-1::p1', 'team-1::p2'] },
+            children: [child('p1'), child('p2')],
+            staffTeams: [],
+            isPartial: false
+        };
+        const currentScope = {
+            profile: { parentTeamIds: ['team-1'], parentPlayerKeys: ['team-1::p1'] },
+            children: [child('p1')],
+            staffTeams: [],
+            isPartial: false
+        };
+        scheduleServiceMocks.loadParentScheduleScope
+            .mockResolvedValueOnce(oldScope)
+            .mockResolvedValueOnce(currentScope);
+
+        const seeded = await loadParentTeamsSummaryBootstrap(user, { force: true });
+        expect(seeded.scheduleScope.children).toEqual([child('p1'), child('p2')]);
+
+        const refreshed = await loadParentTeamsSummaryBootstrap(user);
+        expect(refreshed.scheduleScope.children).toEqual([child('p1')]);
+        expect(refreshed.home.players.map((player) => player.playerId)).toEqual(['p1']);
+        expect(scheduleServiceMocks.loadParentScheduleScope).toHaveBeenCalledTimes(2);
     });
 
     it('includes a newly created staff team before it has players, events, or chat', async () => {
@@ -576,7 +836,7 @@ describe('homeService Teams bootstrap reuse', () => {
         expect(summary.scheduleScope.isPartial).toBe(true);
     });
 
-    it('caches a complete empty chooser for a genuinely teamless account', async () => {
+    it('revalidates a complete empty chooser before serving its fresh cache', async () => {
         scheduleServiceMocks.loadParentScheduleScope.mockResolvedValue({
             profile: {},
             children: [],
@@ -590,7 +850,7 @@ describe('homeService Teams bootstrap reuse', () => {
 
         expect(first.home.teams).toEqual([]);
         expect(second.home.teams).toEqual([]);
-        expect(scheduleServiceMocks.loadParentScheduleScope).toHaveBeenCalledTimes(1);
+        expect(scheduleServiceMocks.loadParentScheduleScope).toHaveBeenCalledTimes(2);
     });
 
     it('refreshes a cached schedule summary when the fast scope contains staff teams', async () => {
@@ -614,6 +874,7 @@ describe('homeService Teams bootstrap reuse', () => {
                 events: [],
                 staffTeams: options?.parentScope?.staffTeams || []
             }));
+        scheduleServiceMocks.loadParentScheduleScope.mockResolvedValue(scheduleScope);
 
         await loadParentScheduleSummary(user, { force: true });
         const refreshed = await loadParentScheduleSummary(user, { scheduleScope });
@@ -627,7 +888,7 @@ describe('homeService Teams bootstrap reuse', () => {
         ]);
     });
 
-    it('does not cache partial parent schedule summaries as complete results', async () => {
+    it('rejects partial parent schedule summaries, leaves them uncached, and recovers on a complete load', async () => {
         scheduleServiceMocks.loadParentSchedule
             .mockResolvedValueOnce({
                 children: [{ teamId: 'team-1', teamName: 'Fast Falcons', playerId: 'player-1', playerName: 'Avery Ace' }],
@@ -640,13 +901,32 @@ describe('homeService Teams bootstrap reuse', () => {
                 isPartial: false
             });
 
-        const partial = await loadParentScheduleSummary(user, { force: true });
+        await expect(loadParentScheduleSummary(user, { force: true })).rejects.toThrow(
+            'The complete schedule could not be loaded'
+        );
         const complete = await loadParentScheduleSummary(user);
 
-        expect(partial.isPartial).toBe(true);
         expect(complete.isPartial).toBe(false);
         expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(2);
         expect(window.localStorage.getItem('allplays:appDataCache:app-schedule-summary%3Aparent-1')).toContain('event-1');
+    });
+
+    it('rejects an explicitly supplied partial Home schedule before caching a false empty summary', async () => {
+        const partialSchedule = {
+            children: [{ teamId: 'team-1', teamName: 'Fast Falcons', playerId: 'player-1', playerName: 'Avery Ace' }],
+            events: [],
+            isPartial: true
+        } as any;
+
+        await expect(loadParentHomeWithSecondaryData(user, {
+            schedule: partialSchedule,
+            force: true
+        })).rejects.toThrow('The complete schedule could not be loaded');
+
+        expect(scheduleServiceMocks.hydrateParentScheduleDetails).not.toHaveBeenCalled();
+        expect(chatServiceMocks.loadChatInbox).not.toHaveBeenCalled();
+        expect(feesMocks.listParentTeamFeeRecipients).not.toHaveBeenCalled();
+        expect(window.localStorage.getItem('allplays:appDataCache:home-secondary%3Av2%3Aparent-1')).toBeNull();
     });
 
     it.each([

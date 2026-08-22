@@ -1252,7 +1252,9 @@ describe('loadParentPlayerDetail custom roster fields', () => {
     legacyPlayerDbMocks.collectRosterParentContacts.mockReturnValue([]);
     scheduleServiceMocks.loadParentPlayerSchedule.mockResolvedValue({
       children: [{ teamId: 'team-1', teamName: 'Comets', playerId: 'player-1', playerName: 'Sam Player' }],
-      events: []
+      events: [],
+      sourceKeysByTeam: { 'team-1': 'no-external-calendar:v1' },
+      teamLoadStates: { 'team-1': 'complete' }
     });
     legacyPlayerDbMocks.getTeam.mockResolvedValue({
       id: 'team-1',
@@ -1292,6 +1294,93 @@ describe('loadParentPlayerDetail custom roster fields', () => {
     legacyPlayerDbMocks.getPlayerTrackingStatuses.mockResolvedValue([]);
     legacyPlayerDbMocks.listAthleteProfilesForParent.mockResolvedValue([]);
     profileServiceMocks.loadProfileDocument.mockResolvedValue(null);
+  });
+
+  it('propagates retryable partial schedule evidence to Player Detail', async () => {
+    const sourceKey = `direct-calendar:v1:${'a'.repeat(64)}`;
+    scheduleServiceMocks.loadParentPlayerSchedule.mockResolvedValue({
+      children: [{ teamId: 'team-1', teamName: 'Comets', playerId: 'player-1', playerName: 'Sam Player' }],
+      events: [],
+      sourceKeysByTeam: { 'team-1': sourceKey },
+      teamLoadStates: { 'team-1': 'external-partial' },
+      isPartial: true
+    });
+
+    const detail = await loadParentPlayerDetail({
+      uid: 'parent-1',
+      email: 'parent@example.com',
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
+    } as any, 'team-1', 'player-1');
+
+    expect(detail).toMatchObject({
+      scheduleIsPartial: true,
+      scheduleTeamLoadState: 'external-partial',
+      scheduleAccessUserId: 'parent-1',
+      scheduleSourceKey: sourceKey,
+      events: [],
+      nextEvent: null
+    });
+    expect(detail.scheduleLoadError).toMatch(/complete player schedule could not be loaded/i);
+  });
+
+  it('keeps a complete-empty player schedule authoritative', async () => {
+    const detail = await loadParentPlayerDetail({
+      uid: 'parent-1',
+      email: 'parent@example.com',
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
+    } as any, 'team-1', 'player-1');
+
+    expect(detail).toMatchObject({
+      scheduleLoadError: null,
+      scheduleIsPartial: false,
+      scheduleTeamLoadState: 'complete',
+      scheduleAccessUserId: 'parent-1',
+      scheduleSourceKey: 'no-external-calendar:v1',
+      events: [],
+      nextEvent: null
+    });
+  });
+
+  it('marks the schedule slice failed when the player schedule read rejects', async () => {
+    scheduleServiceMocks.loadParentPlayerSchedule.mockRejectedValueOnce(new Error('schedule unavailable'));
+
+    const detail = await loadParentPlayerDetail({
+      uid: 'parent-1',
+      email: 'parent@example.com',
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
+    } as any, 'team-1', 'player-1');
+
+    expect(detail).toMatchObject({
+      scheduleIsPartial: true,
+      scheduleTeamLoadState: 'failed',
+      scheduleSourceKey: null,
+      events: []
+    });
+    expect(detail.scheduleLoadError).toMatch(/complete player schedule could not be loaded/i);
+  });
+
+  it('fails closed before loading private player data when current player access is lost', async () => {
+    scheduleServiceMocks.loadParentPlayerSchedule.mockResolvedValue({
+      children: [],
+      events: [],
+      sourceKeysByTeam: { 'team-1': null },
+      teamLoadStates: { 'team-1': 'access-lost' },
+      accessLostTeamIds: ['team-1'],
+      isPartial: true
+    });
+
+    await expect(loadParentPlayerDetail({
+      uid: 'parent-1',
+      email: 'parent@example.com',
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1', playerName: 'Stale Private Player' }]
+    } as any, 'team-1', 'player-1')).rejects.toMatchObject({
+      code: 'permission-denied',
+      status: 403
+    });
+
+    expect(legacyPlayerDbMocks.getTeam).not.toHaveBeenCalled();
+    expect(legacyPlayerDbMocks.getPlayers).not.toHaveBeenCalled();
+    expect(legacyPlayerDbMocks.getPlayerPrivateProfile).not.toHaveBeenCalled();
   });
 
   it('applies roster field privacy so parents do not receive admin-only custom values', async () => {
@@ -1462,6 +1551,66 @@ describe('loadParentPlayerDetail custom roster fields', () => {
       playerName: 'Sam Player'
     }));
     expect(detail.access.isLinkedParent).toBe(true);
+  });
+
+  it('does not restore a revoked same-team sibling from stale user parent metadata', async () => {
+    scheduleServiceMocks.loadParentPlayerSchedule.mockResolvedValue({
+      children: [],
+      events: [],
+      sourceKeysByTeam: { 'team-1': 'no-external-calendar:v1' },
+      teamLoadStates: { 'team-1': 'complete' }
+    });
+    profileServiceMocks.loadProfileDocument.mockResolvedValue({
+      parentTeamIds: ['team-1'],
+      parentPlayerKeys: ['team-1::player-1'],
+      parentOf: [
+        { teamId: 'team-1', playerId: 'player-1', playerName: 'Current Child' },
+        { teamId: 'team-1', playerId: 'player-2', playerName: 'Stale Private Child' }
+      ]
+    });
+    legacyPlayerDbMocks.getPlayers.mockResolvedValue([
+      { id: 'player-2', name: 'Public Teammate' }
+    ]);
+
+    const detail = await loadParentPlayerDetail({
+      uid: 'parent-1',
+      email: 'parent@example.com',
+      parentTeamIds: ['team-1'],
+      parentPlayerKeys: ['team-1::player-1', 'team-1::player-2'],
+      parentOf: [{ teamId: 'team-1', playerId: 'player-2', playerName: 'Stale Private Child' }]
+    } as any, 'team-1', 'player-2');
+
+    expect(scheduleServiceMocks.loadParentPlayerSchedule).toHaveBeenCalledWith(
+      expect.objectContaining({ parentPlayerKeys: ['team-1::player-1'] }),
+      { teamId: 'team-1', playerId: 'player-2' }
+    );
+    expect(detail).toMatchObject({
+      child: { teamId: 'team-1', playerId: 'player-2', playerName: 'Public Teammate' },
+      access: { isLinkedParent: false, isTeamParent: true },
+      privateProfile: null,
+      events: []
+    });
+    expect(legacyPlayerDbMocks.getPlayerPrivateProfile).not.toHaveBeenCalled();
+  });
+
+  it('treats explicit empty current canonical parent scope as revocation', async () => {
+    scheduleServiceMocks.loadParentPlayerSchedule.mockResolvedValue({ children: [], events: [] });
+    profileServiceMocks.loadProfileDocument.mockResolvedValue({
+      parentTeamIds: [],
+      parentPlayerKeys: [],
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1', playerName: 'Stale Child' }]
+    });
+
+    await expect(loadParentPlayerDetail({
+      uid: 'parent-1',
+      email: 'parent@example.com',
+      parentTeamIds: ['team-1'],
+      parentPlayerKeys: ['team-1::player-1'],
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1', playerName: 'Stale Child' }]
+    } as any, 'team-1', 'player-1')).rejects.toThrow('This player is not linked to your account.');
+
+    expect(legacyPlayerDbMocks.getPlayers).not.toHaveBeenCalled();
+    expect(legacyPlayerDbMocks.getPlayerPrivateProfile).not.toHaveBeenCalled();
   });
 
   it('keeps coachOf-only users read-only for custom roster fields', async () => {

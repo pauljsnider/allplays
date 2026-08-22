@@ -98,7 +98,7 @@ import {
   matchesTournamentScheduleGroup,
   type TournamentScheduleGroupQuery
 } from './tournamentScheduleStandings';
-import { loadManagedTeamsFromNativeCallable, loadProfileDocument, saveProfileDocument } from './profileService';
+import { loadManagedTeamsFromNativeCallable, loadProfileDocument } from './profileService';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
 import { callNativeFirebaseFunction } from './nativeCallable';
 import { startUxTimer } from './uxTiming';
@@ -144,6 +144,7 @@ import { DEFAULT_TEAM_CONVERSATION_ID } from './chatLogic';
 import { getCachedAppData, getParentHomeSecondaryCacheKey, getParentScheduleSummaryCacheKey, invalidateCachedAppData, loadCachedAppData } from './appDataCache';
 import { toAppServiceError } from './appErrors';
 import { createLogger } from './logger';
+import { collectCanonicalParentAccessLinks, isCanonicalParentTeamLinked } from './parentAccessScope';
 import { getNativeRestDedupKey, loadDedupedNativeRestRequest, shouldDedupNativeRestRequest } from './nativeRestDedup';
 import { mapFirestoreDocument, mapScheduleEventDocument, mapScheduleEventDocuments, mapScheduleEventRecord, mapScheduleEventRecords } from './firestore/mappers';
 import type { FirestoreDecodedDocument, FirestoreDocument as NativeFirestoreDocument, ScheduleEventFirestoreRecord } from './firestore/types';
@@ -386,6 +387,13 @@ function invalidateParentScheduleCaches(
     invalidateScheduleEventOptionalCaches({ teamId, id: eventId });
   }
 }
+
+export function invalidateParentScheduleReadCaches(
+  user: AuthUser | null | undefined,
+  event?: Pick<ParentScheduleEvent, 'teamId' | 'id'> | null
+) {
+  invalidateParentScheduleCaches(user, event);
+}
 // Default games window for schedule views: ~13 months covers the current and
 // previous season so the "Past Events" filter still shows recent history before
 // an explicit full-history load. Tune here if season length assumptions change.
@@ -414,6 +422,13 @@ function rethrowScheduleLoadError(error: unknown): never {
   throw toAppServiceError(error, 'Unable to load schedule.');
 }
 
+function createIncompleteScheduleAccessError() {
+  return Object.assign(
+    new Error('Unable to verify access to this team schedule. Retry the load.'),
+    { code: 'unavailable' }
+  );
+}
+
 export type ParentScheduleChild = {
   teamId: string;
   teamName: string;
@@ -433,13 +448,147 @@ export type ParentScheduleStaffTeam = {
   teamName: string;
 };
 
+export type ParentScheduleTeamLoadState = 'complete' | 'external-partial' | 'failed' | 'pending' | 'access-lost';
+
 export type ParentScheduleLoadResult = {
   children: ParentScheduleChild[];
   events: ParentScheduleEvent[];
   /** Teams the user can manage (owner/admin/coach), even if they have no events yet. */
   staffTeams?: ParentScheduleStaffTeam[];
+  /** Non-secret fingerprints of the exact external-calendar source state read for each team. */
+  sourceKeysByTeam?: Record<string, string | null>;
+  /** True when the authorized child/staff team set itself could not be completed. */
+  scopeIsPartial?: boolean;
+  /** Team slices whose current load completed without proving full source completeness. */
+  partialTeamIds?: string[];
+  /** Team slices that had not completed yet when an incremental result was emitted. */
+  pendingTeamIds?: string[];
+  /** Per-team load evidence used to reconcile partial multi-team results safely. */
+  teamLoadStates?: Record<string, ParentScheduleTeamLoadState>;
+  /** Teams whose current canonical access read failed with a terminal denial. */
+  accessLostTeamIds?: string[];
   isPartial?: boolean;
 };
+
+export function hasCompleteScheduleSourceEvidence(schedule: ParentScheduleLoadResult | null | undefined) {
+  if (!schedule || schedule.isPartial === true || !schedule.sourceKeysByTeam) return false;
+  const teamIds = new Set([
+    ...(schedule.children || []).map((child) => child.teamId),
+    ...(schedule.staffTeams || []).map((team) => team.teamId),
+    ...(schedule.events || []).map((event) => event.teamId)
+  ].filter(Boolean));
+  return [...teamIds].every((teamId) => (
+    typeof schedule.sourceKeysByTeam?.[teamId] === 'string'
+    && Boolean(compactString(schedule.sourceKeysByTeam[teamId]))
+  ));
+}
+
+export function hasRawExternalScheduleEvents(schedule: Pick<ParentScheduleLoadResult, 'events'> | null | undefined) {
+  return Boolean(schedule?.events?.some((event) => (
+    isScheduleEventSourceSensitive(event)
+  )));
+}
+
+function isScheduleEventSourceSensitive(event: ParentScheduleEvent) {
+  return isRawExternalScheduleEvent(event)
+    || Array.isArray(event.calendarUrls) && event.calendarUrls.some((url) => Boolean(compactString(url)));
+}
+
+function isRawExternalScheduleEvent(event: ParentScheduleEvent) {
+  return event.isDbGame !== true && event.sourceType === 'calendar';
+}
+
+export function isParentScheduleCacheSafe(schedule: ParentScheduleLoadResult | null | undefined) {
+  return hasCompleteScheduleSourceEvidence(schedule) && !hasRawExternalScheduleEvents(schedule);
+}
+
+function getScheduleEventPreservationKey(event: ParentScheduleEvent) {
+  return event.eventKey || [
+    event.teamId,
+    event.id,
+    event.childId,
+    event.date instanceof Date ? event.date.toISOString() : String(event.date || '')
+  ].join('::');
+}
+
+/**
+ * Retain known rows from an older schedule only when the new partial load proves
+ * that the exact external source set is unchanged. Canonical DB rows can remain
+ * as a warm preview; raw external rows fail closed on changed or missing keys.
+ */
+export function reconcileParentSchedulePartial(
+  current: ParentScheduleLoadResult | null | undefined,
+  next: ParentScheduleLoadResult
+): ParentScheduleLoadResult {
+  if (!current || next.isPartial !== true) return next;
+  const currentSourceKeys = current.sourceKeysByTeam || {};
+  const nextSourceKeys = next.sourceKeysByTeam || {};
+  const teamIds = new Set([
+    ...Object.keys(currentSourceKeys),
+    ...Object.keys(nextSourceKeys),
+    ...current.events.map((event) => event.teamId),
+    ...next.events.map((event) => event.teamId)
+  ].filter(Boolean));
+  const sourceKeysByTeam: Record<string, string | null> = {};
+  teamIds.forEach((teamId) => {
+    const nextKey = typeof nextSourceKeys[teamId] === 'string' ? compactString(nextSourceKeys[teamId]) : '';
+    sourceKeysByTeam[teamId] = nextKey || null;
+  });
+
+  const eventsByKey = new Map<string, ParentScheduleEvent>();
+  const teamLoadStates = next.teamLoadStates || {};
+  const staffTeamIds = new Set((next.staffTeams || []).map((team) => compactString(team.teamId)).filter(Boolean));
+  const verifiedChildKeys = new Set(next.children.map((child) => (
+    `${compactString(child.teamId)}::${compactString(child.playerId)}`
+  )));
+  const hasVerifiedEventScope = (event: ParentScheduleEvent) => (
+    staffTeamIds.has(event.teamId)
+    || verifiedChildKeys.has(`${compactString(event.teamId)}::${compactString(event.childId)}`)
+  );
+  const accessLostTeamIds = new Set([
+    ...(next.accessLostTeamIds || []),
+    ...Object.entries(teamLoadStates)
+      .filter(([, loadState]) => loadState === 'access-lost')
+      .map(([teamId]) => teamId)
+  ]);
+  current.events.forEach((event) => {
+    if (!hasVerifiedEventScope(event)) return;
+    const loadState = teamLoadStates[event.teamId];
+    if (accessLostTeamIds.has(event.teamId) || loadState === 'complete' || loadState === 'access-lost') return;
+    if (!loadState) return;
+    const currentKey = typeof currentSourceKeys[event.teamId] === 'string'
+      ? compactString(currentSourceKeys[event.teamId])
+      : '';
+    const nextKey = typeof nextSourceKeys[event.teamId] === 'string'
+      ? compactString(nextSourceKeys[event.teamId])
+      : '';
+    const exactPreservableSource = Boolean(
+      currentKey
+      && currentKey === nextKey
+      && currentKey.startsWith('direct-calendar:v1:')
+    );
+    const rawExternal = isRawExternalScheduleEvent(event);
+    const sourceSensitive = isScheduleEventSourceSensitive(event);
+    if (loadState === 'external-partial') {
+      if (!rawExternal || !exactPreservableSource) return;
+    } else if (sourceSensitive && !exactPreservableSource) {
+      return;
+    }
+    eventsByKey.set(getScheduleEventPreservationKey(event), event);
+  });
+  next.events.forEach((event) => {
+    if (!hasVerifiedEventScope(event)) return;
+    eventsByKey.set(getScheduleEventPreservationKey(event), event);
+  });
+
+  return {
+    ...next,
+    children: next.children,
+    staffTeams: next.staffTeams,
+    events: [...eventsByKey.values()].sort((left, right) => left.date.getTime() - right.date.getTime()),
+    sourceKeysByTeam
+  };
+}
 
 export type ParentScheduleScope = {
   profile: Record<string, unknown>;
@@ -450,6 +599,8 @@ export type ParentScheduleScope = {
   staffTeamsPartial?: boolean;
   /** True when any authoritative scope read failed and cached access should be preserved. */
   isPartial?: boolean;
+  /** Teams whose canonical access read proved a terminal denial. */
+  accessLostTeamIds?: string[];
 };
 
 export type ParentScheduleLoadOptions = {
@@ -2877,6 +3028,7 @@ export async function addTeamCalendarUrl(teamId: string, url: string, user: Auth
 
   const calendarUrls = [...existingUrls, validation.url];
   await saveTeamCalendarUrls(normalizedTeamId, calendarUrls);
+  invalidateParentScheduleCaches(user);
   return { calendarUrls, added: true };
 }
 
@@ -2909,6 +3061,7 @@ export async function removeTeamCalendarUrl(teamId: string, url: string, user: A
   }
 
   await saveTeamCalendarUrls(normalizedTeamId, calendarUrls);
+  invalidateParentScheduleCaches(user);
   return { calendarUrls, removed: true };
 }
 
@@ -3048,92 +3201,26 @@ export async function loadOpponentStatsForGame(teamId: string, gameId: string): 
   }, {});
 }
 
-function getProfileArray(profile: Record<string, unknown>, key: string) {
-  const value = profile[key];
-  return Array.isArray(value) ? value : [];
-}
-
-function getUserArray(user: AuthUser, key: keyof AuthUser | 'parentTeamIds' | 'parentPlayerKeys') {
-  const value = (user as any)[key];
-  return Array.isArray(value) ? value : [];
-}
-
-function parseParentPlayerKey(value: unknown) {
-  const raw = compactString(value);
-  const separatorIndex = raw.indexOf('::');
-  if (separatorIndex <= 0 || separatorIndex >= raw.length - 2) return null;
-  const teamId = compactString(raw.slice(0, separatorIndex));
-  const playerId = compactString(raw.slice(separatorIndex + 2));
-  if (!teamId || !playerId) return null;
-  return { teamId, playerId };
-}
-
 function collectParentScopeLinks(user: AuthUser, profile: Record<string, unknown>): ParentScopeLink[] {
-  const linksByKey = new Map<string, ParentScopeLink>();
-
-  const addLink = (link: ParentScopeLink) => {
-    const key = `${link.teamId}::${link.playerId}`;
-    const existing = linksByKey.get(key);
-    if (!existing) {
-      linksByKey.set(key, link);
-      return;
-    }
-    linksByKey.set(key, {
-      ...existing,
-      teamName: existing.teamName || link.teamName,
-      playerName: existing.playerName === 'Player' ? link.playerName : existing.playerName,
-      playerNumber: existing.playerNumber || link.playerNumber,
-      playerPhotoUrl: existing.playerPhotoUrl || link.playerPhotoUrl,
-      hasMetadata: existing.hasMetadata || link.hasMetadata
-    });
-  };
-
-  const addParentOfEntry = (entry: any) => {
-    const teamId = compactString(entry?.teamId);
-    const playerId = compactString(entry?.playerId || entry?.childId);
-    if (!teamId || !playerId) return;
-    const teamName = compactString(entry?.teamName);
-    const playerName = compactString(entry?.playerName || entry?.childName || entry?.name);
-    const playerNumber = compactString(entry?.playerNumber || entry?.number);
-    const playerPhotoUrl = compactString(entry?.playerPhotoUrl || entry?.photoUrl) || null;
-    addLink({
-      teamId,
-      teamName,
-      playerId,
-      playerName: playerName || 'Player',
-      playerNumber,
-      playerPhotoUrl,
-      hasMetadata: Boolean(teamName || playerName || playerNumber || playerPhotoUrl)
-    });
-  };
-
-  const profileParentOf = getProfileArray(profile, 'parentOf');
-  const profileParentPlayerKeys = getProfileArray(profile, 'parentPlayerKeys');
-  const hasProfileScope = profileParentOf.length > 0 || profileParentPlayerKeys.length > 0;
-  const parentOf = hasProfileScope ? profileParentOf : getUserArray(user, 'parentOf');
-  const parentPlayerKeys = profileParentPlayerKeys.length > 0 ? profileParentPlayerKeys : getUserArray(user, 'parentPlayerKeys');
-
-  parentOf.forEach(addParentOfEntry);
-  parentPlayerKeys
-    .map(parseParentPlayerKey)
-    .filter(Boolean)
-    .forEach((parsed) => {
-      addLink({
-        teamId: parsed!.teamId,
-        teamName: '',
-        playerId: parsed!.playerId,
-        playerName: 'Player',
-        hasMetadata: false
-      });
-    });
-
-  return [...linksByKey.values()];
+  return collectCanonicalParentAccessLinks(profile, user).map((link) => ({
+    ...link,
+    playerName: link.playerName || 'Player',
+    hasMetadata: Boolean(
+      link.teamName || link.playerName || link.playerNumber || link.playerPhotoUrl
+    )
+  }));
 }
 
 type ParentScheduleChildrenResult = {
   children: ParentScheduleChild[];
   isPartial: boolean;
+  accessLostTeamIds: string[];
+  accessLostPlayerKeys: string[];
 };
+
+function getParentSchedulePlayerAccessKey(teamId: string, playerId: string) {
+  return JSON.stringify([compactString(teamId), compactString(playerId)]);
+}
 
 async function resolveParentScheduleChildren(
   user: AuthUser,
@@ -3143,10 +3230,12 @@ async function resolveParentScheduleChildren(
   const targetTeamId = compactString(options.targetTeamId);
   const links = collectParentScopeLinks(user, profile)
     .filter((link) => !targetTeamId || link.teamId === targetTeamId);
-  if (!links.length) return { children: [], isPartial: false };
+  if (!links.length) return { children: [], isPartial: false, accessLostTeamIds: [], accessLostPlayerKeys: [] };
 
   const linksByTeam = new Map<string, ParentScopeLink[]>();
   let isPartial = false;
+  const accessLostTeamIds = new Set<string>();
+  const accessLostPlayerKeys = new Set<string>();
   links.forEach((link) => {
     if (!linksByTeam.has(link.teamId)) linksByTeam.set(link.teamId, []);
     linksByTeam.get(link.teamId)?.push(link);
@@ -3155,6 +3244,7 @@ async function resolveParentScheduleChildren(
   const batches = await mapWithConcurrency([...linksByTeam.entries()], parentScheduleTeamConcurrency, async ([teamId, teamLinks]) => {
     const rawTeam = await loadRawTeam(teamId).catch((error) => {
       isPartial = true;
+      if (isTerminalScheduleAccessError(error)) accessLostTeamIds.add(teamId);
       logScheduleWarning('Unable to validate parent-linked team.', 'parent-team-scope-load', error, { teamId });
       return undefined;
     });
@@ -3165,6 +3255,9 @@ async function resolveParentScheduleChildren(
     const linkedPlayers = await mapWithConcurrency(teamLinks, parentSchedulePlayerConcurrency, async (link) => {
       const player = await loadPlayer(teamId, link.playerId).catch((error) => {
         isPartial = true;
+        if (isTerminalScheduleAccessError(error)) {
+          accessLostPlayerKeys.add(getParentSchedulePlayerAccessKey(teamId, link.playerId));
+        }
         logScheduleWarning('Unable to validate parent-linked player.', 'parent-player-scope-load', error, {
           teamId,
           playerId: link.playerId
@@ -3197,12 +3290,21 @@ async function resolveParentScheduleChildren(
       .filter(Boolean) as ParentScheduleChild[];
   });
 
-  return { children: batches.flat(), isPartial };
+  return {
+    children: batches.flat(),
+    isPartial,
+    accessLostTeamIds: [...accessLostTeamIds],
+    accessLostPlayerKeys: [...accessLostPlayerKeys]
+  };
 }
 
 export async function loadParentScheduleChildren(user: AuthUser | null, options: { profile?: Record<string, unknown> } = {}): Promise<ParentScheduleChild[]> {
   if (!user?.uid) return [];
-  const profile = options.profile || await loadProfileDocument(user.uid).catch(() => ({}));
+  const profile = options.profile || await loadProfileDocument(user.uid).catch(() => ({
+    parentOf: [],
+    parentTeamIds: [],
+    parentPlayerKeys: []
+  }));
   const result = await resolveParentScheduleChildren(user, profile as Record<string, unknown>);
   return result.children;
 }
@@ -3219,7 +3321,14 @@ export async function loadParentScheduleScope(user: AuthUser | null): Promise<Pa
   const [profile, initialStaffTeamResult] = await Promise.all([
     loadProfileDocument(user.uid).catch(() => {
       profileLoadPartial = true;
-      return {};
+      // A stale auth shell is not current membership evidence. Presence-aware
+      // empty canonical fields make the failed read incomplete while ensuring
+      // old parentOf/player keys cannot restore a revoked child.
+      return {
+        parentOf: [],
+        parentTeamIds: [],
+        parentPlayerKeys: []
+      };
     }),
     loadStaffTeams(user).catch(() => {
       return { teams: [], isPartial: true, verifiedByHttp: false, httpAttempted: true };
@@ -3297,6 +3406,7 @@ export async function loadParentScheduleScope(user: AuthUser | null): Promise<Pa
     profile: profile as Record<string, unknown>,
     children: childResult.children,
     isPartial,
+    accessLostTeamIds: childResult.accessLostTeamIds,
     staffTeamsPartial: staffTeamResult.isPartial,
     staffTeams: staffTeamResult.teams
       .map((team: any) => {
@@ -3990,7 +4100,12 @@ async function buildTeamSchedule(
   teamId: string,
   teamChildren: ParentScheduleChild[],
   user: AuthUser,
-  options: { includePastGames?: boolean; range?: ScheduleDateRange; onSourcePartial?: () => void } = {}
+  options: {
+    includePastGames?: boolean;
+    range?: ScheduleDateRange;
+    onSourcePartial?: () => void;
+    onSourceKey?: (sourceKey: string | null) => void;
+  } = {}
 ) {
   const events: ParentScheduleEvent[] = [];
   // Default schedule views only need upcoming + recent games; window the games
@@ -4005,16 +4120,21 @@ async function buildTeamSchedule(
     calendarResults: Array<Awaited<ReturnType<typeof fetchAndParseCalendar>>>;
   }> = teamPromise.then(async (team) => {
     if (!team) {
+      options.onSourceKey?.(null);
       return { calendarUrls: [], calendarResults: [] };
     }
     const calendarUrls = Array.isArray(team.calendarUrls) ? team.calendarUrls.map(compactString).filter(Boolean) : [];
+    const sourceKey = await buildTeamScheduleSourceKey(team, calendarUrls);
+    options.onSourceKey?.(sourceKey);
+    if (!sourceKey) options.onSourcePartial?.();
     if (calendarUrls.length > 0) {
-      const calendarResults = await Promise.all(calendarUrls.map(async (calendarUrl: string) => {
+      const calendarResults = await Promise.all(calendarUrls.map(async (calendarUrl: string, calendarSourceIndex: number) => {
         try {
-          return await withCalendarImportSlot(() => fetchAndParseCalendar(calendarUrl));
+          return await withCalendarImportSlot(() => fetchAndParseCalendar(calendarUrl, { teamId }));
         } catch (error) {
-          logScheduleWarning('Unable to load team calendar.', 'team-calendar-load', error, { teamId, calendarUrl });
+          logScheduleWarning('Unable to load team calendar.', 'team-calendar-load', error, { teamId, calendarSourceIndex });
           options.onSourcePartial?.();
+          if (isTerminalScheduleAccessError(error)) options.onSourceKey?.(null);
           return [];
         }
       }));
@@ -4022,16 +4142,25 @@ async function buildTeamSchedule(
     }
     if (team.hasCalendarSources === true) {
       try {
+        const projection = await getPublicTeamCalendarEvents(
+          teamId,
+          getPublicCalendarProjectionRange(gamesRange)
+        );
+        if (!projection.complete || projection.warnings.length > 0) {
+          options.onSourcePartial?.();
+          // Public projection intentionally hides its raw URL set, so a
+          // partial response cannot prove that it is still the same source.
+          options.onSourceKey?.(null);
+        }
         return {
           calendarUrls,
-          calendarResults: [await getPublicTeamCalendarEvents(
-            teamId,
-            getPublicCalendarProjectionRange(gamesRange)
-          )]
+          calendarResults: [projection.events]
         };
       } catch (error) {
         logScheduleWarning('Unable to load projected team calendar.', 'team-calendar-projection-load', error, { teamId });
-        throw error;
+        options.onSourcePartial?.();
+        options.onSourceKey?.(null);
+        return { calendarUrls, calendarResults: [] };
       }
     }
     return { calendarUrls, calendarResults: [] };
@@ -4302,22 +4431,109 @@ async function buildTeamSchedule(
   return events;
 }
 
-export async function loadTeamOverviewSchedule(teamId: string, teamName: string, user: AuthUser | null): Promise<ParentScheduleEvent[]> {
+async function buildTeamScheduleSourceKey(team: Record<string, any>, calendarUrls: string[]) {
+  const normalizedUrls = [...new Set(calendarUrls.map(compactString).filter(Boolean))].sort();
+  if (!normalizedUrls.length) {
+    return team.hasCalendarSources === true
+      ? 'public-projection:v1'
+      : 'no-external-calendar:v1';
+  }
+  try {
+    const subtle = globalThis.crypto?.subtle;
+    if (!subtle) return null;
+    const digest = await subtle.digest(
+      'SHA-256',
+      new TextEncoder().encode(JSON.stringify(normalizedUrls))
+    );
+    const hex = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+    return hex ? `direct-calendar:v1:${hex}` : null;
+  } catch {
+    // The schedule itself can still render, but an unknown source set must
+    // never authorize cache reuse or preservation of an older calendar.
+    return null;
+  }
+}
+
+export function isTerminalScheduleAccessError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const candidate = error as Record<string, any>;
+  if (candidate.type === 'permission' || candidate.type === 'not_found') return true;
+
+  const status = Number(candidate.status);
+  if (status === 401 || status === 403 || status === 404) return true;
+
+  const rawCode = compactString(candidate.code).toLowerCase();
+  const code = rawCode.includes('/') ? rawCode.slice(rawCode.lastIndexOf('/') + 1) : rawCode;
+  if (code === 'permission-denied' || code === 'unauthenticated' || code === 'not-found') return true;
+
+  const message = compactString(candidate.message).toLowerCase();
+  if (
+    message.includes('missing or insufficient permissions')
+    || message.includes('permission denied')
+    || message.includes('permission-denied')
+    || message.includes('not authorized')
+    || message.includes('unauthenticated')
+    || message.includes('you do not have permission')
+    || message.includes('this player is not linked to your account')
+    || message.includes('requested entity was not found')
+    || message.includes('document was not found')
+    || message.includes('document not found')
+  ) {
+    return true;
+  }
+
+  return candidate.cause && candidate.cause !== error
+    ? isTerminalScheduleAccessError(candidate.cause)
+    : false;
+}
+
+export type TeamOverviewScheduleResult = {
+  events: ParentScheduleEvent[];
+  isPartial: boolean;
+  /** True only after current authenticated access to this exact team was resolved. */
+  accessVerified: boolean;
+  /** Authenticated principal for which access was verified; null otherwise. */
+  accessUid: string | null;
+  /** Non-secret fingerprint of the exact external-calendar source state. */
+  sourceKey: string | null;
+};
+
+export async function loadTeamOverviewSchedule(teamId: string, teamName: string, user: AuthUser | null): Promise<TeamOverviewScheduleResult> {
   const normalizedTeamId = compactString(teamId);
-  if (!normalizedTeamId || !user?.uid) return [];
+  const accessUid = compactString(user?.uid);
+  if (!normalizedTeamId || !user || !accessUid) {
+    return { events: [], isPartial: true, accessVerified: false, accessUid: null, sourceKey: null };
+  }
 
   const scope = await loadParentScheduleScope(user);
   const hasTeamAccess = scope.children.some((child) => child.teamId === normalizedTeamId)
     || scope.staffTeams?.some((team) => team.teamId === normalizedTeamId) === true;
-  if (!hasTeamAccess) return [];
+  if (!hasTeamAccess) return { events: [], isPartial: true, accessVerified: false, accessUid: null, sourceKey: null };
 
   const normalizedTeamName = compactString(teamName) || normalizedTeamId;
-  return buildTeamSchedule(normalizedTeamId, [{
-    teamId: normalizedTeamId,
-    teamName: normalizedTeamName,
-    playerId: `staff-team-${normalizedTeamId}`,
-    playerName: normalizedTeamName
-  }], user);
+  let isPartial = false;
+  let sourceKey: string | null = null;
+  try {
+    const events = await buildTeamSchedule(normalizedTeamId, [{
+      teamId: normalizedTeamId,
+      teamName: normalizedTeamName,
+      playerId: `staff-team-${normalizedTeamId}`,
+      playerName: normalizedTeamName
+    }], user, {
+      onSourcePartial: () => {
+        isPartial = true;
+      },
+      onSourceKey: (nextSourceKey) => {
+        sourceKey = nextSourceKey;
+      }
+    });
+    return { events, isPartial: isPartial || !sourceKey, accessVerified: true, accessUid, sourceKey };
+  } catch (error) {
+    logScheduleWarning('Unable to revalidate team overview schedule access.', 'team-overview-schedule-load', error, {
+      teamId: normalizedTeamId
+    });
+    return { events: [], isPartial: true, accessVerified: false, accessUid: null, sourceKey: null };
+  }
 }
 
 async function buildTargetedTeamScheduleEvent(
@@ -4768,9 +4984,12 @@ async function buildParentScheduleTeamChildren(user: AuthUser, profile: Record<s
   const targetTeamId = compactString(options.targetTeamId);
   const delegatedGameId = compactString(options.delegatedGameId);
   const childResult: ParentScheduleChildrenResult = options.parentScope?.children
-    ? {
+      ? {
         children: options.parentScope.children.filter((child) => !targetTeamId || child.teamId === targetTeamId),
-        isPartial: options.parentScope.isPartial === true
+        isPartial: options.parentScope.isPartial === true,
+        accessLostTeamIds: (options.parentScope.accessLostTeamIds || [])
+          .filter((teamId) => !targetTeamId || teamId === targetTeamId),
+        accessLostPlayerKeys: []
       }
     : await resolveParentScheduleChildren(user, profile as Record<string, unknown>, { targetTeamId });
   const children = childResult.children;
@@ -4882,14 +5101,22 @@ async function buildParentScheduleTeamChildren(user: AuthUser, profile: Record<s
     || staffTeams.some((team: any) => compactString(team?.id || team?.teamId) === targetTeamId)
     || delegatedTeamContexts.has(targetTeamId);
   if (targetTeamId && !targetAccessVerified && childResult.isPartial !== true && staffTeamResult.isPartial !== true) {
-    throw new Error('You do not have permission to load this team schedule.');
+    throw Object.assign(new Error('You do not have permission to load this team schedule.'), {
+      code: 'permission-denied',
+      status: 403
+    });
   }
+  const verifiedTeamIds = new Set([
+    ...children.map((child) => child.teamId),
+    ...staffTeams.map((team: any) => compactString(team?.id || team?.teamId)).filter(Boolean)
+  ]);
   return {
     children,
     byTeam,
     staffTeams,
     delegatedTeamContexts,
     targetAccessVerified,
+    accessLostTeamIds: childResult.accessLostTeamIds.filter((teamId) => !verifiedTeamIds.has(teamId)),
     isParentScopePartial: targetTeamId && targetAccessVerified
       ? false
       : childResult.isPartial || staffTeamResult.isPartial
@@ -4897,10 +5124,10 @@ async function buildParentScheduleTeamChildren(user: AuthUser, profile: Record<s
 }
 
 /**
- * Resolve already-cached schedule events for a route target from the parent
- * schedule summary cache, so ScheduleEventDetail can warm-start from known data
- * instead of showing a cold full-page skeleton (#2649). Returns every matching
- * child-event row for the event.
+ * A persisted schedule summary is display data, not current authorization
+ * evidence. Event detail must wait for its authoritative scoped read before it
+ * renders any private row, so a cross-client membership revocation cannot be
+ * bypassed by a fresh-looking DB-event cache.
  */
 export function resolveCachedParentScheduleEvents(
   userId: string,
@@ -4913,12 +5140,11 @@ export function resolveCachedParentScheduleEvents(
     return [];
   }
   const cached = getCachedAppData<ParentScheduleLoadResult>(getParentScheduleSummaryCacheKey(userId));
-  if (!cached?.events?.length) {
-    return [];
+  if (cached) {
+    invalidateCachedAppData(getParentScheduleSummaryCacheKey(userId));
+    invalidateCachedAppData(getParentHomeSecondaryCacheKey(userId));
   }
-  return cached.events.filter(
-    (event) => event.teamId === normalizedTeamId && event.id === normalizedEventId
-  );
+  return [];
 }
 
 export async function loadParentScheduleEventDetail(user: AuthUser | null, options: ParentScheduleEventDetailLoadOptions): Promise<ParentScheduleLoadResult> {
@@ -4940,11 +5166,15 @@ export async function loadParentScheduleEventDetail(user: AuthUser | null, optio
 
   try {
     const profile = await loadProfileDocument(user.uid);
-    const { children, byTeam, staffTeams, delegatedTeamContexts } = await buildParentScheduleTeamChildren(user, profile as Record<string, unknown>, {
+    const teamScope = await buildParentScheduleTeamChildren(user, profile as Record<string, unknown>, {
       expandStaffPlayers,
       targetTeamId: requestedTeamId,
       delegatedGameId: requestedEventId
     });
+    const { children, byTeam, staffTeams, delegatedTeamContexts } = teamScope;
+    if (!teamScope.targetAccessVerified && teamScope.isParentScopePartial) {
+      throw createIncompleteScheduleAccessError();
+    }
     const teamChildren = byTeam.get(requestedTeamId) || [];
 
     if (!teamChildren.length) {
@@ -4954,6 +5184,7 @@ export async function loadParentScheduleEventDetail(user: AuthUser | null, optio
 
     let fallback = false;
     let sourcePartial = false;
+    let sourceKey: string | null = null;
     let teamEventRows: number | undefined;
     const delegatedTeamContext = delegatedTeamContexts.get(requestedTeamId) || null;
     let events = await buildTargetedTeamScheduleEvent(
@@ -4971,6 +5202,9 @@ export async function loadParentScheduleEventDetail(user: AuthUser | null, optio
         includePastGames: true,
         onSourcePartial: () => {
           sourcePartial = true;
+        },
+        onSourceKey: (nextSourceKey) => {
+          sourceKey = nextSourceKey;
         }
       });
       teamEventRows = teamEvents.length;
@@ -5008,7 +5242,12 @@ export async function loadParentScheduleEventDetail(user: AuthUser | null, optio
       eventRows: events.length,
       fallback
     });
-    return { children, events, isPartial: sourcePartial };
+    return {
+      children,
+      events,
+      sourceKeysByTeam: sourceKey ? { [requestedTeamId]: sourceKey } : {},
+      isPartial: sourcePartial || (fallback && !sourceKey)
+    };
   } catch (error: any) {
     timer.end({ hydrateDetails, expandStaffPlayers, teamId: requestedTeamId, eventId: requestedEventId, error: error?.message || 'Unable to load schedule event detail.' });
     throw error;
@@ -5028,18 +5267,38 @@ export async function loadParentPlayerSchedule(user: AuthUser | null, options: P
 
   try {
     const profile = await loadProfileDocument(user.uid);
-    const { children } = await resolveParentScheduleChildren(user, profile as Record<string, unknown>);
+    const scope = await resolveParentScheduleChildren(user, profile as Record<string, unknown>, {
+      targetTeamId: requestedTeamId || undefined
+    });
+    const { children } = scope;
+    let scopeIsPartial = scope.isPartial;
+    const accessLostTeamIds = new Set(scope.accessLostTeamIds);
+    let requestedPlayerAccessLost = Boolean(
+      requestedTeamId
+      && scope.accessLostPlayerKeys.includes(getParentSchedulePlayerAccessKey(requestedTeamId, requestedPlayerId))
+    );
     let child = (requestedTeamId && requestedPlayerId)
       ? children.find((entry) => entry.teamId === requestedTeamId && entry.playerId === requestedPlayerId)
       : children.find((entry) => entry.playerId === requestedPlayerId);
 
     if (!child && requestedTeamId) {
-      const team = await loadTeam(requestedTeamId).catch(() => null);
+      const team = await loadTeam(requestedTeamId).catch((error) => {
+        scopeIsPartial = true;
+        if (isTerminalScheduleAccessError(error)) accessLostTeamIds.add(requestedTeamId);
+        return null;
+      });
       const teamWithId = team ? { ...team, id: team.id || requestedTeamId } : null;
       if (teamWithId && isTeamStaff(teamWithId, user)) {
-        const player = (await loadPlayers(requestedTeamId).catch(() => []))
+        accessLostTeamIds.delete(requestedTeamId);
+        const player = (await loadPlayers(requestedTeamId).catch((error) => {
+          scopeIsPartial = true;
+          if (isTerminalScheduleAccessError(error)) requestedPlayerAccessLost = true;
+          return [];
+        }))
           .find((entry: any) => compactString(entry?.id) === requestedPlayerId && isActiveRosterPlayer(entry));
         if (player) {
+          accessLostTeamIds.delete(requestedTeamId);
+          requestedPlayerAccessLost = false;
           child = {
             teamId: requestedTeamId,
             teamName: compactString(teamWithId.name) || requestedTeamId,
@@ -5052,17 +5311,38 @@ export async function loadParentPlayerSchedule(user: AuthUser | null, options: P
     }
 
     if (!child) {
+      const accessLost = Boolean(
+        requestedTeamId
+        && (accessLostTeamIds.has(requestedTeamId) || requestedPlayerAccessLost)
+      );
+      const isPartial = scopeIsPartial || accessLost;
       timer.end({ hydrateDetails, teamId: requestedTeamId || null, playerId: requestedPlayerId, childLinks: children.length, eventRows: 0 });
-      return { children, events: [] };
+      return {
+        children,
+        events: [],
+        sourceKeysByTeam: requestedTeamId ? { [requestedTeamId]: null } : {},
+        partialTeamIds: isPartial && requestedTeamId ? [requestedTeamId] : [],
+        pendingTeamIds: [],
+        teamLoadStates: isPartial && requestedTeamId
+          ? { [requestedTeamId]: accessLost ? 'access-lost' : 'failed' }
+          : {},
+        accessLostTeamIds: accessLost && requestedTeamId ? [requestedTeamId] : [],
+        scopeIsPartial: scopeIsPartial,
+        isPartial
+      };
     }
 
     // The player view only renders upcoming events plus a small recent-history
     // window. Keep this read bounded so long-lived teams do not scan every game
     // document before the player profile can open.
     let sourcePartial = false;
+    let sourceKey: string | null = null;
     const events = await buildTeamSchedule(child.teamId, [child], user, {
       onSourcePartial: () => {
         sourcePartial = true;
+      },
+      onSourceKey: (nextSourceKey) => {
+        sourceKey = nextSourceKey;
       }
     });
     const authoritativeEvents = hydrateDetails && events.length
@@ -5077,7 +5357,17 @@ export async function loadParentPlayerSchedule(user: AuthUser | null, options: P
       childLinks: children.length,
       eventRows: events.length
     });
-    return { children, events, isPartial: sourcePartial };
+    return {
+      children,
+      events,
+      sourceKeysByTeam: sourceKey ? { [child.teamId]: sourceKey } : {},
+      partialTeamIds: sourcePartial || !sourceKey ? [child.teamId] : [],
+      pendingTeamIds: [],
+      teamLoadStates: {
+        [child.teamId]: sourcePartial || !sourceKey ? 'external-partial' : 'complete'
+      },
+      isPartial: sourcePartial || !sourceKey
+    };
   } catch (error: any) {
     timer.end({ hydrateDetails, teamId: requestedTeamId || null, playerId: requestedPlayerId, error: error?.message || 'Unable to load player schedule.' });
     throw error;
@@ -5099,34 +5389,20 @@ export async function resolveParentGameRoute(user: AuthUser | null, gameId: stri
 
   const timer = startUxTimer('parent game route resolve');
   const expandStaffPlayers = options.expandStaffPlayers === true;
-  const cachedSchedule = getCachedAppData<ParentScheduleLoadResult>(getParentScheduleSummaryCacheKey(user.uid));
-  const cachedMatch = (cachedSchedule?.events || []).find((event) => (
-    compactString(event?.id) === requestedGameId
-    && event?.type === 'game'
-    && compactString(event?.teamId)
-    && (!requestedTeamId || compactString(event?.teamId) === requestedTeamId)
-  ));
-
-  if (cachedMatch) {
-    const childId = compactString(cachedMatch.childId);
-    const resolution = {
-      teamId: compactString(cachedMatch.teamId),
-      eventId: requestedGameId,
-      childId: childId && !childId.startsWith(`staff-team-${compactString(cachedMatch.teamId)}`) ? childId : null,
-      cachedEvent: cachedMatch
-    };
-    timer.end({ gameId: requestedGameId, expandStaffPlayers, cacheHit: true, matched: true });
-    return resolution;
-  }
 
   try {
     const profile = await loadProfileDocument(user.uid);
-    const { children, byTeam, staffTeams } = await buildParentScheduleTeamChildren(user, profile as Record<string, unknown>, {
+    const teamScope = await buildParentScheduleTeamChildren(user, profile as Record<string, unknown>, {
       expandStaffPlayers,
       targetTeamId: requestedTeamId || undefined,
       delegatedGameId: requestedGameId
     });
+    const { children, byTeam, staffTeams } = teamScope;
+    if (requestedTeamId && !teamScope.targetAccessVerified && teamScope.isParentScopePartial) {
+      throw createIncompleteScheduleAccessError();
+    }
     const teamEntries = [...byTeam.entries()];
+    let routeReadFailure: unknown = null;
 
     const matches = await mapWithConcurrency(teamEntries, parentScheduleTeamConcurrency, async ([teamId, teamChildren]) => {
       try {
@@ -5142,12 +5418,19 @@ export async function resolveParentGameRoute(user: AuthUser | null, gameId: stri
           childId
         };
       } catch (error) {
+        routeReadFailure ||= error;
         logScheduleWarning('Failed to resolve game route for team.', 'parent-game-route-resolve', error, { teamId, gameId: requestedGameId });
         return null;
       }
     });
 
     const resolution = matches.find(Boolean) || null;
+    if (!resolution && routeReadFailure) {
+      throw routeReadFailure;
+    }
+    if (!resolution && teamScope.isParentScopePartial) {
+      throw createIncompleteScheduleAccessError();
+    }
     timer.end({ gameId: requestedGameId, expandStaffPlayers, cacheHit: false, childLinks: children.length, teams: byTeam.size, staffTeams: staffTeams.length, matched: Boolean(resolution) });
     return resolution;
   } catch (error: any) {
@@ -5177,7 +5460,7 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
       : options.nativeProfileLoader
         ? await options.nativeProfileLoader()
         : await loadProfileDocument(user.uid);
-    const { children, byTeam, staffTeams, isParentScopePartial, targetAccessVerified } = await buildParentScheduleTeamChildren(user, profile as Record<string, unknown>, {
+    const { children, byTeam, staffTeams, isParentScopePartial, targetAccessVerified, accessLostTeamIds } = await buildParentScheduleTeamChildren(user, profile as Record<string, unknown>, {
       ...options,
       expandStaffPlayers,
       parentScope: canReuseParentScope ? options.parentScope : undefined
@@ -5197,18 +5480,46 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
       events: ParentScheduleEvent[];
       error: ReturnType<typeof toAppServiceError> | null;
       isPartial: boolean;
+      sourceKey: string | null;
+      loadState: Exclude<ParentScheduleTeamLoadState, 'pending'>;
     }> = [];
+    const teamEntries = [...byTeam.entries()];
     const emitPartial = () => {
       if (!options.onPartial) return;
       const partialEvents = completedTeamResults
         .flatMap((result) => result.events)
         .sort((a, b) => a.date.getTime() - b.date.getTime());
       applySessionRsvpState(partialEvents, user.uid);
+      const sourceKeysByTeam = Object.fromEntries(
+        [
+          ...completedTeamResults.map((result) => [result.teamId, result.sourceKey] as const),
+          ...accessLostTeamIds.map((teamId) => [teamId, null] as const)
+        ]
+      );
+      const completedTeamIds = new Set(completedTeamResults.map((result) => result.teamId));
+      const pendingTeamIds = teamEntries
+        .map(([teamId]) => teamId)
+        .filter((teamId) => !completedTeamIds.has(teamId));
+      const partialTeamIds = [...new Set([
+        ...completedTeamResults.filter((result) => result.isPartial).map((result) => result.teamId),
+        ...accessLostTeamIds
+      ])];
+      const teamLoadStates = Object.fromEntries([
+        ...completedTeamResults.map((result) => [result.teamId, result.loadState] as const),
+        ...pendingTeamIds.map((teamId) => [teamId, 'pending'] as const),
+        ...accessLostTeamIds.map((teamId) => [teamId, 'access-lost'] as const)
+      ]);
       try {
         options.onPartial({
           children,
           events: partialEvents,
           staffTeams: staffTeamSummaries,
+          sourceKeysByTeam,
+          scopeIsPartial: isParentScopePartial,
+          partialTeamIds,
+          pendingTeamIds,
+          teamLoadStates,
+          accessLostTeamIds,
           isPartial: true
         });
       } catch (error) {
@@ -5220,37 +5531,48 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
     // known, without waiting for every team's games and practices to finish.
     emitPartial();
 
-    const teamEntries = [...byTeam.entries()];
     const teamResults = await mapWithConcurrency(teamEntries, parentScheduleTeamConcurrency, async ([teamId, teamChildren]) => {
+      let sourcePartial = false;
+      let sourceKey: string | null = null;
       let result: {
         teamId: string;
         events: ParentScheduleEvent[];
         error: ReturnType<typeof toAppServiceError> | null;
         isPartial: boolean;
+        sourceKey: string | null;
+        loadState: Exclude<ParentScheduleTeamLoadState, 'pending'>;
       };
       try {
-        let sourcePartial = false;
         const teamEvents = await buildTeamSchedule(teamId, teamChildren, user, {
           includePastGames,
           range: scheduleRangeByTeam?.[teamId],
           onSourcePartial: () => {
             sourcePartial = true;
+          },
+          onSourceKey: (nextSourceKey) => {
+            sourceKey = nextSourceKey;
           }
         });
         result = {
           teamId,
           events: teamEvents,
           error: null,
-          isPartial: sourcePartial
+          isPartial: sourcePartial || !sourceKey,
+          sourceKey,
+          loadState: sourcePartial || !sourceKey ? 'external-partial' : 'complete'
         };
       } catch (error) {
         const appError = toAppServiceError(error, 'Unable to load schedule.');
         logScheduleWarning('Failed to load team schedule.', 'team-schedule-load', error, { teamId });
+        const accessLost = isTerminalScheduleAccessError(error);
+        if (accessLost) sourceKey = null;
         result = {
           teamId,
           events: [] as ParentScheduleEvent[],
           error: appError,
-          isPartial: true
+          isPartial: true,
+          sourceKey,
+          loadState: accessLost ? 'access-lost' : 'failed'
         };
       }
       completedTeamResults.push(result);
@@ -5276,6 +5598,20 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
       : [];
     finalizeSessionRsvpHydration(events, authoritativeEvents, user.uid);
     const isPartial = isParentScopePartial || teamResults.some((result) => result.isPartial);
+    const sourceKeysByTeam = Object.fromEntries(
+      [
+        ...teamResults.map((result) => [result.teamId, result.sourceKey] as const),
+        ...accessLostTeamIds.map((teamId) => [teamId, null] as const)
+      ]
+    );
+    const partialTeamIds = [...new Set([
+      ...teamResults.filter((result) => result.isPartial).map((result) => result.teamId),
+      ...accessLostTeamIds
+    ])];
+    const teamLoadStates = Object.fromEntries([
+      ...teamResults.map((result) => [result.teamId, result.loadState] as const),
+      ...accessLostTeamIds.map((teamId) => [teamId, 'access-lost'] as const)
+    ]);
     timer.end({
       hydrateDetails,
       expandStaffPlayers,
@@ -5285,7 +5621,18 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
       eventRows: events.length,
       isPartial
     });
-    return { children, events, staffTeams: staffTeamSummaries, isPartial };
+    return {
+      children,
+      events,
+      staffTeams: staffTeamSummaries,
+      sourceKeysByTeam,
+      scopeIsPartial: isParentScopePartial,
+      partialTeamIds,
+      pendingTeamIds: [],
+      teamLoadStates,
+      accessLostTeamIds,
+      isPartial
+    };
   } catch (error: any) {
     timer.end({ hydrateDetails, expandStaffPlayers, error: error?.message || 'Unable to load parent schedule.' });
     throw error;
@@ -8194,7 +8541,7 @@ export async function markParentPracticePacketComplete(packet: ParentPracticePac
   if (!child?.id) {
     throw new Error('Select a child before marking complete.');
   }
-  await ensureParentTeamAccess(user, packet.teamId);
+  await ensureParentTeamAccess(user, packet.teamId, child.id);
   const payload = buildPracticePacketCompletionPayloadBase({
     currentUserId: user.uid,
     currentUser: user,
@@ -8247,28 +8594,31 @@ function assertRideshareEvent(event: ParentScheduleEvent) {
   }
 }
 
-async function ensureParentTeamAccess(user: AuthUser, teamId: string) {
+async function ensureParentTeamAccess(user: AuthUser, teamId: string, playerId?: string) {
   if (!user?.uid || !teamId) return;
-  const profile = await loadProfileDocument(user.uid) as Record<string, any>;
-  const existingTeamIds = Array.isArray(profile.parentTeamIds) ? profile.parentTeamIds : [];
-  const parentOf = Array.isArray(profile.parentOf) ? profile.parentOf : Array.isArray(user.parentOf) ? user.parentOf : [];
-  const parentTeamIds = [...new Set([...existingTeamIds, teamId].filter(Boolean))];
-  const parentPlayerKeys = [...new Set(parentOf
-    .map((link: any) => link?.teamId && (link?.playerId || link?.childId) ? `${link.teamId}::${link.playerId || link.childId}` : '')
-    .filter(Boolean))];
-  const currentParentPlayerKeys = Array.isArray(profile.parentPlayerKeys) ? profile.parentPlayerKeys : [];
-  const teamsChanged = parentTeamIds.length !== existingTeamIds.length ||
-    parentTeamIds.some((id) => !existingTeamIds.includes(id));
-  const keysChanged = parentPlayerKeys.length !== currentParentPlayerKeys.length ||
-    parentPlayerKeys.some((key) => !currentParentPlayerKeys.includes(key));
-
-  if (teamsChanged || keysChanged) {
-    await saveProfileDocument(user.uid, {
-      ...profile,
-      parentTeamIds,
-      parentPlayerKeys
-    } as any);
+  let profile: Record<string, unknown> | null = null;
+  let profileLoadError: unknown = null;
+  try {
+    profile = await loadProfileDocument(user.uid) as Record<string, unknown> | null;
+  } catch (error) {
+    profileLoadError = error;
   }
+  if (profile) {
+    const parentLinks = collectCanonicalParentAccessLinks(profile);
+    const hasTeamAccess = isCanonicalParentTeamLinked(profile, teamId);
+    const hasPlayerAccess = !playerId || parentLinks.some((link) => (
+      link.teamId === compactString(teamId) && link.playerId === compactString(playerId)
+    ));
+    if (hasTeamAccess && hasPlayerAccess) return;
+  }
+
+  const team = await loadRawTeam(teamId).catch(() => null);
+  if (team && isTeamStaff({ ...team, id: compactString((team as any).id) || teamId }, user)) return;
+  if (profileLoadError) throw createIncompleteScheduleAccessError();
+  throw Object.assign(new Error('You do not have permission to update this team schedule.'), {
+    code: 'permission-denied',
+    status: 403
+  });
 }
 
 async function nativeCreateRideOfferForEvent(event: ParentScheduleEvent, user: AuthUser, input: RideOfferInput) {
@@ -8426,6 +8776,7 @@ export async function requestParentScheduleRideSpot(event: ParentScheduleEvent, 
   if (!child.childId) {
     throw new Error('Select a child first.');
   }
+  await ensureParentTeamAccess(user, event.teamId, child.childId);
   const gameId = getRideOfferGameId(event, offer);
   const payload = {
     childId: child.childId,

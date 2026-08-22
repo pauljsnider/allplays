@@ -716,6 +716,24 @@ describe('hydrateFirebaseUser', () => {
     expect(hydrated.user.email).toBe('');
   });
 
+  it('preserves canonical-field absence for a legacy parentOf-only profile', async () => {
+    legacyAuthMocks.getUserProfile.mockResolvedValue({
+      email: 'parent@example.com',
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1', playerName: 'Legacy Child' }]
+    });
+
+    const hydrated = await hydrateFirebaseUser({
+      uid: 'parent-1',
+      email: 'parent@example.com'
+    });
+
+    expect(hydrated.user.parentOf).toEqual([
+      expect.objectContaining({ teamId: 'team-1', playerId: 'player-1' })
+    ]);
+    expect(hydrated.user).not.toHaveProperty('parentTeamIds');
+    expect(hydrated.user).not.toHaveProperty('parentPlayerKeys');
+  });
+
   it('marks auth identity data as fallback when the profile document cannot be loaded', async () => {
     legacyAuthMocks.getUserProfile.mockRejectedValue(new Error('profile unavailable'));
     profileRestMocks.loadAuthProfileViaRest.mockRejectedValue(new Error('REST profile unavailable'));
@@ -727,6 +745,32 @@ describe('hydrateFirebaseUser', () => {
 
     expect(hydrated.profile).toEqual(expect.objectContaining({ email: 'coach@example.com' }));
     expect(hydrated.profileHydration).toBe('fallback');
+  });
+
+  it('does not mint parent grants from historical requests when current profile hydration fails', async () => {
+    legacyAuthMocks.getUserProfile.mockRejectedValue(new Error('profile unavailable'));
+    profileRestMocks.loadAuthProfileViaRest.mockRejectedValue(new Error('REST profile unavailable'));
+    legacyAuthMocks.listMyParentMembershipRequests.mockResolvedValue([
+      { status: 'approved', teamId: 'team-revoked', playerId: 'player-revoked' }
+    ]);
+    parentMembershipMocks.mergeApprovedParentMembershipRequests.mockReturnValue({
+      changed: true,
+      userUpdate: {
+        parentTeamIds: ['team-revoked'],
+        parentPlayerKeys: ['team-revoked::player-revoked'],
+        parentOf: [{ teamId: 'team-revoked', playerId: 'player-revoked' }]
+      }
+    });
+
+    const hydrated = await hydrateFirebaseUser({
+      uid: 'parent-1',
+      email: 'parent@example.com'
+    });
+
+    expect(hydrated.profileHydration).toBe('fallback');
+    expect(parentMembershipMocks.mergeApprovedParentMembershipRequests).not.toHaveBeenCalled();
+    expect(legacyAuthMocks.updateUserProfile).not.toHaveBeenCalled();
+    expect(hydrated.user.parentOf).toEqual([]);
   });
 
   it('queries owned teams and merges them when the stored coachOf list is already non-empty', async () => {

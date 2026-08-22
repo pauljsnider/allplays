@@ -1,4 +1,8 @@
 const crypto = require('node:crypto');
+const {
+    mergeCanonicalParentAccess,
+    resolveCanonicalParentAccess
+} = require('./parent-access-core.cjs');
 
 function normalizeEmail(value) {
     return String(value || '').trim().toLowerCase();
@@ -116,17 +120,6 @@ function uniqueParentLinks(values = []) {
     return links;
 }
 
-function mergeParentLinks(destinationLinks = [], sourceLinks = []) {
-    const byKey = new Map();
-    [...destinationLinks, ...sourceLinks].forEach((link) => {
-        if (!link || typeof link !== 'object') return;
-        const key = parentLinkKey(link);
-        if (key === '::') return;
-        byKey.set(key, { ...(byKey.get(key) || {}), ...link });
-    });
-    return [...byKey.values()];
-}
-
 function mergePreferenceValue(destinationValue, sourceValue) {
     if (Array.isArray(destinationValue) || Array.isArray(sourceValue)) {
         return uniqueValues(
@@ -152,18 +145,10 @@ function mergePreferenceObjects(destinationPrefs = {}, sourcePrefs = {}) {
 }
 
 function buildMergedParentAccount(destination = {}, source = {}) {
-    const parentOf = mergeParentLinks(destination.parentOf, source.parentOf);
-    const derivedKeys = parentOf
-        .map((link) => parentLinkKey(link))
-        .filter((key) => key !== '::');
-    const derivedTeamIds = parentOf
-        .map((link) => link?.teamId)
-        .filter(Boolean);
+    const parentAccess = mergeCanonicalParentAccess(destination, source);
 
     const update = {
-        parentOf,
-        parentTeamIds: uniqueValues(destination.parentTeamIds || [], source.parentTeamIds || [], derivedTeamIds),
-        parentPlayerKeys: uniqueValues(destination.parentPlayerKeys || [], source.parentPlayerKeys || [], derivedKeys),
+        ...parentAccess,
         roles: uniqueValues(destination.roles || [], source.roles || [])
     };
 
@@ -227,12 +212,13 @@ function isVerifiedAccountMergeRequest(request = {}, { sourceUid, destinationUid
 }
 
 function accountSnapshot(uid, user = {}) {
+    const parentAccess = resolveCanonicalParentAccess(user);
     return {
         uid,
         email: normalizeEmail(user.email || user.profileEmail),
-        parentOf: uniqueParentLinks(user.parentOf),
-        parentTeamIds: uniqueStrings(user.parentTeamIds),
-        parentPlayerKeys: uniqueStrings(user.parentPlayerKeys),
+        parentOf: uniqueParentLinks(parentAccess.parentLinks),
+        parentTeamIds: uniqueStrings(parentAccess.parentTeamIds),
+        parentPlayerKeys: uniqueStrings(parentAccess.parentPlayerKeys),
         roles: uniqueStrings(user.roles)
     };
 }

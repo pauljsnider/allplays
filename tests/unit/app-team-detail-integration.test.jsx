@@ -172,9 +172,38 @@ function model() {
             columnNames: ['PTS', 'REB', 'AST', 'STL'],
             assignedUpcomingGames: [{ gameId: 'game-1', title: 'vs. Falcons', date: nextDate }]
         }],
+        scheduleIsPartial: false,
+        scheduleAccessVerified: true,
+        scheduleAccessUserId: 'user-1',
+        scheduleSourceKey: 'no-external-calendar:v1',
         canManageTeam: false,
         staffPermissions: null,
         counts: { games: 8, practices: 3, completedGames: 7 }
+    };
+}
+
+function scheduleResultForModel(detailModel) {
+    return {
+        children: [{
+            teamId: detailModel.team.id,
+            teamName: detailModel.team.name,
+            playerId: 'player-1',
+            playerName: 'Pat Star'
+        }],
+        staffTeams: [],
+        events: [...detailModel.upcomingEvents, ...detailModel.recentResults].map((event) => ({
+            ...event,
+            eventKey: `${detailModel.team.id}::${event.id}::player-1`,
+            teamId: detailModel.team.id,
+            teamName: detailModel.team.name,
+            childId: 'player-1',
+            childName: 'Pat Star',
+            assignments: []
+        })),
+        sourceKeysByTeam: {
+            [detailModel.team.id]: detailModel.scheduleSourceKey
+        },
+        isPartial: false
     };
 }
 
@@ -295,11 +324,7 @@ beforeEach(() => {
     publicActionMocks.copyPublicText.mockResolvedValue('copied');
     publicActionMocks.sharePublicUrl.mockResolvedValue('copied');
     parentToolsMocks.buildPrivateTeamCalendarFeedUrl.mockReturnValue('https://feed.example.test/private-team.ics?teamId=team-1&token=abc123');
-    scheduleServiceMocks.loadParentSchedule.mockResolvedValue({
-        children: [],
-        events: [],
-        staffTeams: []
-    });
+    scheduleServiceMocks.loadParentSchedule.mockImplementation(async () => scheduleResultForModel(model()));
     scheduleServiceMocks.loadPreview.mockResolvedValue({
         missingPlayerCount: 0,
         eligibleEmailCount: 0,
@@ -487,6 +512,7 @@ describe('React app TeamDetail page', () => {
         managerModel.team.name = 'Bears & Wolves';
         teamDetailMocks.loadParentTeamDetailBootstrap.mockResolvedValueOnce(managerModel);
         teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(managerModel);
+        scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(scheduleResultForModel(managerModel));
 
         const { container } = await renderTeamDetail();
 
@@ -608,6 +634,7 @@ describe('React app TeamDetail page', () => {
         managerModel.staffPermissions = null;
         teamDetailMocks.loadParentTeamDetailBootstrap.mockResolvedValueOnce(managerModel);
         teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(managerModel);
+        scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(scheduleResultForModel(managerModel));
         let resolveStaffPermissions;
         teamDetailMocks.loadTeamStaffPermissions.mockImplementationOnce(() => new Promise((resolve) => {
             resolveStaffPermissions = resolve;
@@ -792,6 +819,7 @@ describe('React app TeamDetail page', () => {
         managerModel.nextEvent = managerModel.upcomingEvents[0];
         teamDetailMocks.loadParentTeamDetailBootstrap.mockResolvedValueOnce(managerModel);
         teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(managerModel);
+        scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(scheduleResultForModel(managerModel));
         scheduleServiceMocks.loadPreview.mockResolvedValueOnce({
             missingPlayerCount: 3,
             eligibleEmailCount: 4,
@@ -861,6 +889,7 @@ describe('React app TeamDetail page', () => {
         }];
         teamDetailMocks.loadParentTeamDetailBootstrap.mockResolvedValueOnce(managerModel);
         teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(managerModel);
+        scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(scheduleResultForModel(managerModel));
 
         const { container } = await renderTeamDetail(managerAuth);
         await clickButton(container, 'Schedule');
@@ -918,6 +947,7 @@ describe('React app TeamDetail page', () => {
         emptyModel.counts = { games: 0, practices: 0, completedGames: 0 };
         teamDetailMocks.loadParentTeamDetailBootstrap.mockResolvedValueOnce(emptyModel);
         teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(emptyModel);
+        scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(scheduleResultForModel(emptyModel));
         teamDetailMocks.loadTeamDetailInsights.mockResolvedValueOnce({ leaderboards: [], trackingSummaries: [] });
         teamDetailMocks.loadTeamDetailSponsors.mockResolvedValueOnce({ sponsors: [] });
 

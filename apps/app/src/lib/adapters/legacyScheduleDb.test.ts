@@ -21,6 +21,7 @@ vi.mock('@legacy/db.js', () => ({
     getPracticeSession: vi.fn(),
     getPracticeSessionByEvent: vi.fn(),
     getPracticeSessions: vi.fn(),
+    getPublicTeamCalendarEvents: vi.fn(),
     getRsvpBreakdownByPlayer: vi.fn(),
     getRsvpSummaries: vi.fn(),
     getRsvps: vi.fn(),
@@ -64,9 +65,9 @@ vi.mock('@legacy/firebase.js', () => ({
     where: vi.fn()
 }));
 
-import { addGame as legacyAddGame, getConfigs as legacyGetConfigs, getTeam as legacyGetTeam, getTeams as legacyGetTeams } from '@legacy/db.js';
+import { addGame as legacyAddGame, getConfigs as legacyGetConfigs, getPublicTeamCalendarEvents as legacyGetPublicTeamCalendarEvents, getTeam as legacyGetTeam, getTeams as legacyGetTeams } from '@legacy/db.js';
 import { collection, doc, getDoc, getDocs, httpsCallable, query, where } from '@legacy/firebase.js';
-import { addGame, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, buildSingleLegacyTournamentGameDocument, getConfigs, getDelegatedTeamContext, getOfficialLinkedTeamIds, getStaffTeams, LegacyTournamentGameAdapterValidationError } from './legacyScheduleDb';
+import { addGame, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, buildSingleLegacyTournamentGameDocument, getConfigs, getDelegatedTeamContext, getOfficialLinkedTeamIds, getPublicTeamCalendarEvents, getStaffTeams, LegacyTournamentGameAdapterValidationError } from './legacyScheduleDb';
 
 const buildValidLegacyGamePayload = (overrides: Record<string, unknown> = {}) => ({
     type: 'game',
@@ -236,6 +237,40 @@ describe('legacyScheduleDb tracker config reads', () => {
         ]);
 
         expect(legacyGetConfigs).toHaveBeenCalledWith('team-1', { limit: 100 });
+    });
+});
+
+describe('legacyScheduleDb public calendar projection reads', () => {
+    it('preserves event rows and explicit incomplete evidence from the legacy boundary', async () => {
+        const event = {
+            id: 'event-1',
+            uid: 'event-1',
+            type: 'practice' as const,
+            dtstart: new Date('2026-08-01T18:00:00.000Z'),
+            dtend: null,
+            summary: 'Practice',
+            location: 'Field 1',
+            status: 'SCHEDULED',
+            isPublicProjection: true as const
+        };
+        vi.mocked(legacyGetPublicTeamCalendarEvents).mockResolvedValueOnce({
+            events: [event],
+            warnings: ['Calendar source 2 could not be loaded.'],
+            complete: false
+        });
+
+        await expect(getPublicTeamCalendarEvents('team-1')).resolves.toEqual({
+            events: [event],
+            warnings: ['Calendar source 2 could not be loaded.'],
+            complete: false
+        });
+    });
+
+    it('rejects a legacy array that omits completeness evidence', async () => {
+        vi.mocked(legacyGetPublicTeamCalendarEvents).mockResolvedValueOnce([]);
+
+        await expect(getPublicTeamCalendarEvents('team-1'))
+            .rejects.toThrow('Public team calendar projection response is invalid.');
     });
 });
 

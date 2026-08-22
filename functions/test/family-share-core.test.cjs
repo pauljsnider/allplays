@@ -114,3 +114,55 @@ test('family share child resolver filters requested keys before bounded profile 
     'team-99::player-99'
   ]);
 });
+
+test('family share child resolution does not restore stale parentOf links after canonical revocation', async () => {
+  const staleLink = { teamId: 'team-1', playerId: 'player-1', playerName: 'Stale Player' };
+
+  for (const profile of [
+    { parentOf: [staleLink], parentTeamIds: [], parentPlayerKeys: [] },
+    { parentOf: [staleLink], parentTeamIds: null, parentPlayerKeys: null },
+    { parentOf: [staleLink], parentTeamIds: ['team-1'] },
+    { parentOf: [staleLink], parentPlayerKeys: ['team-1::player-1::junk'] }
+  ]) {
+    assert.deepEqual(collectOwnerParentLinks(profile), []);
+    const children = await resolveFamilyShareChildrenFromOwnerProfile(profile, {
+      loadTeam: async () => ({ name: 'Private Team' }),
+      loadPlayer: async () => ({ name: 'Private Player' })
+    });
+    assert.deepEqual(children, []);
+  }
+});
+
+test('family share child resolution ignores coerced non-string canonical and legacy ids', () => {
+  assert.deepEqual(collectOwnerParentLinks({
+    parentOf: [{ teamId: 123, playerId: 'player-1' }],
+    parentTeamIds: [123],
+    parentPlayerKeys: [123]
+  }), []);
+  assert.deepEqual(collectOwnerParentLinks({
+    parentOf: [{ teamId: '123', playerId: 'player-1' }],
+    parentTeamIds: [123],
+    parentPlayerKeys: ['123::player-1']
+  }), []);
+});
+
+test('family share child resolution keeps only the exact canonical player on an authorized team', async () => {
+  const profile = {
+    parentOf: [
+      { teamId: 'team-1', playerId: 'player-a', playerName: 'Removed Player' },
+      { teamId: 'team-1', playerId: 'player-b', playerName: 'Current Player' }
+    ],
+    parentTeamIds: ['team-1'],
+    parentPlayerKeys: ['team-1::player-b']
+  };
+
+  assert.deepEqual(
+    collectOwnerParentLinks(profile).map((link) => `${link.teamId}::${link.playerId}`),
+    ['team-1::player-b']
+  );
+  const children = await resolveFamilyShareChildrenFromOwnerProfile(profile, {
+    loadTeam: async () => ({ name: 'Private Team' }),
+    loadPlayer: async (_teamId, playerId) => ({ name: playerId })
+  });
+  assert.deepEqual(children.map((child) => child.playerId), ['player-b']);
+});

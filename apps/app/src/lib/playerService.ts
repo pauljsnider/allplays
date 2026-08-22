@@ -70,10 +70,22 @@ import {
   type RosterProfileValues
 } from './adapters/legacyRosterPrivacy';
 import { getOpenScheduleAssignments, normalizeRsvpResponse, type ParentScheduleEvent } from './scheduleLogic';
-import { loadParentPlayerSchedule, type ParentScheduleChild } from './scheduleService';
+import {
+  loadParentPlayerSchedule,
+  type ParentScheduleChild,
+  type ParentScheduleTeamLoadState
+} from './scheduleService';
 import { clearAppDataCache, loadCachedAppData } from './appDataCache';
 import { createLogger } from './logger';
 import { isNativeRuntime } from './nativeRuntime';
+import {
+  applyCurrentParentAccessProfile,
+  collectCanonicalParentAccessLinks,
+  findCanonicalParentAccessLink,
+  findOnlyCanonicalParentAccessLinkForTeam,
+  isCanonicalParentPlayerLinked,
+  isCanonicalParentTeamLinked
+} from './parentAccessScope';
 import { loadProfileDocument } from './profileService';
 import type { AuthUser } from './types';
 
@@ -210,6 +222,10 @@ export type ParentPlayerDetailData = {
   player: Record<string, any>;
   team: Record<string, any> | null;
   scheduleLoadError: string | null;
+  scheduleIsPartial: boolean;
+  scheduleTeamLoadState: ParentScheduleTeamLoadState;
+  scheduleAccessUserId: string | null;
+  scheduleSourceKey: string | null;
   access: {
     isLinkedParent: boolean;
     isTeamParent: boolean;
@@ -275,7 +291,7 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
   const requestedTeamId = decodeURIComponent(teamId || '');
   const requestedPlayerId = decodeURIComponent(playerId || '');
   let scheduleLoadError: string | null = null;
-  let accessUser = user;
+  let accessUser = await loadUserWithPlayerAccessProfile(user);
   let schedule = await loadParentPlayerSchedule(accessUser, { teamId, playerId }).catch((error) => {
     scheduleLoadError = 'Schedule is temporarily unavailable. Refresh the player to try again.';
     logger.warn('Continuing without player schedule data.', {
@@ -284,23 +300,32 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
       playerId: requestedPlayerId,
       error
     });
-    return { children: [], events: [] };
+    return {
+      children: [],
+      events: [],
+      sourceKeysByTeam: {},
+      teamLoadStates: { [requestedTeamId]: 'failed' as const },
+      isPartial: true
+    };
   });
+  if (schedule.teamLoadStates?.[requestedTeamId] === 'access-lost') {
+    throw Object.assign(new Error('This player is no longer available for your account.'), {
+      code: 'permission-denied',
+      status: 403
+    });
+  }
+  if (schedule.isPartial === true) {
+    scheduleLoadError = 'The complete player schedule could not be loaded. Retry before relying on missing events.';
+  }
   let linkedChild = findLinkedChild(schedule.children, requestedTeamId, requestedPlayerId) || findLinkedParentChild(accessUser, requestedTeamId, requestedPlayerId);
   const initialTeam = await getTeam(requestedTeamId, { includeInactive: true });
   let routeAccess = buildPlayerAccess(accessUser, requestedTeamId, requestedPlayerId, initialTeam);
-  if (!linkedChild && !routeAccess.isLinkedParent && !routeAccess.isTeamStaff) {
-    const hydratedUser = await loadUserWithPlayerAccessProfile(accessUser);
-    if (hydratedUser !== accessUser) {
-      accessUser = hydratedUser;
-      schedule = await loadParentPlayerSchedule(accessUser, { teamId, playerId }).catch(() => schedule);
-      linkedChild = findLinkedChild(schedule.children, requestedTeamId, requestedPlayerId) || findLinkedParentChild(accessUser, requestedTeamId, requestedPlayerId);
-      routeAccess = buildPlayerAccess(accessUser, requestedTeamId, requestedPlayerId, initialTeam);
-    }
-  }
   const canUseScheduleFailureFallback = !!scheduleLoadError && routeAccess.isLinkedParent;
   if (!linkedChild && !canUseScheduleFailureFallback && !routeAccess.isTeamParent && !routeAccess.isTeamStaff) {
-    throw new Error('This player is not linked to your account.');
+    throw Object.assign(new Error('This player is not linked to your account.'), {
+      code: 'permission-denied',
+      status: 403
+    });
   }
 
   const resolvedTeamId = linkedChild?.teamId || requestedTeamId;
@@ -309,6 +334,11 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
     .filter((event) => event.teamId === resolvedTeamId && event.childId === resolvedPlayerId)
     .sort((a, b) => a.date.getTime() - b.date.getTime());
   const nextEvent = events.find((event) => !event.isCancelled && event.date.getTime() >= startOfDay(new Date()).getTime()) || null;
+  const scheduleSourceKeys = schedule.sourceKeysByTeam as Record<string, string | null> | undefined;
+  const scheduleSourceKey = typeof scheduleSourceKeys?.[resolvedTeamId] === 'string'
+    ? scheduleSourceKeys[resolvedTeamId]?.trim() || null
+    : null;
+  const scheduleTeamLoadState = schedule.teamLoadStates?.[resolvedTeamId] || 'failed';
 
   const team = requestedTeamId === resolvedTeamId
     ? initialTeam
@@ -390,6 +420,10 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
     },
     team,
     scheduleLoadError,
+    scheduleIsPartial: schedule.isPartial === true,
+    scheduleTeamLoadState,
+    scheduleAccessUserId: accessUser.uid || null,
+    scheduleSourceKey,
     access,
     customRosterFields,
     events,
@@ -414,7 +448,7 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
       statRows
     }),
     athleteProfile: buildParentAthleteProfileShell(
-      Array.isArray(accessUser.parentOf) ? accessUser.parentOf : [],
+      collectCanonicalParentAccessLinks(accessUser),
       resolvedTeamId,
       resolvedPlayerId
     )
@@ -439,13 +473,14 @@ export async function loadParentPlayerStatsDetail(user: AuthUser | null, teamId:
 }
 
 async function loadParentPlayerStatsDetailUncached(user: AuthUser, teamId: string, playerId: string): Promise<ParentPlayerStatsDetailData> {
+  const accessUser = await loadUserWithPlayerAccessProfile(user);
   const [team, players, games, configs] = await Promise.all([
     getTeam(teamId, { includeInactive: true }),
     getPlayers(teamId, { includeInactive: true }).catch(() => []),
     getGames(teamId).catch(() => []),
     getConfigs(teamId).catch(() => [])
   ]);
-  const access = buildPlayerAccess(user, teamId, playerId, team);
+  const access = buildPlayerAccess(accessUser, teamId, playerId, team);
   if (!access.isLinkedParent && !access.isTeamParent && !access.isTeamStaff) {
     throw new Error('This player is not linked to your account.');
   }
@@ -503,14 +538,15 @@ export async function loadParentPlayerVideoClips(user: AuthUser | null, teamId: 
     throw new Error('Player details require a signed-in user.');
   }
 
-  const schedule = await loadParentPlayerSchedule(user, { teamId, playerId });
+  const accessUser = await loadUserWithPlayerAccessProfile(user);
+  const schedule = await loadParentPlayerSchedule(accessUser, { teamId, playerId });
   const linkedChild = findLinkedChild(schedule.children, teamId, playerId);
   const requestedTeamId = decodeURIComponent(teamId || '');
   const requestedPlayerId = decodeURIComponent(playerId || '');
   const resolvedTeamId = linkedChild?.teamId || requestedTeamId;
   const resolvedPlayerId = linkedChild?.playerId || requestedPlayerId;
   const team = await getTeam(resolvedTeamId, { includeInactive: true });
-  const access = buildPlayerAccess(user, resolvedTeamId, resolvedPlayerId, team);
+  const access = buildPlayerAccess(accessUser, resolvedTeamId, resolvedPlayerId, team);
   if (!linkedChild && !access.isLinkedParent && !access.isTeamParent && !access.isTeamStaff) {
     throw new Error('This player is not linked to your account.');
   }
@@ -527,10 +563,11 @@ export async function loadParentPlayerAthleteProfile(user: AuthUser | null, team
     throw new Error('Player details require a signed-in user.');
   }
 
+  const accessUser = await loadUserWithPlayerAccessProfile(user);
   const profiles = await listAthleteProfilesForParent(user.uid).catch(() => []);
   return buildAthleteProfileData({
     profiles: Array.isArray(profiles) ? profiles : [],
-    parentLinks: Array.isArray(user.parentOf) ? user.parentOf : [],
+    parentLinks: collectCanonicalParentAccessLinks(accessUser),
     teamId,
     playerId
   });
@@ -556,8 +593,9 @@ export async function loadParentPlayerStatTotals(user: AuthUser | null, teamId: 
 
   const requestedTeamId = decodeURIComponent(teamId || '');
   const requestedPlayerId = decodeURIComponent(playerId || '');
+  const accessUser = await loadUserWithPlayerAccessProfile(user);
   const team = await getTeam(requestedTeamId, { includeInactive: true });
-  const access = buildPlayerAccess(user, requestedTeamId, requestedPlayerId, team);
+  const access = buildPlayerAccess(accessUser, requestedTeamId, requestedPlayerId, team);
   if (!access.isLinkedParent && !access.isTeamParent && !access.isTeamStaff) {
     throw new Error('This player is not linked to your account.');
   }
@@ -1584,50 +1622,15 @@ function assertLinkedParent(user: AuthUser | null, teamId: string, playerId: str
 }
 
 function isLinkedParent(user: AuthUser | null, teamId: string, playerId: string) {
-  const normalizedTeamId = safeDecode(teamId);
-  const normalizedPlayerId = safeDecode(playerId);
-  const linkedByParentOf = (user?.parentOf || []).some((entry: any) => (
-    safeDecode(entry?.teamId || entry?.teamID || entry?.team_id || entry?.team) === normalizedTeamId &&
-    [entry?.playerId, entry?.playerID, entry?.player_id, entry?.childId, entry?.childID, entry?.child_id]
-      .some((value) => safeDecode(value) === normalizedPlayerId)
-  ));
-  if (linkedByParentOf) return true;
-
-  const playerKey = `${normalizedTeamId}::${normalizedPlayerId}`;
-  return !!(user?.parentPlayerKeys || []).some((key) => safeDecode(key) === playerKey);
+  return isCanonicalParentPlayerLinked(user, safeDecode(teamId), safeDecode(playerId));
 }
 
 function isParentLinkedToTeam(user: AuthUser | null, teamId: string) {
-  const normalizedTeamId = safeDecode(teamId);
-  if (!normalizedTeamId) return false;
-  const linkedByParentOf = (user?.parentOf || []).some((entry: any) => (
-    safeDecode(entry?.teamId || entry?.teamID || entry?.team_id || entry?.team) === normalizedTeamId
-  ));
-  if (linkedByParentOf) return true;
-
-  const linkedByTeamIds = (user?.parentTeamIds || []).some((value) => safeDecode(value) === normalizedTeamId);
-  if (linkedByTeamIds) return true;
-
-  return !!(user?.parentPlayerKeys || []).some((key) => safeDecode(key).split('::')[0] === normalizedTeamId);
+  return isCanonicalParentTeamLinked(user, safeDecode(teamId));
 }
 
 function isParentOnTeam(user: AuthUser | null, teamId: string) {
-  const normalizedTeamId = safeDecode(teamId);
-  if (!normalizedTeamId) return false;
-
-  if ((user?.parentOf || []).some((entry: any) => safeDecode(entry?.teamId || entry?.teamID || entry?.team_id || entry?.team) === normalizedTeamId)) {
-    return true;
-  }
-
-  if (Array.isArray(user?.parentTeamIds) && user.parentTeamIds.some((value) => safeDecode(value) === normalizedTeamId)) {
-    return true;
-  }
-
-  return !!(user?.parentPlayerKeys || []).some((key) => {
-    const raw = safeDecode(key);
-    const separatorIndex = raw.indexOf('::');
-    return separatorIndex > 0 && raw.slice(0, separatorIndex) === normalizedTeamId;
-  });
+  return isParentLinkedToTeam(user, teamId);
 }
 
 function normalizePlayerFamilyContacts(
@@ -1846,18 +1849,13 @@ function findLinkedChild(children: ParentScheduleChild[], teamId: string, player
 function findLinkedParentChild(user: AuthUser | null, teamId: string, playerId: string): ParentScheduleChild | null {
   const decodedTeamId = safeDecode(teamId);
   const decodedPlayerId = safeDecode(playerId);
-  const playerKey = `${decodedTeamId}::${decodedPlayerId}`;
-  const parentLink = (user?.parentOf || []).find((entry: any) => (
-    safeDecode(entry?.teamId || entry?.teamID || entry?.team_id || entry?.team) === decodedTeamId &&
-    [entry?.playerId, entry?.playerID, entry?.player_id, entry?.childId, entry?.childID, entry?.child_id]
-      .some((value) => safeDecode(value) === decodedPlayerId)
-  ));
-  if (!parentLink && !(user?.parentPlayerKeys || []).some((key) => safeDecode(key) === playerKey)) return null;
+  const parentLink = findCanonicalParentAccessLink(user, decodedTeamId, decodedPlayerId);
+  if (!parentLink) return null;
   return {
     teamId: decodedTeamId,
-    teamName: String((parentLink as any)?.teamName || (parentLink as any)?.team || '').trim(),
+    teamName: parentLink.teamName,
     playerId: decodedPlayerId,
-    playerName: String((parentLink as any)?.playerName || (parentLink as any)?.childName || (parentLink as any)?.name || '').trim()
+    playerName: parentLink.playerName
   };
 }
 
@@ -1866,39 +1864,21 @@ function findOnlyLinkedChildForTeam(children: ParentScheduleChild[], user: AuthU
   const teamChildren = children.filter((child) => safeDecode(child.teamId) === decodedTeamId);
   if (teamChildren.length === 1) return teamChildren[0];
 
-  const parentLinks = (user?.parentOf || [])
-    .filter((entry: any) => safeDecode(entry?.teamId || entry?.teamID || entry?.team_id || entry?.team) === decodedTeamId)
-    .map((entry: any) => ({
-      teamId: decodedTeamId,
-      teamName: String(entry?.teamName || entry?.team || '').trim(),
-      playerId: safeDecode(entry?.playerId || entry?.playerID || entry?.player_id || entry?.childId || entry?.childID || entry?.child_id),
-      playerName: String(entry?.playerName || entry?.childName || entry?.name || '').trim()
-    }))
-    .filter((child) => child.playerId);
-  const keyedChildren = (user?.parentPlayerKeys || [])
-    .map((key) => {
-      const [keyTeamId, keyPlayerId] = safeDecode(key).split('::');
-      return keyTeamId === decodedTeamId && keyPlayerId
-        ? { teamId: decodedTeamId, teamName: '', playerId: keyPlayerId, playerName: '' }
-        : null;
-    })
-    .filter((child): child is ParentScheduleChild => !!child);
-  const childrenByKey = new Map<string, ParentScheduleChild>();
-  [...parentLinks, ...keyedChildren].forEach((child) => {
-    childrenByKey.set(`${child.teamId}::${child.playerId}`, child);
-  });
-  const linkedChildren = [...childrenByKey.values()];
-  return linkedChildren.length === 1 ? linkedChildren[0] : null;
+  const linkedChild = findOnlyCanonicalParentAccessLinkForTeam(user, decodedTeamId);
+  return linkedChild ? {
+    teamId: linkedChild.teamId,
+    teamName: linkedChild.teamName,
+    playerId: linkedChild.playerId,
+    playerName: linkedChild.playerName
+  } : null;
 }
 
 async function loadUserWithPlayerAccessProfile(user: AuthUser): Promise<AuthUser> {
-  const profile = await loadProfileDocument(user.uid).catch(() => null);
+  const profile = await loadProfileDocument(user.uid);
   if (!profile) return user;
+  const parentAccessUser = applyCurrentParentAccessProfile(user, profile as Record<string, unknown>);
   return {
-    ...user,
-    parentOf: mergeProfileArray(user.parentOf, (profile as any).parentOf),
-    parentTeamIds: mergeProfileArray(user.parentTeamIds, (profile as any).parentTeamIds),
-    parentPlayerKeys: mergeProfileArray(user.parentPlayerKeys, (profile as any).parentPlayerKeys),
+    ...parentAccessUser,
     coachOf: mergeProfileArray(user.coachOf, (profile as any).coachOf)
   };
 }

@@ -41,6 +41,7 @@ const {
   hasExactVCalendarBoundaries
 } = require('./calendar-ics-fetch-core.cjs');
 const {
+  FAMILY_SHARE_PROJECTION_INCOMPLETE_WARNING,
   MAX_FAMILY_SHARE_CALENDAR_URLS,
   MAX_FAMILY_SHARE_CHILDREN,
   MAX_FAMILY_SHARE_DB_EVENTS,
@@ -207,6 +208,12 @@ const {
   buildHouseholdAccessRevocationPlan,
   isAcceptedHouseholdAccessCode
 } = require('./household-access-core.cjs');
+const {
+  addCanonicalParentAccessLink,
+  parseParentPlayerKey,
+  removeCanonicalParentAccessLinks,
+  resolveCanonicalParentAccess
+} = require('./parent-access-core.cjs');
 const {
   hashRsvpToken,
   createRawRsvpToken,
@@ -402,7 +409,6 @@ const {
 } = require('./admin-user-search-index-core.cjs');
 const {
   normalizeParentInviteEmail,
-  appendUniqueParentLink,
   appendUniqueValue,
   buildAutoAcceptedParentLink
 } = require('./parent-invite-auto-link-core.cjs');
@@ -4453,25 +4459,19 @@ async function syncPublicUserProfilesForTeamChange(teamId, beforeTeam, afterTeam
 
 function buildApprovedParentMembershipUserUpdate({ userData = {}, requestData = {}, team = {}, player = {} }) {
   const parentLink = {
-    teamId: String(team.id || requestData.teamId || '').trim(),
-    playerId: String(player.id || requestData.playerId || '').trim(),
+    teamId: team.id || requestData.teamId || '',
+    playerId: player.id || requestData.playerId || '',
     teamName: team?.name || requestData.teamName || null,
     playerName: player?.name || requestData.playerName || null,
     playerNumber: player?.number ?? requestData.playerNumber ?? null,
     playerPhotoUrl: player?.photoUrl || requestData.playerPhotoUrl || null,
     relation: requestData.relation || null
   };
-  const parentOf = appendUniqueParentLink(userData.parentOf, parentLink);
-  const parentTeamIds = uniqueNonEmptyStrings(parentOf.map((link) => link?.teamId));
-  const parentPlayerKeys = uniqueNonEmptyStrings(parentOf.map((link) => (
-    link?.teamId && link?.playerId ? `${link.teamId}::${link.playerId}` : ''
-  )));
+  const parentAccess = addCanonicalParentAccessLink(userData, parentLink);
   const roles = appendUniqueValue(userData.roles, 'parent');
 
   return {
-    parentOf,
-    parentTeamIds,
-    parentPlayerKeys,
+    ...parentAccess,
     roles
   };
 }
@@ -4535,22 +4535,16 @@ function isRecentFailedSignupAuthUserRecord(userRecord, nowMillis = Date.now()) 
     isRecentFailedSignupAuthDate(userRecord?.metadata?.createdAt, nowMillis);
 }
 
-function filterInviteCleanupParentLinks(parentOf, cleanupPlayerKeys) {
-  return (Array.isArray(parentOf) ? parentOf : []).filter((link) => {
-    const key = link?.teamId && link?.playerId ? `${link.teamId}::${link.playerId}` : '';
-    return !cleanupPlayerKeys.has(key);
-  });
-}
-
 function shouldDeleteFailedSignupUserProfile(userData = {}, cleanupPlayerKeys, cleanupTeamIds) {
   const roles = Array.isArray(userData.roles) ? userData.roles.map((role) => String(role || '').trim()).filter(Boolean) : [];
   if (roles.some((role) => role !== 'parent')) return false;
   if (Array.isArray(userData.coachOf) && userData.coachOf.length > 0) return false;
   if (userData.isAdmin === true || userData.isPlatformAdmin === true || userData.platformAdmin === true) return false;
 
-  const parentOf = Array.isArray(userData.parentOf) ? userData.parentOf : [];
-  const parentPlayerKeys = Array.isArray(userData.parentPlayerKeys) ? userData.parentPlayerKeys : [];
-  const parentTeamIds = Array.isArray(userData.parentTeamIds) ? userData.parentTeamIds : [];
+  const canonicalAccess = resolveCanonicalParentAccess(userData);
+  const parentOf = canonicalAccess.parentLinks;
+  const parentPlayerKeys = canonicalAccess.parentPlayerKeys;
+  const parentTeamIds = canonicalAccess.parentTeamIds;
   const parentOfOnlyCleanupLinks = parentOf.every((link) => {
     const key = link?.teamId && link?.playerId ? `${link.teamId}::${link.playerId}` : '';
     return key && cleanupPlayerKeys.has(key);
@@ -4633,11 +4627,7 @@ async function cleanupFailedInviteSignupForUser(userId, options = {}) {
     const privateProfileSnaps = relatedSnaps.slice(0, privateProfileRefs.length);
     const membershipSnaps = relatedSnaps.slice(privateProfileRefs.length);
     const userData = userSnap.exists ? userSnap.data() || {} : {};
-    const remainingParentOf = filterInviteCleanupParentLinks(userData.parentOf, cleanupPlayerKeys);
-    const remainingParentPlayerKeys = uniqueNonEmptyStrings(remainingParentOf.map((link) => (
-      link?.teamId && link?.playerId ? `${link.teamId}::${link.playerId}` : ''
-    )));
-    const remainingParentTeamIds = uniqueNonEmptyStrings(remainingParentOf.map((link) => link?.teamId));
+    const remainingParentAccess = removeCanonicalParentAccessLinks(userData, [...cleanupPlayerKeys]);
     const userDeleted = userSnap.exists && shouldDeleteFailedSignupUserProfile(userData, cleanupPlayerKeys, cleanupTeamIds);
 
     eligibleCodes.forEach(({ snap }) => {
@@ -4678,15 +4668,9 @@ async function cleanupFailedInviteSignupForUser(userId, options = {}) {
       transaction.delete(publicProfileRef);
       transaction.delete(userRef);
     } else if (userSnap.exists) {
-      const remainingRoles = Array.isArray(userData.roles)
-        ? userData.roles.filter((role) => role !== 'parent' || remainingParentOf.length > 0)
-        : [];
       const nextUserData = {
         ...userData,
-        parentOf: remainingParentOf,
-        parentTeamIds: remainingParentTeamIds,
-        parentPlayerKeys: remainingParentPlayerKeys,
-        roles: remainingRoles
+        ...remainingParentAccess
       };
       transaction.set(userRef, {
         parentOf: nextUserData.parentOf,
@@ -4745,19 +4729,15 @@ async function resolveAccountMergeRequest(input) {
 function collectParentPlayerKeys(...users) {
   const keys = new Set();
   users.forEach((user = {}) => {
-    (Array.isArray(user.parentPlayerKeys) ? user.parentPlayerKeys : []).forEach((key) => {
-      if (typeof key === 'string' && key.includes('::')) keys.add(key);
-    });
-    (Array.isArray(user.parentOf) ? user.parentOf : []).forEach((link) => {
-      if (link?.teamId && link?.playerId) keys.add(`${link.teamId}::${link.playerId}`);
-    });
+    resolveCanonicalParentAccess(user).parentPlayerKeys.forEach((key) => keys.add(key));
   });
   return [...keys];
 }
 
 function buildPlayerRefFromParentKey(parentPlayerKey) {
-  const [teamId, playerId] = String(parentPlayerKey || '').split('::');
-  if (!teamId || !playerId || teamId.includes('/') || playerId.includes('/')) return null;
+  const parsed = parseParentPlayerKey(parentPlayerKey);
+  if (!parsed) return null;
+  const { teamId, playerId } = parsed;
   return firestore.doc(`teams/${teamId}/players/${playerId}`);
 }
 
@@ -5053,13 +5033,11 @@ exports.redeemParentInvite = functions.https.onCall(async (data, context) => {
     const player = { id: playerSnap.id, ...(playerSnap.data() || {}) };
     const userData = userSnap.exists ? userSnap.data() || {} : {};
     const parentLink = buildAutoAcceptedParentLink({ codeData: { ...codeData, teamId, playerId }, team, player });
-    const playerKey = `${teamId}::${playerId}`;
     const now = admin.firestore.Timestamp.now();
+    const parentAccess = addCanonicalParentAccessLink(userData, parentLink);
     const nextUserData = {
       ...userData,
-      parentOf: appendUniqueParentLink(userData.parentOf, parentLink),
-      parentTeamIds: appendUniqueValue(userData.parentTeamIds, teamId),
-      parentPlayerKeys: appendUniqueValue(userData.parentPlayerKeys, playerKey),
+      ...parentAccess,
       roles: appendUniqueValue(userData.roles, 'parent')
     };
 
@@ -5192,13 +5170,11 @@ exports.redeemHouseholdInvite = functions.https.onCall(async (data, context) => 
       playerPhotoUrl: player.photoUrl || null,
       relation: codeData.relation || 'Household contact'
     };
-    const playerKey = `${teamId}::${playerId}`;
     const now = admin.firestore.Timestamp.now();
+    const parentAccess = addCanonicalParentAccessLink(userData, parentLink);
     const nextUserData = {
       ...userData,
-      parentOf: appendUniqueParentLink(userData.parentOf, parentLink),
-      parentTeamIds: appendUniqueValue(userData.parentTeamIds, teamId),
-      parentPlayerKeys: appendUniqueValue(userData.parentPlayerKeys, playerKey),
+      ...parentAccess,
       roles: appendUniqueValue(userData.roles, 'parent')
     };
 
@@ -5482,13 +5458,11 @@ exports.redeemCoParentInvite = functions.https.onCall(async (data, context) => {
       playerPhotoUrl: player.photoUrl || null,
       relation
     };
-    const playerKey = `${teamId}::${playerId}`;
     const now = admin.firestore.Timestamp.now();
+    const parentAccess = addCanonicalParentAccessLink(userData, parentLink);
     const nextUserData = {
       ...userData,
-      parentOf: appendUniqueParentLink(userData.parentOf, parentLink),
-      parentTeamIds: appendUniqueValue(userData.parentTeamIds, teamId),
-      parentPlayerKeys: appendUniqueValue(userData.parentPlayerKeys, playerKey),
+      ...parentAccess,
       roles: appendUniqueValue(userData.roles, 'parent')
     };
 
@@ -7506,8 +7480,16 @@ function getAllowedOriginPolicy() {
 
 const allowedOriginPolicy = getAllowedOriginPolicy();
 const allowedOriginSet = new Set(allowedOriginPolicy.origins);
-// Capacitor's WebViews use these exact origins. Keep the exception scoped to
-// passive telemetry so it does not broaden the calendar endpoint's CORS policy.
+// Temporary compatibility for already-installed native clients that still use
+// the legacy HTTP calendar bridge. Keep these exact origins scoped to that
+// endpoint; the authenticated callable is the current application path.
+const calendarAllowedOriginSet = new Set([
+  ...allowedOriginSet,
+  'https://localhost',
+  'capacitor://localhost'
+]);
+// Passive telemetry has its own native-origin policy and intentionally keeps
+// the historical Android http://localhost exception separate from calendars.
 const telemetryAllowedOriginSet = new Set([
   ...allowedOriginSet,
   'capacitor://localhost',
@@ -7518,7 +7500,7 @@ function isAllowedOrigin(origin) {
   if (!origin) {
     return true;
   }
-  return allowedOriginSet.has(origin) ||
+  return calendarAllowedOriginSet.has(origin) ||
     (allowedOriginPolicy.allowFirebaseHosting && isAllPlaysFirebaseHostingOrigin(origin));
 }
 
@@ -8719,19 +8701,23 @@ async function loadReadableFamilyShareToken(tokenId) {
   return token;
 }
 
-async function resolveReadableFamilyShareChildren(token) {
-  const storedChildren = normalizeFamilyShareCallableChildren(token.children)
-    .slice(0, MAX_FAMILY_SHARE_CHILDREN);
+async function resolveReadableFamilyShareChildrenProjection(token) {
+  const storedChildren = normalizeFamilyShareCallableChildren(token.children);
   const ownerUserId = normalizeFamilyShareText(token.ownerUserId);
-  if (!ownerUserId) return [];
+  if (!ownerUserId) return { children: [], warnings: [] };
 
   const ownerSnap = await firestore.doc(`users/${ownerUserId}`).get();
-  if (!ownerSnap.exists) return [];
+  if (!ownerSnap.exists) return { children: [], warnings: [] };
 
   const storedKeys = new Set(storedChildren.map((child) => `${child.teamId}::${child.playerId}`));
   const ownerChildren = normalizeFamilyShareCallableChildren(await resolveFamilyShareChildrenFromOwnerProfile(ownerSnap.data() || {}, {
-    allowedKeys: storedKeys.size ? storedKeys : null,
-    maxChildren: MAX_FAMILY_SHARE_CHILDREN,
+    // Token children are the bearer capability boundary. Missing, empty, or
+    // malformed stored scope means the token shares nothing; it must never
+    // expand to all children currently linked to the owner.
+    allowedKeys: storedKeys,
+    // Resolve one sentinel child beyond the response bound so an otherwise
+    // valid share cannot silently turn omitted children into confirmed absence.
+    maxChildren: MAX_FAMILY_SHARE_CHILDREN + 1,
     loadTeam: async (teamId) => {
       const teamSnap = await firestore.doc(`teams/${teamId}`).get();
       return teamSnap.exists ? { id: teamSnap.id, ...(teamSnap.data() || {}) } : null;
@@ -8745,8 +8731,17 @@ async function resolveReadableFamilyShareChildren(token) {
   // Token documents are written by clients, so their child/team IDs are only a
   // requested subset. Never use them as proof that the token owner can read a
   // private schedule; intersect them with the owner's live parent scope.
-  if (!storedChildren.length) return ownerChildren.slice(0, MAX_FAMILY_SHARE_CHILDREN);
-  return ownerChildren;
+  const children = ownerChildren.slice(0, MAX_FAMILY_SHARE_CHILDREN);
+  return {
+    children,
+    warnings: ownerChildren.length > MAX_FAMILY_SHARE_CHILDREN
+      ? [FAMILY_SHARE_PROJECTION_INCOMPLETE_WARNING]
+      : []
+  };
+}
+
+async function resolveReadableFamilyShareChildren(token) {
+  return (await resolveReadableFamilyShareChildrenProjection(token)).children;
 }
 
 function isFamilyShareTeamActive(team = {}) {
@@ -8899,7 +8894,7 @@ async function loadFamilyShareSharedGamesForTeam(teamId, teamBudget, includeInte
   if (
     typeof firestore.collectionGroup !== 'function'
     || teamBudget.remaining <= 0
-  ) return [];
+  ) return { games: [], isPartial: true };
   const sharedGamesRef = firestore.collectionGroup('sharedGames');
   const queries = [
     sharedGamesRef.where('homeTeamId', '==', teamId),
@@ -8908,18 +8903,24 @@ async function loadFamilyShareSharedGamesForTeam(teamId, teamBudget, includeInte
   ];
 
   const docsByPath = new Map();
+  let isPartial = false;
   for (let index = 0; index < queries.length; index += 1) {
-    if (teamBudget.remaining <= 0) break;
+    if (teamBudget.remaining <= 0) {
+      isPartial = true;
+      break;
+    }
     const query = queries[index];
     const queryLimit = getFamilyShareQueryReadLimit(teamBudget, queries.length - index);
     try {
       const snapshot = await query.limit(queryLimit).get();
       const boundedDocs = snapshot.docs.slice(0, queryLimit);
+      if (boundedDocs.length >= queryLimit) isPartial = true;
       chargeFamilyShareReadBudget(teamBudget, boundedDocs.length);
       boundedDocs.forEach((docSnap) => {
         docsByPath.set(getFamilyShareSharedGamePath(docSnap), docSnap);
       });
     } catch (error) {
+      isPartial = true;
       functions.logger.warn('Failed to load shared family share games for team', {
         teamId,
         error: error?.message || String(error)
@@ -8927,8 +8928,8 @@ async function loadFamilyShareSharedGamesForTeam(teamId, teamBudget, includeInte
     }
   }
 
-  return [...docsByPath.values()]
-    .map((docSnap) => {
+  return {
+    games: [...docsByPath.values()].map((docSnap) => {
       const projected = projectFamilyShareSharedGameForTeam(docSnap, teamId);
       if (!projected) return null;
       const sharedGamePath = projected.sharedGamePath || getFamilyShareSharedGamePath(docSnap);
@@ -8936,22 +8937,24 @@ async function loadFamilyShareSharedGamesForTeam(teamId, teamBudget, includeInte
         id: buildFamilyShareSharedGameSyntheticId(sharedGamePath),
         data: () => projected
       }, { includeInternalCalendarUidHash });
-    })
-    .filter(Boolean);
+    }).filter(Boolean),
+    isPartial
+  };
 }
 
-async function loadFamilyShareScheduleTeams(children, {
+async function loadFamilyShareScheduleTeamProjection(children, {
   includePrivateCalendarUrls = false,
   includeInternalCalendarUidHash = false,
   maxGameReads = MAX_FAMILY_SHARE_DB_EVENTS,
   maxTeams = MAX_FAMILY_SHARE_TEAMS
 } = {}) {
-  let teamIds = [...new Set(children.map((child) => child.teamId).filter(Boolean))];
+  const allTeamIds = [...new Set(children.map((child) => child.teamId).filter(Boolean))];
   const normalizedMaxTeams = Math.max(0, Math.min(
     Number.isFinite(maxTeams) ? Math.floor(maxTeams) : MAX_FAMILY_SHARE_TEAMS,
     MAX_FAMILY_SHARE_TEAMS
   ));
-  teamIds = teamIds.slice(0, normalizedMaxTeams);
+  const teamIds = allTeamIds.slice(0, normalizedMaxTeams);
+  let isPartial = allTeamIds.length > normalizedMaxTeams;
   const totalReadBudget = Math.max(0, Math.min(
     Number.isFinite(maxGameReads) ? Math.floor(maxGameReads) : MAX_FAMILY_SHARE_DB_EVENTS,
     MAX_FAMILY_SHARE_DB_EVENTS
@@ -8965,7 +8968,7 @@ async function loadFamilyShareScheduleTeams(children, {
 
   const baseTeamBudget = activeTeams.length ? Math.floor(totalReadBudget / activeTeams.length) : 0;
   const extraTeamBudgetCount = activeTeams.length ? totalReadBudget % activeTeams.length : 0;
-  return Promise.all(activeTeams.map(async ({ teamId, team }, teamIndex) => {
+  const teams = await Promise.all(activeTeams.map(async ({ teamId, team }, teamIndex) => {
     const teamBudget = {
       remaining: baseTeamBudget + (teamIndex < extraTeamBudgetCount ? 1 : 0)
     };
@@ -8976,16 +8979,18 @@ async function loadFamilyShareScheduleTeams(children, {
         .limit(directQueryLimit)
         .get();
       const boundedDocs = gamesSnap.docs.slice(0, directQueryLimit);
+      if (boundedDocs.length >= directQueryLimit) isPartial = true;
       chargeFamilyShareReadBudget(teamBudget, boundedDocs.length);
       directGames = boundedDocs.map((docSnap) => serializeFamilyShareGame(docSnap, {
         includeInternalCalendarUidHash
       }));
     }
-    const sharedGames = await loadFamilyShareSharedGamesForTeam(
+    const sharedGameProjection = await loadFamilyShareSharedGamesForTeam(
       teamId,
       teamBudget,
       includeInternalCalendarUidHash
     );
+    if (sharedGameProjection.isPartial) isPartial = true;
     return {
       teamId,
       teamName: normalizeFamilyShareText(team.name) || children.find((child) => child.teamId === teamId)?.teamName || 'Team',
@@ -8996,10 +9001,18 @@ async function loadFamilyShareScheduleTeams(children, {
         : [],
       games: [
         ...directGames,
-        ...sharedGames
+        ...sharedGameProjection.games
       ]
     };
   }));
+  return {
+    teams,
+    warnings: isPartial ? [FAMILY_SHARE_PROJECTION_INCOMPLETE_WARNING] : []
+  };
+}
+
+async function loadFamilyShareScheduleTeams(children, options = {}) {
+  return (await loadFamilyShareScheduleTeamProjection(children, options)).teams;
 }
 
 exports.resolveFamilyShareTokenChildren = functions.https.onCall(async (data, context) => {
@@ -9068,6 +9081,11 @@ async function fetchFamilyShareCalendarEvents({ url, index, children, teamId = '
       return { fetchedAt: new Date().toISOString(), icsText };
     }
   });
+  if (result.source === 'stale-cache') {
+    const error = new Error('Shared calendar is temporarily unavailable');
+    error.statusCode = 503;
+    throw error;
+  }
   const sourceId = crypto.createHash('sha256').update(normalized.url).digest('hex');
   return buildExternalCalendarEvents(result.icsText, {
     sourceId,
@@ -9079,11 +9097,19 @@ async function fetchFamilyShareCalendarEvents({ url, index, children, teamId = '
 }
 
 async function loadFamilyShareExternalEventProjection(token, children, teams) {
+  if (!Array.isArray(children) || children.length === 0) {
+    return { externalEvents: [], calendarWarnings: [] };
+  }
   const inputs = [];
   const seenUrls = new Set();
+  let sourcesTruncated = false;
   const addInput = (url, details) => {
     const normalizedUrl = normalizeFamilyShareText(url);
-    if (!normalizedUrl || seenUrls.has(normalizedUrl) || inputs.length >= MAX_FAMILY_SHARE_CALENDAR_URLS) return;
+    if (!normalizedUrl || seenUrls.has(normalizedUrl)) return;
+    if (inputs.length >= MAX_FAMILY_SHARE_CALENDAR_URLS) {
+      sourcesTruncated = true;
+      return;
+    }
     seenUrls.add(normalizedUrl);
     inputs.push({ url: normalizedUrl, ...details });
   };
@@ -9106,7 +9132,9 @@ async function loadFamilyShareExternalEventProjection(token, children, teams) {
     fetchFamilyShareCalendarEvents({ ...input, index })
   )));
   const externalEvents = [];
-  const calendarWarnings = [];
+  const calendarWarnings = sourcesTruncated
+    ? ['Some shared calendar sources could not be loaded.']
+    : [];
   const trackedUidsByTeam = new Map(teams.map((team) => [
     team.teamId,
     new Set((Array.isArray(team.games) ? team.games : [])
@@ -9140,21 +9168,296 @@ exports.getFamilyShareView = functions
   .onCall(async (data, context) => {
     await assertFamilyShareRequestRateLimit(context);
     const token = await loadReadableFamilyShareToken(requireFamilyShareTokenId(data));
-    const children = await resolveReadableFamilyShareChildren(token);
-    const teams = await loadFamilyShareScheduleTeams(children, {
+    const childProjection = await resolveReadableFamilyShareChildrenProjection(token);
+    const children = childProjection.children;
+    const teamProjection = await loadFamilyShareScheduleTeamProjection(children, {
       includePrivateCalendarUrls: true,
       includeInternalCalendarUidHash: true,
       maxGameReads: MAX_FAMILY_SHARE_DB_EVENTS,
       maxTeams: MAX_FAMILY_SHARE_TEAMS
     });
+    const teams = teamProjection.teams;
     const { externalEvents, calendarWarnings } = await loadFamilyShareExternalEventProjection(token, children, teams);
     return sanitizeFamilyShareViewResponse({
       token,
       children,
       teams,
       externalEvents,
-      calendarWarnings
+      calendarWarnings: [
+        ...childProjection.warnings,
+        ...teamProjection.warnings,
+        ...calendarWarnings
+      ]
     });
+  });
+
+const MAX_AUTHENTICATED_TEAM_CALENDAR_SOURCES = 100;
+const MAX_AUTHENTICATED_TEAM_CALENDAR_URL_LENGTH = 2_048;
+
+function requireAuthenticatedTeamCalendarUid(context = {}) {
+  const rawUid = context.auth?.uid;
+  const uid = normalizeStablePrincipalUid(rawUid);
+  if (!uid || uid !== rawUid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in to load this team calendar.');
+  }
+  return uid;
+}
+
+function normalizeAuthenticatedTeamCalendarInput(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw new functions.https.HttpsError('invalid-argument', 'A valid team calendar request is required.');
+  }
+  const teamId = normalizeStablePrincipalUid(data.teamId);
+  if (!teamId || teamId !== data.teamId) {
+    throw new functions.https.HttpsError('invalid-argument', 'A valid teamId is required.');
+  }
+  if (
+    typeof data.calendarUrl !== 'string' ||
+    !data.calendarUrl.trim() ||
+    data.calendarUrl.length > MAX_AUTHENTICATED_TEAM_CALENDAR_URL_LENGTH
+  ) {
+    throw new functions.https.HttpsError('invalid-argument', 'A valid calendarUrl is required.');
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(data, 'forceRefresh') &&
+    typeof data.forceRefresh !== 'boolean'
+  ) {
+    throw new functions.https.HttpsError('invalid-argument', 'forceRefresh must be a boolean.');
+  }
+  return {
+    teamId,
+    calendarUrl: data.calendarUrl.trim(),
+    forceRefresh: data.forceRefresh === true
+  };
+}
+
+function assertAuthenticatedTeamCalendarRateLimit(context, forceRefresh) {
+  const checks = [checkCalendarFetchRateLimit];
+  if (forceRefresh) checks.push(checkCalendarForceRefreshRateLimit);
+  for (const checkLimit of checks) {
+    const result = checkLimit(context?.rawRequest || {});
+    if (!result.allowed) {
+      throw new functions.https.HttpsError(
+        'resource-exhausted',
+        'Too many calendar requests. Try again shortly.',
+        { retryAfterSeconds: result.retryAfterSeconds }
+      );
+    }
+  }
+}
+
+function isActiveAuthenticatedTeamCalendar(team = {}) {
+  const status = String(team.status || '').trim().toLowerCase();
+  return team.active !== false &&
+    team.archived !== true &&
+    team.deleted !== true &&
+    !['archived', 'inactive', 'disabled', 'deleted'].includes(status);
+}
+
+function getAuthenticatedTeamCalendarParentTeamIds(user = {}) {
+  const hasCanonicalParentTeamIds = Object.prototype.hasOwnProperty.call(user, 'parentTeamIds');
+  const hasCanonicalParentPlayerKeys = Object.prototype.hasOwnProperty.call(user, 'parentPlayerKeys');
+  let rawTeamIds;
+  if (hasCanonicalParentTeamIds) {
+    rawTeamIds = Array.isArray(user.parentTeamIds) ? user.parentTeamIds : [];
+  } else if (hasCanonicalParentPlayerKeys) {
+    rawTeamIds = (Array.isArray(user.parentPlayerKeys) ? user.parentPlayerKeys : [])
+      .map((value) => {
+        if (typeof value !== 'string') return '';
+        const parts = value.split('::');
+        if (parts.length !== 2 || !normalizeStablePrincipalUid(parts[1])) return '';
+        return parts[0];
+      });
+  } else {
+    rawTeamIds = (Array.isArray(user.parentOf) ? user.parentOf : [])
+      .map((link) => typeof link?.teamId === 'string' ? link.teamId : '');
+  }
+  return new Set(rawTeamIds.map(normalizeStablePrincipalUid).filter(Boolean));
+}
+
+function normalizeAuthenticatedTeamCalendarUrlText(rawUrl) {
+  if (typeof rawUrl !== 'string') return '';
+  let normalizedUrl = rawUrl.trim();
+  if (!normalizedUrl || normalizedUrl.length > MAX_AUTHENTICATED_TEAM_CALENDAR_URL_LENGTH) return '';
+  if (/^webcals?:\/\//i.test(normalizedUrl)) {
+    normalizedUrl = normalizedUrl.replace(/^webcals?:\/\//i, 'https://');
+  } else if (/^http:\/\//i.test(normalizedUrl)) {
+    normalizedUrl = normalizedUrl.replace(/^http:\/\//i, 'https://');
+  }
+  try {
+    const parsed = new URL(normalizedUrl);
+    if (parsed.protocol !== 'https:' || parsed.username || parsed.password) return '';
+    parsed.hash = '';
+    return parsed.toString();
+  } catch {
+    return '';
+  }
+}
+
+async function resolveAuthenticatedTeamCalendarTarget(team, requestedUrl) {
+  const requestedCanonicalUrl = normalizeAuthenticatedTeamCalendarUrlText(requestedUrl);
+  if (!requestedCanonicalUrl) {
+    throw new functions.https.HttpsError('invalid-argument', 'A valid calendarUrl is required.');
+  }
+
+  const storedUrls = Array.isArray(team.calendarUrls) ? team.calendarUrls : [];
+  if (storedUrls.length > MAX_AUTHENTICATED_TEAM_CALENDAR_SOURCES) {
+    throw new functions.https.HttpsError(
+      'failed-precondition',
+      'This team has too many calendar sources to load safely.'
+    );
+  }
+
+  const matchedStoredUrl = storedUrls.find((storedUrl) => (
+    normalizeAuthenticatedTeamCalendarUrlText(storedUrl) === requestedCanonicalUrl
+  ));
+  if (typeof matchedStoredUrl !== 'string') {
+    throw new functions.https.HttpsError(
+      'permission-denied',
+      'This calendar source is not available for the requested team.'
+    );
+  }
+
+  try {
+    // Only a syntactically matched canonical team source crosses the DNS/SSRF
+    // guard. This keeps late-list sources bounded to one guarded resolution.
+    const storedTarget = await normalizeTargetUrl(matchedStoredUrl);
+    if (storedTarget.url === requestedCanonicalUrl) return storedTarget;
+  } catch (error) {
+    if (error instanceof functions.https.HttpsError) throw error;
+    throw new functions.https.HttpsError(
+      'failed-precondition',
+      'This team calendar source cannot be loaded safely.'
+    );
+  }
+
+  throw new functions.https.HttpsError(
+    'permission-denied',
+    'This calendar source is not available for the requested team.'
+  );
+}
+
+async function fetchAuthenticatedTeamCalendarIcs(target, forceRefresh) {
+  return fetchCalendarIcsWithCache({
+    cache: calendarIcsCache,
+    cacheKey: target.url,
+    forceRefresh,
+    fetchIcs: async () => {
+      const targetLimit = checkCalendarTargetFetchRateLimit({
+        ip: `calendar:${crypto.createHash('sha256').update(target.url).digest('hex')}`
+      });
+      if (!targetLimit.allowed) {
+        const error = new Error('The calendar source is temporarily busy.');
+        error.statusCode = 429;
+        error.retryAfterSeconds = targetLimit.retryAfterSeconds;
+        throw error;
+      }
+
+      const response = await fetchWithTimeout(target.url, target.hostname, target.publicIps);
+      if (!response.ok) {
+        const error = new Error('The calendar provider returned an unsuccessful response.');
+        error.statusCode = 502;
+        throw error;
+      }
+      const rawText = await response.text();
+      if (
+        typeof rawText !== 'string' ||
+        Buffer.byteLength(rawText, 'utf8') > DEFAULT_MAX_ICS_BYTES
+      ) {
+        const error = new Error('The calendar response exceeded the size limit.');
+        error.statusCode = 413;
+        error.calendarValidationRejected = true;
+        throw error;
+      }
+      const icsText = normalizeIcsText(rawText);
+      if (
+        Buffer.byteLength(icsText, 'utf8') > DEFAULT_MAX_ICS_BYTES ||
+        !hasExactVCalendarBoundaries(icsText)
+      ) {
+        const error = new Error('The calendar response was not valid ICS.');
+        error.statusCode = 502;
+        error.calendarValidationRejected = true;
+        throw error;
+      }
+      return { fetchedAt: new Date().toISOString(), icsText };
+    }
+  });
+}
+
+exports.getTeamCalendarIcs = functions
+  .runWith(fetchCalendarRuntime)
+  .https
+  .onCall(async (data, context = {}) => {
+    requireAuthenticatedTeamCalendarUid(context);
+    const input = normalizeAuthenticatedTeamCalendarInput(data);
+    assertAuthenticatedTeamCalendarRateLimit(context, input.forceRefresh);
+
+    try {
+      const [caller, teamSnap] = await Promise.all([
+        getOpportunityCaller(context),
+        firestore.doc(`teams/${input.teamId}`).get()
+      ]);
+      if (!teamSnap.exists || !isActiveAuthenticatedTeamCalendar(teamSnap.data() || {})) {
+        throw new functions.https.HttpsError('not-found', 'Team calendar not found.');
+      }
+      const team = teamSnap.data() || {};
+      const canManage = hasOpportunityTeamAdminAccess(caller, team);
+      const isLinkedParent = getAuthenticatedTeamCalendarParentTeamIds(caller.user).has(input.teamId);
+      const hasCalendarAccess = canManage || isLinkedParent ||
+        await hasAuthoritativeTargetStaffAccess(caller, input.teamId, team);
+      if (!hasCalendarAccess) {
+        throw new functions.https.HttpsError(
+          'permission-denied',
+          'You do not have access to this team calendar.'
+        );
+      }
+
+      const target = await resolveAuthenticatedTeamCalendarTarget(team, input.calendarUrl);
+      const result = await fetchAuthenticatedTeamCalendarIcs(target, input.forceRefresh);
+      // A stale cache means the upstream source failed. Returning it as complete
+      // would let clients incorrectly prove schedule absence from old evidence.
+      if (result.source === 'stale-cache') {
+        throw new functions.https.HttpsError(
+          'unavailable',
+          'The team calendar could not be refreshed. Try again shortly.'
+        );
+      }
+      if (
+        !['live', 'cache'].includes(result.source) ||
+        typeof result.fetchedAt !== 'string' ||
+        Number.isNaN(Date.parse(result.fetchedAt)) ||
+        typeof result.icsText !== 'string' ||
+        Buffer.byteLength(result.icsText, 'utf8') > DEFAULT_MAX_ICS_BYTES ||
+        !hasExactVCalendarBoundaries(result.icsText)
+      ) {
+        throw new functions.https.HttpsError(
+          'unavailable',
+          'The team calendar could not be loaded. Try again shortly.'
+        );
+      }
+      return {
+        version: 1,
+        source: result.source,
+        fetchedAt: result.fetchedAt,
+        icsText: result.icsText,
+        complete: true
+      };
+    } catch (error) {
+      if (error instanceof functions.https.HttpsError) throw error;
+      if (Number.isFinite(error?.retryAfterSeconds) && error.retryAfterSeconds > 0) {
+        throw new functions.https.HttpsError(
+          'resource-exhausted',
+          'The team calendar is temporarily busy. Try again shortly.',
+          { retryAfterSeconds: error.retryAfterSeconds }
+        );
+      }
+      // Calendar URLs can contain provider bearer tokens. Do not log or echo
+      // upstream messages, request URLs, or normalized targets here.
+      throw new functions.https.HttpsError(
+        'unavailable',
+        'The team calendar could not be loaded. Try again shortly.'
+      );
+    }
   });
 
 exports.fetchCalendarIcs = functions
@@ -18401,18 +18704,106 @@ function normalizeStablePrincipalUid(value) {
   return value.length > 0 && value.length <= 128 && !value.includes('/') ? value : '';
 }
 
-async function listStaffTeamDocuments(caller) {
-  const legacyCoachInviteEvidenceLimit = 200;
-  const legacyCoachInviteTeamChunkSize = 30;
-  const legacyCoachTeamLimit = 180;
-  const teams = await listOpportunityManagedTeamDocuments(caller, { allowPartial: true });
-  const allCoachTeamIds = Array.from(new Set(
+const LEGACY_COACH_INVITE_EVIDENCE_LIMIT = 200;
+const LEGACY_COACH_INVITE_TEAM_CHUNK_SIZE = 30;
+const LEGACY_COACH_TEAM_LIMIT = 180;
+
+function getBoundedLegacyCoachTeamScope(caller) {
+  const allTeamIds = Array.from(new Set(
     (Array.isArray(caller.user?.coachOf) ? caller.user.coachOf : [])
-      .map((teamId) => String(teamId || '').trim())
-      .filter((teamId) => /^[A-Za-z0-9_-]{1,128}$/.test(teamId))
+      .map(normalizeStablePrincipalUid)
+      .filter(Boolean)
   ));
-  const coachTeamIdsAreIncomplete = allCoachTeamIds.length > legacyCoachTeamLimit;
-  const coachTeamIds = allCoachTeamIds.slice(0, legacyCoachTeamLimit);
+  return {
+    teamIds: allTeamIds.slice(0, LEGACY_COACH_TEAM_LIMIT),
+    isPartial: allTeamIds.length > LEGACY_COACH_TEAM_LIMIT
+  };
+}
+
+async function resolveLegacyCoachGrantEvidence(caller, candidateTeamIds) {
+  const normalizedCandidateTeamIds = Array.from(new Set(
+    (Array.isArray(candidateTeamIds) ? candidateTeamIds : [])
+      .map(normalizeStablePrincipalUid)
+      .filter(Boolean)
+  ));
+  const candidateTeamInviteQueries = [];
+  for (let index = 0; index < normalizedCandidateTeamIds.length; index += LEGACY_COACH_INVITE_TEAM_CHUNK_SIZE) {
+    const teamIds = normalizedCandidateTeamIds.slice(index, index + LEGACY_COACH_INVITE_TEAM_CHUNK_SIZE);
+    candidateTeamInviteQueries.push({
+      teamIds,
+      query: firestore.collection('accessCodes')
+        .where('type', '==', 'admin_invite')
+        .where('teamId', 'in', teamIds)
+        .limit(LEGACY_COACH_INVITE_EVIDENCE_LIMIT + 1)
+    });
+  }
+
+  // Candidate-team lifecycle evidence is stable across Auth email changes
+  // and bounds reads to the resources that could invalidate this response.
+  // Caller-wide email/usedBy history is neither necessary nor relevant: a
+  // long-tenured coach can have hundreds of unrelated historical invites.
+  const settledQueries = await Promise.allSettled(
+    candidateTeamInviteQueries.map(({ query }) => query.get())
+  );
+  const deniedTeamIds = new Set();
+  const unresolvedTeamIds = new Set();
+  settledQueries.forEach((result, index) => {
+    const chunkTeamIds = candidateTeamInviteQueries[index].teamIds;
+    if (result.status === 'rejected' || result.value.size > LEGACY_COACH_INVITE_EVIDENCE_LIMIT) {
+      chunkTeamIds.forEach((teamId) => unresolvedTeamIds.add(teamId));
+      return;
+    }
+    result.value.docs.forEach((inviteDoc) => {
+      const invite = inviteDoc.data() || {};
+      const teamId = normalizeStablePrincipalUid(invite.teamId);
+      const usedBy = normalizeStablePrincipalUid(invite.usedBy);
+      if (!chunkTeamIds.includes(teamId)) return;
+      // A caller-bound usedBy proves a revoked/stale accepted grant even when
+      // that same caller originally generated the invite.
+      if (usedBy === caller.uid) {
+        deniedTeamIds.add(teamId);
+        return;
+      }
+      // A valid stable usedBy belonging to another principal cannot be the
+      // source of this caller's coachOf grant. generatedBy is intentionally
+      // not evidence about the recipient: historical clients allowed a team
+      // admin to issue an invite to themselves.
+      if (usedBy) return;
+      // An unbound or malformed row is deliberately fail-closed: historical
+      // pre-transaction clients could write coachOf before marking the invite,
+      // and after an Auth email change that orphan is indistinguishable from
+      // another pending invite.
+      deniedTeamIds.add(teamId);
+    });
+  });
+
+  const authorizedTeamIds = new Set(normalizedCandidateTeamIds.filter((teamId) => (
+    !deniedTeamIds.has(teamId) && !unresolvedTeamIds.has(teamId)
+  )));
+  return {
+    authorizedTeamIds,
+    unresolvedTeamIds,
+    settledQueries,
+    isPartial: unresolvedTeamIds.size > 0
+  };
+}
+
+async function hasAuthoritativeTargetStaffAccess(caller, teamId, team) {
+  if (hasOpportunityTeamAdminAccess(caller, team)) return true;
+  const legacyCoachScope = getBoundedLegacyCoachTeamScope(caller);
+  // A single-target authorization result cannot safely expose a private
+  // calendar when the caller's canonical staff scope exceeds the verification
+  // bound. Unlike a partial team listing, there is no safe partial response.
+  if (legacyCoachScope.isPartial) return false;
+  if (!legacyCoachScope.teamIds.includes(teamId)) return false;
+  const grantEvidence = await resolveLegacyCoachGrantEvidence(caller, [teamId]);
+  return grantEvidence.authorizedTeamIds.has(teamId);
+}
+
+async function listStaffTeamDocuments(caller) {
+  const teams = await listOpportunityManagedTeamDocuments(caller, { allowPartial: true });
+  const legacyCoachScope = getBoundedLegacyCoachTeamScope(caller);
+  const coachTeamIds = legacyCoachScope.teamIds;
   const settledCoachTeamSnaps = await Promise.allSettled(
     coachTeamIds.map((teamId) => firestore.doc(`teams/${teamId}`).get())
   );
@@ -18432,64 +18823,12 @@ async function listStaffTeamDocuments(caller) {
   });
   const legacyCoachCandidates = loadedCoachTeamSnaps
     .filter((teamSnap) => !teams.has(teamSnap.id));
-  let settledCoachGrantEvidence = [];
-  let coachGrantEvidenceIsIncomplete = coachTeamIdsAreIncomplete;
-  const teamsWithCallerBoundInviteEvidence = new Set();
-  const teamsWithUnresolvedInviteEvidence = new Set();
-  if (legacyCoachCandidates.length > 0) {
-    const candidateTeamIds = legacyCoachCandidates.map((teamSnap) => teamSnap.id);
-    const candidateTeamInviteQueries = [];
-    for (let index = 0; index < candidateTeamIds.length; index += legacyCoachInviteTeamChunkSize) {
-      const teamIds = candidateTeamIds.slice(index, index + legacyCoachInviteTeamChunkSize);
-      candidateTeamInviteQueries.push({
-        teamIds,
-        query: firestore.collection('accessCodes')
-          .where('type', '==', 'admin_invite')
-          .where('teamId', 'in', teamIds)
-          .limit(legacyCoachInviteEvidenceLimit + 1)
-      });
-    }
-    // Candidate-team lifecycle evidence is stable across Auth email changes
-    // and bounds reads to the resources that could invalidate this response.
-    // Caller-wide email/usedBy history is neither necessary nor relevant: a
-    // long-tenured coach can have hundreds of unrelated historical invites.
-    settledCoachGrantEvidence = await Promise.allSettled(
-      candidateTeamInviteQueries.map(({ query }) => query.get())
-    );
-    settledCoachGrantEvidence.forEach((result, index) => {
-      const chunkTeamIds = candidateTeamInviteQueries[index].teamIds;
-      if (result.status === 'rejected' || result.value.size > legacyCoachInviteEvidenceLimit) {
-        coachGrantEvidenceIsIncomplete = true;
-        chunkTeamIds.forEach((teamId) => teamsWithUnresolvedInviteEvidence.add(teamId));
-        return;
-      }
-      result.value.docs.forEach((inviteDoc) => {
-        const invite = inviteDoc.data() || {};
-        const teamId = String(invite.teamId || '').trim();
-        const usedBy = normalizeStablePrincipalUid(invite.usedBy);
-        if (!teamId) return;
-        // A caller-bound usedBy proves a revoked/stale accepted grant even when
-        // that same caller originally generated the invite.
-        if (usedBy === caller.uid) {
-          teamsWithCallerBoundInviteEvidence.add(teamId);
-          return;
-        }
-        // A valid stable usedBy belonging to another principal cannot be the
-        // source of this caller's coachOf grant. generatedBy is intentionally
-        // not evidence about the recipient: historical clients allowed a team
-        // admin to issue an invite to themselves.
-        if (usedBy) return;
-        // An unbound or malformed row is deliberately fail-closed: historical
-        // pre-transaction clients could write coachOf before marking the invite,
-        // and after an Auth email change that orphan is indistinguishable from
-        // another pending invite.
-        teamsWithCallerBoundInviteEvidence.add(teamId);
-      });
-    });
-  }
+  const legacyCoachGrantEvidence = await resolveLegacyCoachGrantEvidence(
+    caller,
+    legacyCoachCandidates.map((teamSnap) => teamSnap.id)
+  );
   legacyCoachCandidates.forEach((teamSnap) => {
-    if (!teamsWithCallerBoundInviteEvidence.has(teamSnap.id)
-      && !teamsWithUnresolvedInviteEvidence.has(teamSnap.id)) {
+    if (legacyCoachGrantEvidence.authorizedTeamIds.has(teamSnap.id)) {
       teams.set(teamSnap.id, teamSnap);
     }
   });
@@ -18499,15 +18838,16 @@ async function listStaffTeamDocuments(caller) {
   teams.discoveryErrors.push(...settledCoachTeamSnaps
     .filter((result) => result.status === 'rejected')
     .map((result) => result.reason));
-  teams.discoveryQueryCount += settledCoachGrantEvidence.length;
-  teams.successfulDiscoveryQueryCount += settledCoachGrantEvidence
+  teams.discoveryQueryCount += legacyCoachGrantEvidence.settledQueries.length;
+  teams.successfulDiscoveryQueryCount += legacyCoachGrantEvidence.settledQueries
     .filter((result) => result.status === 'fulfilled').length;
-  teams.discoveryErrors.push(...settledCoachGrantEvidence
+  teams.discoveryErrors.push(...legacyCoachGrantEvidence.settledQueries
     .filter((result) => result.status === 'rejected')
     .map((result) => result.reason));
   teams.isPartial = teams.isPartial === true
     || settledCoachTeamSnaps.some((result) => result.status === 'rejected')
-    || coachGrantEvidenceIsIncomplete;
+    || legacyCoachScope.isPartial
+    || legacyCoachGrantEvidence.isPartial;
   if (teams.discoveryQueryCount > 0 && teams.successfulDiscoveryQueryCount === 0) {
     throw teams.discoveryErrors[0] || new Error('Managed team discovery failed.');
   }
@@ -18825,21 +19165,30 @@ exports.listManagedPublicOpportunityTeams = functions.https.onCall(async (_data,
 });
 
 function getCallableParentTeamScope(user = {}) {
-  // parentTeamIds is the normalized, revocable source of truth once present.
-  // Fall back to parentOf only for legacy profiles that have not received the
-  // canonical field yet; unioning both can restore a revoked legacy link.
-  const hasCanonicalTeamIds = Object.prototype.hasOwnProperty.call(user, 'parentTeamIds');
-  const canonicalTeamIdsAreValid = Array.isArray(user.parentTeamIds);
-  const legacyParentLinksAreValid = Array.isArray(user.parentOf);
-  const rawTeamIds = hasCanonicalTeamIds
-    ? (canonicalTeamIdsAreValid ? user.parentTeamIds : [])
-    : (legacyParentLinksAreValid ? user.parentOf.map((link) => link?.teamId) : []);
-  const normalizedTeamIds = rawTeamIds.map(normalizeStablePrincipalUid);
+  // Canonical fields are the revocable source of truth once present. The
+  // resolver falls back to legacy parentOf only when neither canonical field
+  // exists, so a stale legacy link cannot restore revoked team access.
+  const access = resolveCanonicalParentAccess(user);
+  const teamIds = Array.from(new Set([
+    ...access.parentTeamIds,
+    ...access.parentLinks.map((link) => link.teamId)
+  ]));
+  let isPartial = false;
+  if (access.hasCanonicalParentTeamIds) {
+    const values = Array.isArray(user.parentTeamIds) ? user.parentTeamIds : [];
+    isPartial = !Array.isArray(user.parentTeamIds) || values.some((value) => !normalizeStablePrincipalUid(value));
+  } else if (access.hasCanonicalParentPlayerKeys) {
+    const values = Array.isArray(user.parentPlayerKeys) ? user.parentPlayerKeys : [];
+    isPartial = !Array.isArray(user.parentPlayerKeys) || values.some((value) => !parseParentPlayerKey(value));
+  } else {
+    const values = Array.isArray(user.parentOf) ? user.parentOf : [];
+    isPartial = user.parentOf != null && !Array.isArray(user.parentOf) || values.some((link) => (
+      !normalizeStablePrincipalUid(link?.teamId) || !normalizeStablePrincipalUid(link?.playerId)
+    ));
+  }
   return {
-    teamIds: Array.from(new Set(normalizedTeamIds.filter(Boolean))),
-    isPartial: (hasCanonicalTeamIds && !canonicalTeamIdsAreValid)
-      || (!hasCanonicalTeamIds && user.parentOf !== undefined && !legacyParentLinksAreValid)
-      || normalizedTeamIds.some((teamId) => !teamId)
+    teamIds,
+    isPartial
   };
 }
 
@@ -19305,21 +19654,11 @@ exports.reportSocialPostForCaller = functions.https.onCall(async (data, context 
 });
 
 function normalizeParentFeePlayerLinks(user = {}) {
-  const links = new Map();
-  const addLink = (teamValue, playerValue) => {
-    const teamId = normalizeStablePrincipalUid(teamValue);
-    const playerId = normalizeStablePrincipalUid(playerValue);
-    if (!teamId || !playerId) return;
-    links.set(`${teamId}::${playerId}`, { teamId, playerId, playerKey: `${teamId}::${playerId}` });
-  };
-  (Array.isArray(user.parentOf) ? user.parentOf : []).forEach((link) => addLink(link?.teamId, link?.playerId || link?.childId));
-  (Array.isArray(user.parentPlayerKeys) ? user.parentPlayerKeys : []).forEach((value) => {
-    const key = String(value || '');
-    const separatorIndex = key.indexOf('::');
-    if (separatorIndex <= 0 || key.indexOf('::', separatorIndex + 2) !== -1) return;
-    addLink(key.slice(0, separatorIndex), key.slice(separatorIndex + 2));
-  });
-  return Array.from(links.values());
+  return resolveCanonicalParentAccess(user).parentLinks.map(({ teamId, playerId }) => ({
+    teamId,
+    playerId,
+    playerKey: `${teamId}::${playerId}`
+  }));
 }
 
 function getParentFeeRecipientTeamId(recipient = {}, documentPath = '') {
@@ -19356,11 +19695,10 @@ exports.listParentTeamFeeRecipients = functions.https.onCall(async (_data, conte
   const userSnap = await firestore.doc(`users/${uid}`).get();
   const user = userSnap.exists ? (userSnap.data() || {}) : {};
   const playerLinks = normalizeParentFeePlayerLinks(user);
+  const parentAccess = resolveCanonicalParentAccess(user);
   const teamIds = new Set([
     ...playerLinks.map((link) => link.teamId),
-    ...(Array.isArray(user.parentTeamIds) ? user.parentTeamIds : [])
-      .map(normalizeStablePrincipalUid)
-      .filter(Boolean)
+    ...parentAccess.parentTeamIds
   ]);
   if (playerLinks.length > 60 || teamIds.size > 60) {
     throw new functions.https.HttpsError('resource-exhausted', 'Too many linked players to load fees safely.');
@@ -19611,13 +19949,14 @@ exports.getPublicTeamCalendarProjection = functions
 
     const calendarUrls = [];
     const seenUrls = new Set();
+    let sourcesTruncated = false;
     (Array.isArray(team.calendarUrls) ? team.calendarUrls : []).forEach((url) => {
       const normalizedUrl = normalizeFamilyShareText(url);
-      if (
-        !normalizedUrl ||
-        seenUrls.has(normalizedUrl) ||
-        calendarUrls.length >= MAX_FAMILY_SHARE_CALENDAR_URLS
-      ) return;
+      if (!normalizedUrl || seenUrls.has(normalizedUrl)) return;
+      if (calendarUrls.length >= MAX_FAMILY_SHARE_CALENDAR_URLS) {
+        sourcesTruncated = true;
+        return;
+      }
       seenUrls.add(normalizedUrl);
       calendarUrls.push(normalizedUrl);
     });
@@ -19645,7 +19984,9 @@ exports.getPublicTeamCalendarProjection = functions
         teamName: team.name
       })
     )));
-    const warnings = [];
+    const warnings = sourcesTruncated
+      ? ['Some calendar sources could not be loaded.']
+      : [];
     const projectedEvents = [];
     settled.forEach((result, index) => {
       if (result.status === 'fulfilled') {

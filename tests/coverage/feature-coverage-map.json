@@ -341,6 +341,7 @@
                 "createScopedRsvpToken",
                 "dispatchDuePreEventReminders",
                 "fetchCalendarIcs",
+                "getTeamCalendarIcs",
                 "getPublicGameProjection",
                 "getPublicRsvp",
                 "getPublicTeamGamesProjection",

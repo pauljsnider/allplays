@@ -33,7 +33,7 @@ const dbMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../js/firebase.js?v=26', () => firebaseMocks);
-vi.mock('../../js/db.js?v=4433182', () => dbMocks);
+vi.mock('../../js/db.js?v=4433183', () => dbMocks);
 vi.mock('../../js/signup-flow.js?v=14', () => ({
     executeEmailPasswordSignup: vi.fn()
 }));
@@ -41,10 +41,17 @@ vi.mock('../../js/admin-invite.js?v=9', () => ({
     redeemAdminInviteAcceptance: vi.fn(),
     redeemAdminInviteAtomically: vi.fn()
 }));
-vi.mock('../../js/parent-membership-utils.js?v=3', () => ({
-    mergeApprovedParentMembershipRequests: vi.fn()
+vi.mock('../../js/parent-membership-utils.js?v=4', () => ({
+    mergeApprovedParentMembershipRequests: vi.fn(),
+    resolveCanonicalParentScopeInput: vi.fn((profile = {}) => ({
+        parentLinks: Array.isArray(profile.parentOf) ? profile.parentOf : [],
+        parentTeamIds: Array.isArray(profile.parentTeamIds) ? profile.parentTeamIds : [],
+        parentPlayerKeys: Array.isArray(profile.parentPlayerKeys) ? profile.parentPlayerKeys : [],
+        hasCanonicalParentTeamIds: Object.prototype.hasOwnProperty.call(profile, 'parentTeamIds'),
+        hasCanonicalParentPlayerKeys: Object.prototype.hasOwnProperty.call(profile, 'parentPlayerKeys')
+    }))
 }));
-vi.mock('../../js/accept-invite-flow.js?v=443314', () => ({
+vi.mock('../../js/accept-invite-flow.js?v=443315', () => ({
     createInviteProcessor: vi.fn()
 }));
 vi.mock('../../js/auth-email.js?v=4', () => ({

@@ -11,18 +11,23 @@ describe('family page external calendar failures', () => {
 
         expect(source).toContain('id="external-calendar-status"');
         expect(source).toContain('let externalCalendarFailures = [];');
-        expect(source).toContain('function recordExternalCalendarFailure');
         expect(source).toContain('function renderExternalCalendarStatus');
+        expect(source).toContain('viewProjection.calendarWarnings.forEach((label, index) => {');
         expect(source).toContain('Some external calendars could not be loaded');
         expect(source).toContain('Events saved in ALL PLAYS are still shown.');
     });
 
-    it('records both team and share-token calendar failures without blocking the page', () => {
+    it('uses only server-projected teams, games, and external events', () => {
         const source = readRepoFile('family.html');
 
-        expect(source).toMatch(/recordExternalCalendarFailure\(\{\s*url:\s*calendarUrl,/);
-        expect(source).toMatch(/recordExternalCalendarFailure\(\{\s*url:\s*calUrl,/);
-        expect(source).toContain('return { calendarEvents: [] };');
+        expect(source).not.toContain('fetchAndParseCalendar');
+        expect(source).not.toContain('getFamilyShareToken');
+        expect(source).not.toContain('extraCalendarUrls');
+        expect(source).not.toContain('getTeam(');
+        expect(source).not.toContain('getGames(');
+        expect(source).toContain('const projectedTeam = projectedTeamsById.get(teamId);');
+        expect(source).toContain('projection.externalEvents.forEach(rawEvent => {');
+        expect(source).toContain('Retry this page to load the complete schedule.');
         expect(source).toContain('return [];');
         expect(source).not.toContain("console.error('[family] Error fetching calendar:'");
     });
@@ -37,8 +42,8 @@ describe('family page external calendar failures', () => {
     it('shows an expired-link state before rendering any family details', () => {
         const source = readRepoFile('family.html');
 
-        expect(source).toContain('function isFamilyShareTokenExpired(token)');
-        expect(source).toContain("showError('This link has expired', 'Ask the parent to create a new family share link. Expired links never load player, team, or schedule details.')");
+        expect(source).toContain("expired: ['This link has expired', 'Ask the parent to create a new family share link. Expired links never load player, team, or schedule details.']");
+        expect(source).toContain('showError(...messages[authoritativeReason]);');
         expect(source).toContain('The family page link you used has expired, been revoked, or does not exist.');
     });
 });

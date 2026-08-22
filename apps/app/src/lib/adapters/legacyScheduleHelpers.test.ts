@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
     buildGameDayRsvpBreakdown: vi.fn(() => ({ grouped: {}, counts: {}, unmatchedResponders: [] as unknown[] })),
     expandRecurrence: vi.fn(),
+    fetchAndParseCalendar: vi.fn(async () => [] as unknown[]),
     getSubstitutionOptions: vi.fn()
 }));
 
@@ -21,7 +22,7 @@ vi.mock('@legacy/officiating-utils.js', () => ({
 vi.mock('@legacy/utils.js', () => ({
     expandRecurrence: mocks.expandRecurrence,
     extractOpponent: vi.fn(() => ''),
-    fetchAndParseCalendar: vi.fn(async () => []),
+    fetchAndParseCalendar: mocks.fetchAndParseCalendar,
     generateSeriesId: vi.fn(() => 'series-1'),
     getCalendarEventTrackingId: vi.fn(() => ''),
     isPracticeEvent: vi.fn(() => false),
@@ -65,7 +66,7 @@ vi.mock('@legacy/edit-schedule-practice-payload.js', () => ({
     applyPracticeRecurrenceFields: vi.fn((payload: Record<string, unknown>) => payload.practiceData)
 }));
 
-import { buildGameDayRsvpBreakdown, expandRecurrence, getSubstitutionOptions } from './legacyScheduleHelpers';
+import { buildGameDayRsvpBreakdown, expandRecurrence, fetchAndParseCalendar, getSubstitutionOptions } from './legacyScheduleHelpers';
 
 describe('legacyScheduleHelpers', () => {
     it('keeps normalizeArray accepting unknown values for legacy payload normalization', () => {
@@ -102,6 +103,30 @@ describe('legacyScheduleHelpers', () => {
                 title: 'Weekly Practice'
             }
         ]);
+    });
+
+    it('forwards authenticated team calendar scope without narrowing parsed event identity', async () => {
+        mocks.fetchAndParseCalendar.mockResolvedValueOnce([{
+            id: 'calendar-event-1',
+            uid: 'stable-calendar-uid',
+            recurrenceId: '20260822T180000Z',
+            dtstart: '2026-08-22T18:00:00.000Z'
+        }]);
+
+        const events = await fetchAndParseCalendar('https://calendar.example.com/team.ics', {
+            teamId: 'team-1',
+            forceRefresh: true
+        });
+
+        expect(mocks.fetchAndParseCalendar).toHaveBeenCalledWith('https://calendar.example.com/team.ics', {
+            teamId: 'team-1',
+            forceRefresh: true
+        });
+        expect(events).toEqual([expect.objectContaining({
+            id: 'calendar-event-1',
+            uid: 'stable-calendar-uid',
+            recurrenceId: '20260822T180000Z'
+        })]);
     });
 
     it('accepts unknown substitution player collections before normalizing arrays', () => {

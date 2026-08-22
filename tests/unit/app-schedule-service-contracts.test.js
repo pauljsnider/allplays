@@ -470,8 +470,11 @@ describe('React app schedule service contract integration', () => {
     it('loads a deduplicated team-level schedule for overview surfaces', async () => {
         const result = await loadTeamOverviewSchedule('team-1', 'Bears', user());
 
-        expect(result.filter((event) => event.id === 'ics-game-1')).toHaveLength(1);
-        expect(result.find((event) => event.id === 'ics-game-1')).toMatchObject({
+        expect(result.isPartial).toBe(false);
+        expect(result.accessVerified).toBe(true);
+        expect(result.accessUid).toBe('user-1');
+        expect(result.events.filter((event) => event.id === 'ics-game-1')).toHaveLength(1);
+        expect(result.events.find((event) => event.id === 'ics-game-1')).toMatchObject({
             childId: 'staff-team-team-1',
             teamId: 'team-1',
             location: 'Imported Field',
@@ -479,18 +482,26 @@ describe('React app schedule service contract integration', () => {
             sourceLabel: 'Imported calendar',
             isDbGame: false
         });
-        expect(result.find((event) => event.id === 'game-1')).toMatchObject({
+        expect(result.events.find((event) => event.id === 'game-1')).toMatchObject({
             location: 'Main Gym',
             locationDetail: 'Court A',
             statTrackerConfigId: 'config-1',
             isDbGame: true
         });
         expect(dbMocks.getTeam).toHaveBeenCalledWith('team-1');
-        expect(utilsMocks.fetchAndParseCalendar).toHaveBeenCalledWith('mock://team-calendar');
+        expect(utilsMocks.fetchAndParseCalendar).toHaveBeenCalledWith('mock://team-calendar', {
+            teamId: 'team-1'
+        });
     });
 
     it('does not load a team overview schedule without an authenticated user', async () => {
-        await expect(loadTeamOverviewSchedule('team-1', 'Bears', null)).resolves.toEqual([]);
+        await expect(loadTeamOverviewSchedule('team-1', 'Bears', null)).resolves.toEqual({
+            events: [],
+            isPartial: true,
+            accessVerified: false,
+            accessUid: null,
+            sourceKey: null
+        });
         expect(dbMocks.getTeam).not.toHaveBeenCalled();
     });
 
@@ -503,7 +514,13 @@ describe('React app schedule service contract integration', () => {
             parentOf: []
         };
 
-        await expect(loadTeamOverviewSchedule('team-1', 'Bears', unrelatedUser)).resolves.toEqual([]);
+        await expect(loadTeamOverviewSchedule('team-1', 'Bears', unrelatedUser)).resolves.toEqual({
+            events: [],
+            isPartial: true,
+            accessVerified: false,
+            accessUid: null,
+            sourceKey: null
+        });
 
         expect(dbMocks.getGames).not.toHaveBeenCalled();
         expect(utilsMocks.fetchAndParseCalendar).not.toHaveBeenCalled();
@@ -538,10 +555,13 @@ describe('React app schedule service contract integration', () => {
 
         const result = await loadTeamOverviewSchedule('team-1', 'Bears', user());
 
-        expect(result.find((event) => event.id === 'practice-series__2026-05-27')).toMatchObject({
+        expect(result.isPartial).toBe(false);
+        expect(result.accessVerified).toBe(true);
+        expect(result.accessUid).toBe('user-1');
+        expect(result.events.find((event) => event.id === 'practice-series__2026-05-27')).toMatchObject({
             locationDetail: 'Occurrence Field'
         });
-        expect(result.find((event) => event.id === 'practice-series__2026-06-03')).toMatchObject({
+        expect(result.events.find((event) => event.id === 'practice-series__2026-06-03')).toMatchObject({
             locationDetail: 'Master Field'
         });
     });
@@ -616,7 +636,8 @@ describe('React app schedule service contract integration', () => {
         expect(detailSource).toContain('const teamEvents = await buildTeamSchedule(requestedTeamId, teamChildren, user, {');
         expect(detailSource).toContain('includePastGames: true,');
         expect(detailSource).toContain('onSourcePartial: () => {');
-        expect(detailSource).toContain('return { children, events, isPartial: sourcePartial };');
+        expect(detailSource).toContain('sourceKeysByTeam: sourceKey ? { [requestedTeamId]: sourceKey } : {},');
+        expect(detailSource).toContain('isPartial: sourcePartial || (fallback && !sourceKey)');
         expect(detailSource).toContain('events = teamEvents.filter((event) => event.id === requestedEventId);');
         expect(scheduleServiceSource).toContain('const breakdown = buildGameDayRsvpBreakdown({');
         expect(scheduleServiceSource).toContain('(breakdown.grouped.going || [])');
@@ -638,7 +659,9 @@ describe('React app schedule service contract integration', () => {
         expect(dbMocks.getPracticeSessions).toHaveBeenCalledWith('team-1', {
             startDate: expect.any(Date)
         });
-        expect(utilsMocks.fetchAndParseCalendar).toHaveBeenCalledWith('mock://team-calendar');
+        expect(utilsMocks.fetchAndParseCalendar).toHaveBeenCalledWith('mock://team-calendar', {
+            teamId: 'team-1'
+        });
         expect(dbMocks.getRsvpSummaries).not.toHaveBeenCalled();
         expect(dbMocks.getRsvps).toHaveBeenCalledWith('team-1', 'game-1');
         expect(dbMocks.getRsvps).toHaveBeenCalledWith('team-1', 'practice-1');
@@ -923,16 +946,14 @@ describe('React app schedule service contract integration', () => {
         });
     });
 
-    it('falls back to user parent links when the profile has not hydrated yet', async () => {
+    it('fails closed instead of restoring stale user parent links from an authoritative empty profile', async () => {
         profileMocks.loadProfileDocument.mockResolvedValue({});
 
         const result = await loadParentSchedule(user());
 
-        expect(result.children).toEqual([
-            { teamId: 'team-1', teamName: 'Bears', playerId: 'player-from-user', playerName: 'User fallback', isLinkedParentChild: true }
-        ]);
-        expect(result.events.some((event) => event.childId === 'player-from-user')).toBe(true);
-        expect(result.events.some((event) => event.childId === 'player-1')).toBe(false);
+        expect(result.children).toEqual([]);
+        expect(result.events).toEqual([]);
+        expect(dbMocks.getTeam).not.toHaveBeenCalled();
     });
 
     it('does not surface parent-linked schedules for archived teams', async () => {

@@ -31,6 +31,18 @@ const playerServiceMocks = vi.hoisted(() => ({
   normalizeAthleteProfileHighlightClipUrl: vi.fn((url: string) => String(url || '').trim())
 }));
 
+const scheduleServiceMocks = vi.hoisted(() => ({
+  invalidateParentScheduleReadCaches: vi.fn(),
+  isTerminalScheduleAccessError: vi.fn((error: any) => (
+    error?.type === 'permission'
+    || error?.type === 'not_found'
+    || [401, 403, 404].includes(Number(error?.status))
+    || ['permission-denied', 'unauthenticated', 'not-found'].includes(String(error?.code || '').split('/').pop() || '')
+    || /missing or insufficient permissions/i.test(String(error?.message || ''))
+    || /this player is not linked to your account/i.test(String(error?.message || ''))
+  ))
+}));
+
 const publicActionMocks = vi.hoisted(() => ({
   sharePublicUrl: vi.fn()
 }));
@@ -41,6 +53,7 @@ const profilePhotoServiceMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../lib/playerService', () => playerServiceMocks);
+vi.mock('../lib/scheduleService', () => scheduleServiceMocks);
 vi.mock('../lib/publicActions', () => publicActionMocks);
 vi.mock('../lib/profilePhotoService', () => profilePhotoServiceMocks);
 vi.mock('../lib/usePremiumFeatureAccess', () => ({
@@ -92,6 +105,11 @@ function buildDetailData(overrides: Record<string, any> = {}) {
       photoUrl: ''
     },
     team: { id: 'team-current', name: 'Current Team' },
+    scheduleLoadError: null,
+    scheduleIsPartial: false,
+    scheduleTeamLoadState: 'complete',
+    scheduleAccessUserId: 'parent-1',
+    scheduleSourceKey: 'no-external-calendar:v1',
     access: {
       isLinkedParent: true,
       isTeamParent: true,
@@ -145,6 +163,29 @@ function buildDetailData(overrides: Record<string, any> = {}) {
         }
       ]
     },
+    ...overrides
+  };
+}
+
+function buildPlayerScheduleEvent(id: string, title: string, overrides: Record<string, any> = {}) {
+  return {
+    eventKey: `team-current:${id}:player-current`,
+    id,
+    teamId: 'team-current',
+    teamName: 'Current Team',
+    childId: 'player-current',
+    childName: 'Sam Player',
+    title,
+    type: 'game',
+    date: new Date('2100-06-01T18:00:00.000Z'),
+    location: 'Main Gym',
+    opponent: title,
+    isDbGame: true,
+    sourceType: 'db',
+    status: 'scheduled',
+    isCancelled: false,
+    assignments: [],
+    openAssignmentCount: 0,
     ...overrides
   };
 }
@@ -249,6 +290,188 @@ describe('PlayerDetail athlete profile season selection', () => {
         'player-current'
       );
     });
+  });
+
+  it('does not merge a stale sibling back into current canonical player scope', async () => {
+    const currentScopeAuth: AuthState = {
+      ...auth,
+      user: auth.user ? {
+        ...auth.user,
+        parentTeamIds: ['team-current'],
+        parentPlayerKeys: ['team-current::player-current', 'team-current::player-revoked'],
+        parentOf: [
+          { teamId: 'team-current', playerId: 'player-current' },
+          { teamId: 'team-current', playerId: 'player-revoked' }
+        ]
+      } as any : null,
+      profile: {
+        parentTeamIds: ['team-current'],
+        parentPlayerKeys: ['team-current::player-current'],
+        parentOf: [
+          { teamId: 'team-current', playerId: 'player-current' },
+          { teamId: 'team-current', playerId: 'player-revoked' }
+        ]
+      }
+    };
+
+    renderPlayerDetail(currentScopeAuth);
+
+    await screen.findByText('Sam Player');
+    await waitFor(() => {
+      expect(playerServiceMocks.loadParentPlayerDetail).toHaveBeenCalledWith(
+        expect.objectContaining({
+          parentOf: [expect.objectContaining({ playerId: 'player-current' })],
+          parentPlayerKeys: ['team-current::player-current']
+        }),
+        'team-current',
+        'player-current'
+      );
+    });
+  });
+
+  it('shows retryable unknown schedule evidence instead of partial-empty absence', async () => {
+    playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData({
+      scheduleLoadError: 'The complete player schedule could not be loaded. Retry before relying on missing events.',
+      scheduleIsPartial: true,
+      scheduleTeamLoadState: 'external-partial',
+      scheduleSourceKey: `direct-calendar:v1:${'a'.repeat(64)}`
+    }));
+
+    renderPlayerDetail();
+
+    expect((await screen.findAllByText('Schedule incomplete')).length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
+    expect(screen.getByText('0 known')).toBeTruthy();
+    expect(screen.getAllByText('—')).toHaveLength(3);
+    expect(screen.queryByText('No upcoming events')).toBeNull();
+    expect(screen.queryByText("This player's schedule is clear.")).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Schedule' }));
+    expect((await screen.findAllByText('Schedule incomplete')).length).toBeGreaterThan(0);
+    expect(screen.queryByText('Nothing scheduled for this player yet.')).toBeNull();
+  });
+
+  it('allows a complete-empty player schedule to confirm no upcoming events', async () => {
+    playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData());
+
+    renderPlayerDetail();
+
+    expect(await screen.findByText('No upcoming events')).toBeTruthy();
+    expect(screen.getByText("This player's schedule is clear.")).toBeTruthy();
+    expect(screen.getByText('0 total')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+  });
+
+  it('recovers from partial-empty when retry returns a complete event', async () => {
+    const recovered = buildPlayerScheduleEvent('recovered', 'Recovered tournament game');
+    playerServiceMocks.loadParentPlayerDetail
+      .mockResolvedValueOnce(buildDetailData({
+        scheduleLoadError: 'The complete player schedule could not be loaded. Retry before relying on missing events.',
+        scheduleIsPartial: true,
+        scheduleTeamLoadState: 'external-partial',
+        scheduleSourceKey: `direct-calendar:v1:${'a'.repeat(64)}`
+      }))
+      .mockResolvedValueOnce(buildDetailData({
+        events: [recovered],
+        nextEvent: recovered
+      }));
+
+    renderPlayerDetail();
+    fireEvent.click(await screen.findByRole('button', { name: 'Retry' }));
+
+    expect((await screen.findAllByText(/Recovered tournament game/)).length).toBeGreaterThan(0);
+    expect(screen.queryByText('Schedule incomplete')).toBeNull();
+  });
+
+  it('preserves a known raw event only for a same-user exact direct-source partial', async () => {
+    const sourceKey = `direct-calendar:v1:${'a'.repeat(64)}`;
+    const known = buildPlayerScheduleEvent('known-raw', 'Known calendar game', {
+      isDbGame: false,
+      sourceType: 'calendar'
+    });
+    playerServiceMocks.loadParentPlayerDetail
+      .mockResolvedValueOnce(buildDetailData({
+        scheduleSourceKey: sourceKey,
+        events: [known],
+        nextEvent: known
+      }))
+      .mockResolvedValueOnce(buildDetailData({
+        scheduleLoadError: 'The complete player schedule could not be loaded. Retry before relying on missing events.',
+        scheduleIsPartial: true,
+        scheduleTeamLoadState: 'external-partial',
+        scheduleSourceKey: sourceKey
+      }));
+
+    renderPlayerDetail();
+    expect(await screen.findByText(/Known calendar game/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh player' }));
+
+    expect(await screen.findByText(/Known calendar game/)).toBeTruthy();
+    expect(screen.getByText(/complete player schedule could not be loaded/i)).toBeTruthy();
+  });
+
+  it('drops a prior raw event when the current partial has a changed source fingerprint', async () => {
+    const known = buildPlayerScheduleEvent('old-raw', 'Removed source event', {
+      isDbGame: false,
+      sourceType: 'calendar'
+    });
+    playerServiceMocks.loadParentPlayerDetail
+      .mockResolvedValueOnce(buildDetailData({
+        scheduleSourceKey: `direct-calendar:v1:${'a'.repeat(64)}`,
+        events: [known],
+        nextEvent: known
+      }))
+      .mockResolvedValueOnce(buildDetailData({
+        scheduleLoadError: 'The complete player schedule could not be loaded. Retry before relying on missing events.',
+        scheduleIsPartial: true,
+        scheduleTeamLoadState: 'external-partial',
+        scheduleSourceKey: `direct-calendar:v1:${'b'.repeat(64)}`
+      }));
+
+    renderPlayerDetail();
+    expect(await screen.findByText(/Removed source event/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh player' }));
+
+    await waitFor(() => expect(screen.queryByText(/Removed source event/)).toBeNull());
+    expect(screen.getAllByText('Schedule incomplete').length).toBeGreaterThan(0);
+  });
+
+  it('shows schedule-derived counts as unknown when the player team slice failed', async () => {
+    playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData({
+      scheduleLoadError: 'Schedule is temporarily unavailable. Refresh the player to try again.',
+      scheduleIsPartial: true,
+      scheduleTeamLoadState: 'failed',
+      scheduleSourceKey: null
+    }));
+
+    renderPlayerDetail();
+
+    expect(await screen.findByText('Parent actions incomplete')).toBeTruthy();
+    expect(screen.getByText('Schedule unavailable')).toBeTruthy();
+    expect(screen.getAllByText('—')).toHaveLength(3);
+    expect(screen.queryByText('Caught up')).toBeNull();
+  });
+
+  it('clears previously rendered private player data when a background refresh is terminally denied', async () => {
+    const privateEvent = buildPlayerScheduleEvent('private-game', 'Private opponent');
+    playerServiceMocks.loadParentPlayerDetail
+      .mockResolvedValueOnce(buildDetailData({
+        events: [privateEvent],
+        nextEvent: privateEvent
+      }))
+      .mockRejectedValueOnce(new Error('This player is not linked to your account.'));
+
+    renderPlayerDetail();
+    expect(await screen.findByText('vs. Private opponent')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh player' }));
+
+    expect(await screen.findByText('Player unavailable')).toBeTruthy();
+    expect(screen.queryByText('vs. Private opponent')).toBeNull();
+    expect(screen.queryByText('Sam Player')).toBeNull();
+    expect(scheduleServiceMocks.invalidateParentScheduleReadCaches).toHaveBeenCalledWith(
+      expect.objectContaining({ uid: 'parent-1' })
+    );
   });
 
   it('defers athlete profile loading until the Profile section opens', async () => {

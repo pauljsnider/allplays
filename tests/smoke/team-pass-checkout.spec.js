@@ -22,7 +22,7 @@ const HARNESS_HTML = `<!doctype html>
             bindTeamPassCheckoutButton,
             buildTeamPassMarkup,
             getTeamPassAccess
-        } from '/js/team-pass.js?v=44344';
+        } from '/js/team-pass.js?v=44345';
 
         const team = ${JSON.stringify(TEAM)};
         const user = { uid: 'parent-1', parentTeamIds: ['team-1'] };

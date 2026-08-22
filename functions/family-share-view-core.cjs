@@ -7,6 +7,7 @@ const MAX_FAMILY_SHARE_RECURRENCES = 366;
 const MAX_FAMILY_SHARE_CHILDREN = 50;
 const MAX_FAMILY_SHARE_TEAMS = 20;
 const MAX_FAMILY_SHARE_DB_EVENTS = 500;
+const FAMILY_SHARE_PROJECTION_INCOMPLETE_WARNING = 'Some shared schedule items could not be loaded.';
 const CALENDAR_LOCATION_DETAIL_PATTERN =
   /^(?:field|diamond|court|pitch|rink|gym|arena)\s*(?:(?:#|no\.?|number|:|-)\s*)?(?:\d+[a-z]?|[a-z])(?:\s+(?:n|s|e|w|ne|nw|se|sw|north|south|east|west|northeast|northwest|southeast|southwest))?$/i;
 const NAMED_CALENDAR_LOCATION_DETAIL_PATTERN =
@@ -25,6 +26,13 @@ function compactText(value, maxLength = 240) {
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
     .trim()
     .slice(0, maxLength);
+}
+
+function createFamilyShareCalendarLimitError(message) {
+  const error = new Error(message);
+  error.statusCode = 413;
+  error.calendarValidationRejected = true;
+  return error;
 }
 
 function hashFamilyShareOpaqueValue(namespace, value, length = 32) {
@@ -229,7 +237,12 @@ function parseRrule(value, timeZone = '') {
     if (!key || !raw) return;
     if (key === 'FREQ' && ['DAILY', 'WEEKLY'].includes(raw)) rule.freq = raw;
     if (key === 'INTERVAL') rule.interval = Math.max(1, Math.min(Number.parseInt(raw, 10) || 1, 366));
-    if (key === 'COUNT') rule.count = Math.max(1, Math.min(Number.parseInt(raw, 10) || 1, MAX_FAMILY_SHARE_RECURRENCES));
+    if (key === 'COUNT') {
+      const count = Number.parseInt(raw, 10);
+      rule.count = Number.isFinite(count) && count > 0
+        ? Math.min(count, MAX_FAMILY_SHARE_RECURRENCES + 1)
+        : 1;
+    }
     if (key === 'UNTIL') rule.until = parseIcsDate(raw, timeZone);
     if (key === 'BYDAY') rule.byDays = raw.split(',').filter((day) => ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'].includes(day));
   });
@@ -317,11 +330,13 @@ function expandIcsEvent(event, maxResults = MAX_FAMILY_SHARE_ICS_EVENTS) {
     Number.isFinite(maxResults) ? Math.floor(maxResults) : 0,
     MAX_FAMILY_SHARE_ICS_EVENTS
   ));
-  if (outputLimit === 0) return [];
+  if (outputLimit === 0) {
+    throw createFamilyShareCalendarLimitError('Calendar expansion exceeded the source event limit');
+  }
   if (!event.rrule) return [event];
   const result = [];
   const interval = event.rrule.interval || 1;
-  const limit = event.rrule.count || MAX_FAMILY_SHARE_RECURRENCES;
+  const limit = event.rrule.count || Number.POSITIVE_INFINITY;
   const untilMs = event.rrule.until?.getTime?.() || Number.POSITIVE_INFINITY;
   const excluded = new Set((event.exDates || []).map((date) => date.toISOString().slice(0, 10)));
   const start = event.dtstart;
@@ -329,13 +344,14 @@ function expandIcsEvent(event, maxResults = MAX_FAMILY_SHARE_ICS_EVENTS) {
   let generatedCount = 0;
   const append = (date) => {
     if (
-      result.length >= outputLimit
-      || date.getTime() > untilMs
+      date.getTime() > untilMs
       || generatedCount >= limit
-      || generatedCount >= MAX_FAMILY_SHARE_RECURRENCES
     ) return false;
     generatedCount += 1;
     if (!excluded.has(date.toISOString().slice(0, 10))) {
+      if (result.length >= outputLimit) {
+        throw createFamilyShareCalendarLimitError('Calendar expansion exceeded the source event limit');
+      }
       result.push({ ...event, dtstart: date, dtend: durationMs == null ? null : new Date(date.getTime() + durationMs), rrule: null });
     }
     return true;
@@ -344,7 +360,17 @@ function expandIcsEvent(event, maxResults = MAX_FAMILY_SHARE_ICS_EVENTS) {
   if (event.rrule.freq === 'DAILY') {
     for (let index = 0; index < MAX_FAMILY_SHARE_RECURRENCES; index += 1) {
       const date = addRecurrenceDays(event, index * interval);
-      if (!date || !append(date)) break;
+      if (!date) {
+        throw createFamilyShareCalendarLimitError('Calendar recurrence could not be expanded completely');
+      }
+      if (!append(date)) return result;
+    }
+    const nextDate = addRecurrenceDays(event, MAX_FAMILY_SHARE_RECURRENCES * interval);
+    if (
+      generatedCount < limit &&
+      (!nextDate || nextDate.getTime() <= untilMs)
+    ) {
+      throw createFamilyShareCalendarLimitError('Calendar recurrence exceeded the per-event occurrence limit');
     }
     return result;
   }
@@ -353,13 +379,23 @@ function expandIcsEvent(event, maxResults = MAX_FAMILY_SHARE_ICS_EVENTS) {
   const allowedDays = new Set(byDays.map((day) => dayIndexes[day]));
   for (let dayOffset = 0; dayOffset < MAX_FAMILY_SHARE_RECURRENCES * 7; dayOffset += 1) {
     const date = addRecurrenceDays(event, dayOffset);
-    if (!date) break;
+    if (!date) {
+      throw createFamilyShareCalendarLimitError('Calendar recurrence could not be expanded completely');
+    }
+    if (date.getTime() > untilMs || generatedCount >= limit) return result;
     const week = Math.floor(dayOffset / 7);
     const wallDay = event.recurrenceWallParts
       ? new Date(Date.UTC(event.recurrenceWallParts.year, event.recurrenceWallParts.month, event.recurrenceWallParts.day + dayOffset)).getUTCDay()
       : date.getUTCDay();
     if (week % interval !== 0 || !allowedDays.has(wallDay)) continue;
-    if (!append(date)) break;
+    if (!append(date)) return result;
+  }
+  const nextDate = addRecurrenceDays(event, MAX_FAMILY_SHARE_RECURRENCES * 7);
+  if (
+    generatedCount < limit &&
+    (!nextDate || nextDate.getTime() <= untilMs)
+  ) {
+    throw createFamilyShareCalendarLimitError('Calendar recurrence exceeded the bounded expansion window');
   }
   return result;
 }
@@ -386,7 +422,6 @@ function buildExternalCalendarEvents(icsText, { sourceId, sourceLabel = 'Shared 
   const expandedEvents = [];
   for (const event of parseBoundedIcsEvents(icsText)) {
     const remainingOutput = MAX_FAMILY_SHARE_ICS_EVENTS - expandedEvents.length;
-    if (remainingOutput <= 0) break;
     expandedEvents.push(...expandIcsEvent(event, remainingOutput));
   }
   return expandedEvents.map((event) => {
@@ -523,14 +558,22 @@ function sanitizeFamilyShareViewResponse({ token, children = [], teams = [], ext
     'awayScore',
     'sourceLabel'
   ];
-  const boundedEvents = externalEvents.slice(0, MAX_FAMILY_SHARE_EVENTS).map((event = {}) => (
+  const normalizedChildren = Array.isArray(children) ? children : [];
+  const normalizedTeams = Array.isArray(teams) ? teams : [];
+  const normalizedExternalEvents = Array.isArray(externalEvents) ? externalEvents : [];
+  let projectionWasTruncated = normalizedChildren.length > MAX_FAMILY_SHARE_CHILDREN
+    || normalizedTeams.length > MAX_FAMILY_SHARE_TEAMS
+    || normalizedExternalEvents.length > MAX_FAMILY_SHARE_EVENTS;
+  const boundedEvents = normalizedExternalEvents.slice(0, MAX_FAMILY_SHARE_EVENTS).map((event = {}) => (
     Object.fromEntries(externalEventFields
       .filter((field) => Object.hasOwn(event, field))
       .map((field) => [field, event[field]]))
   ));
   let remainingGames = MAX_FAMILY_SHARE_DB_EVENTS;
-  const boundedTeams = teams.slice(0, MAX_FAMILY_SHARE_TEAMS).map((team = {}) => {
-    const games = (Array.isArray(team.games) ? team.games : [])
+  const boundedTeams = normalizedTeams.slice(0, MAX_FAMILY_SHARE_TEAMS).map((team = {}) => {
+    const sourceGames = Array.isArray(team.games) ? team.games : [];
+    if (sourceGames.length > remainingGames) projectionWasTruncated = true;
+    const games = sourceGames
       .slice(0, remainingGames)
       .map(sanitizeFamilyShareGame);
     remainingGames -= games.length;
@@ -543,10 +586,13 @@ function sanitizeFamilyShareViewResponse({ token, children = [], teams = [], ext
   return {
     projectionVersion: 2,
     presentation: buildFamilySharePresentation(token),
-    children: children.slice(0, MAX_FAMILY_SHARE_CHILDREN).map(sanitizeFamilyShareChild),
+    children: normalizedChildren.slice(0, MAX_FAMILY_SHARE_CHILDREN).map(sanitizeFamilyShareChild),
     teams: boundedTeams,
     externalEvents: boundedEvents,
-    calendarWarnings: [...new Set(calendarWarnings.map((warning) => compactText(warning, 160)).filter(Boolean))].slice(0, MAX_FAMILY_SHARE_CALENDAR_URLS)
+    calendarWarnings: [...new Set([
+      ...(Array.isArray(calendarWarnings) ? calendarWarnings : []),
+      ...(projectionWasTruncated ? [FAMILY_SHARE_PROJECTION_INCOMPLETE_WARNING] : [])
+    ].map((warning) => compactText(warning, 160)).filter(Boolean))].slice(0, MAX_FAMILY_SHARE_CALENDAR_URLS)
   };
 }
 
@@ -562,6 +608,7 @@ function getFamilyShareCalendarDedupTimestamps(teams = [], teamId = '') {
 }
 
 module.exports = {
+  FAMILY_SHARE_PROJECTION_INCOMPLETE_WARNING,
   MAX_FAMILY_SHARE_CALENDAR_URLS,
   MAX_FAMILY_SHARE_CHILDREN,
   MAX_FAMILY_SHARE_DB_EVENTS,

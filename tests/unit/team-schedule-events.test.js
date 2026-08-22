@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 
 function readTeamPage() {
@@ -19,12 +19,28 @@ function extractAsyncFunctionBody(source, name, nextSignature) {
     return match[1];
 }
 
+function extractNamedFunctionSource(source, name) {
+    const start = source.indexOf(`function ${name}(`);
+    expect(start, `${name} should exist`).toBeGreaterThan(-1);
+    const bodyStart = source.indexOf('{', start);
+    let depth = 0;
+    for (let index = bodyStart; index < source.length; index += 1) {
+        if (source[index] === '{') depth += 1;
+        if (source[index] === '}') depth -= 1;
+        if (depth === 0) return source.slice(start, index + 1);
+    }
+    throw new Error(`${name} did not terminate`);
+}
+
 function buildGetAllEvents(overrides = {}) {
     const source = readTeamPage();
     const body = extractAsyncFunctionBody(source, 'getAllEvents', 'async function renderSchedule');
+    const scopeLossHelper = extractNamedFunctionSource(source, 'isCalendarAccessOrSourceLossError');
+    const snapshotHelper = extractNamedFunctionSource(source, 'resolveTeamExternalCalendarEventsForLoad');
     const deps = {
         currentTeamId: 'team-1',
         getTrackedCalendarEventUids: async () => [],
+        getPublicTeamCalendarEvents: async () => ({ events: [], warnings: [], complete: true }),
         fetchAndParseCalendar: async () => [],
         isTrackedCalendarEvent: () => false,
         isPracticeEvent: () => false,
@@ -33,15 +49,20 @@ function buildGetAllEvents(overrides = {}) {
         buildAvailabilityNoteRows: () => [],
         getRsvps: async () => [],
         canManageTeamAvailability: () => false,
+        refreshCurrentParentAccessForTeam: async () => true,
         currentTeamAccessInfo: null,
         currentUser: null,
+        lastCompleteExternalScheduleEventsByTeam: new Map(),
         ...overrides
     };
 
     const createGetAllEvents = new Function('deps', `
+        ${scopeLossHelper}
+        ${snapshotHelper}
         const {
             currentTeamId,
             getTrackedCalendarEventUids,
+            getPublicTeamCalendarEvents,
             fetchAndParseCalendar,
             isTrackedCalendarEvent,
             isPracticeEvent,
@@ -50,9 +71,12 @@ function buildGetAllEvents(overrides = {}) {
             buildAvailabilityNoteRows,
             getRsvps,
             canManageTeamAvailability,
+            refreshCurrentParentAccessForTeam,
             currentTeamAccessInfo,
-            currentUser
+            currentUser,
+            lastCompleteExternalScheduleEventsByTeam
         } = deps;
+        let teamScheduleIncomplete = false;
         return async function(team, dbGames) {
 ${body}
         };
@@ -99,6 +123,17 @@ ${exposeBody}
 }
 
 describe('team page schedule event normalization', () => {
+    it('does not load external tracking state for a database-only schedule', async () => {
+        const getTrackedCalendarEventUids = vi.fn(async () => {
+            throw new Error('tracking unavailable');
+        });
+        const getAllEvents = buildGetAllEvents({ getTrackedCalendarEventUids });
+
+        await getAllEvents({ calendarUrls: [], hasCalendarSources: false }, []);
+
+        expect(getTrackedCalendarEventUids).not.toHaveBeenCalled();
+    });
+
     it('preserves CTA-driving db game fields and marks cancelled games explicitly', async () => {
         const getAllEvents = buildGetAllEvents();
         const [event] = await getAllEvents({ calendarUrls: [] }, [{

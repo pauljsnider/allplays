@@ -24,11 +24,11 @@ describe('Schedule async operation contract', () => {
         expect(scheduleSource).toContain('loading: loadingPastHistory');
         expect(scheduleSource).toContain('run: runPastHistoryRead');
         expect(refreshScheduleSource).toContain('return runScheduleRead(');
-        expect(refreshScheduleSource).toContain('() => loadCachedAppData(');
-        expect(refreshScheduleSource).toContain('const parentScope = await parentScopePromise;');
+        expect(refreshScheduleSource).toContain('const verifiedParentScope = await parentScopePromise;');
+        expect(refreshScheduleSource).toContain('return loadCachedAppData(');
         expect(refreshScheduleSource).toContain('return loadParentSchedule(auth.user, {');
-        expect(refreshScheduleSource).toContain('...(parentScope && parentScope.isPartial !== true ? { parentScope } : {})');
-        expect(refreshScheduleSource).toContain('{ ttlMs: scheduleCacheTtlMs, force }');
+        expect(refreshScheduleSource).toContain('...(verifiedParentScope && verifiedParentScope.isPartial !== true ? { parentScope: verifiedParentScope } : {})');
+        expect(refreshScheduleSource).toContain('shouldCache: (loadedResult) => isParentScheduleCacheSafe(loadedResult)');
         expect(refreshScheduleSource).not.toContain('setLoading(');
     });
 
@@ -38,7 +38,7 @@ describe('Schedule async operation contract', () => {
         expect(scheduleSource).toContain("import { toAppServiceError, type AppServiceError } from '../lib/appErrors';");
         expect(refreshScheduleSource).toContain("getScheduleLoadErrorMessage(toAppServiceError(loadError, 'Unable to load schedule.'), hasExistingSchedule)");
         expect(refreshScheduleSource).toContain("const mappedError = toAppServiceError(loadError, 'Unable to load schedule.');");
-        expect(refreshScheduleSource).toContain('if (!hasExistingSchedule) {');
+        expect(refreshScheduleSource).toContain('if (!hasExistingSchedule && !hasAppliedSettledPartialEvidence) {');
         expect(refreshScheduleSource).toContain('applyScheduleResult({ children: [], events: [] });');
         expect(refreshScheduleSource).toContain('setLoadedScheduleUserId(auth.user?.uid || null);');
     });

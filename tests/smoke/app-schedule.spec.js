@@ -17,9 +17,19 @@ function appUrl(baseURL, hashPath) {
 
 async function waitForScheduleRoute(page, readyLocator) {
     await expect(async () => {
+        expect(page.__allPlaysUnexpectedPageErrors || []).toEqual([]);
         await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 1000 });
         await expect(readyLocator).toBeVisible({ timeout: 1000 });
     }).toPass({ timeout: 30000 });
+}
+
+function captureUnexpectedPageErrors(page) {
+    const pageErrors = [];
+    page.on('pageerror', (error) => {
+        if (/Installations:.*API key not valid/i.test(error.message)) return;
+        pageErrors.push(error.message);
+    });
+    page.__allPlaysUnexpectedPageErrors = pageErrors;
 }
 
 function mobileScheduleHeader(page) {
@@ -35,6 +45,7 @@ function mobilePlayerFilter(page) {
 }
 
 async function mockScheduleModules(page, options = {}) {
+    captureUnexpectedPageErrors(page);
     const gameDate = options.gameDate || '2030-05-28T18:00:00Z';
     const practiceDate = options.practiceDate || '2030-05-29T19:00:00Z';
     const authRoles = options.isAdmin ? ['parent', 'admin'] : options.isCoach ? ['parent', 'coach'] : ['parent'];
@@ -128,6 +139,8 @@ async function mockScheduleModules(page, options = {}) {
                     email: 'parent@example.com',
                     displayName: 'Pat Parent',
                     roles: ${JSON.stringify(authRoles)},
+                    parentTeamIds: ['team-1'],
+                    parentPlayerKeys: ['team-1::player-1', 'team-1::player-2'],
                     parentOf: [
                         { teamId: 'team-1', playerId: 'player-1', playerName: 'Pat', teamName: 'Bears' },
                         { teamId: 'team-1', playerId: 'player-2', playerName: 'Sam', teamName: 'Bears' }
@@ -137,7 +150,11 @@ async function mockScheduleModules(page, options = {}) {
                 export function useAuth() {
                     return {
                         user,
-                        profile: { parentOf: user.parentOf },
+                        profile: {
+                            parentTeamIds: user.parentTeamIds,
+                            parentPlayerKeys: user.parentPlayerKeys,
+                            parentOf: user.parentOf
+                        },
                         loading: false,
                         error: null,
                         roles: user.roles,
@@ -514,8 +531,34 @@ async function mockScheduleModules(page, options = {}) {
                             })
                             ${extraUpcomingEvents ? `,\n                            ${extraUpcomingEvents}` : ''}
                             ${extraPastEvents ? `,\n                            ${extraPastEvents}` : ''}
-                        ]
+                        ],
+                        sourceKeysByTeam: { 'team-1': 'no-external-calendar:v1' },
+                        teamLoadStates: { 'team-1': 'complete' },
+                        isPartial: false
                     };
+                }
+
+                export function hasRawExternalScheduleEvents(schedule) {
+                    return Boolean(schedule?.events?.some((event) => event?.isDbGame !== true && event?.sourceType === 'calendar'));
+                }
+
+                export function isParentScheduleCacheSafe(schedule) {
+                    return Boolean(
+                        schedule &&
+                        schedule.isPartial !== true &&
+                        schedule.sourceKeysByTeam?.['team-1'] &&
+                        !hasRawExternalScheduleEvents(schedule)
+                    );
+                }
+
+                export function reconcileParentSchedulePartial(_current, next) {
+                    return next;
+                }
+
+                export function invalidateParentScheduleReadCaches() {}
+
+                export function isTerminalScheduleAccessError(error) {
+                    return error?.code === 'permission-denied' || error?.code === 'not-found';
                 }
 
                 export async function loadParentScheduleChildren() {
@@ -527,7 +570,11 @@ async function mockScheduleModules(page, options = {}) {
 
                 export async function loadParentScheduleScope(user) {
                     return {
-                        profile: { uid: user?.uid || 'user-1' },
+                        profile: {
+                            uid: user?.uid || 'user-1',
+                            parentTeamIds: ['team-1'],
+                            parentPlayerKeys: ['team-1::player-1', 'team-1::player-2']
+                        },
                         children: await loadParentScheduleChildren(),
                         staffTeams: ${staffManageable
                           ? "[{ teamId: 'team-1', teamName: 'Bears' }]"

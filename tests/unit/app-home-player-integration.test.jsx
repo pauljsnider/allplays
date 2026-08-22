@@ -511,6 +511,11 @@ beforeEach(() => {
             packetsReady: 1,
             openAssignments: 0
         },
+        scheduleLoadError: null,
+        scheduleIsPartial: false,
+        scheduleTeamLoadState: 'complete',
+        scheduleSourceKey: 'no-external-calendar:v1',
+        scheduleAccessUserId: 'user-1',
         statRows: [{ event: statEvent, stats: { pts: 12, reb: 4 } }],
         clips: [{ title: 'Fast break', url: 'https://video.example.test/clip', gameLabel: 'vs. Falcons' }],
         certificates: [{ id: 'cert-1', title: 'Hustle Award' }],

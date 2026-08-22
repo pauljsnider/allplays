@@ -92,7 +92,7 @@ const {
   getGameDayTeamContext,
   getTeams,
   getUserTeamsWithAccess
-} = await import('../../js/db.js?v=4433182');
+} = await import('../../js/db.js?v=4433183');
 
 describe('team access query resilience', () => {
   beforeEach(() => {
@@ -421,7 +421,9 @@ describe('game access query resilience', () => {
           title: 'Workout',
           location: 'Public Field',
           status: 'scheduled'
-        }]
+        }],
+        warnings: [],
+        range: { truncated: false }
       }
     });
 
@@ -436,16 +438,65 @@ describe('game access query resilience', () => {
       to: '2026-08-02',
       limit: 500
     });
-    expect(result).toEqual([expect.objectContaining({
-      id: 'opaque-event',
-      uid: 'opaque-event',
-      type: 'practice',
-      summary: 'Workout',
-      location: 'Public Field',
-      status: 'SCHEDULED',
-      isPublicProjection: true
-    })]);
-    expect(result[0]).not.toHaveProperty('sourceUrl');
+    expect(result).toEqual({
+      events: [expect.objectContaining({
+        id: 'opaque-event',
+        uid: 'opaque-event',
+        type: 'practice',
+        summary: 'Workout',
+        location: 'Public Field',
+        status: 'SCHEDULED',
+        isPublicProjection: true
+      })],
+      warnings: [],
+      complete: true
+    });
+    expect(result.events[0]).not.toHaveProperty('sourceUrl');
+  });
+
+  it('preserves known public calendar events while reporting source warnings as incomplete', async () => {
+    firebaseMocks.getPublicTeamCalendarProjection.mockResolvedValue({
+      data: {
+        events: [{
+          id: 'known-event',
+          type: 'game',
+          startsAt: '2026-08-01T18:00:00.000Z',
+          opponent: 'Falcons'
+        }],
+        warnings: ['Calendar source 2 could not be loaded.'],
+        range: { truncated: false }
+      }
+    });
+
+    await expect(getPublicTeamCalendarEvents('team-1')).resolves.toEqual({
+      events: [expect.objectContaining({ id: 'known-event', summary: 'vs. Falcons' })],
+      warnings: ['Calendar source 2 could not be loaded.'],
+      complete: false
+    });
+  });
+
+  it('returns already loaded public calendar pages with incomplete evidence when a later page fails', async () => {
+    firebaseMocks.getPublicTeamCalendarProjection
+      .mockResolvedValueOnce({
+        data: {
+          events: [{
+            id: 'known-first-page-event',
+            type: 'practice',
+            startsAt: '2026-08-01T18:00:00.000Z',
+            title: 'Practice'
+          }],
+          warnings: [],
+          range: { truncated: true },
+          nextCursor: 'calendar-page-2'
+        }
+      })
+      .mockRejectedValueOnce(new Error('page unavailable'));
+
+    const result = await getPublicTeamCalendarEvents('team-1');
+
+    expect(result.events).toEqual([expect.objectContaining({ id: 'known-first-page-event' })]);
+    expect(result.complete).toBe(false);
+    expect(result.warnings).toContain('The projected calendar could not be fully loaded.');
   });
 
   it('follows projection cursors so schedules and calendars retain entries beyond 500', async () => {
@@ -465,8 +516,8 @@ describe('game access query resilience', () => {
       .mockResolvedValueOnce({ data: { games, range: { truncated: true }, nextCursor: 'games-page-2' } })
       .mockResolvedValueOnce({ data: { games: [{ id: 'game-500', startsAt: '2026-09-01T18:00:00.000Z', opponent: 'Rockets' }], range: { truncated: false } } });
     firebaseMocks.getPublicTeamCalendarProjection
-      .mockResolvedValueOnce({ data: { events, range: { truncated: true }, nextCursor: 'calendar-page-2' } })
-      .mockResolvedValueOnce({ data: { events: [{ id: 'event-500', type: 'practice', startsAt: '2026-09-01T18:00:00.000Z', title: 'Practice' }], range: { truncated: false } } });
+      .mockResolvedValueOnce({ data: { events, warnings: [], range: { truncated: true }, nextCursor: 'calendar-page-2' } })
+      .mockResolvedValueOnce({ data: { events: [{ id: 'event-500', type: 'practice', startsAt: '2026-09-01T18:00:00.000Z', title: 'Practice' }], warnings: [], range: { truncated: false } } });
 
     const [projectedGames, projectedEvents] = await Promise.all([
       getGames('team-1'),
@@ -475,8 +526,9 @@ describe('game access query resilience', () => {
 
     expect(projectedGames).toHaveLength(501);
     expect(projectedGames.at(-1)).toEqual(expect.objectContaining({ id: 'game-500', opponent: 'Rockets' }));
-    expect(projectedEvents).toHaveLength(501);
-    expect(projectedEvents.at(-1)).toEqual(expect.objectContaining({ id: 'event-500', summary: 'Practice' }));
+    expect(projectedEvents.events).toHaveLength(501);
+    expect(projectedEvents.events.at(-1)).toEqual(expect.objectContaining({ id: 'event-500', summary: 'Practice' }));
+    expect(projectedEvents).toMatchObject({ warnings: [], complete: true });
     expect(firebaseMocks.getPublicTeamGamesProjection.mock.calls[1][0]).toEqual(expect.objectContaining({ cursor: 'games-page-2' }));
     expect(firebaseMocks.getPublicTeamCalendarProjection.mock.calls[1][0]).toEqual(expect.objectContaining({ cursor: 'calendar-page-2' }));
   });

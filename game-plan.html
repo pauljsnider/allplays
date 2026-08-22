@@ -117,6 +117,9 @@
         <!-- Game Selector -->
         <div class="bg-white rounded-2xl shadow-lg p-6 mb-8 border border-gray-200">
             <h2 class="text-xl font-bold text-gray-900 mb-4">Select Game</h2>
+            <div id="calendar-load-warning" class="hidden mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800" role="status" aria-live="polite">
+                The game list is incomplete because the team calendar could not be loaded. Saved ALL PLAYS games are still shown. Retry to load the complete list.
+            </div>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                     <label class="block text-sm font-semibold text-gray-700 mb-2">Upcoming Games</label>
@@ -300,10 +303,10 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getPlayers, getGames, getGame, updateGame, getTrackedCalendarEventUids, getEvents } from './js/db.js?v=4433182';
-        import { renderHeader, renderFooter, getUrlParams, formatDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, isTrackedCalendarEvent, escapeHtml } from './js/utils.js?v=443358';
-        import { checkAuth } from './js/auth.js?v=4433186';
-        import { getTeamAccessInfo } from './js/team-access.js?v=44338';
+        import { getTeam, getPlayers, getGames, getGame, updateGame, getTrackedCalendarEventUids, getEvents } from './js/db.js?v=4433183';
+        import { renderHeader, renderFooter, getUrlParams, formatDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, isTrackedCalendarEvent, escapeHtml } from './js/utils.js?v=443359';
+        import { checkAuth } from './js/auth.js?v=4433187';
+        import { getTeamAccessInfo } from './js/team-access.js?v=44339';
         import { createAutoSaveController } from './js/game-plan-autosave.js?v=2';
         import { buildGamePlanIntervals } from './js/game-plan-intervals.js?v=2';
         import { normalizeLineupsForGamePlanPlanner } from './js/game-plan-interop.js?v=2';
@@ -379,6 +382,37 @@
         let combinedGames = [];
         let plannerInitialized = false;
         let savePlanResetTimer = null;
+        const completeCalendarGamesByTeam = new Map();
+
+        function getCalendarSourceKey(calendarUrls) {
+            const urls = Array.isArray(calendarUrls)
+                ? calendarUrls.filter((url) => typeof url === 'string' && url.trim()).map((url) => url.trim()).sort()
+                : [];
+            return JSON.stringify(urls);
+        }
+
+        function isCalendarAccessOrSourceLossError(error) {
+            const code = String(error?.code || '').trim().toLowerCase().replace(/^functions\//, '');
+            return code === 'unauthenticated' || code === 'permission-denied' || code === 'not-found';
+        }
+
+        function resolveExternalCalendarEventsForLoad(cache, cacheKey, sourceKey, loadedEvents, loadComplete, scopeVerified = true) {
+            const currentEvents = Array.isArray(loadedEvents) ? loadedEvents.slice() : [];
+            if (!scopeVerified) {
+                cache.delete(cacheKey);
+                return currentEvents;
+            }
+            if (loadComplete) {
+                cache.set(cacheKey, { sourceKey, events: currentEvents.slice() });
+                return currentEvents;
+            }
+            const previous = cache.get(cacheKey);
+            if (currentEvents.length === 0 && previous?.sourceKey === sourceKey && Array.isArray(previous.events)) {
+                return previous.events.slice();
+            }
+            return currentEvents;
+        }
+        // COMPLETE_CALENDAR_FALLBACK_END
 
         function isReadOnlyGame(game = currentGame) {
             return !!game?.isCalendar || !!game?.isSharedGame;
@@ -536,16 +570,15 @@
 
             currentTeamId = teamId;
             document.getElementById('back-link').href = `team.html#teamId=${teamId}`;
+            let calendarLoadIncomplete = false;
+            let teamCalendarScopeVerified = false;
+            document.getElementById('calendar-load-warning')?.classList.add('hidden');
 
             try {
-                const [team, allPlayers, games, trackedUids] = await Promise.all([
-                    getTeam(teamId),
-                    getPlayers(teamId),
-                    getEvents(teamId, { type: 'game' }), // Only games, not practices
-                    getTrackedCalendarEventUids(teamId)
-                ]);
+                const team = await getTeam(teamId);
 
                 if (!team) {
+                    completeCalendarGamesByTeam.delete(teamId);
                     alert('Team not found.');
                     window.location.href = 'dashboard.html';
                     return;
@@ -555,6 +588,7 @@
                 const accessInfo = getTeamAccessInfo(currentUser, { ...currentTeam, id: teamId });
                 const hasManageAccess = accessInfo.hasAccess && accessInfo.accessLevel === 'full';
                 if (!hasManageAccess) {
+                    completeCalendarGamesByTeam.delete(teamId);
                     console.warn('[game-plan] Access denied', {
                         teamId,
                         userId: currentUser?.uid || null,
@@ -567,13 +601,36 @@
                     window.location.href = accessInfo.exitUrl || 'dashboard.html';
                     return;
                 }
-                players = allPlayers;
+                teamCalendarScopeVerified = true;
 
-                const calendarGames = [];
-                if (team.calendarUrls && team.calendarUrls.length > 0) {
-                    for (const calendarUrl of team.calendarUrls) {
+                const [allPlayers, games] = await Promise.all([
+                    getPlayers(teamId),
+                    getEvents(teamId, { type: 'game' }) // Only games, not practices
+                ]);
+
+                players = allPlayers;
+                const calendarUrls = Array.isArray(team.calendarUrls) ? team.calendarUrls : [];
+                const calendarSourceKey = getCalendarSourceKey(calendarUrls);
+                let externalCalendarLoadComplete = true;
+                let externalCalendarScopeVerified = true;
+                let trackedUids = [];
+                if (calendarUrls.length > 0) {
+                    try {
+                        trackedUids = await getTrackedCalendarEventUids(teamId);
+                    } catch (error) {
+                        externalCalendarLoadComplete = false;
+                        if (isCalendarAccessOrSourceLossError(error)) {
+                            externalCalendarScopeVerified = false;
+                        }
+                        console.warn('Calendar tracking state unavailable for game plan:', error);
+                    }
+                }
+
+                const loadedCalendarGames = [];
+                if (externalCalendarLoadComplete) {
+                    for (const calendarUrl of calendarUrls) {
                         try {
-                            const calendarEvents = await fetchAndParseCalendar(calendarUrl);
+                            const calendarEvents = await fetchAndParseCalendar(calendarUrl, { teamId });
                             calendarEvents.forEach(event => {
                                 if (trackedUids && isTrackedCalendarEvent(event, trackedUids)) return;
                                 // Check if event is cancelled (standard iCal STATUS or TeamSnap [CANCELED] prefix)
@@ -591,7 +648,7 @@
                                     return Math.abs(dbDate - date) < 60000;
                                 });
                                 if (hasConflict) return;
-                                calendarGames.push({
+                                loadedCalendarGames.push({
                                     id: `cal-${event.uid || date.getTime()}`,
                                     source: 'calendar',
                                     date,
@@ -602,10 +659,24 @@
                                 });
                             });
                         } catch (err) {
-                            console.error('Error reading calendar', calendarUrl, err);
+                            externalCalendarLoadComplete = false;
+                            if (isCalendarAccessOrSourceLossError(err)) {
+                                externalCalendarScopeVerified = false;
+                            }
+                            console.warn('Calendar import unavailable for game plan:', err);
                         }
                     }
                 }
+                calendarLoadIncomplete = !externalCalendarLoadComplete;
+                const calendarGames = resolveExternalCalendarEventsForLoad(
+                    completeCalendarGamesByTeam,
+                    teamId,
+                    calendarSourceKey,
+                    loadedCalendarGames,
+                    externalCalendarLoadComplete,
+                    externalCalendarScopeVerified
+                );
+                document.getElementById('calendar-load-warning')?.classList.toggle('hidden', !calendarLoadIncomplete);
 
                 // Get upcoming or still-active games sorted by nearest upcoming first
                 combinedGames = [...games.map(g => ({ ...g, source: 'db' })), ...calendarGames]
@@ -655,6 +726,9 @@
                 });
 
             } catch (error) {
+                if (!teamCalendarScopeVerified || isCalendarAccessOrSourceLossError(error)) {
+                    completeCalendarGamesByTeam.delete(teamId);
+                }
                 console.error('Error loading game planner:', error);
                 const loadingEl = document.getElementById('game-selector-loading');
                 if (loadingEl) {

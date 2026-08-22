@@ -116,7 +116,7 @@ function FamilyShareContent({ model, onRefresh }: { model: FamilyShareViewModel;
 
       {model.calendarWarnings.length ? (
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-semibold leading-6 text-amber-900" role="status">
-          Some external calendars could not be loaded ({model.calendarWarnings.slice(0, 2).join(', ')}{model.calendarWarnings.length > 2 ? ` +${model.calendarWarnings.length - 2} more` : ''}). ALL PLAYS events are still shown.
+          Some external calendars could not be loaded ({model.calendarWarnings.slice(0, 2).join(', ')}{model.calendarWarnings.length > 2 ? ` +${model.calendarWarnings.length - 2} more` : ''}). Known ALL PLAYS events are still shown.
         </div>
       ) : null}
 
@@ -143,7 +143,16 @@ function FamilyShareContent({ model, onRefresh }: { model: FamilyShareViewModel;
           <div className="mt-3 grid gap-2">
             {model.upcomingEvents.length ? model.upcomingEvents.map((event) => (
               <FamilyEventRow key={event.eventKey} event={event} />
-            )) : <EmptyBlock title="No upcoming events" detail="Games and practices will appear here after the team schedule is updated." />}
+            )) : model.calendarWarnings.length ? (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-4" role="status">
+                <div className="text-sm font-black text-amber-950">Schedule incomplete</div>
+                <div className="mt-1 text-xs font-semibold leading-5 text-amber-800">An external calendar did not load, so upcoming-event absence cannot be confirmed.</div>
+                <button type="button" className="secondary-button mt-3 w-fit justify-center text-xs" onClick={onRefresh}>
+                  <RefreshCw className="h-4 w-4" aria-hidden="true" />
+                  Refresh schedule
+                </button>
+              </div>
+            ) : <EmptyBlock title="No upcoming events" detail="Games and practices will appear here after the team schedule is updated." />}
           </div>
         </section>
       </div>
@@ -259,6 +268,13 @@ function getFamilyShareErrorState(error: unknown): FamilyShareErrorState {
       return {
         title: 'Missing family share token',
         detail: 'Open the full family share link that was sent to you.'
+      };
+    }
+    if (error.reason === 'load-failed') {
+      return {
+        title: 'Family page temporarily unavailable',
+        detail: 'The complete schedule could not be loaded. Retry to avoid showing an incomplete calendar.',
+        retryable: true
       };
     }
   }

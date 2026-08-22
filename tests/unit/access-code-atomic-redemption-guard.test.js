@@ -133,7 +133,10 @@ describe('access code atomic redemption guard', () => {
 
         const keepBranchSource = helperSource.slice(keepBranchIndex);
         expect(keepBranchSource).toContain('const nextUserData = {');
-        expect(keepBranchSource).toContain('parentOf: remainingParentOf');
+        expect(keepBranchSource).toContain('...remainingParentAccess');
+        expect(keepBranchSource).toContain('parentOf: nextUserData.parentOf');
+        expect(keepBranchSource).toContain('parentTeamIds: nextUserData.parentTeamIds');
+        expect(keepBranchSource).toContain('parentPlayerKeys: nextUserData.parentPlayerKeys');
         expect(keepBranchSource).toContain('transaction.set(publicProfileRef, buildTrustedPublicUserProfileProjectionPayload(nextUserData, {');
         expect(keepBranchSource).toContain('trustedEmail: userData.email || null');
         expect(keepBranchSource).toContain('}), { merge: true });');

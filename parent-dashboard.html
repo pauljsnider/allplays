@@ -231,6 +231,9 @@
                             <button id="schedule-filter-past-all" onclick="setScheduleFilter('past-all')" class="px-2.5 py-1 text-xs font-semibold rounded-full border border-gray-200 bg-white text-gray-600 hover:bg-gray-100">Past Events</button>
                         </div>
                     </div>
+                    <div id="parent-schedule-load-warning" class="hidden mx-4 mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800" role="status" aria-live="polite">
+                        This schedule is incomplete because one or more team calendars could not be loaded. Saved ALL PLAYS events are still shown. Retry to load the complete schedule.
+                    </div>
                     <div id="schedule-calendar-nav" class="hidden px-6 py-3 border-b border-gray-100 bg-white flex items-center justify-center gap-4">
                         <button onclick="navScheduleMonth(-1)" class="px-3 py-1.5 rounded-lg bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 text-sm font-medium">&larr; Prev</button>
                         <span id="schedule-calendar-month-label" class="text-base font-bold text-gray-900"></span>
@@ -388,8 +391,8 @@
             listFamilyShareTokens,
             revokeFamilyShareToken,
             updateFamilyShareTokenCalendars
-        } from './js/db.js?v=4433182';
-        import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } from './js/utils.js?v=443358';
+        } from './js/db.js?v=4433183';
+        import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } from './js/utils.js?v=443359';
         import {
             getIncentiveRules,
             saveIncentiveRule as saveIncentiveRuleFn,
@@ -408,7 +411,8 @@
             saveCapSetting as saveCapSettingFn,
         } from './js/parent-incentives.js?v=6';
         import { functions, httpsCallable } from './js/firebase.js?v=26';
-        import { requireAuth, checkAuth } from './js/auth.js?v=4433186';
+        import { requireAuth, checkAuth } from './js/auth.js?v=4433187';
+        import { resolveCanonicalParentScopeInput } from './js/parent-membership-utils.js?v=4';
         import { resolveScheduleWatchCta } from './js/schedule-watch-cta.js?v=1';
         import {
             resolvePracticePacketSessionIdForEvent as resolvePracticePacketSessionIdForEventBase,
@@ -448,6 +452,7 @@
         let scheduleViewMode = 'list';
         let scheduleCalendarMonth = new Date().getMonth();
         let scheduleCalendarYear = new Date().getFullYear();
+        let parentScheduleIncomplete = false;
         let activeDayModal = null;
         const practicePacketSessionMap = new Map();
         const rideshareOffersByEvent = new Map();
@@ -455,6 +460,8 @@
         const teamChildrenByTeamId = new Map();
         const selectedRideChildByOffer = new Map();
         const requestablePlayersByTeam = new Map();
+        const completeParentCalendarEventsByTeam = new Map();
+        let parentCalendarCacheAuthUid = '';
         let publicRequestTeams = [];
         let parentMembershipRequests = [];
         let incentivesPanelPlayer = null;  // { id, name, teamId }
@@ -462,6 +469,76 @@
         let parentDashboardHydrationRun = 0;
         const certificatesByPlayerKey = new Map();
         const incentivesEarningsCache = new Map(); // gameId__playerId → { totalCents, breakdown }
+
+        function getCalendarSourceKey(calendarUrls) {
+            const urls = Array.isArray(calendarUrls)
+                ? calendarUrls.filter((url) => typeof url === 'string' && url.trim()).map((url) => url.trim()).sort()
+                : [];
+            return JSON.stringify(urls);
+        }
+
+        function getParentCalendarCacheKey(authUid, teamId, teamChildren) {
+            const normalizedAuthUid = String(authUid || '').trim();
+            if (!normalizedAuthUid) return '';
+            const playerIds = (Array.isArray(teamChildren) ? teamChildren : [])
+                .map((child) => String(child?.playerId || '').trim())
+                .filter(Boolean)
+                .sort();
+            return JSON.stringify([normalizedAuthUid, String(teamId || '').trim(), playerIds]);
+        }
+
+        function resolveParentCalendarCacheAuthScope(cache, currentAuthUid, nextAuthUid) {
+            const current = String(currentAuthUid || '').trim();
+            const next = String(nextAuthUid || '').trim();
+            if (!next || next !== current) cache.clear();
+            return next;
+        }
+
+        function syncParentCalendarCacheAuthScope(nextAuthUid) {
+            parentCalendarCacheAuthUid = resolveParentCalendarCacheAuthScope(
+                completeParentCalendarEventsByTeam,
+                parentCalendarCacheAuthUid,
+                nextAuthUid
+            );
+            return parentCalendarCacheAuthUid;
+        }
+
+        function isPermanentCalendarSourceAccessError(error) {
+            const code = String(error?.code || '').trim().toLowerCase();
+            return ['unauthenticated', 'permission-denied', 'not-found'].some((terminalCode) => (
+                code === terminalCode || code.endsWith(`/${terminalCode}`)
+            ));
+        }
+
+        function resolveExternalCalendarEventsForLoad(
+            cache,
+            cacheKey,
+            sourceKey,
+            loadedEvents,
+            loadComplete,
+            currentTeamAccessVerified = false,
+            sourceAccessLost = false
+        ) {
+            const currentEvents = Array.isArray(loadedEvents) ? loadedEvents.slice() : [];
+            if (!currentTeamAccessVerified) {
+                cache.delete(cacheKey);
+                return [];
+            }
+            if (sourceAccessLost) {
+                cache.delete(cacheKey);
+                return currentEvents;
+            }
+            if (loadComplete) {
+                cache.set(cacheKey, { sourceKey, events: currentEvents.slice() });
+                return currentEvents;
+            }
+            const previous = cache.get(cacheKey);
+            if (currentEvents.length === 0 && previous?.sourceKey === sourceKey && Array.isArray(previous.events)) {
+                return previous.events.slice();
+            }
+            return currentEvents;
+        }
+        // COMPLETE_CALENDAR_FALLBACK_END
         window.setPracticePacketFilter = setPracticePacketFilter;
         window.setScheduleFilter = setScheduleFilter;
         window.setScheduleView = setScheduleView;
@@ -1543,11 +1620,17 @@
         async function init() {
             try {
                 const user = await requireAuth();
-                currentUserId = user.uid;
+                currentUserId = syncParentCalendarCacheAuthScope(user.uid) || null;
                 currentUser = user;
 
                 // Allow checkAuth to populate user object fully
                 checkAuth((updatedUser) => {
+                     const previousAuthUid = String(currentUserId || '').trim();
+                     const observedAuthUid = syncParentCalendarCacheAuthScope(updatedUser?.uid);
+                     if (observedAuthUid !== previousAuthUid) {
+                         parentDashboardHydrationRun += 1;
+                     }
+                     currentUserId = observedAuthUid || null;
                      renderHeader(document.getElementById('header-container'), updatedUser);
                 });
 
@@ -1725,6 +1808,7 @@
             if (runId !== parentDashboardHydrationRun) return;
 
             allScheduleEvents = combinedSchedule;
+            document.getElementById('parent-schedule-load-warning')?.classList.toggle('hidden', !parentScheduleIncomplete);
             await Promise.all([
                 hydrateRideshareOffersForSchedule(allScheduleEvents),
                 hydrateAssignmentClaimsForSchedule(allScheduleEvents)
@@ -1799,22 +1883,21 @@
             const strict = !!options?.strict;
             if (!userId || !Array.isArray(teamIds) || teamIds.length === 0) return;
             try {
-                const profile = await getUserProfile(userId);
-                const existing = Array.isArray(profile?.parentTeamIds) ? profile.parentTeamIds : [];
-                const merged = [...new Set([...existing, ...teamIds])];
-                const expectedParentPlayerKeys = [...new Set(
-                    (Array.isArray(profile?.parentOf) ? profile.parentOf : [])
-                        .map(p => (p?.teamId && p?.playerId ? `${p.teamId}::${p.playerId}` : null))
-                        .filter(Boolean)
-                )];
-                const currentParentPlayerKeys = Array.isArray(profile?.parentPlayerKeys) ? profile.parentPlayerKeys : [];
-                const needsUpdate = merged.length !== existing.length ||
-                    JSON.stringify(expectedParentPlayerKeys.slice().sort()) !== JSON.stringify(currentParentPlayerKeys.slice().sort());
-                if (needsUpdate) {
-                    await updateUserProfile(userId, {
-                        parentTeamIds: merged,
-                        parentPlayerKeys: expectedParentPlayerKeys
-                    });
+                const profile = (await getUserProfile(userId)) || {};
+                const canonicalParentScope = resolveCanonicalParentScopeInput(profile);
+                const parentAccessBackfill = {};
+                if (!canonicalParentScope.hasCanonicalParentTeamIds) {
+                    parentAccessBackfill.parentTeamIds = [...new Set(
+                        canonicalParentScope.parentLinks.map((link) => link.teamId)
+                    )];
+                }
+                if (!canonicalParentScope.hasCanonicalParentPlayerKeys) {
+                    parentAccessBackfill.parentPlayerKeys = [...new Set(
+                        canonicalParentScope.parentLinks.map((link) => `${link.teamId}::${link.playerId}`)
+                    )];
+                }
+                if (Object.keys(parentAccessBackfill).length > 0) {
+                    await updateUserProfile(userId, parentAccessBackfill);
                 }
             } catch (err) {
                 console.warn('Failed to ensure parent team access:', err);
@@ -1825,7 +1908,14 @@
         }
 
         async function buildCombinedSchedule(children) {
+            parentScheduleIncomplete = false;
             if (!children || children.length === 0) return [];
+            const parentCalendarAuthUid = String(currentUserId || '').trim();
+            if (!parentCalendarAuthUid) {
+                completeParentCalendarEventsByTeam.clear();
+                parentScheduleIncomplete = true;
+                return [];
+            }
 
             const byTeam = new Map();
             for (const child of children) {
@@ -1839,21 +1929,43 @@
             const allEvents = [];
             const teamEventBatches = await Promise.all(Array.from(byTeam.entries()).map(async ([teamId, teamChildren]) => {
                 const teamEvents = [];
+                const parentCalendarCacheKey = getParentCalendarCacheKey(
+                    parentCalendarAuthUid,
+                    teamId,
+                    teamChildren
+                );
                 let team = null;
                 let dbGames = [];
                 let trackedUids = [];
                 let practiceSessions = [];
                 try {
-                    [team, dbGames, trackedUids, practiceSessions] = await Promise.all([
+                    [team, dbGames, practiceSessions] = await Promise.all([
                         getTeam(teamId),
                         getGames(teamId),
-                        getTrackedCalendarEventUids(teamId),
                         getPracticeSessions(teamId)
                     ]);
-                    if (!team) return teamEvents;
+                    if (!team) {
+                        parentScheduleIncomplete = true;
+                        return resolveExternalCalendarEventsForLoad(
+                            completeParentCalendarEventsByTeam,
+                            parentCalendarCacheKey,
+                            '',
+                            [],
+                            false,
+                            false
+                        );
+                    }
                 } catch (err) {
+                    parentScheduleIncomplete = true;
                     console.warn('[parent-dashboard] Failed to load team schedule data:', teamId, err);
-                    return teamEvents;
+                    return resolveExternalCalendarEventsForLoad(
+                        completeParentCalendarEventsByTeam,
+                        parentCalendarCacheKey,
+                        '',
+                        [],
+                        false,
+                        false
+                    );
                 }
                 if (!Array.isArray(dbGames)) dbGames = [];
                 if (!Array.isArray(trackedUids)) trackedUids = [];
@@ -1985,21 +2097,41 @@
                 }
 
                 // Calendar (ICS) events for this team
-                if (team.calendarUrls && team.calendarUrls.length > 0) {
-                    console.log(`[parent-dashboard] Team ${team.name} has ${team.calendarUrls.length} calendar URL(s)`);
-                    const calendarResults = await Promise.all(team.calendarUrls.map(async (calendarUrl) => {
+                const calendarUrls = Array.isArray(team.calendarUrls) ? team.calendarUrls : [];
+                const calendarSourceKey = getCalendarSourceKey(calendarUrls);
+                let externalCalendarLoadComplete = true;
+                let externalCalendarSourceAccessLost = false;
+                if (calendarUrls.length > 0) {
+                    try {
+                        trackedUids = await getTrackedCalendarEventUids(teamId);
+                    } catch (err) {
+                        externalCalendarLoadComplete = false;
+                        externalCalendarSourceAccessLost = isPermanentCalendarSourceAccessError(err);
+                        parentScheduleIncomplete = true;
+                        console.warn('[parent-dashboard] Calendar tracking state unavailable:', err);
+                    }
+                }
+
+                let calendarResults = [];
+                if (externalCalendarLoadComplete) {
+                    calendarResults = await Promise.all(calendarUrls.map(async (calendarUrl) => {
                         try {
-                            console.log(`[parent-dashboard] Fetching calendar: ${calendarUrl}`);
-                            const calendarEvents = await fetchAndParseCalendar(calendarUrl);
+                            const calendarEvents = await fetchAndParseCalendar(calendarUrl, { teamId });
                             console.log(`[parent-dashboard] Got ${calendarEvents.length} events from calendar`);
-                            return { calendarUrl, calendarEvents };
+                            return { calendarEvents };
                         } catch (err) {
-                            console.warn('Calendar import unavailable for parent dashboard:', calendarUrl, err);
-                            return { calendarUrl, calendarEvents: [] };
+                            externalCalendarLoadComplete = false;
+                            externalCalendarSourceAccessLost = externalCalendarSourceAccessLost ||
+                                isPermanentCalendarSourceAccessError(err);
+                            parentScheduleIncomplete = true;
+                            console.warn('Calendar import unavailable for parent dashboard:', err);
+                            return null;
                         }
                     }));
+                }
 
-                    calendarResults.forEach(({ calendarEvents }) => {
+                const loadedCalendarTeamEvents = [];
+                calendarResults.filter(Boolean).forEach(({ calendarEvents }) => {
                         calendarEvents.forEach(event => {
                             if (isTrackedCalendarEvent(event, trackedUids)) return;
 
@@ -2026,7 +2158,7 @@
                             const session = isPractice ? resolvePracticeSession(event, eventDate) : null;
 
                             for (const child of teamChildren) {
-                                teamEvents.push({
+                                loadedCalendarTeamEvents.push({
                                     type,
                                     date: eventDate,
                                     location,
@@ -2035,6 +2167,7 @@
                                     id: getCalendarEventTrackingId(event) || null,
                                     calendarEventUid: event.uid || null,
                                     isDbGame: false,
+                                    source: 'calendar',
                                     childId: child.playerId,
                                     childName: child.playerName,
                                     isCancelled,
@@ -2044,7 +2177,21 @@
                                 });
                             }
                         });
-                    });
+                });
+                // Reaching this point requires the current team, game, and
+                // parent-only practice-session reads to have completed. Only
+                // the external source load may use the last complete snapshot.
+                teamEvents.push(...resolveExternalCalendarEventsForLoad(
+                    completeParentCalendarEventsByTeam,
+                    parentCalendarCacheKey,
+                    calendarSourceKey,
+                    loadedCalendarTeamEvents,
+                    externalCalendarLoadComplete,
+                    true,
+                    externalCalendarSourceAccessLost
+                ));
+                if (!externalCalendarLoadComplete) {
+                    parentScheduleIncomplete = true;
                 }
 
                 // Include upcoming draft/planned sessions that don't currently map to a schedule event.

@@ -27,6 +27,7 @@ import {
 import { searchHelpKnowledge } from './helpKnowledgeService';
 import { loadParentHome } from './homeService';
 import { createLogger } from './logger';
+import { collectCanonicalParentAccessLinks } from './parentAccessScope';
 import {
   createParentFamilyShare,
   createParentHouseholdMemberInvite,
@@ -5678,7 +5679,7 @@ function summarizeSignedInUser(
     email: user.email,
     displayName: user.displayName,
     roles: user.roles || [],
-    linkedPlayerCount: user.parentPlayerKeys?.length || user.parentOf?.length || 0,
+    linkedPlayerCount: collectCanonicalParentAccessLinks(user).length,
     managedTeamCount: roleCapabilities.managedTeamCount,
     emailVerified: user.emailVerified === true
   };

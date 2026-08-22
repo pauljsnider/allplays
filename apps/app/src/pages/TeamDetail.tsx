@@ -30,6 +30,11 @@ import { ErrorBoundary } from '../components/ErrorBoundary';
 import { TeamDetailPageSkeleton } from '../components/PageSkeletons';
 import { DetailLoadErrorState } from '../components/DetailLoadErrorState';
 import { openPublicUrl } from '../lib/publicActions';
+import {
+  applyCurrentParentAccessProfile,
+  collectCanonicalParentAccessLinks,
+  isCanonicalParentTeamLinked
+} from '../lib/parentAccessScope';
 import { isRetryableAppServiceError, toAppServiceError, type AppServiceError } from '../lib/appErrors';
 import { useAppAsyncOperation } from '../lib/useAsyncOperation';
 import { getEventDetailPath } from '../lib/homeLogic';
@@ -93,20 +98,86 @@ function scheduleTeamTabScrollPositionReset() {
   };
 }
 
+function mergeKnownTeamDetailEvents(
+  currentEvents: TeamDetailEvent[],
+  nextEvents: TeamDetailEvent[],
+  direction: 'ascending' | 'descending'
+) {
+  const eventsByIdentity = new Map<string, TeamDetailEvent>();
+  [...currentEvents, ...nextEvents].forEach((event) => {
+    eventsByIdentity.set(`${event.id}:${event.date.getTime()}`, event);
+  });
+  return [...eventsByIdentity.values()].sort((left, right) => (
+    direction === 'ascending'
+      ? left.date.getTime() - right.date.getTime()
+      : right.date.getTime() - left.date.getTime()
+  ));
+}
+
+function preserveKnownTeamDetailSchedule(
+  currentModel: TeamDetailModel | null,
+  nextModel: TeamDetailModel
+) {
+  if (
+    !currentModel
+    || currentModel.team.id !== nextModel.team.id
+    || nextModel.scheduleIsPartial !== true
+    || currentModel.scheduleAccessVerified !== true
+    || nextModel.scheduleAccessVerified !== true
+    || !currentModel.scheduleAccessUserId
+    || currentModel.scheduleAccessUserId !== nextModel.scheduleAccessUserId
+    || !currentModel.scheduleSourceKey
+    || !currentModel.scheduleSourceKey.startsWith('direct-calendar:v1:')
+    || currentModel.scheduleSourceKey !== nextModel.scheduleSourceKey
+  ) {
+    return nextModel;
+  }
+  const upcomingEvents = mergeKnownTeamDetailEvents(
+    currentModel.upcomingEvents.filter((event) => event.isDbGame === false && event.sourceType === 'calendar'),
+    nextModel.upcomingEvents,
+    'ascending'
+  );
+  const recentResults = mergeKnownTeamDetailEvents(
+    currentModel.recentResults.filter((event) => event.isDbGame === false && event.sourceType === 'calendar'),
+    nextModel.recentResults,
+    'descending'
+  );
+  return {
+    ...nextModel,
+    upcomingEvents,
+    recentResults,
+    nextEvent: upcomingEvents[0] || null
+  };
+}
+
 export function TeamDetail({ auth }: { auth: AuthState }) {
   const { teamId = '' } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
   const authUserId = auth.user?.uid || '';
+  const currentParentAccessUser = useMemo(() => (
+    auth.user && auth.profile
+      ? applyCurrentParentAccessProfile(auth.user, auth.profile)
+      : auth.user
+  ), [auth.profile, auth.user]);
+  const currentParentAccessScopeKey = useMemo(() => JSON.stringify({
+    teamIds: [...(currentParentAccessUser?.parentTeamIds || [])].map(String).sort(),
+    playerKeys: [...(currentParentAccessUser?.parentPlayerKeys || [])].map(String).sort(),
+    links: collectCanonicalParentAccessLinks(currentParentAccessUser)
+      .map((link) => `${link.teamId}::${link.playerId}`)
+      .sort()
+  }), [currentParentAccessUser]);
   const [model, setModel] = useState<TeamDetailModel | null>(null);
+  const [modelLoadedForUserId, setModelLoadedForUserId] = useState<string | null>(null);
+  const [modelLoadedForParentAccessScopeKey, setModelLoadedForParentAccessScopeKey] = useState<string | null>(null);
   const [premiumRefreshVersion, setPremiumRefreshVersion] = useState(0);
   const teamPassCheckoutReturnArmedRef = useRef(false);
-  const parentTeamIds = [auth.user?.parentTeamIds, auth.profile?.parentTeamIds]
-    .flatMap((values) => Array.isArray(values) ? values : []);
-  const hasLoadedTeamAccess = model?.team.id === teamId && Boolean(
+  const modelHasCurrentAccessScope = modelLoadedForUserId === authUserId
+    && modelLoadedForParentAccessScopeKey === currentParentAccessScopeKey;
+  const hasLoadedTeamAccess = modelHasCurrentAccessScope && model?.team.id === teamId && Boolean(
     model.canManageTeam ||
     model.linkedPlayers.length ||
-    parentTeamIds.includes(teamId)
+    isCanonicalParentTeamLinked(currentParentAccessUser, teamId)
   );
   const teamPremiumAccess = usePremiumFeatureAccess({
     scope: PREMIUM_SCOPES.TEAM,
@@ -163,6 +234,12 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
   const [detailCollectionsError, setDetailCollectionsError] = useState('');
   const [detailCollectionsReloadVersion, setDetailCollectionsReloadVersion] = useState(0);
   const [authoritativeUpcomingCount, setAuthoritativeUpcomingCount] = useState<number | null>(null);
+  const hasCurrentScheduleAccessEvidence = model?.scheduleAccessVerified === true
+    && Boolean(authUserId)
+    && model.scheduleAccessUserId === authUserId;
+  const verifiedAuthoritativeUpcomingCount = hasCurrentScheduleAccessEvidence
+    ? authoritativeUpcomingCount
+    : null;
   const authUserRef = useRef(auth.user);
   const activeTabRef = useRef(activeTab);
   const detailCollectionsLoadingRef = useRef(detailCollectionsLoading);
@@ -176,7 +253,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
 
   useEffect(() => {
     setAuthoritativeUpcomingCount(null);
-  }, [teamId]);
+  }, [authUserId, model?.scheduleSourceKey, teamId]);
 
   useEffect(() => {
     authUserRef.current = auth.user;
@@ -216,12 +293,16 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
     let cancelled = false;
     async function load() {
       if (!teamId) return;
+      const requestedModelUserId = authUserId;
+      const requestedParentAccessScopeKey = currentParentAccessScopeKey;
       setLoading(true);
       setError(null);
       try {
         const nextModel = await loadParentTeamDetailBootstrap(teamId, authUserRef.current);
         if (!cancelled) {
-          setModel(nextModel);
+          setModel((currentModel) => preserveKnownTeamDetailSchedule(currentModel, nextModel));
+          setModelLoadedForUserId(requestedModelUserId);
+          setModelLoadedForParentAccessScopeKey(requestedParentAccessScopeKey);
           setDetailCollectionsLoaded(false);
           setDetailCollectionsLoading(false);
           setDetailCollectionsError('');
@@ -248,6 +329,8 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
         if (!cancelled) {
           setError(toAppServiceError(loadError, 'Unable to load this team.'));
           setModel(null);
+          setModelLoadedForUserId(null);
+          setModelLoadedForParentAccessScopeKey(null);
           setDetailCollectionsLoaded(false);
           setDetailCollectionsLoading(false);
           setDetailCollectionsError('');
@@ -277,7 +360,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [authUserId, teamId, reloadVersion]);
+  }, [authUserId, currentParentAccessScopeKey, teamId, reloadVersion]);
 
   useEffect(() => {
     let cancelled = false;
@@ -288,14 +371,14 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
       try {
         const nextModel = await loadParentTeamDetail(teamId, authUserRef.current, { includeDeferredData: false });
         if (!cancelled) {
-          setModel((currentModel) => currentModel ? {
+          setModel((currentModel) => preserveKnownTeamDetailSchedule(currentModel, currentModel ? {
             ...nextModel,
             leaderboards: currentModel.leaderboards,
             trackingSummaries: currentModel.trackingSummaries,
             rosterStatistics: currentModel.rosterStatistics,
             sponsors: currentModel.sponsors,
             staffPermissions: currentModel.staffPermissions || nextModel.staffPermissions
-          } : nextModel);
+          } : nextModel));
           setDetailCollectionsLoaded(true);
         }
       } catch (loadError: any) {
@@ -472,12 +555,12 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
     };
     if (activeTab === 'more' && nextModel.canManageTeam) {
       const staffPermissions = await loadTeamStaffPermissions(teamId, auth.user);
-      setModel({ ...mergedModel, staffPermissions });
+      setModel((currentModel) => preserveKnownTeamDetailSchedule(currentModel, { ...mergedModel, staffPermissions }));
       setStaffPermissionsError('');
       setStaffPermissionsLoading(false);
       return;
     }
-    setModel(mergedModel);
+    setModel((currentModel) => preserveKnownTeamDetailSchedule(currentModel, mergedModel));
     setStaffPermissionsError('');
     setStaffPermissionsLoading(false);
   }
@@ -513,11 +596,17 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
 
   const tabBadges = useMemo(() => ({
     overview: 0,
-    schedule: authoritativeUpcomingCount ?? model?.upcomingEvents.length ?? 0,
+    schedule: verifiedAuthoritativeUpcomingCount ?? model?.upcomingEvents.length ?? 0,
     roster: 0,
     insights: (model?.leaderboards.length || 0) + (model?.trackingSummaries.length || 0),
     more: model?.sponsors.length || 0
-  }), [authoritativeUpcomingCount, model]);
+  }), [model, verifiedAuthoritativeUpcomingCount]);
+
+  useEffect(() => {
+    if (model && !hasCurrentScheduleAccessEvidence) {
+      setAuthoritativeUpcomingCount(null);
+    }
+  }, [hasCurrentScheduleAccessEvidence, model]);
   const trackedTeamTab = activeTab === 'schedule' || activeTab === 'roster' || activeTab === 'insights' || activeTab === 'more';
   const teamTabRoute = `/teams/${teamId}${activeTab === 'overview' ? '' : `?tab=${activeTab}`}`;
   const teamTabReady = Boolean(model && !loading && (
@@ -568,7 +657,8 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
 
   if (!teamId) return <Navigate to="/teams" replace />;
 
-  if (loading) {
+  const modelHasStalePrincipal = Boolean(model) && !modelHasCurrentAccessScope;
+  if (modelHasStalePrincipal || (loading && model?.team.id !== teamId)) {
     return <TeamDetailPageSkeleton />;
   }
 
@@ -589,7 +679,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
 
   return (
     <div className="team-detail-page space-y-4">
-      <TeamHero model={model} upcomingCount={authoritativeUpcomingCount} />
+      <TeamHero model={model} upcomingCount={verifiedAuthoritativeUpcomingCount} />
 
       <nav
         className="team-detail-tab-nav sticky top-24 z-30 -mx-1 bg-gray-50/95 py-2 backdrop-blur"
@@ -624,6 +714,11 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
         <OverviewTab
           model={model}
           premiumAccess={teamPremiumAccess}
+          scheduleRetrying={loading}
+          onScheduleRetry={() => {
+            setAuthoritativeUpcomingCount(null);
+            setReloadVersion((current) => current + 1);
+          }}
           onTeamPassCheckoutOpening={() => {
             teamPassCheckoutReturnArmedRef.current = true;
           }}
@@ -632,7 +727,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
           }}
         />
       ) : null}
-      {activeTab === 'schedule' ? <ScheduleTab model={model} auth={auth} onScheduleLoaded={setAuthoritativeUpcomingCount} onOpenStatTrackerConfigs={() => navigateToTab('more')} /> : null}
+      {activeTab === 'schedule' ? <ScheduleTab key={`${authUserId || 'anonymous'}:${model.team.id}:${model.scheduleSourceKey || 'unknown-source'}`} model={model} auth={auth} onScheduleLoaded={setAuthoritativeUpcomingCount} onOpenStatTrackerConfigs={() => navigateToTab('more')} /> : null}
       {activeTab === 'roster' ? (
         <ErrorBoundary name="team-detail-roster" onRetry={() => setRosterTabRetryVersion((current) => current + 1)}>
           <Suspense fallback={<div className="app-card p-4 text-sm font-semibold text-gray-500" role="status" aria-label="Loading roster" aria-live="polite">Loading roster…</div>}>
@@ -665,6 +760,8 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
 
 function TeamHero({ model, upcomingCount = null }: { model: TeamDetailModel; upcomingCount?: number | null }) {
   const { team } = model;
+  const scheduleIncomplete = model.scheduleIsPartial === true && upcomingCount === null;
+  const resolvedUpcomingCount = upcomingCount ?? model.upcomingEvents.length;
   return (
     <section className="app-card overflow-hidden">
       <div className="relative h-32 bg-gray-950 sm:h-44">
@@ -694,19 +791,53 @@ function TeamHero({ model, upcomingCount = null }: { model: TeamDetailModel; upc
       <div className="grid grid-cols-3 gap-2 p-3">
         <SummaryStat icon={Trophy} label="Record" value={formatRecord(model.record)} to={`/schedule?teamId=${encodeURIComponent(model.team.id)}&filter=recent-results`} />
         <SummaryStat icon={Users} label="Roster" value={String(model.players.length)} to={`/teams/${encodeURIComponent(model.team.id)}?tab=roster`} />
-        <SummaryStat icon={CalendarDays} label="Upcoming" value={String(upcomingCount ?? model.upcomingEvents.length)} to={`/teams/${encodeURIComponent(model.team.id)}?tab=schedule`} />
+        <SummaryStat
+          icon={CalendarDays}
+          label="Upcoming"
+          value={scheduleIncomplete ? (resolvedUpcomingCount ? `${resolvedUpcomingCount}+` : '—') : String(resolvedUpcomingCount)}
+          to={`/teams/${encodeURIComponent(model.team.id)}?tab=schedule`}
+        />
       </div>
       {team.description ? <p className="border-t border-gray-100 px-4 py-3 text-sm font-semibold leading-6 text-gray-600">{team.description}</p> : null}
     </section>
   );
 }
 
-function OverviewTab({ model, premiumAccess, onTeamPassCheckoutOpening, onTeamPassCheckoutOpenFailed }: { model: TeamDetailModel; premiumAccess: PremiumAccessResult; onTeamPassCheckoutOpening: () => void; onTeamPassCheckoutOpenFailed: () => void }) {
+function OverviewTab({ model, premiumAccess, scheduleRetrying, onScheduleRetry, onTeamPassCheckoutOpening, onTeamPassCheckoutOpenFailed }: {
+  model: TeamDetailModel;
+  premiumAccess: PremiumAccessResult;
+  scheduleRetrying: boolean;
+  onScheduleRetry: () => void;
+  onTeamPassCheckoutOpening: () => void;
+  onTeamPassCheckoutOpenFailed: () => void;
+}) {
   return (
     <div className="space-y-4">
+      {model.scheduleIsPartial === true ? (
+        <TeamOverviewScheduleIncomplete
+          loading={scheduleRetrying}
+          onRetry={onScheduleRetry}
+          hasKnownEvents={model.upcomingEvents.length > 0}
+          accessVerified={model.scheduleAccessVerified === true}
+        />
+      ) : null}
       <section className="grid gap-3 sm:grid-cols-2">
         <InfoCard icon={Trophy} title={`Season record (${model.record.label})`} value={formatRecord(model.record)} detail={model.record.gamesPlayed ? `${model.record.gamesPlayed} completed ${model.record.gamesPlayed === 1 ? 'game' : 'games'}${model.record.winPercentage !== null ? ` · ${model.record.winPercentage}%` : ''}` : 'No completed games yet'} to={`/schedule?teamId=${encodeURIComponent(model.team.id)}&filter=recent-results`} />
-        <InfoCard icon={CalendarDays} title="Next event" value={model.nextEvent ? formatEventDate(model.nextEvent.date) : 'No upcoming'} detail={model.nextEvent ? `${model.nextEvent.title} · ${model.nextEvent.locationDetail || model.nextEvent.location}` : 'Schedule is clear for now'} to={`/schedule?teamId=${encodeURIComponent(model.team.id)}`} />
+        <InfoCard
+          icon={CalendarDays}
+          title="Next event"
+          value={model.nextEvent
+            ? formatEventDate(model.nextEvent.date)
+            : model.scheduleIsPartial === true ? 'Schedule incomplete' : 'No upcoming'}
+          detail={model.nextEvent
+            ? `${model.nextEvent.title} · ${model.nextEvent.locationDetail || model.nextEvent.location}${model.scheduleIsPartial === true
+              ? model.scheduleAccessVerified === true ? ' · More events may be missing' : ' · Team schedule access is unverified'
+              : ''}`
+            : model.scheduleIsPartial === true
+              ? model.scheduleAccessVerified === true ? 'Retry before relying on an empty team schedule.' : 'Team schedule access could not be verified.'
+              : 'Schedule is clear for now'}
+          to={`/schedule?teamId=${encodeURIComponent(model.team.id)}`}
+        />
         <InfoCard icon={Users} title="Roster size" value={`${model.players.length}`} detail={`${model.linkedPlayers.length || 0} linked to your account`} to={`/teams/${encodeURIComponent(model.team.id)}?tab=roster`} />
         <InfoCard icon={BarChart3} title="Standings" value={getStandingValue(model)} detail={getStandingDetail(model)} href={model.team.leagueUrl || undefined} />
       </section>
@@ -1013,21 +1144,51 @@ function countUpcomingTeamScheduleEvents(scheduleEvents: ParentScheduleEvent[], 
   return identities.size;
 }
 
-function ScheduleTab({ model, auth, onScheduleLoaded, onOpenStatTrackerConfigs }: { model: TeamDetailModel; auth: AuthState; onScheduleLoaded: (upcomingCount: number) => void; onOpenStatTrackerConfigs: () => void }) {
-  const [authoritativeEvents, setAuthoritativeEvents] = useState<ParentScheduleEvent[] | null>(null);
+export function ScheduleTab({ model, auth, onScheduleLoaded, onOpenStatTrackerConfigs }: { model: TeamDetailModel; auth: AuthState; onScheduleLoaded: (upcomingCount: number | null) => void; onOpenStatTrackerConfigs: () => void }) {
+  const modelScheduleGeneration = useMemo(() => ({}), [
+    auth.user?.uid,
+    model.recentResults,
+    model.scheduleSourceKey,
+    model.team.id,
+    model.upcomingEvents
+  ]);
+  const [authoritativeSchedule, setAuthoritativeSchedule] = useState<{
+    events: ParentScheduleEvent[];
+    modelScheduleGeneration: object;
+    sourceKey: string;
+    userId: string;
+  } | null>(null);
   const [scheduleLoading, setScheduleLoading] = useState(true);
   const [scheduleError, setScheduleError] = useState('');
   const [scheduleReloadVersion, setScheduleReloadVersion] = useState(0);
   const modelEvents = useMemo(() => [...model.upcomingEvents, ...model.recentResults], [model.recentResults, model.upcomingEvents]);
+  const currentAuthoritativeSchedule = authoritativeSchedule
+    && authoritativeSchedule.modelScheduleGeneration === modelScheduleGeneration
+    && authoritativeSchedule.userId === (auth.user?.uid || '')
+    ? authoritativeSchedule
+    : null;
+  const authoritativeEvents = currentAuthoritativeSchedule?.events || null;
+  const modelEventsForMerge = currentAuthoritativeSchedule
+    && currentAuthoritativeSchedule.sourceKey === model.scheduleSourceKey
+    && (
+      currentAuthoritativeSchedule.sourceKey === 'no-external-calendar:v1'
+      || currentAuthoritativeSchedule.sourceKey.startsWith('direct-calendar:v1:')
+    )
+    ? modelEvents
+    : [];
   const events = useMemo(
-    () => buildTeamSchedulePreviewEvents(authoritativeEvents || [], modelEvents, model.team.id),
-    [authoritativeEvents, model.team.id, modelEvents]
+    () => authoritativeEvents
+      ? buildTeamSchedulePreviewEvents(authoritativeEvents, modelEventsForMerge, model.team.id)
+      : [],
+    [authoritativeEvents, model.team.id, modelEventsForMerge]
   );
   const reminderPreviewLoader = useMemo(() => createStaffRsvpReminderPreviewLoader(), []);
 
   useEffect(() => {
     let cancelled = false;
     async function loadTeamSchedule() {
+      setAuthoritativeSchedule(null);
+      onScheduleLoaded(null);
       setScheduleLoading(true);
       setScheduleError('');
       try {
@@ -1037,12 +1198,31 @@ function ScheduleTab({ model, auth, onScheduleLoaded, onOpenStatTrackerConfigs }
           targetTeamId: model.team.id,
           includePastGames: true
         });
+        const resultSourceKey = typeof result.sourceKeysByTeam?.[model.team.id] === 'string'
+          ? result.sourceKeysByTeam[model.team.id]?.trim() || null
+          : null;
         if (result.isPartial === true) {
+          if (!cancelled && (!resultSourceKey || resultSourceKey !== model.scheduleSourceKey)) {
+            setAuthoritativeSchedule(null);
+            onScheduleLoaded(null);
+          }
           throw new Error('The complete team schedule could not be loaded. Retry to avoid showing missing events.');
+        }
+        if (!resultSourceKey) {
+          if (!cancelled) {
+            setAuthoritativeSchedule(null);
+            onScheduleLoaded(null);
+          }
+          throw new Error('The current team calendar sources could not be verified. Retry to load the schedule.');
         }
         if (!cancelled) {
           const teamEvents = result.events.filter((event) => event.teamId === model.team.id);
-          setAuthoritativeEvents(teamEvents);
+          setAuthoritativeSchedule({
+            events: teamEvents,
+            modelScheduleGeneration,
+            sourceKey: resultSourceKey,
+            userId: auth.user?.uid || ''
+          });
           onScheduleLoaded(countUpcomingTeamScheduleEvents(teamEvents, model.team.id));
         }
       } catch (loadError: any) {
@@ -1055,7 +1235,7 @@ function ScheduleTab({ model, auth, onScheduleLoaded, onOpenStatTrackerConfigs }
     return () => {
       cancelled = true;
     };
-  }, [auth.user, model.team.id, onScheduleLoaded, scheduleReloadVersion]);
+  }, [auth.user, model.scheduleSourceKey, model.team.id, modelScheduleGeneration, onScheduleLoaded, scheduleReloadVersion]);
 
   return (
     <section className="app-card p-4">
@@ -1192,6 +1372,37 @@ function TeamPassCard({ model, premiumAccess, onCheckoutOpening, onCheckoutOpenF
           <button type="button" className="ghost-button mt-3 !min-h-9 text-xs" onClick={() => openPublicUrl(model.team.websiteUrl)}>
             Open website team page
             <ExternalLink className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function TeamOverviewScheduleIncomplete({ loading, onRetry, hasKnownEvents, accessVerified }: {
+  loading: boolean;
+  onRetry: () => void;
+  hasKnownEvents: boolean;
+  accessVerified: boolean;
+}) {
+  return (
+    <section className="rounded-xl border border-amber-200 bg-amber-50 p-4" role="alert">
+      <div className="flex items-start gap-3">
+        <CalendarDays className="mt-0.5 h-5 w-5 flex-none text-amber-700" aria-hidden="true" />
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-black text-amber-950">
+            {accessVerified ? 'Team schedule incomplete' : 'Team schedule access unavailable'}
+          </div>
+          <div className="mt-1 text-xs font-semibold text-amber-800">
+            {!accessVerified
+              ? 'Current access to this team schedule could not be verified. Previously loaded private events are not shown.'
+              : hasKnownEvents
+              ? 'Showing verified upcoming events, but additional calendar events may be missing.'
+              : 'The complete schedule could not be verified, so an empty upcoming count is not confirmed.'}
+          </div>
+          <button type="button" className="secondary-button mt-3 !min-h-9 text-xs" onClick={onRetry} disabled={loading}>
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
+            Retry team schedule
           </button>
         </div>
       </div>

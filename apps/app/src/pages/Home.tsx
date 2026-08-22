@@ -70,7 +70,7 @@ import {
   type ParentScheduleEvent,
   type RsvpResponse
 } from '../lib/scheduleLogic';
-import { loadOfficialAssignmentsAccess } from '../lib/scheduleService';
+import { loadOfficialAssignmentsAccess, type ParentScheduleLoadResult } from '../lib/scheduleService';
 import { recordFirstMeaningfulRender, startScreenMountTimer } from '../lib/uxTiming';
 import { useAsyncOperation } from '../lib/useAsyncOperation';
 import { useRefreshOnResume } from '../lib/useRefreshOnResume';
@@ -182,8 +182,67 @@ function handleParentCoreDrillInClick(
   });
 }
 
+function mergePartialHomeSchedule(current: ParentHomeModel, partial: ParentHomeModel): ParentHomeModel {
+  const currentPlayers = new Map(current.players.map((player) => [`${player.teamId}::${player.playerId}`, player]));
+  const currentTeams = new Map(current.teams.map((team) => [team.teamId, team]));
+  const retainedNonScheduleActions = current.actionItems.filter((action) => action.kind === 'fee' || action.kind === 'message');
+  const partialScheduleActions = partial.actionItems.filter((action) => action.kind !== 'fee' && action.kind !== 'message');
+  return {
+    ...current,
+    players: partial.players.map((player) => ({
+      ...player,
+      unreadCount: currentPlayers.get(`${player.teamId}::${player.playerId}`)?.unreadCount || player.unreadCount
+    })),
+    teams: partial.teams.map((team) => {
+      const existing = currentTeams.get(team.teamId);
+      return {
+        ...existing,
+        ...team,
+        unreadCount: existing?.unreadCount || team.unreadCount
+      };
+    }),
+    upcomingEvents: partial.upcomingEvents,
+    feedGames: partial.feedGames,
+    actionItems: [...partialScheduleActions, ...retainedNonScheduleActions]
+      .sort((left, right) => left.priority - right.priority),
+    metrics: {
+      ...partial.metrics,
+      unreadMessages: current.metrics.unreadMessages
+    },
+    fees: current.fees
+  };
+}
+
+export function shouldDiscardHomeSecondaryForPartialScope(
+  current: ParentHomeModel,
+  partial: ParentHomeModel,
+  schedule: ParentScheduleLoadResult
+) {
+  if (schedule.scopeIsPartial !== false) return true;
+  if ((schedule.accessLostTeamIds || []).length > 0) return true;
+  if (Object.values(schedule.teamLoadStates || {}).some((state) => state === 'access-lost')) return true;
+  const nextPlayerKeys = new Set(partial.players.map((player) => `${player.teamId}::${player.playerId}`));
+  const nextTeamIds = new Set(partial.teams.map((team) => team.teamId));
+  return current.players.some((player) => !nextPlayerKeys.has(`${player.teamId}::${player.playerId}`))
+    || current.teams.some((team) => !nextTeamIds.has(team.teamId));
+}
+
+export function replaceHomeForUnverifiedPartialScope(partial: ParentHomeModel): ParentHomeModel {
+  return {
+    ...partial,
+    actionItems: partial.actionItems.filter((action) => action.kind !== 'fee' && action.kind !== 'message'),
+    fees: [],
+    metrics: {
+      ...partial.metrics,
+      unreadMessages: 0
+    }
+  };
+}
+
 export function Home({ auth }: { auth: AuthState }) {
   const [home, setHome] = useState<ParentHomeModel>(() => emptyHome());
+  const homeRef = useRef(home);
+  homeRef.current = home;
   const [social, setSocial] = useState<SocialHomeModel>(() => emptySocialHome());
   const [activeSection, setActiveSection] = useState<HomeSectionId>('today');
   const [officialsAccess, setOfficialsAccess] = useState<{ hasAccess: boolean; teamCount: number; isPartial: boolean } | null>(null);
@@ -194,6 +253,7 @@ export function Home({ auth }: { auth: AuthState }) {
   const [previewHomeUserId, setPreviewHomeUserId] = useState<string | null>(null);
   const [loadedHomeDetailsUserId, setLoadedHomeDetailsUserId] = useState<string | null>(null);
   const [failedHomeDetailsUserId, setFailedHomeDetailsUserId] = useState<string | null>(null);
+  const [incompleteHomeScheduleUserId, setIncompleteHomeScheduleUserId] = useState<string | null>(null);
   const [homeLoadError, setHomeLoadError] = useState<AppServiceError | null>(null);
   const { loading, error, clearError, run: runPrimaryLoad } = useAsyncOperation();
   const { loading: socialLoading, run: runSecondaryLoad } = useAsyncOperation();
@@ -249,12 +309,24 @@ export function Home({ auth }: { auth: AuthState }) {
           onBackgroundError: handleBackgroundError,
           onPartial: (partial) => {
             if (!isCurrentHomeLoad()) return;
+            setIncompleteHomeScheduleUserId(user.uid);
+            const discardSecondary = shouldDiscardHomeSecondaryForPartialScope(
+              homeRef.current,
+              partial.home,
+              partial.schedule
+            );
+            if (discardSecondary) setSocial(emptySocialHome());
             // Once the stale summary has returned, background loader partials
-            // are incomplete intermediate states. Wait for onRefresh's complete
-            // result before replacing downstream work.
-            if (summaryResultReturned) return;
+            // are incomplete intermediate states. Apply only their source-safe
+            // schedule projection while retaining loaded chat and fee slices.
+            if (summaryResultReturned) {
+              setHome((current) => discardSecondary
+                ? replaceHomeForUnverifiedPartialScope(partial.home)
+                : mergePartialHomeSchedule(current, partial.home));
+              return;
+            }
             receivedHomePreview = true;
-            setHome(partial.home);
+            setHome(discardSecondary ? replaceHomeForUnverifiedPartialScope(partial.home) : partial.home);
             setPreviewHomeUserId(user.uid);
             setHomeLoadError(null);
           },
@@ -265,6 +337,7 @@ export function Home({ auth }: { auth: AuthState }) {
               return;
             }
             receivedHomePreview = true;
+            setIncompleteHomeScheduleUserId(null);
             setHome(refreshedSummary.home);
             setSocial(emptySocialHome());
             setPreviewHomeUserId(user.uid);
@@ -277,6 +350,7 @@ export function Home({ auth }: { auth: AuthState }) {
         });
         summaryResultReturned = true;
         if (!isCurrentHomeLoad()) return summary;
+        setIncompleteHomeScheduleUserId(null);
         receivedHomePreview = true;
         setHome(summary.home);
         setPreviewHomeUserId(user.uid);
@@ -683,7 +757,7 @@ export function Home({ auth }: { auth: AuthState }) {
           home={home}
           social={social}
           socialLoading={socialLoading}
-          hasLoadedHomeDetails={canRenderFirstRunHome}
+          hasLoadedHomeDetails={canRenderFirstRunHome && incompleteHomeScheduleUserId !== authUserId}
           onOpenComposer={openComposer}
           officialsAccess={resolvedOfficialsAccess}
         />

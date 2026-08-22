@@ -50,8 +50,10 @@ import { isAccessCodeExpired } from './access-code-utils.js?v=2';
 import {
     buildParentMembershipRequestId,
     buildParentMembershipRequestUpdate,
-    mergeApprovedParentMembershipRequests
-} from './parent-membership-utils.js?v=3';
+    mergeApprovedParentMembershipRequests,
+    removeParentLinkState,
+    resolveCanonicalParentScopeInput
+} from './parent-membership-utils.js?v=4';
 import { buildCoachOverrideRsvpDocId, shouldDeleteLegacyRsvpForOverride } from './rsvp-doc-ids.js';
 import { computeEffectiveRsvpSummary } from './rsvp-summary.js?v=2';
 import { assertTeamFeeRecipientLimit, normalizeTeamFeeRecipientRecords } from './team-fee-batch-limits.js?v=1';
@@ -126,7 +128,9 @@ import {
 } from './friend-invite.js?v=1';
 import { commitCertificateDefaults } from './certificates/persistence.js?v=4';
 
-export async function normalizeParentScopeLinks(parentLinks = []) {
+export async function normalizeParentScopeLinks(profileOrLinks = []) {
+    const canonicalScope = resolveCanonicalParentScopeInput(profileOrLinks);
+    const parentLinks = canonicalScope.parentLinks;
     // Dedupe first (no I/O) so every remaining link is fetched exactly once.
     const seenKeys = new Set();
     const uniqueEntries = [];
@@ -228,6 +232,8 @@ export async function normalizeParentScopeLinks(parentLinks = []) {
         activeLinks,
         parentTeamIds: [...new Set(activeLinks.map((link) => link.teamId))],
         parentPlayerKeys: [...new Set(accessLinks.map((link) => `${link.teamId}::${link.playerId}`))],
+        hasCanonicalParentTeamIds: canonicalScope.hasCanonicalParentTeamIds,
+        hasCanonicalParentPlayerKeys: canonicalScope.hasCanonicalParentPlayerKeys,
         blockedLinkCount,
         staleLinkCount
     };
@@ -250,7 +256,7 @@ import {
     loadVolunteerScreeningTargetRegistrations
 } from './volunteer-screening-access.js?v=2';
 import { buildTournamentGroupOverrideKey, buildTournamentPoolOverrideKey, matchesTournamentStandingsGroup } from './tournament-standings.js?v=4';
-import { buildBulkDeleteUpdates, buildMoveUpdates, buildReorderUpdates, isSafeTeamMediaUrl, isSupportedTeamMediaDocument, isSupportedTeamMediaImage, normalizeTeamMediaFolderDraft, normalizeTeamMediaVideoDraft, normalizeAlbumVisibility, sortByMediaOrder } from './team-media-utils.js?v=44339';
+import { buildBulkDeleteUpdates, buildMoveUpdates, buildReorderUpdates, isSafeTeamMediaUrl, isSupportedTeamMediaDocument, isSupportedTeamMediaImage, normalizeTeamMediaFolderDraft, normalizeTeamMediaVideoDraft, normalizeAlbumVisibility, sortByMediaOrder } from './team-media-utils.js?v=44340';
 import { getApp } from './vendor/firebase-app.js';
 import {
     computeOfficiatingCoverageStatus,
@@ -794,7 +800,7 @@ export async function uploadStatSheetPhoto(teamId, gameId, file, options = {}) {
         : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=443358'; // Import resolveZip
+import { resolveZip } from './utils.js?v=443359'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -2012,20 +2018,29 @@ export async function getUserTeamsWithAccess(userId, email, options = {}) {
 }
 
 /**
- * Get teams where the user is connected as a parent (via parentOf)
+ * Get teams where the user has current canonical parent access.
  * This is used to power the "My Teams" view for parents, in a read-only way.
  */
 export async function getParentTeams(userId, options = {}) {
     const includeInactive = !!options.includeInactive;
-    // Callers that already fetched the profile this page load (e.g. an auth
-    // check that ran moments ago) can pass its parentOf directly to skip a
-    // redundant read; everyone else falls back to fetching it here.
-    const parentOf = Array.isArray(options.parentOf) ? options.parentOf : (await getUserProfile(userId))?.parentOf;
-    if (!Array.isArray(parentOf) || parentOf.length === 0) {
-        return [];
+    let teamIds;
+    if (Array.isArray(options.parentOf)) {
+        // Backward-compatible input for callers that already resolved exact
+        // legacy links through checkAuth/normalizeParentScopeLinks.
+        teamIds = [...new Set(resolveCanonicalParentScopeInput(options.parentOf).parentLinks
+            .map((link) => link.teamId)
+            .filter(Boolean))];
+    } else {
+        const profile = options.profile && typeof options.profile === 'object'
+            ? options.profile
+            : await getUserProfile(userId);
+        const canonicalScope = resolveCanonicalParentScopeInput(profile || {});
+        if (canonicalScope.hasCanonicalParentTeamIds) {
+            teamIds = canonicalScope.parentTeamIds;
+        } else {
+            teamIds = [...new Set(canonicalScope.parentLinks.map((link) => link.teamId).filter(Boolean))];
+        }
     }
-
-    const teamIds = [...new Set(parentOf.map(p => p.teamId).filter(Boolean))];
     if (teamIds.length === 0) return [];
 
     const teams = (await Promise.all(
@@ -3767,25 +3782,10 @@ export async function removeParentFromPlayer(teamId, playerId, parentUserId) {
     const userSnap = await getDoc(userRef);
     if (userSnap.exists()) {
         const userData = userSnap.data() || {};
-        const parentOf = Array.isArray(userData.parentOf) ? userData.parentOf : [];
-
-        // Remove the specific parent link
-        const updatedParentOf = parentOf.filter(
-            p => !(p.teamId === teamId && p.playerId === playerId)
-        );
-
-        // Rebuild parentTeamIds from remaining parentOf entries
-        const updatedParentTeamIds = [...new Set(updatedParentOf.map(p => p.teamId).filter(Boolean))];
-        const updatedParentPlayerKeys = [...new Set(
-            updatedParentOf
-                .map(p => (p?.teamId && p?.playerId ? `${p.teamId}::${p.playerId}` : null))
-                .filter(Boolean)
-        )];
+        const updatedParentAccess = removeParentLinkState(userData, teamId, playerId);
 
         await updateDoc(userRef, {
-            parentOf: updatedParentOf,
-            parentTeamIds: updatedParentTeamIds,
-            parentPlayerKeys: updatedParentPlayerKeys,
+            ...updatedParentAccess,
             updatedAt: Timestamp.now()
         });
         await syncPublicUserProfile(parentUserId);
@@ -4150,13 +4150,13 @@ async function getPublicGamesProjection(teamId, options = {}) {
 export async function getPublicTeamCalendarEvents(teamId, options = {}) {
     const callable = httpsCallable(functions, 'getPublicTeamCalendarProjection');
     const range = getPublicProjectionRange(options);
-    const pages = await getAllPublicProjectionPages(callable, {
+    const projection = await getAllPublicCalendarProjectionPages(callable, {
         teamId,
         from: range.from,
         to: range.to,
         limit: 500
-    }, 'events');
-    return pages
+    });
+    const events = projection.items
         .map((event) => {
             const startsAt = event?.startsAt ? new Date(event.startsAt) : null;
             const endsAt = event?.endsAt ? new Date(event.endsAt) : null;
@@ -4179,6 +4179,71 @@ export async function getPublicTeamCalendarEvents(teamId, options = {}) {
             };
         })
         .filter(Boolean);
+    const warnings = [...projection.warnings];
+    const droppedMalformedEvents = projection.items.length - events.length;
+    if (droppedMalformedEvents > 0) {
+        warnings.push('Some projected calendar events were invalid and could not be loaded.');
+    }
+    return {
+        events,
+        warnings: Array.from(new Set(warnings)),
+        complete: projection.complete && droppedMalformedEvents === 0
+    };
+}
+
+async function getAllPublicCalendarProjectionPages(callable, request) {
+    const items = [];
+    const warnings = new Set();
+    const seenCursors = new Set();
+    let cursor = null;
+    let complete = true;
+    let loadedPage = false;
+    do {
+        let response;
+        try {
+            response = await callable(cursor ? { ...request, cursor } : request);
+        } catch (error) {
+            if (!loadedPage) throw error;
+            complete = false;
+            warnings.add('The projected calendar could not be fully loaded.');
+            break;
+        }
+        loadedPage = true;
+        const data = response?.data || {};
+        if (Array.isArray(data.events)) {
+            items.push(...data.events);
+        } else {
+            complete = false;
+            warnings.add('The projected calendar returned an invalid event page.');
+        }
+        if (Array.isArray(data.warnings)) {
+            data.warnings.forEach((warning) => {
+                const normalizedWarning = typeof warning === 'string' ? warning.trim() : '';
+                if (normalizedWarning) warnings.add(normalizedWarning);
+            });
+        } else {
+            complete = false;
+            warnings.add('The projected calendar did not confirm source completeness.');
+        }
+        if (warnings.size > 0) complete = false;
+
+        const pageTruncated = data?.range?.truncated;
+        if (pageTruncated === false) break;
+        if (pageTruncated !== true) {
+            complete = false;
+            warnings.add('The projected calendar did not confirm a complete result.');
+            break;
+        }
+
+        cursor = typeof data.nextCursor === 'string' ? data.nextCursor : '';
+        if (!cursor || seenCursors.has(cursor)) {
+            complete = false;
+            warnings.add('The projected calendar pagination could not be completed.');
+            break;
+        }
+        seenCursors.add(cursor);
+    } while (cursor);
+    return { items, warnings: Array.from(warnings), complete };
 }
 
 async function getAllPublicProjectionPages(callable, request, itemKey) {
@@ -6709,7 +6774,23 @@ export async function getParentDashboardData(userId) {
         console.warn('[parent-dashboard] Failed to sync approved parent membership requests:', error);
     }
 
-    if (!userProfile.parentOf || userProfile.parentOf.length === 0) {
+    const normalizedParentScope = await normalizeParentScopeLinks(userProfile);
+    const children = normalizedParentScope.activeLinks;
+    const parentAccessBackfill = {};
+    if (!normalizedParentScope.hasCanonicalParentTeamIds) {
+        parentAccessBackfill.parentTeamIds = normalizedParentScope.parentTeamIds;
+    }
+    if (!normalizedParentScope.hasCanonicalParentPlayerKeys) {
+        parentAccessBackfill.parentPlayerKeys = normalizedParentScope.parentPlayerKeys;
+    }
+    if (Object.keys(parentAccessBackfill).length > 0) {
+        try {
+            await updateUserProfile(userId, parentAccessBackfill);
+        } catch (error) {
+            console.warn('[parent-dashboard] Failed to backfill parent access keys before loading roster:', error);
+        }
+    }
+    if (children.length === 0) {
         return {
             upcomingGames: [],
             children: [],
@@ -6722,32 +6803,12 @@ export async function getParentDashboardData(userId) {
         };
     }
 
-    const normalizedParentScope = await normalizeParentScopeLinks(userProfile.parentOf);
-    const children = normalizedParentScope.activeLinks;
     const dashboardState = {
         kind: 'ready',
         blockedLinkCount: normalizedParentScope.blockedLinkCount || 0,
         staleLinkCount: normalizedParentScope.staleLinkCount || 0,
         teamEventErrors: 0
     };
-    const existingParentTeamIds = Array.isArray(userProfile.parentTeamIds) ? userProfile.parentTeamIds : [];
-    const existingParentPlayerKeys = Array.isArray(userProfile.parentPlayerKeys) ? userProfile.parentPlayerKeys : [];
-    const normalizedParentTeamIds = normalizedParentScope.parentTeamIds;
-    const expectedParentPlayerKeys = normalizedParentScope.parentPlayerKeys;
-    const needsParentAccessBackfill =
-        JSON.stringify(normalizedParentTeamIds.slice().sort()) !== JSON.stringify(existingParentTeamIds.slice().sort()) ||
-        JSON.stringify(expectedParentPlayerKeys.slice().sort()) !== JSON.stringify(existingParentPlayerKeys.slice().sort());
-    if (needsParentAccessBackfill) {
-        try {
-            await updateUserProfile(userId, {
-                parentTeamIds: normalizedParentTeamIds,
-                parentPlayerKeys: expectedParentPlayerKeys
-            });
-        } catch (error) {
-            console.warn('[parent-dashboard] Failed to backfill parent access keys before loading roster:', error);
-        }
-    }
-
     const activeChildren = [];
     const upcomingGames = [];
 

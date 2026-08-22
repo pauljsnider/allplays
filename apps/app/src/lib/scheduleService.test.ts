@@ -242,14 +242,14 @@ vi.mock('./appDataCache', () => ({
   getParentScheduleSummaryCacheKey: (userId: string) => `app-schedule-summary:${userId}`
 }));
 
-import { addGame, addPractice, broadcastLiveEvent, buildSingleLegacyTournamentGameDocument, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, claimOpenOfficiatingSlot, clearOccurrenceOverride, releaseAssignmentClaim, respondToOfficiatingAssignment, updateEvent, updateGame, updateOccurrence, getAssignmentClaims, getDelegatedTeamContext, getGame, getGames, getMyRsvps, getOfficialLinkedTeamIds, getPlayers, getPracticeSession, getPracticeSessions, getPublicTeamCalendarEvents, getRsvpBreakdownByPlayer, getRsvpSummaries, getRsvps, getStaffTeams, getTeam, getTeams, listRideOffersForEvent, postChatMessage, postSharedGameCancellationNotification, submitRsvp, submitRsvpForPlayer, updatePracticeAttendance, getDoc, getDocs } from './adapters/legacyScheduleDb';
+import { addGame, addPractice, broadcastLiveEvent, buildSingleLegacyTournamentGameDocument, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, claimOpenOfficiatingSlot, clearOccurrenceOverride, createRideOffer, releaseAssignmentClaim, requestRideSpot, respondToOfficiatingAssignment, updateEvent, updateGame, updateOccurrence, upsertPracticePacketCompletion, getAssignmentClaims, getDelegatedTeamContext, getGame, getGames, getMyRsvps, getOfficialLinkedTeamIds, getPlayers, getPracticeSession, getPracticeSessions, getPublicTeamCalendarEvents, getRsvpBreakdownByPlayer, getRsvpSummaries, getRsvps, getStaffTeams, getTeam, getTeams, listRideOffersForEvent, postChatMessage, postSharedGameCancellationNotification, submitRsvp, submitRsvpForPlayer, updatePracticeAttendance, getDoc, getDocs } from './adapters/legacyScheduleDb';
 import { getNativeAuthIdToken } from './authService';
 import { expandRecurrence, fetchAndParseCalendar, getCalendarEventTrackingId, isTeamActive, isTrackedCalendarEvent, mergeAssignmentsWithClaims } from './adapters/legacyScheduleHelpers';
 import { getCachedAppData, invalidateCachedAppData, loadCachedAppData } from './appDataCache';
 import { mapScheduleEventRecord } from './firestore/mappers';
 import { loadManagedTeamsFromNativeCallable, loadProfileDocument } from './profileService';
 import { getScheduleTournamentInfo } from './scheduleLogic';
-import { adjustGameScore, buildPlayerScoringLiveEvent, buildSingleGameTournamentLegacySchedulePayload, cancelScheduledGameForApp, claimOfficialAssignmentItem, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createStaffRsvpAvailabilityLoader, enableRsvpForImportedCalendarEvent, flushPendingLivePublishOperations, hydrateParentScheduleDetails, hydrateParentScheduleEventOptionalDetails, hydrateParentScheduleRsvps, loadHomeScoringPlayers, loadOfficialAssignments, loadOfficialAssignmentsAccess, loadParentSchedule, loadParentScheduleAssignments, loadParentScheduleChildren, loadParentScheduleEventDetail, loadParentScheduleRideOffers, loadParentScheduleScope, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitParentScheduleRsvp, submitParentScheduleRsvpForChildren, submitStaffScheduleRsvpOverride, TournamentBlockPartialSaveError, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
+import { addTeamCalendarUrl, adjustGameScore, buildPlayerScoringLiveEvent, buildSingleGameTournamentLegacySchedulePayload, cancelScheduledGameForApp, claimOfficialAssignmentItem, createParentScheduleRideOffer, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createStaffRsvpAvailabilityLoader, enableRsvpForImportedCalendarEvent, flushPendingLivePublishOperations, hasRawExternalScheduleEvents, hydrateParentScheduleDetails, hydrateParentScheduleEventOptionalDetails, hydrateParentScheduleRsvps, isParentScheduleCacheSafe, loadHomeScoringPlayers, loadOfficialAssignments, loadOfficialAssignmentsAccess, loadParentPlayerSchedule, loadParentSchedule, loadParentScheduleAssignments, loadParentScheduleChildren, loadParentScheduleEventDetail, loadParentScheduleRideOffers, loadParentScheduleScope, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, loadTeamOverviewSchedule, markParentPracticePacketComplete, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, reconcileParentSchedulePartial, releaseParentScheduleAssignmentClaim, removeTeamCalendarUrl, requestParentScheduleRideSpot, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitParentScheduleRsvp, submitParentScheduleRsvpForChildren, submitStaffScheduleRsvpOverride, TournamentBlockPartialSaveError, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
 
 function playerSnapshot(id: string, data: Record<string, unknown> | null) {
   return {
@@ -276,6 +276,9 @@ it('keeps schedule workflows behind typed legacy adapters', () => {
   expect(scheduleServiceSource).toContain("startUxTimer('parent schedule service load', {");
   expect(scheduleServiceSource).toContain("operation: 'parent-schedule-load'");
   expect(scheduleServiceSource).not.toContain('console.');
+  expect(scheduleServiceSource).toContain("fetchAndParseCalendar(calendarUrl, { teamId })");
+  expect(scheduleServiceSource).toContain("error, { teamId, calendarSourceIndex }");
+  expect(scheduleServiceSource).not.toContain("error, { teamId, calendarUrl }");
   expect(scheduleServiceSource).not.toContain('await Promise.resolve();');
   expect(scheduleServiceSource).toContain('lock.waiters.push(resolve);');
   const hedgedReadSource = scheduleServiceSource.slice(
@@ -532,6 +535,43 @@ describe('parent schedule child scope', () => {
     expect(getPlayers).not.toHaveBeenCalled();
   });
 
+  it('uses current canonical player keys to exclude a stale same-team sibling from parentOf', async () => {
+    vi.mocked(loadProfileDocument).mockResolvedValue({
+      parentTeamIds: ['team-1'],
+      parentPlayerKeys: ['team-1::player-1'],
+      parentOf: [
+        { teamId: 'team-1', playerId: 'player-1', playerName: 'Current Child' },
+        { teamId: 'team-1', playerId: 'player-2', playerName: 'Revoked Sibling' }
+      ]
+    } as any);
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-1', name: 'Bears', active: true } as any);
+    vi.mocked(getDoc).mockImplementation(async (ref: any) => {
+      const playerId = String(ref?.path || '').split('/').pop() || '';
+      return playerSnapshot(playerId, { name: playerId === 'player-1' ? 'Current Child' : 'Revoked Sibling', active: true }) as any;
+    });
+
+    await expect(loadParentScheduleChildren(parentUser)).resolves.toEqual([
+      { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Current Child', isLinkedParentChild: true }
+    ]);
+    expect(getDoc).not.toHaveBeenCalledWith(expect.objectContaining({ path: 'teams/team-1/players/player-2' }));
+  });
+
+  it.each([
+    { parentTeamIds: ['team-1'], parentPlayerKeys: [] },
+    { parentTeamIds: ['team-1'], parentPlayerKeys: null },
+    { parentTeamIds: [], parentPlayerKeys: ['team-1::player-1'] },
+    { parentTeamIds: { malformed: true }, parentPlayerKeys: ['team-1::player-1'] }
+  ])('treats present empty or malformed canonical scope as a revocation: %o', async (canonicalScope) => {
+    vi.mocked(loadProfileDocument).mockResolvedValue({
+      ...canonicalScope,
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1', playerName: 'Stale Child' }]
+    } as any);
+
+    await expect(loadParentScheduleChildren(parentUser)).resolves.toEqual([]);
+    expect(getTeam).not.toHaveBeenCalled();
+    expect(getDoc).not.toHaveBeenCalled();
+  });
+
   it('loads parent-linked players without requiring a browser window for timeout guards', async () => {
     const previousWindow = (globalThis as any).window;
     delete (globalThis as any).window;
@@ -621,6 +661,30 @@ describe('parent schedule child scope', () => {
     expect(scope.children).toEqual([]);
     expect(scope.isPartial).toBe(true);
     expect(scope.staffTeamsPartial).toBe(false);
+  });
+
+  it('does not restore stale parent links when the current profile scope read fails', async () => {
+    const staleParentUser = {
+      ...parentUser,
+      parentTeamIds: ['team-1'],
+      parentPlayerKeys: ['team-1::player-1', 'team-1::player-2'],
+      parentOf: [
+        { teamId: 'team-1', playerId: 'player-1', playerName: 'Current Child' },
+        { teamId: 'team-1', playerId: 'player-2', playerName: 'Revoked Sibling' }
+      ]
+    } as any;
+    vi.mocked(loadProfileDocument).mockRejectedValue(new Error('current profile unavailable'));
+    vi.mocked(getStaffTeams).mockResolvedValue({ teams: [], isPartial: false } as any);
+    vi.mocked(loadManagedTeamsFromNativeCallable).mockResolvedValue({ teams: [], isPartial: false });
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-1', name: 'Bears', active: true } as any);
+    vi.mocked(getDoc).mockResolvedValue(playerSnapshot('player-1', { name: 'Current Child', active: true }) as any);
+
+    const scope = await loadParentScheduleScope(staleParentUser);
+
+    expect(scope.children).toEqual([]);
+    expect(scope.isPartial).toBe(true);
+    expect(getTeam).not.toHaveBeenCalled();
+    expect(getDoc).not.toHaveBeenCalled();
   });
 
   it('reloads profile scope during schedule enrichment when the fast scope is partial', async () => {
@@ -1987,7 +2051,7 @@ describe('parent game route resolution', () => {
     vi.mocked(fetchAndParseCalendar).mockResolvedValue([] as any);
   });
 
-  it('resolves a game route from the cached schedule summary before scanning teams', async () => {
+  it('revalidates current access before resolving a game that exists in the cached schedule summary', async () => {
     vi.mocked(getCachedAppData).mockReturnValue({
       children: [],
       events: [
@@ -1995,7 +2059,8 @@ describe('parent game route resolution', () => {
           id: 'game-7',
           teamId: 'team-bravo',
           type: 'game',
-          childId: 'child-2'
+          childId: 'child-2',
+          isDbGame: true
         }
       ]
     } as any);
@@ -2007,19 +2072,35 @@ describe('parent game route resolution', () => {
     expect(result).toEqual({
       teamId: 'team-bravo',
       eventId: 'game-7',
-      childId: 'child-2',
-      cachedEvent: expect.objectContaining({
-        id: 'game-7',
-        teamId: 'team-bravo',
-        childId: 'child-2'
-      })
+      childId: 'child-2'
     });
-    expect(getCachedAppData).toHaveBeenCalledWith('app-schedule-summary:parent-1');
-    expect(loadProfileDocument).not.toHaveBeenCalled();
-    expect(getGame).not.toHaveBeenCalled();
+    expect(getCachedAppData).not.toHaveBeenCalled();
+    expect(loadProfileDocument).toHaveBeenCalledWith('parent-1');
+    expect(getGame).toHaveBeenCalledWith('team-bravo', 'game-7');
     expect(getGames).not.toHaveBeenCalled();
     expect(getPracticeSessions).not.toHaveBeenCalled();
     expect(fetchAndParseCalendar).not.toHaveBeenCalled();
+  });
+
+  it('does not authorize a route from a cached raw external event', async () => {
+    vi.mocked(getCachedAppData).mockReturnValue({
+      children: [],
+      events: [{
+        id: 'external-game',
+        teamId: 'team-bravo',
+        childId: 'child-2',
+        type: 'game',
+        isDbGame: false,
+        sourceType: 'calendar'
+      }]
+    } as any);
+    vi.mocked(getGame).mockResolvedValue(null as any);
+
+    await expect(resolveParentGameRoute(routeUser as any, 'external-game', {
+      expandStaffPlayers: false
+    })).rejects.toThrow('Unable to verify access to this team schedule. Retry the load.');
+
+    expect(getGame).toHaveBeenCalled();
   });
 
   it('resolves a game route without loading full schedules or calendars when cache misses', async () => {
@@ -2037,6 +2118,32 @@ describe('parent game route resolution', () => {
     expect(getGames).not.toHaveBeenCalled();
     expect(getPracticeSessions).not.toHaveBeenCalled();
     expect(fetchAndParseCalendar).not.toHaveBeenCalled();
+  });
+
+  it('surfaces a retryable route error when a current candidate game read fails', async () => {
+    vi.mocked(getGame).mockRejectedValue(new Error('game document temporarily unavailable'));
+
+    await expect(resolveParentGameRoute(routeUser as any, 'game-7', {
+      expandStaffPlayers: false,
+      targetTeamId: 'team-alpha'
+    })).rejects.toThrow('game document temporarily unavailable');
+
+    expect(getGame).toHaveBeenCalledWith('team-alpha', 'game-7');
+  });
+
+  it('surfaces retryable incompleteness instead of treating an unverified target as an absent event', async () => {
+    vi.mocked(getDoc).mockRejectedValue(new Error('player scope temporarily unavailable'));
+    vi.mocked(getStaffTeams).mockResolvedValue({ teams: [], isPartial: false } as any);
+    vi.mocked(getDelegatedTeamContext).mockResolvedValue(null as any);
+
+    await expect(loadParentScheduleEventDetail(routeUser as any, {
+      teamId: 'team-alpha',
+      eventId: 'game-7',
+      hydrateDetails: false,
+      expandStaffPlayers: false
+    })).rejects.toThrow('Unable to verify access to this team schedule. Retry the load.');
+
+    expect(getGame).not.toHaveBeenCalled();
   });
 
   it('resolves an opaque shared-game route through its exact bounded document path', async () => {
@@ -4981,7 +5088,7 @@ describe('native parent schedule Firestore mapping', () => {
       opponent: 'Tigers',
       isDbGame: true
     });
-    expect(fetchAndParseCalendar).toHaveBeenCalledWith('https://calendar.example.com/team-1.ics');
+    expect(fetchAndParseCalendar).toHaveBeenCalledWith('https://calendar.example.com/team-1.ics', { teamId: 'team-1' });
   });
 
   it('queries native game fallback by date range instead of listing the full games collection', async () => {
@@ -5286,6 +5393,140 @@ describe('native parent schedule Firestore mapping', () => {
   });
 });
 
+describe('team calendar source cache invalidation', () => {
+  const manager = { uid: 'owner-1', email: 'owner@example.com' } as any;
+  const sourceA = 'https://calendar.example.com/source-a.ics';
+  const sourceB = 'https://calendar.example.com/source-b.ics';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    capacitorCoreMock.isNativePlatform.mockReturnValue(false);
+    vi.mocked(getTeam).mockResolvedValue({
+      id: 'team-1',
+      ownerId: 'owner-1',
+      calendarUrls: [sourceA]
+    } as any);
+  });
+
+  it('invalidates schedule and Home secondary caches after adding a changed source', async () => {
+    await expect(addTeamCalendarUrl('team-1', sourceB, manager)).resolves.toMatchObject({ added: true });
+
+    expect(invalidateCachedAppData).toHaveBeenCalledWith('app-schedule-summary:owner-1');
+    expect(invalidateCachedAppData).toHaveBeenCalledWith('home-secondary:owner-1');
+  });
+
+  it('does not invalidate caches when adding an already configured source', async () => {
+    await expect(addTeamCalendarUrl('team-1', sourceA, manager)).resolves.toMatchObject({ added: false });
+    expect(invalidateCachedAppData).not.toHaveBeenCalled();
+  });
+
+  it('invalidates schedule and Home secondary caches after removing a changed source', async () => {
+    await expect(removeTeamCalendarUrl('team-1', sourceA, manager)).resolves.toMatchObject({ removed: true });
+
+    expect(invalidateCachedAppData).toHaveBeenCalledWith('app-schedule-summary:owner-1');
+    expect(invalidateCachedAppData).toHaveBeenCalledWith('home-secondary:owner-1');
+  });
+
+  it('does not invalidate caches when the source to remove is absent', async () => {
+    await expect(removeTeamCalendarUrl('team-1', sourceB, manager)).resolves.toMatchObject({ removed: false });
+    expect(invalidateCachedAppData).not.toHaveBeenCalled();
+  });
+});
+
+describe('parent schedule action access refresh', () => {
+  const staleUser = {
+    uid: 'parent-1',
+    email: 'parent@example.com',
+    displayName: 'Parent',
+    roles: ['parent'],
+    parentTeamIds: ['team-1'],
+    parentPlayerKeys: ['team-1::player-1', 'team-1::player-2'],
+    parentOf: [
+      { teamId: 'team-1', playerId: 'player-1' },
+      { teamId: 'team-1', playerId: 'player-2' }
+    ]
+  } as any;
+  const event = {
+    id: 'game-1',
+    eventKey: 'team-1::game-1::player-2',
+    teamId: 'team-1',
+    childId: 'player-2',
+    type: 'game',
+    date: new Date('2099-08-10T18:00:00Z'),
+    isDbGame: true,
+    isCancelled: false
+  } as any;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-1', ownerId: 'other-user', adminEmails: [] } as any);
+  });
+
+  it('does not let a cached event restore a team removed from current canonical scope', async () => {
+    vi.mocked(loadProfileDocument).mockResolvedValue({
+      parentTeamIds: [],
+      parentPlayerKeys: [],
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
+    } as any);
+
+    await expect(createParentScheduleRideOffer(event, staleUser, {
+      seatCapacity: 2,
+      direction: 'round-trip'
+    })).rejects.toMatchObject({ code: 'permission-denied', status: 403 });
+
+    expect(createRideOffer).not.toHaveBeenCalled();
+  });
+
+  it('does not let stale same-team sibling metadata authorize a ride request', async () => {
+    vi.mocked(loadProfileDocument).mockResolvedValue({
+      parentTeamIds: ['team-1'],
+      parentPlayerKeys: ['team-1::player-1'],
+      parentOf: [
+        { teamId: 'team-1', playerId: 'player-1' },
+        { teamId: 'team-1', playerId: 'player-2' }
+      ]
+    } as any);
+
+    await expect(requestParentScheduleRideSpot(event, {
+      id: 'offer-1',
+      sourceGameId: 'game-1'
+    } as any, staleUser, {
+      childId: 'player-2',
+      childName: 'Revoked Sibling'
+    })).rejects.toMatchObject({ code: 'permission-denied', status: 403 });
+
+    expect(requestRideSpot).not.toHaveBeenCalled();
+  });
+
+  it('does not let stale same-team sibling metadata update a practice packet', async () => {
+    vi.mocked(loadProfileDocument).mockResolvedValue({
+      parentTeamIds: ['team-1'],
+      parentPlayerKeys: ['team-1::player-1'],
+      parentOf: [
+        { teamId: 'team-1', playerId: 'player-1' },
+        { teamId: 'team-1', playerId: 'player-2' }
+      ]
+    } as any);
+
+    await expect(markParentPracticePacketComplete({
+      sessionId: 'practice-1',
+      teamId: 'team-1',
+      eventId: 'practice-1',
+      title: 'Practice',
+      date: new Date('2099-08-10T18:00:00Z'),
+      location: 'Gym',
+      homePacket: {},
+      completions: [],
+      children: []
+    } as any, staleUser, {
+      id: 'player-2',
+      name: 'Revoked Sibling'
+    })).rejects.toMatchObject({ code: 'permission-denied', status: 403 });
+
+    expect(upsertPracticePacketCompletion).not.toHaveBeenCalled();
+  });
+});
+
 describe('partial parent schedule team failures (#3021)', () => {
   const parentUser = {
     uid: 'parent-1',
@@ -5340,7 +5581,7 @@ describe('partial parent schedule team failures (#3021)', () => {
     await vi.waitFor(() => expect(getGames).toHaveBeenCalledWith('team-1', expect.any(Object)));
     try {
       await vi.waitFor(() => {
-        expect(fetchAndParseCalendar).toHaveBeenCalledWith('https://calendar.example.com/team-1.ics');
+        expect(fetchAndParseCalendar).toHaveBeenCalledWith('https://calendar.example.com/team-1.ics', { teamId: 'team-1' });
       });
     } finally {
       resolveGames?.([]);
@@ -5388,18 +5629,22 @@ describe('partial parent schedule team failures (#3021)', () => {
     }) as any);
     vi.mocked(getGames).mockResolvedValue([] as any);
     vi.mocked(getPublicTeamCalendarEvents).mockImplementation(async (teamId: string) => teamId === 'team-1'
-      ? [{
-          id: 'teamsnap-event-1',
-          uid: 'teamsnap-event-1',
-          dtstart: new Date('2026-08-08T18:00:00.000Z'),
-          dtend: new Date('2026-08-08T20:00:00.000Z'),
-          type: 'practice',
-          summary: 'Workout',
-          location: 'Field 4',
-          status: 'SCHEDULED',
-          isPublicProjection: true
-        }]
-      : [] as any);
+      ? {
+          events: [{
+            id: 'teamsnap-event-1',
+            uid: 'teamsnap-event-1',
+            dtstart: new Date('2026-08-08T18:00:00.000Z'),
+            dtend: new Date('2026-08-08T20:00:00.000Z'),
+            type: 'practice',
+            summary: 'Workout',
+            location: 'Field 4',
+            status: 'SCHEDULED',
+            isPublicProjection: true
+          }],
+          warnings: [],
+          complete: true
+        }
+      : { events: [], warnings: [], complete: true } as any);
 
     const result = await loadParentSchedule(parentUser, { hydrateDetails: false, expandStaffPlayers: false });
 
@@ -5424,27 +5669,69 @@ describe('partial parent schedule team failures (#3021)', () => {
     ]);
   });
 
+  it('keeps stored and known projected events while marking source warnings partial', async () => {
+    vi.mocked(getTeam).mockResolvedValue({
+      id: 'team-1',
+      name: 'Team One',
+      hasCalendarSources: true
+    } as any);
+    vi.mocked(getGames).mockResolvedValue([{
+      id: 'stored-game-1',
+      type: 'game',
+      date: new Date('2026-08-07T18:00:00.000Z'),
+      opponent: 'Tigers'
+    }] as any);
+    vi.mocked(getPublicTeamCalendarEvents).mockResolvedValue({
+      events: [{
+        id: 'known-projected-practice',
+        uid: 'known-projected-practice',
+        dtstart: new Date('2026-08-08T18:00:00.000Z'),
+        dtend: new Date('2026-08-08T20:00:00.000Z'),
+        type: 'practice',
+        summary: 'Workout',
+        location: 'Field 4',
+        status: 'SCHEDULED',
+        isPublicProjection: true
+      }],
+      warnings: ['Calendar source 2 could not be loaded.'],
+      complete: false
+    });
+
+    const result = await loadParentSchedule(parentUser, {
+      hydrateDetails: false,
+      expandStaffPlayers: false,
+      targetTeamId: 'team-1'
+    });
+
+    expect(result.isPartial).toBe(true);
+    expect(result.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'stored-game-1', isDbGame: true }),
+      expect.objectContaining({ title: 'Workout', sourceType: 'calendar' })
+    ]));
+  });
+
   it('marks the parent schedule partial when a projected calendar read fails', async () => {
     vi.mocked(getTeam).mockImplementation(async (teamId: string) => ({
       id: teamId,
       name: teamId === 'team-1' ? 'Team One' : 'Team Two',
       hasCalendarSources: teamId === 'team-1'
     }) as any);
-    vi.mocked(getGames).mockImplementation(async (teamId: string) => teamId === 'team-2'
-      ? [{
-          id: 'game-2',
+    vi.mocked(getGames).mockImplementation(async (teamId: string) => [{
+          id: `game-${teamId}`,
           type: 'game',
           date: new Date('2026-08-09T18:00:00.000Z'),
           opponent: 'Tigers'
-        }]
-      : [] as any);
+        }] as any);
     vi.mocked(getPublicTeamCalendarEvents).mockRejectedValueOnce(new Error('projection unavailable'));
 
     const result = await loadParentSchedule(parentUser, { hydrateDetails: false, expandStaffPlayers: false });
 
     expect(result).toMatchObject({
       isPartial: true,
-      events: [expect.objectContaining({ teamId: 'team-2', id: 'game-2' })]
+      events: expect.arrayContaining([
+        expect.objectContaining({ teamId: 'team-1', id: 'game-team-1' }),
+        expect.objectContaining({ teamId: 'team-2', id: 'game-team-2' })
+      ])
     });
   });
 
@@ -5474,7 +5761,7 @@ describe('partial parent schedule team failures (#3021)', () => {
       targetTeamId: 'team-1'
     });
 
-    expect(fetchAndParseCalendar).toHaveBeenCalledWith('https://ical-cdn.teamsnap.com/team_schedule/test.ics');
+    expect(fetchAndParseCalendar).toHaveBeenCalledWith('https://ical-cdn.teamsnap.com/team_schedule/test.ics', { teamId: 'team-1' });
     expect(getTeam).not.toHaveBeenCalledWith('team-2');
     expect(result).toMatchObject({
       isPartial: true,
@@ -5484,6 +5771,94 @@ describe('partial parent schedule team failures (#3021)', () => {
         type: 'practice',
         title: 'Stored practice'
       })]
+    });
+  });
+
+  it('returns explicit partial evidence for the Team Detail overview while preserving known events', async () => {
+    vi.mocked(getTeam).mockResolvedValue({
+      id: 'team-1',
+      name: 'Team One',
+      calendarUrls: ['https://ical-cdn.teamsnap.com/team_schedule/overview.ics']
+    } as any);
+    vi.mocked(getGames).mockResolvedValue([{
+      id: 'stored-overview-game',
+      type: 'game',
+      date: new Date('2099-08-05T18:00:00.000Z'),
+      opponent: 'Tigers'
+    }] as any);
+    vi.mocked(fetchAndParseCalendar).mockRejectedValueOnce(new Error('calendar unavailable'));
+
+    const result = await loadTeamOverviewSchedule('team-1', 'Team One', parentUser);
+
+    expect(result).toMatchObject({
+      isPartial: true,
+      accessVerified: true,
+      accessUid: 'parent-1',
+      sourceKey: expect.stringMatching(/^direct-calendar:v1:[a-f0-9]{64}$/),
+      events: [expect.objectContaining({
+        teamId: 'team-1',
+        id: 'stored-overview-game',
+        opponent: 'Tigers'
+      })]
+    });
+  });
+
+  it('fails access closed when a canonical schedule read throws permission denied', async () => {
+    vi.mocked(getGames).mockRejectedValueOnce(Object.assign(new Error('Missing or insufficient permissions.'), {
+      code: 'permission-denied'
+    }));
+
+    await expect(loadTeamOverviewSchedule('team-1', 'Team One', parentUser)).resolves.toEqual({
+      events: [],
+      isPartial: true,
+      accessVerified: false,
+      accessUid: null,
+      sourceKey: null
+    });
+  });
+
+  it('fails closed when the current user no longer has the requested team in scope', async () => {
+    const result = await loadTeamOverviewSchedule('team-revoked', 'Former Team', parentUser);
+
+    expect(result).toEqual({
+      events: [],
+      isPartial: true,
+      accessVerified: false,
+      accessUid: null,
+      sourceKey: null
+    });
+    expect(getGames).not.toHaveBeenCalledWith('team-revoked', expect.anything());
+  });
+
+  it('fails closed when requested-team access cannot be revalidated', async () => {
+    vi.mocked(getTeam).mockImplementation(async (teamId: string) => {
+      if (teamId === 'team-1') throw new Error('team access unavailable');
+      return { id: teamId, name: 'Team Two' } as any;
+    });
+
+    const result = await loadTeamOverviewSchedule('team-1', 'Team One', parentUser);
+
+    expect(result).toEqual({
+      events: [],
+      isPartial: true,
+      accessVerified: false,
+      accessUid: null,
+      sourceKey: null
+    });
+    expect(getGames).not.toHaveBeenCalledWith('team-1', expect.anything());
+  });
+
+  it('confirms a legitimately empty Team Detail overview only after all sources complete', async () => {
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-1', name: 'Team One' } as any);
+    vi.mocked(getGames).mockResolvedValue([] as any);
+    vi.mocked(getPracticeSessions).mockResolvedValue([] as any);
+
+    await expect(loadTeamOverviewSchedule('team-1', 'Team One', parentUser)).resolves.toEqual({
+      events: [],
+      isPartial: false,
+      accessVerified: true,
+      accessUid: 'parent-1',
+      sourceKey: 'no-external-calendar:v1'
     });
   });
 
@@ -5583,7 +5958,7 @@ describe('partial parent schedule team failures (#3021)', () => {
     });
 
     expect(result).toMatchObject({ isPartial: true, events: [] });
-    expect(fetchAndParseCalendar).toHaveBeenCalledWith('https://ical-cdn.teamsnap.com/team_schedule/test.ics');
+    expect(fetchAndParseCalendar).toHaveBeenCalledWith('https://ical-cdn.teamsnap.com/team_schedule/test.ics', { teamId: 'team-1' });
   });
 
   it('keeps an explicitly targeted team complete when an unrelated parent link is inaccessible', async () => {
@@ -5644,6 +6019,11 @@ describe('partial parent schedule team failures (#3021)', () => {
         expect.objectContaining({ teamId: 'team-2', playerId: 'p2' })
       ],
       events: [],
+      pendingTeamIds: ['team-1', 'team-2'],
+      teamLoadStates: {
+        'team-1': 'pending',
+        'team-2': 'pending'
+      },
       isPartial: true
     });
     expect(partials.some((partial) => partial.events.length === 1)).toBe(true);
@@ -5661,6 +6041,365 @@ describe('partial parent schedule team failures (#3021)', () => {
     });
   });
 
+  it.each([
+    { label: 'permission-denied code', error: Object.assign(new Error('permission-denied'), { code: 'permission-denied' }) },
+    { label: 'functions/unauthenticated code', error: Object.assign(new Error('unauthenticated'), { code: 'functions/unauthenticated' }) },
+    { label: 'not-found code', error: Object.assign(new Error('not-found'), { code: 'not-found' }) },
+    { label: 'native 403 status', error: Object.assign(new Error('native request failed'), { status: 403 }) },
+    { label: 'native 404 status', error: Object.assign(new Error('native request failed'), { status: 404 }) },
+    { label: 'native permissions message', error: new Error('Missing or insufficient permissions.') },
+    { label: 'team access semantic message', error: new Error('You do not have permission to load this team schedule.') },
+    { label: 'player access semantic message', error: new Error('This player is not linked to your account.') }
+  ])(
+    'marks $label as access lost so no prior private team rows can be replayed',
+    async ({ error }) => {
+      vi.mocked(getTeam).mockImplementation(async (teamId: string) => ({ id: teamId, name: teamId }) as any);
+      vi.mocked(getGames).mockImplementation(async (teamId: string) => {
+        if (teamId === 'team-2') {
+          throw error;
+        }
+        return [] as any;
+      });
+      vi.mocked(getPracticeSessions).mockResolvedValue([] as any);
+      const partials: any[] = [];
+
+      const loaded = await loadParentSchedule(parentUser, {
+        hydrateDetails: false,
+        expandStaffPlayers: false,
+        onPartial: (partial) => partials.push(partial)
+      });
+
+      expect(loaded.teamLoadStates?.['team-2']).toBe('access-lost');
+      expect(partials[partials.length - 1]?.teamLoadStates?.['team-2']).toBe('access-lost');
+      const reconciled = reconcileParentSchedulePartial({
+        children: [],
+        events: [
+          { id: 'old-db', eventKey: 'old-db', teamId: 'team-2', childId: 'p2', type: 'game', date: new Date('2099-08-10T18:00:00Z'), isDbGame: true, sourceType: 'db' },
+          { id: 'old-practice', eventKey: 'old-practice', teamId: 'team-2', childId: 'p2', type: 'practice', date: new Date('2099-08-11T18:00:00Z'), isDbGame: false, sourceType: 'practice-session' },
+          { id: 'old-raw', eventKey: 'old-raw', teamId: 'team-2', childId: 'p2', type: 'game', date: new Date('2099-08-12T18:00:00Z'), isDbGame: false, sourceType: 'calendar' }
+        ] as any,
+        sourceKeysByTeam: { 'team-2': `direct-calendar:v1:${'c'.repeat(64)}` }
+      }, loaded);
+      expect(reconciled.events.filter((row) => row.teamId === 'team-2')).toEqual([]);
+    }
+  );
+
+  it('marks a terminal canonical team-scope denial as access lost', async () => {
+    vi.mocked(getTeam).mockImplementation(async (teamId: string) => {
+      if (teamId === 'team-2') {
+        throw Object.assign(new Error('revoked'), { code: 'permission-denied' });
+      }
+      return { id: teamId, name: teamId } as any;
+    });
+    vi.mocked(getGames).mockResolvedValue([] as any);
+
+    const result = await loadParentSchedule(parentUser, { hydrateDetails: false, expandStaffPlayers: false });
+
+    expect(result).toMatchObject({
+      isPartial: true,
+      accessLostTeamIds: ['team-2'],
+      teamLoadStates: { 'team-1': 'complete', 'team-2': 'access-lost' },
+      sourceKeysByTeam: { 'team-2': null }
+    });
+    expect(result.children.some((child) => child.teamId === 'team-2')).toBe(false);
+  });
+
+  it('clears old child-scoped rows when a current player access read is terminally denied', async () => {
+    vi.mocked(getTeam).mockImplementation(async (teamId: string) => ({ id: teamId, name: teamId }) as any);
+    vi.mocked(getDoc).mockImplementation(async (ref: any) => {
+      if (ref?.path?.includes('team-2/players/p2')) {
+        throw Object.assign(new Error('player access revoked'), { code: 'permission-denied' });
+      }
+      if (ref?.path?.includes('team-1/players/p1')) {
+        return playerSnapshot('p1', { id: 'p1', name: 'Kid One', active: true }) as any;
+      }
+      return playerSnapshot('missing', null) as any;
+    });
+    vi.mocked(getGames).mockResolvedValue([] as any);
+
+    const loaded = await loadParentSchedule(parentUser, { hydrateDetails: false, expandStaffPlayers: false });
+    const reconciled = reconcileParentSchedulePartial({
+      children: [{ teamId: 'team-2', teamName: 'Team Two', playerId: 'p2', playerName: 'Kid Two' }],
+      events: [
+        { id: 'old-db', eventKey: 'old-db', teamId: 'team-2', childId: 'p2', type: 'game', date: new Date('2099-08-10T18:00:00Z'), isDbGame: true, sourceType: 'db' },
+        { id: 'old-practice', eventKey: 'old-practice', teamId: 'team-2', childId: 'p2', type: 'practice', date: new Date('2099-08-11T18:00:00Z'), isDbGame: false, sourceType: 'practice-session' },
+        { id: 'old-raw', eventKey: 'old-raw', teamId: 'team-2', childId: 'p2', type: 'game', date: new Date('2099-08-12T18:00:00Z'), isDbGame: false, sourceType: 'calendar' }
+      ] as any,
+      sourceKeysByTeam: { 'team-2': `direct-calendar:v1:${'d'.repeat(64)}` }
+    }, loaded);
+
+    expect(loaded.scopeIsPartial).toBe(true);
+    expect(loaded.teamLoadStates?.['team-2']).toBeUndefined();
+    expect(reconciled.children.some((child) => child.teamId === 'team-2')).toBe(false);
+    expect(reconciled.events.some((row) => row.teamId === 'team-2')).toBe(false);
+  });
+
+  it('returns access-lost evidence when the requested player read is terminally denied on a readable team', async () => {
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-2', name: 'Public Team', public: true } as any);
+    vi.mocked(getDoc).mockImplementation(async (ref: any) => {
+      if (ref?.path?.includes('team-2/players/p2')) {
+        throw Object.assign(new Error('Missing or insufficient permissions.'), { status: 403 });
+      }
+      return playerSnapshot('missing', null) as any;
+    });
+
+    const loaded = await loadParentPlayerSchedule(parentUser, {
+      teamId: 'team-2',
+      playerId: 'p2',
+      hydrateDetails: false
+    });
+
+    expect(loaded).toMatchObject({
+      children: [],
+      events: [],
+      isPartial: true,
+      scopeIsPartial: true,
+      accessLostTeamIds: ['team-2'],
+      teamLoadStates: { 'team-2': 'access-lost' },
+      sourceKeysByTeam: { 'team-2': null }
+    });
+  });
+
+  it('returns retryable partial evidence when the requested player scope read fails transiently', async () => {
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-2', name: 'Public Team', public: true } as any);
+    vi.mocked(getDoc).mockImplementation(async (ref: any) => {
+      if (ref?.path?.includes('team-2/players/p2')) throw new Error('network unavailable');
+      return playerSnapshot('missing', null) as any;
+    });
+
+    const loaded = await loadParentPlayerSchedule(parentUser, {
+      teamId: 'team-2',
+      playerId: 'p2',
+      hydrateDetails: false
+    });
+
+    expect(loaded).toMatchObject({
+      children: [],
+      events: [],
+      isPartial: true,
+      scopeIsPartial: true,
+      accessLostTeamIds: [],
+      teamLoadStates: { 'team-2': 'failed' },
+      sourceKeysByTeam: { 'team-2': null }
+    });
+  });
+
+});
+
+describe('partial parent schedule reconciliation', () => {
+  const directA = `direct-calendar:v1:${'a'.repeat(64)}`;
+  const directB = `direct-calendar:v1:${'b'.repeat(64)}`;
+  const event = (id: string, teamId: string, overrides: Record<string, unknown> = {}) => ({
+    id,
+    eventKey: `${teamId}:${id}`,
+    teamId,
+    childId: `${teamId}-child`,
+    type: 'game',
+    date: new Date(`2099-08-${id.length % 8 + 10}T18:00:00.000Z`),
+    isDbGame: true,
+    sourceType: 'db',
+    ...overrides
+  }) as any;
+
+  it('replaces canonical rows but retains same-source raw rows for an external-only partial', () => {
+    const result = reconcileParentSchedulePartial({
+      children: [],
+      events: [
+        event('old-db', 'team-a', { calendarUrls: ['https://calendar.example.com/source-a.ics'] }),
+        event('old-practice', 'team-a', { type: 'practice', calendarUrls: ['https://calendar.example.com/source-a.ics'] }),
+        event('old-raw', 'team-a', {
+          isDbGame: false,
+          sourceType: 'calendar',
+          calendarUrls: ['https://calendar.example.com/source-a.ics']
+        })
+      ],
+      sourceKeysByTeam: { 'team-a': directA }
+    }, {
+      children: [],
+      staffTeams: [{ teamId: 'team-a', teamName: 'Team A' }],
+      events: [event('current-db', 'team-a')],
+      sourceKeysByTeam: { 'team-a': directA },
+      teamLoadStates: { 'team-a': 'external-partial' },
+      partialTeamIds: ['team-a'],
+      isPartial: true
+    });
+
+    expect(result.events.map((row) => row.id).sort()).toEqual(['current-db', 'old-raw']);
+  });
+
+  it('drops prior raw rows when the direct calendar source set changes', () => {
+    const result = reconcileParentSchedulePartial({
+      children: [],
+      events: [event('source-a', 'team-a', { isDbGame: false, sourceType: 'calendar' })],
+      sourceKeysByTeam: { 'team-a': directA }
+    }, {
+      children: [],
+      staffTeams: [{ teamId: 'team-a', teamName: 'Team A' }],
+      events: [event('known-source-b', 'team-a', { isDbGame: false, sourceType: 'calendar' })],
+      sourceKeysByTeam: { 'team-a': directB },
+      teamLoadStates: { 'team-a': 'external-partial' },
+      partialTeamIds: ['team-a'],
+      isPartial: true
+    });
+
+    expect(result.events.map((row) => row.id)).toEqual(['known-source-b']);
+  });
+
+  it('drops a canonical row carrying a stale calendar source when that source changes before a failed load', () => {
+    const sourceA = 'https://calendar.example.com/source-a-token.ics';
+    const result = reconcileParentSchedulePartial({
+      children: [],
+      events: [event('source-a-db', 'team-a', { calendarUrls: [sourceA] })],
+      sourceKeysByTeam: { 'team-a': directA }
+    }, {
+      children: [],
+      staffTeams: [{ teamId: 'team-a', teamName: 'Team A' }],
+      events: [],
+      sourceKeysByTeam: { 'team-a': directB },
+      teamLoadStates: { 'team-a': 'failed' },
+      partialTeamIds: ['team-a'],
+      isPartial: true
+    });
+
+    expect(result.events).toEqual([]);
+  });
+
+  it('does not let an unrelated failed team resurrect rows deleted by a complete team', () => {
+    const result = reconcileParentSchedulePartial({
+      children: [],
+      events: [
+        event('deleted-a-db', 'team-a'),
+        event('deleted-a-raw', 'team-a', { isDbGame: false, sourceType: 'calendar' }),
+        event('known-b-db', 'team-b'),
+        event('known-b-raw', 'team-b', { isDbGame: false, sourceType: 'calendar' })
+      ],
+      sourceKeysByTeam: { 'team-a': directA, 'team-b': directB }
+    }, {
+      children: [],
+      staffTeams: [{ teamId: 'team-b', teamName: 'Team B' }],
+      events: [],
+      sourceKeysByTeam: { 'team-a': directA, 'team-b': directB },
+      teamLoadStates: { 'team-a': 'complete', 'team-b': 'failed' },
+      partialTeamIds: ['team-b'],
+      isPartial: true
+    });
+
+    expect(result.events.map((row) => row.id).sort()).toEqual(['known-b-db', 'known-b-raw']);
+  });
+
+  it('never uses the hidden public-projection sentinel to preserve prior raw rows', () => {
+    const result = reconcileParentSchedulePartial({
+      children: [],
+      events: [event('old-hidden-source', 'team-a', { isDbGame: false, sourceType: 'calendar' })],
+      sourceKeysByTeam: { 'team-a': 'public-projection:v1' }
+    }, {
+      children: [],
+      staffTeams: [{ teamId: 'team-a', teamName: 'Team A' }],
+      events: [event('known-replacement', 'team-a', { isDbGame: false, sourceType: 'calendar' })],
+      sourceKeysByTeam: { 'team-a': 'public-projection:v1' },
+      teamLoadStates: { 'team-a': 'external-partial' },
+      partialTeamIds: ['team-a'],
+      isPartial: true
+    });
+
+    expect(result.events.map((row) => row.id)).toEqual(['known-replacement']);
+  });
+
+  it('preserves no rows for a team whose access was lost', () => {
+    const result = reconcileParentSchedulePartial({
+      children: [],
+      events: [
+        event('private-db', 'team-a'),
+        event('private-practice', 'team-a', { type: 'practice' }),
+        event('private-raw', 'team-a', { isDbGame: false, sourceType: 'calendar' })
+      ],
+      sourceKeysByTeam: { 'team-a': directA }
+    }, {
+      children: [],
+      staffTeams: [{ teamId: 'team-a', teamName: 'Team A' }],
+      events: [],
+      sourceKeysByTeam: { 'team-a': null },
+      teamLoadStates: { 'team-a': 'access-lost' },
+      partialTeamIds: ['team-a'],
+      isPartial: true
+    });
+
+    expect(result.events).toEqual([]);
+  });
+
+  it('can retain policy-approved rows for a transient failed team with the exact direct source', () => {
+    const knownRows = [
+      event('known-db', 'team-a'),
+      event('known-practice', 'team-a', { type: 'practice' }),
+      event('known-raw', 'team-a', { isDbGame: false, sourceType: 'calendar' })
+    ];
+    const result = reconcileParentSchedulePartial({
+      children: [],
+      events: knownRows,
+      sourceKeysByTeam: { 'team-a': directA }
+    }, {
+      children: [],
+      staffTeams: [{ teamId: 'team-a', teamName: 'Team A' }],
+      events: [],
+      sourceKeysByTeam: { 'team-a': directA },
+      teamLoadStates: { 'team-a': 'failed' },
+      partialTeamIds: ['team-a'],
+      isPartial: true
+    });
+
+    expect(result.events.map((row) => row.id).sort()).toEqual(knownRows.map((row) => row.id).sort());
+  });
+
+  it('preserves rows only for currently verified siblings on a partial same-team load', () => {
+    const result = reconcileParentSchedulePartial({
+      children: [
+        { teamId: 'team-a', teamName: 'Team A', playerId: 'p1', playerName: 'Player One' },
+        { teamId: 'team-a', teamName: 'Team A', playerId: 'p2', playerName: 'Player Two' }
+      ],
+      events: [
+        event('known-p1-db', 'team-a', { childId: 'p1' }),
+        event('known-p1-raw', 'team-a', { childId: 'p1', isDbGame: false, sourceType: 'calendar' }),
+        event('removed-p2-db', 'team-a', { childId: 'p2' }),
+        event('removed-p2-raw', 'team-a', { childId: 'p2', isDbGame: false, sourceType: 'calendar' })
+      ],
+      sourceKeysByTeam: { 'team-a': directA }
+    }, {
+      children: [{ teamId: 'team-a', teamName: 'Team A', playerId: 'p1', playerName: 'Player One' }],
+      events: [],
+      sourceKeysByTeam: { 'team-a': directA },
+      teamLoadStates: { 'team-a': 'pending' },
+      pendingTeamIds: ['team-a'],
+      partialTeamIds: ['team-a'],
+      isPartial: true
+    });
+
+    expect(result.events.map((row) => row.id).sort()).toEqual(['known-p1-db', 'known-p1-raw']);
+    expect(result.children).toEqual([
+      { teamId: 'team-a', teamName: 'Team A', playerId: 'p1', playerName: 'Player One' }
+    ]);
+  });
+
+  it('fails closed for every row and principal omitted by a partial scope read without positive access evidence', () => {
+    const result = reconcileParentSchedulePartial({
+      children: [{ teamId: 'team-a', teamName: 'Team A', playerId: 'p1', playerName: 'Player' }],
+      events: [
+        event('known-db', 'team-a'),
+        event('known-practice', 'team-a', { type: 'practice', isDbGame: false, sourceType: 'practice-session' }),
+        event('known-raw', 'team-a', { isDbGame: false, sourceType: 'calendar' })
+      ],
+      sourceKeysByTeam: { 'team-a': directA }
+    }, {
+      children: [],
+      events: [],
+      sourceKeysByTeam: {},
+      teamLoadStates: {},
+      scopeIsPartial: true,
+      isPartial: true
+    });
+
+    expect(result.children).toEqual([]);
+    expect(result.events).toEqual([]);
+  });
 });
 
 describe('web-created tournament standings hydration (#1967)', () => {
@@ -6125,23 +6864,67 @@ describe('team schedule game windowing (#2034)', () => {
 describe('resolveCachedParentScheduleEvents (#2649)', () => {
   beforeEach(() => {
     vi.mocked(getCachedAppData).mockReset();
+    vi.mocked(invalidateCachedAppData).mockReset();
   });
 
-  it('returns every matching child-event row for the route target from cached schedule data', () => {
+  it('never treats a fresh-looking cached private DB row as current route authorization', () => {
     vi.mocked(getCachedAppData).mockReturnValue({
-      children: [],
+      children: [
+        { teamId: 't1', teamName: 'Team', playerId: 'p1', playerName: 'Current child' },
+        { teamId: 't1', teamName: 'Team', playerId: 'p2', playerName: 'Possibly revoked child' }
+      ],
+      staffTeams: [],
+      sourceKeysByTeam: { t1: 'no-external-calendar:v1' },
       events: [
-        { id: 'e1', teamId: 't1', childId: 'c1' },
-        { id: 'e1', teamId: 't1', childId: 'c2' },
-        { id: 'e2', teamId: 't1', childId: 'c1' },
-        { id: 'e1', teamId: 't9', childId: 'c1' }
-      ]
+        { id: 'e1', teamId: 't1', childId: 'p1', isDbGame: true },
+        { id: 'e1', teamId: 't1', childId: 'p2', isDbGame: true }
+      ],
+      isPartial: false
     } as never);
 
     const result = resolveCachedParentScheduleEvents('u1', 't1', 'e1');
 
-    expect(result.map((event) => event.childId)).toEqual(['c1', 'c2']);
+    expect(result).toEqual([]);
     expect(getCachedAppData).toHaveBeenCalledWith('app-schedule-summary:u1');
+    expect(invalidateCachedAppData).toHaveBeenCalledWith('app-schedule-summary:u1');
+    expect(invalidateCachedAppData).toHaveBeenCalledWith('home-secondary:u1');
+  });
+
+  it('invalidates a cache entry containing any raw external event before exposing DB rows', () => {
+    vi.mocked(getCachedAppData).mockReturnValue({
+      children: [],
+      events: [
+        { id: 'external', teamId: 't1', childId: 'c1', isDbGame: false, sourceType: 'calendar' },
+        { id: 'tracked', teamId: 't1', childId: 'c1', isDbGame: true, sourceType: 'db' }
+      ]
+    } as never);
+
+    expect(resolveCachedParentScheduleEvents('u1', 't1', 'external')).toEqual([]);
+    expect(resolveCachedParentScheduleEvents('u1', 't1', 'tracked')).toEqual([]);
+    expect(invalidateCachedAppData).toHaveBeenCalledWith('app-schedule-summary:u1');
+  });
+
+  it('invalidates a DB-only cache entry that still contains a raw calendar source URL', () => {
+    const cached = {
+      children: [{ teamId: 't1', teamName: 'Team', playerId: 'c1', playerName: 'Child' }],
+      staffTeams: [],
+      sourceKeysByTeam: { t1: `direct-calendar:v1:${'a'.repeat(64)}` },
+      events: [{
+        id: 'tracked',
+        teamId: 't1',
+        childId: 'c1',
+        isDbGame: true,
+        sourceType: 'db',
+        calendarUrls: ['https://calendar.example.com/private-token.ics']
+      }],
+      isPartial: false
+    } as any;
+    vi.mocked(getCachedAppData).mockReturnValue(cached);
+
+    expect(hasRawExternalScheduleEvents(cached)).toBe(true);
+    expect(isParentScheduleCacheSafe(cached)).toBe(false);
+    expect(resolveCachedParentScheduleEvents('u1', 't1', 'tracked')).toEqual([]);
+    expect(invalidateCachedAppData).toHaveBeenCalledWith('app-schedule-summary:u1');
   });
 
   it('returns empty without reading the cache when identifiers are blank', () => {

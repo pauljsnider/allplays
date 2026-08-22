@@ -41,7 +41,7 @@ describe('team media management permissions', () => {
     it('cache-busts team access imports for media management access changes', () => {
         const source = readFileSync(path.join(repoRoot, 'js/team-media-utils.js'), 'utf8');
 
-        expect(source).toContain("import { hasTeamMediaManagementAccess } from './team-access.js?v=44338';");
+        expect(source).toContain("import { hasTeamMediaManagementAccess } from './team-access.js?v=44339';");
     });
 
     it('allows owners, admins, platform admins, and selected media managers to see management controls', () => {

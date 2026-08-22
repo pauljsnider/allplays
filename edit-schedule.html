@@ -734,6 +734,9 @@
                         </div>
                     </div>
                     <div id="tournament-standings-admin-panel" class="hidden border-b border-gray-100 bg-slate-50"></div>
+                    <div id="schedule-load-warning" class="hidden mx-4 mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800" role="status" aria-live="polite">
+                        This schedule is incomplete because a team calendar could not be loaded. Saved ALL PLAYS events are still shown. Retry to load the complete schedule.
+                    </div>
                     <div id="schedule-list" class="divide-y divide-gray-200">
                         <!-- Games -->
                     </div>
@@ -948,16 +951,16 @@
     </div>
 
     <script type="module">
-        import { getTeam, getTeams, getGames, getEvents, addGame, updateGame, updateTeam, deleteGame, addPractice, updateEvent, deleteEvent, getConfigs, addCalendarToTeam, removeCalendarFromTeam, getTrackedCalendarEventUids, cancelOccurrence, updateOccurrence, restoreOccurrence, clearOccurrenceOverride, updateSeries, deleteSeries, getUnreadChatCount, getPracticeSessions, cancelGame, getLatestGameAssignments, postChatMessage, getRsvpBreakdownByPlayer, getPlayers, getRsvps, applyTournamentAdvancementPatches, saveTournamentPoolOverride, clearTournamentPoolOverride, getOfficials, addOfficial, updateOfficial, deleteOfficial, createOfficiatingAssignmentNotificationRecords } from './js/db.js?v=4433182';
-        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, formatTimeRange, getDefaultEndTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, getCalendarEventStatus, getCalendarEventTrackingId, isTrackedCalendarEvent, generateSeriesId, expandRecurrence, formatRecurrence, shareOrCopy, escapeHtml } from './js/utils.js?v=443358';
+        import { getTeam, getTeams, getGames, getEvents, addGame, updateGame, updateTeam, deleteGame, addPractice, updateEvent, deleteEvent, getConfigs, addCalendarToTeam, removeCalendarFromTeam, getTrackedCalendarEventUids, cancelOccurrence, updateOccurrence, restoreOccurrence, clearOccurrenceOverride, updateSeries, deleteSeries, getUnreadChatCount, getPracticeSessions, cancelGame, getLatestGameAssignments, postChatMessage, getRsvpBreakdownByPlayer, getPlayers, getRsvps, applyTournamentAdvancementPatches, saveTournamentPoolOverride, clearTournamentPoolOverride, getOfficials, addOfficial, updateOfficial, deleteOfficial, createOfficiatingAssignmentNotificationRecords } from './js/db.js?v=4433183';
+        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, formatTimeRange, getDefaultEndTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, getCalendarEventStatus, getCalendarEventTrackingId, isTrackedCalendarEvent, generateSeriesId, expandRecurrence, formatRecurrence, shareOrCopy, escapeHtml } from './js/utils.js?v=443359';
         import { mergeCalendarImportEvents, validateCalendarImportUrl } from './js/edit-schedule-calendar-import.js?v=2';
         import { materializeCalendarGame } from './js/calendar-game-materialization.js?v=1';
-        import { checkAuth } from './js/auth.js?v=4433186';
-        import { renderTeamAdminBanner } from './js/team-admin-banner.js?v=443338';
+        import { checkAuth } from './js/auth.js?v=4433187';
+        import { renderTeamAdminBanner } from './js/team-admin-banner.js?v=443339';
         import { computeOfficiatingCoverageStatus, flagRescheduledOfficiatingSlots, getOfficiatingAssignmentConflictWarnings, normalizeOfficiatingSlots as normalizeAssignmentOfficiatingSlots } from './js/officiating-utils.js?v=4';
         import { buildOfficiatingAssignmentNotificationRecords } from './js/officiating-notifications.js?v=3';
-        import { getTeamAccessInfo } from './js/team-access.js?v=44338';
-        import { resolvePreferredStatConfigId } from './js/live-game-state.js?v=33';
+        import { getTeamAccessInfo } from './js/team-access.js?v=44339';
+        import { resolvePreferredStatConfigId } from './js/live-game-state.js?v=34';
         import { getGoalSportProfile } from './js/live-sport-config.js?v=3';
         import { cancelScheduledGame } from './js/edit-schedule-cancel-game.js?v=3';
         import { applyPracticeRecurrenceFields } from './js/edit-schedule-practice-payload.js?v=1';
@@ -994,6 +997,53 @@
         let tournamentStandingsDraft = [];
         let tournamentAdvancementGames = [];
         let officialsDirectory = [];
+        const completeCalendarImportEventsByTeam = new Map();
+
+        function getCalendarSourceKey(calendarUrls) {
+            const urls = Array.isArray(calendarUrls)
+                ? calendarUrls.filter((url) => typeof url === 'string' && url.trim()).map((url) => url.trim()).sort()
+                : [];
+            return JSON.stringify(urls);
+        }
+
+        function isCalendarAccessOrSourceLossError(error) {
+            const code = String(error?.code || '').trim().toLowerCase().replace(/^functions\//, '');
+            return code === 'unauthenticated' || code === 'permission-denied' || code === 'not-found';
+        }
+
+        function resolveExternalCalendarEventsForLoad(cache, cacheKey, sourceKey, loadedEvents, loadComplete, scopeVerified = true) {
+            const currentEvents = Array.isArray(loadedEvents) ? loadedEvents.slice() : [];
+            if (!scopeVerified) {
+                cache.delete(cacheKey);
+                return currentEvents;
+            }
+            if (loadComplete) {
+                cache.set(cacheKey, { sourceKey, events: currentEvents.slice() });
+                return currentEvents;
+            }
+            const previous = cache.get(cacheKey);
+            if (currentEvents.length === 0 && previous?.sourceKey === sourceKey && Array.isArray(previous.events)) {
+                return previous.events.slice();
+            }
+            return currentEvents;
+        }
+
+        async function refreshScheduleTeamScopeForLoad() {
+            try {
+                const freshTeam = await getTeam(currentTeamId);
+                if (!hasAccess(freshTeam, currentUser)) {
+                    completeCalendarImportEventsByTeam.delete(currentTeamId);
+                    return null;
+                }
+                currentTeam = freshTeam;
+                return freshTeam;
+            } catch (error) {
+                completeCalendarImportEventsByTeam.delete(currentTeamId);
+                console.warn('Schedule team access could not be verified.');
+                return null;
+            }
+        }
+        // COMPLETE_CALENDAR_FALLBACK_END
 
         const opponentInput = document.getElementById('opponent');
         const opponentResults = document.getElementById('opponent-search-results');
@@ -2081,8 +2131,18 @@
         document.getElementById('registration-schedule-import-btn')?.addEventListener('click', handleRegistrationScheduleImport);
 
         async function loadSchedule() {
+            let calendarLoadIncomplete = false;
+            document.getElementById('schedule-load-warning')?.classList.add('hidden');
             gamesCache = {};
             allTeamGamesCache = {};
+
+            const verifiedTeam = await refreshScheduleTeamScopeForLoad();
+            if (!verifiedTeam) {
+                document.getElementById('schedule-load-warning')?.classList.remove('hidden');
+                const unavailableContainer = document.getElementById('schedule-list');
+                if (unavailableContainer) unavailableContainer.innerHTML = '';
+                return;
+            }
 
             // Get all events (games and practices) from DB
             const dbEvents = await getEvents(currentTeamId);
@@ -2115,16 +2175,33 @@
             // Reset series master cache for this load
             seriesMasters = {};
 
+            const calendarUrls = Array.isArray(currentTeam.calendarUrls) ? currentTeam.calendarUrls : [];
+            const calendarSourceKey = getCalendarSourceKey(calendarUrls);
+            let externalCalendarLoadComplete = true;
+            let externalCalendarScopeVerified = true;
+
             // Get tracked calendar event UIDs
-            const trackedUids = await getTrackedCalendarEventUids(currentTeamId);
+            let trackedUids = [];
+            if (calendarUrls.length > 0) {
+                try {
+                    trackedUids = await getTrackedCalendarEventUids(currentTeamId);
+                } catch (error) {
+                    externalCalendarLoadComplete = false;
+                    if (isCalendarAccessOrSourceLossError(error)) {
+                        externalCalendarScopeVerified = false;
+                    }
+                    console.warn('Calendar tracking state unavailable for schedule editor:', error);
+                }
+            }
 
             // Fetch calendar events
-            if (currentTeam.calendarUrls && currentTeam.calendarUrls.length > 0) {
-                for (const calendarUrl of currentTeam.calendarUrls) {
+            const loadedCalendarEvents = [];
+            if (externalCalendarLoadComplete) {
+                for (const calendarUrl of calendarUrls) {
                     try {
-                        const calendarEvents = await fetchAndParseCalendar(calendarUrl);
+                        const calendarEvents = await fetchAndParseCalendar(calendarUrl, { teamId: currentTeamId });
 
-                        allEvents.push(...mergeCalendarImportEvents({
+                        loadedCalendarEvents.push(...mergeCalendarImportEvents({
                             calendarEvents,
                             dbEvents,
                             trackedUids,
@@ -2135,10 +2212,24 @@
                             extractOpponent
                         }));
                     } catch (error) {
-                        console.warn('Calendar import unavailable:', calendarUrl, error);
+                        externalCalendarLoadComplete = false;
+                        if (isCalendarAccessOrSourceLossError(error)) {
+                            externalCalendarScopeVerified = false;
+                        }
+                        console.warn('Calendar import unavailable for schedule editor:', error);
                     }
                 }
             }
+            calendarLoadIncomplete = !externalCalendarLoadComplete;
+            allEvents.push(...resolveExternalCalendarEventsForLoad(
+                completeCalendarImportEventsByTeam,
+                currentTeamId,
+                calendarSourceKey,
+                loadedCalendarEvents,
+                externalCalendarLoadComplete,
+                externalCalendarScopeVerified
+            ));
+            document.getElementById('schedule-load-warning')?.classList.toggle('hidden', !calendarLoadIncomplete);
 
             // Add DB events (games and practices), expanding recurring series
             resolvedDbEvents.forEach(event => {

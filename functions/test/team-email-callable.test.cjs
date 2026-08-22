@@ -15,6 +15,7 @@ function patchedModuleLoad(request, parent, isMain) {
   if (request === 'firebase-admin' && adminStub) return adminStub;
   if (request === 'firebase-functions' && functionsStub) return functionsStub;
   if (request === 'stripe' && StripeStub) return StripeStub;
+  if (request === 'resend') return { Resend: class ResendStub {} };
   return originalModuleLoad(request, parent, isMain);
 }
 

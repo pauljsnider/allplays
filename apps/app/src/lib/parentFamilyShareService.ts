@@ -1,4 +1,5 @@
 import { createFamilyShareToken, listFamilyShareTokens, revokeFamilyShareToken, updateFamilyShareTokenCalendars } from './adapters/legacyParentTools';
+import { collectCanonicalParentAccessLinks } from './parentAccessScope';
 import type { AuthUser } from './types';
 
 const legacyOrigin = 'https://allplays.ai';
@@ -10,7 +11,7 @@ export type FamilyShareTokenCard = Record<string, any> & {
 
 export async function loadFamilyShareModel(user: AuthUser | null): Promise<{ children: any[]; tokens: FamilyShareTokenCard[] }> {
     if (!user?.uid) return { children: [], tokens: [] };
-    const children = normalizeFamilyChildren(user.parentOf || []);
+    const children = normalizeFamilyChildren(collectCanonicalParentAccessLinks(user));
     const tokens = await Promise.resolve(listFamilyShareTokens(user.uid));
     return {
         children,
@@ -26,7 +27,12 @@ export async function loadFamilyShareModel(user: AuthUser | null): Promise<{ chi
 
 export async function createParentFamilyShare(user: AuthUser | null, label: string, extraCalendarUrls: string[] = []) {
     if (!user?.uid) throw new Error('Sign in before creating a family share link.');
-    const tokenId = await createFamilyShareToken(user.uid, normalizeFamilyChildren(user.parentOf || []), label, extraCalendarUrls);
+    const tokenId = await createFamilyShareToken(
+        user.uid,
+        normalizeFamilyChildren(collectCanonicalParentAccessLinks(user)),
+        label,
+        extraCalendarUrls
+    );
     return { tokenId, url: getFamilyShareUrl(tokenId) };
 }
 

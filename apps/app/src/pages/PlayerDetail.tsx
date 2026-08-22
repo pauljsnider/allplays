@@ -71,6 +71,8 @@ import {
   type ParentScheduleEvent,
   type RsvpResponse
 } from '../lib/scheduleLogic';
+import { invalidateParentScheduleReadCaches, isTerminalScheduleAccessError } from '../lib/scheduleService';
+import { applyCurrentParentAccessProfile } from '../lib/parentAccessScope';
 import { sharePublicUrl } from '../lib/publicActions';
 import { buildAppAcceptInviteUrl } from '../lib/inviteUrls';
 import { completeParentCoreWorkflowTimer } from '../lib/parentWorkflowTiming';
@@ -170,6 +172,44 @@ function hasPersistedPrivateProfileShareUrl(profile: Record<string, any> | null 
 
 function hasPendingPublicProfilePublish({ hasUnsavedPublishChanges = false, saving = false }: { hasUnsavedPublishChanges?: boolean; saving?: boolean } = {}) {
   return hasUnsavedPublishChanges || saving;
+}
+
+function reconcilePartialPlayerSchedule(
+  current: ParentPlayerDetailData | null,
+  next: ParentPlayerDetailData
+) {
+  if (
+    !current
+    || next.scheduleIsPartial !== true
+    || current.child.teamId !== next.child.teamId
+    || current.child.playerId !== next.child.playerId
+    || !current.scheduleAccessUserId
+    || current.scheduleAccessUserId !== next.scheduleAccessUserId
+    || !current.scheduleSourceKey
+    || current.scheduleSourceKey !== next.scheduleSourceKey
+    || !current.scheduleSourceKey.startsWith('direct-calendar:v1:')
+    || next.scheduleTeamLoadState === 'complete'
+    || next.scheduleTeamLoadState === 'access-lost'
+  ) {
+    return next;
+  }
+  const eventsByKey = new Map<string, ParentScheduleEvent>();
+  current.events
+    .filter((event) => (
+      next.scheduleTeamLoadState === 'failed'
+      || next.scheduleTeamLoadState === 'pending'
+      || (event.isDbGame !== true && event.sourceType === 'calendar')
+    ))
+    .forEach((event) => eventsByKey.set(event.eventKey || `${event.teamId}::${event.id}::${event.date.toISOString()}`, event));
+  next.events.forEach((event) => eventsByKey.set(event.eventKey || `${event.teamId}::${event.id}::${event.date.toISOString()}`, event));
+  const events = [...eventsByKey.values()].sort((left, right) => left.date.getTime() - right.date.getTime());
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return {
+    ...next,
+    events,
+    nextEvent: events.find((event) => !event.isCancelled && event.date.getTime() >= today.getTime()) || null
+  };
 }
 
 function requiresSavedPublicProfileForSharing({
@@ -311,11 +351,9 @@ function hasResolvedAthleteProfile(data: ParentAthleteProfileData | null | undef
 
 function mergePlayerAuthUser(user: AuthUser | null, profile: Record<string, unknown> | null): AuthUser | null {
   if (!user || !profile) return user;
+  const parentAccessUser = applyCurrentParentAccessProfile(user, profile);
   return {
-    ...user,
-    parentOf: mergeProfileArray(user.parentOf, profile.parentOf),
-    parentTeamIds: mergeProfileArray(user.parentTeamIds, profile.parentTeamIds),
-    parentPlayerKeys: mergeProfileArray(user.parentPlayerKeys, profile.parentPlayerKeys),
+    ...parentAccessUser,
     coachOf: mergeProfileArray(user.coachOf, profile.coachOf),
     teamMediaUploadTeamIds: mergeProfileArray(user.teamMediaUploadTeamIds, profile.teamMediaUploadTeamIds),
     mediaUploadTeamIds: mergeProfileArray(user.mediaUploadTeamIds, profile.mediaUploadTeamIds)
@@ -386,6 +424,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
   const { teamId = '', playerId = '' } = useParams();
   const playerAuthUser = useMemo(() => mergePlayerAuthUser(auth.user, auth.profile), [auth.profile, auth.user]);
   const [data, setData] = useState<ParentPlayerDetailData | null>(null);
+  const [dataLoadedForUserId, setDataLoadedForUserId] = useState<string | null>(null);
   const hasLoadedPlayerAccess = data?.child.teamId === teamId && data.child.playerId === playerId;
   const playerPremiumAccess = usePremiumFeatureAccess({
     scope: PREMIUM_SCOPES.ACCOUNT,
@@ -581,13 +620,17 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
         && !!data
         && data.child.teamId === nextData.child.teamId
         && data.child.playerId === nextData.child.playerId;
-      setData((current) => ({
-        ...nextData,
-        athleteProfile: preserveAthleteProfile && current
-          ? current.athleteProfile
-          : nextData.athleteProfile,
-        statsDetail: reloadStatsDetail ? null : nextData.statsDetail
-      }));
+      setData((current) => {
+        const scheduleSafeData = reconcilePartialPlayerSchedule(current, nextData);
+        return {
+          ...scheduleSafeData,
+          athleteProfile: preserveAthleteProfile && current
+            ? current.athleteProfile
+            : scheduleSafeData.athleteProfile,
+          statsDetail: reloadStatsDetail ? null : scheduleSafeData.statsDetail
+        };
+      });
+      setDataLoadedForUserId(playerAuthUser?.uid || null);
       setAthleteProfileLoaded(nextAthleteProfileLoaded || preserveAthleteProfile);
       setAthleteProfileError(null);
       setVideoClipsError(null);
@@ -617,8 +660,11 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
       if (playerDetailRequestIdRef.current !== requestId) {
         return;
       }
-      if (fullPageLoading) {
+      const terminalAccessLoss = isTerminalScheduleAccessError(loadError);
+      if (terminalAccessLoss) invalidateParentScheduleReadCaches(playerAuthUser);
+      if (fullPageLoading || terminalAccessLoss) {
         setData(null);
+        setDataLoadedForUserId(null);
       }
       setError(toAppServiceError(loadError, 'Unable to load player.'));
     } finally {
@@ -703,7 +749,12 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
     });
   };
 
-  if (loading) {
+  const dataHasStalePrincipalOrRoute = Boolean(data) && (
+    dataLoadedForUserId !== (playerAuthUser?.uid || null)
+    || data?.child.teamId !== teamId
+    || data?.child.playerId !== playerId
+  );
+  if (loading || dataHasStalePrincipalOrRoute) {
     return (
       <div className="app-card p-6 text-center">
         <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary-600" aria-hidden="true" />
@@ -733,6 +784,8 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
   const teamName = data.team?.name || data.child.teamName || data.child.teamId;
   const isLinkedParent = data.access.isLinkedParent;
   const visiblePlayerSections = getVisiblePlayerSections(data);
+  const scheduleActionCountsComplete = data.scheduleTeamLoadState === 'complete'
+    && data.scheduleIsPartial !== true;
 
   return (
     <div className="player-detail-page space-y-3">
@@ -756,9 +809,9 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
         </div>
         {isLinkedParent ? (
           <div className="flex gap-1.5 overflow-x-auto border-t border-gray-100 px-3 py-1.5 sm:px-4">
-            <SignalChip icon={ClipboardCheck} label="RSVP" value={String(data.actionCounts.rsvpNeeded)} urgent={data.actionCounts.rsvpNeeded > 0} />
-            <SignalChip icon={ClipboardCheck} label="Packets" value={String(data.actionCounts.packetsReady)} urgent={data.actionCounts.packetsReady > 0} />
-            <SignalChip icon={CheckCircle2} label="Tasks" value={String(data.actionCounts.openAssignments)} urgent={data.actionCounts.openAssignments > 0} />
+            <SignalChip icon={ClipboardCheck} label="RSVP" value={scheduleActionCountsComplete ? String(data.actionCounts.rsvpNeeded) : '—'} urgent={scheduleActionCountsComplete && data.actionCounts.rsvpNeeded > 0} />
+            <SignalChip icon={ClipboardCheck} label="Packets" value={scheduleActionCountsComplete ? String(data.actionCounts.packetsReady) : '—'} urgent={scheduleActionCountsComplete && data.actionCounts.packetsReady > 0} />
+            <SignalChip icon={CheckCircle2} label="Tasks" value={scheduleActionCountsComplete ? String(data.actionCounts.openAssignments) : '—'} urgent={scheduleActionCountsComplete && data.actionCounts.openAssignments > 0} />
           </div>
         ) : null}
       </section>
@@ -783,9 +836,9 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
       </div>
 
       {error ? <Status tone="error" message={error.message} /> : null}
-      {data.scheduleLoadError ? <ScheduleLoadNotice message={data.scheduleLoadError} /> : null}
+      {data.scheduleLoadError ? <ScheduleLoadNotice message={data.scheduleLoadError} onRetry={() => refreshPlayer({ showLoading: false })} retrying={refreshing} /> : null}
       {activeSection === 'overview' ? <OverviewSection data={data} showParentActions={isLinkedParent} /> : null}
-      {activeSection === 'schedule' ? <PlayerScheduleSection events={data.events} /> : null}
+      {activeSection === 'schedule' ? <PlayerScheduleSection events={data.events} isPartial={data.scheduleIsPartial} /> : null}
       {activeSection === 'performance' ? (
         <ReportsSection
           data={data}
@@ -826,10 +879,22 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
 }
 
 function OverviewSection({ data, showParentActions = true }: { data: ParentPlayerDetailData; showParentActions?: boolean }) {
-  const nextAction = showParentActions ? getPlayerAction(data) : null;
+  const scheduleDbSliceComplete = data.scheduleTeamLoadState === 'complete'
+    || data.scheduleTeamLoadState === 'external-partial';
+  const scheduleActionCountsComplete = data.scheduleTeamLoadState === 'complete'
+    && data.scheduleIsPartial !== true;
+  const nextAction = showParentActions && scheduleActionCountsComplete ? getPlayerAction(data) : null;
   return (
     <div className="player-section-content space-y-3">
-      {nextAction ? (
+      {showParentActions && !scheduleActionCountsComplete ? (
+        <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
+          <AlertCircle className="mt-0.5 h-5 w-5 flex-none text-amber-700" aria-hidden="true" />
+          <div>
+            <div className="text-sm font-black text-amber-900">Parent actions incomplete</div>
+            <div className="mt-0.5 text-xs font-semibold text-amber-700">Refresh before relying on RSVP, packet, or assignment counts.</div>
+          </div>
+        </div>
+      ) : nextAction ? (
         <Link to={nextAction.to} className={`flex items-center justify-between gap-3 rounded-xl border p-3 ${nextAction.className}`}>
           <span className="min-w-0">
             <span className="block text-sm font-black text-gray-950">{nextAction.title}</span>
@@ -847,10 +912,21 @@ function OverviewSection({ data, showParentActions = true }: { data: ParentPlaye
         </div>
       )}
 
-      {data.nextEvent ? <PlayerEventCard event={data.nextEvent} featured /> : <EmptyCard icon={CalendarDays} title="No upcoming events" detail="This player's schedule is clear." />}
+      {data.nextEvent ? (
+        <PlayerEventCard event={data.nextEvent} featured />
+      ) : data.scheduleIsPartial ? (
+        <EmptyCard icon={AlertCircle} title="Schedule incomplete" detail="Refresh before relying on missing events." />
+      ) : (
+        <EmptyCard icon={CalendarDays} title="No upcoming events" detail="This player's schedule is clear." />
+      )}
 
       <section className="grid gap-3 sm:grid-cols-3">
-        <InfoCard icon={CalendarDays} title="Events" detail={`${data.events.length} total`} to={getPlayerSectionRoute('schedule')} />
+        <InfoCard
+          icon={CalendarDays}
+          title="Events"
+          detail={!scheduleDbSliceComplete ? 'Schedule unavailable' : data.scheduleIsPartial ? `${data.events.length} known` : `${data.events.length} total`}
+          to={getPlayerSectionRoute('schedule')}
+        />
         <InfoCard icon={BarChart3} title="Reports" detail={`${data.statRows.length} recent games`} to={getPlayerSectionRoute('performance')} />
         <InfoCard icon={ImagePlus} title="Clips" detail={`${data.clips.length} clips`} to={getPlayerSectionRoute('performance', 'clips')} />
       </section>
@@ -858,7 +934,7 @@ function OverviewSection({ data, showParentActions = true }: { data: ParentPlaye
   );
 }
 
-function PlayerScheduleSection({ events }: { events: ParentScheduleEvent[] }) {
+function PlayerScheduleSection({ events, isPartial }: { events: ParentScheduleEvent[]; isPartial: boolean }) {
   const upcoming = useMemo(() => events.filter((event) => event.date.getTime() >= startOfDay(new Date()).getTime()), [events]);
   const recent = useMemo(() => events.filter((event) => event.date.getTime() < startOfDay(new Date()).getTime()).slice().sort((a, b) => b.date.getTime() - a.date.getTime()).slice(0, 6), [events]);
   return (
@@ -870,7 +946,11 @@ function PlayerScheduleSection({ events }: { events: ParentScheduleEvent[] }) {
         </div>
         {upcoming.length ? upcoming.map((event) => (
           <PlayerEventCard key={event.eventKey} event={event} />
-        )) : <EmptyCard icon={CalendarDays} title="No upcoming events" detail="Nothing scheduled for this player yet." />}
+        )) : isPartial ? (
+          <EmptyCard icon={AlertCircle} title="Schedule incomplete" detail="Refresh before relying on missing events." />
+        ) : (
+          <EmptyCard icon={CalendarDays} title="No upcoming events" detail="Nothing scheduled for this player yet." />
+        )}
       </section>
       {recent.length ? (
         <section className="space-y-3">
@@ -3447,16 +3527,21 @@ function Status({ tone, message }: { tone: 'error' | 'success'; message: string 
   );
 }
 
-function ScheduleLoadNotice({ message }: { message: string }) {
+function ScheduleLoadNotice({ message, onRetry, retrying }: { message: string; onRetry: () => void; retrying: boolean }) {
   return (
     <div
-      className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-900"
+      className="flex items-start justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-900"
       role="status"
       aria-live="polite"
       aria-atomic="true"
     >
-      <AlertCircle className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" />
-      {message}
+      <span className="flex min-w-0 items-start gap-2">
+        <AlertCircle className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" />
+        <span>{message}</span>
+      </span>
+      <button type="button" className="flex-none text-xs font-black text-amber-900 underline" onClick={onRetry} disabled={retrying}>
+        {retrying ? 'Retrying…' : 'Retry'}
+      </button>
     </div>
   );
 }

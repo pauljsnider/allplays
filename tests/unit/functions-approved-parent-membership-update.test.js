@@ -4,7 +4,8 @@ import { createRequire } from 'node:module';
 
 const functionsSource = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
 const require = createRequire(import.meta.url);
-const { appendUniqueParentLink, appendUniqueValue } = require('../../functions/parent-invite-auto-link-core.cjs');
+const { appendUniqueValue } = require('../../functions/parent-invite-auto-link-core.cjs');
+const { addCanonicalParentAccessLink } = require('../../functions/parent-access-core.cjs');
 
 function getFunctionSource(functionName) {
     const start = functionsSource.indexOf(`function ${functionName}`);
@@ -20,15 +21,15 @@ function loadHelpers() {
     const uniqueNonEmptyStringsSource = getFunctionSource('uniqueNonEmptyStrings');
     const buildApprovedParentMembershipUserUpdateSource = getFunctionSource('buildApprovedParentMembershipUserUpdate');
 
-    return new Function('appendUniqueParentLink', 'appendUniqueValue', `
+    return new Function('addCanonicalParentAccessLink', 'appendUniqueValue', `
         ${uniqueNonEmptyStringsSource}
         ${buildApprovedParentMembershipUserUpdateSource}
         return { buildApprovedParentMembershipUserUpdate };
-    `)(appendUniqueParentLink, appendUniqueValue);
+    `)(addCanonicalParentAccessLink, appendUniqueValue);
 }
 
 describe('buildApprovedParentMembershipUserUpdate', () => {
-    it('recomputes access keys when an approved link already exists in parentOf', () => {
+    it('adds only the approved link when stale parent metadata is no longer canonical', () => {
         const { buildApprovedParentMembershipUserUpdate } = loadHelpers();
 
         const result = buildApprovedParentMembershipUserUpdate({
@@ -54,13 +55,43 @@ describe('buildApprovedParentMembershipUserUpdate', () => {
                 {
                     teamId: 'team-1',
                     playerId: 'player-1',
-                    teamName: 'Old Team',
-                    playerName: 'Jordan'
+                    teamName: 'Team One',
+                    playerName: 'Jordan',
+                    playerNumber: '23',
+                    playerPhotoUrl: null,
+                    relation: 'Parent'
                 }
             ],
             parentTeamIds: ['team-1'],
             parentPlayerKeys: ['team-1::player-1'],
             roles: ['parent']
         });
+    });
+
+    it('does not restore revoked siblings or teams while approving a new link', () => {
+        const { buildApprovedParentMembershipUserUpdate } = loadHelpers();
+
+        const result = buildApprovedParentMembershipUserUpdate({
+            userData: {
+                parentOf: [
+                    { teamId: 'team-1', playerId: 'player-current' },
+                    { teamId: 'team-1', playerId: 'player-revoked' },
+                    { teamId: 'team-old', playerId: 'player-old' }
+                ],
+                parentTeamIds: ['team-1'],
+                parentPlayerKeys: ['team-1::player-current'],
+                roles: ['parent']
+            },
+            requestData: { teamId: 'team-2', playerId: 'player-new' },
+            team: { id: 'team-2', name: 'Team Two' },
+            player: { id: 'player-new', name: 'New Player' }
+        });
+
+        expect(result.parentOf.map((link) => `${link.teamId}::${link.playerId}`)).toEqual([
+            'team-1::player-current',
+            'team-2::player-new'
+        ]);
+        expect(result.parentTeamIds).toEqual(['team-1', 'team-2']);
+        expect(result.parentPlayerKeys).toEqual(['team-1::player-current', 'team-2::player-new']);
     });
 });

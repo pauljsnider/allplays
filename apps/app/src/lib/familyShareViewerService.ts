@@ -1,15 +1,5 @@
-import { functions, getFamilyShareToken, httpsCallable, resolveFamilyShareTokenChildren } from './adapters/legacyParentTools';
-import { getGames, getTeam } from './adapters/legacyScheduleDb';
-import {
-  expandRecurrence,
-  extractOpponent,
-  fetchAndParseCalendar,
-  getCalendarEventTrackingId,
-  isPracticeEvent,
-  isTrackedCalendarEvent
-} from './adapters/legacyScheduleHelpers';
-import { isCalendarOccurrenceTracked } from './calendarOccurrence';
-import { getCalendarLocationDetail } from './scheduleLogic';
+import { functions, httpsCallable } from './adapters/legacyParentTools';
+import { expandRecurrence } from './adapters/legacyScheduleHelpers';
 
 export type FamilyShareTokenErrorReason = 'missing' | 'invalid' | 'revoked' | 'expired' | 'throttled' | 'load-failed';
 
@@ -74,13 +64,10 @@ export type FamilyShareViewModel = {
   calendarWarnings: string[];
 };
 
-type FamilyShareScheduleProjection = {
+type FamilyShareViewProjection = {
+  presentation: { label: string; expiresAt: string | null };
   children: FamilyShareChild[];
   teams: FamilyShareScheduleTeamProjection[];
-};
-
-type FamilyShareViewProjection = FamilyShareScheduleProjection & {
-  presentation: { label: string; expiresAt: string | null };
   externalEvents: FamilyShareEvent[];
   calendarWarnings: string[];
 };
@@ -88,7 +75,6 @@ type FamilyShareViewProjection = FamilyShareScheduleProjection & {
 type FamilyShareScheduleTeamProjection = {
   teamId: string;
   teamName: string;
-  calendarUrls: string[];
   games: Record<string, any>[];
 };
 
@@ -103,69 +89,19 @@ export async function loadFamilyShareView(tokenId: string): Promise<FamilyShareV
   }
 
   const serverProjection = await loadFamilyShareViewProjection(normalizedTokenId);
-  if (serverProjection) {
-    const calendarWarnings = [...serverProjection.calendarWarnings];
-    const projectedEvents = await buildCombinedFamilySchedule(
-      serverProjection.children,
-      [],
-      calendarWarnings,
-      serverProjection.teams
-    );
-    const events = mergeFamilyEvents([...projectedEvents, ...serverProjection.externalEvents])
-      .sort((a, b) => a.date.getTime() - b.date.getTime());
-    return {
-      tokenId: normalizedTokenId,
-      label: serverProjection.presentation.label || 'Family Page',
-      expiresAt: toDate(serverProjection.presentation.expiresAt),
-      children: serverProjection.children,
-      teams: buildFamilyTeams(serverProjection.children),
-      events,
-      upcomingEvents: getUpcomingEvents(events),
-      recentResults: getRecentResults(events),
-      calendarWarnings
-    };
-  }
-
-  let token: Record<string, any>;
-  try {
-    token = asRecord(await getFamilyShareToken(normalizedTokenId));
-  } catch (error: any) {
-    throw new FamilyShareTokenError('load-failed', error?.message || 'Unable to load this family share link.');
-  }
-
-  if (!Object.keys(token).length) {
-    throw new FamilyShareTokenError('invalid', 'This family share link is no longer valid.');
-  }
-
-  if (token.active === false || token.revoked || token.revokedAt) {
-    throw new FamilyShareTokenError('revoked', 'This family share link has been revoked.');
-  }
-
-  const expiresAt = toDate(token.expiresAt);
-  if (expiresAt && expiresAt.getTime() <= Date.now()) {
-    throw new FamilyShareTokenError('expired', 'This family share link has expired.');
-  }
-
-  const scheduleProjection = await loadFamilyShareScheduleProjection(normalizedTokenId);
-  const children = scheduleProjection === null
-    ? await resolveTokenChildren(normalizedTokenId, token)
-    : scheduleProjection.children;
-  const calendarWarnings: string[] = [];
-  const events = await buildCombinedFamilySchedule(
-    children,
-    normalizeCalendarUrls(token.extraCalendarUrls),
-    calendarWarnings,
-    scheduleProjection?.teams
-  );
+  const calendarWarnings = [...serverProjection.calendarWarnings];
+  const projectedEvents = buildCombinedFamilySchedule(serverProjection.children, serverProjection.teams);
+  const events = mergeFamilyEvents([...projectedEvents, ...serverProjection.externalEvents])
+    .sort((a, b) => a.date.getTime() - b.date.getTime());
   const upcomingEvents = getUpcomingEvents(events);
   const recentResults = getRecentResults(events);
 
   return {
     tokenId: normalizedTokenId,
-    label: compactString(token.label) || 'Family Page',
-    expiresAt,
-    children,
-    teams: buildFamilyTeams(children),
+    label: serverProjection.presentation.label || 'Family Page',
+    expiresAt: toDate(serverProjection.presentation.expiresAt),
+    children: serverProjection.children,
+    teams: buildFamilyTeams(serverProjection.children),
     events,
     upcomingEvents,
     recentResults,
@@ -173,24 +109,65 @@ export async function loadFamilyShareView(tokenId: string): Promise<FamilyShareV
   };
 }
 
-async function loadFamilyShareViewProjection(tokenId: string): Promise<FamilyShareViewProjection | null> {
+async function loadFamilyShareViewProjection(tokenId: string): Promise<FamilyShareViewProjection> {
   try {
     const callable = httpsCallable(functions, 'getFamilyShareView');
     const response = await callable({ tokenId });
     const data = asRecord(response?.data);
-    if (Number(data.projectionVersion) !== 2) return null;
+    if (
+      Number(data.projectionVersion) !== 2
+      || !isRecord(data.presentation)
+      || !Array.isArray(data.children)
+      || !Array.isArray(data.teams)
+      || !Array.isArray(data.externalEvents)
+      || !Array.isArray(data.calendarWarnings)
+    ) {
+      throw new FamilyShareTokenError('load-failed', 'Unable to load the complete family schedule. Please retry.');
+    }
+
+    const children = normalizeFamilyShareChildren(data.children);
+    const teams = normalizeScheduleProjectionTeams(data.teams);
+    const externalEvents = normalizeProjectedFamilyEvents(data.externalEvents);
+    const calendarWarnings = uniqueStrings(data.calendarWarnings);
+    const projectedTeamIds = new Set(teams.map((team) => team.teamId));
+    const malformedTeam = data.teams.some((entry: unknown) => {
+      if (!isRecord(entry) || !Array.isArray(entry.games)) return true;
+      return entry.games.some((game: unknown) => !isRecord(game) || !toDate(game.date));
+    });
+    const malformedExternalEvent = data.externalEvents.some((entry: unknown) => (
+      !isRecord(entry)
+      || !toDate(entry.date)
+      || !['game', 'practice'].includes(entry.type)
+    ));
+    const malformedWarning = data.calendarWarnings.some((warning: unknown) => (
+      typeof warning !== 'string' || !warning.trim()
+    ));
+    if (
+      children.length !== data.children.length
+      || teams.length !== data.teams.length
+      || externalEvents.length !== data.externalEvents.length
+      || calendarWarnings.length !== data.calendarWarnings.length
+      || malformedTeam
+      || malformedExternalEvent
+      || malformedWarning
+      || children.some((child) => !projectedTeamIds.has(child.teamId))
+    ) {
+      throw new FamilyShareTokenError('load-failed', 'Unable to load the complete family schedule. Please retry.');
+    }
+
     const presentation = asRecord(data.presentation);
     return {
       presentation: {
         label: compactString(presentation.label) || 'Family Page',
         expiresAt: compactString(presentation.expiresAt) || null
       },
-      children: normalizeFamilyShareChildren(data.children),
-      teams: normalizeScheduleProjectionTeams(data.teams),
-      externalEvents: normalizeProjectedFamilyEvents(data.externalEvents),
-      calendarWarnings: uniqueStrings(Array.isArray(data.calendarWarnings) ? data.calendarWarnings : [])
+      children,
+      teams,
+      externalEvents,
+      calendarWarnings
     };
   } catch (error: any) {
+    if (error instanceof FamilyShareTokenError) throw error;
     throwIfFamilyShareRateLimited(error);
     const reason = compactString(error?.details?.reason);
     if (['invalid', 'revoked', 'expired'].includes(reason)) {
@@ -201,10 +178,7 @@ async function loadFamilyShareViewProjection(tokenId: string): Promise<FamilySha
       } as const;
       throw new FamilyShareTokenError(reason as 'invalid' | 'revoked' | 'expired', messages[reason as keyof typeof messages]);
     }
-    // During the staged rollout, older backends do not yet expose the view
-    // projection. The legacy path remains passive until server/client parity is
-    // verified; the Firestore rule closure then makes that fallback unreadable.
-    return null;
+    throw new FamilyShareTokenError('load-failed', 'Unable to load the complete family schedule. Please retry.');
   }
 }
 
@@ -262,33 +236,6 @@ export function normalizeFamilyShareChildren(children: unknown): FamilyShareChil
     });
 }
 
-async function resolveTokenChildren(tokenId: string, token: Record<string, any>) {
-  const storedChildren = normalizeFamilyShareChildren(token.children);
-  if (storedChildren.length > 0) return storedChildren;
-
-  try {
-    return normalizeFamilyShareChildren(await resolveFamilyShareTokenChildren(tokenId));
-  } catch (error) {
-    throwIfFamilyShareRateLimited(error);
-    return [];
-  }
-}
-
-async function loadFamilyShareScheduleProjection(tokenId: string): Promise<FamilyShareScheduleProjection | null> {
-  try {
-    const callable = httpsCallable(functions, 'getFamilyShareSchedule');
-    const response = await callable({ tokenId });
-    const data = asRecord(response?.data);
-    return {
-      children: normalizeFamilyShareChildren(data.children),
-      teams: normalizeScheduleProjectionTeams(data.teams)
-    };
-  } catch (error) {
-    throwIfFamilyShareRateLimited(error);
-    return null;
-  }
-}
-
 function throwIfFamilyShareRateLimited(error: any): void {
   const code = compactString(error?.code).toLowerCase();
   if (code !== 'resource-exhausted' && !code.endsWith('/resource-exhausted')) return;
@@ -318,11 +265,9 @@ function buildFamilyTeams(children: FamilyShareChild[]): FamilyShareTeam[] {
   return [...teams.values()];
 }
 
-async function buildCombinedFamilySchedule(
+function buildCombinedFamilySchedule(
   children: FamilyShareChild[],
-  extraCalendarUrls: string[],
-  calendarWarnings: string[],
-  scheduleTeams: FamilyShareScheduleTeamProjection[] = []
+  scheduleTeams: FamilyShareScheduleTeamProjection[]
 ) {
   const byTeam = new Map<string, FamilyShareChild[]>();
   const projectedTeamsById = new Map(scheduleTeams.map((team) => [team.teamId, team]));
@@ -331,65 +276,24 @@ async function buildCombinedFamilySchedule(
     byTeam.get(child.teamId)?.push(child);
   });
 
-  const eventRows = await Promise.all([...byTeam.entries()].map(([teamId, teamChildren]) => (
-    buildTeamFamilyEvents(teamId, teamChildren, calendarWarnings, projectedTeamsById.get(teamId) || null)
-  )));
-  const events = eventRows.flat();
-  events.push(...await buildExtraCalendarEvents(children, extraCalendarUrls, events, calendarWarnings));
+  const events = [...byTeam.entries()].flatMap(([teamId, teamChildren]) => (
+    buildTeamFamilyEvents(teamId, teamChildren, projectedTeamsById.get(teamId) || null)
+  ));
   return mergeFamilyEvents(events).sort((a, b) => a.date.getTime() - b.date.getTime());
 }
 
-async function buildTeamFamilyEvents(
+function buildTeamFamilyEvents(
   teamId: string,
   children: FamilyShareChild[],
-  calendarWarnings: string[],
-  scheduleTeam: FamilyShareScheduleTeamProjection | null = null
+  scheduleTeam: FamilyShareScheduleTeamProjection | null
 ) {
-  let team: Record<string, any> | null = null;
-  let games: Record<string, any>[] = [];
-  if (scheduleTeam) {
-    team = {
-      id: scheduleTeam.teamId,
-      name: scheduleTeam.teamName,
-      calendarUrls: scheduleTeam.calendarUrls
-    };
-    games = scheduleTeam.games;
-  } else {
-    try {
-      [team, games] = await Promise.all([
-        Promise.resolve(getTeam(teamId)).catch(() => null),
-        Promise.resolve(getGames(teamId)).catch(() => [])
-      ]);
-    } catch {
-      return [];
-    }
-  }
+  if (!scheduleTeam) return [];
 
-  if (!team) return [];
-
-  const teamName = compactString(team.name) || children[0]?.teamName || 'Team';
+  const teamName = compactString(scheduleTeam.teamName) || children[0]?.teamName || 'Team';
   const events: FamilyShareEvent[] = [];
-  games.forEach((game) => {
+  scheduleTeam.games.forEach((game) => {
     events.push(...buildDbGameEvents(teamId, teamName, children, asRecord(game)));
   });
-
-  const trackedUids = games.map((game) => compactString(game?.calendarEventUid)).filter(Boolean);
-  const dbTimestamps = events.filter((event) => event.isDbGame).map((event) => event.date.getTime());
-  const calendarUrls = normalizeCalendarUrls(team.calendarUrls);
-  if (calendarUrls.length) {
-    const calendarResults = await Promise.all(calendarUrls.map((calendarUrl) => loadCalendar(calendarUrl, teamName, calendarWarnings)));
-    calendarResults.flat().forEach((calendarEvent) => {
-      if (
-        isCalendarOccurrenceTracked(getCalendarEventTrackingId(calendarEvent), calendarEvent.dtstart, trackedUids)
-        || isTrackedCalendarEvent(calendarEvent, trackedUids)
-      ) return;
-      const eventDate = toDate(calendarEvent.dtstart);
-      if (!eventDate) return;
-      if (dbTimestamps.some((timestamp) => Math.abs(timestamp - eventDate.getTime()) < 60000)) return;
-      events.push(buildCalendarEvent(teamId, teamName, children, calendarEvent, calendarEvent.sourceLabel || teamName));
-    });
-  }
-
   return events;
 }
 
@@ -438,69 +342,6 @@ function buildDbGameEvents(teamId: string, teamName: string, children: FamilySha
     awayScore: toScore(game.awayScore),
     notes: compactString(game.notes) || null
   })];
-}
-
-async function buildExtraCalendarEvents(
-  children: FamilyShareChild[],
-  calendarUrls: string[],
-  existingEvents: FamilyShareEvent[],
-  calendarWarnings: string[]
-) {
-  if (!children.length || !calendarUrls.length) return [];
-  const dbTimestamps = existingEvents.filter((event) => event.isDbGame).map((event) => event.date.getTime());
-  const uniqueChildren = [...new Map(children.map((child) => [child.playerId, child])).values()];
-  const calendarResults = await Promise.all(calendarUrls.map((calendarUrl) => loadCalendar(calendarUrl, getCalendarFailureLabel(calendarUrl), calendarWarnings)));
-  return calendarResults.flat().flatMap((calendarEvent) => {
-    const eventDate = toDate(calendarEvent.dtstart);
-    if (!eventDate) return [];
-    if (dbTimestamps.some((timestamp) => Math.abs(timestamp - eventDate.getTime()) < 60000)) return [];
-    return [buildCalendarEvent(
-      uniqueChildren[0]?.teamId || '',
-      uniqueChildren[0]?.teamName || 'Shared calendar',
-      uniqueChildren,
-      calendarEvent,
-      calendarEvent.sourceLabel || 'Shared calendar'
-    )];
-  });
-}
-
-async function loadCalendar(calendarUrl: string, label: string, calendarWarnings: string[]) {
-  try {
-    const events = await fetchAndParseCalendar(calendarUrl);
-    return events.map((event) => ({ ...event, sourceLabel: label }));
-  } catch {
-    const warning = getCalendarFailureLabel(calendarUrl, label);
-    if (!calendarWarnings.includes(warning)) calendarWarnings.push(warning);
-    return [];
-  }
-}
-
-function buildCalendarEvent(
-  teamId: string,
-  teamName: string,
-  children: FamilyShareChild[],
-  calendarEvent: Record<string, any>,
-  sourceLabel: string
-) {
-  const summary = compactString(calendarEvent.summary).replace(/\[CANCELED\]\s*/gi, '');
-  const type: 'game' | 'practice' = isPracticeEvent(summary) ? 'practice' : 'game';
-  const date = toDate(calendarEvent.dtstart) || new Date();
-  return buildFamilyEvent({
-    id: getCalendarEventTrackingId(calendarEvent) || compactString(calendarEvent.uid) || `${sourceLabel}-${date.toISOString()}`,
-    teamId,
-    teamName,
-    type,
-    date,
-    title: type === 'practice' ? summary || 'Practice' : '',
-    opponent: type === 'game' ? extractOpponent(summary, teamName) || 'TBD' : '',
-    location: compactString(calendarEvent.location) || 'TBD',
-    locationDetail: getCalendarLocationDetail(calendarEvent.description),
-    status: compactString(calendarEvent.status) || 'scheduled',
-    isCancelled: compactString(calendarEvent.status).toUpperCase() === 'CANCELLED' || /\[CANCELED\]/i.test(compactString(calendarEvent.summary)),
-    isDbGame: false,
-    children,
-    sourceLabel
-  });
 }
 
 function buildFamilyEvent(input: {
@@ -592,10 +433,6 @@ function getFamilyEventKey(event: Pick<FamilyShareEvent, 'teamId' | 'id' | 'date
   return `${event.teamId}:${event.id}:${datePart}:${event.type}`;
 }
 
-function normalizeCalendarUrls(value: unknown) {
-  return uniqueStrings(Array.isArray(value) ? value.map(compactString) : []);
-}
-
 function normalizeScheduleProjectionTeams(value: unknown): FamilyShareScheduleTeamProjection[] {
   const seen = new Set<string>();
   return (Array.isArray(value) ? value : [])
@@ -605,7 +442,6 @@ function normalizeScheduleProjectionTeams(value: unknown): FamilyShareScheduleTe
       return {
         teamId,
         teamName: compactString(team.teamName || team.name),
-        calendarUrls: normalizeCalendarUrls(team.calendarUrls),
         games: (Array.isArray(team.games) ? team.games : []).map(asRecord)
       };
     })
@@ -647,17 +483,13 @@ function toDate(value: unknown): Date | null {
 }
 
 function asRecord(value: unknown): Record<string, any> {
-  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {};
+  return isRecord(value) ? value : {};
+}
+
+function isRecord(value: unknown): value is Record<string, any> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 function compactString(value: unknown) {
   return String(value || '').trim();
-}
-
-function getCalendarFailureLabel(url: string, fallback = 'External calendar') {
-  try {
-    return new URL(url).hostname || fallback;
-  } catch {
-    return fallback;
-  }
 }

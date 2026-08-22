@@ -2,12 +2,31 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearAppDataCache } from '../../apps/app/src/lib/appDataCache.ts';
 
-const scheduleMocks = vi.hoisted(() => ({
-    loadParentSchedule: vi.fn(),
-    loadParentScheduleChildren: vi.fn(),
-    loadParentScheduleScope: vi.fn(),
-    hydrateParentScheduleDetails: vi.fn((schedule) => Promise.resolve(schedule))
-}));
+const scheduleMocks = vi.hoisted(() => {
+    const hasRawExternalScheduleEvents = vi.fn((schedule) => Boolean(schedule?.events?.some((event) => (
+        (event?.isDbGame !== true && event?.sourceType === 'calendar')
+        || (Array.isArray(event?.calendarUrls) && event.calendarUrls.some(Boolean))
+    ))));
+    const isParentScheduleCacheSafe = vi.fn((schedule) => {
+        if (!schedule || schedule.isPartial === true || !schedule.sourceKeysByTeam) return false;
+        const teamIds = new Set([
+            ...(schedule.children || []).map((child) => child.teamId),
+            ...(schedule.staffTeams || []).map((team) => team.teamId),
+            ...(schedule.events || []).map((event) => event.teamId)
+        ].filter(Boolean));
+        return [...teamIds].every((teamId) => Boolean(String(schedule.sourceKeysByTeam[teamId] || '').trim()))
+            && !hasRawExternalScheduleEvents(schedule);
+    });
+    return {
+        loadParentSchedule: vi.fn(),
+        loadParentScheduleChildren: vi.fn(),
+        loadParentScheduleScope: vi.fn(),
+        hydrateParentScheduleDetails: vi.fn((schedule) => Promise.resolve(schedule)),
+        hasRawExternalScheduleEvents,
+        isParentScheduleCacheSafe,
+        reconcileParentSchedulePartial: vi.fn((_current, next) => next)
+    };
+});
 
 const chatMocks = vi.hoisted(() => ({
     loadChatInbox: vi.fn()
@@ -115,7 +134,8 @@ beforeEach(() => {
                 playerName: 'Pat Star'
             }
         ],
-        events: [event()]
+        events: [event()],
+        sourceKeysByTeam: { 'team-1': 'no-external-calendar:v1' }
     });
     scheduleMocks.loadParentScheduleChildren.mockResolvedValue([
         {
@@ -174,7 +194,7 @@ describe('React app Home service', () => {
 
         const home = await loadParentHome(user);
 
-        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledWith(user, { hydrateDetails: false, expandStaffPlayers: false });
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledWith(user, expect.objectContaining({ hydrateDetails: false, expandStaffPlayers: false }));
         expect(chatMocks.loadChatInbox).toHaveBeenCalledWith(user);
         expect(dbMocks.listParentTeamFeeRecipients).toHaveBeenCalledWith(user.uid, [
             expect.objectContaining({ teamId: 'team-1', playerId: 'player-1' })
@@ -486,7 +506,7 @@ describe('React app Home service', () => {
 
         const home = await loadParentHomeSummary(user, { force: true });
 
-        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledWith(user, { hydrateDetails: false, expandStaffPlayers: false });
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledWith(user, expect.objectContaining({ hydrateDetails: false, expandStaffPlayers: false }));
         expect(chatMocks.loadChatInbox).not.toHaveBeenCalled();
         expect(dbMocks.listParentTeamFeeRecipients).not.toHaveBeenCalled();
         expect(home.players).toHaveLength(1);
@@ -566,7 +586,7 @@ describe('React app Home service', () => {
         const detailed = await loadParentHomeWithSecondaryData(user, { force: true, schedule: summary.schedule });
 
         expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledTimes(1);
-        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledWith(user, { hydrateDetails: false, expandStaffPlayers: false });
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledWith(user, expect.objectContaining({ hydrateDetails: false, expandStaffPlayers: false }));
         expect(scheduleMocks.hydrateParentScheduleDetails).toHaveBeenCalledTimes(1);
         expect(scheduleMocks.hydrateParentScheduleDetails).toHaveBeenCalledWith(expect.objectContaining({
             children: [expect.objectContaining({ teamId: 'team-1', playerId: 'player-1' })],

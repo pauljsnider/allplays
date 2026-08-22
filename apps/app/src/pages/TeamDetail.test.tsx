@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { createMemoryRouter, MemoryRouter, Outlet, Route, RouterProvider, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { buildTeamSchedulePreviewEvents, TeamDetail } from './TeamDetail';
+import { buildTeamSchedulePreviewEvents, ScheduleTab, TeamDetail } from './TeamDetail';
 import { calculateRosterRenderWindow, rosterRenderLimits } from './team-detail/RosterTab';
 import { clearScrollRestorationForTests, ScrollRestoration } from '../components/ScrollRestoration';
 import { buildPrivateAiLaunchPrompt, parsePrivateAiLaunchContext } from '../lib/privateAiLaunch';
@@ -214,6 +214,10 @@ const model = {
   linkedPlayers: [
     { id: 'player-1', name: 'Pat Star', number: '9', photoUrl: null, position: 'Guard', isLinked: true, active: true }
   ],
+  scheduleIsPartial: false,
+  scheduleAccessVerified: true,
+  scheduleAccessUserId: 'parent-1',
+  scheduleSourceKey: 'no-external-calendar:v1',
   upcomingEvents: [],
   recentResults: [],
   nextEvent: null,
@@ -243,6 +247,32 @@ const model = {
   staffPermissions: null,
   counts: { games: 0, practices: 0, completedGames: 0 }
 };
+
+function buildUpcomingTeamDetailEvent(id: string, title: string, day = 1) {
+  return {
+    id,
+    title,
+    type: 'game' as const,
+    date: new Date(Date.UTC(2100, 5, day, 18, 0)),
+    location: 'Main Gym',
+    opponent: 'Tigers',
+    status: 'scheduled',
+    liveStatus: '',
+    visibility: 'public',
+    isPrivate: false,
+    isPublic: true,
+    shareable: true,
+    publicCalendar: true,
+    homeScore: null,
+    awayScore: null,
+    isCancelled: false,
+    statTrackerConfigId: '',
+    statTrackerConfigLabel: 'No config assigned',
+    statTrackerConfigBaseType: '',
+    statTrackerConfigExists: false,
+    statTrackerConfigIsBasketball: false
+  };
+}
 
 function createDeferred<T>() {
   let resolve!: (value: T) => void;
@@ -351,7 +381,8 @@ describe('TeamDetail', () => {
     scheduleServiceMocks.loadParentSchedule.mockReset().mockResolvedValue({
       children: [],
       events: [],
-      staffTeams: []
+      staffTeams: [],
+      sourceKeysByTeam: { 'team-1': 'no-external-calendar:v1' }
     });
     scheduleServiceMocks.createStaffRsvpReminderPreviewLoader.mockReset();
     scheduleServiceMocks.sendStaffRsvpReminder.mockReset();
@@ -805,6 +836,7 @@ describe('TeamDetail', () => {
     scheduleServiceMocks.loadParentSchedule.mockResolvedValue({
       children: [],
       staffTeams: [{ teamId: 'team-1', teamName: 'Bears' }],
+      sourceKeysByTeam: { 'team-1': 'no-external-calendar:v1' },
       events: [{
         eventKey: 'team-1:game-next',
         id: 'game-next',
@@ -984,6 +1016,426 @@ describe('TeamDetail', () => {
     expect(screen.getByRole('link', { name: /Roster size/ }).getAttribute('href')).toBe('/teams/team-1?tab=roster');
   });
 
+  it('shows a retryable incomplete state instead of authoritative absence for a partial-empty overview', async () => {
+    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValueOnce({
+      ...model,
+      scheduleIsPartial: true,
+      upcomingEvents: [],
+      nextEvent: null
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    const incompleteState = await screen.findByRole('alert');
+    expect(within(incompleteState).getByText('Team schedule incomplete')).toBeTruthy();
+    expect(within(incompleteState).getByText(/empty upcoming count is not confirmed/i)).toBeTruthy();
+    expect(within(incompleteState).getByRole('button', { name: 'Retry team schedule' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: /—\s+Upcoming/ })).toBeTruthy();
+    expect(screen.getByText('Schedule incomplete')).toBeTruthy();
+    expect(screen.queryByRole('link', { name: /0\s+Upcoming/ })).toBeNull();
+    expect(screen.queryByText('No upcoming')).toBeNull();
+    expect(screen.queryByText('Schedule is clear for now')).toBeNull();
+  });
+
+  it('labels known partial overview events without claiming the list is complete', async () => {
+    const knownEvent = buildUpcomingTeamDetailEvent('game-known', 'Bears vs Tigers');
+    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValueOnce({
+      ...model,
+      scheduleIsPartial: true,
+      upcomingEvents: [knownEvent],
+      nextEvent: knownEvent
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    const incompleteState = await screen.findByRole('alert');
+    expect(within(incompleteState).getByText(/Showing verified upcoming events.*additional calendar events may be missing/i)).toBeTruthy();
+    expect(screen.getByRole('link', { name: /1\+\s+Upcoming/ })).toBeTruthy();
+    expect(screen.getByRole('link', { name: /Next event.*Bears vs Tigers.*More events may be missing/i })).toBeTruthy();
+  });
+
+  it('keeps a complete-empty overview authoritative', async () => {
+    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValueOnce({
+      ...model,
+      scheduleIsPartial: false,
+      upcomingEvents: [],
+      nextEvent: null
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('link', { name: /0\s+Upcoming/ })).toBeTruthy();
+    expect(screen.getByText('No upcoming')).toBeTruthy();
+    expect(screen.getByText('Schedule is clear for now')).toBeTruthy();
+    expect(screen.queryByText('Team schedule incomplete')).toBeNull();
+  });
+
+  it('recovers a partial-empty overview when a retry returns a complete schedule', async () => {
+    const recoveredEvent = buildUpcomingTeamDetailEvent('game-recovered', 'Bears vs Comets');
+    teamDetailServiceMocks.loadParentTeamDetail
+      .mockResolvedValueOnce({
+        ...model,
+        scheduleIsPartial: true,
+        upcomingEvents: [],
+        nextEvent: null
+      })
+      .mockResolvedValueOnce({
+        ...model,
+        scheduleIsPartial: false,
+        upcomingEvents: [recoveredEvent],
+        nextEvent: recoveredEvent
+      });
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    const retry = await screen.findByRole('button', { name: 'Retry team schedule' });
+    fireEvent.click(retry);
+
+    expect(await screen.findByRole('link', { name: /Next event.*Bears vs Comets/i })).toBeTruthy();
+    expect(screen.getByRole('link', { name: /1\s+Upcoming/ })).toBeTruthy();
+    expect(screen.queryByText('Team schedule incomplete')).toBeNull();
+    expect(teamDetailServiceMocks.loadParentTeamDetail).toHaveBeenCalledTimes(2);
+  });
+
+  it('preserves known events when a repeated partial refresh returns empty', async () => {
+    const sourceKey = `direct-calendar:v1:${'a'.repeat(64)}`;
+    const knownEvent = {
+      ...buildUpcomingTeamDetailEvent('game-known', 'Bears vs Tigers'),
+      isDbGame: false,
+      sourceType: 'calendar'
+    };
+    teamDetailServiceMocks.loadParentTeamDetail
+      .mockResolvedValueOnce({
+        ...model,
+        scheduleIsPartial: true,
+        scheduleSourceKey: sourceKey,
+        upcomingEvents: [knownEvent],
+        nextEvent: knownEvent
+      })
+      .mockResolvedValueOnce({
+        ...model,
+        scheduleIsPartial: true,
+        scheduleSourceKey: sourceKey,
+        upcomingEvents: [],
+        nextEvent: null
+      });
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Retry team schedule' }));
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Retry team schedule' })).toBeEnabled());
+    expect(screen.getByRole('link', { name: /Next event.*Bears vs Tigers.*More events may be missing/i })).toBeTruthy();
+    expect(screen.getByRole('link', { name: /1\+\s+Upcoming/ })).toBeTruthy();
+    expect(teamDetailServiceMocks.loadParentTeamDetail).toHaveBeenCalledTimes(2);
+  });
+
+  it('drops old external events when a partial refresh proves the calendar source set changed', async () => {
+    const sourceA = `direct-calendar:v1:${'a'.repeat(64)}`;
+    const sourceB = `direct-calendar:v1:${'b'.repeat(64)}`;
+    const oldEvent = {
+      ...buildUpcomingTeamDetailEvent('source-a-game', 'Old source A event'),
+      isDbGame: false,
+      sourceType: 'calendar'
+    };
+    teamDetailServiceMocks.loadParentTeamDetail
+      .mockResolvedValueOnce({
+        ...model,
+        scheduleIsPartial: true,
+        scheduleSourceKey: sourceA,
+        upcomingEvents: [oldEvent],
+        nextEvent: oldEvent
+      })
+      .mockResolvedValueOnce({
+        ...model,
+        scheduleIsPartial: true,
+        scheduleSourceKey: sourceB,
+        upcomingEvents: [],
+        nextEvent: null
+      });
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('link', { name: /1\+\s+Upcoming/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry team schedule' }));
+
+    await waitFor(() => expect(screen.queryByRole('link', { name: /1\+\s+Upcoming/ })).toBeNull());
+    expect(screen.getByRole('link', { name: /—\s+Upcoming/ })).toBeTruthy();
+    expect(await screen.findByText('Schedule incomplete')).toBeTruthy();
+  });
+
+  it('does not resurrect a deleted practice-session row during a same-feed external partial', async () => {
+    const sourceKey = `direct-calendar:v1:${'a'.repeat(64)}`;
+    const oldPractice = {
+      ...buildUpcomingTeamDetailEvent('practice-session', 'Deleted practice packet'),
+      type: 'practice' as const,
+      isDbGame: false,
+      sourceType: 'practice-session'
+    };
+    teamDetailServiceMocks.loadParentTeamDetail
+      .mockResolvedValueOnce({
+        ...model,
+        scheduleIsPartial: true,
+        scheduleSourceKey: sourceKey,
+        upcomingEvents: [oldPractice],
+        nextEvent: oldPractice
+      })
+      .mockResolvedValueOnce({
+        ...model,
+        scheduleIsPartial: true,
+        scheduleSourceKey: sourceKey,
+        upcomingEvents: [],
+        nextEvent: null
+      });
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('link', { name: /1\+\s+Upcoming/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry team schedule' }));
+
+    await waitFor(() => expect(screen.queryByRole('link', { name: /1\+\s+Upcoming/ })).toBeNull());
+    expect(screen.getByRole('link', { name: /—\s+Upcoming/ })).toBeTruthy();
+    expect(await screen.findByText('Schedule incomplete')).toBeTruthy();
+  });
+
+  it('clears previously known private events when current team schedule access is no longer verified', async () => {
+    const previouslyKnownEvent = buildUpcomingTeamDetailEvent('private-game', 'Bears private practice');
+    teamDetailServiceMocks.loadParentTeamDetail
+      .mockResolvedValueOnce({
+        ...model,
+        scheduleIsPartial: true,
+        scheduleAccessVerified: true,
+        upcomingEvents: [previouslyKnownEvent],
+        nextEvent: previouslyKnownEvent
+      })
+      .mockResolvedValueOnce({
+        ...model,
+        scheduleIsPartial: true,
+        scheduleAccessVerified: false,
+        scheduleAccessUserId: null,
+        upcomingEvents: [],
+        nextEvent: null
+      });
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Retry team schedule' }));
+
+    const accessState = await screen.findByRole('alert');
+    expect(within(accessState).getByText('Team schedule access unavailable')).toBeTruthy();
+    expect(within(accessState).getByText(/Previously loaded private events are not shown/i)).toBeTruthy();
+    expect(screen.getByRole('link', { name: /—\s+Upcoming/ })).toBeTruthy();
+    expect(screen.queryByText(/Bears private practice/i)).toBeNull();
+    expect(screen.queryByRole('link', { name: /1\+\s+Upcoming/ })).toBeNull();
+    expect(teamDetailServiceMocks.loadParentTeamDetail).toHaveBeenCalledTimes(2);
+  });
+
+  it('hides the prior principal schedule immediately while switched-account access is pending', async () => {
+    const accountAEvent = buildUpcomingTeamDetailEvent('account-a-private-game', 'Account A private event');
+    const accountBLoad = createDeferred<any>();
+    teamDetailServiceMocks.loadParentTeamDetail
+      .mockResolvedValueOnce({
+        ...model,
+        scheduleIsPartial: true,
+        scheduleAccessVerified: true,
+        scheduleAccessUserId: 'parent-1',
+        upcomingEvents: [accountAEvent],
+        nextEvent: accountAEvent
+      })
+      .mockReturnValueOnce(accountBLoad.promise);
+
+    const view = render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText(/Account A private event/i)).toBeTruthy();
+
+    const switchedAuth = {
+      ...auth,
+      user: {
+        ...auth.user,
+        uid: 'parent-2',
+        email: 'parent-2@example.com'
+      } as any
+    };
+    view.rerender(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={switchedAuth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(screen.getByRole('status', { name: 'Loading team' })).toBeTruthy();
+    expect(screen.queryByText(/Account A private event/i)).toBeNull();
+
+    await act(async () => {
+      accountBLoad.resolve({
+        ...model,
+        scheduleIsPartial: true,
+        scheduleAccessVerified: true,
+        scheduleAccessUserId: 'parent-2',
+        upcomingEvents: [],
+        nextEvent: null
+      });
+      await accountBLoad.promise;
+    });
+
+    expect(await screen.findByText('Team schedule incomplete')).toBeTruthy();
+    expect(screen.queryByText(/Account A private event/i)).toBeNull();
+    expect(teamDetailServiceMocks.loadParentTeamDetail).toHaveBeenCalledTimes(2);
+  });
+
+  it('hides an unverified prior-principal model immediately while switched-account access is pending', async () => {
+    const accountAEvent = buildUpcomingTeamDetailEvent('unverified-account-a', 'Unverified account A content');
+    const accountBLoad = createDeferred<any>();
+    teamDetailServiceMocks.loadParentTeamDetail
+      .mockResolvedValueOnce({
+        ...model,
+        scheduleIsPartial: true,
+        scheduleAccessVerified: false,
+        scheduleAccessUserId: null,
+        scheduleSourceKey: null,
+        upcomingEvents: [accountAEvent],
+        nextEvent: accountAEvent
+      })
+      .mockReturnValueOnce(accountBLoad.promise);
+
+    const view = render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText(/Unverified account A content/i)).toBeTruthy();
+    const switchedAuth = {
+      ...auth,
+      user: { ...auth.user, uid: 'parent-2', email: 'parent-2@example.com' } as any
+    };
+    view.rerender(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={switchedAuth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(screen.getByRole('status', { name: 'Loading team' })).toBeTruthy();
+    expect(screen.queryByText(/Unverified account A content/i)).toBeNull();
+
+    await act(async () => {
+      accountBLoad.resolve({
+        ...model,
+        scheduleIsPartial: true,
+        scheduleAccessVerified: false,
+        scheduleAccessUserId: null,
+        scheduleSourceKey: null
+      });
+      await accountBLoad.promise;
+    });
+  });
+
+  it('hides a stale team model and clears normal premium access when current canonical parent scope is revoked', async () => {
+    const revokedLoad = createDeferred<any>();
+    teamDetailServiceMocks.loadParentTeamDetail
+      .mockResolvedValueOnce(model)
+      .mockReturnValueOnce(revokedLoad.promise);
+    const staleUser = {
+      ...auth.user,
+      parentTeamIds: ['team-1'],
+      parentPlayerKeys: ['team-1::player-1'],
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
+    } as any;
+    const view = render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={{
+            ...auth,
+            user: staleUser,
+            profile: {
+              parentTeamIds: ['team-1'],
+              parentPlayerKeys: ['team-1::player-1']
+            }
+          }} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+
+    view.rerender(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={{
+            ...auth,
+            user: staleUser,
+            profile: { parentTeamIds: [], parentPlayerKeys: [], parentOf: [] }
+          }} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(screen.getByRole('status', { name: 'Loading team' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Bears' })).toBeNull();
+    expect(premiumAccessMocks.usePremiumFeatureAccess).toHaveBeenLastCalledWith(
+      expect.objectContaining({ normalAccess: false })
+    );
+  });
+
   it('uses singular wording when the team has one completed game', async () => {
     teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue({
       ...model,
@@ -1014,6 +1466,7 @@ describe('TeamDetail', () => {
       .mockResolvedValueOnce({
         children: [],
         staffTeams: [{ teamId: 'team-1', teamName: 'Bears' }],
+        sourceKeysByTeam: { 'team-1': 'no-external-calendar:v1' },
         events: [{
           eventKey: 'team-1:game-next',
           id: 'game-next',
@@ -1084,6 +1537,132 @@ describe('TeamDetail', () => {
       targetTeamId: 'team-1',
       includePastGames: true
     });
+  });
+
+  it('reloads the mounted schedule tab when a refreshed hidden projection has the same sentinel', async () => {
+    const modelEventA = buildUpcomingTeamDetailEvent('projection-a', 'Projection A event');
+    const modelEventB = buildUpcomingTeamDetailEvent('projection-b', 'Projection B event', 2);
+    const scheduleEvent = (id: string, title: string, day: number) => ({
+      eventKey: `team-1:${id}`,
+      id,
+      teamId: 'team-1',
+      teamName: 'Bears',
+      title,
+      type: 'game' as const,
+      date: new Date(Date.UTC(2100, 5, day, 18, 0)),
+      location: 'Main Gym',
+      opponent: 'Tigers',
+      childId: '',
+      childName: '',
+      isDbGame: false,
+      sourceType: 'calendar',
+      status: 'scheduled',
+      homeScore: null,
+      awayScore: null,
+      isCancelled: false,
+      assignments: [],
+      openAssignmentCount: 0
+    });
+    const projectionModelA = {
+      ...model,
+      scheduleIsPartial: false,
+      scheduleSourceKey: 'public-projection:v1',
+      upcomingEvents: [modelEventA],
+      nextEvent: modelEventA
+    };
+    const projectionModelB = {
+      ...model,
+      scheduleIsPartial: false,
+      scheduleSourceKey: 'public-projection:v1',
+      upcomingEvents: [modelEventB],
+      nextEvent: modelEventB
+    };
+    scheduleServiceMocks.loadParentSchedule
+      .mockResolvedValueOnce({
+        children: [],
+        staffTeams: [{ teamId: 'team-1', teamName: 'Bears' }],
+        sourceKeysByTeam: { 'team-1': 'public-projection:v1' },
+        events: [scheduleEvent('projection-a', 'Projection A event', 1)]
+      })
+      .mockResolvedValueOnce({
+        children: [],
+        staffTeams: [{ teamId: 'team-1', teamName: 'Bears' }],
+        sourceKeysByTeam: { 'team-1': 'public-projection:v1' },
+        events: [scheduleEvent('projection-b', 'Projection B event', 2)]
+      });
+
+    const onScheduleLoaded = vi.fn();
+    const view = render(
+      <MemoryRouter>
+        <ScheduleTab model={projectionModelA as any} auth={auth} onScheduleLoaded={onScheduleLoaded} onOpenStatTrackerConfigs={vi.fn()} />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('Projection A event')).toBeTruthy();
+    view.rerender(
+      <MemoryRouter>
+        <ScheduleTab model={projectionModelB as any} auth={auth} onScheduleLoaded={onScheduleLoaded} onOpenStatTrackerConfigs={vi.fn()} />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('Projection B event')).toBeTruthy();
+    await waitFor(() => expect(screen.queryByText('Projection A event')).toBeNull());
+    expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(2);
+  });
+
+  it('accepts a complete current source replacement and does not merge the old model schedule', async () => {
+    const sourceA = `direct-calendar:v1:${'a'.repeat(64)}`;
+    const sourceB = `direct-calendar:v1:${'b'.repeat(64)}`;
+    const oldModelEvent = buildUpcomingTeamDetailEvent('source-a', 'Removed source A event');
+    const replacementEvent = {
+      eventKey: 'team-1:source-b',
+      id: 'source-b',
+      teamId: 'team-1',
+      teamName: 'Bears',
+      title: 'Current source B event',
+      type: 'game' as const,
+      date: new Date(Date.UTC(2100, 5, 3, 18, 0)),
+      location: 'Main Gym',
+      opponent: 'Current source B event',
+      childId: '',
+      childName: '',
+      isDbGame: false,
+      sourceType: 'calendar',
+      status: 'scheduled',
+      homeScore: null,
+      awayScore: null,
+      isCancelled: false,
+      assignments: [],
+      openAssignmentCount: 0
+    };
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValue({
+      children: [],
+      staffTeams: [{ teamId: 'team-1', teamName: 'Bears' }],
+      sourceKeysByTeam: { 'team-1': sourceB },
+      events: [replacementEvent],
+      isPartial: false
+    });
+
+    render(
+      <MemoryRouter>
+        <ScheduleTab
+          model={{
+            ...model,
+            scheduleIsPartial: false,
+            scheduleSourceKey: sourceA,
+            upcomingEvents: [oldModelEvent],
+            nextEvent: oldModelEvent
+          } as any}
+          auth={auth}
+          onScheduleLoaded={vi.fn()}
+          onOpenStatTrackerConfigs={vi.fn()}
+        />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('Current source B event')).toBeTruthy();
+    expect(screen.queryByText('Removed source A event')).toBeNull();
+    expect(screen.queryByText(/calendar sources changed/i)).toBeNull();
   });
 
   it('retries a retryable RSVP reminder preview failure from the shared error state', async () => {
@@ -2532,6 +3111,7 @@ describe('TeamDetail', () => {
     };
     const managedModel = {
       ...model,
+      scheduleAccessUserId: 'coach-1',
       canManageTeam: true,
       canManageAdmins: false,
       staffPermissions: {

@@ -1,4 +1,16 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
+
+const firebaseMocks = vi.hoisted(() => ({
+  functions: { name: 'functions' },
+  callable: vi.fn(),
+  httpsCallable: vi.fn()
+}));
+
+vi.mock('../../js/firebase.js?v=26', () => ({
+  functions: firebaseMocks.functions,
+  httpsCallable: firebaseMocks.httpsCallable
+}));
+
 import { fetchAndParseCalendar } from '../../js/utils.js';
 
 function makeTextResponse(body, { ok = true, status = 200, statusText = 'OK', headers = {} } = {}) {
@@ -35,6 +47,9 @@ function sampleIcs(uid = 'uid-1', summary = 'Wildcats vs TBD') {
 }
 
 beforeEach(() => {
+  firebaseMocks.callable.mockReset();
+  firebaseMocks.httpsCallable.mockReset();
+  firebaseMocks.httpsCallable.mockReturnValue(firebaseMocks.callable);
   vi.stubGlobal('window', {
     __ALLPLAYS_CONFIG__: {
       calendarFetchFunctionUrl: 'https://example.com/fetchCalendarIcs'
@@ -50,6 +65,167 @@ afterEach(() => {
 });
 
 describe('fetchAndParseCalendar', () => {
+  it('uses the authenticated callable for a team-scoped import without a browser fetch', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    firebaseMocks.callable.mockResolvedValue({
+      data: {
+        version: 1,
+        complete: true,
+        source: 'live',
+        fetchedAt: '2026-08-22T12:00:00.000Z',
+        icsText: sampleIcs('authenticated-team')
+      }
+    });
+
+    const events = await fetchAndParseCalendar('webcal://calendar.example.test/team.ics', {
+      teamId: 'team-1'
+    });
+
+    expect(events).toHaveLength(1);
+    expect(events[0].uid).toBe('authenticated-team');
+    expect(firebaseMocks.httpsCallable).toHaveBeenCalledWith(
+      firebaseMocks.functions,
+      'getTeamCalendarIcs',
+      { timeout: 15_000 }
+    );
+    expect(firebaseMocks.callable).toHaveBeenCalledWith({
+      teamId: 'team-1',
+      calendarUrl: 'https://calendar.example.test/team.ics'
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      version: 1,
+      complete: false,
+      source: 'cache',
+      fetchedAt: '2026-08-22T12:00:00.000Z',
+      icsText: sampleIcs('partial')
+    },
+    {
+      version: 2,
+      complete: true,
+      source: 'cache',
+      fetchedAt: '2026-08-22T12:00:00.000Z',
+      icsText: sampleIcs('wrong-version')
+    },
+    {
+      version: 1,
+      complete: true,
+      source: 'stale-cache',
+      fetchedAt: '2026-08-22T12:00:00.000Z',
+      icsText: sampleIcs('stale-cache')
+    },
+    {
+      version: 1,
+      complete: true,
+      source: 'unknown',
+      fetchedAt: '2026-08-22T12:00:00.000Z',
+      icsText: sampleIcs('wrong-source')
+    }
+  ])('rejects incomplete or invalid authenticated callable responses', async (data) => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    firebaseMocks.callable.mockResolvedValue({ data });
+
+    await expect(fetchAndParseCalendar('https://calendar.example.test/private.ics', {
+      teamId: 'team-1'
+    })).rejects.toMatchObject({ code: 'CALENDAR_CALLABLE_INVALID' });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('preserves stable UID and recurrence occurrence identities from callable ICS', async () => {
+    const recurringIcs = [
+      'BEGIN:VCALENDAR',
+      'BEGIN:VEVENT',
+      'UID:series-uid',
+      'DTSTART:20260822T180000Z',
+      'SUMMARY:Practice',
+      'RRULE:FREQ=DAILY;COUNT=2',
+      'END:VEVENT',
+      'END:VCALENDAR'
+    ].join('\n');
+    vi.stubGlobal('fetch', vi.fn());
+    firebaseMocks.callable.mockResolvedValue({
+      data: {
+        version: 1,
+        complete: true,
+        source: 'live',
+        fetchedAt: '2026-08-22T12:00:00.000Z',
+        icsText: recurringIcs
+      }
+    });
+
+    const events = await fetchAndParseCalendar('https://calendar.example.test/series.ics', {
+      teamId: 'team-1',
+      forceRefresh: true
+    });
+
+    expect(events.map((event) => event.uid)).toEqual(['series-uid', 'series-uid']);
+    expect(events.map((event) => event.id)).toEqual([
+      'series-uid__2026-08-22T18:00:00.000Z',
+      'series-uid__2026-08-23T18:00:00.000Z'
+    ]);
+    expect(firebaseMocks.callable).toHaveBeenCalledWith({
+      teamId: 'team-1',
+      calendarUrl: 'https://calendar.example.test/series.ics',
+      forceRefresh: true
+    });
+  });
+
+  it('rejects a callable ICS recurrence that would otherwise be silently truncated', async () => {
+    const recurringIcs = [
+      'BEGIN:VCALENDAR',
+      'BEGIN:VEVENT',
+      'UID:over-limit-series',
+      'DTSTART:20260822T180000Z',
+      'SUMMARY:Practice',
+      'RRULE:FREQ=DAILY;COUNT=367',
+      'END:VEVENT',
+      'END:VCALENDAR'
+    ].join('\n');
+    vi.stubGlobal('fetch', vi.fn());
+    firebaseMocks.callable.mockResolvedValue({
+      data: {
+        version: 1,
+        complete: true,
+        source: 'live',
+        fetchedAt: '2026-08-22T12:00:00.000Z',
+        icsText: recurringIcs
+      }
+    });
+
+    await expect(fetchAndParseCalendar('https://calendar.example.test/series.ics', {
+      teamId: 'team-1'
+    })).rejects.toMatchObject({ code: 'CALENDAR_PARSE_LIMIT' });
+  });
+
+  it('does not coalesce authenticated imports across teams or account switches', async () => {
+    vi.stubGlobal('fetch', vi.fn());
+    firebaseMocks.callable.mockImplementation(async (request) => ({
+      data: {
+        version: 1,
+        complete: true,
+        source: request.teamId === 'team-1' ? 'live' : 'cache',
+        fetchedAt: '2026-08-22T12:00:00.000Z',
+        icsText: sampleIcs(request.teamId)
+      }
+    }));
+
+    const first = fetchAndParseCalendar('https://calendar.example.test/shared.ics', { teamId: 'team-1' });
+    const second = fetchAndParseCalendar('https://calendar.example.test/shared.ics', { teamId: 'team-1' });
+    const third = fetchAndParseCalendar('https://calendar.example.test/shared.ics', { teamId: 'team-2' });
+
+    const [firstEvents, secondEvents, thirdEvents] = await Promise.all([first, second, third]);
+    expect(firebaseMocks.callable).toHaveBeenCalledTimes(3);
+    expect(firstEvents[0].uid).toBe('team-1');
+    expect(secondEvents[0].uid).toBe('team-1');
+    expect(thirdEvents[0].uid).toBe('team-2');
+  });
+
   it('uses Firebase function first and returns parsed events when function succeeds', async () => {
     const fetchMock = vi.fn(async (url) => {
       expect(url).toContain('example.com/fetchCalendarIcs');

@@ -31,11 +31,29 @@ function loadGetAllEvents() {
     }
 
     const functionSource = source.slice(start, end);
+    const extractNamedFunctionSource = (name) => {
+        const functionStart = source.indexOf(`function ${name}(`);
+        if (functionStart === -1) throw new Error(`Could not locate ${name}() in team.html`);
+        const bodyStart = source.indexOf('{', functionStart);
+        let depth = 0;
+        for (let index = bodyStart; index < source.length; index += 1) {
+            if (source[index] === '{') depth += 1;
+            if (source[index] === '}') depth -= 1;
+            if (depth === 0) return source.slice(functionStart, index + 1);
+        }
+        throw new Error(`${name}() did not terminate`);
+    };
+    const scopeLossHelper = extractNamedFunctionSource('isCalendarAccessOrSourceLossError');
+    const snapshotHelper = extractNamedFunctionSource('resolveTeamExternalCalendarEventsForLoad');
     return new Function('context', `
+        ${scopeLossHelper}
+        ${snapshotHelper}
         let currentTeamId = context.currentTeamId;
         let currentUser = context.currentUser;
         let currentTeamAccessInfo = context.currentTeamAccessInfo;
+        let refreshCurrentParentAccessForTeam = context.refreshCurrentParentAccessForTeam || (async () => true);
         let getTrackedCalendarEventUids = context.getTrackedCalendarEventUids;
+        let getPublicTeamCalendarEvents = context.getPublicTeamCalendarEvents;
         let fetchAndParseCalendar = context.fetchAndParseCalendar;
         let isTrackedCalendarEvent = context.isTrackedCalendarEvent;
         let isPracticeEvent = context.isPracticeEvent;
@@ -49,6 +67,8 @@ function loadGetAllEvents() {
         let getMyRsvp = context.getMyRsvp;
         let isAvailabilityLocked = context.isAvailabilityLocked;
         let expandRecurrence = context.expandRecurrence;
+        let lastCompleteExternalScheduleEventsByTeam = context.lastCompleteExternalScheduleEventsByTeam || new Map();
+        let teamScheduleIncomplete = false;
         let console = context.console || globalThis.console;
         ${functionSource}
         return getAllEvents(context.team, context.dbGames);
@@ -332,6 +352,7 @@ describe('team schedule filtering', () => {
                 }
             ],
             getTrackedCalendarEventUids: async () => [],
+            getPublicTeamCalendarEvents: async () => ({ events: [], warnings: [], complete: true }),
             fetchAndParseCalendar: async () => [],
             isTrackedCalendarEvent: () => false,
             isPracticeEvent: () => false,
@@ -368,6 +389,83 @@ describe('team schedule filtering', () => {
             rsvpSummary: { going: 1, maybe: 0, notGoing: 0 }
         });
         expect(events[1].date.toISOString()).toBe('2026-01-12T18:00:00.000Z');
+    });
+
+    it('preserves the last complete external schedule only across partial-empty refreshes', async () => {
+        const getAllEvents = loadGetAllEvents();
+        const lastCompleteExternalScheduleEventsByTeam = new Map();
+        const baseContext = {
+            currentTeamId: 'team-1',
+            currentUser: { uid: 'user-1', parentOf: [] },
+            currentTeamAccessInfo: { accessLevel: 'full', hasAccess: true },
+            team: {
+                name: 'Team 1',
+                calendarUrls: ['https://calendar.example.test/team-1.ics']
+            },
+            dbGames: [],
+            getTrackedCalendarEventUids: async () => [],
+            getPublicTeamCalendarEvents: async () => ({ events: [], warnings: [], complete: true }),
+            isTrackedCalendarEvent: () => false,
+            isPracticeEvent: () => false,
+            extractOpponent: (summary) => summary,
+            normalizeAvailabilityPreferences: () => ({ cutoffMinutesBeforeStart: 0, noteVisibility: 'admins' }),
+            canManageTeamAvailability: () => false,
+            getRsvpSummaries: async () => new Map(),
+            buildAvailabilityNoteRows: () => [],
+            getRsvps: async () => [],
+            getMyRsvps: async () => [],
+            getMyRsvp: async () => null,
+            isAvailabilityLocked: () => false,
+            expandRecurrence: () => [],
+            lastCompleteExternalScheduleEventsByTeam,
+            console: { warn: vi.fn() }
+        };
+        const event = (uid, date) => ({
+            uid,
+            dtstart: new Date(date),
+            summary: uid,
+            location: 'Field 1',
+            status: 'CONFIRMED'
+        });
+
+        const firstComplete = await getAllEvents({
+            ...baseContext,
+            fetchAndParseCalendar: async () => [event('first', '2026-08-01T18:00:00.000Z')]
+        });
+        const partialEmpty = await getAllEvents({
+            ...baseContext,
+            fetchAndParseCalendar: async () => { throw new Error('calendar unavailable'); }
+        });
+        const changedSourcePartialEmpty = await getAllEvents({
+            ...baseContext,
+            team: {
+                ...baseContext.team,
+                calendarUrls: ['https://calendar.example.test/replacement.ics']
+            },
+            fetchAndParseCalendar: async () => { throw new Error('replacement calendar unavailable'); }
+        });
+        const legitimateCompleteEmpty = await getAllEvents({
+            ...baseContext,
+            fetchAndParseCalendar: async () => []
+        });
+        const partialAfterCompleteEmpty = await getAllEvents({
+            ...baseContext,
+            fetchAndParseCalendar: async () => { throw new Error('calendar unavailable'); }
+        });
+        const laterExpandedComplete = await getAllEvents({
+            ...baseContext,
+            fetchAndParseCalendar: async () => [
+                event('first', '2026-08-01T18:00:00.000Z'),
+                event('second', '2026-08-02T18:00:00.000Z')
+            ]
+        });
+
+        expect(firstComplete.map((entry) => entry.opponent)).toEqual(['first']);
+        expect(partialEmpty.map((entry) => entry.opponent)).toEqual(['first']);
+        expect(changedSourcePartialEmpty).toEqual([]);
+        expect(legitimateCompleteEmpty).toEqual([]);
+        expect(partialAfterCompleteEmpty).toEqual([]);
+        expect(laterExpandedComplete.map((entry) => entry.opponent)).toEqual(['first', 'second']);
     });
 
     it('uses real game IDs for live, report, and share actions while keeping occurrence RSVP ids', () => {

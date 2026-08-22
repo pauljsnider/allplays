@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const source = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
+const parentAccessSource = readFileSync(new URL('../../functions/parent-access-core.cjs', import.meta.url), 'utf8');
 const firestoreIndexes = JSON.parse(readFileSync(new URL('../../firestore.indexes.json', import.meta.url), 'utf8'));
 const opportunitySource = source.slice(source.indexOf('// Public sports opportunity board'));
 const manageSource = readFileSync(new URL('../../apps/app/src/pages/OpportunityManage.tsx', import.meta.url), 'utf8');
@@ -193,6 +194,21 @@ describe('public opportunity callable wiring', () => {
   });
 
   it('uses protected legacy coachOf grants only after stale invite evidence is excluded', () => {
+    const scopeStart = source.indexOf('function getBoundedLegacyCoachTeamScope(caller)');
+    const scopeSource = source.slice(
+      scopeStart,
+      source.indexOf('\nasync function resolveLegacyCoachGrantEvidence', scopeStart)
+    );
+    const evidenceStart = source.indexOf('async function resolveLegacyCoachGrantEvidence(caller, candidateTeamIds)');
+    const evidenceSource = source.slice(
+      evidenceStart,
+      source.indexOf('\nasync function hasAuthoritativeTargetStaffAccess', evidenceStart)
+    );
+    const targetResolverStart = source.indexOf('async function hasAuthoritativeTargetStaffAccess(caller, teamId, team)');
+    const targetResolverSource = source.slice(
+      targetResolverStart,
+      source.indexOf('\nasync function listStaffTeamDocuments', targetResolverStart)
+    );
     const resolverStart = source.indexOf('async function listStaffTeamDocuments(caller)');
     const resolverSource = source.slice(
       resolverStart,
@@ -203,24 +219,38 @@ describe('public opportunity callable wiring', () => {
       source.indexOf('\nexports.getPublicTeamProfile')
     );
 
-    expect(resolverSource).toContain('caller.user?.coachOf');
-    expect(resolverSource).toContain('const legacyCoachTeamLimit = 180;');
-    expect(resolverSource).toContain('const coachTeamIdsAreIncomplete = allCoachTeamIds.length > legacyCoachTeamLimit;');
-    expect(resolverSource).toContain("firestore.collection('accessCodes')");
-    expect(resolverSource).toContain(".where('type', '==', 'admin_invite')");
-    expect(resolverSource).not.toContain(".where('usedBy', '==', caller.uid)");
-    expect(resolverSource).not.toContain(".where('email', 'in', coachInviteEmailCandidates)");
-    expect(resolverSource).toContain(".where('teamId', 'in', teamIds)");
-    expect(resolverSource.match(/\.limit\(legacyCoachInviteEvidenceLimit \+ 1\)/g)).toHaveLength(1);
-    expect(resolverSource).not.toContain(".where('teamId', '==', teamSnap.id)");
-    expect(resolverSource).toContain('result.value.size > legacyCoachInviteEvidenceLimit');
-    expect(resolverSource).toContain('if (usedBy === caller.uid)');
-    expect(resolverSource).toContain('normalizeStablePrincipalUid(invite.usedBy)');
-    expect(resolverSource).not.toContain("String(invite.usedBy || '').trim()");
-    expect(resolverSource).toContain('generatedBy is intentionally');
-    expect(resolverSource).toContain('teamsWithCallerBoundInviteEvidence.add(teamId)');
-    expect(resolverSource).toContain('teamsWithUnresolvedInviteEvidence.add(teamId)');
-    expect(resolverSource).toContain('!teamsWithUnresolvedInviteEvidence.has(teamSnap.id)');
+    expect(source).toContain('const LEGACY_COACH_TEAM_LIMIT = 180;');
+    expect(source).toContain('const LEGACY_COACH_INVITE_EVIDENCE_LIMIT = 200;');
+    expect(scopeSource).toContain('caller.user?.coachOf');
+    expect(scopeSource).toContain('.map(normalizeStablePrincipalUid)');
+    expect(scopeSource).not.toContain('String(teamId');
+    expect(scopeSource).toContain('allTeamIds.slice(0, LEGACY_COACH_TEAM_LIMIT)');
+    expect(scopeSource).toContain('allTeamIds.length > LEGACY_COACH_TEAM_LIMIT');
+    expect(evidenceSource).toContain("firestore.collection('accessCodes')");
+    expect(evidenceSource).toContain('.map(normalizeStablePrincipalUid)');
+    expect(evidenceSource).toContain(".where('type', '==', 'admin_invite')");
+    expect(evidenceSource).not.toContain(".where('usedBy', '==', caller.uid)");
+    expect(evidenceSource).not.toContain(".where('email', 'in', coachInviteEmailCandidates)");
+    expect(evidenceSource).toContain(".where('teamId', 'in', teamIds)");
+    expect(evidenceSource.match(/\.limit\(LEGACY_COACH_INVITE_EVIDENCE_LIMIT \+ 1\)/g)).toHaveLength(1);
+    expect(evidenceSource).not.toContain(".where('teamId', '==', teamSnap.id)");
+    expect(evidenceSource).toContain('result.value.size > LEGACY_COACH_INVITE_EVIDENCE_LIMIT');
+    expect(evidenceSource).toContain('if (usedBy === caller.uid)');
+    expect(evidenceSource).toContain('const teamId = normalizeStablePrincipalUid(invite.teamId);');
+    expect(evidenceSource).toContain('normalizeStablePrincipalUid(invite.usedBy)');
+    expect(evidenceSource).not.toContain("String(invite.teamId || '').trim()");
+    expect(evidenceSource).not.toContain("String(invite.usedBy || '').trim()");
+    expect(evidenceSource).toContain('generatedBy is intentionally');
+    expect(evidenceSource).toContain('deniedTeamIds.add(teamId)');
+    expect(evidenceSource).toContain('unresolvedTeamIds.add(teamId)');
+    expect(evidenceSource).toContain('!deniedTeamIds.has(teamId) && !unresolvedTeamIds.has(teamId)');
+    expect(targetResolverSource).toContain('hasOpportunityTeamAdminAccess(caller, team)');
+    expect(targetResolverSource).toContain('getBoundedLegacyCoachTeamScope(caller)');
+    expect(targetResolverSource).toContain('if (legacyCoachScope.isPartial) return false;');
+    expect(targetResolverSource).toContain('resolveLegacyCoachGrantEvidence(caller, [teamId])');
+    expect(resolverSource).toContain('getBoundedLegacyCoachTeamScope(caller)');
+    expect(resolverSource).toContain('resolveLegacyCoachGrantEvidence(');
+    expect(resolverSource).toContain('legacyCoachGrantEvidence.authorizedTeamIds.has(teamSnap.id)');
     expect(listManagedTeamsSource).toContain('const canManage = hasOpportunityTeamAdminAccess(caller, team);');
     expect(listManagedTeamsSource).toContain('canProjectChatConversation({');
     expect(listManagedTeamsSource).toContain('hasTeamChatAccess: hasCallableChatTeamAccess(caller, teamSnap.id, team)');
@@ -244,8 +274,10 @@ describe('public opportunity callable wiring', () => {
     );
     expect(platformAdminTeamSource).not.toContain(".orderBy('name')");
     expect(source).toContain('async function listCallableParentTeamDocuments(caller)');
-    expect(source).toContain("const hasCanonicalTeamIds = Object.prototype.hasOwnProperty.call(user, 'parentTeamIds');");
-    expect(source).toContain('hasCanonicalTeamIds && !canonicalTeamIdsAreValid');
+    expect(source).toContain('const access = resolveCanonicalParentAccess(user);');
+    expect(source).toContain('if (access.hasCanonicalParentTeamIds)');
+    expect(parentAccessSource).toContain("const hasCanonicalParentTeamIds = Object.prototype.hasOwnProperty.call(user, 'parentTeamIds');");
+    expect(parentAccessSource).toContain("const hasCanonicalParentPlayerKeys = Object.prototype.hasOwnProperty.call(user, 'parentPlayerKeys');");
     expect(source).toContain('const MAX_DASHBOARD_PARENT_TEAMS = 180;');
     expect(listManagedTeamsSource).toContain('includeAllTeams && !isOpportunityPlatformAdmin(caller)');
     expect(listManagedTeamsSource).toContain('!includeAllTeams && (includeParentTeams || includeChatMetadata)');

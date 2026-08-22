@@ -40,6 +40,58 @@ describe('parentFamilyShareService', () => {
     );
   });
 
+  it('keeps legacy parentOf-only hydrated users eligible for family sharing', async () => {
+    legacyParentToolsMocks.createFamilyShareToken.mockResolvedValue('legacy-token');
+    legacyParentToolsMocks.listFamilyShareTokens.mockResolvedValue([]);
+    const legacyHydratedUser = {
+      uid: 'parent-legacy',
+      parentOf: [
+        { teamId: 'team-legacy', teamName: 'Legacy Team', playerId: 'player-legacy', playerName: 'Legacy Child' }
+      ]
+    } as any;
+
+    await expect(loadFamilyShareModel(legacyHydratedUser)).resolves.toMatchObject({
+      children: [expect.objectContaining({ teamId: 'team-legacy', playerId: 'player-legacy' })]
+    });
+    await createParentFamilyShare(legacyHydratedUser, 'Grandpa');
+
+    expect(legacyParentToolsMocks.createFamilyShareToken).toHaveBeenCalledWith(
+      'parent-legacy',
+      [expect.objectContaining({ teamId: 'team-legacy', playerId: 'player-legacy' })],
+      'Grandpa',
+      []
+    );
+  });
+
+  it('never writes a stale same-team sibling outside current canonical scope', async () => {
+    legacyParentToolsMocks.createFamilyShareToken.mockResolvedValue('token-safe');
+    legacyParentToolsMocks.listFamilyShareTokens.mockResolvedValue([]);
+    const user = {
+      uid: 'parent-1',
+      parentTeamIds: ['team-1'],
+      parentPlayerKeys: ['team-1::player-1'],
+      parentOf: [
+        { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Current Child' },
+        { teamId: 'team-1', teamName: 'Bears', playerId: 'player-2', playerName: 'Revoked Sibling' }
+      ]
+    } as any;
+
+    await expect(loadFamilyShareModel(user)).resolves.toMatchObject({
+      children: [expect.objectContaining({ playerId: 'player-1', playerName: 'Current Child' })]
+    });
+    await createParentFamilyShare(user, 'Grandma');
+
+    expect(legacyParentToolsMocks.createFamilyShareToken).toHaveBeenCalledWith(
+      'parent-1',
+      [expect.objectContaining({ teamId: 'team-1', playerId: 'player-1' })],
+      'Grandma',
+      []
+    );
+    expect(legacyParentToolsMocks.createFamilyShareToken.mock.calls[0]?.[1]).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ playerId: 'player-2' })])
+    );
+  });
+
   it('lists existing family share tokens with app viewer URLs', async () => {
     legacyParentToolsMocks.listFamilyShareTokens.mockResolvedValue([
       { id: 'token-1', label: 'Grandma', active: true, children: [{ teamId: 'team-1', playerId: 'player-1' }] }

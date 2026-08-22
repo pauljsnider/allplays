@@ -89,6 +89,7 @@ async function flushTelemetry(page) {
 
 async function waitForHomeRoute(page, readyLocator) {
     await expect(async () => {
+        expect(page.__allPlaysUnexpectedPageErrors || []).toEqual([]);
         await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 3000 });
         await expect(page.getByText('Loading Home')).toBeHidden({ timeout: 3000 });
         await expect(readyLocator).toBeVisible({ timeout: 3000 });
@@ -98,13 +99,24 @@ async function waitForHomeRoute(page, readyLocator) {
 async function waitForTeamsRoute(page, readyLocator) {
     const teamsLoadingState = page.getByText(/^Loading teams$/);
     await expect(async () => {
+        expect(page.__allPlaysUnexpectedPageErrors || []).toEqual([]);
         await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 5000 });
         await expect(teamsLoadingState).toHaveCount(0, { timeout: 5000 });
         await expect(readyLocator).toBeVisible({ timeout: 5000 });
     }).toPass({ timeout: 45000 });
 }
 
+function captureUnexpectedPageErrors(page) {
+    const pageErrors = [];
+    page.on('pageerror', (error) => {
+        if (/Installations:.*API key not valid/i.test(error.message)) return;
+        pageErrors.push(error.message);
+    });
+    page.__allPlaysUnexpectedPageErrors = pageErrors;
+}
+
 async function mockHomePlayerModules(page, { switchableSocialTargets = false, failSocialPost = false, unsafeSocialTarget = false } = {}) {
+    captureUnexpectedPageErrors(page);
     await page.route('https://img.example.test/**', async (route) => {
         await route.fulfill({
             status: 200,
@@ -159,6 +171,8 @@ async function mockHomePlayerModules(page, { switchableSocialTargets = false, fa
                         photoUrl: '',
                         emailVerified: true,
                         roles: ['parent'],
+                        parentTeamIds: ['team-1'],
+                        parentPlayerKeys: ['team-1::player-1'],
                         parentOf: [
                             { teamId: 'team-1', playerId: 'player-1', playerName: 'Pat Star', teamName: 'Bears' }
                         ]
@@ -166,6 +180,8 @@ async function mockHomePlayerModules(page, { switchableSocialTargets = false, fa
                     return {
                         user,
                         profile: {
+                            parentTeamIds: user.parentTeamIds,
+                            parentPlayerKeys: user.parentPlayerKeys,
                             parentOf: user.parentOf,
                             fullName: 'Pat Parent',
                             displayName: 'Pat Parent',
@@ -584,11 +600,49 @@ async function mockHomePlayerModules(page, { switchableSocialTargets = false, fa
                 }
 
                 export async function loadParentSchedule() {
-                    return { children, events: scheduleEvents(), isPartial: false };
+                    return {
+                        children,
+                        events: scheduleEvents(),
+                        sourceKeysByTeam: { 'team-1': 'no-external-calendar:v1' },
+                        teamLoadStates: { 'team-1': 'complete' },
+                        isPartial: false
+                    };
                 }
 
                 export async function loadParentScheduleScope() {
-                    return { profile: {}, children, staffTeams: [] };
+                    return {
+                        profile: {
+                            parentTeamIds: ['team-1'],
+                            parentPlayerKeys: ['team-1::player-1'],
+                            parentOf: children
+                        },
+                        children,
+                        staffTeams: [],
+                        isPartial: false
+                    };
+                }
+
+                export function hasRawExternalScheduleEvents(schedule) {
+                    return Boolean(schedule?.events?.some((event) => event?.isDbGame !== true && event?.sourceType === 'calendar'));
+                }
+
+                export function isParentScheduleCacheSafe(schedule) {
+                    return Boolean(
+                        schedule &&
+                        schedule.isPartial !== true &&
+                        schedule.sourceKeysByTeam?.['team-1'] &&
+                        !hasRawExternalScheduleEvents(schedule)
+                    );
+                }
+
+                export function reconcileParentSchedulePartial(_current, next) {
+                    return next;
+                }
+
+                export function invalidateParentScheduleReadCaches() {}
+
+                export function isTerminalScheduleAccessError(error) {
+                    return error?.code === 'permission-denied' || error?.code === 'not-found';
                 }
 
                 export async function hydrateParentScheduleRsvps(schedule, _user, options = {}) {
@@ -1357,7 +1411,7 @@ test('home dashboard drills into player detail with section submenus', async ({ 
     await mockHomePlayerModules(page);
     await page.goto(appUrl(baseURL, '/home'), { waitUntil: 'domcontentloaded' });
 
-    await expect(page.getByRole('heading', { name: 'Your day' })).toBeVisible();
+    await waitForHomeRoute(page, page.getByRole('heading', { name: 'Your day' }));
     await expect(page.getByText('Do first')).toBeVisible();
     await expect(page.getByText('Team chats')).toBeVisible();
     await expect(page.getByText('2 unread messages')).toBeVisible();

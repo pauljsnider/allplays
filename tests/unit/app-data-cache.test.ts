@@ -281,7 +281,7 @@ describe('appDataCache', () => {
     const cache = await loadCacheModule();
 
     expect(cache.getParentScheduleSummaryCacheKey('parent-1')).toBe('app-schedule-summary:parent-1');
-    expect(cache.getParentHomeSecondaryCacheKey('parent-1')).toBe('home-secondary:parent-1');
+    expect(cache.getParentHomeSecondaryCacheKey('parent-1')).toBe('home-secondary:v2:parent-1');
   });
 
   it('routes handled cache failures through the shared logger', () => {

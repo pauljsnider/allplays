@@ -3,10 +3,10 @@
 const { hasTeamAdminAccess } = require('./team-admin-access-core.cjs');
 const {
   normalizeParentInviteEmail,
-  appendUniqueParentLink,
   appendUniqueValue,
   buildAutoAcceptedParentLink
 } = require('./parent-invite-auto-link-core.cjs');
+const { addCanonicalParentAccessLink } = require('./parent-access-core.cjs');
 
 function createAutoAcceptParentInviteHandler({
   firestore,
@@ -113,11 +113,9 @@ function createAutoAcceptParentInviteHandler({
 
       const player = latestPlayerSnap.data() || {};
       const parentLink = buildAutoAcceptedParentLink({ codeData: latestCodeData, team, player });
-      const playerKey = `${teamId}::${playerId}`;
+      const parentAccess = addCanonicalParentAccessLink(latestUserData, parentLink);
       transaction.update(userRef, {
-        parentOf: appendUniqueParentLink(latestUserData.parentOf, parentLink),
-        parentTeamIds: appendUniqueValue(latestUserData.parentTeamIds, teamId),
-        parentPlayerKeys: appendUniqueValue(latestUserData.parentPlayerKeys, playerKey),
+        ...parentAccess,
         roles: appendUniqueValue(latestUserData.roles, 'parent')
       });
 

@@ -2,6 +2,12 @@ function compactString(value) {
   return value == null ? '' : String(value).trim();
 }
 
+function normalizeParentScopeId(value) {
+  if (typeof value !== 'string') return '';
+  const normalized = value.trim();
+  return normalized && normalized.length <= 128 && !normalized.includes('/') ? normalized : '';
+}
+
 function toMillis(value) {
   if (!value) return 0;
   if (typeof value.toMillis === 'function') return value.toMillis();
@@ -25,19 +31,44 @@ function isTeamActive(team = {}) {
 }
 
 function parseParentPlayerKey(value) {
-  const [teamId, playerId] = compactString(value).split('::').map(compactString);
+  if (typeof value !== 'string') return null;
+  const parts = value.trim().split('::');
+  if (parts.length !== 2) return null;
+  const teamId = normalizeParentScopeId(parts[0]);
+  const playerId = normalizeParentScopeId(parts[1]);
   if (!teamId || !playerId) return null;
   return { teamId, playerId };
 }
 
 function collectOwnerParentLinks(profile = {}) {
   const linksByKey = new Map();
+  const hasCanonicalTeamIds = Object.prototype.hasOwnProperty.call(profile, 'parentTeamIds');
+  const canonicalTeamIds = new Set(
+    (hasCanonicalTeamIds && Array.isArray(profile.parentTeamIds) ? profile.parentTeamIds : [])
+      .map(normalizeParentScopeId)
+      .filter(Boolean)
+  );
+  const hasCanonicalPlayerKeys = Object.prototype.hasOwnProperty.call(profile, 'parentPlayerKeys');
+  const canonicalPlayerLinks = (hasCanonicalPlayerKeys && Array.isArray(profile.parentPlayerKeys)
+    ? profile.parentPlayerKeys
+    : [])
+    .map(parseParentPlayerKey)
+    .filter(Boolean);
+  const canonicalPlayerKeys = new Set(
+    canonicalPlayerLinks.map((link) => `${link.teamId}::${link.playerId}`)
+  );
 
   function addLink(raw = {}) {
-    const teamId = compactString(raw.teamId);
-    const playerId = compactString(raw.playerId || raw.childId);
+    const teamId = normalizeParentScopeId(raw.teamId);
+    const playerId = normalizeParentScopeId(raw.playerId || raw.childId);
     if (!teamId || !playerId) return;
     const key = `${teamId}::${playerId}`;
+    // Canonical revocable fields are authoritative whenever present. A
+    // malformed/null value therefore means no access, and stale parentOf rows
+    // cannot restore either a removed team or a removed sibling player.
+    if (hasCanonicalTeamIds && !canonicalTeamIds.has(teamId)) return;
+    if (hasCanonicalPlayerKeys && !canonicalPlayerKeys.has(key)) return;
+    if (hasCanonicalTeamIds && !hasCanonicalPlayerKeys) return;
     if (!linksByKey.has(key)) {
       linksByKey.set(key, {
         teamId,
@@ -51,10 +82,7 @@ function collectOwnerParentLinks(profile = {}) {
   }
 
   (Array.isArray(profile.parentOf) ? profile.parentOf : []).forEach(addLink);
-  (Array.isArray(profile.parentPlayerKeys) ? profile.parentPlayerKeys : [])
-    .map(parseParentPlayerKey)
-    .filter(Boolean)
-    .forEach(addLink);
+  canonicalPlayerLinks.forEach(addLink);
 
   return [...linksByKey.values()];
 }

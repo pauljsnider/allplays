@@ -30,11 +30,12 @@ describe('calendar page ICS cancellation handling', () => {
 describe('legacy calendar external-feed loading', () => {
     it('publishes stored events only for the authoritative team set before queued feeds finish', () => {
         const source = readCalendarPage();
-        const storedEventsPublish = source.indexOf('onEvents?.(events);');
-        const firstExternalFetch = source.indexOf('const icsEvents = await fetchLegacyCalendarFeed(calUrl, fetchAndParseCalendar);');
+        const storedEventsPublish = source.indexOf('onEvents?.([...events, ...previousExternalEvents]);');
+        const firstExternalFetch = source.indexOf('const icsEvents = await fetchLegacyCalendarFeed(');
 
         expect(storedEventsPublish).toBeGreaterThan(-1);
         expect(firstExternalFetch).toBeGreaterThan(storedEventsPublish);
+        expect(source).toContain('(url) => fetchAndParseCalendar(url, { teamId: team.id })');
         expect(source).toContain('calendarEventsByTeam.clear();');
         expect(source).toContain('calendarTeams.flatMap((team) => calendarEventsByTeam.get(team.id) || [])');
         expect(source).toContain('calendarEventsByTeam.set(team.id, events);');

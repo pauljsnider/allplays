@@ -180,7 +180,7 @@ export function renderHeader(container, user) {
 
     // Keep shared-header logout on the same auth bundle as page consumers.
     navLogout.addEventListener('click', async () => {
-      const { logout } = await import('./auth.js?v=4433186');
+      const { logout } = await import('./auth.js?v=4433187');
       await logout();
       window.location.href = 'index.html';
     });
@@ -200,7 +200,7 @@ export function renderHeader(container, user) {
   // Global search: injected into the shared header in one place.
   // Lazy-import to avoid adding weight to initial render and to avoid circular deps.
   try {
-    import('./global-search.js?v=443344')
+    import('./global-search.js?v=443345')
       .then(({ setupHeaderSearch }) => {
         if (typeof setupHeaderSearch === 'function') {
           setupHeaderSearch({ user, headerContainer: container });
@@ -298,6 +298,14 @@ export const MAX_ICS_RECURRENCE_OCCURRENCES = 366;
 const calendarFetchInFlight = new Map();
 const calendarFetchPending = [];
 let activeCalendarFetches = 0;
+let authenticatedCalendarFetchSequence = 0;
+let calendarFirebaseModulePromise = null;
+
+function createAuthenticatedCalendarResponseError() {
+  const error = new Error('Authenticated calendar response was invalid');
+  error.code = 'CALENDAR_CALLABLE_INVALID';
+  return error;
+}
 
 function createCalendarParseLimitError(message) {
   const error = new Error(message);
@@ -452,7 +460,71 @@ async function readBoundedCalendarResponseText(response, maxBytes) {
 
 async function fetchAndParseCalendarOnce(normalizedUrl, options = {}) {
   const forceRefresh = options?.forceRefresh === true;
+  const teamId = options?.teamId || '';
   const startedAt = Date.now();
+
+  async function fetchViaAuthenticatedCallable() {
+    let firebaseModule;
+    try {
+      if (!calendarFirebaseModulePromise) {
+        calendarFirebaseModulePromise = import('./firebase.js?v=26');
+      }
+      firebaseModule = await calendarFirebaseModulePromise;
+    } catch {
+      calendarFirebaseModulePromise = null;
+      const error = new Error('Authenticated calendar import unavailable');
+      error.code = 'CALENDAR_CALLABLE_UNAVAILABLE';
+      throw error;
+    }
+
+    const getTeamCalendarIcs = firebaseModule.httpsCallable(
+      firebaseModule.functions,
+      'getTeamCalendarIcs',
+      { timeout: CALENDAR_TOTAL_TIMEOUT_MS }
+    );
+    const request = {
+      teamId,
+      calendarUrl: normalizedUrl
+    };
+    if (forceRefresh) {
+      request.forceRefresh = true;
+    }
+
+    let result;
+    try {
+      result = await getTeamCalendarIcs(request);
+    } catch (cause) {
+      const error = new Error('Authenticated calendar import unavailable');
+      error.code = typeof cause?.code === 'string' && cause.code
+        ? cause.code
+        : 'CALENDAR_CALLABLE_FAILED';
+      throw error;
+    }
+
+    const payload = result?.data;
+    const source = payload?.source;
+    const fetchedAt = payload?.fetchedAt;
+    if (
+      payload?.version !== 1 ||
+      payload?.complete !== true ||
+      !['live', 'cache'].includes(source) ||
+      typeof fetchedAt !== 'string' ||
+      !fetchedAt ||
+      !Number.isFinite(Date.parse(fetchedAt)) ||
+      typeof payload?.icsText !== 'string'
+    ) {
+      throw createAuthenticatedCalendarResponseError();
+    }
+    if (new TextEncoder().encode(payload.icsText).byteLength > MAX_REMOTE_ICS_BYTES) {
+      throw createAuthenticatedCalendarResponseError();
+    }
+    return payload.icsText;
+  }
+
+  if (teamId) {
+    const callableIcsText = await fetchViaAuthenticatedCallable();
+    return parseICS(normalizeIcsText(callableIcsText));
+  }
 
   function resolveCalendarFunctionUrl() {
     const globalConfig = window.__ALLPLAYS_CONFIG__;
@@ -620,7 +692,10 @@ function drainCalendarFetchQueue() {
 function startCalendarFetch(job) {
   activeCalendarFetches += 1;
   Promise.resolve()
-    .then(() => fetchAndParseCalendarOnce(job.normalizedUrl, { forceRefresh: job.forceRefresh }))
+    .then(() => fetchAndParseCalendarOnce(job.normalizedUrl, {
+      forceRefresh: job.forceRefresh,
+      teamId: job.teamId
+    }))
     .then(
       (events) => job.resolve(events),
       (error) => job.reject(error)
@@ -642,8 +717,22 @@ export function fetchAndParseCalendar(url, options = {}) {
     return Promise.reject(error);
   }
   const forceRefresh = options?.forceRefresh === true;
-  const inFlightKey = `${forceRefresh ? 'refresh' : 'normal'}:${normalizedUrl}`;
-  const existing = calendarFetchInFlight.get(inFlightKey);
+  let teamId = '';
+  if (options?.teamId !== undefined && options?.teamId !== null) {
+    if (typeof options.teamId !== 'string' || !options.teamId.trim()) {
+      const error = new Error('A valid team is required for authenticated calendar import');
+      error.code = 'CALENDAR_TEAM_INVALID';
+      return Promise.reject(error);
+    }
+    teamId = options.teamId.trim();
+  }
+  // Never share an authenticated promise across calls. A user can sign out or
+  // switch accounts while a request is in flight, and team + URL alone are not
+  // a stable authorization scope for the next caller.
+  const inFlightKey = teamId
+    ? `authenticated:${++authenticatedCalendarFetchSequence}`
+    : `compatibility:${forceRefresh ? 'refresh' : 'normal'}:${normalizedUrl}`;
+  const existing = teamId ? null : calendarFetchInFlight.get(inFlightKey);
   if (existing) return existing;
 
   if (activeCalendarFetches >= MAX_CONCURRENT_CALENDAR_IMPORTS &&
@@ -659,7 +748,7 @@ export function fetchAndParseCalendar(url, options = {}) {
     resolve = promiseResolve;
     reject = promiseReject;
   });
-  const job = { normalizedUrl, forceRefresh, inFlightKey, promise, resolve, reject };
+  const job = { normalizedUrl, forceRefresh, teamId, inFlightKey, promise, resolve, reject };
   calendarFetchInFlight.set(inFlightKey, promise);
   if (activeCalendarFetches < MAX_CONCURRENT_CALENDAR_IMPORTS) {
     startCalendarFetch(job);
@@ -1016,6 +1105,14 @@ function expandRecurringICSEvent(event) {
       cursor = addDaysPreservingRecurrenceWallTime(cursor, interval, recurrenceTimeZone, recurrenceAbsoluteTime);
     }
 
+    if (
+      generated >= MAX_ICS_RECURRENCE_OCCURRENCES &&
+      generated < countLimit &&
+      (!untilBoundary || cursor <= untilBoundary)
+    ) {
+      throw createCalendarParseLimitError('Calendar recurrence exceeded the per-event occurrence limit');
+    }
+
     return occurrences;
   }
 
@@ -1047,6 +1144,14 @@ function expandRecurringICSEvent(event) {
     }
 
     cursor = addDaysPreservingRecurrenceWallTime(cursor, 1, recurrenceTimeZone, recurrenceAbsoluteTime);
+  }
+
+  if (
+    generated >= MAX_ICS_RECURRENCE_OCCURRENCES &&
+    generated < countLimit &&
+    (!untilBoundary || cursor <= untilBoundary)
+  ) {
+    throw createCalendarParseLimitError('Calendar recurrence exceeded the per-event occurrence limit');
   }
 
   return occurrences;

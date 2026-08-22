@@ -115,6 +115,10 @@
             </div>
         </div>
 
+        <div id="calendar-load-warning" class="hidden mb-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800" role="status" aria-live="polite">
+            The calendar is incomplete because one or more team feeds could not be loaded. Saved ALL PLAYS events are still shown. Retry to load the complete schedule.
+        </div>
+
         <!-- Calendar Month Nav (only visible in calendar view) -->
         <div id="month-nav" class="hidden mb-4 flex items-center justify-center gap-4">
             <button onclick="navMonth(-1)" class="px-3 py-1.5 rounded-lg bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 text-sm font-medium">&larr; Prev</button>
@@ -184,10 +188,11 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getUserTeamsWithAccess, getParentTeams, getGames, getTeam, getTrackedCalendarEventUids, getUserProfile, submitRsvp, submitRsvpForPlayer, getMyRsvp, getMyRsvps, getRsvpSummaries, getRsvps } from './js/db.js?v=4433182';
-        import { renderHeader, renderFooter, escapeHtml, formatDate, formatTime, fetchAndParseCalendar, expandRecurrence, buildGlobalCalendarIcsEvent, isTrackedCalendarEvent } from './js/utils.js?v=443358';
+        import { getUserTeamsWithAccess, getParentTeams, getGames, getTeam, getTrackedCalendarEventUids, getUserProfile, submitRsvp, submitRsvpForPlayer, getMyRsvp, getMyRsvps, getRsvpSummaries, getRsvps } from './js/db.js?v=4433183';
+        import { renderHeader, renderFooter, escapeHtml, formatDate, formatTime, fetchAndParseCalendar, expandRecurrence, buildGlobalCalendarIcsEvent, isTrackedCalendarEvent } from './js/utils.js?v=443359';
         import { mergeGlobalCalendarIcsEvents } from './js/calendar-ics-sync.js?v=1';
-        import { requireAuth, checkAuth } from './js/auth.js?v=4433186';
+        import { requireAuth, checkAuth } from './js/auth.js?v=4433187';
+        import { resolveCanonicalParentScopeInput } from './js/parent-membership-utils.js?v=4';
         import { buildLinkedPlayersByTeam, resolveCalendarRsvpSubmission } from './js/calendar-rsvp.js?v=1';
         import { applyRsvpHydration } from './js/rsvp-hydration.js?v=1';
         import { buildAvailabilityNoteRows, canViewAvailabilityNotes, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } from './js/availability-preferences.js?v=1';
@@ -219,12 +224,117 @@
         const loadedCalendarRangesByTeam = new Map();
         const calendarGamesByTeam = new Map();
         const calendarEventsByTeam = new Map();
+        const completeCalendarFeedEventsByTeam = new Map();
         const fullyLoadedCalendarTeams = new Set();
         let renderedCalendarSelection = null;
         let calendarNavigationToken = 0;
         let renderedRsvpHydrationToken = 0;
         const teamColors = {};
         const colorPalette = ['#6366f1', '#ec4899', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4', '#f97316'];
+
+        function getCalendarSourceKey(calendarUrls) {
+            const urls = Array.isArray(calendarUrls)
+                ? calendarUrls.filter((url) => typeof url === 'string' && url.trim()).map((url) => url.trim()).sort()
+                : [];
+            return JSON.stringify(urls);
+        }
+
+        function isCalendarAccessOrSourceLossError(error) {
+            const code = String(error?.code || '').trim().toLowerCase().replace(/^functions\//, '');
+            return code === 'unauthenticated' || code === 'permission-denied' || code === 'not-found';
+        }
+
+        function resolveExternalCalendarEventsForLoad(cache, cacheKey, sourceKey, loadedEvents, loadComplete, scopeVerified = true) {
+            const currentEvents = Array.isArray(loadedEvents) ? loadedEvents.slice() : [];
+            if (!scopeVerified) {
+                cache.delete(cacheKey);
+                return currentEvents;
+            }
+            if (loadComplete) {
+                cache.set(cacheKey, { sourceKey, events: currentEvents.slice() });
+                return currentEvents;
+            }
+            const previous = cache.get(cacheKey);
+            if (currentEvents.length === 0 && previous?.sourceKey === sourceKey && Array.isArray(previous.events)) {
+                return previous.events.slice();
+            }
+            return currentEvents;
+        }
+
+        function clearCalendarTeamLoadState(teamId) {
+            completeCalendarFeedEventsByTeam.delete(teamId);
+            calendarEventsByTeam.delete(teamId);
+            calendarGamesByTeam.delete(teamId);
+            loadedCalendarRangesByTeam.delete(teamId);
+            fullyLoadedCalendarTeams.delete(teamId);
+        }
+
+        function clearCalendarTeamLoadStateIfSourceChanged(previousTeam, freshTeam) {
+            if (!previousTeam?.id || previousTeam.id !== freshTeam?.id) return false;
+            if (getCalendarSourceKey(previousTeam.calendarUrls) === getCalendarSourceKey(freshTeam.calendarUrls)) {
+                return false;
+            }
+            clearCalendarTeamLoadState(freshTeam.id);
+            return true;
+        }
+
+        async function refreshCalendarTeamsForLoad() {
+            const previousTeamsById = new Map(calendarTeams.map((team) => [team.id, team]));
+            let discoveredTeams;
+            try {
+                const profile = await getUserProfile(currentUserId);
+                const canonicalParentScope = resolveCanonicalParentScopeInput(profile || {});
+                linkedPlayersByTeam = buildLinkedPlayersByTeam(canonicalParentScope.parentLinks);
+                const [coachTeams, parentTeams] = await Promise.all([
+                    getUserTeamsWithAccess(currentUserId, currentUser?.email || null),
+                    getParentTeams(currentUserId, { profile })
+                ]);
+                const teamsById = new Map();
+                [...coachTeams, ...parentTeams].forEach((team) => {
+                    if (team?.id) teamsById.set(team.id, team);
+                });
+                discoveredTeams = Array.from(teamsById.values());
+            } catch (error) {
+                linkedPlayersByTeam = new Map();
+                calendarTeams.forEach((team) => clearCalendarTeamLoadState(team.id));
+                calendarTeams = [];
+                console.warn('Calendar team access could not be verified.');
+                return { teams: [], complete: false };
+            }
+
+            const discoveredTeamIds = new Set(discoveredTeams.map((team) => team.id));
+            calendarTeams
+                .filter((team) => !discoveredTeamIds.has(team.id))
+                .forEach((team) => clearCalendarTeamLoadState(team.id));
+
+            let complete = true;
+            const refreshedTeams = (await Promise.all(discoveredTeams.map(async (discoveredTeam) => {
+                try {
+                    const freshTeam = await getTeam(discoveredTeam.id);
+                    if (!freshTeam) {
+                        clearCalendarTeamLoadState(discoveredTeam.id);
+                        return null;
+                    }
+                    clearCalendarTeamLoadStateIfSourceChanged(
+                        previousTeamsById.get(freshTeam.id),
+                        freshTeam
+                    );
+                    return freshTeam;
+                } catch (error) {
+                    complete = false;
+                    clearCalendarTeamLoadState(discoveredTeam.id);
+                    console.warn('Calendar team details could not be verified.');
+                    return null;
+                }
+            }))).filter(Boolean);
+
+            calendarTeams = refreshedTeams;
+            calendarTeams.forEach((team, index) => {
+                if (!teamColors[team.id]) teamColors[team.id] = colorPalette[index % colorPalette.length];
+            });
+            return { teams: refreshedTeams, complete };
+        }
+        // COMPLETE_CALENDAR_FALLBACK_END
 
         window.setView = setView;
         window.setTimeRange = setTimeRange;
@@ -513,13 +623,13 @@
 
                 const profile = await getUserProfile(user.uid);
                 const email = user.email || null;
-                const parentOf = Array.isArray(profile?.parentOf) ? profile.parentOf : [];
-                linkedPlayersByTeam = buildLinkedPlayersByTeam(parentOf);
+                const canonicalParentScope = resolveCanonicalParentScopeInput(profile || {});
+                linkedPlayersByTeam = buildLinkedPlayersByTeam(canonicalParentScope.parentLinks);
 
                 // Load all teams the user has access to (coach + parent)
                 const [coachTeams, parentTeams] = await Promise.all([
                     getUserTeamsWithAccess(user.uid, email),
-                    getParentTeams(user.uid)
+                    getParentTeams(user.uid, { profile })
                 ]);
 
                 const teamsMap = new Map();
@@ -566,7 +676,11 @@
             applyFilters();
         }
 
-        async function loadTeamEvents(team, games, onEvents = null) {
+        function renderCalendarCompletenessWarning(isIncomplete) {
+            document.getElementById('calendar-load-warning')?.classList.toggle('hidden', !isIncomplete);
+        }
+
+        async function loadTeamEvents(team, games, onEvents = null, onPartial = null) {
                     const events = [];
                     const email = currentUser?.email || null;
                     const availabilityPreferences = normalizeAvailabilityPreferences(team.availabilityPreferences);
@@ -656,15 +770,38 @@
                         }
                     }
 
-                    onEvents?.(events);
-
                     // Load ICS calendar events
                     const calendarUrls = Array.isArray(team.calendarUrls) ? team.calendarUrls : [];
+                    const sourceKey = getCalendarSourceKey(calendarUrls);
+                    const previousComplete = completeCalendarFeedEventsByTeam.get(team.id);
+                    const previousExternalEvents = previousComplete?.sourceKey === sourceKey && Array.isArray(previousComplete.events)
+                        ? previousComplete.events.slice()
+                        : [];
+                    onEvents?.([...events, ...previousExternalEvents]);
+
+                    let externalLoadComplete = true;
+                    let externalCalendarScopeVerified = true;
+                    let trackedUids = [];
                     if (calendarUrls.length > 0) {
-                        const trackedUids = await getTrackedCalendarEventUids(team.id, games);
+                        try {
+                            trackedUids = await getTrackedCalendarEventUids(team.id, games);
+                        } catch (error) {
+                            externalLoadComplete = false;
+                            if (isCalendarAccessOrSourceLossError(error)) {
+                                externalCalendarScopeVerified = false;
+                            }
+                            onPartial?.();
+                            console.warn('Calendar tracking state unavailable:', error);
+                        }
+                    }
+                    const storedEventCount = events.length;
+                    if (externalLoadComplete) {
                         for (const calUrl of calendarUrls) {
                             try {
-                                const icsEvents = await fetchLegacyCalendarFeed(calUrl, fetchAndParseCalendar);
+                                const icsEvents = await fetchLegacyCalendarFeed(
+                                    calUrl,
+                                    (url) => fetchAndParseCalendar(url, { teamId: team.id })
+                                );
                                 events.push(...mergeGlobalCalendarIcsEvents({
                                     team,
                                     teamColor: teamColors[team.id],
@@ -674,17 +811,37 @@
                                     isTrackedCalendarEvent,
                                     buildGlobalCalendarIcsEvent
                                 }));
-                                onEvents?.(events);
                             } catch (e) {
+                                externalLoadComplete = false;
+                                if (isCalendarAccessOrSourceLossError(e)) {
+                                    externalCalendarScopeVerified = false;
+                                }
+                                onPartial?.();
                                 console.warn('Failed to load ICS calendar:', e);
                             }
                         }
                     }
 
-                    return events;
+                    const resolvedExternalEvents = resolveExternalCalendarEventsForLoad(
+                        completeCalendarFeedEventsByTeam,
+                        team.id,
+                        sourceKey,
+                        events.slice(storedEventCount),
+                        externalLoadComplete,
+                        externalCalendarScopeVerified
+                    );
+                    const resolvedEvents = [...events.slice(0, storedEventCount), ...resolvedExternalEvents];
+                    onEvents?.(resolvedEvents);
+                    return resolvedEvents;
         }
 
         const loadCalendarRange = createLatestCalendarRangeLoader(async (requestedRange) => {
+                const verifiedTeamLoad = await refreshCalendarTeamsForLoad();
+                let calendarLoadIncomplete = !verifiedTeamLoad.complete;
+                // Publish the freshly reconciled team/source scope before any
+                // downstream read can fail, so removed-source events cannot
+                // remain visible while the retry warning is shown.
+                publishCalendarEvents();
                 const isAllHistory = !requestedRange;
                 const loadPromises = calendarTeams.map(async (team) => {
                     const teamId = team.id;
@@ -715,9 +872,12 @@
                     return loadTeamEvents(team, games, (events) => {
                         calendarEventsByTeam.set(team.id, events);
                         publishCalendarEvents();
+                    }, () => {
+                        calendarLoadIncomplete = true;
                     });
                 }));
                 publishCalendarEvents();
+                renderCalendarCompletenessWarning(calendarLoadIncomplete);
         });
 
         function applyFilters() {

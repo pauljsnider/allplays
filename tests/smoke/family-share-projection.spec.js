@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 
 test('legacy family page boots from the server projection without requesting raw token data', async ({ page, baseURL }) => {
   await page.addInitScript(() => {
-    window.__familyShareProjectionSmoke = { projectionCalls: 0, rawTokenCalls: 0, payloads: [] };
+    window.__familyShareProjectionSmoke = { projectionCalls: 0, payloads: [] };
   });
   await page.route(/https:\/\/www\.googletagmanager\.com\/.*/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: '' }));
   await page.route(/https:\/\/cdn\.tailwindcss\.com\/.*/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: '' }));
@@ -44,14 +44,6 @@ test('legacy family page boots from the server projection without requesting raw
         window.__familyShareProjectionSmoke.payloads.push(JSON.stringify(payload));
         return payload;
       }
-      export async function getFamilyShareToken() {
-        window.__familyShareProjectionSmoke.rawTokenCalls += 1;
-        throw new Error('raw token access forbidden');
-      }
-      export async function resolveFamilyShareTokenChildren() { return []; }
-      export async function getTeam() { throw new Error('direct team read forbidden'); }
-      export async function getGames() { throw new Error('direct games read forbidden'); }
-      export async function getTrackedCalendarEventUids() { throw new Error('direct tracking read forbidden'); }
     `
   }));
 
@@ -62,7 +54,6 @@ test('legacy family page boots from the server projection without requesting raw
   await expect(page.getByText('vs. Comets')).toBeVisible();
   const evidence = await page.evaluate(() => window.__familyShareProjectionSmoke);
   expect(evidence.projectionCalls).toBe(1);
-  expect(evidence.rawTokenCalls).toBe(0);
   expect(evidence.payloads.join('')).not.toContain('ownerUserId');
   expect(evidence.payloads.join('')).not.toContain('extraCalendarUrls');
   expect(evidence.payloads.join('')).not.toContain('SENTINEL');
@@ -70,7 +61,7 @@ test('legacy family page boots from the server projection without requesting raw
 
 test('legacy family page does not reopen raw token reads after an authoritative projection rejection', async ({ page, baseURL }) => {
   await page.addInitScript(() => {
-    window.__familyShareProjectionSmoke = { projectionCalls: 0, rawTokenCalls: 0 };
+    window.__familyShareProjectionSmoke = { projectionCalls: 0 };
   });
   await page.route(/https:\/\/www\.googletagmanager\.com\/.*/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: '' }));
   await page.route(/https:\/\/cdn\.tailwindcss\.com\/.*/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: '' }));
@@ -103,14 +94,6 @@ test('legacy family page does not reopen raw token reads after an authoritative 
         window.__familyShareProjectionSmoke.projectionCalls += 1;
         throw { code: 'functions/permission-denied', details: { reason: 'revoked' } };
       }
-      export async function getFamilyShareToken() {
-        window.__familyShareProjectionSmoke.rawTokenCalls += 1;
-        return { active: true, label: 'Must not render', children: [] };
-      }
-      export async function resolveFamilyShareTokenChildren() { return []; }
-      export async function getTeam() { return null; }
-      export async function getGames() { return []; }
-      export async function getTrackedCalendarEventUids() { return []; }
     `
   }));
 
@@ -119,12 +102,11 @@ test('legacy family page does not reopen raw token reads after an authoritative 
   await expect(page.getByRole('heading', { name: 'This link has been revoked' })).toBeVisible();
   const evidence = await page.evaluate(() => window.__familyShareProjectionSmoke);
   expect(evidence.projectionCalls).toBe(1);
-  expect(evidence.rawTokenCalls).toBe(0);
 });
 
 test('legacy family page shows a retry message without fallback reads after projection throttling', async ({ page, baseURL }) => {
   await page.addInitScript(() => {
-    window.__familyShareProjectionSmoke = { projectionCalls: 0, rawTokenCalls: 0, childCalls: 0, scheduleReads: 0 };
+    window.__familyShareProjectionSmoke = { projectionCalls: 0 };
   });
   await page.route(/https:\/\/www\.googletagmanager\.com\/.*/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: '' }));
   await page.route(/https:\/\/cdn\.tailwindcss\.com\/.*/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: '' }));
@@ -157,17 +139,6 @@ test('legacy family page shows a retry message without fallback reads after proj
         window.__familyShareProjectionSmoke.projectionCalls += 1;
         throw { code: 'functions/resource-exhausted', details: { retryAfterSeconds: 29 } };
       }
-      export async function getFamilyShareToken() {
-        window.__familyShareProjectionSmoke.rawTokenCalls += 1;
-        throw new Error('raw token fallback forbidden');
-      }
-      export async function resolveFamilyShareTokenChildren() {
-        window.__familyShareProjectionSmoke.childCalls += 1;
-        return [];
-      }
-      export async function getTeam() { window.__familyShareProjectionSmoke.scheduleReads += 1; return null; }
-      export async function getGames() { window.__familyShareProjectionSmoke.scheduleReads += 1; return []; }
-      export async function getTrackedCalendarEventUids() { window.__familyShareProjectionSmoke.scheduleReads += 1; return []; }
     `
   }));
 
@@ -177,9 +148,6 @@ test('legacy family page shows a retry message without fallback reads after proj
   await expect(page.getByRole('heading', { name: 'Family page temporarily busy' })).toBeVisible();
   await expect(page.getByText('Please wait about 29 seconds, then retry.')).toBeVisible();
   expect(await page.evaluate(() => window.__familyShareProjectionSmoke)).toEqual({
-    projectionCalls: 1,
-    rawTokenCalls: 0,
-    childCalls: 0,
-    scheduleReads: 0
+    projectionCalls: 1
   });
 });

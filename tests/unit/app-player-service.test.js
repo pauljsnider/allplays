@@ -455,7 +455,7 @@ describe('React app parent player detail service', () => {
         });
         expect(detail.events).toEqual([]);
         expect(detail.nextEvent).toBeNull();
-        expect(detail.scheduleLoadError).toBe('Schedule is temporarily unavailable. Refresh the player to try again.');
+        expect(detail.scheduleLoadError).toBe('The complete player schedule could not be loaded. Retry before relying on missing events.');
     });
 
     it('preserves key-only parent access when the player schedule times out', async () => {
@@ -470,7 +470,7 @@ describe('React app parent player detail service', () => {
 
         expect(detail.access.isLinkedParent).toBe(true);
         expect(detail.player).toMatchObject({ id: 'player-1', name: 'Pat Star' });
-        expect(detail.scheduleLoadError).toBe('Schedule is temporarily unavailable. Refresh the player to try again.');
+        expect(detail.scheduleLoadError).toBe('The complete player schedule could not be loaded. Retry before relying on missing events.');
     });
 
     it('uses in-team parent profile links and rejects off-team stale links when a successful schedule load omits the player', async () => {

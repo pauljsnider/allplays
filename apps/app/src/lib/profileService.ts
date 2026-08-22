@@ -64,6 +64,11 @@ export type ProfileDocument = {
   email?: string;
   fullName?: string;
   displayName?: string;
+  roles?: string[];
+  coachOf?: string[];
+  parentOf?: Array<Record<string, unknown>>;
+  parentTeamIds?: string[];
+  parentPlayerKeys?: string[];
   phone?: string;
   photoUrl?: string | null;
   photoPath?: string | null;

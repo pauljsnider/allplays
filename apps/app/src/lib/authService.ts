@@ -1034,12 +1034,16 @@ function toAuthUser(user: FirebaseUser, profile: Record<string, unknown>): AuthU
     emailVerified: user.emailVerified === true,
     roles: rolesFromProfile(profile),
     parentOf: Array.isArray(profile.parentOf) ? (profile.parentOf as Array<Record<string, unknown>>) : [],
-    parentTeamIds: Array.isArray(profile.parentTeamIds)
-      ? profile.parentTeamIds.filter((teamId): teamId is string => typeof teamId === 'string')
-      : [],
-    parentPlayerKeys: Array.isArray(profile.parentPlayerKeys)
-      ? profile.parentPlayerKeys.filter((playerKey): playerKey is string => typeof playerKey === 'string')
-      : [],
+    ...(Object.prototype.hasOwnProperty.call(profile, 'parentTeamIds') ? {
+      parentTeamIds: Array.isArray(profile.parentTeamIds)
+        ? profile.parentTeamIds.filter((teamId): teamId is string => typeof teamId === 'string')
+        : []
+    } : {}),
+    ...(Object.prototype.hasOwnProperty.call(profile, 'parentPlayerKeys') ? {
+      parentPlayerKeys: Array.isArray(profile.parentPlayerKeys)
+        ? profile.parentPlayerKeys.filter((playerKey): playerKey is string => typeof playerKey === 'string')
+        : []
+    } : {}),
     coachOf,
     isAdmin: profile.isAdmin === true,
     teamMediaUploadTeamIds: Array.isArray(profile.teamMediaUploadTeamIds)
@@ -1150,6 +1154,10 @@ export async function hydrateFirebaseUser(
     result: PromiseSettledResult<unknown[]>
   ): Promise<boolean> => {
     try {
+      // Historical request rows may only repair an authoritatively hydrated
+      // profile. A fallback auth shell cannot prove that its canonical grants
+      // are current, so merging here could restore a revoked membership.
+      if (profileHydration !== 'success') return false;
       if (result.status === 'rejected') throw result.reason;
       const { mergeApprovedParentMembershipRequests } = await loadLegacyParentMembershipUtils();
       const parentRequestSync = mergeApprovedParentMembershipRequests(profile, result.value);

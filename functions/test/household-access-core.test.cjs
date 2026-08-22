@@ -86,6 +86,24 @@ test('revoking the last parent link removes only the parent role', () => {
   });
 });
 
+test('revoking a canonical link never restores stale sibling or team metadata', () => {
+  assert.deepEqual(buildRevokedParentAccess({
+    roles: ['parent'],
+    parentOf: [
+      { teamId: 'team-1', playerId: 'player-1' },
+      { teamId: 'team-1', playerId: 'player-revoked' },
+      { teamId: 'team-old', playerId: 'player-old' }
+    ],
+    parentTeamIds: ['team-1'],
+    parentPlayerKeys: ['team-1::player-1']
+  }, { teamId: 'team-1', playerId: 'player-1' }), {
+    parentOf: [],
+    parentTeamIds: [],
+    parentPlayerKeys: [],
+    roles: []
+  });
+});
+
 test('revocation preserves same-player access backed by another accepted access code', () => {
   const plan = buildHouseholdAccessRevocationPlan({
     organizerUserId: 'organizer-1',

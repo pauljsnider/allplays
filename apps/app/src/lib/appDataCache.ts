@@ -38,7 +38,7 @@ export function getParentScheduleSummaryCacheKey(userId: string) {
 }
 
 export function getParentHomeSecondaryCacheKey(userId: string) {
-  return `home-secondary:${userId}`;
+  return `home-secondary:v2:${userId}`;
 }
 
 export function getTeamsSummaryBootstrapCacheKey(userId: string) {
@@ -149,15 +149,9 @@ function loadAndStoreCachedAppData<T>(
     ) {
       const current = cache.get(key);
       if (current?.promise === promise) {
-        if (existing && hasCachedValue(existing)) {
-          cache.set(key, {
-            value: existing.value,
-            expiresAt: existing.expiresAt,
-            hydratedFromStorage: existing.hydratedFromStorage
-          });
-        } else {
-          cache.delete(key);
-        }
+        // Invalidation is an explicit revocation of the captured value. Never
+        // restore it from an in-flight request's stale `existing` snapshot.
+        cache.delete(key);
       }
       onRefresh?.(value);
       return value;
@@ -189,7 +183,9 @@ function loadAndStoreCachedAppData<T>(
   }).catch((error) => {
     const current = cache.get(key);
     if (current?.promise === promise) {
-      if (existing && hasCachedValue(existing)) {
+      const loadWasInvalidated = loadInvalidationVersion !== cacheInvalidationVersion
+        || loadKeyInvalidationVersion !== getCacheKeyInvalidationVersion(key);
+      if (!loadWasInvalidated && existing && hasCachedValue(existing)) {
         cache.set(key, {
           value: existing.value,
           expiresAt: existing.expiresAt,
@@ -202,12 +198,20 @@ function loadAndStoreCachedAppData<T>(
     throw error;
   });
 
-  cache.set(key, {
-    ...(existing && hasCachedValue(existing) ? { value: existing.value } : {}),
-    promise,
-    expiresAt: existing?.expiresAt ?? Date.now() + ttlMs,
-    hydratedFromStorage: existing?.hydratedFromStorage
-  });
+  const loadWasSynchronouslyInvalidated = loadInvalidationVersion !== cacheInvalidationVersion
+    || loadKeyInvalidationVersion !== getCacheKeyInvalidationVersion(key);
+  // An onPartial callback may invalidate and synchronously start a replacement
+  // request. Do not let this older request overwrite that newer cache entry.
+  if (!loadWasSynchronouslyInvalidated || !cache.has(key)) {
+    cache.set(key, {
+      ...(!loadWasSynchronouslyInvalidated && existing && hasCachedValue(existing) ? { value: existing.value } : {}),
+      promise,
+      expiresAt: !loadWasSynchronouslyInvalidated && existing?.expiresAt
+        ? existing.expiresAt
+        : Date.now() + ttlMs,
+      hydratedFromStorage: !loadWasSynchronouslyInvalidated ? existing?.hydratedFromStorage : false
+    });
+  }
   return promise;
 }
 

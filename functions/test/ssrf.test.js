@@ -32,6 +32,12 @@ test('isPrivateIpAddress correctly identifies private IPs', () => {
   assert.strictEqual(isPrivateIpAddress('100.128.0.1'), false, 'address above RFC 6598 shared space should be public');
   assert.strictEqual(isPrivateIpAddress('8.8.8.8'), false, '8.8.8.8 should be public');
   assert.strictEqual(isPrivateIpAddress('203.0.113.1'), false, '203.0.113.1 should be public');
+  assert.strictEqual(isPrivateIpAddress('198.18.0.1'), true, 'benchmarking space should be blocked');
+  assert.strictEqual(isPrivateIpAddress('198.19.255.255'), true, 'benchmarking upper boundary should be blocked');
+  assert.strictEqual(isPrivateIpAddress('224.0.0.1'), true, 'IPv4 multicast should be blocked');
+  assert.strictEqual(isPrivateIpAddress('239.255.255.255'), true, 'IPv4 multicast upper boundary should be blocked');
+  assert.strictEqual(isPrivateIpAddress('240.0.0.1'), true, 'IPv4 reserved space should be blocked');
+  assert.strictEqual(isPrivateIpAddress('255.255.255.255'), true, 'limited broadcast should be blocked');
 
   assert.strictEqual(isPrivateIpAddress('::1'), true, '::1 should be private (IPv6 loopback)');
   assert.strictEqual(isPrivateIpAddress('fe80::1'), true, 'fe80::1 should be private (IPv6 link-local)');
@@ -43,6 +49,8 @@ test('isPrivateIpAddress correctly identifies private IPs', () => {
   assert.strictEqual(isPrivateIpAddress('fec0::1'), true, 'fec0::1 should be private (IPv6 site-local)');
   assert.strictEqual(isPrivateIpAddress('feff:ffff:ffff:ffff:ffff:ffff:ffff:ffff'), true, 'feff::/16 upper bound should be private (IPv6 site-local)');
   assert.strictEqual(isPrivateIpAddress('2001:0db8::1'), false, '2001:0db8::1 should be public');
+  assert.strictEqual(isPrivateIpAddress('ff02::1'), true, 'IPv6 link multicast should be blocked');
+  assert.strictEqual(isPrivateIpAddress('ff0e::1'), true, 'IPv6 global multicast should be blocked');
 
   assert.strictEqual(isPrivateIpAddress('::ffff:127.0.0.1'), true, 'IPv4-mapped IPv6 loopback should be private');
   assert.strictEqual(isPrivateIpAddress('::ffff:10.0.0.1'), true, 'IPv4-mapped IPv6 RFC1918 should be private');
@@ -62,6 +70,9 @@ test('assertPublicHost prevents blocked hosts and private IPs', async () => {
   await assert.rejects(assertPublicHost('127.0.0.1'), { message: 'Blocked host' }, '127.0.0.1 should be blocked');
   await assert.rejects(assertPublicHost('192.168.1.1'), { message: 'Blocked host address' }, 'private IP should be blocked');
   await assert.rejects(assertPublicHost('100.64.0.1'), { message: 'Blocked host address' }, 'RFC 6598 shared IP should be blocked');
+  await assert.rejects(assertPublicHost('224.0.0.1'), { message: 'Blocked host address' }, 'IPv4 multicast should be blocked');
+  await assert.rejects(assertPublicHost('255.255.255.255'), { message: 'Blocked host address' }, 'limited broadcast should be blocked');
+  await assert.rejects(assertPublicHost('ff02::1'), { message: 'Blocked host address' }, 'IPv6 multicast should be blocked');
   await assert.rejects(assertPublicHost('evil.local'), { message: 'Blocked host' }, '.local should be blocked');
 
   await assert.rejects(assertPublicHost('::ffff:127.0.0.1'), { message: 'Blocked host address' }, 'IPv4-mapped IPv6 loopback should be blocked');
@@ -94,6 +105,14 @@ test('normalizeTargetUrl rejects calendar hosts resolving to RFC 6598 shared spa
   } finally {
     dns.lookup = originalDnsLookup;
   }
+});
+
+test('normalizeTargetUrl preserves case-insensitive webcal and webcals compatibility', async () => {
+  const webcal = await normalizeTargetUrl('WEBCAL://8.8.8.8/team.ics?token=one#fragment');
+  const webcals = await normalizeTargetUrl('webcals://8.8.8.8/team.ics?token=two');
+
+  assert.strictEqual(webcal.url, 'https://8.8.8.8/team.ics?token=one');
+  assert.strictEqual(webcals.url, 'https://8.8.8.8/team.ics?token=two');
 });
 
 test('normalizeTargetUrl validates bracketed IPv6 literals without DNS lookup', async () => {
