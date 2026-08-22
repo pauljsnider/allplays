@@ -5,8 +5,10 @@ import {
     createOverlayDemoFixture,
     createOverlayState,
     formatOverlayClock,
+    getControllableReplayEmbedUrl,
     getOverlayEventTone,
     getOverlayLineup,
+    getOverlayReplayDurationMs,
     replaceOverlayChat
 } from '../../js/live-game-overlay-model.js';
 
@@ -16,6 +18,38 @@ describe('live game overlay model', () => {
         expect(formatOverlayClock(65_999)).toBe('1:05');
         expect(formatOverlayClock(-5_000)).toBe('0:00');
         expect(formatOverlayClock('not-a-clock')).toBe('0:00');
+    });
+
+    it('builds a replay duration from plays, saved conversation, reactions, and recorded media', () => {
+        expect(getOverlayReplayDurationMs({
+            replayEvents: [{ gameClockMs: 90_000 }],
+            replayChat: [{ createdAt: 101_000 }],
+            replayReactions: [{ createdAt: { toMillis: () => 160_000 } }],
+            replayStartAt: 100_000,
+            videoDurationMs: 120_000
+        })).toBe(120_000);
+        expect(getOverlayReplayDurationMs({
+            replayEvents: [{ gameClockMs: -1 }],
+            replayChat: [{ createdAt: 'invalid' }],
+            replayStartAt: 100_000
+        })).toBe(0);
+    });
+
+    it('enables the YouTube player API for replay without rewriting other providers or invalid URLs', () => {
+        const source = getControllableReplayEmbedUrl(
+            'https://www.youtube.com/embed/PK1HyC37doc?autoplay=1&mute=1',
+            'http://localhost:8000'
+        );
+        const url = new URL(source);
+
+        expect(url.searchParams.get('autoplay')).toBe('0');
+        expect(url.searchParams.get('mute')).toBe('1');
+        expect(url.searchParams.get('enablejsapi')).toBe('1');
+        expect(url.searchParams.get('playsinline')).toBe('1');
+        expect(url.searchParams.get('origin')).toBe('http://localhost:8000');
+        expect(getControllableReplayEmbedUrl('https://player.twitch.tv/?channel=vipers', 'http://localhost:8000'))
+            .toBe('https://player.twitch.tv/?channel=vipers');
+        expect(getControllableReplayEmbedUrl('not a url', 'http://localhost:8000')).toBe('not a url');
     });
 
     it('normalizes game context and applies passive game-document updates', () => {

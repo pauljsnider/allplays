@@ -33,6 +33,46 @@ export function formatOverlayClock(milliseconds = 0) {
     return `${minutes}:${String(seconds).padStart(2, '0')}`;
 }
 
+export function getOverlayReplayDurationMs({
+    replayEvents = [],
+    replayChat = [],
+    replayReactions = [],
+    replayStartAt = 0,
+    videoDurationMs = 0
+} = {}) {
+    const eventDuration = replayEvents.reduce((maximum, event) => {
+        return Math.max(maximum, Math.max(0, toFiniteNumber(event?.gameClockMs)));
+    }, 0);
+    const streamDuration = [...replayChat, ...replayReactions].reduce((maximum, item) => {
+        const timestamp = getTimestampMs(item?.createdAt);
+        if (!timestamp || !Number.isFinite(replayStartAt)) return maximum;
+        return Math.max(maximum, Math.max(0, timestamp - replayStartAt));
+    }, 0);
+    return Math.max(eventDuration, streamDuration, Math.max(0, toFiniteNumber(videoDurationMs)));
+}
+
+export function getControllableReplayEmbedUrl(sourceUrl, origin = '') {
+    try {
+        const url = new URL(sourceUrl);
+        const isYouTube = ['www.youtube.com', 'youtube.com', 'www.youtube-nocookie.com', 'youtube-nocookie.com']
+            .includes(url.hostname.toLowerCase());
+        if (!isYouTube || !url.pathname.startsWith('/embed/')) return sourceUrl;
+
+        url.searchParams.set('autoplay', '0');
+        url.searchParams.set('playsinline', '1');
+        url.searchParams.set('enablejsapi', '1');
+        if (origin) {
+            const parsedOrigin = new URL(origin).origin;
+            if (parsedOrigin.startsWith('http://') || parsedOrigin.startsWith('https://')) {
+                url.searchParams.set('origin', parsedOrigin);
+            }
+        }
+        return url.toString();
+    } catch {
+        return sourceUrl;
+    }
+}
+
 export function getOverlayEventTone(event = {}) {
     const type = toText(event.type).toLowerCase();
     const statKey = toText(event.statKey).toLowerCase();

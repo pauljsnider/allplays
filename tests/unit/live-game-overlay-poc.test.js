@@ -13,8 +13,11 @@ describe('live game overlay prototype page', () => {
         expect(html).toContain('id="plays-panel"');
         expect(html).toContain('id="insights-panel"');
         expect(html).toContain('id="reactions-overlay"');
+        expect(html).toContain('id="replay-controls"');
+        expect(html).toContain('id="replay-progress"');
+        expect(html).toContain('data-replay-speed="4"');
         expect(html).toContain('aria-live="polite"');
-        expect(html).toContain('js/live-game-overlay-poc.js?v=2');
+        expect(html).toContain('js/live-game-overlay-poc.js?v=3');
     });
 
     it('keeps the local demo isolated while wiring the canonical real read-only subscriptions', () => {
@@ -31,6 +34,13 @@ describe('live game overlay prototype page', () => {
         expect(source).toContain('database.subscribeReactions');
         expect(source).toContain('database.getLiveEvents');
         expect(source).toContain('database.getLiveChatHistory');
+        expect(source).toContain('database.getLiveReactions');
+        expect(source).toContain('buildReplaySessionState');
+        expect(source).toContain('collectReplayEventWindow');
+        expect(source).toContain('collectReplayStreamWindow');
+        expect(source).toContain('getReplayElapsedMs');
+        expect(source).toContain('seekReplay');
+        expect(source).toContain('syncReplayMedia');
         expect(source).not.toContain('updateGame(');
         expect(source).not.toContain('postLiveChatMessage(');
         expect(source).not.toContain('trackViewerPresence(');

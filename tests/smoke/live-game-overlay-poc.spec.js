@@ -13,7 +13,9 @@ async function stubYouTubeEmbed(page) {
         return route.fulfill({
             status: 200,
             contentType: 'text/html',
-            body: '<!doctype html><title>Overlay video fixture</title><body style="background:#05090d"></body>'
+            body: `<!doctype html><title>Overlay video fixture</title><body style="background:#05090d">
+                <script>addEventListener('message', (event) => parent.postMessage({ source: 'overlay-youtube-fixture', payload: event.data }, '*'));</script>
+            </body>`
         });
     });
     return requests;
@@ -118,12 +120,23 @@ async function stubRealOverlayModules(page) {
                 window.__OVERLAY_REACTION_ERROR__ = onError;
                 return () => {};
             }
-            export async function getLiveEvents() { return [
-                { id: 'replay-start', type: 'clock_sync', homeScore: 0, awayScore: 0, period: 'H1', gameClockMs: 0, createdAt: 100 },
-                { id: 'replay-goal', type: 'goal', description: 'Lane scores the replay winner', playerId: 'p9', playerName: 'Avery Lane', statKey: 'goals', value: 1, homeScore: 3, awayScore: 2, period: 'H2', gameClockMs: 690000, createdAt: 200 }
+            export async function getLiveEvents() {
+                if (window.__OVERLAY_FAIL_REPLAY_EVENTS__) throw new Error('saved events unavailable');
+                return [
+                { id: 'replay-start', type: 'clock_sync', homeScore: 0, awayScore: 0, period: 'H1', gameClockMs: 0, createdAt: 100000 },
+                { id: 'replay-lineup', type: 'lineup', onCourt: ['p4'], bench: ['p9'], period: 'H1', gameClockMs: 300000, createdAt: 400000 },
+                { id: 'replay-opener', type: 'goal', description: 'Lane opens the replay scoring', playerId: 'p9', playerName: 'Avery Lane', statKey: 'goals', value: 1, homeScore: 1, awayScore: 0, period: 'H1', gameClockMs: 345000, createdAt: 445000 },
+                { id: 'replay-goal', type: 'goal', description: 'Lane scores the replay winner', playerId: 'p9', playerName: 'Avery Lane', statKey: 'goals', value: 1, homeScore: 3, awayScore: 2, period: 'H2', gameClockMs: 690000, createdAt: 790000 }
             ]; }
-            export async function getLiveChatHistory() { return [
-                { id: 'replay-chat', senderName: 'Taylor', text: 'Saved replay message', createdAt: 300 }
+            export async function getLiveChatHistory() {
+                if (window.__OVERLAY_FAIL_REPLAY_CHAT__) throw new Error('saved chat unavailable');
+                return [
+                { id: 'replay-chat', senderName: 'Taylor', text: 'Saved replay message', createdAt: 445000 }
+            ]; }
+            export async function getLiveReactions() {
+                if (window.__OVERLAY_FAIL_REPLAY_REACTIONS__) throw new Error('saved reactions unavailable');
+                return [
+                { id: 'replay-reaction', type: 'heart', createdAt: 450000 }
             ]; }
         `
     }));
@@ -228,18 +241,113 @@ test('real mode follows canonical game, lineup, clock, reset, reaction, and pass
     expect(pageErrors).toEqual([]);
 });
 
-test('replay mode loads saved events and chat without starting live subscriptions', async ({ page, baseURL }) => {
+test('replay mode synchronizes saved plays, score, lineup, chat, reactions, and video controls', async ({ page, baseURL }) => {
     const pageErrors = collectPageErrors(page);
+    await page.addInitScript(() => {
+        window.__OVERLAY_YOUTUBE_COMMANDS__ = [];
+        window.addEventListener('message', (event) => {
+            if (event.data?.source !== 'overlay-youtube-fixture') return;
+            try {
+                window.__OVERLAY_YOUTUBE_COMMANDS__.push(JSON.parse(event.data.payload));
+            } catch {
+                // Ignore non-command player messages.
+            }
+        });
+    });
     await stubRealOverlayModules(page);
     await stubYouTubeEmbed(page);
 
     await page.goto(`${baseURL}/live-game-overlay-poc.html?teamId=team-1&gameId=game-1&replay=true`, { waitUntil: 'domcontentloaded' });
     await expect(page.locator('#live-status')).toHaveText('REPLAY');
     expect(pageErrors).toEqual([]);
-    await expect(page.locator('#event-list')).toContainText('Lane scores the replay winner');
-    await expect(page.locator('#home-score')).toHaveText('3');
+    await expect(page.locator('#replay-controls')).toBeVisible();
+    await expect(page.locator('#replay-duration')).toHaveText('11:30');
+    await page.getByRole('button', { name: 'Pause replay' }).click();
+    await expect(page.locator('#home-score')).toHaveText('0');
+    await expect(page.locator('#event-list')).not.toContainText('Lane opens the replay scoring');
+
+    await page.locator('#replay-progress').evaluate((input) => {
+        input.value = '50';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await expect(page.locator('#replay-current')).toHaveText('5:45');
+    await expect(page.locator('#home-score')).toHaveText('1');
+    await expect(page.locator('#event-list')).toContainText('Lane opens the replay scoring');
+    await expect(page.locator('#on-field-list')).toContainText('Sam Gray');
     await page.locator('#chat-tab').click();
     await expect(page.locator('#chat-list')).toContainText('Saved replay message');
+
+    await page.getByRole('button', { name: '4×' }).click();
+    await page.getByRole('button', { name: 'Play replay' }).click();
+    await expect(page.locator('#reactions-overlay .floating-reaction')).toContainText('❤️', { timeout: 3000 });
+    await page.getByRole('button', { name: 'Pause replay' }).click();
+
+    await page.locator('#replay-progress').evaluate((input) => {
+        input.value = '100';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await expect(page.locator('#event-list')).toContainText('Lane scores the replay winner');
+    await expect(page.locator('#home-score')).toHaveText('3');
+    await expect(page.locator('#replay-current')).toHaveText('11:30');
+
+    await page.getByRole('button', { name: 'Restart replay' }).click();
+    await expect(page.locator('#home-score')).toHaveText('0');
+    await expect(page.locator('#chat-list')).not.toContainText('Saved replay message');
+    expect(await page.evaluate(() => window.__OVERLAY_LIVE_SUBSCRIPTIONS__ || 0)).toBe(0);
+    await expect(page.locator('#overlay-video')).toHaveAttribute('src', /enablejsapi=1/);
+    await expect.poll(async () => page.evaluate(() => (
+        window.__OVERLAY_YOUTUBE_COMMANDS__ || []
+    ).map((command) => command.func))).toEqual(expect.arrayContaining(['seekTo', 'playVideo', 'pauseVideo', 'setPlaybackRate']));
+    expect(pageErrors).toEqual([]);
+});
+
+test('mobile replay controls stay on screen without covering the scoreboard', async ({ page, baseURL }) => {
+    const pageErrors = collectPageErrors(page);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await stubRealOverlayModules(page);
+    await stubYouTubeEmbed(page);
+
+    await page.goto(`${baseURL}/live-game-overlay-poc.html?teamId=team-1&gameId=game-1&replay=true`, { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('#replay-controls')).toBeVisible();
+    await page.getByRole('button', { name: 'Pause replay' }).click();
+    await expect(page.getByRole('button', { name: 'Play replay' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Restart replay' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '4×' })).toBeVisible();
+
+    const layout = await page.evaluate(() => {
+        const score = document.querySelector('#score-bug').getBoundingClientRect();
+        const controls = document.querySelector('#replay-controls').getBoundingClientRect();
+        return {
+            noHorizontalOverflow: document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+            scoreBottom: score.bottom,
+            controlsTop: controls.top,
+            controlsRight: controls.right,
+            viewportWidth: window.innerWidth
+        };
+    });
+    expect(layout.noHorizontalOverflow).toBe(true);
+    expect(layout.scoreBottom).toBeLessThanOrEqual(layout.controlsTop);
+    expect(layout.controlsRight).toBeLessThanOrEqual(layout.viewportWidth);
+    expect(pageErrors).toEqual([]);
+});
+
+test('replay history failure leaves the saved video and final game state usable', async ({ page, baseURL }) => {
+    const pageErrors = collectPageErrors(page);
+    await page.addInitScript(() => {
+        window.__OVERLAY_FAIL_REPLAY_EVENTS__ = true;
+        window.__OVERLAY_FAIL_REPLAY_CHAT__ = true;
+        window.__OVERLAY_FAIL_REPLAY_REACTIONS__ = true;
+    });
+    await stubRealOverlayModules(page);
+    await stubYouTubeEmbed(page);
+
+    await page.goto(`${baseURL}/live-game-overlay-poc.html?teamId=team-1&gameId=game-1&replay=true`, { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('#live-status')).toHaveText('REPLAY');
+    await expect(page.locator('#home-score')).toHaveText('3');
+    await expect(page.locator('#away-score')).toHaveText('2');
+    await expect(page.locator('#overlay-video')).toBeVisible();
+    await expect(page.locator('#connection-message')).toContainText('refresh to retry');
+    await expect(page.getByRole('button', { name: 'Play replay' })).toBeDisabled();
     expect(await page.evaluate(() => window.__OVERLAY_LIVE_SUBSCRIPTIONS__ || 0)).toBe(0);
     expect(pageErrors).toEqual([]);
 });
