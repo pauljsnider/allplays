@@ -47,9 +47,18 @@ export function PublicTeamDetail({ authUser }: { authUser: AuthState['user'] }) 
   }, [teamId, loadAttempt]);
 
   if (loading) return (
-    <div className="app-card p-10 text-center" role="status" aria-live="polite">
-      <Loader2 className="mx-auto h-7 w-7 animate-spin text-primary-600" aria-hidden="true" />
-      <div className="mt-3 text-sm font-black text-gray-900">Loading public team</div>
+    <div className="space-y-4">
+      <div className="app-card p-10 text-center" role="status" aria-live="polite">
+        <Loader2 className="mx-auto h-7 w-7 animate-spin text-primary-600" aria-hidden="true" />
+        <div className="mt-3 text-sm font-black text-gray-900">Loading public team</div>
+      </div>
+      <section className="app-card p-5 sm:p-6" aria-labelledby="public-standings-heading">
+        <h2 id="public-standings-heading" className="text-lg font-black text-gray-950">Standings</h2>
+        <div className="mt-3 flex items-center gap-2 text-sm font-semibold text-gray-600">
+          <Loader2 className="h-4 w-4 animate-spin text-primary-600" aria-hidden="true" />
+          Loading standings
+        </div>
+      </section>
     </div>
   );
   if (!team) return (
