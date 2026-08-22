@@ -20,7 +20,7 @@ const firebaseMocks = vi.hoisted(() => ({
 
 vi.mock('../../js/db.js?v=4433181', () => dbMocks);
 vi.mock('../../js/firebase.js?v=26', () => firebaseMocks);
-vi.mock('../../js/utils.js?v=443356', () => ({
+vi.mock('../../js/utils.js?v=443357', () => ({
     escapeHtml: (value) => String(value || '')
 }));
 vi.mock('../../js/global-search-visibility.js?v=44335', () => ({

@@ -23,7 +23,7 @@ import {
     canAccessCertificates,
     canViewSavedCertificate
 } from '../db.js?v=4433181';
-import { renderHeader, renderFooter, escapeHtml, shareOrCopy } from '../utils.js?v=443356';
+import { renderHeader, renderFooter, escapeHtml, shareOrCopy } from '../utils.js?v=443357';
 import { renderTeamAdminBanner, getTeamAccessInfo } from '../team-admin-banner.js?v=443337';
 import { TEMPLATES } from './templates.js?v=2';
 import { CERTIFICATE_FONT_OPTIONS, renderCertificate, createPreviewDraft, resolveColors, getContrastWarning } from './renderer.js?v=2';

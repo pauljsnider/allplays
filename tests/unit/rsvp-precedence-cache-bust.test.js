@@ -54,13 +54,13 @@ describe('RSVP precedence cache delivery', () => {
     it('propagates fresh keys through cached wrapper and shared utility entry modules', () => {
         const consumerVersions = {
             'admin.html': 'js/admin.js?v=443352',
-            'certificates.html': 'js/certificates/studio.js?v=443353',
+            'certificates.html': 'js/certificates/studio.js?v=443354',
             'live-game.html': 'js/live-game.js?v=443343',
             'live-tracker.html': 'js/live-tracker.js?v=443322',
-            'team-fees.html': 'js/team-fees-admin.js?v=443350',
+            'team-fees.html': 'js/team-fees-admin.js?v=443351',
             'team-media.html': 'js/team-media.js?v=44539',
             'track-basketball.html': 'js/track-basketball.js?v=443321',
-            'tracking-items.html': 'js/tracking-items-admin.js?v=443349',
+            'tracking-items.html': 'js/tracking-items-admin.js?v=443350',
             'team.html': 'js/team-staff-permissions.js?v=443335',
             'game-day.html': 'js/team-admin-banner.js?v=443337'
         };
@@ -70,8 +70,8 @@ describe('RSVP precedence cache delivery', () => {
         }
 
         expect(readRepoFile('js/utils.js')).toContain("import('./global-search.js?v=443343')");
-        expect(readRepoFile('js/db.js')).toContain("from './utils.js?v=443356';");
-        expect(readRepoFile('parent-dashboard.html')).toContain('js/utils.js?v=443356');
+        expect(readRepoFile('js/db.js')).toContain("from './utils.js?v=443357';");
+        expect(readRepoFile('parent-dashboard.html')).toContain('js/utils.js?v=443357');
         expect(readRepoFile('js/live-game.js')).toContain("from './live-game-state.js?v=32';");
     });
 
