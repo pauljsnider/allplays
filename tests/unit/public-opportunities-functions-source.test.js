@@ -236,9 +236,13 @@ describe('public opportunity callable wiring', () => {
 
     expect(source).toContain('async function listPlatformAdminTeamDocuments(caller)');
     expect(source).toContain("const snapshot = await firestore.collection('teams')");
-    expect(source).toContain(".orderBy('name')");
     expect(source).toContain('.select(...DASHBOARD_TEAM_FIELD_PATHS)');
     expect(source).toContain('function serializeDashboardManagedTeamProfile(teamId, team = {})');
+    const platformAdminTeamSource = source.slice(
+      source.indexOf('async function listPlatformAdminTeamDocuments(caller)'),
+      source.indexOf('async function listCallableParentTeamDocuments(caller)')
+    );
+    expect(platformAdminTeamSource).not.toContain(".orderBy('name')");
     expect(source).toContain('async function listCallableParentTeamDocuments(caller)');
     expect(source).toContain('const MAX_DASHBOARD_PARENT_TEAMS = 180;');
     expect(listManagedTeamsSource).toContain('includeAllTeams && !isOpportunityPlatformAdmin(caller)');
