@@ -63,6 +63,7 @@ import {
   Timestamp
 } from './adapters/legacyScheduleDb';
 import { getPrimaryAppCheckHeaders } from './adapters/legacyFirebaseAppCheck';
+import { isRetryableReadTransportError, raceFirstSuccessfulRead } from './adapters/legacyHedgedRead';
 import { getCalendarOccurrenceTrackingId, isCalendarOccurrenceTracked } from './calendarOccurrence';
 import {
   sendPublicRsvpReminderEmails,
@@ -151,6 +152,7 @@ import type { AuthUser } from './types';
 const buildPracticePacketCompletionPayloadBase = buildPracticePacketCompletionPayload;
 
 const primaryDataTimeoutMs = 5000;
+const restReadHedgeDelayMs = 750;
 // Managed-team discovery can fan out across owner, admin, and legacy coach
 // grants. Cold production fixture audits take about 11 seconds, so keep this
 // one operation inside the 25-second chooser contract without raising the
@@ -1127,12 +1129,15 @@ async function nativeListCollection(path: string, options: { pageSize?: number; 
   const pageSize = Number.isFinite(requestedPageSize)
     ? Math.min(Math.max(Math.floor(requestedPageSize), 1), 100)
     : null;
-  const params = new URLSearchParams();
-  if (pageSize) params.set('pageSize', String(pageSize));
-  if (options.orderBy) params.set('orderBy', options.orderBy);
-  const queryString = params.size ? `?${params.toString()}` : '';
-  const payload = await nativeFirestoreRequest(`/${path}${queryString}`);
-  return ((payload.documents || []) as NativeFirestoreDocument[])
+  const documents = await listNativeFirestoreCollectionPages<NativeFirestoreDocument>(
+    path,
+    nativeFirestoreRequest,
+    {
+      ...(pageSize ? { pageSize } : {}),
+      ...(options.orderBy ? { orderBy: options.orderBy } : {})
+    }
+  );
+  return documents
     .map((document) => mapFirestoreDocument(document))
     .filter(Boolean) as FirestoreDocument[];
 }
@@ -1172,8 +1177,11 @@ async function nativeGetScheduleEventDocument(path: string): Promise<ScheduleEve
 }
 
 async function nativeListScheduleEventDocuments(path: string): Promise<ScheduleEventFirestoreRecord[]> {
-  const payload = await nativeFirestoreRequest(`/${path}`);
-  return mapScheduleEventDocuments((payload.documents || []) as NativeFirestoreDocument[]);
+  const documents = await listNativeFirestoreCollectionPages<NativeFirestoreDocument>(
+    path,
+    nativeFirestoreRequest
+  );
+  return mapScheduleEventDocuments(documents);
 }
 
 async function nativeQueryScheduleEventDocuments(teamId: string, range: ScheduleDateRange): Promise<ScheduleEventFirestoreRecord[]> {
@@ -1709,13 +1717,23 @@ async function readWithNativeFallback<T>(
   fallback: () => Promise<T>,
   timeoutMs = primaryDataTimeoutMs
 ): Promise<T> {
-  try {
-    return await withTimeout(Promise.resolve(primary()), label, timeoutMs);
-  } catch (error) {
-    if (!isNativeRuntime()) throw error;
-    logScheduleWarning(`Falling back to REST for ${label}.`, 'native-read-fallback', error, { fallback: 'rest', label });
-    return fallback();
+  const result = await raceFirstSuccessfulRead({
+    primary,
+    fallback,
+    label,
+    fallbackDelayMs: restReadHedgeDelayMs,
+    primaryTimeoutMs: timeoutMs,
+    shouldFallbackAfterPrimaryError: (error) => isNativeRuntime() || isRetryableReadTransportError(error)
+  });
+  if (result.source === 'fallback') {
+    logScheduleWarning(
+      `Falling back to REST for ${label}.`,
+      'read-fallback',
+      result.primaryError || new Error(`${label} SDK read exceeded the REST hedge delay.`),
+      { fallback: 'rest', label }
+    );
   }
+  return result.value;
 }
 
 function compactString(value: unknown) {

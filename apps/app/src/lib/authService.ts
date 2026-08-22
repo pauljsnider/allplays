@@ -29,6 +29,8 @@ import {
 } from './adapters/legacyAuth';
 import { createLogger } from './logger';
 import { getPrimaryAppCheckHeaders } from './adapters/legacyFirebaseAppCheck';
+import { loadAuthProfileViaRest } from './adapters/legacyAuthProfileRest';
+import { raceFirstSuccessfulRead } from './adapters/legacyHedgedRead';
 import { clearAppDataCache } from './appDataCache';
 import { buildFirebaseSdkActionHref } from './appLinks';
 import { mergeOwnedTeamIds } from './teamAccess';
@@ -47,6 +49,8 @@ const nativeWebAuthBridgeMaxAttempts = 2;
 const nativeWebAuthBridgeRetryBaseMs = 2000;
 const nativeWebAuthBridgeRetryMaxMs = 30000;
 const profileHydrationTimeoutMs = 8000;
+const profileRestHedgeDelayMs = 750;
+const accessEnrichmentTimeoutMs = 1500;
 const signOutCleanupTimeoutMs = 2500;
 const firebaseAuthStorageDb = 'firebaseLocalStorageDb';
 const firebaseAuthStorageStore = 'firebaseLocalStorage';
@@ -78,9 +82,14 @@ type UserCredential = {
 };
 
 type HydratedUser = {
-  user: AuthUser;
-  profile: Record<string, unknown>;
-  profileHydration: ProfileHydrationStatus;
+    user: AuthUser;
+    profile: Record<string, unknown>;
+    profileHydration: ProfileHydrationStatus;
+};
+
+type HydrateFirebaseUserOptions = {
+  onAccessEnriched?: (hydrated: HydratedUser) => void;
+  onAccessEnrichment?: (hydrated: HydratedUser) => void;
 };
 
 type NativeAuthSession = {
@@ -1070,32 +1079,60 @@ async function cleanupFailedNewUser(user: FirebaseUser | null, context: string, 
   }
 }
 
-export async function hydrateFirebaseUser(user: FirebaseUser): Promise<HydratedUser> {
+export async function hydrateFirebaseUser(
+  user: FirebaseUser,
+  options: HydrateFirebaseUserOptions = {}
+): Promise<HydratedUser> {
   let profile: Record<string, unknown> = {};
   let profileHydration: ProfileHydrationStatus = 'success';
-  const dbModule = await loadLegacyAuthDb();
-  const [profileResult, membershipRequestsResult, ownedTeamsResult] = await Promise.allSettled([
-    withTimeout(
-      Promise.resolve().then(() => dbModule.getUserProfile(user.uid)),
-      'Profile load timed out.',
-      profileHydrationTimeoutMs
-    ),
-    withTimeout(
-      Promise.resolve().then(() => dbModule.listMyParentMembershipRequests(user.uid)),
-      'Parent membership sync timed out.',
-      profileHydrationTimeoutMs
-    ),
-    withTimeout(
-      Promise.resolve().then(() => dbModule.getUserTeams(user.uid)),
-      'Team access load timed out.',
-      profileHydrationTimeoutMs
+  const dbModulePromise = loadLegacyAuthDb();
+  let membershipRequestsResult: PromiseSettledResult<unknown[]> | undefined;
+  let ownedTeamsResult: PromiseSettledResult<Array<Record<string, unknown>>> | undefined;
+  const membershipRequestsTask = dbModulePromise
+    .then((dbModule) => dbModule.listMyParentMembershipRequests(user.uid))
+    .then(
+      (value): PromiseSettledResult<unknown[]> => ({ status: 'fulfilled', value }),
+      (reason): PromiseSettledResult<unknown[]> => ({ status: 'rejected', reason })
     )
-  ]);
+    .then((result) => {
+      membershipRequestsResult = result;
+      return result;
+    });
+  const ownedTeamsTask = dbModulePromise
+    .then((dbModule) => dbModule.getUserTeams(user.uid))
+    .then(
+      (value): PromiseSettledResult<Array<Record<string, unknown>>> => ({ status: 'fulfilled', value }),
+      (reason): PromiseSettledResult<Array<Record<string, unknown>>> => ({ status: 'rejected', reason })
+    )
+    .then((result) => {
+      ownedTeamsResult = result;
+      return result;
+    });
+  let accessEnrichmentTimer: number | undefined;
+  const accessEnrichmentDeadline = Promise.race([
+    Promise.all([membershipRequestsTask, ownedTeamsTask]),
+    new Promise<void>((resolve) => {
+      accessEnrichmentTimer = window.setTimeout(resolve, accessEnrichmentTimeoutMs);
+    })
+  ]).finally(() => {
+    if (accessEnrichmentTimer !== undefined) window.clearTimeout(accessEnrichmentTimer);
+  });
 
-  if (profileResult.status === 'fulfilled') {
+  try {
+    const profileResult = await raceFirstSuccessfulRead({
+      primary: () => dbModulePromise.then((dbModule) => dbModule.getUserProfile(user.uid)),
+      fallback: () => loadAuthProfileViaRest({ auth, user, timeoutMs: profileHydrationTimeoutMs }),
+      label: 'Profile load',
+      fallbackDelayMs: profileRestHedgeDelayMs,
+      primaryTimeoutMs: profileHydrationTimeoutMs
+    });
     profile = profileResult.value || {};
-  } else {
-    const error = profileResult.reason;
+    if (profileResult.source === 'fallback') {
+      logger.warn('Loaded profile through authenticated REST after the SDK read was slow.', {
+        error: profileResult.primaryError || new Error('Profile SDK read exceeded the REST hedge delay.')
+      });
+    }
+  } catch (error) {
     logger.warn('Failed to load profile; continuing with auth identity.', { error });
     profileHydration = 'fallback';
     profile = {
@@ -1103,43 +1140,94 @@ export async function hydrateFirebaseUser(user: FirebaseUser): Promise<HydratedU
     };
   }
 
-  try {
-    if (membershipRequestsResult.status === 'rejected') {
-      throw membershipRequestsResult.reason;
+  // Membership repair and ownerId discovery are authoritative access reads.
+  // Give them a bounded opportunity to enrich this hydration result so
+  // one-shot route consumers receive delayed successes without an unbounded
+  // signed-in shell wait.
+  await accessEnrichmentDeadline;
+
+  const syncApprovedMemberships = async (
+    result: PromiseSettledResult<unknown[]>
+  ): Promise<boolean> => {
+    try {
+      if (result.status === 'rejected') throw result.reason;
+      const { mergeApprovedParentMembershipRequests } = await loadLegacyParentMembershipUtils();
+      const parentRequestSync = mergeApprovedParentMembershipRequests(profile, result.value);
+      if (!parentRequestSync.changed) return false;
+      Object.assign(profile, parentRequestSync.userUpdate);
+      const persistence = dbModulePromise
+        .then((dbModule) => dbModule.updateUserProfile(user.uid, parentRequestSync.userUpdate))
+        .catch((error) => logger.warn('Failed to persist approved parent membership sync.', { error }));
+      void persistence;
+      return true;
+    } catch (error) {
+      logger.warn('Failed to sync approved parent membership requests.', { error });
+      return false;
     }
-    const { mergeApprovedParentMembershipRequests } = await loadLegacyParentMembershipUtils();
-    const parentRequestSync = mergeApprovedParentMembershipRequests(profile, membershipRequestsResult.value);
-    if (parentRequestSync.changed) {
-      await dbModule.updateUserProfile(user.uid, parentRequestSync.userUpdate);
-      profile = {
-        ...profile,
-        ...parentRequestSync.userUpdate
-      };
+  };
+
+  const mergeOwnedTeams = (
+    result: PromiseSettledResult<Array<Record<string, unknown>>>
+  ): boolean => {
+    try {
+      if (result.status === 'rejected') throw result.reason;
+      const previousCoachOf = Array.isArray(profile.coachOf)
+        ? profile.coachOf.filter((teamId): teamId is string => typeof teamId === 'string')
+        : [];
+      const coachOf = mergeOwnedTeamIds(previousCoachOf, result.value);
+      if (coachOf.length === previousCoachOf.length
+        && coachOf.every((teamId, index) => teamId === previousCoachOf[index])) {
+        return false;
+      }
+      profile.coachOf = coachOf;
+      return true;
+    } catch (error) {
+      logger.warn('Failed to load owned teams.', { error });
+      return false;
     }
-  } catch (error) {
-    logger.warn('Failed to sync approved parent membership requests.', { error });
+  };
+
+  if (membershipRequestsResult) {
+    await syncApprovedMemberships(membershipRequestsResult);
   }
 
-  try {
-    if (ownedTeamsResult.status === 'rejected') {
-      throw ownedTeamsResult.reason;
-    }
-    const coachOf = mergeOwnedTeamIds(profile.coachOf, ownedTeamsResult.value);
-    if (coachOf.length > 0) {
-      profile = {
-        ...profile,
-        coachOf
-      };
-    }
-  } catch (error) {
-    logger.warn('Failed to load owned teams.', { error });
+  if (ownedTeamsResult) {
+    mergeOwnedTeams(ownedTeamsResult);
   }
 
-  return {
+  const hydrated = {
     user: toAuthUser(user, profile),
     profile,
     profileHydration
   };
+
+  const publishAccessEnrichment = () => {
+    const enrichedUser = toAuthUser(user, profile);
+    const callback = options.onAccessEnriched ?? options.onAccessEnrichment;
+    if (!callback) return;
+    try {
+      callback({
+        user: enrichedUser,
+        profile: { ...profile },
+        profileHydration
+      });
+    } catch (error) {
+      logger.warn('Failed to publish late auth access enrichment.', { error });
+    }
+  };
+
+  if (!membershipRequestsResult) {
+    void membershipRequestsTask.then(async (result) => {
+      if (await syncApprovedMemberships(result)) publishAccessEnrichment();
+    });
+  }
+  if (!ownedTeamsResult) {
+    void ownedTeamsTask.then((result) => {
+      if (mergeOwnedTeams(result)) publishAccessEnrichment();
+    });
+  }
+
+  return hydrated;
 }
 
 export function observeFirebaseUser(callback: (user: FirebaseUser | null) => void) {

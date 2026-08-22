@@ -295,7 +295,8 @@ describe('React app schedule rideshare service integration', () => {
         dbMocks.listRideOffersForEvent.mockRejectedValue(new Error('web unavailable'));
         const fetchMock = vi.fn(async (url) => {
             const href = String(url);
-            if (href.endsWith('/teams/team-1/games/game-1/rideOffers')) {
+            const pathname = new URL(href).pathname;
+            if (pathname.endsWith('/teams/team-1/games/game-1/rideOffers')) {
                 return restOk({
                     documents: [
                         firestoreDoc('teams/team-1/games/game-1/rideOffers/offer-native', {
@@ -344,7 +345,8 @@ describe('React app schedule rideshare service integration', () => {
         dbMocks.listRideOffersForEvent.mockRejectedValue(new Error('web unavailable'));
         const fetchMock = vi.fn(async (url) => {
             const href = String(url);
-            if (href.endsWith('/teams/team-1/games/game-1/rideOffers')) {
+            const pathname = new URL(href).pathname;
+            if (pathname.endsWith('/teams/team-1/games/game-1/rideOffers')) {
                 return restOk({
                     documents: [firestoreDoc('teams/team-1/games/game-1/rideOffers/offer-native', {
                         driverUserId: 'driver-1',
@@ -355,7 +357,7 @@ describe('React app schedule rideshare service integration', () => {
                     })]
                 });
             }
-            if (href.endsWith('/teams/team-1/games/game-1/rideOffers/offer-native/requests')) {
+            if (pathname.endsWith('/teams/team-1/games/game-1/rideOffers/offer-native/requests')) {
                 return restOk({
                     documents: [
                         firestoreDoc('teams/team-1/games/game-1/rideOffers/offer-native/requests/user-1__player-1', {
@@ -378,7 +380,7 @@ describe('React app schedule rideshare service integration', () => {
         );
 
         expect(loaded[0].requests).toHaveLength(2);
-        expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/rideOffers/offer-native/requests'))).toBe(true);
+        expect(fetchMock.mock.calls.some(([url]) => new URL(String(url)).pathname.endsWith('/rideOffers/offer-native/requests'))).toBe(true);
     });
 
     it('keeps two parent households and the driver isolated for the same offer cache key', async () => {

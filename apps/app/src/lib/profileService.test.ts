@@ -197,6 +197,7 @@ describe('loadProfileDocument telemetry', () => {
 
     afterEach(() => {
         vi.unstubAllGlobals();
+        vi.useRealTimers();
     });
 
     it('records profile load timing when the SDK path succeeds', async () => {
@@ -246,6 +247,35 @@ describe('loadProfileDocument telemetry', () => {
             })
         );
         expect(JSON.stringify(telemetryMocks.captureHandledAppError.mock.calls[0][2])).not.toContain('user-1');
+        expect(telemetryMocks.timerEnd).toHaveBeenCalledWith({
+            path: 'rest_fallback',
+            fallback: true,
+            userIdPresent: true
+        });
+    });
+
+    it('starts the authenticated REST hedge before a stalled SDK read reaches its timeout', async () => {
+        vi.useFakeTimers();
+        dbMocks.getUserProfile.mockImplementation(() => new Promise(() => {}));
+        vi.mocked(getNativeAuthIdToken).mockResolvedValue('web-token');
+        const fetchMock = vi.fn().mockResolvedValue({
+            ok: true,
+            status: 200,
+            json: async () => ({
+                name: 'projects/demo/databases/(default)/documents/users/user-1',
+                fields: {
+                    fullName: { stringValue: 'REST Pat' }
+                }
+            })
+        });
+        vi.stubGlobal('fetch', fetchMock);
+
+        const profile = loadProfileDocument('user-1');
+        await vi.advanceTimersByTimeAsync(749);
+        expect(fetchMock).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1);
+
+        await expect(profile).resolves.toEqual({ id: 'user-1', fullName: 'REST Pat' });
         expect(telemetryMocks.timerEnd).toHaveBeenCalledWith({
             path: 'rest_fallback',
             fallback: true,

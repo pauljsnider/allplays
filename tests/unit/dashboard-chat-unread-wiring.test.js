@@ -15,8 +15,25 @@ describe('dashboard chat unread wiring', () => {
         expect(html).not.toContain('email: user.email || profile?.email');
         expect(html).toContain('const conversationLookupByTeam = allTeams.reduce((acc, team) => {');
         expect(html).toContain("canModerate: team._access === 'full'");
-        expect(html).toContain('await getUnreadChatCounts(user.uid, teamIds, { conversationLookupByTeam })');
+        expect(html).toContain('let unreadCounts = {};');
+        expect(html).toContain('renderTeamLists();');
+        expect(html).toContain("import { startBoundedRetry } from './js/bounded-retry.js?v=2';");
+        expect(html).toContain('run: (requestedTeamIds) => getUnreadChatCounts(user.uid, requestedTeamIds, {');
+        expect(html).toContain('deadlineAt: Date.now() + 5000');
+        expect(html).toContain('updateUnreadChatBadges();');
+        expect(html).toContain('data-unread-chat-unknown');
+        expect(html).toContain('id="unread-chat-status"');
+        expect(html).toContain('id="retry-unread-chat"');
+        expect(html).toContain('cancelUnreadChatRetries = startBoundedRetry({');
+        expect(html).toContain('onExhausted: (unavailableTeamIds, error) => {');
+        expect(html).not.toContain('setTimeout(() => loadUnreadChatBadges');
+        expect(html).toContain('unreadCounts = { ...unreadCounts, ...(counts || {}) };');
+        expect(html).toContain('data-team-chat-link=');
+        expect(html).not.toContain('unreadCounts = counts || {};\n                        renderTeamLists();');
+        expect(html).not.toContain('const unreadCounts = teamIds.length > 0 ? await getUnreadChatCounts');
         expect(html).not.toContain('await getUnreadChatCounts(user.uid, teamIds) : {}');
+        expect(html).toContain("window.addEventListener('allplays-dashboard-parent-access-enriched'");
+        expect(html).toContain("window.dispatchEvent(new window.CustomEvent('allplays-dashboard-parent-access-enriched'));");
     });
 
     it('keeps Firebase Auth email authoritative for dashboard team access', () => {

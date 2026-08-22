@@ -268,6 +268,7 @@ it('keeps schedule workflows behind typed legacy adapters', () => {
   expect(scheduleServiceSource).toContain("./adapters/legacyScheduleDb");
   expect(scheduleServiceSource).toContain("./adapters/legacyScheduleHelpers");
   expect(scheduleServiceSource).toContain("./adapters/legacyAvailability");
+  expect(scheduleServiceSource).toContain("./adapters/legacyHedgedRead");
   expect(scheduleServiceSource).toContain("./statTrackingEvent");
   expect(scheduleServiceSource).not.toContain("from './statTrackingService'");
   expect(scheduleServiceSource).toContain("./logger");
@@ -277,6 +278,24 @@ it('keeps schedule workflows behind typed legacy adapters', () => {
   expect(scheduleServiceSource).not.toContain('console.');
   expect(scheduleServiceSource).not.toContain('await Promise.resolve();');
   expect(scheduleServiceSource).toContain('lock.waiters.push(resolve);');
+  const hedgedReadSource = scheduleServiceSource.slice(
+    scheduleServiceSource.indexOf('async function readWithNativeFallback'),
+    scheduleServiceSource.indexOf('function compactString')
+  );
+  expect(hedgedReadSource).toContain('raceFirstSuccessfulRead({');
+  expect(hedgedReadSource).not.toContain('if (!isNativeRuntime()) throw error;');
+  const nativeListSource = scheduleServiceSource.slice(
+    scheduleServiceSource.indexOf('async function nativeListCollection'),
+    scheduleServiceSource.indexOf('async function nativeRunQuery')
+  );
+  expect(nativeListSource).toContain('listNativeFirestoreCollectionPages<NativeFirestoreDocument>(');
+  expect(nativeListSource).not.toContain('payload.documents');
+  const scheduleEventListSource = scheduleServiceSource.slice(
+    scheduleServiceSource.indexOf('async function nativeListScheduleEventDocuments'),
+    scheduleServiceSource.indexOf('async function nativeQueryScheduleEventDocuments')
+  );
+  expect(scheduleEventListSource).toContain('listNativeFirestoreCollectionPages<NativeFirestoreDocument>(');
+  expect(scheduleEventListSource).not.toContain('payload.documents');
   expect(scheduleEventDetailSource).not.toContain("../../../../js/");
   expect(scheduleEventDetailSource).toContain("./schedule/ScheduleGameHubSection");
   expect(scheduleGameHubSectionSource).not.toContain("../../../../../js/");
@@ -452,7 +471,7 @@ describe('native rideshare request fallback', () => {
   it('keeps an existing child request when another scoped child request is missing', async () => {
     (globalThis as any).fetch = vi.fn().mockImplementation(async (input: any) => {
       const url = String(input || '');
-      if (url.endsWith('/rideOffers')) return rideOfferResponse();
+      if (new URL(url).pathname.endsWith('/rideOffers')) return rideOfferResponse();
       if (url.endsWith('/requests/parent-1__player-1')) {
         return {
           ok: true,

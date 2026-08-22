@@ -49,6 +49,9 @@ const legacyAuthEmailMocks = vi.hoisted(() => ({
 const parentMembershipMocks = vi.hoisted(() => ({
   mergeApprovedParentMembershipRequests: vi.fn()
 }));
+const profileRestMocks = vi.hoisted(() => ({
+  loadAuthProfileViaRest: vi.fn()
+}));
 
 const appDataCacheMocks = vi.hoisted(() => ({
   clearAppDataCache: vi.fn()
@@ -126,6 +129,8 @@ vi.mock('./adapters/legacyAuth', () => ({
 vi.mock('./appDataCache', () => ({
   clearAppDataCache: appDataCacheMocks.clearAppDataCache
 }));
+
+vi.mock('./adapters/legacyAuthProfileRest', () => profileRestMocks);
 
 vi.mock('./nativeCallable', () => nativeCallableMocks);
 
@@ -662,6 +667,7 @@ describe('hydrateFirebaseUser', () => {
     legacyAuthMocks.listMyParentMembershipRequests.mockReset();
     legacyAuthMocks.updateUserProfile.mockReset();
     legacyAuthMocks.getUserTeams.mockReset();
+    profileRestMocks.loadAuthProfileViaRest.mockReset();
     parentMembershipMocks.mergeApprovedParentMembershipRequests.mockReset();
     legacyAuthMocks.getUserProfile.mockResolvedValue({
       email: 'coach@example.com',
@@ -669,9 +675,14 @@ describe('hydrateFirebaseUser', () => {
     });
     legacyAuthMocks.listMyParentMembershipRequests.mockResolvedValue([]);
     legacyAuthMocks.getUserTeams.mockResolvedValue([]);
+    profileRestMocks.loadAuthProfileViaRest.mockResolvedValue(null);
     parentMembershipMocks.mergeApprovedParentMembershipRequests.mockReturnValue({
       changed: false
     });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('loads stored profile roles for native REST fallback users before routing decisions', async () => {
@@ -707,6 +718,7 @@ describe('hydrateFirebaseUser', () => {
 
   it('marks auth identity data as fallback when the profile document cannot be loaded', async () => {
     legacyAuthMocks.getUserProfile.mockRejectedValue(new Error('profile unavailable'));
+    profileRestMocks.loadAuthProfileViaRest.mockRejectedValue(new Error('REST profile unavailable'));
 
     const hydrated = await hydrateFirebaseUser({
       uid: 'coach-1',
@@ -731,6 +743,109 @@ describe('hydrateFirebaseUser', () => {
     expect(legacyAuthMocks.getUserTeams).toHaveBeenCalledWith('coach-1');
     expect(hydrated.profile.coachOf).toEqual(['team-1', 'team-2']);
     expect(hydrated.user.coachOf).toEqual(['team-1', 'team-2']);
+  });
+
+  it('includes a delayed approved-membership repair in the current hydration result', async () => {
+    let resolveMembershipRequests: ((value: unknown[]) => void) | undefined;
+    legacyAuthMocks.listMyParentMembershipRequests.mockImplementation(() => new Promise((resolve) => {
+      resolveMembershipRequests = resolve;
+    }));
+    parentMembershipMocks.mergeApprovedParentMembershipRequests.mockReturnValue({
+      changed: true,
+      userUpdate: {
+        roles: ['member', 'parent'],
+        parentOf: [{ teamId: 'team-2', playerId: 'player-2' }]
+      }
+    });
+
+    const hydration = hydrateFirebaseUser({ uid: 'parent-1', email: 'parent@example.com' });
+    await vi.waitFor(() => expect(resolveMembershipRequests).toBeTypeOf('function'));
+    resolveMembershipRequests?.([{ status: 'approved', teamId: 'team-2' }]);
+
+    await expect(hydration).resolves.toEqual(expect.objectContaining({
+      user: expect.objectContaining({
+        parentOf: [{ teamId: 'team-2', playerId: 'player-2' }]
+      })
+    }));
+  });
+
+  it('includes delayed ownerId team discovery in the current hydration result', async () => {
+    let resolveOwnedTeams: ((value: Array<{ id: string; name: string }>) => void) | undefined;
+    legacyAuthMocks.getUserProfile.mockResolvedValue({ email: 'coach@example.com' });
+    legacyAuthMocks.getUserTeams.mockImplementation(() => new Promise((resolve) => {
+      resolveOwnedTeams = resolve;
+    }));
+
+    const hydration = hydrateFirebaseUser({ uid: 'coach-1', email: 'coach@example.com' });
+    await vi.waitFor(() => expect(resolveOwnedTeams).toBeTypeOf('function'));
+    resolveOwnedTeams?.([{ id: 'team-owned', name: 'Vipers' }]);
+
+    await expect(hydration).resolves.toEqual(expect.objectContaining({
+      user: expect.objectContaining({ coachOf: ['team-owned'] })
+    }));
+  });
+
+  it('publishes an approved-membership repair without waiting for stalled persistence', async () => {
+    vi.useFakeTimers();
+    let resolveMembershipRequests: ((value: unknown[]) => void) | undefined;
+    const onAccessEnriched = vi.fn();
+    legacyAuthMocks.getUserProfile.mockResolvedValue({ email: 'parent@example.com', roles: ['member'] });
+    legacyAuthMocks.listMyParentMembershipRequests.mockImplementation(() => new Promise((resolve) => {
+      resolveMembershipRequests = resolve;
+    }));
+    parentMembershipMocks.mergeApprovedParentMembershipRequests.mockReturnValue({
+      changed: true,
+      userUpdate: { roles: ['member', 'parent'], parentOf: [{ teamId: 'team-late', playerId: 'player-late' }] }
+    });
+    legacyAuthMocks.updateUserProfile.mockImplementation(() => new Promise(() => {}));
+
+    const hydrationPromise = hydrateFirebaseUser(
+      { uid: 'parent-1', email: 'parent@example.com' },
+      { onAccessEnriched }
+    );
+    await vi.advanceTimersByTimeAsync(1500);
+    const hydrated = await hydrationPromise;
+    expect(hydrated.user.parentOf).toEqual([]);
+    resolveMembershipRequests?.([{ status: 'approved', teamId: 'team-late' }]);
+
+    await vi.waitFor(() => expect(onAccessEnriched).toHaveBeenCalledWith(expect.objectContaining({
+      user: expect.objectContaining({
+        roles: expect.arrayContaining(['parent']),
+        parentOf: [{ teamId: 'team-late', playerId: 'player-late' }]
+      }),
+      profile: expect.objectContaining({
+        parentOf: [{ teamId: 'team-late', playerId: 'player-late' }]
+      })
+    })));
+    expect(hydrated.user.parentOf).toEqual([]);
+    expect(legacyAuthMocks.updateUserProfile).toHaveBeenCalledWith('parent-1', expect.objectContaining({
+      parentOf: [{ teamId: 'team-late', playerId: 'player-late' }]
+    }));
+  });
+
+  it('publishes owned-team discovery that settles after the access timeout', async () => {
+    vi.useFakeTimers();
+    let resolveOwnedTeams: ((value: Array<{ id: string }>) => void) | undefined;
+    const onAccessEnriched = vi.fn();
+    legacyAuthMocks.getUserProfile.mockResolvedValue({ email: 'coach@example.com' });
+    legacyAuthMocks.getUserTeams.mockImplementation(() => new Promise((resolve) => {
+      resolveOwnedTeams = resolve;
+    }));
+
+    const hydrationPromise = hydrateFirebaseUser(
+      { uid: 'coach-1', email: 'coach@example.com' },
+      { onAccessEnriched }
+    );
+    await vi.advanceTimersByTimeAsync(1500);
+    const hydrated = await hydrationPromise;
+    expect(hydrated.user.coachOf).toEqual([]);
+    resolveOwnedTeams?.([{ id: 'team-late' }]);
+
+    await vi.waitFor(() => expect(onAccessEnriched).toHaveBeenCalledWith(expect.objectContaining({
+      user: expect.objectContaining({ coachOf: ['team-late'] }),
+      profile: expect.objectContaining({ coachOf: ['team-late'] })
+    })));
+    expect(hydrated.user.coachOf).toEqual([]);
   });
 
   it('starts independent account bootstrap reads before any one read resolves', async () => {
@@ -764,6 +879,145 @@ describe('hydrateFirebaseUser', () => {
       resolveOwnedTeams?.([{ id: 'team-2', name: 'Vipers' }]);
       await hydration;
     }
+  });
+
+  it('returns after the profile is authoritative even when supplementary repair reads remain stalled', async () => {
+    vi.useFakeTimers();
+    legacyAuthMocks.listMyParentMembershipRequests.mockImplementation(() => new Promise(() => {}));
+    legacyAuthMocks.getUserTeams.mockImplementation(() => new Promise(() => {}));
+
+    const hydration = hydrateFirebaseUser({
+      uid: 'coach-1',
+      email: 'coach@example.com'
+    });
+    await vi.advanceTimersByTimeAsync(1499);
+    let settled = false;
+    void hydration.then(() => { settled = true; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(hydration).resolves.toEqual(expect.objectContaining({
+      user: expect.objectContaining({ uid: 'coach-1', coachOf: ['team-1'] }),
+      profileHydration: 'success'
+    }));
+  });
+
+  it('starts the access deadline beside a slow profile read instead of adding another wait', async () => {
+    vi.useFakeTimers();
+    legacyAuthMocks.getUserProfile.mockImplementation(() => new Promise(() => {}));
+    legacyAuthMocks.listMyParentMembershipRequests.mockImplementation(() => new Promise(() => {}));
+    legacyAuthMocks.getUserTeams.mockImplementation(() => new Promise(() => {}));
+    profileRestMocks.loadAuthProfileViaRest.mockResolvedValue({
+      email: 'coach@example.com',
+      coachOf: ['team-rest']
+    });
+
+    const hydration = hydrateFirebaseUser({
+      uid: 'coach-1',
+      email: 'coach@example.com',
+      getIdToken: vi.fn().mockResolvedValue('token')
+    });
+    let settled = false;
+    void hydration.then(() => { settled = true; });
+
+    await vi.advanceTimersByTimeAsync(1499);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+
+    await expect(hydration).resolves.toEqual(expect.objectContaining({
+      user: expect.objectContaining({ coachOf: ['team-rest'] }),
+      profileHydration: 'success'
+    }));
+  });
+
+  it('publishes an approved membership that succeeds after the access deadline', async () => {
+    vi.useFakeTimers();
+    let resolveMembershipRequests: ((value: unknown[]) => void) | undefined;
+    const onAccessEnrichment = vi.fn();
+    legacyAuthMocks.listMyParentMembershipRequests.mockImplementation(() => new Promise((resolve) => {
+      resolveMembershipRequests = resolve;
+    }));
+    parentMembershipMocks.mergeApprovedParentMembershipRequests.mockReturnValue({
+      changed: true,
+      userUpdate: {
+        roles: ['member', 'parent'],
+        parentOf: [{ teamId: 'team-late', playerId: 'player-late' }]
+      }
+    });
+
+    const hydration = hydrateFirebaseUser(
+      { uid: 'parent-1', email: 'parent@example.com' },
+      { onAccessEnrichment }
+    );
+    await vi.advanceTimersByTimeAsync(1500);
+    await expect(hydration).resolves.toEqual(expect.objectContaining({
+      user: expect.not.objectContaining({
+        parentOf: [{ teamId: 'team-late', playerId: 'player-late' }]
+      })
+    }));
+
+    resolveMembershipRequests?.([{ status: 'approved', teamId: 'team-late' }]);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(onAccessEnrichment).toHaveBeenCalledWith(expect.objectContaining({
+      user: expect.objectContaining({
+        roles: expect.arrayContaining(['parent']),
+        parentOf: [{ teamId: 'team-late', playerId: 'player-late' }]
+      })
+    }));
+    expect(legacyAuthMocks.updateUserProfile).toHaveBeenCalledWith('parent-1', expect.objectContaining({
+      parentOf: [{ teamId: 'team-late', playerId: 'player-late' }]
+    }));
+  });
+
+  it('publishes owned teams that succeed after the access deadline', async () => {
+    vi.useFakeTimers();
+    let resolveOwnedTeams: ((value: Array<{ id: string; name: string }>) => void) | undefined;
+    const onAccessEnrichment = vi.fn();
+    legacyAuthMocks.getUserProfile.mockResolvedValue({ email: 'coach@example.com' });
+    legacyAuthMocks.getUserTeams.mockImplementation(() => new Promise((resolve) => {
+      resolveOwnedTeams = resolve;
+    }));
+
+    const hydration = hydrateFirebaseUser(
+      { uid: 'coach-1', email: 'coach@example.com' },
+      { onAccessEnrichment }
+    );
+    await vi.advanceTimersByTimeAsync(1500);
+    await expect(hydration).resolves.toEqual(expect.objectContaining({
+      user: expect.not.objectContaining({ coachOf: ['team-late'] })
+    }));
+
+    resolveOwnedTeams?.([{ id: 'team-late', name: 'Vipers' }]);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(onAccessEnrichment).toHaveBeenCalledWith(expect.objectContaining({
+      user: expect.objectContaining({ coachOf: ['team-late'] }),
+      profile: expect.objectContaining({ coachOf: ['team-late'] })
+    }));
+  });
+
+  it('uses authenticated REST after the SDK profile read exceeds the hedge delay', async () => {
+    vi.useFakeTimers();
+    legacyAuthMocks.getUserProfile.mockImplementation(() => new Promise(() => {}));
+    profileRestMocks.loadAuthProfileViaRest.mockResolvedValue({
+      email: 'coach@example.com',
+      coachOf: ['team-rest']
+    });
+
+    const hydration = hydrateFirebaseUser({
+      uid: 'coach-1',
+      email: 'coach@example.com',
+      getIdToken: vi.fn().mockResolvedValue('token')
+    });
+    await vi.advanceTimersByTimeAsync(749);
+    expect(profileRestMocks.loadAuthProfileViaRest).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+
+    await expect(hydration).resolves.toEqual(expect.objectContaining({
+      user: expect.objectContaining({ coachOf: ['team-rest'] }),
+      profileHydration: 'success'
+    }));
   });
 });
 

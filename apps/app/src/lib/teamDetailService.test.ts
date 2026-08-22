@@ -957,7 +957,7 @@ describe('team detail bootstrap loading', () => {
     expect(dbMocks.getConfigs).not.toHaveBeenCalled();
   });
 
-  it('recovers management access from the authoritative REST document when the web SDK returns a public projection', async () => {
+  it('recovers management access from REST and refreshes the auth token only after a 401', async () => {
     const previousFetch = globalThis.fetch;
     dbMocks.getTeam.mockResolvedValueOnce({
       id: 'team-1',
@@ -966,22 +966,30 @@ describe('team detail bootstrap loading', () => {
       isPublic: true,
       active: true
     });
-    authServiceMocks.getNativeAuthIdToken.mockResolvedValueOnce('web-token');
+    authServiceMocks.getNativeAuthIdToken
+      .mockResolvedValueOnce('cached-web-token')
+      .mockResolvedValueOnce('refreshed-web-token');
     dbMocks.getRosterFieldDefinitions.mockResolvedValueOnce([]);
     dbMocks.applyRosterCsvImportOperations.mockResolvedValueOnce([{ playerId: 'player-2' }]);
-    (globalThis as any).fetch = vi.fn(async () => ({
-      ok: true,
-      status: 200,
-      json: async () => ({
-        name: 'projects/test-project/databases/(default)/documents/teams/team-1',
-        fields: {
-          name: { stringValue: 'Bears' },
-          sport: { stringValue: 'Basketball' },
-          ownerId: { stringValue: 'owner-1' },
-          active: { booleanValue: true }
-        }
-      })
-    }) as any);
+    (globalThis as any).fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        json: async () => ({ error: { message: 'Expired token' } })
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          name: 'projects/test-project/databases/(default)/documents/teams/team-1',
+          fields: {
+            name: { stringValue: 'Bears' },
+            sport: { stringValue: 'Basketball' },
+            ownerId: { stringValue: 'owner-1' },
+            active: { booleanValue: true }
+          }
+        })
+      } as Response);
 
     try {
       const model = await loadParentTeamDetailBootstrap('team-1', { uid: 'owner-1', roles: ['coach'] } as any);
@@ -991,13 +999,13 @@ describe('team detail bootstrap loading', () => {
       expect(dbMocks.getPlayersWithPrivateRosterContacts).toHaveBeenCalledWith('team-1', expect.objectContaining({
         includeInactive: true
       }));
-      expect(authServiceMocks.getNativeAuthIdToken).toHaveBeenCalledWith(true);
+      expect(authServiceMocks.getNativeAuthIdToken.mock.calls).toEqual([[false], [true]]);
 
       await expect(addRosterPlayerForApp('team-1', { uid: 'owner-1', roles: ['coach'] } as any, {
         name: 'New Player'
       })).resolves.toMatchObject({ playerId: 'player-2' });
       expect(dbMocks.getTeam).toHaveBeenCalledTimes(1);
-      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+      expect(globalThis.fetch).toHaveBeenCalledTimes(2);
     } finally {
       globalThis.fetch = previousFetch;
     }

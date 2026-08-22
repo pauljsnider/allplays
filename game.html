@@ -388,14 +388,14 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getGame, getPlayers, getUnreadChatCounts, getUserProfile, updateGame, uploadStatSheetPhoto, deleteUploadedMediaObjects, setCompletedGamePlayerStats, getTeamStatsForGame, setCompletedGameTeamStats } from './js/db.js?v=4433178';
+        import { getTeam, getGame, getPlayers, getUnreadChatCounts, getUserProfile, updateGame, uploadStatSheetPhoto, deleteUploadedMediaObjects, setCompletedGamePlayerStats, getTeamStatsForGame, setCompletedGameTeamStats } from './js/db.js?v=4433182';
         import { generateGameInsights } from './js/post-game-insights.js?v=2';
-        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, escapeHtml, shareOrCopy } from './js/utils.js?v=443354';
-        import { checkAuth } from './js/auth.js?v=4433180';
+        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, escapeHtml, shareOrCopy } from './js/utils.js?v=443358';
+        import { checkAuth } from './js/auth.js?v=4433186';
         import { collection, getDocs, query, orderBy } from "./js/firebase.js?v=26";
         import { db } from './js/firebase.js?v=26';
-        import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=443335';
-        import { resolveLiveStatConfig } from './js/live-game-state.js?v=30';
+        import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=443338';
+        import { resolveLiveStatConfig } from './js/live-game-state.js?v=33';
         import { splitPlayerStatsByVisibility } from './js/stat-leaderboards.js?v=4';
         import { formatGameReportEventTimestamp, resolveReportStatColumns, resolveOpponentReportStatColumns } from './js/game-report-stats.js?v=2';
         import { normalizeStatKey, resolvePostGameStatFields, resolvePostGameTeamStatFields, resolvePostGameEditorDidNotPlay, buildCompletedGamePlayerStatsPayload, buildCompletedGameTeamStatsPayload, getPostGameEditorNextIndex } from './js/post-game-stat-editor.js?v=5';

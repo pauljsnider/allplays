@@ -74,6 +74,10 @@
                     </a>
                 </div>
             </div>
+            <p id="unread-chat-status" class="hidden text-sm text-amber-800" role="status">
+                Some unread message counts could not be loaded.
+                <button id="retry-unread-chat" type="button" class="font-semibold underline hover:text-amber-950">Try again</button>
+            </p>
         </div>
 
         <!-- Teams Grid -->
@@ -88,36 +92,65 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeams, getUserTeamsWithAccess, getParentTeams, deleteTeam, getUnreadChatCounts } from './js/db.js?v=4433178';
-        import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=443354';
-        import { checkAuth } from './js/auth.js?v=4433180';
+        import { getTeams, getUserTeamsWithAccess, getParentTeams, deleteTeam, getUnreadChatCounts } from './js/db.js?v=4433182';
+        import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=443358';
+        import { checkAuth } from './js/auth.js?v=4433186';
+        import { startBoundedRetry } from './js/bounded-retry.js?v=2';
 
         renderFooter(document.getElementById('footer-container'));
+        let authEnrichmentReloadScheduled = false;
+        window.addEventListener('allplays-dashboard-parent-access-enriched', () => {
+            if (authEnrichmentReloadScheduled) return;
+            authEnrichmentReloadScheduled = true;
+            window.location.reload();
+        });
 
         function requireSyncedAuth() {
             return new Promise((resolve, reject) => {
                 let unsubscribe = null;
                 let cleanupRequestedBeforeSubscribeReturned = false;
                 let settled = false;
+                let initialParentAccessFingerprint = '';
+
+                function parentAccessFingerprint(user) {
+                    return JSON.stringify((Array.isArray(user?.parentOf) ? user.parentOf : [])
+                        .map((entry) => `${entry?.teamId || ''}::${entry?.playerId || ''}`)
+                        .sort());
+                }
 
                 function cleanup() {
                     if (typeof unsubscribe === 'function') {
                         const stop = unsubscribe;
                         unsubscribe = null;
                         cleanupRequestedBeforeSubscribeReturned = false;
+                        window.removeEventListener('pagehide', cleanup);
                         stop();
                     } else {
                         cleanupRequestedBeforeSubscribeReturned = true;
                     }
                 }
 
+                window.addEventListener('pagehide', cleanup, { once: true });
                 unsubscribe = checkAuth((user) => {
-                    if (settled) return;
+                    const nextParentAccessFingerprint = parentAccessFingerprint(user);
+                    if (settled) {
+                        if (!user) {
+                            cleanup();
+                            window.location.href = '/app/#/auth';
+                            return;
+                        }
+                        if (nextParentAccessFingerprint !== initialParentAccessFingerprint) {
+                            cleanup();
+                            window.dispatchEvent(new window.CustomEvent('allplays-dashboard-parent-access-enriched'));
+                        }
+                        return;
+                    }
                     settled = true;
-                    cleanup();
+                    initialParentAccessFingerprint = nextParentAccessFingerprint;
                     if (user) {
                         resolve(user);
                     } else {
+                        cleanup();
                         window.location.href = '/app/#/auth';
                         reject('Not authenticated');
                     }
@@ -190,7 +223,9 @@
                     };
                     return acc;
                 }, {});
-                const unreadCounts = teamIds.length > 0 ? await getUnreadChatCounts(user.uid, teamIds, { conversationLookupByTeam }) : {};
+                let unreadCounts = {};
+                const unavailableUnreadTeamIds = new Set();
+                let cancelUnreadChatRetries = () => {};
 
                 function renderNoTeamsState() {
                     return `
@@ -212,10 +247,14 @@
 
                 function renderTeamCard(team) {
                     const hasFullAccess = team._access === 'full';
-                    const unread = unreadCounts[team.id] || 0;
+                    const unreadKnown = Object.prototype.hasOwnProperty.call(unreadCounts, team.id);
+                    const unreadUnavailable = unavailableUnreadTeamIds.has(team.id);
+                    const unread = unreadKnown ? unreadCounts[team.id] || 0 : 0;
                     const unreadBadge = unread > 0
-                        ? `<span class="absolute -top-1 -right-1 inline-flex items-center justify-center w-5 h-5 text-xs font-bold text-white bg-red-500 rounded-full">${unread > 99 ? '99+' : unread}</span>`
-                        : '';
+                        ? `<span data-unread-chat-badge class="absolute -top-1 -right-1 inline-flex items-center justify-center w-5 h-5 text-xs font-bold text-white bg-red-500 rounded-full">${unread > 99 ? '99+' : unread}</span>`
+                        : !unreadKnown
+                            ? `<span data-unread-chat-unknown class="absolute -top-1 -right-1 w-2.5 h-2.5 ${unreadUnavailable ? 'bg-amber-400' : 'bg-gray-300 animate-pulse'} rounded-full" title="${unreadUnavailable ? 'Unread messages are unavailable' : 'Unread messages are still loading'}"></span>`
+                            : '';
                     const chatHighlight = unread > 0 ? 'border-primary-400 bg-primary-50' : 'border-gray-200 hover:border-primary-300 hover:bg-primary-50';
                     return `
                     <div class="group bg-white rounded-2xl shadow-md hover:shadow-xl transition duration-300 border border-gray-200 hover:border-primary-300 overflow-hidden" data-team-card="${team.id}">
@@ -252,13 +291,13 @@
                                     </svg>
                                     <span class="text-xs font-medium text-gray-600 group-hover/btn:text-primary-700">View</span>
                                 </a>
-                                <a href="team-chat.html#teamId=${team.id}"
+                                <a href="team-chat.html#teamId=${team.id}" data-team-chat-link="${escapeHtml(team.id)}"
                                    class="relative flex flex-col items-center justify-center p-3 rounded-lg border ${chatHighlight} transition group/btn">
                                     ${unreadBadge}
-                                    <svg class="w-5 h-5 ${unread > 0 ? 'text-primary-600' : 'text-gray-600 group-hover/btn:text-primary-600'} transition mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <svg data-team-chat-icon class="w-5 h-5 ${unread > 0 ? 'text-primary-600' : 'text-gray-600 group-hover/btn:text-primary-600'} transition mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path>
                                     </svg>
-                                    <span class="text-xs font-medium ${unread > 0 ? 'text-primary-700' : 'text-gray-600 group-hover/btn:text-primary-700'}">Chat</span>
+                                    <span data-team-chat-label class="text-xs font-medium ${unread > 0 ? 'text-primary-700' : 'text-gray-600 group-hover/btn:text-primary-700'}">Chat</span>
                                 </a>
                                 <a href="team-media.html#teamId=${team.id}"
                                    class="flex flex-col items-center justify-center p-3 rounded-lg border border-gray-200 hover:border-primary-300 hover:bg-primary-50 transition group/btn">
@@ -382,10 +421,53 @@
                     });
                 }
 
-                if (fullAccessTeams.length === 0 && parentOnlyTeams.length === 0) {
-                    container.innerHTML = renderNoTeamsState();
-                } else if (fullAccessTeams.length === 0 && parentOnlyTeams.length > 0) {
-                    container.innerHTML = `
+                function updateUnreadChatBadges() {
+                    container.querySelectorAll('[data-team-chat-link]').forEach((link) => {
+                        const teamId = link.dataset.teamChatLink;
+                        const unreadKnown = Object.prototype.hasOwnProperty.call(unreadCounts, teamId);
+                        const unreadUnavailable = unavailableUnreadTeamIds.has(teamId);
+                        const unread = unreadKnown ? Math.max(0, Number(unreadCounts[teamId] || 0) || 0) : 0;
+                        const hasUnread = unread > 0;
+                        link.classList.toggle('border-primary-400', hasUnread);
+                        link.classList.toggle('bg-primary-50', hasUnread);
+                        link.classList.toggle('border-gray-200', !hasUnread);
+                        link.classList.toggle('hover:border-primary-300', !hasUnread);
+                        link.classList.toggle('hover:bg-primary-50', !hasUnread);
+
+                        link.querySelector('[data-unread-chat-badge]')?.remove();
+                        link.querySelector('[data-unread-chat-unknown]')?.remove();
+                        if (hasUnread) {
+                            const badge = document.createElement('span');
+                            badge.dataset.unreadChatBadge = '';
+                            badge.className = 'absolute -top-1 -right-1 inline-flex items-center justify-center w-5 h-5 text-xs font-bold text-white bg-red-500 rounded-full';
+                            badge.textContent = unread > 99 ? '99+' : String(unread);
+                            link.prepend(badge);
+                        } else if (!unreadKnown) {
+                            const unknown = document.createElement('span');
+                            unknown.dataset.unreadChatUnknown = '';
+                            unknown.className = `absolute -top-1 -right-1 w-2.5 h-2.5 ${unreadUnavailable ? 'bg-amber-400' : 'bg-gray-300 animate-pulse'} rounded-full`;
+                            unknown.title = unreadUnavailable
+                                ? 'Unread messages are unavailable'
+                                : 'Unread messages are still loading';
+                            link.prepend(unknown);
+                        }
+
+                        const icon = link.querySelector('[data-team-chat-icon]');
+                        icon?.classList.toggle('text-primary-600', hasUnread);
+                        icon?.classList.toggle('text-gray-600', !hasUnread);
+                        icon?.classList.toggle('group-hover/btn:text-primary-600', !hasUnread);
+                        const label = link.querySelector('[data-team-chat-label]');
+                        label?.classList.toggle('text-primary-700', hasUnread);
+                        label?.classList.toggle('text-gray-600', !hasUnread);
+                        label?.classList.toggle('group-hover/btn:text-primary-700', !hasUnread);
+                    });
+                }
+
+                function renderTeamLists() {
+                    if (fullAccessTeams.length === 0 && parentOnlyTeams.length === 0) {
+                        container.innerHTML = renderNoTeamsState();
+                    } else if (fullAccessTeams.length === 0 && parentOnlyTeams.length > 0) {
+                        container.innerHTML = `
                         <div id="parent-only-notice" class="rounded-xl bg-amber-50 border border-amber-200 p-4 mb-6">
                             <p class="text-sm font-semibold text-amber-800">Parent view only — you are linked as a parent on these teams. Visit the <a href="parent-dashboard.html" class="underline hover:text-amber-900">Parent Dashboard</a> for family-focused tools.</p>
                         </div>
@@ -393,9 +475,9 @@
                             ${parentOnlyTeams.map(team => renderTeamCard(team)).join('')}
                         </div>
                     `;
-                    attachDeleteHandlers(container);
-                } else {
-                    const parentSection = fullAccessTeams.length > 0 && parentOnlyTeams.length > 0 ? `
+                        attachDeleteHandlers(container);
+                    } else {
+                        const parentSection = fullAccessTeams.length > 0 && parentOnlyTeams.length > 0 ? `
                         <div id="parent-teams-section" class="mt-6">
                             <button id="parent-teams-toggle" type="button" aria-expanded="false" aria-controls="parent-teams-collapsible"
                                 class="flex items-center gap-2 text-sm font-semibold text-amber-700 hover:text-amber-900 transition">
@@ -410,26 +492,74 @@
                         </div>
                     ` : '';
 
-                    container.innerHTML = `
+                        container.innerHTML = `
                         <div id="full-access-teams-grid" class="space-y-6">
                             ${fullAccessTeams.map(team => renderTeamCard(team)).join('')}
                         </div>
                         ${parentSection}
                     `;
-                    attachDeleteHandlers(container);
+                        attachDeleteHandlers(container);
 
-                    const toggle = container.querySelector('#parent-teams-toggle');
-                    const collapsible = container.querySelector('#parent-teams-collapsible');
-                    const chevron = container.querySelector('#parent-teams-chevron');
-                    if (toggle && collapsible) {
-                        toggle.addEventListener('click', () => {
-                            const isExpanded = toggle.getAttribute('aria-expanded') === 'true';
-                            toggle.setAttribute('aria-expanded', String(!isExpanded));
-                            collapsible.classList.toggle('hidden', isExpanded);
-                            if (chevron) chevron.style.transform = isExpanded ? '' : 'rotate(90deg)';
-                        });
+                        const toggle = container.querySelector('#parent-teams-toggle');
+                        const collapsible = container.querySelector('#parent-teams-collapsible');
+                        const chevron = container.querySelector('#parent-teams-chevron');
+                        if (toggle && collapsible) {
+                            toggle.addEventListener('click', () => {
+                                const isExpanded = toggle.getAttribute('aria-expanded') === 'true';
+                                toggle.setAttribute('aria-expanded', String(!isExpanded));
+                                collapsible.classList.toggle('hidden', isExpanded);
+                                if (chevron) chevron.style.transform = isExpanded ? '' : 'rotate(90deg)';
+                            });
+                        }
                     }
                 }
+
+                // Team access is the critical result. Render it immediately,
+                // then enrich chat badges in the background with a hard bound.
+                renderTeamLists();
+                const unreadStatus = document.getElementById('unread-chat-status');
+                const retryUnreadButton = document.getElementById('retry-unread-chat');
+                function setUnreadStatusVisible(visible) {
+                    unreadStatus?.classList.toggle('hidden', !visible);
+                }
+                function startUnreadChatBadges(pendingTeamIds) {
+                    cancelUnreadChatRetries();
+                    pendingTeamIds.forEach((teamId) => unavailableUnreadTeamIds.delete(teamId));
+                    setUnreadStatusVisible(false);
+                    updateUnreadChatBadges();
+                    cancelUnreadChatRetries = startBoundedRetry({
+                        initialValue: pendingTeamIds,
+                        maxAttempts: 3,
+                        run: (requestedTeamIds) => getUnreadChatCounts(user.uid, requestedTeamIds, {
+                            conversationLookupByTeam,
+                            deadlineAt: Date.now() + 5000
+                        }).then((counts) => {
+                            unreadCounts = { ...unreadCounts, ...(counts || {}) };
+                            Object.keys(counts || {}).forEach((teamId) => unavailableUnreadTeamIds.delete(teamId));
+                            updateUnreadChatBadges();
+                            return requestedTeamIds.filter((teamId) => (
+                                !Object.prototype.hasOwnProperty.call(unreadCounts, teamId)
+                            ));
+                        }),
+                        shouldRetry: (unknownTeamIds) => unknownTeamIds.length > 0
+                            ? unknownTeamIds
+                            : undefined,
+                        onExhausted: (unavailableTeamIds, error) => {
+                            unavailableTeamIds.forEach((teamId) => unavailableUnreadTeamIds.add(teamId));
+                            updateUnreadChatBadges();
+                            setUnreadStatusVisible(true);
+                            console.warn('Unable to load dashboard unread counts after bounded retries:', error || unavailableTeamIds);
+                        }
+                    });
+                }
+                retryUnreadButton?.addEventListener('click', () => {
+                    const pendingTeamIds = teamIds.filter((teamId) => (
+                        !Object.prototype.hasOwnProperty.call(unreadCounts, teamId)
+                    ));
+                    if (pendingTeamIds.length > 0) startUnreadChatBadges(pendingTeamIds);
+                });
+                window.addEventListener('pagehide', () => cancelUnreadChatRetries(), { once: true });
+                if (teamIds.length > 0) startUnreadChatBadges(teamIds);
 
             } catch (error) {
                 console.error(error);

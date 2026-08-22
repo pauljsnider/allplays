@@ -69,6 +69,7 @@ import {
 } from './adapters/legacyTeamDetail';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
 import { getPrimaryAppCheckHeaders } from './adapters/legacyFirebaseAppCheck';
+import { isRetryableReadTransportError, raceFirstSuccessfulRead } from './adapters/legacyHedgedRead';
 import { buildAppAcceptInviteUrl } from './inviteUrls';
 import { createLogger } from './logger';
 import { getNativeRestDedupKey, loadDedupedNativeRestRequest, shouldDedupNativeRestRequest } from './nativeRestDedup';
@@ -82,6 +83,7 @@ import { requireTrustedStripeCheckoutUrl } from './stripeCheckoutUrl';
 import type { AuthUser } from './types';
 
 const primaryDataTimeoutMs = 5000;
+const restReadHedgeDelayMs = 750;
 const optionalCalendarTimeoutMs = 1500;
 const logger = createLogger('team-detail-service');
 
@@ -640,8 +642,8 @@ function getFirestoreBaseUrl() {
   return `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(getProjectId())}/databases/(default)/documents`;
 }
 
-async function getNativeHeaders(requestUrl: string) {
-  const token = await getNativeAuthIdToken(true);
+async function getNativeHeaders(requestUrl: string, forceRefresh = false) {
+  const token = await getNativeAuthIdToken(forceRefresh);
   if (!token) throw new Error('Native auth token is unavailable.');
   return getPrimaryAppCheckHeaders({
     Authorization: `Bearer ${token}`,
@@ -652,13 +654,19 @@ async function getNativeHeaders(requestUrl: string) {
 async function nativeFirestoreRequest(path: string, init: RequestInit = {}) {
   const url = `${getFirestoreBaseUrl()}${path}`;
   const runRequest = async () => {
-    const response = await withTimeout(fetch(url, {
+    const method = String(init.method || 'GET').toUpperCase();
+    const isReadOnly = method === 'GET' || path.includes(':runQuery');
+    const execute = async (forceRefresh: boolean) => withTimeout(fetch(url, {
       ...init,
       headers: {
-        ...(await getNativeHeaders(url)),
+        ...(await getNativeHeaders(url, forceRefresh)),
         ...(init.headers || {})
       }
     }), 'Firestore REST request');
+    let response = await execute(!isReadOnly);
+    if (response.status === 401) {
+      response = await execute(true);
+    }
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       const error = new Error(payload?.error?.message || `Firestore request failed (${response.status}).`) as Error & { status?: number };
@@ -710,8 +718,11 @@ async function nativeGetDocument(path: string) {
 }
 
 async function nativeListCollection(path: string) {
-  const payload = await nativeFirestoreRequest(`/${path}`);
-  return (payload.documents || [])
+  const documents = await listNativeFirestoreCollectionPages(
+    path,
+    nativeFirestoreRequest
+  );
+  return documents
     .map((document: any) => decodeFirestoreDocument(document))
     .filter(Boolean) as FirestoreDocument[];
 }
@@ -784,13 +795,21 @@ async function nativeRunQuery(collectionId: string, fieldPath: string, op: 'EQUA
 }
 
 async function readWithNativeFallback<T>(label: string, primary: () => Promise<T>, fallback: () => Promise<T>): Promise<T> {
-  try {
-    return await withTimeout(Promise.resolve(primary()), label);
-  } catch (error) {
-    if (!isNativeRuntime()) throw error;
-    logger.warn('Falling back to REST.', { label, error });
-    return fallback();
+  const result = await raceFirstSuccessfulRead({
+    primary,
+    fallback,
+    label,
+    fallbackDelayMs: restReadHedgeDelayMs,
+    primaryTimeoutMs: primaryDataTimeoutMs,
+    shouldFallbackAfterPrimaryError: (error) => isNativeRuntime() || isRetryableReadTransportError(error)
+  });
+  if (result.source === 'fallback') {
+    logger.warn('Falling back to REST.', {
+      label,
+      error: result.primaryError || new Error(`${label} SDK read exceeded the REST hedge delay.`)
+    });
   }
+  return result.value;
 }
 
 async function writeWithNativeFallback<T>(label: string, primary: () => Promise<T>, fallback: () => Promise<T>): Promise<T> {
@@ -860,6 +879,26 @@ async function loadTeamPlayers(teamId: string) {
   );
 }
 
+async function loadPrivateTeamPlayersViaRest(teamId: string, publicPlayers: any[]) {
+  return Promise.all((Array.isArray(publicPlayers) ? publicPlayers : []).map(async (player) => {
+    const playerId = cleanString(player?.id);
+    if (!playerId) return player;
+    const privateProfile = await nativeGetDocument(
+      `teams/${encodeURIComponent(teamId)}/players/${encodeURIComponent(playerId)}/private/profile`
+    );
+    return {
+      ...player,
+      photoPath: privateProfile?.photoPath || player?.photoPath || null,
+      photoOwnershipLoaded: true,
+      privateProfileRosterFields: privateProfile?.rosterFields && typeof privateProfile.rosterFields === 'object'
+        ? privateProfile.rosterFields
+        : {},
+      privateProfileParents: Array.isArray(privateProfile?.parents) ? privateProfile.parents : [],
+      privateProfileContacts: Array.isArray(privateProfile?.contacts) ? privateProfile.contacts : []
+    };
+  }));
+}
+
 async function loadPrivilegedTeamPlayers(teamId: string, user: AuthUser | null, team: any, publicPlayers: any[]) {
   if (!hasFullTeamAccess(user, team)) return publicPlayers;
 
@@ -877,7 +916,7 @@ async function loadPrivilegedTeamPlayers(teamId: string, user: AuthUser | null, 
       includeInactive: true,
       players: publicPlayers
     })),
-    () => Promise.resolve(publicPlayers)
+    () => loadPrivateTeamPlayersViaRest(normalizedTeamId, publicPlayers)
   ).catch((error) => {
     privilegedTeamPlayersCache.delete(cacheKey);
     throw error;
@@ -899,7 +938,7 @@ async function loadTeamConfigs(teamId: string) {
     `team configs ${teamId}`,
     () => Promise.resolve(getConfigs(teamId)),
     async () => nativeListCollection(`teams/${encodeURIComponent(teamId)}/statTrackerConfigs`)
-  ).catch(() => []);
+  );
 }
 
 async function loadTeamTrackingItems(teamId: string) {

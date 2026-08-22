@@ -600,7 +600,9 @@ describe('React app schedule service contract integration', () => {
 
         expect(importSource).toContain("mapScheduleEventDocument, mapScheduleEventDocuments, mapScheduleEventRecord, mapScheduleEventRecords } from './firestore/mappers'");
         expect(nativeMapperSource).toContain('return mapScheduleEventDocument(await nativeFirestoreRequest');
-        expect(nativeMapperSource).toContain('return mapScheduleEventDocuments((payload.documents || [])');
+        expect(nativeMapperSource).toContain('listNativeFirestoreCollectionPages<NativeFirestoreDocument>(');
+        expect(nativeMapperSource).toContain('return mapScheduleEventDocuments(documents);');
+        expect(nativeMapperSource).not.toContain('return mapScheduleEventDocuments((payload.documents || [])');
         expect(readMapperSource).toContain('async () => mapScheduleEventRecords(await getGames(teamId, range))');
         expect(readMapperSource).toContain('async () => mapScheduleEventRecord(await getGame(teamId, gameId), gameId)');
         expect(readMapperSource).toContain('() => nativeGetScheduleEventDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`)');

@@ -794,7 +794,7 @@ export async function uploadStatSheetPhoto(teamId, gameId, file, options = {}) {
         : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=443354'; // Import resolveZip
+import { resolveZip } from './utils.js?v=443358'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -8466,7 +8466,10 @@ function enqueueUnreadChatCountJob(run, deadlineAt) {
 
 export async function getUnreadChatCounts(userId, teamIds, options = {}) {
     const uniqueTeamIds = Array.from(new Set(teamIds));
-    const counts = Object.fromEntries(uniqueTeamIds.map((teamId) => [teamId, 0]));
+    // Missing keys are intentionally unknown. Only publish zero after every
+    // job for that team has completed, so deadline results cannot hide unread
+    // messages behind an authoritative-looking partial zero.
+    const counts = {};
     const latestMessageAtByTeam = options?.latestMessageAtByTeam || {};
     const latestMessageAtByConversationByTeam = options?.latestMessageAtByConversationByTeam || {};
     const conversationIdsByTeam = options?.conversationIdsByTeam || {};
@@ -8476,14 +8479,25 @@ export async function getUnreadChatCounts(userId, teamIds, options = {}) {
     let userData = {};
 
     try {
-        const userDoc = await getDoc(doc(db, 'users', userId));
+        const userDocRead = getDoc(doc(db, 'users', userId));
+        const userDoc = deadlineAt === null
+            ? await userDocRead
+            : await withDeadline(
+                userDocRead,
+                Math.max(1, deadlineAt - Date.now()),
+                'Unread chat profile read timed out.'
+            );
         userData = userDoc.data() || {};
     } catch (err) {
         console.warn(`Failed to load chat state for user ${userId}:`, err);
         return counts;
     }
 
-    const teamStates = Object.fromEntries(uniqueTeamIds.map((teamId) => [teamId, { pending: 0, total: 0 }]));
+    const teamStates = Object.fromEntries(uniqueTeamIds.map((teamId) => [teamId, {
+        pending: 0,
+        total: 0,
+        complete: true
+    }]));
     const jobs = [];
     const conversationIdsForTeam = (loadedConversationIds) => Array.from(new Set([
         DEFAULT_TEAM_CONVERSATION_ID,
@@ -8522,11 +8536,12 @@ export async function getUnreadChatCounts(userId, teamIds, options = {}) {
             resolve({ ...counts });
         };
         const isExpired = () => deadlineAt !== null && Date.now() >= deadlineAt;
-        const completeTeamJob = (teamId, count = 0) => {
+        const completeTeamJob = (teamId, count = 0, succeeded = true) => {
             const state = teamStates[teamId];
+            if (!succeeded) state.complete = false;
             state.total += Number(count || 0);
             state.pending -= 1;
-            if (state.pending === 0) counts[teamId] = state.total;
+            if (state.pending === 0 && state.complete) counts[teamId] = state.total;
         };
         const runJob = async (job) => {
             if (job.type === 'discover') {
@@ -8548,7 +8563,7 @@ export async function getUnreadChatCounts(userId, teamIds, options = {}) {
                     });
                 } catch (err) {
                     console.warn(`Failed to get unread count for team ${job.teamId}:`, err);
-                    if (!settled) completeTeamJob(job.teamId);
+                    if (!settled) completeTeamJob(job.teamId, 0, false);
                 }
                 return;
             }
@@ -8568,7 +8583,7 @@ export async function getUnreadChatCounts(userId, teamIds, options = {}) {
                 if (!settled) completeTeamJob(job.teamId, count);
             } catch (err) {
                 console.warn(`Failed to get unread count for team ${job.teamId} conversation ${job.conversationId}:`, err);
-                if (!settled) completeTeamJob(job.teamId);
+                if (!settled) completeTeamJob(job.teamId, 0, false);
             }
         };
         const scheduleNext = () => {

@@ -27,8 +27,8 @@ describe('dashboard zero-team onboarding state', () => {
 
     it('handles zero full-access and parent-only teams before list mapping', () => {
         expect(source).toContain(`if (fullAccessTeams.length === 0 && parentOnlyTeams.length === 0) {
-                    container.innerHTML = renderNoTeamsState();
-                } else if (fullAccessTeams.length === 0 && parentOnlyTeams.length > 0) {`);
+                        container.innerHTML = renderNoTeamsState();
+                    } else if (fullAccessTeams.length === 0 && parentOnlyTeams.length > 0) {`);
 
         const renderTeamCardSource = extractFunction(source, 'renderTeamCard', 'attachDeleteHandlers');
         expect(renderTeamCardSource).not.toContain('No Teams Yet');

@@ -21,6 +21,7 @@ import { getPrimaryAppCheckHeaders } from './adapters/legacyFirebaseAppCheck';
 import { getNativeRestDedupKey, loadDedupedNativeRestRequest, shouldDedupNativeRestRequest } from './nativeRestDedup';
 import { captureHandledAppError, createAppTimer } from './telemetry';
 import { getFriendInviteTargetError } from './friendInviteCapabilities';
+import { raceFirstSuccessfulRead } from './adapters/legacyHedgedRead';
 
 export {
   acquireProfilePhoto,
@@ -31,6 +32,7 @@ export {
 
 const profileTimeoutMs = 8000;
 const primaryDataTimeoutMs = 3000;
+const restReadHedgeDelayMs = 750;
 const nativeBatchTeamLookupSize = 10;
 const logger = createLogger('profile-service');
 
@@ -563,19 +565,25 @@ export async function loadProfileDocument(userId: string): Promise<ProfileDocume
     operation: 'profile-load'
   });
   try {
-    const profile = await withTimeout(Promise.resolve(getUserProfile(userId)), 'Profile load', primaryDataTimeoutMs) || {};
-    timer.end({ path: 'sdk', userIdPresent: Boolean(userId) });
-    return profile;
-  } catch (error) {
-    logProfileWarning('Falling back to REST profile load.', 'profile-load', error, { userId });
-    try {
-      const profile = await nativeLoadProfileDocument(userId);
+    const result = await raceFirstSuccessfulRead({
+      primary: () => Promise.resolve(getUserProfile(userId)),
+      fallback: () => nativeLoadProfileDocument(userId),
+      label: 'Profile load',
+      fallbackDelayMs: restReadHedgeDelayMs,
+      primaryTimeoutMs: primaryDataTimeoutMs
+    });
+    if (result.source === 'fallback') {
+      const error = result.primaryError || new Error('Profile SDK read exceeded the REST hedge delay.');
+      logProfileWarning('Falling back to REST profile load.', 'profile-load', error, { userId });
       timer.end({ path: 'rest_fallback', fallback: true, userIdPresent: Boolean(userId) });
-      return profile;
-    } catch (fallbackError) {
-      timer.end({ path: 'rest_fallback', fallback: true, userIdPresent: Boolean(userId), error: fallbackError });
-      throw fallbackError;
+    } else {
+      timer.end({ path: 'sdk', userIdPresent: Boolean(userId) });
     }
+    return result.value || {};
+  } catch (error) {
+    logProfileWarning('REST profile load failed.', 'profile-load', error, { userId });
+    timer.end({ path: 'rest_fallback', fallback: true, userIdPresent: Boolean(userId), error });
+    throw error;
   }
 }
 
