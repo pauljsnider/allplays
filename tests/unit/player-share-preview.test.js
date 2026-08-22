@@ -15,7 +15,7 @@ describe('public player share preview wiring', () => {
     it('routes clean player share links through the privacy-aware preview function', () => {
         const firebaseConfig = JSON.parse(repoFile('firebase.json'));
 
-        expect(firebaseConfig.hosting.rewrites[1]).toEqual({
+        expect(firebaseConfig.hosting.rewrites[2]).toEqual({
             source: '/player-card',
             function: 'playerSharePreview'
         });

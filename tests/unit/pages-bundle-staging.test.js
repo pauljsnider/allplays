@@ -376,6 +376,10 @@ describe('pages bundle staging', () => {
                 function: 'liveGameSharePreview'
             },
             {
+                source: '/report',
+                function: 'gameReportSharePreview'
+            },
+            {
                 source: '/player-card',
                 function: 'playerSharePreview'
             },

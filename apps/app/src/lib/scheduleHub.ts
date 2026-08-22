@@ -37,6 +37,7 @@ export function buildGameHubDestinations(event: ParentScheduleEvent): ScheduleHu
       detail: 'Replay, reactions, and clips',
       icon: 'video',
       url: getPublicReplayHref(event),
+      shareUrl: getPublicReplayShareHref(event),
       actionLabel: 'Watch replay',
       shareLabel: 'Replay',
       shareTitle: `${title} replay`,
@@ -65,6 +66,7 @@ export function buildGameHubDestinations(event: ParentScheduleEvent): ScheduleHu
     detail: 'Score, summary, stats, and play-by-play',
     icon: 'file-text',
     url: getPublicGameReportHref(event),
+    shareUrl: getPublicGameReportShareHref(event),
     actionLabel: 'Open report',
     shareLabel: 'Match report',
     shareTitle: `${title} match report`,
@@ -123,6 +125,10 @@ export function getPublicGameReportHref(event: ParentScheduleEvent) {
   return getPublicHashHref('/game.html', { teamId: event.teamId, gameId: event.id });
 }
 
+export function getPublicGameReportShareHref(event: ParentScheduleEvent) {
+  return getSharePreviewHref('/report', { teamId: event.teamId, gameId: event.id });
+}
+
 export function getPublicLiveHref(event: ParentScheduleEvent) {
   return getPublicHref('/live-game.html', {
     teamId: event.teamId,
@@ -139,6 +145,14 @@ export function getPublicLiveShareHref(event: ParentScheduleEvent) {
 
 export function getPublicReplayHref(event: ParentScheduleEvent) {
   return getPublicHref('/live-game.html', {
+    teamId: event.teamId,
+    gameId: event.id,
+    replay: 'true'
+  });
+}
+
+export function getPublicReplayShareHref(event: ParentScheduleEvent) {
+  return getSharePreviewHref('/watch', {
     teamId: event.teamId,
     gameId: event.id,
     replay: 'true'

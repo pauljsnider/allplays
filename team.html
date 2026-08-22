@@ -327,6 +327,7 @@
         import { getTeam, getPlayers, getGames, getPublicTeamCalendarEvents, getConfigs, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile, getAllUsers, saveTeamAvailabilityPreferences, grantScorekeeperAccess, revokeScorekeeperAccess, grantStreamScoreAccess, revokeStreamScoreAccess, getRsvps, getMyRsvps, getRsvpSummaries, submitRsvp, getMyRsvp, getLocalAttractionSponsors, getAdSpaceSponsors, postChatMessage, getPublicTrackingItems, getPlayerTrackingStatuses } from './js/db.js?v=4433177';
         import { normalizeExternalWebsiteUrl, selectRotatingSponsor } from './js/local-attractions.js?v=2';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, isTrackedCalendarEvent, expandRecurrence, escapeHtml, shareOrCopy } from './js/utils.js?v=443353';
+        import { buildGameReportShareUrl, buildGameWatchShareUrl } from './js/game-share-links.js?v=1';
         import { fetchLeagueStandings } from './js/league-standings.js?v=1';
         import { computeNativeStandings } from './js/native-standings.js?v=1';
         import { computeTournamentPoolStandings } from './js/tournament-standings.js?v=4';
@@ -3254,8 +3255,8 @@
             const game = gamesById[gameId];
             if (!game) return showToast('Unable to find game details.');
             const url = mode === 'report'
-                ? `${window.location.origin}/game.html#teamId=${currentTeamId}&gameId=${gameId}`
-                : `${window.location.origin}/live-game.html?teamId=${currentTeamId}&gameId=${gameId}`;
+                ? buildGameReportShareUrl({ teamId: currentTeamId, gameId })
+                : buildGameWatchShareUrl({ teamId: currentTeamId, gameId });
             const shareText = buildShareText(game, mode, url);
             shareOrCopy({
                 title: mode === 'report' ? 'Game report' : 'Watch game',

@@ -257,7 +257,9 @@ async function installMocks(page, scenario, { delayedAuth = false } = {}) {
                 .replace(/'/g, '&#39;');
         }
 
-        export async function shareOrCopy() {
+        export async function shareOrCopy(input) {
+            window.__GAME_SHARE_PAYLOADS__ = window.__GAME_SHARE_PAYLOADS__ || [];
+            window.__GAME_SHARE_PAYLOADS__.push(input);
             return { status: 'copied' };
         }
     `;
@@ -327,9 +329,16 @@ async function readStore(page) {
 }
 
 test('completed-game stat editor saves corrections and DNP state through real controls', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
     await installMocks(page, createScenario());
 
     await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+
+    await page.locator('#share-report-btn').click();
+    await expect.poll(() => page.evaluate(() => window.__GAME_SHARE_PAYLOADS__?.[0]?.url)).toBe(
+        'https://share.allplays.ai/report?teamId=team-1&gameId=game-1'
+    );
 
     const tableRows = page.locator('#stats-body tr');
     await expect(tableRows).toHaveCount(2);
@@ -404,9 +413,12 @@ test('completed-game stat editor saves corrections and DNP state through real co
             timeMs: 0
         }
     });
+    expect(pageErrors).toEqual([]);
 });
 
 test('late authentication refreshes manager controls and private edit data without duplicating report rows', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
     await installMocks(page, createScenario(), { delayedAuth: true });
 
     await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
@@ -444,4 +456,5 @@ test('late authentication refreshes manager controls and private edit data witho
         opponentHeaders: document.querySelectorAll('#opponent-stats-header-row th').length,
         opponentRows: document.querySelectorAll('#opponent-stats-body tr').length
     }))).toEqual(publicShape);
+    expect(pageErrors).toEqual([]);
 });

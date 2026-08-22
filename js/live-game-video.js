@@ -707,8 +707,8 @@ export function normalizeGameClipRecords(game, { players = [], includeHidden = f
         .sort((a, b) => b.createdAtMs - a.createdAtMs || a.title.localeCompare(b.title));
 }
 
-export function buildHighlightShareUrl({ origin, teamId, gameId, startMs, endMs }) {
-    const url = new URL('/live-game.html', origin);
+export function buildHighlightShareUrl({ origin, pathname = '/live-game.html', teamId, gameId, startMs, endMs }) {
+    const url = new URL(pathname, origin);
     url.searchParams.set('teamId', teamId);
     url.searchParams.set('gameId', gameId);
     url.searchParams.set('replay', 'true');

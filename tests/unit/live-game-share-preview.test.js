@@ -20,7 +20,11 @@ describe('live game share preview wiring', () => {
             source: '/watch',
             function: 'liveGameSharePreview'
         });
-        expect(rewrites[2]).toEqual({
+        expect(rewrites[1]).toEqual({
+            source: '/report',
+            function: 'gameReportSharePreview'
+        });
+        expect(rewrites[3]).toEqual({
             source: '!/app/assets/**',
             destination: '/index.html'
         });
@@ -41,13 +45,34 @@ describe('live game share preview wiring', () => {
     it('keeps crawler metadata on the branded share origin', () => {
         const source = repoFile('functions/index.js');
         const start = source.indexOf('exports.liveGameSharePreview = functions');
-        const end = source.indexOf('exports.playerSharePreview = functions', start);
+        const end = source.indexOf('exports.gameReportSharePreview = functions', start);
         const handler = source.slice(start, end);
 
         expect(handler).toContain('setPublicSharePreviewCorsHeaders(res)');
         expect(handler).toContain('`${PUBLIC_SHARE_PREVIEW_ORIGIN}/watch?${query}`');
+        expect(handler).toContain('buildLiveGameShareParams');
         expect(handler).not.toContain('`https://allplays.ai/watch?${query}`');
         expect(source).toContain("const PUBLIC_SHARE_PREVIEW_ORIGIN = 'https://share.allplays.ai'");
         expect(source).not.toContain("const PUBLIC_SHARE_PREVIEW_ORIGIN = 'https://game-flow-c6311.web.app'");
+    });
+
+    it('keeps public report metadata behind the public projection while private links still redirect', () => {
+        const source = repoFile('functions/index.js');
+        const start = source.indexOf('exports.gameReportSharePreview = functions');
+        const end = source.indexOf('exports.playerSharePreview = functions', start);
+        const handler = source.slice(start, end);
+
+        expect(start).toBeGreaterThan(-1);
+        expect(handler).toContain('getPublicGameProjection(teamId, gameId, team)');
+        expect(handler).toContain("ip: `game-report-share|${getRequestIp(req)}`");
+        expect(handler).toContain('`${PUBLIC_SHARE_PREVIEW_ORIGIN}/report?${query}`');
+        expect(handler).toContain('`https://allplays.ai/game.html#${query}`');
+        expect(handler).toContain("teamSnap.exists ? { id: teamId, ...(teamSnap.data() || {}) } : null");
+        expect(handler).toContain('const game = team ? await getPublicGameProjection(teamId, gameId, team) : null');
+        expect(handler).toContain(': buildGameReportShareMetadata()');
+        expect(handler).toContain("game ? 'public, max-age=300, s-maxage=300' : 'private, no-store, max-age=0'");
+        expect(handler).toContain("res.set('X-Robots-Tag', 'noindex, nofollow')");
+        expect(handler).not.toContain("res.status(404).send('Game report not found.')");
+        expect(handler).not.toContain('getPlayers(');
     });
 });

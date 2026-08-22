@@ -639,6 +639,7 @@
             ],
             "cloudFunctions": [
                 "deleteStatConfig",
+                "gameReportSharePreview",
                 "liveGameSharePreview",
                 "resetTeamStatConfigs",
                 "notifyLiveEventCreated"

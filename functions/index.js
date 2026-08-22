@@ -153,8 +153,11 @@ const {
   serializePublicTeamProfile
 } = require('./public-team-api-core.cjs');
 const {
+  buildGameReportShareHtml,
+  buildGameReportShareMetadata,
   buildLiveGameShareHtml,
-  buildLiveGameShareMetadata
+  buildLiveGameShareMetadata,
+  buildLiveGameShareParams
 } = require('./live-game-share-preview-core.cjs');
 const {
   buildPlayerShareHtml,
@@ -19675,14 +19678,23 @@ exports.liveGameSharePreview = functions
         return;
       }
 
-      const query = `teamId=${encodeURIComponent(teamId)}&gameId=${encodeURIComponent(gameId)}`;
+      const shareParams = buildLiveGameShareParams({
+        teamId,
+        gameId,
+        replay: req.query?.replay,
+        clipStart: req.query?.clipStart,
+        clipEnd: req.query?.clipEnd
+      });
+      const query = shareParams.toString();
       const redirectUrl = `https://allplays.ai/live-game.html?${query}`;
       const shareUrl = `${PUBLIC_SHARE_PREVIEW_ORIGIN}/watch?${query}`;
+      const hasHighlightRange = shareParams.has('clipStart') && shareParams.has('clipEnd');
       const metadata = buildLiveGameShareMetadata({
         teamName: game.teamName || team.name,
         opponent: game.opponent,
         startsAt: game.startsAt,
-        timeZone: team.timeZone || team.timezone
+        timeZone: team.timeZone || team.timezone,
+        mode: hasHighlightRange ? 'highlight' : shareParams.has('replay') ? 'replay' : 'live'
       });
       const html = buildLiveGameShareHtml({ metadata, redirectUrl, shareUrl });
       res.set('Cache-Control', 'public, max-age=300, s-maxage=300');
@@ -19700,6 +19712,79 @@ exports.liveGameSharePreview = functions
       });
       res.set('Retry-After', '60');
       res.status(503).send('Live game preview is temporarily unavailable.');
+    }
+  });
+
+exports.gameReportSharePreview = functions
+  .runWith({ timeoutSeconds: 15, memory: '256MB' })
+  .https
+  .onRequest(async (req, res) => {
+    setPublicSharePreviewCorsHeaders(res);
+    if (req.method === 'OPTIONS') {
+      res.status(204).end();
+      return;
+    }
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      res.set('Allow', 'GET, HEAD');
+      res.status(405).send('Method not allowed.');
+      return;
+    }
+
+    const rateLimit = checkPublicOpportunityBrowseRateLimit({
+      ip: `game-report-share|${getRequestIp(req)}`
+    });
+    if (!rateLimit.allowed) {
+      res.set('Retry-After', String(rateLimit.retryAfterSeconds));
+      res.status(429).send('Too many requests.');
+      return;
+    }
+
+    const teamId = typeof req.query?.teamId === 'string'
+      ? normalizeTeamId(req.query.teamId)
+      : '';
+    const gameId = typeof req.query?.gameId === 'string'
+      ? req.query.gameId.trim()
+      : '';
+    if (!teamId || !gameId || gameId.length > 1000) {
+      res.status(400).send('Valid teamId and gameId values are required.');
+      return;
+    }
+
+    try {
+      const params = new URLSearchParams({ teamId, gameId });
+      const query = params.toString();
+      const redirectUrl = `https://allplays.ai/game.html#${query}`;
+      const shareUrl = `${PUBLIC_SHARE_PREVIEW_ORIGIN}/report?${query}`;
+      const teamSnap = await firestore.doc(`teams/${teamId}`).get();
+      const team = teamSnap.exists ? { id: teamId, ...(teamSnap.data() || {}) } : null;
+      const game = team ? await getPublicGameProjection(teamId, gameId, team) : null;
+      const metadata = game
+        ? buildGameReportShareMetadata({
+          teamName: game.teamName || team.name,
+          opponent: game.opponent,
+          startsAt: game.startsAt,
+          timeZone: team.timeZone || team.timezone
+        })
+        : buildGameReportShareMetadata();
+      const html = buildGameReportShareHtml({ metadata, redirectUrl, shareUrl });
+      res.set(
+        'Cache-Control',
+        game ? 'public, max-age=300, s-maxage=300' : 'private, no-store, max-age=0'
+      );
+      res.set('Content-Type', 'text/html; charset=utf-8');
+      res.set('X-Robots-Tag', 'noindex, nofollow');
+      if (req.method === 'HEAD') {
+        res.status(200).end();
+        return;
+      }
+      res.status(200).send(html);
+    } catch (error) {
+      functions.logger.warn('Game report share preview failed.', {
+        teamId,
+        errorCode: error?.code || error?.name || 'preview-failed'
+      });
+      res.set('Retry-After', '60');
+      res.status(503).send('Game report preview is temporarily unavailable.');
     }
   });
 

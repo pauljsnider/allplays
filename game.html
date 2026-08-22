@@ -399,7 +399,8 @@
         import { splitPlayerStatsByVisibility } from './js/stat-leaderboards.js?v=2';
         import { formatGameReportEventTimestamp, resolveReportStatColumns, resolveOpponentReportStatColumns } from './js/game-report-stats.js?v=2';
         import { normalizeStatKey, resolvePostGameStatFields, resolvePostGameTeamStatFields, resolvePostGameEditorDidNotPlay, buildCompletedGamePlayerStatsPayload, buildCompletedGameTeamStatsPayload, getPostGameEditorNextIndex } from './js/post-game-stat-editor.js?v=4';
-        import { buildHighlightShareUrl, normalizeGameRecapHighlightClips, resolveReplayVideoOptions } from './js/live-game-video.js?v=443314';
+        import { buildHighlightShareUrl, normalizeGameRecapHighlightClips, resolveReplayVideoOptions } from './js/live-game-video.js?v=443315';
+        import { buildGameReportShareUrl } from './js/game-share-links.js?v=1';
 
         let currentUser = null;
         let canManageStatSheet = false;
@@ -530,7 +531,8 @@
                 const playerNames = resolveHighlightPlayerNames(clip, playerLookup);
                 const context = [clip.period, clip.gameTime].filter(Boolean).join(' • ');
                 const clipUrl = clip.videoUrl || buildHighlightShareUrl({
-                    origin: window.location.origin,
+                    origin: 'https://share.allplays.ai',
+                    pathname: '/watch',
                     teamId,
                     gameId,
                     startMs: clip.startMs,
@@ -1510,7 +1512,7 @@ Write the match report now:`;
                         const teamName = resolvedTeam?.name || 'Team';
                         const opponent = game?.opponent || 'Opponent';
                         const dateLabel = formatShortDate(game?.date);
-                        const url = `${window.location.origin}/game.html#teamId=${teamId}&gameId=${gameId}`;
+                        const url = buildGameReportShareUrl({ teamId, gameId });
                         const shareText = `Game report: ${teamName} vs ${opponent}${dateLabel ? ` — ${dateLabel}` : ''}\n${url}`;
                         const result = await shareOrCopy({
                             title: 'Game report',

@@ -268,6 +268,10 @@ function buildModuleSource() {
             'const { BROADCAST_SETUP_STATUSES, BROADCAST_STREAM_STATUSES, MAX_HIGHLIGHT_CLIP_MS, buildBroadcastSetupSession, buildHighlightShareUrl, buildStreamScoreContext, canAccessNativeCameraCapture, canSaveBroadcastSetupSession, createHighlightClipDraft, resolveBroadcastProviderMetadata, resolveBroadcastStreamControlState, resolveReplayVideoOptions, shouldReloadVideoPlayback } = deps.liveGameVideo;'
         )
         .replace(
+            /import \{ buildGameReportShareUrl, buildGameWatchShareUrl \} from '\.\/game-share-links\.js\?v=\d+';/,
+            'const { buildGameReportShareUrl, buildGameWatchShareUrl } = deps.gameShareLinks;'
+        )
+        .replace(
             /import \{ TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, isRecordedReplayTeamPassGateEnabled, resolveTeamEntitlementSeasonId \} from '\.\/team-entitlements\.js\?v=\d+';/,
             'const { TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, isRecordedReplayTeamPassGateEnabled, resolveTeamEntitlementSeasonId } = deps.teamEntitlements;'
         )
@@ -516,6 +520,10 @@ async function bootReplayPage({ replayEvents = [], game: gameOverrides = {}, rep
             }),
             resolveReplayVideoOptions: () => null,
             shouldReloadVideoPlayback: () => false
+        },
+        gameShareLinks: {
+            buildGameReportShareUrl: () => 'https://share.allplays.ai/report?teamId=T1&gameId=G1',
+            buildGameWatchShareUrl: () => 'https://share.allplays.ai/watch?teamId=T1&gameId=G1'
         },
         teamEntitlements: {
             TEAM_PASS_FEATURES: {},

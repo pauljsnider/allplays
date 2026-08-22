@@ -1752,12 +1752,12 @@ test('app schedule event detail exposes parent actions and RSVP', async ({ page,
     await page.getByRole('button', { name: 'Watch replay' }).click();
     expect(await page.evaluate(() => window.__openedPublicUrls)).toContain('https://allplays.ai/live-game.html?teamId=team-1&gameId=game-1&replay=true');
     await page.getByRole('button', { name: 'Share replay' }).click();
-    expect(await page.evaluate(() => window.__sharedPayloads[0]?.url)).toBe('https://allplays.ai/live-game.html?teamId=team-1&gameId=game-1&replay=true');
-    expect(await page.evaluate(() => window.__sharedPayloads[0]?.text)).toContain('https://allplays.ai/live-game.html?teamId=team-1&gameId=game-1&replay=true');
+    expect(await page.evaluate(() => window.__sharedPayloads[0]?.url)).toBe('https://share.allplays.ai/watch?teamId=team-1&gameId=game-1&replay=true');
+    expect(await page.evaluate(() => window.__sharedPayloads[0]?.text)).toContain('https://share.allplays.ai/watch?teamId=team-1&gameId=game-1&replay=true');
     await expect(page.getByRole('button', { name: 'Open report', exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Share match report' }).click();
-    expect(await page.evaluate(() => window.__sharedPayloads[1]?.url)).toBe('https://allplays.ai/game.html#teamId=team-1&gameId=game-1');
-    expect(await page.evaluate(() => window.__sharedPayloads[1]?.text)).toContain('https://allplays.ai/game.html#teamId=team-1&gameId=game-1');
+    expect(await page.evaluate(() => window.__sharedPayloads[1]?.url)).toBe('https://share.allplays.ai/report?teamId=team-1&gameId=game-1');
+    expect(await page.evaluate(() => window.__sharedPayloads[1]?.text)).toContain('https://share.allplays.ai/report?teamId=team-1&gameId=game-1');
     expect(await page.evaluate(() => window.__scheduleCalls.gameReport)).toEqual({ teamId: 'team-1', gameId: 'game-1' });
     await page.getByRole('button', { name: 'Players' }).click();
     const playerLink = page.getByRole('link', { name: /#7 Pat/ });
