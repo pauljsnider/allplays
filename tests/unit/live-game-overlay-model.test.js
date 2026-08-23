@@ -9,8 +9,20 @@ import {
     getOverlayEventTone,
     getOverlayLineup,
     getOverlayReplayDurationMs,
+    reconcileOverlayLiveEvents,
     replaceOverlayChat
 } from '../../js/live-game-overlay-model.js';
+import {
+    applyResetEventState,
+    applyViewerEventToState,
+    collectVisibleLiveEventsSequentially
+} from '../../js/live-game-state.js';
+
+const stateTools = {
+    applyResetEventState,
+    applyViewerEventToState,
+    collectVisibleLiveEventsSequentially
+};
 
 describe('live game overlay model', () => {
     it('formats a bounded broadcast clock', () => {
@@ -163,6 +175,134 @@ describe('live game overlay model', () => {
         expect(getOverlayEventTone({ type: 'goal', isOpponent: true })).toBe('away-score');
         expect(state.events.map((event) => event.id)).toEqual(['away', 'reset']);
         expect(state.awayScore).toBe(1);
+    });
+
+    it('reconciles the complete ordered tracker snapshot without dropping non-play state events', () => {
+        const state = createOverlayState({
+            team: { name: 'Vipers' },
+            game: {
+                opponent: 'Union KC',
+                homeScore: 0,
+                awayScore: 0,
+                period: 'H1',
+                liveClockMs: 0,
+                liveStatus: 'live',
+                liveLineup: { onCourt: ['p1'], bench: ['p2'] }
+            },
+            players: [
+                { id: 'p1', name: 'Alex', number: '4' },
+                { id: 'p2', name: 'Jordan', number: '7' }
+            ]
+        });
+        const events = [
+            { id: 'lineup', type: 'lineup', onCourt: ['p2'], bench: ['p1'], createdAt: 100 },
+            { id: 'start', type: 'clock_start', description: 'Game started', homeScore: 0, awayScore: 0, period: 'H1', gameClockMs: 1_000, createdAt: 200 },
+            { id: 'sync', type: 'clock_sync', homeScore: 0, awayScore: 0, period: 'H1', gameClockMs: 5_000, createdAt: 300 },
+            { id: 'home-stat', type: 'stat', description: 'Alex scores', playerId: 'p1', playerName: 'Alex', statKey: 'pts', value: 2, homeScore: 2, awayScore: 0, gameClockMs: 6_000, createdAt: 400 },
+            { id: 'home-stat-undo', type: 'stat', description: 'Alex score reversed', playerId: 'p1', playerName: 'Alex', statKey: 'pts', value: -1, homeScore: 1, awayScore: 0, gameClockMs: 6_500, createdAt: 450 },
+            { id: 'away-stat', type: 'stat', description: 'Away foul', playerId: 'opp1', opponentPlayerName: 'Away Player', statKey: 'fouls', value: 1, isOpponent: true, homeScore: 2, awayScore: 0, gameClockMs: 7_000, createdAt: 500 },
+            { id: 'goal', type: 'goal', description: 'Goal', playerId: 'p1', statKey: 'goals', value: 1, homeScore: 3, awayScore: 0, gameClockMs: 8_000, createdAt: 600 },
+            { id: 'score-update', type: 'score_update', description: 'Manual score', homeScore: 4, awayScore: 1, gameClockMs: 9_000, createdAt: 700 },
+            { id: 'period', type: 'period_change', description: 'Second half', period: 'H2', homeScore: 4, awayScore: 1, gameClockMs: 10_000, createdAt: 800 },
+            { id: 'volleyball', type: 'volleyball', description: 'Side out', homeScore: 5, awayScore: 1, gameClockMs: 11_000, createdAt: 900 },
+            { id: 'baseball', type: 'baseball', description: 'Run scored', homeScore: 6, awayScore: 1, gameClockMs: 12_000, createdAt: 1_000 },
+            { id: 'football-play', type: 'football_play', description: 'Pass complete', homeScore: 6, awayScore: 1, gameClockMs: 13_000, createdAt: 1_100 },
+            { id: 'football-score', type: 'football_score', description: 'Touchdown', homeScore: 12, awayScore: 1, gameClockMs: 14_000, createdAt: 1_200 },
+            { id: 'note', type: 'note', description: 'Great defensive shape', homeScore: 12, awayScore: 1, gameClockMs: 15_000, createdAt: 1_300 },
+            { id: 'substitution', type: 'substitution', description: 'Jordan for Alex', onCourt: ['p2'], bench: ['p1'], homeScore: 12, awayScore: 1, gameClockMs: 16_000, createdAt: 1_400 },
+            { id: 'undo', type: 'undo', description: 'Undo score', homeScore: 11, awayScore: 1, gameClockMs: 17_000, createdAt: 1_500 },
+            { id: 'log-remove', type: 'log_remove', description: 'Removed play', homeScore: 11, awayScore: 1, gameClockMs: 18_000, createdAt: 1_600 },
+            { id: 'pause', type: 'clock_pause', description: 'Game paused', homeScore: 11, awayScore: 1, gameClockMs: 19_000, createdAt: 1_700 }
+        ];
+
+        const result = reconcileOverlayLiveEvents(state, [...events].reverse(), stateTools);
+
+        expect(result.processedEventIds).toEqual(events.map((event) => event.id));
+        expect(state).toMatchObject({
+            homeScore: 11,
+            awayScore: 1,
+            period: 'H2',
+            gameClockMs: 19_000,
+            clockRunning: false,
+            onCourt: ['p2'],
+            bench: ['p1']
+        });
+        expect(state.stats.p1).toMatchObject({ pts: 1, goals: 1 });
+        expect(state.opponentStats.opp1).toMatchObject({ name: 'Away Player', fouls: 1 });
+        expect(state.events.map((event) => event.id)).toEqual([
+            'pause', 'log-remove', 'undo', 'substitution', 'note', 'football-score', 'football-play',
+            'baseball', 'volleyball', 'period', 'score-update', 'goal', 'away-stat', 'home-stat-undo', 'home-stat', 'start'
+        ]);
+        expect(state.eventIds.size).toBe(events.length);
+    });
+
+    it('keeps an unrecognized future play event visible while applying its common state fields', () => {
+        const state = createOverlayState({ game: { homeScore: 0, awayScore: 0, liveStatus: 'live' } });
+
+        reconcileOverlayLiveEvents(state, [{
+            id: 'future-event', type: 'timeout_awarded', description: 'Timeout awarded',
+            homeScore: 2, awayScore: 1, period: 'Q3', gameClockMs: 42_000, createdAt: 1_000
+        }], stateTools);
+
+        expect(state).toMatchObject({ homeScore: 2, awayScore: 1, period: 'Q3', gameClockMs: 42_000 });
+        expect(state.events.map((event) => event.id)).toEqual(['future-event']);
+    });
+
+    it('rebuilds from the complete snapshot so a late offline event cannot regress current state', () => {
+        const state = createOverlayState({
+            game: { homeScore: 0, awayScore: 0, liveStatus: 'live' }
+        });
+        const current = {
+            id: 'current', type: 'score_update', description: 'Current score',
+            homeScore: 2, awayScore: 0, gameClockMs: 20_000, createdAt: 2_000
+        };
+        reconcileOverlayLiveEvents(state, [current], stateTools);
+
+        const lateOffline = {
+            id: 'late-offline', type: 'score_update', description: 'Queued earlier score',
+            homeScore: 1, awayScore: 0, gameClockMs: 10_000,
+            clientCreatedAt: new Date(1_000).toISOString(), createdAt: 3_000
+        };
+        reconcileOverlayLiveEvents(state, [current, lateOffline], stateTools);
+
+        expect(state.homeScore).toBe(2);
+        expect(state.gameClockMs).toBe(20_000);
+        expect(state.latestEvent.id).toBe('current');
+        expect(state.events.map((event) => event.id)).toEqual(['current', 'late-offline']);
+    });
+
+    it('replays reset boundaries deterministically after reconnect and ignores duplicate ids', () => {
+        const state = createOverlayState({
+            game: { homeScore: 8, awayScore: 4, liveStatus: 'live' },
+            players: [{ id: 'p1', name: 'Alex' }]
+        });
+        const duplicateGoal = {
+            id: 'fresh-goal', type: 'goal', description: 'Fresh goal', playerId: 'p1', statKey: 'goals',
+            value: 1, homeScore: 1, awayScore: 0, gameClockMs: 5_000, createdAt: 3_000
+        };
+
+        reconcileOverlayLiveEvents(state, [
+            { id: 'stale-goal', type: 'goal', description: 'Stale goal', playerId: 'p1', statKey: 'goals', value: 1, homeScore: 8, awayScore: 4, createdAt: 1_000 },
+            { id: 'reset', type: 'reset', description: 'Reset', homeScore: 0, awayScore: 0, gameClockMs: 0, createdAt: 2_000 },
+            duplicateGoal,
+            { ...duplicateGoal }
+        ], stateTools);
+
+        expect(state.homeScore).toBe(1);
+        expect(state.awayScore).toBe(0);
+        expect(state.stats.p1.goals).toBe(1);
+        expect(state.events.map((event) => event.id)).toEqual(['fresh-goal']);
+        expect(Array.from(state.eventIds)).toEqual(['stale-goal', 'reset', 'fresh-goal']);
+
+        reconcileOverlayLiveEvents(state, [{
+            id: 'delayed-stale', type: 'score_update', description: 'Pre-reset delayed event',
+            homeScore: 7, awayScore: 4, gameClockMs: 15_000,
+            clientCreatedAt: new Date(1_500).toISOString(), createdAt: 4_000
+        }], stateTools);
+        expect(state.homeScore).toBe(1);
+        expect(state.awayScore).toBe(0);
+        expect(state.gameClockMs).toBe(5_000);
+        expect(state.events.map((event) => event.id)).toEqual([]);
     });
 
     it('sorts replacement chat and supplies a realistic local fixture', () => {

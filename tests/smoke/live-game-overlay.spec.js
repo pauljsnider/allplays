@@ -479,9 +479,32 @@ test('real mode follows canonical game, lineup, clock, reset, reaction, and pass
     await expect(page.locator('#connection-message')).toContainText('Video refresh is delayed');
     await page.evaluate(() => { window.__OVERLAY_THROW_VIDEO__ = false; });
 
-    const liveSnapshot = [
+    const stateOnlySnapshot = [
         { id: 'lineup-1', type: 'lineup', onCourt: ['p4'], bench: ['p9'], createdAt: 1000 },
-        { id: 'clock-1', type: 'clock_sync', homeScore: 3, awayScore: 2, period: 'H2', gameClockMs: 700000, createdAt: 1100 },
+        { id: 'clock-1', type: 'clock_sync', homeScore: 3, awayScore: 2, period: 'H2', gameClockMs: 700000, createdAt: 1100 }
+    ];
+    await page.evaluate((events) => window.__OVERLAY_EVENT_CALLBACK__(events), stateOnlySnapshot);
+    await expect(page.locator('#home-score')).toHaveText('3');
+    await expect(page.locator('#game-clock')).toHaveText('11:40');
+    await expect(page.locator('#on-field-list')).toContainText('Sam Gray');
+    await expect(page.locator('#event-list .event-card')).toHaveCount(0);
+
+    // The public projection refreshes on a slower cadence. A stale projection
+    // must not overwrite state-only lineup/clock events from the live listener.
+    await page.evaluate(() => window.__OVERLAY_GAME_CALLBACK__({
+        id: 'game-1', opponent: 'Sporting Blue', homeScore: 1, awayScore: 0,
+        period: 'H1', liveClockMs: 500000, liveStatus: 'live', liveViewerCount: 22,
+        videoUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+        liveLineup: { onCourt: ['p9'], bench: ['p4'] }
+    }));
+    await expect(page.locator('#viewer-count')).toHaveText('22 watching');
+    await expect(page.locator('#home-score')).toHaveText('3');
+    await expect(page.locator('#period')).toHaveText('H2');
+    await expect(page.locator('#game-clock')).toHaveText('11:40');
+    await expect(page.locator('#on-field-list')).toContainText('Sam Gray');
+
+    const liveSnapshot = [
+        ...stateOnlySnapshot,
         {
             id: 'live-goal', type: 'goal', description: 'Lane scores in transition',
             playerId: 'p9', playerName: 'Avery Lane', playerNumber: '9', statKey: 'goals', value: 1,
@@ -499,6 +522,47 @@ test('real mode follows canonical game, lineup, clock, reset, reaction, and pass
     await expect(page.locator('#leader-list')).toContainText('1 GOALS');
     await page.evaluate((events) => window.__OVERLAY_EVENT_CALLBACK__(events), liveSnapshot);
     await expect(page.locator('#event-list .event-card')).toHaveCount(1);
+
+    // A queued offline event can arrive after newer events. Reprocessing the
+    // complete ordered snapshot must keep the newest score and clock authoritative.
+    await page.evaluate((events) => window.__OVERLAY_EVENT_CALLBACK__([
+        { id: 'late-offline', type: 'score_update', description: 'Earlier queued score', homeScore: 2, awayScore: 1, period: 'H2', gameClockMs: 600000, clientCreatedAt: new Date(900).toISOString(), createdAt: 1250 },
+        ...events
+    ]), liveSnapshot);
+    await expect(page.locator('#home-score')).toHaveText('4');
+    await expect(page.locator('#away-score')).toHaveText('2');
+    await expect(page.locator('#game-clock')).toHaveText('11:30');
+    await expect(page.locator('#event-list .event-card').first()).toContainText('Lane scores in transition');
+
+    const runningSnapshot = [
+        { id: 'late-offline', type: 'score_update', description: 'Earlier queued score', homeScore: 2, awayScore: 1, period: 'H2', gameClockMs: 600000, clientCreatedAt: new Date(900).toISOString(), createdAt: 1250 },
+        ...liveSnapshot,
+        { id: 'clock-start', type: 'clock_start', description: 'Clock started', homeScore: 4, awayScore: 2, period: 'H2', gameClockMs: 690000, createdAt: 1300 }
+    ];
+    await page.evaluate((events) => window.__OVERLAY_EVENT_CALLBACK__(events), runningSnapshot);
+    await expect(page.locator('#game-clock')).toHaveText('11:31', { timeout: 1800 });
+
+    // An unchanged event snapshot (for example after a projection refresh) must
+    // not rewind a running clock to its last immutable event value.
+    await page.evaluate(() => window.__OVERLAY_GAME_CALLBACK__({
+        id: 'game-1', homeScore: 2, awayScore: 1, period: 'H1', liveClockMs: 500000,
+        liveStatus: 'live', liveViewerCount: 23
+    }));
+    await expect(page.locator('#game-clock')).not.toHaveText('11:30');
+
+    const pausedSnapshot = [
+        ...runningSnapshot,
+        { id: 'clock-pause', type: 'clock_pause', description: 'Clock paused', homeScore: 4, awayScore: 2, period: 'H2', gameClockMs: 692000, createdAt: 1400 }
+    ];
+    await page.evaluate((events) => window.__OVERLAY_EVENT_CALLBACK__(events), pausedSnapshot);
+    await expect(page.locator('#game-clock')).toHaveText('11:32');
+    await page.waitForTimeout(650);
+    await expect(page.locator('#game-clock')).toHaveText('11:32');
+
+    await page.evaluate(() => window.__OVERLAY_EVENT_ERROR__(new Error('events unavailable')));
+    await expect(page.locator('#home-score')).toHaveText('4');
+    await expect(page.locator('#away-score')).toHaveText('2');
+    await expect(page.locator('#connection-message')).toContainText('Play-by-play is temporarily unavailable');
 
     const reactionText = await page.evaluate(() => {
         window.__OVERLAY_REACTION_CALLBACK__({ id: 'reaction-1', type: 'heart' });

@@ -5,10 +5,11 @@ const html = readFileSync(new URL('../../live-game-overlay.html', import.meta.ur
 const redirect = readFileSync(new URL('../../live-game-overlay-poc.html', import.meta.url), 'utf8');
 const currentLiveGame = readFileSync(new URL('../../live-game.html', import.meta.url), 'utf8');
 const source = readFileSync(new URL('../../js/live-game-overlay.js', import.meta.url), 'utf8');
-const localProductionAdapter = readFileSync(
-    new URL('../manual/live-game-overlay-production-readonly-adapter.js', import.meta.url),
-    'utf8'
-);
+const modelSource = readFileSync(new URL('../../js/live-game-overlay-model.js', import.meta.url), 'utf8');
+const liveStateSource = readFileSync(new URL('../../js/live-game-state.js', import.meta.url), 'utf8');
+const trackerSource = readFileSync(new URL('../../track-live.html', import.meta.url), 'utf8');
+const legacyTrackerSource = readFileSync(new URL('../../js/live-tracker.js', import.meta.url), 'utf8');
+const appTrackerSource = readFileSync(new URL('../../apps/app/src/lib/scheduleService.ts', import.meta.url), 'utf8');
 
 describe('live game overlay page', () => {
     it('ships as a separate no-index broadcast canvas with accessible overlay regions', () => {
@@ -27,20 +28,19 @@ describe('live game overlay page', () => {
         expect(html).toContain('id="chat-input"');
         expect(html).toContain('maxlength="2000"');
         expect(html).toContain('id="chat-sign-in"');
-        expect(html).toContain('js/live-game-overlay.js?v=3');
+        expect(html).toContain('js/live-game-overlay.js?v=4');
     });
 
     it('keeps the local demo isolated while wiring canonical subscriptions and authenticated chat posting', () => {
         expect(source).toContain("params.demo === '1'");
         expect(source).toContain("params.replay === 'true'");
         expect(source).toContain('startDemoReplayMode');
-        expect(source).toContain("return import('./db.js?v=4433176')");
-        expect(source).toContain("['localhost', '127.0.0.1']");
-        expect(source).toContain("import('../tests/manual/live-game-overlay-production-readonly-adapter.js?v=1')");
-        expect(source).toContain("import('./live-game-state.js?v=28')");
-        expect(source).toContain('stateTools.applyViewerEventToState');
+        expect(source).toContain("return import('./db.js?v=4433182')");
+        expect(source).toContain("import('./live-game-state.js?v=34')");
         expect(source).toContain('stateTools.applyResetEventState');
-        expect(source).toContain('stateTools.collectVisibleLiveEventsSequentially');
+        expect(source).toContain('reconcileOverlayLiveEvents');
+        expect(modelSource).toContain('stateTools.applyViewerEventToState');
+        expect(modelSource).toContain('stateTools.collectVisibleLiveEventsSequentially');
         expect(source).toContain('stateTools.shouldResetViewerFromGameDoc');
         expect(source).toContain('database.subscribeGame');
         expect(source).toContain('database.subscribeLiveEvents');
@@ -67,9 +67,38 @@ describe('live game overlay page', () => {
         expect(source).not.toContain('updateGame(');
         expect(source).not.toContain('trackViewerPresence(');
         expect(source).not.toContain('sendReaction(');
-        expect(localProductionAdapter).toContain("callPublicProjection('getPublicGameProjection'");
-        expect(localProductionAdapter).toContain("gameCollection(teamId, gameId, 'liveEvents')");
-        expect(localProductionAdapter).not.toMatch(/\b(?:addDoc|deleteDoc|setDoc|updateDoc|writeBatch|runTransaction)\b/);
+    });
+
+    it('keeps every current tracker live-event family in the overlay parity inventory', () => {
+        const eventInventory = [
+            ['lineup', [trackerSource, legacyTrackerSource]],
+            ['clock_start', [trackerSource, legacyTrackerSource]],
+            ['clock_pause', [trackerSource, legacyTrackerSource]],
+            ['clock_sync', [trackerSource, legacyTrackerSource]],
+            ['period_change', [trackerSource, legacyTrackerSource]],
+            ['stat', [trackerSource, legacyTrackerSource, appTrackerSource]],
+            ['goal', [trackerSource]],
+            ['volleyball', [trackerSource]],
+            ['baseball', [trackerSource]],
+            ['football_play', [trackerSource]],
+            ['football_score', [trackerSource]],
+            ['note', [trackerSource, legacyTrackerSource]],
+            ['substitution', [legacyTrackerSource]],
+            ['undo', [trackerSource, legacyTrackerSource]],
+            ['log_remove', [legacyTrackerSource]],
+            ['reset', [trackerSource]],
+            ['score_update', [appTrackerSource]]
+        ];
+
+        eventInventory.forEach(([eventType, producers]) => {
+            producers.forEach((producer) => expect(producer).toContain(`type: '${eventType}'`));
+        });
+        expect(liveStateSource).toContain("event?.type === 'lineup'");
+        expect(liveStateSource).toContain("event?.type === 'clock_sync'");
+        expect(modelSource).toContain("event.type === 'clock_start'");
+        expect(modelSource).toContain("event.type === 'clock_pause'");
+        expect(modelSource).toContain("event.type === 'reset'");
+        expect(modelSource).toContain('stateTools.applyViewerEventToState');
     });
 
     it('provides focus, panel, keyboard, and demo interactions without changing live-game.html', () => {

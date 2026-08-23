@@ -7,9 +7,9 @@ import {
     getControllableReplayEmbedUrl,
     getOverlayLineup,
     getOverlayReplayDurationMs,
-    normalizeOverlayEvent,
+    reconcileOverlayLiveEvents,
     replaceOverlayChat
-} from './live-game-overlay-model.js?v=3';
+} from './live-game-overlay-model.js?v=4';
 import {
     buildReplaySessionState,
     collectReplayEventWindow,
@@ -83,7 +83,10 @@ const uiState = {
     activeMobilePanel: null,
     desktopPanels: { plays: true, insights: true },
     activeInsight: 'lineup',
-    liveEventsFirstLoad: true,
+    hasLiveEventSnapshot: false,
+    lastLiveEvents: [],
+    liveClockAnchorMs: 0,
+    liveClockAnchorWallMs: 0,
     reactionIds: new Set(),
     isReplay: false,
     replaySession: null,
@@ -131,11 +134,7 @@ function usesCompactPanelLayout() {
 }
 
 function loadOverlayDatabase() {
-    const isLoopbackHost = ['localhost', '127.0.0.1'].includes(window.location.hostname);
-    if (isLoopbackHost) {
-        return import('../tests/manual/live-game-overlay-production-readonly-adapter.js?v=1');
-    }
-    return import('./db.js?v=4433176');
+    return import('./db.js?v=4433182');
 }
 
 function getTimestampMs(value) {
@@ -205,7 +204,9 @@ function renderEventCard(event, isNew = false) {
 
     const meta = document.createElement('div');
     meta.className = 'event-meta';
-    meta.appendChild(createTextElement('span', '', `${event.period} · ${formatOverlayClock(event.gameClockMs)}`));
+    const displayPeriod = event.period || uiState.game?.period || '—';
+    const displayClockMs = event.gameClockMs ?? uiState.game?.gameClockMs ?? 0;
+    meta.appendChild(createTextElement('span', '', `${displayPeriod} · ${formatOverlayClock(displayClockMs)}`));
     if (event.label) meta.appendChild(createTextElement('span', 'event-label', event.label));
     item.appendChild(meta);
     item.appendChild(createTextElement('p', 'event-description', event.description));
@@ -239,7 +240,7 @@ function renderEvents() {
         elements.heroEvent.dataset.tone = latest.tone;
         elements.heroEventLabel.textContent = latest.label || 'Latest play';
         elements.heroEventDescription.textContent = latest.description;
-        elements.heroEventTime.textContent = `${latest.period} · ${formatOverlayClock(latest.gameClockMs)}`;
+        elements.heroEventTime.textContent = `${latest.period || state.period || '—'} · ${formatOverlayClock(latest.gameClockMs ?? state.gameClockMs)}`;
         if (isNewLatest) {
             elements.screenReaderUpdate.textContent = `${latest.description}. Score ${state.homeScore} to ${state.awayScore}.`;
         }
@@ -477,6 +478,22 @@ function renderAll() {
     renderChat();
 }
 
+function syncLiveClockTicker() {
+    if (uiState.isDemo || uiState.isReplay || !uiState.game) return;
+    window.clearInterval(uiState.clockTimer);
+    uiState.clockTimer = null;
+    uiState.liveClockAnchorMs = Math.max(0, Number(uiState.game.gameClockMs) || 0);
+    uiState.liveClockAnchorWallMs = Date.now();
+    if (!uiState.game.clockRunning) return;
+
+    uiState.clockTimer = window.setInterval(() => {
+        if (!uiState.game?.clockRunning || uiState.isReplay || uiState.isDemo) return;
+        const elapsedSinceAnchor = Math.max(0, Date.now() - uiState.liveClockAnchorWallMs);
+        uiState.game.gameClockMs = uiState.liveClockAnchorMs + elapsedSinceAnchor;
+        renderScoreboard();
+    }, 250);
+}
+
 function resetOverlayFromGame(game = {}, stateTools, message = 'Game reset. Waiting for plays…') {
     const liveLineup = game.liveLineup || {};
     const next = stateTools.applyResetEventState(uiState.game, {
@@ -492,48 +509,22 @@ function resetOverlayFromGame(game = {}, stateTools, message = 'Game reset. Wait
     Object.assign(uiState.game, next, { latestEvent: null });
     uiState.latestRenderedEventId = null;
     renderAll();
+    syncLiveClockTicker();
     const placeholder = elements.eventList.querySelector('.empty-state');
     if (placeholder) placeholder.textContent = message;
 }
 
-function processLiveEventSnapshot(events = [], stateTools, { preserveSeededOpponentGoalStats = false } = {}) {
-    const visibleEvents = stateTools.collectVisibleLiveEventsSequentially(events, {
-        seenIds: uiState.game.eventIds,
-        resetBoundaryMs: uiState.game.lastResetAt
-    });
-
-    visibleEvents.forEach((rawEvent, index) => {
-        const event = normalizeOverlayEvent(rawEvent, index);
-        uiState.game.eventIds.add(event.id);
-
-        if (event.type === 'reset') {
-            const resetAt = getTimestampMs(event.createdAt) || Date.now();
-            uiState.game.lastResetAt = Math.max(uiState.game.lastResetAt || 0, resetAt);
-            const next = stateTools.applyResetEventState(uiState.game, event);
-            Object.assign(uiState.game, next, { latestEvent: null });
-            uiState.game.eventIds.add(event.id);
-            uiState.latestRenderedEventId = null;
-            return;
-        }
-
-        const previousEvents = [...uiState.game.events];
-        const transition = stateTools.applyViewerEventToState(
-            { ...uiState.game, events: [] },
-            event,
-            { preserveSeededOpponentGoalStats }
-        );
-        Object.assign(uiState.game, transition.state);
-        uiState.game.events = previousEvents;
-
-        if (transition.shouldRenderPlayByPlay) {
-            uiState.game.events = [event, ...previousEvents]
-                .sort((left, right) => right.createdAtMs - left.createdAtMs)
-                .slice(0, 60);
-            uiState.game.latestEvent = event;
-        }
-    });
-
+function processLiveEventSnapshot(events = [], stateTools) {
+    const priorClockMs = Math.max(0, Number(uiState.game?.gameClockMs) || 0);
+    const wasClockRunning = uiState.game?.clockRunning === true;
+    const result = reconcileOverlayLiveEvents(uiState.game, events, stateTools);
+    // A public game projection can refresh while the event snapshot is unchanged.
+    // Do not rewind a locally advancing clock back to the last immutable sync event.
+    if (wasClockRunning && uiState.game.clockRunning && result.newEventIds.length === 0) {
+        uiState.game.gameClockMs = Math.max(priorClockMs, uiState.game.gameClockMs);
+    }
     renderAll();
+    syncLiveClockTicker();
 }
 
 function getReactionEmoji(type) {
@@ -1082,7 +1073,7 @@ async function startDemoReplayMode(params) {
         { controllableReplay: true }
     );
     uiState.videoDurationMs = 15_000;
-    const stateTools = await import('./live-game-state.js?v=28');
+    const stateTools = await import('./live-game-state.js?v=34');
     await loadReplaySnapshot({
         getLiveEvents: async () => replayEvents,
         getLiveChatHistory: async () => replayChat,
@@ -1168,7 +1159,7 @@ async function startRealMode(params) {
         const [database, videoTools, stateTools] = await Promise.all([
             loadOverlayDatabase(),
             import('./live-game-video.js?v=443315'),
-            import('./live-game-state.js?v=28')
+            import('./live-game-state.js?v=34')
         ]);
         const teamPromise = database.getGameDayTeamContext(teamId, gameId, { includeInactive: true }).catch(() => ({}));
         const playersPromise = database.getPlayers(teamId, { includeInactive: true }).catch(() => []);
@@ -1224,13 +1215,15 @@ async function startRealMode(params) {
                 const resetAt = getTimestampMs(updatedGame.liveResetAt);
                 const crossedResetBoundary = resetAt > (uiState.game.lastResetAt || 0);
                 if (crossedResetBoundary) uiState.game.lastResetAt = resetAt;
-                applyOverlayGame(uiState.game, updatedGame, { preserveEventState: uiState.game.events.length > 0 });
-                if (crossedResetBoundary) {
-                    resetOverlayFromGame(updatedGame, stateTools);
-                } else if (stateTools.shouldResetViewerFromGameDoc(updatedGame, uiState.game)) {
+                const hasEventAuthority = uiState.hasLiveEventSnapshot && uiState.lastLiveEvents.length > 0;
+                applyOverlayGame(uiState.game, updatedGame, { preserveEventState: hasEventAuthority });
+                if (uiState.hasLiveEventSnapshot) {
+                    processLiveEventSnapshot(uiState.lastLiveEvents, stateTools);
+                } else if (crossedResetBoundary || stateTools.shouldResetViewerFromGameDoc(updatedGame, uiState.game)) {
                     resetOverlayFromGame(updatedGame, stateTools);
                 } else {
                     renderAll();
+                    syncLiveClockTicker();
                 }
                 refreshChatAvailability();
                 if (renderVideoSafely()) setConnectionMessage('');
@@ -1245,16 +1238,9 @@ async function startRealMode(params) {
 
         uiState.unsubscribers.push(database.subscribeLiveEvents(teamId, gameId, (events) => {
             try {
-                const isInitialLoad = uiState.liveEventsFirstLoad;
-                const hadLiveState = uiState.game.events.length > 0 ||
-                    Object.keys(uiState.game.stats || {}).length > 0 ||
-                    Object.keys(uiState.game.opponentStats || {}).length > 0;
-                uiState.liveEventsFirstLoad = false;
-                if (!isInitialLoad && events.length === 0 && hadLiveState) {
-                    resetOverlayFromGame(uiState.game.game, stateTools);
-                    return;
-                }
-                processLiveEventSnapshot(events, stateTools, { preserveSeededOpponentGoalStats: isInitialLoad });
+                uiState.lastLiveEvents = Array.isArray(events) ? [...events] : [];
+                uiState.hasLiveEventSnapshot = true;
+                processLiveEventSnapshot(uiState.lastLiveEvents, stateTools);
                 setConnectionMessage('');
             } catch (error) {
                 console.warn('Overlay event update could not be applied:', error);

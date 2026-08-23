@@ -20,10 +20,49 @@ function getTimestampMs(value) {
 
 function sortNewestFirst(items = []) {
     return [...items].sort((left, right) => {
-        const leftTime = getTimestampMs(left.createdAt || left.timestamp);
-        const rightTime = getTimestampMs(right.createdAt || right.timestamp);
+        const leftTime = Number.isFinite(left.createdAtMs)
+            ? left.createdAtMs
+            : getTimestampMs(left.clientCreatedAt || left.createdAt || left.timestamp);
+        const rightTime = Number.isFinite(right.createdAtMs)
+            ? right.createdAtMs
+            : getTimestampMs(right.clientCreatedAt || right.createdAt || right.timestamp);
         return rightTime - leftTime;
     });
+}
+
+function cloneStats(stats = {}) {
+    return Object.fromEntries(Object.entries(stats || {}).map(([id, values]) => [id, { ...(values || {}) }]));
+}
+
+function createLiveBaseline(game = {}, fallback = {}) {
+    const liveLineup = game.liveLineup || {};
+    return {
+        homeScore: game.homeScore !== undefined ? toFiniteNumber(game.homeScore) : toFiniteNumber(fallback.homeScore),
+        awayScore: game.awayScore !== undefined ? toFiniteNumber(game.awayScore) : toFiniteNumber(fallback.awayScore),
+        period: toText(game.period, toText(fallback.period, DEFAULT_PERIOD)),
+        gameClockMs: game.liveClockMs !== undefined || game.gameClockMs !== undefined
+            ? Math.max(0, toFiniteNumber(game.liveClockMs ?? game.gameClockMs))
+            : Math.max(0, toFiniteNumber(fallback.gameClockMs)),
+        clockRunning: typeof game.liveClockRunning === 'boolean'
+            ? game.liveClockRunning
+            : fallback.clockRunning === true,
+        onCourt: Array.isArray(liveLineup.onCourt)
+            ? [...liveLineup.onCourt]
+            : Array.isArray(fallback.onCourt) ? [...fallback.onCourt] : [],
+        bench: Array.isArray(liveLineup.bench)
+            ? [...liveLineup.bench]
+            : Array.isArray(fallback.bench) ? [...fallback.bench] : [],
+        opponentStats: game.opponentStats !== undefined
+            ? cloneStats(game.opponentStats)
+            : cloneStats(fallback.opponentStats),
+        sport: game.sport || fallback.sport || null,
+        periods: Array.isArray(game.periods)
+            ? [...game.periods]
+            : Array.isArray(fallback.periods) ? [...fallback.periods] : null,
+        lastResetAt: game.liveResetAt !== undefined
+            ? getTimestampMs(game.liveResetAt)
+            : toFiniteNumber(fallback.lastResetAt)
+    };
 }
 
 export function formatOverlayClock(milliseconds = 0) {
@@ -91,13 +130,20 @@ export function normalizeOverlayEvent(event = {}, index = 0) {
     const description = toText(event.description, isScore ? 'Score recorded' : 'Game update');
     return {
         ...event,
-        id: toText(event.id, `event-${index}-${getTimestampMs(event.createdAt || event.timestamp)}`),
+        id: toText(event.id, `event-${index}-${getTimestampMs(event.clientCreatedAt || event.createdAt || event.timestamp)}`),
         description,
-        period: toText(event.period, DEFAULT_PERIOD),
-        gameClockMs: Math.max(0, toFiniteNumber(event.gameClockMs)),
+        // Missing state fields must stay missing. Supplying display defaults here
+        // would make a note or substitution reset the canonical period/clock.
+        period: toText(event.period),
+        gameClockMs: event.gameClockMs === undefined
+            ? undefined
+            : Math.max(0, toFiniteNumber(event.gameClockMs)),
         tone,
         label: isScore ? (toText(event.statKey).toLowerCase() === 'goals' || event.type === 'goal' ? 'GOAL' : 'SCORE') : '',
-        createdAtMs: getTimestampMs(event.createdAt || event.timestamp)
+        // The retrying legacy tracker records the original client time before
+        // Firestore replaces createdAt at eventual delivery. Prefer that stable
+        // origin so a queued old score cannot sort after newer live updates.
+        createdAtMs: getTimestampMs(event.clientCreatedAt || event.createdAt || event.timestamp)
     };
 }
 
@@ -125,6 +171,7 @@ export function createOverlayState({ team = {}, game = {}, players = [], events 
     const normalizedPlayers = players.map(normalizePlayer);
     const normalizedEvents = sortNewestFirst(events.map(normalizeOverlayEvent));
     const normalizedChat = sortNewestFirst(chatMessages.map(normalizeChatMessage));
+    const liveBaseline = createLiveBaseline(game);
     return {
         team,
         game,
@@ -136,6 +183,7 @@ export function createOverlayState({ team = {}, game = {}, players = [], events 
         awayScore: toFiniteNumber(game.awayScore),
         period: toText(game.period, DEFAULT_PERIOD),
         gameClockMs: Math.max(0, toFiniteNumber(game.liveClockMs ?? game.gameClockMs)),
+        clockRunning: liveBaseline.clockRunning,
         liveStatus: toText(game.liveStatus || game.status, 'scheduled').toLowerCase(),
         viewerCount: Math.max(0, toFiniteNumber(game.liveViewerCount ?? game.viewerCount)),
         onCourt: Array.isArray(game.liveLineup?.onCourt) ? [...game.liveLineup.onCourt] : [],
@@ -151,13 +199,15 @@ export function createOverlayState({ team = {}, game = {}, players = [], events 
         scoringRun: { team: null, points: 0 },
         lastRunAnnounced: 0,
         sport: game.sport || team.sport || null,
-        periods: Array.isArray(game.periods) ? [...game.periods] : null
+        periods: Array.isArray(game.periods) ? [...game.periods] : null,
+        liveBaseline
     };
 }
 
 export function applyOverlayGame(state, game = {}, { preserveEventState = false } = {}) {
     if (!state) return state;
     state.game = { ...state.game, ...game };
+    state.liveBaseline = createLiveBaseline(game, state.liveBaseline || state);
     state.awayName = toText(game.opponent || game.opponentTeamName || game.awayTeamName, state.awayName);
     if (!preserveEventState) {
         if (game.homeScore !== undefined) state.homeScore = toFiniteNumber(game.homeScore, state.homeScore);
@@ -175,7 +225,118 @@ export function applyOverlayGame(state, game = {}, { preserveEventState = false 
     if (Array.isArray(game.liveLineup?.bench)) state.bench = [...game.liveLineup.bench];
     if (game.sport) state.sport = game.sport;
     if (Array.isArray(game.periods)) state.periods = [...game.periods];
+    if (!preserveEventState && typeof game.liveClockRunning === 'boolean') {
+        state.clockRunning = game.liveClockRunning;
+    }
     return state;
+}
+
+export function reconcileOverlayLiveEvents(state, incomingEvents = [], stateTools = {}) {
+    if (!state) return { processedEventIds: [], newEventIds: [] };
+    if (typeof stateTools.collectVisibleLiveEventsSequentially !== 'function' ||
+        typeof stateTools.applyResetEventState !== 'function' ||
+        typeof stateTools.applyViewerEventToState !== 'function') {
+        throw new Error('Canonical live event state tools are required.');
+    }
+
+    const priorEventIds = state.eventIds instanceof Set ? new Set(state.eventIds) : new Set();
+    const uniqueIds = new Set();
+    const orderedEvents = (Array.isArray(incomingEvents) ? incomingEvents : [])
+        .map((event, index) => ({ event: normalizeOverlayEvent(event, index), index }))
+        .sort((left, right) => left.event.createdAtMs - right.event.createdAtMs || left.index - right.index)
+        .map(({ event }) => event)
+        .filter((event) => {
+            if (uniqueIds.has(event.id)) return false;
+            uniqueIds.add(event.id);
+            return true;
+        });
+
+    const baseline = createLiveBaseline(state.game || {}, state.liveBaseline || state);
+    state.liveBaseline = baseline;
+    const resetBoundaryMs = Math.max(toFiniteNumber(state.lastResetAt), toFiniteNumber(baseline.lastResetAt));
+    const stateAfterNewerReset = resetBoundaryMs > toFiniteNumber(baseline.lastResetAt);
+    const effectiveBaseline = stateAfterNewerReset
+        ? {
+            ...baseline,
+            homeScore: toFiniteNumber(state.homeScore),
+            awayScore: toFiniteNumber(state.awayScore),
+            period: toText(state.period, baseline.period),
+            gameClockMs: Math.max(0, toFiniteNumber(state.gameClockMs)),
+            clockRunning: state.clockRunning === true,
+            onCourt: Array.isArray(state.onCourt) ? [...state.onCourt] : [],
+            bench: Array.isArray(state.bench) ? [...state.bench] : [],
+            opponentStats: cloneStats(state.opponentStats),
+            lastResetAt: resetBoundaryMs
+        }
+        : baseline;
+    const resetEligibleEvents = orderedEvents.filter((event) => {
+        if (!resetBoundaryMs || event.type === 'reset' || !event.clientCreatedAt) return true;
+        return event.createdAtMs >= resetBoundaryMs;
+    });
+    const visibleEvents = stateTools.collectVisibleLiveEventsSequentially(resetEligibleEvents, {
+        seenIds: new Set(),
+        resetBoundaryMs
+    });
+    const snapshotEventIds = new Set(orderedEvents.map((event) => event.id));
+    const seededOpponentStatKeys = new Set();
+    Object.entries(effectiveBaseline.opponentStats || {}).forEach(([playerId, stats]) => {
+        Object.keys(stats || {}).forEach((statKey) => seededOpponentStatKeys.add(`${playerId}:${statKey}`));
+    });
+
+    let workingState = {
+        ...state,
+        homeScore: effectiveBaseline.homeScore,
+        awayScore: effectiveBaseline.awayScore,
+        period: effectiveBaseline.period,
+        gameClockMs: effectiveBaseline.gameClockMs,
+        clockRunning: effectiveBaseline.clockRunning,
+        onCourt: [...effectiveBaseline.onCourt],
+        bench: [...effectiveBaseline.bench],
+        stats: {},
+        opponentStats: cloneStats(effectiveBaseline.opponentStats),
+        events: [],
+        eventIds: snapshotEventIds,
+        latestEvent: null,
+        lastStatChange: null,
+        scoringRun: { team: null, points: 0 },
+        lastRunAnnounced: 0,
+        sport: effectiveBaseline.sport || state.sport || null,
+        periods: Array.isArray(effectiveBaseline.periods) ? [...effectiveBaseline.periods] : state.periods || null,
+        lastResetAt: resetBoundaryMs
+    };
+
+    visibleEvents.forEach((event) => {
+        if (event.type === 'reset') {
+            const resetAt = event.createdAtMs || Date.now();
+            workingState.lastResetAt = Math.max(workingState.lastResetAt || 0, resetAt);
+            workingState = stateTools.applyResetEventState(workingState, event);
+            workingState.eventIds = snapshotEventIds;
+            workingState.clockRunning = false;
+            return;
+        }
+
+        const transition = stateTools.applyViewerEventToState(workingState, event, {
+            preserveSeededOpponentGoalStats: true,
+            seededOpponentStatKeys
+        });
+        workingState = transition.state;
+        workingState.eventIds = snapshotEventIds;
+        if (event.type === 'clock_start') workingState.clockRunning = true;
+        if (event.type === 'clock_pause') workingState.clockRunning = false;
+        if (typeof event.liveClockRunning === 'boolean') workingState.clockRunning = event.liveClockRunning;
+    });
+
+    if (['completed', 'complete', 'final', 'finished', 'cancelled', 'canceled'].includes(String(state.liveStatus || '').toLowerCase())) {
+        workingState.clockRunning = false;
+    }
+    workingState.events = sortNewestFirst(workingState.events.map(normalizeOverlayEvent));
+    workingState.latestEvent = workingState.events[0] || null;
+    Object.assign(state, workingState);
+
+    return {
+        processedEventIds: visibleEvents.map((event) => event.id),
+        newEventIds: visibleEvents.map((event) => event.id).filter((id) => !priorEventIds.has(id))
+    };
 }
 
 function applyEventStat(state, event) {
