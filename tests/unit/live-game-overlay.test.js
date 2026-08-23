@@ -23,10 +23,14 @@ describe('live game overlay page', () => {
         expect(html).toContain('id="replay-progress"');
         expect(html).toContain('data-replay-speed="4"');
         expect(html).toContain('aria-live="polite"');
-        expect(html).toContain('js/live-game-overlay.js?v=1');
+        expect(html).toContain('id="chat-form"');
+        expect(html).toContain('id="chat-input"');
+        expect(html).toContain('maxlength="2000"');
+        expect(html).toContain('id="chat-sign-in"');
+        expect(html).toContain('js/live-game-overlay.js?v=3');
     });
 
-    it('keeps the local demo isolated while wiring the canonical real read-only subscriptions', () => {
+    it('keeps the local demo isolated while wiring canonical subscriptions and authenticated chat posting', () => {
         expect(source).toContain("params.demo === '1'");
         expect(source).toContain("params.replay === 'true'");
         expect(source).toContain('startDemoReplayMode');
@@ -42,6 +46,15 @@ describe('live game overlay page', () => {
         expect(source).toContain('database.subscribeLiveEvents');
         expect(source).toContain('database.subscribeLiveChat');
         expect(source).toContain('database.subscribeReactions');
+        expect(source).toContain("import('./auth.js?v=4433179')");
+        expect(source).toContain("import('./live-game-chat.js?v=2')");
+        expect(source).toContain("import('./safe-image-url.js?v=1')");
+        expect(source).toContain('database.postLiveChatMessage');
+        expect(source).toContain('uiState.chatUser.uid');
+        expect(source).toContain('resolveSafeProfilePhotoWriteUrl');
+        expect(source).toContain('text.length > 2000');
+        expect(source).toContain('Date.now() - uiState.lastChatSentAt < 1500');
+        expect(source).toContain('Message failed to send. Score and video remain connected.');
         expect(source).toContain('database.getLiveEvents');
         expect(source).toContain('database.getLiveChatHistory');
         expect(source).toContain('database.getLiveReactions');
@@ -52,7 +65,6 @@ describe('live game overlay page', () => {
         expect(source).toContain('seekReplay');
         expect(source).toContain('syncReplayMedia');
         expect(source).not.toContain('updateGame(');
-        expect(source).not.toContain('postLiveChatMessage(');
         expect(source).not.toContain('trackViewerPresence(');
         expect(source).not.toContain('sendReaction(');
         expect(localProductionAdapter).toContain("callPublicProjection('getPublicGameProjection'");

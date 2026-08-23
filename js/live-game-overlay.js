@@ -46,6 +46,11 @@ const elements = {
     benchList: document.querySelector('#bench-list'),
     leaderList: document.querySelector('#leader-list'),
     chatList: document.querySelector('#chat-list'),
+    chatForm: document.querySelector('#chat-form'),
+    chatInput: document.querySelector('#chat-input'),
+    chatSend: document.querySelector('#chat-send'),
+    chatStatus: document.querySelector('#chat-status'),
+    chatSignIn: document.querySelector('#chat-sign-in'),
     panelToggles: [...document.querySelectorAll('[data-panel]')],
     insightTabs: [...document.querySelectorAll('[role="tab"][aria-controls]')],
     insightViews: [...document.querySelectorAll('[role="tabpanel"]')],
@@ -91,6 +96,15 @@ const uiState = {
     videoMode: 'none',
     videoOrigin: '',
     videoDurationMs: 0,
+    teamId: '',
+    gameId: '',
+    chatUser: null,
+    chatEnabled: false,
+    chatBusy: false,
+    chatControlsReady: false,
+    chatSubmitBound: false,
+    lastChatSentAt: 0,
+    chatServices: null,
     unsubscribers: []
 };
 
@@ -322,6 +336,137 @@ function renderChat() {
         item.appendChild(content);
         elements.chatList.appendChild(item);
     });
+}
+
+function setChatStatus(message, tone = 'neutral') {
+    if (!elements.chatStatus) return;
+    elements.chatStatus.textContent = message;
+    elements.chatStatus.dataset.tone = tone;
+}
+
+function getChatSignInUrl() {
+    const returnPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    return `login.html?next=${encodeURIComponent(returnPath)}`;
+}
+
+function renderChatComposer(statusOverride = null) {
+    if (!elements.chatForm || !elements.chatInput || !elements.chatSend) return;
+    const canShowComposer = !uiState.isDemo && !uiState.isReplay;
+    elements.chatForm.hidden = !canShowComposer;
+    if (!canShowComposer) return;
+
+    const signedIn = Boolean(uiState.chatUser?.uid);
+    const canSend = uiState.chatControlsReady && uiState.chatEnabled && signedIn && !uiState.chatBusy;
+    elements.chatInput.disabled = !canSend;
+    elements.chatSend.disabled = !canSend;
+    elements.chatInput.placeholder = uiState.chatEnabled
+        ? (signedIn ? 'Send a message…' : 'Sign in to join chat')
+        : 'Chat opens on game day';
+
+    if (elements.chatSignIn) {
+        elements.chatSignIn.href = getChatSignInUrl();
+        elements.chatSignIn.hidden = !uiState.chatControlsReady || !uiState.chatEnabled || signedIn;
+    }
+
+    if (statusOverride) {
+        setChatStatus(statusOverride.message, statusOverride.tone);
+    } else if (!uiState.chatControlsReady) {
+        setChatStatus('Chat controls are temporarily unavailable. Live updates continue.', 'error');
+    } else if (!uiState.chatEnabled) {
+        setChatStatus('Chat is read-only until game day.');
+    } else if (!signedIn) {
+        setChatStatus('Sign in to join the live conversation.');
+    } else if (uiState.chatBusy) {
+        setChatStatus('Sending…');
+    } else {
+        const senderName = String(uiState.chatUser.displayName || 'Fan').trim().slice(0, 80) || 'Fan';
+        setChatStatus(`Chatting as ${senderName}`);
+    }
+}
+
+function refreshChatAvailability() {
+    const availability = uiState.chatServices?.isViewerChatEnabled;
+    uiState.chatEnabled = Boolean(
+        availability && uiState.game && availability(uiState.game.game, { isReplay: uiState.isReplay })
+    );
+    renderChatComposer();
+}
+
+async function submitChatMessage(event) {
+    event.preventDefault();
+    if (!uiState.chatServices || !uiState.chatEnabled || !uiState.chatUser?.uid || uiState.chatBusy) {
+        renderChatComposer();
+        return;
+    }
+
+    const text = String(elements.chatInput?.value || '').trim();
+    if (!text) return;
+    if (text.length > 2000) {
+        renderChatComposer({ message: 'Messages must be 2,000 characters or fewer.', tone: 'error' });
+        return;
+    }
+    if (Date.now() - uiState.lastChatSentAt < 1500) {
+        renderChatComposer({ message: 'Please wait a moment before sending another message.', tone: 'error' });
+        return;
+    }
+
+    uiState.lastChatSentAt = Date.now();
+    uiState.chatBusy = true;
+    elements.chatInput.value = '';
+    renderChatComposer();
+
+    const senderName = String(uiState.chatUser.displayName || 'Fan').trim().slice(0, 80) || 'Fan';
+    try {
+        await uiState.chatServices.postLiveChatMessage(uiState.teamId, uiState.gameId, {
+            text,
+            senderId: uiState.chatUser.uid,
+            senderName,
+            senderPhotoUrl: uiState.chatServices.resolveSafeProfilePhotoWriteUrl(uiState.chatUser.photoURL) || null,
+            isAnonymous: false
+        });
+        uiState.chatBusy = false;
+        renderChatComposer({ message: 'Message sent.', tone: 'success' });
+    } catch (error) {
+        console.warn('Overlay chat send failed:', error);
+        uiState.chatBusy = false;
+        elements.chatInput.value = text;
+        renderChatComposer({ message: 'Message failed to send. Score and video remain connected.', tone: 'error' });
+    }
+}
+
+async function initializeChatComposer(database, teamId, gameId) {
+    uiState.teamId = teamId;
+    uiState.gameId = gameId;
+    if (!elements.chatForm) return;
+
+    try {
+        const [authTools, chatTools, imageTools] = await Promise.all([
+            import('./auth.js?v=4433179'),
+            import('./live-game-chat.js?v=2'),
+            import('./safe-image-url.js?v=1')
+        ]);
+        uiState.chatServices = {
+            postLiveChatMessage: database.postLiveChatMessage,
+            isViewerChatEnabled: chatTools.isViewerChatEnabled,
+            resolveSafeProfilePhotoWriteUrl: imageTools.resolveSafeProfilePhotoWriteUrl
+        };
+        uiState.chatControlsReady = true;
+        if (!uiState.chatSubmitBound) {
+            elements.chatForm.addEventListener('submit', submitChatMessage);
+            uiState.chatSubmitBound = true;
+        }
+        const unsubscribeAuth = authTools.checkAuth((user) => {
+            uiState.chatUser = user;
+            refreshChatAvailability();
+        }, { skipEmailVerificationCheck: true });
+        if (typeof unsubscribeAuth === 'function') uiState.unsubscribers.push(unsubscribeAuth);
+        refreshChatAvailability();
+    } catch (error) {
+        console.warn('Overlay chat controls failed to initialize:', error);
+        uiState.chatControlsReady = false;
+        uiState.chatEnabled = false;
+        renderChatComposer();
+    }
 }
 
 function renderAll() {
@@ -1041,6 +1186,7 @@ async function startRealMode(params) {
         renderPanelVisibility();
         if (isReplay) uiState.game.liveStatus = 'replay';
         renderAll();
+        renderChatComposer();
         const renderVideoSafely = () => {
             try {
                 const options = videoTools.resolveReplayVideoOptions({
@@ -1086,6 +1232,7 @@ async function startRealMode(params) {
                 } else {
                     renderAll();
                 }
+                refreshChatAvailability();
                 if (renderVideoSafely()) setConnectionMessage('');
             } catch (error) {
                 console.warn('Overlay game update could not be applied:', error);
@@ -1130,6 +1277,8 @@ async function startRealMode(params) {
         }, (error) => {
             console.warn('Overlay reaction subscription failed:', error);
         }));
+
+        void initializeChatComposer(database, teamId, gameId);
     } catch (error) {
         console.warn('Overlay broadcast failed to connect:', error);
         showVideoFallback('The game could not be loaded. The interactive preview remains available.');

@@ -370,6 +370,15 @@ async function stubRealOverlayModules(page) {
                 callback([]);
                 return () => {};
             }
+            export async function postLiveChatMessage(teamId, gameId, message) {
+                window.__OVERLAY_POSTED_CHAT__ = [...(window.__OVERLAY_POSTED_CHAT__ || []), { teamId, gameId, message }];
+                if (window.__OVERLAY_FAIL_CHAT_SEND__) throw new Error('chat write unavailable');
+                window.__OVERLAY_CHAT_CALLBACK__?.([{
+                    id: 'posted-chat',
+                    ...message,
+                    createdAt: Date.now()
+                }]);
+            }
             export function subscribeReactions(_teamId, _gameId, callback, onError) {
                 window.__OVERLAY_LIVE_SUBSCRIPTIONS__ = (window.__OVERLAY_LIVE_SUBSCRIPTIONS__ || 0) + 1;
                 window.__OVERLAY_REACTION_CALLBACK__ = callback;
@@ -407,6 +416,29 @@ async function stubRealOverlayModules(page) {
                 publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc'
             };
         }`
+    }));
+    await page.route(/\/js\/auth\.js(?:\?.*)?$/, (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: `export function checkAuth(callback) {
+            const user = Object.prototype.hasOwnProperty.call(window, '__OVERLAY_AUTH_USER__')
+                ? window.__OVERLAY_AUTH_USER__
+                : { uid: 'viewer-1', displayName: 'Alex Viewer', photoURL: 'https://images.example/avatar.png' };
+            callback(user);
+            return () => {};
+        }`
+    }));
+    await page.route(/\/js\/live-game-chat\.js(?:\?.*)?$/, (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: `export function isViewerChatEnabled(game, { isReplay = false } = {}) {
+            return !isReplay && game?.liveStatus === 'live';
+        }`
+    }));
+    await page.route(/\/js\/safe-image-url\.js(?:\?.*)?$/, (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: `export function resolveSafeProfilePhotoWriteUrl() { return ''; }`
     }));
 }
 
@@ -479,6 +511,23 @@ test('real mode follows canonical game, lineup, clock, reset, reaction, and pass
     }]));
     await page.locator('[data-panel="chat"]').click();
     await expect(page.locator('#chat-list')).toContainText('What a finish!');
+    await expect(page.locator('#chat-input')).toBeEnabled();
+    await expect(page.locator('#chat-status')).toContainText('Chatting as Alex Viewer');
+    await page.locator('#chat-input').fill('Overlay hello');
+    await page.locator('#chat-form').getByRole('button', { name: 'Send' }).click();
+    await expect(page.locator('#chat-status')).toContainText('Message sent.');
+    await expect(page.locator('#chat-list')).toContainText('Overlay hello');
+    expect(await page.evaluate(() => window.__OVERLAY_POSTED_CHAT__)).toEqual([{
+        teamId: 'team-1',
+        gameId: 'game-1',
+        message: {
+            text: 'Overlay hello',
+            senderId: 'viewer-1',
+            senderName: 'Alex Viewer',
+            senderPhotoUrl: null,
+            isAnonymous: false
+        }
+    }]);
 
     await page.evaluate(() => window.__OVERLAY_EVENT_CALLBACK__([{
         id: 'reset-1', type: 'reset', description: 'Game reset', homeScore: 0, awayScore: 0,
@@ -494,6 +543,46 @@ test('real mode follows canonical game, lineup, clock, reset, reaction, and pass
     }]));
     await expect(page.locator('#home-score')).toHaveText('0');
     await expect(page.locator('#event-list')).not.toContainText('Old goal must stay hidden');
+    expect(pageErrors).toEqual([]);
+});
+
+test('signed-out viewers can read chat but cannot post from the overlay', async ({ page, baseURL }) => {
+    const pageErrors = collectPageErrors(page);
+    await page.addInitScript(() => { window.__OVERLAY_AUTH_USER__ = null; });
+    await stubRealOverlayModules(page);
+    await stubYouTubeEmbed(page);
+
+    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('#home-team-name')).toHaveText('Current Academy');
+    await page.evaluate(() => window.__OVERLAY_CHAT_CALLBACK__([{
+        id: 'chat-1', senderName: 'Taylor', text: 'Readable for everyone', createdAt: Date.now()
+    }]));
+    await page.locator('[data-panel="chat"]').click();
+
+    await expect(page.locator('#chat-list')).toContainText('Readable for everyone');
+    await expect(page.locator('#chat-input')).toBeDisabled();
+    await expect(page.locator('#chat-status')).toContainText('Sign in to join');
+    await expect(page.locator('#chat-sign-in')).toBeVisible();
+    await expect(page.locator('#chat-sign-in')).toHaveAttribute('href', /login\.html\?next=/);
+    expect(await page.evaluate(() => window.__OVERLAY_POSTED_CHAT__ || [])).toEqual([]);
+    expect(pageErrors).toEqual([]);
+});
+
+test('chat write failure restores the draft without disrupting the live overlay', async ({ page, baseURL }) => {
+    const pageErrors = collectPageErrors(page);
+    await page.addInitScript(() => { window.__OVERLAY_FAIL_CHAT_SEND__ = true; });
+    await stubRealOverlayModules(page);
+    await stubYouTubeEmbed(page);
+
+    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+    await page.locator('[data-panel="chat"]').click();
+    await page.locator('#chat-input').fill('Keep this draft');
+    await page.locator('#chat-form').getByRole('button', { name: 'Send' }).click();
+
+    await expect(page.locator('#chat-input')).toHaveValue('Keep this draft');
+    await expect(page.locator('#chat-status')).toContainText('Message failed to send');
+    await expect(page.locator('#home-score')).toHaveText('3');
+    await expect(page.locator('#overlay-video')).toBeVisible();
     expect(pageErrors).toEqual([]);
 });
 
@@ -532,6 +621,7 @@ test('replay mode synchronizes saved plays, score, lineup, chat, reactions, and 
     await expect(page.locator('#on-field-list')).toContainText('Sam Gray');
     await page.locator('[data-panel="chat"]').click();
     await expect(page.locator('#chat-list')).toContainText('Saved replay message');
+    await expect(page.locator('#chat-form')).toBeHidden();
 
     await page.getByRole('button', { name: '4×' }).click();
     await page.getByRole('button', { name: 'Play replay' }).click();

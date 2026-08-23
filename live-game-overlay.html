@@ -510,6 +510,104 @@
       line-height: 1.45;
     }
 
+    #chat-view:not([hidden]) {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    #chat-view .chat-list {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+    }
+
+    .chat-composer {
+      flex: 0 0 auto;
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid rgba(97, 228, 219, 0.2);
+    }
+
+    .chat-compose-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+    }
+
+    .chat-input,
+    .chat-send,
+    .chat-sign-in {
+      min-height: 44px;
+      border: 1px solid rgba(97, 228, 219, 0.28);
+      border-radius: 12px;
+      font: 600 12px/1.2 "Barlow Condensed", sans-serif;
+    }
+
+    .chat-input {
+      min-width: 0;
+      padding: 0 12px;
+      color: var(--paper);
+      background: rgba(5, 12, 22, 0.72);
+      outline: none;
+    }
+
+    .chat-input:focus {
+      border-color: var(--signal);
+      box-shadow: 0 0 0 2px rgba(97, 228, 219, 0.15);
+    }
+
+    .chat-input:disabled {
+      cursor: not-allowed;
+      opacity: 0.58;
+    }
+
+    .chat-send,
+    .chat-sign-in {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 15px;
+      color: #041015;
+      background: var(--signal);
+      cursor: pointer;
+      text-decoration: none;
+    }
+
+    .chat-send:disabled {
+      cursor: not-allowed;
+      opacity: 0.48;
+    }
+
+    .chat-helper {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      min-height: 44px;
+      margin: 5px 0 0;
+    }
+
+    .chat-status {
+      margin: 0;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.35;
+    }
+
+    .chat-status[data-tone="error"] {
+      color: #ff9b8f;
+    }
+
+    .chat-status[data-tone="success"] {
+      color: var(--signal);
+    }
+
+    .chat-sign-in {
+      flex: 0 0 auto;
+      padding-inline: 12px;
+    }
+
     .empty-state {
       padding: 24px 12px;
       color: var(--muted);
@@ -1345,7 +1443,18 @@
       </section>
       <section id="chat-view" class="insight-view" role="tabpanel" aria-labelledby="chat-tab" hidden>
         <h3 class="section-label">Live conversation</h3>
-        <ul id="chat-list" class="chat-list"></ul>
+        <ul id="chat-list" class="chat-list" aria-live="polite" aria-relevant="additions"></ul>
+        <form id="chat-form" class="chat-composer" hidden novalidate>
+          <div class="chat-compose-row">
+            <label class="visually-hidden" for="chat-input">Live chat message</label>
+            <input id="chat-input" class="chat-input" type="text" maxlength="2000" autocomplete="off" placeholder="Sign in to join chat" aria-describedby="chat-status" disabled>
+            <button id="chat-send" class="chat-send" type="submit" disabled>Send</button>
+          </div>
+          <div class="chat-helper">
+            <p id="chat-status" class="chat-status" role="status">Checking chat access…</p>
+            <a id="chat-sign-in" class="chat-sign-in" href="login.html" hidden>Sign in</a>
+          </div>
+        </form>
       </section>
     </aside>
 
@@ -1423,6 +1532,6 @@
   </main>
 
   <span id="screen-reader-update" class="visually-hidden" aria-live="polite"></span>
-  <script type="module" src="js/live-game-overlay.js?v=1"></script>
+  <script type="module" src="js/live-game-overlay.js?v=3"></script>
 </body>
 </html>
