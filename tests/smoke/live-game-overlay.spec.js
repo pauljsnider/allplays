@@ -574,18 +574,29 @@ test('real mode follows canonical game, lineup, clock, reset, reaction, and pass
         { id: 'clock-start', type: 'clock_start', description: 'Clock started', homeScore: 4, awayScore: 2, period: 'H2', gameClockMs: 690000, createdAt: 1300 }
     ];
     await page.evaluate((events) => window.__OVERLAY_EVENT_CALLBACK__(events), runningSnapshot);
-    await expect(page.locator('#game-clock')).toHaveText('11:31', { timeout: 1800 });
+    await expect(page.locator('#game-clock')).toHaveText('11:30');
+    await page.waitForTimeout(1100);
+    await expect(page.locator('#game-clock')).toHaveText('11:30');
 
-    // An unchanged event snapshot (for example after a projection refresh) must
-    // not rewind a running clock to its last immutable event value.
+    // Match live-game.html: the displayed clock advances only when Firebase
+    // publishes a new clock snapshot, never from a browser-local timer.
+    const syncedRunningSnapshot = [
+        ...runningSnapshot,
+        { id: 'clock-sync-2', type: 'clock_sync', homeScore: 4, awayScore: 2, period: 'H2', gameClockMs: 691000, createdAt: 1350 }
+    ];
+    await page.evaluate((events) => window.__OVERLAY_EVENT_CALLBACK__(events), syncedRunningSnapshot);
+    await expect(page.locator('#game-clock')).toHaveText('11:31');
+
+    // A stale public projection must not overwrite the event-authoritative
+    // clock after a newer Firebase clock sync.
     await page.evaluate(() => window.__OVERLAY_GAME_CALLBACK__({
         id: 'game-1', homeScore: 2, awayScore: 1, period: 'H1', liveClockMs: 500000,
         liveStatus: 'live', liveViewerCount: 23
     }));
-    await expect(page.locator('#game-clock')).not.toHaveText('11:30');
+    await expect(page.locator('#game-clock')).toHaveText('11:31');
 
     const pausedSnapshot = [
-        ...runningSnapshot,
+        ...syncedRunningSnapshot,
         { id: 'clock-pause', type: 'clock_pause', description: 'Clock paused', homeScore: 4, awayScore: 2, period: 'H2', gameClockMs: 692000, createdAt: 1400 }
     ];
     await page.evaluate((events) => window.__OVERLAY_EVENT_CALLBACK__(events), pausedSnapshot);

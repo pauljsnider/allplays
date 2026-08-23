@@ -85,8 +85,6 @@ const uiState = {
     activeInsight: 'lineup',
     hasLiveEventSnapshot: false,
     lastLiveEvents: [],
-    liveClockAnchorMs: 0,
-    liveClockAnchorWallMs: 0,
     reactionIds: new Set(),
     isReplay: false,
     replaySession: null,
@@ -478,22 +476,6 @@ function renderAll() {
     renderChat();
 }
 
-function syncLiveClockTicker() {
-    if (uiState.isDemo || uiState.isReplay || !uiState.game) return;
-    window.clearInterval(uiState.clockTimer);
-    uiState.clockTimer = null;
-    uiState.liveClockAnchorMs = Math.max(0, Number(uiState.game.gameClockMs) || 0);
-    uiState.liveClockAnchorWallMs = Date.now();
-    if (!uiState.game.clockRunning) return;
-
-    uiState.clockTimer = window.setInterval(() => {
-        if (!uiState.game?.clockRunning || uiState.isReplay || uiState.isDemo) return;
-        const elapsedSinceAnchor = Math.max(0, Date.now() - uiState.liveClockAnchorWallMs);
-        uiState.game.gameClockMs = uiState.liveClockAnchorMs + elapsedSinceAnchor;
-        renderScoreboard();
-    }, 250);
-}
-
 function resetOverlayFromGame(game = {}, stateTools, message = 'Game reset. Waiting for plays…') {
     const liveLineup = game.liveLineup || {};
     const next = stateTools.applyResetEventState(uiState.game, {
@@ -509,22 +491,13 @@ function resetOverlayFromGame(game = {}, stateTools, message = 'Game reset. Wait
     Object.assign(uiState.game, next, { latestEvent: null });
     uiState.latestRenderedEventId = null;
     renderAll();
-    syncLiveClockTicker();
     const placeholder = elements.eventList.querySelector('.empty-state');
     if (placeholder) placeholder.textContent = message;
 }
 
 function processLiveEventSnapshot(events = [], stateTools) {
-    const priorClockMs = Math.max(0, Number(uiState.game?.gameClockMs) || 0);
-    const wasClockRunning = uiState.game?.clockRunning === true;
-    const result = reconcileOverlayLiveEvents(uiState.game, events, stateTools);
-    // A public game projection can refresh while the event snapshot is unchanged.
-    // Do not rewind a locally advancing clock back to the last immutable sync event.
-    if (wasClockRunning && uiState.game.clockRunning && result.newEventIds.length === 0) {
-        uiState.game.gameClockMs = Math.max(priorClockMs, uiState.game.gameClockMs);
-    }
+    reconcileOverlayLiveEvents(uiState.game, events, stateTools);
     renderAll();
-    syncLiveClockTicker();
 }
 
 function getReactionEmoji(type) {
@@ -1256,7 +1229,6 @@ async function startRealMode(params) {
                     resetOverlayFromGame(updatedGame, stateTools);
                 } else {
                     renderAll();
-                    syncLiveClockTicker();
                 }
                 refreshChatAvailability();
                 if (renderVideoSafely()) setConnectionMessage('');

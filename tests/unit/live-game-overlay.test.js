@@ -28,7 +28,7 @@ describe('live game overlay page', () => {
         expect(html).toContain('id="chat-input"');
         expect(html).toContain('maxlength="2000"');
         expect(html).toContain('id="chat-sign-in"');
-        expect(html).toContain('js/live-game-overlay.js?v=12');
+        expect(html).toContain('js/live-game-overlay.js?v=13');
     });
 
     it('keeps the local demo isolated while wiring canonical subscriptions and authenticated chat posting', () => {
@@ -46,6 +46,8 @@ describe('live game overlay page', () => {
         expect(source).toContain('database.subscribeLiveEvents');
         expect(source).toContain('database.subscribeLiveChat');
         expect(source).toContain('database.subscribeReactions');
+        expect(source).not.toContain('syncLiveClockTicker');
+        expect(source).not.toContain('liveClockAnchor');
         expect(source).toContain("import('./auth.js?v=4433192')");
         expect(source).toContain("import('./live-game-chat.js?v=2')");
         expect(source).toContain("import('./safe-image-url.js?v=1')");
