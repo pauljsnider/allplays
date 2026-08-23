@@ -93,6 +93,35 @@ test('local replay demo exposes the complete playback flow without Firebase', as
     expect(pageErrors).toEqual([]);
 });
 
+test('local replay fires the recorded game timeline in order without manual seeking', async ({ page, baseURL }) => {
+    const pageErrors = collectPageErrors(page);
+    await stubYouTubeEmbed(page);
+    await page.goto(`${baseURL}/live-game-overlay-poc.html?demo=1&replay=true&videoId=PK1HyC37doc`, { waitUntil: 'domcontentloaded' });
+
+    await expect(page.locator('#replay-controls')).toBeVisible();
+    await page.getByRole('button', { name: 'Pause replay' }).click();
+    await page.getByRole('button', { name: '4×' }).click();
+    await page.getByRole('button', { name: 'Restart replay' }).click();
+
+    await expect(page.locator('#home-score')).toHaveText('1', { timeout: 2000 });
+    await expect(page.locator('#away-score')).toHaveText('0');
+    await expect(page.locator('#event-list')).toContainText('Kurtz opens the scoring');
+    await expect(page.locator('#reactions-overlay .floating-reaction')).toContainText('👏', { timeout: 1500 });
+    await expect(page.locator('#chat-list')).toContainText('What a finish!', { timeout: 1500 });
+
+    await expect(page.locator('#away-score')).toHaveText('1', { timeout: 2500 });
+    await expect(page.locator('#event-list')).toContainText('Union KC equalizes');
+    await expect(page.locator('#period')).toHaveText('H2');
+    await expect(page.locator('#chat-list')).toContainText('Great recovery shape in the second half.', { timeout: 2500 });
+
+    await expect(page.locator('#home-score')).toHaveText('2', { timeout: 2500 });
+    await expect(page.locator('#event-list')).toContainText('Persell finds the winner');
+    await expect(page.locator('#reactions-overlay .floating-reaction')).toContainText('❤️', { timeout: 1500 });
+    await expect(page.locator('#replay-current')).toHaveText('0:15', { timeout: 2500 });
+    await expect(page.locator('#game-clock')).toHaveText('0:15');
+    expect(pageErrors).toEqual([]);
+});
+
 async function stubRealOverlayModules(page) {
     await page.route(/\/js\/db\.js(?:\?.*)?$/, (route) => route.fulfill({
         status: 200,
