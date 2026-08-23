@@ -87,7 +87,7 @@ vi.mock('../../js/firebase-app-check.js?v=11', () => ({
     initializePrimaryAppCheck: vi.fn(async () => ({ state: 'skipped' }))
 }));
 
-vi.mock('../../js/firebase-runtime-config.js?v=17', () => ({
+vi.mock('../../js/firebase-runtime-config.js?v=22', () => ({
     resolvePrimaryFirebaseConfig: vi.fn(async () => ({
         apiKey: 'test-key',
         authDomain: 'example.test',
