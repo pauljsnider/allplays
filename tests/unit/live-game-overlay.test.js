@@ -1,12 +1,14 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-const html = readFileSync(new URL('../../live-game-overlay-poc.html', import.meta.url), 'utf8');
-const source = readFileSync(new URL('../../js/live-game-overlay-poc.js', import.meta.url), 'utf8');
+const html = readFileSync(new URL('../../live-game-overlay.html', import.meta.url), 'utf8');
+const redirect = readFileSync(new URL('../../live-game-overlay-poc.html', import.meta.url), 'utf8');
+const currentLiveGame = readFileSync(new URL('../../live-game.html', import.meta.url), 'utf8');
+const source = readFileSync(new URL('../../js/live-game-overlay.js', import.meta.url), 'utf8');
 
-describe('live game overlay prototype page', () => {
+describe('live game overlay page', () => {
     it('ships as a separate no-index broadcast canvas with accessible overlay regions', () => {
-        expect(html).toContain('<meta name="robots" content="noindex,nofollow">');
+        expect(html).toContain('<meta name="robots" content="noindex, nofollow">');
         expect(html).toContain('id="broadcast-stage"');
         expect(html).toContain('id="overlay-video"');
         expect(html).toContain('id="score-bug"');
@@ -17,7 +19,7 @@ describe('live game overlay prototype page', () => {
         expect(html).toContain('id="replay-progress"');
         expect(html).toContain('data-replay-speed="4"');
         expect(html).toContain('aria-live="polite"');
-        expect(html).toContain('js/live-game-overlay-poc.js?v=4');
+        expect(html).toContain('js/live-game-overlay.js?v=1');
     });
 
     it('keeps the local demo isolated while wiring the canonical real read-only subscriptions', () => {
@@ -55,5 +57,16 @@ describe('live game overlay prototype page', () => {
         expect(html).toContain('data-action="home-goal"');
         expect(source).toContain("event.key.toLowerCase() === 'f'");
         expect(source).toContain('togglePanel');
+        expect(source).toContain('usesCompactPanelLayout');
+        expect(html).toContain('data-panel-layout="wide"');
+        expect(html).toContain('data-panel-open="false"');
+        expect(html).toContain('@media (min-width: 901px) and (max-width: 1320px)');
+        expect(currentLiveGame).not.toContain('live-game-overlay');
+    });
+
+    it('keeps the former preview URL as a query-preserving compatibility redirect', () => {
+        expect(redirect).toContain("new URL('live-game-overlay.html', window.location.href)");
+        expect(redirect).toContain('destination.search = window.location.search');
+        expect(redirect).toContain('destination.hash = window.location.hash');
     });
 });

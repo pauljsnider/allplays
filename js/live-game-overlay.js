@@ -105,8 +105,15 @@ function getQueryParams() {
     return Object.fromEntries(new URLSearchParams(window.location.search).entries());
 }
 
-function isMobileLayout() {
-    return window.matchMedia('(max-width: 900px)').matches;
+function isValidDocumentId(value) {
+    const candidate = String(value || '').trim();
+    if (!candidate || candidate === '.' || candidate === '..' || candidate.includes('/')) return false;
+    return new TextEncoder().encode(candidate).length <= 1500;
+}
+
+function usesCompactPanelLayout() {
+    return window.matchMedia('(max-width: 900px)').matches ||
+        (uiState.isReplay && window.matchMedia('(max-width: 1320px)').matches);
 }
 
 function getTimestampMs(value) {
@@ -629,6 +636,7 @@ async function loadReplaySnapshot(database, stateTools, teamId, gameId) {
     uiState.isReplay = true;
     uiState.game.liveStatus = 'replay';
     elements.body.dataset.replay = 'true';
+    renderPanelVisibility();
     elements.replayControls.hidden = false;
     setConnectionMessage('Loading replay timeline…', 'info');
     const [eventsResult, chatResult, reactionsResult] = await Promise.allSettled([
@@ -744,8 +752,8 @@ function getDemoVideoId(params) {
 }
 
 function renderPanelVisibility() {
-    const mobile = isMobileLayout();
-    if (mobile) {
+    const compact = usesCompactPanelLayout();
+    if (compact) {
         elements.playsPanel.hidden = uiState.activeMobilePanel !== 'plays';
         elements.insightsPanel.hidden = uiState.activeMobilePanel !== 'insights';
         elements.playsPanel.dataset.mobileActive = String(uiState.activeMobilePanel === 'plays');
@@ -757,13 +765,17 @@ function renderPanelVisibility() {
         elements.insightsPanel.dataset.mobileActive = 'true';
     }
 
+    elements.body.dataset.panelLayout = compact ? 'compact' : 'wide';
+    elements.body.dataset.panelOpen = String(compact && uiState.activeMobilePanel !== null);
+
     elements.panelToggles.forEach((button) => {
         const panel = button.dataset.panel;
         let pressed = false;
-        if (panel === 'plays') pressed = mobile ? uiState.activeMobilePanel === 'plays' : uiState.desktopPanels.plays;
-        if (panel === 'insights') pressed = mobile ? uiState.activeMobilePanel === 'insights' && uiState.activeInsight !== 'chat' : uiState.desktopPanels.insights && uiState.activeInsight !== 'chat';
-        if (panel === 'chat') pressed = mobile ? uiState.activeMobilePanel === 'insights' && uiState.activeInsight === 'chat' : uiState.desktopPanels.insights && uiState.activeInsight === 'chat';
+        if (panel === 'plays') pressed = compact ? uiState.activeMobilePanel === 'plays' : uiState.desktopPanels.plays;
+        if (panel === 'insights') pressed = compact ? uiState.activeMobilePanel === 'insights' && uiState.activeInsight !== 'chat' : uiState.desktopPanels.insights && uiState.activeInsight !== 'chat';
+        if (panel === 'chat') pressed = compact ? uiState.activeMobilePanel === 'insights' && uiState.activeInsight === 'chat' : uiState.desktopPanels.insights && uiState.activeInsight === 'chat';
         button.setAttribute('aria-pressed', String(pressed));
+        button.setAttribute('aria-expanded', String(pressed));
     });
 }
 
@@ -779,18 +791,18 @@ function selectInsight(name) {
 }
 
 function togglePanel(panel) {
-    const mobile = isMobileLayout();
+    const compact = usesCompactPanelLayout();
     if (panel === 'chat') {
-        const wasActive = mobile && uiState.activeMobilePanel === 'insights' && uiState.activeInsight === 'chat';
+        const wasActive = compact && uiState.activeMobilePanel === 'insights' && uiState.activeInsight === 'chat';
         selectInsight('chat');
-        if (mobile) uiState.activeMobilePanel = wasActive ? null : 'insights';
+        if (compact) uiState.activeMobilePanel = wasActive ? null : 'insights';
         else uiState.desktopPanels.insights = true;
     } else if (panel === 'insights') {
         if (uiState.activeInsight === 'chat') selectInsight('lineup');
-        if (mobile) uiState.activeMobilePanel = uiState.activeMobilePanel === 'insights' ? null : 'insights';
+        if (compact) uiState.activeMobilePanel = uiState.activeMobilePanel === 'insights' ? null : 'insights';
         else uiState.desktopPanels.insights = !uiState.desktopPanels.insights;
     } else if (panel === 'plays') {
-        if (mobile) uiState.activeMobilePanel = uiState.activeMobilePanel === 'plays' ? null : 'plays';
+        if (compact) uiState.activeMobilePanel = uiState.activeMobilePanel === 'plays' ? null : 'plays';
         else uiState.desktopPanels.plays = !uiState.desktopPanels.plays;
     }
     renderPanelVisibility();
@@ -952,7 +964,7 @@ function bindInteractions() {
         if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
         if (event.key === 'Escape') {
             setDemoLabOpen(false);
-            if (isMobileLayout()) uiState.activeMobilePanel = null;
+            if (usesCompactPanelLayout()) uiState.activeMobilePanel = null;
             renderPanelVisibility();
             return;
         }
@@ -991,8 +1003,8 @@ async function startDemoMode(params) {
 async function startRealMode(params) {
     const teamId = String(params.teamId || '').trim();
     const gameId = String(params.gameId || '').trim();
-    if (!teamId || !gameId) {
-        showVideoFallback('Add teamId and gameId to load a real game, or add ?demo=1 to explore the prototype.');
+    if (!isValidDocumentId(teamId) || !isValidDocumentId(gameId)) {
+        showVideoFallback('Add valid teamId and gameId values to load a real game, or add ?demo=1 to explore the preview.');
         setConnectionMessage('This broadcast view needs a teamId and gameId. Add ?demo=1 for the interactive local demo.');
         setStatus('scheduled');
         return;
@@ -1018,6 +1030,7 @@ async function startRealMode(params) {
         const isReplay = params.replay === 'true';
         uiState.isReplay = isReplay;
         elements.body.dataset.replay = String(isReplay);
+        renderPanelVisibility();
         if (isReplay) uiState.game.liveStatus = 'replay';
         renderAll();
         const renderVideoSafely = () => {
@@ -1111,8 +1124,8 @@ async function startRealMode(params) {
         }));
     } catch (error) {
         console.warn('Overlay broadcast failed to connect:', error);
-        showVideoFallback('The real game could not be loaded in this local environment. Demo mode remains available.');
-        setConnectionMessage(`Could not load this game here. Open ${window.location.pathname}?demo=1 to use the interactive local demo.`);
+        showVideoFallback('The game could not be loaded. The interactive preview remains available.');
+        setConnectionMessage(`Could not load this game. Open ${window.location.pathname}?demo=1 to use the interactive preview.`);
         setStatus('scheduled');
     }
 }

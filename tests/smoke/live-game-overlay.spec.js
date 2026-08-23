@@ -21,11 +21,100 @@ async function stubYouTubeEmbed(page) {
     return requests;
 }
 
+function rectanglesOverlap(left, right) {
+    return Boolean(left && right &&
+        left.left < right.right && left.right > right.left &&
+        left.top < right.bottom && left.bottom > right.top);
+}
+
+async function getResponsiveLayout(page) {
+    return page.evaluate(() => {
+        const getRectangle = (selector) => {
+            const element = document.querySelector(selector);
+            if (!element || element.hidden) return null;
+            const style = getComputedStyle(element);
+            if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return null;
+            const rectangle = element.getBoundingClientRect();
+            return {
+                left: rectangle.left,
+                right: rectangle.right,
+                top: rectangle.top,
+                bottom: rectangle.bottom,
+                width: rectangle.width,
+                height: rectangle.height
+            };
+        };
+        const visible = (element) => {
+            const style = getComputedStyle(element);
+            const rectangle = element.getBoundingClientRect();
+            return !element.hidden && style.display !== 'none' && style.visibility !== 'hidden' &&
+                rectangle.width > 0 && rectangle.height > 0;
+        };
+        const touchTargets = [...document.querySelectorAll('button, a[href], input[type="range"]')]
+            .filter(visible)
+            .map((element) => {
+                const rectangle = element.getBoundingClientRect();
+                return {
+                    label: element.getAttribute('aria-label') || element.textContent.trim(),
+                    width: rectangle.width,
+                    height: rectangle.height
+                };
+            });
+
+        return {
+            viewport: { width: window.innerWidth, height: window.innerHeight },
+            documentWidth: document.documentElement.scrollWidth,
+            panelLayout: document.body.dataset.panelLayout,
+            panelOpen: document.body.dataset.panelOpen,
+            topbar: getRectangle('.broadcast-topbar'),
+            score: getRectangle('#score-bug'),
+            replay: getRectangle('#replay-controls'),
+            plays: getRectangle('#plays-panel'),
+            insights: getRectangle('#insights-panel'),
+            dock: getRectangle('.panel-dock'),
+            video: getRectangle('.video-layer'),
+            touchTargets,
+            teamBounds: [...document.querySelectorAll('.score-team')].map((team) => {
+                const teamRectangle = team.getBoundingClientRect();
+                const nameRectangle = team.querySelector('.team-name').getBoundingClientRect();
+                return { team: { left: teamRectangle.left, right: teamRectangle.right }, name: { left: nameRectangle.left, right: nameRectangle.right } };
+            })
+        };
+    });
+}
+
+function expectLayoutInsideViewport(layout) {
+    expect(layout.documentWidth, 'page must not overflow horizontally').toBeLessThanOrEqual(layout.viewport.width);
+    for (const [name, rectangle] of Object.entries({
+        topbar: layout.topbar,
+        score: layout.score,
+        replay: layout.replay,
+        plays: layout.plays,
+        insights: layout.insights,
+        dock: layout.dock,
+        video: layout.video
+    })) {
+        if (!rectangle) continue;
+        expect(rectangle.left, `${name} left edge`).toBeGreaterThanOrEqual(-0.5);
+        expect(rectangle.right, `${name} right edge`).toBeLessThanOrEqual(layout.viewport.width + 0.5);
+        expect(rectangle.top, `${name} top edge`).toBeGreaterThanOrEqual(-0.5);
+        expect(rectangle.bottom, `${name} bottom edge`).toBeLessThanOrEqual(layout.viewport.height + 0.5);
+    }
+    layout.touchTargets.forEach((target) => {
+        expect(target.width, `${target.label} touch-target width`).toBeGreaterThanOrEqual(44);
+        expect(target.height, `${target.label} touch-target height`).toBeGreaterThanOrEqual(44);
+    });
+    layout.teamBounds.forEach(({ team, name }) => {
+        expect(name.left, 'team name left edge').toBeGreaterThanOrEqual(team.left - 0.5);
+        expect(name.right, 'team name right edge').toBeLessThanOrEqual(team.right + 0.5);
+    });
+}
+
 test('interactive overlay demo keeps the video primary while live moments update the broadcast UI', async ({ page, baseURL }) => {
     const pageErrors = collectPageErrors(page);
     await page.setViewportSize({ width: 1440, height: 900 });
     await stubYouTubeEmbed(page);
-    await page.goto(`${baseURL}/live-game-overlay-poc.html?demo=1&videoId=PK1HyC37doc`, { waitUntil: 'domcontentloaded' });
+    await page.goto(`${baseURL}/live-game-overlay.html?demo=1&videoId=PK1HyC37doc`, { waitUntil: 'domcontentloaded' });
     await expect(page.locator('#live-status')).toHaveText('LIVE');
     expect(pageErrors).toEqual([]);
 
@@ -53,7 +142,7 @@ test('mobile overlay turns edge context into one-at-a-time bottom sheets without
     const pageErrors = collectPageErrors(page);
     await page.setViewportSize({ width: 390, height: 844 });
     await stubYouTubeEmbed(page);
-    await page.goto(`${baseURL}/live-game-overlay-poc.html?demo=1`, { waitUntil: 'domcontentloaded' });
+    await page.goto(`${baseURL}/live-game-overlay.html?demo=1`, { waitUntil: 'domcontentloaded' });
     await expect(page.locator('#score-bug')).toBeVisible();
     expect(pageErrors).toEqual([]);
 
@@ -72,10 +161,127 @@ test('mobile overlay turns edge context into one-at-a-time bottom sheets without
     expect(pageErrors).toEqual([]);
 });
 
-test('local replay demo exposes the complete playback flow without Firebase', async ({ page, baseURL }) => {
+const responsiveViewports = [
+    { name: 'iPhone SE', width: 320, height: 568 },
+    { name: 'iPhone 14', width: 390, height: 844 },
+    { name: 'Pixel 7', width: 412, height: 915 },
+    { name: 'phone landscape', width: 844, height: 390 },
+    { name: 'iPad Mini', width: 768, height: 1024 },
+    { name: 'iPad Pro portrait', width: 1024, height: 1366 },
+    { name: 'iPad landscape', width: 1180, height: 820 },
+    { name: 'laptop', width: 1280, height: 720 },
+    { name: 'desktop', width: 1440, height: 900 },
+    { name: 'Full HD', width: 1920, height: 1080 },
+    { name: 'ultrawide', width: 2560, height: 1080 }
+];
+
+for (const viewport of responsiveViewports) {
+    test(`live and replay overlays remain usable at ${viewport.name} ${viewport.width}x${viewport.height}`, async ({ page, baseURL }) => {
+        const pageErrors = collectPageErrors(page);
+        await page.setViewportSize({ width: viewport.width, height: viewport.height });
+        await stubYouTubeEmbed(page);
+
+        for (const replay of [false, true]) {
+            const suffix = replay ? '&replay=true' : '';
+            await page.goto(`${baseURL}/live-game-overlay.html?demo=1&videoId=PK1HyC37doc${suffix}`, { waitUntil: 'domcontentloaded' });
+            await expect(page.locator('#live-status')).toHaveText(replay ? 'REPLAY' : 'LIVE');
+            expect(pageErrors).toEqual([]);
+
+            if (replay) {
+                await page.getByRole('button', { name: 'Pause replay' }).click();
+            }
+
+            const initialLayout = await getResponsiveLayout(page);
+            expectLayoutInsideViewport(initialLayout);
+            expect(rectanglesOverlap(initialLayout.score, initialLayout.replay), 'score must not overlap replay controls').toBe(false);
+
+            if (initialLayout.panelLayout === 'compact') {
+                await expect(page.locator('#plays-panel')).toBeHidden();
+                await expect(page.locator('#insights-panel')).toBeHidden();
+                await page.locator('[data-panel="chat"]').click();
+                await expect(page.locator('#insights-panel')).toBeVisible();
+                await expect(page.locator('body')).toHaveAttribute('data-panel-open', 'true');
+
+                const openLayout = await getResponsiveLayout(page);
+                expectLayoutInsideViewport(openLayout);
+                expect(rectanglesOverlap(openLayout.insights, openLayout.score), 'open panel must not overlap score').toBe(false);
+                expect(rectanglesOverlap(openLayout.insights, openLayout.replay), 'open panel must not overlap replay controls').toBe(false);
+                expect(rectanglesOverlap(openLayout.insights, openLayout.dock), 'open panel must not overlap panel dock').toBe(false);
+
+                await page.keyboard.press('Escape');
+                await expect(page.locator('#insights-panel')).toBeHidden();
+                await expect(page.locator('body')).toHaveAttribute('data-panel-open', 'false');
+                await expect(page.locator('#score-bug')).toBeVisible();
+                if (replay) await expect(page.locator('#replay-controls')).toBeVisible();
+            } else {
+                await expect(page.locator('#plays-panel')).toBeVisible();
+                await expect(page.locator('#insights-panel')).toBeVisible();
+                expect(rectanglesOverlap(initialLayout.plays, initialLayout.score), 'left panel must not overlap score').toBe(false);
+                expect(rectanglesOverlap(initialLayout.insights, initialLayout.score), 'right panel must not overlap score').toBe(false);
+                expect(rectanglesOverlap(initialLayout.plays, initialLayout.replay), 'left panel must not overlap replay controls').toBe(false);
+                expect(rectanglesOverlap(initialLayout.insights, initialLayout.replay), 'right panel must not overlap replay controls').toBe(false);
+            }
+            expect(pageErrors).toEqual([]);
+        }
+    });
+}
+
+test('replay panel layout adapts across tablet rotation and desktop resizing', async ({ page, baseURL }) => {
+    const pageErrors = collectPageErrors(page);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await stubYouTubeEmbed(page);
+    await page.goto(`${baseURL}/live-game-overlay.html?demo=1&replay=true`, { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('#live-status')).toHaveText('REPLAY');
+    expect(pageErrors).toEqual([]);
+    await page.getByRole('button', { name: 'Pause replay' }).click();
+    await expect(page.locator('body')).toHaveAttribute('data-panel-layout', 'wide');
+    await expect(page.locator('#plays-panel')).toBeVisible();
+    await expect(page.locator('#insights-panel')).toBeVisible();
+
+    await page.setViewportSize({ width: 1180, height: 820 });
+    await expect(page.locator('body')).toHaveAttribute('data-panel-layout', 'compact');
+    await expect(page.locator('#plays-panel')).toBeHidden();
+    await expect(page.locator('#insights-panel')).toBeHidden();
+    await page.locator('[data-panel="plays"]').click();
+    await expect(page.locator('#plays-panel')).toBeVisible();
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await expect(page.locator('body')).toHaveAttribute('data-panel-layout', 'wide');
+    await expect(page.locator('body')).toHaveAttribute('data-panel-open', 'false');
+    await expect(page.locator('#plays-panel')).toBeVisible();
+    await expect(page.locator('#insights-panel')).toBeVisible();
+    expectLayoutInsideViewport(await getResponsiveLayout(page));
+    expect(pageErrors).toEqual([]);
+});
+
+test('former overlay preview URL preserves query parameters on the production-ready route', async ({ page, baseURL }) => {
     const pageErrors = collectPageErrors(page);
     await stubYouTubeEmbed(page);
     await page.goto(`${baseURL}/live-game-overlay-poc.html?demo=1&replay=true&videoId=PK1HyC37doc`, { waitUntil: 'domcontentloaded' });
+    await expect(page).toHaveURL(/\/live-game-overlay\.html\?demo=1&replay=true&videoId=PK1HyC37doc$/);
+    await expect(page.locator('#live-status')).toHaveText('REPLAY');
+    expect(pageErrors).toEqual([]);
+});
+
+test('malformed game identifiers fail before any data subscription module loads', async ({ page, baseURL }) => {
+    const pageErrors = collectPageErrors(page);
+    let databaseRequests = 0;
+    await page.route(/\/js\/db\.js(?:\?.*)?$/, (route) => {
+        databaseRequests += 1;
+        return route.abort();
+    });
+
+    await page.goto(`${baseURL}/live-game-overlay.html?teamId=bad%2Fteam&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('#video-fallback-copy')).toContainText('valid teamId and gameId');
+    await expect(page.locator('#live-status')).toHaveText('UPCOMING');
+    expect(databaseRequests).toBe(0);
+    expect(pageErrors).toEqual([]);
+});
+
+test('local replay demo exposes the complete playback flow without Firebase', async ({ page, baseURL }) => {
+    const pageErrors = collectPageErrors(page);
+    await stubYouTubeEmbed(page);
+    await page.goto(`${baseURL}/live-game-overlay.html?demo=1&replay=true&videoId=PK1HyC37doc`, { waitUntil: 'domcontentloaded' });
 
     await expect(page.locator('#live-status')).toHaveText('REPLAY');
     await expect(page.locator('#replay-controls')).toBeVisible();
@@ -88,7 +294,7 @@ test('local replay demo exposes the complete playback flow without Firebase', as
     await expect(page.locator('#home-score')).toHaveText('2');
     await expect(page.locator('#away-score')).toHaveText('1');
     await expect(page.locator('#event-list')).toContainText('Persell finds the winner');
-    await page.locator('#chat-tab').click();
+    await page.locator('[data-panel="chat"]').click();
     await expect(page.locator('#chat-list')).toContainText('Great recovery shape');
     expect(pageErrors).toEqual([]);
 });
@@ -96,7 +302,7 @@ test('local replay demo exposes the complete playback flow without Firebase', as
 test('local replay fires the recorded game timeline in order without manual seeking', async ({ page, baseURL }) => {
     const pageErrors = collectPageErrors(page);
     await stubYouTubeEmbed(page);
-    await page.goto(`${baseURL}/live-game-overlay-poc.html?demo=1&replay=true&videoId=PK1HyC37doc`, { waitUntil: 'domcontentloaded' });
+    await page.goto(`${baseURL}/live-game-overlay.html?demo=1&replay=true&videoId=PK1HyC37doc`, { waitUntil: 'domcontentloaded' });
 
     await expect(page.locator('#replay-controls')).toBeVisible();
     await page.getByRole('button', { name: 'Pause replay' }).click();
@@ -209,7 +415,7 @@ test('real mode follows canonical game, lineup, clock, reset, reaction, and pass
     await stubRealOverlayModules(page);
     const embedRequests = await stubYouTubeEmbed(page);
 
-    await page.goto(`${baseURL}/live-game-overlay-poc.html?teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
     await expect(page.locator('#home-team-name')).toHaveText('Current Academy');
     expect(pageErrors).toEqual([]);
     await expect(page.locator('#home-score')).toHaveText('3');
@@ -271,7 +477,7 @@ test('real mode follows canonical game, lineup, clock, reset, reaction, and pass
     await page.evaluate(() => window.__OVERLAY_CHAT_CALLBACK__([{
         id: 'chat-1', senderName: 'Taylor', text: 'What a finish!', createdAt: Date.now()
     }]));
-    await page.locator('#chat-tab').click();
+    await page.locator('[data-panel="chat"]').click();
     await expect(page.locator('#chat-list')).toContainText('What a finish!');
 
     await page.evaluate(() => window.__OVERLAY_EVENT_CALLBACK__([{
@@ -307,7 +513,7 @@ test('replay mode synchronizes saved plays, score, lineup, chat, reactions, and 
     await stubRealOverlayModules(page);
     await stubYouTubeEmbed(page);
 
-    await page.goto(`${baseURL}/live-game-overlay-poc.html?teamId=team-1&gameId=game-1&replay=true`, { waitUntil: 'domcontentloaded' });
+    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true`, { waitUntil: 'domcontentloaded' });
     await expect(page.locator('#live-status')).toHaveText('REPLAY');
     expect(pageErrors).toEqual([]);
     await expect(page.locator('#replay-controls')).toBeVisible();
@@ -324,7 +530,7 @@ test('replay mode synchronizes saved plays, score, lineup, chat, reactions, and 
     await expect(page.locator('#home-score')).toHaveText('1');
     await expect(page.locator('#event-list')).toContainText('Lane opens the replay scoring');
     await expect(page.locator('#on-field-list')).toContainText('Sam Gray');
-    await page.locator('#chat-tab').click();
+    await page.locator('[data-panel="chat"]').click();
     await expect(page.locator('#chat-list')).toContainText('Saved replay message');
 
     await page.getByRole('button', { name: '4×' }).click();
@@ -357,7 +563,7 @@ test('mobile replay controls stay on screen without covering the scoreboard', as
     await stubRealOverlayModules(page);
     await stubYouTubeEmbed(page);
 
-    await page.goto(`${baseURL}/live-game-overlay-poc.html?teamId=team-1&gameId=game-1&replay=true`, { waitUntil: 'domcontentloaded' });
+    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true`, { waitUntil: 'domcontentloaded' });
     await expect(page.locator('#replay-controls')).toBeVisible();
     await page.getByRole('button', { name: 'Pause replay' }).click();
     await expect(page.getByRole('button', { name: 'Play replay' })).toBeVisible();
@@ -391,7 +597,7 @@ test('replay history failure leaves the saved video and final game state usable'
     await stubRealOverlayModules(page);
     await stubYouTubeEmbed(page);
 
-    await page.goto(`${baseURL}/live-game-overlay-poc.html?teamId=team-1&gameId=game-1&replay=true`, { waitUntil: 'domcontentloaded' });
+    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true`, { waitUntil: 'domcontentloaded' });
     await expect(page.locator('#live-status')).toHaveText('REPLAY');
     await expect(page.locator('#home-score')).toHaveText('3');
     await expect(page.locator('#away-score')).toHaveText('2');

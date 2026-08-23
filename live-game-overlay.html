@@ -1,0 +1,1428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Live Game Broadcast - ALL PLAYS</title>
+  <meta name="description" content="Watch an ALL PLAYS live game with score, clock, plays, lineup, and chat layered over the video.">
+  <link rel="icon" type="image/png" href="img/logo_small.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700;800&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      color-scheme: dark;
+      --ink: #06111f;
+      --ink-deep: #02070d;
+      --glass: rgba(5, 14, 27, 0.74);
+      --glass-strong: rgba(4, 12, 23, 0.91);
+      --line: rgba(185, 222, 228, 0.2);
+      --line-strong: rgba(185, 222, 228, 0.42);
+      --paper: #f4f7f2;
+      --muted: #a9b8bd;
+      --home: #61e4db;
+      --home-deep: #1b9f9a;
+      --away: #ff7a70;
+      --away-deep: #d7474c;
+      --signal: #ffd166;
+      --success: #77e49a;
+      --shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+      --radius-sm: 12px;
+      --radius-md: 18px;
+      --radius-lg: 28px;
+      --top-safe: max(18px, env(safe-area-inset-top));
+      --bottom-safe: max(18px, env(safe-area-inset-bottom));
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: var(--ink-deep);
+    }
+
+    body {
+      color: var(--paper);
+      font-family: "Manrope", ui-sans-serif, system-ui, sans-serif;
+    }
+
+    button,
+    input {
+      font: inherit;
+    }
+
+    button,
+    a {
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    button:focus-visible,
+    a:focus-visible,
+    input:focus-visible,
+    [role="tab"]:focus-visible {
+      outline: 3px solid var(--signal);
+      outline-offset: 3px;
+    }
+
+    .broadcast-stage {
+      position: relative;
+      width: 100%;
+      height: 100dvh;
+      isolation: isolate;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at 50% 42%, rgba(18, 54, 69, 0.34), transparent 48%),
+        linear-gradient(135deg, #071423, #02070d 70%);
+    }
+
+    .video-layer,
+    .video-layer iframe,
+    .video-layer video,
+    .video-fallback {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    .video-layer {
+      z-index: -3;
+      display: grid;
+      place-items: center;
+      background: #000;
+    }
+
+    .video-layer iframe {
+      border: 0;
+      background: #000;
+    }
+
+    .video-layer video {
+      object-fit: contain;
+      background: #000;
+    }
+
+    .video-fallback {
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      text-align: center;
+      background:
+        linear-gradient(120deg, transparent 0 49%, rgba(97, 228, 219, 0.08) 50%, transparent 51%),
+        repeating-linear-gradient(0deg, transparent 0 64px, rgba(255, 255, 255, 0.025) 65px),
+        radial-gradient(ellipse at center, #173444 0%, #07111e 66%);
+    }
+
+    .video-fallback[hidden] {
+      display: none;
+    }
+
+    .video-fallback-mark {
+      display: grid;
+      place-items: center;
+      width: 82px;
+      height: 82px;
+      margin: 0 auto 18px;
+      border: 1px solid var(--line-strong);
+      border-radius: 50%;
+      color: var(--home);
+      font: 700 42px/1 "Barlow Condensed", sans-serif;
+      background: rgba(2, 7, 13, 0.55);
+    }
+
+    .stage-shade {
+      position: absolute;
+      inset: 0;
+      z-index: -2;
+      pointer-events: none;
+      background:
+        linear-gradient(180deg, rgba(0, 0, 0, 0.72), transparent 22%, transparent 67%, rgba(0, 0, 0, 0.8)),
+        linear-gradient(90deg, rgba(0, 0, 0, 0.5), transparent 23%, transparent 77%, rgba(0, 0, 0, 0.5));
+    }
+
+    .stage-grain {
+      position: absolute;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+      opacity: 0.11;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.95' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.6'/%3E%3C/svg%3E");
+    }
+
+    .broadcast-topbar {
+      position: absolute;
+      top: var(--top-safe);
+      left: 24px;
+      right: 24px;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      pointer-events: none;
+    }
+
+    .brand-lockup,
+    .top-actions,
+    .status-cluster {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      pointer-events: auto;
+    }
+
+    .brand-lockup {
+      min-width: 44px;
+      min-height: 44px;
+      color: var(--paper);
+      text-decoration: none;
+      font: 700 19px/1 "Barlow Condensed", sans-serif;
+      letter-spacing: 0.11em;
+      text-transform: uppercase;
+    }
+
+    .brand-lockup img {
+      width: 34px;
+      height: 34px;
+      border-radius: 9px;
+      box-shadow: 0 10px 24px rgba(0, 0, 0, 0.28);
+    }
+
+    .status-pill,
+    .icon-button,
+    .panel-toggle,
+    .demo-action {
+      border: 1px solid var(--line);
+      color: var(--paper);
+      background: rgba(3, 11, 21, 0.72);
+      backdrop-filter: blur(18px) saturate(1.15);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22);
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 38px;
+      padding: 0 13px;
+      border-radius: 999px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+    }
+
+    .status-pill[data-status="live"] {
+      color: var(--paper);
+    }
+
+    .status-pill[data-status="live"]::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      margin-right: 8px;
+      border-radius: 50%;
+      background: var(--away);
+      box-shadow: 0 0 0 5px rgba(255, 122, 112, 0.13);
+      animation: live-pulse 1.8s ease-in-out infinite;
+    }
+
+    .icon-button {
+      display: grid;
+      place-items: center;
+      width: 44px;
+      height: 44px;
+      padding: 0;
+      border-radius: 50%;
+      cursor: pointer;
+      transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+    }
+
+    .icon-button:hover,
+    .panel-toggle:hover,
+    .demo-action:hover {
+      border-color: var(--line-strong);
+      background: rgba(12, 31, 48, 0.92);
+      transform: translateY(-1px);
+    }
+
+    .icon-button svg {
+      width: 19px;
+      height: 19px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.8;
+    }
+
+    .edge-panel {
+      position: absolute;
+      top: 82px;
+      bottom: 150px;
+      z-index: 12;
+      display: flex;
+      flex-direction: column;
+      width: min(320px, 25vw);
+      min-width: 260px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-lg);
+      background: linear-gradient(155deg, rgba(4, 13, 25, 0.88), rgba(4, 13, 25, 0.64));
+      backdrop-filter: blur(22px) saturate(1.15);
+      box-shadow: var(--shadow);
+      transition: opacity 220ms ease;
+    }
+
+    .edge-panel[data-side="left"] {
+      left: 24px;
+    }
+
+    .edge-panel[data-side="right"] {
+      right: 24px;
+    }
+
+    .edge-panel[hidden] {
+      display: none;
+    }
+
+    .panel-heading {
+      padding: 20px 20px 14px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .panel-kicker {
+      margin: 0 0 5px;
+      color: var(--home);
+      font: 700 12px/1 "Barlow Condensed", sans-serif;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+    }
+
+    .panel-title {
+      margin: 0;
+      font: 700 25px/1.05 "Barlow Condensed", sans-serif;
+      letter-spacing: 0.01em;
+    }
+
+    .panel-copy {
+      margin: 7px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .panel-scroll {
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(97, 228, 219, 0.35) transparent;
+    }
+
+    .event-list {
+      display: grid;
+      gap: 10px;
+      margin: 0;
+      padding: 14px;
+      list-style: none;
+    }
+
+    .event-card {
+      position: relative;
+      padding: 13px 13px 13px 16px;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: var(--radius-sm);
+      background: rgba(255, 255, 255, 0.045);
+    }
+
+    .event-card::before {
+      content: "";
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 3px;
+      background: var(--home);
+    }
+
+    .event-card[data-tone^="away"]::before {
+      background: var(--away);
+    }
+
+    .event-card[data-tone="system"]::before {
+      background: var(--signal);
+    }
+
+    .event-card[data-new="true"] {
+      animation: event-arrive 420ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+    }
+
+    .event-meta {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 5px;
+      color: var(--muted);
+      font: 700 11px/1 "Barlow Condensed", sans-serif;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    .event-label {
+      color: var(--signal);
+    }
+
+    .event-description {
+      margin: 0;
+      font-size: 13px;
+      font-weight: 650;
+      line-height: 1.42;
+    }
+
+    .event-player {
+      margin: 5px 0 0;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .panel-tabs {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 5px;
+      margin: 14px;
+      padding: 5px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(0, 0, 0, 0.24);
+    }
+
+    .panel-tab {
+      min-height: 44px;
+      border: 0;
+      border-radius: 999px;
+      color: var(--muted);
+      background: transparent;
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .panel-tab[aria-selected="true"] {
+      color: var(--ink);
+      background: var(--home);
+    }
+
+    .insight-view {
+      min-height: 0;
+      overflow-y: auto;
+      padding: 0 14px 16px;
+    }
+
+    .insight-view[hidden] {
+      display: none;
+    }
+
+    .section-label {
+      margin: 12px 0 8px;
+      color: var(--muted);
+      font: 700 11px/1 "Barlow Condensed", sans-serif;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+
+    .lineup-list,
+    .leader-list,
+    .chat-list {
+      display: grid;
+      gap: 8px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .player-row,
+    .chat-row {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      align-items: center;
+      gap: 10px;
+      min-height: 48px;
+      padding: 9px 10px;
+      border: 1px solid rgba(255, 255, 255, 0.07);
+      border-radius: var(--radius-sm);
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .player-number,
+    .chat-avatar {
+      display: grid;
+      place-items: center;
+      width: 31px;
+      height: 31px;
+      border-radius: 50%;
+      color: var(--ink);
+      background: var(--home);
+      font: 800 13px/1 "Barlow Condensed", sans-serif;
+    }
+
+    .player-row strong,
+    .chat-row strong {
+      display: block;
+      overflow: hidden;
+      color: var(--paper);
+      font-size: 12px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .player-row small,
+    .chat-row small {
+      display: block;
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 10px;
+    }
+
+    .player-stat {
+      color: var(--signal);
+      font: 700 13px/1 "Barlow Condensed", sans-serif;
+      text-align: right;
+    }
+
+    .chat-row {
+      grid-template-columns: auto 1fr;
+      align-items: start;
+    }
+
+    .chat-row[data-ai="true"] {
+      border-color: rgba(97, 228, 219, 0.25);
+      background: rgba(97, 228, 219, 0.08);
+    }
+
+    .chat-row p {
+      margin: 4px 0 0;
+      color: #d9e0dd;
+      font-size: 11px;
+      line-height: 1.45;
+    }
+
+    .empty-state {
+      padding: 24px 12px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+      text-align: center;
+    }
+
+    .reactions-overlay {
+      position: absolute;
+      inset: 0;
+      z-index: 10;
+      overflow: hidden;
+      pointer-events: none;
+    }
+
+    .floating-reaction {
+      position: absolute;
+      left: var(--reaction-x, 50%);
+      bottom: 118px;
+      display: block;
+      font-size: clamp(30px, 4vw, 54px);
+      filter: drop-shadow(0 8px 16px rgba(0, 0, 0, 0.55));
+      animation: reaction-rise 2.2s ease-out forwards;
+      transform: translateX(-50%);
+      will-change: opacity, transform;
+    }
+
+    .hero-event {
+      position: absolute;
+      left: 50%;
+      bottom: 154px;
+      z-index: 11;
+      width: min(460px, calc(100vw - 720px));
+      min-width: 340px;
+      padding: 13px 16px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-md);
+      background: linear-gradient(110deg, rgba(4, 13, 25, 0.92), rgba(4, 13, 25, 0.64));
+      backdrop-filter: blur(20px);
+      box-shadow: var(--shadow);
+      transform: translateX(-50%);
+      transition: opacity 180ms ease, transform 180ms ease;
+    }
+
+    .hero-event[data-tone="home-score"] {
+      border-color: rgba(97, 228, 219, 0.56);
+    }
+
+    .hero-event[data-tone="away-score"] {
+      border-color: rgba(255, 122, 112, 0.56);
+    }
+
+    .hero-event-label {
+      margin: 0 0 4px;
+      color: var(--home);
+      font: 700 11px/1 "Barlow Condensed", sans-serif;
+      letter-spacing: 0.17em;
+      text-transform: uppercase;
+    }
+
+    .hero-event[data-tone^="away"] .hero-event-label {
+      color: var(--away);
+    }
+
+    .hero-event-copy {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 14px;
+    }
+
+    .hero-event-copy p {
+      margin: 0;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .hero-event-time {
+      flex: none;
+      color: var(--muted);
+      font: 700 12px/1 "Barlow Condensed", sans-serif;
+    }
+
+    .score-bug {
+      position: absolute;
+      left: 50%;
+      bottom: calc(var(--bottom-safe) + 34px);
+      z-index: 15;
+      display: grid;
+      grid-template-columns: minmax(165px, 1fr) auto minmax(165px, 1fr);
+      align-items: stretch;
+      width: min(680px, calc(100vw - 64px));
+      min-height: 80px;
+      overflow: hidden;
+      border: 1px solid var(--line-strong);
+      border-radius: 22px;
+      background: var(--glass-strong);
+      backdrop-filter: blur(24px) saturate(1.18);
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.52);
+      transform: translateX(-50%);
+    }
+
+    .replay-controls {
+      position: absolute;
+      left: 50%;
+      bottom: calc(var(--bottom-safe) + 126px);
+      z-index: 17;
+      display: grid;
+      grid-template-columns: auto auto minmax(160px, 1fr) auto;
+      align-items: center;
+      gap: 10px;
+      width: min(680px, calc(100vw - 64px));
+      min-height: 58px;
+      padding: 9px 12px;
+      border: 1px solid var(--line-strong);
+      border-radius: 18px;
+      background: rgba(3, 11, 21, 0.92);
+      backdrop-filter: blur(24px) saturate(1.18);
+      box-shadow: 0 18px 54px rgba(0, 0, 0, 0.46);
+      transform: translateX(-50%);
+    }
+
+    .replay-controls[hidden] {
+      display: none;
+    }
+
+    .replay-button,
+    .replay-speed {
+      min-height: 44px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--paper);
+      background: rgba(255, 255, 255, 0.06);
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 750;
+    }
+
+    .replay-button {
+      min-width: 68px;
+      padding: 0 14px;
+    }
+
+    .replay-button[data-kind="restart"] {
+      min-width: 44px;
+      padding: 0 10px;
+      font-size: 18px;
+    }
+
+    .replay-button:hover,
+    .replay-speed:hover,
+    .replay-speed[aria-pressed="true"] {
+      border-color: rgba(97, 228, 219, 0.55);
+      color: var(--ink);
+      background: var(--home);
+    }
+
+    .replay-button:disabled,
+    .replay-progress:disabled {
+      cursor: not-allowed;
+      opacity: 0.45;
+    }
+
+    .replay-timeline {
+      display: grid;
+      grid-template-columns: auto minmax(100px, 1fr) auto;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .replay-time {
+      color: var(--muted);
+      font: 700 11px/1 "Barlow Condensed", sans-serif;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .replay-progress {
+      width: 100%;
+      min-height: 44px;
+      accent-color: var(--home);
+      cursor: pointer;
+    }
+
+    .replay-speed-group {
+      display: flex;
+      gap: 4px;
+    }
+
+    .replay-speed {
+      min-width: 44px;
+      min-height: 44px;
+      padding: 0 8px;
+    }
+
+    body[data-replay="true"] .hero-event {
+      bottom: 226px;
+    }
+
+    .score-team {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      gap: 14px;
+      min-width: 0;
+      padding: 13px 18px;
+    }
+
+    .score-team > div {
+      min-width: 0;
+    }
+
+    .score-team[data-side="away"] {
+      grid-template-columns: auto 1fr;
+      text-align: right;
+    }
+
+    .team-name {
+      overflow: hidden;
+      font: 700 19px/1.05 "Barlow Condensed", sans-serif;
+      letter-spacing: 0.02em;
+      text-overflow: ellipsis;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .team-side {
+      display: block;
+      margin-top: 5px;
+      color: var(--home);
+      font: 700 9px/1 "Barlow Condensed", sans-serif;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+    }
+
+    .score-team[data-side="away"] .team-side {
+      color: var(--away);
+    }
+
+    .team-score {
+      min-width: 44px;
+      font: 800 48px/0.85 "Barlow Condensed", sans-serif;
+      text-align: center;
+    }
+
+    .team-score[data-flash="true"] {
+      animation: score-flash 520ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    }
+
+    .clock-block {
+      display: grid;
+      align-content: center;
+      justify-items: center;
+      min-width: 102px;
+      padding: 11px 14px;
+      border-right: 1px solid var(--line);
+      border-left: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .period-label {
+      color: var(--signal);
+      font: 700 11px/1 "Barlow Condensed", sans-serif;
+      letter-spacing: 0.17em;
+      text-transform: uppercase;
+    }
+
+    .game-clock {
+      margin-top: 5px;
+      font: 700 26px/1 "Barlow Condensed", sans-serif;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 0.04em;
+    }
+
+    .panel-dock {
+      position: absolute;
+      right: 24px;
+      bottom: calc(var(--bottom-safe) + 46px);
+      z-index: 18;
+      display: flex;
+      gap: 8px;
+    }
+
+    .panel-toggle {
+      min-height: 44px;
+      padding: 0 14px;
+      border-radius: 999px;
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .panel-toggle[aria-pressed="true"] {
+      border-color: rgba(97, 228, 219, 0.48);
+      color: var(--ink);
+      background: var(--home);
+    }
+
+    .demo-lab {
+      position: absolute;
+      top: 74px;
+      left: 50%;
+      z-index: 30;
+      width: min(620px, calc(100vw - 48px));
+      padding: 14px;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius-md);
+      background: rgba(3, 11, 21, 0.94);
+      backdrop-filter: blur(26px);
+      box-shadow: var(--shadow);
+      transform: translateX(-50%);
+    }
+
+    .demo-lab[hidden] {
+      display: none;
+    }
+
+    .demo-lab-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 11px;
+    }
+
+    .demo-lab-header h2 {
+      margin: 0;
+      font: 700 21px/1 "Barlow Condensed", sans-serif;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    .demo-lab-header p {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 10px;
+    }
+
+    .demo-actions {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 8px;
+    }
+
+    .demo-action {
+      min-height: 44px;
+      padding: 8px 10px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .demo-action[data-action="home-goal"] {
+      color: var(--home);
+    }
+
+    .demo-action[data-action="away-goal"] {
+      color: var(--away);
+    }
+
+    .mode-note {
+      position: absolute;
+      left: 24px;
+      bottom: calc(var(--bottom-safe) + 49px);
+      z-index: 16;
+      max-width: 210px;
+      color: rgba(244, 247, 242, 0.62);
+      font-size: 10px;
+      line-height: 1.45;
+      pointer-events: none;
+    }
+
+    .connection-message {
+      position: absolute;
+      top: 74px;
+      left: 50%;
+      z-index: 28;
+      max-width: min(620px, calc(100vw - 48px));
+      padding: 10px 14px;
+      border: 1px solid rgba(255, 209, 102, 0.36);
+      border-radius: 999px;
+      color: var(--paper);
+      background: rgba(3, 11, 21, 0.94);
+      box-shadow: var(--shadow);
+      font-size: 11px;
+      text-align: center;
+      transform: translateX(-50%);
+    }
+
+    .connection-message[hidden] {
+      display: none;
+    }
+
+    body[data-focus="true"] .edge-panel,
+    body[data-focus="true"] .hero-event,
+    body[data-focus="true"] .panel-dock,
+    body[data-focus="true"] .mode-note {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    body[data-focus="true"] .edge-panel[data-side="left"] {
+      transform: translateX(-22px);
+    }
+
+    body[data-focus="true"] .edge-panel[data-side="right"] {
+      transform: translateX(22px);
+    }
+
+    .visually-hidden {
+      position: absolute !important;
+      width: 1px !important;
+      height: 1px !important;
+      padding: 0 !important;
+      margin: -1px !important;
+      overflow: hidden !important;
+      clip: rect(0, 0, 0, 0) !important;
+      white-space: nowrap !important;
+      border: 0 !important;
+    }
+
+    @keyframes live-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.45; }
+    }
+
+    @keyframes event-arrive {
+      from { opacity: 0; transform: translateY(-12px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes score-flash {
+      0% { color: var(--paper); transform: scale(1); }
+      40% { color: var(--signal); transform: scale(1.24); }
+      100% { color: var(--paper); transform: scale(1); }
+    }
+
+    @keyframes reaction-rise {
+      0% { opacity: 0; transform: translate(-50%, 24px) scale(0.72) rotate(-8deg); }
+      18% { opacity: 1; transform: translate(-50%, 0) scale(1.08) rotate(4deg); }
+      100% { opacity: 0; transform: translate(-50%, -46vh) scale(1.22) rotate(-3deg); }
+    }
+
+    @media (max-width: 1180px) {
+      .edge-panel {
+        width: 280px;
+      }
+
+      .hero-event {
+        display: none;
+      }
+
+      .score-bug {
+        width: min(610px, calc(100vw - 620px));
+        min-width: 470px;
+      }
+
+      .score-team {
+        padding-inline: 13px;
+      }
+
+      .team-name {
+        font-size: 16px;
+      }
+    }
+
+    @media (min-width: 901px) and (max-width: 1320px) {
+      body[data-replay="true"] .edge-panel {
+        top: auto;
+        right: auto !important;
+        bottom: calc(var(--bottom-safe) + 74px);
+        left: 50% !important;
+        width: min(720px, calc(100vw - 48px));
+        min-width: 0;
+        height: min(45dvh, 420px, calc(100dvh - var(--bottom-safe) - 330px));
+        border-radius: 22px;
+        transform: translateX(-50%);
+      }
+
+      body[data-replay="true"] .edge-panel[data-side="right"] {
+        height: min(49dvh, 450px, calc(100dvh - var(--bottom-safe) - 330px));
+      }
+
+      body[data-replay="true"] .edge-panel[data-mobile-active="false"] {
+        display: none;
+      }
+
+      body[data-replay="true"] .hero-event,
+      body[data-replay="true"] .mode-note {
+        display: none;
+      }
+
+      body[data-replay="true"] .score-bug {
+        top: 72px;
+        bottom: auto;
+        width: min(680px, calc(100vw - 48px));
+        min-width: 0;
+      }
+
+      body[data-replay="true"] .replay-controls {
+        top: 164px;
+        bottom: auto;
+        width: min(680px, calc(100vw - 48px));
+      }
+
+      body[data-replay="true"] .panel-dock {
+        right: 24px;
+        bottom: var(--bottom-safe);
+      }
+
+      body[data-replay="true"] .connection-message {
+        top: 238px;
+      }
+    }
+
+    @media (max-width: 900px) {
+      .broadcast-topbar {
+        left: 14px;
+        right: 14px;
+      }
+
+      .brand-lockup span {
+        display: none;
+      }
+
+      .edge-panel {
+        top: auto;
+        right: 12px !important;
+        bottom: calc(var(--bottom-safe) + 74px);
+        left: 12px !important;
+        width: auto;
+        min-width: 0;
+        height: min(45dvh, 420px);
+        border-radius: 22px;
+      }
+
+      .edge-panel[data-side="right"] {
+        height: min(49dvh, 450px);
+      }
+
+      .edge-panel[data-mobile-active="false"] {
+        display: none;
+      }
+
+      .score-bug {
+        top: 72px;
+        bottom: auto;
+        width: calc(100vw - 24px);
+        min-width: 0;
+        min-height: 66px;
+        border-radius: 18px;
+      }
+
+      .replay-controls {
+        top: 148px;
+        bottom: auto;
+        grid-template-columns: auto auto minmax(0, 1fr);
+        width: calc(100vw - 24px);
+        min-height: 72px;
+        padding: 8px 10px;
+      }
+
+      .replay-timeline {
+        grid-template-columns: minmax(80px, 1fr) auto;
+      }
+
+      .replay-timeline .replay-time:first-child {
+        display: none;
+      }
+
+      .replay-speed-group {
+        grid-column: 1 / -1;
+        justify-content: center;
+      }
+
+      .score-team {
+        gap: 8px;
+        padding: 9px 11px;
+      }
+
+      .team-name {
+        font-size: 14px;
+      }
+
+      .team-score {
+        min-width: 30px;
+        font-size: 38px;
+      }
+
+      .clock-block {
+        min-width: 78px;
+        padding-inline: 8px;
+      }
+
+      .game-clock {
+        font-size: 22px;
+      }
+
+      .panel-dock {
+        right: 12px;
+        bottom: var(--bottom-safe);
+        left: 12px;
+        justify-content: center;
+      }
+
+      .panel-toggle {
+        flex: 1;
+        max-width: 150px;
+      }
+
+      body[data-replay="true"] .edge-panel {
+        height: min(45dvh, 420px, calc(100dvh - var(--bottom-safe) - 348px));
+      }
+
+      body[data-replay="true"] .edge-panel[data-side="right"] {
+        height: min(49dvh, 450px, calc(100dvh - var(--bottom-safe) - 348px));
+      }
+
+      .mode-note {
+        display: none;
+      }
+
+      .demo-lab {
+        top: 148px;
+      }
+
+      .connection-message {
+        top: 148px;
+      }
+
+      body[data-replay="true"] .connection-message {
+        top: 274px;
+      }
+
+      .demo-actions {
+        grid-template-columns: repeat(2, 1fr);
+      }
+
+      .demo-action:last-child {
+        grid-column: span 2;
+      }
+    }
+
+    @media (max-width: 560px) {
+      .top-actions .status-pill:last-of-type {
+        display: none;
+      }
+
+      .brand-lockup img {
+        width: 31px;
+        height: 31px;
+      }
+
+      .score-bug {
+        grid-template-columns: minmax(0, 1fr) 70px minmax(0, 1fr);
+      }
+
+      .score-team {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 3px;
+        padding: 7px 8px;
+        text-align: center;
+      }
+
+      .score-team[data-side="away"] {
+        flex-direction: column-reverse;
+        text-align: center;
+      }
+
+      .team-name {
+        display: -webkit-box;
+        width: 100%;
+        overflow: hidden;
+        font-size: 11px;
+        line-height: 1;
+        white-space: normal;
+        overflow-wrap: anywhere;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 2;
+      }
+
+      .team-side {
+        display: none;
+      }
+
+      .team-score {
+        font-size: 34px;
+      }
+
+      .clock-block {
+        min-width: 70px;
+      }
+
+      .panel-heading {
+        padding: 16px 16px 12px;
+      }
+
+      .panel-title {
+        font-size: 22px;
+      }
+
+      .panel-copy {
+        display: none;
+      }
+
+      .demo-lab-header p {
+        display: none;
+      }
+    }
+
+    @media (max-width: 900px) and (max-height: 620px) {
+      body[data-panel-layout="compact"][data-panel-open="true"] .score-bug,
+      body[data-panel-layout="compact"][data-panel-open="true"] .replay-controls,
+      body[data-panel-layout="compact"][data-panel-open="true"] .connection-message {
+        visibility: hidden;
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      body[data-panel-layout="compact"] .edge-panel,
+      body[data-panel-layout="compact"] .edge-panel[data-side="right"],
+      body[data-replay="true"][data-panel-layout="compact"] .edge-panel,
+      body[data-replay="true"][data-panel-layout="compact"] .edge-panel[data-side="right"] {
+        height: min(55dvh, 320px);
+      }
+
+      .panel-heading {
+        padding: 12px 14px 10px;
+      }
+
+      .panel-title {
+        font-size: 19px;
+      }
+
+      .panel-tabs {
+        margin: 8px 12px;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        scroll-behavior: auto !important;
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+  </style>
+</head>
+<body data-focus="false" data-panel-layout="wide" data-panel-open="false">
+  <main id="broadcast-stage" class="broadcast-stage" aria-label="ALL PLAYS live game broadcast">
+    <div class="video-layer" aria-label="Game video">
+      <iframe
+        id="overlay-video"
+        title="Game video stream"
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+        allowfullscreen
+        referrerpolicy="strict-origin-when-cross-origin"
+        hidden></iframe>
+      <video id="overlay-recorded-video" controls playsinline hidden></video>
+      <div id="video-fallback" class="video-fallback">
+        <div>
+          <div class="video-fallback-mark" aria-hidden="true">AP</div>
+          <strong>Waiting for the game feed</strong>
+          <p id="video-fallback-copy">The scoreboard and live context stay ready while video connects.</p>
+        </div>
+      </div>
+    </div>
+    <div class="stage-shade" aria-hidden="true"></div>
+    <div class="stage-grain" aria-hidden="true"></div>
+    <div id="reactions-overlay" class="reactions-overlay" aria-hidden="true"></div>
+
+    <header class="broadcast-topbar">
+      <div class="status-cluster">
+        <a class="brand-lockup" href="index.html" aria-label="ALL PLAYS home">
+          <img src="img/logo_small.png" alt="">
+          <span>ALL PLAYS LIVE</span>
+        </a>
+        <span id="live-status" class="status-pill" data-status="loading">Loading</span>
+      </div>
+      <div class="top-actions">
+        <span id="viewer-count" class="status-pill">0 watching</span>
+        <a id="open-stream" class="icon-button" href="#" target="_blank" rel="noopener noreferrer" aria-label="Open video on provider" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5M19 5l-8 8M19 13v5a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></svg>
+        </a>
+        <button id="demo-lab-toggle" class="icon-button" type="button" aria-label="Open preview controls" aria-expanded="false" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6M10 3v5l-5 9a2 2 0 0 0 1.8 3h10.4A2 2 0 0 0 19 17l-5-9V3M8 14h8"/></svg>
+        </button>
+        <button id="focus-toggle" class="icon-button" type="button" aria-label="Enter video focus mode" aria-pressed="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <aside id="plays-panel" class="edge-panel" data-side="left" data-mobile-active="false" aria-labelledby="plays-heading">
+      <div class="panel-heading">
+        <p class="panel-kicker">Live timeline</p>
+        <h1 id="plays-heading" class="panel-title">Every moment, in context</h1>
+        <p class="panel-copy">New plays arrive at the top without taking your eyes off the field.</p>
+      </div>
+      <div class="panel-scroll">
+        <ol id="event-list" class="event-list" aria-live="polite" aria-relevant="additions">
+          <li class="empty-state">Connecting to the live event feed…</li>
+        </ol>
+      </div>
+    </aside>
+
+    <aside id="insights-panel" class="edge-panel" data-side="right" data-mobile-active="false" aria-labelledby="insights-heading">
+      <div class="panel-heading">
+        <p class="panel-kicker">Game intelligence</p>
+        <h2 id="insights-heading" class="panel-title">Who is shaping the game</h2>
+      </div>
+      <div class="panel-tabs" role="tablist" aria-label="Game intelligence views">
+        <button id="lineup-tab" class="panel-tab" type="button" role="tab" aria-selected="true" aria-controls="lineup-view">Lineup</button>
+        <button id="leaders-tab" class="panel-tab" type="button" role="tab" aria-selected="false" aria-controls="leaders-view">Leaders</button>
+        <button id="chat-tab" class="panel-tab" type="button" role="tab" aria-selected="false" aria-controls="chat-view">Chat</button>
+      </div>
+      <section id="lineup-view" class="insight-view" role="tabpanel" aria-labelledby="lineup-tab">
+        <h3 class="section-label">On the field</h3>
+        <ul id="on-field-list" class="lineup-list"></ul>
+        <h3 class="section-label">Bench</h3>
+        <ul id="bench-list" class="lineup-list"></ul>
+      </section>
+      <section id="leaders-view" class="insight-view" role="tabpanel" aria-labelledby="leaders-tab" hidden>
+        <h3 class="section-label">Game leaders</h3>
+        <ul id="leader-list" class="leader-list"></ul>
+      </section>
+      <section id="chat-view" class="insight-view" role="tabpanel" aria-labelledby="chat-tab" hidden>
+        <h3 class="section-label">Live conversation</h3>
+        <ul id="chat-list" class="chat-list"></ul>
+      </section>
+    </aside>
+
+    <section id="hero-event" class="hero-event" aria-live="polite" data-tone="system">
+      <p id="hero-event-label" class="hero-event-label">Latest play</p>
+      <div class="hero-event-copy">
+        <p id="hero-event-description">Waiting for the first play…</p>
+        <span id="hero-event-time" class="hero-event-time">—</span>
+      </div>
+    </section>
+
+    <section id="replay-controls" class="replay-controls" aria-label="Replay controls" hidden>
+      <button id="replay-restart" class="replay-button" data-kind="restart" type="button" aria-label="Restart replay">↺</button>
+      <button id="replay-play" class="replay-button" type="button" aria-label="Play replay">Play</button>
+      <div class="replay-timeline">
+        <time id="replay-current" class="replay-time" datetime="PT0M0S">0:00</time>
+        <input id="replay-progress" class="replay-progress" type="range" min="0" max="100" step="0.1" value="0" aria-label="Replay position">
+        <time id="replay-duration" class="replay-time" datetime="PT0M0S">0:00</time>
+      </div>
+      <div class="replay-speed-group" role="group" aria-label="Replay speed">
+        <button class="replay-speed" type="button" data-replay-speed="1" aria-pressed="true">1×</button>
+        <button class="replay-speed" type="button" data-replay-speed="2" aria-pressed="false">2×</button>
+        <button class="replay-speed" type="button" data-replay-speed="4" aria-pressed="false">4×</button>
+      </div>
+    </section>
+
+    <section id="score-bug" class="score-bug" aria-label="Scoreboard">
+      <div class="score-team" data-side="home">
+        <div>
+          <div id="home-team-name" class="team-name">Home</div>
+          <span class="team-side">Home</span>
+        </div>
+        <span id="home-score" class="team-score">0</span>
+      </div>
+      <div class="clock-block">
+        <span id="period" class="period-label">H1</span>
+        <time id="game-clock" class="game-clock" datetime="PT0M0S">0:00</time>
+      </div>
+      <div class="score-team" data-side="away">
+        <span id="away-score" class="team-score">0</span>
+        <div>
+          <div id="away-team-name" class="team-name">Opponent</div>
+          <span class="team-side">Away</span>
+        </div>
+      </div>
+    </section>
+
+    <nav class="panel-dock" aria-label="Overlay panels">
+      <button class="panel-toggle" type="button" data-panel="plays" aria-controls="plays-panel" aria-pressed="true">Plays</button>
+      <button class="panel-toggle" type="button" data-panel="insights" aria-controls="insights-panel" aria-pressed="true">Lineup</button>
+      <button class="panel-toggle" type="button" data-panel="chat" aria-controls="insights-panel" aria-pressed="false">Chat</button>
+    </nav>
+
+    <p id="mode-note" class="mode-note">Broadcast view · score and context update from the live game without modifying the source video.</p>
+    <div id="connection-message" class="connection-message" role="status" hidden></div>
+
+    <section id="demo-lab" class="demo-lab" aria-labelledby="demo-lab-heading" hidden>
+      <div class="demo-lab-header">
+        <div>
+          <h2 id="demo-lab-heading">Preview controls</h2>
+          <p>Trigger moments to test hierarchy, motion, and panel behavior.</p>
+        </div>
+        <button id="demo-lab-close" class="icon-button" type="button" aria-label="Close preview controls">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+      <div class="demo-actions">
+        <button class="demo-action" type="button" data-action="home-goal">Vipers goal</button>
+        <button class="demo-action" type="button" data-action="away-goal">Union goal</button>
+        <button class="demo-action" type="button" data-action="next-play">Next play</button>
+        <button class="demo-action" type="button" data-action="toggle-clock">Pause clock</button>
+        <button class="demo-action" type="button" data-action="reset">Reset demo</button>
+      </div>
+    </section>
+  </main>
+
+  <span id="screen-reader-update" class="visually-hidden" aria-live="polite"></span>
+  <script type="module" src="js/live-game-overlay.js?v=1"></script>
+</body>
+</html>
