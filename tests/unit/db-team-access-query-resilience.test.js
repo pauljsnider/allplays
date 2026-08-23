@@ -18,7 +18,7 @@ const firebaseMocks = vi.hoisted(() => ({
   onSnapshot: vi.fn()
 }));
 
-vi.mock('../../js/firebase.js?v=26', () => ({
+vi.mock('../../js/firebase.js?v=27', () => ({
   db: {},
   auth: firebaseMocks.auth,
   storage: {},
@@ -92,7 +92,7 @@ const {
   getGameDayTeamContext,
   getTeams,
   getUserTeamsWithAccess
-} = await import('../../js/db.js?v=4433182');
+} = await import('../../js/db.js?v=4433183');
 
 describe('team access query resilience', () => {
   beforeEach(() => {

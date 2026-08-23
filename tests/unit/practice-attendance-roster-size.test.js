@@ -7,7 +7,7 @@ const drillsHtml = readFileSync(path.resolve(process.cwd(), 'drills.html'), 'utf
 const updateDoc = vi.fn();
 const doc = vi.fn((database, ...segments) => ({ database, path: segments.join('/') }));
 
-vi.mock('../../js/firebase.js?v=26', () => ({
+vi.mock('../../js/firebase.js?v=27', () => ({
     db: { name: 'mock-db' },
     auth: {},
     storage: {},
@@ -84,7 +84,7 @@ describe('updatePracticeAttendance roster size', () => {
     });
 
     it('loads the roster-size fix through a fresh drills page cache key', () => {
-        expect(drillsHtml).toContain("from './js/db.js?v=4433182';");
+        expect(drillsHtml).toContain("from './js/db.js?v=4433183';");
         expect(drillsHtml).not.toContain("from './js/db.js?v=94';");
     });
 });

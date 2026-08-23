@@ -36,7 +36,7 @@ vi.mock('../../js/db.js', () => ({
     moveTeamMediaItems: dbMocks.moveTeamMediaItems,
     setTeamMediaAlbumCover: dbMocks.setTeamMediaAlbumCover
 }));
-vi.mock('../../js/firebase.js?v=26', () => ({
+vi.mock('../../js/firebase.js?v=27', () => ({
     db: {},
     doc: vi.fn(),
     collection: vi.fn(),
