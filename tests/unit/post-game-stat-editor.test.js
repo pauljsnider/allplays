@@ -93,7 +93,7 @@ describe('post-game stat editor helpers', () => {
             { fieldName: 'coacheffort', label: 'Coach Effort' },
             { fieldName: 'fouls', label: 'FOULS' }
         ]));
-        expect(gameHtml).toContain("import { resolveLiveStatConfig } from './js/live-game-state.js?v=34';");
+        expect(gameHtml).toContain("import { resolveLiveStatConfig } from './js/live-game-state.js?v=35';");
     });
 
     it('builds an absolute stat payload and zeroes the row when a player did not play', () => {

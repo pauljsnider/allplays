@@ -72,7 +72,7 @@ describe('RSVP precedence cache delivery', () => {
         expect(readRepoFile('js/utils.js')).toContain("import('./global-search.js?v=443345')");
         expect(readRepoFile('js/db.js')).toContain("from './utils.js?v=443359';");
         expect(readRepoFile('parent-dashboard.html')).toContain('js/utils.js?v=443359');
-        expect(readRepoFile('js/live-game.js')).toContain("from './live-game-state.js?v=34';");
+        expect(readRepoFile('js/live-game.js')).toContain("from './live-game-state.js?v=35';");
     });
 
     it('guards the shared utils cache key and all of its production consumers', () => {

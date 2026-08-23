@@ -36,7 +36,7 @@ describe('live game overlay page', () => {
         expect(source).toContain("params.replay === 'true'");
         expect(source).toContain('startDemoReplayMode');
         expect(source).toContain("return import('./db.js?v=4433183')");
-        expect(source).toContain("import('./live-game-state.js?v=34')");
+        expect(source).toContain("import('./live-game-state.js?v=35')");
         expect(source).toContain('stateTools.applyResetEventState');
         expect(source).toContain('reconcileOverlayLiveEvents');
         expect(modelSource).toContain('stateTools.applyViewerEventToState');

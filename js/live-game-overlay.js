@@ -1073,7 +1073,7 @@ async function startDemoReplayMode(params) {
         { controllableReplay: true }
     );
     uiState.videoDurationMs = 15_000;
-    const stateTools = await import('./live-game-state.js?v=34');
+    const stateTools = await import('./live-game-state.js?v=35');
     await loadReplaySnapshot({
         getLiveEvents: async () => replayEvents,
         getLiveChatHistory: async () => replayChat,
@@ -1159,7 +1159,7 @@ async function startRealMode(params) {
         const [database, videoTools, stateTools] = await Promise.all([
             loadOverlayDatabase(),
             import('./live-game-video.js?v=443315'),
-            import('./live-game-state.js?v=34')
+            import('./live-game-state.js?v=35')
         ]);
         const teamPromise = database.getGameDayTeamContext(teamId, gameId, { includeInactive: true }).catch(() => ({}));
         const playersPromise = database.getPlayers(teamId, { includeInactive: true }).catch(() => []);
