@@ -22,6 +22,14 @@ function parseParentPlayerKey(value) {
     return teamId && playerId ? { teamId, playerId, playerKey: `${teamId}::${playerId}` } : null;
 }
 
+function normalizeParentLink(link) {
+    if (!link || typeof link !== 'object' || Array.isArray(link)) return null;
+    const teamId = normalizeParentScopeId(link.teamId);
+    const playerId = normalizeParentScopeId(link.playerId || link.childId);
+    if (!teamId || !playerId) return null;
+    return { ...link, teamId, playerId };
+}
+
 export function resolveCanonicalParentScopeInput(profileOrLinks = []) {
     if (Array.isArray(profileOrLinks)) {
         return {
@@ -54,11 +62,10 @@ export function resolveCanonicalParentScopeInput(profileOrLinks = []) {
         })
     );
     const metadataByPlayerKey = new Map();
-    (Array.isArray(profile.parentOf) ? profile.parentOf : []).forEach((link) => {
-        const teamId = normalizeParentScopeId(link?.teamId);
-        const playerId = normalizeParentScopeId(link?.playerId);
-        if (!teamId || !playerId) return;
-        const playerKey = `${teamId}::${playerId}`;
+    (Array.isArray(profile.parentOf) ? profile.parentOf : []).forEach((rawLink) => {
+        const link = normalizeParentLink(rawLink);
+        if (!link) return;
+        const playerKey = `${link.teamId}::${link.playerId}`;
         if (!metadataByPlayerKey.has(playerKey)) metadataByPlayerKey.set(playerKey, link);
     });
 

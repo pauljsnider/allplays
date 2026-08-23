@@ -5,7 +5,8 @@ import {
     hasParentLink,
     mergeApprovedParentLinkState,
     mergeApprovedParentMembershipRequests,
-    removeParentLinkState
+    removeParentLinkState,
+    resolveCanonicalParentScopeInput
 } from '../../js/parent-membership-utils.js';
 
 describe('parent membership utils', () => {
@@ -62,6 +63,22 @@ describe('parent membership utils', () => {
             parentTeamIds: ['team-1'],
             parentPlayerKeys: []
         }, 'team-1', 'player-9')).toBe(false);
+    });
+
+    it('normalizes a legacy childId parent link before checking canonical access', () => {
+        const legacyProfile = {
+            parentOf: [{ teamId: 'team-1', childId: 'player-9', playerName: 'Legacy child' }]
+        };
+
+        expect(hasParentLink(legacyProfile, 'team-1', 'player-9')).toBe(true);
+        expect(resolveCanonicalParentScopeInput(legacyProfile)).toMatchObject({
+            parentLinks: [{
+                teamId: 'team-1',
+                childId: 'player-9',
+                playerId: 'player-9',
+                playerName: 'Legacy child'
+            }]
+        });
     });
 
     it('removes an exact canonical parent link without restoring stale metadata', () => {

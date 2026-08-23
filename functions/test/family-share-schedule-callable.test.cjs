@@ -1749,7 +1749,7 @@ test('authenticated team calendar callable allows a stable linked parent for a p
       parentTeamIds: ['private-parent-team']
     },
     'users/legacy-parent': {
-      parentOf: [{ teamId: 'private-parent-team', playerId: 'player-1' }]
+      parentOf: [{ teamId: 'private-parent-team', childId: 'player-1' }]
     },
     'teams/private-parent-team': {
       active: true,
@@ -1823,6 +1823,9 @@ test('authenticated team calendar callable denies unrelated users and revoked le
       parentPlayerKeys: [123],
       parentOf: [{ teamId: 'private-team', playerId: 'player-1' }]
     },
+    'users/incomplete-legacy-parent': {
+      parentOf: [{ teamId: 'private-team' }]
+    },
     'users/valid-key-parent': {
       parentPlayerKeys: ['private-team::player-1']
     },
@@ -1868,6 +1871,13 @@ test('authenticated team calendar callable denies unrelated users and revoked le
     callables.getTeamCalendarIcs(
       { teamId: 'private-team', calendarUrl },
       teamCalendarContext('numeric-parent', 'numeric@example.test', true, '64')
+    ),
+    (error) => error.code === 'permission-denied'
+  );
+  await assert.rejects(
+    callables.getTeamCalendarIcs(
+      { teamId: 'private-team', calendarUrl },
+      teamCalendarContext('incomplete-legacy-parent', 'incomplete@example.test', true, '69')
     ),
     (error) => error.code === 'permission-denied'
   );

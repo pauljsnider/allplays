@@ -9255,24 +9255,11 @@ function isActiveAuthenticatedTeamCalendar(team = {}) {
 }
 
 function getAuthenticatedTeamCalendarParentTeamIds(user = {}) {
-  const hasCanonicalParentTeamIds = Object.prototype.hasOwnProperty.call(user, 'parentTeamIds');
-  const hasCanonicalParentPlayerKeys = Object.prototype.hasOwnProperty.call(user, 'parentPlayerKeys');
-  let rawTeamIds;
-  if (hasCanonicalParentTeamIds) {
-    rawTeamIds = Array.isArray(user.parentTeamIds) ? user.parentTeamIds : [];
-  } else if (hasCanonicalParentPlayerKeys) {
-    rawTeamIds = (Array.isArray(user.parentPlayerKeys) ? user.parentPlayerKeys : [])
-      .map((value) => {
-        if (typeof value !== 'string') return '';
-        const parts = value.split('::');
-        if (parts.length !== 2 || !normalizeStablePrincipalUid(parts[1])) return '';
-        return parts[0];
-      });
-  } else {
-    rawTeamIds = (Array.isArray(user.parentOf) ? user.parentOf : [])
-      .map((link) => typeof link?.teamId === 'string' ? link.teamId : '');
-  }
-  return new Set(rawTeamIds.map(normalizeStablePrincipalUid).filter(Boolean));
+  const access = resolveCanonicalParentAccess(user);
+  return new Set([
+    ...access.parentTeamIds,
+    ...access.parentLinks.map((link) => link.teamId)
+  ]);
 }
 
 function normalizeAuthenticatedTeamCalendarUrlText(rawUrl) {
@@ -19183,7 +19170,8 @@ function getCallableParentTeamScope(user = {}) {
   } else {
     const values = Array.isArray(user.parentOf) ? user.parentOf : [];
     isPartial = user.parentOf != null && !Array.isArray(user.parentOf) || values.some((link) => (
-      !normalizeStablePrincipalUid(link?.teamId) || !normalizeStablePrincipalUid(link?.playerId)
+      !normalizeStablePrincipalUid(link?.teamId) ||
+      !normalizeStablePrincipalUid(link?.playerId || link?.childId)
     ));
   }
   return {
