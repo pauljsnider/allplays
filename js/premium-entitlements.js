@@ -4,13 +4,13 @@ import {
     isValidPremiumEntitlementRecord,
     resolvePremiumAccess
 } from './premium-access-core.js?v=1';
-import { readPremiumAccessConfig } from './premium-access.js?v=4';
+import { readPremiumAccessConfig } from './premium-access.js?v=5';
 
 export { isValidPremiumEntitlementRecord } from './premium-access-core.js?v=1';
 
 async function loadFirebase(deps = {}) {
     if (deps.firebase) return deps.firebase;
-    return import('./firebase.js?v=26');
+    return import('./firebase.js?v=27');
 }
 
 function dataFromSnapshot(docSnap) {

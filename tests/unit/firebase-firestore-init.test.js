@@ -1,8 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const firestoreMocks = vi.hoisted(() => ({
     initializeFirestore: vi.fn(),
     getFirestore: vi.fn(),
+    memoryLocalCache: vi.fn(() => ({ kind: 'memoryLocalCache' })),
     persistentLocalCache: vi.fn((options) => ({ kind: 'persistentLocalCache', options })),
     persistentMultipleTabManager: vi.fn(() => ({ kind: 'persistentMultipleTabManager' }))
 }));
@@ -39,6 +40,7 @@ vi.mock('../../js/vendor/firebase-auth.js', () => ({
 vi.mock('../../js/vendor/firebase-firestore.js', () => ({
     initializeFirestore: firestoreMocks.initializeFirestore,
     getFirestore: firestoreMocks.getFirestore,
+    memoryLocalCache: firestoreMocks.memoryLocalCache,
     persistentLocalCache: firestoreMocks.persistentLocalCache,
     persistentMultipleTabManager: firestoreMocks.persistentMultipleTabManager,
     collection: vi.fn(),
@@ -63,6 +65,7 @@ vi.mock('../../js/vendor/firebase-firestore.js', () => ({
     onSnapshot: vi.fn(),
     serverTimestamp: vi.fn(),
     collectionGroup: vi.fn(),
+    documentId: vi.fn(),
     writeBatch: vi.fn(),
     runTransaction: vi.fn()
 }));
@@ -98,7 +101,95 @@ describe('firebase firestore initialization', () => {
     beforeEach(() => {
         vi.resetModules();
         vi.clearAllMocks();
+        firestoreMocks.initializeFirestore.mockImplementation((_app, options) => ({
+            kind: 'initialized-firestore',
+            options
+        }));
+        firestoreMocks.getFirestore.mockReturnValue({ kind: 'default-firestore' });
+        firestoreMocks.memoryLocalCache.mockImplementation(() => ({ kind: 'memoryLocalCache' }));
+        firestoreMocks.persistentLocalCache.mockImplementation((options) => ({
+            kind: 'persistentLocalCache',
+            options
+        }));
+        firestoreMocks.persistentMultipleTabManager.mockImplementation(() => ({
+            kind: 'persistentMultipleTabManager'
+        }));
         delete globalThis.__allplaysFirebaseDb;
+    });
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    async function loadFirebaseForWindow(windowValue) {
+        vi.stubGlobal('window', windowValue);
+        return import('../../js/firebase.js?v=27');
+    }
+
+    it.each([
+        ['canonical web', { location: { protocol: 'https:', hostname: 'allplays.ai' } }],
+        ['local web development', { location: { protocol: 'http:', hostname: 'localhost' } }]
+    ])('uses memory-only Firestore caching for %s', async (_label, windowValue) => {
+        const module = await loadFirebaseForWindow(windowValue);
+
+        expect(module.db).toEqual({
+            kind: 'initialized-firestore',
+            options: { localCache: { kind: 'memoryLocalCache' } }
+        });
+        expect(firestoreMocks.memoryLocalCache).toHaveBeenCalledTimes(1);
+        expect(firestoreMocks.persistentLocalCache).not.toHaveBeenCalled();
+        expect(firestoreMocks.persistentMultipleTabManager).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ['Capacitor protocol', { location: { protocol: 'capacitor:', hostname: 'localhost' } }],
+        ['Ionic protocol', { location: { protocol: 'ionic:', hostname: 'localhost' } }],
+        ['Android cold start before bridge injection', { location: { protocol: 'https:', hostname: 'localhost' } }],
+        ['Capacitor native bridge', {
+            location: { protocol: 'https:', hostname: 'allplays.ai' },
+            Capacitor: { isNativePlatform: () => true }
+        }],
+        ['Capacitor iOS platform fallback', {
+            location: { protocol: 'https:', hostname: 'allplays.ai' },
+            Capacitor: { getPlatform: () => 'ios' }
+        }],
+        ['Capacitor Android platform fallback', {
+            location: { protocol: 'https:', hostname: 'allplays.ai' },
+            Capacitor: { getPlatform: () => 'android' }
+        }]
+    ])('preserves persistent Firestore caching for %s', async (_label, windowValue) => {
+        const module = await loadFirebaseForWindow(windowValue);
+
+        expect(module.db).toEqual({
+            kind: 'initialized-firestore',
+            options: {
+                localCache: {
+                    kind: 'persistentLocalCache',
+                    options: {
+                        tabManager: { kind: 'persistentMultipleTabManager' }
+                    }
+                }
+            }
+        });
+        expect(firestoreMocks.memoryLocalCache).not.toHaveBeenCalled();
+        expect(firestoreMocks.persistentMultipleTabManager).toHaveBeenCalledTimes(1);
+        expect(firestoreMocks.persistentLocalCache).toHaveBeenCalledWith({
+            tabManager: { kind: 'persistentMultipleTabManager' }
+        });
+    });
+
+    it('reuses the existing global Firestore instance without constructing another cache', async () => {
+        const existingDb = { kind: 'shared-db' };
+        globalThis.__allplaysFirebaseDb = existingDb;
+
+        const module = await loadFirebaseForWindow({
+            location: { protocol: 'https:', hostname: 'allplays.ai' }
+        });
+
+        expect(module.db).toBe(existingDb);
+        expect(firestoreMocks.initializeFirestore).not.toHaveBeenCalled();
+        expect(firestoreMocks.memoryLocalCache).not.toHaveBeenCalled();
+        expect(firestoreMocks.persistentLocalCache).not.toHaveBeenCalled();
     });
 
     it('falls back to getFirestore when initializeFirestore was already called elsewhere', async () => {
@@ -110,11 +201,40 @@ describe('firebase firestore initialization', () => {
         });
         firestoreMocks.getFirestore.mockReturnValue(existingDb);
 
-        const module = await import('../../js/firebase.js?v=26');
+        const module = await loadFirebaseForWindow({
+            location: { protocol: 'https:', hostname: 'allplays.ai' }
+        });
 
         expect(module.db).toBe(existingDb);
         expect(firestoreMocks.initializeFirestore).toHaveBeenCalledTimes(1);
         expect(firestoreMocks.getFirestore).toHaveBeenCalledTimes(1);
         expect(globalThis.__allplaysFirebaseDb).toBe(existingDb);
+    });
+
+    it('does not mask an unrelated failed-precondition initialization error', async () => {
+        const initializationError = Object.assign(
+            new Error('Persistent cache could not obtain exclusive access.'),
+            { code: 'failed-precondition' }
+        );
+        firestoreMocks.initializeFirestore.mockImplementation(() => {
+            throw initializationError;
+        });
+
+        await expect(loadFirebaseForWindow({
+            location: { protocol: 'https:', hostname: 'allplays.ai' }
+        })).rejects.toBe(initializationError);
+        expect(firestoreMocks.getFirestore).not.toHaveBeenCalled();
+    });
+
+    it('propagates unexpected Firestore initialization failures', async () => {
+        const initializationError = new Error('IndexedDB is unavailable.');
+        firestoreMocks.initializeFirestore.mockImplementation(() => {
+            throw initializationError;
+        });
+
+        await expect(loadFirebaseForWindow({
+            location: { protocol: 'https:', hostname: 'allplays.ai' }
+        })).rejects.toBe(initializationError);
+        expect(firestoreMocks.getFirestore).not.toHaveBeenCalled();
     });
 });
