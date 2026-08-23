@@ -163,6 +163,7 @@ describe('pages bundle staging', () => {
         const hashedAssetHtml = '<!doctype html><html><head></head><body>Hashed help asset</body></html>';
         writeFile(path.join(rootDir, 'apps', 'app', 'dist', 'assets', 'help-AbC123.html'), hashedAssetHtml);
         writeFile(path.join(rootDir, 'tests', 'unit', 'example.test.js'), 'test');
+        writeFile(path.join(rootDir, 'tests', 'manual', 'local-adapter.js'), 'local only');
 
         const result = stagePagesBundle(destinationDir, { rootDir });
 
@@ -218,6 +219,7 @@ describe('pages bundle staging', () => {
         expect(fs.existsSync(path.join(destinationDir, 'README.md'))).toBe(false);
         expect(fs.existsSync(path.join(destinationDir, 'apps', 'app', 'src', 'main.tsx'))).toBe(false);
         expect(fs.existsSync(path.join(destinationDir, 'tests', 'unit', 'example.test.js'))).toBe(false);
+        expect(fs.existsSync(path.join(destinationDir, 'tests', 'manual', 'local-adapter.js'))).toBe(false);
     });
 
     it('stages every public-boundary db consumer with the fresh module key', () => {

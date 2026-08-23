@@ -116,6 +116,14 @@ function usesCompactPanelLayout() {
         (uiState.isReplay && window.matchMedia('(max-width: 1320px)').matches);
 }
 
+function loadOverlayDatabase() {
+    const isLoopbackHost = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+    if (isLoopbackHost) {
+        return import('../tests/manual/live-game-overlay-production-readonly-adapter.js?v=1');
+    }
+    return import('./db.js?v=4433176');
+}
+
 function getTimestampMs(value) {
     if (Number.isFinite(value)) return Number(value);
     if (value && typeof value.toMillis === 'function') return value.toMillis();
@@ -1013,7 +1021,7 @@ async function startRealMode(params) {
     setConnectionMessage('Connecting to the game, event feed, and chat…', 'info');
     try {
         const [database, videoTools, stateTools] = await Promise.all([
-            import('./db.js?v=4433176'),
+            loadOverlayDatabase(),
             import('./live-game-video.js?v=443315'),
             import('./live-game-state.js?v=28')
         ]);

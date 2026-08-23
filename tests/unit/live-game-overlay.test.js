@@ -5,6 +5,10 @@ const html = readFileSync(new URL('../../live-game-overlay.html', import.meta.ur
 const redirect = readFileSync(new URL('../../live-game-overlay-poc.html', import.meta.url), 'utf8');
 const currentLiveGame = readFileSync(new URL('../../live-game.html', import.meta.url), 'utf8');
 const source = readFileSync(new URL('../../js/live-game-overlay.js', import.meta.url), 'utf8');
+const localProductionAdapter = readFileSync(
+    new URL('../manual/live-game-overlay-production-readonly-adapter.js', import.meta.url),
+    'utf8'
+);
 
 describe('live game overlay page', () => {
     it('ships as a separate no-index broadcast canvas with accessible overlay regions', () => {
@@ -26,7 +30,9 @@ describe('live game overlay page', () => {
         expect(source).toContain("params.demo === '1'");
         expect(source).toContain("params.replay === 'true'");
         expect(source).toContain('startDemoReplayMode');
-        expect(source).toContain("import('./db.js?v=4433176')");
+        expect(source).toContain("return import('./db.js?v=4433176')");
+        expect(source).toContain("['localhost', '127.0.0.1']");
+        expect(source).toContain("import('../tests/manual/live-game-overlay-production-readonly-adapter.js?v=1')");
         expect(source).toContain("import('./live-game-state.js?v=28')");
         expect(source).toContain('stateTools.applyViewerEventToState');
         expect(source).toContain('stateTools.applyResetEventState');
@@ -49,6 +55,9 @@ describe('live game overlay page', () => {
         expect(source).not.toContain('postLiveChatMessage(');
         expect(source).not.toContain('trackViewerPresence(');
         expect(source).not.toContain('sendReaction(');
+        expect(localProductionAdapter).toContain("callPublicProjection('getPublicGameProjection'");
+        expect(localProductionAdapter).toContain("gameCollection(teamId, gameId, 'liveEvents')");
+        expect(localProductionAdapter).not.toMatch(/\b(?:addDoc|deleteDoc|setDoc|updateDoc|writeBatch|runTransaction)\b/);
     });
 
     it('provides focus, panel, keyboard, and demo interactions without changing live-game.html', () => {

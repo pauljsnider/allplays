@@ -329,7 +329,7 @@ test('local replay fires the recorded game timeline in order without manual seek
 });
 
 async function stubRealOverlayModules(page) {
-    await page.route(/\/js\/db\.js(?:\?.*)?$/, (route) => route.fulfill({
+    await page.route(/\/(?:js\/db|tests\/manual\/live-game-overlay-production-readonly-adapter)\.js(?:\?.*)?$/, (route) => route.fulfill({
         status: 200,
         contentType: 'application/javascript',
         body: `
