@@ -1504,7 +1504,7 @@ function StatsheetImportPanel({ event, onImported }: { event: ParentScheduleEven
 
       {photoPreviewUrl ? (
         <div className="mt-3 rounded-2xl border border-gray-200 bg-white p-3">
-          <img src={photoPreviewUrl} alt="Statsheet preview" className="max-h-72 w-full rounded-xl object-contain" />
+          <img src={photoPreviewUrl} alt="Statsheet preview" loading="lazy" decoding="async" className="max-h-72 w-full rounded-xl object-contain" />
         </div>
       ) : null}
 

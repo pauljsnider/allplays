@@ -377,7 +377,7 @@
                         <article class="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm hover:shadow-md transition" data-player-video-clip-card>
                             <a href="${escapeHtml(clip.url)}" target="_blank" rel="noopener noreferrer" class="block group">
                                 ${clip.thumbnailUrl
-                                    ? `<img src="${escapeHtml(clip.thumbnailUrl)}" alt="${escapeHtml(clip.title)} thumbnail" class="w-full h-40 object-cover bg-gray-100 group-hover:opacity-90 transition" loading="lazy">`
+                                    ? `<img decoding="async" src="${escapeHtml(clip.thumbnailUrl)}" alt="${escapeHtml(clip.title)} thumbnail" class="w-full h-40 object-cover bg-gray-100 group-hover:opacity-90 transition" loading="lazy">`
                                     : renderVideoClipFallback()}
                                 <div class="p-4">
                                     <div class="flex items-center justify-between gap-3 mb-2">
@@ -680,7 +680,7 @@
                         <div class="text-gray-500 font-semibold uppercase tracking-wider text-sm mb-3">${escapeHtml(team.name)}</div>
                         <div class="flex justify-center mb-4">
                             <span class="inline-flex h-28 w-28 rounded-full bg-gray-100 overflow-hidden border-2 border-gray-200">
-                                ${player.photoUrl ? `<img src="${escapeHtml(player.photoUrl)}" alt="${escapeHtml(player.name)}" class="w-full h-full object-cover">` : `<span class="m-auto text-gray-400 text-sm">No Img</span>`}
+                                ${player.photoUrl ? `<img loading="lazy" decoding="async" src="${escapeHtml(player.photoUrl)}" alt="${escapeHtml(player.name)}" class="w-full h-full object-cover">` : `<span class="m-auto text-gray-400 text-sm">No Img</span>`}
                             </span>
                         </div>
                         <h1 class="text-4xl md:text-5xl lg:text-6xl font-bold mb-3 text-gray-900">${escapeHtml(player.name)}</h1>
@@ -1271,7 +1271,7 @@
              
              const preview = document.getElementById('edit-photo-preview');
              if (currentPlayer.photoUrl) {
-                 preview.innerHTML = `<img src="${escapeHtml(currentPlayer.photoUrl)}" class="w-full h-full object-cover">`;
+                 preview.innerHTML = `<img loading="lazy" decoding="async" src="${escapeHtml(currentPlayer.photoUrl)}" class="w-full h-full object-cover">`;
              } else {
                  preview.innerHTML = '';
              }
@@ -1364,7 +1364,7 @@
             if (file) {
                 const reader = new FileReader();
                 reader.onload = (e) => {
-                    document.getElementById('edit-photo-preview').innerHTML = `<img src="${e.target.result}" class="w-full h-full object-cover">`;
+                    document.getElementById('edit-photo-preview').innerHTML = `<img loading="lazy" decoding="async" src="${e.target.result}" class="w-full h-full object-cover">`;
                 };
                 reader.readAsDataURL(file);
             }

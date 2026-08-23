@@ -257,7 +257,7 @@
                         <div class="p-6 border-b border-gray-100 bg-gradient-to-r from-gray-50 to-white">
                             <div class="flex items-center space-x-4">
                                 ${team.photoUrl
-                                    ? `<img src="${escapeHtml(team.photoUrl)}" alt="${escapeHtml(team.name)}" class="w-20 h-20 rounded-xl object-cover border-2 border-gray-200 group-hover:border-primary-400 transition shadow-md">`
+                                    ? `<img loading="lazy" decoding="async" src="${escapeHtml(team.photoUrl)}" alt="${escapeHtml(team.name)}" class="w-20 h-20 rounded-xl object-cover border-2 border-gray-200 group-hover:border-primary-400 transition shadow-md">`
                                     : `<div class="w-20 h-20 rounded-xl bg-gradient-to-br from-primary-100 to-primary-200 flex items-center justify-center border-2 border-gray-200 group-hover:border-primary-400 transition shadow-md">
                                         <span class="text-3xl font-bold text-primary-600">${escapeHtml(team.name.charAt(0))}</span>
                                     </div>`

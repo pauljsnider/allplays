@@ -17,7 +17,7 @@ export function AuthFrame({
     <div className="min-h-screen bg-gray-50 px-4 py-6">
       <div className="mx-auto flex min-h-[calc(100vh-48px)] w-full max-w-md flex-col justify-center">
         <Link to="/auth" className="mb-5 flex items-center gap-3">
-          <img src="./logo_small.png" alt="" className="h-11 w-11 rounded-xl shadow-sm" />
+          <img src="./logo_small.png" alt="" loading="lazy" decoding="async" className="h-11 w-11 rounded-xl shadow-sm" />
           <span>
             <span className="block text-lg font-black leading-tight text-gray-950">ALL PLAYS</span>
             <span className="block text-xs font-extrabold uppercase tracking-[0.04em] text-primary-700">{eyebrow}</span>

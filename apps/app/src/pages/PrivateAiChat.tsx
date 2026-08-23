@@ -671,7 +671,7 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
               <section className="app-card p-3">
                 <div className="flex items-center gap-3">
                   <div className="private-ai-desktop-mark flex h-10 w-10 flex-none items-center justify-center rounded-xl text-primary-700">
-                    <img src="./logo_small.png" alt="" aria-hidden="true" />
+                    <img src="./logo_small.png" alt="" aria-hidden="true" loading="lazy" decoding="async" />
                     <Sparkles className="private-ai-mark-spark" aria-hidden="true" />
                   </div>
                   <div className="min-w-0">
@@ -937,7 +937,7 @@ function PrivateAiMobileTopbar({
     <section className="chat-topbar app-card p-3 private-ai-mobile-topbar">
       <div className="flex min-w-0 items-center gap-3">
         <div className="private-ai-mobile-mark flex h-10 w-10 flex-none items-center justify-center rounded-xl text-primary-700">
-          <img src="./logo_small.png" alt="" aria-hidden="true" />
+          <img src="./logo_small.png" alt="" aria-hidden="true" loading="lazy" decoding="async" />
           <Sparkles className="private-ai-mark-spark" aria-hidden="true" />
         </div>
         <div className="min-w-0 flex-1">
