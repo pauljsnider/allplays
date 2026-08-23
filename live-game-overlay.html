@@ -469,6 +469,10 @@
       font: 800 13px/1 "Barlow Condensed", sans-serif;
     }
 
+    img.chat-avatar {
+      object-fit: cover;
+    }
+
     .player-row strong,
     .chat-row strong {
       display: block;
@@ -503,11 +507,37 @@
       background: rgba(97, 228, 219, 0.08);
     }
 
-    .chat-row p {
+    .chat-message {
       margin: 4px 0 0;
       color: #d9e0dd;
       font-size: 11px;
       line-height: 1.45;
+      overflow-wrap: anywhere;
+      white-space: pre-wrap;
+    }
+
+    .chat-mention {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 6px;
+      border-radius: 999px;
+      color: var(--home);
+      background: rgba(97, 228, 219, 0.16);
+      font: 700 10px/1.3 "Barlow Condensed", sans-serif;
+      white-space: nowrap;
+    }
+
+    .chat-link {
+      color: var(--home);
+      text-underline-offset: 2px;
+    }
+
+    .chat-code {
+      padding: 1px 4px;
+      border-radius: 4px;
+      color: var(--paper);
+      background: rgba(255, 255, 255, 0.1);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     }
 
     #chat-view:not([hidden]) {
@@ -535,6 +565,11 @@
       gap: 8px;
     }
 
+    .chat-input-wrap {
+      position: relative;
+      min-width: 0;
+    }
+
     .chat-input,
     .chat-send,
     .chat-sign-in {
@@ -545,6 +580,7 @@
     }
 
     .chat-input {
+      width: 100%;
       min-width: 0;
       padding: 0 12px;
       color: var(--paper);
@@ -606,6 +642,177 @@
     .chat-sign-in {
       flex: 0 0 auto;
       padding-inline: 12px;
+    }
+
+    .chat-mention-menu {
+      position: absolute;
+      right: 0;
+      bottom: calc(100% + 7px);
+      left: 0;
+      z-index: 4;
+      overflow: hidden;
+      border: 1px solid rgba(97, 228, 219, 0.32);
+      border-radius: 12px;
+      background: rgba(5, 14, 27, 0.98);
+      box-shadow: 0 16px 38px rgba(0, 0, 0, 0.45);
+    }
+
+    .chat-mention-option {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      width: 100%;
+      min-height: 44px;
+      padding: 7px 10px;
+      border: 0;
+      color: var(--paper);
+      background: transparent;
+      cursor: pointer;
+      text-align: left;
+    }
+
+    .chat-mention-option:hover,
+    .chat-mention-option:focus-visible {
+      background: rgba(97, 228, 219, 0.1);
+    }
+
+    .chat-mention-mark {
+      display: grid;
+      place-items: center;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      color: var(--ink);
+      background: var(--home);
+      font: 800 11px/1 "Barlow Condensed", sans-serif;
+    }
+
+    .chat-secondary,
+    .chat-anon-editor,
+    .chat-thinking,
+    .chat-tip {
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.4;
+    }
+
+    .chat-secondary {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      flex-wrap: wrap;
+    }
+
+    .chat-text-button {
+      min-height: 44px;
+      padding: 0;
+      border: 0;
+      color: var(--home);
+      background: transparent;
+      cursor: pointer;
+      font-size: 10px;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+
+    .chat-anon-editor {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      gap: 6px;
+    }
+
+    .chat-anon-input,
+    .chat-mini-button {
+      min-height: 44px;
+      border: 1px solid rgba(97, 228, 219, 0.28);
+      border-radius: 9px;
+      font: 600 10px/1.2 "Barlow Condensed", sans-serif;
+    }
+
+    .chat-anon-input {
+      min-width: 0;
+      padding: 0 9px;
+      color: var(--paper);
+      background: rgba(5, 12, 22, 0.72);
+    }
+
+    .chat-mini-button {
+      padding: 0 10px;
+      color: var(--ink);
+      background: var(--home);
+      cursor: pointer;
+    }
+
+    .chat-mini-button[data-kind="secondary"] {
+      color: var(--paper);
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    .chat-thinking {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      color: var(--home);
+    }
+
+    .chat-thinking-spinner {
+      width: 13px;
+      height: 13px;
+      border: 2px solid rgba(97, 228, 219, 0.28);
+      border-top-color: var(--home);
+      border-radius: 50%;
+      animation: chat-spin 800ms linear infinite;
+    }
+
+    .chat-tip .chat-mention {
+      vertical-align: middle;
+    }
+
+    .chat-reactions {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(44px, 1fr));
+      gap: 4px;
+      margin-top: 9px;
+      padding-top: 9px;
+      border-top: 1px solid rgba(97, 228, 219, 0.14);
+    }
+
+    .chat-reaction-button {
+      min-width: 44px;
+      min-height: 44px;
+      border: 0;
+      border-radius: 10px;
+      color: var(--paper);
+      background: rgba(255, 255, 255, 0.05);
+      cursor: pointer;
+      font-size: 19px;
+      transition: transform 140ms ease, background 140ms ease;
+    }
+
+    .chat-reaction-button:hover,
+    .chat-reaction-button:focus-visible {
+      background: rgba(97, 228, 219, 0.12);
+      transform: translateY(-2px);
+    }
+
+    .chat-reaction-button:disabled {
+      cursor: not-allowed;
+      opacity: 0.45;
+      transform: none;
+    }
+
+    .chat-mention-menu[hidden],
+    .chat-secondary[hidden],
+    .chat-anon-editor[hidden],
+    .chat-thinking[hidden],
+    .chat-tip[hidden],
+    .chat-reactions[hidden] {
+      display: none;
+    }
+
+    @keyframes chat-spin {
+      to { transform: rotate(360deg); }
     }
 
     .empty-state {
@@ -893,12 +1100,32 @@
     }
 
     .panel-toggle {
+      position: relative;
       min-height: 44px;
       padding: 0 14px;
       border-radius: 999px;
       cursor: pointer;
       font-size: 11px;
       font-weight: 700;
+    }
+
+    .chat-badge {
+      position: absolute;
+      top: 3px;
+      right: 5px;
+      display: grid;
+      place-items: center;
+      min-width: 18px;
+      height: 18px;
+      padding: 0 5px;
+      border-radius: 999px;
+      color: #fff;
+      background: var(--away-deep);
+      font: 800 10px/1 "Barlow Condensed", sans-serif;
+    }
+
+    .chat-badge[hidden] {
+      display: none;
     }
 
     .panel-toggle[aria-pressed="true"] {
@@ -1446,13 +1673,43 @@
         <ul id="chat-list" class="chat-list" aria-live="polite" aria-relevant="additions"></ul>
         <form id="chat-form" class="chat-composer" hidden novalidate>
           <div class="chat-compose-row">
-            <label class="visually-hidden" for="chat-input">Live chat message</label>
-            <input id="chat-input" class="chat-input" type="text" maxlength="2000" autocomplete="off" placeholder="Sign in to join chat" aria-describedby="chat-status" disabled>
+            <div class="chat-input-wrap">
+              <label class="visually-hidden" for="chat-input">Live chat message</label>
+              <input id="chat-input" class="chat-input" type="text" maxlength="2000" autocomplete="off" placeholder="Sign in to join chat" aria-describedby="chat-status chat-tip" aria-controls="mention-menu" aria-autocomplete="list" aria-expanded="false" disabled>
+              <div id="mention-menu" class="chat-mention-menu" role="listbox" aria-label="Chat mentions" hidden>
+                <button id="mention-allplays" class="chat-mention-option" type="button" role="option" aria-selected="true">
+                  <span class="chat-mention-mark" aria-hidden="true">AP</span>
+                  <span>@ALL PLAYS</span>
+                </button>
+              </div>
+            </div>
             <button id="chat-send" class="chat-send" type="submit" disabled>Send</button>
           </div>
+          <p id="chat-anon-notice" class="chat-secondary" hidden>
+            Chatting as <strong id="anon-name">Fan1234</strong>
+            <button id="anon-change-btn" class="chat-text-button" type="button">Change name</button>
+          </p>
+          <div id="anon-edit" class="chat-anon-editor" hidden>
+            <label class="visually-hidden" for="anon-input">Chat display name</label>
+            <input id="anon-input" class="chat-anon-input" type="text" maxlength="20" autocomplete="nickname" placeholder="Enter a display name">
+            <button id="anon-save" class="chat-mini-button" type="button">Save</button>
+            <button id="anon-cancel" class="chat-mini-button" data-kind="secondary" type="button">Cancel</button>
+          </div>
+          <div id="ai-thinking" class="chat-thinking" role="status" hidden>
+            <span class="chat-thinking-spinner" aria-hidden="true"></span>
+            <span>ALL PLAYS is thinking…</span>
+          </div>
+          <p id="chat-tip" class="chat-tip">Tip: tag <span class="chat-mention">@ALL PLAYS</span> to ask the live assistant.</p>
           <div class="chat-helper">
             <p id="chat-status" class="chat-status" role="status">Checking chat access…</p>
             <a id="chat-sign-in" class="chat-sign-in" href="login.html" hidden>Sign in</a>
+          </div>
+          <div id="chat-reactions" class="chat-reactions" aria-label="Live reactions" hidden>
+            <button class="chat-reaction-button" type="button" data-chat-reaction="fire" aria-label="Send fire reaction">🔥</button>
+            <button class="chat-reaction-button" type="button" data-chat-reaction="clap" aria-label="Send clap reaction">👏</button>
+            <button class="chat-reaction-button" type="button" data-chat-reaction="wow" aria-label="Send wow reaction">😲</button>
+            <button class="chat-reaction-button" type="button" data-chat-reaction="heart" aria-label="Send heart reaction">❤️</button>
+            <button class="chat-reaction-button" type="button" data-chat-reaction="hundred" aria-label="Send hundred reaction">💯</button>
           </div>
         </form>
       </section>
@@ -1505,7 +1762,10 @@
     <nav class="panel-dock" aria-label="Overlay panels">
       <button class="panel-toggle" type="button" data-panel="plays" aria-controls="plays-panel" aria-pressed="true">Plays</button>
       <button class="panel-toggle" type="button" data-panel="insights" aria-controls="insights-panel" aria-pressed="true">Lineup</button>
-      <button class="panel-toggle" type="button" data-panel="chat" aria-controls="insights-panel" aria-pressed="false">Chat</button>
+      <button class="panel-toggle" type="button" data-panel="chat" aria-controls="insights-panel" aria-pressed="false">
+        Chat
+        <span id="chat-badge" class="chat-badge" aria-label="Unread chat messages" hidden>0</span>
+      </button>
     </nav>
 
     <p id="mode-note" class="mode-note">Broadcast view · score and context update from the live game without modifying the source video.</p>
@@ -1532,6 +1792,6 @@
   </main>
 
   <span id="screen-reader-update" class="visually-hidden" aria-live="polite"></span>
-  <script type="module" src="js/live-game-overlay.js?v=13"></script>
+  <script type="module" src="js/live-game-overlay.js?v=14"></script>
 </body>
 </html>

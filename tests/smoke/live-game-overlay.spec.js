@@ -329,6 +329,11 @@ test('local replay fires the recorded game timeline in order without manual seek
 });
 
 async function stubRealOverlayModules(page) {
+    await page.route('https://images.example/**', (route) => route.fulfill({
+        status: 200,
+        contentType: 'image/svg+xml',
+        body: '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="#61e4db"/></svg>'
+    }));
     await page.route(/\/(?:js\/db|tests\/manual\/live-game-overlay-production-readonly-adapter)\.js(?:\?.*)?$/, (route) => route.fulfill({
         status: 200,
         contentType: 'application/javascript',
@@ -386,6 +391,11 @@ async function stubRealOverlayModules(page) {
                     createdAt: Date.now()
                 }]);
             }
+            export async function sendReaction(teamId, gameId, reaction) {
+                window.__OVERLAY_SENT_REACTIONS__ = [...(window.__OVERLAY_SENT_REACTIONS__ || []), { teamId, gameId, reaction }];
+                if (window.__OVERLAY_FAIL_REACTION_SEND__) throw new Error('reaction write unavailable');
+                window.__OVERLAY_REACTION_CALLBACK__?.({ id: 'posted-reaction', ...reaction, createdAt: Date.now() });
+            }
             export function subscribeReactions(_teamId, _gameId, callback, onError) {
                 window.__OVERLAY_LIVE_SUBSCRIPTIONS__ = (window.__OVERLAY_LIVE_SUBSCRIPTIONS__ || 0) + 1;
                 window.__OVERLAY_REACTION_CALLBACK__ = callback;
@@ -403,7 +413,7 @@ async function stubRealOverlayModules(page) {
             export async function getLiveChatHistory() {
                 if (window.__OVERLAY_FAIL_REPLAY_CHAT__) throw new Error('saved chat unavailable');
                 return [
-                { id: 'replay-chat', senderName: 'Taylor', text: 'Saved replay message', createdAt: 445000 }
+                { id: 'replay-chat', senderName: 'Taylor', senderPhotoUrl: 'https://images.example/avatar.png', text: '*Saved replay message* from @ALL PLAYS', createdAt: 445000 }
             ]; }
             export async function getLiveReactions() {
                 if (window.__OVERLAY_FAIL_REPLAY_REACTIONS__) throw new Error('saved reactions unavailable');
@@ -445,7 +455,40 @@ async function stubRealOverlayModules(page) {
     await page.route(/\/js\/safe-image-url\.js(?:\?.*)?$/, (route) => route.fulfill({
         status: 200,
         contentType: 'application/javascript',
-        body: `export function resolveSafeProfilePhotoWriteUrl() { return ''; }`
+        body: `
+            export function resolveSafeProfilePhotoUrl(value) { return String(value || '').startsWith('https://') ? value : ''; }
+            export function resolveSafeProfilePhotoWriteUrl() { return ''; }
+            export function createSafeImageElement({ documentRef = document, url, resolveUrl, alt = '', className = '', onLoadError } = {}) {
+                const safeUrl = resolveUrl(url);
+                if (!safeUrl) return null;
+                const image = documentRef.createElement('img');
+                image.src = safeUrl;
+                image.alt = alt;
+                image.className = className;
+                if (onLoadError) image.addEventListener('error', () => onLoadError(image), { once: true });
+                return image;
+            }
+        `
+    }));
+    await page.route(/\/js\/vendor\/firebase-ai\.js(?:\?.*)?$/, (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: `
+            export class GoogleAIBackend {}
+            export function getAI() { return {}; }
+            export function getGenerativeModel() {
+                return { generateContent: async (prompt) => {
+                    window.__OVERLAY_AI_PROMPT__ = prompt;
+                    if (window.__OVERLAY_FAIL_AI__) throw new Error('assistant unavailable');
+                    return { response: { text: () => 'ALL PLAYS says the press is working.' } };
+                } };
+            }
+        `
+    }));
+    await page.route(/\/js\/vendor\/firebase-app\.js(?:\?.*)?$/, (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: `export function getApp() { return {}; }`
     }));
 }
 
@@ -615,28 +658,68 @@ test('real mode follows canonical game, lineup, clock, reset, reaction, and pass
     });
     expect(reactionText).toBe('❤️');
 
-    await page.evaluate(() => window.__OVERLAY_CHAT_CALLBACK__([{
-        id: 'chat-1', senderName: 'Taylor', text: 'What a finish!', createdAt: Date.now()
-    }]));
+    await page.evaluate(() => window.__OVERLAY_CHAT_CALLBACK__([
+        {
+            id: 'chat-2', senderName: 'ALL PLAYS', text: '@ALL PLAYS sees the press working.',
+            createdAt: 200
+        },
+        {
+            id: 'chat-1', senderName: 'Taylor', senderPhotoUrl: 'https://images.example/avatar.png',
+            text: '*What a finish!* https://allplays.ai <img src=x onerror=alert(1)>', createdAt: 100
+        }
+    ]));
     await page.locator('[data-panel="chat"]').click();
     await expect(page.locator('#chat-list')).toContainText('What a finish!');
+    await expect(page.locator('#chat-list .chat-row')).toHaveCount(2);
+    await expect(page.locator('#chat-list .chat-row').first().locator('strong').first()).toHaveText('Taylor');
+    await expect(page.locator('#chat-list .chat-row').last().locator('strong').first()).toHaveText('ALL PLAYS');
+    await expect(page.locator('#chat-list .chat-row').first().locator('img.chat-avatar')).toBeVisible();
+    await expect(page.locator('#chat-list .chat-row').first().locator('.chat-message strong')).toHaveText('What a finish!');
+    await expect(page.locator('#chat-list .chat-link')).toHaveAttribute('href', 'https://allplays.ai');
+    await expect(page.locator('#chat-list .chat-mention')).toHaveText('@ALL PLAYS');
+    await expect(page.locator('#chat-list .chat-message img')).toHaveCount(0);
     await expect(page.locator('#chat-input')).toBeEnabled();
     await expect(page.locator('#chat-status')).toContainText('Chatting as Alex Viewer');
-    await page.locator('#chat-input').fill('Overlay hello');
-    await page.locator('#chat-form').getByRole('button', { name: 'Send' }).click();
+    await expect(page.locator('#chat-reactions')).toBeVisible();
+    await page.locator('#chat-input').fill('@al');
+    await expect(page.locator('#mention-menu')).toBeVisible();
+    await page.locator('#mention-allplays').click();
+    await expect(page.locator('#chat-input')).toHaveValue('@ALL PLAYS ');
+    await page.locator('#chat-input').pressSequentially('How is the press?');
+    await page.locator('#chat-form').getByRole('button', { name: 'Send', exact: true }).click();
     await expect(page.locator('#chat-status')).toContainText('Message sent.');
-    await expect(page.locator('#chat-list')).toContainText('Overlay hello');
+    await expect(page.locator('#chat-list')).toContainText('ALL PLAYS says the press is working.');
+    await expect(page.locator('#ai-thinking')).toBeHidden();
+    expect(await page.evaluate(() => window.__OVERLAY_AI_PROMPT__)).toContain('Question: @ALL PLAYS How is the press?');
     expect(await page.evaluate(() => window.__OVERLAY_POSTED_CHAT__)).toEqual([{
         teamId: 'team-1',
         gameId: 'game-1',
         message: {
-            text: 'Overlay hello',
+            text: '@ALL PLAYS How is the press?',
             senderId: 'viewer-1',
             senderName: 'Alex Viewer',
             senderPhotoUrl: null,
             isAnonymous: false
         }
+    }, {
+        teamId: 'team-1',
+        gameId: 'game-1',
+        message: {
+            text: 'ALL PLAYS says the press is working.',
+            senderId: 'viewer-1',
+            senderName: 'ALL PLAYS',
+            senderPhotoUrl: null,
+            isAnonymous: false
+        }
     }]);
+
+    await page.getByRole('button', { name: 'Send clap reaction' }).click();
+    await expect.poll(() => page.evaluate(() => window.__OVERLAY_SENT_REACTIONS__ || [])).toEqual([{
+        teamId: 'team-1',
+        gameId: 'game-1',
+        reaction: { type: 'clap', senderId: 'viewer-1' }
+    }]);
+    await expect(page.locator('#chat-list')).toContainText('👏');
 
     await page.evaluate(() => window.__OVERLAY_EVENT_CALLBACK__([{
         id: 'reset-1', type: 'reset', description: 'Game reset', homeScore: 0, awayScore: 0,
@@ -657,7 +740,10 @@ test('real mode follows canonical game, lineup, clock, reset, reaction, and pass
 
 test('signed-out viewers can read chat but cannot post from the overlay', async ({ page, baseURL }) => {
     const pageErrors = collectPageErrors(page);
-    await page.addInitScript(() => { window.__OVERLAY_AUTH_USER__ = null; });
+    await page.addInitScript(() => {
+        window.__OVERLAY_AUTH_USER__ = null;
+        sessionStorage.setItem('liveChatAnonName', 'Fan Riley');
+    });
     await stubRealOverlayModules(page);
     await stubYouTubeEmbed(page);
 
@@ -673,7 +759,55 @@ test('signed-out viewers can read chat but cannot post from the overlay', async 
     await expect(page.locator('#chat-status')).toContainText('Sign in to join');
     await expect(page.locator('#chat-sign-in')).toBeVisible();
     await expect(page.locator('#chat-sign-in')).toHaveAttribute('href', /login\.html\?next=/);
+    await expect(page.locator('#chat-anon-notice')).toContainText('Chatting as Fan Riley');
+    await page.locator('#anon-change-btn').click();
+    await expect(page.locator('#anon-edit')).toBeVisible();
+    await page.locator('#anon-input').fill('  Riley   Blue  ');
+    await page.locator('#anon-save').click();
+    await expect(page.locator('#chat-anon-notice')).toContainText('Chatting as Riley Blue');
+    await expect(page.locator('#chat-status')).toContainText('Name changed to Riley Blue.');
+    expect(await page.evaluate(() => sessionStorage.getItem('liveChatAnonName'))).toBe('Riley Blue');
+    await expect(page.locator('#chat-reactions')).toBeHidden();
     expect(await page.evaluate(() => window.__OVERLAY_POSTED_CHAT__ || [])).toEqual([]);
+    expect(pageErrors).toEqual([]);
+});
+
+test('signed-in mobile chat keeps mentions and every reaction reachable without overflow', async ({ page, baseURL }) => {
+    const pageErrors = collectPageErrors(page);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await stubRealOverlayModules(page);
+    await stubYouTubeEmbed(page);
+
+    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('#home-team-name')).toHaveText('Current Academy');
+    await page.evaluate(() => window.__OVERLAY_CHAT_CALLBACK__([{
+        id: 'mobile-unread', senderName: 'Taylor', text: 'New mobile message', createdAt: Date.now() + 1000
+    }]));
+    await expect(page.locator('#chat-badge')).toHaveText('1');
+    await expect(page.locator('#chat-badge')).toBeVisible();
+    await page.locator('[data-panel="chat"]').click();
+    await expect(page.locator('#chat-badge')).toBeHidden();
+    await expect(page.locator('#insights-panel')).toBeVisible();
+    await expect(page.locator('#chat-input')).toBeEnabled();
+    await expect(page.locator('#chat-reactions .chat-reaction-button')).toHaveCount(5);
+
+    const layout = await getResponsiveLayout(page);
+    expectLayoutInsideViewport(layout);
+    const chatBounds = await page.evaluate(() => {
+        const panel = document.querySelector('#insights-panel').getBoundingClientRect();
+        const composer = document.querySelector('#chat-form').getBoundingClientRect();
+        return {
+            composerLeft: composer.left,
+            composerRight: composer.right,
+            composerBottom: composer.bottom,
+            panelLeft: panel.left,
+            panelRight: panel.right,
+            panelBottom: panel.bottom
+        };
+    });
+    expect(chatBounds.composerLeft).toBeGreaterThanOrEqual(chatBounds.panelLeft);
+    expect(chatBounds.composerRight).toBeLessThanOrEqual(chatBounds.panelRight);
+    expect(chatBounds.composerBottom).toBeLessThanOrEqual(chatBounds.panelBottom);
     expect(pageErrors).toEqual([]);
 });
 
@@ -686,12 +820,38 @@ test('chat write failure restores the draft without disrupting the live overlay'
     await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
     await page.locator('[data-panel="chat"]').click();
     await page.locator('#chat-input').fill('Keep this draft');
-    await page.locator('#chat-form').getByRole('button', { name: 'Send' }).click();
+    await page.locator('#chat-form').getByRole('button', { name: 'Send', exact: true }).click();
 
     await expect(page.locator('#chat-input')).toHaveValue('Keep this draft');
     await expect(page.locator('#chat-status')).toContainText('Message failed to send');
     await expect(page.locator('#home-score')).toHaveText('3');
     await expect(page.locator('#overlay-video')).toBeVisible();
+    expect(pageErrors).toEqual([]);
+});
+
+test('ALL PLAYS failure posts the canonical fallback without disrupting the game', async ({ page, baseURL }) => {
+    const pageErrors = collectPageErrors(page);
+    await page.addInitScript(() => { window.__OVERLAY_FAIL_AI__ = true; });
+    await stubRealOverlayModules(page);
+    await stubYouTubeEmbed(page);
+
+    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('#home-team-name')).toHaveText('Current Academy');
+    await page.locator('[data-panel="chat"]').click();
+    await page.locator('#chat-input').fill('@ALL PLAYS status?');
+    await page.locator('#chat-form').getByRole('button', { name: 'Send', exact: true }).click();
+
+    await expect(page.locator('#chat-list')).toContainText('ALL PLAYS is unavailable right now.');
+    await expect(page.locator('#ai-thinking')).toBeHidden();
+    await expect(page.locator('#home-score')).toHaveText('3');
+    await expect(page.locator('#overlay-video')).toBeVisible();
+    expect((await page.evaluate(() => window.__OVERLAY_POSTED_CHAT__)).at(-1).message).toEqual({
+        text: 'ALL PLAYS is unavailable right now.',
+        senderId: 'viewer-1',
+        senderName: 'ALL PLAYS',
+        senderPhotoUrl: null,
+        isAnonymous: false
+    });
     expect(pageErrors).toEqual([]);
 });
 
@@ -730,7 +890,11 @@ test('replay mode synchronizes saved plays, score, lineup, chat, reactions, and 
     await expect(page.locator('#on-field-list')).toContainText('Sam Gray');
     await page.locator('[data-panel="chat"]').click();
     await expect(page.locator('#chat-list')).toContainText('Saved replay message');
+    await expect(page.locator('#chat-list .chat-message strong')).toHaveText('Saved replay message');
+    await expect(page.locator('#chat-list .chat-mention')).toHaveText('@ALL PLAYS');
+    await expect(page.locator('#chat-list img.chat-avatar')).toBeVisible();
     await expect(page.locator('#chat-form')).toBeHidden();
+    await expect(page.locator('#chat-reactions')).toBeHidden();
 
     await page.getByRole('button', { name: '4×' }).click();
     await page.getByRole('button', { name: 'Play replay' }).click();

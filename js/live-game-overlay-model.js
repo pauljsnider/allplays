@@ -34,6 +34,24 @@ function cloneStats(stats = {}) {
     return Object.fromEntries(Object.entries(stats || {}).map(([id, values]) => [id, { ...(values || {}) }]));
 }
 
+function escapeChatHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+
+function isSafeChatUrl(value) {
+    try {
+        const url = new URL(value, 'https://allplays.ai');
+        return url.protocol === 'http:' || url.protocol === 'https:';
+    } catch {
+        return false;
+    }
+}
+
 function createLiveBaseline(game = {}, fallback = {}) {
     const liveLineup = game.liveLineup || {};
     return {
@@ -70,6 +88,33 @@ export function formatOverlayClock(milliseconds = 0) {
     const minutes = Math.floor(totalSeconds / 60);
     const seconds = totalSeconds % 60;
     return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
+export function formatOverlayChatMessageHtml(text = '') {
+    let formatted = escapeChatHtml(text);
+
+    formatted = formatted.replace(
+        /(^|\n)\s*[-*]\s+(?=\S)/g,
+        '$1&bull; '
+    );
+    formatted = formatted.replace(
+        /@all\s*plays/gi,
+        '<span class="chat-mention">@ALL PLAYS</span>'
+    );
+    formatted = formatted.replace(
+        /(\bhttps?:\/\/[^\s<]+[^\s<.,;:!?"'\])>]|\bwww\.[^\s<]+[^\s<.,;:!?"'\])>])/gi,
+        (url) => {
+            const href = url.startsWith('www.') ? `https://${url}` : url;
+            if (!isSafeChatUrl(href)) return url;
+            return `<a href="${escapeChatHtml(href)}" target="_blank" rel="noopener noreferrer" class="chat-link">${url}</a>`;
+        }
+    );
+    formatted = formatted.replace(/`([^`]+)`/g, '<code class="chat-code">$1</code>');
+    formatted = formatted.replace(/\*([^*]+)\*/g, '<strong>$1</strong>');
+    formatted = formatted.replace(/\b_([^_]+)_\b/g, '<em>$1</em>');
+    formatted = formatted.replace(/~([^~]+)~/g, '<del>$1</del>');
+
+    return formatted;
 }
 
 export function getOverlayReplayDurationMs({
@@ -158,10 +203,12 @@ function normalizePlayer(player = {}, index = 0) {
 }
 
 function normalizeChatMessage(message = {}, index = 0) {
+    const senderName = toText(message.senderName || message.name, message.ai ? 'ALL PLAYS' : 'Fan');
     return {
         ...message,
         id: toText(message.id, `message-${index}-${getTimestampMs(message.createdAt)}`),
-        senderName: toText(message.senderName || message.name, message.ai ? 'ALL PLAYS' : 'Fan'),
+        senderName,
+        ai: Boolean(message.ai || senderName.trim().toUpperCase() === 'ALL PLAYS'),
         text: toText(message.text || message.message, ''),
         createdAtMs: getTimestampMs(message.createdAt)
     };

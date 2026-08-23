@@ -28,7 +28,13 @@ describe('live game overlay page', () => {
         expect(html).toContain('id="chat-input"');
         expect(html).toContain('maxlength="2000"');
         expect(html).toContain('id="chat-sign-in"');
-        expect(html).toContain('js/live-game-overlay.js?v=13');
+        expect(html).toContain('id="mention-menu"');
+        expect(html).toContain('id="mention-allplays"');
+        expect(html).toContain('id="anon-change-btn"');
+        expect(html).toContain('id="ai-thinking"');
+        expect(html).toContain('id="chat-badge"');
+        expect(html).toContain('data-chat-reaction="fire"');
+        expect(html).toContain('js/live-game-overlay.js?v=14');
     });
 
     it('keeps the local demo isolated while wiring canonical subscriptions and authenticated chat posting', () => {
@@ -50,10 +56,18 @@ describe('live game overlay page', () => {
         expect(source).not.toContain('liveClockAnchor');
         expect(source).toContain("import('./auth.js?v=4433192')");
         expect(source).toContain("import('./live-game-chat.js?v=2')");
-        expect(source).toContain("import('./safe-image-url.js?v=1')");
+        expect(source).toContain("from './safe-image-url.js?v=1'");
         expect(source).toContain('database.postLiveChatMessage');
+        expect(source).toContain('database.sendReaction');
         expect(source).toContain('uiState.chatUser.uid');
         expect(source).toContain('resolveSafeProfilePhotoWriteUrl');
+        expect(source).toContain('createSafeImageElement');
+        expect(source).toContain('formatOverlayChatMessageHtml');
+        expect(source).toContain('generateAiResponse');
+        expect(source).toContain("import('./vendor/firebase-ai.js')");
+        expect(source).toContain('handleMentionInput');
+        expect(source).toContain('ensureAnonymousChatName');
+        expect(source).toContain('updateChatUnread');
         expect(source).toContain('text.length > 2000');
         expect(source).toContain('Date.now() - uiState.lastChatSentAt < 1500');
         expect(source).toContain('Message failed to send. Score and video remain connected.');
@@ -68,7 +82,7 @@ describe('live game overlay page', () => {
         expect(source).toContain('syncReplayMedia');
         expect(source).not.toContain('updateGame(');
         expect(source).not.toContain('trackViewerPresence(');
-        expect(source).not.toContain('sendReaction(');
+        expect(source).toContain('sendChatReaction');
     });
 
     it('keeps every current tracker live-event family in the overlay parity inventory', () => {

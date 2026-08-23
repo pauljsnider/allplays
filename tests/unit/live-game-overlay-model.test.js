@@ -4,6 +4,7 @@ import {
     applyOverlayGame,
     createOverlayDemoFixture,
     createOverlayState,
+    formatOverlayChatMessageHtml,
     formatOverlayClock,
     getControllableReplayEmbedUrl,
     getOverlayEventTone,
@@ -30,6 +31,20 @@ describe('live game overlay model', () => {
         expect(formatOverlayClock(65_999)).toBe('1:05');
         expect(formatOverlayClock(-5_000)).toBe('0:00');
         expect(formatOverlayClock('not-a-clock')).toBe('0:00');
+    });
+
+    it('formats live and replay chat like the canonical viewer without allowing stored markup', () => {
+        const html = formatOverlayChatMessageHtml(
+            '*Update* @all plays see https://allplays.ai/game.html and `ready` <img src=x onerror=alert(1)>'
+        );
+
+        expect(html).toContain('<strong>Update</strong>');
+        expect(html).toContain('<span class="chat-mention">@ALL PLAYS</span>');
+        expect(html).toContain('class="chat-link"');
+        expect(html).toContain('<code class="chat-code">ready</code>');
+        expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;');
+        expect(html).not.toContain('<img');
+        expect(formatOverlayChatMessageHtml('javascript:alert(1)')).not.toContain('<a ');
     });
 
     it('builds a replay duration from plays, saved conversation, reactions, and recorded media', () => {
@@ -309,11 +324,12 @@ describe('live game overlay model', () => {
         const state = createOverlayState();
         replaceOverlayChat(state, [
             { id: 'older', senderName: 'One', text: 'Earlier', createdAt: 10 },
-            { id: 'newer', senderName: 'Two', text: 'Latest', createdAt: 20 }
+            { id: 'newer', senderName: 'ALL PLAYS', text: 'Latest', createdAt: 20 }
         ]);
         const fixture = createOverlayDemoFixture(100_000);
 
         expect(state.chatMessages.map((message) => message.id)).toEqual(['newer', 'older']);
+        expect(state.chatMessages[0].ai).toBe(true);
         expect(fixture.game.liveStatus).toBe('live');
         expect(fixture.events.length).toBeGreaterThanOrEqual(4);
         expect(fixture.players.length).toBeGreaterThanOrEqual(6);

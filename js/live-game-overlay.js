@@ -3,13 +3,14 @@ import {
     applyOverlayGame,
     createOverlayDemoFixture,
     createOverlayState,
+    formatOverlayChatMessageHtml,
     formatOverlayClock,
     getControllableReplayEmbedUrl,
     getOverlayLineup,
     getOverlayReplayDurationMs,
     reconcileOverlayLiveEvents,
     replaceOverlayChat
-} from './live-game-overlay-model.js?v=4';
+} from './live-game-overlay-model.js?v=5';
 import {
     buildReplaySessionState,
     collectReplayEventWindow,
@@ -19,6 +20,11 @@ import {
     rebaseReplayStartTimeMs
 } from './live-game-replay.js?v=3';
 import { getDefaultLivePeriod } from './live-sport-config.js?v=2';
+import {
+    createSafeImageElement,
+    resolveSafeProfilePhotoUrl,
+    resolveSafeProfilePhotoWriteUrl
+} from './safe-image-url.js?v=1';
 
 const elements = {
     body: document.body,
@@ -51,6 +57,20 @@ const elements = {
     chatSend: document.querySelector('#chat-send'),
     chatStatus: document.querySelector('#chat-status'),
     chatSignIn: document.querySelector('#chat-sign-in'),
+    chatBadge: document.querySelector('#chat-badge'),
+    mentionMenu: document.querySelector('#mention-menu'),
+    mentionAllPlays: document.querySelector('#mention-allplays'),
+    chatAnonNotice: document.querySelector('#chat-anon-notice'),
+    anonName: document.querySelector('#anon-name'),
+    anonChange: document.querySelector('#anon-change-btn'),
+    anonEdit: document.querySelector('#anon-edit'),
+    anonInput: document.querySelector('#anon-input'),
+    anonSave: document.querySelector('#anon-save'),
+    anonCancel: document.querySelector('#anon-cancel'),
+    aiThinking: document.querySelector('#ai-thinking'),
+    chatTip: document.querySelector('#chat-tip'),
+    chatReactions: document.querySelector('#chat-reactions'),
+    chatReactionButtons: [...document.querySelectorAll('[data-chat-reaction]')],
     panelToggles: [...document.querySelectorAll('[data-panel]')],
     insightTabs: [...document.querySelectorAll('[role="tab"][aria-controls]')],
     insightViews: [...document.querySelectorAll('[role="tabpanel"]')],
@@ -104,9 +124,18 @@ const uiState = {
     chatBusy: false,
     chatControlsReady: false,
     chatSubmitBound: false,
+    chatParityBound: false,
+    unreadChatCount: 0,
+    lastChatSeenAt: Date.now(),
     lastChatSentAt: 0,
+    anonName: '',
     chatServices: null,
     unsubscribers: []
+};
+
+const mentionState = {
+    active: false,
+    atPos: null
 };
 
 function createTextElement(tagName, className, text) {
@@ -317,6 +346,8 @@ function renderChat() {
     if (!state) return;
     elements.chatList.replaceChildren();
     if (!state.chatMessages.length) {
+        uiState.unreadChatCount = 0;
+        updateChatBadge();
         elements.chatList.appendChild(createTextElement(
             'li',
             'empty-state',
@@ -324,17 +355,262 @@ function renderChat() {
         ));
         return;
     }
-    state.chatMessages.slice(0, 24).forEach((message) => {
+    state.chatMessages.slice(0, 24).reverse().forEach((message) => {
+        const senderName = String(message.senderName || 'Fan');
+        const isAi = Boolean(message.ai || senderName.trim().toUpperCase() === 'ALL PLAYS');
         const item = document.createElement('li');
         item.className = 'chat-row';
-        item.dataset.ai = String(Boolean(message.ai));
-        item.appendChild(createTextElement('span', 'chat-avatar', message.ai ? 'AP' : message.senderName.charAt(0).toUpperCase()));
+        item.dataset.ai = String(isAi);
+
+        const fallback = createTextElement('span', 'chat-avatar', isAi ? 'AP' : senderName.charAt(0).toUpperCase());
+        const avatar = createSafeImageElement({
+            url: message.senderPhotoUrl,
+            resolveUrl: resolveSafeProfilePhotoUrl,
+            alt: `${senderName} profile photo`,
+            className: 'chat-avatar',
+            onLoadError: (image) => image.replaceWith(fallback)
+        });
+        item.appendChild(avatar || fallback);
+
         const content = document.createElement('div');
-        content.appendChild(createTextElement('strong', '', message.senderName));
-        content.appendChild(createTextElement('p', '', message.text));
+        content.appendChild(createTextElement('strong', '', isAi ? 'ALL PLAYS' : senderName));
+        const copy = document.createElement('p');
+        copy.className = 'chat-message';
+        copy.innerHTML = formatOverlayChatMessageHtml(message.text || '');
+        content.appendChild(copy);
         item.appendChild(content);
         elements.chatList.appendChild(item);
     });
+    elements.chatList.scrollTop = elements.chatList.scrollHeight;
+    updateChatUnread();
+}
+
+function updateChatBadge() {
+    if (!elements.chatBadge) return;
+    elements.chatBadge.textContent = uiState.unreadChatCount > 99 ? '99+' : String(uiState.unreadChatCount);
+    elements.chatBadge.hidden = uiState.unreadChatCount === 0;
+}
+
+function markChatSeen() {
+    uiState.lastChatSeenAt = Date.now();
+    uiState.unreadChatCount = 0;
+    updateChatBadge();
+}
+
+function updateChatUnread() {
+    if (!uiState.game?.chatMessages.length) return;
+    const isMobile = window.matchMedia('(max-width: 767px)').matches;
+    const chatIsOpen = uiState.activeInsight === 'chat' && (
+        !usesCompactPanelLayout() || uiState.activeMobilePanel === 'insights'
+    );
+    if (!isMobile || chatIsOpen) {
+        markChatSeen();
+        return;
+    }
+    uiState.unreadChatCount = uiState.game.chatMessages.reduce((count, message) => {
+        const timestamp = Number(message.createdAtMs) || 0;
+        return !timestamp || timestamp > uiState.lastChatSeenAt ? count + 1 : count;
+    }, 0);
+    updateChatBadge();
+}
+
+function getChatSenderName() {
+    if (uiState.chatUser?.uid) {
+        return String(uiState.chatUser.displayName || 'Fan').trim().slice(0, 80) || 'Fan';
+    }
+    return uiState.anonName || 'Fan';
+}
+
+function ensureAnonymousChatName() {
+    if (uiState.anonName) return uiState.anonName;
+    let saved = '';
+    try {
+        saved = String(sessionStorage.getItem('liveChatAnonName') || '').replace(/\s+/g, ' ').trim().slice(0, 20);
+    } catch {
+        // Storage can be unavailable in privacy-restricted browsers. The
+        // generated name still works for this page view.
+    }
+    uiState.anonName = saved.length >= 2 ? saved : `Fan${Math.floor(1000 + Math.random() * 9000)}`;
+    try {
+        sessionStorage.setItem('liveChatAnonName', uiState.anonName);
+    } catch {
+        // Display-name persistence is optional and must not affect the game.
+    }
+    if (elements.anonName) elements.anonName.textContent = uiState.anonName;
+    return uiState.anonName;
+}
+
+function openAnonNameEditor() {
+    if (!elements.anonEdit || !elements.anonInput) return;
+    elements.anonEdit.hidden = false;
+    elements.anonInput.value = ensureAnonymousChatName();
+    elements.anonInput.focus();
+}
+
+function closeAnonNameEditor() {
+    if (elements.anonEdit) elements.anonEdit.hidden = true;
+}
+
+function saveAnonName() {
+    if (!elements.anonInput) return;
+    const cleaned = elements.anonInput.value.replace(/\s+/g, ' ').trim();
+    if (cleaned.length < 2) {
+        setChatStatus('Name must be at least 2 characters.', 'error');
+        return;
+    }
+    uiState.anonName = cleaned.slice(0, 20);
+    try {
+        sessionStorage.setItem('liveChatAnonName', uiState.anonName);
+    } catch {
+        // The in-memory name remains usable when storage is unavailable.
+    }
+    if (elements.anonName) elements.anonName.textContent = uiState.anonName;
+    closeAnonNameEditor();
+    setChatStatus(`Name changed to ${uiState.anonName}.`, 'success');
+}
+
+function hideMentionMenu() {
+    mentionState.active = false;
+    mentionState.atPos = null;
+    if (elements.mentionMenu) elements.mentionMenu.hidden = true;
+    elements.chatInput?.setAttribute('aria-expanded', 'false');
+}
+
+function handleMentionInput() {
+    if (!elements.chatInput || !elements.mentionMenu) return;
+    const text = elements.chatInput.value;
+    const cursor = elements.chatInput.selectionStart ?? text.length;
+    const atPos = text.lastIndexOf('@', Math.max(0, cursor - 1));
+    if (atPos === -1) {
+        hideMentionMenu();
+        return;
+    }
+    const token = text.slice(atPos, cursor);
+    const prefix = token.slice(1).toLowerCase();
+    if (!/^[^\s@]*$/.test(prefix) || (token.length > 1 && !'allplays'.startsWith(prefix)) || token.length > 20) {
+        hideMentionMenu();
+        return;
+    }
+    mentionState.active = true;
+    mentionState.atPos = atPos;
+    elements.mentionMenu.hidden = false;
+    elements.chatInput.setAttribute('aria-expanded', 'true');
+}
+
+function insertMention() {
+    if (!elements.chatInput || mentionState.atPos === null) return;
+    const text = elements.chatInput.value;
+    const cursor = elements.chatInput.selectionStart ?? text.length;
+    const before = text.slice(0, mentionState.atPos);
+    const after = text.slice(cursor);
+    const mention = '@ALL PLAYS ';
+    elements.chatInput.value = `${before}${mention}${after}`;
+    const nextCursor = before.length + mention.length;
+    elements.chatInput.setSelectionRange(nextCursor, nextCursor);
+    hideMentionMenu();
+    elements.chatInput.focus();
+}
+
+function handleMentionKeydown(event) {
+    if (!mentionState.active) return;
+    if (event.key === 'Escape') hideMentionMenu();
+    if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        insertMention();
+    }
+}
+
+function buildAiPrompt(question) {
+    const recentEvents = uiState.game.events.slice(0, 20).reverse().map((event) => (
+        `${event.period || ''} ${formatOverlayClock(event.gameClockMs || 0)} - ${event.description}`
+    )).join('\n');
+    const statLines = uiState.game.players.map((player) => {
+        const stats = uiState.game.stats[player.id] || {};
+        const values = Object.entries(stats)
+            .filter(([, value]) => Number(value) !== 0)
+            .map(([key, value]) => `${key.toUpperCase()} ${value}`)
+            .join(', ');
+        return `${player.number ? `#${player.number} ` : ''}${player.name}: ${values || 'No stats'}`;
+    }).join('\n');
+    const chatContext = uiState.game.chatMessages.slice(0, 10).reverse()
+        .map((message) => `${message.senderName || 'Fan'}: ${message.text}`)
+        .join('\n');
+
+    return `You are ALL PLAYS, a helpful game assistant for a live sports broadcast.\n\nCurrent score: ${uiState.game.homeScore} - ${uiState.game.awayScore}\nPeriod: ${uiState.game.period}\nClock: ${formatOverlayClock(uiState.game.gameClockMs)}\n\nRecent plays:\n${recentEvents || 'No events yet.'}\n\nPlayer stats:\n${statLines || 'No stats yet.'}\n\nRecent chat:\n${chatContext || 'No chat yet.'}\n\nQuestion: ${question}\n\nRespond in a concise, friendly broadcast tone.`;
+}
+
+async function generateAiResponse(question) {
+    if (!uiState.chatUser?.uid || !uiState.chatServices) return;
+    if (elements.aiThinking) elements.aiThinking.hidden = false;
+    try {
+        const [aiTools, appTools] = await Promise.all([
+            import('./vendor/firebase-ai.js'),
+            import('./vendor/firebase-app.js')
+        ]);
+        const ai = aiTools.getAI(appTools.getApp(), { backend: new aiTools.GoogleAIBackend() });
+        const model = aiTools.getGenerativeModel(ai, { model: 'gemini-2.5-flash' });
+        const result = await model.generateContent(buildAiPrompt(question));
+        const text = String(result.response.text() || '').trim();
+        if (!text) throw new Error('ALL PLAYS returned an empty response.');
+        await uiState.chatServices.postLiveChatMessage(uiState.teamId, uiState.gameId, {
+            text,
+            senderId: uiState.chatUser.uid,
+            senderName: 'ALL PLAYS',
+            senderPhotoUrl: null,
+            isAnonymous: false
+        });
+    } catch (error) {
+        console.warn('Overlay ALL PLAYS response failed:', error);
+        try {
+            await uiState.chatServices.postLiveChatMessage(uiState.teamId, uiState.gameId, {
+                text: 'ALL PLAYS is unavailable right now.',
+                senderId: uiState.chatUser.uid,
+                senderName: 'ALL PLAYS',
+                senderPhotoUrl: null,
+                isAnonymous: false
+            });
+        } catch (postError) {
+            console.warn('Overlay ALL PLAYS fallback failed:', postError);
+            setChatStatus('ALL PLAYS could not answer. Live game updates continue.', 'error');
+        }
+    } finally {
+        if (elements.aiThinking) elements.aiThinking.hidden = true;
+    }
+}
+
+async function sendChatReaction(button) {
+    if (!uiState.chatServices || !uiState.chatEnabled || !uiState.chatUser?.uid || button.disabled) return;
+    const type = String(button.dataset.chatReaction || '');
+    const emoji = getReactionEmoji(type);
+    button.disabled = true;
+    button.dataset.cooldown = 'true';
+    window.setTimeout(() => {
+        delete button.dataset.cooldown;
+        button.disabled = !(uiState.chatEnabled && uiState.chatUser?.uid && !uiState.isReplay);
+    }, 1000);
+
+    const payload = {
+        senderId: uiState.chatUser.uid,
+        senderName: getChatSenderName(),
+        senderPhotoUrl: resolveSafeProfilePhotoWriteUrl(uiState.chatUser.photoURL) || null,
+        isAnonymous: false
+    };
+    const reactionRequest = typeof uiState.chatServices.sendReaction === 'function'
+        ? uiState.chatServices.sendReaction(uiState.teamId, uiState.gameId, {
+            type,
+            senderId: uiState.chatUser.uid
+        })
+        : Promise.reject(new Error('Live reactions are unavailable.'));
+    const results = await Promise.allSettled([
+        reactionRequest,
+        uiState.chatServices.postLiveChatMessage(uiState.teamId, uiState.gameId, {
+            ...payload,
+            text: emoji
+        })
+    ]);
+    if (results.every((result) => result.status === 'rejected')) {
+        setChatStatus('Reaction failed to send. Live game updates continue.', 'error');
+    }
 }
 
 function setChatStatus(message, tone = 'neutral') {
@@ -352,7 +628,11 @@ function renderChatComposer(statusOverride = null) {
     if (!elements.chatForm || !elements.chatInput || !elements.chatSend) return;
     const canShowComposer = !uiState.isDemo && !uiState.isReplay;
     elements.chatForm.hidden = !canShowComposer;
-    if (!canShowComposer) return;
+    if (!canShowComposer) {
+        hideMentionMenu();
+        if (elements.chatReactions) elements.chatReactions.hidden = true;
+        return;
+    }
 
     const signedIn = Boolean(uiState.chatUser?.uid);
     const canSend = uiState.chatControlsReady && uiState.chatEnabled && signedIn && !uiState.chatBusy;
@@ -366,6 +646,15 @@ function renderChatComposer(statusOverride = null) {
         elements.chatSignIn.href = getChatSignInUrl();
         elements.chatSignIn.hidden = !uiState.chatControlsReady || !uiState.chatEnabled || signedIn;
     }
+    if (!signedIn) ensureAnonymousChatName();
+    if (elements.chatAnonNotice) elements.chatAnonNotice.hidden = !uiState.chatEnabled || signedIn;
+    if (elements.chatTip) elements.chatTip.hidden = !uiState.chatEnabled;
+    if (elements.chatReactions) elements.chatReactions.hidden = !canSend;
+    elements.chatReactionButtons.forEach((button) => {
+        if (!button.dataset.cooldown) button.disabled = !canSend;
+    });
+    if (!canSend) hideMentionMenu();
+    if (signedIn) closeAnonNameEditor();
 
     if (statusOverride) {
         setChatStatus(statusOverride.message, statusOverride.tone);
@@ -378,8 +667,7 @@ function renderChatComposer(statusOverride = null) {
     } else if (uiState.chatBusy) {
         setChatStatus('Sending…');
     } else {
-        const senderName = String(uiState.chatUser.displayName || 'Fan').trim().slice(0, 80) || 'Fan';
-        setChatStatus(`Chatting as ${senderName}`);
+        setChatStatus(`Chatting as ${getChatSenderName()}`);
     }
 }
 
@@ -412,19 +700,21 @@ async function submitChatMessage(event) {
     uiState.lastChatSentAt = Date.now();
     uiState.chatBusy = true;
     elements.chatInput.value = '';
+    hideMentionMenu();
     renderChatComposer();
 
-    const senderName = String(uiState.chatUser.displayName || 'Fan').trim().slice(0, 80) || 'Fan';
+    const hasAiMention = /@all\s*plays/i.test(text);
     try {
         await uiState.chatServices.postLiveChatMessage(uiState.teamId, uiState.gameId, {
             text,
             senderId: uiState.chatUser.uid,
-            senderName,
-            senderPhotoUrl: uiState.chatServices.resolveSafeProfilePhotoWriteUrl(uiState.chatUser.photoURL) || null,
+            senderName: getChatSenderName(),
+            senderPhotoUrl: resolveSafeProfilePhotoWriteUrl(uiState.chatUser.photoURL) || null,
             isAnonymous: false
         });
         uiState.chatBusy = false;
         renderChatComposer({ message: 'Message sent.', tone: 'success' });
+        if (hasAiMention) await generateAiResponse(text);
     } catch (error) {
         console.warn('Overlay chat send failed:', error);
         uiState.chatBusy = false;
@@ -439,23 +729,47 @@ async function initializeChatComposer(database, teamId, gameId) {
     if (!elements.chatForm) return;
 
     try {
-        const [authTools, chatTools, imageTools] = await Promise.all([
+        const [authTools, chatTools] = await Promise.all([
             import('./auth.js?v=4433192'),
-            import('./live-game-chat.js?v=2'),
-            import('./safe-image-url.js?v=1')
+            import('./live-game-chat.js?v=2')
         ]);
         uiState.chatServices = {
             postLiveChatMessage: database.postLiveChatMessage,
             isViewerChatEnabled: chatTools.isViewerChatEnabled,
-            resolveSafeProfilePhotoWriteUrl: imageTools.resolveSafeProfilePhotoWriteUrl
+            sendReaction: database.sendReaction
         };
         uiState.chatControlsReady = true;
         if (!uiState.chatSubmitBound) {
             elements.chatForm.addEventListener('submit', submitChatMessage);
             uiState.chatSubmitBound = true;
         }
+        if (!uiState.chatParityBound) {
+            elements.chatInput.addEventListener('input', handleMentionInput);
+            elements.chatInput.addEventListener('keydown', handleMentionKeydown);
+            elements.mentionAllPlays?.addEventListener('click', insertMention);
+            elements.anonChange?.addEventListener('click', openAnonNameEditor);
+            elements.anonSave?.addEventListener('click', saveAnonName);
+            elements.anonCancel?.addEventListener('click', closeAnonNameEditor);
+            elements.anonInput?.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter') {
+                    event.preventDefault();
+                    saveAnonName();
+                }
+                if (event.key === 'Escape') closeAnonNameEditor();
+            });
+            elements.chatReactionButtons.forEach((button) => {
+                button.addEventListener('click', () => void sendChatReaction(button));
+            });
+            document.addEventListener('click', (event) => {
+                if (!elements.mentionMenu || !elements.chatInput) return;
+                if (elements.mentionMenu.contains(event.target) || event.target === elements.chatInput) return;
+                hideMentionMenu();
+            });
+            uiState.chatParityBound = true;
+        }
         const unsubscribeAuth = authTools.checkAuth((user) => {
             uiState.chatUser = user;
+            if (!user) ensureAnonymousChatName();
             refreshChatAvailability();
         }, { skipEmailVerificationCheck: true });
         if (typeof unsubscribeAuth === 'function') uiState.unsubscribers.push(unsubscribeAuth);
@@ -898,6 +1212,7 @@ function renderPanelVisibility() {
 
 function selectInsight(name) {
     uiState.activeInsight = name;
+    if (name === 'chat' && !usesCompactPanelLayout()) markChatSeen();
     elements.insightTabs.forEach((tab) => {
         tab.setAttribute('aria-selected', String(tab.id === `${name}-tab`));
     });
@@ -914,6 +1229,7 @@ function togglePanel(panel) {
         selectInsight('chat');
         if (compact) uiState.activeMobilePanel = wasActive ? null : 'insights';
         else uiState.desktopPanels.insights = true;
+        if (!wasActive) markChatSeen();
     } else if (panel === 'insights') {
         if (uiState.activeInsight === 'chat') selectInsight('lineup');
         if (compact) uiState.activeMobilePanel = uiState.activeMobilePanel === 'insights' ? null : 'insights';
