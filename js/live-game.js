@@ -17,12 +17,12 @@ import {
   updateGame,
   uploadGameClip,
   deleteUploadedMediaObjects
-} from './db.js?v=4433183';
-import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=443359';
+} from './db.js?v=4433188';
+import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=443364';
 import { hasFullTeamAccess } from './team-access.js?v=44338';
 import { buildScoreLinkedClipRecord, isScoredPlayEvent, validateGameClipFile } from './game-clips.js?v=1';
 import { computePanelVisibility } from './live-stream-utils.js?v=2';
-import { checkAuth } from './auth.js?v=4433187';
+import { checkAuth } from './auth.js?v=4433192';
 import { isViewerChatEnabled } from './live-game-chat.js?v=2';
 import { createPlayAnnouncer } from './live-game-announcer.js?v=1';
 import {
@@ -36,10 +36,10 @@ import {
 } from './live-game-replay.js?v=3';
 import { BROADCAST_SETUP_STATUSES, BROADCAST_STREAM_STATUSES, MAX_HIGHLIGHT_CLIP_MS, buildBroadcastSetupSession, buildHighlightShareUrl, buildStreamScoreContext, canAccessNativeCameraCapture, canSaveBroadcastSetupSession, createHighlightClipDraft, resolveBroadcastProviderMetadata, resolveBroadcastStreamControlState, resolveReplayVideoOptions, shouldReloadVideoPlayback } from './live-game-video.js?v=443315';
 import { buildGameReportShareUrl, buildGameWatchShareUrl } from './game-share-links.js?v=1';
-import { TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, isRecordedReplayTeamPassGateEnabled, resolveTeamEntitlementSeasonId } from './team-entitlements.js?v=7';
+import { TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, isRecordedReplayTeamPassGateEnabled, resolveTeamEntitlementSeasonId } from './team-entitlements.js?v=8';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
-import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, renderViewerLineupSections, renderOpponentStatsCards, applyResetEventState, applyViewerEventToState, shouldResetViewerFromGameDoc, collectVisibleLiveEventsSequentially } from './live-game-state.js?v=35';
+import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, renderViewerLineupSections, renderOpponentStatsCards, applyResetEventState, applyViewerEventToState, shouldResetViewerFromGameDoc, collectVisibleLiveEventsSequentially } from './live-game-state.js?v=36';
 import { getDefaultLivePeriod } from './live-sport-config.js?v=2';
 import { BROADCAST_STREAM_HEARTBEAT_MS, buildBroadcastRuntimeSession } from './game-day-broadcast.js?v=5';
 import { createSafeImageElement, resolveSafeProfilePhotoUrl, resolveSafeProfilePhotoWriteUrl } from './safe-image-url.js?v=1';

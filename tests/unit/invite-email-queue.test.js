@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const callable = vi.fn();
 const httpsCallable = vi.fn(() => callable);
 
-vi.mock('../../js/firebase.js?v=27', () => ({
+vi.mock('../../js/firebase.js?v=32', () => ({
     functions: {},
     httpsCallable
 }));

@@ -7,8 +7,9 @@ const PRODUCTION_FIREBASE_HOSTING_HOSTNAMES = new Set([
     'game-flow-c6311.web.app',
     'game-flow-c6311.firebaseapp.com'
 ]);
-const LOCAL_PRODUCTION_FIREBASE_ORIGINS = new Set([
-    'http://localhost:8000'
+const LOCAL_FIREBASE_HOSTING_ORIGINS = new Set([
+    'http://localhost:8000',
+    'http://127.0.0.1:8000'
 ]);
 const DEFAULT_PRIMARY_FIREBASE_CONFIG = {
     apiKey: 'AIzaSyDoixIoKJuUVWdmImwjYRTthjKOv2mU0Jc',
@@ -183,8 +184,8 @@ function isProductionFirebaseHostingHostname(hostname) {
     return PRODUCTION_FIREBASE_HOSTING_HOSTNAMES.has(String(hostname || '').trim().toLowerCase());
 }
 
-function isLocalProductionFirebaseOrigin(origin) {
-    return LOCAL_PRODUCTION_FIREBASE_ORIGINS.has(String(origin || '').trim().toLowerCase());
+function isLocalFirebaseHostingOrigin(origin) {
+    return LOCAL_FIREBASE_HOSTING_ORIGINS.has(String(origin || '').trim().toLowerCase());
 }
 
 function isBundledProductionFirebaseConfig(config) {
@@ -195,7 +196,7 @@ function isNativeRuntimeProtocol(protocol) {
     return protocol === 'capacitor:' || protocol === 'ionic:';
 }
 
-async function fetchFirebaseConfigFromHosting() {
+async function fetchFirebaseConfigFromHosting({ allowEmpty = false } = {}) {
     const baseUrl = (typeof window !== 'undefined' && window.location && window.location.origin)
         ? window.location.origin
         : 'http://localhost'; // Fallback for Node.js tests
@@ -209,9 +210,25 @@ async function fetchFirebaseConfigFromHosting() {
         throw new Error(`Firebase config request failed (${response.status})`);
     }
 
-    const payload = await response.json();
+    let payload;
+    try {
+        payload = await response.json();
+    } catch (error) {
+        // The Firebase Hosting emulator can return an empty 200 body when its
+        // CLI login has expired. Browsers do not consistently expose the
+        // Content-Length header, but an empty JSON body consistently fails at
+        // this parsing boundary. Only the explicitly trusted local Hosting
+        // origin enables this fallback.
+        if (allowEmpty && error instanceof SyntaxError) {
+            return null;
+        }
+        throw error;
+    }
     const normalized = normalizeFirebaseConfig(payload);
     if (!normalized) {
+        if (allowEmpty && payload && Object.keys(payload).length === 0) {
+            return null;
+        }
         throw new Error('Firebase config payload is missing required fields');
     }
 
@@ -234,6 +251,21 @@ async function fetchProductionFirebaseConfigFromHosting() {
     return config;
 }
 
+async function fetchLocalFirebaseConfigFromHosting() {
+    try {
+        const config = await fetchFirebaseConfigFromHosting({ allowEmpty: true });
+        return config || { ...DEFAULT_PRIMARY_FIREBASE_CONFIG };
+    } catch (error) {
+        console.warn('[firebase-config] Local Hosting config read failed.', {
+            name: String(error?.name || 'Error'),
+            message: String(error?.message || 'Unknown local Hosting error')
+        });
+        throw new Error(
+            'Firebase Hosting config is unavailable on localhost:8000. Start the site with npm run serve:firebase or npm run serve:firebase:live.'
+        );
+    }
+}
+
 export async function resolvePrimaryFirebaseConfig() {
     const runtimeOrigin = typeof window !== 'undefined'
         ? window.location?.origin
@@ -247,14 +279,14 @@ export async function resolvePrimaryFirebaseConfig() {
     const canonicalProductionHost = isCanonicalProductionHostname(runtimeHostname);
     const productionFirebaseHostingHost = isProductionFirebaseHostingHostname(runtimeHostname);
     const productionRuntimeHost = canonicalProductionHost || productionFirebaseHostingHost;
-    const localProductionRuntime = isLocalProductionFirebaseOrigin(runtimeOrigin);
+    const localFirebaseHostingRuntime = isLocalFirebaseHostingOrigin(runtimeOrigin);
     const nativeRuntime = isNativeRuntimeProtocol(runtimeProtocol);
     const globalConfig = readGlobalConfig();
     const inlineConfig = normalizeFirebaseConfig(
         globalConfig.firebase || globalConfig.firebasePrimary || readWindowGlobal('ALLPLAYS_FIREBASE_CONFIG')
     );
     if (inlineConfig) {
-        if (productionRuntimeHost || localProductionRuntime) {
+        if (productionRuntimeHost) {
             if (!isBundledProductionFirebaseConfig(inlineConfig)) {
                 throw new Error('Firebase config does not match the production Firebase project.');
             }
@@ -297,18 +329,8 @@ export async function resolvePrimaryFirebaseConfig() {
         return fetchProductionFirebaseConfigFromHosting();
     }
 
-    if (localProductionRuntime) {
-        const remoteConfig = await fetchAllPlaysRuntimeConfig();
-        const remoteFirebaseConfig = normalizeFirebaseConfig(
-            remoteConfig.firebase || remoteConfig.firebasePrimary
-        );
-        if (
-            remoteFirebaseConfig
-            && !isBundledProductionFirebaseConfig(remoteFirebaseConfig)
-        ) {
-            throw new Error('Local Firebase runtime config does not match the production Firebase project.');
-        }
-        return remoteFirebaseConfig || { ...DEFAULT_PRIMARY_FIREBASE_CONFIG };
+    if (localFirebaseHostingRuntime) {
+        return fetchLocalFirebaseConfigFromHosting();
     }
 
     if (!runtimeHostname || localDevelopmentHost || firebaseHostingHost) {

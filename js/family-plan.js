@@ -1,4 +1,4 @@
-import { readAccountPremiumEntitlement } from './premium-entitlements.js?v=6';
+import { readAccountPremiumEntitlement } from './premium-entitlements.js?v=7';
 import { PREMIUM_FEATURES } from './premium-access-core.js?v=1';
 import { buildAppJoinUrl, generateJoinCode } from './join-code.js?v=2';
 
@@ -57,7 +57,7 @@ function normalizePlayerLinks(playerLinks = []) {
 
 function loadFirebase(deps = {}) {
     if (deps.firebase) return Promise.resolve(deps.firebase);
-    return import('./firebase.js?v=27');
+    return import('./firebase.js?v=32');
 }
 
 function normalizeAccessLinks(links = []) {

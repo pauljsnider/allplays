@@ -83,7 +83,7 @@ vi.mock('../../js/vendor/firebase-functions.js', () => ({
     httpsCallable: vi.fn()
 }));
 
-vi.mock('../../js/firebase-app-check.js?v=6', () => ({
+vi.mock('../../js/firebase-app-check.js?v=11', () => ({
     initializePrimaryAppCheck: vi.fn(async () => ({ state: 'skipped' }))
 }));
 

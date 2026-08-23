@@ -94,7 +94,32 @@ See `FIREBASE-HOSTING-MIGRATION.md` for the GitHub Pages → Firebase Hosting cu
 
 ### 3. Local Development
 
-Since this is a static site, you can run it with any static file server.
+Use the Firebase Hosting emulator for pages that load Firebase. It serves the
+allowlisted `http://localhost:8000` origin and supplies the project's Firebase
+configuration through `/__/firebase/init.json`.
+
+Production-backed local development for real games, events, and chat:
+
+```bash
+npm run serve:firebase
+```
+
+This command reads and writes production data. The Firebase Hosting emulator
+normally supplies the project configuration. If an expired CLI login leaves
+that Hosting response empty, localhost uses the checked-in public web config;
+it still refuses to do so when the page is not running through Firebase
+Hosting.
+
+Safe isolated development:
+
+```bash
+npm run serve:firebase:safe
+```
+
+`npm run serve:firebase:live` remains an explicit alias for the production-backed
+workflow.
+
+For pages that do not use Firebase, any static file server is sufficient.
 
 Python:
 ```bash
@@ -106,7 +131,8 @@ Node (http-server):
 npx http-server .
 ```
 
-Open `http://localhost:8000` (or port shown) in your browser.
+Open `http://localhost:8000` in your browser. Firebase-backed pages fail closed
+on that origin when they are not served through Firebase Hosting.
 
 ## Admin Setup
 

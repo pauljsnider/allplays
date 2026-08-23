@@ -336,6 +336,7 @@ async function stubRealOverlayModules(page) {
             const team = { id: 'team-1', name: 'Current Academy' };
             const game = {
                 id: 'game-1', opponent: 'Sporting Blue', homeScore: 3, awayScore: 2,
+                homeTeamName: 'Current Academy',
                 period: 'H2', liveClockMs: 720000, liveStatus: 'live', viewerCount: 4, liveViewerCount: 19,
                 videoUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
                 isPublicProjection: true,
@@ -343,12 +344,18 @@ async function stubRealOverlayModules(page) {
                 liveStats: { p9: { goals: 5 } },
                 opponentStats: { away8: { name: 'Jordan Vale', goals: 1 } }
             };
-            export async function getGameDayTeamContext() { return team; }
+            export async function getGameDayTeamContext() {
+                if (window.__OVERLAY_DEFER_OPTIONAL_CONTEXT__) return new Promise(() => {});
+                return team;
+            }
             export async function getGame() { return game; }
-            export async function getPlayers() { return [
+            export async function getPlayers() {
+                if (window.__OVERLAY_DEFER_OPTIONAL_CONTEXT__) return new Promise(() => {});
+                return [
                 { id: 'p9', name: 'Avery Lane', number: '9', position: 'F' },
                 { id: 'p4', name: 'Sam Gray', number: '4', position: 'D' }
-            ]; }
+                ];
+            }
             export function subscribeGame(_teamId, _gameId, callback, onError, options) {
                 window.__OVERLAY_LIVE_SUBSCRIPTIONS__ = (window.__OVERLAY_LIVE_SUBSCRIPTIONS__ || 0) + 1;
                 window.__OVERLAY_GAME_CALLBACK__ = callback;
@@ -441,6 +448,33 @@ async function stubRealOverlayModules(page) {
         body: `export function resolveSafeProfilePhotoWriteUrl() { return ''; }`
     }));
 }
+
+test('live subscriptions start before signed-in team and roster enrichment finishes', async ({ page, baseURL }) => {
+    const pageErrors = collectPageErrors(page);
+    await page.addInitScript(() => { window.__OVERLAY_DEFER_OPTIONAL_CONTEXT__ = true; });
+    await stubRealOverlayModules(page);
+    await stubYouTubeEmbed(page);
+
+    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('#home-team-name')).toHaveText('Current Academy');
+    await expect(page.locator('#home-score')).toHaveText('3');
+    await expect.poll(() => page.evaluate(() => window.__OVERLAY_LIVE_SUBSCRIPTIONS__ || 0)).toBe(4);
+
+    await page.evaluate(() => window.__OVERLAY_EVENT_CALLBACK__([{
+        id: 'early-live-goal', type: 'goal', description: 'Realtime before roster hydration',
+        playerId: 'p9', playerName: 'Avery Lane', statKey: 'goals', value: 1,
+        homeScore: 4, awayScore: 2, period: 'H2', gameClockMs: 725000, createdAt: 1500
+    }]));
+    await expect(page.locator('#home-score')).toHaveText('4');
+    await expect(page.locator('#event-list')).toContainText('Realtime before roster hydration');
+
+    await page.evaluate(() => window.__OVERLAY_CHAT_CALLBACK__([{
+        id: 'early-chat', senderName: 'Taylor', text: 'Chat before roster hydration', createdAt: Date.now()
+    }]));
+    await page.locator('[data-panel="chat"]').click();
+    await expect(page.locator('#chat-list')).toContainText('Chat before roster hydration');
+    expect(pageErrors).toEqual([]);
+});
 
 test('real mode follows canonical game, lineup, clock, reset, reaction, and passive video-failure behavior', async ({ page, baseURL }) => {
     const pageErrors = collectPageErrors(page);

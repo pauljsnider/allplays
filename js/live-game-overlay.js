@@ -134,7 +134,7 @@ function usesCompactPanelLayout() {
 }
 
 function loadOverlayDatabase() {
-    return import('./db.js?v=4433183');
+    return import('./db.js?v=4433188');
 }
 
 function getTimestampMs(value) {
@@ -442,7 +442,7 @@ async function initializeChatComposer(database, teamId, gameId) {
 
     try {
         const [authTools, chatTools, imageTools] = await Promise.all([
-            import('./auth.js?v=4433187'),
+            import('./auth.js?v=4433192'),
             import('./live-game-chat.js?v=2'),
             import('./safe-image-url.js?v=1')
         ]);
@@ -1073,7 +1073,7 @@ async function startDemoReplayMode(params) {
         { controllableReplay: true }
     );
     uiState.videoDurationMs = 15_000;
-    const stateTools = await import('./live-game-state.js?v=35');
+    const stateTools = await import('./live-game-state.js?v=36');
     await loadReplaySnapshot({
         getLiveEvents: async () => replayEvents,
         getLiveChatHistory: async () => replayChat,
@@ -1159,14 +1159,19 @@ async function startRealMode(params) {
         const [database, videoTools, stateTools] = await Promise.all([
             loadOverlayDatabase(),
             import('./live-game-video.js?v=443315'),
-            import('./live-game-state.js?v=35')
+            import('./live-game-state.js?v=36')
         ]);
         const teamPromise = database.getGameDayTeamContext(teamId, gameId, { includeInactive: true }).catch(() => ({}));
         const playersPromise = database.getPlayers(teamId, { includeInactive: true }).catch(() => []);
-        const [team, game, players] = await Promise.all([teamPromise, database.getGame(teamId, gameId), playersPromise]);
+        const game = await database.getGame(teamId, gameId);
         if (!game) throw new Error('Game not found.');
 
-        uiState.game = createOverlayState({ team: team || {}, game, players });
+        // A public game projection is sufficient to start the broadcast. Team
+        // and roster reads are optional enrichment and can be slower for some
+        // signed-in access paths, so they must never delay live subscriptions.
+        let resolvedTeam = {};
+        let resolvedPlayers = [];
+        uiState.game = createOverlayState({ team: resolvedTeam, game, players: resolvedPlayers });
         // The canonical viewer derives home-player stats from the ordered event
         // stream. Keep the demo fixture's seeded stats, but avoid double-counting
         // persisted liveStats when the initial live snapshot arrives.
@@ -1203,6 +1208,34 @@ async function startRealMode(params) {
             }
         };
         if (renderVideoSafely()) setConnectionMessage('');
+
+        const refreshOptionalContext = () => {
+            if (!uiState.game) return;
+            const context = createOverlayState({
+                team: resolvedTeam,
+                game: uiState.game.game,
+                players: resolvedPlayers
+            });
+            uiState.game.team = context.team;
+            uiState.game.players = context.players;
+            uiState.game.playerMap = context.playerMap;
+            uiState.game.homeName = context.homeName;
+            uiState.game.awayName = context.awayName;
+            if (!uiState.game.sport) uiState.game.sport = context.sport;
+            if (!uiState.game.periods && context.periods) uiState.game.periods = context.periods;
+            renderScoreboard();
+            renderLineup();
+            renderLeaders();
+            renderVideoSafely();
+        };
+        void teamPromise.then((team) => {
+            resolvedTeam = team || {};
+            refreshOptionalContext();
+        });
+        void playersPromise.then((players) => {
+            resolvedPlayers = Array.isArray(players) ? players : [];
+            refreshOptionalContext();
+        });
 
         if (isReplay) {
             await loadReplaySnapshot(database, stateTools, teamId, gameId);

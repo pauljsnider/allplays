@@ -6,7 +6,7 @@ describe('co-parent invite workflow regression', () => {
     it('surfaces a shareable co-parent invite link on the parent dashboard', () => {
         const dashboardSource = readFileSync(resolve(process.cwd(), 'parent-dashboard.html'), 'utf8');
 
-        expect(dashboardSource).toContain("import { functions, httpsCallable } from './js/firebase.js?v=27';");
+        expect(dashboardSource).toContain("import { functions, httpsCallable } from './js/firebase.js?v=32';");
         expect(dashboardSource).toContain("const createCoParentInvite = httpsCallable(functions, 'createCoParentInvite');");
         expect(dashboardSource).toContain('const response = await createCoParentInvite({');
         expect(dashboardSource).toContain('const invite = response?.data || {};');
@@ -21,7 +21,7 @@ describe('co-parent invite workflow regression', () => {
         const acceptInviteSource = readFileSync(resolve(process.cwd(), 'accept-invite.html'), 'utf8');
 
         expect(acceptInviteSource).toContain('redeemCoParentInvite');
-        expect(acceptInviteSource).toContain("./js/db.js?v=4433183");
+        expect(acceptInviteSource).toContain("./js/db.js?v=4433188");
         expect(acceptInviteSource).toContain("./js/accept-invite-flow.js?v=443314");
     });
 
