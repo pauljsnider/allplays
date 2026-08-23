@@ -4,7 +4,7 @@ import { join } from 'path';
 
 const repoRoot = join(__dirname, '..', '..');
 
-describe('Firestore persistent local cache', () => {
+describe('Firestore local cache policy', () => {
     it('initializes Firestore with initializeFirestore and falls back to getFirestore when needed', () => {
         const source = readFileSync(join(repoRoot, 'js', 'firebase.js'), 'utf8');
 
@@ -13,17 +13,21 @@ describe('Firestore persistent local cache', () => {
         expect(source).toContain("initializeFirestore() has already been called");
     });
 
-    it('configures localCache with persistentLocalCache', () => {
+    it('uses memory cache for web while retaining persistent cache for native runtimes', () => {
         const source = readFileSync(join(repoRoot, 'js', 'firebase.js'), 'utf8');
 
+        expect(source).toContain('memoryLocalCache');
         expect(source).toContain('persistentLocalCache');
-        expect(source).toContain('localCache: persistentLocalCache(');
+        expect(source).toContain('isCapacitorNativeFirestoreRuntime');
+        expect(source).toContain('localCache: createFirestoreLocalCache()');
+        expect(source).not.toContain('clearIndexedDbPersistence');
     });
 
-    it('uses persistentMultipleTabManager to share the IndexedDB cache across browser tabs', () => {
+    it('keeps the persistent multi-tab manager scoped to native Firestore', () => {
         const source = readFileSync(join(repoRoot, 'js', 'firebase.js'), 'utf8');
 
         expect(source).toContain('persistentMultipleTabManager');
         expect(source).toContain('tabManager: persistentMultipleTabManager()');
+        expect(source).toMatch(/if \(isCapacitorNativeFirestoreRuntime\(\)\)[\s\S]*persistentLocalCache/);
     });
 });

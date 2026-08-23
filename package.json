@@ -18,6 +18,7 @@
     "test:functions:team-email": "node --test functions/test/team-email-*.test.cjs",
     "smoke:candidate-host": "node scripts/smoke-candidate-host.mjs",
     "test:smoke": "playwright test --config=playwright.smoke.config.js",
+    "test:smoke:firebase-cache-policy": "playwright test tests/smoke/firebase-cache-policy.spec.js --config=playwright.smoke.config.js --project=smoke --reporter=line",
     "test:smoke:visual": "playwright test --config=playwright.smoke.config.js --grep @visual",
     "test:smoke:visual:update": "playwright test --config=playwright.smoke.config.js --grep @visual --update-snapshots",
     "test:smoke:team-fallback": "playwright test tests/smoke/team-fallback-regressions.spec.js --config=playwright.smoke.config.js --reporter=line",

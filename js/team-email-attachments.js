@@ -12,7 +12,7 @@ import {
     uploadBytes,
     getDownloadURL,
     deleteObject
-} from './firebase.js?v=26';
+} from './firebase.js?v=27';
 import { createSecureUploadToken } from './secure-upload-token.js?v=1';
 
 export const TEAM_EMAIL_ATTACHMENT_LIMIT_BYTES = 20 * 1024 * 1024;
