@@ -134,7 +134,7 @@ function usesCompactPanelLayout() {
 }
 
 function loadOverlayDatabase() {
-    return import('./db.js?v=4433182');
+    return import('./db.js?v=4433183');
 }
 
 function getTimestampMs(value) {
@@ -442,7 +442,7 @@ async function initializeChatComposer(database, teamId, gameId) {
 
     try {
         const [authTools, chatTools, imageTools] = await Promise.all([
-            import('./auth.js?v=4433179'),
+            import('./auth.js?v=4433187'),
             import('./live-game-chat.js?v=2'),
             import('./safe-image-url.js?v=1')
         ]);

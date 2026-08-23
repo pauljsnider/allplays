@@ -107,6 +107,65 @@ describe('firebase runtime config', () => {
         expect(globalThis.fetch).toHaveBeenCalledTimes(2);
     });
 
+    it('allows the production Firebase runtime only on the configured localhost:8000 origin', async () => {
+        resetGlobals();
+        globalThis.window.location = {
+            origin: 'http://localhost:8000',
+            protocol: 'http:',
+            hostname: 'localhost',
+            port: '8000',
+            pathname: '/live-game-overlay.html'
+        };
+        globalThis.fetch = vi.fn(async (url) => {
+            expect(url).toBe('http://localhost:8000/.well-known/allplays-runtime-config.json');
+            return {
+                ok: true,
+                json: async () => ({
+                    firebase: {
+                        apiKey: 'production-key',
+                        authDomain: 'game-flow-c6311.firebaseapp.com',
+                        projectId: 'game-flow-c6311',
+                        messagingSenderId: '982493478258',
+                        appId: 'production-app'
+                    }
+                })
+            };
+        });
+
+        const config = await resolvePrimaryFirebaseConfig();
+
+        expect(config.projectId).toBe('game-flow-c6311');
+        expect(globalThis.fetch).toHaveBeenCalledOnce();
+    });
+
+    it('rejects a non-production runtime config on the configured localhost:8000 origin', async () => {
+        resetGlobals();
+        globalThis.window.location = {
+            origin: 'http://localhost:8000',
+            protocol: 'http:',
+            hostname: 'localhost',
+            port: '8000',
+            pathname: '/live-game-overlay.html'
+        };
+        globalThis.fetch = vi.fn().mockResolvedValue({
+            ok: true,
+            json: async () => ({
+                firebase: {
+                    apiKey: 'preview-key',
+                    authDomain: 'allplays-preview-smoke.firebaseapp.com',
+                    projectId: 'allplays-preview-smoke',
+                    messagingSenderId: '123456789',
+                    appId: 'preview-smoke-app'
+                }
+            })
+        });
+
+        await expect(resolvePrimaryFirebaseConfig()).rejects.toThrow(
+            'Local Firebase runtime config does not match the production Firebase project.'
+        );
+        expect(globalThis.fetch).toHaveBeenCalledOnce();
+    });
+
     it('uses an explicit non-production runtime fallback for isolated local preview smoke', async () => {
         resetGlobals();
         globalThis.window.location = {
@@ -724,7 +783,7 @@ describe('firebase runtime config', () => {
     it('keeps every legacy browser importer on the explicit runtime-config cache contract', () => {
         for (const importer of ['firebase.js', 'firebase-images.js', 'firebase-app-check.js']) {
             const source = readFileSync(new URL(`../../js/${importer}`, import.meta.url), 'utf8');
-            expect(source).toContain('firebase-runtime-config.js?v=16');
+            expect(source).toContain('firebase-runtime-config.js?v=17');
         }
     });
 

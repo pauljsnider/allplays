@@ -7,6 +7,9 @@ const PRODUCTION_FIREBASE_HOSTING_HOSTNAMES = new Set([
     'game-flow-c6311.web.app',
     'game-flow-c6311.firebaseapp.com'
 ]);
+const LOCAL_PRODUCTION_FIREBASE_ORIGINS = new Set([
+    'http://localhost:8000'
+]);
 const DEFAULT_PRIMARY_FIREBASE_CONFIG = {
     apiKey: 'AIzaSyDoixIoKJuUVWdmImwjYRTthjKOv2mU0Jc',
     authDomain: 'game-flow-c6311.firebaseapp.com',
@@ -180,6 +183,10 @@ function isProductionFirebaseHostingHostname(hostname) {
     return PRODUCTION_FIREBASE_HOSTING_HOSTNAMES.has(String(hostname || '').trim().toLowerCase());
 }
 
+function isLocalProductionFirebaseOrigin(origin) {
+    return LOCAL_PRODUCTION_FIREBASE_ORIGINS.has(String(origin || '').trim().toLowerCase());
+}
+
 function isBundledProductionFirebaseConfig(config) {
     return config?.projectId === DEFAULT_PRIMARY_FIREBASE_CONFIG.projectId;
 }
@@ -228,6 +235,9 @@ async function fetchProductionFirebaseConfigFromHosting() {
 }
 
 export async function resolvePrimaryFirebaseConfig() {
+    const runtimeOrigin = typeof window !== 'undefined'
+        ? window.location?.origin
+        : globalThis.location?.origin;
     const runtimeHostname = typeof window !== 'undefined'
         ? window.location?.hostname
         : globalThis.location?.hostname;
@@ -237,13 +247,14 @@ export async function resolvePrimaryFirebaseConfig() {
     const canonicalProductionHost = isCanonicalProductionHostname(runtimeHostname);
     const productionFirebaseHostingHost = isProductionFirebaseHostingHostname(runtimeHostname);
     const productionRuntimeHost = canonicalProductionHost || productionFirebaseHostingHost;
+    const localProductionRuntime = isLocalProductionFirebaseOrigin(runtimeOrigin);
     const nativeRuntime = isNativeRuntimeProtocol(runtimeProtocol);
     const globalConfig = readGlobalConfig();
     const inlineConfig = normalizeFirebaseConfig(
         globalConfig.firebase || globalConfig.firebasePrimary || readWindowGlobal('ALLPLAYS_FIREBASE_CONFIG')
     );
     if (inlineConfig) {
-        if (productionRuntimeHost) {
+        if (productionRuntimeHost || localProductionRuntime) {
             if (!isBundledProductionFirebaseConfig(inlineConfig)) {
                 throw new Error('Firebase config does not match the production Firebase project.');
             }
@@ -284,6 +295,20 @@ export async function resolvePrimaryFirebaseConfig() {
 
     if (productionFirebaseHostingHost) {
         return fetchProductionFirebaseConfigFromHosting();
+    }
+
+    if (localProductionRuntime) {
+        const remoteConfig = await fetchAllPlaysRuntimeConfig();
+        const remoteFirebaseConfig = normalizeFirebaseConfig(
+            remoteConfig.firebase || remoteConfig.firebasePrimary
+        );
+        if (
+            remoteFirebaseConfig
+            && !isBundledProductionFirebaseConfig(remoteFirebaseConfig)
+        ) {
+            throw new Error('Local Firebase runtime config does not match the production Firebase project.');
+        }
+        return remoteFirebaseConfig || { ...DEFAULT_PRIMARY_FIREBASE_CONFIG };
     }
 
     if (!runtimeHostname || localDevelopmentHost || firebaseHostingHost) {

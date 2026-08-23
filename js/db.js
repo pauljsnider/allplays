@@ -35,7 +35,7 @@ import {
     deleteObject
 } from './firebase.js?v=27';
 import { getPrimaryAppCheckHeaders } from './firebase-app-check-rest.js?v=1';
-import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=11';
+import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=12';
 import { uploadBytesResumable } from './vendor/firebase-storage.js';
 import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=3';
 import { buildChatAttachmentFallbackPath, buildGameClipFallbackPath, buildGameScopedStatSheetFallbackPath } from './fallback-media-paths.js?v=4';
