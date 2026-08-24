@@ -40,7 +40,16 @@ describe('live game overlay page', () => {
         expect(html).toContain('class="replay-play-glyph"');
         expect(html).toContain('class="replay-pause-glyph"');
         expect(html).toContain('data-replay-action="play"');
-        expect(html).toContain('js/live-game-overlay.js?v=17');
+        expect(html).toContain('id="share-game"');
+        expect(html).toContain('id="mute-toggle"');
+        expect(html).toContain('id="fullscreen-toggle"');
+        expect(html).toContain('id="game-actions-menu"');
+        expect(html).toContain('id="match-report-link"');
+        expect(html).toContain('id="game-details-link"');
+        expect(html).toContain('id="replay-access-gate"');
+        expect(html).toContain('id="announcer-toggle"');
+        expect(html).toContain('id="opponent-tab"');
+        expect(html).toContain('js/live-game-overlay.js?v=18');
     });
 
     it('keeps the local demo isolated while wiring canonical subscriptions and authenticated chat posting', () => {
@@ -91,6 +100,16 @@ describe('live game overlay page', () => {
         expect(source).not.toContain('updateGame(');
         expect(source).not.toContain('trackViewerPresence(');
         expect(source).toContain('sendChatReaction');
+        expect(source).toContain("from './game-share-links.js?v=1'");
+        expect(source).toContain("from './utils.js?v=443364'");
+        expect(source).toContain("from './live-game-announcer.js?v=1'");
+        expect(source).toContain("import('./team-entitlements.js?v=8')");
+        expect(source).toContain('isRecordedReplayTeamPassGateEnabled');
+        expect(source).toContain('getTeamEntitlementStatus');
+        expect(source).toContain('showReplayAccessGate');
+        expect(source).toContain("uiState.videoMuted ? 'mute' : 'unMute'");
+        expect(source).toContain('requestFullscreen');
+        expect(source).toContain('buildGameWatchShareUrl');
     });
 
     it('keeps every current tracker live-event family in the overlay parity inventory', () => {

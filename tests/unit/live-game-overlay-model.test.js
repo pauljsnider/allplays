@@ -7,6 +7,7 @@ import {
     formatOverlayChatMessageHtml,
     formatOverlayClock,
     getControllableReplayEmbedUrl,
+    getControllableYouTubeEmbedUrl,
     getOverlayEventTone,
     getOverlayLineup,
     getOverlayReplayDurationMs,
@@ -78,6 +79,13 @@ describe('live game overlay model', () => {
         expect(getControllableReplayEmbedUrl('https://player.twitch.tv/?channel=vipers', 'http://localhost:8000'))
             .toBe('https://player.twitch.tv/?channel=vipers');
         expect(getControllableReplayEmbedUrl('not a url', 'http://localhost:8000')).toBe('not a url');
+        const liveSource = new URL(getControllableYouTubeEmbedUrl(
+            'https://www.youtube.com/embed/PK1HyC37doc?autoplay=1&mute=1',
+            'http://localhost:8000'
+        ));
+        expect(liveSource.searchParams.get('autoplay')).toBe('1');
+        expect(liveSource.searchParams.get('enablejsapi')).toBe('1');
+        expect(liveSource.searchParams.get('origin')).toBe('http://localhost:8000');
     });
 
     it('accepts bounded YouTube replay telemetry and rejects unrelated player messages', () => {

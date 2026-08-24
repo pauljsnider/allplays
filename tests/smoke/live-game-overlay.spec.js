@@ -118,7 +118,7 @@ test('interactive overlay demo keeps the video primary while live moments update
     await expect(page.locator('#live-status')).toHaveText('LIVE');
     expect(pageErrors).toEqual([]);
 
-    await expect(page.locator('#overlay-video')).toHaveAttribute('src', 'https://www.youtube.com/embed/PK1HyC37doc?autoplay=1&mute=1&playsinline=1');
+    await expect(page.locator('#overlay-video')).toHaveAttribute('src', /https:\/\/www\.youtube\.com\/embed\/PK1HyC37doc\?.*autoplay=1.*enablejsapi=1/);
     await expect(page.locator('#home-team-name')).toHaveText('Vipers');
     await expect(page.locator('#away-team-name')).toContainText('Union KC');
     await expect(page.locator('#home-score')).toHaveText('2');
@@ -343,7 +343,12 @@ async function stubRealOverlayModules(page) {
         status: 200,
         contentType: 'application/javascript',
         body: `
-            const team = { id: 'team-1', name: 'Current Academy' };
+            const team = {
+                id: 'team-1',
+                name: 'Current Academy',
+                currentSeasonId: '2026',
+                recordedReplayTeamPassRequired: window.__OVERLAY_TEAM_PASS_GATE__ === true
+            };
             const game = {
                 id: 'game-1', opponent: 'Sporting Blue', homeScore: 3, awayScore: 2,
                 homeTeamName: 'Current Academy',
@@ -438,15 +443,40 @@ async function stubRealOverlayModules(page) {
                 return {
                     mode: 'recorded', hasVideo: true,
                     sourceUrl: '/overlay-recording-fixture.mp4',
-                    publicUrl: '/overlay-recording-fixture.mp4'
+                    publicUrl: '/overlay-recording-fixture.mp4',
+                    publicLabel: 'Open replay video ↗'
                 };
             }
             return {
                 mode: 'embed', hasVideo: true,
                 sourceUrl: 'https://www.youtube.com/embed/PK1HyC37doc?autoplay=1&mute=1',
-                publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc'
+                publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+                publicLabel: 'Watch on YouTube ↗'
             };
         }`
+    }));
+    await page.route(/\/js\/team-entitlements\.js(?:\?.*)?$/, (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: `
+            export const TEAM_PASS_FEATURES = { RECORDED_REPLAY: 'recorded-replay' };
+            export function isRecordedReplayTeamPassGateEnabled({ team = {}, game = {} } = {}) {
+                return game.recordedReplayTeamPassRequired === true || team.recordedReplayTeamPassRequired === true;
+            }
+            export function resolveTeamEntitlementSeasonId() { return '2026'; }
+            export function canAccessPremiumFanFeature(_feature, status = {}) {
+                return status?.access?.state === 'unlocked' || status?.active === true;
+            }
+            export async function getTeamEntitlementStatus() {
+                window.__OVERLAY_ENTITLEMENT_READS__ = (window.__OVERLAY_ENTITLEMENT_READS__ || 0) + 1;
+                const state = window.__OVERLAY_TEAM_PASS_STATE__ || 'locked';
+                return {
+                    active: state === 'unlocked',
+                    reason: state,
+                    access: { state, reason: state }
+                };
+            }
+        `
     }));
     await page.route(/\/js\/auth\.js(?:\?.*)?$/, (route) => route.fulfill({
         status: 200,
@@ -566,7 +596,7 @@ test('real mode follows canonical game, lineup, clock, reset, reaction, and pass
         });
     });
     await expect(page.locator('#viewer-count')).toHaveText('21 watching');
-    await expect(page.locator('#overlay-video')).toHaveAttribute('src', 'https://www.youtube.com/embed/PK1HyC37doc?autoplay=1&mute=1');
+    await expect(page.locator('#overlay-video')).toHaveAttribute('src', /https:\/\/www\.youtube\.com\/embed\/PK1HyC37doc\?.*autoplay=1.*enablejsapi=1/);
     await expect(page.locator('#connection-message')).toContainText('Video refresh is delayed');
     await page.evaluate(() => { window.__OVERLAY_THROW_VIDEO__ = false; });
 
@@ -751,6 +781,129 @@ test('real mode follows canonical game, lineup, clock, reset, reaction, and pass
     await expect(page.locator('#event-list')).not.toContainText('Old goal must stay hidden');
     expect(pageErrors).toEqual([]);
 });
+
+test('viewer toolbar shares the canonical watch URL and controls YouTube audio and fullscreen', async ({ page, baseURL }) => {
+    const pageErrors = collectPageErrors(page);
+    await page.addInitScript(() => {
+        window.__OVERLAY_SHARED__ = [];
+        Object.defineProperty(navigator, 'share', {
+            configurable: true,
+            value: async (payload) => window.__OVERLAY_SHARED__.push(payload)
+        });
+        window.__OVERLAY_YOUTUBE_COMMANDS__ = [];
+        window.addEventListener('message', (event) => {
+            if (event.data?.source !== 'overlay-youtube-fixture') return;
+            try {
+                window.__OVERLAY_YOUTUBE_COMMANDS__.push(JSON.parse(event.data.payload));
+            } catch { /* fixture telemetry only */ }
+        });
+        let fullscreenElement = null;
+        Object.defineProperty(document, 'fullscreenElement', {
+            configurable: true,
+            get: () => fullscreenElement
+        });
+        Element.prototype.requestFullscreen = async function requestFullscreen() {
+            fullscreenElement = this;
+            document.dispatchEvent(new Event('fullscreenchange'));
+        };
+        document.exitFullscreen = async () => {
+            fullscreenElement = null;
+            document.dispatchEvent(new Event('fullscreenchange'));
+        };
+        window.__OVERLAY_SPOKEN__ = [];
+        Object.defineProperty(window, 'speechSynthesis', {
+            configurable: true,
+            value: {
+                speak: (utterance) => window.__OVERLAY_SPOKEN__.push(utterance.text),
+                cancel: () => {}
+            }
+        });
+        Object.defineProperty(window, 'SpeechSynthesisUtterance', {
+            configurable: true,
+            value: class SpeechSynthesisUtterance {
+                constructor(text) { this.text = text; }
+            }
+        });
+    });
+    await stubRealOverlayModules(page);
+    await stubYouTubeEmbed(page);
+
+    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('#home-team-name')).toHaveText('Current Academy');
+    expect(pageErrors).toEqual([]);
+
+    await expect(page.locator('#open-stream')).toContainText('Watch on YouTube');
+    await expect(page.locator('#open-stream')).toHaveAttribute('href', 'https://www.youtube.com/watch?v=PK1HyC37doc');
+    await expect(page.locator('#overlay-video')).toHaveAttribute('src', /enablejsapi=1/);
+    await page.locator('#share-game').click();
+    await expect.poll(() => page.evaluate(() => window.__OVERLAY_SHARED__)).toEqual([{
+        title: 'Watch game',
+        text: 'Watch Current Academy vs Sporting Blue',
+        url: 'https://share.allplays.ai/watch?teamId=team-1&gameId=game-1'
+    }]);
+
+    await page.locator('#mute-toggle').click();
+    await expect(page.locator('#mute-toggle')).toHaveAttribute('aria-label', 'Mute video');
+    await expect.poll(() => page.evaluate(() => window.__OVERLAY_YOUTUBE_COMMANDS__.map((item) => item.func))).toContain('unMute');
+    await page.locator('#mute-toggle').click();
+    await expect(page.locator('#mute-toggle')).toHaveAttribute('aria-label', 'Unmute video');
+    await expect.poll(() => page.evaluate(() => window.__OVERLAY_YOUTUBE_COMMANDS__.map((item) => item.func))).toContain('mute');
+
+    await page.locator('#fullscreen-toggle').click();
+    await expect(page.locator('#fullscreen-toggle')).toHaveAttribute('aria-label', 'Exit fullscreen');
+    await expect(page.locator('#fullscreen-toggle')).toHaveAttribute('aria-pressed', 'true');
+    await page.locator('#fullscreen-toggle').click();
+    await expect(page.locator('#fullscreen-toggle')).toHaveAttribute('aria-label', 'Enter fullscreen');
+
+    await page.locator('#game-actions-toggle').click();
+    await expect(page.locator('#game-actions-menu')).toBeVisible();
+    await expect(page.locator('#match-report-link')).toHaveAttribute('href', 'game.html#teamId=team-1&gameId=game-1');
+    await expect(page.locator('#match-report-link')).toBeHidden();
+    await expect(page.locator('#game-details-link')).toHaveAttribute('href', 'game.html#teamId=team-1&gameId=game-1');
+    await expect(page.locator('#provider-menu-link')).toContainText('Watch on YouTube');
+    await page.locator('#game-actions-toggle').click();
+    await expect(page.locator('#game-actions-menu')).toBeHidden();
+
+    await page.locator('#opponent-tab').click();
+    await expect(page.locator('#opponent-list')).toContainText('Jordan Vale');
+    await page.locator('#announcer-toggle').click();
+    await page.evaluate(() => window.__OVERLAY_EVENT_CALLBACK__([{
+        id: 'announced-goal', type: 'goal', description: 'Lane scores from distance',
+        homeScore: 4, awayScore: 2, period: 'H2', gameClockMs: 700000, createdAt: 5000
+    }]));
+    await expect.poll(() => page.evaluate(() => window.__OVERLAY_SPOKEN__)).toContain('H2. Lane scores from distance');
+    expect(pageErrors).toEqual([]);
+});
+
+for (const accessState of ['locked', 'unavailable', 'unlocked']) {
+    test(`recorded replay access fails closed when Team Pass is ${accessState}`, async ({ page, baseURL }) => {
+        const pageErrors = collectPageErrors(page);
+        await page.addInitScript((state) => {
+            window.__OVERLAY_RECORDED_VIDEO__ = true;
+            window.__OVERLAY_TEAM_PASS_GATE__ = true;
+            window.__OVERLAY_TEAM_PASS_STATE__ = state;
+        }, accessState);
+        await stubRealOverlayModules(page);
+
+        await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true`, { waitUntil: 'domcontentloaded' });
+        await expect.poll(() => page.evaluate(() => window.__OVERLAY_ENTITLEMENT_READS__ || 0)).toBe(1);
+        if (accessState === 'unlocked') {
+            await expect(page.locator('#replay-access-gate')).toBeHidden();
+            await expect(page.locator('#overlay-recorded-video')).toBeVisible();
+            await expect(page.locator('#overlay-recorded-video')).toHaveAttribute('src', '/overlay-recording-fixture.mp4');
+            await page.locator('#game-actions-toggle').click();
+            await expect(page.locator('#match-report-link')).toBeVisible();
+        } else {
+            await expect(page.locator('#replay-access-gate')).toBeVisible();
+            await expect(page.locator('#replay-access-gate')).toContainText(
+                accessState === 'locked' ? 'Team Pass required' : 'Replay access could not be verified'
+            );
+            await expect(page.locator('#overlay-recorded-video')).not.toHaveAttribute('src', /.+/);
+            await expect(page.locator('#open-stream')).toBeHidden();
+        }
+        expect(pageErrors).toEqual([]);
+    });
+}
 
 test('signed-out viewers can read chat but cannot post from the overlay', async ({ page, baseURL }) => {
     const pageErrors = collectPageErrors(page);

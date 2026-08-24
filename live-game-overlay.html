@@ -85,7 +85,8 @@
     .video-layer,
     .video-layer iframe,
     .video-layer video,
-    .video-fallback {
+    .video-fallback,
+    .replay-access-gate {
       position: absolute;
       inset: 0;
       width: 100%;
@@ -120,8 +121,39 @@
         radial-gradient(ellipse at center, #173444 0%, #07111e 66%);
     }
 
-    .video-fallback[hidden] {
+    .video-fallback[hidden],
+    .replay-access-gate[hidden] {
       display: none;
+    }
+
+    .replay-access-gate {
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      text-align: center;
+      background: radial-gradient(circle at center, rgba(24, 43, 56, 0.96), rgba(2, 7, 13, 0.99) 68%);
+    }
+
+    .replay-access-card {
+      width: min(520px, 100%);
+      padding: 28px;
+      border: 1px solid rgba(255, 209, 102, 0.34);
+      border-radius: var(--radius-lg);
+      background: rgba(5, 14, 27, 0.9);
+      box-shadow: var(--shadow);
+    }
+
+    .replay-access-card strong {
+      display: block;
+      margin-top: 8px;
+      font: 700 28px/1.05 "Barlow Condensed", sans-serif;
+    }
+
+    .replay-access-card p {
+      margin: 10px auto 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.55;
     }
 
     .video-fallback-mark {
@@ -178,6 +210,10 @@
       pointer-events: auto;
     }
 
+    .top-actions {
+      position: relative;
+    }
+
     .brand-lockup {
       min-width: 44px;
       min-height: 44px;
@@ -197,6 +233,7 @@
 
     .status-pill,
     .icon-button,
+    .provider-button,
     .panel-toggle,
     .demo-action {
       border: 1px solid var(--line);
@@ -244,6 +281,33 @@
       transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
     }
 
+    .icon-button[hidden],
+    .provider-button[hidden] {
+      display: none;
+    }
+
+    .provider-button {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 44px;
+      padding: 0 14px;
+      border-radius: 999px;
+      color: var(--home);
+      font-size: 11px;
+      font-weight: 700;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+
+    .provider-button svg {
+      width: 17px;
+      height: 17px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.8;
+    }
+
     .icon-button:hover,
     .panel-toggle:hover,
     .demo-action:hover {
@@ -258,6 +322,93 @@
       fill: none;
       stroke: currentColor;
       stroke-width: 1.8;
+    }
+
+    .icon-button[data-muted="true"] .volume-on,
+    .icon-button[data-muted="false"] .volume-off,
+    .icon-button[aria-pressed="true"] .fullscreen-enter,
+    .icon-button[aria-pressed="false"] .fullscreen-exit {
+      display: none;
+    }
+
+    .game-actions-menu {
+      position: absolute;
+      top: calc(100% + 10px);
+      right: 0;
+      z-index: 40;
+      width: min(260px, calc(100vw - 28px));
+      padding: 7px;
+      border: 1px solid var(--line-strong);
+      border-radius: 16px;
+      background: rgba(3, 11, 21, 0.98);
+      box-shadow: var(--shadow);
+    }
+
+    .game-actions-menu[hidden] {
+      display: none;
+    }
+
+    .game-menu-action {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+      min-height: 44px;
+      padding: 0 12px;
+      border: 0;
+      border-radius: 10px;
+      color: var(--paper);
+      background: transparent;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 700;
+      text-align: left;
+      text-decoration: none;
+    }
+
+    .game-menu-action:hover,
+    .game-menu-action:focus-visible {
+      color: var(--home);
+      background: rgba(97, 228, 219, 0.09);
+    }
+
+    .game-menu-action[hidden] {
+      display: none;
+    }
+
+    .announcer-controls {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      margin-top: 12px;
+    }
+
+    .announcer-button {
+      min-height: 44px;
+      padding: 0 12px;
+      border: 1px solid rgba(97, 228, 219, 0.3);
+      border-radius: 999px;
+      color: var(--home);
+      background: rgba(3, 11, 21, 0.58);
+      cursor: pointer;
+      font: 700 11px/1 "Barlow Condensed", sans-serif;
+    }
+
+    .announcer-button[aria-pressed="true"] {
+      color: var(--ink);
+      background: var(--home);
+    }
+
+    .announcer-button:disabled {
+      cursor: not-allowed;
+      opacity: 0.5;
+    }
+
+    .announcer-status {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.35;
     }
 
     .edge-panel {
@@ -391,7 +542,7 @@
 
     .panel-tabs {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(4, 1fr);
       gap: 5px;
       margin: 14px;
       padding: 5px;
@@ -1301,6 +1452,26 @@
       display: none;
     }
 
+    .action-toast {
+      position: absolute;
+      top: 82px;
+      right: 24px;
+      z-index: 42;
+      max-width: min(320px, calc(100vw - 28px));
+      padding: 11px 14px;
+      border: 1px solid rgba(97, 228, 219, 0.38);
+      border-radius: 999px;
+      color: var(--paper);
+      background: rgba(3, 11, 21, 0.96);
+      box-shadow: var(--shadow);
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .action-toast[hidden] {
+      display: none;
+    }
+
     body[data-focus="true"] .edge-panel,
     body[data-focus="true"] .hero-event,
     body[data-focus="true"] .panel-dock,
@@ -1433,6 +1604,20 @@
         display: none;
       }
 
+      .provider-button,
+      #focus-toggle {
+        display: none;
+      }
+
+      .top-actions {
+        gap: 7px;
+      }
+
+      .action-toast {
+        top: 72px;
+        right: 14px;
+      }
+
       .edge-panel {
         top: auto;
         right: 12px !important;
@@ -1556,6 +1741,24 @@
         display: none;
       }
 
+      #share-game {
+        display: none;
+      }
+
+      #demo-lab-toggle {
+        display: none;
+      }
+
+      .status-cluster {
+        gap: 6px;
+      }
+
+      .status-cluster .status-pill {
+        min-height: 34px;
+        padding-inline: 9px;
+        font-size: 10px;
+      }
+
       .brand-lockup img {
         width: 31px;
         height: 31px;
@@ -1613,6 +1816,16 @@
 
       .panel-copy {
         display: none;
+      }
+
+      .panel-tabs {
+        margin-inline: 10px;
+        padding: 4px;
+      }
+
+      .panel-tab {
+        padding-inline: 4px;
+        font-size: 10px;
       }
 
       .demo-lab-header p {
@@ -1679,6 +1892,13 @@
           <p id="video-fallback-copy">The scoreboard and live context stay ready while video connects.</p>
         </div>
       </div>
+      <div id="replay-access-gate" class="replay-access-gate" role="status" hidden>
+        <div class="replay-access-card">
+          <span id="replay-access-kicker" class="panel-kicker">Checking access</span>
+          <strong id="replay-access-title">Checking replay access…</strong>
+          <p id="replay-access-copy">The scoreboard and saved game timeline remain available while replay access is verified.</p>
+        </div>
+      </div>
     </div>
     <div class="stage-shade" aria-hidden="true"></div>
     <div class="stage-grain" aria-hidden="true"></div>
@@ -1694,14 +1914,39 @@
       </div>
       <div class="top-actions">
         <span id="viewer-count" class="status-pill">0 watching</span>
-        <a id="open-stream" class="icon-button" href="#" target="_blank" rel="noopener noreferrer" aria-label="Open video on provider" hidden>
+        <a id="open-stream" class="provider-button" href="#" target="_blank" rel="noopener noreferrer" aria-label="Open video on provider" hidden>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5M19 5l-8 8M19 13v5a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></svg>
+          <span id="open-stream-label">Open video</span>
         </a>
+        <button id="share-game" class="icon-button" type="button" aria-label="Share game">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a3 3 0 1 0-2.83-4M6 15a3 3 0 1 0 0 6 3 3 0 0 0 0-6Zm12-1a3 3 0 1 0 0 6 3 3 0 0 0 0-6ZM8.6 16.5l6.8-3.8M8.6 7.5l6.8 3.8"/></svg>
+        </button>
+        <button id="mute-toggle" class="icon-button" type="button" aria-label="Unmute video" data-muted="true" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <g class="volume-on"><path d="M4 9v6h4l5 4V5L8 9H4M16 9a4 4 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11"/></g>
+            <g class="volume-off"><path d="M4 9v6h4l5 4V5L8 9H4M17 9l5 5M22 9l-5 5"/></g>
+          </svg>
+        </button>
+        <button id="game-actions-toggle" class="icon-button" type="button" aria-label="More game actions" aria-expanded="false" aria-controls="game-actions-menu">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h.01M12 12h.01M19 12h.01" stroke-linecap="round" stroke-width="3"/></svg>
+        </button>
+        <div id="game-actions-menu" class="game-actions-menu" role="menu" hidden>
+          <button id="share-game-menu" class="game-menu-action" type="button" role="menuitem">Share game <span aria-hidden="true">↗</span></button>
+          <a id="match-report-link" class="game-menu-action" href="#" role="menuitem">Match report <span aria-hidden="true">→</span></a>
+          <a id="game-details-link" class="game-menu-action" href="#" role="menuitem">Game details <span aria-hidden="true">→</span></a>
+          <a id="provider-menu-link" class="game-menu-action" href="#" target="_blank" rel="noopener noreferrer" role="menuitem" hidden><span id="provider-menu-label">Open video</span> <span aria-hidden="true">↗</span></a>
+        </div>
         <button id="demo-lab-toggle" class="icon-button" type="button" aria-label="Open preview controls" aria-expanded="false" hidden>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6M10 3v5l-5 9a2 2 0 0 0 1.8 3h10.4A2 2 0 0 0 19 17l-5-9V3M8 14h8"/></svg>
         </button>
         <button id="focus-toggle" class="icon-button" type="button" aria-label="Enter video focus mode" aria-pressed="false">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/></svg>
+        </button>
+        <button id="fullscreen-toggle" class="icon-button" type="button" aria-label="Enter fullscreen" aria-pressed="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <g class="fullscreen-enter"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/></g>
+            <g class="fullscreen-exit"><path d="M3 8h5V3M21 8h-5V3M3 16h5v5M21 16h-5v5"/></g>
+          </svg>
         </button>
       </div>
     </header>
@@ -1711,6 +1956,11 @@
         <p class="panel-kicker">Live timeline</p>
         <h1 id="plays-heading" class="panel-title">Every moment, in context</h1>
         <p class="panel-copy">New plays arrive at the top without taking your eyes off the field.</p>
+        <div class="announcer-controls">
+          <button id="announcer-toggle" class="announcer-button" type="button" aria-pressed="false">Listen live</button>
+          <button id="announcer-pause" class="announcer-button" type="button" aria-pressed="false" hidden>Pause</button>
+        </div>
+        <p id="announcer-status" class="announcer-status">Opt in to hear new plays during live games and replay.</p>
       </div>
       <div class="panel-scroll">
         <ol id="event-list" class="event-list" aria-live="polite" aria-relevant="additions">
@@ -1727,6 +1977,7 @@
       <div class="panel-tabs" role="tablist" aria-label="Game intelligence views">
         <button id="lineup-tab" class="panel-tab" type="button" role="tab" aria-selected="true" aria-controls="lineup-view">Lineup</button>
         <button id="leaders-tab" class="panel-tab" type="button" role="tab" aria-selected="false" aria-controls="leaders-view">Leaders</button>
+        <button id="opponent-tab" class="panel-tab" type="button" role="tab" aria-selected="false" aria-controls="opponent-view">Opponent</button>
         <button id="chat-tab" class="panel-tab" type="button" role="tab" aria-selected="false" aria-controls="chat-view">Chat</button>
       </div>
       <section id="lineup-view" class="insight-view" role="tabpanel" aria-labelledby="lineup-tab">
@@ -1738,6 +1989,10 @@
       <section id="leaders-view" class="insight-view" role="tabpanel" aria-labelledby="leaders-tab" hidden>
         <h3 class="section-label">Game leaders</h3>
         <ul id="leader-list" class="leader-list"></ul>
+      </section>
+      <section id="opponent-view" class="insight-view" role="tabpanel" aria-labelledby="opponent-tab" hidden>
+        <h3 class="section-label">Opponent stats</h3>
+        <ul id="opponent-list" class="leader-list"></ul>
       </section>
       <section id="chat-view" class="insight-view" role="tabpanel" aria-labelledby="chat-tab" hidden>
         <h3 class="section-label">Live conversation</h3>
@@ -1857,6 +2112,7 @@
 
     <p id="mode-note" class="mode-note">Broadcast view · score and context update from the live game without modifying the source video.</p>
     <div id="connection-message" class="connection-message" role="status" hidden></div>
+    <div id="action-toast" class="action-toast" role="status" hidden></div>
 
     <section id="demo-lab" class="demo-lab" aria-labelledby="demo-lab-heading" hidden>
       <div class="demo-lab-header">
@@ -1879,6 +2135,6 @@
   </main>
 
   <span id="screen-reader-update" class="visually-hidden" aria-live="polite"></span>
-  <script type="module" src="js/live-game-overlay.js?v=17"></script>
+  <script type="module" src="js/live-game-overlay.js?v=18"></script>
 </body>
 </html>

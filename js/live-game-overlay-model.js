@@ -135,14 +135,14 @@ export function getOverlayReplayDurationMs({
     return Math.max(eventDuration, streamDuration, Math.max(0, toFiniteNumber(videoDurationMs)));
 }
 
-export function getControllableReplayEmbedUrl(sourceUrl, origin = '') {
+export function getControllableYouTubeEmbedUrl(sourceUrl, origin = '', { replay = false } = {}) {
     try {
         const url = new URL(sourceUrl);
         const isYouTube = ['www.youtube.com', 'youtube.com', 'www.youtube-nocookie.com', 'youtube-nocookie.com']
             .includes(url.hostname.toLowerCase());
         if (!isYouTube || !url.pathname.startsWith('/embed/')) return sourceUrl;
 
-        url.searchParams.set('autoplay', '0');
+        if (replay) url.searchParams.set('autoplay', '0');
         url.searchParams.set('playsinline', '1');
         url.searchParams.set('enablejsapi', '1');
         if (origin) {
@@ -155,6 +155,10 @@ export function getControllableReplayEmbedUrl(sourceUrl, origin = '') {
     } catch {
         return sourceUrl;
     }
+}
+
+export function getControllableReplayEmbedUrl(sourceUrl, origin = '') {
+    return getControllableYouTubeEmbedUrl(sourceUrl, origin, { replay: true });
 }
 
 export function parseYouTubeReplayTelemetry(data) {

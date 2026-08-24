@@ -6,12 +6,13 @@ import {
     formatOverlayChatMessageHtml,
     formatOverlayClock,
     getControllableReplayEmbedUrl,
+    getControllableYouTubeEmbedUrl,
     getOverlayLineup,
     getOverlayReplayDurationMs,
     parseYouTubeReplayTelemetry,
     reconcileOverlayLiveEvents,
     replaceOverlayChat
-} from './live-game-overlay-model.js?v=6';
+} from './live-game-overlay-model.js?v=7';
 import {
     buildReplaySessionState,
     collectReplayEventWindow,
@@ -26,6 +27,9 @@ import {
     resolveSafeProfilePhotoUrl,
     resolveSafeProfilePhotoWriteUrl
 } from './safe-image-url.js?v=1';
+import { buildGameWatchShareUrl } from './game-share-links.js?v=1';
+import { shareOrCopy } from './utils.js?v=443364';
+import { createPlayAnnouncer } from './live-game-announcer.js?v=1';
 
 const elements = {
     body: document.body,
@@ -34,6 +38,22 @@ const elements = {
     videoFallback: document.querySelector('#video-fallback'),
     videoFallbackCopy: document.querySelector('#video-fallback-copy'),
     openStream: document.querySelector('#open-stream'),
+    openStreamLabel: document.querySelector('#open-stream-label'),
+    shareGame: document.querySelector('#share-game'),
+    shareGameMenu: document.querySelector('#share-game-menu'),
+    muteToggle: document.querySelector('#mute-toggle'),
+    fullscreenToggle: document.querySelector('#fullscreen-toggle'),
+    broadcastStage: document.querySelector('#broadcast-stage'),
+    gameActionsToggle: document.querySelector('#game-actions-toggle'),
+    gameActionsMenu: document.querySelector('#game-actions-menu'),
+    matchReportLink: document.querySelector('#match-report-link'),
+    gameDetailsLink: document.querySelector('#game-details-link'),
+    providerMenuLink: document.querySelector('#provider-menu-link'),
+    providerMenuLabel: document.querySelector('#provider-menu-label'),
+    replayAccessGate: document.querySelector('#replay-access-gate'),
+    replayAccessKicker: document.querySelector('#replay-access-kicker'),
+    replayAccessTitle: document.querySelector('#replay-access-title'),
+    replayAccessCopy: document.querySelector('#replay-access-copy'),
     liveStatus: document.querySelector('#live-status'),
     viewerCount: document.querySelector('#viewer-count'),
     homeName: document.querySelector('#home-team-name'),
@@ -52,6 +72,7 @@ const elements = {
     onFieldList: document.querySelector('#on-field-list'),
     benchList: document.querySelector('#bench-list'),
     leaderList: document.querySelector('#leader-list'),
+    opponentList: document.querySelector('#opponent-list'),
     chatList: document.querySelector('#chat-list'),
     chatForm: document.querySelector('#chat-form'),
     chatInput: document.querySelector('#chat-input'),
@@ -76,6 +97,9 @@ const elements = {
     insightTabs: [...document.querySelectorAll('[role="tab"][aria-controls]')],
     insightViews: [...document.querySelectorAll('[role="tabpanel"]')],
     focusToggle: document.querySelector('#focus-toggle'),
+    announcerToggle: document.querySelector('#announcer-toggle'),
+    announcerPause: document.querySelector('#announcer-pause'),
+    announcerStatus: document.querySelector('#announcer-status'),
     demoLab: document.querySelector('#demo-lab'),
     demoLabToggle: document.querySelector('#demo-lab-toggle'),
     demoLabClose: document.querySelector('#demo-lab-close'),
@@ -90,6 +114,7 @@ const elements = {
     replayScanStatus: document.querySelector('#replay-scan-status'),
     replayScanSpeed: document.querySelector('#replay-scan-speed'),
     connectionMessage: document.querySelector('#connection-message'),
+    actionToast: document.querySelector('#action-toast'),
     reactionsOverlay: document.querySelector('#reactions-overlay'),
     screenReaderUpdate: document.querySelector('#screen-reader-update')
 };
@@ -120,6 +145,12 @@ const uiState = {
     replayStateTools: null,
     videoMode: 'none',
     videoOrigin: '',
+    videoMuted: true,
+    videoRequestId: 0,
+    optionalTeamStatus: 'pending',
+    teamEntitlement: null,
+    teamEntitlementPromise: null,
+    teamEntitlementKey: '',
     videoDurationMs: 0,
     lastMediaSeekTargetMs: null,
     lastMediaSeekAt: 0,
@@ -138,6 +169,9 @@ const uiState = {
     chatServices: null,
     unsubscribers: []
 };
+
+const playAnnouncer = createPlayAnnouncer();
+let actionToastTimer = null;
 
 const mentionState = {
     active: false,
@@ -183,6 +217,121 @@ function setConnectionMessage(message = '', tone = 'warning') {
     elements.connectionMessage.textContent = message;
     elements.connectionMessage.dataset.tone = tone;
     elements.connectionMessage.hidden = !message;
+}
+
+function showActionToast(message) {
+    window.clearTimeout(actionToastTimer);
+    elements.actionToast.textContent = message;
+    elements.actionToast.hidden = false;
+    actionToastTimer = window.setTimeout(() => {
+        elements.actionToast.hidden = true;
+    }, 2600);
+}
+
+function closeGameActionsMenu({ restoreFocus = false } = {}) {
+    elements.gameActionsMenu.hidden = true;
+    elements.gameActionsToggle.setAttribute('aria-expanded', 'false');
+    if (restoreFocus) elements.gameActionsToggle.focus();
+}
+
+function toggleGameActionsMenu() {
+    const open = elements.gameActionsMenu.hidden;
+    elements.gameActionsMenu.hidden = !open;
+    elements.gameActionsToggle.setAttribute('aria-expanded', String(open));
+    if (open) elements.gameActionsMenu.querySelector('[role="menuitem"]')?.focus();
+}
+
+function configureGameActions() {
+    if (!uiState.teamId || !uiState.gameId) return;
+    const gameHref = `game.html#teamId=${encodeURIComponent(uiState.teamId)}&gameId=${encodeURIComponent(uiState.gameId)}`;
+    elements.matchReportLink.href = gameHref;
+    const status = String(uiState.game?.game?.status || uiState.game?.game?.liveStatus || '').toLowerCase();
+    elements.matchReportLink.hidden = !(uiState.isReplay || status === 'completed' || status === 'final');
+    elements.gameDetailsLink.href = gameHref;
+}
+
+async function shareGame() {
+    if (!uiState.teamId || !uiState.gameId || !uiState.game) return;
+    const url = buildGameWatchShareUrl({
+        teamId: uiState.teamId,
+        gameId: uiState.gameId,
+        replay: uiState.isReplay
+    });
+    const homeName = uiState.game.homeName || 'Team';
+    const awayName = uiState.game.awayName || 'Opponent';
+    const text = `Watch ${homeName} vs ${awayName}`;
+    const result = await shareOrCopy({
+        title: uiState.isReplay ? 'Watch replay' : 'Watch game',
+        text,
+        url,
+        clipboardText: `${text}\n${url}`
+    });
+    closeGameActionsMenu();
+    if (result.status === 'shared') showActionToast('Share sheet opened.');
+    else if (result.status === 'copied') showActionToast('Game link copied.');
+    else if (result.status === 'failed') showActionToast('Could not share this game. Copy the address from your browser.');
+}
+
+function setProviderLink(publicUrl = '', publicLabel = 'Open video ↗') {
+    let label = String(publicLabel || 'Open video ↗').trim();
+    if (!publicUrl) {
+        elements.openStream.hidden = true;
+        elements.openStream.removeAttribute('href');
+        elements.providerMenuLink.hidden = true;
+        elements.providerMenuLink.removeAttribute('href');
+        return;
+    }
+    if (/^Open video\s*↗?$/i.test(label)) {
+        try {
+            const providerHost = new URL(publicUrl, window.location.href).hostname.toLowerCase();
+            if (providerHost === 'youtu.be' || providerHost.endsWith('youtube.com')) label = 'Watch on YouTube ↗';
+            else if (providerHost.endsWith('twitch.tv')) label = 'Watch on Twitch ↗';
+        } catch { /* keep the generic validated label */ }
+    }
+    elements.openStream.href = publicUrl;
+    elements.openStreamLabel.textContent = label.replace(/\s*↗\s*$/, '');
+    elements.openStream.setAttribute('aria-label', label.replace(/\s*↗\s*$/, ''));
+    elements.openStream.hidden = false;
+    elements.providerMenuLink.href = publicUrl;
+    elements.providerMenuLabel.textContent = label.replace(/\s*↗\s*$/, '');
+    elements.providerMenuLink.hidden = false;
+}
+
+function updateMuteControl() {
+    const controllable = uiState.videoMode === 'youtube' || uiState.videoMode === 'recorded';
+    elements.muteToggle.hidden = !controllable;
+    elements.muteToggle.dataset.muted = String(uiState.videoMuted);
+    elements.muteToggle.setAttribute('aria-pressed', String(!uiState.videoMuted));
+    elements.muteToggle.setAttribute('aria-label', uiState.videoMuted ? 'Unmute video' : 'Mute video');
+}
+
+function toggleVideoMute() {
+    if (uiState.videoMode !== 'youtube' && uiState.videoMode !== 'recorded') return;
+    uiState.videoMuted = !uiState.videoMuted;
+    if (uiState.videoMode === 'youtube') {
+        sendYouTubeCommand(uiState.videoMuted ? 'mute' : 'unMute');
+    } else {
+        elements.recordedVideo.muted = uiState.videoMuted;
+    }
+    updateMuteControl();
+    elements.screenReaderUpdate.textContent = uiState.videoMuted ? 'Video muted.' : 'Video unmuted.';
+}
+
+function updateFullscreenControl() {
+    const fullscreen = document.fullscreenElement === elements.broadcastStage;
+    elements.fullscreenToggle.setAttribute('aria-pressed', String(fullscreen));
+    elements.fullscreenToggle.setAttribute('aria-label', fullscreen ? 'Exit fullscreen' : 'Enter fullscreen');
+}
+
+async function toggleFullscreen() {
+    try {
+        if (document.fullscreenElement) await document.exitFullscreen();
+        else if (elements.broadcastStage.requestFullscreen) await elements.broadcastStage.requestFullscreen();
+        else showActionToast('Fullscreen is not available in this browser.');
+    } catch {
+        showActionToast('Fullscreen could not be opened.');
+    }
+    updateFullscreenControl();
 }
 
 function setStatus(status = '') {
@@ -255,7 +404,11 @@ function renderEvents() {
     const state = uiState.game;
     if (!state) return;
     const latestId = state.latestEvent?.id || null;
-    const isNewLatest = Boolean(latestId && uiState.latestRenderedEventId && latestId !== uiState.latestRenderedEventId);
+    const isNewLatest = Boolean(
+        latestId &&
+        latestId !== uiState.latestRenderedEventId &&
+        (uiState.latestRenderedEventId || uiState.hasLiveEventSnapshot || uiState.isReplay)
+    );
     elements.eventList.replaceChildren();
     if (!state.events.length) {
         const emptyCopy = uiState.isReplay
@@ -276,6 +429,7 @@ function renderEvents() {
         elements.heroEventTime.textContent = `${latest.period || state.period || '—'} · ${formatOverlayClock(latest.gameClockMs ?? state.gameClockMs)}`;
         if (isNewLatest) {
             elements.screenReaderUpdate.textContent = `${latest.description}. Score ${state.homeScore} to ${state.awayScore}.`;
+            playAnnouncer.announceEvent(latest, { playbackSessionId: uiState.isReplay ? 'replay' : 'live' });
         }
     } else {
         elements.heroEvent.dataset.tone = 'system';
@@ -345,6 +499,41 @@ function renderLeaders() {
         .slice(0, 6)
         .map(({ player }) => player);
     renderLineupList(elements.leaderList, leaders, 'Player leaders will appear as live stats arrive.');
+}
+
+function renderOpponentStats() {
+    const state = uiState.game;
+    if (!state || !elements.opponentList) return;
+    const opponents = Object.entries(state.opponentStats || {})
+        .map(([id, stats]) => ({
+            id,
+            name: String(stats?.name || stats?.playerName || 'Opponent player'),
+            number: String(stats?.number || stats?.playerNumber || ''),
+            position: 'Opponent',
+            stats: stats || {}
+        }))
+        .sort((left, right) => {
+            const leftTotal = Object.values(left.stats).reduce((sum, value) => sum + (Number(value) || 0), 0);
+            const rightTotal = Object.values(right.stats).reduce((sum, value) => sum + (Number(value) || 0), 0);
+            return rightTotal - leftTotal || left.name.localeCompare(right.name);
+        });
+    renderLineupList(elements.opponentList, opponents, 'Opponent stats will appear as they are tracked.');
+}
+
+function renderAnnouncerControls() {
+    const supported = playAnnouncer.isSupported();
+    const enabled = playAnnouncer.isEnabled();
+    const paused = playAnnouncer.isPaused();
+    elements.announcerToggle.disabled = !supported;
+    elements.announcerToggle.textContent = enabled ? 'Stop announcer' : 'Listen live';
+    elements.announcerToggle.setAttribute('aria-pressed', String(enabled));
+    elements.announcerPause.hidden = !enabled;
+    elements.announcerPause.textContent = paused ? 'Resume' : 'Pause';
+    elements.announcerPause.setAttribute('aria-pressed', String(paused));
+    if (!supported) elements.announcerStatus.textContent = 'Play announcer is not supported in this browser.';
+    else if (!enabled) elements.announcerStatus.textContent = 'Opt in to hear new plays during live games and replay.';
+    else if (paused) elements.announcerStatus.textContent = 'Announcer paused.';
+    else elements.announcerStatus.textContent = uiState.isReplay ? 'Replay announcer on.' : 'Live announcer on.';
 }
 
 function renderChat() {
@@ -793,7 +982,9 @@ function renderAll() {
     renderEvents();
     renderLineup();
     renderLeaders();
+    renderOpponentStats();
     renderChat();
+    renderAnnouncerControls();
 }
 
 function resetOverlayFromGame(game = {}, stateTools, message = 'Game reset. Waiting for plays…') {
@@ -1215,10 +1406,12 @@ function resetVideoElements() {
     elements.recordedVideo.pause();
     elements.recordedVideo.removeAttribute('src');
     elements.recordedVideo.load();
-    elements.openStream.hidden = true;
-    elements.openStream.removeAttribute('href');
+    elements.replayAccessGate.hidden = true;
+    setProviderLink('');
     uiState.videoMode = 'none';
     uiState.videoOrigin = '';
+    uiState.videoMuted = true;
+    updateMuteControl();
 }
 
 function showVideoFallback(message = 'The scoreboard and live context stay ready while video connects.') {
@@ -1227,15 +1420,39 @@ function showVideoFallback(message = 'The scoreboard and live context stay ready
     elements.videoFallback.hidden = false;
 }
 
-function showEmbedVideo(sourceUrl, publicUrl = '', { controllableReplay = false } = {}) {
+function showReplayAccessGate({ state = 'checking' } = {}) {
+    resetVideoElements();
+    elements.videoFallback.hidden = true;
+    const presentations = {
+        checking: {
+            kicker: 'Checking access',
+            title: 'Checking replay access…',
+            copy: 'The scoreboard and saved game timeline remain available while replay access is verified.'
+        },
+        locked: {
+            kicker: 'Team Pass required',
+            title: 'Archived replay video is locked',
+            copy: 'This premium fan feature unlocks when the team has an active paid Team Pass for the season. Ask a coach or team admin to activate access.'
+        },
+        unavailable: {
+            kicker: 'Access check delayed',
+            title: 'Replay access could not be verified',
+            copy: 'The video stays protected while access is unavailable. Refresh to try again; scores, plays, and saved chat remain available.'
+        }
+    };
+    const presentation = presentations[state] || presentations.unavailable;
+    elements.replayAccessKicker.textContent = presentation.kicker;
+    elements.replayAccessTitle.textContent = presentation.title;
+    elements.replayAccessCopy.textContent = presentation.copy;
+    elements.replayAccessGate.hidden = false;
+}
+
+function showEmbedVideo(sourceUrl, publicUrl = '', { controllableReplay = false, publicLabel = 'Open video ↗' } = {}) {
     const effectiveSourceUrl = controllableReplay
         ? getControllableReplayEmbedUrl(sourceUrl, window.location.origin)
-        : sourceUrl;
+        : getControllableYouTubeEmbedUrl(sourceUrl, window.location.origin);
     if (!elements.iframe.hidden && elements.iframe.getAttribute('src') === effectiveSourceUrl) {
-        if (publicUrl) {
-            elements.openStream.href = publicUrl;
-            elements.openStream.hidden = false;
-        }
+        setProviderLink(publicUrl, publicLabel);
         return;
     }
     resetVideoElements();
@@ -1248,21 +1465,18 @@ function showEmbedVideo(sourceUrl, publicUrl = '', { controllableReplay = false 
             .includes(source.hostname.toLowerCase());
         uiState.videoMode = isYouTube ? 'youtube' : 'embed';
         uiState.videoOrigin = source.origin;
+        uiState.videoMuted = isYouTube ? source.searchParams.get('mute') === '1' : true;
     } catch {
         uiState.videoMode = 'embed';
+        uiState.videoMuted = true;
     }
-    if (publicUrl) {
-        elements.openStream.href = publicUrl;
-        elements.openStream.hidden = false;
-    }
+    setProviderLink(publicUrl, publicLabel);
+    updateMuteControl();
 }
 
-function showRecordedVideo(sourceUrl, publicUrl = '') {
+function showRecordedVideo(sourceUrl, publicUrl = '', publicLabel = 'Open replay video ↗') {
     if (!elements.recordedVideo.hidden && elements.recordedVideo.getAttribute('src') === sourceUrl) {
-        if (publicUrl) {
-            elements.openStream.href = publicUrl;
-            elements.openStream.hidden = false;
-        }
+        setProviderLink(publicUrl, publicLabel);
         return;
     }
     resetVideoElements();
@@ -1270,10 +1484,9 @@ function showRecordedVideo(sourceUrl, publicUrl = '') {
     elements.recordedVideo.src = sourceUrl;
     elements.recordedVideo.hidden = false;
     uiState.videoMode = 'recorded';
-    if (publicUrl) {
-        elements.openStream.href = publicUrl;
-        elements.openStream.hidden = false;
-    }
+    uiState.videoMuted = elements.recordedVideo.muted;
+    setProviderLink(publicUrl, publicLabel);
+    updateMuteControl();
 }
 
 function getDemoVideoId(params) {
@@ -1473,12 +1686,42 @@ function bindInteractions() {
     elements.panelToggles.forEach((button) => button.addEventListener('click', () => togglePanel(button.dataset.panel)));
     elements.insightTabs.forEach((tab) => tab.addEventListener('click', () => selectInsight(tab.id.replace('-tab', ''))));
     elements.focusToggle.addEventListener('click', toggleFocusMode);
+    elements.shareGame.addEventListener('click', () => void shareGame());
+    elements.shareGameMenu.addEventListener('click', () => void shareGame());
+    elements.muteToggle.addEventListener('click', toggleVideoMute);
+    elements.fullscreenToggle.addEventListener('click', () => void toggleFullscreen());
+    elements.gameActionsToggle.addEventListener('click', toggleGameActionsMenu);
+    elements.gameActionsMenu.addEventListener('click', (event) => {
+        if (event.target.closest('a')) closeGameActionsMenu();
+    });
+    elements.gameActionsMenu.addEventListener('keydown', (event) => {
+        const items = [...elements.gameActionsMenu.querySelectorAll('[role="menuitem"]')]
+            .filter((item) => !item.hidden);
+        const currentIndex = items.indexOf(document.activeElement);
+        let nextIndex = null;
+        if (event.key === 'ArrowDown') nextIndex = (currentIndex + 1) % items.length;
+        if (event.key === 'ArrowUp') nextIndex = (currentIndex - 1 + items.length) % items.length;
+        if (event.key === 'Home') nextIndex = 0;
+        if (event.key === 'End') nextIndex = items.length - 1;
+        if (nextIndex === null || !items.length) return;
+        event.preventDefault();
+        items[nextIndex].focus();
+    });
+    elements.announcerToggle.addEventListener('click', () => {
+        playAnnouncer.setEnabled(!playAnnouncer.isEnabled());
+        renderAnnouncerControls();
+    });
+    elements.announcerPause.addEventListener('click', () => {
+        playAnnouncer.setPaused(!playAnnouncer.isPaused());
+        renderAnnouncerControls();
+    });
     elements.demoLabToggle.addEventListener('click', () => setDemoLabOpen(elements.demoLab.hidden));
     elements.demoLabClose.addEventListener('click', () => setDemoLabOpen(false));
     elements.demoActions.forEach((button) => button.addEventListener('click', () => handleDemoAction(button.dataset.action)));
     elements.iframe.addEventListener('load', () => {
-        if (!uiState.isReplay) return;
         window.setTimeout(() => {
+            if (uiState.videoMode === 'youtube') sendYouTubeCommand(uiState.videoMuted ? 'mute' : 'unMute');
+            if (!uiState.isReplay) return;
             startYouTubeReplayListening();
             syncReplayMedia({ seek: true });
         }, 0);
@@ -1511,11 +1754,18 @@ function bindInteractions() {
         if (!uiState.replayStateTools) return;
         handleYouTubeReplayMessage(event, uiState.replayStateTools);
     });
+    document.addEventListener('fullscreenchange', updateFullscreenControl);
+    document.addEventListener('click', (event) => {
+        if (elements.gameActionsMenu.hidden) return;
+        if (elements.gameActionsMenu.contains(event.target) || elements.gameActionsToggle.contains(event.target)) return;
+        closeGameActionsMenu();
+    });
     window.addEventListener('resize', renderPanelVisibility);
     window.addEventListener('keydown', (event) => {
         if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
         if (event.key === 'Escape') {
             setDemoLabOpen(false);
+            closeGameActionsMenu({ restoreFocus: !elements.gameActionsMenu.hidden });
             if (usesCompactPanelLayout()) uiState.activeMobilePanel = null;
             renderPanelVisibility();
             return;
@@ -1523,7 +1773,9 @@ function bindInteractions() {
         if (event.key.toLowerCase() === 'p') togglePanel('plays');
         if (event.key.toLowerCase() === 'i') togglePanel('insights');
         if (event.key.toLowerCase() === 'c') togglePanel('chat');
-        if (event.key.toLowerCase() === 'f') toggleFocusMode();
+        if (event.key.toLowerCase() === 'm') toggleVideoMute();
+        if (event.key.toLowerCase() === 'f' && event.shiftKey) void toggleFullscreen();
+        else if (event.key.toLowerCase() === 'f') toggleFocusMode();
     });
     window.addEventListener('beforeunload', () => {
         window.clearInterval(uiState.clockTimer);
@@ -1562,6 +1814,10 @@ async function startRealMode(params) {
         return;
     }
 
+    uiState.teamId = teamId;
+    uiState.gameId = gameId;
+    configureGameActions();
+
     setConnectionMessage('Connecting to the game, event feed, and chat…', 'info');
     try {
         const [database, videoTools, stateTools] = await Promise.all([
@@ -1569,7 +1825,17 @@ async function startRealMode(params) {
             import('./live-game-video.js?v=443315'),
             import('./live-game-state.js?v=36')
         ]);
-        const teamPromise = database.getGameDayTeamContext(teamId, gameId, { includeInactive: true }).catch(() => ({}));
+        uiState.optionalTeamStatus = 'pending';
+        const teamPromise = database.getGameDayTeamContext(teamId, gameId, { includeInactive: true })
+            .then((team) => {
+                uiState.optionalTeamStatus = 'ready';
+                return team || {};
+            })
+            .catch((error) => {
+                console.warn('Overlay team context could not be loaded:', error);
+                uiState.optionalTeamStatus = 'failed';
+                return {};
+            });
         const playersPromise = database.getPlayers(teamId, { includeInactive: true }).catch(() => []);
         const game = await database.getGame(teamId, gameId);
         if (!game) throw new Error('Game not found.');
@@ -1586,12 +1852,14 @@ async function startRealMode(params) {
         uiState.game.stats = {};
         const isReplay = params.replay === 'true';
         uiState.isReplay = isReplay;
+        configureGameActions();
         elements.body.dataset.replay = String(isReplay);
         renderPanelVisibility();
         if (isReplay) uiState.game.liveStatus = 'replay';
         renderAll();
         renderChatComposer();
-        const renderVideoSafely = () => {
+        const renderVideoSafely = async () => {
+            const requestId = ++uiState.videoRequestId;
             try {
                 const options = videoTools.resolveReplayVideoOptions({
                     team: uiState.game.team,
@@ -1600,10 +1868,59 @@ async function startRealMode(params) {
                     isReplay
                 });
                 uiState.videoDurationMs = Number.isFinite(options.durationMs) ? options.durationMs : 0;
-                if (options.mode === 'embed' && options.sourceUrl) {
-                    showEmbedVideo(options.sourceUrl, options.publicUrl, { controllableReplay: isReplay });
+                if (isReplay && options.mode === 'recorded' && options.sourceUrl) {
+                    if (uiState.optionalTeamStatus === 'pending') {
+                        showReplayAccessGate({ state: 'checking' });
+                        return true;
+                    }
+                    if (uiState.optionalTeamStatus === 'failed') {
+                        showReplayAccessGate({ state: 'unavailable' });
+                        return true;
+                    }
+                    const entitlements = await import('./team-entitlements.js?v=8');
+                    if (requestId !== uiState.videoRequestId) return false;
+                    const gateEnabled = entitlements.isRecordedReplayTeamPassGateEnabled({
+                        game: uiState.game.game,
+                        team: uiState.game.team
+                    });
+                    if (gateEnabled) {
+                        const seasonId = entitlements.resolveTeamEntitlementSeasonId({
+                            game: uiState.game.game,
+                            team: uiState.game.team
+                        });
+                        const entitlementKey = `${teamId}:${seasonId}`;
+                        if (uiState.teamEntitlementKey !== entitlementKey) {
+                            uiState.teamEntitlementKey = entitlementKey;
+                            uiState.teamEntitlement = null;
+                            uiState.teamEntitlementPromise = entitlements.getTeamEntitlementStatus({ teamId, seasonId })
+                                .then((status) => {
+                                    uiState.teamEntitlement = status;
+                                    return status;
+                                });
+                        }
+                        const entitlementStatus = uiState.teamEntitlement || await uiState.teamEntitlementPromise;
+                        if (requestId !== uiState.videoRequestId) return false;
+                        const videoUnlocked = entitlements.canAccessPremiumFanFeature(
+                            entitlements.TEAM_PASS_FEATURES.RECORDED_REPLAY,
+                            entitlementStatus
+                        );
+                        if (!videoUnlocked) {
+                            showReplayAccessGate({
+                                state: entitlementStatus?.access?.state === 'unavailable' ? 'unavailable' : 'locked'
+                            });
+                            return true;
+                        }
+                    }
                 }
-                else if (options.mode === 'recorded' && options.sourceUrl) showRecordedVideo(options.sourceUrl, options.publicUrl);
+                if (options.mode === 'embed' && options.sourceUrl) {
+                    showEmbedVideo(options.sourceUrl, options.publicUrl, {
+                        controllableReplay: isReplay,
+                        publicLabel: options.publicLabel
+                    });
+                }
+                else if (options.mode === 'recorded' && options.sourceUrl) {
+                    showRecordedVideo(options.sourceUrl, options.publicUrl, options.publicLabel);
+                }
                 else showVideoFallback(options.replayState?.message || 'No video feed is configured for this game yet.');
                 return true;
             } catch (error) {
@@ -1615,7 +1932,9 @@ async function startRealMode(params) {
                 return false;
             }
         };
-        if (renderVideoSafely()) setConnectionMessage('');
+        void renderVideoSafely().then((success) => {
+            if (success) setConnectionMessage('');
+        });
 
         const refreshOptionalContext = () => {
             if (!uiState.game) return;
@@ -1634,7 +1953,8 @@ async function startRealMode(params) {
             renderScoreboard();
             renderLineup();
             renderLeaders();
-            renderVideoSafely();
+            renderOpponentStats();
+            void renderVideoSafely();
         };
         void teamPromise.then((team) => {
             resolvedTeam = team || {};
@@ -1666,7 +1986,9 @@ async function startRealMode(params) {
                     renderAll();
                 }
                 refreshChatAvailability();
-                if (renderVideoSafely()) setConnectionMessage('');
+                void renderVideoSafely().then((success) => {
+                    if (success) setConnectionMessage('');
+                });
             } catch (error) {
                 console.warn('Overlay game update could not be applied:', error);
                 setConnectionMessage('A score refresh was skipped. Existing video, score, and play data remain available.');
