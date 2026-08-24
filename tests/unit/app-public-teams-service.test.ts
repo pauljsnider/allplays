@@ -734,6 +734,35 @@ describe('publicTeamsService', () => {
         });
     });
 
+    it('builds privacy-safe win-percentage standings with native ranking and tie-break parity', () => {
+        const config = {
+            enabled: true,
+            rankingMode: 'win_pct' as const,
+            points: { win: 3, tie: 1, loss: 0 },
+            maxGoalDiff: null,
+            tiebreakers: ['point_diff'],
+            twoTeamTiebreakers: ['point_diff'],
+            multiTeamTiebreakers: ['point_diff']
+        };
+        const games = [
+            { id: 'a-win', date: new Date('2026-08-01T18:00:00Z'), homeTeam: 'Austin Bats', awayTeam: 'Owls', homeScore: 4, awayScore: 1, status: 'completed' as const },
+            { id: 'a-loss', date: new Date('2026-08-02T18:00:00Z'), homeTeam: 'Foxes', awayTeam: 'Austin Bats', homeScore: 2, awayScore: 1, status: 'completed' as const },
+            { id: 'owls-win', date: new Date('2026-08-03T18:00:00Z'), homeTeam: 'Owls', awayTeam: 'Foxes', homeScore: 3, awayScore: 2, status: 'completed' as const }
+        ];
+
+        const expected = computeNativeStandings(games, config).map((row) => ({
+            rank: row.rank,
+            team: row.team,
+            record: row.record,
+            winPct: row.winPct
+        }));
+        expect(buildPublicTeamStandings('Austin Bats', config, games)).toEqual({
+            label: 'Win percentage',
+            rows: expected,
+            currentRow: expected.find((row) => row.team === 'Austin Bats')
+        });
+    });
+
     it('returns an empty or unavailable result without throwing for no eligible games or disabled standings', async () => {
         dbMocks.getPublicTeamProfile.mockResolvedValue({
             id: 'team-public-1', name: 'Austin Bats', isPublic: true, active: true,
