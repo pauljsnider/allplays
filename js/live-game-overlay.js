@@ -8,9 +8,10 @@ import {
     getControllableReplayEmbedUrl,
     getOverlayLineup,
     getOverlayReplayDurationMs,
+    parseYouTubeReplayTelemetry,
     reconcileOverlayLiveEvents,
     replaceOverlayChat
-} from './live-game-overlay-model.js?v=5';
+} from './live-game-overlay-model.js?v=6';
 import {
     buildReplaySessionState,
     collectReplayEventWindow,
@@ -114,9 +115,13 @@ const uiState = {
     replayElapsedMs: 0,
     replayDurationMs: 0,
     replayFrame: null,
+    replayStateTools: null,
     videoMode: 'none',
     videoOrigin: '',
     videoDurationMs: 0,
+    lastMediaSeekTargetMs: null,
+    lastMediaSeekAt: 0,
+    lastHighSpeedMediaSyncAt: 0,
     teamId: '',
     gameId: '',
     chatUser: null,
@@ -899,25 +904,92 @@ function sendYouTubeCommand(command, args = []) {
     }), uiState.videoOrigin || 'https://www.youtube.com');
 }
 
+function rememberMediaSeek(targetMs) {
+    uiState.lastMediaSeekTargetMs = Math.max(0, Number(targetMs) || 0);
+    uiState.lastMediaSeekAt = Date.now();
+}
+
+function updateReplayVideoDuration(durationMs) {
+    if (!Number.isFinite(durationMs) || durationMs <= 0 || durationMs === uiState.videoDurationMs) return;
+    uiState.videoDurationMs = durationMs;
+    if (!uiState.replaySession) return;
+    uiState.replayDurationMs = getOverlayReplayDurationMs({
+        ...uiState.replaySession,
+        videoDurationMs: uiState.videoDurationMs
+    });
+    setReplayControlState();
+}
+
+function isRecentMediaSeekEcho(mediaElapsedMs) {
+    if (!Number.isFinite(uiState.lastMediaSeekTargetMs) || Date.now() - uiState.lastMediaSeekAt > 1600) return false;
+    return Math.abs(mediaElapsedMs - uiState.lastMediaSeekTargetMs) <= 1800;
+}
+
+function syncReplayFromMediaTime(mediaElapsedMs, stateTools) {
+    if (!uiState.isReplay || !uiState.replaySession || !stateTools || !Number.isFinite(mediaElapsedMs)) return;
+    const boundedElapsedMs = Math.min(uiState.replayDurationMs, Math.max(0, mediaElapsedMs));
+    if (isRecentMediaSeekEcho(boundedElapsedMs)) return;
+
+    const allowedDriftMs = uiState.replayPlaying ? 1800 : 250;
+    if (Math.abs(boundedElapsedMs - uiState.replayElapsedMs) <= allowedDriftMs) return;
+    resetReplayToElapsed(boundedElapsedMs, stateTools);
+    if (uiState.replayPlaying) {
+        uiState.replayStartTime = rebaseReplayStartTimeMs(Date.now(), uiState.replayElapsedMs, uiState.replaySpeed);
+    }
+}
+
+function resumeReplayFromMedia(stateTools) {
+    if (uiState.replayPlaying || uiState.replayDurationMs <= 0 || uiState.replayElapsedMs >= uiState.replayDurationMs) return;
+    uiState.replayPlaying = true;
+    uiState.replayStartTime = rebaseReplayStartTimeMs(Date.now(), uiState.replayElapsedMs, uiState.replaySpeed);
+    setReplayControlState();
+    uiState.replayFrame = requestAnimationFrame(() => replayTick(stateTools));
+}
+
+function handleYouTubeReplayMessage(event, stateTools) {
+    if (!uiState.isReplay || uiState.videoMode !== 'youtube' || event.source !== elements.iframe.contentWindow) return;
+    if (uiState.videoOrigin && event.origin !== uiState.videoOrigin) return;
+    const telemetry = parseYouTubeReplayTelemetry(event.data);
+    if (!telemetry) return;
+
+    updateReplayVideoDuration(telemetry.durationMs);
+    syncReplayFromMediaTime(telemetry.currentTimeMs, stateTools);
+    if (telemetry.playerState === 2 && uiState.replayPlaying) pauseReplay({ syncMedia: false });
+    if (telemetry.playerState === 1 && !uiState.replayPlaying) resumeReplayFromMedia(stateTools);
+}
+
+function startYouTubeReplayListening() {
+    if (!uiState.isReplay || uiState.videoMode !== 'youtube' || !elements.iframe.contentWindow) return;
+    elements.iframe.contentWindow.postMessage(JSON.stringify({
+        event: 'listening',
+        id: elements.iframe.id,
+        channel: 'allplays-overlay-replay'
+    }), uiState.videoOrigin || 'https://www.youtube.com');
+}
+
 function syncReplayMedia({ seek = false, play = uiState.replayPlaying } = {}) {
     if (!uiState.isReplay) return;
     const seconds = Math.max(0, uiState.replayElapsedMs / 1000);
 
     if (uiState.videoMode === 'recorded') {
+        if (seek) rememberMediaSeek(uiState.replayElapsedMs);
         if (seek && Number.isFinite(elements.recordedVideo.duration)) {
             elements.recordedVideo.currentTime = Math.min(seconds, elements.recordedVideo.duration);
         } else if (seek) {
             elements.recordedVideo.currentTime = seconds;
         }
-        elements.recordedVideo.playbackRate = uiState.replaySpeed;
+        elements.recordedVideo.playbackRate = Math.min(uiState.replaySpeed, 2);
         if (play) elements.recordedVideo.play().catch(() => {});
         else elements.recordedVideo.pause();
         return;
     }
 
     if (uiState.videoMode === 'youtube') {
-        if (seek) sendYouTubeCommand('seekTo', [seconds, true]);
-        sendYouTubeCommand('setPlaybackRate', [uiState.replaySpeed]);
+        if (seek) {
+            rememberMediaSeek(uiState.replayElapsedMs);
+            sendYouTubeCommand('seekTo', [seconds, true]);
+        }
+        sendYouTubeCommand('setPlaybackRate', [Math.min(uiState.replaySpeed, 2)]);
         sendYouTubeCommand(play ? 'playVideo' : 'pauseVideo');
     }
 }
@@ -1001,6 +1073,11 @@ function replayTick(stateTools) {
         getReplayElapsedMs(Date.now(), uiState.replayStartTime, uiState.replaySpeed)
     );
     advanceReplayToElapsed(elapsed, stateTools);
+    const nowMs = Date.now();
+    if (uiState.replaySpeed > 2 && nowMs - uiState.lastHighSpeedMediaSyncAt >= 250) {
+        uiState.lastHighSpeedMediaSyncAt = nowMs;
+        syncReplayMedia({ seek: true, play: true });
+    }
     if (elapsed >= uiState.replayDurationMs) {
         pauseReplay();
         return;
@@ -1065,6 +1142,7 @@ function bindReplayControls(stateTools) {
 
 async function loadReplaySnapshot(database, stateTools, teamId, gameId) {
     uiState.isReplay = true;
+    uiState.replayStateTools = stateTools;
     uiState.game.liveStatus = 'replay';
     elements.body.dataset.replay = 'true';
     renderPanelVisibility();
@@ -1379,7 +1457,10 @@ function bindInteractions() {
     elements.demoActions.forEach((button) => button.addEventListener('click', () => handleDemoAction(button.dataset.action)));
     elements.iframe.addEventListener('load', () => {
         if (!uiState.isReplay) return;
-        window.setTimeout(() => syncReplayMedia({ seek: true }), 0);
+        window.setTimeout(() => {
+            startYouTubeReplayListening();
+            syncReplayMedia({ seek: true });
+        }, 0);
     });
     elements.recordedVideo.addEventListener('loadedmetadata', () => {
         if (!uiState.isReplay || !Number.isFinite(elements.recordedVideo.duration)) return;
@@ -1391,6 +1472,22 @@ function bindInteractions() {
             });
             setReplayControlState();
         }
+    });
+    elements.recordedVideo.addEventListener('timeupdate', () => {
+        if (!uiState.isReplay) return;
+        syncReplayFromMediaTime(elements.recordedVideo.currentTime * 1000, uiState.replayStateTools);
+    });
+    elements.recordedVideo.addEventListener('play', () => {
+        if (!uiState.isReplay) return;
+        resumeReplayFromMedia(uiState.replayStateTools);
+    });
+    elements.recordedVideo.addEventListener('pause', () => {
+        if (!uiState.isReplay || !uiState.replayPlaying) return;
+        pauseReplay({ syncMedia: false });
+    });
+    window.addEventListener('message', (event) => {
+        if (!uiState.replayStateTools) return;
+        handleYouTubeReplayMessage(event, uiState.replayStateTools);
     });
     window.addEventListener('resize', renderPanelVisibility);
     window.addEventListener('keydown', (event) => {

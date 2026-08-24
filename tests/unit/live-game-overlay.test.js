@@ -23,6 +23,7 @@ describe('live game overlay page', () => {
         expect(html).toContain('id="replay-controls"');
         expect(html).toContain('id="replay-progress"');
         expect(html).toContain('data-replay-speed="4"');
+        expect(html).toContain('data-replay-speed="50"');
         expect(html).toContain('aria-live="polite"');
         expect(html).toContain('id="chat-form"');
         expect(html).toContain('id="chat-input"');
@@ -34,7 +35,7 @@ describe('live game overlay page', () => {
         expect(html).toContain('id="ai-thinking"');
         expect(html).toContain('id="chat-badge"');
         expect(html).toContain('data-chat-reaction="fire"');
-        expect(html).toContain('js/live-game-overlay.js?v=14');
+        expect(html).toContain('js/live-game-overlay.js?v=15');
     });
 
     it('keeps the local demo isolated while wiring canonical subscriptions and authenticated chat posting', () => {
@@ -80,6 +81,8 @@ describe('live game overlay page', () => {
         expect(source).toContain('getReplayElapsedMs');
         expect(source).toContain('seekReplay');
         expect(source).toContain('syncReplayMedia');
+        expect(source).toContain('handleYouTubeReplayMessage');
+        expect(source).toContain('parseYouTubeReplayTelemetry');
         expect(source).not.toContain('updateGame(');
         expect(source).not.toContain('trackViewerPresence(');
         expect(source).toContain('sendChatReaction');

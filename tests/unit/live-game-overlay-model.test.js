@@ -10,6 +10,7 @@ import {
     getOverlayEventTone,
     getOverlayLineup,
     getOverlayReplayDurationMs,
+    parseYouTubeReplayTelemetry,
     reconcileOverlayLiveEvents,
     replaceOverlayChat
 } from '../../js/live-game-overlay-model.js';
@@ -77,6 +78,28 @@ describe('live game overlay model', () => {
         expect(getControllableReplayEmbedUrl('https://player.twitch.tv/?channel=vipers', 'http://localhost:8000'))
             .toBe('https://player.twitch.tv/?channel=vipers');
         expect(getControllableReplayEmbedUrl('not a url', 'http://localhost:8000')).toBe('not a url');
+    });
+
+    it('accepts bounded YouTube replay telemetry and rejects unrelated player messages', () => {
+        expect(parseYouTubeReplayTelemetry(JSON.stringify({
+            event: 'infoDelivery',
+            info: { currentTime: 32.5, duration: 120, playerState: 2, playbackRate: 1.5 }
+        }))).toEqual({
+            currentTimeMs: 32_500,
+            durationMs: 120_000,
+            playerState: 2,
+            playbackRate: 1.5
+        });
+        expect(parseYouTubeReplayTelemetry({ event: 'infoDelivery', info: { currentTime: 0 } })).toEqual({
+            currentTimeMs: 0,
+            durationMs: null,
+            playerState: null,
+            playbackRate: null
+        });
+        expect(parseYouTubeReplayTelemetry('{bad json')).toBeNull();
+        expect(parseYouTubeReplayTelemetry({ event: 'onStateChange', info: { currentTime: 12 } })).toBeNull();
+        expect(parseYouTubeReplayTelemetry({ event: 'infoDelivery', info: { currentTime: null } })).toBeNull();
+        expect(parseYouTubeReplayTelemetry({ event: 'infoDelivery', info: { currentTime: -1 } })).toBeNull();
     });
 
     it('normalizes game context and applies passive game-document updates', () => {

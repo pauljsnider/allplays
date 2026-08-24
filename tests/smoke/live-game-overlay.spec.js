@@ -296,6 +296,11 @@ test('local replay demo exposes the complete playback flow without Firebase', as
     await expect(page.locator('#event-list')).toContainText('Persell finds the winner');
     await page.locator('[data-panel="chat"]').click();
     await expect(page.locator('#chat-list')).toContainText('Great recovery shape');
+
+    await page.getByRole('button', { name: '50×' }).click();
+    await page.getByRole('button', { name: 'Restart replay' }).click();
+    await expect(page.locator('#home-score')).toHaveText('2', { timeout: 1500 });
+    await expect(page.locator('#replay-current')).toHaveText('0:15', { timeout: 1500 });
     expect(pageErrors).toEqual([]);
 });
 
@@ -920,6 +925,41 @@ test('replay mode synchronizes saved plays, score, lineup, chat, reactions, and 
     expect(pageErrors).toEqual([]);
 });
 
+test('manual YouTube seeking rebuilds replay stats and the overlay offers canonical 50× catch-up', async ({ page, baseURL }) => {
+    const pageErrors = collectPageErrors(page);
+    await stubRealOverlayModules(page);
+    await stubYouTubeEmbed(page);
+
+    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true`, { waitUntil: 'domcontentloaded' });
+    await page.getByRole('button', { name: 'Pause replay' }).click();
+    await expect(page.locator('#home-score')).toHaveText('0');
+
+    const youtubeFrame = page.frames().find((frame) => frame.url().startsWith('https://www.youtube.com/embed/'));
+    expect(youtubeFrame).toBeTruthy();
+    await youtubeFrame.evaluate(() => {
+        parent.postMessage(JSON.stringify({
+            event: 'infoDelivery',
+            info: { currentTime: 690, duration: 690, playerState: 2 }
+        }), '*');
+    });
+
+    await expect(page.locator('#replay-current')).toHaveText('11:30');
+    await expect(page.locator('#home-score')).toHaveText('3');
+    await expect(page.locator('#away-score')).toHaveText('2');
+    await expect(page.locator('#period')).toHaveText('H2');
+    await expect(page.locator('#event-list')).toContainText('Lane scores the replay winner');
+    await page.locator('[data-panel="insights"]').click();
+    await page.getByRole('tab', { name: 'Leaders' }).click();
+    await expect(page.locator('#leader-list')).toContainText('Avery Lane');
+    await expect(page.locator('#leader-list')).toContainText('2 GOALS');
+
+    const fiftyTimes = page.getByRole('button', { name: '50×' });
+    await expect(fiftyTimes).toBeVisible();
+    await fiftyTimes.click();
+    await expect(fiftyTimes).toHaveAttribute('aria-pressed', 'true');
+    expect(pageErrors).toEqual([]);
+});
+
 test('mobile replay controls stay on screen without covering the scoreboard', async ({ page, baseURL }) => {
     const pageErrors = collectPageErrors(page);
     await page.setViewportSize({ width: 390, height: 844 });
@@ -932,6 +972,7 @@ test('mobile replay controls stay on screen without covering the scoreboard', as
     await expect(page.getByRole('button', { name: 'Play replay' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Restart replay' })).toBeVisible();
     await expect(page.getByRole('button', { name: '4×' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '50×' })).toBeVisible();
 
     const layout = await page.evaluate(() => {
         const score = document.querySelector('#score-bug').getBoundingClientRect();

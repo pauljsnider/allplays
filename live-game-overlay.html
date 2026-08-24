@@ -1003,9 +1003,15 @@
     .replay-speed-group {
       display: flex;
       gap: 4px;
+      min-width: 0;
+      max-width: 100%;
+      overflow-x: auto;
+      overscroll-behavior-x: contain;
+      scrollbar-width: thin;
     }
 
     .replay-speed {
+      flex: 0 0 auto;
       min-width: 44px;
       min-height: 44px;
       padding: 0 8px;
@@ -1734,7 +1740,11 @@
       <div class="replay-speed-group" role="group" aria-label="Replay speed">
         <button class="replay-speed" type="button" data-replay-speed="1" aria-pressed="true">1×</button>
         <button class="replay-speed" type="button" data-replay-speed="2" aria-pressed="false">2×</button>
+        <button class="replay-speed" type="button" data-replay-speed="3" aria-pressed="false">3×</button>
         <button class="replay-speed" type="button" data-replay-speed="4" aria-pressed="false">4×</button>
+        <button class="replay-speed" type="button" data-replay-speed="10" aria-pressed="false">10×</button>
+        <button class="replay-speed" type="button" data-replay-speed="20" aria-pressed="false">20×</button>
+        <button class="replay-speed" type="button" data-replay-speed="50" aria-pressed="false">50×</button>
       </div>
     </section>
 
@@ -1792,6 +1802,6 @@
   </main>
 
   <span id="screen-reader-update" class="visually-hidden" aria-live="polite"></span>
-  <script type="module" src="js/live-game-overlay.js?v=14"></script>
+  <script type="module" src="js/live-game-overlay.js?v=15"></script>
 </body>
 </html>

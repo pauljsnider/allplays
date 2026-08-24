@@ -157,6 +157,36 @@ export function getControllableReplayEmbedUrl(sourceUrl, origin = '') {
     }
 }
 
+export function parseYouTubeReplayTelemetry(data) {
+    let payload = data;
+    if (typeof payload === 'string') {
+        try {
+            payload = JSON.parse(payload);
+        } catch {
+            return null;
+        }
+    }
+    if (!payload || typeof payload !== 'object' || payload.event !== 'infoDelivery') return null;
+
+    const info = payload.info;
+    if (!info || typeof info !== 'object') return null;
+    if (info.currentTime === null || info.currentTime === '') return null;
+    const currentTimeSeconds = Number(info.currentTime);
+    if (!Number.isFinite(currentTimeSeconds) || currentTimeSeconds < 0) return null;
+
+    const durationSeconds = Number(info.duration);
+    const playerState = Number(info.playerState);
+    const playbackRate = Number(info.playbackRate);
+    return {
+        currentTimeMs: Math.round(currentTimeSeconds * 1000),
+        durationMs: Number.isFinite(durationSeconds) && durationSeconds >= 0
+            ? Math.round(durationSeconds * 1000)
+            : null,
+        playerState: Number.isFinite(playerState) ? playerState : null,
+        playbackRate: Number.isFinite(playbackRate) && playbackRate > 0 ? playbackRate : null
+    };
+}
+
 export function getOverlayEventTone(event = {}) {
     const type = toText(event.type).toLowerCase();
     const statKey = toText(event.statKey).toLowerCase();
