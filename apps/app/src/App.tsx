@@ -361,7 +361,7 @@ function LoadingScreen() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
       <div className="app-card w-full max-w-sm p-5 text-center">
-        <img src="./logo_small.png" alt="" loading="lazy" decoding="async" className="mx-auto h-12 w-12 rounded-xl" />
+        <img src="./logo_small.png" alt="" decoding="async" className="mx-auto h-12 w-12 rounded-xl" />
         <div className="mt-3 text-lg font-black text-gray-950">Loading ALL PLAYS</div>
         <div className="mt-1 text-sm font-semibold text-gray-500">Checking your account...</div>
       </div>

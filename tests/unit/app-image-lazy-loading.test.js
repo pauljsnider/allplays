@@ -44,4 +44,19 @@ describe('app image lazy loading', () => {
         // Hero banner stays eager so it is not deferred as the LCP element.
         expect(source).not.toContain('alt={`${team.name} team photo`} loading="lazy"');
     });
+
+    it('keeps immediately visible app chrome logos eager while decoding asynchronously', () => {
+        const appSource = read('src/App.tsx');
+        const appShellSource = read('src/components/AppShell.tsx');
+        const authFrameSource = read('src/components/AuthFrame.tsx');
+
+        expect(appSource).toContain('src="./logo_small.png" alt="" decoding="async" className="mx-auto h-12 w-12 rounded-xl"');
+        expect(appSource).not.toContain('src="./logo_small.png" alt="" loading="lazy"');
+
+        expect(appShellSource.match(/src="\.\/logo_small\.png" alt="" decoding="async"/g)).toHaveLength(2);
+        expect(appShellSource).not.toContain('src="./logo_small.png" alt="" loading="lazy"');
+
+        expect(authFrameSource).toContain('src="./logo_small.png" alt="" decoding="async" className="h-11 w-11 rounded-xl shadow-sm"');
+        expect(authFrameSource).not.toContain('src="./logo_small.png" alt="" loading="lazy"');
+    });
 });

@@ -476,7 +476,7 @@ export function AppShell({ auth, children }: AppShellProps) {
                 onClick={() => navigate(hasSignedInSession ? '/home' : '/discover')}
                 aria-label={hasSignedInSession ? 'Go to home' : 'Go to Discover'}
               >
-                <img src="./logo_small.png" alt="" loading="lazy" decoding="async" className="h-10 w-10 flex-none rounded-xl shadow-sm" />
+                <img src="./logo_small.png" alt="" decoding="async" className="h-10 w-10 flex-none rounded-xl shadow-sm" />
                 <span className="min-w-0">
                   <span className="block truncate text-base font-black leading-tight text-gray-950">ALL PLAYS</span>
                   <span className="block truncate text-xs font-bold text-gray-500">
@@ -608,7 +608,7 @@ export function AppShell({ auth, children }: AppShellProps) {
                 onClick={() => navigate(hasSignedInSession ? '/home' : '/discover')}
                 aria-label={hasSignedInSession ? 'Go to home' : 'Go to Discover'}
               >
-                <img src="./logo_small.png" alt="" loading="lazy" decoding="async" className="h-10 w-10 flex-none rounded-xl shadow-sm" />
+                <img src="./logo_small.png" alt="" decoding="async" className="h-10 w-10 flex-none rounded-xl shadow-sm" />
                 <span className="min-w-0">
                   <span className="block truncate text-base font-black leading-tight text-gray-950">ALL PLAYS</span>
                   <span className="block truncate text-xs font-bold text-gray-500">
