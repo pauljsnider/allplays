@@ -2723,7 +2723,7 @@ export function MessageAvatar({ message, label }: { message: ChatMessage; label:
     </div>
   );
   if (message.ai) {
-    return <img src="./logo_small.png" alt="ALL PLAYS assistant avatar" className="h-8 w-8 rounded-full border border-indigo-200 object-cover" />;
+    return <img src="./logo_small.png" alt="ALL PLAYS assistant avatar" loading="lazy" decoding="async" className="h-8 w-8 rounded-full border border-indigo-200 object-cover" />;
   }
   if (message.senderPhotoUrl) {
     return <AvatarImage src={message.senderPhotoUrl} alt={`${label} profile photo`} loading="lazy" decoding="async" className="h-8 w-8 rounded-full object-cover" fallback={initialsBadge} />;
@@ -2829,7 +2829,7 @@ function ReactionPills({
 function AiThinkingBubble() {
   return (
     <div className="flex justify-start gap-2 px-3 pb-4 sm:px-4">
-      <img src="./logo_small.png" alt="" className="h-8 w-8 rounded-full border border-indigo-200 object-cover" />
+      <img src="./logo_small.png" alt="" loading="lazy" decoding="async" className="h-8 w-8 rounded-full border border-indigo-200 object-cover" />
       <div className="max-w-[78%] rounded-2xl rounded-bl-md border border-indigo-100 bg-indigo-50 px-4 py-3 text-sm font-bold text-indigo-700">
         <span className="inline-flex items-center gap-2">
           <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />

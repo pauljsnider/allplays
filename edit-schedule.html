@@ -656,7 +656,7 @@
                                     <input type="file" id="schedule-image-input" accept="image/*"
                                         class="w-full text-sm text-gray-700 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100">
                                     <div id="schedule-image-preview" class="hidden mt-3">
-                                        <img id="schedule-image-preview-img" class="max-w-full h-auto rounded-lg border border-gray-300" alt="Schedule preview">
+                                        <img loading="lazy" decoding="async" id="schedule-image-preview-img" class="max-w-full h-auto rounded-lg border border-gray-300" alt="Schedule preview">
                                         <button type="button" id="remove-schedule-image" class="mt-2 text-sm text-red-600 hover:text-red-800">✕ Remove image</button>
                                     </div>
                                 </div>
@@ -1208,7 +1208,7 @@
                     const teamPhoto = team.photoUrl ? String(team.photoUrl) : '';
                     return `
                     <button type="button" class="w-full text-left px-3 py-2 hover:bg-indigo-50 flex items-center gap-2" data-team-id="${escapeHtml(team.id)}">
-                        ${teamPhoto ? `<img src="${escapeHtml(teamPhoto)}" alt="" class="w-6 h-6 rounded-full object-cover">` : `<div class="w-6 h-6 rounded-full bg-indigo-100 text-indigo-600 text-xs flex items-center justify-center font-semibold">${escapeHtml(teamInitial)}</div>`}
+                        ${teamPhoto ? `<img loading="lazy" decoding="async" src="${escapeHtml(teamPhoto)}" alt="" class="w-6 h-6 rounded-full object-cover">` : `<div class="w-6 h-6 rounded-full bg-indigo-100 text-indigo-600 text-xs flex items-center justify-center font-semibold">${escapeHtml(teamInitial)}</div>`}
                         <div>
                             <div class="font-medium text-gray-900">${escapeHtml(teamName)}</div>
                             <div class="text-xs text-gray-500">${escapeHtml(teamSport)}</div>

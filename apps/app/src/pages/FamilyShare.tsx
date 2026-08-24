@@ -127,7 +127,7 @@ function FamilyShareContent({ model, onRefresh }: { model: FamilyShareViewModel;
             {model.children.length ? model.children.map((child) => (
               <div key={`${child.teamId}-${child.playerId}`} className="flex min-w-0 items-center gap-3 rounded-xl border border-gray-200 p-3">
                 <div className="flex h-11 w-11 flex-none items-center justify-center overflow-hidden rounded-full bg-primary-50 text-sm font-black text-primary-700">
-                  {child.playerPhotoUrl ? <img src={child.playerPhotoUrl} alt="" className="h-full w-full object-cover" /> : (child.playerName.charAt(0) || 'P')}
+                  {child.playerPhotoUrl ? <img src={child.playerPhotoUrl} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" /> : (child.playerName.charAt(0) || 'P')}
                 </div>
                 <div className="min-w-0">
                   <div className="truncate text-sm font-black text-gray-950">{child.playerName}</div>
