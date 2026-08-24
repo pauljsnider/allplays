@@ -463,24 +463,31 @@ export async function getPublicTeamStandingsInputs(teamId: string): Promise<Publ
     return (await getNormalizedPublicCompletedGames(teamId)).map((game) => game.standings);
 }
 
-/** Build the public, points-mode subset of native standings rows. */
+/** Build the privacy-safe subset of native standings rows for the configured mode. */
 export function buildPublicTeamStandings(
     teamName: string,
     standingsConfig: PublicStandingsConfig | null,
     games: PublicTeamStandingsInput[]
 ): PublicTeamStandings | null {
-    if (!teamName || !standingsConfig?.enabled || standingsConfig.rankingMode !== 'points') return null;
+    if (!teamName || !standingsConfig?.enabled) return null;
 
     const rows = computeNativeStandings(games, standingsConfig)
-        .map((row: Record<string, any>) => ({
-            rank: row.rank,
-            team: row.team,
-            record: row.record,
-            points: row.points
-        }));
+        .map((row: Record<string, any>) => standingsConfig.rankingMode === 'win_pct'
+            ? {
+                rank: row.rank,
+                team: row.team,
+                record: row.record,
+                winPct: row.winPct
+            }
+            : {
+                rank: row.rank,
+                team: row.team,
+                record: row.record,
+                points: row.points
+            });
 
     return {
-        label: 'Points table',
+        label: standingsConfig.rankingMode === 'win_pct' ? 'Win percentage' : 'Points table',
         rows,
         currentRow: rows.find((row: { team: unknown }) => row.team === teamName) || null
     };
@@ -489,7 +496,7 @@ export function buildPublicTeamStandings(
 export async function getPublicTeamStandings(teamId: string): Promise<PublicTeamStandings | null> {
     const team = await getPublicTeamDetail(teamId);
     const standingsConfig = team.standingsConfig;
-    if (!standingsConfig?.enabled || standingsConfig.rankingMode !== 'points') return null;
+    if (!standingsConfig?.enabled) return null;
     const games = await getPublicTeamStandingsInputs(teamId);
     return buildPublicTeamStandings(team.name, standingsConfig, games);
 }
