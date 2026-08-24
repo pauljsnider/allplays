@@ -569,6 +569,25 @@ async function mockTeamsModules(page, { scenario = '', managedTeam = false, rost
                             isCancelled: false,
                             assignments: [],
                             openAssignmentCount: 0
+                        }, {
+                            eventKey: 'team-1::game-final',
+                            id: 'game-final',
+                            teamId: 'team-1',
+                            teamName: 'Bears',
+                            title: 'vs. Wolves',
+                            type: 'game',
+                            date: new Date('2026-05-01T18:00:00Z'),
+                            location: 'Main Gym',
+                            opponent: 'Wolves',
+                            childId: 'player-1',
+                            childName: 'Pat Star',
+                            isDbGame: true,
+                            status: 'completed',
+                            homeScore: 42,
+                            awayScore: 35,
+                            isCancelled: false,
+                            assignments: [],
+                            openAssignmentCount: 0
                         }],
                         isPartial: false
                     };
