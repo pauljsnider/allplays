@@ -413,6 +413,8 @@ async function stubRealOverlayModules(page) {
                 { id: 'replay-start', type: 'clock_sync', homeScore: 0, awayScore: 0, period: 'H1', gameClockMs: 0, createdAt: 100000 },
                 { id: 'replay-lineup', type: 'lineup', onCourt: ['p4'], bench: ['p9'], period: 'H1', gameClockMs: 300000, createdAt: 400000 },
                 { id: 'replay-opener', type: 'goal', description: 'Lane opens the replay scoring', playerId: 'p9', playerName: 'Avery Lane', statKey: 'goals', value: 1, homeScore: 1, awayScore: 0, period: 'H1', gameClockMs: 345000, createdAt: 445000 },
+                { id: 'replay-shot', type: 'stat', description: 'Gray tests the keeper', playerId: 'p4', playerName: 'Sam Gray', statKey: 'shots', value: 1, homeScore: 1, awayScore: 0, period: 'H1', gameClockMs: 350000, createdAt: 450000 },
+                { id: 'replay-clock-after-opener', type: 'clock_sync', homeScore: 1, awayScore: 0, period: 'H1', gameClockMs: 360000, createdAt: 460000 },
                 { id: 'replay-goal', type: 'goal', description: 'Lane scores the replay winner', playerId: 'p9', playerName: 'Avery Lane', statKey: 'goals', value: 1, homeScore: 3, awayScore: 2, period: 'H2', gameClockMs: 690000, createdAt: 790000 }
             ]; }
             export async function getLiveChatHistory() {
@@ -900,6 +902,21 @@ test('replay mode synchronizes saved plays, score, lineup, chat, reactions, and 
     await expect(page.locator('#home-score')).toHaveText('1');
     await expect(page.locator('#event-list')).toContainText('Lane opens the replay scoring');
     await expect(page.locator('#on-field-list')).toContainText('Sam Gray');
+    await page.getByRole('button', { name: '50×' }).click();
+    await page.getByRole('button', { name: 'Play replay' }).click();
+    await expect(page.locator('#replay-play')).toHaveAttribute('data-replay-action', 'pause');
+    await expect(page.locator('#replay-play .replay-pause-glyph')).toBeVisible();
+    await expect(page.locator('#replay-current')).not.toHaveText('5:45');
+    await page.waitForTimeout(400);
+    await page.getByRole('button', { name: 'Pause replay' }).click();
+    await page.locator('[data-panel="insights"]').click();
+    await page.locator('#leaders-tab').click();
+    await expect(page.locator('#leader-list')).toContainText('1 GOALS');
+    await expect(page.locator('#leader-list')).toContainText('1 SHOTS');
+    await expect(page.locator('#event-list')).toContainText('Lane opens the replay scoring');
+    await expect(page.locator('#event-list')).toContainText('Gray tests the keeper');
+    await expect(page.locator('#replay-play')).toHaveAttribute('data-replay-action', 'play');
+    await expect(page.locator('#replay-play .replay-play-glyph')).toBeVisible();
     await page.locator('[data-panel="chat"]').click();
     await expect(page.locator('#chat-list')).toContainText('Saved replay message');
     await expect(page.locator('#chat-list .chat-message strong')).toHaveText('Saved replay message');
@@ -1071,9 +1088,13 @@ test('recorded replay scan keeps the event timeline moving while the video is in
     await page.route('**/overlay-recording-fixture.mp4', (route) => route.abort());
 
     await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true`, { waitUntil: 'domcontentloaded' });
-    await page.getByRole('button', { name: 'Pause replay' }).click();
+    const playbackButton = page.locator('#replay-play');
+    await expect(playbackButton).toBeVisible();
     await page.getByRole('button', { name: '50×' }).click();
-    await page.getByRole('button', { name: 'Play replay' }).click();
+    if (await playbackButton.getAttribute('data-replay-action') === 'play') {
+        await playbackButton.click();
+    }
+    await expect(playbackButton).toHaveAttribute('data-replay-action', 'pause');
     await page.locator('#overlay-recorded-video').dispatchEvent('pause');
 
     await expect(page.locator('#replay-scan-status')).toBeVisible();

@@ -959,6 +959,26 @@
       padding: 0 14px;
     }
 
+    .replay-button[data-kind="playback"] {
+      display: grid;
+      place-items: center;
+      width: 44px;
+      min-width: 44px;
+      padding: 0;
+    }
+
+    .replay-control-icon {
+      display: block;
+      width: 20px;
+      height: 20px;
+      fill: currentColor;
+    }
+
+    .replay-button[data-replay-action="play"] .replay-pause-glyph,
+    .replay-button[data-replay-action="pause"] .replay-play-glyph {
+      display: none;
+    }
+
     .replay-button[data-kind="restart"] {
       min-width: 44px;
       padding: 0 10px;
@@ -1783,7 +1803,12 @@
 
     <section id="replay-controls" class="replay-controls" aria-label="Replay controls" hidden>
       <button id="replay-restart" class="replay-button" data-kind="restart" type="button" aria-label="Restart replay">↺</button>
-      <button id="replay-play" class="replay-button" type="button" aria-label="Play replay">Play</button>
+      <button id="replay-play" class="replay-button" data-kind="playback" data-replay-action="play" type="button" aria-label="Play replay">
+        <svg class="replay-control-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path class="replay-play-glyph" d="M8 5v14l11-7z"></path>
+          <path class="replay-pause-glyph" d="M7 5h4v14H7zm6 0h4v14h-4z"></path>
+        </svg>
+      </button>
       <div class="replay-timeline">
         <time id="replay-current" class="replay-time" datetime="PT0M0S">0:00</time>
         <input id="replay-progress" class="replay-progress" type="range" min="0" max="100" step="0.1" value="0" aria-label="Replay position">
@@ -1854,6 +1879,6 @@
   </main>
 
   <span id="screen-reader-update" class="visually-hidden" aria-live="polite"></span>
-  <script type="module" src="js/live-game-overlay.js?v=16"></script>
+  <script type="module" src="js/live-game-overlay.js?v=17"></script>
 </body>
 </html>

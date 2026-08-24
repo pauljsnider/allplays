@@ -37,7 +37,10 @@ describe('live game overlay page', () => {
         expect(html).toContain('data-chat-reaction="fire"');
         expect(html).toContain('id="replay-scan-status"');
         expect(html).toContain('Video catches up when paused');
-        expect(html).toContain('js/live-game-overlay.js?v=16');
+        expect(html).toContain('class="replay-play-glyph"');
+        expect(html).toContain('class="replay-pause-glyph"');
+        expect(html).toContain('data-replay-action="play"');
+        expect(html).toContain('js/live-game-overlay.js?v=17');
     });
 
     it('keeps the local demo isolated while wiring canonical subscriptions and authenticated chat posting', () => {

@@ -889,7 +889,7 @@ function setReplayControlState() {
     elements.replayProgress.disabled = duration <= 0;
     elements.replayPlay.disabled = duration <= 0;
     elements.replayRestart.disabled = duration <= 0;
-    elements.replayPlay.textContent = uiState.replayPlaying ? 'Pause' : (elapsed >= duration && duration > 0 ? 'Play again' : 'Play');
+    elements.replayPlay.dataset.replayAction = uiState.replayPlaying ? 'pause' : 'play';
     elements.replayPlay.setAttribute('aria-label', uiState.replayPlaying ? 'Pause replay' : 'Play replay');
     elements.replaySpeeds.forEach((button) => {
         button.setAttribute('aria-pressed', String(Number(button.dataset.replaySpeed) === uiState.replaySpeed));
@@ -1063,7 +1063,12 @@ function advanceReplayToElapsed(elapsedMs, stateTools) {
         replayIndex: session.replayIndex,
         elapsedMs: elapsed
     });
-    if (eventWindow.events.length) processLiveEventSnapshot(eventWindow.events, stateTools);
+    if (eventWindow.events.length) {
+        // Snapshot reconciliation intentionally rebuilds canonical score, lineup,
+        // plays, and stats. Give it the complete replay window so a later
+        // clock-only batch cannot erase previously applied stat events.
+        processLiveEventSnapshot(session.replayEvents.slice(0, eventWindow.nextReplayIndex), stateTools);
+    }
     session.replayIndex = eventWindow.nextReplayIndex;
     applyReplayStreams(elapsed);
     uiState.replayElapsedMs = elapsed;
