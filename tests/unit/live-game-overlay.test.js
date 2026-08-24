@@ -41,6 +41,8 @@ describe('live game overlay page', () => {
         expect(html).toContain('class="replay-pause-glyph"');
         expect(html).toContain('data-replay-action="play"');
         expect(html).toContain('id="share-game"');
+        expect(html).toContain('id="watch-replay"');
+        expect(html).toContain('id="watch-replay-menu"');
         expect(html).toContain('id="scoreboard-toggle"');
         expect(html).toContain('id="scoreboard-menu-toggle"');
         expect(html).toContain('id="mute-toggle"');
@@ -54,15 +56,15 @@ describe('live game overlay page', () => {
         expect(html).toContain('id="home-team-photo"');
         expect(html).toContain('id="away-team-photo"');
         expect(html).toContain('data-score-hidden="false"');
-        expect(html).toContain('js/live-game-overlay.js?v=19');
+        expect(html).toContain('js/live-game-overlay.js?v=20');
     });
 
     it('keeps the local demo isolated while wiring canonical subscriptions and authenticated chat posting', () => {
         expect(source).toContain("params.demo === '1'");
         expect(source).toContain("params.replay === 'true'");
         expect(source).toContain('startDemoReplayMode');
-        expect(source).toContain("return import('./db.js?v=4433188')");
-        expect(source).toContain("import('./live-game-state.js?v=36')");
+        expect(source).toContain("return import('./db.js?v=4433189')");
+        expect(source).toContain("import('./live-game-state.js?v=37')");
         expect(source).toContain('stateTools.applyResetEventState');
         expect(source).toContain('reconcileOverlayLiveEvents');
         expect(modelSource).toContain('stateTools.applyViewerEventToState');
@@ -74,7 +76,7 @@ describe('live game overlay page', () => {
         expect(source).toContain('database.subscribeReactions');
         expect(source).not.toContain('syncLiveClockTicker');
         expect(source).not.toContain('liveClockAnchor');
-        expect(source).toContain("import('./auth.js?v=4433192')");
+        expect(source).toContain("import('./auth.js?v=4433193')");
         expect(source).toContain("import('./live-game-chat.js?v=2')");
         expect(source).toContain("from './safe-image-url.js?v=1'");
         expect(source).toContain('database.postLiveChatMessage');
@@ -86,7 +88,8 @@ describe('live game overlay page', () => {
         expect(source).toContain('generateAiResponse');
         expect(source).toContain("import('./vendor/firebase-ai.js')");
         expect(source).toContain('handleMentionInput');
-        expect(source).toContain('ensureAnonymousChatName');
+        expect(source).toContain('ensureChatDisplayName');
+        expect(source).toContain('liveChatDisplayName:');
         expect(source).toContain('updateChatUnread');
         expect(source).toContain('text.length > 2000');
         expect(source).toContain('Date.now() - uiState.lastChatSentAt < 1500');
@@ -106,9 +109,9 @@ describe('live game overlay page', () => {
         expect(source).not.toContain('trackViewerPresence(');
         expect(source).toContain('sendChatReaction');
         expect(source).toContain("from './game-share-links.js?v=1'");
-        expect(source).toContain("from './utils.js?v=443364'");
+        expect(source).toContain("from './utils.js?v=443365'");
         expect(source).toContain("from './live-game-announcer.js?v=1'");
-        expect(source).toContain("import('./team-entitlements.js?v=8')");
+        expect(source).toContain("import('./team-entitlements.js?v=9')");
         expect(source).toContain('isRecordedReplayTeamPassGateEnabled');
         expect(source).toContain('getTeamEntitlementStatus');
         expect(source).toContain('showReplayAccessGate');
@@ -116,6 +119,8 @@ describe('live game overlay page', () => {
         expect(source).toContain('requestFullscreen');
         expect(source).toContain('buildGameWatchShareUrl');
         expect(source).toContain('toggleScoreboardVisibility');
+        expect(source).toContain("setConnectionIssue('replay'");
+        expect(source).toContain('connectionIssues: new Map()');
         expect(source).toContain("state.events.slice(0, 60)");
         expect(source).toContain('renderTeamPhoto');
         expect(source).toContain('image.dataset.source === safeUrl');

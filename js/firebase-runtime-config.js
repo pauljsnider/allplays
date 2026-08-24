@@ -11,6 +11,7 @@ const LOCAL_FIREBASE_HOSTING_ORIGINS = new Set([
     'http://localhost:8000',
     'http://127.0.0.1:8000'
 ]);
+const LOCAL_FIREBASE_PROJECT_HEADER = 'X-AllPlays-Local-Firebase-Project';
 const DEFAULT_PRIMARY_FIREBASE_CONFIG = {
     apiKey: 'AIzaSyDoixIoKJuUVWdmImwjYRTthjKOv2mU0Jc',
     authDomain: 'game-flow-c6311.firebaseapp.com',
@@ -196,7 +197,7 @@ function isNativeRuntimeProtocol(protocol) {
     return protocol === 'capacitor:' || protocol === 'ionic:';
 }
 
-async function fetchFirebaseConfigFromHosting({ allowEmpty = false } = {}) {
+async function fetchFirebaseConfigFromHosting({ requireExpectedLocalProject = false } = {}) {
     const baseUrl = (typeof window !== 'undefined' && window.location && window.location.origin)
         ? window.location.origin
         : 'http://localhost'; // Fallback for Node.js tests
@@ -210,26 +211,25 @@ async function fetchFirebaseConfigFromHosting({ allowEmpty = false } = {}) {
         throw new Error(`Firebase config request failed (${response.status})`);
     }
 
+    const expectedLocalProjectId = requireExpectedLocalProject
+        ? String(response.headers?.get?.(LOCAL_FIREBASE_PROJECT_HEADER) || '').trim()
+        : '';
+    if (requireExpectedLocalProject && !/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(expectedLocalProjectId)) {
+        throw new Error('Local Firebase Hosting did not declare its expected project.');
+    }
+
     let payload;
     try {
         payload = await response.json();
-    } catch (error) {
-        // The Firebase Hosting emulator can return an empty 200 body when its
-        // CLI login has expired. Browsers do not consistently expose the
-        // Content-Length header, but an empty JSON body consistently fails at
-        // this parsing boundary. Only the explicitly trusted local Hosting
-        // origin enables this fallback.
-        if (allowEmpty && error instanceof SyntaxError) {
-            return null;
-        }
-        throw error;
+    } catch (_error) {
+        throw new Error('Firebase Hosting init config returned an empty or invalid response.');
     }
     const normalized = normalizeFirebaseConfig(payload);
     if (!normalized) {
-        if (allowEmpty && payload && Object.keys(payload).length === 0) {
-            return null;
-        }
         throw new Error('Firebase config payload is missing required fields');
+    }
+    if (requireExpectedLocalProject && normalized.projectId !== expectedLocalProjectId) {
+        throw new Error('Local Firebase Hosting project does not match the declared project.');
     }
 
     return normalized;
@@ -253,8 +253,7 @@ async function fetchProductionFirebaseConfigFromHosting() {
 
 async function fetchLocalFirebaseConfigFromHosting() {
     try {
-        const config = await fetchFirebaseConfigFromHosting({ allowEmpty: true });
-        return config || { ...DEFAULT_PRIMARY_FIREBASE_CONFIG };
+        return await fetchFirebaseConfigFromHosting({ requireExpectedLocalProject: true });
     } catch (error) {
         console.warn('[firebase-config] Local Hosting config read failed.', {
             name: String(error?.name || 'Error'),

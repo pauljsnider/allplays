@@ -28,7 +28,7 @@ import {
     resolveSafeProfilePhotoWriteUrl
 } from './safe-image-url.js?v=1';
 import { buildGameWatchShareUrl } from './game-share-links.js?v=1';
-import { shareOrCopy } from './utils.js?v=443364';
+import { shareOrCopy } from './utils.js?v=443365';
 import { createPlayAnnouncer } from './live-game-announcer.js?v=1';
 
 const elements = {
@@ -39,6 +39,8 @@ const elements = {
     videoFallbackCopy: document.querySelector('#video-fallback-copy'),
     openStream: document.querySelector('#open-stream'),
     openStreamLabel: document.querySelector('#open-stream-label'),
+    watchReplay: document.querySelector('#watch-replay'),
+    watchReplayMenu: document.querySelector('#watch-replay-menu'),
     shareGame: document.querySelector('#share-game'),
     shareGameMenu: document.querySelector('#share-game-menu'),
     scoreboardToggle: document.querySelector('#scoreboard-toggle'),
@@ -174,11 +176,13 @@ const uiState = {
     lastChatSentAt: 0,
     anonName: '',
     chatServices: null,
+    connectionIssues: new Map(),
     unsubscribers: []
 };
 
 const playAnnouncer = createPlayAnnouncer();
 let actionToastTimer = null;
+let connectionIssueSequence = 0;
 
 const mentionState = {
     active: false,
@@ -208,7 +212,7 @@ function usesCompactPanelLayout() {
 }
 
 function loadOverlayDatabase() {
-    return import('./db.js?v=4433188');
+    return import('./db.js?v=4433189');
 }
 
 function getTimestampMs(value) {
@@ -219,11 +223,35 @@ function getTimestampMs(value) {
     return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function setConnectionMessage(message = '', tone = 'warning') {
+function renderConnectionMessage() {
     if (!elements.connectionMessage) return;
-    elements.connectionMessage.textContent = message;
-    elements.connectionMessage.dataset.tone = tone;
-    elements.connectionMessage.hidden = !message;
+    const tonePriority = { error: 3, warning: 2, info: 1 };
+    const activeIssues = [...uiState.connectionIssues.values()].sort((left, right) => (
+        (tonePriority[right.tone] || 0) - (tonePriority[left.tone] || 0)
+        || right.sequence - left.sequence
+    ));
+    const issue = activeIssues[0] || null;
+    elements.connectionMessage.textContent = issue?.message || '';
+    elements.connectionMessage.dataset.tone = issue?.tone || 'warning';
+    elements.connectionMessage.hidden = !issue;
+}
+
+function setConnectionIssue(channel, message = '', tone = 'warning') {
+    const key = String(channel || 'general');
+    if (message) {
+        uiState.connectionIssues.set(key, {
+            message,
+            tone,
+            sequence: ++connectionIssueSequence
+        });
+    } else {
+        uiState.connectionIssues.delete(key);
+    }
+    renderConnectionMessage();
+}
+
+function setConnectionMessage(message = '', tone = 'warning') {
+    setConnectionIssue('general', message, tone);
 }
 
 function showActionToast(message) {
@@ -248,27 +276,46 @@ function toggleGameActionsMenu() {
     if (open) elements.gameActionsMenu.querySelector('[role^="menuitem"]')?.focus();
 }
 
+function isCompletedGame() {
+    return [
+        uiState.game?.game?.liveStatus,
+        uiState.game?.game?.status,
+        uiState.game?.game?.state,
+        uiState.game?.liveStatus
+    ].some((value) => ['completed', 'final'].includes(String(value || '').toLowerCase()));
+}
+
+function getOverlayReplayHref() {
+    return `live-game-overlay.html?teamId=${encodeURIComponent(uiState.teamId)}&gameId=${encodeURIComponent(uiState.gameId)}&replay=true`;
+}
+
 function configureGameActions() {
     if (!uiState.teamId || !uiState.gameId) return;
     const gameHref = `game.html#teamId=${encodeURIComponent(uiState.teamId)}&gameId=${encodeURIComponent(uiState.gameId)}`;
     elements.matchReportLink.href = gameHref;
-    const status = String(uiState.game?.game?.status || uiState.game?.game?.liveStatus || '').toLowerCase();
-    elements.matchReportLink.hidden = !(uiState.isReplay || status === 'completed' || status === 'final');
+    elements.matchReportLink.hidden = !(uiState.isReplay || isCompletedGame());
     elements.gameDetailsLink.href = gameHref;
+    const replayAvailable = !uiState.isReplay && isCompletedGame();
+    const replayHref = getOverlayReplayHref();
+    elements.watchReplay.href = replayHref;
+    elements.watchReplay.hidden = !replayAvailable;
+    elements.watchReplayMenu.href = replayHref;
+    elements.watchReplayMenu.hidden = !replayAvailable;
 }
 
 async function shareGame() {
     if (!uiState.teamId || !uiState.gameId || !uiState.game) return;
+    const shareReplay = uiState.isReplay || isCompletedGame();
     const url = buildGameWatchShareUrl({
         teamId: uiState.teamId,
         gameId: uiState.gameId,
-        replay: uiState.isReplay
+        replay: shareReplay
     });
     const homeName = uiState.game.homeName || 'Team';
     const awayName = uiState.game.awayName || 'Opponent';
     const text = `Watch ${homeName} vs ${awayName}`;
     const result = await shareOrCopy({
-        title: uiState.isReplay ? 'Watch replay' : 'Watch game',
+        title: shareReplay ? 'Watch replay' : 'Watch game',
         text,
         url,
         clipboardText: `${text}\n${url}`
@@ -671,24 +718,31 @@ function updateChatUnread() {
 }
 
 function getChatSenderName() {
-    if (uiState.chatUser?.uid) {
-        return String(uiState.chatUser.displayName || 'Fan').trim().slice(0, 80) || 'Fan';
-    }
-    return uiState.anonName || 'Fan';
+    if (uiState.anonName) return uiState.anonName;
+    return String(uiState.chatUser?.displayName || 'Fan').trim().slice(0, 80) || 'Fan';
 }
 
-function ensureAnonymousChatName() {
+function getChatNameStorageKey() {
+    return uiState.chatUser?.uid
+        ? `liveChatDisplayName:${uiState.chatUser.uid}`
+        : 'liveChatAnonName';
+}
+
+function ensureChatDisplayName() {
     if (uiState.anonName) return uiState.anonName;
     let saved = '';
     try {
-        saved = String(sessionStorage.getItem('liveChatAnonName') || '').replace(/\s+/g, ' ').trim().slice(0, 20);
+        saved = String(sessionStorage.getItem(getChatNameStorageKey()) || '').replace(/\s+/g, ' ').trim().slice(0, 20);
     } catch {
         // Storage can be unavailable in privacy-restricted browsers. The
         // generated name still works for this page view.
     }
-    uiState.anonName = saved.length >= 2 ? saved : `Fan${Math.floor(1000 + Math.random() * 9000)}`;
+    const authenticatedName = String(uiState.chatUser?.displayName || '').replace(/\s+/g, ' ').trim().slice(0, 20);
+    uiState.anonName = saved.length >= 2
+        ? saved
+        : authenticatedName || `Fan${Math.floor(1000 + Math.random() * 9000)}`;
     try {
-        sessionStorage.setItem('liveChatAnonName', uiState.anonName);
+        sessionStorage.setItem(getChatNameStorageKey(), uiState.anonName);
     } catch {
         // Display-name persistence is optional and must not affect the game.
     }
@@ -699,7 +753,7 @@ function ensureAnonymousChatName() {
 function openAnonNameEditor() {
     if (!elements.anonEdit || !elements.anonInput) return;
     elements.anonEdit.hidden = false;
-    elements.anonInput.value = ensureAnonymousChatName();
+    elements.anonInput.value = ensureChatDisplayName();
     elements.anonInput.focus();
 }
 
@@ -716,7 +770,7 @@ function saveAnonName() {
     }
     uiState.anonName = cleaned.slice(0, 20);
     try {
-        sessionStorage.setItem('liveChatAnonName', uiState.anonName);
+        sessionStorage.setItem(getChatNameStorageKey(), uiState.anonName);
     } catch {
         // The in-memory name remains usable when storage is unavailable.
     }
@@ -902,15 +956,15 @@ function renderChatComposer(statusOverride = null) {
         elements.chatSignIn.href = getChatSignInUrl();
         elements.chatSignIn.hidden = !uiState.chatControlsReady || !uiState.chatEnabled || signedIn;
     }
-    if (!signedIn) ensureAnonymousChatName();
-    if (elements.chatAnonNotice) elements.chatAnonNotice.hidden = !uiState.chatEnabled || signedIn;
+    if (signedIn) ensureChatDisplayName();
+    if (elements.chatAnonNotice) elements.chatAnonNotice.hidden = !uiState.chatEnabled || !signedIn;
     if (elements.chatTip) elements.chatTip.hidden = !uiState.chatEnabled;
     if (elements.chatReactions) elements.chatReactions.hidden = !canSend;
     elements.chatReactionButtons.forEach((button) => {
         if (!button.dataset.cooldown) button.disabled = !canSend;
     });
     if (!canSend) hideMentionMenu();
-    if (signedIn) closeAnonNameEditor();
+    if (!signedIn) closeAnonNameEditor();
 
     if (statusOverride) {
         setChatStatus(statusOverride.message, statusOverride.tone);
@@ -986,7 +1040,7 @@ async function initializeChatComposer(database, teamId, gameId) {
 
     try {
         const [authTools, chatTools] = await Promise.all([
-            import('./auth.js?v=4433192'),
+            import('./auth.js?v=4433193'),
             import('./live-game-chat.js?v=2')
         ]);
         uiState.chatServices = {
@@ -1024,8 +1078,11 @@ async function initializeChatComposer(database, teamId, gameId) {
             uiState.chatParityBound = true;
         }
         const unsubscribeAuth = authTools.checkAuth((user) => {
+            const previousUid = uiState.chatUser?.uid || '';
+            const nextUid = user?.uid || '';
             uiState.chatUser = user;
-            if (!user) ensureAnonymousChatName();
+            if (previousUid !== nextUid) uiState.anonName = '';
+            if (user) ensureChatDisplayName();
             refreshChatAvailability();
         }, { skipEmailVerificationCheck: true });
         if (typeof unsubscribeAuth === 'function') uiState.unsubscribers.push(unsubscribeAuth);
@@ -1451,11 +1508,12 @@ async function loadReplaySnapshot(database, stateTools, teamId, gameId) {
     resetReplayToElapsed(0, stateTools);
 
     const failedResults = [eventsResult, chatResult, reactionsResult].filter((result) => result.status === 'rejected');
+    setConnectionMessage('');
     if (failedResults.length) {
         console.warn('Some overlay replay history could not be loaded:', failedResults[0].reason);
-        setConnectionMessage('Some replay context could not load. The saved video and available game data still work; refresh to retry.');
+        setConnectionIssue('replay', 'Some replay context could not load. The saved video and available game data still work; refresh to retry.');
     } else {
-        setConnectionMessage('');
+        setConnectionIssue('replay');
     }
     playReplay(stateTools);
 }
@@ -1538,6 +1596,9 @@ function showEmbedVideo(sourceUrl, publicUrl = '', { controllableReplay = false,
 function showRecordedVideo(sourceUrl, publicUrl = '', publicLabel = 'Open replay video ↗') {
     if (!elements.recordedVideo.hidden && elements.recordedVideo.getAttribute('src') === sourceUrl) {
         setProviderLink(publicUrl, publicLabel);
+        if (uiState.isReplay && uiState.replaySession) {
+            syncReplayMedia({ seek: true, play: uiState.replayPlaying });
+        }
         return;
     }
     resetVideoElements();
@@ -1735,7 +1796,7 @@ async function startDemoReplayMode(params) {
         { controllableReplay: true }
     );
     uiState.videoDurationMs = 15_000;
-    const stateTools = await import('./live-game-state.js?v=36');
+    const stateTools = await import('./live-game-state.js?v=37');
     await loadReplaySnapshot({
         getLiveEvents: async () => replayEvents,
         getLiveChatHistory: async () => replayChat,
@@ -1798,6 +1859,7 @@ function bindInteractions() {
                 videoDurationMs: uiState.videoDurationMs
             });
             setReplayControlState();
+            syncReplayMedia({ seek: true, play: uiState.replayPlaying });
         }
     });
     elements.recordedVideo.addEventListener('timeupdate', () => {
@@ -1887,7 +1949,7 @@ async function startRealMode(params) {
         const [database, videoTools, stateTools] = await Promise.all([
             loadOverlayDatabase(),
             import('./live-game-video.js?v=443315'),
-            import('./live-game-state.js?v=36')
+            import('./live-game-state.js?v=37')
         ]);
         uiState.optionalTeamStatus = 'pending';
         const teamPromise = database.getGameDayTeamContext(teamId, gameId, { includeInactive: true })
@@ -1941,7 +2003,7 @@ async function startRealMode(params) {
                         showReplayAccessGate({ state: 'unavailable' });
                         return true;
                     }
-                    const entitlements = await import('./team-entitlements.js?v=8');
+                    const entitlements = await import('./team-entitlements.js?v=9');
                     if (requestId !== uiState.videoRequestId) return false;
                     const gateEnabled = entitlements.isRecordedReplayTeamPassGateEnabled({
                         game: uiState.game.game,
@@ -1992,12 +2054,12 @@ async function startRealMode(params) {
                 if (elements.iframe.hidden && elements.recordedVideo.hidden) {
                     showVideoFallback('The video feed is temporarily unavailable. Live score and play updates remain connected.');
                 }
-                setConnectionMessage('Video refresh is delayed. Score, clock, plays, and chat continue independently.');
+                setConnectionIssue('video', 'Video refresh is delayed. Score, clock, plays, and chat continue independently.');
                 return false;
             }
         };
         void renderVideoSafely().then((success) => {
-            if (success) setConnectionMessage('');
+            if (success) setConnectionIssue('video');
         });
 
         const refreshOptionalContext = () => {
@@ -2042,6 +2104,7 @@ async function startRealMode(params) {
                 if (crossedResetBoundary) uiState.game.lastResetAt = resetAt;
                 const hasEventAuthority = uiState.hasLiveEventSnapshot && uiState.lastLiveEvents.length > 0;
                 applyOverlayGame(uiState.game, updatedGame, { preserveEventState: hasEventAuthority });
+                configureGameActions();
                 if (uiState.hasLiveEventSnapshot) {
                     processLiveEventSnapshot(uiState.lastLiveEvents, stateTools);
                 } else if (crossedResetBoundary || stateTools.shouldResetViewerFromGameDoc(updatedGame, uiState.game)) {
@@ -2051,15 +2114,16 @@ async function startRealMode(params) {
                 }
                 refreshChatAvailability();
                 void renderVideoSafely().then((success) => {
-                    if (success) setConnectionMessage('');
+                    if (success) setConnectionIssue('video');
                 });
+                setConnectionIssue('game');
             } catch (error) {
                 console.warn('Overlay game update could not be applied:', error);
-                setConnectionMessage('A score refresh was skipped. Existing video, score, and play data remain available.');
+                setConnectionIssue('game', 'A score refresh was skipped. Existing video, score, and play data remain available.');
             }
         }, (error) => {
             console.warn('Overlay game subscription failed:', error);
-            setConnectionMessage('Live score refresh is delayed. The video remains available; try refreshing if it does not recover.');
+            setConnectionIssue('game', 'Live score refresh is delayed. The video remains available; try refreshing if it does not recover.');
         }, { publicProjection: game.isPublicProjection === true }));
 
         uiState.unsubscribers.push(database.subscribeLiveEvents(teamId, gameId, (events) => {
@@ -2067,30 +2131,35 @@ async function startRealMode(params) {
                 uiState.lastLiveEvents = Array.isArray(events) ? [...events] : [];
                 uiState.hasLiveEventSnapshot = true;
                 processLiveEventSnapshot(uiState.lastLiveEvents, stateTools);
-                setConnectionMessage('');
+                setConnectionIssue('events');
             } catch (error) {
                 console.warn('Overlay event update could not be applied:', error);
-                setConnectionMessage('One play update was skipped. Video, scoreboard refresh, and chat continue independently.');
+                setConnectionIssue('events', 'One play update was skipped. Video, scoreboard refresh, and chat continue independently.');
             }
         }, (error) => {
             console.warn('Overlay event subscription failed:', error);
-            setConnectionMessage('Play-by-play is temporarily unavailable. Video and scoreboard updates continue independently.');
+            setConnectionIssue('events', 'Play-by-play is temporarily unavailable. Video and scoreboard updates continue independently.');
         }));
 
         uiState.unsubscribers.push(database.subscribeLiveChat(teamId, gameId, { limit: 100 }, (messages) => {
             replaceOverlayChat(uiState.game, messages);
             renderChat();
+            setConnectionIssue('chat');
         }, (error) => {
             console.warn('Overlay chat subscription failed:', error);
+            setConnectionIssue('chat', 'Live chat is temporarily unavailable. Video, score, and play updates continue independently.');
         }));
 
         uiState.unsubscribers.push(database.subscribeReactions(teamId, gameId, (reaction) => {
             showFloatingReaction(reaction);
+            setConnectionIssue('reactions');
         }, (error) => {
             console.warn('Overlay reaction subscription failed:', error);
+            setConnectionIssue('reactions', 'Live reactions are temporarily unavailable. The rest of the broadcast continues.');
         }));
 
         void initializeChatComposer(database, teamId, gameId);
+        setConnectionMessage('');
     } catch (error) {
         console.warn('Overlay broadcast failed to connect:', error);
         showVideoFallback('The game could not be loaded. The interactive preview remains available.');

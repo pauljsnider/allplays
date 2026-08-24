@@ -368,6 +368,9 @@ async function stubRealOverlayModules(page) {
             };
             export async function getGameDayTeamContext() {
                 if (window.__OVERLAY_DEFER_OPTIONAL_CONTEXT__) return new Promise(() => {});
+                if (window.__OVERLAY_DELAY_TEAM_CONTEXT__) {
+                    await new Promise((resolve) => { window.__OVERLAY_RELEASE_TEAM_CONTEXT__ = resolve; });
+                }
                 return team;
             }
             export async function getGame() { return game; }
@@ -703,9 +706,22 @@ test('real mode follows canonical game, lineup, clock, reset, reaction, and pass
     await expect(page.locator('#away-score')).toHaveText('2');
     await expect(page.locator('#connection-message')).toContainText('Play-by-play is temporarily unavailable');
 
+    // A healthy game, chat, reaction, or video callback must not erase the
+    // independent event-feed failure until that feed itself recovers.
+    await page.evaluate(() => {
+        window.__OVERLAY_GAME_CALLBACK__({
+            id: 'game-1', opponent: 'Sporting Blue', homeScore: 4, awayScore: 2,
+            period: 'H2', liveClockMs: 692000, liveStatus: 'live', liveViewerCount: 24,
+            videoUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc'
+        });
+        window.__OVERLAY_CHAT_CALLBACK__([]);
+        window.__OVERLAY_REACTION_CALLBACK__({ id: 'healthy-reaction', type: 'clap' });
+    });
+    await expect(page.locator('#connection-message')).toContainText('Play-by-play is temporarily unavailable');
+
     const reactionText = await page.evaluate(() => {
         window.__OVERLAY_REACTION_CALLBACK__({ id: 'reaction-1', type: 'heart' });
-        return document.querySelector('#reactions-overlay .floating-reaction')?.textContent;
+        return [...document.querySelectorAll('#reactions-overlay .floating-reaction')].at(-1)?.textContent;
     });
     expect(reactionText).toBe('❤️');
 
@@ -830,6 +846,39 @@ test('live event feed keeps the current 60-play history with explicit team conte
     expect(pageErrors).toEqual([]);
 });
 
+test('subscription warnings remain isolated until the matching feed recovers', async ({ page, baseURL }) => {
+    const pageErrors = collectPageErrors(page);
+    await stubRealOverlayModules(page);
+    await stubYouTubeEmbed(page);
+
+    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('#home-team-name')).toHaveText('Current Academy');
+    await expect.poll(() => page.evaluate(() => typeof window.__OVERLAY_EVENT_ERROR__)).toBe('function');
+    await page.evaluate(() => {
+        window.__OVERLAY_EVENT_ERROR__(new Error('events unavailable'));
+        window.__OVERLAY_CHAT_ERROR__(new Error('chat unavailable'));
+    });
+    await expect(page.locator('#connection-message')).toContainText('Live chat is temporarily unavailable');
+
+    await page.evaluate(() => window.__OVERLAY_EVENT_CALLBACK__([]));
+    await expect(page.locator('#connection-message')).toContainText('Live chat is temporarily unavailable');
+
+    await page.evaluate(() => window.__OVERLAY_CHAT_CALLBACK__([]));
+    await expect(page.locator('#connection-message')).toBeHidden();
+
+    await page.evaluate(() => window.__OVERLAY_REACTION_ERROR__(new Error('reactions unavailable')));
+    await expect(page.locator('#connection-message')).toContainText('Live reactions are temporarily unavailable');
+    await page.evaluate(() => window.__OVERLAY_GAME_CALLBACK__({
+        id: 'game-1', opponent: 'Sporting Blue', homeScore: 3, awayScore: 2,
+        period: 'H2', liveClockMs: 720000, liveStatus: 'live', liveViewerCount: 20,
+        videoUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc'
+    }));
+    await expect(page.locator('#connection-message')).toContainText('Live reactions are temporarily unavailable');
+    await page.evaluate(() => window.__OVERLAY_REACTION_CALLBACK__({ id: 'recovered', type: 'heart' }));
+    await expect(page.locator('#connection-message')).toBeHidden();
+    expect(pageErrors).toEqual([]);
+});
+
 test('viewer toolbar shares the canonical watch URL and controls YouTube audio and fullscreen', async ({ page, baseURL }) => {
     const pageErrors = collectPageErrors(page);
     await page.addInitScript(() => {
@@ -942,6 +991,46 @@ test('viewer toolbar shares the canonical watch URL and controls YouTube audio a
     expect(pageErrors).toEqual([]);
 });
 
+test('a completed live game exposes replay actions and shares the replay URL without a reload', async ({ page, baseURL }) => {
+    const pageErrors = collectPageErrors(page);
+    await page.addInitScript(() => {
+        window.__OVERLAY_SHARED__ = [];
+        Object.defineProperty(navigator, 'share', {
+            configurable: true,
+            value: async (payload) => window.__OVERLAY_SHARED__.push(payload)
+        });
+    });
+    await stubRealOverlayModules(page);
+    await stubYouTubeEmbed(page);
+
+    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('#watch-replay')).toBeHidden();
+    await page.evaluate(() => window.__OVERLAY_GAME_CALLBACK__({
+        id: 'game-1', opponent: 'Sporting Blue', homeScore: 3, awayScore: 2,
+        period: 'H2', liveClockMs: 720000, liveStatus: 'completed', status: 'final',
+        videoUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc'
+    }));
+
+    await expect(page.locator('#live-status')).toHaveText('FINAL');
+    await expect(page.locator('#watch-replay')).toBeVisible();
+    await expect(page.locator('#watch-replay')).toHaveAttribute(
+        'href',
+        'live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true'
+    );
+    await page.locator('#game-actions-toggle').click();
+    await expect(page.locator('#watch-replay-menu')).toBeVisible();
+    await expect(page.locator('#match-report-link')).toBeVisible();
+    await page.locator('#game-actions-toggle').click();
+
+    await page.locator('#share-game').click();
+    await expect.poll(() => page.evaluate(() => window.__OVERLAY_SHARED__)).toEqual([{
+        title: 'Watch replay',
+        text: 'Watch Current Academy vs Sporting Blue',
+        url: 'https://share.allplays.ai/watch?teamId=team-1&gameId=game-1&replay=true'
+    }]);
+    expect(pageErrors).toEqual([]);
+});
+
 for (const accessState of ['locked', 'unavailable', 'unlocked']) {
     test(`recorded replay access fails closed when Team Pass is ${accessState}`, async ({ page, baseURL }) => {
         const pageErrors = collectPageErrors(page);
@@ -993,16 +1082,41 @@ test('signed-out viewers can read chat but cannot post from the overlay', async 
     await expect(page.locator('#chat-status')).toContainText('Sign in to join');
     await expect(page.locator('#chat-sign-in')).toBeVisible();
     await expect(page.locator('#chat-sign-in')).toHaveAttribute('href', /login\.html\?next=/);
-    await expect(page.locator('#chat-anon-notice')).toContainText('Chatting as Fan Riley');
+    await expect(page.locator('#chat-anon-notice')).toBeHidden();
+    await expect(page.locator('#anon-edit')).toBeHidden();
+    expect(await page.evaluate(() => sessionStorage.getItem('liveChatAnonName'))).toBe('Fan Riley');
+    await expect(page.locator('#chat-reactions')).toBeHidden();
+    expect(await page.evaluate(() => window.__OVERLAY_POSTED_CHAT__ || [])).toEqual([]);
+    expect(pageErrors).toEqual([]);
+});
+
+test('signed-in viewers can choose the display name used for their authenticated chat posts', async ({ page, baseURL }) => {
+    const pageErrors = collectPageErrors(page);
+    await stubRealOverlayModules(page);
+    await stubYouTubeEmbed(page);
+
+    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+    await page.locator('[data-panel="chat"]').click();
+    await expect(page.locator('#chat-anon-notice')).toContainText('Chatting as Alex Viewer');
     await page.locator('#anon-change-btn').click();
-    await expect(page.locator('#anon-edit')).toBeVisible();
     await page.locator('#anon-input').fill('  Riley   Blue  ');
     await page.locator('#anon-save').click();
     await expect(page.locator('#chat-anon-notice')).toContainText('Chatting as Riley Blue');
-    await expect(page.locator('#chat-status')).toContainText('Name changed to Riley Blue.');
-    expect(await page.evaluate(() => sessionStorage.getItem('liveChatAnonName'))).toBe('Riley Blue');
-    await expect(page.locator('#chat-reactions')).toBeHidden();
-    expect(await page.evaluate(() => window.__OVERLAY_POSTED_CHAT__ || [])).toEqual([]);
+    expect(await page.evaluate(() => sessionStorage.getItem('liveChatDisplayName:viewer-1'))).toBe('Riley Blue');
+
+    await page.locator('#chat-input').fill('Authenticated name override');
+    await page.locator('#chat-form').getByRole('button', { name: 'Send', exact: true }).click();
+    await expect.poll(() => page.evaluate(() => window.__OVERLAY_POSTED_CHAT__ || [])).toEqual([{
+        teamId: 'team-1',
+        gameId: 'game-1',
+        message: {
+            text: 'Authenticated name override',
+            senderId: 'viewer-1',
+            senderName: 'Riley Blue',
+            senderPhotoUrl: null,
+            isAnonymous: false
+        }
+    }]);
     expect(pageErrors).toEqual([]);
 });
 
@@ -1333,6 +1447,51 @@ test('recorded replay scan keeps the event timeline moving while the video is in
     await expect(page.locator('#replay-scan-status')).toBeVisible();
     await expect(page.locator('#replay-current')).not.toHaveText('0:00');
     await expect(page.getByRole('button', { name: 'Pause replay' })).toBeVisible();
+    expect(pageErrors).toEqual([]);
+});
+
+test('a delayed recorded replay joins the current timeline instead of restarting out of sync', async ({ page, baseURL }) => {
+    const pageErrors = collectPageErrors(page);
+    await page.addInitScript(() => {
+        window.__OVERLAY_RECORDED_VIDEO__ = true;
+        window.__OVERLAY_DELAY_TEAM_CONTEXT__ = true;
+        Object.defineProperty(HTMLMediaElement.prototype, 'duration', {
+            configurable: true,
+            get() { return 690; }
+        });
+        Object.defineProperty(HTMLMediaElement.prototype, 'currentTime', {
+            configurable: true,
+            get() { return this.__overlayCurrentTime || 0; },
+            set(value) { this.__overlayCurrentTime = Number(value) || 0; }
+        });
+        HTMLMediaElement.prototype.play = function play() {
+            this.__overlayPlayCalls = (this.__overlayPlayCalls || 0) + 1;
+            return Promise.resolve();
+        };
+        HTMLMediaElement.prototype.pause = function pause() {
+            this.__overlayPauseCalls = (this.__overlayPauseCalls || 0) + 1;
+        };
+        HTMLMediaElement.prototype.load = function load() {};
+    });
+    await stubRealOverlayModules(page);
+    await page.route('**/overlay-recording-fixture.mp4', (route) => route.abort());
+
+    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true`, { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('#replay-controls')).toBeVisible();
+    await page.getByRole('button', { name: 'Pause replay' }).click();
+    await page.locator('#replay-progress').evaluate((input) => {
+        input.value = '50';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await expect(page.locator('#replay-current')).toHaveText('5:45');
+    await expect(page.locator('#home-score')).toHaveText('1');
+    await expect(page.locator('#overlay-recorded-video')).toBeHidden();
+
+    await page.evaluate(() => window.__OVERLAY_RELEASE_TEAM_CONTEXT__());
+    await expect(page.locator('#overlay-recorded-video')).toBeVisible();
+    await page.locator('#overlay-recorded-video').dispatchEvent('loadedmetadata');
+    await expect.poll(() => page.locator('#overlay-recorded-video').evaluate((video) => video.currentTime)).toBe(345);
+    await expect(page.locator('#home-score')).toHaveText('1');
     expect(pageErrors).toEqual([]);
 });
 

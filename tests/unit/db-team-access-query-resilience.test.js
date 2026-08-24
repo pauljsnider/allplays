@@ -18,7 +18,7 @@ const firebaseMocks = vi.hoisted(() => ({
   onSnapshot: vi.fn()
 }));
 
-vi.mock('../../js/firebase.js?v=32', () => ({
+vi.mock('../../js/firebase.js?v=33', () => ({
   db: {},
   auth: firebaseMocks.auth,
   storage: {},
@@ -65,7 +65,7 @@ vi.mock('../../js/firebase.js?v=32', () => ({
 }));
 
 
-vi.mock('../../js/firebase-images.js?v=17', () => ({
+vi.mock('../../js/firebase-images.js?v=18', () => ({
   imageStorage: {},
   ensureImageAuth: vi.fn(),
   requireImageAuth: vi.fn()
@@ -92,7 +92,7 @@ const {
   getGameDayTeamContext,
   getTeams,
   getUserTeamsWithAccess
-} = await import('../../js/db.js?v=4433188');
+} = await import('../../js/db.js?v=4433189');
 
 describe('team access query resilience', () => {
   beforeEach(() => {

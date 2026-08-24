@@ -14,7 +14,7 @@ describe('legacy account action pages', () => {
         const html = readRepoFile('reset-password.html');
 
         expect(html).toContain('<meta name="robots" content="noindex,nofollow">');
-        expect(html).toContain("import { auth } from './js/firebase.js?v=32';");
+        expect(html).toContain("import { auth } from './js/firebase.js?v=33';");
         expect(html).toContain('verifyPasswordResetCode');
         expect(html).toContain('confirmPasswordReset');
         expect(html).toContain('applyActionCode');

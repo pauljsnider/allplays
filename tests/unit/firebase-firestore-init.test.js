@@ -83,11 +83,11 @@ vi.mock('../../js/vendor/firebase-functions.js', () => ({
     httpsCallable: vi.fn()
 }));
 
-vi.mock('../../js/firebase-app-check.js?v=11', () => ({
+vi.mock('../../js/firebase-app-check.js?v=12', () => ({
     initializePrimaryAppCheck: vi.fn(async () => ({ state: 'skipped' }))
 }));
 
-vi.mock('../../js/firebase-runtime-config.js?v=22', () => ({
+vi.mock('../../js/firebase-runtime-config.js?v=23', () => ({
     resolvePrimaryFirebaseConfig: vi.fn(async () => ({
         apiKey: 'test-key',
         authDomain: 'example.test',

@@ -6,8 +6,19 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = dirname(scriptDir);
 const generatedConfigPath = join(repositoryRoot, '.firebase-local.generated.json');
+const LOCAL_FIREBASE_PROJECT_HEADER = 'X-AllPlays-Local-Firebase-Project';
+const DEFAULT_LOCAL_FIREBASE_PROJECT_ID = 'demo-allplays';
 
-export function buildLocalFirebaseConfig(sourceConfig) {
+function normalizeProjectId(projectId) {
+    const normalized = String(projectId || '').trim();
+    if (!/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(normalized)) {
+        throw new Error('A valid Firebase project ID is required for local Hosting.');
+    }
+    return normalized;
+}
+
+export function buildLocalFirebaseConfig(sourceConfig, projectId = DEFAULT_LOCAL_FIREBASE_PROJECT_ID) {
+    const expectedProjectId = normalizeProjectId(projectId);
     const config = structuredClone(sourceConfig);
     const hosting = config.hosting || {};
     const headers = Array.isArray(hosting.headers) ? hosting.headers : [];
@@ -18,11 +29,17 @@ export function buildLocalFirebaseConfig(sourceConfig) {
         const cacheHeader = values.find((header) => String(header?.key || '').toLowerCase() === 'cache-control');
         if (cacheHeader) cacheHeader.value = 'no-store';
         else values.push({ key: 'Cache-Control', value: 'no-store' });
+        const projectHeader = values.find((header) => String(header?.key || '').toLowerCase() === LOCAL_FIREBASE_PROJECT_HEADER.toLowerCase());
+        if (projectHeader) projectHeader.value = expectedProjectId;
+        else values.push({ key: LOCAL_FIREBASE_PROJECT_HEADER, value: expectedProjectId });
         globalHeaders.headers = values;
     } else {
         headers.unshift({
             source: '**',
-            headers: [{ key: 'Cache-Control', value: 'no-store' }]
+            headers: [
+                { key: 'Cache-Control', value: 'no-store' },
+                { key: LOCAL_FIREBASE_PROJECT_HEADER, value: expectedProjectId }
+            ]
         });
     }
 
@@ -39,9 +56,10 @@ export function buildLocalFirebaseConfig(sourceConfig) {
     return config;
 }
 
-export function startLocalFirebaseHosting(projectId = 'game-flow-c6311') {
+export function startLocalFirebaseHosting(projectId = DEFAULT_LOCAL_FIREBASE_PROJECT_ID) {
+    const expectedProjectId = normalizeProjectId(projectId);
     const sourceConfig = JSON.parse(readFileSync(join(repositoryRoot, 'firebase.json'), 'utf8'));
-    const localConfig = buildLocalFirebaseConfig(sourceConfig);
+    const localConfig = buildLocalFirebaseConfig(sourceConfig, expectedProjectId);
     writeFileSync(generatedConfigPath, `${JSON.stringify(localConfig, null, 2)}\n`);
 
     const child = spawn('firebase', [
@@ -49,7 +67,7 @@ export function startLocalFirebaseHosting(projectId = 'game-flow-c6311') {
         '--only',
         'hosting',
         '--project',
-        projectId,
+        expectedProjectId,
         '--config',
         generatedConfigPath
     ], {
@@ -81,5 +99,5 @@ export function startLocalFirebaseHosting(projectId = 'game-flow-c6311') {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-    startLocalFirebaseHosting(String(process.argv[2] || 'game-flow-c6311'));
+    startLocalFirebaseHosting(String(process.argv[2] || DEFAULT_LOCAL_FIREBASE_PROJECT_ID));
 }

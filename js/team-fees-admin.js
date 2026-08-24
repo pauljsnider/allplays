@@ -1,4 +1,4 @@
-import { escapeHtml, getUrlParams, renderFooter, renderHeader } from './utils.js?v=443364';
+import { escapeHtml, getUrlParams, renderFooter, renderHeader } from './utils.js?v=443365';
 import { assertTeamFeeRecipientLimit, normalizeTeamFeeRecipientIds } from './team-fee-batch-limits.js?v=1';
 
 export const OFFLINE_TEAM_FEE_LABEL = 'Offline/manual collection only';
@@ -615,7 +615,7 @@ export function buildOnlineRefundRequest({ amount, reason, teamId, batchId, reci
 }
 
 export async function submitOnlineTeamFeeRefund(request) {
-    const { getFunctions, httpsCallable } = await import('./firebase.js?v=32');
+    const { getFunctions, httpsCallable } = await import('./firebase.js?v=33');
     const functions = getFunctions();
     const refundTeamFee = httpsCallable(functions, 'refundStripeTeamFeePayment');
     const result = await refundTeamFee(request);
@@ -1255,8 +1255,8 @@ async function initTeamFeesAdminPage() {
     renderFooter(document.getElementById('footer-container'));
 
     const [{ getTeam, getPlayers, getUserProfile, createTeamFeeBatch, getTeamFeeBatch, listTeamFeeBatches, listTeamFeeRecipients, updateTeamFeeRecipient, canModerateChat }, { requireAuth }] = await Promise.all([
-        import('./db.js?v=4433188'),
-        import('./auth.js?v=4433192')
+        import('./db.js?v=4433189'),
+        import('./auth.js?v=4433193')
     ]);
 
     try {

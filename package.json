@@ -29,7 +29,7 @@
     "stage:pages": "node scripts/stage-pages-bundle.mjs",
     "app:build-help-index": "node scripts/build-app-help-knowledge-index.mjs",
     "app:check-bundle-size": "node scripts/check-app-bundle-size.mjs",
-    "serve:firebase": "node scripts/serve-firebase-local.mjs game-flow-c6311",
+    "serve:firebase": "node scripts/serve-firebase-local.mjs demo-allplays",
     "serve:firebase:safe": "node scripts/serve-firebase-local.mjs demo-allplays",
     "serve:firebase:live": "node scripts/serve-firebase-local.mjs game-flow-c6311",
     "app:dev": "npm --prefix apps/app run dev",

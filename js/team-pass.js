@@ -1,8 +1,8 @@
-import { auth } from './firebase.js?v=32';
+import { auth } from './firebase.js?v=33';
 import { getPrimaryAppCheckHeaders } from './firebase-app-check-rest.js?v=1';
 import { hasFullTeamAccess } from './team-access.js?v=44338';
 import { PREMIUM_FEATURES, resolvePremiumAccess } from './premium-access-core.js?v=1';
-import { readPremiumAccessConfig } from './premium-access.js?v=6';
+import { readPremiumAccessConfig } from './premium-access.js?v=7';
 
 function getFunctionsBaseUrl() {
     const configured = window.__ALLPLAYS_CONFIG__?.functionsBaseUrl || window.__ALLPLAYS_CONFIG__?.functions?.baseUrl;
@@ -139,7 +139,7 @@ function arrayIncludesTeamId(values, teamId) {
 
 function loadFirebase(deps = {}) {
     if (deps.firebase) return deps.firebase;
-    return import('./firebase.js?v=32');
+    return import('./firebase.js?v=33');
 }
 
 function dataFromSnapshot(docSnap) {

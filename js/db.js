@@ -33,9 +33,9 @@ import {
     uploadBytes,
     getDownloadURL,
     deleteObject
-} from './firebase.js?v=32';
+} from './firebase.js?v=33';
 import { getPrimaryAppCheckHeaders } from './firebase-app-check-rest.js?v=1';
-import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=17';
+import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=18';
 import { uploadBytesResumable } from './vendor/firebase-storage.js';
 import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=3';
 import { buildChatAttachmentFallbackPath, buildGameClipFallbackPath, buildGameScopedStatSheetFallbackPath } from './fallback-media-paths.js?v=4';
@@ -124,7 +124,7 @@ import {
     FRIEND_INVITE_TYPE,
     buildFriendInviteAccessCodeData
 } from './friend-invite.js?v=1';
-import { commitCertificateDefaults } from './certificates/persistence.js?v=6';
+import { commitCertificateDefaults } from './certificates/persistence.js?v=7';
 
 export async function normalizeParentScopeLinks(parentLinks = []) {
     // Dedupe first (no I/O) so every remaining link is fetched exactly once.
@@ -261,7 +261,7 @@ import { buildOfficiatingNotificationRecord } from './officiating-notifications.
 import {
     getTeamEmailAttachmentTotalBytes,
     normalizeTeamEmailAttachments
-} from './team-email-attachments.js?v=8';
+} from './team-email-attachments.js?v=9';
 export {
     TEAM_EMAIL_ATTACHMENT_LIMIT_BYTES,
     assertTeamEmailAttachmentLimit,
@@ -270,7 +270,7 @@ export {
     getTeamEmailDraft,
     normalizeTeamEmailAttachments,
     uploadTeamEmailAttachment
-} from './team-email-attachments.js?v=8';
+} from './team-email-attachments.js?v=9';
 // import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-vertexai.js';
 export { collection, getDocs, deleteDoc, query };
 const limitQuery = limit;
@@ -794,7 +794,7 @@ export async function uploadStatSheetPhoto(teamId, gameId, file, options = {}) {
         : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=443364'; // Import resolveZip
+import { resolveZip } from './utils.js?v=443365'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();

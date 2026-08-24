@@ -46,7 +46,7 @@ describe('dashboard chat unread wiring', () => {
         expect(authJs).toContain('user.profileEmail = profile.email;');
         expect(html).not.toContain('profile.email');
         expect(html).not.toContain('user.email = profile.email;');
-        expect(html).toContain("import { loadDashboardTeams } from './js/dashboard-team-load.js?v=3';");
+        expect(html).toContain("import { loadDashboardTeams } from './js/dashboard-team-load.js?v=4';");
         expect(html).toContain('includeAllTeams: user.isAdmin === true');
         expect(html).not.toContain('getUserTeamsWithAccess(');
         expect(html).not.toContain('getUserTeamsWithAccess(user.uid, user.email || profile?.email)');

@@ -21,9 +21,13 @@ describe('local Firebase Hosting configuration', () => {
             }
         };
 
-        const local = buildLocalFirebaseConfig(source);
+        const local = buildLocalFirebaseConfig(source, 'demo-allplays');
 
         expect(local.hosting.headers[0].headers).toContainEqual({ key: 'Cache-Control', value: 'no-store' });
+        expect(local.hosting.headers[0].headers).toContainEqual({
+            key: 'X-AllPlays-Local-Firebase-Project',
+            value: 'demo-allplays'
+        });
         expect(local.hosting.headers[1].headers).toEqual([{ key: 'Cache-Control', value: 'no-store' }]);
         expect(source.hosting.headers[0].headers).toEqual([
             { key: 'Content-Security-Policy', value: "default-src 'self'" }
@@ -37,13 +41,19 @@ describe('local Firebase Hosting configuration', () => {
         const packageJson = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'));
 
         expect(packageJson.scripts['serve:firebase']).toBe(
-            'node scripts/serve-firebase-local.mjs game-flow-c6311'
+            'node scripts/serve-firebase-local.mjs demo-allplays'
         );
         expect(packageJson.scripts['serve:firebase:live']).toBe(
             'node scripts/serve-firebase-local.mjs game-flow-c6311'
         );
         expect(packageJson.scripts['serve:firebase:safe']).toBe(
             'node scripts/serve-firebase-local.mjs demo-allplays'
+        );
+    });
+
+    it('rejects an invalid expected project before generating local Hosting config', () => {
+        expect(() => buildLocalFirebaseConfig({ hosting: {} }, '../production')).toThrow(
+            'A valid Firebase project ID is required for local Hosting.'
         );
     });
 });
