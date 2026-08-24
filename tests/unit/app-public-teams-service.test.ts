@@ -9,7 +9,8 @@ const dbMocks = vi.hoisted(() => ({
 
 vi.mock('../../apps/app/src/lib/adapters/legacyPublicTeamsDb', () => dbMocks);
 
-import { getPublicTeamDetail, getPublicTeamRecentResults, getPublicTeamStandingsInputs, getPublicTeamsByLocation, getPublicTeamsPage, hydratePublicTeamRosterCounts } from '../../apps/app/src/lib/publicTeamsService';
+import { buildPublicTeamStandings, getPublicTeamDetail, getPublicTeamRecentResults, getPublicTeamStandings, getPublicTeamStandingsInputs, getPublicTeamsByLocation, getPublicTeamsPage, hydratePublicTeamRosterCounts } from '../../apps/app/src/lib/publicTeamsService';
+import { computeNativeStandings } from '../../js/native-standings.js';
 
 describe('publicTeamsService', () => {
     beforeEach(() => {
@@ -703,5 +704,46 @@ describe('publicTeamsService', () => {
         await expect(getPublicTeamStandingsInputs('team-public-1')).rejects.toThrow('Public team not found.');
         await expect(getPublicTeamStandingsInputs('team-private-1')).rejects.toMatchObject({ code: 'functions/not-found' });
         expect(dbMocks.getPublicTeamGamesProjection).toHaveBeenCalledTimes(2);
+    });
+
+    it('builds privacy-safe points standings with native parity and configured points', () => {
+        const config = {
+            enabled: true,
+            rankingMode: 'points' as const,
+            points: { win: 5, tie: 2, loss: -1 },
+            maxGoalDiff: null,
+            tiebreakers: ['point_diff'],
+            twoTeamTiebreakers: ['point_diff'],
+            multiTeamTiebreakers: ['point_diff']
+        };
+        const games = [
+            { id: 'win', date: new Date('2026-08-01T18:00:00Z'), homeTeam: 'Austin Bats', awayTeam: 'Owls', homeScore: 4, awayScore: 1, status: 'completed' as const },
+            { id: 'tie', date: new Date('2026-08-02T18:00:00Z'), homeTeam: 'Foxes', awayTeam: 'Austin Bats', homeScore: 2, awayScore: 2, status: 'completed' as const }
+        ];
+
+        const expected = computeNativeStandings(games, config).map((row) => ({
+            rank: row.rank,
+            team: row.team,
+            record: row.record,
+            points: row.points
+        }));
+        expect(buildPublicTeamStandings('Austin Bats', config, games)).toEqual({
+            label: 'Points table',
+            rows: expected,
+            currentRow: expected.find((row) => row.team === 'Austin Bats')
+        });
+    });
+
+    it('returns an empty or unavailable result without throwing for no eligible games or disabled standings', async () => {
+        dbMocks.getPublicTeamProfile.mockResolvedValue({
+            id: 'team-public-1', name: 'Austin Bats', isPublic: true, active: true,
+            standingsConfig: { enabled: true, rankingMode: 'points', points: { win: 3, tie: 1, loss: 0 } }
+        });
+        dbMocks.getPublicTeamGamesProjection.mockResolvedValue({ team: { id: 'team-public-1', name: 'Austin Bats' }, games: [] });
+
+        await expect(getPublicTeamStandings('team-public-1')).resolves.toEqual({
+            label: 'Points table', rows: [], currentRow: null
+        });
+        expect(buildPublicTeamStandings('Austin Bats', { enabled: false, rankingMode: 'points', points: null, maxGoalDiff: null, tiebreakers: [], twoTeamTiebreakers: [], multiTeamTiebreakers: [] }, [])).toBeNull();
     });
 });
