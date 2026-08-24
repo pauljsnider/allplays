@@ -270,7 +270,7 @@
             profilePhotoPreview.innerHTML = `
                 <div class="rounded-2xl border border-gray-200 p-4 flex items-center gap-4 bg-gray-50">
                     <div class="h-24 w-24 rounded-full overflow-hidden border border-gray-200 bg-white flex items-center justify-center shrink-0">
-                        ${photoUrl ? `<img src="${escapeHtml(photoUrl)}" alt="Athlete headshot" class="w-full h-full object-cover">` : '<span class="text-xs text-gray-400">No Photo</span>'}
+                        ${photoUrl ? `<img loading="lazy" decoding="async" src="${escapeHtml(photoUrl)}" alt="Athlete headshot" class="w-full h-full object-cover">` : '<span class="text-xs text-gray-400">No Photo</span>'}
                     </div>
                     <div>
                         <div class="font-semibold text-gray-900">${escapeHtml(sourceLabel)}</div>
@@ -289,7 +289,7 @@
                 return '<div class="rounded-xl border border-dashed border-gray-300 bg-white p-4 text-sm text-gray-500">This clip will be available after you add media or a link.</div>';
             }
             if (clip.mediaType === 'image') {
-                return `<img src="${escapeHtml(previewUrl)}" alt="${escapeHtml(clip.title || 'Highlight image')}" class="w-full h-48 rounded-xl object-cover border border-gray-200 bg-white">`;
+                return `<img loading="lazy" decoding="async" src="${escapeHtml(previewUrl)}" alt="${escapeHtml(clip.title || 'Highlight image')}" class="w-full h-48 rounded-xl object-cover border border-gray-200 bg-white">`;
             }
             if (clip.mediaType === 'video') {
                 return `<video controls preload="metadata" class="w-full h-48 rounded-xl border border-gray-200 bg-black" src="${escapeHtml(previewUrl)}"></video>`;

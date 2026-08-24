@@ -724,7 +724,7 @@
         }
 
         function displayPhoto(url) {
-            document.getElementById('photo-preview').innerHTML = `<img src="${url}" class="w-full h-full object-cover">`;
+            document.getElementById('photo-preview').innerHTML = `<img loading="lazy" decoding="async" src="${url}" class="w-full h-full object-cover">`;
         }
 
         function displayDefaultAvatar() {

@@ -92,7 +92,7 @@ export function PublicTeamDetail({ authUser }: { authUser: AuthState['user'] }) 
         <div className="bg-gradient-to-br from-primary-700 to-primary-950 p-6 text-white sm:p-8">
           <div className="flex items-start gap-4">
             <div className="flex h-16 w-16 flex-none items-center justify-center overflow-hidden rounded-2xl bg-white/15 ring-1 ring-white/20">
-              {team.photoUrl ? <img src={team.photoUrl} alt="" className="h-full w-full object-cover" /> : <Users className="h-8 w-8" aria-hidden="true" />}
+              {team.photoUrl ? <img src={team.photoUrl} alt="" decoding="async" className="h-full w-full object-cover" /> : <Users className="h-8 w-8" aria-hidden="true" />}
             </div>
             <div className="min-w-0"><div className="text-xs font-black uppercase tracking-[0.08em] text-primary-100">Public team</div><h1 className="mt-1 text-3xl font-black">{team.name}</h1><div className="mt-2 flex flex-wrap gap-3 text-sm font-bold text-primary-50">{team.sport ? <span>{team.sport}</span> : null}{team.location ? <span className="inline-flex items-center gap-1"><MapPin className="h-4 w-4" />{team.location}</span> : null}</div></div>
           </div>

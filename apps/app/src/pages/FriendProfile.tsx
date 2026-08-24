@@ -222,7 +222,7 @@ export function FriendProfile({ auth, profileUserId }: { auth: AuthState; profil
         {activeSection === 'overview' || activeSection === 'teams' ? <ProfileCollection title="Public teams" icon={Trophy} empty="No public teams shared.">
           {publicTeams.map((team) => (
             <Link key={team.id} to={`/teams/${encodeURIComponent(team.id)}/public`} className="flex items-center gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3 hover:border-primary-200">
-              {team.photoUrl ? <img src={team.photoUrl} alt="" className="h-10 w-10 rounded-xl object-cover" /> : <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-50 text-primary-700"><Trophy className="h-5 w-5" /></span>}
+              {team.photoUrl ? <img src={team.photoUrl} alt="" loading="lazy" decoding="async" className="h-10 w-10 rounded-xl object-cover" /> : <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-50 text-primary-700"><Trophy className="h-5 w-5" /></span>}
               <span className="min-w-0"><span className="block truncate text-sm font-black text-gray-950">{team.name}</span><span className="block truncate text-xs font-semibold text-gray-500">{team.sport || 'Public team'}</span></span>
             </Link>
           ))}
@@ -230,7 +230,7 @@ export function FriendProfile({ auth, profileUserId }: { auth: AuthState; profil
         {activeSection === 'overview' || activeSection === 'players' ? <ProfileCollection title="Public players" icon={UserRound} empty="No public player profiles shared.">
           {publicChildren.map((child) => (
             <a key={child.id} href={child.shareUrl} target="_blank" rel="noreferrer" className="flex items-center gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3 hover:border-primary-200">
-              {child.photoUrl ? <img src={child.photoUrl} alt="" className="h-10 w-10 rounded-xl object-cover" /> : <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-gray-950 text-white"><UserRound className="h-5 w-5" /></span>}
+              {child.photoUrl ? <img src={child.photoUrl} alt="" loading="lazy" decoding="async" className="h-10 w-10 rounded-xl object-cover" /> : <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-gray-950 text-white"><UserRound className="h-5 w-5" /></span>}
               <span className="min-w-0"><span className="block truncate text-sm font-black text-gray-950">{child.name}</span><span className="block truncate text-xs font-semibold text-gray-500">{child.headline || 'View public profile'}</span></span>
             </a>
           ))}

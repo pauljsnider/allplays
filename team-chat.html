@@ -450,7 +450,7 @@
                     <div class="p-5 bg-gradient-to-r from-gray-50 to-white">
                         <div class="flex items-center gap-4">
                             ${photoUrl
-                                ? `<img src="${escapeHtml(photoUrl)}" alt="${escapeHtml(name)}" class="w-14 h-14 rounded-xl object-cover border-2 border-gray-200 shadow-sm">`
+                                ? `<img decoding="async" src="${escapeHtml(photoUrl)}" alt="${escapeHtml(name)}" class="w-14 h-14 rounded-xl object-cover border-2 border-gray-200 shadow-sm">`
                                 : `<div class="w-14 h-14 rounded-xl bg-gradient-to-br from-primary-100 to-primary-200 flex items-center justify-center border-2 border-gray-200 shadow-sm">
                                     <span class="text-xl font-bold text-primary-600">${escapeHtml(name.charAt(0))}</span>
                                   </div>`
@@ -805,7 +805,7 @@
             if (aiUiPending) {
                 html += `
                     <div id="ai-thinking-placeholder" class="flex justify-start gap-2">
-                        <img src="img/logo_small.png" class="w-8 h-8 rounded-full object-cover border border-indigo-200">
+                        <img loading="lazy" decoding="async" src="img/logo_small.png" class="w-8 h-8 rounded-full object-cover border border-indigo-200">
                         <div class="max-w-[75%]">
                             <div class="text-xs text-gray-500 mb-1">
                                 <span class="font-medium">ALL PLAYS</span>
@@ -1012,9 +1012,9 @@
             }
 
             const avatar = isAi
-                ? `<img src="img/logo_small.png" class="w-8 h-8 rounded-full object-cover border border-indigo-200">`
+                ? `<img loading="lazy" decoding="async" src="img/logo_small.png" class="w-8 h-8 rounded-full object-cover border border-indigo-200">`
                 : msg.senderPhotoUrl
-                    ? `<img src="${escapeHtml(msg.senderPhotoUrl)}" class="w-8 h-8 rounded-full object-cover">`
+                    ? `<img loading="lazy" decoding="async" src="${escapeHtml(msg.senderPhotoUrl)}" class="w-8 h-8 rounded-full object-cover">`
                     : `<div class="w-8 h-8 rounded-full bg-gray-300 flex items-center justify-center">
                          <span class="text-xs font-bold text-gray-600">${escapeHtml(displayName.charAt(0).toUpperCase())}</span>
                        </div>`;
@@ -1188,7 +1188,7 @@
                 pendingMediaPreviewUrls.push(objectUrl);
                 const mediaPreview = file.type.startsWith('video/')
                     ? `<video src="${objectUrl}" class="w-14 h-14 rounded-md object-cover border border-gray-200 bg-black" muted playsinline></video>`
-                    : `<img src="${objectUrl}" alt="${escapeHtml(file.name)}" class="w-14 h-14 rounded-md object-cover border border-gray-200">`;
+                    : `<img loading="lazy" decoding="async" src="${objectUrl}" alt="${escapeHtml(file.name)}" class="w-14 h-14 rounded-md object-cover border border-gray-200">`;
                 const label = file.type.startsWith('video/') ? 'Video' : 'Photo';
                 return `
                     <div class="flex items-center gap-3">
@@ -2059,7 +2059,7 @@
 
             return `
                 <a href="${escapeHtml(attachment.url)}" target="_blank" rel="noopener noreferrer" class="block rounded-lg overflow-hidden border border-gray-200">
-                    <img src="${escapeHtml(attachment.url)}" alt="${label}" class="w-full max-h-72 object-cover bg-white">
+                    <img loading="lazy" decoding="async" src="${escapeHtml(attachment.url)}" alt="${label}" class="w-full max-h-72 object-cover bg-white">
                 </a>
             `;
         }
@@ -2125,7 +2125,7 @@
                 return `
                     <div class="rounded-xl overflow-hidden border border-gray-200 bg-white shadow-sm">
                         <a href="${escapeHtml(entry.url)}" target="_blank" rel="noopener noreferrer" class="block">
-                            <img src="${escapeHtml(entry.url)}" alt="${escapeHtml(entry.name || 'Photo')}" class="w-full aspect-video object-cover bg-white">
+                            <img loading="lazy" decoding="async" src="${escapeHtml(entry.url)}" alt="${escapeHtml(entry.name || 'Photo')}" class="w-full aspect-video object-cover bg-white">
                         </a>
                         ${footer}
                         ${actions}
