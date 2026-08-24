@@ -475,13 +475,15 @@ async function mockTeamsModules(page, { scenario = '', managedTeam = false, rost
                         linkedPlayers: [
                             { id: 'player-1', name: 'Pat Star', number: '9', photoUrl: 'https://img.example.test/player.png', position: 'Guard', isLinked: true, active: true }
                         ],
-                        upcomingEvents: [
+                        upcomingEvents: window.__teamsScenario === 'stale-team-detail' ? [] : [
                             { id: 'game-next', type: 'game', title: 'vs. Falcons', date: nextDate, location: 'Main Gym', opponent: 'Falcons', status: '', homeScore: null, awayScore: null, isCancelled: false }
                         ],
                         recentResults: [
                             { id: 'game-final', type: 'game', title: 'vs. Wolves', date: resultDate, location: 'Main Gym', opponent: 'Wolves', status: 'completed', homeScore: 42, awayScore: 35, isCancelled: false }
                         ],
-                        nextEvent: { id: 'game-next', type: 'game', title: 'vs. Falcons', date: nextDate, location: 'Main Gym', opponent: 'Falcons', status: '', homeScore: null, awayScore: null, isCancelled: false },
+                        nextEvent: window.__teamsScenario === 'stale-team-detail'
+                            ? null
+                            : { id: 'game-next', type: 'game', title: 'vs. Falcons', date: nextDate, location: 'Main Gym', opponent: 'Falcons', status: '', homeScore: null, awayScore: null, isCancelled: false },
                         record: { label: '2100', wins: 4, losses: 2, ties: 0, gamesPlayed: 6, winPercentage: 66.7 },
                         standings: { enabled: true, label: 'Points table', rows: [{ team: 'Bears', rank: 1, record: '4-2', pf: 180, pa: 150 }], currentRow: { team: 'Bears', rank: 1, record: '4-2', pf: 180, pa: 150 } },
                         leaderboards: [{ id: 'pts', label: 'Points', leaders: [{ playerId: 'player-1', playerName: 'Pat Star', playerNumber: '9', photoUrl: 'https://img.example.test/player.png', rank: 1, formattedValue: '88' }] }],
@@ -518,7 +520,77 @@ async function mockTeamsModules(page, { scenario = '', managedTeam = false, rost
                 }
 
                 export async function loadParentSchedule() {
-                    return { events: [] };
+                    if (window.__teamsScenario === 'stale-team-detail') {
+                        return {
+                            children: [],
+                            staffTeams: [{ teamId: 'team-1', teamName: 'Bears' }],
+                            events: [{
+                                eventKey: 'team-1::game-schedule-only',
+                                id: 'game-schedule-only',
+                                teamId: 'team-1',
+                                teamName: 'Bears',
+                                title: 'Bears vs Tigers',
+                                type: 'game',
+                                date: new Date('2100-08-23T22:15:00Z'),
+                                location: 'Main Gym',
+                                opponent: 'Tigers',
+                                childId: 'player-1',
+                                childName: 'Pat Star',
+                                isDbGame: false,
+                                status: 'scheduled',
+                                homeScore: null,
+                                awayScore: null,
+                                isCancelled: false,
+                                assignments: [],
+                                openAssignmentCount: 0
+                            }],
+                            isPartial: false
+                        };
+                    }
+                    return {
+                        children: [],
+                        staffTeams: [{ teamId: 'team-1', teamName: 'Bears' }],
+                        events: [{
+                            eventKey: 'team-1::game-next',
+                            id: 'game-next',
+                            teamId: 'team-1',
+                            teamName: 'Bears',
+                            title: 'vs. Falcons',
+                            type: 'game',
+                            date: new Date('2100-06-01T18:00:00Z'),
+                            location: 'Main Gym',
+                            opponent: 'Falcons',
+                            childId: 'player-1',
+                            childName: 'Pat Star',
+                            isDbGame: true,
+                            status: 'scheduled',
+                            homeScore: null,
+                            awayScore: null,
+                            isCancelled: false,
+                            assignments: [],
+                            openAssignmentCount: 0
+                        }, {
+                            eventKey: 'team-1::game-final',
+                            id: 'game-final',
+                            teamId: 'team-1',
+                            teamName: 'Bears',
+                            title: 'vs. Wolves',
+                            type: 'game',
+                            date: new Date('2026-05-01T18:00:00Z'),
+                            location: 'Main Gym',
+                            opponent: 'Wolves',
+                            childId: 'player-1',
+                            childName: 'Pat Star',
+                            isDbGame: true,
+                            status: 'completed',
+                            homeScore: 42,
+                            awayScore: 35,
+                            isCancelled: false,
+                            assignments: [],
+                            openAssignmentCount: 0
+                        }],
+                        isPartial: false
+                    };
                 }
 
                 export async function enableRsvpForImportedCalendarEvent() {
@@ -978,6 +1050,35 @@ test.describe('mobile My Teams', () => {
         await page.getByRole('link', { name: /Pizza Place/ }).click();
         await expect.poll(() => page.evaluate(() => window.__openedPublicUrls.at(-1))).toBe('https://pizza.example.test');
         await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+    });
+
+    test('keeps a complete schedule event on the team overview across tab changes when the bootstrap is stale', async ({ page, baseURL }) => {
+        const pageErrors = [];
+        page.on('pageerror', (error) => {
+            if (!error.message.startsWith('Installations: Create Installation request failed')) {
+                pageErrors.push(error.message);
+            }
+        });
+        await mockTeamsModules(page, { scenario: 'stale-team-detail' });
+        await page.goto(appUrl(baseURL, '/teams/team-1?scenario=stale-team-detail'), { waitUntil: 'domcontentloaded' });
+
+        expect(pageErrors).toEqual([]);
+        await waitForTeamDetailRoute(page, 'Bears');
+        const tabNav = page.getByTestId('team-detail-tab-nav');
+        await expect(tabNav.getByRole('button', { name: /Overview/ })).toHaveAttribute('aria-pressed', 'true');
+        await expect(page.getByRole('link', { name: /Next event/ })).toContainText('Bears vs Tigers');
+        await expect(page.getByRole('link', { name: /Next event/ })).toContainText('Main Gym');
+        await expect(page.getByText('Schedule is clear for now')).toHaveCount(0);
+
+        await tabNav.getByRole('button', { name: /Schedule/ }).click();
+        await expect(page.getByText('Bears vs Tigers', { exact: true })).toBeVisible();
+        await expect(page.getByText('No team events found.')).toHaveCount(0);
+
+        await tabNav.getByRole('button', { name: /Overview/ }).click();
+        await expect(page.getByRole('link', { name: /Next event/ })).toContainText('Bears vs Tigers');
+        await expect(page.getByRole('link', { name: /Next event/ })).toContainText('Main Gym');
+        await expect(page.getByText('Schedule is clear for now')).toHaveCount(0);
+        expect(pageErrors).toEqual([]);
     });
 
     test('team detail tab routes preserve back navigation inside the team page', async ({ page, baseURL }) => {
