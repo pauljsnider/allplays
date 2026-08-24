@@ -981,6 +981,20 @@ test('manual YouTube seeking rebuilds replay stats and the overlay offers canoni
     await expect(page.locator('#replay-current')).not.toHaveText('0:00');
     await expect(page.locator('#replay-scan-status')).toContainText('50× game scan');
     await expect(page.locator('#replay-scan-status')).toContainText('Video catches up when paused');
+    const scanPresentation = await page.locator('#replay-scan-status').evaluate((element) => {
+        const rectangle = element.getBoundingClientRect();
+        const stage = document.querySelector('#broadcast-stage').getBoundingClientRect();
+        const backgroundColor = getComputedStyle(element).backgroundColor;
+        const alphaMatch = backgroundColor.match(/rgba\([^,]+,[^,]+,[^,]+,\s*([\d.]+)\)/);
+        return {
+            coversStage: Math.abs(rectangle.left - stage.left) < 1
+                && Math.abs(rectangle.right - stage.right) < 1
+                && Math.abs(rectangle.top - stage.top) < 1
+                && Math.abs(rectangle.bottom - stage.bottom) < 1,
+            hasOpaqueBackground: !alphaMatch || Number(alphaMatch[1]) === 1
+        };
+    });
+    expect(scanPresentation).toEqual({ coversStage: true, hasOpaqueBackground: true });
     await page.waitForTimeout(700);
     const scanningCommands = await page.evaluate(() => window.__OVERLAY_YOUTUBE_COMMANDS__ || []);
     expect(scanningCommands.filter((command) => command.func === 'seekTo')).toHaveLength(1);
@@ -1007,19 +1021,30 @@ test('mobile replay controls stay on screen without covering the scoreboard', as
     await expect(page.getByRole('button', { name: 'Play replay' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Restart replay' })).toBeVisible();
     await expect(page.getByRole('button', { name: '4×' })).toBeVisible();
-    const fiftyTimes = page.getByRole('button', { name: '50×' });
-    await expect(fiftyTimes).toBeVisible();
-    await fiftyTimes.click();
+    const twentyTimes = page.getByRole('button', { name: '20×' });
+    await expect(twentyTimes).toBeVisible();
+    await twentyTimes.click();
     await page.getByRole('button', { name: 'Play replay' }).click();
     await expect(page.locator('#replay-scan-status')).toBeVisible();
+    await expect(page.locator('#replay-scan-status')).toContainText('20× game scan');
     const scanBounds = await page.locator('#replay-scan-status').evaluate((element) => {
         const rectangle = element.getBoundingClientRect();
-        return { left: rectangle.left, right: rectangle.right, top: rectangle.top, bottom: rectangle.bottom };
+        const stage = document.querySelector('#broadcast-stage').getBoundingClientRect();
+        return {
+            left: rectangle.left,
+            right: rectangle.right,
+            top: rectangle.top,
+            bottom: rectangle.bottom,
+            stageLeft: stage.left,
+            stageRight: stage.right,
+            stageTop: stage.top,
+            stageBottom: stage.bottom
+        };
     });
-    expect(scanBounds.left).toBeGreaterThanOrEqual(0);
-    expect(scanBounds.right).toBeLessThanOrEqual(390);
-    expect(scanBounds.top).toBeGreaterThanOrEqual(0);
-    expect(scanBounds.bottom).toBeLessThanOrEqual(844);
+    expect(scanBounds.left).toBeCloseTo(scanBounds.stageLeft, 0);
+    expect(scanBounds.right).toBeCloseTo(scanBounds.stageRight, 0);
+    expect(scanBounds.top).toBeCloseTo(scanBounds.stageTop, 0);
+    expect(scanBounds.bottom).toBeCloseTo(scanBounds.stageBottom, 0);
     await page.getByRole('button', { name: 'Pause replay' }).click();
 
     const layout = await page.evaluate(() => {
