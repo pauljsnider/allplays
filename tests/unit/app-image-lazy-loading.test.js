@@ -10,6 +10,23 @@ function read(relativePath) {
     return readFileSync(new URL(`../../apps/app/${relativePath}`, import.meta.url), 'utf8');
 }
 
+function readRepo(relativePath) {
+    return readFileSync(new URL(`../../${relativePath}`, import.meta.url), 'utf8');
+}
+
+function imageTagsContaining(source, marker) {
+    return (source.match(/<img\b[^>]*>/g) || []).filter((tag) => tag.includes(marker));
+}
+
+function expectEagerAsyncImages(source, marker, expectedCount = 1) {
+    const tags = imageTagsContaining(source, marker);
+    expect(tags).toHaveLength(expectedCount);
+    tags.forEach((tag) => {
+        expect(tag).toContain('decoding="async"');
+        expect(tag).not.toContain('loading="lazy"');
+    });
+}
+
 describe('app image lazy loading', () => {
     it('lazy-loads repeated roster photos in game report sections', () => {
         const source = read('src/components/schedule/GameReportSectionContent.tsx');
@@ -58,5 +75,45 @@ describe('app image lazy loading', () => {
 
         expect(authFrameSource).toContain('src="./logo_small.png" alt="" decoding="async" className="h-11 w-11 rounded-xl shadow-sm"');
         expect(authFrameSource).not.toContain('src="./logo_small.png" alt="" loading="lazy"');
+    });
+
+    it('keeps primary initial-view images eager while decoding asynchronously', () => {
+        expectEagerAsyncImages(readRepo('athlete-profile.html'), 'profile.profilePhotoUrl');
+        expectEagerAsyncImages(readRepo('game.html'), 'resolvedTeam.photoUrl');
+        expectEagerAsyncImages(readRepo('game.html'), 'game.opponentTeamPhoto', 2);
+        expectEagerAsyncImages(readRepo('live-game.html'), 'home-team-photo');
+        expectEagerAsyncImages(readRepo('live-game.html'), 'away-team-photo');
+        expectEagerAsyncImages(readRepo('login.html'), 'google.svg');
+        expectEagerAsyncImages(readRepo('player.html'), 'player.photoUrl');
+        expectEagerAsyncImages(readRepo('team-chat.html'), 'escapeHtml(photoUrl)');
+        expectEagerAsyncImages(readRepo('team.html'), 'escapeHtml(team.photoUrl)');
+        expectEagerAsyncImages(read('src/pages/PrivateAiChat.tsx'), './logo_small.png', 2);
+        expectEagerAsyncImages(read('src/pages/PublicTeamDetail.tsx'), 'team.photoUrl');
+    });
+
+    it('eager-loads only the first card image in legacy team lists', () => {
+        const dashboardSource = readRepo('dashboard.html');
+        const teamsSource = readRepo('teams.html');
+
+        expect(imageTagsContaining(dashboardSource, 'escapeHtml(team.photoUrl)')).toEqual([
+            expect.stringContaining('loading="${eager ? \'eager\' : \'lazy\'}" decoding="async"')
+        ]);
+        expect(dashboardSource).toContain('function renderTeamCard(team, { eager = false } = {})');
+        expect(dashboardSource).toContain('parentOnlyTeams.map((team, index) => renderTeamCard(team, { eager: index === 0 }))');
+        expect(dashboardSource).toContain('fullAccessTeams.map((team, index) => renderTeamCard(team, { eager: index === 0 }))');
+        expect(dashboardSource).toContain('parentOnlyTeams.map(team => renderTeamCard(team))');
+
+        expect(imageTagsContaining(teamsSource, 'safePhotoUrl')).toEqual([
+            expect.stringContaining('loading="${eager ? \'eager\' : \'lazy\'}" decoding="async"')
+        ]);
+        expect(teamsSource).toContain('const card = (team, { eager = false } = {}) => {');
+        expect(teamsSource).toContain('const eager = renderedCardIndex === 0;');
+        expect(teamsSource).toContain('return card(team, { eager });');
+    });
+
+    it('keeps the below-the-fold About founder portrait lazy', () => {
+        const [founderPortrait] = imageTagsContaining(readRepo('about.html'), 'Paul Snider — founder');
+        expect(founderPortrait).toContain('loading="lazy"');
+        expect(founderPortrait).toContain('decoding="async"');
     });
 });

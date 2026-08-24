@@ -226,7 +226,7 @@
           return a.localeCompare(b);
         });
 
-        const card = (team) => {
+        const card = (team, { eager = false } = {}) => {
           const teamName = String(team.name || 'Unnamed Team');
           const escapedTeamName = escapeHtml(teamName);
           const escapedTeamId = escapeHtml(team.id);
@@ -242,7 +242,7 @@
             <div class="p-6">
               <div class="flex items-center space-x-4 mb-4">
                 ${safePhotoUrl
-            ? `<img loading="lazy" decoding="async" src="${safePhotoUrl}" alt="${escapedTeamName}" class="w-16 h-16 rounded-full object-cover border-2 border-gray-200 group-hover:border-primary-400 transition">`
+            ? `<img loading="${eager ? 'eager' : 'lazy'}" decoding="async" src="${safePhotoUrl}" alt="${escapedTeamName}" class="w-16 h-16 rounded-full object-cover border-2 border-gray-200 group-hover:border-primary-400 transition">`
             : `<div class="w-16 h-16 rounded-full bg-gradient-to-br from-primary-100 to-primary-200 flex items-center justify-center border-2 border-gray-200 group-hover:border-primary-400 transition">
                       <span class="text-2xl font-bold text-primary-600">${initial}</span>
                     </div>`
@@ -272,8 +272,14 @@
         `;
         };
 
+        let renderedCardIndex = 0;
         const markup = locationKeys.map(loc => {
           const teamsForLoc = grouped[loc].sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+          const cardsMarkup = teamsForLoc.map((team) => {
+            const eager = renderedCardIndex === 0;
+            renderedCardIndex += 1;
+            return card(team, { eager });
+          }).join('');
           return `
             <section class="space-y-4">
               <div class="flex items-center justify-between px-2">
@@ -286,7 +292,7 @@
                 </span>
               </div>
               <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                ${teamsForLoc.map(card).join('')}
+                ${cardsMarkup}
               </div>
             </section>
           `;

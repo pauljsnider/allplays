@@ -450,7 +450,7 @@
                     <div class="p-5 bg-gradient-to-r from-gray-50 to-white">
                         <div class="flex items-center gap-4">
                             ${photoUrl
-                                ? `<img loading="lazy" decoding="async" src="${escapeHtml(photoUrl)}" alt="${escapeHtml(name)}" class="w-14 h-14 rounded-xl object-cover border-2 border-gray-200 shadow-sm">`
+                                ? `<img decoding="async" src="${escapeHtml(photoUrl)}" alt="${escapeHtml(name)}" class="w-14 h-14 rounded-xl object-cover border-2 border-gray-200 shadow-sm">`
                                 : `<div class="w-14 h-14 rounded-xl bg-gradient-to-br from-primary-100 to-primary-200 flex items-center justify-center border-2 border-gray-200 shadow-sm">
                                     <span class="text-xl font-bold text-primary-600">${escapeHtml(name.charAt(0))}</span>
                                   </div>`

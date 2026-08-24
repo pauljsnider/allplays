@@ -169,7 +169,7 @@
                     <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-6">
                         <div class="flex items-center gap-4">
                             <div class="h-24 w-24 rounded-full overflow-hidden border border-slate-200 bg-slate-100 flex items-center justify-center">
-                                ${profile.profilePhotoUrl ? `<img loading="lazy" decoding="async" src="${escapeHtml(profile.profilePhotoUrl)}" alt="${escapeHtml(profile.athlete?.name || 'Athlete')}" class="w-full h-full object-cover">` : '<span class="text-xs text-slate-400">No Photo</span>'}
+                                ${profile.profilePhotoUrl ? `<img decoding="async" src="${escapeHtml(profile.profilePhotoUrl)}" alt="${escapeHtml(profile.athlete?.name || 'Athlete')}" class="w-full h-full object-cover">` : '<span class="text-xs text-slate-400">No Photo</span>'}
                             </div>
                             <div>
                                 <p class="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Athlete Profile</p>

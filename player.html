@@ -680,7 +680,7 @@
                         <div class="text-gray-500 font-semibold uppercase tracking-wider text-sm mb-3">${escapeHtml(team.name)}</div>
                         <div class="flex justify-center mb-4">
                             <span class="inline-flex h-28 w-28 rounded-full bg-gray-100 overflow-hidden border-2 border-gray-200">
-                                ${player.photoUrl ? `<img loading="lazy" decoding="async" src="${escapeHtml(player.photoUrl)}" alt="${escapeHtml(player.name)}" class="w-full h-full object-cover">` : `<span class="m-auto text-gray-400 text-sm">No Img</span>`}
+                                ${player.photoUrl ? `<img decoding="async" src="${escapeHtml(player.photoUrl)}" alt="${escapeHtml(player.name)}" class="w-full h-full object-cover">` : `<span class="m-auto text-gray-400 text-sm">No Img</span>`}
                             </span>
                         </div>
                         <h1 class="text-4xl md:text-5xl lg:text-6xl font-bold mb-3 text-gray-900">${escapeHtml(player.name)}</h1>

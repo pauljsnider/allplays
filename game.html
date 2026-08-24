@@ -1448,12 +1448,12 @@ Write the match report now:`;
                     </div>
                     <h1 class="text-3xl md:text-4xl lg:text-5xl font-bold mb-6 md:mb-8 text-gray-900">
                         <span class="inline-flex items-center gap-2">
-                            ${resolvedTeam.photoUrl ? `<img loading="lazy" decoding="async" src="${escapeHtml(resolvedTeam.photoUrl)}" alt="" class="w-10 h-10 rounded-full object-cover border border-gray-200">` : ''}
+                            ${resolvedTeam.photoUrl ? `<img decoding="async" src="${escapeHtml(resolvedTeam.photoUrl)}" alt="" class="w-10 h-10 rounded-full object-cover border border-gray-200">` : ''}
                             ${escapeHtml(resolvedTeam.name)}
                         </span>
                         <span class="text-gray-400 mx-2 md:mx-3">vs</span>
                         <span class="inline-flex items-center gap-2">
-                            ${game.opponentTeamPhoto ? `<img loading="lazy" decoding="async" src="${escapeHtml(game.opponentTeamPhoto)}" alt="" class="w-10 h-10 rounded-full object-cover border border-gray-200">` : ''}
+                            ${game.opponentTeamPhoto ? `<img decoding="async" src="${escapeHtml(game.opponentTeamPhoto)}" alt="" class="w-10 h-10 rounded-full object-cover border border-gray-200">` : ''}
                             ${escapeHtml(game.opponent)}
                         </span>
                     </h1>
@@ -1466,7 +1466,7 @@ Write the match report now:`;
                         <div class="text-3xl md:text-4xl text-gray-300 font-light">-</div>
                         <div class="text-center">
                             <div class="text-sm text-gray-500 mb-2 font-medium flex items-center justify-center gap-2">
-                                ${game.opponentTeamPhoto ? `<img loading="lazy" decoding="async" src="${escapeHtml(game.opponentTeamPhoto)}" alt="" class="w-6 h-6 rounded-full object-cover border border-gray-200">` : ''}
+                                ${game.opponentTeamPhoto ? `<img decoding="async" src="${escapeHtml(game.opponentTeamPhoto)}" alt="" class="w-6 h-6 rounded-full object-cover border border-gray-200">` : ''}
                                 <span>${escapeHtml(game.opponent)}</span>
                             </div>
                             <div class="text-5xl md:text-6xl lg:text-7xl font-mono font-bold ${isLoss ? 'text-red-600' : 'text-gray-600'
