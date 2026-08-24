@@ -178,6 +178,38 @@ function model() {
     };
 }
 
+function scheduleResultForModel(teamModel) {
+    return {
+        children: [],
+        staffTeams: [{ teamId: teamModel.team.id, teamName: teamModel.team.name }],
+        events: [...teamModel.upcomingEvents, ...teamModel.recentResults].map((event) => ({
+            eventKey: `${teamModel.team.id}:${event.id}`,
+            id: event.id,
+            teamId: teamModel.team.id,
+            teamName: teamModel.team.name,
+            title: event.title,
+            type: event.type,
+            date: event.date,
+            location: event.location,
+            locationDetail: event.locationDetail || null,
+            opponent: event.opponent || null,
+            childId: '',
+            childName: '',
+            isDbGame: event.isDbGame === true,
+            status: event.status || 'scheduled',
+            liveStatus: event.liveStatus || '',
+            visibility: event.visibility || '',
+            homeScore: event.homeScore,
+            awayScore: event.awayScore,
+            isCancelled: event.isCancelled === true,
+            statTrackerConfigId: event.statTrackerConfigId || '',
+            assignments: [],
+            openAssignmentCount: 0
+        })),
+        isPartial: false
+    };
+}
+
 function coreModel() {
     return {
         ...model(),
@@ -295,11 +327,7 @@ beforeEach(() => {
     publicActionMocks.copyPublicText.mockResolvedValue('copied');
     publicActionMocks.sharePublicUrl.mockResolvedValue('copied');
     parentToolsMocks.buildPrivateTeamCalendarFeedUrl.mockReturnValue('https://feed.example.test/private-team.ics?teamId=team-1&token=abc123');
-    scheduleServiceMocks.loadParentSchedule.mockResolvedValue({
-        children: [],
-        events: [],
-        staffTeams: []
-    });
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValue(scheduleResultForModel(coreModel()));
     scheduleServiceMocks.loadPreview.mockResolvedValue({
         missingPlayerCount: 0,
         eligibleEmailCount: 0,
@@ -792,6 +820,7 @@ describe('React app TeamDetail page', () => {
         managerModel.nextEvent = managerModel.upcomingEvents[0];
         teamDetailMocks.loadParentTeamDetailBootstrap.mockResolvedValueOnce(managerModel);
         teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(managerModel);
+        scheduleServiceMocks.loadParentSchedule.mockResolvedValue(scheduleResultForModel(managerModel));
         scheduleServiceMocks.loadPreview.mockResolvedValueOnce({
             missingPlayerCount: 3,
             eligibleEmailCount: 4,
@@ -861,6 +890,7 @@ describe('React app TeamDetail page', () => {
         }];
         teamDetailMocks.loadParentTeamDetailBootstrap.mockResolvedValueOnce(managerModel);
         teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(managerModel);
+        scheduleServiceMocks.loadParentSchedule.mockResolvedValue(scheduleResultForModel(managerModel));
 
         const { container } = await renderTeamDetail(managerAuth);
         await clickButton(container, 'Schedule');
@@ -877,6 +907,7 @@ describe('React app TeamDetail page', () => {
 
         teamDetailMocks.loadParentTeamDetailBootstrap.mockResolvedValueOnce(model());
         teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(model());
+        scheduleServiceMocks.loadParentSchedule.mockResolvedValue(scheduleResultForModel(model()));
         const hidden = await renderTeamDetail();
         await clickButton(hidden.container, 'Schedule');
         expect(hidden.container.textContent).not.toContain('Varsity Basketball');
@@ -920,6 +951,7 @@ describe('React app TeamDetail page', () => {
         teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(emptyModel);
         teamDetailMocks.loadTeamDetailInsights.mockResolvedValueOnce({ leaderboards: [], trackingSummaries: [] });
         teamDetailMocks.loadTeamDetailSponsors.mockResolvedValueOnce({ sponsors: [] });
+        scheduleServiceMocks.loadParentSchedule.mockResolvedValue(scheduleResultForModel(emptyModel));
 
         const { container } = await renderTeamDetail();
         expect(container.textContent).toContain('No completed games yet');
