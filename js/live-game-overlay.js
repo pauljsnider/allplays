@@ -87,6 +87,8 @@ const elements = {
     replayCurrent: document.querySelector('#replay-current'),
     replayDuration: document.querySelector('#replay-duration'),
     replaySpeeds: [...document.querySelectorAll('[data-replay-speed]')],
+    replayScanStatus: document.querySelector('#replay-scan-status'),
+    replayScanSpeed: document.querySelector('#replay-scan-speed'),
     connectionMessage: document.querySelector('#connection-message'),
     reactionsOverlay: document.querySelector('#reactions-overlay'),
     screenReaderUpdate: document.querySelector('#screen-reader-update')
@@ -121,7 +123,6 @@ const uiState = {
     videoDurationMs: 0,
     lastMediaSeekTargetMs: null,
     lastMediaSeekAt: 0,
-    lastHighSpeedMediaSyncAt: 0,
     teamId: '',
     gameId: '',
     chatUser: null,
@@ -893,6 +894,12 @@ function setReplayControlState() {
     elements.replaySpeeds.forEach((button) => {
         button.setAttribute('aria-pressed', String(Number(button.dataset.replaySpeed) === uiState.replaySpeed));
     });
+    const isScanning = uiState.replayPlaying && uiState.replaySpeed > 2;
+    const scanLabel = `${uiState.replaySpeed}× game scan`;
+    if (elements.replayScanSpeed.textContent !== scanLabel) {
+        elements.replayScanSpeed.textContent = scanLabel;
+    }
+    elements.replayScanStatus.hidden = !isScanning;
 }
 
 function sendYouTubeCommand(command, args = []) {
@@ -927,6 +934,7 @@ function isRecentMediaSeekEcho(mediaElapsedMs) {
 
 function syncReplayFromMediaTime(mediaElapsedMs, stateTools) {
     if (!uiState.isReplay || !uiState.replaySession || !stateTools || !Number.isFinite(mediaElapsedMs)) return;
+    if (uiState.replayPlaying && uiState.replaySpeed > 2) return;
     const boundedElapsedMs = Math.min(uiState.replayDurationMs, Math.max(0, mediaElapsedMs));
     if (isRecentMediaSeekEcho(boundedElapsedMs)) return;
 
@@ -954,8 +962,13 @@ function handleYouTubeReplayMessage(event, stateTools) {
 
     updateReplayVideoDuration(telemetry.durationMs);
     syncReplayFromMediaTime(telemetry.currentTimeMs, stateTools);
-    if (telemetry.playerState === 2 && uiState.replayPlaying) pauseReplay({ syncMedia: false });
-    if (telemetry.playerState === 1 && !uiState.replayPlaying) resumeReplayFromMedia(stateTools);
+    if (telemetry.playerState === 2 && uiState.replayPlaying && uiState.replaySpeed <= 2) {
+        pauseReplay({ syncMedia: false });
+    }
+    if (telemetry.playerState === 1 && !uiState.replayPlaying) {
+        resumeReplayFromMedia(stateTools);
+        if (uiState.replaySpeed > 2) syncReplayMedia({ play: true });
+    }
 }
 
 function startYouTubeReplayListening() {
@@ -970,6 +983,7 @@ function startYouTubeReplayListening() {
 function syncReplayMedia({ seek = false, play = uiState.replayPlaying } = {}) {
     if (!uiState.isReplay) return;
     const seconds = Math.max(0, uiState.replayElapsedMs / 1000);
+    const isScanning = play && uiState.replaySpeed > 2;
 
     if (uiState.videoMode === 'recorded') {
         if (seek) rememberMediaSeek(uiState.replayElapsedMs);
@@ -979,7 +993,7 @@ function syncReplayMedia({ seek = false, play = uiState.replayPlaying } = {}) {
             elements.recordedVideo.currentTime = seconds;
         }
         elements.recordedVideo.playbackRate = Math.min(uiState.replaySpeed, 2);
-        if (play) elements.recordedVideo.play().catch(() => {});
+        if (play && !isScanning) elements.recordedVideo.play().catch(() => {});
         else elements.recordedVideo.pause();
         return;
     }
@@ -990,7 +1004,7 @@ function syncReplayMedia({ seek = false, play = uiState.replayPlaying } = {}) {
             sendYouTubeCommand('seekTo', [seconds, true]);
         }
         sendYouTubeCommand('setPlaybackRate', [Math.min(uiState.replaySpeed, 2)]);
-        sendYouTubeCommand(play ? 'playVideo' : 'pauseVideo');
+        sendYouTubeCommand(play && !isScanning ? 'playVideo' : 'pauseVideo');
     }
 }
 
@@ -1059,10 +1073,11 @@ function advanceReplayToElapsed(elapsedMs, stateTools) {
 }
 
 function pauseReplay({ syncMedia = true } = {}) {
+    const wasScanning = uiState.replayPlaying && uiState.replaySpeed > 2;
     uiState.replayPlaying = false;
     if (uiState.replayFrame !== null) cancelAnimationFrame(uiState.replayFrame);
     uiState.replayFrame = null;
-    if (syncMedia) syncReplayMedia({ play: false });
+    if (syncMedia) syncReplayMedia({ seek: wasScanning, play: false });
     setReplayControlState();
 }
 
@@ -1073,11 +1088,6 @@ function replayTick(stateTools) {
         getReplayElapsedMs(Date.now(), uiState.replayStartTime, uiState.replaySpeed)
     );
     advanceReplayToElapsed(elapsed, stateTools);
-    const nowMs = Date.now();
-    if (uiState.replaySpeed > 2 && nowMs - uiState.lastHighSpeedMediaSyncAt >= 250) {
-        uiState.lastHighSpeedMediaSyncAt = nowMs;
-        syncReplayMedia({ seek: true, play: true });
-    }
     if (elapsed >= uiState.replayDurationMs) {
         pauseReplay();
         return;
@@ -1122,6 +1132,7 @@ function bindReplayControls(stateTools) {
         button.onclick = () => {
             const speed = Number(button.dataset.replaySpeed);
             if (!Number.isFinite(speed) || speed <= 0) return;
+            const previousSpeed = uiState.replaySpeed;
             if (uiState.replayPlaying) {
                 const nowMs = Date.now();
                 uiState.replayElapsedMs = getReplayElapsedMs(nowMs, uiState.replayStartTime, uiState.replaySpeed);
@@ -1134,7 +1145,12 @@ function bindReplayControls(stateTools) {
                 );
             }
             uiState.replaySpeed = speed;
-            syncReplayMedia();
+            syncReplayMedia({
+                seek: uiState.replayPlaying && previousSpeed > 2 && speed <= 2
+            });
+            if (speed > 2) {
+                elements.screenReaderUpdate.textContent = `${speed} times game scan. Video will catch up when paused.`;
+            }
             setReplayControlState();
         };
     });
@@ -1480,9 +1496,10 @@ function bindInteractions() {
     elements.recordedVideo.addEventListener('play', () => {
         if (!uiState.isReplay) return;
         resumeReplayFromMedia(uiState.replayStateTools);
+        if (uiState.replaySpeed > 2) syncReplayMedia({ play: true });
     });
     elements.recordedVideo.addEventListener('pause', () => {
-        if (!uiState.isReplay || !uiState.replayPlaying) return;
+        if (!uiState.isReplay || !uiState.replayPlaying || uiState.replaySpeed > 2) return;
         pauseReplay({ syncMedia: false });
     });
     window.addEventListener('message', (event) => {

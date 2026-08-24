@@ -1017,6 +1017,41 @@
       padding: 0 8px;
     }
 
+    .replay-scan-status {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      z-index: 12;
+      display: grid;
+      gap: 4px;
+      min-width: min(320px, calc(100vw - 48px));
+      padding: 14px 18px;
+      border: 1px solid rgba(97, 228, 219, 0.48);
+      border-radius: 18px;
+      color: var(--paper);
+      background: rgba(3, 11, 21, 0.88);
+      box-shadow: 0 18px 54px rgba(0, 0, 0, 0.45);
+      text-align: center;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+    }
+
+    .replay-scan-status[hidden] {
+      display: none;
+    }
+
+    .replay-scan-status strong {
+      color: var(--home);
+      font: 700 17px/1 "Barlow Condensed", sans-serif;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .replay-scan-status span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
     body[data-replay="true"] .hero-event {
       bottom: 226px;
     }
@@ -1729,6 +1764,11 @@
       </div>
     </section>
 
+    <div id="replay-scan-status" class="replay-scan-status" role="status" hidden>
+      <strong id="replay-scan-speed">50× game scan</strong>
+      <span>Video catches up when paused</span>
+    </div>
+
     <section id="replay-controls" class="replay-controls" aria-label="Replay controls" hidden>
       <button id="replay-restart" class="replay-button" data-kind="restart" type="button" aria-label="Restart replay">↺</button>
       <button id="replay-play" class="replay-button" type="button" aria-label="Play replay">Play</button>
@@ -1802,6 +1842,6 @@
   </main>
 
   <span id="screen-reader-update" class="visually-hidden" aria-live="polite"></span>
-  <script type="module" src="js/live-game-overlay.js?v=15"></script>
+  <script type="module" src="js/live-game-overlay.js?v=16"></script>
 </body>
 </html>

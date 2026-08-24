@@ -432,6 +432,13 @@ async function stubRealOverlayModules(page) {
         contentType: 'application/javascript',
         body: `export function resolveReplayVideoOptions() {
             if (window.__OVERLAY_THROW_VIDEO__) throw new Error('provider refresh failed');
+            if (window.__OVERLAY_RECORDED_VIDEO__) {
+                return {
+                    mode: 'recorded', hasVideo: true,
+                    sourceUrl: '/overlay-recording-fixture.mp4',
+                    publicUrl: '/overlay-recording-fixture.mp4'
+                };
+            }
             return {
                 mode: 'embed', hasVideo: true,
                 sourceUrl: 'https://www.youtube.com/embed/PK1HyC37doc?autoplay=1&mute=1',
@@ -927,6 +934,17 @@ test('replay mode synchronizes saved plays, score, lineup, chat, reactions, and 
 
 test('manual YouTube seeking rebuilds replay stats and the overlay offers canonical 50× catch-up', async ({ page, baseURL }) => {
     const pageErrors = collectPageErrors(page);
+    await page.addInitScript(() => {
+        window.__OVERLAY_YOUTUBE_COMMANDS__ = [];
+        window.addEventListener('message', (event) => {
+            if (event.data?.source !== 'overlay-youtube-fixture') return;
+            try {
+                window.__OVERLAY_YOUTUBE_COMMANDS__.push(JSON.parse(event.data.payload));
+            } catch {
+                // Ignore non-command player messages.
+            }
+        });
+    });
     await stubRealOverlayModules(page);
     await stubYouTubeEmbed(page);
 
@@ -957,6 +975,23 @@ test('manual YouTube seeking rebuilds replay stats and the overlay offers canoni
     await expect(fiftyTimes).toBeVisible();
     await fiftyTimes.click();
     await expect(fiftyTimes).toHaveAttribute('aria-pressed', 'true');
+
+    await page.evaluate(() => { window.__OVERLAY_YOUTUBE_COMMANDS__ = []; });
+    await page.getByRole('button', { name: 'Play replay' }).click();
+    await expect(page.locator('#replay-current')).not.toHaveText('0:00');
+    await expect(page.locator('#replay-scan-status')).toContainText('50× game scan');
+    await expect(page.locator('#replay-scan-status')).toContainText('Video catches up when paused');
+    await page.waitForTimeout(700);
+    const scanningCommands = await page.evaluate(() => window.__OVERLAY_YOUTUBE_COMMANDS__ || []);
+    expect(scanningCommands.filter((command) => command.func === 'seekTo')).toHaveLength(1);
+    expect(scanningCommands.some((command) => command.func === 'pauseVideo')).toBe(true);
+    expect(scanningCommands.some((command) => command.func === 'playVideo')).toBe(false);
+
+    await page.getByRole('button', { name: 'Pause replay' }).click();
+    await expect(page.locator('#replay-scan-status')).toBeHidden();
+    await expect.poll(async () => page.evaluate(() => (
+        window.__OVERLAY_YOUTUBE_COMMANDS__ || []
+    ).filter((command) => command.func === 'seekTo').length)).toBe(2);
     expect(pageErrors).toEqual([]);
 });
 
@@ -972,7 +1007,20 @@ test('mobile replay controls stay on screen without covering the scoreboard', as
     await expect(page.getByRole('button', { name: 'Play replay' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Restart replay' })).toBeVisible();
     await expect(page.getByRole('button', { name: '4×' })).toBeVisible();
-    await expect(page.getByRole('button', { name: '50×' })).toBeVisible();
+    const fiftyTimes = page.getByRole('button', { name: '50×' });
+    await expect(fiftyTimes).toBeVisible();
+    await fiftyTimes.click();
+    await page.getByRole('button', { name: 'Play replay' }).click();
+    await expect(page.locator('#replay-scan-status')).toBeVisible();
+    const scanBounds = await page.locator('#replay-scan-status').evaluate((element) => {
+        const rectangle = element.getBoundingClientRect();
+        return { left: rectangle.left, right: rectangle.right, top: rectangle.top, bottom: rectangle.bottom };
+    });
+    expect(scanBounds.left).toBeGreaterThanOrEqual(0);
+    expect(scanBounds.right).toBeLessThanOrEqual(390);
+    expect(scanBounds.top).toBeGreaterThanOrEqual(0);
+    expect(scanBounds.bottom).toBeLessThanOrEqual(844);
+    await page.getByRole('button', { name: 'Pause replay' }).click();
 
     const layout = await page.evaluate(() => {
         const score = document.querySelector('#score-bug').getBoundingClientRect();
@@ -988,6 +1036,24 @@ test('mobile replay controls stay on screen without covering the scoreboard', as
     expect(layout.noHorizontalOverflow).toBe(true);
     expect(layout.scoreBottom).toBeLessThanOrEqual(layout.controlsTop);
     expect(layout.controlsRight).toBeLessThanOrEqual(layout.viewportWidth);
+    expect(pageErrors).toEqual([]);
+});
+
+test('recorded replay scan keeps the event timeline moving while the video is intentionally paused', async ({ page, baseURL }) => {
+    const pageErrors = collectPageErrors(page);
+    await page.addInitScript(() => { window.__OVERLAY_RECORDED_VIDEO__ = true; });
+    await stubRealOverlayModules(page);
+    await page.route('**/overlay-recording-fixture.mp4', (route) => route.abort());
+
+    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true`, { waitUntil: 'domcontentloaded' });
+    await page.getByRole('button', { name: 'Pause replay' }).click();
+    await page.getByRole('button', { name: '50×' }).click();
+    await page.getByRole('button', { name: 'Play replay' }).click();
+    await page.locator('#overlay-recorded-video').dispatchEvent('pause');
+
+    await expect(page.locator('#replay-scan-status')).toBeVisible();
+    await expect(page.locator('#replay-current')).not.toHaveText('0:00');
+    await expect(page.getByRole('button', { name: 'Pause replay' })).toBeVisible();
     expect(pageErrors).toEqual([]);
 });
 
