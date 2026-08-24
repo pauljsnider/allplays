@@ -41,6 +41,8 @@ describe('live game overlay page', () => {
         expect(html).toContain('class="replay-pause-glyph"');
         expect(html).toContain('data-replay-action="play"');
         expect(html).toContain('id="share-game"');
+        expect(html).toContain('id="scoreboard-toggle"');
+        expect(html).toContain('id="scoreboard-menu-toggle"');
         expect(html).toContain('id="mute-toggle"');
         expect(html).toContain('id="fullscreen-toggle"');
         expect(html).toContain('id="game-actions-menu"');
@@ -49,7 +51,10 @@ describe('live game overlay page', () => {
         expect(html).toContain('id="replay-access-gate"');
         expect(html).toContain('id="announcer-toggle"');
         expect(html).toContain('id="opponent-tab"');
-        expect(html).toContain('js/live-game-overlay.js?v=18');
+        expect(html).toContain('id="home-team-photo"');
+        expect(html).toContain('id="away-team-photo"');
+        expect(html).toContain('data-score-hidden="false"');
+        expect(html).toContain('js/live-game-overlay.js?v=19');
     });
 
     it('keeps the local demo isolated while wiring canonical subscriptions and authenticated chat posting', () => {
@@ -110,6 +115,10 @@ describe('live game overlay page', () => {
         expect(source).toContain("uiState.videoMuted ? 'mute' : 'unMute'");
         expect(source).toContain('requestFullscreen');
         expect(source).toContain('buildGameWatchShareUrl');
+        expect(source).toContain('toggleScoreboardVisibility');
+        expect(source).toContain("state.events.slice(0, 60)");
+        expect(source).toContain('renderTeamPhoto');
+        expect(source).toContain('image.dataset.source === safeUrl');
     });
 
     it('keeps every current tracker live-event family in the overlay parity inventory', () => {

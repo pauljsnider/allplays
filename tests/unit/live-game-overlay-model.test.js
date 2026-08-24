@@ -218,9 +218,30 @@ describe('live game overlay model', () => {
         applyOverlayEvents(state, [{ id: 'away', type: 'goal', isOpponent: true, awayScore: 1, createdAt: 3 }]);
 
         expect(getOverlayEventTone({ type: 'clock_pause' })).toBe('system');
+        expect(getOverlayEventTone({ type: 'undo' })).toBe('system');
+        expect(getOverlayEventTone({ type: 'log_remove' })).toBe('system');
         expect(getOverlayEventTone({ type: 'goal', isOpponent: true })).toBe('away-score');
         expect(state.events.map((event) => event.id)).toEqual(['away', 'reset']);
         expect(state.awayScore).toBe(1);
+    });
+
+    it('labels point values while preserving neutral system-event presentation', () => {
+        const state = createOverlayState({
+            game: {},
+            events: [
+                { id: 'three', type: 'stat', statKey: 'pts', value: 3, homeScore: 3, createdAt: 1 },
+                { id: 'undo', type: 'undo', description: 'Undo score', createdAt: 2 }
+            ]
+        });
+
+        expect(state.events.find((event) => event.id === 'three')).toMatchObject({
+            tone: 'home-score',
+            label: '+3'
+        });
+        expect(state.events.find((event) => event.id === 'undo')).toMatchObject({
+            tone: 'system',
+            label: ''
+        });
     });
 
     it('reconciles the complete ordered tracker snapshot without dropping non-play state events', () => {

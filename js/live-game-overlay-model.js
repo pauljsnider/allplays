@@ -194,7 +194,7 @@ export function parseYouTubeReplayTelemetry(data) {
 export function getOverlayEventTone(event = {}) {
     const type = toText(event.type).toLowerCase();
     const statKey = toText(event.statKey).toLowerCase();
-    if (type === 'reset' || ['clock_pause', 'clock_start', 'clock_sync', 'period_change'].includes(type)) {
+    if (type === 'reset' || ['clock_pause', 'clock_start', 'clock_sync', 'period_change', 'undo', 'log_remove'].includes(type)) {
         return 'system';
     }
     if (type === 'goal' || type === 'football_score' || type === 'score_update' || ['pts', 'points', 'goals'].includes(statKey)) {
@@ -206,6 +206,7 @@ export function getOverlayEventTone(event = {}) {
 export function normalizeOverlayEvent(event = {}, index = 0) {
     const tone = getOverlayEventTone(event);
     const isScore = tone === 'home-score' || tone === 'away-score';
+    const statKey = toText(event.statKey).toLowerCase();
     const description = toText(event.description, isScore ? 'Score recorded' : 'Game update');
     return {
         ...event,
@@ -218,7 +219,13 @@ export function normalizeOverlayEvent(event = {}, index = 0) {
             ? undefined
             : Math.max(0, toFiniteNumber(event.gameClockMs)),
         tone,
-        label: isScore ? (toText(event.statKey).toLowerCase() === 'goals' || event.type === 'goal' ? 'GOAL' : 'SCORE') : '',
+        label: isScore
+            ? (statKey === 'goals' || event.type === 'goal'
+                ? 'GOAL'
+                : (['pts', 'points'].includes(statKey) && toFiniteNumber(event.value) > 0
+                    ? `+${toFiniteNumber(event.value)}`
+                    : 'SCORE'))
+            : '',
         // The retrying legacy tracker records the original client time before
         // Firestore replaces createdAt at eventual delivery. Prefer that stable
         // origin so a queued old score cannot sort after newer live updates.

@@ -12,7 +12,7 @@ import {
     parseYouTubeReplayTelemetry,
     reconcileOverlayLiveEvents,
     replaceOverlayChat
-} from './live-game-overlay-model.js?v=7';
+} from './live-game-overlay-model.js?v=8';
 import {
     buildReplaySessionState,
     collectReplayEventWindow,
@@ -41,6 +41,9 @@ const elements = {
     openStreamLabel: document.querySelector('#open-stream-label'),
     shareGame: document.querySelector('#share-game'),
     shareGameMenu: document.querySelector('#share-game-menu'),
+    scoreboardToggle: document.querySelector('#scoreboard-toggle'),
+    scoreboardMenuToggle: document.querySelector('#scoreboard-menu-toggle'),
+    scoreboardMenuLabel: document.querySelector('#scoreboard-menu-label'),
     muteToggle: document.querySelector('#mute-toggle'),
     fullscreenToggle: document.querySelector('#fullscreen-toggle'),
     broadcastStage: document.querySelector('#broadcast-stage'),
@@ -56,8 +59,11 @@ const elements = {
     replayAccessCopy: document.querySelector('#replay-access-copy'),
     liveStatus: document.querySelector('#live-status'),
     viewerCount: document.querySelector('#viewer-count'),
+    scoreBug: document.querySelector('#score-bug'),
     homeName: document.querySelector('#home-team-name'),
     awayName: document.querySelector('#away-team-name'),
+    homeTeamPhoto: document.querySelector('#home-team-photo'),
+    awayTeamPhoto: document.querySelector('#away-team-photo'),
     homeScore: document.querySelector('#home-score'),
     awayScore: document.querySelector('#away-score'),
     period: document.querySelector('#period'),
@@ -146,6 +152,7 @@ const uiState = {
     videoMode: 'none',
     videoOrigin: '',
     videoMuted: true,
+    scoreboardHidden: false,
     videoRequestId: 0,
     optionalTeamStatus: 'pending',
     teamEntitlement: null,
@@ -238,7 +245,7 @@ function toggleGameActionsMenu() {
     const open = elements.gameActionsMenu.hidden;
     elements.gameActionsMenu.hidden = !open;
     elements.gameActionsToggle.setAttribute('aria-expanded', String(open));
-    if (open) elements.gameActionsMenu.querySelector('[role="menuitem"]')?.focus();
+    if (open) elements.gameActionsMenu.querySelector('[role^="menuitem"]')?.focus();
 }
 
 function configureGameActions() {
@@ -317,6 +324,26 @@ function toggleVideoMute() {
     elements.screenReaderUpdate.textContent = uiState.videoMuted ? 'Video muted.' : 'Video unmuted.';
 }
 
+function updateScoreboardVisibility() {
+    const hidden = uiState.scoreboardHidden;
+    elements.body.dataset.scoreHidden = String(hidden);
+    elements.scoreBug.setAttribute('aria-hidden', String(hidden));
+    elements.scoreboardToggle.setAttribute('aria-pressed', String(hidden));
+    elements.scoreboardToggle.setAttribute('aria-label', hidden ? 'Show scoreboard' : 'Hide scoreboard');
+    elements.scoreboardToggle.title = hidden ? 'Show scoreboard' : 'Hide scoreboard';
+    elements.scoreboardMenuToggle.setAttribute('aria-checked', String(hidden));
+    elements.scoreboardMenuLabel.textContent = hidden ? 'Show scoreboard' : 'Hide scoreboard';
+}
+
+function toggleScoreboardVisibility({ closeMenu = false } = {}) {
+    uiState.scoreboardHidden = !uiState.scoreboardHidden;
+    updateScoreboardVisibility();
+    if (closeMenu) closeGameActionsMenu();
+    const message = uiState.scoreboardHidden ? 'Scoreboard hidden.' : 'Scoreboard shown.';
+    showActionToast(message);
+    elements.screenReaderUpdate.textContent = message;
+}
+
 function updateFullscreenControl() {
     const fullscreen = document.fullscreenElement === elements.broadcastStage;
     elements.fullscreenToggle.setAttribute('aria-pressed', String(fullscreen));
@@ -358,11 +385,39 @@ function flashScore(element) {
     }, 560);
 }
 
+function renderTeamPhoto(image, value, alt) {
+    const safeUrl = resolveSafeProfilePhotoUrl(value);
+    if (!safeUrl) {
+        delete image.dataset.source;
+        image.hidden = true;
+        image.removeAttribute('src');
+        image.alt = '';
+        return;
+    }
+    if (image.dataset.source === safeUrl) {
+        if (!image.hidden) image.alt = alt;
+        return;
+    }
+    image.dataset.source = safeUrl;
+    image.src = safeUrl;
+    image.alt = alt;
+    image.referrerPolicy = 'no-referrer';
+    image.decoding = 'async';
+    image.hidden = false;
+    image.onerror = () => {
+        image.hidden = true;
+        image.removeAttribute('src');
+        image.alt = '';
+    };
+}
+
 function renderScoreboard() {
     const state = uiState.game;
     if (!state) return;
     elements.homeName.textContent = state.homeName;
     elements.awayName.textContent = state.awayName;
+    renderTeamPhoto(elements.homeTeamPhoto, state.team?.photoUrl, `${state.homeName} team photo`);
+    renderTeamPhoto(elements.awayTeamPhoto, state.game?.opponentTeamPhoto, `${state.awayName} team photo`);
     elements.homeScore.textContent = String(state.homeScore);
     elements.awayScore.textContent = String(state.awayScore);
     elements.period.textContent = state.period;
@@ -388,7 +443,13 @@ function renderEventCard(event, isNew = false) {
     meta.className = 'event-meta';
     const displayPeriod = event.period || uiState.game?.period || '—';
     const displayClockMs = event.gameClockMs ?? uiState.game?.gameClockMs ?? 0;
-    meta.appendChild(createTextElement('span', '', `${displayPeriod} · ${formatOverlayClock(displayClockMs)}`));
+    const context = document.createElement('div');
+    context.className = 'event-context';
+    context.appendChild(createTextElement('span', '', `${displayPeriod} · ${formatOverlayClock(displayClockMs)}`));
+    if (event.tone !== 'system') {
+        context.appendChild(createTextElement('span', 'event-side-tag', event.isOpponent ? 'Away' : 'Home'));
+    }
+    meta.appendChild(context);
     if (event.label) meta.appendChild(createTextElement('span', 'event-label', event.label));
     item.appendChild(meta);
     item.appendChild(createTextElement('p', 'event-description', event.description));
@@ -416,7 +477,7 @@ function renderEvents() {
             : 'Connected. Waiting for the first play…';
         elements.eventList.appendChild(createTextElement('li', 'empty-state', emptyCopy));
     } else {
-        state.events.slice(0, 18).forEach((event, index) => {
+        state.events.slice(0, 60).forEach((event, index) => {
             elements.eventList.appendChild(renderEventCard(event, isNewLatest && index === 0));
         });
     }
@@ -1688,6 +1749,8 @@ function bindInteractions() {
     elements.focusToggle.addEventListener('click', toggleFocusMode);
     elements.shareGame.addEventListener('click', () => void shareGame());
     elements.shareGameMenu.addEventListener('click', () => void shareGame());
+    elements.scoreboardToggle.addEventListener('click', () => toggleScoreboardVisibility());
+    elements.scoreboardMenuToggle.addEventListener('click', () => toggleScoreboardVisibility({ closeMenu: true }));
     elements.muteToggle.addEventListener('click', toggleVideoMute);
     elements.fullscreenToggle.addEventListener('click', () => void toggleFullscreen());
     elements.gameActionsToggle.addEventListener('click', toggleGameActionsMenu);
@@ -1695,7 +1758,7 @@ function bindInteractions() {
         if (event.target.closest('a')) closeGameActionsMenu();
     });
     elements.gameActionsMenu.addEventListener('keydown', (event) => {
-        const items = [...elements.gameActionsMenu.querySelectorAll('[role="menuitem"]')]
+        const items = [...elements.gameActionsMenu.querySelectorAll('[role^="menuitem"]')]
             .filter((item) => !item.hidden);
         const currentIndex = items.indexOf(document.activeElement);
         let nextIndex = null;
@@ -1774,6 +1837,7 @@ function bindInteractions() {
         if (event.key.toLowerCase() === 'i') togglePanel('insights');
         if (event.key.toLowerCase() === 'c') togglePanel('chat');
         if (event.key.toLowerCase() === 'm') toggleVideoMute();
+        if (event.key.toLowerCase() === 's') toggleScoreboardVisibility();
         if (event.key.toLowerCase() === 'f' && event.shiftKey) void toggleFullscreen();
         else if (event.key.toLowerCase() === 'f') toggleFocusMode();
     });
@@ -2037,6 +2101,7 @@ async function startRealMode(params) {
 
 async function init() {
     bindInteractions();
+    updateScoreboardVisibility();
     renderPanelVisibility();
     const params = getQueryParams();
     if (params.demo === '1' || params.demo === 'true') await startDemoMode(params);

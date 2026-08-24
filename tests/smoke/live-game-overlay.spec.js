@@ -339,6 +339,11 @@ async function stubRealOverlayModules(page) {
         contentType: 'image/svg+xml',
         body: '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="#61e4db"/></svg>'
     }));
+    await page.route('https://allplays.ai/test-assets/**', (route) => route.fulfill({
+        status: 200,
+        contentType: 'image/svg+xml',
+        body: '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="#61e4db"/></svg>'
+    }));
     await page.route(/\/(?:js\/db|tests\/manual\/live-game-overlay-production-readonly-adapter)\.js(?:\?.*)?$/, (route) => route.fulfill({
         status: 200,
         contentType: 'application/javascript',
@@ -346,12 +351,14 @@ async function stubRealOverlayModules(page) {
             const team = {
                 id: 'team-1',
                 name: 'Current Academy',
+                photoUrl: 'https://allplays.ai/test-assets/current-academy.svg',
                 currentSeasonId: '2026',
                 recordedReplayTeamPassRequired: window.__OVERLAY_TEAM_PASS_GATE__ === true
             };
             const game = {
                 id: 'game-1', opponent: 'Sporting Blue', homeScore: 3, awayScore: 2,
                 homeTeamName: 'Current Academy',
+                opponentTeamPhoto: 'https://allplays.ai/test-assets/sporting-blue.svg',
                 period: 'H2', liveClockMs: 720000, liveStatus: 'live', viewerCount: 4, liveViewerCount: 19,
                 videoUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
                 isPublicProjection: true,
@@ -782,6 +789,47 @@ test('real mode follows canonical game, lineup, clock, reset, reaction, and pass
     expect(pageErrors).toEqual([]);
 });
 
+test('live event feed keeps the current 60-play history with explicit team context', async ({ page, baseURL }) => {
+    const pageErrors = collectPageErrors(page);
+    await stubRealOverlayModules(page);
+    await stubYouTubeEmbed(page);
+
+    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('#home-team-name')).toHaveText('Current Academy');
+
+    const events = Array.from({ length: 70 }, (_, index) => ({
+        id: `event-${index}`,
+        type: 'note',
+        description: `Event ${index}`,
+        isOpponent: index % 2 === 1,
+        homeScore: 3,
+        awayScore: 2,
+        period: 'H2',
+        gameClockMs: index * 1000,
+        createdAt: index + 1
+    }));
+    await page.evaluate((snapshot) => window.__OVERLAY_EVENT_CALLBACK__(snapshot), events);
+
+    const cards = page.locator('#event-list .event-card');
+    await expect(cards).toHaveCount(60);
+    await expect(cards.first()).toContainText('Event 69');
+    await expect(cards.first().locator('.event-side-tag')).toHaveText('Away');
+    await expect(cards.last()).toContainText('Event 10');
+
+    await page.evaluate((snapshot) => window.__OVERLAY_EVENT_CALLBACK__([
+        ...snapshot,
+        {
+            id: 'system-remove', type: 'log_remove', description: 'Removed play',
+            homeScore: 3, awayScore: 2, period: 'H2', gameClockMs: 71_000, createdAt: 71
+        }
+    ]), events);
+    await expect(cards).toHaveCount(60);
+    await expect(cards.first()).toContainText('Removed play');
+    await expect(cards.first()).toHaveAttribute('data-tone', 'system');
+    await expect(cards.first().locator('.event-side-tag')).toHaveCount(0);
+    expect(pageErrors).toEqual([]);
+});
+
 test('viewer toolbar shares the canonical watch URL and controls YouTube audio and fullscreen', async ({ page, baseURL }) => {
     const pageErrors = collectPageErrors(page);
     await page.addInitScript(() => {
@@ -834,6 +882,12 @@ test('viewer toolbar shares the canonical watch URL and controls YouTube audio a
 
     await expect(page.locator('#open-stream')).toContainText('Watch on YouTube');
     await expect(page.locator('#open-stream')).toHaveAttribute('href', 'https://www.youtube.com/watch?v=PK1HyC37doc');
+    await expect(page.locator('#open-stream')).toHaveAttribute('target', '_blank');
+    await expect(page.locator('#open-stream')).toHaveAttribute('rel', /noopener/);
+    await expect(page.locator('#home-team-photo')).toBeVisible();
+    await expect(page.locator('#home-team-photo')).toHaveAttribute('src', 'https://allplays.ai/test-assets/current-academy.svg');
+    await expect(page.locator('#away-team-photo')).toBeVisible();
+    await expect(page.locator('#away-team-photo')).toHaveAttribute('src', 'https://allplays.ai/test-assets/sporting-blue.svg');
     await expect(page.locator('#overlay-video')).toHaveAttribute('src', /enablejsapi=1/);
     await page.locator('#share-game').click();
     await expect.poll(() => page.evaluate(() => window.__OVERLAY_SHARED__)).toEqual([{
@@ -841,6 +895,19 @@ test('viewer toolbar shares the canonical watch URL and controls YouTube audio a
         text: 'Watch Current Academy vs Sporting Blue',
         url: 'https://share.allplays.ai/watch?teamId=team-1&gameId=game-1'
     }]);
+
+    await page.locator('#scoreboard-toggle').click();
+    await expect(page.locator('body')).toHaveAttribute('data-score-hidden', 'true');
+    await expect(page.locator('#score-bug')).toHaveAttribute('aria-hidden', 'true');
+    await expect(page.locator('#scoreboard-toggle')).toHaveAttribute('aria-label', 'Show scoreboard');
+    await expect(page.locator('#scoreboard-toggle')).toHaveAttribute('aria-pressed', 'true');
+
+    await page.locator('#game-actions-toggle').click();
+    await expect(page.locator('#scoreboard-menu-toggle')).toContainText('Show scoreboard');
+    await page.locator('#scoreboard-menu-toggle').click();
+    await expect(page.locator('#game-actions-menu')).toBeHidden();
+    await expect(page.locator('body')).toHaveAttribute('data-score-hidden', 'false');
+    await expect(page.locator('#score-bug')).toHaveAttribute('aria-hidden', 'false');
 
     await page.locator('#mute-toggle').click();
     await expect(page.locator('#mute-toggle')).toHaveAttribute('aria-label', 'Mute video');
@@ -1231,6 +1298,19 @@ test('mobile replay controls stay on screen without covering the scoreboard', as
     expect(layout.noHorizontalOverflow).toBe(true);
     expect(layout.scoreBottom).toBeLessThanOrEqual(layout.controlsTop);
     expect(layout.controlsRight).toBeLessThanOrEqual(layout.viewportWidth);
+
+    await page.locator('#scoreboard-toggle').click();
+    await expect(page.locator('#score-bug')).toHaveAttribute('aria-hidden', 'true');
+    await expect(page.locator('#score-bug')).toHaveCSS('visibility', 'hidden');
+    const hiddenScoreLayout = await page.evaluate(() => ({
+        scoreVisibility: getComputedStyle(document.querySelector('#score-bug')).visibility,
+        controlsTop: document.querySelector('#replay-controls').getBoundingClientRect().top,
+        controlsRight: document.querySelector('#replay-controls').getBoundingClientRect().right,
+        viewportWidth: window.innerWidth
+    }));
+    expect(hiddenScoreLayout.scoreVisibility).toBe('hidden');
+    expect(hiddenScoreLayout.controlsTop).toBeLessThanOrEqual(80);
+    expect(hiddenScoreLayout.controlsRight).toBeLessThanOrEqual(hiddenScoreLayout.viewportWidth);
     expect(pageErrors).toEqual([]);
 });
 
