@@ -1,6 +1,6 @@
 import { discoverPublicTeams, getPublicTeamGamesProjection, getPublicTeamProfile, getPublicTeamRosterCount, type PublicTeamProjectedGame, type PublicTeamRosterCount } from './adapters/legacyPublicTeamsDb';
 import { type ParentHomeTeam } from './homeLogic';
-import { computeNativeStandings } from './adapters/legacyTeamDetail';
+import { computeNativeStandings } from './adapters/legacyNativeStandings';
 
 const PUBLIC_ROSTER_COUNT_CONCURRENCY = 6;
 let activePublicRosterCountRequests = 0;
