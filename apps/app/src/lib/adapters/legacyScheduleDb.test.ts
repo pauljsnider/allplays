@@ -242,18 +242,25 @@ describe('legacyScheduleDb tracker config reads', () => {
 });
 
 describe('legacyScheduleDb live-event reads', () => {
-    it('bounds active-game reads to 20 events', async () => {
+    it('returns the newest 20 active-game events in chronological order', async () => {
         vi.mocked(legacyGetGame).mockResolvedValueOnce({ status: 'live', liveStatus: 'live' });
         vi.mocked(collection).mockReturnValueOnce({ path: 'teams/team-1/games/game-1/liveEvents' } as never);
         vi.mocked(query).mockReturnValueOnce({} as never);
+        const events = Array.from({ length: 25 }, (_, index) => ({
+            id: `event-${index + 1}`,
+            createdAt: index + 1
+        }));
         vi.mocked(getDocs).mockResolvedValueOnce({
-            docs: [{ id: 'event-1', data: () => ({ type: 'score_update' }) }]
+            docs: events
+                .toReversed()
+                .slice(0, 20)
+                .map((event) => ({ id: event.id, data: () => ({ createdAt: event.createdAt }) }))
         } as never);
 
-        await expect(getLiveEvents('team-1', 'game-1')).resolves.toEqual([{ id: 'event-1', type: 'score_update' }]);
+        await expect(getLiveEvents('team-1', 'game-1')).resolves.toEqual(events.slice(5));
 
         expect(legacyGetGame).toHaveBeenCalledWith('team-1', 'game-1');
-        expect(orderBy).toHaveBeenCalledWith('createdAt', 'asc');
+        expect(orderBy).toHaveBeenCalledWith('createdAt', 'desc');
         expect(limit).toHaveBeenCalledWith(20);
         expect(query).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.anything());
         expect(getDocs).toHaveBeenCalledTimes(1);

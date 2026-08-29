@@ -401,11 +401,13 @@ export async function getLiveEvents(teamId: string, gameId: string) {
     );
     const eventsQuery = legacyFirebaseQuery(
         eventsRef,
-        legacyFirebaseOrderBy('createdAt', 'asc'),
+        legacyFirebaseOrderBy('createdAt', 'desc'),
         legacyFirebaseLimit(20)
     );
     const snapshot = await legacyFirebaseGetDocs(eventsQuery);
-    return snapshot.docs.map((eventDoc: any) => ({ id: eventDoc.id, ...eventDoc.data() }));
+    return snapshot.docs
+        .map((eventDoc: any) => ({ id: eventDoc.id, ...eventDoc.data() }))
+        .reverse();
 }
 
 export async function updateGame(teamId: string, gameId: string, payload: Record<string, unknown>) {
