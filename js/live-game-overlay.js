@@ -17,7 +17,7 @@ import {
     reconcileOverlayLiveEvents,
     resolvePublicProjectionVideoOptions,
     replaceOverlayChat
-} from './live-game-overlay-model.js?v=18';
+} from './live-game-overlay-model.js?v=19';
 import {
     buildReplaySessionState,
     collectReplayEventWindow,

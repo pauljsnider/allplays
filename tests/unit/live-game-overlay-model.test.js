@@ -643,12 +643,47 @@ describe('live game overlay model', () => {
         reconcileOverlayLiveEvents(state, [{
             id: 'delayed-stale', type: 'score_update', description: 'Pre-reset delayed event',
             homeScore: 7, awayScore: 4, gameClockMs: 15_000,
-            clientCreatedAt: new Date(1_500).toISOString(), createdAt: 4_000
+            clientCreatedAt: new Date(4_000).toISOString(), createdAt: 1_500
         }], stateTools);
         expect(state.homeScore).toBe(1);
         expect(state.awayScore).toBe(0);
         expect(state.gameClockMs).toBe(5_000);
         expect(state.events.map((event) => event.id)).toEqual([]);
+    });
+
+    it('uses server timestamps for live reset membership while retaining client ordering', () => {
+        const state = createOverlayState({
+            game: {
+                homeScore: 0,
+                awayScore: 0,
+                liveStatus: 'live',
+                liveResetAt: 2_000
+            }
+        });
+
+        reconcileOverlayLiveEvents(state, [
+            {
+                id: 'stale-device-ahead',
+                type: 'goal',
+                description: 'Stale goal',
+                homeScore: 9,
+                awayScore: 0,
+                clientCreatedAt: new Date(2_500).toISOString(),
+                createdAt: 1_900
+            },
+            {
+                id: 'fresh-device-behind',
+                type: 'goal',
+                description: 'Fresh goal',
+                homeScore: 1,
+                awayScore: 0,
+                clientCreatedAt: new Date(1_500).toISOString(),
+                createdAt: 2_100
+            }
+        ], stateTools);
+
+        expect(state.homeScore).toBe(1);
+        expect(state.events.map((event) => event.id)).toEqual(['fresh-device-behind']);
     });
 
     it('sorts replacement chat and supplies a realistic local fixture', () => {

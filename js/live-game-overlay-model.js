@@ -431,7 +431,11 @@ export function normalizeOverlayEvent(event = {}, index = 0) {
         // The retrying legacy tracker records the original client time before
         // Firestore replaces createdAt at eventual delivery. Prefer that stable
         // origin so a queued old score cannot sort after newer live updates.
-        createdAtMs: getTimestampMs(event.clientCreatedAt || event.createdAt || event.timestamp)
+        createdAtMs: getTimestampMs(event.clientCreatedAt || event.createdAt || event.timestamp),
+        // Reset membership is a server-authoritative decision. Keep this
+        // separate from the client timestamp used for ordering so tracker clock
+        // skew cannot hide a valid post-reset event or revive a stale one.
+        serverCreatedAtMs: getTimestampMs(event.createdAt || event.timestamp)
     };
 }
 
@@ -596,8 +600,8 @@ export function reconcileOverlayLiveEvents(state, incomingEvents = [], stateTool
         }
         : baseline;
     const resetEligibleEvents = orderedEvents.filter((event) => {
-        if (!resetBoundaryMs || event.type === 'reset' || !event.clientCreatedAt) return true;
-        return event.createdAtMs >= resetBoundaryMs;
+        if (!resetBoundaryMs || event.type === 'reset' || !event.serverCreatedAtMs) return true;
+        return event.serverCreatedAtMs >= resetBoundaryMs;
     });
     const visibleEvents = stateTools.collectVisibleLiveEventsSequentially(resetEligibleEvents, {
         seenIds: new Set(),
@@ -641,7 +645,7 @@ export function reconcileOverlayLiveEvents(state, incomingEvents = [], stateTool
 
     visibleEvents.forEach((event) => {
         if (event.type === 'reset') {
-            const resetAt = event.createdAtMs || Date.now();
+            const resetAt = event.serverCreatedAtMs || event.createdAtMs || Date.now();
             workingState.lastResetAt = Math.max(workingState.lastResetAt || 0, resetAt);
             workingState = stateTools.applyResetEventState(workingState, event);
             workingState.eventIds = snapshotEventIds;

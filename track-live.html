@@ -677,6 +677,7 @@
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=443367';
         import { resolveOpponentDisplayName, resolveLiveStatConfig, resolveLiveStatColumns, resolveGoalSportTrackerProfile } from './js/live-game-state.js?v=39';
         import { createFieldState, setPlayerFieldStatus, startFieldClock, pauseFieldClock, getPlayerFieldElapsedMs, getLiveLineup } from './js/live-tracker-field-status.js?v=1';
+        import { persistThenPublishLiveLineup } from './js/live-tracker-lineup-publish.js?v=1';
         import { summarizePersistedTrackingState, buildTrackLiveResetUpdate, resolveTrackLiveClockResume, buildTrackLiveResumeState, runTrackLiveResetPersistence } from './js/track-live-state.js?v=4';
         import { getDefaultLivePeriod, getSportPeriodLabels, resolveLiveSport, isFootballSport } from './js/live-sport-config.js?v=3';
         import { applyGoalSportScore, buildGoalSportEvent, resolveGoalSportScorer } from './js/live-scorekeeping-goal-sports.js?v=2';
@@ -1769,11 +1770,10 @@
         async function syncLiveLineup() {
             if (!currentTeamId || !currentGameId) return;
             const liveLineup = getLiveLineup(gameState.playerFieldStatus, players);
-            const lineupWrite = updateGame(currentTeamId, currentGameId, { liveLineup }).catch((error) => {
-                console.warn('Failed to sync live lineup:', error);
-            });
-            if (gameState.isRunning || liveState.isLive || currentGame?.liveStatus === 'live') {
-                broadcastLiveEvent(currentTeamId, currentGameId, {
+            await persistThenPublishLiveLineup({
+                persistLineup: () => updateGame(currentTeamId, currentGameId, { liveLineup }),
+                shouldPublish: gameState.isRunning || liveState.isLive || currentGame?.liveStatus === 'live',
+                publishLineup: () => broadcastLiveEvent(currentTeamId, currentGameId, {
                     type: 'lineup',
                     period: gameState.currentPeriod,
                     gameClockMs: gameState.elapsed,
@@ -1783,9 +1783,8 @@
                     bench: liveLineup.bench,
                     description: 'Lineup updated',
                     createdBy: currentUser?.uid || null
-                }).catch(console.warn);
-            }
-            await lineupWrite;
+                }).catch(console.warn)
+            });
         }
 
         function broadcastReversedStatEvent({ playerId, statKey, value, isOpponent, description }) {

@@ -14,12 +14,13 @@ describe('track-live live event publishing', () => {
 
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
-    expect(syncLiveLineup).toContain("if (gameState.isRunning || liveState.isLive || currentGame?.liveStatus === 'live') {");
+    expect(syncLiveLineup).toContain("shouldPublish: gameState.isRunning || liveState.isLive || currentGame?.liveStatus === 'live'");
     expect(syncLiveLineup).toContain("type: 'lineup'");
     expect(syncLiveLineup).toContain('onCourt: liveLineup.onCourt');
     expect(syncLiveLineup).toContain('bench: liveLineup.bench');
-    expect(syncLiveLineup).toContain('const lineupWrite = updateGame');
-    expect(syncLiveLineup.indexOf("type: 'lineup'")).toBeLessThan(syncLiveLineup.indexOf('await lineupWrite;'));
+    expect(syncLiveLineup).toContain('persistThenPublishLiveLineup');
+    expect(syncLiveLineup).toContain('persistLineup: () => updateGame');
+    expect(syncLiveLineup.indexOf('persistLineup: () => updateGame')).toBeLessThan(syncLiveLineup.indexOf("type: 'lineup'"));
   });
 
   it('publishes reverse stat events when stats are undone or corrected', () => {

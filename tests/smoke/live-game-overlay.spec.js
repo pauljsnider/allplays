@@ -932,10 +932,16 @@ test('real mode follows canonical game, lineup, clock, reset, reaction, and pass
 
     await page.evaluate(() => window.__OVERLAY_EVENT_CALLBACK__([{
         id: 'stale-goal', type: 'goal', description: 'Old goal must stay hidden', homeScore: 9, awayScore: 0,
-        period: 'H1', gameClockMs: 1000, createdAt: 1500
+        period: 'H1', gameClockMs: 1000,
+        clientCreatedAt: new Date(2500).toISOString(), createdAt: 1500
+    }, {
+        id: 'fresh-skewed-goal', type: 'goal', description: 'Fresh goal survives tracker clock skew',
+        homeScore: 1, awayScore: 0, period: 'H1', gameClockMs: 2000,
+        clientCreatedAt: new Date(1000).toISOString(), createdAt: 2100
     }]));
-    await expect(page.locator('#home-score')).toHaveText('0');
+    await expect(page.locator('#home-score')).toHaveText('1');
     await expect(page.locator('#event-list')).not.toContainText('Old goal must stay hidden');
+    await expect(page.locator('#event-list')).toContainText('Fresh goal survives tracker clock skew');
     expect(pageErrors).toEqual([]);
 });
 
