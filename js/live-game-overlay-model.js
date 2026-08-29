@@ -294,8 +294,29 @@ export function createOverlayState({ team = {}, game = {}, players = [], events 
 
 export function applyOverlayGame(state, game = {}, { preserveEventState = false } = {}) {
     if (!state) return state;
+    const previousBaseline = state.liveBaseline || createLiveBaseline(state.game || {}, state);
     state.game = { ...state.game, ...game };
-    state.liveBaseline = createLiveBaseline(game, state.liveBaseline || state);
+    const refreshedBaseline = createLiveBaseline(game, previousBaseline);
+    state.liveBaseline = preserveEventState
+        ? {
+            ...refreshedBaseline,
+            // Once the live-event listener has produced a nonempty snapshot,
+            // its baseline must remain stable across the slower public game
+            // projection. Otherwise a later correction/removal rebuilds from
+            // whichever stale score happened to arrive in the 15-second poll.
+            homeScore: previousBaseline.homeScore,
+            awayScore: previousBaseline.awayScore,
+            period: previousBaseline.period,
+            gameClockMs: previousBaseline.gameClockMs,
+            clockRunning: previousBaseline.clockRunning,
+            onCourt: [...(previousBaseline.onCourt || [])],
+            bench: [...(previousBaseline.bench || [])],
+            lastResetAt: Math.max(
+                toFiniteNumber(previousBaseline.lastResetAt),
+                toFiniteNumber(refreshedBaseline.lastResetAt)
+            )
+        }
+        : refreshedBaseline;
     state.awayName = toText(game.opponent || game.opponentTeamName || game.awayTeamName, state.awayName);
     if (!preserveEventState) {
         if (game.homeScore !== undefined) state.homeScore = toFiniteNumber(game.homeScore, state.homeScore);
@@ -309,8 +330,8 @@ export function applyOverlayGame(state, game = {}, { preserveEventState = false 
     if (game.liveViewerCount !== undefined || game.viewerCount !== undefined) {
         state.viewerCount = Math.max(0, toFiniteNumber(game.liveViewerCount ?? game.viewerCount));
     }
-    if (Array.isArray(game.liveLineup?.onCourt)) state.onCourt = [...game.liveLineup.onCourt];
-    if (Array.isArray(game.liveLineup?.bench)) state.bench = [...game.liveLineup.bench];
+    if (!preserveEventState && Array.isArray(game.liveLineup?.onCourt)) state.onCourt = [...game.liveLineup.onCourt];
+    if (!preserveEventState && Array.isArray(game.liveLineup?.bench)) state.bench = [...game.liveLineup.bench];
     if (game.sport) state.sport = game.sport;
     if (Array.isArray(game.periods)) state.periods = [...game.periods];
     if (!preserveEventState && typeof game.liveClockRunning === 'boolean') {
@@ -339,7 +360,19 @@ export function reconcileOverlayLiveEvents(state, incomingEvents = [], stateTool
             return true;
         });
 
-    const baseline = createLiveBaseline(state.game || {}, state.liveBaseline || state);
+    // applyOverlayGame maintains this baseline separately from the merged game
+    // document. Re-reading state.game here would reintroduce a stale public
+    // projection into event reconciliation after authority was transferred to
+    // the live-event listener.
+    const baseline = state.liveBaseline
+        ? {
+            ...state.liveBaseline,
+            onCourt: [...(state.liveBaseline.onCourt || [])],
+            bench: [...(state.liveBaseline.bench || [])],
+            opponentStats: cloneStats(state.liveBaseline.opponentStats),
+            periods: Array.isArray(state.liveBaseline.periods) ? [...state.liveBaseline.periods] : null
+        }
+        : createLiveBaseline(state.game || {}, state);
     state.liveBaseline = baseline;
     const resetBoundaryMs = Math.max(toFiniteNumber(state.lastResetAt), toFiniteNumber(baseline.lastResetAt));
     const stateAfterNewerReset = resetBoundaryMs > toFiniteNumber(baseline.lastResetAt);

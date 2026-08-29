@@ -573,6 +573,43 @@ test('live subscriptions start before signed-in team and roster enrichment finis
     expect(pageErrors).toEqual([]);
 });
 
+test('event corrections rebuild from a stable baseline after a stale public projection poll', async ({ page, baseURL }) => {
+    const pageErrors = collectPageErrors(page);
+    await stubRealOverlayModules(page);
+    await stubYouTubeEmbed(page);
+
+    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('#home-score')).toHaveText('3');
+    await expect(page.locator('#away-score')).toHaveText('2');
+
+    await page.evaluate(() => window.__OVERLAY_EVENT_CALLBACK__([{
+        id: 'temporary-goal', type: 'goal', description: 'Temporary score',
+        homeScore: 4, awayScore: 2, period: 'H2', gameClockMs: 730_000, createdAt: 1_000
+    }]));
+    await expect(page.locator('#home-score')).toHaveText('4');
+
+    await page.evaluate(() => window.__OVERLAY_GAME_CALLBACK__({
+        id: 'game-1', homeScore: 1, awayScore: 0, period: 'H1', liveClockMs: 300_000,
+        liveStatus: 'live', liveViewerCount: 22,
+        liveLineup: { onCourt: ['p9'], bench: ['p4'] }
+    }));
+    await expect(page.locator('#home-score')).toHaveText('4');
+    await expect(page.locator('#away-score')).toHaveText('2');
+    await expect(page.locator('#viewer-count')).toHaveText('22 watching');
+
+    // Removing/correcting the scoring event must return to the original game
+    // baseline, not the older score from the intervening projection poll.
+    await page.evaluate(() => window.__OVERLAY_EVENT_CALLBACK__([{
+        id: 'lineup-after-correction', type: 'lineup', onCourt: ['p4'], bench: ['p9'], createdAt: 2_000
+    }]));
+    await expect(page.locator('#home-score')).toHaveText('3');
+    await expect(page.locator('#away-score')).toHaveText('2');
+    await expect(page.locator('#period')).toHaveText('H2');
+    await expect(page.locator('#game-clock')).toHaveText('12:00');
+    await expect(page.locator('#on-field-list')).toContainText('Sam Gray');
+    expect(pageErrors).toEqual([]);
+});
+
 test('real mode follows canonical game, lineup, clock, reset, reaction, and passive video-failure behavior', async ({ page, baseURL }) => {
     const pageErrors = collectPageErrors(page);
     await stubRealOverlayModules(page);

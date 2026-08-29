@@ -177,8 +177,54 @@ describe('live game overlay model', () => {
             gameClockMs: 690_000,
             viewerCount: 31,
             lastResetAt: 12_345,
-            onCourt: ['p1'],
+            onCourt: [],
             opponentStats: { away9: { name: 'Riley', goals: 1 } }
+        });
+    });
+
+    it('keeps the event baseline stable when a stale game projection arrives before a correction', () => {
+        const state = createOverlayState({
+            game: {
+                homeScore: 3,
+                awayScore: 1,
+                period: 'H2',
+                liveClockMs: 690_000,
+                liveLineup: { onCourt: ['p1'], bench: ['p2'] },
+                liveStatus: 'live'
+            }
+        });
+        const goal = {
+            id: 'goal-1', type: 'goal', description: 'Current goal',
+            homeScore: 4, awayScore: 1, period: 'H2', gameClockMs: 700_000, createdAt: 1_000
+        };
+
+        reconcileOverlayLiveEvents(state, [goal], stateTools);
+        applyOverlayGame(state, {
+            homeScore: 1,
+            awayScore: 0,
+            period: 'H1',
+            liveClockMs: 300_000,
+            liveLineup: { onCourt: ['stale'], bench: [] },
+            liveViewerCount: 22
+        }, { preserveEventState: true });
+        reconcileOverlayLiveEvents(state, [{
+            id: 'lineup-2', type: 'lineup', onCourt: ['p2'], bench: ['p1'], createdAt: 2_000
+        }], stateTools);
+
+        expect(state).toMatchObject({
+            homeScore: 3,
+            awayScore: 1,
+            period: 'H2',
+            gameClockMs: 690_000,
+            viewerCount: 22,
+            onCourt: ['p2'],
+            bench: ['p1']
+        });
+        expect(state.liveBaseline).toMatchObject({
+            homeScore: 3,
+            awayScore: 1,
+            period: 'H2',
+            gameClockMs: 690_000
         });
     });
 

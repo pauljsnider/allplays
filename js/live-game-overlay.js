@@ -12,7 +12,7 @@ import {
     parseYouTubeReplayTelemetry,
     reconcileOverlayLiveEvents,
     replaceOverlayChat
-} from './live-game-overlay-model.js?v=8';
+} from './live-game-overlay-model.js?v=9';
 import {
     buildReplaySessionState,
     collectReplayEventWindow,
@@ -2103,9 +2103,19 @@ async function startRealMode(params) {
                 const crossedResetBoundary = resetAt > (uiState.game.lastResetAt || 0);
                 if (crossedResetBoundary) uiState.game.lastResetAt = resetAt;
                 const hasEventAuthority = uiState.hasLiveEventSnapshot && uiState.lastLiveEvents.length > 0;
-                applyOverlayGame(uiState.game, updatedGame, { preserveEventState: hasEventAuthority });
+                applyOverlayGame(uiState.game, updatedGame, {
+                    preserveEventState: hasEventAuthority && !crossedResetBoundary
+                });
                 configureGameActions();
-                if (uiState.hasLiveEventSnapshot) {
+                if (crossedResetBoundary && uiState.hasLiveEventSnapshot) {
+                    processLiveEventSnapshot(uiState.lastLiveEvents, stateTools);
+                } else if (hasEventAuthority) {
+                    // The event listener already owns score, clock, period,
+                    // lineup, and stats. Rendering the safe game-document fields
+                    // directly avoids rebuilding event state from a stale public
+                    // projection poll.
+                    renderAll();
+                } else if (uiState.hasLiveEventSnapshot) {
                     processLiveEventSnapshot(uiState.lastLiveEvents, stateTools);
                 } else if (crossedResetBoundary || stateTools.shouldResetViewerFromGameDoc(updatedGame, uiState.game)) {
                     resetOverlayFromGame(updatedGame, stateTools);
