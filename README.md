@@ -101,7 +101,7 @@ configuration through `/__/firebase/init.json`.
 Production-backed local development for real games, events, and chat:
 
 ```bash
-npm run serve:firebase
+npm run serve:firebase:live
 ```
 
 This command reads and writes production data. The Firebase Hosting emulator
@@ -110,14 +110,13 @@ that Hosting response empty, localhost uses the checked-in public web config;
 it still refuses to do so when the page is not running through Firebase
 Hosting.
 
-Safe isolated development:
+Safe isolated development (also the default `serve:firebase` command):
 
 ```bash
 npm run serve:firebase:safe
 ```
 
-`npm run serve:firebase:live` remains an explicit alias for the production-backed
-workflow.
+Use the explicit `:live` command only when the local page needs production data.
 
 For pages that do not use Firebase, any static file server is sufficient.
 

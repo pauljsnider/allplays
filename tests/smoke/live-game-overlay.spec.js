@@ -507,7 +507,7 @@ async function stubRealOverlayModules(page) {
             return {
                 mode: 'embed', hasVideo: true,
                 sourceUrl: 'https://www.youtube.com/embed/PK1HyC37doc?autoplay=1&mute=1',
-                publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+                publicUrl: window.__OVERLAY_PROVIDER_PUBLIC_URL__ || 'https://www.youtube.com/watch?v=PK1HyC37doc',
                 publicLabel: 'Watch on YouTube ↗'
             };
         }`
@@ -1103,6 +1103,26 @@ test('viewer toolbar shares the canonical watch URL and controls YouTube audio a
         homeScore: 4, awayScore: 2, period: 'H2', gameClockMs: 700000, createdAt: 5000
     }]));
     await expect.poll(() => page.evaluate(() => window.__OVERLAY_SPOKEN__)).toContain('H2. Lane scores from distance');
+    expect(pageErrors).toEqual([]);
+});
+
+test('unsafe stored provider links stay hidden while the video and live feed remain available', async ({ page, baseURL }) => {
+    const pageErrors = collectPageErrors(page);
+    await page.addInitScript(() => {
+        window.__OVERLAY_PROVIDER_PUBLIC_URL__ = 'javascript:alert(document.domain)';
+    });
+    await stubRealOverlayModules(page);
+    await stubYouTubeEmbed(page);
+
+    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+
+    await expect(page.locator('#overlay-video')).toBeVisible();
+    await expect(page.locator('#home-team-name')).toHaveText('Current Academy');
+    await expect(page.locator('#open-stream')).toBeHidden();
+    await expect(page.locator('#open-stream')).not.toHaveAttribute('href', /.+/);
+    await page.locator('#game-actions-toggle').click();
+    await expect(page.locator('#provider-menu-link')).toBeHidden();
+    await expect(page.locator('#provider-menu-link')).not.toHaveAttribute('href', /.+/);
     expect(pageErrors).toEqual([]);
 });
 

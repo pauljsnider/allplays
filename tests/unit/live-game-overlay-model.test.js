@@ -12,6 +12,7 @@ import {
     getOverlayLineup,
     getOverlayReplayDurationMs,
     getOverlayReplayStartAt,
+    getSafeOverlayProviderUrl,
     parseYouTubeReplayTelemetry,
     reconcileOverlayLiveEvents,
     replaceOverlayChat
@@ -34,6 +35,17 @@ describe('live game overlay model', () => {
         expect(formatOverlayClock(65_999)).toBe('1:05');
         expect(formatOverlayClock(-5_000)).toBe('0:00');
         expect(formatOverlayClock('not-a-clock')).toBe('0:00');
+    });
+
+    it('exposes only absolute HTTP(S) provider links', () => {
+        expect(getSafeOverlayProviderUrl('https://www.youtube.com/watch?v=PK1HyC37doc'))
+            .toBe('https://www.youtube.com/watch?v=PK1HyC37doc');
+        expect(getSafeOverlayProviderUrl('http://localhost:8000/replay.mp4'))
+            .toBe('http://localhost:8000/replay.mp4');
+        expect(getSafeOverlayProviderUrl('javascript:alert(1)')).toBeNull();
+        expect(getSafeOverlayProviderUrl('data:text/html,unsafe')).toBeNull();
+        expect(getSafeOverlayProviderUrl('/relative-replay.mp4')).toBeNull();
+        expect(getSafeOverlayProviderUrl('not a url')).toBeNull();
     });
 
     it('formats live and replay chat like the canonical viewer without allowing stored markup', () => {

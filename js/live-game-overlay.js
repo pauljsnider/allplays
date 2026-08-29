@@ -10,10 +10,11 @@ import {
     getOverlayLineup,
     getOverlayReplayDurationMs,
     getOverlayReplayStartAt,
+    getSafeOverlayProviderUrl,
     parseYouTubeReplayTelemetry,
     reconcileOverlayLiveEvents,
     replaceOverlayChat
-} from './live-game-overlay-model.js?v=12';
+} from './live-game-overlay-model.js?v=13';
 import {
     buildReplaySessionState,
     collectReplayEventWindow,
@@ -331,7 +332,8 @@ async function shareGame() {
 
 function setProviderLink(publicUrl = '', publicLabel = 'Open video ↗') {
     let label = String(publicLabel || 'Open video ↗').trim();
-    if (!publicUrl) {
+    const safePublicUrl = getSafeOverlayProviderUrl(publicUrl);
+    if (!safePublicUrl) {
         elements.openStream.hidden = true;
         elements.openStream.removeAttribute('href');
         elements.providerMenuLink.hidden = true;
@@ -340,16 +342,16 @@ function setProviderLink(publicUrl = '', publicLabel = 'Open video ↗') {
     }
     if (/^Open video\s*↗?$/i.test(label)) {
         try {
-            const providerHost = new URL(publicUrl, window.location.href).hostname.toLowerCase();
+            const providerHost = new URL(safePublicUrl).hostname.toLowerCase();
             if (providerHost === 'youtu.be' || providerHost.endsWith('youtube.com')) label = 'Watch on YouTube ↗';
             else if (providerHost.endsWith('twitch.tv')) label = 'Watch on Twitch ↗';
         } catch { /* keep the generic validated label */ }
     }
-    elements.openStream.href = publicUrl;
+    elements.openStream.href = safePublicUrl;
     elements.openStreamLabel.textContent = label.replace(/\s*↗\s*$/, '');
     elements.openStream.setAttribute('aria-label', label.replace(/\s*↗\s*$/, ''));
     elements.openStream.hidden = false;
-    elements.providerMenuLink.href = publicUrl;
+    elements.providerMenuLink.href = safePublicUrl;
     elements.providerMenuLabel.textContent = label.replace(/\s*↗\s*$/, '');
     elements.providerMenuLink.hidden = false;
 }

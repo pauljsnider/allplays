@@ -56,7 +56,7 @@ describe('live game overlay page', () => {
         expect(html).toContain('id="home-team-photo"');
         expect(html).toContain('id="away-team-photo"');
         expect(html).toContain('data-score-hidden="false"');
-        expect(html).toContain('js/live-game-overlay.js?v=24');
+        expect(html).toContain('js/live-game-overlay.js?v=25');
     });
 
     it('keeps the local demo isolated while wiring canonical subscriptions and authenticated chat posting', () => {
@@ -67,7 +67,8 @@ describe('live game overlay page', () => {
         expect(source).toContain("import('./live-game-state.js?v=37')");
         expect(source).toContain('stateTools.applyResetEventState');
         expect(source).toContain('reconcileOverlayLiveEvents');
-        expect(source).toContain("from './live-game-overlay-model.js?v=12'");
+        expect(source).toContain("from './live-game-overlay-model.js?v=13'");
+        expect(source).toContain('getSafeOverlayProviderUrl(publicUrl)');
         expect(modelSource).toContain('stateTools.applyViewerEventToState');
         expect(modelSource).toContain('stateTools.collectVisibleLiveEventsSequentially');
         expect(source).toContain('stateTools.shouldResetViewerFromGameDoc');

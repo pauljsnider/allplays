@@ -51,6 +51,17 @@ describe('local Firebase Hosting configuration', () => {
         );
     });
 
+    it('documents production-backed local data behind the explicit live command', () => {
+        const readme = readFileSync(new URL('../../README.md', import.meta.url), 'utf8');
+        const productionSection = readme.match(
+            /Production-backed local development[\s\S]*?Safe isolated development/
+        )?.[0] || '';
+
+        expect(productionSection).toContain('npm run serve:firebase:live');
+        expect(productionSection).not.toMatch(/npm run serve:firebase\s*\n/);
+        expect(readme).toContain('default `serve:firebase` command');
+    });
+
     it('rejects an invalid expected project before generating local Hosting config', () => {
         expect(() => buildLocalFirebaseConfig({ hosting: {} }, '../production')).toThrow(
             'A valid Firebase project ID is required for local Hosting.'

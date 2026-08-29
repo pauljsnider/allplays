@@ -90,6 +90,16 @@ export function formatOverlayClock(milliseconds = 0) {
     return `${minutes}:${String(seconds).padStart(2, '0')}`;
 }
 
+export function getSafeOverlayProviderUrl(value) {
+    if (typeof value !== 'string' || !value.trim()) return null;
+    try {
+        const url = new URL(value.trim());
+        return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : null;
+    } catch {
+        return null;
+    }
+}
+
 export function getOverlayReplayStartAt({
     replayEvents = [],
     replayChat = [],
