@@ -135,7 +135,7 @@
             <div class="bg-white shadow-lg rounded-2xl p-4 border border-gray-200">
                 <a id="stat-sheet-link" href="#" target="_blank" rel="noopener noreferrer"
                     class="block overflow-hidden rounded-xl border border-gray-100">
-                    <img id="stat-sheet-img" src="" alt="Uploaded stat sheet" class="w-full h-auto object-contain">
+                    <img loading="lazy" decoding="async" id="stat-sheet-img" src="" alt="Uploaded stat sheet" class="w-full h-auto object-contain">
                 </a>
                 <div id="stat-sheet-empty" class="hidden text-sm text-gray-500 text-center py-6">
                     No stat sheet uploaded yet.
@@ -156,7 +156,7 @@
                     </div>
                 <input id="stat-sheet-file-input" type="file" accept="image/*" class="hidden">
                 <div id="stat-sheet-upload-preview" class="hidden mt-4 border border-gray-200 rounded-xl p-3">
-                    <img id="stat-sheet-upload-img" src="" alt="Stat sheet preview" class="w-full h-auto object-contain rounded-lg">
+                    <img loading="lazy" decoding="async" id="stat-sheet-upload-img" src="" alt="Stat sheet preview" class="w-full h-auto object-contain rounded-lg">
                     <div class="mt-3 flex items-center gap-2">
                         <button id="stat-sheet-save"
                             class="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700">Save</button>
@@ -1006,7 +1006,7 @@ Write the match report now:`;
                             <a href="player.html#teamId=${teamId}&gameId=${gameId}&playerId=${p.id}"
                                class="flex items-center gap-3 text-primary-600 hover:text-primary-700 hover:underline transition">
                                 <span class="inline-flex h-10 w-10 rounded-full bg-gray-100 overflow-hidden border border-gray-200">
-                                    ${p.photoUrl ? `<img src="${escapeHtml(p.photoUrl)}" alt="${escapeHtml(p.name)}" class="w-full h-full object-cover">` : `
+                                    ${p.photoUrl ? `<img loading="lazy" decoding="async" src="${escapeHtml(p.photoUrl)}" alt="${escapeHtml(p.name)}" class="w-full h-full object-cover">` : `
                                         <svg class="w-full h-full text-gray-400 p-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5.121 17.804A9 9 0 1119 12.999M15 21v-2a3 3 0 00-3-3H6a3 3 0 00-3 3v2"></path>
                                         </svg>
@@ -1448,12 +1448,12 @@ Write the match report now:`;
                     </div>
                     <h1 class="text-3xl md:text-4xl lg:text-5xl font-bold mb-6 md:mb-8 text-gray-900">
                         <span class="inline-flex items-center gap-2">
-                            ${resolvedTeam.photoUrl ? `<img src="${escapeHtml(resolvedTeam.photoUrl)}" alt="" class="w-10 h-10 rounded-full object-cover border border-gray-200">` : ''}
+                            ${resolvedTeam.photoUrl ? `<img decoding="async" src="${escapeHtml(resolvedTeam.photoUrl)}" alt="" class="w-10 h-10 rounded-full object-cover border border-gray-200">` : ''}
                             ${escapeHtml(resolvedTeam.name)}
                         </span>
                         <span class="text-gray-400 mx-2 md:mx-3">vs</span>
                         <span class="inline-flex items-center gap-2">
-                            ${game.opponentTeamPhoto ? `<img src="${escapeHtml(game.opponentTeamPhoto)}" alt="" class="w-10 h-10 rounded-full object-cover border border-gray-200">` : ''}
+                            ${game.opponentTeamPhoto ? `<img decoding="async" src="${escapeHtml(game.opponentTeamPhoto)}" alt="" class="w-10 h-10 rounded-full object-cover border border-gray-200">` : ''}
                             ${escapeHtml(game.opponent)}
                         </span>
                     </h1>
@@ -1466,7 +1466,7 @@ Write the match report now:`;
                         <div class="text-3xl md:text-4xl text-gray-300 font-light">-</div>
                         <div class="text-center">
                             <div class="text-sm text-gray-500 mb-2 font-medium flex items-center justify-center gap-2">
-                                ${game.opponentTeamPhoto ? `<img src="${escapeHtml(game.opponentTeamPhoto)}" alt="" class="w-6 h-6 rounded-full object-cover border border-gray-200">` : ''}
+                                ${game.opponentTeamPhoto ? `<img decoding="async" src="${escapeHtml(game.opponentTeamPhoto)}" alt="" class="w-6 h-6 rounded-full object-cover border border-gray-200">` : ''}
                                 <span>${escapeHtml(game.opponent)}</span>
                             </div>
                             <div class="text-5xl md:text-6xl lg:text-7xl font-mono font-bold ${isLoss ? 'text-red-600' : 'text-gray-600'
@@ -1727,7 +1727,7 @@ Write the match report now:`;
                                                 <div class="flex items-center justify-between gap-3 mb-1.5">
                                                     <div class="flex items-center gap-3 min-w-0 flex-1">
                                                         <span class="inline-flex h-8 w-8 rounded-full bg-gray-100 overflow-hidden border border-gray-200 flex-shrink-0">
-                                                            ${p.photoUrl ? `<img src="${escapeHtml(p.photoUrl)}" alt="${escapeHtml(p.name)}" class="w-full h-full object-cover">` : `
+                                                            ${p.photoUrl ? `<img loading="lazy" decoding="async" src="${escapeHtml(p.photoUrl)}" alt="${escapeHtml(p.name)}" class="w-full h-full object-cover">` : `
                                                                 <svg class="w-full h-full text-gray-400 p-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5.121 17.804A9 9 0 1119 12.999M15 21v-2a3 3 0 00-3-3H6a3 3 0 00-3 3v2"></path>
                                                                 </svg>
@@ -1813,7 +1813,7 @@ Write the match report now:`;
                                 <td class="px-4 py-4 font-mono text-gray-500 font-semibold">${escapeHtml(p.number)}</td>
                                 <td class="px-4 py-4 font-medium text-gray-900">
                                     <div class="flex items-center gap-2">
-                                        ${p.photoUrl ? `<img src="${escapeHtml(p.photoUrl)}" alt="" class="w-6 h-6 rounded-full object-cover">` : `<div class="w-6 h-6 rounded-full bg-gray-100 text-gray-600 text-xs flex items-center justify-center font-semibold">${escapeHtml((p.name || 'O')[0])}</div>`}
+                                        ${p.photoUrl ? `<img loading="lazy" decoding="async" src="${escapeHtml(p.photoUrl)}" alt="" class="w-6 h-6 rounded-full object-cover">` : `<div class="w-6 h-6 rounded-full bg-gray-100 text-gray-600 text-xs flex items-center justify-center font-semibold">${escapeHtml((p.name || 'O')[0])}</div>`}
                                         <span>${escapeHtml(p.name)}</span>
                                     </div>
                                 </td>

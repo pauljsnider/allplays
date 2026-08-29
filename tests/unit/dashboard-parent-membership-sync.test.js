@@ -137,7 +137,7 @@ describe('dashboard parent membership sync', () => {
 
     it('does not merge parent-only teams into the primary full-access grid', () => {
         expect(html).toContain('full-access-teams-grid');
-        expect(html).toContain('fullAccessTeams.map(team => renderTeamCard');
+        expect(html).toContain('fullAccessTeams.map((team, index) => renderTeamCard(team, { eager: index === 0 }))');
     });
 
     it('renders parent-only teams in a separate collapsed section for mixed-role users', () => {

@@ -1598,7 +1598,7 @@
                 if (team.photoUrl) {
                     currentPhotoUrl = team.photoUrl;
                     currentPhotoPath = String(team.photoPath || '').trim();
-                    document.getElementById('photo-preview').innerHTML = `<img src="${escapeHtml(team.photoUrl)}" class="w-full h-full object-cover">`;
+                    document.getElementById('photo-preview').innerHTML = `<img loading="lazy" decoding="async" src="${escapeHtml(team.photoUrl)}" class="w-full h-full object-cover">`;
                 }
 
                 updateTeamManagementActions(initialTeamId, { created: isInitialCreatedState });
@@ -1713,7 +1713,7 @@
                 const reader = new FileReader();
                 reader.onload = (e) => {
                     document.getElementById('photo-preview').innerHTML =
-                        `<img src="${e.target.result}" class="w-full h-full object-cover">`;
+                        `<img loading="lazy" decoding="async" src="${e.target.result}" class="w-full h-full object-cover">`;
                 };
                 reader.readAsDataURL(file);
             }

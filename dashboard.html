@@ -240,7 +240,7 @@
                     `;
                 }
 
-                function renderTeamCard(team) {
+                function renderTeamCard(team, { eager = false } = {}) {
                     const hasFullAccess = team._access === 'full';
                     const unreadKnown = Object.prototype.hasOwnProperty.call(unreadCounts, team.id);
                     const unreadUnavailable = unavailableUnreadTeamIds.has(team.id);
@@ -257,7 +257,7 @@
                         <div class="p-6 border-b border-gray-100 bg-gradient-to-r from-gray-50 to-white">
                             <div class="flex items-center space-x-4">
                                 ${team.photoUrl
-                                    ? `<img src="${escapeHtml(team.photoUrl)}" alt="${escapeHtml(team.name)}" class="w-20 h-20 rounded-xl object-cover border-2 border-gray-200 group-hover:border-primary-400 transition shadow-md">`
+                                    ? `<img loading="${eager ? 'eager' : 'lazy'}" decoding="async" src="${escapeHtml(team.photoUrl)}" alt="${escapeHtml(team.name)}" class="w-20 h-20 rounded-xl object-cover border-2 border-gray-200 group-hover:border-primary-400 transition shadow-md">`
                                     : `<div class="w-20 h-20 rounded-xl bg-gradient-to-br from-primary-100 to-primary-200 flex items-center justify-center border-2 border-gray-200 group-hover:border-primary-400 transition shadow-md">
                                         <span class="text-3xl font-bold text-primary-600">${escapeHtml(team.name.charAt(0))}</span>
                                     </div>`
@@ -467,7 +467,7 @@
                             <p class="text-sm font-semibold text-amber-800">Parent view only — you are linked as a parent on these teams. Visit the <a href="parent-dashboard.html" class="underline hover:text-amber-900">Parent Dashboard</a> for family-focused tools.</p>
                         </div>
                         <div id="parent-only-teams-grid" class="space-y-6">
-                            ${parentOnlyTeams.map(team => renderTeamCard(team)).join('')}
+                            ${parentOnlyTeams.map((team, index) => renderTeamCard(team, { eager: index === 0 })).join('')}
                         </div>
                     `;
                         attachDeleteHandlers(container);
@@ -489,7 +489,7 @@
 
                         container.innerHTML = `
                         <div id="full-access-teams-grid" class="space-y-6">
-                            ${fullAccessTeams.map(team => renderTeamCard(team)).join('')}
+                            ${fullAccessTeams.map((team, index) => renderTeamCard(team, { eager: index === 0 })).join('')}
                         </div>
                         ${parentSection}
                     `;

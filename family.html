@@ -406,7 +406,7 @@
              class="flex items-center gap-3 p-3 hover:bg-primary-50 transition group">
             <div class="h-11 w-11 flex-shrink-0 rounded-full bg-gray-200 overflow-hidden border border-gray-300">
               ${child.playerPhotoUrl
-                ? `<img src="${escapeHtml(child.playerPhotoUrl)}" class="w-full h-full object-cover" loading="lazy">`
+                ? `<img decoding="async" src="${escapeHtml(child.playerPhotoUrl)}" class="w-full h-full object-cover" loading="lazy">`
                 : `<div class="w-full h-full flex items-center justify-center text-gray-400 text-xs font-bold">${escapeHtml((child.playerName || '?').charAt(0).toUpperCase())}</div>`
               }
             </div>

@@ -78,6 +78,18 @@ describe('team fee recipient Firestore rules', () => {
         expect(nestedRecipientBlock).toContain('allow update: if canWriteTeamFeeFinancialState(teamId)');
     });
 
+    it('keeps fee recipient assignment fields immutable after creation', () => {
+        expect(rules).toContain('function hasUnchangedTeamFeeRecipientAssignment()');
+        expect(rules).toContain("'playerId'");
+        expect(rules).toContain("'childId'");
+        expect(rules).toContain("'playerKey'");
+        expect(rules).toContain("'parentUserId'");
+        expect(rules).toContain("'accountUserId'");
+        expect(rules).toContain("'userId'");
+        expect(rules).toContain('affectedKeys().hasAny(assignmentFields)');
+        expect(nestedRecipientBlock).toContain('hasUnchangedTeamFeeRecipientAssignment()');
+    });
+
     it('requires financial recipient updates to create a matching actor-attributed audit', () => {
         expect(rules).toContain('function hasRequiredTeamFeeMutationAudit(teamId, batchId, recipientId)');
         expect(rules).toContain('existsAfter(auditPath)');
@@ -158,6 +170,12 @@ describe('team fee recipient Firestore rules', () => {
                     isAdmin: false,
                     parentPlayerKeys: ['team-a::player-a']
                 });
+                await setDoc(doc(firestore, 'users/parent-b'), {
+                    email: 'parent-b@example.com',
+                    isAdmin: false,
+                    parentTeamIds: ['team-a'],
+                    parentPlayerKeys: ['team-a::player-b']
+                });
             });
         });
 
@@ -178,7 +196,10 @@ describe('team fee recipient Firestore rules', () => {
                 teamId,
                 batchId,
                 parentUserId: 'parent-a',
+                accountUserId: 'parent-a',
+                userId: 'parent-a',
                 playerId: 'player-a',
+                childId: 'player-a',
                 playerKey: 'team-a::player-a',
                 status: 'unpaid',
                 amountDueCents: 2500
@@ -450,6 +471,107 @@ describe('team fee recipient Firestore rules', () => {
                     { note: 'Protected legacy state remains unchanged' }
                 ));
             }
+        });
+
+        it('denies owner and admin changes or removals of every recipient assignment field', async () => {
+            const assignmentFields = {
+                playerId: 'player-b',
+                childId: 'player-b',
+                playerKey: 'team-a::player-b',
+                parentUserId: 'parent-b',
+                accountUserId: 'parent-b',
+                userId: 'parent-b'
+            };
+
+            for (const [uid, email] of [
+                ['owner-a', 'owner-a@example.com'],
+                ['admin-a', 'admin-a@example.com']
+            ]) {
+                const actorDb = authedFirestore(uid, email);
+                for (const [field, retargetedValue] of Object.entries(assignmentFields)) {
+                    const recipientId = `immutable-${uid}-${field}`;
+                    await seedRecipient(
+                        `teams/team-a/feeBatches/batch-a/feeRecipients/${recipientId}`,
+                        recipientPayload()
+                    );
+                    const targetRef = recipientRef(actorDb, 'team-a', 'batch-a', recipientId);
+
+                    await assertFails(updateDoc(targetRef, { [field]: retargetedValue }));
+                    await assertFails(updateDoc(targetRef, { [field]: deleteField() }));
+                }
+            }
+
+            const legacyRecipientId = 'immutable-new-assignment-field';
+            const { accountUserId: omittedAccountUserId, ...legacyPayload } = recipientPayload();
+            await seedRecipient(
+                `teams/team-a/feeBatches/batch-a/feeRecipients/${legacyRecipientId}`,
+                legacyPayload
+            );
+            await assertFails(updateDoc(
+                recipientRef(
+                    authedFirestore('owner-a', 'owner-a@example.com'),
+                    'team-a',
+                    'batch-a',
+                    legacyRecipientId
+                ),
+                { accountUserId: omittedAccountUserId }
+            ));
+        });
+
+        it('denies reassignment mixed with an otherwise valid audited balance update', async () => {
+            for (const [uid, email] of [
+                ['owner-a', 'owner-a@example.com'],
+                ['admin-a', 'admin-a@example.com']
+            ]) {
+                const recipientId = `audited-reassignment-${uid}`;
+                await seedRecipient(
+                    `teams/team-a/feeBatches/batch-a/feeRecipients/${recipientId}`,
+                    recipientPayload()
+                );
+
+                await assertFails(writeAuditedUpdate(
+                    authedFirestore(uid, email),
+                    'team-a',
+                    'batch-a',
+                    recipientId,
+                    uid,
+                    { parentUserId: 'parent-b', amountDueCents: 2000 },
+                    { changedFields: ['amountDueCents'] }
+                ));
+            }
+        });
+
+        it('preserves the original parent boundary after a rejected reassignment', async () => {
+            const recipientId = 'parent-boundary-after-denial';
+            await seedRecipient(
+                `teams/team-a/feeBatches/batch-a/feeRecipients/${recipientId}`,
+                recipientPayload()
+            );
+            const ownerRef = recipientRef(
+                authedFirestore('owner-a', 'owner-a@example.com'),
+                'team-a',
+                'batch-a',
+                recipientId
+            );
+
+            await assertFails(updateDoc(ownerRef, {
+                parentUserId: 'parent-b',
+                playerId: 'player-b',
+                childId: 'player-b',
+                playerKey: 'team-a::player-b'
+            }));
+            await assertSucceeds(getDoc(recipientRef(
+                authedFirestore('parent-a', 'parent-a@example.com'),
+                'team-a',
+                'batch-a',
+                recipientId
+            )));
+            await assertFails(getDoc(recipientRef(
+                authedFirestore('parent-b', 'parent-b@example.com'),
+                'team-a',
+                'batch-a',
+                recipientId
+            )));
         });
 
         it('denies parent fee amount/status tampering while allowing owner and admin updates', async () => {

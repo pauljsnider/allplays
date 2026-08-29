@@ -2770,7 +2770,7 @@
                        class="flex items-center gap-4 p-3 hover:border-primary-300 hover:bg-primary-50 transition group">
                         <div class="h-12 w-12 flex-shrink-0 rounded-full bg-gray-200 overflow-hidden border border-gray-300">
                             ${child.playerPhotoUrl
-                                ? `<img src="${escapeHtml(child.playerPhotoUrl)}" class="w-full h-full object-cover">`
+                                ? `<img loading="lazy" decoding="async" src="${escapeHtml(child.playerPhotoUrl)}" class="w-full h-full object-cover">`
                                 : `<div class="w-full h-full flex items-center justify-center text-gray-400 text-xs">No Img</div>`
                             }
                         </div>

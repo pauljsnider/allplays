@@ -286,7 +286,7 @@ describe('Profile seed from auth.profile', () => {
             </MemoryRouter>
         );
 
-        expect(await screen.findByText('Profile details could not be loaded yet.')).toBeTruthy();
+        expect(await screen.findByText('Profile details could not be loaded yet. Load your profile details before saving.')).toBeTruthy();
         await waitFor(() => {
             expect(initialLoadTelemetryMocks.end).toHaveBeenCalledWith(expect.objectContaining({
                 error: expect.any(Error)
