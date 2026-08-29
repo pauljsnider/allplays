@@ -150,6 +150,23 @@ describe('live game overlay model', () => {
         expect(getOverlayLineup(state, 'bench').map((player) => player.name)).toEqual(['Jordan']);
     });
 
+    it('preserves lineup positions while optional roster details are unavailable', () => {
+        const state = createOverlayState({
+            game: { liveLineup: { onCourt: ['missing-1'], bench: ['missing-2'] } }
+        });
+
+        expect(getOverlayLineup(state, 'onCourt')).toEqual([expect.objectContaining({
+            id: 'missing-1',
+            name: 'Player 1',
+            position: 'Roster details unavailable'
+        })]);
+        expect(getOverlayLineup(state, 'bench')).toEqual([expect.objectContaining({
+            id: 'missing-2',
+            name: 'Player 1',
+            position: 'Roster details unavailable'
+        })]);
+    });
+
     it('uses the canonical live viewer count and preserves event-authoritative score during document refreshes', () => {
         const state = createOverlayState({
             game: {
@@ -478,7 +495,9 @@ describe('live game overlay model', () => {
         const fixture = createOverlayDemoFixture(100_000);
 
         expect(state.chatMessages.map((message) => message.id)).toEqual(['newer', 'older']);
-        expect(state.chatMessages[0].ai).toBe(true);
+        expect(state.chatMessages[0].ai).toBe(false);
+        replaceOverlayChat(state, [{ id: 'trusted-fixture', senderName: 'ALL PLAYS', text: 'Fixture', ai: true }]);
+        expect(state.chatMessages[0].ai).toBe(false);
         expect(fixture.game.liveStatus).toBe('live');
         expect(fixture.events.length).toBeGreaterThanOrEqual(4);
         expect(fixture.players.length).toBeGreaterThanOrEqual(6);

@@ -244,12 +244,15 @@ function normalizePlayer(player = {}, index = 0) {
 }
 
 function normalizeChatMessage(message = {}, index = 0) {
-    const senderName = toText(message.senderName || message.name, message.ai ? 'ALL PLAYS' : 'Fan');
+    const senderName = toText(message.senderName || message.name, 'Fan');
     return {
         ...message,
         id: toText(message.id, `message-${index}-${getTimestampMs(message.createdAt)}`),
         senderName,
-        ai: Boolean(message.ai || senderName.trim().toUpperCase() === 'ALL PLAYS'),
+        // Public chat rows are viewer-controlled. Until the server schema has
+        // an authenticated platform-message type, none may claim official AI
+        // identity or styling.
+        ai: false,
         text: toText(message.text || message.message, ''),
         createdAtMs: getTimestampMs(message.createdAt)
     };
@@ -506,8 +509,12 @@ export function getOverlayLineup(state, group = 'onCourt') {
     if (!state) return [];
     const ids = group === 'bench' ? state.bench : state.onCourt;
     return ids
-        .map((id) => state.playerMap.get(String(id)))
-        .filter(Boolean)
+        .map((id, index) => state.playerMap.get(String(id)) || {
+            id: String(id),
+            name: `Player ${index + 1}`,
+            number: '',
+            position: 'Roster details unavailable'
+        })
         .map((player) => ({ ...player, stats: state.stats[player.id] || {} }));
 }
 

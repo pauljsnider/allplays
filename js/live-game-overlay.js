@@ -12,7 +12,7 @@ import {
     parseYouTubeReplayTelemetry,
     reconcileOverlayLiveEvents,
     replaceOverlayChat
-} from './live-game-overlay-model.js?v=10';
+} from './live-game-overlay-model.js?v=11';
 import {
     buildReplaySessionState,
     collectReplayEventWindow,
@@ -151,12 +151,14 @@ const uiState = {
     replayDurationMs: 0,
     replayFrame: null,
     replayStateTools: null,
+    replayHistoryStatus: 'pending',
     videoMode: 'none',
     videoOrigin: '',
     videoMuted: true,
     scoreboardHidden: false,
     videoRequestId: 0,
     optionalTeamStatus: 'pending',
+    optionalPlayersStatus: 'pending',
     teamEntitlement: null,
     teamEntitlementPromise: null,
     teamEntitlementKey: '',
@@ -519,7 +521,9 @@ function renderEvents() {
     );
     elements.eventList.replaceChildren();
     if (!state.events.length) {
-        const emptyCopy = uiState.isReplay
+        const emptyCopy = uiState.isReplay && uiState.replayHistoryStatus === 'failed'
+            ? 'Replay timeline is temporarily unavailable. Refresh to retry.'
+            : uiState.isReplay
             ? 'Replay ready. Press play or scrub the timeline to revisit the game.'
             : 'Connected. Waiting for the first play…';
         elements.eventList.appendChild(createTextElement('li', 'empty-state', emptyCopy));
@@ -541,8 +545,12 @@ function renderEvents() {
         }
     } else {
         elements.heroEvent.dataset.tone = 'system';
-        elements.heroEventLabel.textContent = uiState.isReplay ? 'Replay ready' : 'Latest play';
-        elements.heroEventDescription.textContent = uiState.isReplay
+        elements.heroEventLabel.textContent = uiState.isReplay && uiState.replayHistoryStatus === 'failed'
+            ? 'Replay unavailable'
+            : uiState.isReplay ? 'Replay ready' : 'Latest play';
+        elements.heroEventDescription.textContent = uiState.isReplay && uiState.replayHistoryStatus === 'failed'
+            ? 'The saved event timeline could not be loaded. Refresh to retry.'
+            : uiState.isReplay
             ? 'Press play or move the timeline to revisit the game.'
             : 'Waiting for the first play…';
         elements.heroEventTime.textContent = '—';
@@ -660,7 +668,7 @@ function renderChat() {
     }
     state.chatMessages.slice(0, 24).reverse().forEach((message) => {
         const senderName = String(message.senderName || 'Fan');
-        const isAi = Boolean(message.ai || senderName.trim().toUpperCase() === 'ALL PLAYS');
+        const isAi = false;
         const item = document.createElement('li');
         item.className = 'chat-row';
         item.dataset.ai = String(isAi);
@@ -718,8 +726,12 @@ function updateChatUnread() {
 }
 
 function getChatSenderName() {
-    if (uiState.anonName) return uiState.anonName;
-    return String(uiState.chatUser?.displayName || 'Fan').trim().slice(0, 80) || 'Fan';
+    const name = uiState.anonName || uiState.chatUser?.displayName || 'Fan';
+    return isReservedChatDisplayName(name) ? 'Fan' : String(name).trim().slice(0, 80) || 'Fan';
+}
+
+function isReservedChatDisplayName(value) {
+    return String(value || '').replace(/\s+/g, ' ').trim().toUpperCase() === 'ALL PLAYS';
 }
 
 function getChatNameStorageKey() {
@@ -738,9 +750,10 @@ function ensureChatDisplayName() {
         // generated name still works for this page view.
     }
     const authenticatedName = String(uiState.chatUser?.displayName || '').replace(/\s+/g, ' ').trim().slice(0, 20);
-    uiState.anonName = saved.length >= 2
-        ? saved
-        : authenticatedName || `Fan${Math.floor(1000 + Math.random() * 9000)}`;
+    const preferredName = saved.length >= 2 ? saved : authenticatedName;
+    uiState.anonName = preferredName && !isReservedChatDisplayName(preferredName)
+        ? preferredName
+        : `Fan${Math.floor(1000 + Math.random() * 9000)}`;
     try {
         sessionStorage.setItem(getChatNameStorageKey(), uiState.anonName);
     } catch {
@@ -766,6 +779,10 @@ function saveAnonName() {
     const cleaned = elements.anonInput.value.replace(/\s+/g, ' ').trim();
     if (cleaned.length < 2) {
         setChatStatus('Name must be at least 2 characters.', 'error');
+        return;
+    }
+    if (isReservedChatDisplayName(cleaned)) {
+        setChatStatus('ALL PLAYS is a reserved name.', 'error');
         return;
     }
     uiState.anonName = cleaned.slice(0, 20);
@@ -863,9 +880,9 @@ async function generateAiResponse(question) {
         const text = String(result.response.text() || '').trim();
         if (!text) throw new Error('ALL PLAYS returned an empty response.');
         await uiState.chatServices.postLiveChatMessage(uiState.teamId, uiState.gameId, {
-            text,
+            text: `ALL PLAYS: ${text}`,
             senderId: uiState.chatUser.uid,
-            senderName: 'ALL PLAYS',
+            senderName: getChatSenderName(),
             senderPhotoUrl: null,
             isAnonymous: false
         });
@@ -875,7 +892,7 @@ async function generateAiResponse(question) {
             await uiState.chatServices.postLiveChatMessage(uiState.teamId, uiState.gameId, {
                 text: 'ALL PLAYS is unavailable right now.',
                 senderId: uiState.chatUser.uid,
-                senderName: 'ALL PLAYS',
+                senderName: getChatSenderName(),
                 senderPhotoUrl: null,
                 isAnonymous: false
             });
@@ -1189,15 +1206,16 @@ function clearReplayReactions() {
 
 function setReplayControlState() {
     const duration = uiState.replayDurationMs;
+    const historyAvailable = uiState.replayHistoryStatus === 'ready';
     const elapsed = Math.min(duration, Math.max(0, uiState.replayElapsedMs));
     elements.replayCurrent.textContent = formatOverlayClock(elapsed);
     elements.replayDuration.textContent = formatOverlayClock(duration);
     elements.replayCurrent.dateTime = `PT${Math.floor(elapsed / 60000)}M${Math.floor((elapsed % 60000) / 1000)}S`;
     elements.replayDuration.dateTime = `PT${Math.floor(duration / 60000)}M${Math.floor((duration % 60000) / 1000)}S`;
     elements.replayProgress.value = duration > 0 ? String((elapsed / duration) * 100) : '0';
-    elements.replayProgress.disabled = duration <= 0;
-    elements.replayPlay.disabled = duration <= 0;
-    elements.replayRestart.disabled = duration <= 0;
+    elements.replayProgress.disabled = duration <= 0 || !historyAvailable;
+    elements.replayPlay.disabled = duration <= 0 || !historyAvailable;
+    elements.replayRestart.disabled = duration <= 0 || !historyAvailable;
     elements.replayPlay.dataset.replayAction = uiState.replayPlaying ? 'pause' : 'play';
     elements.replayPlay.setAttribute('aria-label', uiState.replayPlaying ? 'Pause replay' : 'Play replay');
     elements.replaySpeeds.forEach((button) => {
@@ -1289,8 +1307,8 @@ function startYouTubeReplayListening() {
     }), uiState.videoOrigin || 'https://www.youtube.com');
 }
 
-function syncReplayMedia({ seek = false, play = uiState.replayPlaying } = {}) {
-    if (!uiState.isReplay) return;
+async function syncReplayMedia({ seek = false, play = uiState.replayPlaying } = {}) {
+    if (!uiState.isReplay) return true;
     const seconds = Math.max(0, uiState.replayElapsedMs / 1000);
     const isScanning = play && uiState.replaySpeed > 2;
 
@@ -1302,9 +1320,17 @@ function syncReplayMedia({ seek = false, play = uiState.replayPlaying } = {}) {
             elements.recordedVideo.currentTime = seconds;
         }
         elements.recordedVideo.playbackRate = Math.min(uiState.replaySpeed, 2);
-        if (play && !isScanning) elements.recordedVideo.play().catch(() => {});
-        else elements.recordedVideo.pause();
-        return;
+        if (play && !isScanning) {
+            try {
+                await elements.recordedVideo.play();
+                return true;
+            } catch (error) {
+                console.warn('Recorded replay playback was blocked:', error);
+                return false;
+            }
+        }
+        elements.recordedVideo.pause();
+        return true;
     }
 
     if (uiState.videoMode === 'youtube') {
@@ -1315,6 +1341,7 @@ function syncReplayMedia({ seek = false, play = uiState.replayPlaying } = {}) {
         sendYouTubeCommand('setPlaybackRate', [Math.min(uiState.replaySpeed, 2)]);
         sendYouTubeCommand(play && !isScanning ? 'playVideo' : 'pauseVideo');
     }
+    return true;
 }
 
 function applyReplayStreams(elapsedMs, { animateReactions = true } = {}) {
@@ -1409,16 +1436,23 @@ function replayTick(stateTools) {
     uiState.replayFrame = requestAnimationFrame(() => replayTick(stateTools));
 }
 
-function playReplay(stateTools) {
-    if (uiState.replayDurationMs <= 0) return;
+async function playReplay(stateTools) {
+    if (uiState.replayDurationMs <= 0 || uiState.replayHistoryStatus === 'failed') return;
     if (uiState.replayElapsedMs >= uiState.replayDurationMs) {
         resetReplayToElapsed(0, stateTools);
     }
-    uiState.replayPlaying = true;
-    uiState.replayStartTime = rebaseReplayStartTimeMs(Date.now(), uiState.replayElapsedMs, uiState.replaySpeed);
-    syncReplayMedia({ seek: true, play: true });
-    setReplayControlState();
-    uiState.replayFrame = requestAnimationFrame(() => replayTick(stateTools));
+    const waitsForYouTube = uiState.videoMode === 'youtube' && uiState.replaySpeed <= 2;
+    const mediaStarted = await syncReplayMedia({ seek: true, play: true });
+    if (!mediaStarted) {
+        pauseReplay({ syncMedia: false });
+        setConnectionIssue('replayPlayback', 'Video playback was blocked. Press play again or allow media playback in this browser.');
+        return;
+    }
+    setConnectionIssue('replayPlayback');
+    // YouTube confirms playback asynchronously through player telemetry. Do
+    // not advance the score/event timeline until the video actually starts.
+    if (waitsForYouTube) return;
+    resumeReplayFromMedia(stateTools);
 }
 
 function seekReplay(targetMs, stateTools) {
@@ -1432,11 +1466,11 @@ function seekReplay(targetMs, stateTools) {
 function bindReplayControls(stateTools) {
     elements.replayPlay.onclick = () => {
         if (uiState.replayPlaying) pauseReplay();
-        else playReplay(stateTools);
+        else void playReplay(stateTools);
     };
     elements.replayRestart.onclick = () => {
         seekReplay(0, stateTools);
-        playReplay(stateTools);
+        void playReplay(stateTools);
     };
     elements.replayProgress.oninput = (event) => {
         const ratio = Math.min(1, Math.max(0, Number(event.target.value) / 100));
@@ -1478,22 +1512,24 @@ async function loadReplaySnapshot(database, stateTools, teamId, gameId) {
     renderPanelVisibility();
     elements.replayControls.hidden = false;
     setConnectionMessage('Loading replay timeline…', 'info');
-    const [eventsResult, chatResult, reactionsResult] = await Promise.allSettled([
-        database.getLiveEvents(teamId, gameId),
-        database.getLiveChatHistory(teamId, gameId),
+    const [eventsResult, chatResult, reactionsResult] = await Promise.all([
+        loadWithBoundedRetry(() => database.getLiveEvents(teamId, gameId)),
+        loadWithBoundedRetry(() => database.getLiveChatHistory(teamId, gameId)),
         typeof database.getLiveReactions === 'function'
-            ? database.getLiveReactions(teamId, gameId)
-            : Promise.resolve([])
+            ? loadWithBoundedRetry(() => database.getLiveReactions(teamId, gameId))
+            : Promise.resolve({ ok: true, value: [], attempts: 0 })
     ]);
+
+    uiState.replayHistoryStatus = eventsResult.ok ? 'ready' : 'failed';
 
     const replaySession = buildReplaySessionState({
         teamId,
         gameId,
         game: uiState.game.game,
         defaultPeriod: getDefaultLivePeriod({ game: uiState.game.game, team: uiState.game.team }),
-        replayEvents: eventsResult.status === 'fulfilled' ? eventsResult.value : [],
-        replayChat: chatResult.status === 'fulfilled' ? chatResult.value : [],
-        replayReactions: reactionsResult.status === 'fulfilled' ? reactionsResult.value : []
+        replayEvents: eventsResult.ok ? eventsResult.value : [],
+        replayChat: chatResult.ok ? chatResult.value : [],
+        replayReactions: reactionsResult.ok ? reactionsResult.value : []
     });
     replaySession.replayIndex = 0;
     replaySession.replayChatIndex = 0;
@@ -1507,15 +1543,30 @@ async function loadReplaySnapshot(database, stateTools, teamId, gameId) {
     bindReplayControls(stateTools);
     resetReplayToElapsed(0, stateTools);
 
-    const failedResults = [eventsResult, chatResult, reactionsResult].filter((result) => result.status === 'rejected');
+    const failedResults = [eventsResult, chatResult, reactionsResult].filter((result) => !result.ok);
     setConnectionMessage('');
     if (failedResults.length) {
-        console.warn('Some overlay replay history could not be loaded:', failedResults[0].reason);
-        setConnectionIssue('replay', 'Some replay context could not load. The saved video and available game data still work; refresh to retry.');
+        console.warn('Some overlay replay history could not be loaded:', failedResults[0].error);
+        const message = !eventsResult.ok
+            ? 'Replay timeline is temporarily unavailable after two attempts. The saved video and final score remain available; refresh to retry.'
+            : 'Some replay context could not load after two attempts. The saved video and event timeline still work; refresh to retry.';
+        setConnectionIssue('replay', message);
     } else {
         setConnectionIssue('replay');
     }
-    playReplay(stateTools);
+    await syncReplayMedia({ seek: true, play: false });
+}
+
+async function loadWithBoundedRetry(loader, attempts = 2) {
+    let lastError = null;
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+        try {
+            return { ok: true, value: await loader(), attempts: attempt };
+        } catch (error) {
+            lastError = error;
+        }
+    }
+    return { ok: false, error: lastError, attempts };
 }
 
 function resetVideoElements() {
@@ -1962,7 +2013,10 @@ async function startRealMode(params) {
                 uiState.optionalTeamStatus = 'failed';
                 return {};
             });
-        const playersPromise = database.getPlayers(teamId, { includeInactive: true }).catch(() => []);
+        uiState.optionalPlayersStatus = 'pending';
+        const playersPromise = loadWithBoundedRetry(
+            () => database.getPlayers(teamId, { includeInactive: true })
+        );
         const game = await database.getGame(teamId, gameId);
         if (!game) throw new Error('Game not found.');
 
@@ -2086,8 +2140,17 @@ async function startRealMode(params) {
             resolvedTeam = team || {};
             refreshOptionalContext();
         });
-        void playersPromise.then((players) => {
-            resolvedPlayers = Array.isArray(players) ? players : [];
+        void playersPromise.then((result) => {
+            if (!result.ok) {
+                uiState.optionalPlayersStatus = 'failed';
+                console.warn('Overlay roster context could not be loaded:', result.error);
+                setConnectionIssue('players', 'Roster details are temporarily unavailable after two attempts. Live lineup positions remain connected; refresh to retry.');
+                renderLineup();
+                return;
+            }
+            uiState.optionalPlayersStatus = 'ready';
+            resolvedPlayers = Array.isArray(result.value) ? result.value : [];
+            setConnectionIssue('players');
             refreshOptionalContext();
         });
 

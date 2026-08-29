@@ -14,7 +14,22 @@ async function stubYouTubeEmbed(page) {
             status: 200,
             contentType: 'text/html',
             body: `<!doctype html><title>Overlay video fixture</title><body style="background:#05090d">
-                <script>addEventListener('message', (event) => parent.postMessage({ source: 'overlay-youtube-fixture', payload: event.data }, '*'));</script>
+                <script>
+                    let currentTime = 0;
+                    addEventListener('message', (event) => {
+                        parent.postMessage({ source: 'overlay-youtube-fixture', payload: event.data }, '*');
+                        try {
+                            const command = JSON.parse(event.data);
+                            if (command.func === 'seekTo') currentTime = Number(command.args?.[0]) || 0;
+                            if (command.func === 'playVideo' || command.func === 'pauseVideo') {
+                                parent.postMessage(JSON.stringify({
+                                    event: 'infoDelivery',
+                                    info: { currentTime, playerState: command.func === 'playVideo' ? 1 : 2 }
+                                }), '*');
+                            }
+                        } catch {}
+                    });
+                </script>
             </body>`
         });
     });
@@ -187,9 +202,7 @@ for (const viewport of responsiveViewports) {
             await expect(page.locator('#live-status')).toHaveText(replay ? 'REPLAY' : 'LIVE');
             expect(pageErrors).toEqual([]);
 
-            if (replay) {
-                await page.getByRole('button', { name: 'Pause replay' }).click();
-            }
+            if (replay) await expect(page.getByRole('button', { name: 'Play replay' })).toBeVisible();
 
             const initialLayout = await getResponsiveLayout(page);
             expectLayoutInsideViewport(initialLayout);
@@ -233,7 +246,7 @@ test('replay panel layout adapts across tablet rotation and desktop resizing', a
     await page.goto(`${baseURL}/live-game-overlay.html?demo=1&replay=true`, { waitUntil: 'domcontentloaded' });
     await expect(page.locator('#live-status')).toHaveText('REPLAY');
     expect(pageErrors).toEqual([]);
-    await page.getByRole('button', { name: 'Pause replay' }).click();
+    await expect(page.getByRole('button', { name: 'Play replay' })).toBeVisible();
     await expect(page.locator('body')).toHaveAttribute('data-panel-layout', 'wide');
     await expect(page.locator('#plays-panel')).toBeVisible();
     await expect(page.locator('#insights-panel')).toBeVisible();
@@ -286,7 +299,7 @@ test('local replay demo exposes the complete playback flow without Firebase', as
     await expect(page.locator('#live-status')).toHaveText('REPLAY');
     await expect(page.locator('#replay-controls')).toBeVisible();
     await expect(page.locator('#replay-duration')).toHaveText('0:15');
-    await page.getByRole('button', { name: 'Pause replay' }).click();
+    await expect(page.getByRole('button', { name: 'Play replay' })).toBeVisible();
     await page.locator('#replay-progress').evaluate((input) => {
         input.value = '100';
         input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -310,7 +323,7 @@ test('local replay fires the recorded game timeline in order without manual seek
     await page.goto(`${baseURL}/live-game-overlay.html?demo=1&replay=true&videoId=PK1HyC37doc`, { waitUntil: 'domcontentloaded' });
 
     await expect(page.locator('#replay-controls')).toBeVisible();
-    await page.getByRole('button', { name: 'Pause replay' }).click();
+    await expect(page.getByRole('button', { name: 'Play replay' })).toBeVisible();
     await page.getByRole('button', { name: '4×' }).click();
     await page.getByRole('button', { name: 'Restart replay' }).click();
 
@@ -379,6 +392,12 @@ async function stubRealOverlayModules(page) {
             export async function getGame() { return game; }
             export async function getPlayers() {
                 if (window.__OVERLAY_DEFER_OPTIONAL_CONTEXT__) return new Promise(() => {});
+                window.__OVERLAY_GET_PLAYERS_CALLS__ = (window.__OVERLAY_GET_PLAYERS_CALLS__ || 0) + 1;
+                if (window.__OVERLAY_FAIL_PLAYERS__ ||
+                    (window.__OVERLAY_FAIL_PLAYERS_ONCE__ && window.__OVERLAY_GET_PLAYERS_CALLS__ === 1)) {
+                    throw new Error('roster unavailable');
+                }
+                if (window.__OVERLAY_EMPTY_PLAYERS__) return [];
                 return [
                 { id: 'p9', name: 'Avery Lane', number: '9', position: 'F' },
                 { id: 'p4', name: 'Sam Gray', number: '4', position: 'D' }
@@ -426,7 +445,12 @@ async function stubRealOverlayModules(page) {
                 return () => {};
             }
             export async function getLiveEvents() {
-                if (window.__OVERLAY_FAIL_REPLAY_EVENTS__) throw new Error('saved events unavailable');
+                window.__OVERLAY_GET_REPLAY_EVENTS_CALLS__ = (window.__OVERLAY_GET_REPLAY_EVENTS_CALLS__ || 0) + 1;
+                if (window.__OVERLAY_FAIL_REPLAY_EVENTS__ ||
+                    (window.__OVERLAY_FAIL_REPLAY_EVENTS_ONCE__ && window.__OVERLAY_GET_REPLAY_EVENTS_CALLS__ === 1)) {
+                    throw new Error('saved events unavailable');
+                }
+                if (window.__OVERLAY_EMPTY_REPLAY_EVENTS__) return [];
                 return [
                 { id: 'replay-start', type: 'clock_sync', homeScore: 0, awayScore: 0, period: 'H1', gameClockMs: 0, createdAt: 100000 },
                 { id: 'replay-lineup', type: 'lineup', onCourt: ['p4'], bench: ['p9'], period: 'H1', gameClockMs: 300000, createdAt: 400000 },
@@ -436,12 +460,20 @@ async function stubRealOverlayModules(page) {
                 { id: 'replay-goal', type: 'goal', description: 'Lane scores the replay winner', playerId: 'p9', playerName: 'Avery Lane', statKey: 'goals', value: 1, homeScore: 3, awayScore: 2, period: 'H2', gameClockMs: 690000, createdAt: 790000 }
             ]; }
             export async function getLiveChatHistory() {
-                if (window.__OVERLAY_FAIL_REPLAY_CHAT__) throw new Error('saved chat unavailable');
+                window.__OVERLAY_GET_REPLAY_CHAT_CALLS__ = (window.__OVERLAY_GET_REPLAY_CHAT_CALLS__ || 0) + 1;
+                if (window.__OVERLAY_FAIL_REPLAY_CHAT__ ||
+                    (window.__OVERLAY_FAIL_REPLAY_CHAT_ONCE__ && window.__OVERLAY_GET_REPLAY_CHAT_CALLS__ === 1)) {
+                    throw new Error('saved chat unavailable');
+                }
                 return [
                 { id: 'replay-chat', senderName: 'Taylor', senderPhotoUrl: 'https://images.example/avatar.png', text: '*Saved replay message* from @ALL PLAYS', createdAt: 445000 }
             ]; }
             export async function getLiveReactions() {
-                if (window.__OVERLAY_FAIL_REPLAY_REACTIONS__) throw new Error('saved reactions unavailable');
+                window.__OVERLAY_GET_REPLAY_REACTIONS_CALLS__ = (window.__OVERLAY_GET_REPLAY_REACTIONS_CALLS__ || 0) + 1;
+                if (window.__OVERLAY_FAIL_REPLAY_REACTIONS__ ||
+                    (window.__OVERLAY_FAIL_REPLAY_REACTIONS_ONCE__ && window.__OVERLAY_GET_REPLAY_REACTIONS_CALLS__ === 1)) {
+                    throw new Error('saved reactions unavailable');
+                }
                 return [
                 { id: 'replay-reaction', type: 'heart', createdAt: 450000 }
             ]; }
@@ -792,8 +824,12 @@ test('real mode follows canonical game, lineup, clock, reset, reaction, and pass
 
     await page.evaluate(() => window.__OVERLAY_CHAT_CALLBACK__([
         {
-            id: 'chat-2', senderName: 'ALL PLAYS', text: '@ALL PLAYS sees the press working.',
+            id: 'chat-2', senderName: 'ALL PLAYS', text: '@ALL PLAYS sees the press working.', ai: true,
             createdAt: 200
+        },
+        {
+            id: 'chat-spoof', senderName: 'ALL PLAYS', text: 'Viewer-controlled display name',
+            createdAt: 150
         },
         {
             id: 'chat-1', senderName: 'Taylor', senderPhotoUrl: 'https://images.example/avatar.png',
@@ -802,9 +838,11 @@ test('real mode follows canonical game, lineup, clock, reset, reaction, and pass
     ]));
     await page.locator('[data-panel="chat"]').click();
     await expect(page.locator('#chat-list')).toContainText('What a finish!');
-    await expect(page.locator('#chat-list .chat-row')).toHaveCount(2);
+    await expect(page.locator('#chat-list .chat-row')).toHaveCount(3);
     await expect(page.locator('#chat-list .chat-row').first().locator('strong').first()).toHaveText('Taylor');
     await expect(page.locator('#chat-list .chat-row').last().locator('strong').first()).toHaveText('ALL PLAYS');
+    await expect(page.locator('#chat-list .chat-row').filter({ hasText: 'Viewer-controlled display name' })).toHaveAttribute('data-ai', 'false');
+    await expect(page.locator('#chat-list .chat-row').last()).toHaveAttribute('data-ai', 'false');
     await expect(page.locator('#chat-list .chat-row').first().locator('img.chat-avatar')).toBeVisible();
     await expect(page.locator('#chat-list .chat-row').first().locator('.chat-message strong')).toHaveText('What a finish!');
     await expect(page.locator('#chat-list .chat-link')).toHaveAttribute('href', 'https://allplays.ai');
@@ -837,9 +875,9 @@ test('real mode follows canonical game, lineup, clock, reset, reaction, and pass
         teamId: 'team-1',
         gameId: 'game-1',
         message: {
-            text: 'ALL PLAYS says the press is working.',
+            text: 'ALL PLAYS: ALL PLAYS says the press is working.',
             senderId: 'viewer-1',
-            senderName: 'ALL PLAYS',
+            senderName: 'Alex Viewer',
             senderPhotoUrl: null,
             isAnonymous: false
         }
@@ -1164,6 +1202,10 @@ test('signed-in viewers can choose the display name used for their authenticated
     await page.locator('[data-panel="chat"]').click();
     await expect(page.locator('#chat-anon-notice')).toContainText('Chatting as Alex Viewer');
     await page.locator('#anon-change-btn').click();
+    await page.locator('#anon-input').fill('ALL PLAYS');
+    await page.locator('#anon-save').click();
+    await expect(page.locator('#chat-status')).toContainText('ALL PLAYS is a reserved name.');
+    await expect(page.locator('#anon-edit')).toBeVisible();
     await page.locator('#anon-input').fill('  Riley   Blue  ');
     await page.locator('#anon-save').click();
     await expect(page.locator('#chat-anon-notice')).toContainText('Chatting as Riley Blue');
@@ -1261,7 +1303,7 @@ test('ALL PLAYS failure posts the canonical fallback without disrupting the game
     expect((await page.evaluate(() => window.__OVERLAY_POSTED_CHAT__)).at(-1).message).toEqual({
         text: 'ALL PLAYS is unavailable right now.',
         senderId: 'viewer-1',
-        senderName: 'ALL PLAYS',
+        senderName: 'Alex Viewer',
         senderPhotoUrl: null,
         isAnonymous: false
     });
@@ -1289,7 +1331,7 @@ test('replay mode synchronizes saved plays, score, lineup, chat, reactions, and 
     expect(pageErrors).toEqual([]);
     await expect(page.locator('#replay-controls')).toBeVisible();
     await expect(page.locator('#replay-duration')).toHaveText('11:30');
-    await page.getByRole('button', { name: 'Pause replay' }).click();
+    await expect(page.getByRole('button', { name: 'Play replay' })).toBeVisible();
     await expect(page.locator('#home-score')).toHaveText('0');
     await expect(page.locator('#event-list')).not.toContainText('Lane opens the replay scoring');
 
@@ -1340,6 +1382,10 @@ test('replay mode synchronizes saved plays, score, lineup, chat, reactions, and 
     await page.getByRole('button', { name: 'Restart replay' }).click();
     await expect(page.locator('#home-score')).toHaveText('0');
     await expect(page.locator('#chat-list')).not.toContainText('Saved replay message');
+    await page.getByRole('button', { name: 'Pause replay' }).click();
+    await page.getByRole('button', { name: '1×' }).click();
+    await page.getByRole('button', { name: 'Play replay' }).click();
+    await page.getByRole('button', { name: 'Pause replay' }).click();
     expect(await page.evaluate(() => window.__OVERLAY_LIVE_SUBSCRIPTIONS__ || 0)).toBe(0);
     await expect(page.locator('#overlay-video')).toHaveAttribute('src', /enablejsapi=1/);
     await expect.poll(async () => page.evaluate(() => (
@@ -1365,7 +1411,7 @@ test('manual YouTube seeking rebuilds replay stats and the overlay offers canoni
     await stubYouTubeEmbed(page);
 
     await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true`, { waitUntil: 'domcontentloaded' });
-    await page.getByRole('button', { name: 'Pause replay' }).click();
+    await expect(page.getByRole('button', { name: 'Play replay' })).toBeVisible();
     await expect(page.locator('#home-score')).toHaveText('0');
 
     const youtubeFrame = page.frames().find((frame) => frame.url().startsWith('https://www.youtube.com/embed/'));
@@ -1433,7 +1479,6 @@ test('mobile replay controls stay on screen without covering the scoreboard', as
 
     await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true`, { waitUntil: 'domcontentloaded' });
     await expect(page.locator('#replay-controls')).toBeVisible();
-    await page.getByRole('button', { name: 'Pause replay' }).click();
     await expect(page.getByRole('button', { name: 'Play replay' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Restart replay' })).toBeVisible();
     await expect(page.getByRole('button', { name: '4×' })).toBeVisible();
@@ -1543,7 +1588,7 @@ test('a delayed recorded replay joins the current timeline instead of restarting
 
     await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true`, { waitUntil: 'domcontentloaded' });
     await expect(page.locator('#replay-controls')).toBeVisible();
-    await page.getByRole('button', { name: 'Pause replay' }).click();
+    await expect(page.getByRole('button', { name: 'Play replay' })).toBeVisible();
     await page.locator('#replay-progress').evaluate((input) => {
         input.value = '50';
         input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -1575,8 +1620,109 @@ test('replay history failure leaves the saved video and final game state usable'
     await expect(page.locator('#home-score')).toHaveText('3');
     await expect(page.locator('#away-score')).toHaveText('2');
     await expect(page.locator('#overlay-video')).toBeVisible();
-    await expect(page.locator('#connection-message')).toContainText('refresh to retry');
+    await expect(page.locator('#connection-message')).toContainText('after two attempts');
+    await expect(page.locator('#event-list')).toContainText('temporarily unavailable');
     await expect(page.getByRole('button', { name: 'Play replay' })).toBeDisabled();
+    expect(await page.evaluate(() => ({
+        events: window.__OVERLAY_GET_REPLAY_EVENTS_CALLS__,
+        chat: window.__OVERLAY_GET_REPLAY_CHAT_CALLS__,
+        reactions: window.__OVERLAY_GET_REPLAY_REACTIONS_CALLS__
+    }))).toEqual({ events: 2, chat: 2, reactions: 2 });
     expect(await page.evaluate(() => window.__OVERLAY_LIVE_SUBSCRIPTIONS__ || 0)).toBe(0);
+    expect(pageErrors).toEqual([]);
+});
+
+test('replay history retries a transient first-load failure before exposing the timeline', async ({ page, baseURL }) => {
+    const pageErrors = collectPageErrors(page);
+    await page.addInitScript(() => {
+        window.__OVERLAY_FAIL_REPLAY_EVENTS_ONCE__ = true;
+        window.__OVERLAY_FAIL_REPLAY_CHAT_ONCE__ = true;
+        window.__OVERLAY_FAIL_REPLAY_REACTIONS_ONCE__ = true;
+    });
+    await stubRealOverlayModules(page);
+    await stubYouTubeEmbed(page);
+
+    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true`, { waitUntil: 'domcontentloaded' });
+    await expect(page.getByRole('button', { name: 'Play replay' })).toBeEnabled();
+    await expect(page.locator('#replay-duration')).toHaveText('11:30');
+    await expect(page.locator('#connection-message')).toBeHidden();
+    expect(await page.evaluate(() => ({
+        events: window.__OVERLAY_GET_REPLAY_EVENTS_CALLS__,
+        chat: window.__OVERLAY_GET_REPLAY_CHAT_CALLS__,
+        reactions: window.__OVERLAY_GET_REPLAY_REACTIONS_CALLS__
+    }))).toEqual({ events: 2, chat: 2, reactions: 2 });
+    expect(pageErrors).toEqual([]);
+});
+
+test('a complete empty replay history remains distinct from a failed history load', async ({ page, baseURL }) => {
+    const pageErrors = collectPageErrors(page);
+    await page.addInitScript(() => { window.__OVERLAY_EMPTY_REPLAY_EVENTS__ = true; });
+    await stubRealOverlayModules(page);
+    await stubYouTubeEmbed(page);
+
+    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true`, { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('#home-score')).toHaveText('3');
+    await expect(page.locator('#away-score')).toHaveText('2');
+    await expect(page.locator('#event-list')).toContainText('Replay ready');
+    await expect(page.getByRole('button', { name: 'Play replay' })).toBeEnabled();
+    await expect(page.locator('#connection-message')).toBeHidden();
+    expect(await page.evaluate(() => window.__OVERLAY_GET_REPLAY_EVENTS_CALLS__)).toBe(1);
+    expect(pageErrors).toEqual([]);
+});
+
+test('optional roster loading recovers once without hiding lineup positions', async ({ page, baseURL }) => {
+    const pageErrors = collectPageErrors(page);
+    await page.addInitScript(() => { window.__OVERLAY_FAIL_PLAYERS_ONCE__ = true; });
+    await stubRealOverlayModules(page);
+    await stubYouTubeEmbed(page);
+
+    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('#on-field-list')).toContainText('Avery Lane');
+    await expect(page.locator('#bench-list')).toContainText('Sam Gray');
+    await expect(page.locator('#connection-message')).toBeHidden();
+    expect(await page.evaluate(() => window.__OVERLAY_GET_PLAYERS_CALLS__)).toBe(2);
+    expect(pageErrors).toEqual([]);
+});
+
+test('repeated roster failure preserves live lineup positions and surfaces a retryable warning', async ({ page, baseURL }) => {
+    const pageErrors = collectPageErrors(page);
+    await page.addInitScript(() => { window.__OVERLAY_FAIL_PLAYERS__ = true; });
+    await stubRealOverlayModules(page);
+    await stubYouTubeEmbed(page);
+
+    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('#on-field-list')).toContainText('Player 1');
+    await expect(page.locator('#bench-list')).toContainText('Player 1');
+    await expect(page.locator('#connection-message')).toContainText('after two attempts');
+    await expect(page.locator('#connection-message')).toContainText('refresh to retry');
+    expect(await page.evaluate(() => window.__OVERLAY_GET_PLAYERS_CALLS__)).toBe(2);
+    expect(pageErrors).toEqual([]);
+});
+
+test('recorded replay does not advance when browser playback is rejected', async ({ page, baseURL }) => {
+    const pageErrors = collectPageErrors(page);
+    await page.addInitScript(() => {
+        window.__OVERLAY_RECORDED_VIDEO__ = true;
+        Object.defineProperty(HTMLMediaElement.prototype, 'duration', {
+            configurable: true,
+            get() { return 690; }
+        });
+        HTMLMediaElement.prototype.play = function play() {
+            this.__overlayPlayCalls = (this.__overlayPlayCalls || 0) + 1;
+            return Promise.reject(new Error('autoplay blocked'));
+        };
+        HTMLMediaElement.prototype.pause = function pause() {};
+        HTMLMediaElement.prototype.load = function load() {};
+    });
+    await stubRealOverlayModules(page);
+    await page.route('**/overlay-recording-fixture.mp4', (route) => route.abort());
+
+    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true`, { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('#overlay-recorded-video')).toBeVisible();
+    await page.getByRole('button', { name: 'Play replay' }).click();
+    await expect(page.getByRole('button', { name: 'Play replay' })).toBeVisible();
+    await expect(page.locator('#replay-current')).toHaveText('0:00');
+    await expect(page.locator('#connection-message')).toContainText('playback was blocked');
+    expect(await page.locator('#overlay-recorded-video').evaluate((video) => video.__overlayPlayCalls)).toBe(1);
     expect(pageErrors).toEqual([]);
 });
