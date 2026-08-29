@@ -297,6 +297,7 @@ function buildNotificationTestEnv({
                 });
             },
             orderBy(field, direction = 'asc') {
+                if (field === '__name__') return this;
                 return makeQuery(getDocs, {
                     filters,
                     order: { field, direction },
@@ -305,7 +306,10 @@ function buildNotificationTestEnv({
                     queryLog
                 });
             },
-            startAfter(nextCursor) {
+            startAfter(...cursorValues) {
+                const nextCursor = cursorValues.length > 1
+                    ? { value: cursorValues[0], path: cursorValues[1] }
+                    : cursorValues[0];
                 return makeQuery(getDocs, {
                     filters,
                     order,
@@ -340,10 +344,15 @@ function buildNotificationTestEnv({
                 }
                 if (cursor) {
                     docs = docs.filter((docSnap) => {
-                        const pathComparison = docSnap.ref.path.localeCompare(cursor.ref.path);
+                        const cursorPath = cursor.path || cursor.ref?.path;
+                        const pathComparison = docSnap.ref.path.localeCompare(cursorPath);
                         if (!order) return pathComparison > 0;
                         const docMillis = comparableMillis(docSnap.data()?.[order.field]);
-                        const cursorMillis = comparableMillis(cursor.data()?.[order.field]);
+                        const cursorMillis = comparableMillis(
+                            Object.prototype.hasOwnProperty.call(cursor, 'value')
+                                ? cursor.value
+                                : cursor.data()?.[order.field]
+                        );
                         const valueComparison = docMillis - cursorMillis;
                         const comparison = valueComparison || pathComparison;
                         return order.direction === 'desc' ? comparison < 0 : comparison > 0;
@@ -356,7 +365,7 @@ function buildNotificationTestEnv({
                     queryLog.push({
                         filters: clone(filters),
                         order: clone(order),
-                        cursorPath: cursor?.ref?.path || null,
+                        cursorPath: cursor?.path || cursor?.ref?.path || null,
                         limit: limitCount,
                         resultPaths: docs.map((docSnap) => docSnap.ref.path)
                     });
@@ -1045,6 +1054,9 @@ function buildNotificationTestEnv({
             serverTimestamp: () => ({ __serverTimestamp: true }),
             increment: (amount) => ({ __increment: amount }),
             delete: () => ({ __delete: true })
+        },
+        FieldPath: {
+            documentId: () => '__name__'
         },
         Timestamp: {
             now: () => makeTimestamp(

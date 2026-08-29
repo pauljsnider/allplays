@@ -142,9 +142,12 @@ describe('fee due reminder source wiring', () => {
         expect(source).toContain(".orderBy('dueDate', 'asc')");
         expect(source).toContain(".where('reminderDeliveryClaimExpiresAtMillis', '>', 0)");
         expect(source).toContain(".orderBy('reminderDeliveryClaimExpiresAtMillis', 'asc')");
-        expect(source).toContain('.startAfter(cursor)');
+        expect(source).toContain('.startAfter(cursorValue, cursorPath)');
         expect(source).toContain('.limit(FEE_REMINDER_QUERY_PAGE_SIZE)');
         expect(source).toContain('drainFeeReminderQueryPages({');
+        expect(source).toContain('initialCursors: persistedCursors');
+        expect(source).toContain('saveCursor');
+        expect(source).toContain("firestore.doc(FEE_REMINDER_DISPATCH_STATE_PATH)");
         expect(source).toContain('FEE_REMINDER_MAX_PAGES_PER_QUERY');
         expect(source).toContain('FEE_REMINDER_MAX_RUNTIME_MS');
         expect(source).toContain('FEE_REMINDER_WORKER_CONCURRENCY');
@@ -327,5 +330,96 @@ describe('fee due reminder bounded dispatcher', () => {
             failed: 0,
             stoppedBecause: 'maxRuntimeMs'
         });
+    });
+
+    it('resumes after page-capped invocations instead of rescanning the first recipients', async () => {
+        const docs = Array.from({ length: 7 }, (_, index) => createReminderDoc(
+            `teams/team-1/feeBatches/batch-1/feeRecipients/capped-${index + 1}`
+        ));
+        const processedPaths = [];
+        const persistedCursors = {};
+        const loadPage = async ({ cursor, limit }) => {
+            const startIndex = cursor
+                ? docs.findIndex((doc) => doc.ref.path === cursor.ref.path) + 1
+                : 0;
+            return docs.slice(startIndex, startIndex + limit);
+        };
+        const saveCursor = async ({ queryName, cursor }) => {
+            persistedCursors[queryName] = cursor;
+        };
+        const processRecipient = async (doc) => {
+            processedPaths.push(doc.ref.path);
+            return { sent: true };
+        };
+
+        const firstSummary = await drainFeeReminderQueryPages({
+            queryNames: ['upcoming'],
+            pageSize: 2,
+            maxPagesPerQuery: 2,
+            loadPage,
+            saveCursor,
+            processRecipient
+        });
+        const secondSummary = await drainFeeReminderQueryPages({
+            queryNames: ['upcoming'],
+            pageSize: 2,
+            maxPagesPerQuery: 2,
+            initialCursors: persistedCursors,
+            loadPage,
+            saveCursor,
+            processRecipient
+        });
+
+        expect(firstSummary).toMatchObject({ examined: 4, stoppedBecause: 'maxPages' });
+        expect(secondSummary).toMatchObject({ examined: 3, stoppedBecause: 'drained' });
+        expect(processedPaths).toEqual(docs.map((doc) => doc.ref.path));
+        expect(persistedCursors.upcoming).toBeNull();
+    });
+
+    it('checkpoints the processed prefix when runtime expires within a page', async () => {
+        const docs = Array.from({ length: 5 }, (_, index) => createReminderDoc(
+            `teams/team-1/feeBatches/batch-1/feeRecipients/runtime-${index + 1}`
+        ));
+        const processedPaths = [];
+        const persistedCursors = {};
+        let clock = 0;
+        const loadPage = async ({ cursor, limit }) => {
+            const startIndex = cursor
+                ? docs.findIndex((doc) => doc.ref.path === cursor.ref.path) + 1
+                : 0;
+            return docs.slice(startIndex, startIndex + limit);
+        };
+        const saveCursor = async ({ queryName, cursor }) => {
+            persistedCursors[queryName] = cursor;
+        };
+        const processRecipient = async (doc) => {
+            processedPaths.push(doc.ref.path);
+            clock += 4;
+            return { sent: true };
+        };
+
+        const firstSummary = await drainFeeReminderQueryPages({
+            queryNames: ['upcoming'],
+            pageSize: 5,
+            concurrency: 1,
+            maxRuntimeMs: 10,
+            getNowMs: () => clock,
+            loadPage,
+            saveCursor,
+            processRecipient
+        });
+        clock = 0;
+        const secondSummary = await drainFeeReminderQueryPages({
+            queryNames: ['upcoming'],
+            pageSize: 5,
+            initialCursors: persistedCursors,
+            loadPage,
+            saveCursor,
+            processRecipient
+        });
+
+        expect(firstSummary).toMatchObject({ sent: 3, stoppedBecause: 'maxRuntimeMs' });
+        expect(secondSummary).toMatchObject({ sent: 2, stoppedBecause: 'drained' });
+        expect(processedPaths).toEqual(docs.map((doc) => doc.ref.path));
     });
 });

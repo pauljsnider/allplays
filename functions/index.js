@@ -12664,6 +12664,7 @@ function getNewOpenOfficiatingSlots(beforeGame = {}, afterGame = {}) {
 
 const FEE_REMINDER_CLAIM_LEASE_MS = 10 * 60 * 1000;
 const FEE_REMINDER_STALE_RECOVERY_GRACE_MS = 48 * 60 * 60 * 1000;
+const FEE_REMINDER_DISPATCH_STATE_PATH = '_notificationDispatcherState/feeDueReminders';
 
 exports._internal = {
   getTargetsForCategoryUserIds,
@@ -13894,6 +13895,11 @@ async function sendFeeUnpaidDueReminders() {
   const nowMillis = now.toMillis();
   const maxReminderThresholdLater = admin.firestore.Timestamp.fromMillis(now.toMillis() + 72 * 60 * 60 * 1000);
   const teamReminderThresholdHours = new Map();
+  const dispatchStateRef = firestore.doc(FEE_REMINDER_DISPATCH_STATE_PATH);
+  const dispatchStateSnap = await dispatchStateRef.get();
+  const persistedCursors = dispatchStateSnap.exists
+    ? { ...(dispatchStateSnap.data()?.cursors || {}) }
+    : {};
 
   const loadPage = async ({ queryName, cursor }) => {
     // Keep leased recipients in the retry set even if they cross their due time
@@ -13907,10 +13913,43 @@ async function sendFeeUnpaidDueReminders() {
         .where('dueDate', '>=', now)
         .where('dueDate', '<=', maxReminderThresholdLater)
         .orderBy('dueDate', 'asc');
+    query = query.orderBy(admin.firestore.FieldPath.documentId(), 'asc');
     if (cursor) {
-      query = query.startAfter(cursor);
+      const cursorData = typeof cursor.data === 'function' ? cursor.data() : null;
+      const valueMillis = cursorData
+        ? (queryName === 'leased'
+          ? Number(cursorData.reminderDeliveryClaimExpiresAtMillis)
+          : getFeeReminderDueDateMillis(cursorData))
+        : Number(cursor.valueMillis);
+      const cursorPath = String(cursorData ? cursor.ref?.path : cursor.path || '').trim();
+      if (Number.isFinite(valueMillis) && cursorPath) {
+        const cursorValue = queryName === 'leased'
+          ? valueMillis
+          : admin.firestore.Timestamp.fromMillis(valueMillis);
+        query = query.startAfter(cursorValue, cursorPath);
+      }
     }
     return (await query.limit(FEE_REMINDER_QUERY_PAGE_SIZE).get()).docs;
+  };
+
+  const saveCursor = async ({ queryName, cursor }) => {
+    if (!cursor) {
+      delete persistedCursors[queryName];
+    } else {
+      const cursorData = cursor.data() || {};
+      const valueMillis = queryName === 'leased'
+        ? Number(cursorData.reminderDeliveryClaimExpiresAtMillis)
+        : getFeeReminderDueDateMillis(cursorData);
+      const path = String(cursor.ref?.path || '').trim();
+      if (!Number.isFinite(valueMillis) || !path) {
+        throw new Error(`Cannot persist invalid ${queryName} fee reminder cursor.`);
+      }
+      persistedCursors[queryName] = { valueMillis, path };
+    }
+    await dispatchStateRef.set({
+      cursors: persistedCursors,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
   };
 
   const processRecipient = async (doc) => {
@@ -14090,7 +14129,9 @@ async function sendFeeUnpaidDueReminders() {
     pageSize: FEE_REMINDER_QUERY_PAGE_SIZE,
     maxPagesPerQuery: FEE_REMINDER_MAX_PAGES_PER_QUERY,
     maxRuntimeMs: FEE_REMINDER_MAX_RUNTIME_MS,
-    concurrency: FEE_REMINDER_WORKER_CONCURRENCY
+    concurrency: FEE_REMINDER_WORKER_CONCURRENCY,
+    initialCursors: persistedCursors,
+    saveCursor
   });
   const result = {
     examined: summary.examined,

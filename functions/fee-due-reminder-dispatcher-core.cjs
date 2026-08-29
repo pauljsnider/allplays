@@ -44,6 +44,8 @@ async function processReminderPage({
       }
     }
   }));
+
+  return nextIndex;
 }
 
 async function drainFeeReminderQueryPages({
@@ -54,7 +56,9 @@ async function drainFeeReminderQueryPages({
   maxPagesPerQuery = FEE_REMINDER_MAX_PAGES_PER_QUERY,
   maxRuntimeMs = FEE_REMINDER_MAX_RUNTIME_MS,
   concurrency = FEE_REMINDER_WORKER_CONCURRENCY,
-  getNowMs = Date.now
+  getNowMs = Date.now,
+  initialCursors = {},
+  saveCursor
 } = {}) {
   if (typeof loadPage !== 'function') {
     throw new Error('loadPage is required.');
@@ -82,7 +86,7 @@ async function drainFeeReminderQueryPages({
   };
 
   for (const queryName of queryNames) {
-    let cursor = null;
+    let cursor = initialCursors?.[queryName] || null;
     let drained = false;
     let pagesAttempted = 0;
 
@@ -105,6 +109,9 @@ async function drainFeeReminderQueryPages({
 
       if (!docs.length) {
         drained = true;
+        if (typeof saveCursor === 'function') {
+          await saveCursor({ queryName, cursor: null });
+        }
         break;
       }
 
@@ -119,7 +126,7 @@ async function drainFeeReminderQueryPages({
         uniqueDocs.push(doc);
       }
 
-      await processReminderPage({
+      const processedDocCount = await processReminderPage({
         docs: uniqueDocs,
         processRecipient,
         concurrency,
@@ -128,13 +135,32 @@ async function drainFeeReminderQueryPages({
         maxRuntimeMs: safeMaxRuntimeMs,
         getNowMs
       });
+
+      let remainingProcessedDocs = processedDocCount;
+      let lastSafeCursor = cursor;
+      for (const doc of docs) {
+        const path = getReminderDocPath(doc);
+        if (path && seenPaths.has(path) && !uniqueDocs.includes(doc)) {
+          lastSafeCursor = doc;
+          continue;
+        }
+        if (remainingProcessedDocs <= 0) break;
+        remainingProcessedDocs -= 1;
+        lastSafeCursor = doc;
+      }
+      cursor = lastSafeCursor;
+      if (typeof saveCursor === 'function' && cursor) {
+        await saveCursor({ queryName, cursor });
+      }
       if (summary.stoppedBecause === 'maxRuntimeMs') {
         return summary;
       }
 
-      cursor = docs[docs.length - 1];
       if (docs.length < safePageSize) {
         drained = true;
+        if (typeof saveCursor === 'function') {
+          await saveCursor({ queryName, cursor: null });
+        }
         break;
       }
     }
