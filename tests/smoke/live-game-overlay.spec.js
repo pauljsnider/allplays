@@ -1738,6 +1738,19 @@ test('replay chat remains aligned when the first tracked event starts mid-game',
         input.dispatchEvent(new Event('input', { bubbles: true }));
     });
     await expect(page.locator('#chat-list')).toContainText('Twenty-one minute update');
+
+    // YouTube may acknowledge rapid seek commands out of order. A delayed
+    // echo from the earlier 50% seek must not rewind the latest 100% state.
+    const youtubeFrame = page.frames().find((frame) => frame.url().startsWith('https://www.youtube.com/embed/'));
+    expect(youtubeFrame).toBeTruthy();
+    await youtubeFrame.evaluate(() => {
+        parent.postMessage(JSON.stringify({
+            event: 'infoDelivery',
+            info: { currentTime: 630, playerState: 2 }
+        }), '*');
+    });
+    await page.waitForTimeout(50);
+    await expect(page.locator('#chat-list')).toContainText('Twenty-one minute update');
     expect(pageErrors).toEqual([]);
 });
 

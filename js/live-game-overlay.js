@@ -168,8 +168,7 @@ const uiState = {
     teamEntitlementPromise: null,
     teamEntitlementKey: '',
     videoDurationMs: 0,
-    lastMediaSeekTargetMs: null,
-    lastMediaSeekAt: 0,
+    recentMediaSeekTargets: [],
     teamId: '',
     gameId: '',
     chatUser: null,
@@ -1287,8 +1286,11 @@ function sendYouTubeCommand(command, args = []) {
 }
 
 function rememberMediaSeek(targetMs) {
-    uiState.lastMediaSeekTargetMs = Math.max(0, Number(targetMs) || 0);
-    uiState.lastMediaSeekAt = Date.now();
+    const nowMs = Date.now();
+    uiState.recentMediaSeekTargets = uiState.recentMediaSeekTargets
+        .filter((seek) => nowMs - seek.atMs <= 1600)
+        .concat({ targetMs: Math.max(0, Number(targetMs) || 0), atMs: nowMs })
+        .slice(-8);
 }
 
 function updateReplayVideoDuration(durationMs) {
@@ -1303,8 +1305,12 @@ function updateReplayVideoDuration(durationMs) {
 }
 
 function isRecentMediaSeekEcho(mediaElapsedMs) {
-    if (!Number.isFinite(uiState.lastMediaSeekTargetMs) || Date.now() - uiState.lastMediaSeekAt > 1600) return false;
-    return Math.abs(mediaElapsedMs - uiState.lastMediaSeekTargetMs) <= 1800;
+    const nowMs = Date.now();
+    uiState.recentMediaSeekTargets = uiState.recentMediaSeekTargets
+        .filter((seek) => nowMs - seek.atMs <= 1600);
+    return uiState.recentMediaSeekTargets.some((seek) =>
+        Math.abs(mediaElapsedMs - seek.targetMs) <= 1800
+    );
 }
 
 function syncReplayFromMediaTime(mediaElapsedMs, stateTools) {
