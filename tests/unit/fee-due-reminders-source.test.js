@@ -137,8 +137,8 @@ describe('fee due reminder source wiring', () => {
         const source = functionsSource.slice(start, end);
 
         expect(source).toContain(".where('status', 'in', ['unpaid', 'pending'])");
-        expect(source).toContain(".where('dueDate', '>=', now)");
-        expect(source).toContain(".where('dueDate', '<=', maxReminderThresholdLater)");
+        expect(source).toContain(".where('dueDate', '>=', upcomingScanStart)");
+        expect(source).toContain(".where('dueDate', '<=', upcomingScanEnd)");
         expect(source).toContain(".orderBy('dueDate', 'asc')");
         expect(source).toContain(".where('reminderDeliveryClaimExpiresAtMillis', '>', 0)");
         expect(source).toContain(".orderBy('reminderDeliveryClaimExpiresAtMillis', 'asc')");
@@ -147,6 +147,8 @@ describe('fee due reminder source wiring', () => {
         expect(source).toContain('drainFeeReminderQueryPages({');
         expect(source).toContain('initialCursors: persistedCursors');
         expect(source).toContain('saveCursor');
+        expect(source).toContain('upcomingScan: persistedUpcomingScan');
+        expect(source).toContain('overdueEligibilityFloorMillis');
         expect(source).toContain("firestore.doc(FEE_REMINDER_DISPATCH_STATE_PATH)");
         expect(source).toContain('FEE_REMINDER_MAX_PAGES_PER_QUERY');
         expect(source).toContain('FEE_REMINDER_MAX_RUNTIME_MS');

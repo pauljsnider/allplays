@@ -1549,8 +1549,8 @@ test('sendFeeUnpaidDueReminders sends eligible unpaid parent fee reminders with 
     }
 });
 
-test('sendFeeUnpaidDueReminders resumes after a capped invocation and deduplicates an expired leased recipient', async () => {
-    const nowMillis = Date.parse('2026-06-28T12:00:00.000Z');
+test('sendFeeUnpaidDueReminders resumes a capped scan after its recipients become overdue', async () => {
+    let currentNowMillis = Date.parse('2026-06-28T12:00:00.000Z');
     const { moduleExports, env, cleanup } = loadNotificationInternals({
         teamDoc: { ownerId: 'coach-1', adminEmails: [] },
         userDocs: {
@@ -1559,7 +1559,7 @@ test('sendFeeUnpaidDueReminders resumes after a capped invocation and deduplicat
         indexedTargets: [
             { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { fees: true } }
         ],
-        nowMillis
+        nowMillisProvider: () => currentNowMillis
     });
 
     try {
@@ -1572,15 +1572,16 @@ test('sendFeeUnpaidDueReminders resumes after a capped invocation and deduplicat
                 playerKey: 'team-1::player-1',
                 feeTitle: `Tournament dues ${index + 1}`,
                 amountCents: 4500,
-                dueDate: '2026-06-30T12:00:00.000Z',
+                dueDate: '2026-06-28T13:00:00.000Z',
                 ...(index === 0 ? {
                     reminderDeliveryClaimId: 'expired-claim',
-                    reminderDeliveryClaimExpiresAtMillis: nowMillis - 1
+                    reminderDeliveryClaimExpiresAtMillis: currentNowMillis - 1
                 } : {})
             })
         )));
 
         const firstResult = await moduleExports.sendFeeUnpaidDueReminders();
+        currentNowMillis = Date.parse('2026-06-29T12:00:00.000Z');
         const secondResult = await moduleExports.sendFeeUnpaidDueReminders();
 
         const leasedQueries = env.feeRecipientQueryLog.filter((query) => (

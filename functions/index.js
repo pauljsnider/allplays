@@ -13506,7 +13506,8 @@ function getFeeReminderDueDateMillis(recipient = {}) {
 function isFeeDueReminderCandidateEligible(recipient = {}, {
   nowMillis = Date.now(),
   reminderThresholdHours = 72,
-  allowRecentlyOverdueRecovery = false
+  allowRecentlyOverdueRecovery = false,
+  overdueEligibilityFloorMillis = null
 } = {}) {
   const status = String(recipient?.status || '').trim().toLowerCase();
   if (!['unpaid', 'pending'].includes(status)) return false;
@@ -13518,9 +13519,16 @@ function isFeeDueReminderCandidateEligible(recipient = {}, {
   const effectiveNowMillis = Number(nowMillis);
   if (!Number.isFinite(effectiveNowMillis)) return false;
   if (dueDateMillis < effectiveNowMillis) {
+    const effectiveOverdueEligibilityFloorMillis = Number(overdueEligibilityFloorMillis);
+    const isPersistedScanCandidate = overdueEligibilityFloorMillis !== null
+      && Number.isFinite(effectiveOverdueEligibilityFloorMillis)
+      && dueDateMillis >= effectiveOverdueEligibilityFloorMillis;
     if (
-      !allowRecentlyOverdueRecovery
-      || dueDateMillis < effectiveNowMillis - FEE_REMINDER_STALE_RECOVERY_GRACE_MS
+      !isPersistedScanCandidate
+      && (
+        !allowRecentlyOverdueRecovery
+        || dueDateMillis < effectiveNowMillis - FEE_REMINDER_STALE_RECOVERY_GRACE_MS
+      )
     ) return false;
   }
 
@@ -13561,12 +13569,14 @@ async function resolveEligibleFeeReminderRecipient({
   recipient,
   nowMillis,
   reminderThresholdHours,
-  allowRecentlyOverdueRecovery = false
+  allowRecentlyOverdueRecovery = false,
+  overdueEligibilityFloorMillis = null
 }) {
   if (!isFeeDueReminderCandidateEligible(recipient, {
     nowMillis,
     reminderThresholdHours,
-    allowRecentlyOverdueRecovery
+    allowRecentlyOverdueRecovery,
+    overdueEligibilityFloorMillis
   })) {
     return null;
   }
@@ -13607,7 +13617,8 @@ function isFeeReminderDeliveryClaimActive(recipient = {}, nowMillis = Date.now()
 async function claimFeeDueReminder(recipientRef, {
   nowMillis,
   reminderThresholdHours,
-  allowRecentlyOverdueRecovery = false
+  allowRecentlyOverdueRecovery = false,
+  overdueEligibilityFloorMillis = null
 }) {
   const claimId = buildFeeReminderClaimId();
   let claimResult;
@@ -13618,7 +13629,8 @@ async function claimFeeDueReminder(recipientRef, {
       if (!recipientSnap.exists || !isFeeDueReminderCandidateEligible(recipient, {
         nowMillis,
         reminderThresholdHours,
-        allowRecentlyOverdueRecovery
+        allowRecentlyOverdueRecovery,
+        overdueEligibilityFloorMillis
       })) {
         return null;
       }
@@ -13689,7 +13701,8 @@ async function markFeeDueReminderClaimSent(
     reminderThresholdHours,
     teamId,
     authorizedPayerUserIds = [],
-    allowRecentlyOverdueRecovery = false
+    allowRecentlyOverdueRecovery = false,
+    overdueEligibilityFloorMillis = null
   }
 ) {
   try {
@@ -13711,7 +13724,8 @@ async function markFeeDueReminderClaimSent(
         || !isFeeDueReminderCandidateEligible(recipient, {
           nowMillis,
           reminderThresholdHours,
-          allowRecentlyOverdueRecovery
+          allowRecentlyOverdueRecovery,
+          overdueEligibilityFloorMillis
         })
       ) {
         return false;
@@ -13893,13 +13907,38 @@ async function finalizeFeeDueReminderClaim(recipientRef, claimId, {
 async function sendFeeUnpaidDueReminders() {
   const now = admin.firestore.Timestamp.now();
   const nowMillis = now.toMillis();
-  const maxReminderThresholdLater = admin.firestore.Timestamp.fromMillis(now.toMillis() + 72 * 60 * 60 * 1000);
   const teamReminderThresholdHours = new Map();
   const dispatchStateRef = firestore.doc(FEE_REMINDER_DISPATCH_STATE_PATH);
   const dispatchStateSnap = await dispatchStateRef.get();
+  const dispatchState = dispatchStateSnap.exists ? (dispatchStateSnap.data() || {}) : {};
   const persistedCursors = dispatchStateSnap.exists
-    ? { ...(dispatchStateSnap.data()?.cursors || {}) }
+    ? { ...(dispatchState.cursors || {}) }
     : {};
+  const isUpcomingScanContinuation = Boolean(persistedCursors.upcoming);
+  const storedUpcomingScan = dispatchState.upcomingScan || {};
+  const storedUpcomingScanStartMillis = Number(storedUpcomingScan.startMillis);
+  const storedUpcomingScanEndMillis = Number(storedUpcomingScan.endMillis);
+  const cursorDueDateMillis = Number(persistedCursors.upcoming?.valueMillis);
+  const upcomingScan = isUpcomingScanContinuation
+    && Number.isFinite(storedUpcomingScanStartMillis)
+    && Number.isFinite(storedUpcomingScanEndMillis)
+    && storedUpcomingScanEndMillis >= storedUpcomingScanStartMillis
+    ? {
+      startMillis: storedUpcomingScanStartMillis,
+      endMillis: storedUpcomingScanEndMillis
+    }
+    : {
+      startMillis: Number.isFinite(cursorDueDateMillis)
+        ? Math.min(nowMillis, cursorDueDateMillis)
+        : nowMillis,
+      endMillis: Math.max(
+        nowMillis + 72 * 60 * 60 * 1000,
+        Number.isFinite(cursorDueDateMillis) ? cursorDueDateMillis : nowMillis
+      )
+    };
+  let persistedUpcomingScan = isUpcomingScanContinuation ? upcomingScan : null;
+  const upcomingScanStart = admin.firestore.Timestamp.fromMillis(upcomingScan.startMillis);
+  const upcomingScanEnd = admin.firestore.Timestamp.fromMillis(upcomingScan.endMillis);
 
   const loadPage = async ({ queryName, cursor }) => {
     // Keep leased recipients in the retry set even if they cross their due time
@@ -13910,8 +13949,8 @@ async function sendFeeUnpaidDueReminders() {
         .orderBy('reminderDeliveryClaimExpiresAtMillis', 'asc')
       : firestore.collectionGroup('feeRecipients')
         .where('status', 'in', ['unpaid', 'pending'])
-        .where('dueDate', '>=', now)
-        .where('dueDate', '<=', maxReminderThresholdLater)
+        .where('dueDate', '>=', upcomingScanStart)
+        .where('dueDate', '<=', upcomingScanEnd)
         .orderBy('dueDate', 'asc');
     query = query.orderBy(admin.firestore.FieldPath.documentId(), 'asc');
     if (cursor) {
@@ -13935,6 +13974,7 @@ async function sendFeeUnpaidDueReminders() {
   const saveCursor = async ({ queryName, cursor }) => {
     if (!cursor) {
       delete persistedCursors[queryName];
+      if (queryName === 'upcoming') persistedUpcomingScan = null;
     } else {
       const cursorData = cursor.data() || {};
       const valueMillis = queryName === 'leased'
@@ -13945,9 +13985,11 @@ async function sendFeeUnpaidDueReminders() {
         throw new Error(`Cannot persist invalid ${queryName} fee reminder cursor.`);
       }
       persistedCursors[queryName] = { valueMillis, path };
+      if (queryName === 'upcoming') persistedUpcomingScan = upcomingScan;
     }
     await dispatchStateRef.set({
       cursors: persistedCursors,
+      upcomingScan: persistedUpcomingScan || admin.firestore.FieldValue.delete(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     });
   };
@@ -14016,6 +14058,9 @@ async function sendFeeUnpaidDueReminders() {
       && dueDateMillis < nowMillis
       && dueDateMillis >= nowMillis - FEE_REMINDER_STALE_RECOVERY_GRACE_MS
       && (hasDeliveryLease || recoveredExpiredLease);
+    const overdueEligibilityFloorMillis = isUpcomingScanContinuation
+      ? upcomingScan.startMillis
+      : null;
 
     let reminderThresholdHours = teamReminderThresholdHours.get(teamId);
     if (!reminderThresholdHours) {
@@ -14036,7 +14081,8 @@ async function sendFeeUnpaidDueReminders() {
         recipient: data,
         nowMillis,
         reminderThresholdHours,
-        allowRecentlyOverdueRecovery
+        allowRecentlyOverdueRecovery,
+        overdueEligibilityFloorMillis
       });
       if (!eligibleRecipient) return null;
 
@@ -14045,7 +14091,8 @@ async function sendFeeUnpaidDueReminders() {
       const claimId = await claimFeeDueReminder(doc.ref, {
         nowMillis,
         reminderThresholdHours,
-        allowRecentlyOverdueRecovery
+        allowRecentlyOverdueRecovery,
+        overdueEligibilityFloorMillis
       });
       if (!claimId) return null;
 
@@ -14070,7 +14117,8 @@ async function sendFeeUnpaidDueReminders() {
                 reminderThresholdHours,
                 teamId,
                 authorizedPayerUserIds: authorizedTargets.map((target) => target.uid),
-                allowRecentlyOverdueRecovery
+                allowRecentlyOverdueRecovery,
+                overdueEligibilityFloorMillis
               }
             );
             sentMarkerCommitted = Array.isArray(deliverablePayerUserIds)
