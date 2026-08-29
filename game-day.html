@@ -99,6 +99,31 @@
         </div>
     </div>
 
+    <!-- Loaded only after canonical owner/admin access is confirmed. -->
+    <div id="coaches-only-note-panel" class="hidden max-w-7xl mx-auto px-4 pt-4">
+        <div class="bg-amber-50 rounded-xl border border-amber-200 p-4">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                    <label for="coaches-only-note-input" class="text-xs font-semibold text-amber-800 uppercase tracking-wider">Coaches-only notes</label>
+                    <p id="coaches-only-note-privacy" class="mt-1 text-sm text-amber-950">Visible only to team owners and admins. These notes are not included in family views, game-helper access, recaps, or AI summaries.</p>
+                </div>
+                <span class="rounded-full border border-amber-300 bg-white px-2 py-1 text-[11px] font-bold uppercase tracking-wide text-amber-800">Private</span>
+            </div>
+            <textarea id="coaches-only-note-input" rows="4" maxlength="5000" disabled aria-describedby="coaches-only-note-privacy coaches-only-note-count coaches-only-note-status"
+                class="mt-3 w-full resize-y rounded-lg border border-amber-200 bg-white p-3 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-amber-300 disabled:cursor-not-allowed disabled:bg-amber-100 disabled:text-gray-500"
+                placeholder="Private observations, reminders, or plans for team managers…"></textarea>
+            <div class="mt-2 flex flex-wrap items-center justify-between gap-3">
+                <div class="flex items-center gap-3 text-xs">
+                    <span id="coaches-only-note-count" class="text-amber-800">0 / 5000</span>
+                    <span id="coaches-only-note-status" class="text-amber-800" role="status">Waiting to load…</span>
+                    <button id="coaches-only-note-retry" type="button" class="hidden min-h-11 items-center px-2 font-semibold text-amber-900 underline hover:text-amber-700">Retry</button>
+                </div>
+                <button id="coaches-only-note-save" type="button" disabled
+                    class="rounded-lg bg-amber-700 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-800 disabled:cursor-not-allowed disabled:opacity-50">Save private note</button>
+            </div>
+        </div>
+    </div>
+
     <!-- ============================================================ -->
     <!-- PRE-GAME VIEW                                                -->
     <!-- ============================================================ -->
@@ -492,6 +517,8 @@
     <script type="module">
         import { getApp } from './js/vendor/firebase-app.js';
         import { getAI, getGenerativeModel, GoogleAIBackend } from './js/vendor/firebase-ai.js';
+        import { db } from './js/firebase.js?v=27';
+        import { doc, getDocFromServer, serverTimestamp, setDoc } from './js/vendor/firebase-firestore.js';
         import {
             getGameDayTeamContext, getGame, subscribeGame, getPlayers,
             getRsvpBreakdownByPlayer, getMyRsvp, getGames, getAggregatedStatsForGames,
@@ -522,6 +549,11 @@
         import { pickBestGameId, normalizeGameDayUrl } from './js/game-day-entry.js?v=1';
         import { buildGameDayBroadcastSetupUrl, resolveGameDayBroadcastStatus } from './js/game-day-broadcast.js?v=5';
         import { createGameDayRsvpController } from './js/game-day-rsvp-controls.js?v=3';
+        import {
+            COACHES_ONLY_GAME_NOTE_MAX_LENGTH,
+            loadCoachesOnlyGameNote,
+            saveCoachesOnlyGameNote
+        } from './js/coaches-only-game-notes.js?v=1';
         import {
             buildOnFieldMap as buildLiveOnFieldMap,
             syncGameDayLiveState,
@@ -676,6 +708,12 @@
             activePeriodGD: 'H1',
             rotationActual: {},
             coachingNotes: [],
+            coachesOnlyNoteLoaded: false,
+            coachesOnlyNoteLoadInFlight: false,
+            coachesOnlyNoteSaveInFlight: false,
+            coachesOnlyNoteSavedText: '',
+            coachesOnlyNoteRequestGeneration: 0,
+            coachesOnlyNotePrincipalUid: '',
             aggregatedStats: [],
             liveEvents: [],
             lastStatEvent: null,
@@ -974,14 +1012,23 @@
         };
 
         // ==================== AUTH ====================
+        let activeAuthUid = null;
         checkAuth(async (user) => {
+            const nextAuthUid = user?.uid || '';
+            const principalChanged = activeAuthUid !== null && activeAuthUid !== nextAuthUid;
+            if (principalChanged) resetCoachesOnlyNotePanelForPrincipalChange();
+            activeAuthUid = nextAuthUid;
             if (!user) {
+                state.user = null;
                 window.location.href = '/app/#/auth';
                 return;
             }
             state.user = user;
             renderHeader(document.getElementById('header-container'), user);
-            if (pageInitialized) return;
+            if (pageInitialized) {
+                if (principalChanged) window.location.reload();
+                return;
+            }
             pageInitialized = true;
             await initPage();
         });
@@ -993,10 +1040,15 @@
                 return;
             }
             state.teamId = teamId;
+            const isSharedGameRoute = typeof gameId === 'string' && (
+                gameId.startsWith('shared_') ||
+                gameId.startsWith('shared::') ||
+                gameId.startsWith('sharedh_')
+            );
 
             try {
                 const [team, players, configs, games] = await Promise.all([
-                    getGameDayTeamContext(teamId, gameId),
+                    getGameDayTeamContext(teamId, isSharedGameRoute ? null : gameId),
                     getPlayers(teamId),
                     getConfigs(teamId),
                     getGames(teamId)
@@ -1060,6 +1112,9 @@
                     renderLimitedVideographerAccess(accessInfo);
                     return;
                 }
+
+                initializeCoachesOnlyNotePanel();
+                void loadCoachesOnlyNote();
 
                 hydrateChatState(game);
 
@@ -1344,6 +1399,145 @@
                     status.textContent = 'Save failed';
                 }
             };
+        }
+
+        function setCoachesOnlyNoteStatus(message, { isError = false } = {}) {
+            const status = document.getElementById('coaches-only-note-status');
+            if (!status) return;
+            status.textContent = message;
+            status.className = isError ? 'text-red-700' : 'text-amber-800';
+        }
+
+        function updateCoachesOnlyNoteControls() {
+            const input = document.getElementById('coaches-only-note-input');
+            const saveButton = document.getElementById('coaches-only-note-save');
+            const count = document.getElementById('coaches-only-note-count');
+            if (!input || !saveButton || !count) return;
+
+            const currentText = input.value;
+            count.textContent = `${currentText.length} / ${COACHES_ONLY_GAME_NOTE_MAX_LENGTH}`;
+            input.disabled = !state.coachesOnlyNoteLoaded ||
+                state.coachesOnlyNoteLoadInFlight ||
+                state.coachesOnlyNoteSaveInFlight;
+            saveButton.disabled = !state.coachesOnlyNoteLoaded ||
+                state.coachesOnlyNoteLoadInFlight ||
+                state.coachesOnlyNoteSaveInFlight ||
+                currentText === state.coachesOnlyNoteSavedText ||
+                currentText.length > COACHES_ONLY_GAME_NOTE_MAX_LENGTH;
+        }
+
+        function initializeCoachesOnlyNotePanel() {
+            const panel = document.getElementById('coaches-only-note-panel');
+            const input = document.getElementById('coaches-only-note-input');
+            const saveButton = document.getElementById('coaches-only-note-save');
+            const retryButton = document.getElementById('coaches-only-note-retry');
+            state.coachesOnlyNotePrincipalUid = state.user?.uid || '';
+            panel?.classList.remove('hidden');
+            input?.addEventListener('input', updateCoachesOnlyNoteControls);
+            saveButton?.addEventListener('click', saveCoachesOnlyNoteDraft);
+            retryButton?.addEventListener('click', loadCoachesOnlyNote);
+            updateCoachesOnlyNoteControls();
+        }
+
+        function resetCoachesOnlyNotePanelForPrincipalChange() {
+            state.coachesOnlyNoteRequestGeneration += 1;
+            state.coachesOnlyNoteLoaded = false;
+            state.coachesOnlyNoteLoadInFlight = false;
+            state.coachesOnlyNoteSaveInFlight = false;
+            state.coachesOnlyNoteSavedText = '';
+            state.coachesOnlyNotePrincipalUid = '';
+            const panel = document.getElementById('coaches-only-note-panel');
+            const input = document.getElementById('coaches-only-note-input');
+            const retryButton = document.getElementById('coaches-only-note-retry');
+            panel?.classList.add('hidden');
+            retryButton?.classList.add('hidden');
+            if (input) input.value = '';
+            setCoachesOnlyNoteStatus('Waiting to verify private-note access…');
+            updateCoachesOnlyNoteControls();
+        }
+
+        async function loadCoachesOnlyNote() {
+            if (state.coachesOnlyNoteLoadInFlight) return;
+            const input = document.getElementById('coaches-only-note-input');
+            const retryButton = document.getElementById('coaches-only-note-retry');
+            const hadCompleteValue = state.coachesOnlyNoteLoaded;
+            const principalUid = state.user?.uid || '';
+            const requestGeneration = ++state.coachesOnlyNoteRequestGeneration;
+            if (!principalUid || principalUid !== state.coachesOnlyNotePrincipalUid) return;
+            state.coachesOnlyNoteLoadInFlight = true;
+            if (!hadCompleteValue) state.coachesOnlyNoteLoaded = false;
+            retryButton?.classList.add('hidden');
+            setCoachesOnlyNoteStatus('Loading private note…');
+            updateCoachesOnlyNoteControls();
+
+            try {
+                const note = await loadCoachesOnlyGameNote({
+                    db,
+                    doc,
+                    getDoc: getDocFromServer,
+                    teamId: state.teamId,
+                    gameId: state.gameId,
+                    sharedGamePath: state.game?._sharedGamePath || state.game?.sharedGamePath || ''
+                });
+                if (requestGeneration !== state.coachesOnlyNoteRequestGeneration || principalUid !== state.user?.uid) return;
+                state.coachesOnlyNoteLoaded = true;
+                state.coachesOnlyNoteSavedText = note.text;
+                if (input) input.value = note.text;
+                setCoachesOnlyNoteStatus(note.exists ? 'Private note loaded.' : 'No private note yet.');
+            } catch (error) {
+                if (requestGeneration !== state.coachesOnlyNoteRequestGeneration || principalUid !== state.user?.uid) return;
+                console.error('Unable to load coaches-only note:', error);
+                if (hadCompleteValue) {
+                    setCoachesOnlyNoteStatus('Refresh failed. Keeping the last loaded note.', { isError: true });
+                } else {
+                    state.coachesOnlyNoteLoaded = false;
+                    setCoachesOnlyNoteStatus('Private note could not be loaded. Editing is disabled.', { isError: true });
+                }
+                retryButton?.classList.remove('hidden');
+            } finally {
+                if (requestGeneration === state.coachesOnlyNoteRequestGeneration && principalUid === state.user?.uid) {
+                    state.coachesOnlyNoteLoadInFlight = false;
+                    updateCoachesOnlyNoteControls();
+                }
+            }
+        }
+
+        async function saveCoachesOnlyNoteDraft() {
+            const input = document.getElementById('coaches-only-note-input');
+            if (!input || !state.coachesOnlyNoteLoaded || state.coachesOnlyNoteSaveInFlight || !state.user?.uid) return;
+            const draft = input.value;
+            const principalUid = state.user.uid;
+            const requestGeneration = ++state.coachesOnlyNoteRequestGeneration;
+            if (principalUid !== state.coachesOnlyNotePrincipalUid) return;
+            state.coachesOnlyNoteSaveInFlight = true;
+            setCoachesOnlyNoteStatus('Saving private note…');
+            updateCoachesOnlyNoteControls();
+
+            try {
+                const saved = await saveCoachesOnlyGameNote({
+                    db,
+                    doc,
+                    setDoc,
+                    serverTimestamp,
+                    teamId: state.teamId,
+                    gameId: state.gameId,
+                    userId: principalUid,
+                    text: draft,
+                    sharedGamePath: state.game?._sharedGamePath || state.game?.sharedGamePath || ''
+                });
+                if (requestGeneration !== state.coachesOnlyNoteRequestGeneration || principalUid !== state.user?.uid) return;
+                state.coachesOnlyNoteSavedText = saved.text;
+                setCoachesOnlyNoteStatus('Private note saved.');
+            } catch (error) {
+                if (requestGeneration !== state.coachesOnlyNoteRequestGeneration || principalUid !== state.user?.uid) return;
+                console.error('Unable to save coaches-only note:', error);
+                setCoachesOnlyNoteStatus('Save failed. Your draft is still here; try again.', { isError: true });
+            } finally {
+                if (requestGeneration === state.coachesOnlyNoteRequestGeneration && principalUid === state.user?.uid) {
+                    state.coachesOnlyNoteSaveInFlight = false;
+                    updateCoachesOnlyNoteControls();
+                }
+            }
         }
 
         async function loadLastGame() {

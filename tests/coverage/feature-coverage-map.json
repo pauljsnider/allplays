@@ -638,6 +638,9 @@
                 "apps/app/src/pages/StandardTracker.tsx"
             ],
             "cloudFunctions": [
+                "cleanupDirectGameCoachesOnlyNote",
+                "cleanupOrganizationSharedGameCoachesOnlyNotes",
+                "cleanupTournamentSharedGameCoachesOnlyNotes",
                 "deleteStatConfig",
                 "gameReportSharePreview",
                 "liveGameSharePreview",
@@ -645,6 +648,7 @@
                 "notifyLiveEventCreated"
             ],
             "unitTests": [
+                "functions/test/coaches-only-game-note-cleanup.test.cjs",
                 "functions/test/live-game-share-preview-core.test.cjs",
                 "functions/test/stat-config-management-core.test.cjs",
                 "tests/unit/app-baseball-scorekeeping-service.test.ts",

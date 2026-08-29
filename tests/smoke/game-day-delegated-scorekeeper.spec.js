@@ -49,6 +49,7 @@ function createScenario(overrides = {}) {
             uid: 'scorekeeper-1',
             email: 'scorekeeper@example.com'
         },
+        coachesOnlyNoteReadCalls: 0,
         ...overrides
     };
 }
@@ -209,6 +210,30 @@ async function installModuleMocks(page) {
         }
     `;
 
+    const firebaseModule = `
+        const STORE_KEY = ${JSON.stringify(STORE_KEY)};
+        export const db = {};
+
+        export function doc(_db, ...segments) {
+            return { path: segments.join('/') };
+        }
+
+        export async function getDoc() {
+            const store = JSON.parse(localStorage.getItem(STORE_KEY) || '{}');
+            store.coachesOnlyNoteReadCalls = (store.coachesOnlyNoteReadCalls || 0) + 1;
+            localStorage.setItem(STORE_KEY, JSON.stringify(store));
+            throw new Error('Delegated helpers must not read coaches-only notes');
+        }
+
+        export async function setDoc() {
+            throw new Error('Delegated helpers must not write coaches-only notes');
+        }
+
+        export function serverTimestamp() {
+            return { type: 'server-timestamp' };
+        }
+    `;
+
     await page.route('https://cdn.tailwindcss.com/**', (route) => route.fulfill({
         status: 200,
         contentType: 'application/javascript',
@@ -237,6 +262,18 @@ async function installModuleMocks(page) {
         status: 200,
         contentType: 'application/javascript',
         body: authModule
+    }));
+
+    await page.route(/\/js\/firebase\.js(?:\?v=\d+)?$/, (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: firebaseModule
+    }));
+
+    await page.route(/\/js\/vendor\/firebase-firestore\.js$/, (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: firebaseModule.replace('export async function getDoc()', 'export async function getDocFromServer()')
     }));
 
     await page.route(/\/js\/vendor\/firebase-app\.js$/, (route) => route.fulfill({
@@ -276,11 +313,15 @@ async function expectManagementControlsHidden(page) {
     await expect(page.locator('#pre-game-view')).toHaveClass(/hidden/);
     await expect(page.locator('#game-day-view')).toHaveClass(/hidden/);
     await expect(page.locator('#game-subbanner')).toHaveClass(/hidden/);
+    await expect(page.locator('#coaches-only-note-panel')).toHaveClass(/hidden/);
     await expect(page.locator('a[href^="edit-roster.html"]')).toHaveCount(0);
     await expect(page.locator('a[href^="edit-schedule.html"]')).toHaveCount(0);
     await expect(page.locator('a[href^="edit-team.html"]')).toHaveCount(0);
     await expect(page.locator('a[href^="edit-config.html"]')).toHaveCount(0);
     await expect(page.locator('a[href*="section=staff-permissions"]')).toHaveCount(0);
+    await expect.poll(() => page.evaluate((storeKey) => {
+        return JSON.parse(localStorage.getItem(storeKey) || '{}').coachesOnlyNoteReadCalls || 0;
+    }, STORE_KEY)).toBe(0);
 }
 
 test.beforeEach(async ({ page }) => {

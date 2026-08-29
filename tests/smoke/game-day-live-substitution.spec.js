@@ -43,6 +43,14 @@ function createScenario(overrides = {}) {
             uid: 'coach-1',
             email: 'coach@example.com'
         },
+        coachesOnlyNote: {
+            text: 'Force play toward the sideline.',
+            updatedAt: '2026-04-14T18:00:00.000Z',
+            updatedBy: 'coach-1'
+        },
+        coachesOnlyNoteReadCalls: 0,
+        coachesOnlyNoteWriteCalls: [],
+        teamContextCalls: [],
         updateCalls: [],
         ...overrides
     };
@@ -68,8 +76,12 @@ async function installModuleMocks(page) {
             return clone(loadStore().team);
         }
 
-        export async function getGameDayTeamContext() {
-            return clone(loadStore().team);
+        export async function getGameDayTeamContext(teamId, gameId = null) {
+            const store = loadStore();
+            store.teamContextCalls = store.teamContextCalls || [];
+            store.teamContextCalls.push({ teamId, gameId });
+            saveStore(store);
+            return clone(store.team);
         }
 
         export async function getGame() {
@@ -218,6 +230,53 @@ async function installModuleMocks(page) {
         }
     `;
 
+    const firebaseModule = `
+        const STORE_KEY = ${JSON.stringify(STORE_KEY)};
+        export const db = {};
+
+        function loadStore() {
+            return JSON.parse(localStorage.getItem(STORE_KEY) || '{}');
+        }
+
+        function saveStore(store) {
+            localStorage.setItem(STORE_KEY, JSON.stringify(store));
+        }
+
+        export function doc(_db, ...segments) {
+            return { path: segments.join('/') };
+        }
+
+        export async function getDoc(reference) {
+            const store = loadStore();
+            store.coachesOnlyNoteReadCalls = (store.coachesOnlyNoteReadCalls || 0) + 1;
+            saveStore(store);
+            if (store.coachesOnlyNoteLoadError) throw new Error('Private note read failed');
+            const note = store.coachesOnlyNote;
+            return {
+                exists() { return !!note; },
+                data() { return note ? JSON.parse(JSON.stringify(note)) : undefined; },
+                ref: reference
+            };
+        }
+
+        export async function setDoc(reference, payload) {
+            const store = loadStore();
+            if (store.coachesOnlyNoteSaveError) throw new Error('Private note save failed');
+            const saved = {
+                ...payload,
+                updatedAt: new Date().toISOString()
+            };
+            store.coachesOnlyNote = saved;
+            store.coachesOnlyNoteWriteCalls = store.coachesOnlyNoteWriteCalls || [];
+            store.coachesOnlyNoteWriteCalls.push({ path: reference.path, payload: saved });
+            saveStore(store);
+        }
+
+        export function serverTimestamp() {
+            return { type: 'server-timestamp' };
+        }
+    `;
+
     await page.route(/^https:\/\/cdn\.tailwindcss\.com(?:\/.*)?$/, (route) => route.fulfill({
         status: 200,
         contentType: 'application/javascript',
@@ -246,6 +305,18 @@ async function installModuleMocks(page) {
         status: 200,
         contentType: 'application/javascript',
         body: authModule
+    }));
+
+    await page.route(/\/js\/firebase\.js(?:\?v=\d+)?$/, (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: firebaseModule
+    }));
+
+    await page.route(/\/js\/vendor\/firebase-firestore\.js$/, (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: firebaseModule.replace('export async function getDoc(', 'export async function getDocFromServer(')
     }));
 
     await page.route(/\/js\/team-admin-banner\.js(?:\?v=\d+)?$/, (route) => route.fulfill({
@@ -277,8 +348,8 @@ async function seedScenario(page, baseURL, scenario = createScenario()) {
     }, { storeKey: STORE_KEY, value: scenario });
 }
 
-async function openGameDay(page, baseURL) {
-    await page.goto(buildUrl(baseURL, '/game-day.html?teamId=team-1&gameId=game-1'), {
+async function openGameDay(page, baseURL, gameId = 'game-1') {
+    await page.goto(buildUrl(baseURL, `/game-day.html?teamId=team-1&gameId=${encodeURIComponent(gameId)}`), {
         waitUntil: 'domcontentloaded'
     });
     await expect(page.locator('#game-day-view')).toBeVisible();
@@ -359,4 +430,127 @@ test('applies a live Game Day substitution through the browser controls', async 
     await expect(page.locator('#sub-out-select')).toContainText('Casey Vale');
     await expect(page.locator('#sub-in-select')).toContainText('Blake Stone');
     await expect(page.locator('#coaching-log-list')).toContainText('Sub: Blake Stone → Casey Vale');
+});
+
+test('loads, saves, and reloads a manager-only game note', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    await seedScenario(page, baseURL);
+    await openGameDay(page, baseURL);
+
+    expect(pageErrors).toEqual([]);
+    const panel = page.locator('#coaches-only-note-panel');
+    const input = page.locator('#coaches-only-note-input');
+    await expect(panel).toBeVisible();
+    await expect(input).toBeEnabled();
+    await expect(input).toHaveValue('Force play toward the sideline.');
+
+    await input.fill('Press after every backward pass.');
+    await page.getByRole('button', { name: 'Save private note' }).click();
+    await expect(page.locator('#coaches-only-note-status')).toHaveText('Private note saved.');
+
+    let store = await getStore(page);
+    expect(store.coachesOnlyNoteWriteCalls).toEqual([
+        expect.objectContaining({
+            path: 'teams/team-1/games/game-1/coachNotes/main',
+            payload: expect.objectContaining({
+                text: 'Press after every backward pass.',
+                updatedBy: 'coach-1'
+            })
+        })
+    ]);
+
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    expect(pageErrors).toEqual([]);
+    await expect(input).toBeEnabled();
+    await expect(input).toHaveValue('Press after every backward pass.');
+    store = await getStore(page);
+    expect(store.coachesOnlyNoteReadCalls).toBeGreaterThanOrEqual(2);
+});
+
+test('boots an encoded shared game and stores its team-private note beneath the physical shared game', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    const sharedGamePath = 'organizations/org-1/sharedGames/shared-game-1';
+    const sharedGameId = `shared_${encodeURIComponent(sharedGamePath)}`;
+    await seedScenario(page, baseURL, createScenario({
+        game: {
+            ...createScenario().game,
+            id: sharedGameId,
+            sharedGamePath,
+            _sharedGamePath: sharedGamePath
+        }
+    }));
+    await openGameDay(page, baseURL, sharedGameId);
+
+    expect(pageErrors).toEqual([]);
+    const input = page.locator('#coaches-only-note-input');
+    await expect(input).toBeEnabled();
+    await expect(input).toHaveValue('Force play toward the sideline.');
+    await input.fill('Shared-game private plan.');
+    await page.getByRole('button', { name: 'Save private note' }).click();
+    await expect(page.locator('#coaches-only-note-status')).toHaveText('Private note saved.');
+
+    const store = await getStore(page);
+    expect(store.teamContextCalls).toEqual([
+        { teamId: 'team-1', gameId: null }
+    ]);
+    expect(store.coachesOnlyNoteWriteCalls).toEqual([
+        expect.objectContaining({
+            path: `${sharedGamePath}/coachNotes/team-1`,
+            payload: expect.objectContaining({
+                text: 'Shared-game private plan.',
+                updatedBy: 'coach-1'
+            })
+        })
+    ]);
+    expect(pageErrors).toEqual([]);
+});
+
+test('fails closed on a private-note read error and hydrates only after Retry succeeds', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    await seedScenario(page, baseURL, createScenario({ coachesOnlyNoteLoadError: true }));
+    await openGameDay(page, baseURL);
+
+    expect(pageErrors).toEqual([]);
+    const input = page.locator('#coaches-only-note-input');
+    await expect(input).toBeDisabled();
+    await expect(page.locator('#coaches-only-note-status')).toContainText('Editing is disabled');
+
+    await page.evaluate((storeKey) => {
+        const store = JSON.parse(localStorage.getItem(storeKey) || '{}');
+        store.coachesOnlyNoteLoadError = false;
+        store.coachesOnlyNote = {
+            text: 'Recovered private note',
+            updatedAt: new Date().toISOString(),
+            updatedBy: 'coach-1'
+        };
+        localStorage.setItem(storeKey, JSON.stringify(store));
+    }, STORE_KEY);
+    await page.getByRole('button', { name: 'Retry' }).click();
+
+    await expect(input).toBeEnabled();
+    await expect(input).toHaveValue('Recovered private note');
+    expect(pageErrors).toEqual([]);
+});
+
+test('preserves the private-note draft when saving fails', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    await seedScenario(page, baseURL, createScenario({ coachesOnlyNoteSaveError: true }));
+    await openGameDay(page, baseURL);
+
+    expect(pageErrors).toEqual([]);
+    const input = page.locator('#coaches-only-note-input');
+    await expect(input).toBeEnabled();
+    await input.fill('Keep this private draft');
+    await page.getByRole('button', { name: 'Save private note' }).click();
+
+    await expect(page.locator('#coaches-only-note-status')).toContainText('Your draft is still here');
+    await expect(input).toBeEnabled();
+    await expect(input).toHaveValue('Keep this private draft');
+    const store = await getStore(page);
+    expect(store.coachesOnlyNoteWriteCalls).toEqual([]);
+    expect(pageErrors).toEqual([]);
 });

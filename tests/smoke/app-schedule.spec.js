@@ -50,6 +50,7 @@ async function mockScheduleModules(page, options = {}) {
     const gameTournament = options.gameTournament || null;
     const gameMyRsvp = options.gameMyRsvp || 'not_responded';
     const gameMyRsvpNote = options.gameMyRsvpNote || '';
+    const coachesOnlyGameNoteText = options.coachesOnlyGameNoteText || '';
     const extraUpcomingEvents = Array.from({ length: options.extraUpcomingEvents || 0 }, (_, index) => {
         const day = String(index + 1).padStart(2, '0');
         return `baseEvent({ eventKey: 'bulk-upcoming-${index}', id: 'bulk-upcoming-${index}', childId: 'player-1', childName: 'Pat', date: new Date('2030-06-${day}T18:00:00Z'), opponent: 'Team ${index + 1}', location: 'Field ${index + 1}' })`;
@@ -62,6 +63,18 @@ async function mockScheduleModules(page, options = {}) {
     await page.addInitScript(() => {
         window.localStorage.clear();
         window.sessionStorage.clear();
+        window.__ALLPLAYS_CONFIG__ = {
+            firebase: {
+                apiKey: 'preview-smoke-key',
+                authDomain: 'allplays-preview-smoke.firebaseapp.com',
+                projectId: 'allplays-preview-smoke',
+                messagingSenderId: '123456789',
+                appId: '1:123456789:web:previewsmoke'
+            },
+            appCheck: { enabled: false },
+            performanceMonitoringEnabled: false,
+            telemetryEnabled: false
+        };
         const RealDate = Date;
         const fixedNow = new RealDate('2026-05-20T12:00:00Z').getTime();
         class FixedDate extends RealDate {
@@ -89,7 +102,9 @@ async function mockScheduleModules(page, options = {}) {
             rideshare: [],
             assignments: [],
             packets: [],
-            chatSubscriptions: []
+            chatSubscriptions: [],
+            coachesOnlyGameNotesModuleLoads: 0,
+            coachesOnlyGameNotes: []
         };
         window.__trackerCalls = {
             recordEvents: [],
@@ -148,6 +163,38 @@ async function mockScheduleModules(page, options = {}) {
                         refresh: async () => {},
                         signOut: async () => {}
                     };
+                }
+            `
+        });
+    });
+
+    await page.route(/\/src\/lib\/coachesOnlyGameNotesService\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                window.__scheduleCalls.coachesOnlyGameNotesModuleLoads += 1;
+                let noteText = ${JSON.stringify(coachesOnlyGameNoteText)};
+
+                export const COACHES_ONLY_GAME_NOTE_MAX_LENGTH = 5000;
+                export function isCoachesOnlyGameNoteSaveUncertainError(error) {
+                    return error?.mayHaveSaved === true;
+                }
+
+                export async function loadCoachesOnlyGameNoteForApp({ teamId, gameId, userId, sharedGamePath = '' }) {
+                    window.__scheduleCalls.coachesOnlyGameNotes.push({ action: 'load', teamId, gameId, userId, sharedGamePath });
+                    return {
+                        exists: noteText.length > 0,
+                        text: noteText,
+                        updatedAt: null,
+                        updatedBy: noteText.length > 0 ? 'manager-1' : null
+                    };
+                }
+
+                export async function saveCoachesOnlyGameNoteForApp({ teamId, gameId, userId, text, sharedGamePath = '' }) {
+                    window.__scheduleCalls.coachesOnlyGameNotes.push({ action: 'save', teamId, gameId, userId, text, sharedGamePath });
+                    noteText = text;
+                    return { text, updatedBy: userId };
                 }
             `
         });
@@ -1491,6 +1538,83 @@ test('iOS-sized schedule smoke covers list, event nav, and rideshare without ove
     await expect(page.getByText('Dana Driver')).toBeVisible();
     await expect(page.getByText('Request spot')).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
+});
+
+test('team manager loads and saves a coaches-only game note', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    await page.setViewportSize({ width: 390, height: 844 });
+    await mockScheduleModules(page, {
+        isAdmin: true,
+        staffManageable: true,
+        coachesOnlyGameNoteText: 'Watch the weak-side press after halftime.'
+    });
+    await page.goto(appUrl(baseURL, '/schedule/team-1/game-1?childId=player-1&section=game'), { waitUntil: 'domcontentloaded' });
+
+    await expect.poll(async () => {
+        const noteCalls = await page.evaluate(() => window.__scheduleCalls?.coachesOnlyGameNotes || []);
+        return {
+            moduleLoads: await page.evaluate(() => window.__scheduleCalls?.coachesOnlyGameNotesModuleLoads || 0),
+            hasOnlyExpectedLoads: noteCalls.length > 0 && noteCalls.every((call) => (
+                call.action === 'load'
+                && call.teamId === 'team-1'
+                && call.gameId === 'game-1'
+                && call.userId === 'user-1'
+                && call.sharedGamePath === ''
+            )),
+            pageErrors: [...pageErrors]
+        };
+    }).toEqual({
+        moduleLoads: 1,
+        hasOnlyExpectedLoads: true,
+        pageErrors: []
+    });
+    expect(pageErrors).toEqual([]);
+
+    const panel = page.getByTestId('coaches-only-game-notes-panel');
+    await expect(panel).toBeVisible();
+    const notes = panel.getByLabel('Coaches-only notes', { exact: true });
+    await expect(notes).toHaveValue('Watch the weak-side press after halftime.');
+
+    await notes.fill('Switch to zone if the press starts trapping Pat.');
+    await panel.getByRole('button', { name: 'Save private note', exact: true }).click();
+
+    await expect(panel.getByRole('status')).toHaveText('Private note saved.');
+    await expect.poll(() => page.evaluate(() => (
+        window.__scheduleCalls?.coachesOnlyGameNotes?.filter((call) => call.action === 'save') || []
+    ))).toEqual([{
+        action: 'save',
+        teamId: 'team-1',
+        gameId: 'game-1',
+        userId: 'user-1',
+        text: 'Switch to zone if the press starts trapping Pat.',
+        sharedGamePath: ''
+    }]);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
+});
+
+test('parent non-manager cannot see or call coaches-only game notes', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    await mockScheduleModules(page, {
+        coachesOnlyGameNoteText: 'This private note must not load for a parent.'
+    });
+    await page.goto(appUrl(baseURL, '/schedule/team-1/game-1?childId=player-1&section=game'), { waitUntil: 'domcontentloaded' });
+
+    await expect.poll(async () => ({
+        moduleLoads: await page.evaluate(() => window.__scheduleCalls?.coachesOnlyGameNotesModuleLoads || 0),
+        noteCalls: await page.evaluate(() => window.__scheduleCalls?.coachesOnlyGameNotes || []),
+        pageErrors: [...pageErrors]
+    })).toEqual({
+        moduleLoads: 1,
+        noteCalls: [],
+        pageErrors: []
+    });
+    expect(pageErrors).toEqual([]);
+
+    await expect(page.getByRole('heading', { name: 'Game hub' })).toBeVisible();
+    await expect(page.getByTestId('coaches-only-game-notes-panel')).toHaveCount(0);
+    expect(await page.evaluate(() => window.__scheduleCalls.coachesOnlyGameNotes)).toEqual([]);
 });
 
 test('iOS-sized Game hub deep link opens and positions Live chat without an accordion tap', async ({ page, baseURL }) => {
