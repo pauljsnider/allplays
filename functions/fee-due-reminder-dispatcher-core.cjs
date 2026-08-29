@@ -14,7 +14,8 @@ async function processReminderPage({
   summary,
   startedAtMs,
   maxRuntimeMs,
-  getNowMs
+  getNowMs,
+  onRecipientFailure
 }) {
   const safeConcurrency = Math.max(1, Math.min(
     Number.isInteger(concurrency) ? concurrency : FEE_REMINDER_WORKER_CONCURRENCY,
@@ -38,6 +39,14 @@ async function processReminderPage({
         summary.results.push(outcome);
         if (value?.failed === true) {
           summary.failed += 1;
+          if (typeof onRecipientFailure === 'function') {
+            try {
+              await onRecipientFailure(docs[currentIndex], outcome);
+              outcome.cursorSafe = true;
+            } catch (retryPersistenceError) {
+              outcome.retryPersistenceError = retryPersistenceError;
+            }
+          }
         } else if (value) {
           summary.sent += 1;
         }
@@ -46,6 +55,14 @@ async function processReminderPage({
         outcomes[currentIndex] = outcome;
         summary.results.push(outcome);
         summary.failed += 1;
+        if (typeof onRecipientFailure === 'function') {
+          try {
+            await onRecipientFailure(docs[currentIndex], outcome);
+            outcome.cursorSafe = true;
+          } catch (retryPersistenceError) {
+            outcome.retryPersistenceError = retryPersistenceError;
+          }
+        }
       }
     }
   }));
@@ -63,7 +80,8 @@ async function drainFeeReminderQueryPages({
   concurrency = FEE_REMINDER_WORKER_CONCURRENCY,
   getNowMs = Date.now,
   initialCursors = {},
-  saveCursor
+  saveCursor,
+  onRecipientFailure
 } = {}) {
   if (typeof loadPage !== 'function') {
     throw new Error('loadPage is required.');
@@ -139,7 +157,8 @@ async function drainFeeReminderQueryPages({
         summary,
         startedAtMs,
         maxRuntimeMs: safeMaxRuntimeMs,
-        getNowMs
+        getNowMs,
+        onRecipientFailure
       });
 
       const outcomesByDoc = new Map(uniqueDocs.map((doc, index) => [doc, outcomes[index]]));

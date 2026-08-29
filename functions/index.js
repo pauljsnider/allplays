@@ -13917,16 +13917,31 @@ async function sendFeeUnpaidDueReminders() {
   const storedUpcomingScan = dispatchState.upcomingScan || {};
   const storedUpcomingScanStartMillis = Number(storedUpcomingScan.startMillis);
   const storedUpcomingScanEndMillis = Number(storedUpcomingScan.endMillis);
+  const storedUpcomingScanNextStartMillis = Number(storedUpcomingScan.nextStartMillis);
+  const storedUpcomingRescan = dispatchState.upcomingRescan || {};
+  const storedUpcomingRescanStartMillis = Number(storedUpcomingRescan.startMillis);
+  const storedUpcomingRescanAdvanceMillis = Number(storedUpcomingRescan.advanceMillis);
   const cursorDueDateMillis = Number(persistedCursors.upcoming?.valueMillis);
   const hasPersistedUpcomingScan = Number.isFinite(storedUpcomingScanStartMillis)
     && Number.isFinite(storedUpcomingScanEndMillis)
     && storedUpcomingScanEndMillis >= storedUpcomingScanStartMillis;
-  const isUpcomingScanContinuation = Boolean(persistedCursors.upcoming) || hasPersistedUpcomingScan;
+  const hasPendingUpcomingRescan = Number.isFinite(storedUpcomingRescanStartMillis)
+    && Number.isFinite(storedUpcomingRescanAdvanceMillis)
+    && storedUpcomingRescanAdvanceMillis >= storedUpcomingRescanStartMillis;
   const upcomingScan = hasPersistedUpcomingScan
     ? {
       startMillis: storedUpcomingScanStartMillis,
-      endMillis: storedUpcomingScanEndMillis
+      endMillis: storedUpcomingScanEndMillis,
+      nextStartMillis: Number.isFinite(storedUpcomingScanNextStartMillis)
+        ? storedUpcomingScanNextStartMillis
+        : storedUpcomingScanStartMillis
     }
+    : hasPendingUpcomingRescan
+      ? {
+        startMillis: storedUpcomingRescanStartMillis,
+        endMillis: Math.max(nowMillis + 72 * 60 * 60 * 1000, storedUpcomingRescanAdvanceMillis),
+        nextStartMillis: storedUpcomingRescanAdvanceMillis
+      }
     : {
       startMillis: Number.isFinite(cursorDueDateMillis)
         ? Math.min(nowMillis, cursorDueDateMillis)
@@ -13934,13 +13949,53 @@ async function sendFeeUnpaidDueReminders() {
       endMillis: Math.max(
         nowMillis + 72 * 60 * 60 * 1000,
         Number.isFinite(cursorDueDateMillis) ? cursorDueDateMillis : nowMillis
-      )
+      ),
+      nextStartMillis: Number.isFinite(cursorDueDateMillis)
+        ? Math.min(nowMillis, cursorDueDateMillis)
+        : nowMillis
     };
   let persistedUpcomingScan = upcomingScan;
+  let persistedUpcomingRescan = hasPendingUpcomingRescan ? storedUpcomingRescan : null;
   const upcomingScanStart = admin.firestore.Timestamp.fromMillis(upcomingScan.startMillis);
   const upcomingScanEnd = admin.firestore.Timestamp.fromMillis(upcomingScan.endMillis);
+  const retryCollection = dispatchStateRef.collection('retries');
+
+  if (!hasPersistedUpcomingScan) {
+    persistedUpcomingRescan = null;
+    await dispatchStateRef.set({
+      upcomingScan,
+      upcomingRescan: admin.firestore.FieldValue.delete(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+  }
 
   const loadPage = async ({ queryName, cursor }) => {
+    if (queryName === 'retry') {
+      let retryQuery = retryCollection.orderBy(admin.firestore.FieldPath.documentId(), 'asc');
+      if (cursor) {
+        const retryPath = String(cursor.retryRef?.path || cursor.path || '').trim();
+        const retryId = retryPath.split('/').pop();
+        if (retryId) retryQuery = retryQuery.startAfter(retryId);
+      }
+      const retrySnap = await retryQuery.limit(FEE_REMINDER_QUERY_PAGE_SIZE).get();
+      return Promise.all(retrySnap.docs.map(async (retryDoc) => {
+        const retryData = retryDoc.data() || {};
+        const recipientPath = String(retryData.recipientPath || '').trim();
+        const isValidRecipientPath = /^teams\/[^/]+\/feeBatches\/[^/]+\/feeRecipients\/[^/]+$/.test(recipientPath);
+        const recipientDoc = isValidRecipientPath
+          ? await firestore.doc(recipientPath).get()
+          : null;
+        return {
+          id: recipientDoc?.id || retryDoc.id,
+          ref: recipientDoc?.ref || retryDoc.ref,
+          data: () => recipientDoc?.data?.() || {},
+          exists: recipientDoc?.exists === true,
+          recipientDoc,
+          retryRef: retryDoc.ref,
+          retryEligibilityFloorMillis: Number(retryData.eligibilityFloorMillis)
+        };
+      }));
+    }
     // Keep leased recipients in the retry set even if they cross their due time
     // while a crashed attempt's lease is active.
     let query = queryName === 'leased'
@@ -13976,17 +14031,29 @@ async function sendFeeUnpaidDueReminders() {
     if (drained) {
       delete persistedCursors[queryName];
       clearedCursorField = queryName;
-      if (queryName === 'upcoming') persistedUpcomingScan = null;
-    } else if (cursor) {
-      const cursorData = cursor.data() || {};
-      const valueMillis = queryName === 'leased'
-        ? Number(cursorData.reminderDeliveryClaimExpiresAtMillis)
-        : getFeeReminderDueDateMillis(cursorData);
-      const path = String(cursor.ref?.path || '').trim();
-      if (!Number.isFinite(valueMillis) || !path) {
-        throw new Error(`Cannot persist invalid ${queryName} fee reminder cursor.`);
+      if (queryName === 'upcoming') {
+        persistedUpcomingScan = null;
+        persistedUpcomingRescan = {
+          startMillis: upcomingScan.nextStartMillis,
+          advanceMillis: upcomingScan.endMillis
+        };
       }
-      persistedCursors[queryName] = { valueMillis, path };
+    } else if (cursor) {
+      if (queryName === 'retry') {
+        const path = String(cursor.retryRef?.path || '').trim();
+        if (!path) throw new Error('Cannot persist invalid retry fee reminder cursor.');
+        persistedCursors[queryName] = { path };
+      } else {
+        const cursorData = cursor.data() || {};
+        const valueMillis = queryName === 'leased'
+          ? Number(cursorData.reminderDeliveryClaimExpiresAtMillis)
+          : getFeeReminderDueDateMillis(cursorData);
+        const path = String(cursor.ref?.path || '').trim();
+        if (!Number.isFinite(valueMillis) || !path) {
+          throw new Error(`Cannot persist invalid ${queryName} fee reminder cursor.`);
+        }
+        persistedCursors[queryName] = { valueMillis, path };
+      }
       if (queryName === 'upcoming') persistedUpcomingScan = upcomingScan;
     }
     const cursorsWrite = { ...persistedCursors };
@@ -13996,11 +14063,12 @@ async function sendFeeUnpaidDueReminders() {
     await dispatchStateRef.set({
       cursors: cursorsWrite,
       upcomingScan: persistedUpcomingScan || admin.firestore.FieldValue.delete(),
+      upcomingRescan: persistedUpcomingRescan || admin.firestore.FieldValue.delete(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
   };
 
-  const processRecipient = async (doc) => {
+  const processRecipientOnce = async (doc, retryEligibilityFloorMillis = null) => {
     let data = doc.data();
     const pathParts = doc.ref.path.split('/');
     // Path structure: teams/{teamId}/feeBatches/{batchId}/feeRecipients/{recipientId}
@@ -14064,9 +14132,9 @@ async function sendFeeUnpaidDueReminders() {
       && dueDateMillis < nowMillis
       && dueDateMillis >= nowMillis - FEE_REMINDER_STALE_RECOVERY_GRACE_MS
       && (hasDeliveryLease || recoveredExpiredLease);
-    const overdueEligibilityFloorMillis = isUpcomingScanContinuation
-      ? upcomingScan.startMillis
-      : null;
+    const overdueEligibilityFloorMillis = Number.isFinite(retryEligibilityFloorMillis)
+      ? retryEligibilityFloorMillis
+      : upcomingScan.startMillis;
 
     let reminderThresholdHours = teamReminderThresholdHours.get(teamId);
     if (!reminderThresholdHours) {
@@ -14177,7 +14245,39 @@ async function sendFeeUnpaidDueReminders() {
     }
   };
 
+  const processRecipient = async (doc) => {
+    const recipientDoc = doc.recipientDoc || doc;
+    if (doc.retryRef && !doc.exists) {
+      await doc.retryRef.delete();
+      return null;
+    }
+    const value = await processRecipientOnce(recipientDoc, doc.retryEligibilityFloorMillis);
+    if (doc.retryRef && value?.failed !== true) await doc.retryRef.delete();
+    return value;
+  };
+
+  const onRecipientFailure = async (doc) => {
+    const recipientDoc = doc.recipientDoc || doc;
+    const recipientPath = String(recipientDoc?.ref?.path || '').trim();
+    if (!/^teams\/[^/]+\/feeBatches\/[^/]+\/feeRecipients\/[^/]+$/.test(recipientPath)) {
+      throw new Error('Cannot persist retry for invalid fee reminder recipient path.');
+    }
+    const recipientData = recipientDoc.data?.() || {};
+    const eligibilityFloorMillis = Number.isFinite(doc.retryEligibilityFloorMillis)
+      ? doc.retryEligibilityFloorMillis
+      : getFeeReminderDueDateMillis(recipientData);
+    const retryId = crypto.createHash('sha256').update(recipientPath).digest('hex');
+    await retryCollection.doc(retryId).set({
+      recipientPath,
+      eligibilityFloorMillis: Number.isFinite(eligibilityFloorMillis)
+        ? eligibilityFloorMillis
+        : upcomingScan.startMillis,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+  };
+
   const summary = await drainFeeReminderQueryPages({
+    queryNames: ['retry', 'leased', 'upcoming'],
     loadPage,
     processRecipient,
     pageSize: FEE_REMINDER_QUERY_PAGE_SIZE,
@@ -14185,7 +14285,8 @@ async function sendFeeUnpaidDueReminders() {
     maxRuntimeMs: FEE_REMINDER_MAX_RUNTIME_MS,
     concurrency: FEE_REMINDER_WORKER_CONCURRENCY,
     initialCursors: persistedCursors,
-    saveCursor
+    saveCursor,
+    onRecipientFailure
   });
   const result = {
     examined: summary.examined,

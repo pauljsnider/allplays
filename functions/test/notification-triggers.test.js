@@ -1,9 +1,15 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { test } from 'vitest';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 const { loadNotificationInternals } = require('./send-category-notification-test-helpers.cjs');
+
+function feeReminderRetryPath(recipientPath) {
+    const retryId = createHash('sha256').update(recipientPath).digest('hex');
+    return `_notificationDispatcherState/feeDueReminders/retries/${retryId}`;
+}
 
 function makeSnapshot(ref, data, exists = true) {
     return {
@@ -1557,6 +1563,90 @@ test('sendFeeUnpaidDueReminders sends eligible unpaid parent fee reminders with 
     }
 });
 
+test('sendFeeUnpaidDueReminders persists a new scan window before its first recipient query', async () => {
+    const nowMillis = Date.parse('2026-06-28T12:00:00.000Z');
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        nowMillis,
+        feeRecipientQueryErrors: [new Error('interrupted before first fee page')]
+    });
+
+    try {
+        await assert.rejects(
+            moduleExports.sendFeeUnpaidDueReminders(),
+            /interrupted before first fee page/
+        );
+        assert.deepEqual(
+            env.getStoredDoc('_notificationDispatcherState/feeDueReminders')?.upcomingScan,
+            {
+                startMillis: nowMillis,
+                endMillis: Date.parse('2026-07-01T12:00:00.000Z'),
+                nextStartMillis: nowMillis
+            }
+        );
+    } finally {
+        cleanup();
+    }
+});
+
+test('sendFeeUnpaidDueReminders overlap-rescans insertion behind its cursor and fees aging beyond its window', async () => {
+    let currentNowMillis = Date.parse('2026-06-28T12:00:00.000Z');
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        userDocs: {
+            'parent-1': { parentTeamIds: ['team-1'], parentPlayerKeys: ['team-1::player-1'] }
+        },
+        indexedTargets: [
+            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { fees: true } }
+        ],
+        nowMillisProvider: () => currentNowMillis
+    });
+
+    try {
+        const recipientIds = Array.from({ length: 501 }, (_, index) => (
+            `recipient-${String(index + 1).padStart(3, '0')}`
+        ));
+        await Promise.all(recipientIds.map((recipientId) => (
+            env.firestoreState.doc(`teams/team-1/feeBatches/batch-1/feeRecipients/${recipientId}`).set({
+                status: 'unpaid',
+                playerKey: 'team-1::player-1',
+                amountCents: 4500,
+                dueDate: '2026-06-29T12:00:00.000Z'
+            })
+        )));
+        const outsideRef = env.firestoreState.doc(
+            'teams/team-1/feeBatches/batch-1/feeRecipients/outside-original-window'
+        );
+        await outsideRef.set({
+            status: 'unpaid',
+            playerKey: 'team-1::player-1',
+            amountCents: 4500,
+            dueDate: '2026-07-01T13:00:00.000Z'
+        });
+
+        await moduleExports.sendFeeUnpaidDueReminders();
+        const insertedRef = env.firestoreState.doc(
+            'teams/team-1/feeBatches/batch-1/feeRecipients/recipient-000'
+        );
+        await insertedRef.set({
+            status: 'unpaid',
+            playerKey: 'team-1::player-1',
+            amountCents: 4500,
+            dueDate: '2026-06-29T12:00:00.000Z'
+        });
+        currentNowMillis = Date.parse('2026-07-03T12:00:00.000Z');
+
+        await moduleExports.sendFeeUnpaidDueReminders();
+        await moduleExports.sendFeeUnpaidDueReminders();
+        await moduleExports.sendFeeUnpaidDueReminders();
+
+        assert.ok((await insertedRef.get()).data().reminderSentAt);
+        assert.ok((await outsideRef.get()).data().reminderSentAt);
+        assert.equal(env.messagingCalls.length, 503);
+    } finally {
+        cleanup();
+    }
+});
+
 test('sendFeeUnpaidDueReminders resumes a capped scan after its recipients become overdue', async () => {
     let currentNowMillis = Date.parse('2026-06-28T12:00:00.000Z');
     const { moduleExports, env, cleanup } = loadNotificationInternals({
@@ -1623,7 +1713,7 @@ test('sendFeeUnpaidDueReminders resumes a capped scan after its recipients becom
             sent: 500,
             failed: 0,
             deduplicated: 1,
-            pagesAttempted: 11,
+            pagesAttempted: 12,
             stoppingReason: 'maxPages'
         });
         assert.deepEqual(secondResult, {
@@ -1631,7 +1721,7 @@ test('sendFeeUnpaidDueReminders resumes a capped scan after its recipients becom
             sent: 20,
             failed: 0,
             deduplicated: 0,
-            pagesAttempted: 2,
+            pagesAttempted: 3,
             stoppingReason: 'drained'
         });
     } finally {
@@ -1810,12 +1900,13 @@ test('sendFeeUnpaidDueReminders releases its lease when final Auth validation fa
         assert.equal(failedRecipient.reminderDeliveryClaimId, undefined);
         assert.equal(env.messagingCalls.length, 0);
         assert.deepEqual(
-            env.getStoredDoc('_notificationDispatcherState/feeDueReminders')?.upcomingScan,
+            env.getStoredDoc('_notificationDispatcherState/feeDueReminders')?.upcomingRescan,
             {
                 startMillis: Date.parse('2026-06-28T12:00:00.000Z'),
-                endMillis: Date.parse('2026-07-01T12:00:00.000Z')
+                advanceMillis: Date.parse('2026-07-01T12:00:00.000Z')
             }
         );
+        assert.equal(env.getStoredDoc(feeReminderRetryPath(ref.path))?.recipientPath, ref.path);
 
         currentNowMillis = Date.parse('2026-06-29T12:00:00.000Z');
         await moduleExports.sendFeeUnpaidDueReminders();
@@ -1860,13 +1951,15 @@ test('sendFeeUnpaidDueReminders retries a pre-claim Auth failure after the due d
             env.getStoredDoc('_notificationDispatcherState/feeDueReminders')?.cursors?.upcoming,
             undefined
         );
-        assert.ok(env.getStoredDoc('_notificationDispatcherState/feeDueReminders')?.upcomingScan);
+        assert.ok(env.getStoredDoc('_notificationDispatcherState/feeDueReminders')?.upcomingRescan);
+        assert.equal(env.getStoredDoc(feeReminderRetryPath(ref.path))?.recipientPath, ref.path);
 
         currentNowMillis = Date.parse('2026-06-29T12:00:00.000Z');
         await moduleExports.sendFeeUnpaidDueReminders();
 
         assert.equal(env.messagingCalls.length, 1);
         assert.ok((await ref.get()).data().reminderSentAt);
+        assert.equal(env.getStoredDoc(feeReminderRetryPath(ref.path)), undefined);
     } finally {
         cleanup();
     }
@@ -2150,7 +2243,8 @@ test('sendFeeUnpaidDueReminders retries an orphan lease and sends once after exp
             env.getStoredDoc('_notificationDispatcherState/feeDueReminders')?.cursors?.leased,
             undefined
         );
-        assert.ok(env.getStoredDoc('_notificationDispatcherState/feeDueReminders')?.upcomingScan);
+        assert.ok(env.getStoredDoc('_notificationDispatcherState/feeDueReminders')?.upcomingRescan);
+        assert.equal(env.getStoredDoc(feeReminderRetryPath(ref.path))?.recipientPath, ref.path);
 
         currentNowMillis += moduleExports._internal.FEE_REMINDER_CLAIM_LEASE_MS + 1;
         await moduleExports.sendFeeUnpaidDueReminders();
@@ -2200,7 +2294,8 @@ test('sendFeeUnpaidDueReminders retries a transient sent-marker transaction fail
             env.getStoredDoc('_notificationDispatcherState/feeDueReminders')?.cursors?.upcoming,
             undefined
         );
-        assert.ok(env.getStoredDoc('_notificationDispatcherState/feeDueReminders')?.upcomingScan);
+        assert.ok(env.getStoredDoc('_notificationDispatcherState/feeDueReminders')?.upcomingRescan);
+        assert.equal(env.getStoredDoc(feeReminderRetryPath(ref.path))?.recipientPath, ref.path);
 
         currentNowMillis = Date.parse('2026-06-29T12:00:00.000Z');
         await moduleExports.sendFeeUnpaidDueReminders();

@@ -121,6 +121,7 @@ function buildNotificationTestEnv({
     deferNotificationInboxOperations = false,
     transactionErrors = [],
     transactionPostCommitErrors = [],
+    feeRecipientQueryErrors = [],
     initialDocs = {},
     nowMillis = Date.parse('2026-06-28T12:00:00.000Z'),
     nowMillisProvider = null
@@ -132,6 +133,7 @@ function buildNotificationTestEnv({
     const pendingAuthGetUsersErrors = [...authGetUsersErrors];
     const pendingTransactionErrors = [...transactionErrors];
     const pendingTransactionPostCommitErrors = [...transactionPostCommitErrors];
+    const pendingFeeRecipientQueryErrors = [...feeRecipientQueryErrors];
     const pendingDocGetErrors = new Map(
         Object.entries(docGetErrors || {}).map(([path, errors]) => [path, [...(errors || [])]])
     );
@@ -284,7 +286,8 @@ function buildNotificationTestEnv({
         order = null,
         cursor = null,
         limitCount = null,
-        queryLog = null
+        queryLog = null,
+        queryErrors = null
     } = {}) {
         return {
             where(field, op, value) {
@@ -293,17 +296,19 @@ function buildNotificationTestEnv({
                     order,
                     cursor,
                     limitCount,
-                    queryLog
+                    queryLog,
+                    queryErrors
                 });
             },
             orderBy(field, direction = 'asc') {
-                if (field === '__name__') return this;
+                if (field === '__name__' && order) return this;
                 return makeQuery(getDocs, {
                     filters,
                     order: { field, direction },
                     cursor,
                     limitCount,
-                    queryLog
+                    queryLog,
+                    queryErrors
                 });
             },
             startAfter(...cursorValues) {
@@ -315,7 +320,8 @@ function buildNotificationTestEnv({
                     order,
                     cursor: nextCursor,
                     limitCount,
-                    queryLog
+                    queryLog,
+                    queryErrors
                 });
             },
             limit(nextLimitCount) {
@@ -324,19 +330,22 @@ function buildNotificationTestEnv({
                     order,
                     cursor,
                     limitCount: nextLimitCount,
-                    queryLog
+                    queryLog,
+                    queryErrors
                 });
             },
             async get() {
+                const queryError = queryErrors?.shift?.();
+                if (queryError) throw queryError;
                 let docs = getDocs().filter((docSnap) => {
                     const data = docSnap.data() || {};
                     return filters.every((filter) => matchesQueryFilter(data, filter));
                 });
                 if (order) {
                     docs.sort((left, right) => {
-                        const leftMillis = comparableMillis(left.data()?.[order.field]);
-                        const rightMillis = comparableMillis(right.data()?.[order.field]);
-                        const valueComparison = leftMillis - rightMillis;
+                        const valueComparison = order.field === '__name__'
+                            ? left.ref.path.localeCompare(right.ref.path)
+                            : comparableMillis(left.data()?.[order.field]) - comparableMillis(right.data()?.[order.field]);
                         const pathComparison = left.ref.path.localeCompare(right.ref.path);
                         const comparison = valueComparison || pathComparison;
                         return order.direction === 'desc' ? -comparison : comparison;
@@ -344,9 +353,16 @@ function buildNotificationTestEnv({
                 }
                 if (cursor) {
                     docs = docs.filter((docSnap) => {
-                        const cursorPath = cursor.path || cursor.ref?.path;
-                        const pathComparison = docSnap.ref.path.localeCompare(cursorPath);
+                        const cursorPath = typeof cursor === 'string'
+                            ? cursor
+                            : cursor.path || cursor.ref?.path;
+                        const pathComparison = order?.field === '__name__' && typeof cursor === 'string'
+                            ? docSnap.id.localeCompare(cursor)
+                            : docSnap.ref.path.localeCompare(cursorPath);
                         if (!order) return pathComparison > 0;
+                        if (order.field === '__name__') {
+                            return order.direction === 'desc' ? pathComparison < 0 : pathComparison > 0;
+                        }
                         const docMillis = comparableMillis(docSnap.data()?.[order.field]);
                         const cursorMillis = comparableMillis(
                             Object.prototype.hasOwnProperty.call(cursor, 'value')
@@ -633,6 +649,27 @@ function buildNotificationTestEnv({
     }
 
     function collection(path) {
+        if (path === '_notificationDispatcherState/feeDueReminders/retries') {
+            const getRetryDocs = () => {
+                const prefix = `${path}/`;
+                return Array.from(docStore.entries())
+                    .filter(([docPath]) => docPath.startsWith(prefix) && !docPath.slice(prefix.length).includes('/'))
+                    .map(([docPath, data]) => makeDocSnapshot({
+                        id: docPath.slice(prefix.length),
+                        ref: doc(docPath),
+                        data,
+                        exists: true
+                    }));
+            };
+            const query = makeQuery(getRetryDocs);
+            return {
+                ...query,
+                doc(id) {
+                    return doc(`${path}/${id}`);
+                }
+            };
+        }
+
         if (path === 'teamMediaNotificationBatches') {
             const getBatchDocs = () => {
                 const prefix = `${path}/`;
@@ -1064,7 +1101,10 @@ function buildNotificationTestEnv({
                     ref: doc(path),
                     data,
                     exists: true
-                })), { queryLog: feeRecipientQueryLog });
+                })), {
+                    queryLog: feeRecipientQueryLog,
+                    queryErrors: pendingFeeRecipientQueryErrors
+                });
         },
         async getAll(...refs) {
             getAllCalls.push(refs.map((ref) => ref.path));

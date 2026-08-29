@@ -325,6 +325,41 @@ describe('fee due reminder bounded dispatcher', () => {
         expect(savedCursor).toBe(docs[0]);
     });
 
+    it('persists thrown and returned failures while continuing through later pages', async () => {
+        const docs = ['throws', 'returned', 'later-1', 'later-2', 'later-3'].map((id) => createReminderDoc(
+            `teams/team-1/feeBatches/batch-1/feeRecipients/${id}`
+        ));
+        const processedIds = [];
+        const retryIds = [];
+
+        const summary = await drainFeeReminderQueryPages({
+            queryNames: ['upcoming'],
+            pageSize: 2,
+            loadPage: async ({ cursor, limit }) => {
+                const startIndex = cursor ? docs.indexOf(cursor) + 1 : 0;
+                return docs.slice(startIndex, startIndex + limit);
+            },
+            processRecipient: async (doc) => {
+                processedIds.push(doc.id);
+                if (doc.id === 'throws') throw new Error('retry thrown failure');
+                if (doc.id === 'returned') return { failed: true };
+                return { sent: true };
+            },
+            onRecipientFailure: async (doc) => {
+                retryIds.push(doc.id);
+            }
+        });
+
+        expect(processedIds).toEqual(docs.map((doc) => doc.id));
+        expect(retryIds).toEqual(['throws', 'returned']);
+        expect(summary).toMatchObject({
+            examined: 5,
+            sent: 3,
+            failed: 2,
+            stoppedBecause: 'drained'
+        });
+    });
+
     it('returns explicit page and runtime stopping reasons with counts', async () => {
         const fullPage = Array.from({ length: FEE_REMINDER_QUERY_PAGE_SIZE }, (_, index) => createReminderDoc(
             `teams/team-1/feeBatches/batch-1/feeRecipients/page-${index + 1}`
