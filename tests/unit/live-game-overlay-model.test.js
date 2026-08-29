@@ -4,6 +4,7 @@ import {
     applyOverlayGame,
     createOverlayDemoFixture,
     createOverlayState,
+    filterOverlayReplayStreams,
     formatOverlayChatMessageHtml,
     formatOverlayClock,
     getControllableReplayEmbedUrl,
@@ -155,6 +156,39 @@ describe('live game overlay model', () => {
             replayChat: [{ createdAt: 1_360_000 }],
             replayStartAt
         })).toBe(21 * 60 * 1000);
+    });
+
+    it('uses only the latest reset epoch for replay events, conversation, and duration', () => {
+        const replayEvents = [
+            { id: 'stale-goal', type: 'goal', gameClockMs: 45 * 60 * 1000, createdAt: 100_000 },
+            { id: 'old-reset', type: 'reset', gameClockMs: 0, createdAt: 120_000 },
+            { id: 'stale-after-old-reset', type: 'goal', gameClockMs: 10 * 60 * 1000, createdAt: 130_000 },
+            { id: 'latest-reset', type: 'reset', gameClockMs: 0, createdAt: 200_000 },
+            { id: 'fresh-goal', type: 'goal', gameClockMs: 30_000, createdAt: 230_000 }
+        ];
+        const replayChat = [
+            { id: 'stale-chat', createdAt: 150_000 },
+            { id: 'fresh-chat', createdAt: 220_000 }
+        ];
+        const replayReactions = [
+            { id: 'stale-reaction', createdAt: 190_000 },
+            { id: 'fresh-reaction', createdAt: 225_000 }
+        ];
+        const latestEpoch = filterOverlayReplayStreams({ replayEvents, replayChat, replayReactions });
+
+        expect(latestEpoch.resetBoundaryMs).toBe(200_000);
+        expect(latestEpoch.replayEvents.map((event) => event.id)).toEqual(['latest-reset', 'fresh-goal']);
+        expect(latestEpoch.replayChat.map((message) => message.id)).toEqual(['fresh-chat']);
+        expect(latestEpoch.replayReactions.map((reaction) => reaction.id)).toEqual(['fresh-reaction']);
+
+        const replayStartAt = getOverlayReplayStartAt({ replayEvents, replayChat, replayReactions });
+        expect(replayStartAt).toBe(200_000);
+        expect(getOverlayReplayDurationMs({
+            replayEvents,
+            replayChat,
+            replayReactions,
+            replayStartAt
+        })).toBe(30_000);
     });
 
     it('enables the YouTube player API for replay without rewriting other providers or invalid URLs', () => {

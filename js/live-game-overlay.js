@@ -3,6 +3,7 @@ import {
     applyOverlayGame,
     createOverlayDemoFixture,
     createOverlayState,
+    filterOverlayReplayStreams,
     formatOverlayChatMessageHtml,
     formatOverlayClock,
     getControllableReplayEmbedUrl,
@@ -16,7 +17,7 @@ import {
     reconcileOverlayLiveEvents,
     resolvePublicProjectionVideoOptions,
     replaceOverlayChat
-} from './live-game-overlay-model.js?v=15';
+} from './live-game-overlay-model.js?v=16';
 import {
     buildReplaySessionState,
     collectReplayEventWindow,
@@ -1581,19 +1582,27 @@ async function loadReplaySnapshot(database, stateTools, teamId, gameId) {
 
     uiState.replayHistoryStatus = eventsResult.ok ? 'ready' : 'failed';
 
+    const latestReplayEpoch = filterOverlayReplayStreams({
+        replayEvents: eventsResult.ok ? eventsResult.value : [],
+        replayChat: chatResult.ok ? chatResult.value : [],
+        replayReactions: reactionsResult.ok ? reactionsResult.value : [],
+        fallbackResetAt: uiState.game.lastResetAt || uiState.game.game?.liveResetAt
+    });
     const replaySession = buildReplaySessionState({
         teamId,
         gameId,
         game: uiState.game.game,
         defaultPeriod: getDefaultLivePeriod({ game: uiState.game.game, team: uiState.game.team }),
-        replayEvents: eventsResult.ok ? eventsResult.value : [],
-        replayChat: chatResult.ok ? chatResult.value : [],
-        replayReactions: reactionsResult.ok ? reactionsResult.value : []
+        replayEvents: latestReplayEpoch.replayEvents,
+        replayChat: latestReplayEpoch.replayChat,
+        replayReactions: latestReplayEpoch.replayReactions
     });
+    replaySession.replayResetBoundaryMs = latestReplayEpoch.resetBoundaryMs;
     replaySession.replayStartAt = getOverlayReplayStartAt({
         replayEvents: replaySession.replayEvents,
         replayChat: replaySession.replayChat,
         replayReactions: replaySession.replayReactions,
+        fallbackResetAt: replaySession.replayResetBoundaryMs,
         fallbackStartAt: replaySession.replayStartAt
     });
     replaySession.replayIndex = 0;
@@ -1602,6 +1611,7 @@ async function loadReplaySnapshot(database, stateTools, teamId, gameId) {
     uiState.replaySession = replaySession;
     uiState.replayDurationMs = getOverlayReplayDurationMs({
         ...replaySession,
+        fallbackResetAt: replaySession.replayResetBoundaryMs,
         videoDurationMs: uiState.videoDurationMs
     });
     uiState.replayElapsedMs = 0;

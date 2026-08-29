@@ -115,22 +115,66 @@ export function getSafeOverlayProviderUrl(value) {
     }
 }
 
+function getReplayItemTimestampMs(item = {}) {
+    return getTimestampMs(item?.clientCreatedAt || item?.createdAt || item?.timestamp);
+}
+
+export function getOverlayReplayResetBoundaryMs({ replayEvents = [], fallbackResetAt = 0 } = {}) {
+    return replayEvents.reduce((latestResetAt, event) => {
+        if (String(event?.type || '').toLowerCase() !== 'reset') return latestResetAt;
+        return Math.max(latestResetAt, getReplayItemTimestampMs(event));
+    }, getTimestampMs(fallbackResetAt));
+}
+
+export function filterOverlayReplayStreams({
+    replayEvents = [],
+    replayChat = [],
+    replayReactions = [],
+    fallbackResetAt = 0
+} = {}) {
+    const resetBoundaryMs = getOverlayReplayResetBoundaryMs({ replayEvents, fallbackResetAt });
+    if (!resetBoundaryMs) {
+        return { replayEvents, replayChat, replayReactions, resetBoundaryMs: 0 };
+    }
+    const isInLatestEpoch = (item) => {
+        const timestamp = getReplayItemTimestampMs(item);
+        return timestamp > 0 && timestamp >= resetBoundaryMs;
+    };
+    return {
+        replayEvents: replayEvents.filter(isInLatestEpoch),
+        replayChat: replayChat.filter(isInLatestEpoch),
+        replayReactions: replayReactions.filter(isInLatestEpoch),
+        resetBoundaryMs
+    };
+}
+
 export function getOverlayReplayStartAt({
     replayEvents = [],
     replayChat = [],
     replayReactions = [],
+    fallbackResetAt = 0,
     fallbackStartAt = Date.now()
 } = {}) {
-    const eventStartCandidates = replayEvents.flatMap((event) => {
-        const timestamp = getTimestampMs(event?.clientCreatedAt || event?.createdAt || event?.timestamp);
+    const latestEpoch = filterOverlayReplayStreams({
+        replayEvents,
+        replayChat,
+        replayReactions,
+        fallbackResetAt
+    });
+    const eventStartCandidates = latestEpoch.replayEvents.flatMap((event) => {
+        const timestamp = getReplayItemTimestampMs(event);
         const gameClockMs = Number(event?.gameClockMs);
         if (!timestamp || !Number.isFinite(gameClockMs) || gameClockMs < 0) return [];
         return [timestamp - gameClockMs];
     });
     if (eventStartCandidates.length) return Math.min(...eventStartCandidates);
 
-    const streamTimestamps = [...replayEvents, ...replayChat, ...replayReactions]
-        .map((item) => getTimestampMs(item?.clientCreatedAt || item?.createdAt || item?.timestamp))
+    const streamTimestamps = [
+        ...latestEpoch.replayEvents,
+        ...latestEpoch.replayChat,
+        ...latestEpoch.replayReactions
+    ]
+        .map(getReplayItemTimestampMs)
         .filter((timestamp) => timestamp > 0);
     return streamTimestamps.length
         ? Math.min(...streamTimestamps)
@@ -168,14 +212,21 @@ export function getOverlayReplayDurationMs({
     replayEvents = [],
     replayChat = [],
     replayReactions = [],
+    fallbackResetAt = 0,
     replayStartAt = 0,
     videoDurationMs = 0
 } = {}) {
-    const eventDuration = replayEvents.reduce((maximum, event) => {
+    const latestEpoch = filterOverlayReplayStreams({
+        replayEvents,
+        replayChat,
+        replayReactions,
+        fallbackResetAt
+    });
+    const eventDuration = latestEpoch.replayEvents.reduce((maximum, event) => {
         return Math.max(maximum, Math.max(0, toFiniteNumber(event?.gameClockMs)));
     }, 0);
-    const streamDuration = [...replayChat, ...replayReactions].reduce((maximum, item) => {
-        const timestamp = getTimestampMs(item?.createdAt);
+    const streamDuration = [...latestEpoch.replayChat, ...latestEpoch.replayReactions].reduce((maximum, item) => {
+        const timestamp = getReplayItemTimestampMs(item);
         if (!timestamp || !Number.isFinite(replayStartAt)) return maximum;
         return Math.max(maximum, Math.max(0, timestamp - replayStartAt));
     }, 0);

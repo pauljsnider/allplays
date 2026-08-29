@@ -378,6 +378,7 @@ async function stubRealOverlayModules(page) {
                 viewerCount: 4, liveViewerCount: 19,
                 videoUrl: window.__OVERLAY_PUBLIC_VIDEO_URL__ || 'https://www.youtube.com/watch?v=PK1HyC37doc',
                 isPublicProjection: true,
+                liveResetAt: window.__OVERLAY_RESET_REPLAY__ ? 200000 : undefined,
                 liveLineup: { onCourt: ['p9'], bench: ['p4'] },
                 liveStats: { p9: { goals: 5 } },
                 opponentStats: {
@@ -459,6 +460,11 @@ async function stubRealOverlayModules(page) {
                     throw new Error('saved events unavailable');
                 }
                 if (window.__OVERLAY_EMPTY_REPLAY_EVENTS__) return [];
+                if (window.__OVERLAY_RESET_REPLAY__) return [
+                    { id: 'stale-before-reset', type: 'goal', description: 'Stale pre-reset goal', homeScore: 8, awayScore: 0, period: 'H1', gameClockMs: 2700000, createdAt: 100000 },
+                    { id: 'latest-reset', type: 'reset', description: 'Game reset', homeScore: 0, awayScore: 0, period: 'H1', gameClockMs: 0, createdAt: 200000 },
+                    { id: 'fresh-after-reset', type: 'goal', description: 'Fresh post-reset goal', homeScore: 1, awayScore: 0, period: 'H1', gameClockMs: 30000, createdAt: 230000 }
+                ];
                 if (window.__OVERLAY_RESUMED_REPLAY__) return [
                     { id: 'replay-resumed', type: 'clock_sync', homeScore: 1, awayScore: 0, period: 'H1', gameClockMs: 1200000, createdAt: 1300000 }
                 ];
@@ -476,6 +482,10 @@ async function stubRealOverlayModules(page) {
                     (window.__OVERLAY_FAIL_REPLAY_CHAT_ONCE__ && window.__OVERLAY_GET_REPLAY_CHAT_CALLS__ === 1)) {
                     throw new Error('saved chat unavailable');
                 }
+                if (window.__OVERLAY_RESET_REPLAY__) return [
+                    { id: 'stale-reset-chat', senderName: 'Taylor', text: 'Stale chat before reset', createdAt: 150000 },
+                    { id: 'fresh-reset-chat', senderName: 'Taylor', text: 'Fresh chat after reset', createdAt: 220000 }
+                ];
                 if (window.__OVERLAY_RESUMED_REPLAY__) return [
                     { id: 'replay-resumed-chat', senderName: 'Taylor', text: 'Twenty-one minute update', createdAt: 1360000 }
                 ];
@@ -488,6 +498,10 @@ async function stubRealOverlayModules(page) {
                     (window.__OVERLAY_FAIL_REPLAY_REACTIONS_ONCE__ && window.__OVERLAY_GET_REPLAY_REACTIONS_CALLS__ === 1)) {
                     throw new Error('saved reactions unavailable');
                 }
+                if (window.__OVERLAY_RESET_REPLAY__) return [
+                    { id: 'stale-reset-reaction', type: 'heart', createdAt: 190000 },
+                    { id: 'fresh-reset-reaction', type: 'clap', createdAt: 225000 }
+                ];
                 if (window.__OVERLAY_RESUMED_REPLAY__) return [];
                 return [
                 { id: 'replay-reaction', type: 'heart', createdAt: 450000 }
@@ -1838,6 +1852,30 @@ test('replay chat remains aligned when the first tracked event starts mid-game',
     await expect(page.getByRole('button', { name: 'Pause replay' })).toBeVisible();
     await expect(page.locator('#replay-current')).not.toHaveText('16:48');
     await page.getByRole('button', { name: 'Pause replay' }).click();
+    expect(pageErrors).toEqual([]);
+});
+
+test('replay excludes stale events and conversation from before the latest tracker reset', async ({ page, baseURL }) => {
+    const pageErrors = collectPageErrors(page);
+    await page.addInitScript(() => {
+        window.__OVERLAY_RESET_REPLAY__ = true;
+    });
+    await stubRealOverlayModules(page);
+    await stubYouTubeEmbed(page);
+
+    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true`, { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('#replay-duration')).toHaveText('0:30');
+    await page.locator('#replay-progress').evaluate((input) => {
+        input.value = '100';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+
+    await expect(page.locator('#home-score')).toHaveText('1');
+    await expect(page.locator('#event-list')).toContainText('Fresh post-reset goal');
+    await expect(page.locator('#event-list')).not.toContainText('Stale pre-reset goal');
+    await page.locator('[data-panel="chat"]').click();
+    await expect(page.locator('#chat-list')).toContainText('Fresh chat after reset');
+    await expect(page.locator('#chat-list')).not.toContainText('Stale chat before reset');
     expect(pageErrors).toEqual([]);
 });
 
