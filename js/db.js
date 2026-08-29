@@ -4076,6 +4076,7 @@ function getPublicProjectionRange(options = {}) {
 function mapPublicGameProjection(game = {}, teamId = '') {
     const startsAt = game?.startsAt ? new Date(game.startsAt) : null;
     const endsAt = game?.endsAt ? new Date(game.endsAt) : null;
+    const liveResetAt = game?.liveResetAt ? new Date(game.liveResetAt) : null;
     const isHome = game?.isHome !== false;
     const teamScore = Number.isFinite(game?.teamScore) ? game.teamScore : null;
     const opponentScore = Number.isFinite(game?.opponentScore) ? game.opponentScore : null;
@@ -4107,6 +4108,7 @@ function mapPublicGameProjection(game = {}, teamId = '') {
         homeTeamPhoto: game?.homeTeamPhoto || game?.teamPhotoUrl || null,
         opponentTeamPhoto: game?.opponentTeamPhoto || null,
         statSheetPhotoUrl: game?.statSheetPhotoUrl || null,
+        liveResetAt: liveResetAt && !Number.isNaN(liveResetAt.getTime()) ? liveResetAt : null,
         isSharedGame: game?.isSharedGame === true || String(game?.id || '').startsWith('shared_'),
         isPublicProjection: true
     };

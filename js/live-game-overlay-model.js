@@ -115,14 +115,18 @@ export function getSafeOverlayProviderUrl(value) {
     }
 }
 
-function getReplayItemTimestampMs(item = {}) {
+function getReplayAlignmentTimestampMs(item = {}) {
     return getTimestampMs(item?.clientCreatedAt || item?.createdAt || item?.timestamp);
+}
+
+function getReplayEpochTimestampMs(item = {}) {
+    return getTimestampMs(item?.createdAt || item?.timestamp);
 }
 
 export function getOverlayReplayResetBoundaryMs({ replayEvents = [], fallbackResetAt = 0 } = {}) {
     return replayEvents.reduce((latestResetAt, event) => {
         if (String(event?.type || '').toLowerCase() !== 'reset') return latestResetAt;
-        return Math.max(latestResetAt, getReplayItemTimestampMs(event));
+        return Math.max(latestResetAt, getReplayEpochTimestampMs(event));
     }, getTimestampMs(fallbackResetAt));
 }
 
@@ -137,7 +141,10 @@ export function filterOverlayReplayStreams({
         return { replayEvents, replayChat, replayReactions, resetBoundaryMs: 0 };
     }
     const isInLatestEpoch = (item) => {
-        const timestamp = getReplayItemTimestampMs(item);
+        // Reset metadata, chat, and reactions are server-stamped. Tracker
+        // client clocks are useful for ordering a selected epoch, but cannot
+        // safely decide whether an item landed before or after a server reset.
+        const timestamp = getReplayEpochTimestampMs(item);
         return timestamp > 0 && timestamp >= resetBoundaryMs;
     };
     return {
@@ -161,8 +168,12 @@ export function getOverlayReplayStartAt({
         replayReactions,
         fallbackResetAt
     });
+    // A reset timestamp is the authoritative server-clock origin for the new
+    // epoch. Using it also keeps server-stamped chat/reactions aligned when the
+    // tracker device clock differs from Firestore's clock.
+    if (latestEpoch.resetBoundaryMs) return latestEpoch.resetBoundaryMs;
     const eventStartCandidates = latestEpoch.replayEvents.flatMap((event) => {
-        const timestamp = getReplayItemTimestampMs(event);
+        const timestamp = getReplayAlignmentTimestampMs(event);
         const gameClockMs = Number(event?.gameClockMs);
         if (!timestamp || !Number.isFinite(gameClockMs) || gameClockMs < 0) return [];
         return [timestamp - gameClockMs];
@@ -174,7 +185,7 @@ export function getOverlayReplayStartAt({
         ...latestEpoch.replayChat,
         ...latestEpoch.replayReactions
     ]
-        .map(getReplayItemTimestampMs)
+        .map(getReplayAlignmentTimestampMs)
         .filter((timestamp) => timestamp > 0);
     return streamTimestamps.length
         ? Math.min(...streamTimestamps)
@@ -226,7 +237,7 @@ export function getOverlayReplayDurationMs({
         return Math.max(maximum, Math.max(0, toFiniteNumber(event?.gameClockMs)));
     }, 0);
     const streamDuration = [...latestEpoch.replayChat, ...latestEpoch.replayReactions].reduce((maximum, item) => {
-        const timestamp = getReplayItemTimestampMs(item);
+        const timestamp = getReplayAlignmentTimestampMs(item);
         if (!timestamp || !Number.isFinite(replayStartAt)) return maximum;
         return Math.max(maximum, Math.max(0, timestamp - replayStartAt));
     }, 0);

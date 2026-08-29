@@ -191,6 +191,28 @@ describe('live game overlay model', () => {
         })).toBe(30_000);
     });
 
+    it('uses server timestamps for reset membership when the tracker clock is skewed', () => {
+        const latestEpoch = filterOverlayReplayStreams({
+            fallbackResetAt: 200_000,
+            replayEvents: [
+                { id: 'stale-device-ahead', type: 'goal', createdAt: 190_000, clientCreatedAt: 250_000 },
+                { id: 'fresh-device-behind', type: 'goal', createdAt: 210_000, clientCreatedAt: 150_000 }
+            ],
+            replayChat: [
+                { id: 'stale-chat', createdAt: 199_999 },
+                { id: 'fresh-chat', createdAt: 200_001 }
+            ]
+        });
+
+        expect(latestEpoch.replayEvents.map((event) => event.id)).toEqual(['fresh-device-behind']);
+        expect(latestEpoch.replayChat.map((message) => message.id)).toEqual(['fresh-chat']);
+        expect(getOverlayReplayStartAt({
+            fallbackResetAt: 200_000,
+            replayEvents: latestEpoch.replayEvents,
+            replayChat: latestEpoch.replayChat
+        })).toBe(200_000);
+    });
+
     it('enables the YouTube player API for replay without rewriting other providers or invalid URLs', () => {
         const source = getControllableReplayEmbedUrl(
             'https://www.youtube.com/embed/PK1HyC37doc?autoplay=1&mute=1',

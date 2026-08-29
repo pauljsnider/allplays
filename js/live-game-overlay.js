@@ -17,7 +17,7 @@ import {
     reconcileOverlayLiveEvents,
     resolvePublicProjectionVideoOptions,
     replaceOverlayChat
-} from './live-game-overlay-model.js?v=16';
+} from './live-game-overlay-model.js?v=17';
 import {
     buildReplaySessionState,
     collectReplayEventWindow,
@@ -1233,6 +1233,10 @@ function createReplayBaseState() {
         status: 'replay'
     };
     if (hasReplayEvents) {
+        // Replay history was already reduced to the latest reset epoch using
+        // Firestore server timestamps. Do not make live reconciliation compare
+        // tracker-device timestamps against that server boundary a second time.
+        delete game.liveResetAt;
         game.liveLineup = { onCourt: [], bench: [] };
         game.liveStats = {};
         game.stats = {};

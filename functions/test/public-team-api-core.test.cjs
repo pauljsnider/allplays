@@ -552,6 +552,24 @@ test('public game projection preserves an active live URL when only archived rep
   assert.equal(JSON.stringify(projection).includes('private-after-final'), false);
 });
 
+test('public game projection exposes only a valid reset boundary timestamp', () => {
+  const projection = serializePublicGame({
+    id: 'reset-replay',
+    type: 'game',
+    date: '2026-08-01T15:00:00Z',
+    liveResetAt: new Date('2026-08-01T15:30:00Z')
+  });
+  const invalidProjection = serializePublicGame({
+    id: 'invalid-reset',
+    type: 'game',
+    date: '2026-08-01T15:00:00Z',
+    liveResetAt: 'not-a-date'
+  });
+
+  assert.equal(projection.liveResetAt, '2026-08-01T15:30:00.000Z');
+  assert.equal(Object.hasOwn(invalidProjection, 'liveResetAt'), false);
+});
+
 test('shared game projections retain their encoded document path identity', () => {
   const sharedId = `shared_${encodeURIComponent(`tournaments/${'t'.repeat(90)}/sharedGames/${'g'.repeat(90)}`)}`;
   const game = serializePublicGame({

@@ -461,9 +461,8 @@ async function stubRealOverlayModules(page) {
                 }
                 if (window.__OVERLAY_EMPTY_REPLAY_EVENTS__) return [];
                 if (window.__OVERLAY_RESET_REPLAY__) return [
-                    { id: 'stale-before-reset', type: 'goal', description: 'Stale pre-reset goal', homeScore: 8, awayScore: 0, period: 'H1', gameClockMs: 2700000, createdAt: 100000 },
-                    { id: 'latest-reset', type: 'reset', description: 'Game reset', homeScore: 0, awayScore: 0, period: 'H1', gameClockMs: 0, createdAt: 200000 },
-                    { id: 'fresh-after-reset', type: 'goal', description: 'Fresh post-reset goal', homeScore: 1, awayScore: 0, period: 'H1', gameClockMs: 30000, createdAt: 230000 }
+                    { id: 'stale-before-reset', type: 'goal', description: 'Stale pre-reset goal', homeScore: 8, awayScore: 0, period: 'H1', gameClockMs: 2700000, createdAt: 100000, clientCreatedAt: 250000 },
+                    { id: 'fresh-after-reset', type: 'goal', description: 'Fresh post-reset goal', homeScore: 1, awayScore: 0, period: 'H1', gameClockMs: 30000, createdAt: 230000, clientCreatedAt: 180000 }
                 ];
                 if (window.__OVERLAY_RESUMED_REPLAY__) return [
                     { id: 'replay-resumed', type: 'clock_sync', homeScore: 1, awayScore: 0, period: 'H1', gameClockMs: 1200000, createdAt: 1300000 }

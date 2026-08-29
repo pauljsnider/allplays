@@ -495,7 +495,8 @@ describe('game access query resilience', () => {
           isHome: false,
           teamScore: 4,
           opponentScore: 5,
-          status: 'completed'
+          status: 'completed',
+          liveResetAt: '2026-08-02T18:15:00.000Z'
         }
       }
     });
@@ -505,6 +506,7 @@ describe('game access query resilience', () => {
       teamId: 'team-1',
       homeScore: 5,
       awayScore: 4,
+      liveResetAt: new Date('2026-08-02T18:15:00.000Z'),
       isPublicProjection: true
     }));
     expect(firebaseMocks.getPublicGameProjection).toHaveBeenCalledWith({
