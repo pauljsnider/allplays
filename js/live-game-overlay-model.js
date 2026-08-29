@@ -90,6 +90,28 @@ export function formatOverlayClock(milliseconds = 0) {
     return `${minutes}:${String(seconds).padStart(2, '0')}`;
 }
 
+export function getOverlayReplayStartAt({
+    replayEvents = [],
+    replayChat = [],
+    replayReactions = [],
+    fallbackStartAt = Date.now()
+} = {}) {
+    const eventStartCandidates = replayEvents.flatMap((event) => {
+        const timestamp = getTimestampMs(event?.clientCreatedAt || event?.createdAt || event?.timestamp);
+        const gameClockMs = Number(event?.gameClockMs);
+        if (!timestamp || !Number.isFinite(gameClockMs) || gameClockMs < 0) return [];
+        return [timestamp - gameClockMs];
+    });
+    if (eventStartCandidates.length) return Math.min(...eventStartCandidates);
+
+    const streamTimestamps = [...replayEvents, ...replayChat, ...replayReactions]
+        .map((item) => getTimestampMs(item?.clientCreatedAt || item?.createdAt || item?.timestamp))
+        .filter((timestamp) => timestamp > 0);
+    return streamTimestamps.length
+        ? Math.min(...streamTimestamps)
+        : toFiniteNumber(fallbackStartAt, Date.now());
+}
+
 export function formatOverlayChatMessageHtml(text = '') {
     let formatted = escapeChatHtml(text);
 

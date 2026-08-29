@@ -9,10 +9,11 @@ import {
     getControllableYouTubeEmbedUrl,
     getOverlayLineup,
     getOverlayReplayDurationMs,
+    getOverlayReplayStartAt,
     parseYouTubeReplayTelemetry,
     reconcileOverlayLiveEvents,
     replaceOverlayChat
-} from './live-game-overlay-model.js?v=11';
+} from './live-game-overlay-model.js?v=12';
 import {
     buildReplaySessionState,
     collectReplayEventWindow,
@@ -1531,6 +1532,12 @@ async function loadReplaySnapshot(database, stateTools, teamId, gameId) {
         replayChat: chatResult.ok ? chatResult.value : [],
         replayReactions: reactionsResult.ok ? reactionsResult.value : []
     });
+    replaySession.replayStartAt = getOverlayReplayStartAt({
+        replayEvents: replaySession.replayEvents,
+        replayChat: replaySession.replayChat,
+        replayReactions: replaySession.replayReactions,
+        fallbackStartAt: replaySession.replayStartAt
+    });
     replaySession.replayIndex = 0;
     replaySession.replayChatIndex = 0;
     replaySession.replayReactionIndex = 0;
@@ -2003,16 +2010,19 @@ async function startRealMode(params) {
             import('./live-game-state.js?v=37')
         ]);
         uiState.optionalTeamStatus = 'pending';
-        const teamPromise = database.getGameDayTeamContext(teamId, gameId, { includeInactive: true })
-            .then((team) => {
+        const teamPromise = loadWithBoundedRetry(
+            () => database.getGameDayTeamContext(teamId, gameId, { includeInactive: true })
+        ).then((result) => {
+            if (result.ok) {
                 uiState.optionalTeamStatus = 'ready';
-                return team || {};
-            })
-            .catch((error) => {
-                console.warn('Overlay team context could not be loaded:', error);
-                uiState.optionalTeamStatus = 'failed';
-                return {};
-            });
+                setConnectionIssue('team');
+                return result.value || {};
+            }
+            console.warn('Overlay team context could not be loaded:', result.error);
+            uiState.optionalTeamStatus = 'failed';
+            setConnectionIssue('team', 'Team stream and replay settings are temporarily unavailable after two attempts. Score, clock, plays, and chat remain connected; refresh to retry.');
+            return {};
+        });
         uiState.optionalPlayersStatus = 'pending';
         const playersPromise = loadWithBoundedRetry(
             () => database.getPlayers(teamId, { includeInactive: true })

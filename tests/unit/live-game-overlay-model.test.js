@@ -11,6 +11,7 @@ import {
     getOverlayEventTone,
     getOverlayLineup,
     getOverlayReplayDurationMs,
+    getOverlayReplayStartAt,
     parseYouTubeReplayTelemetry,
     reconcileOverlayLiveEvents,
     replaceOverlayChat
@@ -62,6 +63,24 @@ describe('live game overlay model', () => {
             replayChat: [{ createdAt: 'invalid' }],
             replayStartAt: 100_000
         })).toBe(0);
+    });
+
+    it('anchors replay conversation to the game clock when tracking begins mid-game', () => {
+        const replayStartAt = getOverlayReplayStartAt({
+            replayEvents: [{
+                id: 'resumed-event',
+                gameClockMs: 20 * 60 * 1000,
+                createdAt: 1_300_000
+            }],
+            replayChat: [{ id: 'later-chat', createdAt: 1_360_000 }]
+        });
+
+        expect(replayStartAt).toBe(100_000);
+        expect(getOverlayReplayDurationMs({
+            replayEvents: [{ gameClockMs: 20 * 60 * 1000 }],
+            replayChat: [{ createdAt: 1_360_000 }],
+            replayStartAt
+        })).toBe(21 * 60 * 1000);
     });
 
     it('enables the YouTube player API for replay without rewriting other providers or invalid URLs', () => {

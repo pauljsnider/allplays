@@ -383,7 +383,12 @@ async function stubRealOverlayModules(page) {
                 }
             };
             export async function getGameDayTeamContext() {
+                window.__OVERLAY_GET_TEAM_CONTEXT_CALLS__ = (window.__OVERLAY_GET_TEAM_CONTEXT_CALLS__ || 0) + 1;
                 if (window.__OVERLAY_DEFER_OPTIONAL_CONTEXT__) return new Promise(() => {});
+                if (window.__OVERLAY_FAIL_TEAM_CONTEXT__ ||
+                    (window.__OVERLAY_FAIL_TEAM_CONTEXT_ONCE__ && window.__OVERLAY_GET_TEAM_CONTEXT_CALLS__ === 1)) {
+                    throw new Error('team context unavailable');
+                }
                 if (window.__OVERLAY_DELAY_TEAM_CONTEXT__) {
                     await new Promise((resolve) => { window.__OVERLAY_RELEASE_TEAM_CONTEXT__ = resolve; });
                 }
@@ -451,6 +456,9 @@ async function stubRealOverlayModules(page) {
                     throw new Error('saved events unavailable');
                 }
                 if (window.__OVERLAY_EMPTY_REPLAY_EVENTS__) return [];
+                if (window.__OVERLAY_RESUMED_REPLAY__) return [
+                    { id: 'replay-resumed', type: 'clock_sync', homeScore: 1, awayScore: 0, period: 'H1', gameClockMs: 1200000, createdAt: 1300000 }
+                ];
                 return [
                 { id: 'replay-start', type: 'clock_sync', homeScore: 0, awayScore: 0, period: 'H1', gameClockMs: 0, createdAt: 100000 },
                 { id: 'replay-lineup', type: 'lineup', onCourt: ['p4'], bench: ['p9'], period: 'H1', gameClockMs: 300000, createdAt: 400000 },
@@ -465,6 +473,9 @@ async function stubRealOverlayModules(page) {
                     (window.__OVERLAY_FAIL_REPLAY_CHAT_ONCE__ && window.__OVERLAY_GET_REPLAY_CHAT_CALLS__ === 1)) {
                     throw new Error('saved chat unavailable');
                 }
+                if (window.__OVERLAY_RESUMED_REPLAY__) return [
+                    { id: 'replay-resumed-chat', senderName: 'Taylor', text: 'Twenty-one minute update', createdAt: 1360000 }
+                ];
                 return [
                 { id: 'replay-chat', senderName: 'Taylor', senderPhotoUrl: 'https://images.example/avatar.png', text: '*Saved replay message* from @ALL PLAYS', createdAt: 445000 }
             ]; }
@@ -474,6 +485,7 @@ async function stubRealOverlayModules(page) {
                     (window.__OVERLAY_FAIL_REPLAY_REACTIONS_ONCE__ && window.__OVERLAY_GET_REPLAY_REACTIONS_CALLS__ === 1)) {
                     throw new Error('saved reactions unavailable');
                 }
+                if (window.__OVERLAY_RESUMED_REPLAY__) return [];
                 return [
                 { id: 'replay-reaction', type: 'heart', createdAt: 450000 }
             ]; }
@@ -1605,6 +1617,35 @@ test('a delayed recorded replay joins the current timeline instead of restarting
     expect(pageErrors).toEqual([]);
 });
 
+test('optional team context retries a transient first read before applying stream settings', async ({ page, baseURL }) => {
+    const pageErrors = collectPageErrors(page);
+    await page.addInitScript(() => { window.__OVERLAY_FAIL_TEAM_CONTEXT_ONCE__ = true; });
+    await stubRealOverlayModules(page);
+    await stubYouTubeEmbed(page);
+
+    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+    await expect.poll(() => page.evaluate(() => window.__OVERLAY_GET_TEAM_CONTEXT_CALLS__)).toBe(2);
+    await expect(page.locator('#home-team-photo')).toHaveAttribute('src', /current-academy\.svg/);
+    await expect(page.locator('#overlay-video')).toBeVisible();
+    await expect(page.locator('#connection-message')).toBeHidden();
+    expect(pageErrors).toEqual([]);
+});
+
+test('repeated team context failure stays passive to the live game feed', async ({ page, baseURL }) => {
+    const pageErrors = collectPageErrors(page);
+    await page.addInitScript(() => { window.__OVERLAY_FAIL_TEAM_CONTEXT__ = true; });
+    await stubRealOverlayModules(page);
+    await stubYouTubeEmbed(page);
+
+    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+    await expect.poll(() => page.evaluate(() => window.__OVERLAY_GET_TEAM_CONTEXT_CALLS__)).toBe(2);
+    await expect(page.locator('#home-score')).toHaveText('3');
+    await expect(page.locator('#away-score')).toHaveText('2');
+    await expect(page.locator('#overlay-video')).toBeVisible();
+    await expect(page.locator('#connection-message')).toContainText('after two attempts');
+    expect(pageErrors).toEqual([]);
+});
+
 test('replay history failure leaves the saved video and final game state usable', async ({ page, baseURL }) => {
     const pageErrors = collectPageErrors(page);
     await page.addInitScript(() => {
@@ -1651,6 +1692,29 @@ test('replay history retries a transient first-load failure before exposing the 
         chat: window.__OVERLAY_GET_REPLAY_CHAT_CALLS__,
         reactions: window.__OVERLAY_GET_REPLAY_REACTIONS_CALLS__
     }))).toEqual({ events: 2, chat: 2, reactions: 2 });
+    expect(pageErrors).toEqual([]);
+});
+
+test('replay chat remains aligned when the first tracked event starts mid-game', async ({ page, baseURL }) => {
+    const pageErrors = collectPageErrors(page);
+    await page.addInitScript(() => { window.__OVERLAY_RESUMED_REPLAY__ = true; });
+    await stubRealOverlayModules(page);
+    await stubYouTubeEmbed(page);
+
+    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true`, { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('#replay-duration')).toHaveText('21:00');
+    await page.locator('[data-panel="chat"]').click();
+    await page.locator('#replay-progress').evaluate((input) => {
+        input.value = '50';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await expect(page.locator('#chat-list')).not.toContainText('Twenty-one minute update');
+
+    await page.locator('#replay-progress').evaluate((input) => {
+        input.value = '100';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await expect(page.locator('#chat-list')).toContainText('Twenty-one minute update');
     expect(pageErrors).toEqual([]);
 });
 
