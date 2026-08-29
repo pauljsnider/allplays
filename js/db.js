@@ -125,6 +125,7 @@ import {
     buildFriendInviteAccessCodeData
 } from './friend-invite.js?v=1';
 import { commitCertificateDefaults } from './certificates/persistence.js?v=7';
+import { normalizeLiveEventsSnapshot } from './live-event-utils.js?v=1';
 
 export async function normalizeParentScopeLinks(parentLinks = []) {
     // Dedupe first (no I/O) so every remaining link is fetched exactly once.
@@ -8739,11 +8740,10 @@ export async function broadcastLiveEvent(teamId, gameId, eventData) {
  */
 export function subscribeLiveEvents(teamId, gameId, callback, onError) {
     const eventsRef = getGameSubcollectionRef(teamId, gameId, 'liveEvents');
-    const q = query(eventsRef, orderBy('createdAt', 'asc'));
+    const q = query(eventsRef, orderBy('createdAt', 'desc'), limit(20));
 
     return onSnapshot(q, (snapshot) => {
-        const events = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        callback(events);
+        callback(normalizeLiveEventsSnapshot(snapshot));
     }, onError);
 }
 

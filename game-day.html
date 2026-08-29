@@ -2504,7 +2504,7 @@ Respond ONLY with valid JSON.`;
 
         function renderLiveEventLog() {
             const el = document.getElementById('live-event-log');
-            const recent = [...state.liveEvents].reverse().slice(0, 10);
+            const recent = state.liveEvents.slice(-10);
             if (!recent.length) {
                 el.innerHTML = '<div class="text-gray-400 italic">No events yet</div>';
                 return;
