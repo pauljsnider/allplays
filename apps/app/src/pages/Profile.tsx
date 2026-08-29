@@ -122,6 +122,8 @@ export function Profile({ auth }: { auth: AuthState }) {
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoChanged, setPhotoChanged] = useState(false);
   const [profileSaveNeedsRefresh, setProfileSaveNeedsRefresh] = useState(false);
+  const [profileHydrated, setProfileHydrated] = useState(useAuthProfile);
+  const [profileLoadRetryNonce, setProfileLoadRetryNonce] = useState(0);
   const [photoChooserOpen, setPhotoChooserOpen] = useState(false);
   const [profilePhotoOwnershipLoaded, setProfilePhotoOwnershipLoaded] = useState(useAuthProfile);
   const [notificationTeams, setNotificationTeams] = useState<NotificationTeam[]>([]);
@@ -176,6 +178,7 @@ export function Profile({ auth }: { auth: AuthState }) {
   const photoPathRef = useRef('');
   const photoChangedRef = useRef(false);
   const profilePhotoOwnershipLoadedRef = useRef(useAuthProfile);
+  const profileHydratedRef = useRef(useAuthProfile);
   const selectedTeamIdRef = useRef('');
   const notificationPreferenceDraftsByTeamIdRef = useRef<Record<string, NotificationPreferences>>({});
 
@@ -333,6 +336,8 @@ export function Profile({ auth }: { auth: AuthState }) {
 
       photoSelectionIdRef.current += 1;
       profilePhotoOwnershipLoadedRef.current = false;
+      profileHydratedRef.current = false;
+      setProfileHydrated(false);
       setProfilePhotoOwnershipLoaded(false);
       setPhotoChooserOpen(false);
       setLoading(!useAuthProfile);
@@ -381,7 +386,7 @@ export function Profile({ auth }: { auth: AuthState }) {
           } catch (error) {
             logger.warn('Unable to load profile.', { error });
             if (!cancelled) {
-              setProfileStatus({ message: 'Profile details could not be loaded yet.', tone: 'error' });
+              setProfileStatus({ message: 'Profile details could not be loaded yet. Load your profile details before saving.', tone: 'error' });
               initialLoadTimer.end({
                 error
               });
@@ -413,6 +418,8 @@ export function Profile({ auth }: { auth: AuthState }) {
         photoChangedRef.current = false;
         profilePhotoOwnershipLoadedRef.current = loadedPhotoOwnership;
         setProfilePhotoOwnershipLoaded(loadedPhotoOwnership);
+        profileHydratedRef.current = loadedPhotoOwnership;
+        setProfileHydrated(loadedPhotoOwnership);
         setPhotoUrl(loadedProfile.photoUrl || '');
         setPhotoPreview(loadedProfile.photoUrl || '');
         setPhotoFile(null);
@@ -429,7 +436,7 @@ export function Profile({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [auth.profile, useAuthProfile, user]);
+  }, [auth.profile, profileLoadRetryNonce, useAuthProfile, user]);
 
   useEffect(() => {
     void refreshPushPermissionStatus();
@@ -806,6 +813,10 @@ export function Profile({ auth }: { auth: AuthState }) {
   const saveProfile = async (event: FormEvent) => {
     event.preventDefault();
     if (!user) {
+      return;
+    }
+    if (!profileHydratedRef.current) {
+      setProfileStatus({ message: 'Profile details could not be loaded yet. Load your profile details before saving.', tone: 'error' });
       return;
     }
     if (profileSaveNeedsRefresh) {
@@ -1464,7 +1475,18 @@ export function Profile({ auth }: { auth: AuthState }) {
           {loading ? <Loader2 className="h-5 w-5 animate-spin text-primary-600" aria-hidden="true" /> : null}
         </div>
 
+        {!loading && !profileHydrated ? (
+          <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 p-4" role="alert" aria-live="polite">
+            <p className="text-sm font-semibold leading-6 text-rose-800">{profileStatus?.message || 'Profile details could not be loaded yet. Load your profile details before saving.'}</p>
+            <button type="button" className="primary-button mt-3 !min-h-9 text-xs" onClick={() => setProfileLoadRetryNonce((current) => current + 1)}>
+              <RefreshCw className="h-4 w-4" aria-hidden="true" />
+              Retry profile load
+            </button>
+          </div>
+        ) : null}
+
         <form className="mt-4 space-y-4" onSubmit={saveProfile}>
+          <fieldset disabled={loading || !profileHydrated}>
           <div className="flex flex-wrap items-center gap-3">
             {isNative ? (
               <>
@@ -1506,12 +1528,13 @@ export function Profile({ auth }: { auth: AuthState }) {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <button type="submit" className="primary-button" disabled={busy === 'profile' || profileSaveNeedsRefresh}>
+            <button type="submit" className="primary-button" disabled={busy === 'profile' || profileSaveNeedsRefresh || loading || !profileHydrated}>
               {busy === 'profile' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}
               Save profile
             </button>
-            <StatusMessage status={profileStatus} />
+            <StatusMessage status={profileHydrated ? profileStatus : null} />
           </div>
+          </fieldset>
         </form>
 
         {auth.isParent ? (
