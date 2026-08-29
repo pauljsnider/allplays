@@ -406,6 +406,12 @@ function serializePublicGame(game = {}, options = {}) {
   const teamPhotoUrl = publicHttpUrl(game?.teamPhotoUrl || game?.homeTeamPhoto);
   const opponentTeamPhoto = publicHttpUrl(game?.opponentTeamPhoto);
   const statSheetPhotoUrl = publicHttpUrl(game?.statSheetPhotoUrl);
+  const replayVideoPublicUrl = publicHttpUrl(
+    game?.replayVideo?.publicUrl ||
+    game?.recordedVideo?.publicUrl ||
+    game?.videoReplay?.publicUrl ||
+    game?.replayVideoPublicUrl
+  );
   const id = compactText(game?.id || game?.gameId, game?.isSharedGame === true ? 1000 : 128);
   return {
     id,
@@ -422,7 +428,7 @@ function serializePublicGame(game = {}, options = {}) {
     competitionType: nullableText(game?.competitionType, 80),
     countsTowardSeasonRecord: game?.countsTowardSeasonRecord !== false,
     summary: nullableText(game?.summary || game?.publicSummary, 2000),
-    videoUrl: publicHttpUrl(game?.videoUrl),
+    videoUrl: publicHttpUrl(game?.videoUrl) || replayVideoPublicUrl,
     ...(tournament ? { tournament } : {}),
     ...(Object.keys(opponentStats).length ? { opponentStats } : {}),
     ...(teamName ? { teamName } : {}),

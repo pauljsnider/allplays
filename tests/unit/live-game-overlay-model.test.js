@@ -16,6 +16,7 @@ import {
     getSafeOverlayProviderUrl,
     parseYouTubeReplayTelemetry,
     reconcileOverlayLiveEvents,
+    resolvePublicProjectionVideoOptions,
     replaceOverlayChat
 } from '../../js/live-game-overlay-model.js';
 import {
@@ -63,6 +64,50 @@ describe('live game overlay model', () => {
         expect(getSafeOverlayProviderUrl('data:text/html,unsafe')).toBeNull();
         expect(getSafeOverlayProviderUrl('/relative-replay.mp4')).toBeNull();
         expect(getSafeOverlayProviderUrl('not a url')).toBeNull();
+    });
+
+    it('turns only explicitly public projected game video links into playable options', () => {
+        expect(resolvePublicProjectionVideoOptions({
+            isPublicProjection: true,
+            videoUrl: 'https://www.youtube.com/live/PK1HyC37doc?si=share-token'
+        })).toMatchObject({
+            mode: 'embed',
+            sourceUrl: 'https://www.youtube.com/embed/PK1HyC37doc?autoplay=1&mute=1',
+            publicUrl: 'https://www.youtube.com/live/PK1HyC37doc?si=share-token',
+            publicLabel: 'Watch on YouTube ↗'
+        });
+        expect(resolvePublicProjectionVideoOptions({
+            isPublicProjection: true,
+            videoUrl: 'https://twitch.tv/viperslive'
+        }, { parentHost: 'allplays.ai' })).toMatchObject({
+            mode: 'embed',
+            sourceUrl: 'https://player.twitch.tv/?channel=viperslive&parent=allplays.ai&autoplay=true&muted=true',
+            publicLabel: 'Watch on Twitch ↗'
+        });
+        expect(resolvePublicProjectionVideoOptions({
+            isPublicProjection: true,
+            videoUrl: 'https://www.youtube.com/embed/live_stream?channel=UCa9ghvbup6VQmnDOdqwYpqQ'
+        })).toMatchObject({
+            mode: 'embed',
+            sourceUrl: 'https://www.youtube.com/embed/live_stream?channel=UCa9ghvbup6VQmnDOdqwYpqQ&autoplay=1&mute=1'
+        });
+        expect(resolvePublicProjectionVideoOptions({
+            isPublicProjection: true,
+            videoUrl: 'https://twitch.tv/videos/123456789'
+        }, { parentHost: 'allplays.ai' })).toMatchObject({
+            mode: 'embed',
+            sourceUrl: 'https://player.twitch.tv/?video=123456789&parent=allplays.ai&autoplay=true&muted=true'
+        });
+        expect(resolvePublicProjectionVideoOptions({
+            isPublicProjection: true,
+            videoUrl: 'https://media.example.test/game.mp4'
+        })).toMatchObject({
+            mode: 'recorded',
+            sourceUrl: 'https://media.example.test/game.mp4'
+        });
+        expect(resolvePublicProjectionVideoOptions({ videoUrl: 'https://media.example.test/private.mp4' })).toBeNull();
+        expect(resolvePublicProjectionVideoOptions({ isPublicProjection: true, videoUrl: 'javascript:alert(1)' })).toBeNull();
+        expect(resolvePublicProjectionVideoOptions({ isPublicProjection: true, videoUrl: 'https://youtube.com/not-a-video' })).toBeNull();
     });
 
     it('formats live and replay chat like the canonical viewer without allowing stored markup', () => {

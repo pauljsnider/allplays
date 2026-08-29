@@ -208,6 +208,97 @@ export function getControllableReplayEmbedUrl(sourceUrl, origin = '') {
     return getControllableYouTubeEmbedUrl(sourceUrl, origin, { replay: true });
 }
 
+function getYouTubeVideoId(url) {
+    const host = url.hostname.toLowerCase().replace(/^www\./, '');
+    if (host === 'youtu.be') {
+        return url.pathname.split('/').filter(Boolean)[0] || '';
+    }
+    if (host !== 'youtube.com' && host !== 'youtube-nocookie.com') return '';
+    const pathMatch = url.pathname.match(/^\/(?:embed|live|shorts)\/([A-Za-z0-9_-]{11})(?:\/|$)/);
+    const candidate = url.searchParams.get('v') || pathMatch?.[1] || '';
+    return candidate === 'live_stream' ? '' : candidate;
+}
+
+export function resolvePublicProjectionVideoOptions(game = {}, { parentHost = 'localhost' } = {}) {
+    if (game?.isPublicProjection !== true) return null;
+    const publicUrl = getSafeOverlayProviderUrl(game?.videoUrl);
+    if (!publicUrl) return null;
+
+    const url = new URL(publicUrl);
+    const host = url.hostname.toLowerCase().replace(/^www\./, '');
+    const videoId = getYouTubeVideoId(url);
+    if (/^[A-Za-z0-9_-]{11}$/.test(videoId)) {
+        return {
+            mode: 'embed',
+            hasVideo: true,
+            sourceUrl: `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1`,
+            publicUrl,
+            publicLabel: 'Watch on YouTube ↗',
+            durationMs: null,
+            replayState: null
+        };
+    }
+
+    if (host === 'youtube.com' || host === 'youtube-nocookie.com') {
+        const channelId = url.searchParams.get('channel') || url.pathname.match(/^\/channel\/(UC[A-Za-z0-9_-]{22})(?:\/|$)/)?.[1];
+        if (/^UC[A-Za-z0-9_-]{22}$/.test(channelId || '')) {
+            return {
+                mode: 'embed',
+                hasVideo: true,
+                sourceUrl: `https://www.youtube.com/embed/live_stream?channel=${encodeURIComponent(channelId)}&autoplay=1&mute=1`,
+                publicUrl,
+                publicLabel: 'Watch on YouTube ↗',
+                durationMs: null,
+                replayState: null
+            };
+        }
+        return null;
+    }
+
+    if (host === 'twitch.tv' || host === 'player.twitch.tv') {
+        const safeParentHost = /^[A-Za-z0-9.-]+$/.test(parentHost) ? parentHost : 'localhost';
+        const channel = host === 'player.twitch.tv'
+            ? url.searchParams.get('channel')
+            : url.pathname.split('/').filter(Boolean)[0];
+        const video = host === 'player.twitch.tv'
+            ? url.searchParams.get('video')
+            : url.pathname.match(/^\/videos\/(\d+)(?:\/|$)/)?.[1];
+        if (/^\d+$/.test(video || '')) {
+            return {
+                mode: 'embed',
+                hasVideo: true,
+                sourceUrl: `https://player.twitch.tv/?video=${encodeURIComponent(video)}&parent=${encodeURIComponent(safeParentHost)}&autoplay=true&muted=true`,
+                publicUrl,
+                publicLabel: 'Watch on Twitch ↗',
+                durationMs: null,
+                replayState: null
+            };
+        }
+        if (channel !== 'videos' && /^[A-Za-z0-9_]{1,25}$/.test(channel || '')) {
+            return {
+                mode: 'embed',
+                hasVideo: true,
+                sourceUrl: `https://player.twitch.tv/?channel=${encodeURIComponent(channel)}&parent=${encodeURIComponent(safeParentHost)}&autoplay=true&muted=true`,
+                publicUrl,
+                publicLabel: 'Watch on Twitch ↗',
+                durationMs: null,
+                replayState: null
+            };
+        }
+        return null;
+    }
+
+    return {
+        mode: 'recorded',
+        hasVideo: true,
+        sourceUrl: publicUrl,
+        publicUrl,
+        publicLabel: 'Open replay video ↗',
+        durationMs: null,
+        replayState: null
+    };
+}
+
 export function parseYouTubeReplayTelemetry(data) {
     let payload = data;
     if (typeof payload === 'string') {

@@ -496,6 +496,9 @@ async function stubRealOverlayModules(page) {
         contentType: 'application/javascript',
         body: `export function resolveReplayVideoOptions() {
             if (window.__OVERLAY_THROW_VIDEO__) throw new Error('provider refresh failed');
+            if (window.__OVERLAY_NO_RESOLVED_VIDEO__) {
+                return { mode: 'none', hasVideo: false, sourceUrl: null, publicUrl: null, replayState: null };
+            }
             if (window.__OVERLAY_RECORDED_VIDEO__) {
                 return {
                     mode: 'recorded', hasVideo: true,
@@ -1228,6 +1231,24 @@ test('signed-out viewers can read chat but cannot post from the overlay', async 
     expect(pageErrors).toEqual([]);
 });
 
+test('signed-out public replay uses the sanitized projected game video when private replay metadata is unavailable', async ({ page, baseURL }) => {
+    const pageErrors = collectPageErrors(page);
+    await page.addInitScript(() => {
+        window.__OVERLAY_AUTH_USER__ = null;
+        window.__OVERLAY_NO_RESOLVED_VIDEO__ = true;
+    });
+    await stubRealOverlayModules(page);
+    await stubYouTubeEmbed(page);
+
+    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true`, { waitUntil: 'domcontentloaded' });
+
+    await expect(page.locator('#overlay-video')).toHaveAttribute('src', /youtube\.com\/embed\/PK1HyC37doc/);
+    await expect(page.locator('#open-stream')).toHaveAttribute('href', 'https://www.youtube.com/watch?v=PK1HyC37doc');
+    await expect(page.locator('#replay-access-gate')).toBeHidden();
+    expect(await page.evaluate(() => window.__OVERLAY_ENTITLEMENT_READS__ || 0)).toBe(0);
+    expect(pageErrors).toEqual([]);
+});
+
 test('signed-in viewers can choose the display name used for their authenticated chat posts', async ({ page, baseURL }) => {
     const pageErrors = collectPageErrors(page);
     await stubRealOverlayModules(page);
@@ -1751,6 +1772,27 @@ test('replay chat remains aligned when the first tracked event starts mid-game',
     });
     await page.waitForTimeout(50);
     await expect(page.locator('#chat-list')).toContainText('Twenty-one minute update');
+
+    // A stale pause acknowledgement from an earlier seek must not pause active
+    // playback after a newer seek has already been accepted by the player.
+    await page.locator('#replay-progress').evaluate((input) => {
+        input.value = '80';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.value = '90';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await page.getByRole('button', { name: 'Play replay' }).click();
+    await expect(page.getByRole('button', { name: 'Pause replay' })).toBeVisible();
+    await youtubeFrame.evaluate(() => {
+        parent.postMessage(JSON.stringify({
+            event: 'infoDelivery',
+            info: { currentTime: 1008, playerState: 2 }
+        }), '*');
+    });
+    await page.waitForTimeout(50);
+    await expect(page.getByRole('button', { name: 'Pause replay' })).toBeVisible();
+    await expect(page.locator('#replay-current')).not.toHaveText('16:48');
+    await page.getByRole('button', { name: 'Pause replay' }).click();
     expect(pageErrors).toEqual([]);
 });
 
