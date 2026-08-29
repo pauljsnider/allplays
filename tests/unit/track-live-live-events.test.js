@@ -6,6 +6,22 @@ function readTrackLive() {
 }
 
 describe('track-live live event publishing', () => {
+  it('publishes lineup changes while an already-live game is paused', () => {
+    const source = readTrackLive();
+    const start = source.indexOf('async function syncLiveLineup()');
+    const end = source.indexOf('function broadcastReversedStatEvent', start);
+    const syncLiveLineup = source.slice(start, end);
+
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    expect(syncLiveLineup).toContain("if (gameState.isRunning || liveState.isLive || currentGame?.liveStatus === 'live') {");
+    expect(syncLiveLineup).toContain("type: 'lineup'");
+    expect(syncLiveLineup).toContain('onCourt: liveLineup.onCourt');
+    expect(syncLiveLineup).toContain('bench: liveLineup.bench');
+    expect(syncLiveLineup).toContain('const lineupWrite = updateGame');
+    expect(syncLiveLineup.indexOf("type: 'lineup'")).toBeLessThan(syncLiveLineup.indexOf('await lineupWrite;'));
+  });
+
   it('publishes reverse stat events when stats are undone or corrected', () => {
     const source = readTrackLive();
 

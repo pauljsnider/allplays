@@ -12,7 +12,7 @@ import {
     parseYouTubeReplayTelemetry,
     reconcileOverlayLiveEvents,
     replaceOverlayChat
-} from './live-game-overlay-model.js?v=9';
+} from './live-game-overlay-model.js?v=10';
 import {
     buildReplaySessionState,
     collectReplayEventWindow,

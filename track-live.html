@@ -1769,12 +1769,10 @@
         async function syncLiveLineup() {
             if (!currentTeamId || !currentGameId) return;
             const liveLineup = getLiveLineup(gameState.playerFieldStatus, players);
-            try {
-                await updateGame(currentTeamId, currentGameId, { liveLineup });
-            } catch (error) {
+            const lineupWrite = updateGame(currentTeamId, currentGameId, { liveLineup }).catch((error) => {
                 console.warn('Failed to sync live lineup:', error);
-            }
-            if (gameState.isRunning) {
+            });
+            if (gameState.isRunning || liveState.isLive || currentGame?.liveStatus === 'live') {
                 broadcastLiveEvent(currentTeamId, currentGameId, {
                     type: 'lineup',
                     period: gameState.currentPeriod,
@@ -1787,6 +1785,7 @@
                     createdBy: currentUser?.uid || null
                 }).catch(console.warn);
             }
+            await lineupWrite;
         }
 
         function broadcastReversedStatEvent({ playerId, statKey, value, isOpponent, description }) {

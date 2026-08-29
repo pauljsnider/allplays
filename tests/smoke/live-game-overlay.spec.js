@@ -364,7 +364,10 @@ async function stubRealOverlayModules(page) {
                 isPublicProjection: true,
                 liveLineup: { onCourt: ['p9'], bench: ['p4'] },
                 liveStats: { p9: { goals: 5 } },
-                opponentStats: { away8: { name: 'Jordan Vale', goals: 1 } }
+                opponentStats: {
+                    away8: { name: 'Jordan Vale', goals: 1 },
+                    away9: { name: 'Casey Park', shots: 0 }
+                }
             };
             export async function getGameDayTeamContext() {
                 if (window.__OVERLAY_DEFER_OPTIONAL_CONTEXT__) return new Promise(() => {});
@@ -690,6 +693,31 @@ test('real mode follows canonical game, lineup, clock, reset, reaction, and pass
     await expect(page.locator('#leader-list')).toContainText('1 GOALS');
     await page.evaluate((events) => window.__OVERLAY_EVENT_CALLBACK__(events), liveSnapshot);
     await expect(page.locator('#event-list .event-card')).toHaveCount(1);
+
+    const opponentStatSnapshot = [
+        ...liveSnapshot,
+        {
+            id: 'away-shot', type: 'stat', description: 'Vale tests the keeper',
+            playerId: 'away9', opponentPlayerName: 'Casey Park', statKey: 'shots', value: 1,
+            isOpponent: true, homeScore: 4, awayScore: 2, period: 'H2', gameClockMs: 690000,
+            createdAt: 1210
+        }
+    ];
+    await page.evaluate((events) => window.__OVERLAY_EVENT_CALLBACK__(events), opponentStatSnapshot);
+    await page.locator('#opponent-tab').click();
+    await expect(page.locator('#opponent-list')).toContainText('1 SHOTS');
+
+    await page.evaluate((events) => window.__OVERLAY_EVENT_CALLBACK__([
+        ...events,
+        {
+            id: 'away-shot-undo', type: 'stat', description: 'Vale shot reversed',
+            playerId: 'away9', opponentPlayerName: 'Casey Park', statKey: 'shots', value: -1,
+            isOpponent: true, homeScore: 4, awayScore: 2, period: 'H2', gameClockMs: 690000,
+            createdAt: 1220
+        }
+    ]), opponentStatSnapshot);
+    await expect(page.locator('#opponent-list')).not.toContainText('1 SHOTS');
+    await page.locator('#leaders-tab').click();
 
     // A queued offline event can arrive after newer events. Reprocessing the
     // complete ordered snapshot must keep the newest score and clock authoritative.

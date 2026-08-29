@@ -349,6 +349,57 @@ describe('live game overlay model', () => {
         expect(state.eventIds.size).toBe(events.length);
     });
 
+    it('rebuilds opponent stat keys from live events while preserving baseline-only stats', () => {
+        const state = createOverlayState({
+            game: {
+                homeScore: 2,
+                awayScore: 1,
+                liveStatus: 'live',
+                opponentStats: {
+                    away8: {
+                        name: 'Jordan Vale',
+                        number: '8',
+                        goals: 1,
+                        shots: 0,
+                        assists: 2
+                    }
+                }
+            }
+        });
+        const historicalGoal = {
+            id: 'away-goal', type: 'goal', description: 'Jordan scores',
+            playerId: 'away8', opponentPlayerName: 'Jordan Vale', opponentPlayerNumber: '8',
+            statKey: 'goals', value: 1, isOpponent: true,
+            homeScore: 2, awayScore: 1, createdAt: 1_000
+        };
+        const liveShot = {
+            id: 'away-shot', type: 'stat', description: 'Jordan shoots',
+            playerId: 'away8', opponentPlayerName: 'Jordan Vale', opponentPlayerNumber: '8',
+            statKey: 'shots', value: 1, isOpponent: true,
+            homeScore: 2, awayScore: 1, createdAt: 2_000
+        };
+
+        reconcileOverlayLiveEvents(state, [historicalGoal, liveShot], stateTools);
+
+        expect(state.opponentStats.away8).toMatchObject({
+            name: 'Jordan Vale',
+            number: '8',
+            goals: 1,
+            shots: 1,
+            assists: 2
+        });
+
+        reconcileOverlayLiveEvents(state, [historicalGoal, liveShot, {
+            ...liveShot,
+            id: 'away-shot-undo',
+            description: 'Jordan shot reversed',
+            value: -1,
+            createdAt: 3_000
+        }], stateTools);
+
+        expect(state.opponentStats.away8).toMatchObject({ goals: 1, shots: 0, assists: 2 });
+    });
+
     it('keeps an unrecognized future play event visible while applying its common state fields', () => {
         const state = createOverlayState({ game: { homeScore: 0, awayScore: 0, liveStatus: 'live' } });
 

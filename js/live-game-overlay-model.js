@@ -399,9 +399,13 @@ export function reconcileOverlayLiveEvents(state, incomingEvents = [], stateTool
         resetBoundaryMs
     });
     const snapshotEventIds = new Set(orderedEvents.map((event) => event.id));
-    const seededOpponentStatKeys = new Set();
-    Object.entries(effectiveBaseline.opponentStats || {}).forEach(([playerId, stats]) => {
-        Object.keys(stats || {}).forEach((statKey) => seededOpponentStatKeys.add(`${playerId}:${statKey}`));
+    const opponentStatsBaseline = cloneStats(effectiveBaseline.opponentStats);
+    visibleEvents.forEach((event) => {
+        if (!event.isOpponent || !event.playerId || !event.statKey || !['stat', 'goal'].includes(event.type)) return;
+        opponentStatsBaseline[event.playerId] = {
+            ...(opponentStatsBaseline[event.playerId] || {}),
+            [event.statKey]: 0
+        };
     });
 
     let workingState = {
@@ -414,7 +418,11 @@ export function reconcileOverlayLiveEvents(state, incomingEvents = [], stateTool
         onCourt: [...effectiveBaseline.onCourt],
         bench: [...effectiveBaseline.bench],
         stats: {},
-        opponentStats: cloneStats(effectiveBaseline.opponentStats),
+        // Public game projections can already contain the totals represented by
+        // this complete live-event snapshot. Rebuild only event-backed keys from
+        // zero so new stats and their negative corrections are both reflected,
+        // while keeping baseline-only opponent metadata and stat fields intact.
+        opponentStats: opponentStatsBaseline,
         events: [],
         eventIds: snapshotEventIds,
         latestEvent: null,
@@ -436,10 +444,7 @@ export function reconcileOverlayLiveEvents(state, incomingEvents = [], stateTool
             return;
         }
 
-        const transition = stateTools.applyViewerEventToState(workingState, event, {
-            preserveSeededOpponentGoalStats: true,
-            seededOpponentStatKeys
-        });
+        const transition = stateTools.applyViewerEventToState(workingState, event);
         workingState = transition.state;
         workingState.eventIds = snapshotEventIds;
         if (event.type === 'clock_start') workingState.clockRunning = true;
