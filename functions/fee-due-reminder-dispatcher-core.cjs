@@ -21,6 +21,7 @@ async function processReminderPage({
     docs.length || 1
   ));
   let nextIndex = 0;
+  const outcomes = new Array(docs.length);
 
   await Promise.all(Array.from({ length: safeConcurrency }, async () => {
     while (nextIndex < docs.length) {
@@ -32,20 +33,24 @@ async function processReminderPage({
       nextIndex += 1;
       try {
         const value = await processRecipient(docs[currentIndex]);
-        summary.results.push({ status: 'fulfilled', value });
+        const outcome = { status: 'fulfilled', value, cursorSafe: value?.failed !== true };
+        outcomes[currentIndex] = outcome;
+        summary.results.push(outcome);
         if (value?.failed === true) {
           summary.failed += 1;
         } else if (value) {
           summary.sent += 1;
         }
       } catch (reason) {
-        summary.results.push({ status: 'rejected', reason });
+        const outcome = { status: 'rejected', reason, cursorSafe: false };
+        outcomes[currentIndex] = outcome;
+        summary.results.push(outcome);
         summary.failed += 1;
       }
     }
   }));
 
-  return nextIndex;
+  return outcomes;
 }
 
 async function drainFeeReminderQueryPages({
@@ -73,7 +78,7 @@ async function drainFeeReminderQueryPages({
     : FEE_REMINDER_MAX_PAGES_PER_QUERY);
   const safeMaxRuntimeMs = Math.max(1, Number(maxRuntimeMs) || FEE_REMINDER_MAX_RUNTIME_MS);
   const startedAtMs = getNowMs();
-  const seenPaths = new Set();
+  const safelyHandledPaths = new Set();
   const summary = {
     examined: 0,
     sent: 0,
@@ -110,23 +115,24 @@ async function drainFeeReminderQueryPages({
       if (!docs.length) {
         drained = true;
         if (typeof saveCursor === 'function') {
-          await saveCursor({ queryName, cursor: null });
+          await saveCursor({ queryName, cursor: null, drained: true });
         }
         break;
       }
 
       const uniqueDocs = [];
+      const deduplicatedDocs = new Set();
       for (const doc of docs) {
         const path = getReminderDocPath(doc);
-        if (path && seenPaths.has(path)) {
+        if (path && safelyHandledPaths.has(path)) {
           summary.deduplicated += 1;
+          deduplicatedDocs.add(doc);
           continue;
         }
-        if (path) seenPaths.add(path);
         uniqueDocs.push(doc);
       }
 
-      const processedDocCount = await processReminderPage({
+      const outcomes = await processReminderPage({
         docs: uniqueDocs,
         processRecipient,
         concurrency,
@@ -136,21 +142,29 @@ async function drainFeeReminderQueryPages({
         getNowMs
       });
 
-      let remainingProcessedDocs = processedDocCount;
+      const outcomesByDoc = new Map(uniqueDocs.map((doc, index) => [doc, outcomes[index]]));
+      for (const [doc, outcome] of outcomesByDoc) {
+        const path = getReminderDocPath(doc);
+        if (path && outcome?.cursorSafe) safelyHandledPaths.add(path);
+      }
+
       let lastSafeCursor = cursor;
       for (const doc of docs) {
-        const path = getReminderDocPath(doc);
-        if (path && seenPaths.has(path) && !uniqueDocs.includes(doc)) {
+        if (deduplicatedDocs.has(doc)) {
           lastSafeCursor = doc;
           continue;
         }
-        if (remainingProcessedDocs <= 0) break;
-        remainingProcessedDocs -= 1;
+        const outcome = outcomesByDoc.get(doc);
+        if (!outcome?.cursorSafe) break;
         lastSafeCursor = doc;
       }
       cursor = lastSafeCursor;
-      if (typeof saveCursor === 'function' && cursor) {
-        await saveCursor({ queryName, cursor });
+      if (typeof saveCursor === 'function') {
+        await saveCursor({ queryName, cursor, drained: false });
+      }
+      if (outcomes.some((outcome) => outcome && !outcome.cursorSafe)) {
+        summary.stoppedBecause = 'recipientFailure';
+        return summary;
       }
       if (summary.stoppedBecause === 'maxRuntimeMs') {
         return summary;
@@ -159,7 +173,7 @@ async function drainFeeReminderQueryPages({
       if (docs.length < safePageSize) {
         drained = true;
         if (typeof saveCursor === 'function') {
-          await saveCursor({ queryName, cursor: null });
+          await saveCursor({ queryName, cursor: null, drained: true });
         }
         break;
       }

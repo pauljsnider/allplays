@@ -148,6 +148,7 @@ describe('fee due reminder source wiring', () => {
         expect(source).toContain('initialCursors: persistedCursors');
         expect(source).toContain('saveCursor');
         expect(source).toContain('upcomingScan: persistedUpcomingScan');
+        expect(source).toContain('}, { merge: true });');
         expect(source).toContain('overdueEligibilityFloorMillis');
         expect(source).toContain("firestore.doc(FEE_REMINDER_DISPATCH_STATE_PATH)");
         expect(source).toContain('FEE_REMINDER_MAX_PAGES_PER_QUERY');
@@ -274,15 +275,19 @@ describe('fee due reminder bounded dispatcher', () => {
         expect(maximumWorkers).toBe(3);
     });
 
-    it('records failed workers while continuing the bounded page', async () => {
+    it('does not checkpoint a rejected recipient or later concurrent successes', async () => {
         const docs = [
             createReminderDoc('teams/team-1/feeBatches/batch-1/feeRecipients/fails'),
             createReminderDoc('teams/team-1/feeBatches/batch-1/feeRecipients/sends')
         ];
+        const savedCursors = [];
 
         const summary = await drainFeeReminderQueryPages({
             queryNames: ['upcoming'],
             loadPage: async () => docs,
+            saveCursor: async ({ cursor, drained }) => {
+                savedCursors.push({ path: cursor?.ref?.path || null, drained });
+            },
             processRecipient: async (doc) => {
                 if (doc.id === 'fails') throw new Error('delivery failed');
                 return { sent: true };
@@ -293,8 +298,31 @@ describe('fee due reminder bounded dispatcher', () => {
             examined: 2,
             sent: 1,
             failed: 1,
-            stoppedBecause: 'drained'
+            stoppedBecause: 'recipientFailure'
         });
+        expect(savedCursors).toEqual([{ path: null, drained: false }]);
+    });
+
+    it('checkpoints only the contiguous handled prefix before a returned failure', async () => {
+        const docs = ['first', 'fails', 'later'].map((id) => createReminderDoc(
+            `teams/team-1/feeBatches/batch-1/feeRecipients/${id}`
+        ));
+        let savedCursor = null;
+
+        const summary = await drainFeeReminderQueryPages({
+            queryNames: ['upcoming'],
+            concurrency: 3,
+            loadPage: async () => docs,
+            saveCursor: async ({ cursor }) => {
+                savedCursor = cursor;
+            },
+            processRecipient: async (doc) => (
+                doc.id === 'fails' ? { failed: true } : { sent: true }
+            )
+        });
+
+        expect(summary).toMatchObject({ sent: 2, failed: 1, stoppedBecause: 'recipientFailure' });
+        expect(savedCursor).toBe(docs[0]);
     });
 
     it('returns explicit page and runtime stopping reasons with counts', async () => {

@@ -379,6 +379,12 @@ function buildNotificationTestEnv({
         return Boolean(value && typeof value === 'object' && value.__delete === true);
     }
 
+    function containsDeleteSentinel(value) {
+        if (isDeleteSentinel(value)) return true;
+        if (!value || typeof value !== 'object') return false;
+        return Object.values(value).some((entryValue) => containsDeleteSentinel(entryValue));
+    }
+
     function setValueAtPath(target, pathSegments, value) {
         let cursor = target;
         for (let index = 0; index < pathSegments.length - 1; index += 1) {
@@ -416,10 +422,49 @@ function buildNotificationTestEnv({
         const current = clone(docStore.get(path) || {});
         const incoming = clone(value) || {};
 
+        function mergeEntry(target, key, entryValue) {
+            if (
+                entryValue
+                && typeof entryValue === 'object'
+                && !Array.isArray(entryValue)
+                && !isDeleteSentinel(entryValue)
+                && entryValue.__serverTimestamp !== true
+                && !Object.keys(entryValue).some((nestedKey) => nestedKey.includes('.'))
+            ) {
+                const nestedTarget = target[key] && typeof target[key] === 'object' && !Array.isArray(target[key])
+                    ? target[key]
+                    : {};
+                Object.entries(entryValue).forEach(([nestedKey, nestedValue]) => {
+                    mergeEntry(nestedTarget, nestedKey, nestedValue);
+                });
+                target[key] = nestedTarget;
+                return;
+            }
+            target[key] = entryValue;
+        }
+
         Object.entries(incoming).forEach(([key, entryValue]) => {
             const pathSegments = key.split('.');
             if (isDeleteSentinel(entryValue)) {
                 deleteValueAtPath(current, pathSegments);
+                return;
+            }
+            if (pathSegments.length === 1) {
+                if (entryValue && typeof entryValue === 'object' && !Array.isArray(entryValue)) {
+                    const target = current[key] && typeof current[key] === 'object' && !Array.isArray(current[key])
+                        ? current[key]
+                        : {};
+                    Object.entries(entryValue).forEach(([nestedKey, nestedValue]) => {
+                        if (isDeleteSentinel(nestedValue)) {
+                            delete target[nestedKey];
+                        } else {
+                            mergeEntry(target, nestedKey, nestedValue);
+                        }
+                    });
+                    current[key] = target;
+                    return;
+                }
+                current[key] = entryValue;
                 return;
             }
             setValueAtPath(current, pathSegments, entryValue);
@@ -553,7 +598,10 @@ function buildNotificationTestEnv({
                 }
                 return makeDocSnapshot({ id: this.id, ref: this, data: undefined, exists: false });
             },
-            async set(value) {
+            async set(value, options = undefined) {
+                if (containsDeleteSentinel(value) && options?.merge !== true) {
+                    throw new Error('FieldValue.delete() requires a merge set or update.');
+                }
                 if (path.startsWith(`teams/${teamId}/notificationSendLog/`)) {
                     const sentAtMillis = Date.now();
                     docStore.set(path, {
@@ -562,6 +610,8 @@ function buildNotificationTestEnv({
                             toMillis: () => sentAtMillis
                         }
                     });
+                } else if (options?.merge === true) {
+                    mergeStoredDoc(path, value);
                 } else {
                     writeStoredDoc(path, value);
                 }

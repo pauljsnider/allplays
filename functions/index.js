@@ -13914,15 +13914,15 @@ async function sendFeeUnpaidDueReminders() {
   const persistedCursors = dispatchStateSnap.exists
     ? { ...(dispatchState.cursors || {}) }
     : {};
-  const isUpcomingScanContinuation = Boolean(persistedCursors.upcoming);
   const storedUpcomingScan = dispatchState.upcomingScan || {};
   const storedUpcomingScanStartMillis = Number(storedUpcomingScan.startMillis);
   const storedUpcomingScanEndMillis = Number(storedUpcomingScan.endMillis);
   const cursorDueDateMillis = Number(persistedCursors.upcoming?.valueMillis);
-  const upcomingScan = isUpcomingScanContinuation
-    && Number.isFinite(storedUpcomingScanStartMillis)
+  const hasPersistedUpcomingScan = Number.isFinite(storedUpcomingScanStartMillis)
     && Number.isFinite(storedUpcomingScanEndMillis)
-    && storedUpcomingScanEndMillis >= storedUpcomingScanStartMillis
+    && storedUpcomingScanEndMillis >= storedUpcomingScanStartMillis;
+  const isUpcomingScanContinuation = Boolean(persistedCursors.upcoming) || hasPersistedUpcomingScan;
+  const upcomingScan = hasPersistedUpcomingScan
     ? {
       startMillis: storedUpcomingScanStartMillis,
       endMillis: storedUpcomingScanEndMillis
@@ -13936,7 +13936,7 @@ async function sendFeeUnpaidDueReminders() {
         Number.isFinite(cursorDueDateMillis) ? cursorDueDateMillis : nowMillis
       )
     };
-  let persistedUpcomingScan = isUpcomingScanContinuation ? upcomingScan : null;
+  let persistedUpcomingScan = upcomingScan;
   const upcomingScanStart = admin.firestore.Timestamp.fromMillis(upcomingScan.startMillis);
   const upcomingScanEnd = admin.firestore.Timestamp.fromMillis(upcomingScan.endMillis);
 
@@ -13971,11 +13971,13 @@ async function sendFeeUnpaidDueReminders() {
     return (await query.limit(FEE_REMINDER_QUERY_PAGE_SIZE).get()).docs;
   };
 
-  const saveCursor = async ({ queryName, cursor }) => {
-    if (!cursor) {
+  const saveCursor = async ({ queryName, cursor, drained = false }) => {
+    let clearedCursorField = null;
+    if (drained) {
       delete persistedCursors[queryName];
+      clearedCursorField = queryName;
       if (queryName === 'upcoming') persistedUpcomingScan = null;
-    } else {
+    } else if (cursor) {
       const cursorData = cursor.data() || {};
       const valueMillis = queryName === 'leased'
         ? Number(cursorData.reminderDeliveryClaimExpiresAtMillis)
@@ -13987,11 +13989,15 @@ async function sendFeeUnpaidDueReminders() {
       persistedCursors[queryName] = { valueMillis, path };
       if (queryName === 'upcoming') persistedUpcomingScan = upcomingScan;
     }
+    const cursorsWrite = { ...persistedCursors };
+    if (clearedCursorField) {
+      cursorsWrite[clearedCursorField] = admin.firestore.FieldValue.delete();
+    }
     await dispatchStateRef.set({
-      cursors: persistedCursors,
+      cursors: cursorsWrite,
       upcomingScan: persistedUpcomingScan || admin.firestore.FieldValue.delete(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
-    });
+    }, { merge: true });
   };
 
   const processRecipient = async (doc) => {
