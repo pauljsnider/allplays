@@ -1454,6 +1454,7 @@ test('replay mode synchronizes saved plays, score, lineup, chat, reactions, and 
         input.dispatchEvent(new Event('input', { bubbles: true }));
     });
     await expect(page.locator('#replay-current')).toHaveText('5:45');
+    await expect(page.locator('#game-clock')).toHaveText('5:45');
     await expect(page.locator('#home-score')).toHaveText('1');
     await expect(page.locator('#event-list')).toContainText('Lane opens the replay scoring');
     await expect(page.locator('#on-field-list')).toContainText('Sam Gray');
@@ -1492,9 +1493,11 @@ test('replay mode synchronizes saved plays, score, lineup, chat, reactions, and 
     await expect(page.locator('#event-list')).toContainText('Lane scores the replay winner');
     await expect(page.locator('#home-score')).toHaveText('3');
     await expect(page.locator('#replay-current')).toHaveText('11:30');
+    await expect(page.locator('#game-clock')).toHaveText('11:30');
 
     await page.getByRole('button', { name: 'Restart replay' }).click();
     await expect(page.locator('#home-score')).toHaveText('0');
+    await expect(page.locator('#game-clock')).toHaveText('0:00');
     await expect(page.locator('#chat-list')).not.toContainText('Saved replay message');
     await page.getByRole('button', { name: 'Pause replay' }).click();
     await page.getByRole('button', { name: '1×' }).click();

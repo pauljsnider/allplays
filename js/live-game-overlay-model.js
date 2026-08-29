@@ -124,10 +124,12 @@ function getReplayEpochTimestampMs(item = {}) {
 }
 
 export function getOverlayReplayResetBoundaryMs({ replayEvents = [], fallbackResetAt = 0 } = {}) {
+    const authoritativeResetAt = getTimestampMs(fallbackResetAt);
+    if (authoritativeResetAt) return authoritativeResetAt;
     return replayEvents.reduce((latestResetAt, event) => {
         if (String(event?.type || '').toLowerCase() !== 'reset') return latestResetAt;
         return Math.max(latestResetAt, getReplayEpochTimestampMs(event));
-    }, getTimestampMs(fallbackResetAt));
+    }, 0);
 }
 
 export function filterOverlayReplayStreams({

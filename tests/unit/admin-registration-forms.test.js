@@ -42,14 +42,14 @@ const adminAuthMocks = vi.hoisted(() => ({
     })
 }));
 
-vi.mock('../../js/db.js?v=4433189', () => adminDbMocks);
+vi.mock('../../js/db.js?v=4433190', () => adminDbMocks);
 vi.mock('../../js/firebase.js?v=33', () => adminFirebaseMocks);
-vi.mock('../../js/utils.js?v=443365', () => ({
+vi.mock('../../js/utils.js?v=443366', () => ({
     renderHeader: vi.fn(),
     renderFooter: vi.fn(),
     escapeHtml: (value) => String(value || '')
 }));
-vi.mock('../../js/auth.js?v=4433193', () => adminAuthMocks);
+vi.mock('../../js/auth.js?v=4433194', () => adminAuthMocks);
 vi.mock('../../js/admin-premium-access-control.js?v=7', () => ({
     createAdminPremiumAccessControl: () => ({ load: vi.fn() })
 }));

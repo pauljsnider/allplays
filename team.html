@@ -324,16 +324,16 @@
     </div>
 
     <script type="module">
-        import { getTeam, getPlayers, getGames, getPublicTeamCalendarEvents, getConfigs, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile, getAllUsers, saveTeamAvailabilityPreferences, grantScorekeeperAccess, revokeScorekeeperAccess, grantStreamScoreAccess, revokeStreamScoreAccess, getRsvps, getMyRsvps, getRsvpSummaries, submitRsvp, getMyRsvp, getLocalAttractionSponsors, getAdSpaceSponsors, postChatMessage, getPublicTrackingItems, getPlayerTrackingStatuses } from './js/db.js?v=4433189';
+        import { getTeam, getPlayers, getGames, getPublicTeamCalendarEvents, getConfigs, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile, getAllUsers, saveTeamAvailabilityPreferences, grantScorekeeperAccess, revokeScorekeeperAccess, grantStreamScoreAccess, revokeStreamScoreAccess, getRsvps, getMyRsvps, getRsvpSummaries, submitRsvp, getMyRsvp, getLocalAttractionSponsors, getAdSpaceSponsors, postChatMessage, getPublicTrackingItems, getPlayerTrackingStatuses } from './js/db.js?v=4433190';
         import { normalizeExternalWebsiteUrl, selectRotatingSponsor } from './js/local-attractions.js?v=2';
-        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, isTrackedCalendarEvent, expandRecurrence, escapeHtml, shareOrCopy } from './js/utils.js?v=443365';
+        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, isTrackedCalendarEvent, expandRecurrence, escapeHtml, shareOrCopy } from './js/utils.js?v=443366';
         import { buildGameReportShareUrl, buildGameWatchShareUrl } from './js/game-share-links.js?v=1';
         import { fetchLeagueStandings } from './js/league-standings.js?v=1';
         import { computeNativeStandings } from './js/native-standings.js?v=1';
         import { computeTournamentPoolStandings } from './js/tournament-standings.js?v=4';
         import { aggregateSeasonStatsByPlayerId, buildPlayerLeaderboardSnapshot, selectAnalyticsConfig } from './js/stat-leaderboards.js?v=4';
         import { calculateSeasonRecord, listSeasonLabels } from './js/season-record.js';
-        import { checkAuth } from './js/auth.js?v=4433193';
+        import { checkAuth } from './js/auth.js?v=4433194';
         import { collection, getDocs, query, where } from "./js/firebase.js?v=33";
         import { db } from './js/firebase.js?v=33';
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=443341';

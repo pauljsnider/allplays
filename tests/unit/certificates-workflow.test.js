@@ -252,7 +252,7 @@ describe('awards and certificates workflow wiring', () => {
         expect(studio).toContain("from './signers.js?v=2'");
         expect(studio).toContain("from './defaultsReconciliation.js?v=1'");
         expect(studio).toContain('if (!certificateDefaultsMatch(state.shared, authoritativeDefaults))');
-        expect(studio).toContain("from '../db.js?v=4433189'");
+        expect(studio).toContain("from '../db.js?v=4433190'");
         expect(db).toContain("from './certificates/persistence.js?v=7'");
         expect(db).toContain('return commitCertificateDefaults(teamId, defaults);');
         expect(studio).toContain("import('./assets.js?v=13')");

@@ -27,7 +27,7 @@ describe('team fees admin page routing', () => {
         const adminSource = readFileSync(new URL('../../js/team-fees-admin.js', import.meta.url), 'utf8');
         const pageSource = readFileSync(new URL('../../team-fees.html', import.meta.url), 'utf8');
 
-        expect(adminSource).toContain("import('./db.js?v=4433189')");
+        expect(adminSource).toContain("import('./db.js?v=4433190')");
         expect(pageSource).toContain('<script type="module" src="./js/team-fees-admin.js?v=443356"></script>');
     });
 

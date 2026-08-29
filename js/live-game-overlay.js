@@ -17,7 +17,7 @@ import {
     reconcileOverlayLiveEvents,
     resolvePublicProjectionVideoOptions,
     replaceOverlayChat
-} from './live-game-overlay-model.js?v=17';
+} from './live-game-overlay-model.js?v=18';
 import {
     buildReplaySessionState,
     collectReplayEventWindow,
@@ -33,7 +33,7 @@ import {
     resolveSafeProfilePhotoWriteUrl
 } from './safe-image-url.js?v=1';
 import { buildGameWatchShareUrl } from './game-share-links.js?v=1';
-import { shareOrCopy } from './utils.js?v=443365';
+import { shareOrCopy } from './utils.js?v=443366';
 import { createPlayAnnouncer } from './live-game-announcer.js?v=1';
 
 const elements = {
@@ -220,7 +220,7 @@ function usesCompactPanelLayout() {
 }
 
 function loadOverlayDatabase() {
-    return import('./db.js?v=4433189');
+    return import('./db.js?v=4433190');
 }
 
 function getTimestampMs(value) {
@@ -507,7 +507,9 @@ function renderTeamPhoto(image, value, alt) {
 function renderScoreboard() {
     const state = uiState.game;
     if (!state) return;
-    const displayedClockMs = uiState.isDemo ? state.gameClockMs : getDisplayedLiveClockMs();
+    const displayedClockMs = uiState.isReplay
+        ? Math.max(0, Number(uiState.replayElapsedMs) || 0)
+        : uiState.isDemo ? state.gameClockMs : getDisplayedLiveClockMs();
     elements.homeName.textContent = state.homeName;
     elements.awayName.textContent = state.awayName;
     renderTeamPhoto(elements.homeTeamPhoto, state.team?.photoUrl, `${state.homeName} team photo`);
@@ -1102,7 +1104,7 @@ async function initializeChatComposer(database, teamId, gameId) {
 
     try {
         const [authTools, chatTools] = await Promise.all([
-            import('./auth.js?v=4433193'),
+            import('./auth.js?v=4433194'),
             import('./live-game-chat.js?v=2')
         ]);
         uiState.chatServices = {

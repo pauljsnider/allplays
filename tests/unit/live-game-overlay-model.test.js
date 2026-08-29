@@ -213,6 +213,22 @@ describe('live game overlay model', () => {
         })).toBe(200_000);
     });
 
+    it('prefers the game reset timestamp while reset-event publication finishes later', () => {
+        const latestEpoch = filterOverlayReplayStreams({
+            fallbackResetAt: 200_000,
+            replayEvents: [
+                { id: 'reset-event', type: 'reset', createdAt: 220_000 },
+                { id: 'fresh-goal', type: 'goal', createdAt: 230_000 }
+            ],
+            replayChat: [{ id: 'during-reset-cleanup', createdAt: 210_000 }],
+            replayReactions: [{ id: 'after-reset', createdAt: 215_000 }]
+        });
+
+        expect(latestEpoch.resetBoundaryMs).toBe(200_000);
+        expect(latestEpoch.replayChat.map((message) => message.id)).toEqual(['during-reset-cleanup']);
+        expect(latestEpoch.replayReactions.map((reaction) => reaction.id)).toEqual(['after-reset']);
+    });
+
     it('enables the YouTube player API for replay without rewriting other providers or invalid URLs', () => {
         const source = getControllableReplayEmbedUrl(
             'https://www.youtube.com/embed/PK1HyC37doc?autoplay=1&mute=1',
