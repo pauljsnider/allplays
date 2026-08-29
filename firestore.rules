@@ -1112,6 +1112,18 @@ service cloud.firestore {
       return isTeamOwnerOrAdmin(teamId);
     }
 
+    function hasUnchangedTeamFeeRecipientAssignment() {
+      let assignmentFields = [
+        'playerId',
+        'childId',
+        'playerKey',
+        'parentUserId',
+        'accountUserId',
+        'userId'
+      ];
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(assignmentFields);
+    }
+
     function hasRequiredTeamFeeMutationAudit(teamId, batchId, recipientId) {
       let affectedKeys = request.resource.data.diff(resource.data).affectedKeys();
       let financialFields = [
@@ -4276,6 +4288,7 @@ service cloud.firestore {
                            resource.data.batchId == batchId &&
                            request.resource.data.teamId == teamId &&
                            request.resource.data.batchId == batchId &&
+                           hasUnchangedTeamFeeRecipientAssignment() &&
                            hasNoChangedServerOwnedTeamFeeCheckoutFields() &&
                            hasNoIntroducedPrivateTeamFeeBillingFields() &&
                            hasRequiredTeamFeeMutationAudit(teamId, batchId, recipientId);
