@@ -81,7 +81,7 @@ function serializeHomepageGame(game = {}, teamId, team = {}) {
     ? projectSharedGameForPublicTeam(game, teamId)
     : { ...game, teamId };
   if (!projected) return null;
-  const serialized = serializePublicGame(projected);
+  const serialized = serializePublicGame(projected, { team });
   if (!serialized) return null;
 
   const homeScore = serialized.isHome ? serialized.teamScore : serialized.opponentScore;

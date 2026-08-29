@@ -8265,6 +8265,7 @@ async function getPublicGameProjection(teamId, gameId, team) {
   if (!game || !canProjectPublicGame(team, game)) return null;
   const opponentStatKeysByGameId = await getPublicOpponentStatKeysByGameId(teamId, [game]);
   return serializePublicGame(game, {
+    team,
     opponentStatKeys: opponentStatKeysByGameId.get(String(game.id || game.gameId || ''))
   });
 }

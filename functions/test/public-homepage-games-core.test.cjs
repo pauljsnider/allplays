@@ -65,6 +65,24 @@ test('homepage serializer exposes only public game and team fields', () => {
   assert.equal(json.includes('private note'), false);
 });
 
+test('homepage serializer does not publish completed replay URLs for a gated team', () => {
+  const game = serializeHomepageGame({
+    id: 'gated-replay',
+    date: '2026-07-28T18:00:00Z',
+    opponent: 'Falcons',
+    status: 'completed',
+    videoUrl: 'https://www.youtube.com/watch?v=privateReplay1',
+    replayVideo: { publicUrl: 'https://cdn.example.test/private-replay.mp4' }
+  }, 'team-public', {
+    ...publicTeam,
+    teamPassConfig: { recordedReplayPaywallEnabled: true }
+  });
+
+  assert.equal(game.videoUrl, null);
+  assert.equal(JSON.stringify(game).includes('privateReplay1'), false);
+  assert.equal(JSON.stringify(game).includes('private-replay'), false);
+});
+
 test('homepage serializer rejects private teams and unsafe games', () => {
   assert.equal(serializeHomepageGame(
     { id: 'game-1', date: '2026-07-28T18:00:00Z' },

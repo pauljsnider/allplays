@@ -372,8 +372,11 @@ async function stubRealOverlayModules(page) {
                 id: 'game-1', opponent: 'Sporting Blue', homeScore: 3, awayScore: 2,
                 homeTeamName: 'Current Academy',
                 opponentTeamPhoto: 'https://allplays.ai/test-assets/sporting-blue.svg',
-                period: 'H2', liveClockMs: 720000, liveStatus: 'live', viewerCount: 4, liveViewerCount: 19,
-                videoUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+                period: 'H2', liveClockMs: 720000,
+                liveStatus: window.__OVERLAY_COMPLETED_GAME__ ? 'completed' : 'live',
+                status: window.__OVERLAY_COMPLETED_GAME__ ? 'completed' : 'live',
+                viewerCount: 4, liveViewerCount: 19,
+                videoUrl: window.__OVERLAY_PUBLIC_VIDEO_URL__ || 'https://www.youtube.com/watch?v=PK1HyC37doc',
                 isPublicProjection: true,
                 liveLineup: { onCourt: ['p9'], bench: ['p4'] },
                 liveStats: { p9: { goals: 5 } },
@@ -1202,6 +1205,25 @@ for (const accessState of ['locked', 'unavailable', 'unlocked']) {
     });
 }
 
+test('completed game gates its recorded video without requiring replay query mode', async ({ page, baseURL }) => {
+    const pageErrors = collectPageErrors(page);
+    await page.addInitScript(() => {
+        window.__OVERLAY_RECORDED_VIDEO__ = true;
+        window.__OVERLAY_TEAM_PASS_GATE__ = true;
+        window.__OVERLAY_TEAM_PASS_STATE__ = 'locked';
+        window.__OVERLAY_COMPLETED_GAME__ = true;
+    });
+    await stubRealOverlayModules(page);
+
+    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+    await expect.poll(() => page.evaluate(() => window.__OVERLAY_ENTITLEMENT_READS__ || 0)).toBe(1);
+    await expect(page.locator('#replay-access-gate')).toBeVisible();
+    await expect(page.locator('#replay-access-gate')).toContainText('Team Pass required');
+    await expect(page.locator('#overlay-recorded-video')).not.toHaveAttribute('src', /.+/);
+    await expect(page.locator('#open-stream')).toBeHidden();
+    expect(pageErrors).toEqual([]);
+});
+
 test('signed-out viewers can read chat but cannot post from the overlay', async ({ page, baseURL }) => {
     const pageErrors = collectPageErrors(page);
     await page.addInitScript(() => {
@@ -1244,6 +1266,29 @@ test('signed-out public replay uses the sanitized projected game video when priv
 
     await expect(page.locator('#overlay-video')).toHaveAttribute('src', /youtube\.com\/embed\/PK1HyC37doc/);
     await expect(page.locator('#open-stream')).toHaveAttribute('href', 'https://www.youtube.com/watch?v=PK1HyC37doc');
+    await expect(page.locator('#replay-access-gate')).toBeHidden();
+    expect(await page.evaluate(() => window.__OVERLAY_ENTITLEMENT_READS__ || 0)).toBe(0);
+    expect(pageErrors).toEqual([]);
+});
+
+test('signed-out public replay can use a server-approved recording without private team context', async ({ page, baseURL }) => {
+    const pageErrors = collectPageErrors(page);
+    await page.addInitScript(() => {
+        window.__OVERLAY_AUTH_USER__ = null;
+        window.__OVERLAY_NO_RESOLVED_VIDEO__ = true;
+        window.__OVERLAY_PUBLIC_VIDEO_URL__ = 'https://cdn.example.test/public-replay.mp4';
+        window.__OVERLAY_FAIL_TEAM_CONTEXT__ = true;
+    });
+    await page.route('https://cdn.example.test/public-replay.mp4', (route) => route.fulfill({
+        status: 200,
+        contentType: 'video/mp4',
+        body: ''
+    }));
+    await stubRealOverlayModules(page);
+
+    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true`, { waitUntil: 'domcontentloaded' });
+
+    await expect(page.locator('#overlay-recorded-video')).toHaveAttribute('src', 'https://cdn.example.test/public-replay.mp4');
     await expect(page.locator('#replay-access-gate')).toBeHidden();
     expect(await page.evaluate(() => window.__OVERLAY_ENTITLEMENT_READS__ || 0)).toBe(0);
     expect(pageErrors).toEqual([]);

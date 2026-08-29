@@ -508,6 +508,50 @@ test('public game projection exposes only an explicitly public replay URL', () =
   assert.equal(JSON.stringify(withoutPublicReplay).includes('private-capability'), false);
 });
 
+test('public game projection withholds recorded URLs when the replay paywall is enabled', () => {
+  const completedGame = {
+    id: 'gated-replay',
+    type: 'game',
+    date: '2026-08-01T15:00:00Z',
+    status: 'completed',
+    videoUrl: 'https://www.youtube.com/watch?v=directReplay1',
+    replayVideo: {
+      publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc'
+    }
+  };
+
+  assert.equal(serializePublicGame(completedGame, {
+    team: { teamPassConfig: { recordedReplayPaywallEnabled: true } }
+  }).videoUrl, null);
+  assert.equal(serializePublicGame({
+    ...completedGame,
+    teamPassConfig: { recordedReplayPaywallEnabled: true },
+    videoUrl: null
+  }).videoUrl, null);
+  assert.equal(serializePublicGame({
+    ...completedGame,
+    teamPassConfig: { recordedReplayPaywallEnabled: false }
+  }, {
+    team: { teamPassConfig: { recordedReplayPaywallEnabled: true } }
+  }).videoUrl, 'https://www.youtube.com/watch?v=directReplay1');
+});
+
+test('public game projection preserves an active live URL when only archived replay is paywalled', () => {
+  const projection = serializePublicGame({
+    id: 'gated-live',
+    type: 'game',
+    date: '2026-08-01T15:00:00Z',
+    liveStatus: 'live',
+    videoUrl: 'https://www.youtube.com/live/liveFeed123',
+    replayVideo: { publicUrl: 'https://cdn.example.test/private-after-final.mp4' }
+  }, {
+    team: { recordedReplayTeamPassRequired: true }
+  });
+
+  assert.equal(projection.videoUrl, 'https://www.youtube.com/live/liveFeed123');
+  assert.equal(JSON.stringify(projection).includes('private-after-final'), false);
+});
+
 test('shared game projections retain their encoded document path identity', () => {
   const sharedId = `shared_${encodeURIComponent(`tournaments/${'t'.repeat(90)}/sharedGames/${'g'.repeat(90)}`)}`;
   const game = serializePublicGame({

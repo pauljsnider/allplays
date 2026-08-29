@@ -2114,6 +2114,7 @@ async function startRealMode(params) {
         const renderVideoSafely = async () => {
             const requestId = ++uiState.videoRequestId;
             try {
+                let usesSanitizedPublicProjection = false;
                 let options = videoTools.resolveReplayVideoOptions({
                     team: uiState.game.team,
                     game: uiState.game.game,
@@ -2121,12 +2122,16 @@ async function startRealMode(params) {
                     isReplay
                 });
                 if (options.mode === 'none') {
-                    options = resolvePublicProjectionVideoOptions(uiState.game.game, {
+                    const publicProjectionOptions = resolvePublicProjectionVideoOptions(uiState.game.game, {
                         parentHost: window.location.hostname
-                    }) || options;
+                    });
+                    if (publicProjectionOptions) {
+                        options = publicProjectionOptions;
+                        usesSanitizedPublicProjection = true;
+                    }
                 }
                 uiState.videoDurationMs = Number.isFinite(options.durationMs) ? options.durationMs : 0;
-                if (isReplay && options.mode === 'recorded' && options.sourceUrl) {
+                if (!usesSanitizedPublicProjection && options.mode === 'recorded' && options.sourceUrl) {
                     if (uiState.optionalTeamStatus === 'pending') {
                         showReplayAccessGate({ state: 'checking' });
                         return true;
