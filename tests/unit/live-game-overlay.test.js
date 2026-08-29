@@ -56,6 +56,7 @@ describe('live game overlay page', () => {
         expect(html).toContain('id="home-team-photo"');
         expect(html).toContain('id="away-team-photo"');
         expect(html).toContain('data-score-hidden="false"');
+        expect(html).toMatch(/\.panel-tab\s*\{[^}]*min-width:\s*44px;/);
         expect(html).toContain('js/live-game-overlay.js?v=26');
     });
 
