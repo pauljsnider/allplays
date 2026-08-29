@@ -56,6 +56,8 @@ import {
     functions as legacyFirebaseFunctions,
     httpsCallable as legacyFirebaseHttpsCallable,
     increment as legacyFirebaseIncrement,
+    limit as legacyFirebaseLimit,
+    orderBy as legacyFirebaseOrderBy,
     query as legacyFirebaseQuery,
     runTransaction as legacyFirebaseRunTransaction,
     serverTimestamp as legacyFirebaseServerTimestamp,
@@ -387,7 +389,23 @@ export async function broadcastLiveEvent(teamId: string, gameId: string, payload
 }
 
 export async function getLiveEvents(teamId: string, gameId: string) {
-    return await Promise.resolve(legacyGetLiveEvents(teamId, gameId));
+    const game = await Promise.resolve(legacyGetGame(teamId, gameId));
+    const status = [game?.status, game?.liveStatus]
+        .map((value) => String(value || '').trim().toLowerCase());
+    const isCompletedGame = status.some((value) => value === 'completed' || value === 'final');
+    if (isCompletedGame) return await Promise.resolve(legacyGetLiveEvents(teamId, gameId));
+
+    const eventsRef = legacyFirebaseCollection(
+        legacyFirebaseDb,
+        `teams/${teamId}/games/${gameId}/liveEvents`
+    );
+    const eventsQuery = legacyFirebaseQuery(
+        eventsRef,
+        legacyFirebaseOrderBy('createdAt', 'asc'),
+        legacyFirebaseLimit(20)
+    );
+    const snapshot = await legacyFirebaseGetDocs(eventsQuery);
+    return snapshot.docs.map((eventDoc: any) => ({ id: eventDoc.id, ...eventDoc.data() }));
 }
 
 export async function updateGame(teamId: string, gameId: string, payload: Record<string, unknown>) {

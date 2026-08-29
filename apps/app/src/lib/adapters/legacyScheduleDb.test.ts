@@ -57,6 +57,8 @@ vi.mock('@legacy/firebase.js', () => ({
     functions: { name: 'functions' },
     httpsCallable: vi.fn(),
     increment: vi.fn(),
+    limit: vi.fn((value: number) => ({ type: 'limit', value })),
+    orderBy: vi.fn((field: string, direction: string) => ({ type: 'orderBy', field, direction })),
     query: vi.fn(),
     runTransaction: vi.fn(),
     serverTimestamp: vi.fn(),
@@ -64,9 +66,9 @@ vi.mock('@legacy/firebase.js', () => ({
     where: vi.fn()
 }));
 
-import { addGame as legacyAddGame, getConfigs as legacyGetConfigs, getTeam as legacyGetTeam, getTeams as legacyGetTeams } from '@legacy/db.js';
-import { collection, doc, getDoc, getDocs, httpsCallable, query, where } from '@legacy/firebase.js';
-import { addGame, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, buildSingleLegacyTournamentGameDocument, getConfigs, getDelegatedTeamContext, getOfficialLinkedTeamIds, getStaffTeams, LegacyTournamentGameAdapterValidationError } from './legacyScheduleDb';
+import { addGame as legacyAddGame, getConfigs as legacyGetConfigs, getGame as legacyGetGame, getLiveEvents as legacyGetLiveEvents, getTeam as legacyGetTeam, getTeams as legacyGetTeams } from '@legacy/db.js';
+import { collection, doc, getDoc, getDocs, httpsCallable, limit, orderBy, query, where } from '@legacy/firebase.js';
+import { addGame, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, buildSingleLegacyTournamentGameDocument, getConfigs, getDelegatedTeamContext, getLiveEvents, getOfficialLinkedTeamIds, getStaffTeams, LegacyTournamentGameAdapterValidationError } from './legacyScheduleDb';
 
 const buildValidLegacyGamePayload = (overrides: Record<string, unknown> = {}) => ({
     type: 'game',
@@ -236,6 +238,35 @@ describe('legacyScheduleDb tracker config reads', () => {
         ]);
 
         expect(legacyGetConfigs).toHaveBeenCalledWith('team-1', { limit: 100 });
+    });
+});
+
+describe('legacyScheduleDb live-event reads', () => {
+    it('bounds active-game reads to 20 events', async () => {
+        vi.mocked(legacyGetGame).mockResolvedValueOnce({ status: 'live', liveStatus: 'live' });
+        vi.mocked(collection).mockReturnValueOnce({ path: 'teams/team-1/games/game-1/liveEvents' } as never);
+        vi.mocked(query).mockReturnValueOnce({} as never);
+        vi.mocked(getDocs).mockResolvedValueOnce({
+            docs: [{ id: 'event-1', data: () => ({ type: 'score_update' }) }]
+        } as never);
+
+        await expect(getLiveEvents('team-1', 'game-1')).resolves.toEqual([{ id: 'event-1', type: 'score_update' }]);
+
+        expect(legacyGetGame).toHaveBeenCalledWith('team-1', 'game-1');
+        expect(orderBy).toHaveBeenCalledWith('createdAt', 'asc');
+        expect(limit).toHaveBeenCalledWith(20);
+        expect(query).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.anything());
+        expect(getDocs).toHaveBeenCalledTimes(1);
+        expect(legacyGetLiveEvents).not.toHaveBeenCalled();
+    });
+
+    it('keeps completed-game replay reads unbounded', async () => {
+        vi.mocked(legacyGetGame).mockResolvedValueOnce({ status: 'completed', liveStatus: 'completed' });
+        vi.mocked(legacyGetLiveEvents).mockResolvedValueOnce([{ id: 'event-1' }, { id: 'event-2' }]);
+
+        await expect(getLiveEvents('team-1', 'game-1')).resolves.toHaveLength(2);
+
+        expect(legacyGetLiveEvents).toHaveBeenCalledWith('team-1', 'game-1');
     });
 });
 
