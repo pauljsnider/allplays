@@ -57,15 +57,15 @@ describe('live game overlay page', () => {
         expect(html).toContain('id="away-team-photo"');
         expect(html).toContain('data-score-hidden="false"');
         expect(html).toMatch(/\.panel-tab\s*\{[^}]*min-width:\s*44px;/);
-        expect(html).toContain('js/live-game-overlay.js?v=32');
+        expect(html).toContain('js/live-game-overlay.js?v=33');
     });
 
     it('keeps the local demo isolated while wiring canonical subscriptions and authenticated chat posting', () => {
         expect(source).toContain("params.demo === '1'");
         expect(source).toContain("params.replay === 'true'");
         expect(source).toContain('startDemoReplayMode');
-        expect(source).toContain("return import('./db.js?v=4433190')");
-        expect(source).toContain("import('./live-game-state.js?v=38')");
+        expect(source).toContain("return import('./db.js?v=4433191')");
+        expect(source).toContain("import('./live-game-state.js?v=39')");
         expect(source).toContain('stateTools.applyResetEventState');
         expect(source).toContain('reconcileOverlayLiveEvents');
         expect(source).toContain("from './live-game-overlay-model.js?v=18'");
@@ -80,7 +80,7 @@ describe('live game overlay page', () => {
         expect(source).toContain('database.subscribeReactions');
         expect(source).toContain('getOverlayLiveClockMs');
         expect(source).toContain('syncLiveClockAnchor');
-        expect(source).toContain("import('./auth.js?v=4433194')");
+        expect(source).toContain("import('./auth.js?v=4433195')");
         expect(source).toContain("import('./live-game-chat.js?v=2')");
         expect(source).toContain("from './safe-image-url.js?v=1'");
         expect(source).toContain('database.postLiveChatMessage');
@@ -113,7 +113,7 @@ describe('live game overlay page', () => {
         expect(source).not.toContain('trackViewerPresence(');
         expect(source).toContain('sendChatReaction');
         expect(source).toContain("from './game-share-links.js?v=1'");
-        expect(source).toContain("from './utils.js?v=443366'");
+        expect(source).toContain("from './utils.js?v=443367'");
         expect(source).toContain("from './live-game-announcer.js?v=1'");
         expect(source).toContain("import('./team-entitlements.js?v=9')");
         expect(source).toContain('isRecordedReplayTeamPassGateEnabled');

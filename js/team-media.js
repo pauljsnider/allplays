@@ -1,4 +1,4 @@
-import { checkAuth } from './auth.js?v=4433194';
+import { checkAuth } from './auth.js?v=4433195';
 import {
     getDelegatedTeamContext,
     getTeamMediaFolders,
@@ -16,7 +16,7 @@ import {
     bulkDeleteTeamMediaItems,
     setTeamMediaAlbumCover,
     updateTeamMediaItem
-} from './db.js?v=4433190';
+} from './db.js?v=4433191';
 import {
     canContributeTeamMedia,
     canDeleteTeamMediaItem,
