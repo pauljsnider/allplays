@@ -58,6 +58,8 @@ describe('local Firebase Hosting configuration', () => {
         )?.[0] || '';
 
         expect(productionSection).toContain('npm run serve:firebase:live');
+        expect(productionSection).toContain('startup fails closed');
+        expect(productionSection).not.toContain('checked-in public web config');
         expect(productionSection).not.toMatch(/npm run serve:firebase\s*\n/);
         expect(readme).toContain('default `serve:firebase` command');
     });

@@ -10,6 +10,7 @@ import {
     getControllableYouTubeEmbedUrl,
     getOverlayEventTone,
     getOverlayLineup,
+    getOverlayLiveClockMs,
     getOverlayReplayDurationMs,
     getOverlayReplayStartAt,
     getSafeOverlayProviderUrl,
@@ -35,6 +36,22 @@ describe('live game overlay model', () => {
         expect(formatOverlayClock(65_999)).toBe('1:05');
         expect(formatOverlayClock(-5_000)).toBe('0:00');
         expect(formatOverlayClock('not-a-clock')).toBe('0:00');
+    });
+
+    it('interpolates a running live clock between authoritative snapshots only', () => {
+        const base = {
+            snapshotClockMs: 690_000,
+            snapshotAtMs: 1_000_000,
+            nowMs: 1_002_500,
+            clockRunning: true
+        };
+
+        expect(getOverlayLiveClockMs(base)).toBe(692_500);
+        expect(getOverlayLiveClockMs({ ...base, clockRunning: false })).toBe(690_000);
+        expect(getOverlayLiveClockMs({ ...base, isReplay: true })).toBe(690_000);
+        expect(getOverlayLiveClockMs({ ...base, isCompleted: true })).toBe(690_000);
+        expect(getOverlayLiveClockMs({ ...base, nowMs: 999_000 })).toBe(690_000);
+        expect(getOverlayLiveClockMs({ ...base, snapshotAtMs: 0 })).toBe(690_000);
     });
 
     it('exposes only absolute HTTP(S) provider links', () => {

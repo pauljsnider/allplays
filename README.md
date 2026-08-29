@@ -105,10 +105,9 @@ npm run serve:firebase:live
 ```
 
 This command reads and writes production data. The Firebase Hosting emulator
-normally supplies the project configuration. If an expired CLI login leaves
-that Hosting response empty, localhost uses the checked-in public web config;
-it still refuses to do so when the page is not running through Firebase
-Hosting.
+supplies the project configuration. If the Firebase CLI session is expired or
+that Hosting response is empty, startup fails closed. Reauthenticate the CLI
+and restart the server rather than bypassing project validation.
 
 Safe isolated development (also the default `serve:firebase` command):
 

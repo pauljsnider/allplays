@@ -90,6 +90,21 @@ export function formatOverlayClock(milliseconds = 0) {
     return `${minutes}:${String(seconds).padStart(2, '0')}`;
 }
 
+export function getOverlayLiveClockMs({
+    snapshotClockMs = 0,
+    snapshotAtMs = 0,
+    nowMs = Date.now(),
+    clockRunning = false,
+    isReplay = false,
+    isCompleted = false
+} = {}) {
+    const clockMs = Math.max(0, toFiniteNumber(snapshotClockMs));
+    const anchorMs = toFiniteNumber(snapshotAtMs);
+    const currentMs = toFiniteNumber(nowMs, anchorMs);
+    if (!clockRunning || isReplay || isCompleted || anchorMs <= 0) return clockMs;
+    return clockMs + Math.max(0, currentMs - anchorMs);
+}
+
 export function getSafeOverlayProviderUrl(value) {
     if (typeof value !== 'string' || !value.trim()) return null;
     try {

@@ -782,10 +782,10 @@ test('real mode follows canonical game, lineup, clock, reset, reaction, and pass
     await page.evaluate((events) => window.__OVERLAY_EVENT_CALLBACK__(events), runningSnapshot);
     await expect(page.locator('#game-clock')).toHaveText('11:30');
     await page.waitForTimeout(1100);
-    await expect(page.locator('#game-clock')).toHaveText('11:30');
+    await expect(page.locator('#game-clock')).toHaveText('11:31');
 
-    // Match live-game.html: the displayed clock advances only when Firebase
-    // publishes a new clock snapshot, never from a browser-local timer.
+    // Firebase remains authoritative. Each clock_sync re-anchors the passive
+    // browser display so drift is corrected without writing anything back.
     const syncedRunningSnapshot = [
         ...runningSnapshot,
         { id: 'clock-sync-2', type: 'clock_sync', homeScore: 4, awayScore: 2, period: 'H2', gameClockMs: 691000, createdAt: 1350 }
@@ -1147,6 +1147,9 @@ test('a completed live game exposes replay actions and shares the replay URL wit
     }));
 
     await expect(page.locator('#live-status')).toHaveText('FINAL');
+    await expect(page.locator('#game-clock')).toHaveText('12:00');
+    await page.waitForTimeout(1100);
+    await expect(page.locator('#game-clock')).toHaveText('12:00');
     await expect(page.locator('#watch-replay')).toBeVisible();
     await expect(page.locator('#watch-replay')).toHaveAttribute(
         'href',

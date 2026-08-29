@@ -56,7 +56,7 @@ describe('live game overlay page', () => {
         expect(html).toContain('id="home-team-photo"');
         expect(html).toContain('id="away-team-photo"');
         expect(html).toContain('data-score-hidden="false"');
-        expect(html).toContain('js/live-game-overlay.js?v=25');
+        expect(html).toContain('js/live-game-overlay.js?v=26');
     });
 
     it('keeps the local demo isolated while wiring canonical subscriptions and authenticated chat posting', () => {
@@ -67,7 +67,7 @@ describe('live game overlay page', () => {
         expect(source).toContain("import('./live-game-state.js?v=37')");
         expect(source).toContain('stateTools.applyResetEventState');
         expect(source).toContain('reconcileOverlayLiveEvents');
-        expect(source).toContain("from './live-game-overlay-model.js?v=13'");
+        expect(source).toContain("from './live-game-overlay-model.js?v=14'");
         expect(source).toContain('getSafeOverlayProviderUrl(publicUrl)');
         expect(modelSource).toContain('stateTools.applyViewerEventToState');
         expect(modelSource).toContain('stateTools.collectVisibleLiveEventsSequentially');
@@ -76,8 +76,8 @@ describe('live game overlay page', () => {
         expect(source).toContain('database.subscribeLiveEvents');
         expect(source).toContain('database.subscribeLiveChat');
         expect(source).toContain('database.subscribeReactions');
-        expect(source).not.toContain('syncLiveClockTicker');
-        expect(source).not.toContain('liveClockAnchor');
+        expect(source).toContain('getOverlayLiveClockMs');
+        expect(source).toContain('syncLiveClockAnchor');
         expect(source).toContain("import('./auth.js?v=4433193')");
         expect(source).toContain("import('./live-game-chat.js?v=2')");
         expect(source).toContain("from './safe-image-url.js?v=1'");
