@@ -297,6 +297,8 @@ describe('Profile', () => {
     const accountHeader = screen.getByRole('heading', { name: 'Your Account' }).parentElement?.parentElement;
     expect(accountHeader?.querySelector('.animate-spin')).toBeTruthy();
     expect(profileServiceMocks.loadProfileDocument).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: 'Save profile' })).toBeDisabled();
+    expect(screen.getByPlaceholderText('Your name')).toBeDisabled();
 
     await act(async () => {
       profileRequest.resolve({
@@ -630,16 +632,27 @@ describe('Profile', () => {
       profileHydration: 'fallback'
     });
 
-    expect(await screen.findByText('Profile details could not be loaded yet.')).toBeTruthy();
+    const profileLoadAlert = await screen.findByRole('alert');
+    expect(within(profileLoadAlert).getByText('Profile details could not be loaded yet. Load your profile details before saving.')).toBeTruthy();
     const photoInput = screen.getByLabelText('Choose photo') as HTMLInputElement;
     expect(photoInput.disabled).toBe(true);
+    expect(screen.getByRole('button', { name: 'Retry profile load' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Save profile' })).toBeDisabled();
 
     fireEvent.change(screen.getByPlaceholderText('Your name'), { target: { value: 'Pat Updated' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
 
+    expect(profileServiceMocks.saveProfileDocument).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry profile load' }));
+    expect(await screen.findByDisplayValue('Pat Parent')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Save profile' })).not.toBeDisabled();
+    fireEvent.change(screen.getByPlaceholderText('Your name'), { target: { value: 'Pat Updated' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
     await waitFor(() => expect(profileServiceMocks.saveProfileDocument).toHaveBeenCalledWith('user-1', {
       fullName: 'Pat Updated',
-      phone: ''
+      phone: '555-0100',
+      photoUrl: null
     }));
     expect(profilePhotoServiceMocks.normalizeProfilePhoto).not.toHaveBeenCalled();
     expect(profilePhotoServiceMocks.uploadProfilePhoto).not.toHaveBeenCalled();
