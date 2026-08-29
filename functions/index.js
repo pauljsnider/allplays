@@ -288,6 +288,13 @@ const {
   drainDueReminderPages
 } = require('./pre-event-reminder-dispatcher-core.cjs');
 const {
+  FEE_REMINDER_QUERY_PAGE_SIZE,
+  FEE_REMINDER_MAX_PAGES_PER_QUERY,
+  FEE_REMINDER_MAX_RUNTIME_MS,
+  FEE_REMINDER_WORKER_CONCURRENCY,
+  drainFeeReminderQueryPages
+} = require('./fee-due-reminder-dispatcher-core.cjs');
+const {
   NOTIFICATION_CATEGORIES,
   DEFAULT_NOTIFICATION_PREFERENCES,
   normalizeNotificationTargetCategories,
@@ -13888,23 +13895,25 @@ async function sendFeeUnpaidDueReminders() {
   const maxReminderThresholdLater = admin.firestore.Timestamp.fromMillis(now.toMillis() + 72 * 60 * 60 * 1000);
   const teamReminderThresholdHours = new Map();
 
-  // Keep leased recipients in the retry set even if they cross their due time
-  // while a crashed attempt's lease is active.
-  const [upcomingSnap, leasedSnap] = await Promise.all([
-    firestore.collectionGroup('feeRecipients')
-      .where('status', 'in', ['unpaid', 'pending'])
-      .where('dueDate', '>=', now)
-      .where('dueDate', '<=', maxReminderThresholdLater)
-      .get(),
-    firestore.collectionGroup('feeRecipients')
-      .where('reminderDeliveryClaimExpiresAtMillis', '>', 0)
-      .get()
-  ]);
-  const reminderDocs = [...new Map(
-    [...upcomingSnap.docs, ...leasedSnap.docs].map((docSnap) => [docSnap.ref.path, docSnap])
-  ).values()];
+  const loadPage = async ({ queryName, cursor }) => {
+    // Keep leased recipients in the retry set even if they cross their due time
+    // while a crashed attempt's lease is active.
+    let query = queryName === 'leased'
+      ? firestore.collectionGroup('feeRecipients')
+        .where('reminderDeliveryClaimExpiresAtMillis', '>', 0)
+        .orderBy('reminderDeliveryClaimExpiresAtMillis', 'asc')
+      : firestore.collectionGroup('feeRecipients')
+        .where('status', 'in', ['unpaid', 'pending'])
+        .where('dueDate', '>=', now)
+        .where('dueDate', '<=', maxReminderThresholdLater)
+        .orderBy('dueDate', 'asc');
+    if (cursor) {
+      query = query.startAfter(cursor);
+    }
+    return (await query.limit(FEE_REMINDER_QUERY_PAGE_SIZE).get()).docs;
+  };
 
-  const promises = reminderDocs.map(async (doc) => {
+  const processRecipient = async (doc) => {
     let data = doc.data();
     const pathParts = doc.ref.path.split('/');
     // Path structure: teams/{teamId}/feeBatches/{batchId}/feeRecipients/{recipientId}
@@ -14071,12 +14080,28 @@ async function sendFeeUnpaidDueReminders() {
         || isFeeReminderClaimActiveFailure(err)
         || isFeeReminderPreEffectFailure(err)
       ) throw err;
-      return null;
+      return { failed: true };
     }
-  });
+  };
 
-  const results = await Promise.allSettled(promises);
-  const retryableFailure = results.find((result) => (
+  const summary = await drainFeeReminderQueryPages({
+    loadPage,
+    processRecipient,
+    pageSize: FEE_REMINDER_QUERY_PAGE_SIZE,
+    maxPagesPerQuery: FEE_REMINDER_MAX_PAGES_PER_QUERY,
+    maxRuntimeMs: FEE_REMINDER_MAX_RUNTIME_MS,
+    concurrency: FEE_REMINDER_WORKER_CONCURRENCY
+  });
+  const result = {
+    examined: summary.examined,
+    sent: summary.sent,
+    failed: summary.failed,
+    deduplicated: summary.deduplicated,
+    pagesAttempted: summary.pagesAttempted,
+    stoppingReason: summary.stoppedBecause
+  };
+  console.log('sendFeeUnpaidDueReminders: completed bounded reminder drain', result);
+  const retryableFailure = summary.results.find((result) => (
     result.status === 'rejected'
     && (
       isNotificationAuthResolutionFailure(result.reason)
@@ -14085,8 +14110,7 @@ async function sendFeeUnpaidDueReminders() {
     )
   ));
   if (retryableFailure) throw retryableFailure.reason;
-  const sent = results.filter((r) => r.status === 'fulfilled' && r.value).length;
-  console.log(`sendFeeUnpaidDueReminders: processed ${reminderDocs.length} docs, sent ${sent} reminders`);
+  return result;
 }
 
 exports.sendFeeUnpaidDueReminders = retryableNotificationFunctions.pubsub

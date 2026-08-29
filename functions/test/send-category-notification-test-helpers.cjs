@@ -139,6 +139,7 @@ function buildNotificationTestEnv({
     const updatedDocs = [];
     const messagingCalls = [];
     const feeRecipientDocGetPaths = [];
+    const feeRecipientQueryLog = [];
     const getAllCalls = [];
     const docStore = new Map();
     const teamMediaQueryLog = [];
@@ -278,18 +279,88 @@ function buildNotificationTestEnv({
         return false;
     }
 
-    function makeQuery(getDocs) {
-        const filters = [];
+    function makeQuery(getDocs, {
+        filters = [],
+        order = null,
+        cursor = null,
+        limitCount = null,
+        queryLog = null
+    } = {}) {
         return {
             where(field, op, value) {
-                filters.push({ field, op, value });
-                return this;
+                return makeQuery(getDocs, {
+                    filters: [...filters, { field, op, value }],
+                    order,
+                    cursor,
+                    limitCount,
+                    queryLog
+                });
+            },
+            orderBy(field, direction = 'asc') {
+                return makeQuery(getDocs, {
+                    filters,
+                    order: { field, direction },
+                    cursor,
+                    limitCount,
+                    queryLog
+                });
+            },
+            startAfter(nextCursor) {
+                return makeQuery(getDocs, {
+                    filters,
+                    order,
+                    cursor: nextCursor,
+                    limitCount,
+                    queryLog
+                });
+            },
+            limit(nextLimitCount) {
+                return makeQuery(getDocs, {
+                    filters,
+                    order,
+                    cursor,
+                    limitCount: nextLimitCount,
+                    queryLog
+                });
             },
             async get() {
-                const docs = getDocs().filter((docSnap) => {
+                let docs = getDocs().filter((docSnap) => {
                     const data = docSnap.data() || {};
                     return filters.every((filter) => matchesQueryFilter(data, filter));
                 });
+                if (order) {
+                    docs.sort((left, right) => {
+                        const leftMillis = comparableMillis(left.data()?.[order.field]);
+                        const rightMillis = comparableMillis(right.data()?.[order.field]);
+                        const valueComparison = leftMillis - rightMillis;
+                        const pathComparison = left.ref.path.localeCompare(right.ref.path);
+                        const comparison = valueComparison || pathComparison;
+                        return order.direction === 'desc' ? -comparison : comparison;
+                    });
+                }
+                if (cursor) {
+                    docs = docs.filter((docSnap) => {
+                        const pathComparison = docSnap.ref.path.localeCompare(cursor.ref.path);
+                        if (!order) return pathComparison > 0;
+                        const docMillis = comparableMillis(docSnap.data()?.[order.field]);
+                        const cursorMillis = comparableMillis(cursor.data()?.[order.field]);
+                        const valueComparison = docMillis - cursorMillis;
+                        const comparison = valueComparison || pathComparison;
+                        return order.direction === 'desc' ? comparison < 0 : comparison > 0;
+                    });
+                }
+                if (Number.isFinite(limitCount)) {
+                    docs = docs.slice(0, limitCount);
+                }
+                if (Array.isArray(queryLog)) {
+                    queryLog.push({
+                        filters: clone(filters),
+                        order: clone(order),
+                        cursorPath: cursor?.ref?.path || null,
+                        limit: limitCount,
+                        resultPaths: docs.map((docSnap) => docSnap.ref.path)
+                    });
+                }
                 return makeQuerySnapshot(docs);
             }
         };
@@ -934,7 +1005,7 @@ function buildNotificationTestEnv({
                     ref: doc(path),
                     data,
                     exists: true
-                })));
+                })), { queryLog: feeRecipientQueryLog });
         },
         async getAll(...refs) {
             getAllCalls.push(refs.map((ref) => ref.path));
@@ -1097,6 +1168,7 @@ function buildNotificationTestEnv({
         updatedDocs,
         messagingCalls,
         feeRecipientDocGetPaths,
+        feeRecipientQueryLog,
         getAllCalls,
         teamMediaQueryLog,
         get activeNotificationInboxPipelines() {

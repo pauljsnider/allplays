@@ -1549,6 +1549,67 @@ test('sendFeeUnpaidDueReminders sends eligible unpaid parent fee reminders with 
     }
 });
 
+test('sendFeeUnpaidDueReminders drains three upcoming pages and deduplicates an expired leased recipient', async () => {
+    const nowMillis = Date.parse('2026-06-28T12:00:00.000Z');
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        userDocs: {
+            'parent-1': { parentTeamIds: ['team-1'], parentPlayerKeys: ['team-1::player-1'] }
+        },
+        indexedTargets: [
+            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { fees: true } }
+        ],
+        nowMillis
+    });
+
+    try {
+        const recipientIds = Array.from({ length: 120 }, (_, index) => (
+            `recipient-${String(index + 1).padStart(3, '0')}`
+        ));
+        await Promise.all(recipientIds.map((recipientId, index) => (
+            env.firestoreState.doc(`teams/team-1/feeBatches/batch-1/feeRecipients/${recipientId}`).set({
+                status: 'unpaid',
+                playerKey: 'team-1::player-1',
+                feeTitle: `Tournament dues ${index + 1}`,
+                amountCents: 4500,
+                dueDate: '2026-06-30T12:00:00.000Z',
+                ...(index === 0 ? {
+                    reminderDeliveryClaimId: 'expired-claim',
+                    reminderDeliveryClaimExpiresAtMillis: nowMillis - 1
+                } : {})
+            })
+        )));
+
+        const result = await moduleExports.sendFeeUnpaidDueReminders();
+
+        const leasedQueries = env.feeRecipientQueryLog.filter((query) => (
+            query.order?.field === 'reminderDeliveryClaimExpiresAtMillis'
+        ));
+        const upcomingQueries = env.feeRecipientQueryLog.filter((query) => query.order?.field === 'dueDate');
+        const overlapRoute = '/parent-tools/fees?teamId=team-1&batchId=batch-1&recipientId=recipient-001';
+
+        assert.equal(leasedQueries.length, 1);
+        assert.deepEqual(upcomingQueries.map((query) => query.resultPaths.length), [50, 50, 20]);
+        assert.equal(env.feeRecipientQueryLog.every((query) => query.limit === 50), true);
+        assert.equal(env.feeRecipientQueryLog.every((query) => query.resultPaths.length <= query.limit), true);
+        assert.equal(env.messagingCalls.length, 120);
+        assert.equal(env.messagingCalls.filter((call) => call.data.appRoute === overlapRoute).length, 1);
+        assert.equal(env.messagingCalls.some((call) => (
+            call.data.appRoute.endsWith('recipientId=recipient-120')
+        )), true);
+        assert.deepEqual(result, {
+            examined: 121,
+            sent: 120,
+            failed: 0,
+            deduplicated: 1,
+            pagesAttempted: 4,
+            stoppingReason: 'drained'
+        });
+    } finally {
+        cleanup();
+    }
+});
+
 test('sendFeeUnpaidDueReminders excludes paid fees and parents with disabled fee notifications', async () => {
     const { moduleExports, env, cleanup } = loadNotificationInternals({
         teamDoc: { ownerId: 'coach-1', adminEmails: [] },

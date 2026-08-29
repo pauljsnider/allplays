@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
+const {
+    FEE_REMINDER_QUERY_PAGE_SIZE,
+    drainFeeReminderQueryPages
+} = require('../../functions/fee-due-reminder-dispatcher-core.cjs');
 
 const functionsSource = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
 const firestoreIndexes = JSON.parse(readFileSync(new URL('../../firestore.indexes.json', import.meta.url), 'utf8'));
@@ -37,6 +44,13 @@ const resolveFeeReminderThresholdHours = getHelper('resolveFeeReminderThresholdH
 const wasFeeReminderSentForThreshold = getHelper('wasFeeReminderSentForThreshold', 'function formatFeeReminderWindowLabel');
 const formatFeeReminderWindowLabel = getHelper('formatFeeReminderWindowLabel', 'async function resolveFeeReminderCandidateUserIds');
 const { getFeeReminderDueDateMillis, isFeeDueReminderCandidateEligible } = getEligibilityHelpers();
+
+function createReminderDoc(path) {
+    return {
+        id: path.split('/').pop(),
+        ref: { path }
+    };
+}
 
 describe('fee due reminder helper logic', () => {
     it('builds a player key from team and player ids when the recipient does not store one', () => {
@@ -117,11 +131,24 @@ describe('fee due reminder helper logic', () => {
 });
 
 describe('fee due reminder source wiring', () => {
-    it('queries fee recipients using the stored status and dueDate fields', () => {
-        expect(functionsSource).toContain(".where('status', 'in', ['unpaid', 'pending'])");
-        expect(functionsSource).toContain(".where('dueDate', '>=', now)");
-        expect(functionsSource).toContain(".where('dueDate', '<=', maxReminderThresholdLater)");
-        expect(functionsSource).toContain(".where('reminderDeliveryClaimExpiresAtMillis', '>', 0)");
+    it('queries both fee-recipient populations with ordered bounded pages and cursors', () => {
+        const start = functionsSource.indexOf('async function sendFeeUnpaidDueReminders()');
+        const end = functionsSource.indexOf('\nexports.sendFeeUnpaidDueReminders', start);
+        const source = functionsSource.slice(start, end);
+
+        expect(source).toContain(".where('status', 'in', ['unpaid', 'pending'])");
+        expect(source).toContain(".where('dueDate', '>=', now)");
+        expect(source).toContain(".where('dueDate', '<=', maxReminderThresholdLater)");
+        expect(source).toContain(".orderBy('dueDate', 'asc')");
+        expect(source).toContain(".where('reminderDeliveryClaimExpiresAtMillis', '>', 0)");
+        expect(source).toContain(".orderBy('reminderDeliveryClaimExpiresAtMillis', 'asc')");
+        expect(source).toContain('.startAfter(cursor)');
+        expect(source).toContain('.limit(FEE_REMINDER_QUERY_PAGE_SIZE)');
+        expect(source).toContain('drainFeeReminderQueryPages({');
+        expect(source).toContain('FEE_REMINDER_MAX_PAGES_PER_QUERY');
+        expect(source).toContain('FEE_REMINDER_MAX_RUNTIME_MS');
+        expect(source).toContain('FEE_REMINDER_WORKER_CONCURRENCY');
+        expect(source).not.toMatch(/\.where\('dueDate',[\s\S]+?\.get\(\),/);
     });
 
     it('declares collection-group indexes for upcoming and leased reminder queries', () => {
@@ -174,5 +201,131 @@ describe('fee due reminder source wiring', () => {
         expect(functionsSource).toContain('body,');
         expect(functionsSource).toContain('batchId,');
         expect(functionsSource).toContain('recipientId,');
+    });
+});
+
+describe('fee due reminder bounded dispatcher', () => {
+    it('drains more than two pages and deduplicates paths across upcoming and leased queries', async () => {
+        const upcomingDocs = Array.from({ length: 120 }, (_, index) => createReminderDoc(
+            `teams/team-1/feeBatches/batch-1/feeRecipients/upcoming-${String(index + 1).padStart(3, '0')}`
+        ));
+        const leasedDocs = [
+            upcomingDocs[75],
+            createReminderDoc('teams/team-1/feeBatches/batch-1/feeRecipients/leased-only')
+        ];
+        const processedPaths = [];
+        const pageCalls = [];
+
+        const summary = await drainFeeReminderQueryPages({
+            queryNames: ['upcoming', 'leased'],
+            loadPage: async ({ queryName, cursor, limit }) => {
+                pageCalls.push({ queryName, cursor: cursor?.ref?.path || null, limit });
+                const docs = queryName === 'upcoming' ? upcomingDocs : leasedDocs;
+                const startIndex = cursor
+                    ? docs.findIndex((doc) => doc.ref.path === cursor.ref.path) + 1
+                    : 0;
+                return docs.slice(startIndex, startIndex + limit);
+            },
+            processRecipient: async (doc) => {
+                processedPaths.push(doc.ref.path);
+                return { sent: true };
+            }
+        });
+
+        expect(pageCalls.filter((call) => call.queryName === 'upcoming')).toHaveLength(3);
+        expect(pageCalls.every((call) => call.limit === FEE_REMINDER_QUERY_PAGE_SIZE)).toBe(true);
+        expect(processedPaths).toHaveLength(121);
+        expect(new Set(processedPaths).size).toBe(121);
+        expect(processedPaths).toContain(upcomingDocs[119].ref.path);
+        expect(summary).toMatchObject({
+            examined: 122,
+            sent: 121,
+            failed: 0,
+            deduplicated: 1,
+            stoppedBecause: 'drained'
+        });
+    });
+
+    it('never exceeds the configured recipient worker concurrency', async () => {
+        const docs = Array.from({ length: 20 }, (_, index) => createReminderDoc(
+            `teams/team-1/feeBatches/batch-1/feeRecipients/recipient-${index + 1}`
+        ));
+        let activeWorkers = 0;
+        let maximumWorkers = 0;
+
+        await drainFeeReminderQueryPages({
+            queryNames: ['upcoming'],
+            concurrency: 3,
+            loadPage: async () => docs,
+            processRecipient: async () => {
+                activeWorkers += 1;
+                maximumWorkers = Math.max(maximumWorkers, activeWorkers);
+                await new Promise((resolve) => setTimeout(resolve, 1));
+                activeWorkers -= 1;
+                return { sent: true };
+            }
+        });
+
+        expect(maximumWorkers).toBe(3);
+    });
+
+    it('records failed workers while continuing the bounded page', async () => {
+        const docs = [
+            createReminderDoc('teams/team-1/feeBatches/batch-1/feeRecipients/fails'),
+            createReminderDoc('teams/team-1/feeBatches/batch-1/feeRecipients/sends')
+        ];
+
+        const summary = await drainFeeReminderQueryPages({
+            queryNames: ['upcoming'],
+            loadPage: async () => docs,
+            processRecipient: async (doc) => {
+                if (doc.id === 'fails') throw new Error('delivery failed');
+                return { sent: true };
+            }
+        });
+
+        expect(summary).toMatchObject({
+            examined: 2,
+            sent: 1,
+            failed: 1,
+            stoppedBecause: 'drained'
+        });
+    });
+
+    it('returns explicit page and runtime stopping reasons with counts', async () => {
+        const fullPage = Array.from({ length: FEE_REMINDER_QUERY_PAGE_SIZE }, (_, index) => createReminderDoc(
+            `teams/team-1/feeBatches/batch-1/feeRecipients/page-${index + 1}`
+        ));
+        const pageCapped = await drainFeeReminderQueryPages({
+            queryNames: ['upcoming'],
+            maxPagesPerQuery: 1,
+            loadPage: async () => fullPage,
+            processRecipient: async () => null
+        });
+
+        let clock = 0;
+        const runtimeCapped = await drainFeeReminderQueryPages({
+            queryNames: ['upcoming'],
+            maxRuntimeMs: 10,
+            getNowMs: () => {
+                clock += 10;
+                return clock;
+            },
+            loadPage: async () => fullPage,
+            processRecipient: async () => ({ sent: true })
+        });
+
+        expect(pageCapped).toMatchObject({
+            examined: FEE_REMINDER_QUERY_PAGE_SIZE,
+            sent: 0,
+            failed: 0,
+            stoppedBecause: 'maxPages'
+        });
+        expect(runtimeCapped).toMatchObject({
+            examined: 0,
+            sent: 0,
+            failed: 0,
+            stoppedBecause: 'maxRuntimeMs'
+        });
     });
 });
