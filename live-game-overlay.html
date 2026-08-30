@@ -340,7 +340,10 @@
       right: 0;
       z-index: 40;
       width: min(260px, calc(100vw - 28px));
+      max-height: calc(100dvh - var(--top-safe) - 64px);
       padding: 7px;
+      overflow-y: auto;
+      overscroll-behavior: contain;
       border: 1px solid var(--line-strong);
       border-radius: 16px;
       background: rgba(3, 11, 21, 0.98);
@@ -2036,13 +2039,14 @@
             <g class="volume-off"><path d="M4 9v6h4l5 4V5L8 9H4M17 9l5 5M22 9l-5 5"/></g>
           </svg>
         </button>
-        <button id="game-actions-toggle" class="icon-button" type="button" aria-label="More game actions" aria-expanded="false" aria-controls="game-actions-menu">
+        <button id="game-actions-toggle" class="icon-button" type="button" aria-label="More game actions" aria-haspopup="menu" aria-expanded="false" aria-controls="game-actions-menu">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h.01M12 12h.01M19 12h.01" stroke-linecap="round" stroke-width="3"/></svg>
         </button>
         <div id="game-actions-menu" class="game-actions-menu" role="menu" hidden>
           <button id="share-game-menu" class="game-menu-action" type="button" role="menuitem">Share game <span aria-hidden="true">↗</span></button>
           <button id="scoreboard-menu-toggle" class="game-menu-action" type="button" role="menuitemcheckbox" aria-checked="false"><span id="scoreboard-menu-label">Hide scoreboard</span> <span aria-hidden="true">—</span></button>
           <a id="watch-replay-menu" class="game-menu-action" href="#" role="menuitem" hidden>Watch replay <span aria-hidden="true">→</span></a>
+          <a id="classic-view-link" class="game-menu-action" href="#" role="menuitem" hidden><span id="classic-view-link-label">Standard live view</span> <span aria-hidden="true">→</span></a>
           <a id="match-report-link" class="game-menu-action" href="#" role="menuitem">Match report <span aria-hidden="true">→</span></a>
           <a id="game-details-link" class="game-menu-action" href="#" role="menuitem">Game details <span aria-hidden="true">→</span></a>
           <a id="provider-menu-link" class="game-menu-action" href="#" target="_blank" rel="noopener noreferrer" role="menuitem" hidden><span id="provider-menu-label">Open video</span> <span aria-hidden="true">↗</span></a>
@@ -2258,6 +2262,6 @@
   </main>
 
   <span id="screen-reader-update" class="visually-hidden" aria-live="polite"></span>
-  <script type="module" src="js/live-game-overlay.js?v=35"></script>
+  <script type="module" src="js/live-game-overlay.js?v=36"></script>
 </body>
 </html>

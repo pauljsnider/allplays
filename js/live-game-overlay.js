@@ -58,6 +58,8 @@ const elements = {
     gameActionsMenu: document.querySelector('#game-actions-menu'),
     matchReportLink: document.querySelector('#match-report-link'),
     gameDetailsLink: document.querySelector('#game-details-link'),
+    classicViewLink: document.querySelector('#classic-view-link'),
+    classicViewLinkLabel: document.querySelector('#classic-view-link-label'),
     providerMenuLink: document.querySelector('#provider-menu-link'),
     providerMenuLabel: document.querySelector('#provider-menu-label'),
     replayAccessGate: document.querySelector('#replay-access-gate'),
@@ -337,6 +339,10 @@ function getOverlayReplayHref() {
 function configureGameActions() {
     if (!uiState.teamId || !uiState.gameId) return;
     const gameHref = `game.html#teamId=${encodeURIComponent(uiState.teamId)}&gameId=${encodeURIComponent(uiState.gameId)}`;
+    const replayParam = uiState.isReplay ? '&replay=true' : '';
+    elements.classicViewLink.href = `live-game.html?teamId=${encodeURIComponent(uiState.teamId)}&gameId=${encodeURIComponent(uiState.gameId)}${replayParam}`;
+    elements.classicViewLink.hidden = false;
+    elements.classicViewLinkLabel.textContent = uiState.isReplay ? 'Standard replay view' : 'Standard live view';
     elements.matchReportLink.href = gameHref;
     elements.matchReportLink.hidden = !(uiState.isReplay || isCompletedGame());
     elements.gameDetailsLink.href = gameHref;
@@ -2076,8 +2082,11 @@ async function startRealMode(params) {
         return;
     }
 
+    const isReplay = params.replay === 'true';
     uiState.teamId = teamId;
     uiState.gameId = gameId;
+    uiState.isReplay = isReplay;
+    elements.body.dataset.replay = String(isReplay);
     configureGameActions();
 
     setConnectionMessage('Connecting to the game, event feed, and chat…', 'info');
@@ -2118,11 +2127,8 @@ async function startRealMode(params) {
         // stream. Keep the demo fixture's seeded stats, but avoid double-counting
         // persisted liveStats when the initial live snapshot arrives.
         uiState.game.stats = {};
-        const isReplay = params.replay === 'true';
-        uiState.isReplay = isReplay;
         syncLiveClockAnchor();
         configureGameActions();
-        elements.body.dataset.replay = String(isReplay);
         renderPanelVisibility();
         if (isReplay) uiState.game.liveStatus = 'replay';
         renderAll();

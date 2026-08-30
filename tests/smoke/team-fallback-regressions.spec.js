@@ -1307,28 +1307,48 @@ test('live game archived replay Team Pass gate is off by default', async ({ page
     });
     const liveGameStubs = await routeLiveGameStubs(page);
 
-    await page.goto(`${baseURL}/live-game.html?teamId=team-1&gameId=game-1&replay=true`, { waitUntil: 'domcontentloaded' });
+    await page.goto(`${baseURL}/live-game.html?teamId=team-1&gameId=game-1&replay=true&unknown=ignored`, { waitUntil: 'domcontentloaded' });
 
     await expect(page.locator('#video-paywall')).toBeHidden();
     await expect(page.locator('#recorded-replay-video')).toBeVisible();
+    await expect(page.locator('#overlay-view-link')).toBeVisible();
+    await expect(page.locator('#overlay-view-link')).toContainText('Replay overlay view');
+    await expect(page.locator('#overlay-view-link')).toHaveAttribute(
+        'href',
+        'live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true'
+    );
     await expect.poll(() => page.evaluate(() => window.__DELEGATED_TEAM_CONTEXT_COUNT__ || 0)).toBe(1);
     await expect.poll(() => page.evaluate(() => window.__CANONICAL_TEAM_READ_COUNT__ || 0)).toBe(0);
     await expect.poll(() => page.evaluate(() => window.__TEAM_PASS_ENTITLEMENT_READS__ || 0)).toBe(0);
+    expect(await page.locator('#overlay-view-link, #replay-report-link, #share-game-btn').evaluateAll((elements) => (
+        elements.every((element) => element.getBoundingClientRect().height >= 44)
+    ))).toBe(true);
     expect(liveGameStubs.getTelemetryStubRequestCount()).toBeGreaterThan(0);
     expect(pageErrors).toEqual([]);
 });
 
 test('private-team parent opens a live game through the bounded team projection', async ({ page, baseURL }) => {
     const pageErrors = await collectPageErrors(page);
+    await page.setViewportSize({ width: 320, height: 568 });
     await page.addInitScript(() => {
         window.__LIVE_GAME_TEAM__ = {};
         window.__LIVE_GAME_GAME__ = { status: 'scheduled', liveStatus: 'live' };
     });
     await routeLiveGameStubs(page);
 
-    await page.goto(`${baseURL}/live-game.html?teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+    await page.goto(`${baseURL}/live-game.html?teamId=team-1&gameId=game-1&unknown=ignored`, { waitUntil: 'domcontentloaded' });
 
     await expect(page.locator('#home-team-name')).toHaveText('Replay Test Team');
+    await expect(page.locator('#overlay-view-link')).toBeVisible();
+    await expect(page.locator('#overlay-view-link')).toContainText('Video overlay view');
+    await expect(page.locator('#overlay-view-link')).toHaveAttribute(
+        'href',
+        'live-game-overlay.html?teamId=team-1&gameId=game-1'
+    );
+    await expect.poll(() => page.locator('#scoreboard').evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    expect(await page.locator('#overlay-view-link, #share-game-btn').evaluateAll((elements) => (
+        elements.every((element) => element.getBoundingClientRect().height >= 44)
+    ))).toBe(true);
     await expect.poll(() => page.evaluate(() => window.__DELEGATED_TEAM_CONTEXT_COUNT__ || 0)).toBe(1);
     await expect.poll(() => page.evaluate(() => window.__CANONICAL_TEAM_READ_COUNT__ || 0)).toBe(0);
     await page.locator('#share-game-btn').click();

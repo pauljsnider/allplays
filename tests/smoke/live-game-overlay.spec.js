@@ -398,7 +398,12 @@ async function stubRealOverlayModules(page) {
                 }
                 return team;
             }
-            export async function getGame() { return game; }
+            export async function getGame() {
+                if (window.__OVERLAY_DELAY_GAME__) {
+                    await new Promise((resolve) => { window.__OVERLAY_RELEASE_GAME__ = resolve; });
+                }
+                return game;
+            }
             export async function getPlayers() {
                 if (window.__OVERLAY_DEFER_OPTIONAL_CONTEXT__) return new Promise(() => {});
                 window.__OVERLAY_GET_PLAYERS_CALLS__ = (window.__OVERLAY_GET_PLAYERS_CALLS__ || 0) + 1;
@@ -1186,6 +1191,12 @@ test('viewer toolbar shares the canonical watch URL and controls YouTube audio a
     await expect(page.locator('#match-report-link')).toHaveAttribute('href', 'game.html#teamId=team-1&gameId=game-1');
     await expect(page.locator('#match-report-link')).toBeHidden();
     await expect(page.locator('#game-details-link')).toHaveAttribute('href', 'game.html#teamId=team-1&gameId=game-1');
+    await expect(page.locator('#classic-view-link')).toBeVisible();
+    await expect(page.locator('#classic-view-link')).toContainText('Standard live view');
+    await expect(page.locator('#classic-view-link')).toHaveAttribute(
+        'href',
+        'live-game.html?teamId=team-1&gameId=game-1'
+    );
     await expect(page.locator('#provider-menu-link')).toContainText('Watch on YouTube');
     await page.locator('#game-actions-toggle').click();
     await expect(page.locator('#game-actions-menu')).toBeHidden();
@@ -1198,6 +1209,57 @@ test('viewer toolbar shares the canonical watch URL and controls YouTube audio a
         homeScore: 4, awayScore: 2, period: 'H2', gameClockMs: 700000, createdAt: 5000
     }]));
     await expect.poll(() => page.evaluate(() => window.__OVERLAY_SPOKEN__)).toContain('H2. Lane scores from distance');
+    expect(pageErrors).toEqual([]);
+});
+
+test('replay navigation stays in replay mode while the initial game load is pending', async ({ page, baseURL }) => {
+    const pageErrors = collectPageErrors(page);
+    await page.addInitScript(() => {
+        window.__OVERLAY_DELAY_GAME__ = true;
+    });
+    await stubRealOverlayModules(page);
+    await stubYouTubeEmbed(page);
+
+    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true`, { waitUntil: 'domcontentloaded' });
+
+    await expect.poll(() => page.evaluate(() => typeof window.__OVERLAY_RELEASE_GAME__)).toBe('function');
+    await expect(page.locator('#classic-view-link')).toContainText('Standard replay view');
+    await expect(page.locator('#classic-view-link')).toHaveAttribute(
+        'href',
+        'live-game.html?teamId=team-1&gameId=game-1&replay=true'
+    );
+    await page.evaluate(() => window.__OVERLAY_RELEASE_GAME__());
+    await expect(page.locator('#home-team-name')).toHaveText('Current Academy');
+    expect(pageErrors).toEqual([]);
+});
+
+test('short replay menus keep every action reachable by keyboard and touch', async ({ page, baseURL }) => {
+    const pageErrors = collectPageErrors(page);
+    await page.setViewportSize({ width: 568, height: 320 });
+    await stubRealOverlayModules(page);
+    await stubYouTubeEmbed(page);
+
+    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true`, { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('#home-team-name')).toHaveText('Current Academy');
+
+    const menuToggle = page.locator('#game-actions-toggle');
+    await expect(menuToggle).toHaveAttribute('aria-haspopup', 'menu');
+    await menuToggle.focus();
+    await menuToggle.press('Enter');
+    await expect(page.locator('#game-actions-menu')).toBeVisible();
+    await expect(page.locator('#share-game-menu')).toBeFocused();
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('ArrowDown');
+    await expect(page.locator('#classic-view-link')).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#game-actions-menu')).toBeHidden();
+    await expect(menuToggle).toBeFocused();
+
+    await menuToggle.click();
+    const menu = page.locator('#game-actions-menu');
+    await expect.poll(() => menu.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+    await page.locator('#provider-menu-link').scrollIntoViewIfNeeded();
+    await expect(page.locator('#provider-menu-link')).toBeInViewport();
     expect(pageErrors).toEqual([]);
 });
 
@@ -1352,11 +1414,18 @@ test('signed-out public replay uses the sanitized projected game video when priv
     await stubRealOverlayModules(page);
     await stubYouTubeEmbed(page);
 
-    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true`, { waitUntil: 'domcontentloaded' });
+    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true&videoId=ignored&unknown=ignored`, { waitUntil: 'domcontentloaded' });
 
     await expect(page.locator('#overlay-video')).toHaveAttribute('src', /youtube\.com\/embed\/PK1HyC37doc/);
     await expect(page.locator('#open-stream')).toHaveAttribute('href', 'https://www.youtube.com/watch?v=PK1HyC37doc');
     await expect(page.locator('#replay-access-gate')).toBeHidden();
+    await page.locator('#game-actions-toggle').click();
+    await expect(page.locator('#classic-view-link')).toBeVisible();
+    await expect(page.locator('#classic-view-link')).toContainText('Standard replay view');
+    await expect(page.locator('#classic-view-link')).toHaveAttribute(
+        'href',
+        'live-game.html?teamId=team-1&gameId=game-1&replay=true'
+    );
     expect(await page.evaluate(() => window.__OVERLAY_ENTITLEMENT_READS__ || 0)).toBe(0);
     expect(pageErrors).toEqual([]);
 });
