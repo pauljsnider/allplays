@@ -1192,7 +1192,7 @@ test('viewer toolbar shares the canonical watch URL and controls YouTube audio a
     await expect(page.locator('#match-report-link')).toBeHidden();
     await expect(page.locator('#game-details-link')).toHaveAttribute('href', 'game.html#teamId=team-1&gameId=game-1');
     await expect(page.locator('#classic-view-link')).toBeVisible();
-    await expect(page.locator('#classic-view-link')).toContainText('Standard live view');
+    await expect(page.locator('#classic-view-link')).toContainText('Game Center');
     await expect(page.locator('#classic-view-link')).toHaveAttribute(
         'href',
         'live-game.html?teamId=team-1&gameId=game-1'
@@ -1223,7 +1223,7 @@ test('replay navigation stays in replay mode while the initial game load is pend
     await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true`, { waitUntil: 'domcontentloaded' });
 
     await expect.poll(() => page.evaluate(() => typeof window.__OVERLAY_RELEASE_GAME__)).toBe('function');
-    await expect(page.locator('#classic-view-link')).toContainText('Standard replay view');
+    await expect(page.locator('#classic-view-link')).toContainText('Game Recap');
     await expect(page.locator('#classic-view-link')).toHaveAttribute(
         'href',
         'live-game.html?teamId=team-1&gameId=game-1&replay=true'
@@ -1421,7 +1421,7 @@ test('signed-out public replay uses the sanitized projected game video when priv
     await expect(page.locator('#replay-access-gate')).toBeHidden();
     await page.locator('#game-actions-toggle').click();
     await expect(page.locator('#classic-view-link')).toBeVisible();
-    await expect(page.locator('#classic-view-link')).toContainText('Standard replay view');
+    await expect(page.locator('#classic-view-link')).toContainText('Game Recap');
     await expect(page.locator('#classic-view-link')).toHaveAttribute(
         'href',
         'live-game.html?teamId=team-1&gameId=game-1&replay=true'

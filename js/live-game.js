@@ -273,9 +273,9 @@ function updateShareButton() {
     const replayParam = state.isReplay ? '&replay=true' : '';
     els.overlayViewLink.href = `live-game-overlay.html?teamId=${encodeURIComponent(state.teamId)}&gameId=${encodeURIComponent(state.gameId)}${replayParam}`;
     els.overlayViewLink.classList.remove('hidden');
-    els.overlayViewLink.setAttribute('aria-label', state.isReplay ? 'Open replay overlay view' : 'Open video overlay view');
+    els.overlayViewLink.setAttribute('aria-label', state.isReplay ? 'Watch Replay' : 'Watch Live');
     if (els.overlayViewLinkLabel) {
-      els.overlayViewLinkLabel.textContent = state.isReplay ? 'Replay overlay view' : 'Video overlay view';
+      els.overlayViewLinkLabel.textContent = state.isReplay ? 'Watch Replay' : 'Watch Live';
     }
   }
   if (els.replayReportLink) {

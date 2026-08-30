@@ -1312,7 +1312,8 @@ test('live game archived replay Team Pass gate is off by default', async ({ page
     await expect(page.locator('#video-paywall')).toBeHidden();
     await expect(page.locator('#recorded-replay-video')).toBeVisible();
     await expect(page.locator('#overlay-view-link')).toBeVisible();
-    await expect(page.locator('#overlay-view-link')).toContainText('Replay overlay view');
+    await expect(page.locator('#overlay-view-link')).toContainText('Watch Replay');
+    await expect(page.locator('#overlay-view-link')).toHaveAttribute('aria-label', 'Watch Replay');
     await expect(page.locator('#overlay-view-link')).toHaveAttribute(
         'href',
         'live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true'
@@ -1340,7 +1341,8 @@ test('private-team parent opens a live game through the bounded team projection'
 
     await expect(page.locator('#home-team-name')).toHaveText('Replay Test Team');
     await expect(page.locator('#overlay-view-link')).toBeVisible();
-    await expect(page.locator('#overlay-view-link')).toContainText('Video overlay view');
+    await expect(page.locator('#overlay-view-link')).toContainText('Watch Live');
+    await expect(page.locator('#overlay-view-link')).toHaveAttribute('aria-label', 'Watch Live');
     await expect(page.locator('#overlay-view-link')).toHaveAttribute(
         'href',
         'live-game-overlay.html?teamId=team-1&gameId=game-1'

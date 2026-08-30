@@ -52,6 +52,7 @@ describe('live game overlay page', () => {
         expect(html).toContain('aria-haspopup="menu"');
         expect(html).toContain('id="classic-view-link"');
         expect(html).toContain('id="classic-view-link-label"');
+        expect(html).toContain('<span id="classic-view-link-label">Game Center</span>');
         expect(html).toContain('id="match-report-link"');
         expect(html).toContain('id="game-details-link"');
         expect(html).toContain('id="replay-access-gate"');
@@ -61,7 +62,7 @@ describe('live game overlay page', () => {
         expect(html).toContain('id="away-team-photo"');
         expect(html).toContain('data-score-hidden="false"');
         expect(html).toMatch(/\.panel-tab\s*\{[^}]*min-width:\s*44px;/);
-        expect(html).toContain('js/live-game-overlay.js?v=36');
+        expect(html).toContain('js/live-game-overlay.js?v=37');
     });
 
     it('keeps the local demo isolated while wiring canonical subscriptions and authenticated chat posting', () => {
@@ -129,7 +130,7 @@ describe('live game overlay page', () => {
         expect(source).toContain('buildGameWatchShareUrl');
         expect(source).toContain('toggleScoreboardVisibility');
         expect(source).toContain('elements.classicViewLink.href = `live-game.html?teamId=');
-        expect(source).toContain("uiState.isReplay ? 'Standard replay view' : 'Standard live view'");
+        expect(source).toContain("uiState.isReplay ? 'Game Recap' : 'Game Center'");
         expect(source).toContain("setConnectionIssue('replay'");
         expect(source).toContain('connectionIssues: new Map()');
         expect(source).toContain("state.events.slice(0, 60)");
@@ -181,9 +182,10 @@ describe('live game overlay page', () => {
         expect(html).toContain('@media (min-width: 901px) and (max-width: 1320px)');
         expect(currentLiveGame).toContain('id="overlay-view-link"');
         expect(currentLiveGame).toContain('id="overlay-view-link-label"');
+        expect(currentLiveGame).toContain('<span id="overlay-view-link-label">Watch Live</span>');
         expect(currentLiveGameSource).toContain("overlayViewLink: q('#overlay-view-link')");
         expect(currentLiveGameSource).toContain('els.overlayViewLink.href = `live-game-overlay.html?teamId=');
-        expect(currentLiveGameSource).toContain("state.isReplay ? 'Replay overlay view' : 'Video overlay view'");
+        expect(currentLiveGameSource).toContain("state.isReplay ? 'Watch Replay' : 'Watch Live'");
     });
 
     it('keeps the former preview URL as a query-preserving compatibility redirect', () => {

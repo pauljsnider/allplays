@@ -342,7 +342,7 @@ function configureGameActions() {
     const replayParam = uiState.isReplay ? '&replay=true' : '';
     elements.classicViewLink.href = `live-game.html?teamId=${encodeURIComponent(uiState.teamId)}&gameId=${encodeURIComponent(uiState.gameId)}${replayParam}`;
     elements.classicViewLink.hidden = false;
-    elements.classicViewLinkLabel.textContent = uiState.isReplay ? 'Standard replay view' : 'Standard live view';
+    elements.classicViewLinkLabel.textContent = uiState.isReplay ? 'Game Recap' : 'Game Center';
     elements.matchReportLink.href = gameHref;
     elements.matchReportLink.hidden = !(uiState.isReplay || isCompletedGame());
     elements.gameDetailsLink.href = gameHref;
