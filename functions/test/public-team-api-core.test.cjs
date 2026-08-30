@@ -483,6 +483,93 @@ test('game results require completed status and both scores', () => {
   }).result, 'loss');
 });
 
+test('public game projection exposes only an explicitly public replay URL', () => {
+  const withPublicReplay = serializePublicGame({
+    id: 'public-replay',
+    type: 'game',
+    date: '2026-08-01T15:00:00Z',
+    replayVideo: {
+      url: 'https://private.example.test/replay.mp4?token=private-capability',
+      publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc'
+    }
+  });
+  assert.equal(withPublicReplay.videoUrl, 'https://www.youtube.com/watch?v=PK1HyC37doc');
+  assert.equal(JSON.stringify(withPublicReplay).includes('private-capability'), false);
+
+  const withoutPublicReplay = serializePublicGame({
+    id: 'private-replay',
+    type: 'game',
+    date: '2026-08-01T15:00:00Z',
+    replayVideo: {
+      url: 'https://private.example.test/replay.mp4?token=private-capability'
+    }
+  });
+  assert.equal(withoutPublicReplay.videoUrl, null);
+  assert.equal(JSON.stringify(withoutPublicReplay).includes('private-capability'), false);
+});
+
+test('public game projection withholds recorded URLs when the replay paywall is enabled', () => {
+  const completedGame = {
+    id: 'gated-replay',
+    type: 'game',
+    date: '2026-08-01T15:00:00Z',
+    status: 'completed',
+    videoUrl: 'https://www.youtube.com/watch?v=directReplay1',
+    replayVideo: {
+      publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc'
+    }
+  };
+
+  assert.equal(serializePublicGame(completedGame, {
+    team: { teamPassConfig: { recordedReplayPaywallEnabled: true } }
+  }).videoUrl, null);
+  assert.equal(serializePublicGame({
+    ...completedGame,
+    teamPassConfig: { recordedReplayPaywallEnabled: true },
+    videoUrl: null
+  }).videoUrl, null);
+  assert.equal(serializePublicGame({
+    ...completedGame,
+    teamPassConfig: { recordedReplayPaywallEnabled: false }
+  }, {
+    team: { teamPassConfig: { recordedReplayPaywallEnabled: true } }
+  }).videoUrl, 'https://www.youtube.com/watch?v=directReplay1');
+});
+
+test('public game projection preserves an active live URL when only archived replay is paywalled', () => {
+  const projection = serializePublicGame({
+    id: 'gated-live',
+    type: 'game',
+    date: '2026-08-01T15:00:00Z',
+    liveStatus: 'live',
+    videoUrl: 'https://www.youtube.com/live/liveFeed123',
+    replayVideo: { publicUrl: 'https://cdn.example.test/private-after-final.mp4' }
+  }, {
+    team: { recordedReplayTeamPassRequired: true }
+  });
+
+  assert.equal(projection.videoUrl, 'https://www.youtube.com/live/liveFeed123');
+  assert.equal(JSON.stringify(projection).includes('private-after-final'), false);
+});
+
+test('public game projection exposes only a valid reset boundary timestamp', () => {
+  const projection = serializePublicGame({
+    id: 'reset-replay',
+    type: 'game',
+    date: '2026-08-01T15:00:00Z',
+    liveResetAt: new Date('2026-08-01T15:30:00Z')
+  });
+  const invalidProjection = serializePublicGame({
+    id: 'invalid-reset',
+    type: 'game',
+    date: '2026-08-01T15:00:00Z',
+    liveResetAt: 'not-a-date'
+  });
+
+  assert.equal(projection.liveResetAt, '2026-08-01T15:30:00.000Z');
+  assert.equal(Object.hasOwn(invalidProjection, 'liveResetAt'), false);
+});
+
 test('shared game projections retain their encoded document path identity', () => {
   const sharedId = `shared_${encodeURIComponent(`tournaments/${'t'.repeat(90)}/sharedGames/${'g'.repeat(90)}`)}`;
   const game = serializePublicGame({

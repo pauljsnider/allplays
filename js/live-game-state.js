@@ -1,4 +1,4 @@
-import { escapeHtml } from './utils.js?v=443359';
+import { escapeHtml } from './utils.js?v=443367';
 import { getDefaultLivePeriod, getGoalSportProfile } from './live-sport-config.js';
 
 const statKeyMap = {
@@ -372,7 +372,9 @@ export function applyViewerEventToState(currentState = {}, event = {}, options =
         event.type === 'goal' &&
         Number.isFinite(Number(existing[event.statKey])) &&
         Number(existing[event.statKey]) > 0;
-      if (!hasSeededOpponentGoalStat) {
+      const hasSeededOpponentStat = options.seededOpponentStatKeys instanceof Set &&
+        options.seededOpponentStatKeys.has(`${event.playerId}:${event.statKey}`);
+      if (!hasSeededOpponentGoalStat && !hasSeededOpponentStat) {
         nextState.opponentStats[event.playerId][event.statKey] =
           (nextState.opponentStats[event.playerId][event.statKey] || 0) + (event.value || 0);
       }

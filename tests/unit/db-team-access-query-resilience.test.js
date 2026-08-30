@@ -18,7 +18,7 @@ const firebaseMocks = vi.hoisted(() => ({
   onSnapshot: vi.fn()
 }));
 
-vi.mock('../../js/firebase.js?v=27', () => ({
+vi.mock('../../js/firebase.js?v=33', () => ({
   db: {},
   auth: firebaseMocks.auth,
   storage: {},
@@ -65,7 +65,7 @@ vi.mock('../../js/firebase.js?v=27', () => ({
 }));
 
 
-vi.mock('../../js/firebase-images.js?v=11', () => ({
+vi.mock('../../js/firebase-images.js?v=18', () => ({
   imageStorage: {},
   ensureImageAuth: vi.fn(),
   requireImageAuth: vi.fn()
@@ -92,7 +92,7 @@ const {
   getGameDayTeamContext,
   getTeams,
   getUserTeamsWithAccess
-} = await import('../../js/db.js?v=4433183');
+} = await import('../../js/db.js?v=4433191');
 
 describe('team access query resilience', () => {
   beforeEach(() => {
@@ -495,7 +495,8 @@ describe('game access query resilience', () => {
           isHome: false,
           teamScore: 4,
           opponentScore: 5,
-          status: 'completed'
+          status: 'completed',
+          liveResetAt: '2026-08-02T18:15:00.000Z'
         }
       }
     });
@@ -505,6 +506,7 @@ describe('game access query resilience', () => {
       teamId: 'team-1',
       homeScore: 5,
       awayScore: 4,
+      liveResetAt: new Date('2026-08-02T18:15:00.000Z'),
       isPublicProjection: true
     }));
     expect(firebaseMocks.getPublicGameProjection).toHaveBeenCalledWith({

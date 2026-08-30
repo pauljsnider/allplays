@@ -357,6 +357,29 @@ function normalizeGameStatus(game = {}) {
   return 'scheduled';
 }
 
+function firstExplicitBoolean(values = []) {
+  return values.find((value) => typeof value === 'boolean');
+}
+
+function isRecordedReplayPaywallEnabled(game = {}, team = {}) {
+  const gameOverride = firstExplicitBoolean([
+    game?.teamPassConfig?.recordedReplayPaywallEnabled,
+    game?.teamPass?.recordedReplayPaywallEnabled,
+    game?.premiumFeatures?.recordedReplayPaywallEnabled,
+    game?.recordedReplayPaywallEnabled,
+    game?.recordedReplayTeamPassRequired
+  ]);
+  if (typeof gameOverride === 'boolean') return gameOverride;
+
+  return firstExplicitBoolean([
+    team?.teamPassConfig?.recordedReplayPaywallEnabled,
+    team?.teamPass?.recordedReplayPaywallEnabled,
+    team?.premiumFeatures?.recordedReplayPaywallEnabled,
+    team?.recordedReplayPaywallEnabled,
+    team?.recordedReplayTeamPassRequired
+  ]) === true;
+}
+
 function finiteScore(value) {
   if (value === null || value === undefined || value === '') return null;
   const score = Number(value);
@@ -398,6 +421,7 @@ function serializePublicGame(game = {}, options = {}) {
   }
 
   const endsAt = toDate(game?.endDate || game?.endsAt || game?.end || game?.dtend);
+  const liveResetAt = toDate(game?.liveResetAt);
   const tournament = serializePublicGameTournament(game?.tournament);
   const opponentStats = serializePublicOpponentStats(game?.opponentStats, options.opponentStatKeys);
   const teamName = nullableText(game?.teamName, 160);
@@ -406,6 +430,20 @@ function serializePublicGame(game = {}, options = {}) {
   const teamPhotoUrl = publicHttpUrl(game?.teamPhotoUrl || game?.homeTeamPhoto);
   const opponentTeamPhoto = publicHttpUrl(game?.opponentTeamPhoto);
   const statSheetPhotoUrl = publicHttpUrl(game?.statSheetPhotoUrl);
+  const replayVideoPublicUrl = publicHttpUrl(
+    game?.replayVideo?.publicUrl ||
+    game?.recordedVideo?.publicUrl ||
+    game?.videoReplay?.publicUrl ||
+    game?.replayVideoPublicUrl
+  );
+  const replayPaywallEnabled = isRecordedReplayPaywallEnabled(game, options.team);
+  const directVideoUrl = publicHttpUrl(game?.videoUrl);
+  // An anonymous projection cannot prove Team Pass entitlement. Keep an active
+  // live feed available, but never project an archived or explicitly recorded
+  // URL from a paywalled game.
+  const videoUrl = replayPaywallEnabled
+    ? (status === 'live' ? directVideoUrl : null)
+    : directVideoUrl || replayVideoPublicUrl;
   const id = compactText(game?.id || game?.gameId, game?.isSharedGame === true ? 1000 : 128);
   return {
     id,
@@ -422,7 +460,8 @@ function serializePublicGame(game = {}, options = {}) {
     competitionType: nullableText(game?.competitionType, 80),
     countsTowardSeasonRecord: game?.countsTowardSeasonRecord !== false,
     summary: nullableText(game?.summary || game?.publicSummary, 2000),
-    videoUrl: publicHttpUrl(game?.videoUrl),
+    videoUrl,
+    ...(liveResetAt ? { liveResetAt: liveResetAt.toISOString() } : {}),
     ...(tournament ? { tournament } : {}),
     ...(Object.keys(opponentStats).length ? { opponentStats } : {}),
     ...(teamName ? { teamName } : {}),
@@ -521,6 +560,7 @@ function buildPublicGamesResponse({
 }) {
   const publicGames = games
     .map((game) => serializePublicGame(game, {
+      team,
       opponentStatKeys: opponentStatKeysByGameId instanceof Map
         ? opponentStatKeysByGameId.get(String(game?.id || game?.gameId || ''))
         : undefined
@@ -630,6 +670,7 @@ module.exports = {
   isPublicGame,
   isStrictPublicTeam,
   isPublicProjectionItemAfterCursor,
+  isRecordedReplayPaywallEnabled,
   normalizeGameStatus,
   normalizeTeamId,
   paginatePublicProjectionItems,

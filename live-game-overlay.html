@@ -1,0 +1,2263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Live Game Broadcast - ALL PLAYS</title>
+  <meta name="description" content="Watch an ALL PLAYS live game with score, clock, plays, lineup, and chat layered over the video.">
+  <link rel="icon" type="image/png" href="img/logo_small.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700;800&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      color-scheme: dark;
+      --ink: #06111f;
+      --ink-deep: #02070d;
+      --glass: rgba(5, 14, 27, 0.74);
+      --glass-strong: rgba(4, 12, 23, 0.91);
+      --line: rgba(185, 222, 228, 0.2);
+      --line-strong: rgba(185, 222, 228, 0.42);
+      --paper: #f4f7f2;
+      --muted: #a9b8bd;
+      --home: #61e4db;
+      --home-deep: #1b9f9a;
+      --away: #ff7a70;
+      --away-deep: #d7474c;
+      --signal: #ffd166;
+      --success: #77e49a;
+      --shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+      --radius-sm: 12px;
+      --radius-md: 18px;
+      --radius-lg: 28px;
+      --top-safe: max(18px, env(safe-area-inset-top));
+      --bottom-safe: max(18px, env(safe-area-inset-bottom));
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: var(--ink-deep);
+    }
+
+    body {
+      color: var(--paper);
+      font-family: "Manrope", ui-sans-serif, system-ui, sans-serif;
+    }
+
+    button,
+    input {
+      font: inherit;
+    }
+
+    button,
+    a {
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    button:focus-visible,
+    a:focus-visible,
+    input:focus-visible,
+    [role="tab"]:focus-visible {
+      outline: 3px solid var(--signal);
+      outline-offset: 3px;
+    }
+
+    .broadcast-stage {
+      position: relative;
+      width: 100%;
+      height: 100dvh;
+      isolation: isolate;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at 50% 42%, rgba(18, 54, 69, 0.34), transparent 48%),
+        linear-gradient(135deg, #071423, #02070d 70%);
+    }
+
+    .video-layer,
+    .video-layer iframe,
+    .video-layer video,
+    .video-fallback,
+    .replay-access-gate {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    .video-layer {
+      z-index: -3;
+      display: grid;
+      place-items: center;
+      background: #000;
+    }
+
+    .video-layer iframe {
+      border: 0;
+      background: #000;
+    }
+
+    .video-layer video {
+      object-fit: contain;
+      background: #000;
+    }
+
+    .video-fallback {
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      text-align: center;
+      background:
+        linear-gradient(120deg, transparent 0 49%, rgba(97, 228, 219, 0.08) 50%, transparent 51%),
+        repeating-linear-gradient(0deg, transparent 0 64px, rgba(255, 255, 255, 0.025) 65px),
+        radial-gradient(ellipse at center, #173444 0%, #07111e 66%);
+    }
+
+    .video-fallback[hidden],
+    .replay-access-gate[hidden] {
+      display: none;
+    }
+
+    .replay-access-gate {
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      text-align: center;
+      background: radial-gradient(circle at center, rgba(24, 43, 56, 0.96), rgba(2, 7, 13, 0.99) 68%);
+    }
+
+    .replay-access-card {
+      width: min(520px, 100%);
+      padding: 28px;
+      border: 1px solid rgba(255, 209, 102, 0.34);
+      border-radius: var(--radius-lg);
+      background: rgba(5, 14, 27, 0.9);
+      box-shadow: var(--shadow);
+    }
+
+    .replay-access-card strong {
+      display: block;
+      margin-top: 8px;
+      font: 700 28px/1.05 "Barlow Condensed", sans-serif;
+    }
+
+    .replay-access-card p {
+      margin: 10px auto 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .video-fallback-mark {
+      display: grid;
+      place-items: center;
+      width: 82px;
+      height: 82px;
+      margin: 0 auto 18px;
+      border: 1px solid var(--line-strong);
+      border-radius: 50%;
+      color: var(--home);
+      font: 700 42px/1 "Barlow Condensed", sans-serif;
+      background: rgba(2, 7, 13, 0.55);
+    }
+
+    .stage-shade {
+      position: absolute;
+      inset: 0;
+      z-index: -2;
+      pointer-events: none;
+      background:
+        linear-gradient(180deg, rgba(0, 0, 0, 0.72), transparent 22%, transparent 67%, rgba(0, 0, 0, 0.8)),
+        linear-gradient(90deg, rgba(0, 0, 0, 0.5), transparent 23%, transparent 77%, rgba(0, 0, 0, 0.5));
+    }
+
+    .stage-grain {
+      position: absolute;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+      opacity: 0.11;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.95' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.6'/%3E%3C/svg%3E");
+    }
+
+    .broadcast-topbar {
+      position: absolute;
+      top: var(--top-safe);
+      left: 24px;
+      right: 24px;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      pointer-events: none;
+    }
+
+    .brand-lockup,
+    .top-actions,
+    .status-cluster {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      pointer-events: auto;
+    }
+
+    .top-actions {
+      position: relative;
+    }
+
+    .brand-lockup {
+      min-width: 44px;
+      min-height: 44px;
+      color: var(--paper);
+      text-decoration: none;
+      font: 700 19px/1 "Barlow Condensed", sans-serif;
+      letter-spacing: 0.11em;
+      text-transform: uppercase;
+    }
+
+    .brand-lockup img {
+      width: 34px;
+      height: 34px;
+      border-radius: 9px;
+      box-shadow: 0 10px 24px rgba(0, 0, 0, 0.28);
+    }
+
+    .status-pill,
+    .icon-button,
+    .provider-button,
+    .panel-toggle,
+    .demo-action {
+      border: 1px solid var(--line);
+      color: var(--paper);
+      background: rgba(3, 11, 21, 0.72);
+      backdrop-filter: blur(18px) saturate(1.15);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22);
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 38px;
+      padding: 0 13px;
+      border-radius: 999px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+    }
+
+    .status-pill[data-status="live"] {
+      color: var(--paper);
+    }
+
+    .status-pill[data-status="live"]::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      margin-right: 8px;
+      border-radius: 50%;
+      background: var(--away);
+      box-shadow: 0 0 0 5px rgba(255, 122, 112, 0.13);
+      animation: live-pulse 1.8s ease-in-out infinite;
+    }
+
+    .icon-button {
+      display: grid;
+      flex: 0 0 44px;
+      place-items: center;
+      width: 44px;
+      height: 44px;
+      padding: 0;
+      border-radius: 50%;
+      cursor: pointer;
+      transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+    }
+
+    .icon-button[hidden],
+    .provider-button[hidden] {
+      display: none;
+    }
+
+    .provider-button {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 44px;
+      padding: 0 14px;
+      border-radius: 999px;
+      color: var(--home);
+      font-size: 11px;
+      font-weight: 700;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+
+    .provider-button svg {
+      width: 17px;
+      height: 17px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.8;
+    }
+
+    .icon-button:hover,
+    .panel-toggle:hover,
+    .demo-action:hover {
+      border-color: var(--line-strong);
+      background: rgba(12, 31, 48, 0.92);
+      transform: translateY(-1px);
+    }
+
+    .icon-button svg {
+      width: 19px;
+      height: 19px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.8;
+    }
+
+    .icon-button[data-muted="true"] .volume-on,
+    .icon-button[data-muted="false"] .volume-off,
+    .icon-button[aria-pressed="true"] .scoreboard-visible,
+    .icon-button[aria-pressed="false"] .scoreboard-hidden,
+    .icon-button[aria-pressed="true"] .fullscreen-enter,
+    .icon-button[aria-pressed="false"] .fullscreen-exit {
+      display: none;
+    }
+
+    .game-actions-menu {
+      position: absolute;
+      top: calc(100% + 10px);
+      right: 0;
+      z-index: 40;
+      width: min(260px, calc(100vw - 28px));
+      padding: 7px;
+      border: 1px solid var(--line-strong);
+      border-radius: 16px;
+      background: rgba(3, 11, 21, 0.98);
+      box-shadow: var(--shadow);
+    }
+
+    .game-actions-menu[hidden] {
+      display: none;
+    }
+
+    .game-menu-action {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+      min-height: 44px;
+      padding: 0 12px;
+      border: 0;
+      border-radius: 10px;
+      color: var(--paper);
+      background: transparent;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 700;
+      text-align: left;
+      text-decoration: none;
+    }
+
+    .game-menu-action:hover,
+    .game-menu-action:focus-visible {
+      color: var(--home);
+      background: rgba(97, 228, 219, 0.09);
+    }
+
+    .game-menu-action[hidden] {
+      display: none;
+    }
+
+    .announcer-controls {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      margin-top: 12px;
+    }
+
+    .announcer-button {
+      min-height: 44px;
+      padding: 0 12px;
+      border: 1px solid rgba(97, 228, 219, 0.3);
+      border-radius: 999px;
+      color: var(--home);
+      background: rgba(3, 11, 21, 0.58);
+      cursor: pointer;
+      font: 700 11px/1 "Barlow Condensed", sans-serif;
+    }
+
+    .announcer-button[aria-pressed="true"] {
+      color: var(--ink);
+      background: var(--home);
+    }
+
+    .announcer-button:disabled {
+      cursor: not-allowed;
+      opacity: 0.5;
+    }
+
+    .announcer-status {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.35;
+    }
+
+    .edge-panel {
+      position: absolute;
+      top: 82px;
+      bottom: 150px;
+      z-index: 12;
+      display: flex;
+      flex-direction: column;
+      width: min(320px, 25vw);
+      min-width: 260px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-lg);
+      background: linear-gradient(155deg, rgba(4, 13, 25, 0.88), rgba(4, 13, 25, 0.64));
+      backdrop-filter: blur(22px) saturate(1.15);
+      box-shadow: var(--shadow);
+      transition: opacity 220ms ease;
+    }
+
+    .edge-panel[data-side="left"] {
+      left: 24px;
+    }
+
+    .edge-panel[data-side="right"] {
+      right: 24px;
+    }
+
+    .edge-panel[hidden] {
+      display: none;
+    }
+
+    .panel-heading {
+      padding: 20px 20px 14px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .panel-kicker {
+      margin: 0 0 5px;
+      color: var(--home);
+      font: 700 12px/1 "Barlow Condensed", sans-serif;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+    }
+
+    .panel-title {
+      margin: 0;
+      font: 700 25px/1.05 "Barlow Condensed", sans-serif;
+      letter-spacing: 0.01em;
+    }
+
+    .panel-copy {
+      margin: 7px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .panel-scroll {
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(97, 228, 219, 0.35) transparent;
+    }
+
+    .event-list {
+      display: grid;
+      gap: 10px;
+      margin: 0;
+      padding: 14px;
+      list-style: none;
+    }
+
+    .event-card {
+      position: relative;
+      padding: 13px 13px 13px 16px;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: var(--radius-sm);
+      background: rgba(255, 255, 255, 0.045);
+    }
+
+    .event-card::before {
+      content: "";
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 3px;
+      background: var(--home);
+    }
+
+    .event-card[data-tone^="away"]::before {
+      background: var(--away);
+    }
+
+    .event-card[data-tone="system"]::before {
+      background: var(--signal);
+    }
+
+    .event-card[data-new="true"] {
+      animation: event-arrive 420ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+    }
+
+    .event-meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 5px;
+      color: var(--muted);
+      font: 700 11px/1 "Barlow Condensed", sans-serif;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    .event-context {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .event-side-tag {
+      display: inline-flex;
+      align-items: center;
+      min-height: 20px;
+      padding: 0 7px;
+      border: 1px solid rgba(97, 228, 219, 0.28);
+      border-radius: 999px;
+      color: var(--home);
+      background: rgba(97, 228, 219, 0.08);
+      letter-spacing: 0.08em;
+    }
+
+    .event-card[data-tone^="away"] .event-side-tag {
+      border-color: rgba(255, 122, 112, 0.3);
+      color: var(--away);
+      background: rgba(255, 122, 112, 0.08);
+    }
+
+    .event-label {
+      color: var(--signal);
+    }
+
+    .event-description {
+      margin: 0;
+      font-size: 13px;
+      font-weight: 650;
+      line-height: 1.42;
+    }
+
+    .event-player {
+      margin: 5px 0 0;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .panel-tabs {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 5px;
+      margin: 14px;
+      padding: 5px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(0, 0, 0, 0.24);
+    }
+
+    .panel-tab {
+      min-width: 44px;
+      min-height: 44px;
+      border: 0;
+      border-radius: 999px;
+      color: var(--muted);
+      background: transparent;
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .panel-tab[aria-selected="true"] {
+      color: var(--ink);
+      background: var(--home);
+    }
+
+    .insight-view {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+      padding: 0 14px 16px;
+    }
+
+    .insight-view[hidden] {
+      display: none;
+    }
+
+    .section-label {
+      margin: 12px 0 8px;
+      color: var(--muted);
+      font: 700 11px/1 "Barlow Condensed", sans-serif;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+
+    .lineup-list,
+    .leader-list,
+    .chat-list {
+      display: grid;
+      gap: 8px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .player-row,
+    .chat-row {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      align-items: center;
+      gap: 10px;
+      min-height: 48px;
+      padding: 9px 10px;
+      border: 1px solid rgba(255, 255, 255, 0.07);
+      border-radius: var(--radius-sm);
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .player-number,
+    .chat-avatar {
+      display: grid;
+      place-items: center;
+      width: 31px;
+      height: 31px;
+      border-radius: 50%;
+      color: var(--ink);
+      background: var(--home);
+      font: 800 13px/1 "Barlow Condensed", sans-serif;
+    }
+
+    img.chat-avatar {
+      object-fit: cover;
+    }
+
+    .player-row strong,
+    .chat-row strong {
+      display: block;
+      overflow: hidden;
+      color: var(--paper);
+      font-size: 12px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .player-row small,
+    .chat-row small {
+      display: block;
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 10px;
+    }
+
+    .player-stat {
+      color: var(--signal);
+      font: 700 13px/1 "Barlow Condensed", sans-serif;
+      text-align: right;
+    }
+
+    .chat-row {
+      grid-template-columns: auto 1fr;
+      align-items: start;
+    }
+
+    .chat-row[data-ai="true"] {
+      border-color: rgba(97, 228, 219, 0.25);
+      background: rgba(97, 228, 219, 0.08);
+    }
+
+    .chat-message {
+      margin: 4px 0 0;
+      color: #d9e0dd;
+      font-size: 11px;
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+      white-space: pre-wrap;
+    }
+
+    .chat-mention {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 6px;
+      border-radius: 999px;
+      color: var(--home);
+      background: rgba(97, 228, 219, 0.16);
+      font: 700 10px/1.3 "Barlow Condensed", sans-serif;
+      white-space: nowrap;
+    }
+
+    .chat-link {
+      color: var(--home);
+      text-underline-offset: 2px;
+    }
+
+    .chat-code {
+      padding: 1px 4px;
+      border-radius: 4px;
+      color: var(--paper);
+      background: rgba(255, 255, 255, 0.1);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    #chat-view:not([hidden]) {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    #chat-view .chat-list {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+    }
+
+    .chat-composer {
+      flex: 0 0 auto;
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid rgba(97, 228, 219, 0.2);
+    }
+
+    .chat-compose-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+    }
+
+    .chat-input-wrap {
+      position: relative;
+      min-width: 0;
+    }
+
+    .chat-input,
+    .chat-send,
+    .chat-sign-in {
+      min-height: 44px;
+      border: 1px solid rgba(97, 228, 219, 0.28);
+      border-radius: 12px;
+      font: 600 12px/1.2 "Barlow Condensed", sans-serif;
+    }
+
+    .chat-input {
+      width: 100%;
+      min-width: 0;
+      padding: 0 12px;
+      color: var(--paper);
+      background: rgba(5, 12, 22, 0.72);
+      outline: none;
+    }
+
+    .chat-input:focus {
+      border-color: var(--signal);
+      box-shadow: 0 0 0 2px rgba(97, 228, 219, 0.15);
+    }
+
+    .chat-input:disabled {
+      cursor: not-allowed;
+      opacity: 0.58;
+    }
+
+    .chat-send,
+    .chat-sign-in {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 15px;
+      color: #041015;
+      background: var(--signal);
+      cursor: pointer;
+      text-decoration: none;
+    }
+
+    .chat-send:disabled {
+      cursor: not-allowed;
+      opacity: 0.48;
+    }
+
+    .chat-helper {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      min-height: 44px;
+      margin: 5px 0 0;
+    }
+
+    .chat-status {
+      margin: 0;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.35;
+    }
+
+    .chat-status[data-tone="error"] {
+      color: #ff9b8f;
+    }
+
+    .chat-status[data-tone="success"] {
+      color: var(--signal);
+    }
+
+    .chat-sign-in {
+      flex: 0 0 auto;
+      padding-inline: 12px;
+    }
+
+    .chat-mention-menu {
+      position: absolute;
+      right: 0;
+      bottom: calc(100% + 7px);
+      left: 0;
+      z-index: 4;
+      overflow: hidden;
+      border: 1px solid rgba(97, 228, 219, 0.32);
+      border-radius: 12px;
+      background: rgba(5, 14, 27, 0.98);
+      box-shadow: 0 16px 38px rgba(0, 0, 0, 0.45);
+    }
+
+    .chat-mention-option {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      width: 100%;
+      min-height: 44px;
+      padding: 7px 10px;
+      border: 0;
+      color: var(--paper);
+      background: transparent;
+      cursor: pointer;
+      text-align: left;
+    }
+
+    .chat-mention-option:hover,
+    .chat-mention-option:focus-visible {
+      background: rgba(97, 228, 219, 0.1);
+    }
+
+    .chat-mention-mark {
+      display: grid;
+      place-items: center;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      color: var(--ink);
+      background: var(--home);
+      font: 800 11px/1 "Barlow Condensed", sans-serif;
+    }
+
+    .chat-secondary,
+    .chat-anon-editor,
+    .chat-thinking,
+    .chat-tip {
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.4;
+    }
+
+    .chat-secondary {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      flex-wrap: wrap;
+    }
+
+    .chat-text-button {
+      min-height: 44px;
+      padding: 0;
+      border: 0;
+      color: var(--home);
+      background: transparent;
+      cursor: pointer;
+      font-size: 10px;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+
+    .chat-anon-editor {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      gap: 6px;
+    }
+
+    .chat-anon-input,
+    .chat-mini-button {
+      min-height: 44px;
+      border: 1px solid rgba(97, 228, 219, 0.28);
+      border-radius: 9px;
+      font: 600 10px/1.2 "Barlow Condensed", sans-serif;
+    }
+
+    .chat-anon-input {
+      min-width: 0;
+      padding: 0 9px;
+      color: var(--paper);
+      background: rgba(5, 12, 22, 0.72);
+    }
+
+    .chat-mini-button {
+      padding: 0 10px;
+      color: var(--ink);
+      background: var(--home);
+      cursor: pointer;
+    }
+
+    .chat-mini-button[data-kind="secondary"] {
+      color: var(--paper);
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    .chat-thinking {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      color: var(--home);
+    }
+
+    .chat-thinking-spinner {
+      width: 13px;
+      height: 13px;
+      border: 2px solid rgba(97, 228, 219, 0.28);
+      border-top-color: var(--home);
+      border-radius: 50%;
+      animation: chat-spin 800ms linear infinite;
+    }
+
+    .chat-tip .chat-mention {
+      vertical-align: middle;
+    }
+
+    .chat-reactions {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(44px, 1fr));
+      gap: 4px;
+      margin-top: 9px;
+      padding-top: 9px;
+      border-top: 1px solid rgba(97, 228, 219, 0.14);
+    }
+
+    .chat-reaction-button {
+      min-width: 44px;
+      min-height: 44px;
+      border: 0;
+      border-radius: 10px;
+      color: var(--paper);
+      background: rgba(255, 255, 255, 0.05);
+      cursor: pointer;
+      font-size: 19px;
+      transition: transform 140ms ease, background 140ms ease;
+    }
+
+    .chat-reaction-button:hover,
+    .chat-reaction-button:focus-visible {
+      background: rgba(97, 228, 219, 0.12);
+      transform: translateY(-2px);
+    }
+
+    .chat-reaction-button:disabled {
+      cursor: not-allowed;
+      opacity: 0.45;
+      transform: none;
+    }
+
+    .chat-mention-menu[hidden],
+    .chat-secondary[hidden],
+    .chat-anon-editor[hidden],
+    .chat-thinking[hidden],
+    .chat-tip[hidden],
+    .chat-reactions[hidden] {
+      display: none;
+    }
+
+    @keyframes chat-spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .empty-state {
+      padding: 24px 12px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+      text-align: center;
+    }
+
+    .reactions-overlay {
+      position: absolute;
+      inset: 0;
+      z-index: 10;
+      overflow: hidden;
+      pointer-events: none;
+    }
+
+    .floating-reaction {
+      position: absolute;
+      left: var(--reaction-x, 50%);
+      bottom: 118px;
+      display: block;
+      font-size: clamp(30px, 4vw, 54px);
+      filter: drop-shadow(0 8px 16px rgba(0, 0, 0, 0.55));
+      animation: reaction-rise 2.2s ease-out forwards;
+      transform: translateX(-50%);
+      will-change: opacity, transform;
+    }
+
+    .hero-event {
+      position: absolute;
+      left: 50%;
+      bottom: 154px;
+      z-index: 11;
+      width: min(460px, calc(100vw - 720px));
+      min-width: 340px;
+      padding: 13px 16px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-md);
+      background: linear-gradient(110deg, rgba(4, 13, 25, 0.92), rgba(4, 13, 25, 0.64));
+      backdrop-filter: blur(20px);
+      box-shadow: var(--shadow);
+      transform: translateX(-50%);
+      transition: opacity 180ms ease, transform 180ms ease;
+    }
+
+    .hero-event[data-tone="home-score"] {
+      border-color: rgba(97, 228, 219, 0.56);
+    }
+
+    .hero-event[data-tone="away-score"] {
+      border-color: rgba(255, 122, 112, 0.56);
+    }
+
+    .hero-event-label {
+      margin: 0 0 4px;
+      color: var(--home);
+      font: 700 11px/1 "Barlow Condensed", sans-serif;
+      letter-spacing: 0.17em;
+      text-transform: uppercase;
+    }
+
+    .hero-event[data-tone^="away"] .hero-event-label {
+      color: var(--away);
+    }
+
+    .hero-event-copy {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 14px;
+    }
+
+    .hero-event-copy p {
+      margin: 0;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .hero-event-time {
+      flex: none;
+      color: var(--muted);
+      font: 700 12px/1 "Barlow Condensed", sans-serif;
+    }
+
+    .score-bug {
+      position: absolute;
+      left: 50%;
+      bottom: calc(var(--bottom-safe) + 34px);
+      z-index: 15;
+      display: grid;
+      grid-template-columns: minmax(165px, 1fr) auto minmax(165px, 1fr);
+      align-items: stretch;
+      width: min(680px, calc(100vw - 64px));
+      min-height: 80px;
+      overflow: hidden;
+      border: 1px solid var(--line-strong);
+      border-radius: 22px;
+      background: var(--glass-strong);
+      backdrop-filter: blur(24px) saturate(1.18);
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.52);
+      transform: translateX(-50%);
+      transition: opacity 180ms ease, transform 180ms ease, visibility 180ms ease;
+    }
+
+    body[data-score-hidden="true"] .score-bug {
+      visibility: hidden;
+      opacity: 0;
+      pointer-events: none;
+      transform: translate(-50%, 18px);
+    }
+
+    body[data-score-hidden="true"]:not([data-replay="true"]) .hero-event {
+      bottom: calc(var(--bottom-safe) + 34px);
+    }
+
+    body[data-score-hidden="true"][data-replay="true"] .hero-event {
+      bottom: calc(var(--bottom-safe) + 104px);
+    }
+
+    body[data-score-hidden="true"] .replay-controls {
+      bottom: calc(var(--bottom-safe) + 34px);
+    }
+
+    .replay-controls {
+      position: absolute;
+      left: 50%;
+      bottom: calc(var(--bottom-safe) + 126px);
+      z-index: 17;
+      display: grid;
+      grid-template-columns: auto auto minmax(160px, 1fr) auto;
+      align-items: center;
+      gap: 10px;
+      width: min(680px, calc(100vw - 64px));
+      min-height: 58px;
+      padding: 9px 12px;
+      border: 1px solid var(--line-strong);
+      border-radius: 18px;
+      background: rgba(3, 11, 21, 0.92);
+      backdrop-filter: blur(24px) saturate(1.18);
+      box-shadow: 0 18px 54px rgba(0, 0, 0, 0.46);
+      transform: translateX(-50%);
+    }
+
+    .replay-controls[hidden] {
+      display: none;
+    }
+
+    .replay-button,
+    .replay-speed {
+      min-height: 44px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--paper);
+      background: rgba(255, 255, 255, 0.06);
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 750;
+    }
+
+    .replay-button {
+      min-width: 68px;
+      padding: 0 14px;
+    }
+
+    .replay-button[data-kind="playback"] {
+      display: grid;
+      place-items: center;
+      width: 44px;
+      min-width: 44px;
+      padding: 0;
+    }
+
+    .replay-control-icon {
+      display: block;
+      width: 20px;
+      height: 20px;
+      fill: currentColor;
+    }
+
+    .replay-button[data-replay-action="play"] .replay-pause-glyph,
+    .replay-button[data-replay-action="pause"] .replay-play-glyph {
+      display: none;
+    }
+
+    .replay-button[data-kind="restart"] {
+      min-width: 44px;
+      padding: 0 10px;
+      font-size: 18px;
+    }
+
+    .replay-button:hover,
+    .replay-speed:hover,
+    .replay-speed[aria-pressed="true"] {
+      border-color: rgba(97, 228, 219, 0.55);
+      color: var(--ink);
+      background: var(--home);
+    }
+
+    .replay-button:disabled,
+    .replay-progress:disabled {
+      cursor: not-allowed;
+      opacity: 0.45;
+    }
+
+    .replay-timeline {
+      display: grid;
+      grid-template-columns: auto minmax(100px, 1fr) auto;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .replay-time {
+      color: var(--muted);
+      font: 700 11px/1 "Barlow Condensed", sans-serif;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .replay-progress {
+      width: 100%;
+      min-height: 44px;
+      accent-color: var(--home);
+      cursor: pointer;
+    }
+
+    .replay-speed-group {
+      display: flex;
+      gap: 4px;
+      min-width: 0;
+      max-width: 100%;
+      overflow-x: auto;
+      overscroll-behavior-x: contain;
+      scrollbar-width: thin;
+    }
+
+    .replay-speed {
+      flex: 0 0 auto;
+      min-width: 44px;
+      min-height: 44px;
+      padding: 0 8px;
+    }
+
+    .replay-scan-status {
+      position: absolute;
+      inset: 0;
+      z-index: 9;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      color: var(--paper);
+      background-color: var(--ink);
+      background-image:
+        radial-gradient(circle at 50% 45%, rgba(97, 228, 219, 0.2), transparent 31%),
+        linear-gradient(115deg, transparent 0 49.5%, rgba(97, 228, 219, 0.07) 50%, transparent 50.5%),
+        repeating-linear-gradient(0deg, transparent 0 72px, rgba(255, 255, 255, 0.025) 73px),
+        linear-gradient(145deg, #0b2534, var(--ink) 58%, var(--ink-deep));
+      text-align: center;
+      pointer-events: none;
+    }
+
+    .replay-scan-card {
+      display: grid;
+      gap: 4px;
+      min-width: min(320px, calc(100vw - 48px));
+      padding: 14px 18px;
+      border: 1px solid rgba(97, 228, 219, 0.48);
+      border-radius: 18px;
+      background: var(--glass-strong);
+      box-shadow: 0 18px 54px rgba(0, 0, 0, 0.45);
+    }
+
+    .replay-scan-status[hidden] {
+      display: none;
+    }
+
+    .replay-scan-status strong {
+      color: var(--home);
+      font: 700 17px/1 "Barlow Condensed", sans-serif;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .replay-scan-status span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    body[data-replay="true"] .hero-event {
+      bottom: 226px;
+    }
+
+    .score-team {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      gap: 14px;
+      min-width: 0;
+      padding: 13px 18px;
+    }
+
+    .score-team > div {
+      min-width: 0;
+    }
+
+    .team-identity {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .team-identity > div {
+      min-width: 0;
+      max-width: 100%;
+      overflow: hidden;
+    }
+
+    .score-team[data-side="away"] .team-identity {
+      flex-direction: row-reverse;
+    }
+
+    .team-photo {
+      flex: none;
+      width: 30px;
+      height: 30px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 50%;
+      object-fit: cover;
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    .team-photo[hidden] {
+      display: none;
+    }
+
+    .score-team[data-side="away"] {
+      grid-template-columns: auto 1fr;
+      text-align: right;
+    }
+
+    .team-name {
+      overflow: hidden;
+      font: 700 19px/1.05 "Barlow Condensed", sans-serif;
+      letter-spacing: 0.02em;
+      text-overflow: ellipsis;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .team-side {
+      display: block;
+      margin-top: 5px;
+      color: var(--home);
+      font: 700 9px/1 "Barlow Condensed", sans-serif;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+    }
+
+    .score-team[data-side="away"] .team-side {
+      color: var(--away);
+    }
+
+    .team-score {
+      min-width: 44px;
+      font: 800 48px/0.85 "Barlow Condensed", sans-serif;
+      text-align: center;
+    }
+
+    .team-score[data-flash="true"] {
+      animation: score-flash 520ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    }
+
+    .clock-block {
+      display: grid;
+      align-content: center;
+      justify-items: center;
+      min-width: 102px;
+      padding: 11px 14px;
+      border-right: 1px solid var(--line);
+      border-left: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .period-label {
+      color: var(--signal);
+      font: 700 11px/1 "Barlow Condensed", sans-serif;
+      letter-spacing: 0.17em;
+      text-transform: uppercase;
+    }
+
+    .game-clock {
+      margin-top: 5px;
+      font: 700 26px/1 "Barlow Condensed", sans-serif;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 0.04em;
+    }
+
+    .panel-dock {
+      position: absolute;
+      right: 24px;
+      bottom: calc(var(--bottom-safe) + 46px);
+      z-index: 18;
+      display: flex;
+      gap: 8px;
+    }
+
+    .panel-toggle {
+      position: relative;
+      min-width: 44px;
+      min-height: 44px;
+      padding: 0 14px;
+      border-radius: 999px;
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .chat-badge {
+      position: absolute;
+      top: 3px;
+      right: 5px;
+      display: grid;
+      place-items: center;
+      min-width: 18px;
+      height: 18px;
+      padding: 0 5px;
+      border-radius: 999px;
+      color: #fff;
+      background: var(--away-deep);
+      font: 800 10px/1 "Barlow Condensed", sans-serif;
+    }
+
+    .chat-badge[hidden] {
+      display: none;
+    }
+
+    .panel-toggle[aria-pressed="true"] {
+      border-color: rgba(97, 228, 219, 0.48);
+      color: var(--ink);
+      background: var(--home);
+    }
+
+    .demo-lab {
+      position: absolute;
+      top: 74px;
+      left: 50%;
+      z-index: 30;
+      width: min(620px, calc(100vw - 48px));
+      padding: 14px;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius-md);
+      background: rgba(3, 11, 21, 0.94);
+      backdrop-filter: blur(26px);
+      box-shadow: var(--shadow);
+      transform: translateX(-50%);
+    }
+
+    .demo-lab[hidden] {
+      display: none;
+    }
+
+    .demo-lab-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 11px;
+    }
+
+    .demo-lab-header h2 {
+      margin: 0;
+      font: 700 21px/1 "Barlow Condensed", sans-serif;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    .demo-lab-header p {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 10px;
+    }
+
+    .demo-actions {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 8px;
+    }
+
+    .demo-action {
+      min-height: 44px;
+      padding: 8px 10px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .demo-action[data-action="home-goal"] {
+      color: var(--home);
+    }
+
+    .demo-action[data-action="away-goal"] {
+      color: var(--away);
+    }
+
+    .mode-note {
+      position: absolute;
+      left: 24px;
+      bottom: calc(var(--bottom-safe) + 49px);
+      z-index: 16;
+      max-width: 210px;
+      color: rgba(244, 247, 242, 0.62);
+      font-size: 10px;
+      line-height: 1.45;
+      pointer-events: none;
+    }
+
+    .connection-message {
+      position: absolute;
+      top: 74px;
+      left: 50%;
+      z-index: 28;
+      max-width: min(620px, calc(100vw - 48px));
+      padding: 10px 14px;
+      border: 1px solid rgba(255, 209, 102, 0.36);
+      border-radius: 999px;
+      color: var(--paper);
+      background: rgba(3, 11, 21, 0.94);
+      box-shadow: var(--shadow);
+      font-size: 11px;
+      text-align: center;
+      transform: translateX(-50%);
+    }
+
+    .connection-message[hidden] {
+      display: none;
+    }
+
+    .action-toast {
+      position: absolute;
+      top: 82px;
+      right: 24px;
+      z-index: 42;
+      max-width: min(320px, calc(100vw - 28px));
+      padding: 11px 14px;
+      border: 1px solid rgba(97, 228, 219, 0.38);
+      border-radius: 999px;
+      color: var(--paper);
+      background: rgba(3, 11, 21, 0.96);
+      box-shadow: var(--shadow);
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .action-toast[hidden] {
+      display: none;
+    }
+
+    body[data-focus="true"] .edge-panel,
+    body[data-focus="true"] .hero-event,
+    body[data-focus="true"] .panel-dock,
+    body[data-focus="true"] .mode-note {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    body[data-focus="true"] .edge-panel[data-side="left"] {
+      transform: translateX(-22px);
+    }
+
+    body[data-focus="true"] .edge-panel[data-side="right"] {
+      transform: translateX(22px);
+    }
+
+    .visually-hidden {
+      position: absolute !important;
+      width: 1px !important;
+      height: 1px !important;
+      padding: 0 !important;
+      margin: -1px !important;
+      overflow: hidden !important;
+      clip: rect(0, 0, 0, 0) !important;
+      white-space: nowrap !important;
+      border: 0 !important;
+    }
+
+    @keyframes live-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.45; }
+    }
+
+    @keyframes event-arrive {
+      from { opacity: 0; transform: translateY(-12px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes score-flash {
+      0% { color: var(--paper); transform: scale(1); }
+      40% { color: var(--signal); transform: scale(1.24); }
+      100% { color: var(--paper); transform: scale(1); }
+    }
+
+    @keyframes reaction-rise {
+      0% { opacity: 0; transform: translate(-50%, 24px) scale(0.72) rotate(-8deg); }
+      18% { opacity: 1; transform: translate(-50%, 0) scale(1.08) rotate(4deg); }
+      100% { opacity: 0; transform: translate(-50%, -46vh) scale(1.22) rotate(-3deg); }
+    }
+
+    @media (max-width: 1180px) {
+      .edge-panel {
+        width: 280px;
+      }
+
+      .hero-event {
+        display: none;
+      }
+
+      .score-bug {
+        width: min(610px, calc(100vw - 620px));
+        min-width: 470px;
+      }
+
+      .score-team {
+        padding-inline: 13px;
+      }
+
+      .team-name {
+        font-size: 16px;
+      }
+    }
+
+    @media (min-width: 901px) and (max-width: 1320px) {
+      body[data-replay="true"] .edge-panel {
+        top: auto;
+        right: auto !important;
+        bottom: calc(var(--bottom-safe) + 74px);
+        left: 50% !important;
+        width: min(720px, calc(100vw - 48px));
+        min-width: 0;
+        height: min(45dvh, 420px, calc(100dvh - var(--bottom-safe) - 330px));
+        border-radius: 22px;
+        transform: translateX(-50%);
+      }
+
+      body[data-replay="true"] .edge-panel[data-side="right"] {
+        height: min(49dvh, 450px, calc(100dvh - var(--bottom-safe) - 330px));
+      }
+
+      body[data-replay="true"] .edge-panel[data-mobile-active="false"] {
+        display: none;
+      }
+
+      body[data-replay="true"] .hero-event,
+      body[data-replay="true"] .mode-note {
+        display: none;
+      }
+
+      body[data-replay="true"] .score-bug {
+        top: 72px;
+        bottom: auto;
+        width: min(680px, calc(100vw - 48px));
+        min-width: 0;
+      }
+
+      body[data-replay="true"] .replay-controls {
+        top: 164px;
+        bottom: auto;
+        width: min(680px, calc(100vw - 48px));
+      }
+
+      body[data-replay="true"][data-score-hidden="true"] .replay-controls {
+        top: 72px;
+      }
+
+      body[data-replay="true"] .panel-dock {
+        right: 24px;
+        bottom: var(--bottom-safe);
+      }
+
+      body[data-replay="true"] .connection-message {
+        top: 238px;
+      }
+    }
+
+    @media (max-width: 900px) {
+      .broadcast-topbar {
+        left: 14px;
+        right: 14px;
+      }
+
+      .brand-lockup span {
+        display: none;
+      }
+
+      .provider-button,
+      #focus-toggle {
+        display: none;
+      }
+
+      .top-actions {
+        gap: 7px;
+      }
+
+      .action-toast {
+        top: 72px;
+        right: 14px;
+      }
+
+      .edge-panel {
+        top: auto;
+        right: 12px !important;
+        bottom: calc(var(--bottom-safe) + 74px);
+        left: 12px !important;
+        width: auto;
+        min-width: 0;
+        height: min(45dvh, 420px);
+        border-radius: 22px;
+      }
+
+      .edge-panel[data-side="right"] {
+        height: min(49dvh, 450px);
+      }
+
+      .edge-panel[data-mobile-active="false"] {
+        display: none;
+      }
+
+      .score-bug {
+        top: 72px;
+        bottom: auto;
+        width: calc(100vw - 24px);
+        min-width: 0;
+        min-height: 66px;
+        border-radius: 18px;
+      }
+
+      .replay-controls {
+        top: 152px;
+        bottom: auto;
+        grid-template-columns: auto auto minmax(0, 1fr);
+        width: calc(100vw - 24px);
+        min-height: 72px;
+        padding: 8px 10px;
+      }
+
+      body[data-replay="true"][data-score-hidden="true"] .replay-controls {
+        top: 72px;
+      }
+
+      .replay-timeline {
+        grid-template-columns: minmax(80px, 1fr) auto;
+      }
+
+      .replay-timeline .replay-time:first-child {
+        display: none;
+      }
+
+      .replay-speed-group {
+        grid-column: 1 / -1;
+        justify-content: center;
+      }
+
+      .score-team {
+        gap: 8px;
+        padding: 9px 11px;
+      }
+
+      .team-name {
+        font-size: 14px;
+      }
+
+      .team-score {
+        min-width: 30px;
+        font-size: 38px;
+      }
+
+      .clock-block {
+        min-width: 78px;
+        padding-inline: 8px;
+      }
+
+      .game-clock {
+        font-size: 22px;
+      }
+
+      .panel-dock {
+        right: 12px;
+        bottom: var(--bottom-safe);
+        left: 12px;
+        justify-content: center;
+      }
+
+      .panel-toggle {
+        flex: 1;
+        max-width: 150px;
+      }
+
+      body[data-replay="true"] .edge-panel {
+        height: min(45dvh, 420px, calc(100dvh - var(--bottom-safe) - 348px));
+      }
+
+      body[data-replay="true"] .edge-panel[data-side="right"] {
+        height: min(49dvh, 450px, calc(100dvh - var(--bottom-safe) - 348px));
+      }
+
+      .mode-note {
+        display: none;
+      }
+
+      .demo-lab {
+        top: 148px;
+      }
+
+      .connection-message {
+        top: 148px;
+      }
+
+      body[data-replay="true"] .connection-message {
+        top: 274px;
+      }
+
+      .demo-actions {
+        grid-template-columns: repeat(2, 1fr);
+      }
+
+      .demo-action:last-child {
+        grid-column: span 2;
+      }
+    }
+
+    @media (max-width: 560px) {
+      .top-actions .status-pill:last-of-type {
+        display: none;
+      }
+
+      #share-game {
+        display: none;
+      }
+
+      #demo-lab-toggle {
+        display: none;
+      }
+
+      .status-cluster {
+        gap: 6px;
+      }
+
+      .status-cluster .status-pill {
+        min-height: 34px;
+        padding-inline: 9px;
+        font-size: 10px;
+      }
+
+      .brand-lockup img {
+        width: 31px;
+        height: 31px;
+      }
+
+      .score-bug {
+        grid-template-columns: minmax(0, 1fr) 70px minmax(0, 1fr);
+      }
+
+      .score-team {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 3px;
+        padding: 7px 8px;
+        text-align: center;
+      }
+
+      .score-team[data-side="away"] {
+        flex-direction: column-reverse;
+        text-align: center;
+      }
+
+      .team-name {
+        display: -webkit-box;
+        width: 100%;
+        overflow: hidden;
+        font-size: 11px;
+        line-height: 1;
+        white-space: normal;
+        overflow-wrap: anywhere;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 2;
+      }
+
+      .team-side {
+        display: none;
+      }
+
+      .team-score {
+        font-size: 34px;
+      }
+
+      .clock-block {
+        min-width: 70px;
+      }
+
+      .panel-heading {
+        padding: 16px 16px 12px;
+      }
+
+      .panel-title {
+        font-size: 22px;
+      }
+
+      .panel-copy {
+        display: none;
+      }
+
+      .panel-tabs {
+        margin-inline: 10px;
+        padding: 4px;
+      }
+
+      .panel-tab {
+        padding-inline: 4px;
+        font-size: 10px;
+      }
+
+      .chat-tip {
+        display: none;
+      }
+
+      .chat-composer {
+        margin-top: 8px;
+        padding-top: 8px;
+      }
+
+      .demo-lab-header p {
+        display: none;
+      }
+    }
+
+    @media (max-width: 900px) and (max-height: 620px) {
+      body[data-panel-layout="compact"][data-panel-open="true"] .score-bug,
+      body[data-panel-layout="compact"][data-panel-open="true"] .replay-controls,
+      body[data-panel-layout="compact"][data-panel-open="true"] .connection-message {
+        visibility: hidden;
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      body[data-panel-layout="compact"][data-panel-open="true"] .score-bug {
+        transition: none;
+      }
+
+      body[data-panel-layout="compact"] .edge-panel,
+      body[data-panel-layout="compact"] .edge-panel[data-side="right"],
+      body[data-replay="true"][data-panel-layout="compact"] .edge-panel,
+      body[data-replay="true"][data-panel-layout="compact"] .edge-panel[data-side="right"] {
+        height: min(55dvh, 320px);
+      }
+
+      .panel-heading {
+        padding: 12px 14px 10px;
+      }
+
+      .panel-title {
+        font-size: 19px;
+      }
+
+      .panel-tabs {
+        margin: 8px 12px;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        scroll-behavior: auto !important;
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+  </style>
+</head>
+<body data-focus="false" data-score-hidden="false" data-panel-layout="wide" data-panel-open="false">
+  <main id="broadcast-stage" class="broadcast-stage" aria-label="ALL PLAYS live game broadcast">
+    <div class="video-layer" aria-label="Game video">
+      <iframe
+        id="overlay-video"
+        title="Game video stream"
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+        allowfullscreen
+        referrerpolicy="strict-origin-when-cross-origin"
+        hidden></iframe>
+      <video id="overlay-recorded-video" controls playsinline hidden></video>
+      <div id="video-fallback" class="video-fallback">
+        <div>
+          <div class="video-fallback-mark" aria-hidden="true">AP</div>
+          <strong>Waiting for the game feed</strong>
+          <p id="video-fallback-copy">The scoreboard and live context stay ready while video connects.</p>
+        </div>
+      </div>
+      <div id="replay-access-gate" class="replay-access-gate" role="status" hidden>
+        <div class="replay-access-card">
+          <span id="replay-access-kicker" class="panel-kicker">Checking access</span>
+          <strong id="replay-access-title">Checking replay access…</strong>
+          <p id="replay-access-copy">The scoreboard and saved game timeline remain available while replay access is verified.</p>
+        </div>
+      </div>
+    </div>
+    <div class="stage-shade" aria-hidden="true"></div>
+    <div class="stage-grain" aria-hidden="true"></div>
+    <div id="reactions-overlay" class="reactions-overlay" aria-hidden="true"></div>
+
+    <header class="broadcast-topbar">
+      <div class="status-cluster">
+        <a class="brand-lockup" href="index.html" aria-label="ALL PLAYS home">
+          <img src="img/logo_small.png" alt="">
+          <span>ALL PLAYS LIVE</span>
+        </a>
+        <span id="live-status" class="status-pill" data-status="loading">Loading</span>
+      </div>
+      <div class="top-actions">
+        <span id="viewer-count" class="status-pill">0 watching</span>
+        <a id="watch-replay" class="provider-button" href="#" aria-label="Watch replay" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+          <span>Watch replay</span>
+        </a>
+        <a id="open-stream" class="provider-button" href="#" target="_blank" rel="noopener noreferrer" aria-label="Open video on provider" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5M19 5l-8 8M19 13v5a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></svg>
+          <span id="open-stream-label">Open video</span>
+        </a>
+        <button id="share-game" class="icon-button" type="button" aria-label="Share game">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a3 3 0 1 0-2.83-4M6 15a3 3 0 1 0 0 6 3 3 0 0 0 0-6Zm12-1a3 3 0 1 0 0 6 3 3 0 0 0 0-6ZM8.6 16.5l6.8-3.8M8.6 7.5l6.8 3.8"/></svg>
+        </button>
+        <button id="mute-toggle" class="icon-button" type="button" aria-label="Unmute video" data-muted="true" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <g class="volume-on"><path d="M4 9v6h4l5 4V5L8 9H4M16 9a4 4 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11"/></g>
+            <g class="volume-off"><path d="M4 9v6h4l5 4V5L8 9H4M17 9l5 5M22 9l-5 5"/></g>
+          </svg>
+        </button>
+        <button id="game-actions-toggle" class="icon-button" type="button" aria-label="More game actions" aria-expanded="false" aria-controls="game-actions-menu">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h.01M12 12h.01M19 12h.01" stroke-linecap="round" stroke-width="3"/></svg>
+        </button>
+        <div id="game-actions-menu" class="game-actions-menu" role="menu" hidden>
+          <button id="share-game-menu" class="game-menu-action" type="button" role="menuitem">Share game <span aria-hidden="true">↗</span></button>
+          <button id="scoreboard-menu-toggle" class="game-menu-action" type="button" role="menuitemcheckbox" aria-checked="false"><span id="scoreboard-menu-label">Hide scoreboard</span> <span aria-hidden="true">—</span></button>
+          <a id="watch-replay-menu" class="game-menu-action" href="#" role="menuitem" hidden>Watch replay <span aria-hidden="true">→</span></a>
+          <a id="match-report-link" class="game-menu-action" href="#" role="menuitem">Match report <span aria-hidden="true">→</span></a>
+          <a id="game-details-link" class="game-menu-action" href="#" role="menuitem">Game details <span aria-hidden="true">→</span></a>
+          <a id="provider-menu-link" class="game-menu-action" href="#" target="_blank" rel="noopener noreferrer" role="menuitem" hidden><span id="provider-menu-label">Open video</span> <span aria-hidden="true">↗</span></a>
+        </div>
+        <button id="demo-lab-toggle" class="icon-button" type="button" aria-label="Open preview controls" aria-expanded="false" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6M10 3v5l-5 9a2 2 0 0 0 1.8 3h10.4A2 2 0 0 0 19 17l-5-9V3M8 14h8"/></svg>
+        </button>
+        <button id="focus-toggle" class="icon-button" type="button" aria-label="Enter video focus mode" aria-pressed="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/></svg>
+        </button>
+        <button id="scoreboard-toggle" class="icon-button" type="button" aria-label="Hide scoreboard" aria-pressed="false" aria-controls="score-bug" title="Hide scoreboard">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <g class="scoreboard-visible"><path d="M4 6h16v12H4zM9 9H7v6h2M15 9h2v6h-2M12 8v8"/></g>
+            <g class="scoreboard-hidden"><path d="M4 6h16v12H4zM7 9l10 6M17 9 7 15"/></g>
+          </svg>
+        </button>
+        <button id="fullscreen-toggle" class="icon-button" type="button" aria-label="Enter fullscreen" aria-pressed="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <g class="fullscreen-enter"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/></g>
+            <g class="fullscreen-exit"><path d="M3 8h5V3M21 8h-5V3M3 16h5v5M21 16h-5v5"/></g>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <aside id="plays-panel" class="edge-panel" data-side="left" data-mobile-active="false" aria-labelledby="plays-heading">
+      <div class="panel-heading">
+        <p class="panel-kicker">Live timeline</p>
+        <h1 id="plays-heading" class="panel-title">Every moment, in context</h1>
+        <p class="panel-copy">New plays arrive at the top without taking your eyes off the field.</p>
+        <div class="announcer-controls">
+          <button id="announcer-toggle" class="announcer-button" type="button" aria-pressed="false">Listen live</button>
+          <button id="announcer-pause" class="announcer-button" type="button" aria-pressed="false" hidden>Pause</button>
+        </div>
+        <p id="announcer-status" class="announcer-status">Opt in to hear new plays during live games and replay.</p>
+      </div>
+      <div class="panel-scroll">
+        <ol id="event-list" class="event-list" aria-live="polite" aria-relevant="additions">
+          <li class="empty-state">Connecting to the live event feed…</li>
+        </ol>
+      </div>
+    </aside>
+
+    <aside id="insights-panel" class="edge-panel" data-side="right" data-mobile-active="false" aria-labelledby="insights-heading">
+      <div class="panel-heading">
+        <p class="panel-kicker">Game intelligence</p>
+        <h2 id="insights-heading" class="panel-title">Who is shaping the game</h2>
+      </div>
+      <div class="panel-tabs" role="tablist" aria-label="Game intelligence views">
+        <button id="lineup-tab" class="panel-tab" type="button" role="tab" aria-selected="true" aria-controls="lineup-view">Lineup</button>
+        <button id="leaders-tab" class="panel-tab" type="button" role="tab" aria-selected="false" aria-controls="leaders-view">Leaders</button>
+        <button id="opponent-tab" class="panel-tab" type="button" role="tab" aria-selected="false" aria-controls="opponent-view">Opponent</button>
+        <button id="chat-tab" class="panel-tab" type="button" role="tab" aria-selected="false" aria-controls="chat-view">Chat</button>
+      </div>
+      <section id="lineup-view" class="insight-view" role="tabpanel" aria-labelledby="lineup-tab">
+        <h3 class="section-label">On the field</h3>
+        <ul id="on-field-list" class="lineup-list"></ul>
+        <h3 class="section-label">Bench</h3>
+        <ul id="bench-list" class="lineup-list"></ul>
+      </section>
+      <section id="leaders-view" class="insight-view" role="tabpanel" aria-labelledby="leaders-tab" hidden>
+        <h3 class="section-label">Game leaders</h3>
+        <ul id="leader-list" class="leader-list"></ul>
+      </section>
+      <section id="opponent-view" class="insight-view" role="tabpanel" aria-labelledby="opponent-tab" hidden>
+        <h3 class="section-label">Opponent stats</h3>
+        <ul id="opponent-list" class="leader-list"></ul>
+      </section>
+      <section id="chat-view" class="insight-view" role="tabpanel" aria-labelledby="chat-tab" hidden>
+        <h3 class="section-label">Live conversation</h3>
+        <ul id="chat-list" class="chat-list" aria-live="polite" aria-relevant="additions"></ul>
+        <form id="chat-form" class="chat-composer" hidden novalidate>
+          <div class="chat-compose-row">
+            <div class="chat-input-wrap">
+              <label class="visually-hidden" for="chat-input">Live chat message</label>
+              <input id="chat-input" class="chat-input" type="text" maxlength="2000" autocomplete="off" placeholder="Sign in to join chat" aria-describedby="chat-status chat-tip" aria-controls="mention-menu" aria-autocomplete="list" aria-expanded="false" disabled>
+              <div id="mention-menu" class="chat-mention-menu" role="listbox" aria-label="Chat mentions" hidden>
+                <button id="mention-allplays" class="chat-mention-option" type="button" role="option" aria-selected="true">
+                  <span class="chat-mention-mark" aria-hidden="true">AP</span>
+                  <span>@ALL PLAYS</span>
+                </button>
+              </div>
+            </div>
+            <button id="chat-send" class="chat-send" type="submit" disabled>Send</button>
+          </div>
+          <p id="chat-anon-notice" class="chat-secondary" hidden>
+            Chatting as <strong id="anon-name">Fan1234</strong>
+            <button id="anon-change-btn" class="chat-text-button" type="button">Change name</button>
+          </p>
+          <div id="anon-edit" class="chat-anon-editor" hidden>
+            <label class="visually-hidden" for="anon-input">Chat display name</label>
+            <input id="anon-input" class="chat-anon-input" type="text" maxlength="20" autocomplete="nickname" placeholder="Enter a display name">
+            <button id="anon-save" class="chat-mini-button" type="button">Save</button>
+            <button id="anon-cancel" class="chat-mini-button" data-kind="secondary" type="button">Cancel</button>
+          </div>
+          <div id="ai-thinking" class="chat-thinking" role="status" hidden>
+            <span class="chat-thinking-spinner" aria-hidden="true"></span>
+            <span>ALL PLAYS is thinking…</span>
+          </div>
+          <p id="chat-tip" class="chat-tip">Tip: tag <span class="chat-mention">@ALL PLAYS</span> to ask the live assistant.</p>
+          <div class="chat-helper">
+            <p id="chat-status" class="chat-status" role="status">Checking chat access…</p>
+            <a id="chat-sign-in" class="chat-sign-in" href="login.html" hidden>Sign in</a>
+          </div>
+          <div id="chat-reactions" class="chat-reactions" aria-label="Live reactions" hidden>
+            <button class="chat-reaction-button" type="button" data-chat-reaction="fire" aria-label="Send fire reaction">🔥</button>
+            <button class="chat-reaction-button" type="button" data-chat-reaction="clap" aria-label="Send clap reaction">👏</button>
+            <button class="chat-reaction-button" type="button" data-chat-reaction="wow" aria-label="Send wow reaction">😲</button>
+            <button class="chat-reaction-button" type="button" data-chat-reaction="heart" aria-label="Send heart reaction">❤️</button>
+            <button class="chat-reaction-button" type="button" data-chat-reaction="hundred" aria-label="Send hundred reaction">💯</button>
+          </div>
+        </form>
+      </section>
+    </aside>
+
+    <section id="hero-event" class="hero-event" aria-live="polite" data-tone="system">
+      <p id="hero-event-label" class="hero-event-label">Latest play</p>
+      <div class="hero-event-copy">
+        <p id="hero-event-description">Waiting for the first play…</p>
+        <span id="hero-event-time" class="hero-event-time">—</span>
+      </div>
+    </section>
+
+    <div id="replay-scan-status" class="replay-scan-status" role="status" hidden>
+      <div class="replay-scan-card">
+        <strong id="replay-scan-speed">50× game scan</strong>
+        <span>Video catches up when paused</span>
+      </div>
+    </div>
+
+    <section id="replay-controls" class="replay-controls" aria-label="Replay controls" hidden>
+      <button id="replay-restart" class="replay-button" data-kind="restart" type="button" aria-label="Restart replay">↺</button>
+      <button id="replay-play" class="replay-button" data-kind="playback" data-replay-action="play" type="button" aria-label="Play replay">
+        <svg class="replay-control-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path class="replay-play-glyph" d="M8 5v14l11-7z"></path>
+          <path class="replay-pause-glyph" d="M7 5h4v14H7zm6 0h4v14h-4z"></path>
+        </svg>
+      </button>
+      <div class="replay-timeline">
+        <time id="replay-current" class="replay-time" datetime="PT0M0S">0:00</time>
+        <input id="replay-progress" class="replay-progress" type="range" min="0" max="100" step="0.1" value="0" aria-label="Replay position">
+        <time id="replay-duration" class="replay-time" datetime="PT0M0S">0:00</time>
+      </div>
+      <div class="replay-speed-group" role="group" aria-label="Replay speed">
+        <button class="replay-speed" type="button" data-replay-speed="1" aria-pressed="true">1×</button>
+        <button class="replay-speed" type="button" data-replay-speed="2" aria-pressed="false">2×</button>
+        <button class="replay-speed" type="button" data-replay-speed="3" aria-pressed="false">3×</button>
+        <button class="replay-speed" type="button" data-replay-speed="4" aria-pressed="false">4×</button>
+        <button class="replay-speed" type="button" data-replay-speed="10" aria-pressed="false">10×</button>
+        <button class="replay-speed" type="button" data-replay-speed="20" aria-pressed="false">20×</button>
+        <button class="replay-speed" type="button" data-replay-speed="50" aria-pressed="false">50×</button>
+      </div>
+    </section>
+
+    <section id="score-bug" class="score-bug" aria-label="Scoreboard">
+      <div class="score-team" data-side="home">
+        <div class="team-identity">
+          <img id="home-team-photo" class="team-photo" alt="" hidden>
+          <div>
+            <div id="home-team-name" class="team-name">Home</div>
+            <span class="team-side">Home</span>
+          </div>
+        </div>
+        <span id="home-score" class="team-score">0</span>
+      </div>
+      <div class="clock-block">
+        <span id="period" class="period-label">H1</span>
+        <time id="game-clock" class="game-clock" datetime="PT0M0S">0:00</time>
+      </div>
+      <div class="score-team" data-side="away">
+        <span id="away-score" class="team-score">0</span>
+        <div class="team-identity">
+          <img id="away-team-photo" class="team-photo" alt="" hidden>
+          <div>
+            <div id="away-team-name" class="team-name">Opponent</div>
+            <span class="team-side">Away</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <nav class="panel-dock" aria-label="Overlay panels">
+      <button class="panel-toggle" type="button" data-panel="plays" aria-controls="plays-panel" aria-pressed="true">Plays</button>
+      <button class="panel-toggle" type="button" data-panel="insights" aria-controls="insights-panel" aria-pressed="true">Lineup</button>
+      <button class="panel-toggle" type="button" data-panel="chat" aria-controls="insights-panel" aria-pressed="false">
+        Chat
+        <span id="chat-badge" class="chat-badge" aria-label="Unread chat messages" hidden>0</span>
+      </button>
+    </nav>
+
+    <p id="mode-note" class="mode-note">Broadcast view · score and context update from the live game without modifying the source video.</p>
+    <div id="connection-message" class="connection-message" role="status" hidden></div>
+    <div id="action-toast" class="action-toast" role="status" hidden></div>
+
+    <section id="demo-lab" class="demo-lab" aria-labelledby="demo-lab-heading" hidden>
+      <div class="demo-lab-header">
+        <div>
+          <h2 id="demo-lab-heading">Preview controls</h2>
+          <p>Trigger moments to test hierarchy, motion, and panel behavior.</p>
+        </div>
+        <button id="demo-lab-close" class="icon-button" type="button" aria-label="Close preview controls">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+      <div class="demo-actions">
+        <button class="demo-action" type="button" data-action="home-goal">Vipers goal</button>
+        <button class="demo-action" type="button" data-action="away-goal">Union goal</button>
+        <button class="demo-action" type="button" data-action="next-play">Next play</button>
+        <button class="demo-action" type="button" data-action="toggle-clock">Pause clock</button>
+        <button class="demo-action" type="button" data-action="reset">Reset demo</button>
+      </div>
+    </section>
+  </main>
+
+  <span id="screen-reader-update" class="visually-hidden" aria-live="polite"></span>
+  <script type="module" src="js/live-game-overlay.js?v=34"></script>
+</body>
+</html>

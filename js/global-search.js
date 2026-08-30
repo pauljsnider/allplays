@@ -1,5 +1,5 @@
-import { escapeHtml } from './utils.js?v=443359';
-import { discoverPublicTeams } from './db.js?v=4433183';
+import { escapeHtml } from './utils.js?v=443367';
+import { discoverPublicTeams } from './db.js?v=4433191';
 import { canUserDiscoverPlayerInSearch, filterSearchableTeams } from './global-search-visibility.js?v=44335';
 import { isTeamActive } from './team-visibility.js?v=2';
 import {
@@ -17,7 +17,7 @@ import {
     where,
     orderBy,
     limit
-} from './firebase.js?v=27';
+} from './firebase.js?v=33';
 
 let cachedAccessibleTeams = null;
 let cachedAccessibleTeamsLoadedAt = 0;
