@@ -877,13 +877,64 @@ describe('live game overlay model', () => {
                 homeScore: 0,
                 awayScore: 0,
                 clientCreatedAt: new Date(4_500).toISOString(),
-                createdAt: 4_200
+                createdAt: 3_800
             }
         ], stateTools);
 
         expect(state.homeScore).toBe(1);
         expect(state.events.map((event) => event.id)).toEqual(['second-epoch-goal']);
         expect(state.lastResetEventBoundaryMs).toBe(4_000);
+    });
+
+    it('acknowledges a markerless game boundary before the next reset', () => {
+        const state = createOverlayState({
+            game: {
+                homeScore: 0,
+                awayScore: 0,
+                liveStatus: 'live',
+                liveResetAt: 2_000
+            }
+        });
+        reconcileOverlayLiveEvents(state, [], stateTools);
+
+        state.lastResetAt = 4_000;
+        applyOverlayGame(state, {
+            homeScore: 0,
+            awayScore: 0,
+            liveResetAt: 4_000
+        });
+        reconcileOverlayLiveEvents(state, [], stateTools);
+        expect(state.lastResetEventBoundaryMs).toBe(4_000);
+
+        reconcileOverlayLiveEvents(state, [
+            {
+                id: 'between-resets',
+                type: 'goal',
+                description: 'Stale goal between resets',
+                homeScore: 7,
+                awayScore: 0,
+                createdAt: 4_500
+            },
+            {
+                id: 'next-reset',
+                type: 'reset',
+                homeScore: 0,
+                awayScore: 0,
+                createdAt: 5_000
+            },
+            {
+                id: 'next-epoch-goal',
+                type: 'goal',
+                description: 'Goal after next reset',
+                homeScore: 1,
+                awayScore: 0,
+                createdAt: 5_100
+            }
+        ], stateTools);
+
+        expect(state.homeScore).toBe(1);
+        expect(state.events.map((event) => event.id)).toEqual(['next-epoch-goal']);
+        expect(state.lastResetAt).toBe(5_000);
     });
 
     it('sorts replacement chat and supplies a realistic local fixture', () => {

@@ -621,6 +621,9 @@ export function reconcileOverlayLiveEvents(state, incomingEvents = [], stateTool
         // marker may have arrived first and already become the active epoch.
         boundaryResetEvent = latestResetEvent(unseenResetEvents) ||
             resetEvents.find((event) => event.id === state.lastResetEventId) || null;
+        if (toFiniteNumber(boundaryResetEvent?.serverCreatedAtMs) > configuredResetBoundaryMs) {
+            incomingResetBoundaryMs = toFiniteNumber(boundaryResetEvent?.serverCreatedAtMs);
+        }
     } else {
         // With the configured epoch already acknowledged, an unseen reset is a
         // distinct restart even if its game-document update has not arrived.
@@ -728,7 +731,7 @@ export function reconcileOverlayLiveEvents(state, incomingEvents = [], stateTool
     if (boundaryResetEvent) {
         state.lastResetEventId = boundaryResetEvent.id;
         state.lastResetEventBoundaryMs = resetBoundaryMs;
-    } else if (!resetEpochInitialized) {
+    } else if (!resetEpochInitialized || configuredBoundaryAdvanced) {
         state.lastResetEventBoundaryMs = configuredResetBoundaryMs;
     }
 
