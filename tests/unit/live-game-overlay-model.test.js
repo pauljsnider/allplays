@@ -686,6 +686,42 @@ describe('live game overlay model', () => {
         expect(state.events.map((event) => event.id)).toEqual(['fresh-device-behind']);
     });
 
+    it('applies a reset marker before server-confirmed events from the new epoch', () => {
+        const state = createOverlayState({
+            game: {
+                homeScore: 0,
+                awayScore: 0,
+                liveStatus: 'live',
+                liveResetAt: 2_000
+            }
+        });
+
+        reconcileOverlayLiveEvents(state, [
+            {
+                id: 'fresh-device-behind',
+                type: 'goal',
+                description: 'Fresh goal',
+                homeScore: 1,
+                awayScore: 0,
+                clientCreatedAt: new Date(1_000).toISOString(),
+                createdAt: 2_100
+            },
+            {
+                id: 'reset-marker',
+                type: 'reset',
+                description: 'Game reset',
+                homeScore: 0,
+                awayScore: 0,
+                clientCreatedAt: new Date(2_500).toISOString(),
+                createdAt: 2_200
+            }
+        ], stateTools);
+
+        expect(state.homeScore).toBe(1);
+        expect(state.awayScore).toBe(0);
+        expect(state.events.map((event) => event.id)).toEqual(['fresh-device-behind']);
+    });
+
     it('sorts replacement chat and supplies a realistic local fixture', () => {
         const state = createOverlayState();
         replaceOverlayChat(state, [

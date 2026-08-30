@@ -938,6 +938,10 @@ test('real mode follows canonical game, lineup, clock, reset, reaction, and pass
         id: 'fresh-skewed-goal', type: 'goal', description: 'Fresh goal survives tracker clock skew',
         homeScore: 1, awayScore: 0, period: 'H1', gameClockMs: 2000,
         clientCreatedAt: new Date(1000).toISOString(), createdAt: 2100
+    }, {
+        id: 'reset-1', type: 'reset', description: 'Game reset', homeScore: 0, awayScore: 0,
+        period: 'H1', gameClockMs: 0, onCourt: ['p9'], bench: ['p4'],
+        clientCreatedAt: new Date(2500).toISOString(), createdAt: 2200
     }]));
     await expect(page.locator('#home-score')).toHaveText('1');
     await expect(page.locator('#event-list')).not.toContainText('Old goal must stay hidden');

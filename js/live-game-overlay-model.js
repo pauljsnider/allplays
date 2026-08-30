@@ -583,7 +583,17 @@ export function reconcileOverlayLiveEvents(state, incomingEvents = [], stateTool
         }
         : createLiveBaseline(state.game || {}, state);
     state.liveBaseline = baseline;
-    const resetBoundaryMs = Math.max(toFiniteNumber(state.lastResetAt), toFiniteNumber(baseline.lastResetAt));
+    const configuredResetBoundaryMs = Math.max(
+        toFiniteNumber(state.lastResetAt),
+        toFiniteNumber(baseline.lastResetAt)
+    );
+    const incomingResetBoundaryMs = configuredResetBoundaryMs
+        ? 0
+        : orderedEvents.reduce((latestResetAt, event) => {
+            if (event.type !== 'reset') return latestResetAt;
+            return Math.max(latestResetAt, toFiniteNumber(event.serverCreatedAtMs));
+        }, 0);
+    const resetBoundaryMs = configuredResetBoundaryMs || incomingResetBoundaryMs;
     const stateAfterNewerReset = resetBoundaryMs > toFiniteNumber(baseline.lastResetAt);
     const effectiveBaseline = stateAfterNewerReset
         ? {
@@ -599,10 +609,20 @@ export function reconcileOverlayLiveEvents(state, incomingEvents = [], stateTool
             lastResetAt: resetBoundaryMs
         }
         : baseline;
-    const resetEligibleEvents = orderedEvents.filter((event) => {
-        if (!resetBoundaryMs || event.type === 'reset' || !event.serverCreatedAtMs) return true;
-        return event.serverCreatedAtMs >= resetBoundaryMs;
-    });
+    const resetEligibleEvents = orderedEvents
+        .filter((event) => {
+            if (!resetBoundaryMs || !event.serverCreatedAtMs) return true;
+            return event.serverCreatedAtMs >= resetBoundaryMs;
+        })
+        .sort((left, right) => {
+            const leftIsReset = left.type === 'reset';
+            const rightIsReset = right.type === 'reset';
+            if (leftIsReset !== rightIsReset) return leftIsReset ? -1 : 1;
+            return 0;
+        })
+        .map((event) => event.type === 'reset' && resetBoundaryMs
+            ? { ...event, createdAt: resetBoundaryMs }
+            : event);
     const visibleEvents = stateTools.collectVisibleLiveEventsSequentially(resetEligibleEvents, {
         seenIds: new Set(),
         resetBoundaryMs
@@ -645,7 +665,7 @@ export function reconcileOverlayLiveEvents(state, incomingEvents = [], stateTool
 
     visibleEvents.forEach((event) => {
         if (event.type === 'reset') {
-            const resetAt = event.serverCreatedAtMs || event.createdAtMs || Date.now();
+            const resetAt = resetBoundaryMs || event.serverCreatedAtMs || event.createdAtMs || Date.now();
             workingState.lastResetAt = Math.max(workingState.lastResetAt || 0, resetAt);
             workingState = stateTools.applyResetEventState(workingState, event);
             workingState.eventIds = snapshotEventIds;
