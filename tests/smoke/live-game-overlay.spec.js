@@ -1165,6 +1165,7 @@ test('a completed live game exposes replay actions and shares the replay URL wit
 
     await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
     await expect(page.locator('#watch-replay')).toBeHidden();
+    await expect.poll(() => page.evaluate(() => typeof window.__OVERLAY_GAME_CALLBACK__)).toBe('function');
     await page.evaluate(() => window.__OVERLAY_GAME_CALLBACK__({
         id: 'game-1', opponent: 'Sporting Blue', homeScore: 3, awayScore: 2,
         period: 'H2', liveClockMs: 720000, liveStatus: 'completed', status: 'final',
