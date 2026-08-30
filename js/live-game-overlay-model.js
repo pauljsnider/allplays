@@ -608,11 +608,12 @@ export function reconcileOverlayLiveEvents(state, incomingEvents = [], stateTool
         boundaryResetEvent = latestResetEvent(resetEvents);
         incomingResetBoundaryMs = toFiniteNumber(boundaryResetEvent?.serverCreatedAtMs);
     } else if (!resetEpochInitialized) {
-        // The first snapshot can contain the marker published shortly after the
-        // game document's authoritative reset time. Associate a single marker
-        // with that boundary; two markers prove a later reset also occurred.
+        // Reset persistence publishes the marker before advancing the game
+        // document boundary. A marker newer than that boundary therefore opens
+        // a new epoch even when cleanup has already removed the prior marker
+        // and this is the viewer's first snapshot.
         boundaryResetEvent = latestResetEvent(resetEvents);
-        if (resetEvents.length > 1) {
+        if (toFiniteNumber(boundaryResetEvent?.serverCreatedAtMs) > configuredResetBoundaryMs) {
             incomingResetBoundaryMs = toFiniteNumber(boundaryResetEvent?.serverCreatedAtMs);
         }
     } else if (configuredBoundaryAdvanced) {

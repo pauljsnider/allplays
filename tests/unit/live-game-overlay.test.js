@@ -68,7 +68,7 @@ describe('live game overlay page', () => {
         expect(source).toContain("import('./live-game-state.js?v=39')");
         expect(source).toContain('stateTools.applyResetEventState');
         expect(source).toContain('reconcileOverlayLiveEvents');
-        expect(source).toContain("from './live-game-overlay-model.js?v=21'");
+        expect(source).toContain("from './live-game-overlay-model.js?v=22'");
         expect(source).toContain('resolvePublicProjectionVideoOptions');
         expect(source).toContain('getSafeOverlayProviderUrl(publicUrl)');
         expect(modelSource).toContain('stateTools.applyViewerEventToState');
