@@ -965,6 +965,27 @@ test('real mode follows canonical game, lineup, clock, reset, reaction, and pass
     await expect(page.locator('#home-score')).toHaveText('1');
     await expect(page.locator('#event-list')).not.toContainText('Goal before the second reset');
     await expect(page.locator('#event-list')).toContainText('Goal after the second reset');
+
+    // Firebase can publish the reset event, a new play, and then the game's
+    // liveResetAt update. The later game callback acknowledges the same reset;
+    // it must not erase the play that already arrived after the marker.
+    const markerFirstSnapshot = [{
+        id: 'reset-3', type: 'reset', description: 'Third game reset', homeScore: 0, awayScore: 0,
+        period: 'H1', gameClockMs: 0, createdAt: 4000
+    }, {
+        id: 'post-marker-goal', type: 'goal', description: 'Goal after marker before game update',
+        homeScore: 1, awayScore: 0, period: 'H1', gameClockMs: 1000, createdAt: 4100
+    }];
+    await page.evaluate((events) => window.__OVERLAY_EVENT_CALLBACK__(events), markerFirstSnapshot);
+    await expect(page.locator('#event-list')).toContainText('Goal after marker before game update');
+
+    await page.evaluate(() => window.__OVERLAY_GAME_CALLBACK__({
+        id: 'game-1', opponent: 'Sporting Blue', homeScore: 0, awayScore: 0,
+        period: 'H1', liveClockMs: 0, liveStatus: 'live', liveViewerCount: 25,
+        liveResetAt: 4200, videoUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc'
+    }));
+    await expect(page.locator('#home-score')).toHaveText('1');
+    await expect(page.locator('#event-list')).toContainText('Goal after marker before game update');
     expect(pageErrors).toEqual([]);
 });
 

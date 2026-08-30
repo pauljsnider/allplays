@@ -883,7 +883,93 @@ describe('live game overlay model', () => {
 
         expect(state.homeScore).toBe(1);
         expect(state.events.map((event) => event.id)).toEqual(['second-epoch-goal']);
+        expect(state.lastResetEventBoundaryMs).toBe(3_800);
+        expect(state.lastAcknowledgedGameResetBoundaryMs).toBe(4_000);
+    });
+
+    it('accepts a delayed marker after a markerless game-boundary snapshot', () => {
+        const state = createOverlayState({
+            game: {
+                homeScore: 0,
+                awayScore: 0,
+                liveStatus: 'live',
+                liveResetAt: 2_000
+            }
+        });
+        reconcileOverlayLiveEvents(state, [], stateTools);
+
+        applyOverlayGame(state, {
+            homeScore: 0,
+            awayScore: 0,
+            liveResetAt: 4_000
+        });
+        reconcileOverlayLiveEvents(state, [], stateTools);
         expect(state.lastResetEventBoundaryMs).toBe(4_000);
+        expect(state.pendingGameResetBoundaryMs).toBe(4_000);
+
+        reconcileOverlayLiveEvents(state, [{
+            id: 'delayed-reset-marker',
+            type: 'reset',
+            homeScore: 0,
+            awayScore: 0,
+            createdAt: 3_800
+        }, {
+            id: 'post-reset-goal',
+            type: 'goal',
+            description: 'Goal after delayed reset marker',
+            homeScore: 1,
+            awayScore: 0,
+            createdAt: 4_100
+        }], stateTools);
+
+        expect(state.homeScore).toBe(1);
+        expect(state.events.map((event) => event.id)).toEqual(['post-reset-goal']);
+        expect(state.lastResetEventBoundaryMs).toBe(3_800);
+        expect(state.pendingGameResetBoundaryMs).toBe(0);
+    });
+
+    it('preserves post-marker plays when the corresponding game boundary arrives later', () => {
+        const state = createOverlayState({
+            game: {
+                homeScore: 0,
+                awayScore: 0,
+                liveStatus: 'live',
+                liveResetAt: 2_000
+            }
+        });
+        reconcileOverlayLiveEvents(state, [], stateTools);
+        const secondReset = {
+            id: 'second-reset',
+            type: 'reset',
+            homeScore: 0,
+            awayScore: 0,
+            createdAt: 3_000
+        };
+        const postResetGoal = {
+            id: 'post-reset-goal',
+            type: 'goal',
+            description: 'Goal after reset marker',
+            homeScore: 1,
+            awayScore: 0,
+            createdAt: 3_050
+        };
+
+        reconcileOverlayLiveEvents(state, [secondReset, postResetGoal], stateTools);
+        expect(state.homeScore).toBe(1);
+        expect(state.lastResetEventBoundaryMs).toBe(3_000);
+
+        state.lastResetAt = 3_100;
+        applyOverlayGame(state, {
+            homeScore: 0,
+            awayScore: 0,
+            liveResetAt: 3_100
+        });
+        reconcileOverlayLiveEvents(state, [secondReset, postResetGoal], stateTools);
+
+        expect(state.homeScore).toBe(1);
+        expect(state.events.map((event) => event.id)).toEqual(['post-reset-goal']);
+        expect(state.lastResetEventBoundaryMs).toBe(3_000);
+        expect(state.lastAcknowledgedGameResetBoundaryMs).toBe(3_100);
     });
 
     it('acknowledges a markerless game boundary before the next reset', () => {
@@ -905,6 +991,7 @@ describe('live game overlay model', () => {
         });
         reconcileOverlayLiveEvents(state, [], stateTools);
         expect(state.lastResetEventBoundaryMs).toBe(4_000);
+        expect(state.lastAcknowledgedGameResetBoundaryMs).toBe(4_000);
 
         reconcileOverlayLiveEvents(state, [
             {
