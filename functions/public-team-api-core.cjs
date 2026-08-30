@@ -422,6 +422,7 @@ function serializePublicGame(game = {}, options = {}) {
 
   const endsAt = toDate(game?.endDate || game?.endsAt || game?.end || game?.dtend);
   const liveResetAt = toDate(game?.liveResetAt);
+  const liveResetEventId = compactText(game?.liveResetEventId, 128);
   const tournament = serializePublicGameTournament(game?.tournament);
   const opponentStats = serializePublicOpponentStats(game?.opponentStats, options.opponentStatKeys);
   const teamName = nullableText(game?.teamName, 160);
@@ -462,6 +463,7 @@ function serializePublicGame(game = {}, options = {}) {
     summary: nullableText(game?.summary || game?.publicSummary, 2000),
     videoUrl,
     ...(liveResetAt ? { liveResetAt: liveResetAt.toISOString() } : {}),
+    ...(liveResetEventId ? { liveResetEventId } : {}),
     ...(tournament ? { tournament } : {}),
     ...(Object.keys(opponentStats).length ? { opponentStats } : {}),
     ...(teamName ? { teamName } : {}),
