@@ -557,17 +557,21 @@ test('public game projection exposes only a valid reset boundary timestamp', () 
     id: 'reset-replay',
     type: 'game',
     date: '2026-08-01T15:00:00Z',
-    liveResetAt: new Date('2026-08-01T15:30:00Z')
+    liveResetAt: new Date('2026-08-01T15:30:00Z'),
+    liveResetEventId: 'reset-public-1'
   });
   const invalidProjection = serializePublicGame({
     id: 'invalid-reset',
     type: 'game',
     date: '2026-08-01T15:00:00Z',
-    liveResetAt: 'not-a-date'
+    liveResetAt: 'not-a-date',
+    liveResetEventId: 'x'.repeat(129)
   });
 
   assert.equal(projection.liveResetAt, '2026-08-01T15:30:00.000Z');
+  assert.equal(projection.liveResetEventId, 'reset-public-1');
   assert.equal(Object.hasOwn(invalidProjection, 'liveResetAt'), false);
+  assert.equal(invalidProjection.liveResetEventId, 'x'.repeat(128));
 });
 
 test('shared game projections retain their encoded document path identity', () => {

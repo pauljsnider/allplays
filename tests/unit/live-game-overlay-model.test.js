@@ -657,7 +657,8 @@ describe('live game overlay model', () => {
                 homeScore: 0,
                 awayScore: 0,
                 liveStatus: 'live',
-                liveResetAt: 2_000
+                liveResetAt: 2_000,
+                liveResetEventId: 'first-reset'
             }
         });
 
@@ -858,7 +859,8 @@ describe('live game overlay model', () => {
         applyOverlayGame(state, {
             homeScore: 0,
             awayScore: 0,
-            liveResetAt: 4_000
+            liveResetAt: 4_000,
+            liveResetEventId: 'second-reset'
         });
         reconcileOverlayLiveEvents(state, [
             firstReset,
@@ -893,7 +895,8 @@ describe('live game overlay model', () => {
                 homeScore: 0,
                 awayScore: 0,
                 liveStatus: 'live',
-                liveResetAt: 2_000
+                liveResetAt: 2_000,
+                liveResetEventId: 'first-reset'
             }
         });
         reconcileOverlayLiveEvents(state, [], stateTools);
@@ -901,7 +904,8 @@ describe('live game overlay model', () => {
         applyOverlayGame(state, {
             homeScore: 0,
             awayScore: 0,
-            liveResetAt: 4_000
+            liveResetAt: 4_000,
+            liveResetEventId: 'delayed-reset-marker'
         });
         reconcileOverlayLiveEvents(state, [], stateTools);
         expect(state.lastResetEventBoundaryMs).toBe(4_000);
@@ -934,7 +938,8 @@ describe('live game overlay model', () => {
                 homeScore: 0,
                 awayScore: 0,
                 liveStatus: 'live',
-                liveResetAt: 2_000
+                liveResetAt: 2_000,
+                liveResetEventId: 'first-reset'
             }
         });
         reconcileOverlayLiveEvents(state, [], stateTools);
@@ -962,7 +967,8 @@ describe('live game overlay model', () => {
         applyOverlayGame(state, {
             homeScore: 0,
             awayScore: 0,
-            liveResetAt: 3_100
+            liveResetAt: 3_100,
+            liveResetEventId: 'second-reset'
         });
         reconcileOverlayLiveEvents(state, [secondReset, postResetGoal], stateTools);
 
@@ -970,6 +976,64 @@ describe('live game overlay model', () => {
         expect(state.events.map((event) => event.id)).toEqual(['post-reset-goal']);
         expect(state.lastResetEventBoundaryMs).toBe(3_000);
         expect(state.lastAcknowledgedGameResetBoundaryMs).toBe(3_100);
+    });
+
+    it('uses reset identity to distinguish a later markerless reset from an acknowledgement', () => {
+        const state = createOverlayState({
+            game: {
+                homeScore: 0,
+                awayScore: 0,
+                liveStatus: 'live',
+                liveResetAt: 2_000,
+                liveResetEventId: 'reset-zero'
+            }
+        });
+        reconcileOverlayLiveEvents(state, [], stateTools);
+
+        reconcileOverlayLiveEvents(state, [{
+            id: 'reset-one',
+            type: 'reset',
+            homeScore: 0,
+            awayScore: 0,
+            createdAt: 3_000
+        }, {
+            id: 'between-resets',
+            type: 'goal',
+            description: 'Goal after reset one',
+            homeScore: 1,
+            awayScore: 0,
+            createdAt: 3_100
+        }], stateTools);
+        expect(state.homeScore).toBe(1);
+        expect(state.lastResetEventId).toBe('reset-one');
+
+        // Reset one's game update failed. Reset two then failed to publish its
+        // marker but did update the game with its distinct reserved identity.
+        applyOverlayGame(state, {
+            homeScore: 0,
+            awayScore: 0,
+            liveResetAt: 4_000,
+            liveResetEventId: 'reset-two'
+        });
+        reconcileOverlayLiveEvents(state, [{
+            id: 'reset-one',
+            type: 'reset',
+            homeScore: 0,
+            awayScore: 0,
+            createdAt: 3_000
+        }, {
+            id: 'between-resets',
+            type: 'goal',
+            description: 'Goal after reset one',
+            homeScore: 1,
+            awayScore: 0,
+            createdAt: 3_100
+        }], stateTools);
+
+        expect(state.homeScore).toBe(0);
+        expect(state.events).toEqual([]);
+        expect(state.lastResetEventBoundaryMs).toBe(4_000);
+        expect(state.lastAcknowledgedGameResetEventId).toBe('reset-two');
     });
 
     it('acknowledges a markerless game boundary before the next reset', () => {

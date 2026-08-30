@@ -678,7 +678,7 @@
         import { resolveOpponentDisplayName, resolveLiveStatConfig, resolveLiveStatColumns, resolveGoalSportTrackerProfile } from './js/live-game-state.js?v=39';
         import { createFieldState, setPlayerFieldStatus, startFieldClock, pauseFieldClock, getPlayerFieldElapsedMs, getLiveLineup } from './js/live-tracker-field-status.js?v=1';
         import { persistThenPublishLiveLineup } from './js/live-tracker-lineup-publish.js?v=1';
-        import { summarizePersistedTrackingState, buildTrackLiveResetUpdate, resolveTrackLiveClockResume, buildTrackLiveResumeState, runTrackLiveResetPersistence } from './js/track-live-state.js?v=4';
+        import { summarizePersistedTrackingState, buildTrackLiveResetUpdate, resolveTrackLiveClockResume, buildTrackLiveResumeState, runTrackLiveResetPersistence } from './js/track-live-state.js?v=5';
         import { getDefaultLivePeriod, getSportPeriodLabels, resolveLiveSport, isFootballSport } from './js/live-sport-config.js?v=3';
         import { applyGoalSportScore, buildGoalSportEvent, resolveGoalSportScorer } from './js/live-scorekeeping-goal-sports.js?v=2';
         import { resolveSafeProfilePhotoWriteUrl } from './js/safe-image-url.js?v=1';
@@ -2451,7 +2451,8 @@
 
                             const resetLineup = getLiveLineup(gameState.playerFieldStatus, players);
                             await runTrackLiveResetPersistence({
-                                publishResetEvent: () => broadcastLiveEvent(currentTeamId, currentGameId, {
+                                publishResetEvent: ({ resetEventId }) => broadcastLiveEvent(currentTeamId, currentGameId, {
+                                    ...(resetEventId ? { eventId: resetEventId } : {}),
                                     type: 'reset',
                                     period: gameState.currentPeriod,
                                     gameClockMs: 0,
@@ -2463,7 +2464,7 @@
                                     description: `Tracker restarted from zero. Cleared: ${persistedState.summary}.`,
                                     createdBy: currentUser?.uid || null
                                 }),
-                                updateResetState: async () => {
+                                updateResetState: async ({ resetEventId }) => {
                                     await updateGame(
                                         currentTeamId,
                                         currentGameId,
@@ -2472,7 +2473,8 @@
                                                 currentGame,
                                                 currentConfig,
                                                 period: gameState.currentPeriod,
-                                                liveLineup: resetLineup
+                                                liveLineup: resetLineup,
+                                                liveResetEventId: resetEventId
                                             }),
                                             ...(gameState.isBaseballScorekeeping ? { liveBaseballState: gameState.baseballState } : {}),
                                             ...(isFootballTrackingConfig() ? { liveFootballState: gameState.footballState } : {})
@@ -2639,7 +2641,8 @@
 
                 const liveLineup = getLiveLineup(gameState.playerFieldStatus, players);
                 await runTrackLiveResetPersistence({
-                    publishResetEvent: () => broadcastLiveEvent(currentTeamId, currentGameId, {
+                    publishResetEvent: ({ resetEventId }) => broadcastLiveEvent(currentTeamId, currentGameId, {
+                        ...(resetEventId ? { eventId: resetEventId } : {}),
                         type: 'reset',
                         period: gameState.currentPeriod,
                         gameClockMs: 0,
@@ -2651,13 +2654,14 @@
                         description: 'Game reset',
                         createdBy: currentUser?.uid || null
                     }),
-                    updateResetState: async () => {
+                    updateResetState: async ({ resetEventId }) => {
                         await updateGame(currentTeamId, currentGameId, {
                             ...buildTrackLiveResetUpdate({
                                 currentGame,
                                 currentConfig,
                                 period: gameState.currentPeriod,
-                                liveLineup
+                                liveLineup,
+                                liveResetEventId: resetEventId
                             }),
                             opponentStats: gameState.opponentStats,
                             ...(gameState.isBaseballScorekeeping ? { liveBaseballState: gameState.baseballState } : {}),
@@ -2705,13 +2709,14 @@
 
             try {
                 await runTrackLiveResetPersistence({
-                    updateResetState: async () => {
+                    updateResetState: async ({ resetEventId }) => {
                         await updateGame(currentTeamId, currentGameId, {
                             ...buildTrackLiveResetUpdate({
                                 currentGame,
                                 currentConfig,
                                 period: gameState.currentPeriod,
-                                liveLineup: getLiveLineup(gameState.playerFieldStatus, players)
+                                liveLineup: getLiveLineup(gameState.playerFieldStatus, players),
+                                liveResetEventId: resetEventId
                             }),
                             status: 'scheduled',
                             liveBaseballState: gameState.isBaseballScorekeeping ? createBaseballLiveState() : null,

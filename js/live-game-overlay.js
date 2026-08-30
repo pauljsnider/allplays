@@ -17,7 +17,7 @@ import {
     reconcileOverlayLiveEvents,
     resolvePublicProjectionVideoOptions,
     replaceOverlayChat
-} from './live-game-overlay-model.js?v=24';
+} from './live-game-overlay-model.js?v=25';
 import {
     buildReplaySessionState,
     collectReplayEventWindow,
@@ -35,6 +35,7 @@ import {
 import { buildGameWatchShareUrl } from './game-share-links.js?v=1';
 import { shareOrCopy } from './utils.js?v=443367';
 import { createPlayAnnouncer } from './live-game-announcer.js?v=1';
+import { loadPublicGameResetIdentity } from './live-game-overlay-reset-identity.js?v=1';
 
 const elements = {
     body: document.body,
@@ -2258,8 +2259,23 @@ async function startRealMode(params) {
             return;
         }
 
-        uiState.unsubscribers.push(database.subscribeGame(teamId, gameId, (updatedGame) => {
+        let gameSubscriptionRevision = 0;
+        uiState.unsubscribers.push(database.subscribeGame(teamId, gameId, async (updatedGame) => {
             if (!updatedGame) return;
+            const subscriptionRevision = ++gameSubscriptionRevision;
+            const projectedResetAt = getTimestampMs(updatedGame.liveResetAt);
+            if (updatedGame.isPublicProjection === true && projectedResetAt && !updatedGame.liveResetEventId) {
+                try {
+                    const identity = await loadPublicGameResetIdentity(teamId, gameId);
+                    if (subscriptionRevision !== gameSubscriptionRevision) return;
+                    if (identity?.resetAtMs === projectedResetAt) {
+                        updatedGame = { ...updatedGame, liveResetEventId: identity.resetEventId };
+                    }
+                } catch (error) {
+                    console.warn('Overlay reset identity could not be enriched:', error);
+                }
+            }
+            if (subscriptionRevision !== gameSubscriptionRevision) return;
             try {
                 const previousClock = captureLiveClockState();
                 const resetAt = getTimestampMs(updatedGame.liveResetAt);

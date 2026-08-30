@@ -982,10 +982,36 @@ test('real mode follows canonical game, lineup, clock, reset, reaction, and pass
     await page.evaluate(() => window.__OVERLAY_GAME_CALLBACK__({
         id: 'game-1', opponent: 'Sporting Blue', homeScore: 0, awayScore: 0,
         period: 'H1', liveClockMs: 0, liveStatus: 'live', liveViewerCount: 25,
-        liveResetAt: 4200, videoUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc'
+        liveResetAt: 4200, liveResetEventId: 'reset-3',
+        videoUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc'
     }));
     await expect(page.locator('#home-score')).toHaveText('1');
     await expect(page.locator('#event-list')).toContainText('Goal after marker before game update');
+
+    // A later reset can fail in the opposite direction: its marker write is
+    // missing while the game document succeeds. Its reserved identity must
+    // keep that new boundary from being mistaken for reset-3's acknowledgement.
+    const nextMarkerSnapshot = [
+        ...markerFirstSnapshot,
+        {
+            id: 'reset-4', type: 'reset', description: 'Fourth game reset', homeScore: 0, awayScore: 0,
+            period: 'H1', gameClockMs: 0, createdAt: 5000
+        }, {
+            id: 'between-partial-resets', type: 'goal', description: 'Goal before markerless fifth reset',
+            homeScore: 1, awayScore: 0, period: 'H1', gameClockMs: 1000, createdAt: 5100
+        }
+    ];
+    await page.evaluate((events) => window.__OVERLAY_EVENT_CALLBACK__(events), nextMarkerSnapshot);
+    await expect(page.locator('#event-list')).toContainText('Goal before markerless fifth reset');
+
+    await page.evaluate(() => window.__OVERLAY_GAME_CALLBACK__({
+        id: 'game-1', opponent: 'Sporting Blue', homeScore: 0, awayScore: 0,
+        period: 'H1', liveClockMs: 0, liveStatus: 'live', liveViewerCount: 25,
+        liveResetAt: 6000, liveResetEventId: 'reset-5',
+        videoUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc'
+    }));
+    await expect(page.locator('#home-score')).toHaveText('0');
+    await expect(page.locator('#event-list')).not.toContainText('Goal before markerless fifth reset');
     expect(pageErrors).toEqual([]);
 });
 
