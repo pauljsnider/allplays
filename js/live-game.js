@@ -164,6 +164,8 @@ const els = {
   replayPlay: q('#replay-play'),
   replayGameLink: q('#replay-game-link'),
   replayReportLink: q('#replay-report-link'),
+  overlayViewLink: q('#overlay-view-link'),
+  overlayViewLinkLabel: q('#overlay-view-link-label'),
   watchReportBtn: q('#watch-report-btn'),
   shareGameBtn: q('#share-game-btn'),
 
@@ -265,12 +267,21 @@ function buildShareText(mode, url) {
 
 function updateShareButton() {
   if (!els.shareGameBtn) return;
-  const isReport = state.isReplay || state.game?.status === 'completed' || state.game?.liveStatus === 'completed';
+  const isReport = state.isReplay || state.game?.status === 'completed' || state.game?.status === 'final' || state.game?.liveStatus === 'completed';
   els.shareGameBtn.textContent = isReport ? 'Share Report' : 'Share';
+  if (els.overlayViewLink && state.teamId && state.gameId) {
+    const replayParam = isReport ? '&replay=true' : '';
+    els.overlayViewLink.href = `live-game-overlay.html?teamId=${encodeURIComponent(state.teamId)}&gameId=${encodeURIComponent(state.gameId)}${replayParam}`;
+    els.overlayViewLink.classList.remove('hidden');
+    els.overlayViewLink.setAttribute('aria-label', isReport ? 'Watch Replay' : 'Watch Live');
+    if (els.overlayViewLinkLabel) {
+      els.overlayViewLinkLabel.textContent = isReport ? 'Watch Replay' : 'Watch Live';
+    }
+  }
   if (els.replayReportLink) {
     const reportUrl = `game.html#teamId=${state.teamId}&gameId=${state.gameId}`;
     els.replayReportLink.href = reportUrl;
-    els.replayReportLink.classList.toggle('hidden', !(state.isReplay || state.game?.status === 'completed' || state.game?.liveStatus === 'completed'));
+    els.replayReportLink.classList.toggle('hidden', !(state.isReplay || state.game?.status === 'completed' || state.game?.status === 'final' || state.game?.liveStatus === 'completed'));
   }
   if (els.watchReportBtn) {
     els.watchReportBtn.href = `game.html#teamId=${state.teamId}&gameId=${state.gameId}`;
@@ -2897,7 +2908,7 @@ async function init() {
   initAnnouncerControls();
   if (els.shareGameBtn) {
     els.shareGameBtn.addEventListener('click', async () => {
-      const isReport = state.isReplay || state.game?.status === 'completed' || state.game?.liveStatus === 'completed';
+      const isReport = state.isReplay || state.game?.status === 'completed' || state.game?.status === 'final' || state.game?.liveStatus === 'completed';
       const url = isReport
         ? buildGameReportShareUrl({ teamId: state.teamId, gameId: state.gameId })
         : buildGameWatchShareUrl({ teamId: state.teamId, gameId: state.gameId });
