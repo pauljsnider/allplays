@@ -794,7 +794,7 @@ export async function uploadStatSheetPhoto(teamId, gameId, file, options = {}) {
         : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=443368'; // Import resolveZip
+import { resolveZip } from './utils.js?v=443369'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -4434,10 +4434,26 @@ export function subscribeGame(teamId, gameId, callback, onError, options = {}) {
     let stopped = false;
     let projectionTimer = null;
     let projectionPollingStarted = false;
+    let projectionPollRevision = 0;
+    let latestSettledProjectionPollRevision = 0;
     const pollProjection = async () => {
+        if (stopped) return;
+        // Order completed requests without suppressing every response when the
+        // projection service is consistently slower than the polling interval.
+        const pollRevision = ++projectionPollRevision;
+        let projectedGame;
         try {
-            const projectedGame = await getPublicGameProjection(teamId, gameId);
-            if (!stopped) callback(projectedGame);
+            projectedGame = await getPublicGameProjection(teamId, gameId);
+        } catch (error) {
+            if (stopped || pollRevision <= latestSettledProjectionPollRevision) return;
+            latestSettledProjectionPollRevision = pollRevision;
+            if (typeof onError === 'function') onError(error);
+            return;
+        }
+        if (stopped || pollRevision <= latestSettledProjectionPollRevision) return;
+        latestSettledProjectionPollRevision = pollRevision;
+        try {
+            callback(projectedGame);
         } catch (error) {
             if (!stopped && typeof onError === 'function') onError(error);
         }

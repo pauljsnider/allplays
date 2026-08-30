@@ -242,7 +242,7 @@ describe('edit roster tracking status matrix wiring', () => {
     it('uses rules-compatible tracking item names in the selector and summary', () => {
         const source = readEditRoster();
 
-        expect(source).toContain("from './js/db.js?v=4433192'");
+        expect(source).toContain("from './js/db.js?v=4433193'");
         expect(source).not.toContain("from './js/db.js?v=71'");
         expect(source).toContain("from './js/tracking-status-admin.js?v=18'");
         expect(source).toContain('item.title || item.name || item.id');
