@@ -33,9 +33,8 @@ import {
     resolveSafeProfilePhotoWriteUrl
 } from './safe-image-url.js?v=1';
 import { buildGameWatchShareUrl } from './game-share-links.js?v=1';
-import { shareOrCopy } from './utils.js?v=443367';
+import { shareOrCopy } from './utils.js?v=443368';
 import { createPlayAnnouncer } from './live-game-announcer.js?v=1';
-import { loadPublicGameResetIdentity } from './live-game-overlay-reset-identity.js?v=1';
 
 const elements = {
     body: document.body,
@@ -221,7 +220,7 @@ function usesCompactPanelLayout() {
 }
 
 function loadOverlayDatabase() {
-    return import('./db.js?v=4433191');
+    return import('./db.js?v=4433192');
 }
 
 function getTimestampMs(value) {
@@ -1105,7 +1104,7 @@ async function initializeChatComposer(database, teamId, gameId) {
 
     try {
         const [authTools, chatTools] = await Promise.all([
-            import('./auth.js?v=4433195'),
+            import('./auth.js?v=4433196'),
             import('./live-game-chat.js?v=2')
         ]);
         uiState.chatServices = {
@@ -1934,7 +1933,7 @@ async function startDemoReplayMode(params) {
         { controllableReplay: true }
     );
     uiState.videoDurationMs = 15_000;
-    const stateTools = await import('./live-game-state.js?v=39');
+    const stateTools = await import('./live-game-state.js?v=40');
     await loadReplaySnapshot({
         getLiveEvents: async () => replayEvents,
         getLiveChatHistory: async () => replayChat,
@@ -2086,7 +2085,7 @@ async function startRealMode(params) {
         const [database, videoTools, stateTools] = await Promise.all([
             loadOverlayDatabase(),
             import('./live-game-video.js?v=443315'),
-            import('./live-game-state.js?v=39')
+            import('./live-game-state.js?v=40')
         ]);
         uiState.optionalTeamStatus = 'pending';
         const teamPromise = loadWithBoundedRetry(
@@ -2259,23 +2258,8 @@ async function startRealMode(params) {
             return;
         }
 
-        let gameSubscriptionRevision = 0;
-        uiState.unsubscribers.push(database.subscribeGame(teamId, gameId, async (updatedGame) => {
+        uiState.unsubscribers.push(database.subscribeGame(teamId, gameId, (updatedGame) => {
             if (!updatedGame) return;
-            const subscriptionRevision = ++gameSubscriptionRevision;
-            const projectedResetAt = getTimestampMs(updatedGame.liveResetAt);
-            if (updatedGame.isPublicProjection === true && projectedResetAt && !updatedGame.liveResetEventId) {
-                try {
-                    const identity = await loadPublicGameResetIdentity(teamId, gameId);
-                    if (subscriptionRevision !== gameSubscriptionRevision) return;
-                    if (identity?.resetAtMs === projectedResetAt) {
-                        updatedGame = { ...updatedGame, liveResetEventId: identity.resetEventId };
-                    }
-                } catch (error) {
-                    console.warn('Overlay reset identity could not be enriched:', error);
-                }
-            }
-            if (subscriptionRevision !== gameSubscriptionRevision) return;
             try {
                 const previousClock = captureLiveClockState();
                 const resetAt = getTimestampMs(updatedGame.liveResetAt);

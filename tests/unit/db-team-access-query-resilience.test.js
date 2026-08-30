@@ -92,7 +92,7 @@ const {
   getGameDayTeamContext,
   getTeams,
   getUserTeamsWithAccess
-} = await import('../../js/db.js?v=4433191');
+} = await import('../../js/db.js?v=4433192');
 
 describe('team access query resilience', () => {
   beforeEach(() => {
@@ -496,7 +496,8 @@ describe('game access query resilience', () => {
           teamScore: 4,
           opponentScore: 5,
           status: 'completed',
-          liveResetAt: '2026-08-02T18:15:00.000Z'
+          liveResetAt: '2026-08-02T18:15:00.000Z',
+          liveResetEventId: 'reset-public-2'
         }
       }
     });
@@ -507,6 +508,7 @@ describe('game access query resilience', () => {
       homeScore: 5,
       awayScore: 4,
       liveResetAt: new Date('2026-08-02T18:15:00.000Z'),
+      liveResetEventId: 'reset-public-2',
       isPublicProjection: true
     }));
     expect(firebaseMocks.getPublicGameProjection).toHaveBeenCalledWith({

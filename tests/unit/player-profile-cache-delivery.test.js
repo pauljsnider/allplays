@@ -10,13 +10,13 @@ describe('player profile cache delivery', () => {
     it('bumps externally loaded entry modules whose Firebase imports changed', () => {
         const entryModules = {
             'admin.html': 'js/admin.js?v=443357',
-            'certificates.html': 'js/certificates/studio.js?v=443360',
+            'certificates.html': 'js/certificates/studio.js?v=443361',
             'live-game.html': 'js/live-game.js?v=443346',
             'live-tracker.html': 'js/live-tracker.js?v=443325',
-            'team-fees.html': 'js/team-fees-admin.js?v=443358',
+            'team-fees.html': 'js/team-fees-admin.js?v=443359',
             'team-media.html': 'js/team-media.js?v=44542',
             'track-basketball.html': 'js/track-basketball.js?v=443324',
-            'tracking-items.html': 'js/tracking-items-admin.js?v=443356'
+            'tracking-items.html': 'js/tracking-items-admin.js?v=443357'
         };
 
         for (const [pagePath, expectedEntryModule] of Object.entries(entryModules)) {
@@ -25,10 +25,10 @@ describe('player profile cache delivery', () => {
     });
 
     it('delivers updated shared utility and nested entry-module imports', () => {
-        expect(read('js/utils.js')).toContain("import('./global-search.js?v=443349')");
-        expect(read('drills.html')).toContain('js/team-admin-banner.js?v=443343');
-        expect(read('game-day.html')).toContain('js/team-admin-banner.js?v=443343');
-        expect(read('js/certificates/studio.js')).toContain('team-admin-banner.js?v=443343');
-        expect(read('team.html')).toContain('js/team-staff-permissions.js?v=443341');
+        expect(read('js/utils.js')).toContain("import('./global-search.js?v=443350')");
+        expect(read('drills.html')).toContain('js/team-admin-banner.js?v=443344');
+        expect(read('game-day.html')).toContain('js/team-admin-banner.js?v=443344');
+        expect(read('js/certificates/studio.js')).toContain('team-admin-banner.js?v=443344');
+        expect(read('team.html')).toContain('js/team-staff-permissions.js?v=443342');
     });
 });

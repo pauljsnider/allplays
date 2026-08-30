@@ -794,7 +794,7 @@ export async function uploadStatSheetPhoto(teamId, gameId, file, options = {}) {
         : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=443367'; // Import resolveZip
+import { resolveZip } from './utils.js?v=443368'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -4109,6 +4109,9 @@ function mapPublicGameProjection(game = {}, teamId = '') {
         opponentTeamPhoto: game?.opponentTeamPhoto || null,
         statSheetPhotoUrl: game?.statSheetPhotoUrl || null,
         liveResetAt: liveResetAt && !Number.isNaN(liveResetAt.getTime()) ? liveResetAt : null,
+        liveResetEventId: typeof game?.liveResetEventId === 'string'
+            ? game.liveResetEventId.trim().slice(0, 128)
+            : '',
         isSharedGame: game?.isSharedGame === true || String(game?.id || '').startsWith('shared_'),
         isPublicProjection: true
     };
