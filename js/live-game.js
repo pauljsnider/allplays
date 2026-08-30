@@ -267,7 +267,7 @@ function buildShareText(mode, url) {
 
 function updateShareButton() {
   if (!els.shareGameBtn) return;
-  const isReport = state.isReplay || state.game?.status === 'completed' || state.game?.liveStatus === 'completed';
+  const isReport = state.isReplay || state.game?.status === 'completed' || state.game?.status === 'final' || state.game?.liveStatus === 'completed';
   els.shareGameBtn.textContent = isReport ? 'Share Report' : 'Share';
   if (els.overlayViewLink && state.teamId && state.gameId) {
     const replayParam = isReport ? '&replay=true' : '';
@@ -281,7 +281,7 @@ function updateShareButton() {
   if (els.replayReportLink) {
     const reportUrl = `game.html#teamId=${state.teamId}&gameId=${state.gameId}`;
     els.replayReportLink.href = reportUrl;
-    els.replayReportLink.classList.toggle('hidden', !(state.isReplay || state.game?.status === 'completed' || state.game?.liveStatus === 'completed'));
+    els.replayReportLink.classList.toggle('hidden', !(state.isReplay || state.game?.status === 'completed' || state.game?.status === 'final' || state.game?.liveStatus === 'completed'));
   }
   if (els.watchReportBtn) {
     els.watchReportBtn.href = `game.html#teamId=${state.teamId}&gameId=${state.gameId}`;
@@ -2908,7 +2908,7 @@ async function init() {
   initAnnouncerControls();
   if (els.shareGameBtn) {
     els.shareGameBtn.addEventListener('click', async () => {
-      const isReport = state.isReplay || state.game?.status === 'completed' || state.game?.liveStatus === 'completed';
+      const isReport = state.isReplay || state.game?.status === 'completed' || state.game?.status === 'final' || state.game?.liveStatus === 'completed';
       const url = isReport
         ? buildGameReportShareUrl({ teamId: state.teamId, gameId: state.gameId })
         : buildGameWatchShareUrl({ teamId: state.teamId, gameId: state.gameId });
