@@ -270,12 +270,12 @@ function updateShareButton() {
   const isReport = state.isReplay || state.game?.status === 'completed' || state.game?.liveStatus === 'completed';
   els.shareGameBtn.textContent = isReport ? 'Share Report' : 'Share';
   if (els.overlayViewLink && state.teamId && state.gameId) {
-    const replayParam = state.isReplay ? '&replay=true' : '';
+    const replayParam = isReport ? '&replay=true' : '';
     els.overlayViewLink.href = `live-game-overlay.html?teamId=${encodeURIComponent(state.teamId)}&gameId=${encodeURIComponent(state.gameId)}${replayParam}`;
     els.overlayViewLink.classList.remove('hidden');
-    els.overlayViewLink.setAttribute('aria-label', state.isReplay ? 'Watch Replay' : 'Watch Live');
+    els.overlayViewLink.setAttribute('aria-label', isReport ? 'Watch Replay' : 'Watch Live');
     if (els.overlayViewLinkLabel) {
-      els.overlayViewLinkLabel.textContent = state.isReplay ? 'Watch Replay' : 'Watch Live';
+      els.overlayViewLinkLabel.textContent = isReport ? 'Watch Replay' : 'Watch Live';
     }
   }
   if (els.replayReportLink) {

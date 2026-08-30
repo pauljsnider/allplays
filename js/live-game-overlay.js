@@ -366,7 +366,7 @@ async function shareGame() {
     const awayName = uiState.game.awayName || 'Opponent';
     const text = `Watch ${homeName} vs ${awayName}`;
     const result = await shareOrCopy({
-        title: shareReplay ? 'Watch replay' : 'Watch game',
+        title: shareReplay ? 'Watch Replay' : 'Watch Live',
         text,
         url,
         clipboardText: `${text}\n${url}`

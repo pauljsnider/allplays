@@ -44,6 +44,8 @@ describe('live game overlay page', () => {
         expect(html).toContain('id="share-game"');
         expect(html).toContain('id="watch-replay"');
         expect(html).toContain('id="watch-replay-menu"');
+        expect(html).toContain('aria-label="Watch Replay"');
+        expect(html).toContain('>Watch Replay <span aria-hidden="true">→</span></a>');
         expect(html).toContain('id="scoreboard-toggle"');
         expect(html).toContain('id="scoreboard-menu-toggle"');
         expect(html).toContain('id="mute-toggle"');
@@ -62,7 +64,7 @@ describe('live game overlay page', () => {
         expect(html).toContain('id="away-team-photo"');
         expect(html).toContain('data-score-hidden="false"');
         expect(html).toMatch(/\.panel-tab\s*\{[^}]*min-width:\s*44px;/);
-        expect(html).toContain('js/live-game-overlay.js?v=37');
+        expect(html).toContain('js/live-game-overlay.js?v=38');
     });
 
     it('keeps the local demo isolated while wiring canonical subscriptions and authenticated chat posting', () => {
@@ -185,7 +187,7 @@ describe('live game overlay page', () => {
         expect(currentLiveGame).toContain('<span id="overlay-view-link-label">Watch Live</span>');
         expect(currentLiveGameSource).toContain("overlayViewLink: q('#overlay-view-link')");
         expect(currentLiveGameSource).toContain('els.overlayViewLink.href = `live-game-overlay.html?teamId=');
-        expect(currentLiveGameSource).toContain("state.isReplay ? 'Watch Replay' : 'Watch Live'");
+        expect(currentLiveGameSource).toContain("isReport ? 'Watch Replay' : 'Watch Live'");
     });
 
     it('keeps the former preview URL as a query-preserving compatibility redirect', () => {

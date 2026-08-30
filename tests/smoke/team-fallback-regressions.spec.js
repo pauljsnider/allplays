@@ -1328,6 +1328,26 @@ test('live game archived replay Team Pass gate is off by default', async ({ page
     expect(pageErrors).toEqual([]);
 });
 
+test('completed game standard URL promotes the replay experience', async ({ page, baseURL }) => {
+    const pageErrors = await collectPageErrors(page);
+    await page.addInitScript(() => {
+        window.__LIVE_GAME_TEAM__ = {};
+        window.__LIVE_GAME_GAME__ = { status: 'completed', liveStatus: 'completed' };
+    });
+    await routeLiveGameStubs(page);
+
+    await page.goto(`${baseURL}/live-game.html?teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+
+    await expect(page.locator('#overlay-view-link')).toBeVisible();
+    await expect(page.locator('#overlay-view-link')).toContainText('Watch Replay');
+    await expect(page.locator('#overlay-view-link')).toHaveAttribute('aria-label', 'Watch Replay');
+    await expect(page.locator('#overlay-view-link')).toHaveAttribute(
+        'href',
+        'live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true'
+    );
+    expect(pageErrors).toEqual([]);
+});
+
 test('private-team parent opens a live game through the bounded team projection', async ({ page, baseURL }) => {
     const pageErrors = await collectPageErrors(page);
     await page.setViewportSize({ width: 320, height: 568 });

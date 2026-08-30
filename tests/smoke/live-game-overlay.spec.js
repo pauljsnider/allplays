@@ -1155,7 +1155,7 @@ test('viewer toolbar shares the canonical watch URL and controls YouTube audio a
     await expect(page.locator('#overlay-video')).toHaveAttribute('src', /enablejsapi=1/);
     await page.locator('#share-game').click();
     await expect.poll(() => page.evaluate(() => window.__OVERLAY_SHARED__)).toEqual([{
-        title: 'Watch game',
+        title: 'Watch Live',
         text: 'Watch Current Academy vs Sporting Blue',
         url: 'https://share.allplays.ai/watch?teamId=team-1&gameId=game-1'
     }]);
@@ -1309,18 +1309,21 @@ test('a completed live game exposes replay actions and shares the replay URL wit
     await page.waitForTimeout(1100);
     await expect(page.locator('#game-clock')).toHaveText('12:00');
     await expect(page.locator('#watch-replay')).toBeVisible();
+    await expect(page.locator('#watch-replay')).toContainText('Watch Replay');
+    await expect(page.locator('#watch-replay')).toHaveAttribute('aria-label', 'Watch Replay');
     await expect(page.locator('#watch-replay')).toHaveAttribute(
         'href',
         'live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true'
     );
     await page.locator('#game-actions-toggle').click();
     await expect(page.locator('#watch-replay-menu')).toBeVisible();
+    await expect(page.locator('#watch-replay-menu')).toContainText('Watch Replay');
     await expect(page.locator('#match-report-link')).toBeVisible();
     await page.locator('#game-actions-toggle').click();
 
     await page.locator('#share-game').click();
     await expect.poll(() => page.evaluate(() => window.__OVERLAY_SHARED__)).toEqual([{
-        title: 'Watch replay',
+        title: 'Watch Replay',
         text: 'Watch Current Academy vs Sporting Blue',
         url: 'https://share.allplays.ai/watch?teamId=team-1&gameId=game-1&replay=true'
     }]);
