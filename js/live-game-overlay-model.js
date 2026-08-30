@@ -79,8 +79,16 @@ function createLiveBaseline(game = {}, fallback = {}) {
             : Array.isArray(fallback.periods) ? [...fallback.periods] : null,
         lastResetAt: game.liveResetAt !== undefined
             ? getTimestampMs(game.liveResetAt)
-            : toFiniteNumber(fallback.lastResetAt)
+            : toFiniteNumber(fallback.lastResetAt),
+        resetEventId: game.liveResetEventId !== undefined
+            ? normalizeResetEventId(game.liveResetEventId)
+            : normalizeResetEventId(fallback.resetEventId)
     };
+}
+
+function normalizeResetEventId(value) {
+    const text = typeof value === 'string' ? value.trim() : '';
+    return text && text.length <= 128 && !text.includes('/') ? text : '';
 }
 
 export function formatOverlayClock(milliseconds = 0) {
@@ -492,6 +500,14 @@ export function createOverlayState({ team = {}, game = {}, players = [], events 
         chatMessages: normalizedChat,
         latestEvent: normalizedEvents[0] || null,
         lastResetAt: getTimestampMs(game.liveResetAt),
+        resetEventEpochInitialized: false,
+        lastResetEventId: null,
+        lastResetEventBoundaryMs: 0,
+        lastAcknowledgedGameResetBoundaryMs: 0,
+        lastAcknowledgedGameResetEventId: '',
+        pendingGameResetBoundaryMs: 0,
+        pendingGameResetPreviousEventBoundaryMs: 0,
+        pendingGameResetEventId: '',
         lastStatChange: null,
         scoringRun: { team: null, points: 0 },
         lastRunAnnounced: 0,
@@ -506,6 +522,13 @@ export function applyOverlayGame(state, game = {}, { preserveEventState = false 
     const previousBaseline = state.liveBaseline || createLiveBaseline(state.game || {}, state);
     state.game = { ...state.game, ...game };
     const refreshedBaseline = createLiveBaseline(game, previousBaseline);
+    if (game.liveResetAt !== undefined &&
+        refreshedBaseline.lastResetAt > toFiniteNumber(previousBaseline.lastResetAt) &&
+        game.liveResetEventId === undefined) {
+        // Older public projections do not expose reset identity. Do not carry a
+        // prior epoch's identity onto a newer timestamp while enrichment retries.
+        refreshedBaseline.resetEventId = '';
+    }
     state.liveBaseline = preserveEventState
         ? {
             ...refreshedBaseline,
@@ -583,7 +606,103 @@ export function reconcileOverlayLiveEvents(state, incomingEvents = [], stateTool
         }
         : createLiveBaseline(state.game || {}, state);
     state.liveBaseline = baseline;
-    const resetBoundaryMs = Math.max(toFiniteNumber(state.lastResetAt), toFiniteNumber(baseline.lastResetAt));
+    // The baseline is the game document's reset boundary. state.lastResetAt is
+    // also advanced by reset events, so folding it into this value makes an
+    // event marker look like a second game-document update.
+    const configuredResetBoundaryMs = toFiniteNumber(baseline.lastResetAt);
+    const configuredResetEventId = normalizeResetEventId(baseline.resetEventId);
+    const resetEvents = orderedEvents.filter((event) => event.type === 'reset' && event.serverCreatedAtMs);
+    const unseenResetEvents = resetEvents.filter((event) => (
+        !priorEventIds.has(event.id) && event.id !== state.lastResetEventId
+    ));
+    const latestResetEvent = (events = []) => events.reduce((latest, event) => (
+        !latest || event.serverCreatedAtMs > latest.serverCreatedAtMs ? event : latest
+    ), null);
+    const resetEpochInitialized = state.resetEventEpochInitialized === true;
+    const lastResetEventBoundaryMs = toFiniteNumber(state.lastResetEventBoundaryMs);
+    const lastAcknowledgedGameResetBoundaryMs = toFiniteNumber(state.lastAcknowledgedGameResetBoundaryMs);
+    const lastAcknowledgedGameResetEventId = normalizeResetEventId(
+        state.lastAcknowledgedGameResetEventId
+    );
+    const configuredBoundaryAdvanced = resetEpochInitialized &&
+        configuredResetBoundaryMs > lastAcknowledgedGameResetBoundaryMs;
+    const markerAwaitingGameBoundary = resetEpochInitialized &&
+        lastResetEventBoundaryMs > lastAcknowledgedGameResetBoundaryMs;
+    const pendingGameResetBoundaryMs = toFiniteNumber(state.pendingGameResetBoundaryMs);
+    const pendingGameResetPreviousEventBoundaryMs = toFiniteNumber(
+        state.pendingGameResetPreviousEventBoundaryMs
+    );
+    const pendingGameResetEventId = normalizeResetEventId(state.pendingGameResetEventId);
+    let boundaryResetEvent = null;
+    let resetBoundaryMs = lastResetEventBoundaryMs || configuredResetBoundaryMs;
+    let nextPendingGameResetBoundaryMs = pendingGameResetBoundaryMs;
+    let nextPendingGameResetPreviousEventBoundaryMs = pendingGameResetPreviousEventBoundaryMs;
+    let nextPendingGameResetEventId = pendingGameResetEventId;
+    const newestUnseenResetEvent = latestResetEvent(unseenResetEvents);
+    const newestUnseenResetBoundaryMs = toFiniteNumber(newestUnseenResetEvent?.serverCreatedAtMs);
+
+    if (!resetEpochInitialized) {
+        boundaryResetEvent = latestResetEvent(resetEvents);
+        const initialMarkerBoundaryMs = toFiniteNumber(boundaryResetEvent?.serverCreatedAtMs);
+        const initialMarkerMatchesGame = configuredResetEventId &&
+            boundaryResetEvent?.id === configuredResetEventId;
+        resetBoundaryMs = initialMarkerMatchesGame || initialMarkerBoundaryMs > configuredResetBoundaryMs
+            ? initialMarkerBoundaryMs
+            : configuredResetBoundaryMs || initialMarkerBoundaryMs;
+        if (configuredResetBoundaryMs && !initialMarkerMatchesGame &&
+            initialMarkerBoundaryMs <= configuredResetBoundaryMs) {
+            nextPendingGameResetBoundaryMs = configuredResetBoundaryMs;
+            nextPendingGameResetPreviousEventBoundaryMs = 0;
+            nextPendingGameResetEventId = configuredResetEventId;
+        }
+    } else if (configuredBoundaryAdvanced) {
+        const unseenMarkerMatchesGame = configuredResetEventId &&
+            newestUnseenResetEvent?.id === configuredResetEventId;
+        const unseenMarkerFollowsGame = newestUnseenResetBoundaryMs > configuredResetBoundaryMs;
+        if (newestUnseenResetBoundaryMs > lastResetEventBoundaryMs &&
+            (!configuredResetEventId || unseenMarkerMatchesGame || unseenMarkerFollowsGame)) {
+            // The game boundary and marker became visible in the same snapshot.
+            boundaryResetEvent = newestUnseenResetEvent;
+            resetBoundaryMs = newestUnseenResetBoundaryMs;
+            nextPendingGameResetBoundaryMs = 0;
+            nextPendingGameResetPreviousEventBoundaryMs = 0;
+            nextPendingGameResetEventId = '';
+        } else if (markerAwaitingGameBoundary &&
+            (!configuredResetEventId || configuredResetEventId === state.lastResetEventId)) {
+            // The marker was already applied. This game update acknowledges the
+            // same reset without moving the event cutoff past intervening plays.
+            resetBoundaryMs = lastResetEventBoundaryMs;
+            if (configuredResetBoundaryMs >= lastResetEventBoundaryMs) {
+                nextPendingGameResetBoundaryMs = 0;
+                nextPendingGameResetPreviousEventBoundaryMs = 0;
+                nextPendingGameResetEventId = '';
+            }
+        } else {
+            // The game document arrived first. Keep its boundary as a temporary
+            // cutoff so a later marker can move the cutoff back to the exact
+            // event timestamp without reviving the prior epoch.
+            resetBoundaryMs = configuredResetBoundaryMs;
+            nextPendingGameResetBoundaryMs = configuredResetBoundaryMs;
+            nextPendingGameResetPreviousEventBoundaryMs = lastResetEventBoundaryMs;
+            nextPendingGameResetEventId = configuredResetEventId;
+        }
+    } else if (newestUnseenResetEvent) {
+        const acceptsIdentifiedPendingGameMarker = pendingGameResetEventId &&
+            newestUnseenResetEvent.id === pendingGameResetEventId;
+        const acceptsLegacyPendingGameMarker = pendingGameResetBoundaryMs &&
+            !pendingGameResetEventId &&
+            newestUnseenResetBoundaryMs > pendingGameResetPreviousEventBoundaryMs;
+        const acceptsPendingGameMarker = acceptsIdentifiedPendingGameMarker ||
+            acceptsLegacyPendingGameMarker;
+        const opensNewMarkerEpoch = newestUnseenResetBoundaryMs > lastResetEventBoundaryMs;
+        if (acceptsPendingGameMarker || opensNewMarkerEpoch) {
+            boundaryResetEvent = newestUnseenResetEvent;
+            resetBoundaryMs = newestUnseenResetBoundaryMs;
+            nextPendingGameResetBoundaryMs = 0;
+            nextPendingGameResetPreviousEventBoundaryMs = 0;
+            nextPendingGameResetEventId = '';
+        }
+    }
     const stateAfterNewerReset = resetBoundaryMs > toFiniteNumber(baseline.lastResetAt);
     const effectiveBaseline = stateAfterNewerReset
         ? {
@@ -599,10 +718,20 @@ export function reconcileOverlayLiveEvents(state, incomingEvents = [], stateTool
             lastResetAt: resetBoundaryMs
         }
         : baseline;
-    const resetEligibleEvents = orderedEvents.filter((event) => {
-        if (!resetBoundaryMs || event.type === 'reset' || !event.serverCreatedAtMs) return true;
-        return event.serverCreatedAtMs >= resetBoundaryMs;
-    });
+    const resetEligibleEvents = orderedEvents
+        .filter((event) => {
+            if (!resetBoundaryMs || !event.serverCreatedAtMs) return true;
+            return event.serverCreatedAtMs >= resetBoundaryMs;
+        })
+        .sort((left, right) => {
+            const leftIsReset = left.type === 'reset';
+            const rightIsReset = right.type === 'reset';
+            if (leftIsReset !== rightIsReset) return leftIsReset ? -1 : 1;
+            return 0;
+        })
+        .map((event) => event.type === 'reset' && resetBoundaryMs
+            ? { ...event, createdAt: resetBoundaryMs }
+            : event);
     const visibleEvents = stateTools.collectVisibleLiveEventsSequentially(resetEligibleEvents, {
         seenIds: new Set(),
         resetBoundaryMs
@@ -645,7 +774,7 @@ export function reconcileOverlayLiveEvents(state, incomingEvents = [], stateTool
 
     visibleEvents.forEach((event) => {
         if (event.type === 'reset') {
-            const resetAt = event.serverCreatedAtMs || event.createdAtMs || Date.now();
+            const resetAt = resetBoundaryMs || event.serverCreatedAtMs || event.createdAtMs || Date.now();
             workingState.lastResetAt = Math.max(workingState.lastResetAt || 0, resetAt);
             workingState = stateTools.applyResetEventState(workingState, event);
             workingState.eventIds = snapshotEventIds;
@@ -667,6 +796,25 @@ export function reconcileOverlayLiveEvents(state, incomingEvents = [], stateTool
     workingState.events = sortNewestFirst(workingState.events.map(normalizeOverlayEvent));
     workingState.latestEvent = workingState.events[0] || null;
     Object.assign(state, workingState);
+    state.resetEventEpochInitialized = true;
+    state.lastAcknowledgedGameResetBoundaryMs = Math.max(
+        lastAcknowledgedGameResetBoundaryMs,
+        configuredResetBoundaryMs
+    );
+    if (!resetEpochInitialized || configuredBoundaryAdvanced) {
+        state.lastAcknowledgedGameResetEventId = configuredResetEventId;
+    } else {
+        state.lastAcknowledgedGameResetEventId = lastAcknowledgedGameResetEventId;
+    }
+    state.pendingGameResetBoundaryMs = nextPendingGameResetBoundaryMs;
+    state.pendingGameResetPreviousEventBoundaryMs = nextPendingGameResetPreviousEventBoundaryMs;
+    state.pendingGameResetEventId = nextPendingGameResetEventId;
+    if (boundaryResetEvent) {
+        state.lastResetEventId = boundaryResetEvent.id;
+        state.lastResetEventBoundaryMs = resetBoundaryMs;
+    } else if (!resetEpochInitialized || configuredBoundaryAdvanced) {
+        state.lastResetEventBoundaryMs = resetBoundaryMs;
+    }
 
     return {
         processedEventIds: visibleEvents.map((event) => event.id),

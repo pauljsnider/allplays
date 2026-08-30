@@ -92,7 +92,7 @@ const {
   getGameDayTeamContext,
   getTeams,
   getUserTeamsWithAccess
-} = await import('../../js/db.js?v=4433191');
+} = await import('../../js/db.js?v=4433193');
 
 describe('team access query resilience', () => {
   beforeEach(() => {
@@ -496,7 +496,8 @@ describe('game access query resilience', () => {
           teamScore: 4,
           opponentScore: 5,
           status: 'completed',
-          liveResetAt: '2026-08-02T18:15:00.000Z'
+          liveResetAt: '2026-08-02T18:15:00.000Z',
+          liveResetEventId: 'reset-public-2'
         }
       }
     });
@@ -507,6 +508,7 @@ describe('game access query resilience', () => {
       homeScore: 5,
       awayScore: 4,
       liveResetAt: new Date('2026-08-02T18:15:00.000Z'),
+      liveResetEventId: 'reset-public-2',
       isPublicProjection: true
     }));
     expect(firebaseMocks.getPublicGameProjection).toHaveBeenCalledWith({
@@ -580,6 +582,131 @@ describe('game access query resilience', () => {
 
     expect(callback).not.toHaveBeenCalled();
     expect(firebaseMocks.onSnapshot).not.toHaveBeenCalled();
+  });
+
+  it('ignores an older public projection that resolves after a newer poll', async () => {
+    vi.useFakeTimers();
+    let resolveFirstProjection;
+    let resolveSecondProjection;
+    const firstProjection = new Promise((resolve) => {
+      resolveFirstProjection = resolve;
+    });
+    const secondProjection = new Promise((resolve) => {
+      resolveSecondProjection = resolve;
+    });
+    const callback = vi.fn();
+    const onError = vi.fn();
+    firebaseMocks.getPublicGameProjection
+      .mockReturnValueOnce(firstProjection)
+      .mockReturnValueOnce(secondProjection);
+
+    const unsubscribe = subscribeGame(
+      'team-1',
+      'game-2',
+      callback,
+      onError,
+      { publicProjection: true }
+    );
+    try {
+      expect(firebaseMocks.getPublicGameProjection).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(firebaseMocks.getPublicGameProjection).toHaveBeenCalledTimes(2);
+
+      resolveSecondProjection({
+        data: {
+          item: {
+            id: 'game-2',
+            startsAt: '2026-08-02T18:00:00.000Z',
+            opponent: 'Rockets',
+            status: 'live',
+            liveResetEventId: 'reset-newer'
+          }
+        }
+      });
+      await secondProjection;
+      await vi.advanceTimersByTimeAsync(0);
+      expect(callback).toHaveBeenCalledTimes(1);
+      expect(callback).toHaveBeenLastCalledWith(expect.objectContaining({
+        liveResetEventId: 'reset-newer'
+      }));
+
+      resolveFirstProjection({
+        data: {
+          item: {
+            id: 'game-2',
+            startsAt: '2026-08-02T18:00:00.000Z',
+            opponent: 'Rockets',
+            status: 'live',
+            liveResetEventId: 'reset-older'
+          }
+        }
+      });
+      await firstProjection;
+      await vi.advanceTimersByTimeAsync(0);
+      expect(callback).toHaveBeenCalledTimes(1);
+      expect(callback).toHaveBeenLastCalledWith(expect.objectContaining({
+        liveResetEventId: 'reset-newer'
+      }));
+      expect(onError).not.toHaveBeenCalled();
+    } finally {
+      unsubscribe();
+      vi.useRealTimers();
+    }
+  });
+
+  it('ignores an older public projection error after a newer poll succeeds', async () => {
+    vi.useFakeTimers();
+    let rejectFirstProjection;
+    let resolveSecondProjection;
+    const firstProjection = new Promise((_resolve, reject) => {
+      rejectFirstProjection = reject;
+    });
+    const secondProjection = new Promise((resolve) => {
+      resolveSecondProjection = resolve;
+    });
+    const callback = vi.fn();
+    const onError = vi.fn();
+    firebaseMocks.getPublicGameProjection
+      .mockReturnValueOnce(firstProjection)
+      .mockReturnValueOnce(secondProjection);
+
+    const unsubscribe = subscribeGame(
+      'team-1',
+      'game-2',
+      callback,
+      onError,
+      { publicProjection: true }
+    );
+    try {
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(firebaseMocks.getPublicGameProjection).toHaveBeenCalledTimes(2);
+
+      resolveSecondProjection({
+        data: {
+          item: {
+            id: 'game-2',
+            startsAt: '2026-08-02T18:00:00.000Z',
+            opponent: 'Rockets',
+            status: 'live',
+            liveResetEventId: 'reset-newer'
+          }
+        }
+      });
+      await secondProjection;
+      await vi.advanceTimersByTimeAsync(0);
+      expect(callback).toHaveBeenCalledTimes(1);
+
+      rejectFirstProjection(Object.assign(new Error('stale projection failed'), {
+        code: 'unavailable'
+      }));
+      await expect(firstProjection).rejects.toThrow('stale projection failed');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(callback).toHaveBeenCalledTimes(1);
+      expect(onError).not.toHaveBeenCalled();
+    } finally {
+      unsubscribe();
+      vi.useRealTimers();
+    }
   });
 
   it('uses a bounded nine-year public fallback for legacy unbounded schedule reads', async () => {

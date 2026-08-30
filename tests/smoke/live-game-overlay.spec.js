@@ -938,10 +938,80 @@ test('real mode follows canonical game, lineup, clock, reset, reaction, and pass
         id: 'fresh-skewed-goal', type: 'goal', description: 'Fresh goal survives tracker clock skew',
         homeScore: 1, awayScore: 0, period: 'H1', gameClockMs: 2000,
         clientCreatedAt: new Date(1000).toISOString(), createdAt: 2100
+    }, {
+        id: 'reset-1', type: 'reset', description: 'Game reset', homeScore: 0, awayScore: 0,
+        period: 'H1', gameClockMs: 0, onCourt: ['p9'], bench: ['p4'],
+        clientCreatedAt: new Date(2500).toISOString(), createdAt: 2200
     }]));
     await expect(page.locator('#home-score')).toHaveText('1');
     await expect(page.locator('#event-list')).not.toContainText('Old goal must stay hidden');
     await expect(page.locator('#event-list')).toContainText('Fresh goal survives tracker clock skew');
+
+    await page.evaluate(() => window.__OVERLAY_EVENT_CALLBACK__([{
+        id: 'reset-1', type: 'reset', description: 'First game reset', homeScore: 0, awayScore: 0,
+        period: 'H1', gameClockMs: 0, clientCreatedAt: new Date(2500).toISOString(), createdAt: 2200
+    }, {
+        id: 'between-resets', type: 'goal', description: 'Goal before the second reset',
+        homeScore: 7, awayScore: 0, period: 'H1', gameClockMs: 3000,
+        clientCreatedAt: new Date(3500).toISOString(), createdAt: 2700
+    }, {
+        id: 'reset-2', type: 'reset', description: 'Second game reset', homeScore: 0, awayScore: 0,
+        period: 'H1', gameClockMs: 0, clientCreatedAt: new Date(3600).toISOString(), createdAt: 3000
+    }, {
+        id: 'second-reset-goal', type: 'goal', description: 'Goal after the second reset',
+        homeScore: 1, awayScore: 0, period: 'H1', gameClockMs: 1000,
+        clientCreatedAt: new Date(1500).toISOString(), createdAt: 3100
+    }]));
+    await expect(page.locator('#home-score')).toHaveText('1');
+    await expect(page.locator('#event-list')).not.toContainText('Goal before the second reset');
+    await expect(page.locator('#event-list')).toContainText('Goal after the second reset');
+
+    // Firebase can publish the reset event, a new play, and then the game's
+    // liveResetAt update. The later game callback acknowledges the same reset;
+    // it must not erase the play that already arrived after the marker.
+    const markerFirstSnapshot = [{
+        id: 'reset-3', type: 'reset', description: 'Third game reset', homeScore: 0, awayScore: 0,
+        period: 'H1', gameClockMs: 0, createdAt: 4000
+    }, {
+        id: 'post-marker-goal', type: 'goal', description: 'Goal after marker before game update',
+        homeScore: 1, awayScore: 0, period: 'H1', gameClockMs: 1000, createdAt: 4100
+    }];
+    await page.evaluate((events) => window.__OVERLAY_EVENT_CALLBACK__(events), markerFirstSnapshot);
+    await expect(page.locator('#event-list')).toContainText('Goal after marker before game update');
+
+    await page.evaluate(() => window.__OVERLAY_GAME_CALLBACK__({
+        id: 'game-1', opponent: 'Sporting Blue', homeScore: 0, awayScore: 0,
+        period: 'H1', liveClockMs: 0, liveStatus: 'live', liveViewerCount: 25,
+        liveResetAt: 4200, liveResetEventId: 'reset-3',
+        videoUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc'
+    }));
+    await expect(page.locator('#home-score')).toHaveText('1');
+    await expect(page.locator('#event-list')).toContainText('Goal after marker before game update');
+
+    // A later reset can fail in the opposite direction: its marker write is
+    // missing while the game document succeeds. Its reserved identity must
+    // keep that new boundary from being mistaken for reset-3's acknowledgement.
+    const nextMarkerSnapshot = [
+        ...markerFirstSnapshot,
+        {
+            id: 'reset-4', type: 'reset', description: 'Fourth game reset', homeScore: 0, awayScore: 0,
+            period: 'H1', gameClockMs: 0, createdAt: 5000
+        }, {
+            id: 'between-partial-resets', type: 'goal', description: 'Goal before markerless fifth reset',
+            homeScore: 1, awayScore: 0, period: 'H1', gameClockMs: 1000, createdAt: 5100
+        }
+    ];
+    await page.evaluate((events) => window.__OVERLAY_EVENT_CALLBACK__(events), nextMarkerSnapshot);
+    await expect(page.locator('#event-list')).toContainText('Goal before markerless fifth reset');
+
+    await page.evaluate(() => window.__OVERLAY_GAME_CALLBACK__({
+        id: 'game-1', opponent: 'Sporting Blue', homeScore: 0, awayScore: 0,
+        period: 'H1', liveClockMs: 0, liveStatus: 'live', liveViewerCount: 25,
+        liveResetAt: 6000, liveResetEventId: 'reset-5',
+        videoUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc'
+    }));
+    await expect(page.locator('#home-score')).toHaveText('0');
+    await expect(page.locator('#event-list')).not.toContainText('Goal before markerless fifth reset');
     expect(pageErrors).toEqual([]);
 });
 

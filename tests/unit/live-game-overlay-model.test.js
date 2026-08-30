@@ -657,7 +657,8 @@ describe('live game overlay model', () => {
                 homeScore: 0,
                 awayScore: 0,
                 liveStatus: 'live',
-                liveResetAt: 2_000
+                liveResetAt: 2_000,
+                liveResetEventId: 'first-reset'
             }
         });
 
@@ -684,6 +685,407 @@ describe('live game overlay model', () => {
 
         expect(state.homeScore).toBe(1);
         expect(state.events.map((event) => event.id)).toEqual(['fresh-device-behind']);
+    });
+
+    it('applies a reset marker before server-confirmed events from the new epoch', () => {
+        const state = createOverlayState({
+            game: {
+                homeScore: 0,
+                awayScore: 0,
+                liveStatus: 'live',
+                liveResetAt: 2_000
+            }
+        });
+
+        reconcileOverlayLiveEvents(state, [
+            {
+                id: 'fresh-device-behind',
+                type: 'goal',
+                description: 'Fresh goal',
+                homeScore: 1,
+                awayScore: 0,
+                clientCreatedAt: new Date(1_000).toISOString(),
+                createdAt: 2_100
+            },
+            {
+                id: 'reset-marker',
+                type: 'reset',
+                description: 'Game reset',
+                homeScore: 0,
+                awayScore: 0,
+                clientCreatedAt: new Date(2_500).toISOString(),
+                createdAt: 2_000
+            }
+        ], stateTools);
+
+        expect(state.homeScore).toBe(1);
+        expect(state.awayScore).toBe(0);
+        expect(state.events.map((event) => event.id)).toEqual(['fresh-device-behind']);
+    });
+
+    it('promotes a lone newer reset marker on the first snapshot', () => {
+        const state = createOverlayState({
+            game: {
+                homeScore: 0,
+                awayScore: 0,
+                liveStatus: 'live',
+                liveResetAt: 2_000
+            }
+        });
+        const secondReset = {
+            id: 'second-reset',
+            type: 'reset',
+            homeScore: 0,
+            awayScore: 0,
+            createdAt: 3_000
+        };
+
+        reconcileOverlayLiveEvents(state, [
+            {
+                id: 'between-resets',
+                type: 'goal',
+                description: 'Stale goal between resets',
+                homeScore: 7,
+                awayScore: 0,
+                createdAt: 2_700
+            },
+            secondReset
+        ], stateTools);
+
+        expect(state.homeScore).toBe(0);
+        expect(state.events).toEqual([]);
+        expect(state.lastResetAt).toBe(3_000);
+        expect(state.lastResetEventId).toBe('second-reset');
+
+        reconcileOverlayLiveEvents(state, [{
+            id: 'second-epoch-goal',
+            type: 'goal',
+            description: 'Goal after second reset',
+            homeScore: 1,
+            awayScore: 0,
+            createdAt: 3_100
+        }], stateTools);
+
+        expect(state.homeScore).toBe(1);
+        expect(state.events.map((event) => event.id)).toEqual(['second-epoch-goal']);
+    });
+
+    it('treats an unseen reset marker as a newer epoch before its game update arrives', () => {
+        const state = createOverlayState({
+            game: {
+                homeScore: 0,
+                awayScore: 0,
+                liveStatus: 'live',
+                liveResetAt: 2_000
+            }
+        });
+        const firstReset = {
+            id: 'first-reset',
+            type: 'reset',
+            homeScore: 0,
+            awayScore: 0,
+            clientCreatedAt: new Date(2_500).toISOString(),
+            createdAt: 2_000
+        };
+
+        reconcileOverlayLiveEvents(state, [
+            firstReset,
+            {
+                id: 'first-epoch-goal',
+                type: 'goal',
+                description: 'Goal after first reset',
+                homeScore: 1,
+                awayScore: 0,
+                clientCreatedAt: new Date(1_000).toISOString(),
+                createdAt: 2_100
+            }
+        ], stateTools);
+        expect(state.homeScore).toBe(1);
+
+        reconcileOverlayLiveEvents(state, [
+            firstReset,
+            {
+                id: 'between-resets',
+                type: 'goal',
+                description: 'Stale goal between resets',
+                homeScore: 7,
+                awayScore: 0,
+                clientCreatedAt: new Date(3_500).toISOString(),
+                createdAt: 2_700
+            },
+            {
+                id: 'second-reset',
+                type: 'reset',
+                homeScore: 0,
+                awayScore: 0,
+                clientCreatedAt: new Date(3_600).toISOString(),
+                createdAt: 3_000
+            },
+            {
+                id: 'second-epoch-goal',
+                type: 'goal',
+                description: 'Goal after second reset',
+                homeScore: 1,
+                awayScore: 0,
+                clientCreatedAt: new Date(1_500).toISOString(),
+                createdAt: 3_100
+            }
+        ], stateTools);
+
+        expect(state.homeScore).toBe(1);
+        expect(state.events.map((event) => event.id)).toEqual(['second-epoch-goal']);
+        expect(state.lastResetAt).toBe(3_000);
+    });
+
+    it('associates a later reset marker with a game boundary that arrived first', () => {
+        const state = createOverlayState({
+            game: {
+                homeScore: 0,
+                awayScore: 0,
+                liveStatus: 'live',
+                liveResetAt: 2_000
+            }
+        });
+        const firstReset = {
+            id: 'first-reset',
+            type: 'reset',
+            homeScore: 0,
+            awayScore: 0,
+            createdAt: 2_200
+        };
+        reconcileOverlayLiveEvents(state, [firstReset], stateTools);
+
+        state.lastResetAt = 4_000;
+        applyOverlayGame(state, {
+            homeScore: 0,
+            awayScore: 0,
+            liveResetAt: 4_000,
+            liveResetEventId: 'second-reset'
+        });
+        reconcileOverlayLiveEvents(state, [
+            firstReset,
+            {
+                id: 'second-epoch-goal',
+                type: 'goal',
+                description: 'Goal after game reset',
+                homeScore: 1,
+                awayScore: 0,
+                clientCreatedAt: new Date(1_000).toISOString(),
+                createdAt: 4_100
+            },
+            {
+                id: 'second-reset',
+                type: 'reset',
+                homeScore: 0,
+                awayScore: 0,
+                clientCreatedAt: new Date(4_500).toISOString(),
+                createdAt: 3_800
+            }
+        ], stateTools);
+
+        expect(state.homeScore).toBe(1);
+        expect(state.events.map((event) => event.id)).toEqual(['second-epoch-goal']);
+        expect(state.lastResetEventBoundaryMs).toBe(3_800);
+        expect(state.lastAcknowledgedGameResetBoundaryMs).toBe(4_000);
+    });
+
+    it('accepts a delayed marker after a markerless game-boundary snapshot', () => {
+        const state = createOverlayState({
+            game: {
+                homeScore: 0,
+                awayScore: 0,
+                liveStatus: 'live',
+                liveResetAt: 2_000,
+                liveResetEventId: 'first-reset'
+            }
+        });
+        reconcileOverlayLiveEvents(state, [], stateTools);
+
+        applyOverlayGame(state, {
+            homeScore: 0,
+            awayScore: 0,
+            liveResetAt: 4_000,
+            liveResetEventId: 'delayed-reset-marker'
+        });
+        reconcileOverlayLiveEvents(state, [], stateTools);
+        expect(state.lastResetEventBoundaryMs).toBe(4_000);
+        expect(state.pendingGameResetBoundaryMs).toBe(4_000);
+
+        reconcileOverlayLiveEvents(state, [{
+            id: 'delayed-reset-marker',
+            type: 'reset',
+            homeScore: 0,
+            awayScore: 0,
+            createdAt: 3_800
+        }, {
+            id: 'post-reset-goal',
+            type: 'goal',
+            description: 'Goal after delayed reset marker',
+            homeScore: 1,
+            awayScore: 0,
+            createdAt: 4_100
+        }], stateTools);
+
+        expect(state.homeScore).toBe(1);
+        expect(state.events.map((event) => event.id)).toEqual(['post-reset-goal']);
+        expect(state.lastResetEventBoundaryMs).toBe(3_800);
+        expect(state.pendingGameResetBoundaryMs).toBe(0);
+    });
+
+    it('preserves post-marker plays when the corresponding game boundary arrives later', () => {
+        const state = createOverlayState({
+            game: {
+                homeScore: 0,
+                awayScore: 0,
+                liveStatus: 'live',
+                liveResetAt: 2_000,
+                liveResetEventId: 'first-reset'
+            }
+        });
+        reconcileOverlayLiveEvents(state, [], stateTools);
+        const secondReset = {
+            id: 'second-reset',
+            type: 'reset',
+            homeScore: 0,
+            awayScore: 0,
+            createdAt: 3_000
+        };
+        const postResetGoal = {
+            id: 'post-reset-goal',
+            type: 'goal',
+            description: 'Goal after reset marker',
+            homeScore: 1,
+            awayScore: 0,
+            createdAt: 3_050
+        };
+
+        reconcileOverlayLiveEvents(state, [secondReset, postResetGoal], stateTools);
+        expect(state.homeScore).toBe(1);
+        expect(state.lastResetEventBoundaryMs).toBe(3_000);
+
+        state.lastResetAt = 3_100;
+        applyOverlayGame(state, {
+            homeScore: 0,
+            awayScore: 0,
+            liveResetAt: 3_100,
+            liveResetEventId: 'second-reset'
+        });
+        reconcileOverlayLiveEvents(state, [secondReset, postResetGoal], stateTools);
+
+        expect(state.homeScore).toBe(1);
+        expect(state.events.map((event) => event.id)).toEqual(['post-reset-goal']);
+        expect(state.lastResetEventBoundaryMs).toBe(3_000);
+        expect(state.lastAcknowledgedGameResetBoundaryMs).toBe(3_100);
+    });
+
+    it('uses reset identity to distinguish a later markerless reset from an acknowledgement', () => {
+        const state = createOverlayState({
+            game: {
+                homeScore: 0,
+                awayScore: 0,
+                liveStatus: 'live',
+                liveResetAt: 2_000,
+                liveResetEventId: 'reset-zero'
+            }
+        });
+        reconcileOverlayLiveEvents(state, [], stateTools);
+
+        reconcileOverlayLiveEvents(state, [{
+            id: 'reset-one',
+            type: 'reset',
+            homeScore: 0,
+            awayScore: 0,
+            createdAt: 3_000
+        }, {
+            id: 'between-resets',
+            type: 'goal',
+            description: 'Goal after reset one',
+            homeScore: 1,
+            awayScore: 0,
+            createdAt: 3_100
+        }], stateTools);
+        expect(state.homeScore).toBe(1);
+        expect(state.lastResetEventId).toBe('reset-one');
+
+        // Reset one's game update failed. Reset two then failed to publish its
+        // marker but did update the game with its distinct reserved identity.
+        applyOverlayGame(state, {
+            homeScore: 0,
+            awayScore: 0,
+            liveResetAt: 4_000,
+            liveResetEventId: 'reset-two'
+        });
+        reconcileOverlayLiveEvents(state, [{
+            id: 'reset-one',
+            type: 'reset',
+            homeScore: 0,
+            awayScore: 0,
+            createdAt: 3_000
+        }, {
+            id: 'between-resets',
+            type: 'goal',
+            description: 'Goal after reset one',
+            homeScore: 1,
+            awayScore: 0,
+            createdAt: 3_100
+        }], stateTools);
+
+        expect(state.homeScore).toBe(0);
+        expect(state.events).toEqual([]);
+        expect(state.lastResetEventBoundaryMs).toBe(4_000);
+        expect(state.lastAcknowledgedGameResetEventId).toBe('reset-two');
+    });
+
+    it('acknowledges a markerless game boundary before the next reset', () => {
+        const state = createOverlayState({
+            game: {
+                homeScore: 0,
+                awayScore: 0,
+                liveStatus: 'live',
+                liveResetAt: 2_000
+            }
+        });
+        reconcileOverlayLiveEvents(state, [], stateTools);
+
+        state.lastResetAt = 4_000;
+        applyOverlayGame(state, {
+            homeScore: 0,
+            awayScore: 0,
+            liveResetAt: 4_000
+        });
+        reconcileOverlayLiveEvents(state, [], stateTools);
+        expect(state.lastResetEventBoundaryMs).toBe(4_000);
+        expect(state.lastAcknowledgedGameResetBoundaryMs).toBe(4_000);
+
+        reconcileOverlayLiveEvents(state, [
+            {
+                id: 'between-resets',
+                type: 'goal',
+                description: 'Stale goal between resets',
+                homeScore: 7,
+                awayScore: 0,
+                createdAt: 4_500
+            },
+            {
+                id: 'next-reset',
+                type: 'reset',
+                homeScore: 0,
+                awayScore: 0,
+                createdAt: 5_000
+            },
+            {
+                id: 'next-epoch-goal',
+                type: 'goal',
+                description: 'Goal after next reset',
+                homeScore: 1,
+                awayScore: 0,
+                createdAt: 5_100
+            }
+        ], stateTools);
+
+        expect(state.homeScore).toBe(1);
+        expect(state.events.map((event) => event.id)).toEqual(['next-epoch-goal']);
+        expect(state.lastResetAt).toBe(5_000);
     });
 
     it('sorts replacement chat and supplies a realistic local fixture', () => {
