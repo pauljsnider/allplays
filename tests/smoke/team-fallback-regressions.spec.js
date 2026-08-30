@@ -1328,11 +1328,11 @@ test('live game archived replay Team Pass gate is off by default', async ({ page
     expect(pageErrors).toEqual([]);
 });
 
-test('completed game standard URL promotes the replay experience', async ({ page, baseURL }) => {
+test('final game standard URL promotes the replay experience without a completed live status', async ({ page, baseURL }) => {
     const pageErrors = await collectPageErrors(page);
     await page.addInitScript(() => {
         window.__LIVE_GAME_TEAM__ = {};
-        window.__LIVE_GAME_GAME__ = { status: 'completed', liveStatus: 'completed' };
+        window.__LIVE_GAME_GAME__ = { status: 'final' };
     });
     await routeLiveGameStubs(page);
 

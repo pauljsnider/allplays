@@ -267,7 +267,7 @@ function buildShareText(mode, url) {
 
 function updateShareButton() {
   if (!els.shareGameBtn) return;
-  const isReport = state.isReplay || state.game?.status === 'completed' || state.game?.liveStatus === 'completed';
+  const isReport = state.isReplay || state.game?.status === 'completed' || state.game?.status === 'final' || state.game?.liveStatus === 'completed';
   els.shareGameBtn.textContent = isReport ? 'Share Report' : 'Share';
   if (els.overlayViewLink && state.teamId && state.gameId) {
     const replayParam = isReport ? '&replay=true' : '';
