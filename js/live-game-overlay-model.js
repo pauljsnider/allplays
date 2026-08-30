@@ -492,6 +492,9 @@ export function createOverlayState({ team = {}, game = {}, players = [], events 
         chatMessages: normalizedChat,
         latestEvent: normalizedEvents[0] || null,
         lastResetAt: getTimestampMs(game.liveResetAt),
+        resetEventEpochInitialized: false,
+        lastResetEventId: null,
+        lastResetEventBoundaryMs: 0,
         lastStatChange: null,
         scoringRun: { team: null, points: 0 },
         lastRunAnnounced: 0,
@@ -587,13 +590,46 @@ export function reconcileOverlayLiveEvents(state, incomingEvents = [], stateTool
         toFiniteNumber(state.lastResetAt),
         toFiniteNumber(baseline.lastResetAt)
     );
-    const incomingResetBoundaryMs = configuredResetBoundaryMs
-        ? 0
-        : orderedEvents.reduce((latestResetAt, event) => {
-            if (event.type !== 'reset') return latestResetAt;
-            return Math.max(latestResetAt, toFiniteNumber(event.serverCreatedAtMs));
-        }, 0);
-    const resetBoundaryMs = configuredResetBoundaryMs || incomingResetBoundaryMs;
+    const resetEvents = orderedEvents.filter((event) => event.type === 'reset' && event.serverCreatedAtMs);
+    const unseenResetEvents = resetEvents.filter((event) => (
+        !priorEventIds.has(event.id) && event.id !== state.lastResetEventId
+    ));
+    const latestResetEvent = (events = []) => events.reduce((latest, event) => (
+        !latest || event.serverCreatedAtMs > latest.serverCreatedAtMs ? event : latest
+    ), null);
+    const resetEpochInitialized = state.resetEventEpochInitialized === true;
+    const lastResetEventBoundaryMs = toFiniteNumber(state.lastResetEventBoundaryMs);
+    const configuredBoundaryAdvanced = resetEpochInitialized &&
+        configuredResetBoundaryMs > lastResetEventBoundaryMs;
+    let boundaryResetEvent = null;
+    let incomingResetBoundaryMs = 0;
+
+    if (!configuredResetBoundaryMs) {
+        boundaryResetEvent = latestResetEvent(resetEvents);
+        incomingResetBoundaryMs = toFiniteNumber(boundaryResetEvent?.serverCreatedAtMs);
+    } else if (!resetEpochInitialized) {
+        // The first snapshot can contain the marker published shortly after the
+        // game document's authoritative reset time. Associate a single marker
+        // with that boundary; two markers prove a later reset also occurred.
+        boundaryResetEvent = latestResetEvent(resetEvents);
+        if (resetEvents.length > 1) {
+            incomingResetBoundaryMs = toFiniteNumber(boundaryResetEvent?.serverCreatedAtMs);
+        }
+    } else if (configuredBoundaryAdvanced) {
+        // A game update may arrive before its reset marker. Conversely, the
+        // marker may have arrived first and already become the active epoch.
+        boundaryResetEvent = latestResetEvent(unseenResetEvents) ||
+            resetEvents.find((event) => event.id === state.lastResetEventId) || null;
+    } else {
+        // With the configured epoch already acknowledged, an unseen reset is a
+        // distinct restart even if its game-document update has not arrived.
+        boundaryResetEvent = latestResetEvent(unseenResetEvents.filter(
+            (event) => event.serverCreatedAtMs > configuredResetBoundaryMs
+        ));
+        incomingResetBoundaryMs = toFiniteNumber(boundaryResetEvent?.serverCreatedAtMs);
+    }
+
+    const resetBoundaryMs = Math.max(configuredResetBoundaryMs, incomingResetBoundaryMs);
     const stateAfterNewerReset = resetBoundaryMs > toFiniteNumber(baseline.lastResetAt);
     const effectiveBaseline = stateAfterNewerReset
         ? {
@@ -687,6 +723,13 @@ export function reconcileOverlayLiveEvents(state, incomingEvents = [], stateTool
     workingState.events = sortNewestFirst(workingState.events.map(normalizeOverlayEvent));
     workingState.latestEvent = workingState.events[0] || null;
     Object.assign(state, workingState);
+    state.resetEventEpochInitialized = true;
+    if (boundaryResetEvent) {
+        state.lastResetEventId = boundaryResetEvent.id;
+        state.lastResetEventBoundaryMs = resetBoundaryMs;
+    } else if (!resetEpochInitialized) {
+        state.lastResetEventBoundaryMs = configuredResetBoundaryMs;
+    }
 
     return {
         processedEventIds: visibleEvents.map((event) => event.id),

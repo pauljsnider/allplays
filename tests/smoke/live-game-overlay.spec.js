@@ -946,6 +946,25 @@ test('real mode follows canonical game, lineup, clock, reset, reaction, and pass
     await expect(page.locator('#home-score')).toHaveText('1');
     await expect(page.locator('#event-list')).not.toContainText('Old goal must stay hidden');
     await expect(page.locator('#event-list')).toContainText('Fresh goal survives tracker clock skew');
+
+    await page.evaluate(() => window.__OVERLAY_EVENT_CALLBACK__([{
+        id: 'reset-1', type: 'reset', description: 'First game reset', homeScore: 0, awayScore: 0,
+        period: 'H1', gameClockMs: 0, clientCreatedAt: new Date(2500).toISOString(), createdAt: 2200
+    }, {
+        id: 'between-resets', type: 'goal', description: 'Goal before the second reset',
+        homeScore: 7, awayScore: 0, period: 'H1', gameClockMs: 3000,
+        clientCreatedAt: new Date(3500).toISOString(), createdAt: 2700
+    }, {
+        id: 'reset-2', type: 'reset', description: 'Second game reset', homeScore: 0, awayScore: 0,
+        period: 'H1', gameClockMs: 0, clientCreatedAt: new Date(3600).toISOString(), createdAt: 3000
+    }, {
+        id: 'second-reset-goal', type: 'goal', description: 'Goal after the second reset',
+        homeScore: 1, awayScore: 0, period: 'H1', gameClockMs: 1000,
+        clientCreatedAt: new Date(1500).toISOString(), createdAt: 3100
+    }]));
+    await expect(page.locator('#home-score')).toHaveText('1');
+    await expect(page.locator('#event-list')).not.toContainText('Goal before the second reset');
+    await expect(page.locator('#event-list')).toContainText('Goal after the second reset');
     expect(pageErrors).toEqual([]);
 });
 

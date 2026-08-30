@@ -722,6 +722,123 @@ describe('live game overlay model', () => {
         expect(state.events.map((event) => event.id)).toEqual(['fresh-device-behind']);
     });
 
+    it('treats an unseen reset marker as a newer epoch before its game update arrives', () => {
+        const state = createOverlayState({
+            game: {
+                homeScore: 0,
+                awayScore: 0,
+                liveStatus: 'live',
+                liveResetAt: 2_000
+            }
+        });
+        const firstReset = {
+            id: 'first-reset',
+            type: 'reset',
+            homeScore: 0,
+            awayScore: 0,
+            clientCreatedAt: new Date(2_500).toISOString(),
+            createdAt: 2_200
+        };
+
+        reconcileOverlayLiveEvents(state, [
+            firstReset,
+            {
+                id: 'first-epoch-goal',
+                type: 'goal',
+                description: 'Goal after first reset',
+                homeScore: 1,
+                awayScore: 0,
+                clientCreatedAt: new Date(1_000).toISOString(),
+                createdAt: 2_100
+            }
+        ], stateTools);
+        expect(state.homeScore).toBe(1);
+
+        reconcileOverlayLiveEvents(state, [
+            firstReset,
+            {
+                id: 'between-resets',
+                type: 'goal',
+                description: 'Stale goal between resets',
+                homeScore: 7,
+                awayScore: 0,
+                clientCreatedAt: new Date(3_500).toISOString(),
+                createdAt: 2_700
+            },
+            {
+                id: 'second-reset',
+                type: 'reset',
+                homeScore: 0,
+                awayScore: 0,
+                clientCreatedAt: new Date(3_600).toISOString(),
+                createdAt: 3_000
+            },
+            {
+                id: 'second-epoch-goal',
+                type: 'goal',
+                description: 'Goal after second reset',
+                homeScore: 1,
+                awayScore: 0,
+                clientCreatedAt: new Date(1_500).toISOString(),
+                createdAt: 3_100
+            }
+        ], stateTools);
+
+        expect(state.homeScore).toBe(1);
+        expect(state.events.map((event) => event.id)).toEqual(['second-epoch-goal']);
+        expect(state.lastResetAt).toBe(3_000);
+    });
+
+    it('associates a later reset marker with a game boundary that arrived first', () => {
+        const state = createOverlayState({
+            game: {
+                homeScore: 0,
+                awayScore: 0,
+                liveStatus: 'live',
+                liveResetAt: 2_000
+            }
+        });
+        const firstReset = {
+            id: 'first-reset',
+            type: 'reset',
+            homeScore: 0,
+            awayScore: 0,
+            createdAt: 2_200
+        };
+        reconcileOverlayLiveEvents(state, [firstReset], stateTools);
+
+        state.lastResetAt = 4_000;
+        applyOverlayGame(state, {
+            homeScore: 0,
+            awayScore: 0,
+            liveResetAt: 4_000
+        });
+        reconcileOverlayLiveEvents(state, [
+            firstReset,
+            {
+                id: 'second-epoch-goal',
+                type: 'goal',
+                description: 'Goal after game reset',
+                homeScore: 1,
+                awayScore: 0,
+                clientCreatedAt: new Date(1_000).toISOString(),
+                createdAt: 4_100
+            },
+            {
+                id: 'second-reset',
+                type: 'reset',
+                homeScore: 0,
+                awayScore: 0,
+                clientCreatedAt: new Date(4_500).toISOString(),
+                createdAt: 4_200
+            }
+        ], stateTools);
+
+        expect(state.homeScore).toBe(1);
+        expect(state.events.map((event) => event.id)).toEqual(['second-epoch-goal']);
+        expect(state.lastResetEventBoundaryMs).toBe(4_000);
+    });
+
     it('sorts replacement chat and supplies a realistic local fixture', () => {
         const state = createOverlayState();
         replaceOverlayChat(state, [
