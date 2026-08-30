@@ -206,7 +206,7 @@ describe('Firebase deploy Workload Identity boundary', () => {
             retryEnabledExports.add(`functions:${match[1]}`);
         }
 
-        expect(retryEnabledExports.size).toBe(40);
+        expect(retryEnabledExports.size).toBe(43);
         expect([...targets].sort()).toEqual([...retryEnabledExports].sort());
         expect(production.indexOf('"retry-enabled-functions"')).toBeLessThan(
             production.lastIndexOf('retry_firebase_deploy "hosting,functions" "application"')

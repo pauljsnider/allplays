@@ -10848,6 +10848,149 @@ const retryableTeamMediaNotificationFunctions = functions.runWith({
   failurePolicy: true,
   timeoutSeconds: 540
 });
+const retryableCoachesOnlyNoteCleanupFunctions = functions.runWith({ failurePolicy: true });
+const COACHES_ONLY_NOTE_CLEANUP_TRANSACTION_WRITE_LIMIT = 400;
+
+function normalizeCoachesOnlyNoteTeamId(value) {
+  if (
+    typeof value !== 'string' ||
+    !value ||
+    value === '.' ||
+    value === '..' ||
+    value.includes('/') ||
+    /^__.*__$/.test(value) ||
+    Buffer.byteLength(value, 'utf8') > 1500
+  ) return '';
+  return value;
+}
+
+function getSharedGameCoachesOnlyNoteTeamIds(game = {}) {
+  return [...new Set([
+    normalizeCoachesOnlyNoteTeamId(game?.homeTeamId),
+    normalizeCoachesOnlyNoteTeamId(game?.awayTeamId)
+  ].filter(Boolean))];
+}
+
+function getRemovedSharedGameCoachesOnlyNoteTeamIds(beforeGame = {}, afterGame = {}) {
+  const afterTeamIds = new Set(getSharedGameCoachesOnlyNoteTeamIds(afterGame));
+  return getSharedGameCoachesOnlyNoteTeamIds(beforeGame)
+    .filter((teamId) => !afterTeamIds.has(teamId));
+}
+
+async function cleanupDirectGameCoachesOnlyNote(snapshot) {
+  if (!snapshot?.ref || typeof snapshot.ref.collection !== 'function') {
+    throw new Error('Deleted game snapshot is invalid.');
+  }
+  const noteRef = snapshot.ref.collection('coachNotes').doc('main');
+  const deleted = await firestore.runTransaction(async (transaction) => {
+    const currentGame = await transaction.get(snapshot.ref);
+    if (currentGame.exists) return false;
+    transaction.delete(noteRef);
+    return true;
+  });
+  return {
+    deletedNotePath: deleted ? noteRef.path : null,
+    retained: !deleted
+  };
+}
+
+async function cleanupRemovedSharedGameCoachesOnlyNotes(gameRef, removedTeamIds) {
+  if (!removedTeamIds.length) {
+    return { deletedTeamIds: [], retainedTeamIds: [] };
+  }
+  return firestore.runTransaction(async (transaction) => {
+    const currentGameSnapshot = await transaction.get(gameRef);
+    const currentTeamIds = new Set(currentGameSnapshot.exists
+      ? getSharedGameCoachesOnlyNoteTeamIds(currentGameSnapshot.data() || {})
+      : []);
+    const deletedTeamIds = removedTeamIds.filter((teamId) => !currentTeamIds.has(teamId));
+    const retainedTeamIds = removedTeamIds.filter((teamId) => currentTeamIds.has(teamId));
+    deletedTeamIds.forEach((teamId) => {
+      transaction.delete(gameRef.collection('coachNotes').doc(teamId));
+    });
+    return { deletedTeamIds, retainedTeamIds };
+  });
+}
+
+async function cleanupDeletedSharedGameCoachesOnlyNotes(gameRef) {
+  const notesRef = gameRef.collection('coachNotes');
+  if (typeof notesRef.limit !== 'function') {
+    throw new Error('Shared game coaches-only note collection is invalid.');
+  }
+
+  let deletedCount = 0;
+  while (true) {
+    const batchResult = await firestore.runTransaction(async (transaction) => {
+      const currentGameSnapshot = await transaction.get(gameRef);
+      if (currentGameSnapshot.exists) {
+        return { deletedCount: 0, complete: true, retained: true };
+      }
+
+      const notesSnapshot = await transaction.get(
+        notesRef.limit(COACHES_ONLY_NOTE_CLEANUP_TRANSACTION_WRITE_LIMIT)
+      );
+      if (!notesSnapshot || !Array.isArray(notesSnapshot.docs)) {
+        throw new Error('Shared game coaches-only note query response is invalid.');
+      }
+      notesSnapshot.docs.forEach((noteSnapshot) => {
+        if (!noteSnapshot?.ref) {
+          throw new Error('Shared game coaches-only note snapshot is invalid.');
+        }
+        transaction.delete(noteSnapshot.ref);
+      });
+      return {
+        deletedCount: notesSnapshot.docs.length,
+        complete: notesSnapshot.docs.length < COACHES_ONLY_NOTE_CLEANUP_TRANSACTION_WRITE_LIMIT,
+        retained: false
+      };
+    });
+
+    deletedCount += batchResult.deletedCount;
+    if (batchResult.retained) {
+      return { deletedCount, retained: true };
+    }
+    if (batchResult.complete) {
+      return { deletedCount, retained: false };
+    }
+  }
+}
+
+async function cleanupSharedGameCoachesOnlyNotes(change) {
+  if (!change?.before || !change?.after) {
+    throw new Error('Shared game change is invalid.');
+  }
+  if (!change.before.exists) {
+    return { deletedAll: false, removedTeamIds: [] };
+  }
+  if (!change.before.ref || typeof change.before.ref.collection !== 'function') {
+    throw new Error('Shared game snapshot is invalid.');
+  }
+
+  const beforeGame = change.before.data() || {};
+  if (!change.after.exists) {
+    const cleanupResult = await cleanupDeletedSharedGameCoachesOnlyNotes(change.before.ref);
+    return {
+      deletedAll: !cleanupResult.retained,
+      removedTeamIds: getSharedGameCoachesOnlyNoteTeamIds(beforeGame),
+      deletedCount: cleanupResult.deletedCount,
+      retained: cleanupResult.retained
+    };
+  }
+
+  const removedTeamIds = getRemovedSharedGameCoachesOnlyNoteTeamIds(
+    beforeGame,
+    change.after.data() || {}
+  );
+  const cleanupResult = await cleanupRemovedSharedGameCoachesOnlyNotes(
+    change.before.ref,
+    removedTeamIds
+  );
+  return {
+    deletedAll: false,
+    removedTeamIds,
+    ...cleanupResult
+  };
+}
 
 async function getCandidateUsersForTeam(teamId) {
   const teamSnap = await firestore.doc(`teams/${teamId}`).get();
@@ -12687,6 +12830,14 @@ exports._internal = {
   FIRESTORE_BATCH_SAFE_WRITE_LIMIT,
   NOTIFICATION_RECIPIENT_DEVICE_SYNC_CONCURRENCY,
   NOTIFICATION_INBOX_WRITE_CONCURRENCY,
+  COACHES_ONLY_NOTE_CLEANUP_TRANSACTION_WRITE_LIMIT,
+  normalizeCoachesOnlyNoteTeamId,
+  getSharedGameCoachesOnlyNoteTeamIds,
+  getRemovedSharedGameCoachesOnlyNoteTeamIds,
+  cleanupDirectGameCoachesOnlyNote,
+  cleanupRemovedSharedGameCoachesOnlyNotes,
+  cleanupDeletedSharedGameCoachesOnlyNotes,
+  cleanupSharedGameCoachesOnlyNotes,
   createBoundedFirestoreBatchWriter,
   runWithConcurrencyLimit,
   syncNotificationRecipientForTeamUser,
@@ -15956,6 +16107,18 @@ exports.sendTeamEmail = functions.https.onCall(async (data, context) => {
     inboxFailureCount: inboxResult.failureCount
   };
 });
+
+exports.cleanupDirectGameCoachesOnlyNote = retryableCoachesOnlyNoteCleanupFunctions.firestore
+  .document('teams/{teamId}/games/{gameId}')
+  .onDelete(cleanupDirectGameCoachesOnlyNote);
+
+exports.cleanupOrganizationSharedGameCoachesOnlyNotes = retryableCoachesOnlyNoteCleanupFunctions.firestore
+  .document('organizations/{organizationId}/sharedGames/{gameId}')
+  .onWrite(cleanupSharedGameCoachesOnlyNotes);
+
+exports.cleanupTournamentSharedGameCoachesOnlyNotes = retryableCoachesOnlyNoteCleanupFunctions.firestore
+  .document('tournaments/{tournamentId}/sharedGames/{gameId}')
+  .onWrite(cleanupSharedGameCoachesOnlyNotes);
 
 exports.notifyGameUpdated = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/games/{gameId}')

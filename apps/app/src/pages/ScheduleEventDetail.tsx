@@ -189,6 +189,14 @@ function createLazyScheduleGameHubSection() {
 
 let LazyScheduleGameHubSection = createLazyScheduleGameHubSection();
 
+function createLazyScheduleGameHubPrivateNotes() {
+  return lazy(() => (
+    loadScheduleGameHubSection().then((module) => ({ default: module.ScheduleGameHubPrivateNotes }))
+  ));
+}
+
+let LazyScheduleGameHubPrivateNotes = createLazyScheduleGameHubPrivateNotes();
+
 export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   const { teamId = '', eventId = '' } = useParams();
   const navigate = useNavigate();
@@ -197,10 +205,13 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   const decodedEventId = decodeURIComponent(eventId);
   const sharedGamePath = String(searchParams.get('sharedGamePath') || '').trim();
   const [GameHubSection, setGameHubSection] = useState(() => LazyScheduleGameHubSection);
+  const [GameHubPrivateNotes, setGameHubPrivateNotes] = useState(() => LazyScheduleGameHubPrivateNotes);
   const retryScheduleGameHubSection = useCallback(() => {
     resetScheduleGameHubSectionLoader();
     LazyScheduleGameHubSection = createLazyScheduleGameHubSection();
+    LazyScheduleGameHubPrivateNotes = createLazyScheduleGameHubPrivateNotes();
     setGameHubSection(LazyScheduleGameHubSection);
+    setGameHubPrivateNotes(LazyScheduleGameHubPrivateNotes);
   }, []);
   const initialHandoffScopeRef = useRef({
     userId: auth.user?.uid || '',
@@ -691,6 +702,12 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
                 Loading Game hub...
               </div>
             )}>
+              <GameHubPrivateNotes
+                key={JSON.stringify([auth.user?.uid || 'signed-out', selectedEvent.teamId, selectedEvent.id, sharedGamePath])}
+                auth={auth}
+                event={selectedEvent}
+                sharedGamePath={sharedGamePath}
+              />
               <GameHubSection
                 key={selectedEvent.eventKey}
                 auth={auth}

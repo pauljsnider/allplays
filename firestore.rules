@@ -1530,6 +1530,27 @@ service cloud.firestore {
              );
     }
 
+    function isCoachesOnlyGameNotePayloadValid(data) {
+      return data.keys().hasOnly(['text', 'updatedAt', 'updatedBy']) &&
+             data.keys().hasAll(['text', 'updatedAt', 'updatedBy']) &&
+             data.text is string &&
+             data.text.size() <= 5000 &&
+             data.updatedAt == request.time &&
+             data.updatedBy == request.auth.uid;
+    }
+
+    function isSharedGameTeamManager(sharedGamePath, teamId) {
+      let sharedGame = get(sharedGamePath).data;
+      return sharedGame != null &&
+             teamId is string &&
+             teamId.size() > 0 &&
+             (
+               sharedGame.get('homeTeamId', null) == teamId ||
+               sharedGame.get('awayTeamId', null) == teamId
+             ) &&
+             isTeamOwnerOrAdmin(teamId);
+    }
+
     function isTrackingItemPayloadValid(teamId, data) {
       return data.keys().hasOnly([
                'teamId', 'name', 'description', 'visibility', 'status', 'active', 'archived',
@@ -3215,6 +3236,47 @@ service cloud.firestore {
       allow read: if canReadCollectionGroupSharedGameDocument(resource.data);
     }
 
+    // Shared-game notes stay beneath the physical shared game. Each linked team
+    // gets its own document, and removing the team or game immediately revokes
+    // access even if asynchronous cleanup has not run yet.
+    match /organizations/{organizationId}/sharedGames/{gameId}/coachNotes/{teamId} {
+      allow get: if isSharedGameTeamManager(
+                    /databases/$(database)/documents/organizations/$(organizationId)/sharedGames/$(gameId),
+                    teamId
+                  );
+      allow list: if false;
+      allow create, update: if isVerifiedForSensitiveWrite() &&
+                              isSharedGameTeamManager(
+                                /databases/$(database)/documents/organizations/$(organizationId)/sharedGames/$(gameId),
+                                teamId
+                              ) &&
+                              isCoachesOnlyGameNotePayloadValid(request.resource.data);
+      allow delete: if isVerifiedForSensitiveWrite() &&
+                       isSharedGameTeamManager(
+                         /databases/$(database)/documents/organizations/$(organizationId)/sharedGames/$(gameId),
+                         teamId
+                       );
+    }
+
+    match /tournaments/{tournamentId}/sharedGames/{gameId}/coachNotes/{teamId} {
+      allow get: if isSharedGameTeamManager(
+                    /databases/$(database)/documents/tournaments/$(tournamentId)/sharedGames/$(gameId),
+                    teamId
+                  );
+      allow list: if false;
+      allow create, update: if isVerifiedForSensitiveWrite() &&
+                              isSharedGameTeamManager(
+                                /databases/$(database)/documents/tournaments/$(tournamentId)/sharedGames/$(gameId),
+                                teamId
+                              ) &&
+                              isCoachesOnlyGameNotePayloadValid(request.resource.data);
+      allow delete: if isVerifiedForSensitiveWrite() &&
+                       isSharedGameTeamManager(
+                         /databases/$(database)/documents/tournaments/$(tournamentId)/sharedGames/$(gameId),
+                         teamId
+                       );
+    }
+
     // Live viewers open shared games by synthetic ID, then read live/replay data
     // from the decoded sharedGames document path.
     match /{path=**}/sharedGames/{gameId}/{liveGameCollection}/{docId} {
@@ -3755,6 +3817,22 @@ service cloud.firestore {
         // game-update role and exceed the per-request expression budget.
         allow update: if isBroadcastSessionOnlyUpdate() && isTeamOwnerOrAdmin(teamId);
         allow update: if isStreamingGameUpdate(teamId, gameId);
+
+        // A separately stored note for coaches and team managers. The game
+        // document itself is readable by parents and scoped game helpers, so
+        // private staff text must never be stored on that parent document.
+        match /coachNotes/main {
+          allow get: if exists(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)) &&
+                        isTeamOwnerOrAdmin(teamId);
+          allow list: if false;
+          allow create, update: if isVerifiedForSensitiveWrite() &&
+                                  exists(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)) &&
+                                  isTeamOwnerOrAdmin(teamId) &&
+                                  isCoachesOnlyGameNotePayloadValid(request.resource.data);
+          allow delete: if isVerifiedForSensitiveWrite() &&
+                           exists(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)) &&
+                           isTeamOwnerOrAdmin(teamId);
+        }
 
         // Events subcollection
         match /events/{eventId} {

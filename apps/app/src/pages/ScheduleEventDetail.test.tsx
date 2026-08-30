@@ -234,6 +234,24 @@ const statsheetImportServiceMocks = vi.hoisted(() => ({
 
 vi.mock('../lib/statsheetImportService', () => statsheetImportServiceMocks);
 
+const coachesOnlyGameNotesServiceMocks = vi.hoisted(() => ({
+  load: vi.fn(() => Promise.resolve({
+    exists: false,
+    text: '',
+    updatedAt: null,
+    updatedBy: null
+  })),
+  save: vi.fn(({ text, userId }: { text: string; userId: string }) => Promise.resolve({ text, updatedBy: userId }))
+}));
+
+vi.mock('../lib/coachesOnlyGameNotesService', () => ({
+  COACHES_ONLY_GAME_NOTE_MAX_LENGTH: 5000,
+  isCoachesOnlyGameNoteSaveUncertainError: (error: unknown) =>
+    Boolean(error && typeof error === 'object' && (error as { mayHaveSaved?: unknown }).mayHaveSaved === true),
+  loadCoachesOnlyGameNoteForApp: coachesOnlyGameNotesServiceMocks.load,
+  saveCoachesOnlyGameNoteForApp: coachesOnlyGameNotesServiceMocks.save
+}));
+
 import {
   ScheduleEventDetail,
   loadScheduleGameHubSection,
@@ -1436,6 +1454,98 @@ describe('ScheduleEventDetail nav visibility', () => {
     expect(screen.queryByRole('button', { name: 'Assignments' })).toBeNull();
     expect(screen.getAllByRole('button', { name: 'Availability' }).length).toBeGreaterThan(0);
     expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0);
+  });
+
+  it('loads coaches-only notes only for a canonical team manager viewing a tracked game', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [
+        buildEvent({ isTeamAdmin: true, isTeamStaff: true, isDbGame: true, childId: 'player-1', childName: 'Avery Smith' }),
+        buildEvent({
+          eventKey: 'team-1::game-1::player-2::2026-06-04T18:00:00.000Z::game',
+          isTeamAdmin: true,
+          isTeamStaff: true,
+          isDbGame: true,
+          childId: 'player-2',
+          childName: 'Sam Lee'
+        })
+      ],
+      children: []
+    });
+
+    renderScheduleEventDetailWithLocation('/schedule/team-1/game-1?childId=player-1&section=game');
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Coaches-only notes' })).toBeTruthy();
+    });
+    expect(coachesOnlyGameNotesServiceMocks.load).toHaveBeenCalledWith({
+      teamId: 'team-1',
+      gameId: 'game-1',
+      userId: 'coach-1',
+      sharedGamePath: ''
+    });
+
+    const editor = screen.getByLabelText('Coaches-only notes');
+    await waitFor(() => expect(editor).toBeEnabled());
+    fireEvent.change(editor, { target: { value: 'Keep this unsaved game note' } });
+    fireEvent.click(within(screen.getByTestId('event-player-switcher')).getByRole('button', { name: 'Sam Lee' }));
+    expect(editor).toHaveValue('Keep this unsaved game note');
+    expect(coachesOnlyGameNotesServiceMocks.load).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes a router-decoded reversible shared-game identity to the private-note service', async () => {
+    const sharedGamePath = 'organizations/org-1/sharedGames/shared-game-1';
+    const storedSyntheticId = `shared_${encodeURIComponent(sharedGamePath)}`;
+    const routerDecodedId = `shared_${sharedGamePath}`;
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        id: routerDecodedId,
+        isTeamAdmin: true,
+        isTeamStaff: true,
+        isDbGame: true
+      })],
+      children: []
+    });
+
+    renderScheduleEventDetailWithLocation(
+      `/schedule/team-1/${encodeURIComponent(storedSyntheticId)}?sharedGamePath=${encodeURIComponent(sharedGamePath)}&section=game`
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Coaches-only notes' })).toBeTruthy();
+    });
+    expect(scheduleServiceMocks.loadParentScheduleEventDetail).toHaveBeenCalledWith(auth.user, {
+      teamId: 'team-1',
+      eventId: routerDecodedId,
+      sharedGamePath
+    });
+    expect(coachesOnlyGameNotesServiceMocks.load).toHaveBeenCalledWith({
+      teamId: 'team-1',
+      gameId: routerDecodedId,
+      userId: 'coach-1',
+      sharedGamePath
+    });
+  });
+
+  it.each([
+    ['parent', { isTeamAdmin: false, isTeamStaff: false, canUpdateScore: false }],
+    ['non-manager staff', { isTeamAdmin: false, isTeamStaff: true, canUpdateScore: false }],
+    ['scorekeeper', { isTeamAdmin: false, isTeamStaff: false, canUpdateScore: true }],
+    ['calendar-only event', { isTeamAdmin: true, isTeamStaff: true, isDbGame: false }],
+    ['practice', { isTeamAdmin: true, isTeamStaff: true, type: 'practice', title: 'Practice' }]
+  ])('does not mount or fetch coaches-only notes for a %s', async (_label, access) => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent(access)],
+      children: []
+    });
+
+    renderScheduleEventDetailWithLocation('/schedule/team-1/game-1?childId=player-1&section=game');
+
+    await waitFor(() => {
+      const isPracticeCase = 'type' in access && access.type === 'practice';
+      expect(screen.getByRole('heading', { name: isPracticeCase ? 'Practice hub' : 'Game hub' })).toBeTruthy();
+    });
+    expect(screen.queryByRole('heading', { name: 'Coaches-only notes' })).toBeNull();
+    expect(coachesOnlyGameNotesServiceMocks.load).not.toHaveBeenCalled();
   });
 
   it('keeps related tabs but still defaults inactive events to the read-only Game hub', async () => {
@@ -3666,7 +3776,7 @@ describe('ScheduleEventDetail assignments', () => {
       expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0);
     });
     fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
-    fireEvent.click(screen.getByRole('button', { name: 'Live substitutions' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Live substitutions' }));
 
     await waitFor(() => {
       expect(screen.getByTestId('game-day-substitution-panel')).toBeTruthy();
@@ -3676,9 +3786,23 @@ describe('ScheduleEventDetail assignments', () => {
     });
     expect(screen.getByText('#6 Finley Ray for #2 Blake Jones at sg')).toBeTruthy();
 
-    fireEvent.change(screen.getByLabelText('Out'), { target: { value: 'p2' } });
-    fireEvent.change(screen.getByLabelText('In'), { target: { value: 'p6' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Execute sub' }));
+    const outPlayerSelect = screen.getByLabelText('Out');
+    const inPlayerSelect = screen.getByLabelText('In');
+    await waitFor(() => {
+      expect(outPlayerSelect).toHaveValue('p1');
+      expect(inPlayerSelect).toHaveValue('p6');
+    });
+    fireEvent.change(outPlayerSelect, { target: { value: 'p2' } });
+    fireEvent.change(inPlayerSelect, { target: { value: 'p6' } });
+    await waitFor(() => {
+      expect(outPlayerSelect).toHaveValue('p2');
+      expect(inPlayerSelect).toHaveValue('p6');
+    });
+    const executeSubstitutionButton = screen.getByRole('button', { name: 'Execute sub' });
+    await waitFor(() => {
+      expect(executeSubstitutionButton).toBeEnabled();
+    });
+    fireEvent.click(executeSubstitutionButton);
 
     await waitFor(() => {
       expect(scheduleServiceMocks.saveGameDaySubstitutionForApp).toHaveBeenCalledWith(
