@@ -38,8 +38,8 @@ async function waitForTeamDetailRoute(page, teamName, { pageErrors = [] } = {}) 
     }).toPass({ timeout: 45000 });
 }
 
-async function mockTeamsModules(page, { scenario = '', managedTeam = false, rosterPlayerCount = 2 } = {}) {
-    await page.addInitScript(({ scenarioName, shouldManageTeam, teamRosterPlayerCount }) => {
+async function mockTeamsModules(page, { scenario = '', managedTeam = false, rosterPlayerCount = 2, privateCalendarEligible = true } = {}) {
+    await page.addInitScript(({ scenarioName, shouldManageTeam, teamRosterPlayerCount, canUsePrivateCalendarSync }) => {
         window.__openedPublicUrls = [];
         window.__copiedPublicTexts = [];
         window.__sharedPublicUrls = [];
@@ -48,7 +48,8 @@ async function mockTeamsModules(page, { scenario = '', managedTeam = false, rost
         window.__teamsScenario = scenarioName;
         window.__managedTeam = shouldManageTeam;
         window.__teamRosterPlayerCount = teamRosterPlayerCount;
-    }, { scenarioName: scenario, shouldManageTeam: managedTeam, teamRosterPlayerCount: rosterPlayerCount });
+        window.__canUsePrivateCalendarSync = canUsePrivateCalendarSync;
+    }, { scenarioName: scenario, shouldManageTeam: managedTeam, teamRosterPlayerCount: rosterPlayerCount, canUsePrivateCalendarSync: privateCalendarEligible });
 
     await page.route(/\/src\/lib\/useAuth\.ts(\?.*)?$/, async (route) => {
         await route.fulfill({
@@ -60,7 +61,9 @@ async function mockTeamsModules(page, { scenario = '', managedTeam = false, rost
                         uid: 'user-1',
                         email: 'parent@example.com',
                         displayName: 'Pat Parent',
+                        emailVerified: true,
                         roles: ['parent', 'coach'],
+                        parentTeamIds: ['team-1'],
                         parentOf: [
                             { teamId: 'team-1', playerId: 'player-1', playerName: 'Pat Star', teamName: 'Bears' },
                             { teamId: 'team-1', playerId: 'player-2', playerName: 'Sam Wing', teamName: 'Bears' },
@@ -460,6 +463,7 @@ async function mockTeamsModules(page, { scenario = '', managedTeam = false, rost
                             statTrackerConfigs: [],
                             canManageTeam: false,
                             canManageAdmins: false,
+                            canUsePrivateCalendarSync: false,
                             staffPermissions: null,
                             counts: { games: 0, practices: 0, completedGames: 0 }
                         };
@@ -522,6 +526,7 @@ async function mockTeamsModules(page, { scenario = '', managedTeam = false, rost
                         statTrackerConfigs: [],
                         canManageTeam: window.__managedTeam,
                         canManageAdmins: window.__managedTeam,
+                        canUsePrivateCalendarSync: window.__canUsePrivateCalendarSync,
                         staffPermissions: null,
                         counts: { games: 8, practices: 3, completedGames: 6 }
                     };
@@ -1100,6 +1105,21 @@ test.describe('mobile My Teams', () => {
         await expect.poll(() => page.evaluate(() => window.__openedPublicUrls.at(-1))).toBe('https://pizza.example.test');
         await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
         expect(pageErrors).toEqual([]);
+    });
+
+    test('keeps private calendar sync hidden for an authenticated but ineligible viewer', async ({ page, baseURL }) => {
+        const pageErrors = [];
+        page.on('pageerror', (error) => pageErrors.push(error.message));
+        await mockTeamsModules(page, { privateCalendarEligible: false });
+        await page.goto(appUrl(baseURL, '/teams/team-1'), { waitUntil: 'domcontentloaded' });
+
+        await waitForTeamDetailRoute(page, 'Bears', { pageErrors });
+        await page.getByTestId('team-detail-tab-nav').getByRole('button', { name: /More/ }).click();
+        expect(pageErrors).toEqual([]);
+        await expect(page.getByText('Private calendar sync')).toHaveCount(0);
+        await expect(page.getByText('Fan Feed', { exact: true })).toBeVisible();
+        await expect(page.getByText('Website team page')).toBeVisible();
+        expect(await page.evaluate(() => window.__privateCalendarTeamIds)).toEqual([]);
     });
 
     test('keeps a complete schedule event on the team overview across tab changes when the bootstrap is stale', async ({ page, baseURL }) => {

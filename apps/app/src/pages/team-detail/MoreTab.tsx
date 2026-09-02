@@ -78,7 +78,7 @@ export function MoreTab({ model, auth, staffPermissionsLoading, staffPermissions
       ) : null}
       {model.staffPermissions ? <StaffPermissionsCard model={model} auth={auth} onInviteSuccess={onTeamDetailRefresh} /> : null}
       {model.canManageTeam ? <ReminderTimingDefaultsCard model={model} onSaved={onTeamDetailRefresh} /> : null}
-      {auth.user ? <PrivateCalendarSyncCard model={model} /> : null}
+      {auth.user && model.canUsePrivateCalendarSync ? <PrivateCalendarSyncCard model={model} /> : null}
       {canExposePublicFanFeed(model.team, [...model.upcomingEvents, ...model.recentResults]) ? <FanFeedCard model={model} /> : null}
       {model.canManageTeam ? <ScoreboardWidgetCard model={model} /> : null}
 

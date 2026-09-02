@@ -242,6 +242,7 @@ const model = {
   canManageTeam: false,
   canManageAdmins: false,
   canPurchaseTeamPass: false,
+  canUsePrivateCalendarSync: true,
   staffPermissions: null,
   counts: { games: 0, practices: 0, completedGames: 0 }
 };

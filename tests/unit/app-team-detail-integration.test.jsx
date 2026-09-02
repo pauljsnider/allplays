@@ -173,6 +173,7 @@ function model() {
             assignedUpcomingGames: [{ gameId: 'game-1', title: 'vs. Falcons', date: nextDate }]
         }],
         canManageTeam: false,
+        canUsePrivateCalendarSync: true,
         staffPermissions: null,
         counts: { games: 8, practices: 3, completedGames: 7 }
     };
@@ -490,7 +491,7 @@ describe('React app TeamDetail page', () => {
         expect(hidden.container.textContent).not.toContain('Fan Feed');
     });
 
-    it('shows a private calendar sync error and hides sync actions without a signed-in user', async () => {
+    it('shows private calendar errors only to eligible users and hides sync for denied or signed-out users', async () => {
         parentToolsMocks.getPrivateTeamCalendarFeedUrl.mockRejectedValueOnce(new Error('Unable to create private calendar feed. Sign in again and retry.'));
         const { container } = await renderTeamDetail();
 
@@ -506,6 +507,15 @@ describe('React app TeamDetail page', () => {
         });
         await clickButton(signedOut.container, 'More');
         expect(signedOut.container.textContent).not.toContain('Private calendar sync');
+
+        const deniedModel = model();
+        deniedModel.canUsePrivateCalendarSync = false;
+        teamDetailMocks.loadParentTeamDetailBootstrap.mockResolvedValueOnce(deniedModel);
+        teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(deniedModel);
+        const denied = await renderTeamDetail();
+        await clickButton(denied.container, 'More');
+        expect(denied.container.textContent).not.toContain('Private calendar sync');
+        expect(parentToolsMocks.getPrivateTeamCalendarFeedUrl).toHaveBeenCalledTimes(1);
     });
 
     it('renders scoreboard widget copy tools only for managers', async () => {
