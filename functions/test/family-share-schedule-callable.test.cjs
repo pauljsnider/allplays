@@ -373,6 +373,8 @@ test('family share schedule callable validates bearer token and projects private
       id: 'game-1',
       gameId: 'game-1',
       type: 'game',
+      hasReplayVideo: false,
+      canOpenPublicViewer: false,
       date: '2026-07-13T18:00:00.000Z',
       opponent: 'Tigers',
       location: 'Private Field',
@@ -520,7 +522,90 @@ test('family share view projection omits owner UID and raw calendar URLs from th
       type: 'game',
       date: new FakeTimestamp(Date.parse('2026-07-20T18:00:00Z')),
       opponent: 'Tigers',
+      status: 'completed',
+      liveStatus: ' SCHEDULED ',
+      replayVideo: {
+        provider: 'SENTINEL_REPLAY_PROVIDER',
+        videoId: 'SENTINEL_REPLAY_VIDEO_ID',
+        embedUrl: 'https://www.youtube.com/embed/SENTINEL_REPLAY_VIDEO_ID',
+        linkedBy: 'SENTINEL_REPLAY_LINKER',
+        linkedAt: new FakeTimestamp(Date.parse('2026-07-20T20:00:00Z'))
+      },
       internalNotes: 'SENTINEL_STAFF_NOTE'
+    },
+    'teams/private-team/games/game-string-container': {
+      type: 'game',
+      date: new FakeTimestamp(Date.parse('2026-07-21T18:00:00Z')),
+      opponent: 'String Container',
+      status: 'completed',
+      liveStatus: 'scheduled',
+      replayVideo: 'https://www.youtube.com/watch?v=SENTINEL_STRING_CONTAINER'
+    },
+    'teams/private-team/games/game-flat-source': {
+      type: 'game',
+      date: new FakeTimestamp(Date.parse('2026-07-22T18:00:00Z')),
+      opponent: 'Flat Source',
+      status: 'completed',
+      liveStatus: 'scheduled',
+      visibility: 'public',
+      recordedVideoUrl: 'https://cdn.example.test/SENTINEL_FLAT_SOURCE.mp4'
+    },
+    'teams/private-team/games/game-public-replay': {
+      type: 'game',
+      date: new FakeTimestamp(Date.parse('2026-07-23T18:00:00Z')),
+      opponent: 'Public Replay',
+      status: 'completed',
+      liveStatus: 'scheduled',
+      visibility: 'public',
+      recordedVideo: {
+        publicUrl: 'https://youtu.be/PK1HyC37doc?si=SENTINEL_PUBLIC_SHARE_TOKEN',
+        status: 'available'
+      }
+    },
+    'teams/private-team/games/game-processing-replay': {
+      type: 'game',
+      date: new FakeTimestamp(Date.parse('2026-07-24T18:00:00Z')),
+      opponent: 'Processing Replay',
+      status: 'completed',
+      liveStatus: 'scheduled',
+      visibility: 'public',
+      recordedVideo: {
+        publicUrl: 'https://youtu.be/PK1HyC37doc',
+        status: 'processing'
+      }
+    },
+    'teams/private-team/games/game-paywalled-replay': {
+      type: 'game',
+      date: new FakeTimestamp(Date.parse('2026-07-25T18:00:00Z')),
+      opponent: 'Paywalled Replay',
+      status: 'completed',
+      liveStatus: 'scheduled',
+      visibility: 'public',
+      recordedReplayPaywallEnabled: true,
+      replayVideo: {
+        provider: 'youtube',
+        videoId: 'PK1HyC37doc',
+        embedUrl: 'https://www.youtube.com/embed/PK1HyC37doc',
+        publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+        status: 'ready'
+      }
+    },
+    'teams/private-team/games/game-flag-cancelled': {
+      type: 'game',
+      date: new FakeTimestamp(Date.parse('2026-07-26T18:00:00Z')),
+      opponent: 'Flag Cancelled',
+      status: 'completed',
+      liveStatus: 'final',
+      isCancelled: true,
+      visibility: 'public'
+    },
+    'teams/private-team/games/game-live-status-cancelled': {
+      type: 'game',
+      date: new FakeTimestamp(Date.parse('2026-07-27T18:00:00Z')),
+      opponent: 'Live Status Cancelled',
+      status: 'completed',
+      liveStatus: 'canceled',
+      visibility: 'public'
     }
   });
 
@@ -529,12 +614,42 @@ test('family share view projection omits owner UID and raw calendar URLs from th
 
   assert.equal(result.projectionVersion, 2);
   assert.equal(result.presentation.label, 'Grandma');
+  const gamesById = new Map(result.teams[0].games.map((game) => [game.id, game]));
+  assert.equal(gamesById.get('game-1').status, 'completed');
+  assert.equal(gamesById.get('game-1').liveStatus, 'scheduled');
+  assert.equal(gamesById.get('game-1').hasReplayVideo, false);
+  assert.equal(gamesById.get('game-1').canOpenPublicViewer, false);
+  assert.equal(gamesById.get('game-string-container').hasReplayVideo, false);
+  assert.equal(gamesById.get('game-flat-source').hasReplayVideo, false);
+  assert.equal(gamesById.get('game-flat-source').canOpenPublicViewer, true);
+  assert.equal(gamesById.get('game-public-replay').hasReplayVideo, true);
+  assert.equal(gamesById.get('game-public-replay').canOpenPublicViewer, true);
+  assert.equal(gamesById.get('game-processing-replay').hasReplayVideo, false);
+  assert.equal(gamesById.get('game-paywalled-replay').hasReplayVideo, false);
+  assert.equal(gamesById.get('game-flag-cancelled').status, 'cancelled');
+  assert.equal(gamesById.get('game-flag-cancelled').liveStatus, 'final');
+  assert.equal(gamesById.get('game-flag-cancelled').hasReplayVideo, false);
+  assert.equal(gamesById.get('game-flag-cancelled').isCancelled, true);
+  assert.equal(gamesById.get('game-live-status-cancelled').status, 'completed');
+  assert.equal(gamesById.get('game-live-status-cancelled').liveStatus, 'cancelled');
+  assert.equal(gamesById.get('game-live-status-cancelled').hasReplayVideo, false);
+  assert.equal(gamesById.get('game-live-status-cancelled').isCancelled, true);
   assert.equal(payload.includes('SENTINEL_OWNER_UID'), false);
   assert.equal(payload.includes('SENTINEL_CALENDAR_SECRET'), false);
   assert.equal(payload.includes('SENTINEL_STAFF_NOTE'), false);
+  assert.equal(payload.includes('SENTINEL_REPLAY_PROVIDER'), false);
+  assert.equal(payload.includes('SENTINEL_REPLAY_VIDEO_ID'), false);
+  assert.equal(payload.includes('SENTINEL_REPLAY_LINKER'), false);
+  assert.equal(payload.includes('SENTINEL_STRING_CONTAINER'), false);
+  assert.equal(payload.includes('SENTINEL_FLAT_SOURCE'), false);
+  assert.equal(payload.includes('SENTINEL_PUBLIC_SHARE_TOKEN'), false);
   assert.equal(payload.includes('ownerUserId'), false);
   assert.equal(payload.includes('extraCalendarUrls'), false);
   assert.equal(payload.includes('calendarUrls'), false);
+  assert.equal(payload.includes('replayVideo'), false);
+  assert.equal(payload.includes('videoId'), false);
+  assert.equal(payload.includes('linkedBy'), false);
+  assert.equal(payload.includes('linkedAt'), false);
 });
 
 test('family share schedule callable includes organization shared games for scoped teams', async () => {
@@ -583,6 +698,8 @@ test('family share schedule callable includes organization shared games for scop
     id: 'shared_organizations%2Forg-1%2FsharedGames%2Fshared-game',
     gameId: 'shared_organizations%2Forg-1%2FsharedGames%2Fshared-game',
     type: 'game',
+    hasReplayVideo: false,
+    canOpenPublicViewer: false,
     date: '2026-07-14T19:00:00.000Z',
     location: 'Org Field',
     opponent: 'Wolves',

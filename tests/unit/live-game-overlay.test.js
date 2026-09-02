@@ -7,6 +7,8 @@ const currentLiveGame = readFileSync(new URL('../../live-game.html', import.meta
 const currentLiveGameSource = readFileSync(new URL('../../js/live-game.js', import.meta.url), 'utf8');
 const source = readFileSync(new URL('../../js/live-game-overlay.js', import.meta.url), 'utf8');
 const modelSource = readFileSync(new URL('../../js/live-game-overlay-model.js', import.meta.url), 'utf8');
+const videoSource = readFileSync(new URL('../../js/live-game-video.js', import.meta.url), 'utf8');
+const chatSource = readFileSync(new URL('../../js/live-game-chat.js', import.meta.url), 'utf8');
 const liveStateSource = readFileSync(new URL('../../js/live-game-state.js', import.meta.url), 'utf8');
 const trackerSource = readFileSync(new URL('../../track-live.html', import.meta.url), 'utf8');
 const legacyTrackerSource = readFileSync(new URL('../../js/live-tracker.js', import.meta.url), 'utf8');
@@ -64,18 +66,19 @@ describe('live game overlay page', () => {
         expect(html).toContain('id="away-team-photo"');
         expect(html).toContain('data-score-hidden="false"');
         expect(html).toMatch(/\.panel-tab\s*\{[^}]*min-width:\s*44px;/);
-        expect(html).toContain('js/live-game-overlay.js?v=38');
+        expect(html).toContain('js/live-game-overlay.js?v=42');
     });
 
     it('keeps the local demo isolated while wiring canonical subscriptions and authenticated chat posting', () => {
         expect(source).toContain("params.demo === '1'");
         expect(source).toContain("params.replay === 'true'");
         expect(source).toContain('startDemoReplayMode');
-        expect(source).toContain("return import('./db.js?v=4433193')");
-        expect(source).toContain("import('./live-game-state.js?v=41')");
+        expect(source).toContain("return import('./db.js?v=4433194')");
+        expect(source).toContain("import('./live-game-state.js?v=42')");
         expect(source).toContain('stateTools.applyResetEventState');
         expect(source).toContain('reconcileOverlayLiveEvents');
-        expect(source).toContain("from './live-game-overlay-model.js?v=25'");
+        expect(source).toContain("from './live-game-overlay-model.js?v=28'");
+        expect(source).toContain("import('./live-game-video.js?v=443319')");
         expect(source).not.toContain('loadPublicGameResetIdentity');
         expect(source).toContain('resolvePublicProjectionVideoOptions');
         expect(source).toContain('getSafeOverlayProviderUrl(publicUrl)');
@@ -88,8 +91,14 @@ describe('live game overlay page', () => {
         expect(source).toContain('database.subscribeReactions');
         expect(source).toContain('getOverlayLiveClockMs');
         expect(source).toContain('syncLiveClockAnchor');
-        expect(source).toContain("import('./auth.js?v=4433197')");
-        expect(source).toContain("import('./live-game-chat.js?v=2')");
+        expect(source).toContain("import('./auth.js?v=4433198')");
+        expect(source).toContain("import('./live-game-chat.js?v=4')");
+        expect(currentLiveGameSource).toContain("from './live-game-overlay-model.js?v=28'");
+        expect(currentLiveGameSource).toContain("from './live-game-video.js?v=443319'");
+        expect(currentLiveGameSource).toContain("from './live-game-chat.js?v=4'");
+        expect(modelSource).toContain("from './game-replay-video.js?v=3'");
+        expect(videoSource).toContain("from './game-replay-video.js?v=3'");
+        expect(chatSource).toContain("from './game-replay-video.js?v=3'");
         expect(source).toContain("from './safe-image-url.js?v=1'");
         expect(source).toContain('database.postLiveChatMessage');
         expect(source).toContain('database.sendReaction');
@@ -121,12 +130,13 @@ describe('live game overlay page', () => {
         expect(source).not.toContain('trackViewerPresence(');
         expect(source).toContain('sendChatReaction');
         expect(source).toContain("from './game-share-links.js?v=1'");
-        expect(source).toContain("from './utils.js?v=443369'");
+        expect(source).toContain("from './utils.js?v=443370'");
         expect(source).toContain("from './live-game-announcer.js?v=1'");
         expect(source).toContain("import('./team-entitlements.js?v=9')");
         expect(source).toContain('isRecordedReplayTeamPassGateEnabled');
         expect(source).toContain('getTeamEntitlementStatus');
         expect(source).toContain('showReplayAccessGate');
+        expect(source).toContain('options.isRecordedReplay === true');
         expect(source).toContain("uiState.videoMuted ? 'mute' : 'unMute'");
         expect(source).toContain('requestFullscreen');
         expect(source).toContain('buildGameWatchShareUrl');
@@ -187,7 +197,10 @@ describe('live game overlay page', () => {
         expect(currentLiveGame).toContain('<span id="overlay-view-link-label">Watch Live</span>');
         expect(currentLiveGameSource).toContain("overlayViewLink: q('#overlay-view-link')");
         expect(currentLiveGameSource).toContain('els.overlayViewLink.href = `live-game-overlay.html?teamId=');
-        expect(currentLiveGameSource).toContain("isReport ? 'Watch Replay' : 'Watch Live'");
+        expect(currentLiveGameSource).toContain("? 'Game replay video'");
+        expect(currentLiveGameSource).toContain(": 'Live stream';");
+        expect(currentLiveGameSource).toContain("hasReplayPlayback ? 'Watch Replay' : 'Watch Live'");
+        expect(currentLiveGameSource).toContain("els.overlayViewLink.classList.toggle('hidden', !hasReplayPlayback && !hasLivePlayback)");
     });
 
     it('keeps the former preview URL as a query-preserving compatibility redirect', () => {

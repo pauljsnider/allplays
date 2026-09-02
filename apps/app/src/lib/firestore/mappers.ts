@@ -15,6 +15,11 @@ import type {
     GameReportTeamStatsFirestoreRecord,
     ScheduleEventFirestoreRecord
 } from './types';
+import {
+    createReplayTimestampValue,
+    getReplayArchiveState,
+    replayArchiveFieldNames
+} from '../youtubeReplay';
 
 function decodeFirestoreValue(value: FirestoreValue | undefined): unknown {
     if (!value || typeof value !== 'object') return null;
@@ -34,6 +39,43 @@ export function decodeFirestoreFields(fields: Record<string, FirestoreValue> = {
         acc[key] = decodeFirestoreValue(fields[key]);
         return acc;
     }, {});
+}
+
+function decodeReplayTimestamp(value: unknown): unknown {
+    if (typeof value !== 'string') return { timestampValue: value };
+    const match = value.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.(\d{1,9}))?(?:Z|[+-]\d{2}:\d{2})$/);
+    const milliseconds = Date.parse(value);
+    if (!match || !Number.isFinite(milliseconds)) return { timestampValue: value };
+    const nanoseconds = Number((match[1] || '').padEnd(9, '0') || '0');
+    return createReplayTimestampValue(Math.floor(milliseconds / 1000), nanoseconds)
+        || { timestampValue: value };
+}
+
+function decodeReplayFirestoreValue(value: FirestoreValue | undefined): unknown {
+    if (!value || typeof value !== 'object') return null;
+    if ('stringValue' in value && value.stringValue !== undefined) return value.stringValue;
+    if ('booleanValue' in value && value.booleanValue !== undefined) return value.booleanValue;
+    if ('integerValue' in value && value.integerValue !== undefined) return Number(value.integerValue || 0);
+    if ('doubleValue' in value && value.doubleValue !== undefined) return Number(value.doubleValue || 0);
+    if ('timestampValue' in value && value.timestampValue !== undefined) return decodeReplayTimestamp(value.timestampValue);
+    if ('nullValue' in value && value.nullValue !== undefined) return null;
+    if ('arrayValue' in value) return (value.arrayValue?.values || []).map((entry) => decodeReplayFirestoreValue(entry));
+    if ('mapValue' in value) {
+        return Object.entries(value.mapValue?.fields || {}).reduce<Record<string, unknown>>((result, [key, entry]) => {
+            result[key] = decodeReplayFirestoreValue(entry);
+            return result;
+        }, {});
+    }
+    return null;
+}
+
+function decodeReplayArchiveState(fields: Record<string, FirestoreValue> = {}) {
+    return getReplayArchiveState(replayArchiveFieldNames.reduce<Record<string, unknown>>((result, field) => {
+        if (Object.prototype.hasOwnProperty.call(fields, field)) {
+            result[field] = decodeReplayFirestoreValue(fields[field]);
+        }
+        return result;
+    }, {}));
 }
 
 export function mapFirestoreDocument(document: FirestoreDocument | null | undefined): FirestoreDecodedDocument | null {
@@ -386,6 +428,23 @@ export function mapScheduleEventRecord(value: unknown, fallbackId = ''): Schedul
         return null;
     }
 
+    const rawReplayLifecycle = ['type', 'status', 'liveStatus'].reduce<Record<string, unknown>>((state, field) => {
+        if (Object.prototype.hasOwnProperty.call(decoded, field)) state[field] = decoded[field];
+        return state;
+    }, {});
+    const hasReplayShareMarker = [
+        'sharedGameId',
+        'sharedGamePath',
+        '_sharedGamePath',
+        'sharedScheduleId',
+        'sharedScheduleSourceTeamId',
+        'sharedScheduleOpponentTeamId',
+        'sharedScheduleOpponentGameId'
+    ].some((field) => Object.prototype.hasOwnProperty.call(decoded, field)
+        && decoded[field] !== null
+        && decoded[field] !== undefined
+        && decoded[field] !== '');
+
     return {
         id,
         type,
@@ -402,10 +461,17 @@ export function mapScheduleEventRecord(value: unknown, fallbackId = ''): Schedul
         opponentTeamName: asTrimmedString(decoded.opponentTeamName),
         awayTeamName: asTrimmedString(decoded.awayTeamName),
         opponentTeamPhoto: asTrimmedString(decoded.opponentTeamPhoto),
+        sharedScheduleId: asTrimmedString(decoded.sharedScheduleId),
+        sharedScheduleSourceTeamId: asTrimmedString(decoded.sharedScheduleSourceTeamId),
         sharedScheduleOpponentTeamId: asTrimmedString(decoded.sharedScheduleOpponentTeamId),
+        sharedScheduleOpponentGameId: asTrimmedString(decoded.sharedScheduleOpponentGameId),
+        hasReplayShareMarker,
         gameId: asTrimmedString(decoded.gameId),
         status: asTrimmedString(decoded.status),
         liveStatus: asTrimmedString(decoded.liveStatus),
+        isCancelled: decoded.isCancelled === true,
+        deleted: decoded.deleted === true,
+        isDeleted: decoded.isDeleted === true,
         liveClockMs: asOptionalNumber(decoded.liveClockMs),
         liveClockRunning: asOptionalBoolean(decoded.liveClockRunning),
         liveClockPeriod: asTrimmedString(decoded.liveClockPeriod),
@@ -414,7 +480,12 @@ export function mapScheduleEventRecord(value: unknown, fallbackId = ''): Schedul
         awayScore: asOptionalNumber(decoded.awayScore),
         postGameNotes: asTrimmedString(decoded.postGameNotes),
         summary: asTrimmedString(decoded.summary),
+        videoUrl: asTrimmedString(decoded.videoUrl),
+        replayVideo: asObject(decoded.replayVideo),
+        rawReplayState: getReplayArchiveState(decoded),
+        rawReplayLifecycle,
         practiceFeedItems: asObjectArray(decoded.practiceFeedItems),
+        isSharedGame: decoded.isSharedGame === true,
         isHome: asOptionalBoolean(decoded.isHome),
         kitColor: asTrimmedString(decoded.kitColor),
         arrivalTime: asOptionalDate(decoded.arrivalTime),
@@ -453,7 +524,10 @@ export function mapScheduleEventRecords(values: unknown): ScheduleEventFirestore
 
 export function mapScheduleEventDocument(document: FirestoreDocument | null | undefined): ScheduleEventFirestoreRecord | null {
     const decoded = mapFirestoreDocument(document);
-    return decoded ? mapScheduleEventRecord(decoded, decoded.id) : null;
+    const mapped = decoded ? mapScheduleEventRecord(decoded, decoded.id) : null;
+    return mapped
+        ? { ...mapped, rawReplayState: decodeReplayArchiveState(document?.fields || {}) }
+        : null;
 }
 
 export function mapScheduleEventDocuments(documents: FirestoreDocument[] | null | undefined): ScheduleEventFirestoreRecord[] {

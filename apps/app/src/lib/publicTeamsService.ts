@@ -246,13 +246,16 @@ function normalizePublicCompletedGame(
     teamName: string
 ): NormalizedPublicCompletedGame | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-    const status = String(value.status || '').trim().toLowerCase();
+    const hasSourceStatus = Object.prototype.hasOwnProperty.call(value, 'sourceStatus');
+    const status = String(hasSourceStatus ? value.sourceStatus || '' : value.status || '').trim().toLowerCase();
     const liveStatus = String(value.liveStatus || '').trim().toLowerCase();
     const type = String(value.type || '').trim().toLowerCase();
     const visibility = String(value.visibility || '').trim().toLowerCase();
     const completedStatuses = ['completed', 'complete', 'final', 'finished'];
-    if (!completedStatuses.includes(status)) return null;
-    if (liveStatus && !completedStatuses.includes(liveStatus)) return null;
+    const hasCompletedLifecycle = (completedStatuses.includes(status)
+        && (!liveStatus || completedStatuses.includes(liveStatus) || liveStatus === 'scheduled'))
+        || (!status && completedStatuses.includes(liveStatus));
+    if (!hasCompletedLifecycle) return null;
     if (type && type !== 'game') return null;
     if (visibility === 'private' || value.isPrivate === true || value.private === true || value.deleted === true) return null;
     if (value.teamId && String(value.teamId).trim() !== teamId) return null;

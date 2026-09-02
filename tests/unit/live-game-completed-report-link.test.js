@@ -14,6 +14,7 @@ describe('live game completed-state match report path', () => {
         expect(html).toContain('Match Report');
         expect(js).toContain("watchReportBtn: q('#watch-report-btn')");
         expect(js).toContain('els.watchReportBtn.href = `game.html#teamId=${state.teamId}&gameId=${state.gameId}`;');
-        expect(js).toContain("els.replayReportLink.classList.toggle('hidden', !(state.isReplay || state.game?.status === 'completed' || state.game?.status === 'final' || state.game?.liveStatus === 'completed'));");
+        expect(js).toContain('const isReport = state.isReplay || hasCompletedReplayLifecycle(state.game);');
+        expect(js).toContain("els.replayReportLink.classList.toggle('hidden', !isReport);");
     });
 });
