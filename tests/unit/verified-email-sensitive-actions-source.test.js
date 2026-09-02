@@ -18,11 +18,18 @@ describe('verified-email sensitive action coverage', () => {
       'create-team-pass-checkout',
       'create-team-fee-checkout',
       'refund-team-fee-payment',
+      'private-team-calendar-feed',
       'post-shared-game-cancellation',
       'send-team-email',
       'send-authorized-direct-message'
     ].forEach((operation) => {
-      expect(functionsSource).toContain(`await assertSensitiveEmailVerified(context, '${operation}');`);
+      if (operation === 'private-team-calendar-feed') {
+        expect(functionsSource).toMatch(
+          /assertFreshAuthUser:\s*async \(\{ authUser \}\) => \{[\s\S]{0,700}'private-team-calendar-feed'[\s\S]{0,300}!verification\.verified && !verification\.exempt/
+        );
+      } else {
+        expect(functionsSource).toContain(`await assertSensitiveEmailVerified(context, '${operation}');`);
+      }
     });
     expect(functionsSource).toMatch(
       /await assertSensitiveEmailVerified\(\{[\s\S]{0,500}\}, 'sync-public-user-profile-projection'\);/

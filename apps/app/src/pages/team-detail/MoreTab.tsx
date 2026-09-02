@@ -21,7 +21,7 @@ import {
   Trophy
 } from 'lucide-react';
 import { copyPublicText, openPublicUrl, sharePublicUrl } from '../../lib/publicActions';
-import { buildPrivateTeamCalendarFeedUrl, getAppleCalendarFeedUrl, getGoogleCalendarFeedUrl } from '../../lib/parentToolsService';
+import { getAppleCalendarFeedUrl, getGoogleCalendarFeedUrl, getPrivateTeamCalendarFeedUrl } from '../../lib/parentToolsService';
 import {
   buildPublicTeamGamesIcsUrl,
   canExposePublicFanFeed,
@@ -78,7 +78,7 @@ export function MoreTab({ model, auth, staffPermissionsLoading, staffPermissions
       ) : null}
       {model.staffPermissions ? <StaffPermissionsCard model={model} auth={auth} onInviteSuccess={onTeamDetailRefresh} /> : null}
       {model.canManageTeam ? <ReminderTimingDefaultsCard model={model} onSaved={onTeamDetailRefresh} /> : null}
-      {auth.user ? <PrivateCalendarSyncCard model={model} /> : null}
+      {auth.user && model.canUsePrivateCalendarSync ? <PrivateCalendarSyncCard model={model} /> : null}
       {canExposePublicFanFeed(model.team, [...model.upcomingEvents, ...model.recentResults]) ? <FanFeedCard model={model} /> : null}
       {model.canManageTeam ? <ScoreboardWidgetCard model={model} /> : null}
 
@@ -534,7 +534,7 @@ function PrivateCalendarSyncCard({ model }: { model: TeamDetailModel }) {
     setBusyTarget(target);
     setStatus(null);
     try {
-      const feedUrl = buildPrivateTeamCalendarFeedUrl(model.team.id, model.team);
+      const feedUrl = await getPrivateTeamCalendarFeedUrl(model.team.id);
       if (!feedUrl) throw new Error('Unable to create private calendar feed. Sign in again and retry.');
       if (target === 'copy') {
         const result = await copyPublicText(feedUrl);

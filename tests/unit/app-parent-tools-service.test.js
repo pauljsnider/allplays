@@ -276,6 +276,9 @@ const user = {
 beforeEach(() => {
     vi.clearAllMocks();
     clearAppDataCache();
+    delete window.__ALLPLAYS_CONFIG__;
+    delete window.ALLPLAYS_CALENDAR_FUNCTION_URL;
+    delete window.ALLPLAYS_TEAM_CALENDAR_FEED_URL;
     authMocks.firebaseAuth.currentUser.getIdToken.mockResolvedValue('firebase-token');
     authMocks.getNativeAuthIdToken.mockResolvedValue('native-token');
 });
@@ -621,21 +624,19 @@ describe('React app parent tools service', () => {
         expect(ics).toContain('DESCRIPTION:Bears\\nGame\\nPlayer: Pat Star\\nBring water\\; arrive early');
     });
 
-    it('builds private calendar feed URLs from stored team subscription URLs or tokens', () => {
-        expect(buildPrivateTeamCalendarFeedUrl('team-1', { privateCalendarFeedUrl: 'webcal://example.test/private.ics?teamId=team-1&token=stored' })).toBe('https://example.test/private.ics?teamId=team-1&token=stored');
-        expect(buildPrivateTeamCalendarFeedUrl('team-1', { calendarSubscriptionToken: 'stored-token' })).toBe('https://us-central1-all-plays-prod.cloudfunctions.net/teamCalendarFeed?teamId=team-1&token=stored-token');
+    it('builds private calendar feed URLs only from a server-returned token', () => {
+        expect(buildPrivateTeamCalendarFeedUrl('team-1', 'server-token')).toBe('https://us-central1-game-flow-c6311.cloudfunctions.net/teamCalendarFeed?teamId=team-1&token=server-token');
+        expect(buildPrivateTeamCalendarFeedUrl('team-1', { calendarSubscriptionToken: 'stored-token' })).toBe('');
     });
 
-    it('creates private calendar feed URLs with stored-team and native token fallback support', async () => {
-        dbMocks.getTeam.mockResolvedValueOnce({ id: 'team-1', calendarSubscriptionToken: 'stored-token' });
-        await expect(getPrivateTeamCalendarFeedUrl('team-1')).resolves.toBe('https://us-central1-all-plays-prod.cloudfunctions.net/teamCalendarFeed?teamId=team-1&token=stored-token');
-
-        dbMocks.getTeam.mockResolvedValueOnce(null);
-        await expect(getPrivateTeamCalendarFeedUrl('team-1')).resolves.toBe('https://us-central1-all-plays-prod.cloudfunctions.net/teamCalendarFeed?teamId=team-1&token=native-token');
-
-        dbMocks.getTeam.mockResolvedValueOnce(null);
-        authMocks.getNativeAuthIdToken.mockRejectedValueOnce(new Error('native unavailable'));
-        await expect(getPrivateTeamCalendarFeedUrl('team-1')).resolves.toBe('https://us-central1-all-plays-prod.cloudfunctions.net/teamCalendarFeed?teamId=team-1&token=firebase-token');
+    it('provisions a server-authorized bearer without using Firebase ID tokens as feed credentials', async () => {
+        const provisionFeedToken = vi.fn().mockResolvedValue({ data: { teamId: 'team-1', token: 'provisioned-token', reused: false } });
+        firebaseMocks.httpsCallable.mockReturnValueOnce(provisionFeedToken);
+        await expect(getPrivateTeamCalendarFeedUrl('team-1')).resolves.toBe('https://us-central1-game-flow-c6311.cloudfunctions.net/teamCalendarFeed?teamId=team-1&token=provisioned-token');
+        expect(firebaseMocks.httpsCallable).toHaveBeenCalledWith(firebaseMocks.functions, 'getPrivateTeamCalendarFeedToken');
+        expect(provisionFeedToken).toHaveBeenCalledWith({ teamId: 'team-1' });
+        expect(authMocks.getNativeAuthIdToken).not.toHaveBeenCalled();
+        expect(authMocks.firebaseAuth.currentUser.getIdToken).not.toHaveBeenCalled();
     });
 
     it('loads and mutates family share tokens using current website contracts', async () => {

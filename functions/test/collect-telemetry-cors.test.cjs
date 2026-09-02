@@ -6,8 +6,17 @@ const functions = require('firebase-functions');
 
 const ALLOWED_ORIGIN = 'https://allplays.ai';
 const NATIVE_ORIGINS = [
+  'https://localhost',
   'capacitor://localhost',
   'http://localhost'
+];
+const NATIVE_LOOKALIKE_ORIGINS = [
+  'https://localhost:443',
+  'https://localhost:5174',
+  'https://127.0.0.1',
+  'https://localhost.evil.example',
+  'capacitor://localhost.evil.example',
+  'http://localhost.evil.example'
 ];
 const APP_CHECK_HEADER = 'X-Firebase-AppCheck';
 const ALLOWED_HEADERS = `Content-Type, ${APP_CHECK_HEADER}`;
@@ -81,24 +90,26 @@ for (const origin of NATIVE_ORIGINS) {
   });
 }
 
-test('collectTelemetry handles lookalike native origins passively without reflecting them', async () => {
-  const response = createResponse();
+for (const origin of NATIVE_LOOKALIKE_ORIGINS) {
+  test(`collectTelemetry handles the native lookalike origin ${origin} passively without reflecting it`, async () => {
+    const response = createResponse();
 
-  await collectTelemetry({
-    method: 'OPTIONS',
-    headers: {
-      origin: 'http://localhost.evil.example',
-      'access-control-request-method': 'POST',
-      'access-control-request-headers': 'content-type'
-    }
-  }, response);
+    await collectTelemetry({
+      method: 'OPTIONS',
+      headers: {
+        origin,
+        'access-control-request-method': 'POST',
+        'access-control-request-headers': 'content-type'
+      }
+    }, response);
 
-  assert.equal(response.statusCode, 204);
-  assert.equal(response.body, '');
-  assert.equal(response.headers.get('access-control-allow-origin'), undefined);
-  assert.equal(response.headers.get('vary'), undefined);
-  assert.equal(response.headers.get('cache-control'), 'no-store');
-});
+    assert.equal(response.statusCode, 204);
+    assert.equal(response.body, '');
+    assert.equal(response.headers.get('access-control-allow-origin'), undefined);
+    assert.equal(response.headers.get('vary'), undefined);
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+  });
+}
 
 test('collectTelemetry treats Origin as CORS-only and accepts POST requests without one', async (t) => {
   const persistence = mockSuccessfulTelemetryPersistence(t);

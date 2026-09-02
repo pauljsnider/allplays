@@ -161,7 +161,9 @@ function makeFirestore(seed = {}, metrics = {}) {
   };
 }
 
-function makeFunctionsStub() {
+function makeFunctionsStub(runtimeConfig = {
+  stripe: { secret_key: 'sk_test_123', app_url: 'https://allplays.test' }
+}) {
   class HttpsError extends Error {
     constructor(code, message, details) {
       super(message);
@@ -189,7 +191,7 @@ function makeFunctionsStub() {
   triggerChain.pubsub = triggerChain;
 
   return {
-    config: () => ({ stripe: { secret_key: 'sk_test_123', app_url: 'https://allplays.test' } }),
+    config: () => runtimeConfig,
     auth: { user: () => triggerChain },
     https: { HttpsError, onCall: (fn) => fn, onRequest: (fn) => fn },
     firestore: { document: () => triggerChain },
@@ -199,7 +201,12 @@ function makeFunctionsStub() {
   };
 }
 
-function loadCallables(seed = {}, { metrics = {}, securityUtils = null, firestore: firestoreOverride = null } = {}) {
+function loadCallables(seed = {}, {
+  metrics = {},
+  securityUtils = null,
+  firestore: firestoreOverride = null,
+  functionsConfig = undefined
+} = {}) {
   delete require.cache[repoIndexPath];
   const firestore = firestoreOverride || makeFirestore(seed, metrics);
   adminStub = {
@@ -218,7 +225,7 @@ function loadCallables(seed = {}, { metrics = {}, securityUtils = null, firestor
     auth: () => ({ verifyIdToken: async () => null }),
     messaging: () => ({})
   };
-  functionsStub = makeFunctionsStub();
+  functionsStub = makeFunctionsStub(functionsConfig);
   StripeStub = class StripeMock {
     constructor() {
       return {
@@ -233,11 +240,13 @@ function loadCallables(seed = {}, { metrics = {}, securityUtils = null, firestor
 
 function makeCalendarSecurityUtilsStub(icsText, counters = {}) {
   counters.fetchCount = 0;
+  counters.normalizeCount = 0;
   return {
     isPrivateIpAddress: () => false,
     isBlockedHostname: () => false,
     assertPublicHost: async () => ['203.0.113.10'],
     normalizeTargetUrl: async (rawUrl) => {
+      counters.normalizeCount += 1;
       const url = new URL(rawUrl);
       return { url: url.toString(), hostname: url.hostname, publicIps: ['203.0.113.10'] };
     },
@@ -494,7 +503,7 @@ test('family share view projection omits owner UID and raw calendar URLs from th
       active: true,
       ownerUserId: 'SENTINEL_OWNER_UID',
       label: 'Grandma',
-      expiresAt: new FakeTimestamp(Date.parse('2026-08-20T00:00:00Z')),
+      expiresAt: new FakeTimestamp(Date.now() + 60 * 60 * 1000),
       children: [{ teamId: 'private-team', playerId: 'player-1' }],
       extraCalendarUrls: []
     },
@@ -847,4 +856,157 @@ test('family share schedule callable rejects inactive bearer tokens before sched
     callables.getFamilyShareSchedule({ tokenId }, {}),
     (error) => error.code === 'permission-denied'
   );
+});
+
+const VALID_NATIVE_CALENDAR_ICS = [
+  'BEGIN:VCALENDAR',
+  'BEGIN:VEVENT',
+  'UID:native-team-event',
+  'DTSTART:20260820T180000Z',
+  'SUMMARY:Private practice',
+  'END:VEVENT',
+  'END:VCALENDAR'
+].join('\r\n');
+
+function createCalendarHttpResponse() {
+  return {
+    statusCode: 200,
+    body: null,
+    headers: {},
+    set(name, value) {
+      this.headers[name] = value;
+      return this;
+    },
+    status(code) {
+      this.statusCode = code;
+      return this;
+    },
+    send(payload) {
+      this.body = payload;
+      return this;
+    },
+    json(payload) {
+      this.body = payload;
+      return this;
+    }
+  };
+}
+
+async function invokeCalendarHttp(handler, {
+  origin,
+  method = 'GET',
+  ip = '203.0.113.80',
+  url = 'https://203.0.113.10/native-calendar.ics'
+} = {}) {
+  const req = {
+    method,
+    ip,
+    headers: { origin },
+    query: { url }
+  };
+  const res = createCalendarHttpResponse();
+  await handler(req, res);
+  return res;
+}
+
+test('legacy calendar HTTP bridge accepts exact native origins for preflight and GET requests', async () => {
+  const counters = {};
+  const callables = loadCallables({}, {
+    securityUtils: makeCalendarSecurityUtilsStub(VALID_NATIVE_CALENDAR_ICS, counters)
+  });
+  const nativeOrigins = ['https://localhost', 'capacitor://localhost'];
+
+  for (const [index, origin] of nativeOrigins.entries()) {
+    const optionsResponse = await invokeCalendarHttp(callables.fetchCalendarIcs, {
+      origin,
+      method: 'OPTIONS',
+      ip: `203.0.113.${80 + index}`
+    });
+    assert.equal(optionsResponse.statusCode, 204);
+    assert.equal(optionsResponse.headers['Access-Control-Allow-Origin'], origin);
+    assert.equal(optionsResponse.headers.Vary, 'Origin');
+    assert.equal(optionsResponse.headers['Access-Control-Allow-Methods'], 'GET,OPTIONS');
+    assert.equal(
+      optionsResponse.headers['Access-Control-Allow-Headers'],
+      'Authorization, Content-Type, X-Firebase-AppCheck'
+    );
+
+    const getResponse = await invokeCalendarHttp(callables.fetchCalendarIcs, {
+      origin,
+      ip: `203.0.113.${82 + index}`,
+      url: `https://203.0.113.10/native-calendar-${index}.ics`
+    });
+    assert.equal(getResponse.statusCode, 200);
+    assert.equal(getResponse.headers['Access-Control-Allow-Origin'], origin);
+    assert.equal(getResponse.headers.Vary, 'Origin');
+    assert.equal(getResponse.body.ok, true);
+    assert.equal(getResponse.body.icsText, VALID_NATIVE_CALENDAR_ICS);
+  }
+
+  assert.equal(counters.normalizeCount, 2);
+  assert.equal(counters.fetchCount, 2);
+});
+
+test('legacy calendar HTTP bridge denies native-origin lookalikes and wrong schemes without reflection', async () => {
+  const counters = {};
+  const callables = loadCallables({}, {
+    securityUtils: makeCalendarSecurityUtilsStub(VALID_NATIVE_CALENDAR_ICS, counters)
+  });
+  const deniedOrigins = [
+    'http://localhost',
+    'https://localhost:444',
+    'https://localhost.evil.test',
+    'capacitor://localhost.evil.test',
+    'https://127.0.0.1',
+    'capacitor://127.0.0.1'
+  ];
+
+  for (const [originIndex, origin] of deniedOrigins.entries()) {
+    for (const method of ['OPTIONS', 'GET']) {
+      const response = await invokeCalendarHttp(callables.fetchCalendarIcs, {
+        origin,
+        method,
+        ip: `198.51.100.${90 + originIndex}`
+      });
+      assert.equal(response.statusCode, 403);
+      assert.deepEqual(response.body, { ok: false, error: 'Origin not allowed' });
+      assert.equal(response.headers['Access-Control-Allow-Origin'], undefined);
+      assert.equal(response.headers.Vary, undefined);
+    }
+  }
+
+  assert.equal(counters.normalizeCount, 0);
+  assert.equal(counters.fetchCount, 0);
+});
+
+test('configured calendar origin allowlist remains authoritative over native compatibility defaults', async () => {
+  const counters = {};
+  const configuredOrigin = 'https://calendar-proxy.example';
+  const callables = loadCallables({}, {
+    securityUtils: makeCalendarSecurityUtilsStub(VALID_NATIVE_CALENDAR_ICS, counters),
+    functionsConfig: {
+      stripe: { secret_key: 'sk_test_123', app_url: 'https://allplays.test' },
+      calendar: { allowed_origins: configuredOrigin }
+    }
+  });
+
+  for (const [index, origin] of ['https://localhost', 'capacitor://localhost'].entries()) {
+    const deniedResponse = await invokeCalendarHttp(callables.fetchCalendarIcs, {
+      origin,
+      ip: `198.51.100.${110 + index}`
+    });
+    assert.equal(deniedResponse.statusCode, 403);
+    assert.deepEqual(deniedResponse.body, { ok: false, error: 'Origin not allowed' });
+    assert.equal(deniedResponse.headers['Access-Control-Allow-Origin'], undefined);
+  }
+
+  const configuredResponse = await invokeCalendarHttp(callables.fetchCalendarIcs, {
+    origin: configuredOrigin,
+    ip: '198.51.100.112'
+  });
+  assert.equal(configuredResponse.statusCode, 200);
+  assert.equal(configuredResponse.headers['Access-Control-Allow-Origin'], configuredOrigin);
+  assert.equal(configuredResponse.body.ok, true);
+  assert.equal(counters.normalizeCount, 1);
+  assert.equal(counters.fetchCount, 1);
 });

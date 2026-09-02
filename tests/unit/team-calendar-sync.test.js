@@ -35,10 +35,20 @@ describe('team calendar sync controls', () => {
     it('builds Apple, Google, and HTTPS private feed URLs', () => {
         const source = readTeamPage();
 
-        expect(source).toContain("function getPrivateCalendarFeedUrl()");
-        expect(source).toContain("currentTeam?.calendarSubscriptionUrl");
-        expect(source).toContain("currentTeam?.calendarSubscriptionToken");
+        expect(source).toContain('function getPrivateCalendarFeedUrl(token)');
+        expect(source).toContain('async function resolvePrivateCalendarFeedUrl()');
+        expect(source).toContain("httpsCallable(functions, 'getPrivateTeamCalendarFeedToken')");
+        expect(source).toContain('await resolvePrivateCalendarFeedUrl()');
+        expect(source).not.toContain('privateCalendarFeedTokensByTeamId');
+        expect(source).toContain("let preparedPrivateCalendarFeedUrl = '';");
+        expect(source).toContain('setSyncCalendarActionsEnabled(Boolean(feedUrl));');
+        expect(source).toContain('const feedUrl = preparedPrivateCalendarFeedUrl;');
+        expect(source).not.toContain('currentTeam?.calendarSubscriptionUrl');
+        expect(source).not.toContain('currentTeam?.calendarSubscriptionToken');
         expect(source).toContain("teamCalendarFeed");
+        expect(source).toContain('https://us-central1-game-flow-c6311.cloudfunctions.net/teamCalendarFeed');
+        expect(source).toContain('https://us-central1-game-flow-c6311.cloudfunctions.net/publicTeamGamesIcs');
+        expect(source).not.toContain('https://us-central1-all-plays-prod.cloudfunctions.net');
         expect(source).toContain("return feedUrl.replace(/^https?:\\/\\//i, 'webcal://');");
         expect(source).toContain("https://calendar.google.com/calendar/render?cid=${encodeURIComponent(feedUrl)}");
         expect(source).toContain("navigator.clipboard.writeText(feedUrl)");
@@ -88,10 +98,20 @@ describe('all teams calendar sync controls', () => {
         const source = readCalendarPage();
 
         expect(source).toContain('function getSelectedSyncCalendarTeam()');
-        expect(source).toContain('function getPrivateCalendarFeedUrl(team)');
-        expect(source).toContain('team?.calendarSubscriptionUrl');
-        expect(source).toContain('team?.calendarSubscriptionToken');
+        expect(source).toContain('function getPrivateCalendarFeedUrl(team, token)');
+        expect(source).toContain('async function resolveCurrentCalendarFeedUrl()');
+        expect(source).toContain("httpsCallable(functions, 'getPrivateTeamCalendarFeedToken')");
+        expect(source).toContain('await resolveCurrentCalendarFeedUrl()');
+        expect(source).not.toContain('privateCalendarFeedTokensByTeamId');
+        expect(source).toContain("let preparedPrivateCalendarFeedUrl = '';");
+        expect(source).toContain('setSyncCalendarActionsEnabled(Boolean(feedUrl));');
+        expect(source).toContain('const feedUrl = preparedPrivateCalendarFeedUrl;');
+        expect(source).not.toContain('team?.calendarSubscriptionUrl');
+        expect(source).not.toContain('team?.calendarSubscriptionToken');
         expect(source).toContain('teamCalendarFeed');
+        expect(source).toContain('https://us-central1-game-flow-c6311.cloudfunctions.net/teamCalendarFeed');
+        expect(source).toContain('https://us-central1-game-flow-c6311.cloudfunctions.net/publicTeamGamesIcs');
+        expect(source).not.toContain('https://us-central1-all-plays-prod.cloudfunctions.net');
         expect(source).toContain("return feedUrl.replace(/^https?:\\/\\//i, 'webcal://');");
         expect(source).toContain('https://calendar.google.com/calendar/render?cid=${encodeURIComponent(feedUrl)}');
         expect(source).toContain('navigator.clipboard.writeText(feedUrl)');
