@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const {
   createDelegatedTeamContextHandler,
+  getRecordedReplayPaywallSetting,
   resolveDelegatedAccess,
   serializeDelegatedTeamContext
 } = require('../delegated-team-context-core.cjs');
@@ -291,6 +292,35 @@ test('returns a bounded private-team projection for a current parent', async () 
     });
     assertNoProhibitedFields(result);
   }
+});
+
+test('projects only the effective recorded-replay gate for every authorized viewer path', async () => {
+  const team = productionTeam({
+    teamPassConfig: {
+      recordedReplayPaywallEnabled: true,
+      checkoutUrl: 'https://private.example.test/bearer'
+    }
+  });
+  const handler = createHarness({
+    teams: { 'team-1': team },
+    users: { 'parent-1': { parentTeamIds: ['team-1'] } }
+  });
+
+  for (const [uid, email] of [
+    ['parent-1', undefined],
+    ['videographer-1', undefined],
+    ['owner-1', 'owner@example.com']
+  ]) {
+    const result = await handler({ teamId: 'team-1' }, context(uid, email));
+    assert.equal(result.item.recordedReplayPaywallEnabled, true);
+    assert.equal(JSON.stringify(result).includes('checkoutUrl'), false);
+    assert.equal(JSON.stringify(result).includes('bearer'), false);
+  }
+
+  assert.equal(getRecordedReplayPaywallSetting({
+    teamPassConfig: { recordedReplayPaywallEnabled: false },
+    recordedReplayTeamPassRequired: true
+  }), false);
 });
 
 test('marks owner and admin projections with server-authoritative full access', async () => {

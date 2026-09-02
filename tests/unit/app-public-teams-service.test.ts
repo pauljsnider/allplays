@@ -626,6 +626,33 @@ describe('publicTeamsService', () => {
         ]);
     });
 
+    it('keeps ordered statsheet and live-only completion while rejecting contradictions', async () => {
+        const completedGame = (id: string, overrides: Record<string, unknown>) => ({
+            id,
+            teamId: 'team-public-1',
+            startsAt: `2026-08-${id.slice(-2)}T18:00:00.000Z`,
+            opponent: `Opponent ${id}`,
+            isHome: true,
+            teamScore: 3,
+            opponentScore: 1,
+            ...overrides
+        });
+        dbMocks.getPublicTeamGamesProjection.mockResolvedValue({
+            team: { id: 'team-public-1', name: 'Austin Bats' },
+            games: [
+                completedGame('game-01', { status: 'completed', sourceStatus: 'completed', liveStatus: 'scheduled' }),
+                completedGame('game-02', { status: 'completed', sourceStatus: null, liveStatus: 'completed' }),
+                completedGame('game-03', { status: 'completed', sourceStatus: 'scheduled', liveStatus: 'completed' }),
+                completedGame('game-04', { status: 'completed', sourceStatus: 'completed', liveStatus: 'live' }),
+                completedGame('game-05', { status: 'completed', sourceStatus: 'completed', liveStatus: 'cancelled' })
+            ]
+        });
+
+        const results = await getPublicTeamRecentResults('team-public-1');
+
+        expect(results.map((result) => result.id)).toEqual(['game-02', 'game-01']);
+    });
+
     it('excludes scheduled, live, private, and practice games from recent results', async () => {
         const completedGame = {
             startsAt: '2026-08-01T18:00:00.000Z',

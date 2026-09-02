@@ -388,8 +388,8 @@
             listFamilyShareTokens,
             revokeFamilyShareToken,
             updateFamilyShareTokenCalendars
-        } from './js/db.js?v=4433193';
-        import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } from './js/utils.js?v=443369';
+        } from './js/db.js?v=4433194';
+        import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } from './js/utils.js?v=443370';
         import {
             getIncentiveRules,
             saveIncentiveRule as saveIncentiveRuleFn,
@@ -408,8 +408,8 @@
             saveCapSetting as saveCapSettingFn,
         } from './js/parent-incentives.js?v=9';
         import { functions, httpsCallable } from './js/firebase.js?v=33';
-        import { requireAuth, checkAuth } from './js/auth.js?v=4433197';
-        import { resolveScheduleWatchCta } from './js/schedule-watch-cta.js?v=1';
+        import { requireAuth, checkAuth } from './js/auth.js?v=4433198';
+        import { hasReplayVideoEvidence, resolveScheduleWatchCta } from './js/schedule-watch-cta.js?v=3';
         import {
             resolvePracticePacketSessionIdForEvent as resolvePracticePacketSessionIdForEventBase,
             resolvePracticePacketContextForEvent as resolvePracticePacketContextForEventBase,
@@ -1908,7 +1908,15 @@
                 for (const game of dbGames) {
                     const isPractice = game.type === 'practice';
                     const type = isPractice ? 'practice' : 'game';
-                    const isCancelled = game.status === 'cancelled';
+                    const normalizedGameStatus = String(game.status || '').trim().toLowerCase();
+                    const normalizedGameLiveStatus = String(game.liveStatus || '').trim().toLowerCase();
+                    const isCancelled = game.isCancelled === true
+                        || game.deleted === true
+                        || game.isDeleted === true
+                        || normalizedGameStatus === 'cancelled'
+                        || normalizedGameStatus === 'canceled'
+                        || normalizedGameLiveStatus === 'cancelled'
+                        || normalizedGameLiveStatus === 'canceled';
 
                     if (isPractice && game.isSeriesMaster && game.recurrence) {
                         // Expand recurring practice series — each occurrence gets its own
@@ -1929,7 +1937,7 @@
                                     childId: child.playerId,
                                     childName: child.playerName,
                                     title: occ.title || null,
-                                    status: game.status || 'scheduled',
+                                    status: game.status || null,
                                     isCancelled,
                                     isHome: null,
                                     kitColor: null,
@@ -1963,8 +1971,9 @@
                                 childId: child.playerId,
                                 childName: child.playerName,
                                 title: game.title || null,
-                                status: game.status || 'scheduled',
+                                status: game.status || null,
                                 liveStatus: game.liveStatus || null,
+                                hasReplayVideo: hasReplayVideoEvidence(game),
                                 isCancelled,
                                 isHome: game.isHome ?? null,
                                 kitColor: game.kitColor || null,

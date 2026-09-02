@@ -15,6 +15,7 @@ import {
     getOverlayReplayDurationMs,
     getOverlayReplayStartAt,
     getSafeOverlayProviderUrl,
+    hasCompletedReplayLifecycle,
     parseYouTubeReplayTelemetry,
     reconcileOverlayLiveEvents,
     resolvePublicProjectionVideoOptions,
@@ -33,6 +34,20 @@ const stateTools = {
 };
 
 describe('live game overlay model', () => {
+    it('uses the ordered statsheet completion lifecycle without accepting contradictions', () => {
+        expect(hasCompletedReplayLifecycle({ status: 'completed', liveStatus: 'scheduled' })).toBe(true);
+        expect(hasCompletedReplayLifecycle({ status: 'completed', liveStatus: 'final' })).toBe(true);
+        expect(hasCompletedReplayLifecycle({ liveStatus: 'completed' })).toBe(true);
+        expect(hasCompletedReplayLifecycle({ status: 'scheduled', liveStatus: 'completed' })).toBe(false);
+        expect(hasCompletedReplayLifecycle({ status: 'completed', liveStatus: 'live' })).toBe(false);
+        expect(hasCompletedReplayLifecycle({ status: 'completed', liveStatus: 'cancelled' })).toBe(false);
+        expect(hasCompletedReplayLifecycle({ status: ' FINAL ', liveStatus: 'scheduled' })).toBe(false);
+        expect(hasCompletedReplayLifecycle({ status: 'FINAL', liveStatus: 'scheduled' })).toBe(false);
+        expect(hasCompletedReplayLifecycle({ type: 'practice', status: 'completed', liveStatus: 'scheduled' })).toBe(false);
+        expect(hasCompletedReplayLifecycle({ status: 'completed', liveStatus: 'scheduled', isCancelled: true })).toBe(false);
+        expect(hasCompletedReplayLifecycle({ status: 'completed', liveStatus: 'scheduled', deleted: true })).toBe(false);
+    });
+
     it('formats a bounded broadcast clock', () => {
         expect(formatOverlayClock(0)).toBe('0:00');
         expect(formatOverlayClock(65_999)).toBe('1:05');
@@ -70,15 +85,30 @@ describe('live game overlay model', () => {
     it('turns only explicitly public projected game video links into playable options', () => {
         expect(resolvePublicProjectionVideoOptions({
             isPublicProjection: true,
+            status: 'completed',
+            liveStatus: 'scheduled',
             videoUrl: 'https://www.youtube.com/live/PK1HyC37doc?si=share-token'
         })).toMatchObject({
             mode: 'embed',
+            isRecordedReplay: true,
+            isPublicProjectionVideo: true,
             sourceUrl: 'https://www.youtube.com/embed/PK1HyC37doc?autoplay=1&mute=1',
-            publicUrl: 'https://www.youtube.com/live/PK1HyC37doc?si=share-token',
+            publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
             publicLabel: 'Watch on YouTube ↗'
         });
         expect(resolvePublicProjectionVideoOptions({
             isPublicProjection: true,
+            status: 'live',
+            videoUrl: 'https://www.youtube.com/live/PK1HyC37doc?si=share-token'
+        })).toMatchObject({
+            mode: 'embed',
+            isRecordedReplay: false,
+            isPublicProjectionVideo: true,
+            sourceUrl: 'https://www.youtube.com/embed/PK1HyC37doc?autoplay=1&mute=1'
+        });
+        expect(resolvePublicProjectionVideoOptions({
+            isPublicProjection: true,
+            liveStatus: 'live',
             videoUrl: 'https://twitch.tv/viperslive'
         }, { parentHost: 'allplays.ai' })).toMatchObject({
             mode: 'embed',
@@ -87,6 +117,8 @@ describe('live game overlay model', () => {
         });
         expect(resolvePublicProjectionVideoOptions({
             isPublicProjection: true,
+            status: 'scheduled',
+            liveStatus: 'live',
             videoUrl: 'https://www.youtube.com/embed/live_stream?channel=UCa9ghvbup6VQmnDOdqwYpqQ'
         })).toMatchObject({
             mode: 'embed',
@@ -94,6 +126,7 @@ describe('live game overlay model', () => {
         });
         expect(resolvePublicProjectionVideoOptions({
             isPublicProjection: true,
+            status: 'completed',
             videoUrl: 'https://twitch.tv/videos/123456789'
         }, { parentHost: 'allplays.ai' })).toMatchObject({
             mode: 'embed',
@@ -101,6 +134,7 @@ describe('live game overlay model', () => {
         });
         expect(resolvePublicProjectionVideoOptions({
             isPublicProjection: true,
+            status: 'final',
             videoUrl: 'https://media.example.test/game.mp4'
         })).toMatchObject({
             mode: 'recorded',
@@ -109,6 +143,50 @@ describe('live game overlay model', () => {
         expect(resolvePublicProjectionVideoOptions({ videoUrl: 'https://media.example.test/private.mp4' })).toBeNull();
         expect(resolvePublicProjectionVideoOptions({ isPublicProjection: true, videoUrl: 'javascript:alert(1)' })).toBeNull();
         expect(resolvePublicProjectionVideoOptions({ isPublicProjection: true, videoUrl: 'https://youtube.com/not-a-video' })).toBeNull();
+        expect(resolvePublicProjectionVideoOptions({ isPublicProjection: true, videoUrl: 'https://www.youtube.com:443/watch?v=PK1HyC37doc' })).toBeNull();
+    });
+
+    it('fails closed for projected replay URLs outside a consistent final lifecycle', () => {
+        const replayUrl = 'https://www.youtube.com/watch?v=PK1HyC37doc';
+        for (const lifecycle of [
+            { status: 'scheduled' },
+            { status: 'cancelled' },
+            { status: 'completed', liveStatus: 'live' },
+            { status: 'completed', liveStatus: 'cancelled' },
+            { status: 'scheduled', liveStatus: 'completed' }
+        ]) {
+            expect(resolvePublicProjectionVideoOptions({
+                isPublicProjection: true,
+                videoUrl: replayUrl,
+                ...lifecycle
+            })).toBeNull();
+        }
+
+        expect(resolvePublicProjectionVideoOptions({
+            isPublicProjection: true,
+            status: 'completed',
+            videoUrl: 'https://www.youtube.com/embed/live_stream?channel=UCa9ghvbup6VQmnDOdqwYpqQ'
+        })).toBeNull();
+        expect(resolvePublicProjectionVideoOptions({
+            isPublicProjection: true,
+            status: 'completed',
+            videoUrl: 'https://twitch.tv/viperslive'
+        }, { parentHost: 'allplays.ai' })).toBeNull();
+    });
+
+    it('allows only compatible active-live lifecycle pairs in public projections', () => {
+        const liveUrl = 'https://www.youtube.com/embed/live_stream?channel=UCa9ghvbup6VQmnDOdqwYpqQ';
+        const resolve = (lifecycle) => resolvePublicProjectionVideoOptions({
+            isPublicProjection: true,
+            videoUrl: liveUrl,
+            ...lifecycle
+        });
+
+        expect(resolve({ status: 'scheduled', liveStatus: 'live' })?.hasVideo).toBe(true);
+        expect(resolve({ liveStatus: 'live' })?.hasVideo).toBe(true);
+        for (const status of ['completed', 'cancelled', 'postponed', 'unexpected']) {
+            expect(resolve({ status, liveStatus: 'live' })).toBeNull();
+        }
     });
 
     it('formats live and replay chat like the canonical viewer without allowing stored markup', () => {

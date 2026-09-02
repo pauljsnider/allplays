@@ -178,9 +178,9 @@
   <div id="footer-container"></div>
 
   <script type="module">
-    import { getFamilyShareToken, getFamilyShareView, resolveFamilyShareTokenChildren, getTeam, getGames, getTrackedCalendarEventUids } from './js/db.js?v=4433193';
-    import { resolveScheduleWatchCta } from './js/schedule-watch-cta.js?v=1';
-    import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } from './js/utils.js?v=443369';
+    import { getFamilyShareToken, getFamilyShareView, resolveFamilyShareTokenChildren, getTeam, getGames, getTrackedCalendarEventUids } from './js/db.js?v=4433194';
+    import { hasReplayVideoEvidence, resolveScheduleWatchCta } from './js/schedule-watch-cta.js?v=3';
+    import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } from './js/utils.js?v=443370';
 
     renderFooter(document.getElementById('footer-container'));
 
@@ -536,7 +536,13 @@
         for (const game of dbGames) {
           const isPractice = game.type === 'practice';
           const type = isPractice ? 'practice' : 'game';
-          const isCancelled = game.status === 'cancelled';
+          const normalizedGameStatus = String(game.status || '').trim().toLowerCase();
+          const normalizedGameLiveStatus = String(game.liveStatus || '').trim().toLowerCase();
+          const isCancelled = game.isCancelled === true
+            || normalizedGameStatus === 'cancelled'
+            || normalizedGameStatus === 'canceled'
+            || normalizedGameLiveStatus === 'cancelled'
+            || normalizedGameLiveStatus === 'canceled';
 
           if (isPractice && game.isSeriesMaster && game.recurrence) {
             for (const occ of expandRecurrence(game)) {
@@ -555,7 +561,7 @@
                   childId: child.playerId,
                   childName: child.playerName,
                   title: occ.title || null,
-                  status: game.status || 'scheduled',
+                  status: game.status || null,
                   liveStatus: game.liveStatus || null,
                   visibility: game.visibility || null,
                   isPrivate: game.isPrivate === true,
@@ -583,8 +589,10 @@
                 childId: child.playerId,
                 childName: child.playerName,
                 title: game.title || null,
-                status: game.status || 'scheduled',
+                status: game.status || null,
                 liveStatus: game.liveStatus || null,
+                hasReplayVideo: hasReplayVideoEvidence(game),
+                canOpenPublicViewer: game.canOpenPublicViewer === true,
                 visibility: game.visibility || null,
                 isPrivate: game.isPrivate === true,
                 isCancelled,
@@ -970,7 +978,7 @@
     function renderDayModalEvent(ev) {
       const timeStr = ev.date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
       const title = ev.type === 'practice' ? (ev.title || 'Practice') : `vs. ${ev.opponent || 'TBD'}`;
-      const watchCta = resolveScheduleWatchCta(ev);
+      const watchCta = ev.canOpenPublicViewer === true ? resolveScheduleWatchCta(ev) : null;
       return `
         <div class="mb-4 p-4 rounded-lg border border-gray-200 ${ev.isCancelled ? 'opacity-60' : ''}">
           <div class="text-xs font-semibold uppercase ${ev.type === 'practice' ? 'text-amber-700' : 'text-primary-700'}">${ev.type}</div>
@@ -1049,7 +1057,7 @@
         const typeLabel = game.type === 'practice' ? 'Practice' : 'Game';
         const typeColor = game.type === 'practice' ? 'bg-amber-100 text-amber-800' : 'bg-primary-100 text-primary-800';
         const isCancelled = game.isCancelled;
-        const watchCta = resolveScheduleWatchCta(game);
+        const watchCta = game.canOpenPublicViewer === true ? resolveScheduleWatchCta(game) : null;
         const childLabel = game.childNames.join(', ') || game.childName || 'Player';
         return `
           <div class="p-6 hover:bg-gray-50 transition flex flex-col sm:flex-row gap-4 sm:items-start ${isCancelled ? 'opacity-60' : ''}">

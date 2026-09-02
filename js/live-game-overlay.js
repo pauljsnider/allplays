@@ -13,11 +13,12 @@ import {
     getOverlayReplayDurationMs,
     getOverlayReplayStartAt,
     getSafeOverlayProviderUrl,
+    hasCompletedReplayLifecycle,
     parseYouTubeReplayTelemetry,
     reconcileOverlayLiveEvents,
     resolvePublicProjectionVideoOptions,
     replaceOverlayChat
-} from './live-game-overlay-model.js?v=25';
+} from './live-game-overlay-model.js?v=28';
 import {
     buildReplaySessionState,
     collectReplayEventWindow,
@@ -33,7 +34,7 @@ import {
     resolveSafeProfilePhotoWriteUrl
 } from './safe-image-url.js?v=1';
 import { buildGameWatchShareUrl } from './game-share-links.js?v=1';
-import { shareOrCopy } from './utils.js?v=443369';
+import { shareOrCopy } from './utils.js?v=443370';
 import { createPlayAnnouncer } from './live-game-announcer.js?v=1';
 
 const elements = {
@@ -166,6 +167,7 @@ const uiState = {
     videoMuted: true,
     scoreboardHidden: false,
     videoRequestId: 0,
+    replayPlaybackAvailable: false,
     optionalTeamStatus: 'pending',
     optionalPlayersStatus: 'pending',
     teamEntitlement: null,
@@ -206,6 +208,16 @@ function createTextElement(tagName, className, text) {
     return element;
 }
 
+function getRecordedReplayGameGateOverride(game = {}) {
+    return [
+        game?.teamPassConfig?.recordedReplayPaywallEnabled,
+        game?.teamPass?.recordedReplayPaywallEnabled,
+        game?.premiumFeatures?.recordedReplayPaywallEnabled,
+        game?.recordedReplayPaywallEnabled,
+        game?.recordedReplayTeamPassRequired
+    ].find((value) => typeof value === 'boolean');
+}
+
 function getQueryParams() {
     return Object.fromEntries(new URLSearchParams(window.location.search).entries());
 }
@@ -222,7 +234,7 @@ function usesCompactPanelLayout() {
 }
 
 function loadOverlayDatabase() {
-    return import('./db.js?v=4433193');
+    return import('./db.js?v=4433194');
 }
 
 function getTimestampMs(value) {
@@ -287,12 +299,19 @@ function toggleGameActionsMenu() {
 }
 
 function isCompletedGame() {
-    return [
-        uiState.game?.game?.liveStatus,
-        uiState.game?.game?.status,
-        uiState.game?.game?.state,
-        uiState.game?.liveStatus
-    ].some((value) => ['completed', 'final'].includes(String(value || '').toLowerCase()));
+    const game = uiState.game?.game || {};
+    return hasCompletedReplayLifecycle({
+        ...game,
+        status: game.status || game.state,
+        liveStatus: game.liveStatus || uiState.game?.liveStatus
+    });
+}
+
+function hasReplayExperienceAvailable() {
+    const game = uiState.game?.game || {};
+    const liveStatus = String(game.liveStatus || uiState.game?.liveStatus || '').trim().toLowerCase();
+    const hasCompletedLiveReplay = isCompletedGame() && ['completed', 'final'].includes(liveStatus);
+    return hasCompletedLiveReplay || uiState.replayPlaybackAvailable;
 }
 
 function getDisplayedLiveClockMs() {
@@ -346,7 +365,7 @@ function configureGameActions() {
     elements.matchReportLink.href = gameHref;
     elements.matchReportLink.hidden = !(uiState.isReplay || isCompletedGame());
     elements.gameDetailsLink.href = gameHref;
-    const replayAvailable = !uiState.isReplay && isCompletedGame();
+    const replayAvailable = !uiState.isReplay && hasReplayExperienceAvailable();
     const replayHref = getOverlayReplayHref();
     elements.watchReplay.href = replayHref;
     elements.watchReplay.hidden = !replayAvailable;
@@ -356,7 +375,7 @@ function configureGameActions() {
 
 async function shareGame() {
     if (!uiState.teamId || !uiState.gameId || !uiState.game) return;
-    const shareReplay = uiState.isReplay || isCompletedGame();
+    const shareReplay = hasReplayExperienceAvailable();
     const url = buildGameWatchShareUrl({
         teamId: uiState.teamId,
         gameId: uiState.gameId,
@@ -365,8 +384,9 @@ async function shareGame() {
     const homeName = uiState.game.homeName || 'Team';
     const awayName = uiState.game.awayName || 'Opponent';
     const text = `Watch ${homeName} vs ${awayName}`;
+    const shareTitle = shareReplay ? 'Watch Replay' : isCompletedGame() ? 'Game Center' : 'Watch Live';
     const result = await shareOrCopy({
-        title: shareReplay ? 'Watch Replay' : 'Watch Live',
+        title: shareTitle,
         text,
         url,
         clipboardText: `${text}\n${url}`
@@ -526,7 +546,7 @@ function renderScoreboard() {
     elements.gameClock.textContent = formatOverlayClock(displayedClockMs);
     elements.gameClock.dateTime = `PT${Math.floor(displayedClockMs / 60000)}M${Math.floor((displayedClockMs % 60000) / 1000)}S`;
     elements.viewerCount.textContent = `${state.viewerCount} watching`;
-    setStatus(state.liveStatus);
+    setStatus(isCompletedGame() ? 'completed' : state.liveStatus);
 
     if (uiState.previousHomeScore !== null && uiState.previousHomeScore !== state.homeScore) flashScore(elements.homeScore);
     if (uiState.previousAwayScore !== null && uiState.previousAwayScore !== state.awayScore) flashScore(elements.awayScore);
@@ -1110,8 +1130,8 @@ async function initializeChatComposer(database, teamId, gameId) {
 
     try {
         const [authTools, chatTools] = await Promise.all([
-            import('./auth.js?v=4433197'),
-            import('./live-game-chat.js?v=2')
+            import('./auth.js?v=4433198'),
+            import('./live-game-chat.js?v=4')
         ]);
         uiState.chatServices = {
             postLiveChatMessage: database.postLiveChatMessage,
@@ -1939,7 +1959,7 @@ async function startDemoReplayMode(params) {
         { controllableReplay: true }
     );
     uiState.videoDurationMs = 15_000;
-    const stateTools = await import('./live-game-state.js?v=41');
+    const stateTools = await import('./live-game-state.js?v=42');
     await loadReplaySnapshot({
         getLiveEvents: async () => replayEvents,
         getLiveChatHistory: async () => replayChat,
@@ -2093,8 +2113,8 @@ async function startRealMode(params) {
     try {
         const [database, videoTools, stateTools] = await Promise.all([
             loadOverlayDatabase(),
-            import('./live-game-video.js?v=443315'),
-            import('./live-game-state.js?v=41')
+            import('./live-game-video.js?v=443319'),
+            import('./live-game-state.js?v=42')
         ]);
         uiState.optionalTeamStatus = 'pending';
         const teamPromise = loadWithBoundedRetry(
@@ -2135,14 +2155,16 @@ async function startRealMode(params) {
         renderChatComposer();
         const renderVideoSafely = async () => {
             const requestId = ++uiState.videoRequestId;
+            uiState.replayPlaybackAvailable = false;
+            configureGameActions();
             try {
-                let usesSanitizedPublicProjection = false;
                 let options = videoTools.resolveReplayVideoOptions({
                     team: uiState.game.team,
                     game: uiState.game.game,
                     players: uiState.game.players,
                     isReplay
                 });
+                let usesSanitizedPublicProjection = options.isPublicProjectionVideo === true;
                 if (options.mode === 'none') {
                     const publicProjectionOptions = resolvePublicProjectionVideoOptions(uiState.game.game, {
                         parentHost: window.location.hostname
@@ -2152,13 +2174,16 @@ async function startRealMode(params) {
                         usesSanitizedPublicProjection = true;
                     }
                 }
+                uiState.replayPlaybackAvailable = options.isRecordedReplay === true && options.hasVideo === true;
+                configureGameActions();
                 uiState.videoDurationMs = Number.isFinite(options.durationMs) ? options.durationMs : 0;
-                if (!usesSanitizedPublicProjection && options.mode === 'recorded' && options.sourceUrl) {
-                    if (uiState.optionalTeamStatus === 'pending') {
+                if (!usesSanitizedPublicProjection && options.isRecordedReplay === true && options.sourceUrl) {
+                    const gameGateOverride = getRecordedReplayGameGateOverride(uiState.game.game);
+                    if (typeof gameGateOverride !== 'boolean' && uiState.optionalTeamStatus === 'pending') {
                         showReplayAccessGate({ state: 'checking' });
                         return true;
                     }
-                    if (uiState.optionalTeamStatus === 'failed') {
+                    if (typeof gameGateOverride !== 'boolean' && uiState.optionalTeamStatus === 'failed') {
                         showReplayAccessGate({ state: 'unavailable' });
                         return true;
                     }

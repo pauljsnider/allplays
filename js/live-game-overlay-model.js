@@ -1,3 +1,5 @@
+import { getGameReplayLifecycle, normalizeYouTubeReplayUrl } from './game-replay-video.js?v=3';
+
 const DEFAULT_PERIOD = 'H1';
 
 function toFiniteNumber(value, fallback = 0) {
@@ -280,15 +282,8 @@ export function getControllableReplayEmbedUrl(sourceUrl, origin = '') {
     return getControllableYouTubeEmbedUrl(sourceUrl, origin, { replay: true });
 }
 
-function getYouTubeVideoId(url) {
-    const host = url.hostname.toLowerCase().replace(/^www\./, '');
-    if (host === 'youtu.be') {
-        return url.pathname.split('/').filter(Boolean)[0] || '';
-    }
-    if (host !== 'youtube.com' && host !== 'youtube-nocookie.com') return '';
-    const pathMatch = url.pathname.match(/^\/(?:embed|live|shorts)\/([A-Za-z0-9_-]{11})(?:\/|$)/);
-    const candidate = url.searchParams.get('v') || pathMatch?.[1] || '';
-    return candidate === 'live_stream' ? '' : candidate;
+export function hasCompletedReplayLifecycle(game = {}) {
+    return getGameReplayLifecycle(game).isCompleted;
 }
 
 export function resolvePublicProjectionVideoOptions(game = {}, { parentHost = 'localhost' } = {}) {
@@ -298,24 +293,32 @@ export function resolvePublicProjectionVideoOptions(game = {}, { parentHost = 'l
 
     const url = new URL(publicUrl);
     const host = url.hostname.toLowerCase().replace(/^www\./, '');
-    const videoId = getYouTubeVideoId(url);
-    if (/^[A-Za-z0-9_-]{11}$/.test(videoId)) {
+    const lifecycle = getGameReplayLifecycle(game);
+    const isCompleted = lifecycle.isCompleted;
+    const isActiveLive = lifecycle.isActiveLive;
+    if (!isCompleted && !isActiveLive) return null;
+    const youtubeReplay = normalizeYouTubeReplayUrl(game.videoUrl);
+    if (youtubeReplay) {
         return {
             mode: 'embed',
+            isRecordedReplay: isCompleted && !isActiveLive,
+            isPublicProjectionVideo: true,
             hasVideo: true,
-            sourceUrl: `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1`,
-            publicUrl,
+            sourceUrl: `${youtubeReplay.embedUrl}?autoplay=1&mute=1`,
+            publicUrl: youtubeReplay.publicUrl,
             publicLabel: 'Watch on YouTube ↗',
             durationMs: null,
             replayState: null
         };
     }
 
-    if (host === 'youtube.com' || host === 'youtube-nocookie.com') {
+    if (['youtube.com', 'm.youtube.com', 'youtube-nocookie.com', 'youtu.be'].includes(host)) {
         const channelId = url.searchParams.get('channel') || url.pathname.match(/^\/channel\/(UC[A-Za-z0-9_-]{22})(?:\/|$)/)?.[1];
-        if (/^UC[A-Za-z0-9_-]{22}$/.test(channelId || '')) {
+        if (isActiveLive && (host === 'youtube.com' || host === 'm.youtube.com' || host === 'youtube-nocookie.com') && /^UC[A-Za-z0-9_-]{22}$/.test(channelId || '')) {
             return {
                 mode: 'embed',
+                isRecordedReplay: false,
+                isPublicProjectionVideo: true,
                 hasVideo: true,
                 sourceUrl: `https://www.youtube.com/embed/live_stream?channel=${encodeURIComponent(channelId)}&autoplay=1&mute=1`,
                 publicUrl,
@@ -335,9 +338,11 @@ export function resolvePublicProjectionVideoOptions(game = {}, { parentHost = 'l
         const video = host === 'player.twitch.tv'
             ? url.searchParams.get('video')
             : url.pathname.match(/^\/videos\/(\d+)(?:\/|$)/)?.[1];
-        if (/^\d+$/.test(video || '')) {
+        if (isCompleted && /^\d+$/.test(video || '')) {
             return {
                 mode: 'embed',
+                isRecordedReplay: true,
+                isPublicProjectionVideo: true,
                 hasVideo: true,
                 sourceUrl: `https://player.twitch.tv/?video=${encodeURIComponent(video)}&parent=${encodeURIComponent(safeParentHost)}&autoplay=true&muted=true`,
                 publicUrl,
@@ -346,9 +351,11 @@ export function resolvePublicProjectionVideoOptions(game = {}, { parentHost = 'l
                 replayState: null
             };
         }
-        if (channel !== 'videos' && /^[A-Za-z0-9_]{1,25}$/.test(channel || '')) {
+        if (isActiveLive && channel !== 'videos' && /^[A-Za-z0-9_]{1,25}$/.test(channel || '')) {
             return {
                 mode: 'embed',
+                isRecordedReplay: false,
+                isPublicProjectionVideo: true,
                 hasVideo: true,
                 sourceUrl: `https://player.twitch.tv/?channel=${encodeURIComponent(channel)}&parent=${encodeURIComponent(safeParentHost)}&autoplay=true&muted=true`,
                 publicUrl,
@@ -362,6 +369,8 @@ export function resolvePublicProjectionVideoOptions(game = {}, { parentHost = 'l
 
     return {
         mode: 'recorded',
+        isRecordedReplay: !isActiveLive,
+        isPublicProjectionVideo: true,
         hasVideo: true,
         sourceUrl: publicUrl,
         publicUrl,

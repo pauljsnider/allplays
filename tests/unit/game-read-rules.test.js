@@ -34,7 +34,10 @@ const officiatingNotificationRules = rules.match(
 describe('game Firestore read rules', () => {
     it('keeps staff assignment-array updates on the team-admin game write path', () => {
         expect(teamGamesRules).toContain('allow update: if !isBroadcastSessionOnlyUpdate() &&');
+        expect(teamGamesRules).toContain('!isReplayArchiveMutation() &&');
         expect(teamGamesRules).toContain('(isTeamOwnerOrAdmin(teamId) ||');
+        expect(teamGamesRules).toContain('allow update: if isReplayArchiveOnlyUpdate() &&');
+        expect(teamGamesRules).toContain('isGameReplayVideoMutationValid(true)');
         expect(teamGamesRules).toContain('allow update: if isBroadcastSessionOnlyUpdate() && isTeamOwnerOrAdmin(teamId);');
     });
 

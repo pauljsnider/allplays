@@ -145,6 +145,7 @@ const {
   canTrackedCalendarEventSuppressPublicProjection,
   canProjectPublicGame,
   getPublicOpponentStatKeys,
+  getPublicVideoLifecycle,
   isStrictPublicTeam,
   isPublicProjectionItemAfterCursor,
   normalizeTeamId,
@@ -8340,17 +8341,42 @@ function buildPublicHomepageCandidateQuery(collectionName, category, now = new D
   } else {
     const start = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     query = query
-      .where('liveStatus', '==', 'completed')
+      .where('liveStatus', 'in', ['completed', 'final', 'complete', 'finished'])
       .where('date', '>=', start)
       .orderBy('date', 'desc');
   }
   return query.limit(PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY + 1);
 }
 
+function buildPublicHomepageStatsheetReplayCandidateQuery(collectionName, now = new Date()) {
+  const start = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  return firestore.collectionGroup(collectionName)
+    .where('status', 'in', ['completed', 'final', 'complete', 'finished'])
+    .where('date', '>=', start)
+    .orderBy('date', 'desc')
+    .limit(PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY + 1);
+}
+
 async function getPublicHomepageCandidateDocuments(collectionName, category, now) {
   const snapshot = await buildPublicHomepageCandidateQuery(collectionName, category, now).get();
-  const batch = buildPublicHomepageCandidateBatch(snapshot.docs);
-  if (batch.truncated) {
+  const statsheetSnapshot = category === 'replays'
+    ? await buildPublicHomepageStatsheetReplayCandidateQuery(collectionName, now).get()
+    : null;
+  const candidateDocs = [...snapshot.docs, ...(statsheetSnapshot?.docs || [])];
+  const uniqueDocs = [...new Map(candidateDocs.map((docSnap) => [
+    String(docSnap.ref?.path || `${collectionName}/${docSnap.id}`),
+    docSnap
+  ])).values()]
+    .sort((left, right) => {
+      const rightMillis = firestoreTimestampToMillis(right.data()?.date) ?? Number.NEGATIVE_INFINITY;
+      const leftMillis = firestoreTimestampToMillis(left.data()?.date) ?? Number.NEGATIVE_INFINITY;
+      return rightMillis - leftMillis
+        || String(left.ref?.path || left.id).localeCompare(String(right.ref?.path || right.id));
+    });
+  const batch = buildPublicHomepageCandidateBatch(uniqueDocs);
+  const queryTruncated = snapshot.docs.length > PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY
+    || (statsheetSnapshot?.docs.length || 0) > PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY;
+  if (batch.truncated || queryTruncated) {
     functions.logger.warn('Truncating a public homepage candidate query at the scan limit.', {
       collectionName,
       category,
@@ -8358,7 +8384,7 @@ async function getPublicHomepageCandidateDocuments(collectionName, category, now
     });
   }
   return {
-    truncated: batch.truncated,
+    truncated: batch.truncated || queryTruncated,
     candidates: batch.candidates.map((docSnap) => ({
       id: docSnap.id,
       ...(docSnap.data() || {}),
@@ -8689,6 +8715,8 @@ const FAMILY_SHARE_GAME_PROJECTION_FIELDS = [
   'opponent',
   'location',
   'status',
+  'liveStatus',
+  'isCancelled',
   'homeScore',
   'awayScore',
   'sharedGameId',
@@ -8844,7 +8872,10 @@ function serializeFamilyShareOverrides(value) {
     }));
 }
 
-function serializeFamilyShareGame(docSnap, { includeInternalCalendarUidHash = false } = {}) {
+function serializeFamilyShareGame(docSnap, {
+  includeInternalCalendarUidHash = false,
+  team = null
+} = {}) {
   const data = docSnap.data() || {};
   const game = {
     id: docSnap.id,
@@ -8865,11 +8896,32 @@ function serializeFamilyShareGame(docSnap, { includeInternalCalendarUidHash = fa
           .map(normalizeFamilyShareText)
           .filter((dateKey) => /^\d{4}-\d{2}-\d{2}$/.test(dateKey))
           .slice(0, 1000);
+      } else if (field === 'liveStatus') {
+        game[field] = normalizeFamilyShareText(data[field]).slice(0, 32).toLowerCase();
       } else {
         game[field] = serializeFamilyShareValue(data[field]);
       }
     }
   });
+  const publicProjection = canProjectPublicGame(team || {}, data)
+    ? serializePublicGame({ id: docSnap.id, ...data }, { team: team || {} })
+    : null;
+  if (publicProjection) {
+    game.status = publicProjection.sourceStatus || publicProjection.status || null;
+    game.liveStatus = publicProjection.liveStatus || null;
+  }
+  if (data.isCancelled === true
+    || ['cancelled', 'canceled'].includes(normalizeFamilyShareText(game.status).toLowerCase())
+    || ['cancelled', 'canceled'].includes(normalizeFamilyShareText(game.liveStatus).toLowerCase())) {
+    game.isCancelled = true;
+  } else {
+    delete game.isCancelled;
+  }
+  game.canOpenPublicViewer = Boolean(publicProjection);
+  game.hasReplayVideo = Boolean(
+    publicProjection?.videoUrl
+    && publicProjection.videoLifecycle === 'completed'
+  );
   return game;
 }
 
@@ -8932,7 +8984,7 @@ function chargeFamilyShareReadBudget(teamBudget, count) {
   teamBudget.remaining -= charged;
 }
 
-async function loadFamilyShareSharedGamesForTeam(teamId, teamBudget, includeInternalCalendarUidHash) {
+async function loadFamilyShareSharedGamesForTeam(teamId, team, teamBudget, includeInternalCalendarUidHash) {
   if (
     typeof firestore.collectionGroup !== 'function'
     || teamBudget.remaining <= 0
@@ -8972,7 +9024,7 @@ async function loadFamilyShareSharedGamesForTeam(teamId, teamBudget, includeInte
       return serializeFamilyShareGame({
         id: buildFamilyShareSharedGameSyntheticId(sharedGamePath),
         data: () => projected
-      }, { includeInternalCalendarUidHash });
+      }, { includeInternalCalendarUidHash, team });
     })
     .filter(Boolean);
 }
@@ -9015,11 +9067,13 @@ async function loadFamilyShareScheduleTeams(children, {
       const boundedDocs = gamesSnap.docs.slice(0, directQueryLimit);
       chargeFamilyShareReadBudget(teamBudget, boundedDocs.length);
       directGames = boundedDocs.map((docSnap) => serializeFamilyShareGame(docSnap, {
-        includeInternalCalendarUidHash
+        includeInternalCalendarUidHash,
+        team
       }));
     }
     const sharedGames = await loadFamilyShareSharedGamesForTeam(
       teamId,
+      team,
       teamBudget,
       includeInternalCalendarUidHash
     );
