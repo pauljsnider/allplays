@@ -133,7 +133,12 @@ const {
   normalizePublicRegistrationSecurityMode,
   resolvePublicRegistrationGuardianEmail
 } = require('./public-registration-abuse-core.cjs');
-const { buildPublicGamesIcs, canExposeEmptyPublicFeed, isPublicFanGame } = require('./public-calendar-core.cjs');
+const {
+  buildPublicGamesIcs,
+  canExposeEmptyPublicFeed,
+  isPublicFanGame,
+  normalizePublicCalendarTeamId
+} = require('./public-calendar-core.cjs');
 const {
   buildPublicGamesResponse,
   buildPublicRosterResponse,
@@ -196,9 +201,12 @@ const {
 } = require('./public-rsvp-idempotency-core.cjs');
 const {
   buildTeamCalendarIcs,
-  calendarTokenHasTeamAccess,
-  normalizeCalendarRequest
+  createTeamCalendarFeedCredentialResolver,
+  getCalendarTokenHolderId
 } = require('./team-calendar-feed-core.cjs');
+const {
+  createGetOrCreatePrivateTeamCalendarFeedHandler
+} = require('./team-calendar-subscription-core.cjs');
 const {
   isFamilyShareTokenReadable,
   resolveFamilyShareChildrenFromOwnerProfile
@@ -215,7 +223,10 @@ const {
   validateRsvpTokenRedemption,
   buildRsvpTokenAuditPayload
 } = require('./rsvp-token-core.cjs');
-const { isAllowedPublicRsvpOrigin } = require('./public-rsvp-cors-core.cjs');
+const {
+  isAllowedPublicRsvpAdminOrigin,
+  isAllowedPublicRsvpOrigin
+} = require('./public-rsvp-cors-core.cjs');
 const {
   normalizeText,
   resolveTeamEmailRecipients,
@@ -379,6 +390,7 @@ const {
   buildTeamAccountGrantScrubPlan,
   collectAccountRosterScopes,
   collectAccountTeamIds,
+  cleanupAccountCalendarCredentials,
   createAccountDeletionRequestHandler,
   deleteAccountMediaStoragePages,
   getAccountDeletionCollectionQueries,
@@ -7482,13 +7494,15 @@ function getAllowedOriginPolicy() {
   if (Array.isArray(configuredOrigins)) {
     return {
       origins: configuredOrigins.map((origin) => String(origin).trim()).filter(Boolean),
-      allowFirebaseHosting: false
+      allowFirebaseHosting: false,
+      allowNativeCalendarOrigins: false
     };
   }
   if (typeof configuredOrigins === 'string') {
     return {
       origins: configuredOrigins.split(',').map((origin) => origin.trim()).filter(Boolean),
-      allowFirebaseHosting: false
+      allowFirebaseHosting: false,
+      allowNativeCalendarOrigins: false
     };
   }
   return {
@@ -7500,16 +7514,26 @@ function getAllowedOriginPolicy() {
       'http://localhost:5174',
       'http://127.0.0.1:5174'
     ],
-    allowFirebaseHosting: true
+    allowFirebaseHosting: true,
+    allowNativeCalendarOrigins: true
   };
 }
 
 const allowedOriginPolicy = getAllowedOriginPolicy();
 const allowedOriginSet = new Set(allowedOriginPolicy.origins);
-// Capacitor's WebViews use these exact origins. Keep the exception scoped to
-// passive telemetry so it does not broaden the calendar endpoint's CORS policy.
+// Capacitor's exact WebView origins keep installed native clients on the
+// legacy HTTP calendar bridge. Configured allowlists remain authoritative.
+const calendarAllowedOriginSet = new Set([
+  ...allowedOriginSet,
+  ...(allowedOriginPolicy.allowNativeCalendarOrigins
+    ? ['https://localhost', 'capacitor://localhost']
+    : [])
+]);
+// Passive telemetry has its own exact native-origin policy, separate from the
+// calendar allowlist and its configured-origin compatibility behavior.
 const telemetryAllowedOriginSet = new Set([
   ...allowedOriginSet,
+  'https://localhost',
   'capacitor://localhost',
   'http://localhost'
 ]);
@@ -7518,7 +7542,7 @@ function isAllowedOrigin(origin) {
   if (!origin) {
     return true;
   }
-  return allowedOriginSet.has(origin) ||
+  return calendarAllowedOriginSet.has(origin) ||
     (allowedOriginPolicy.allowFirebaseHosting && isAllPlaysFirebaseHostingOrigin(origin));
 }
 
@@ -8499,8 +8523,8 @@ exports.publicTeamGamesIcs = functions
       return;
     }
 
-    const teamId = String(req.query.teamId || '').trim();
-    if (!teamId || !/^[A-Za-z0-9_-]{1,128}$/.test(teamId)) {
+    const teamId = normalizePublicCalendarTeamId(req.query.teamId);
+    if (!teamId) {
       res.status(400).send('Missing or invalid teamId');
       return;
     }
@@ -8525,7 +8549,7 @@ exports.publicTeamGamesIcs = functions
 
       const icsText = buildPublicGamesIcs({ teamId, team, games: publicGames });
       res.set('Content-Type', 'text/calendar; charset=utf-8');
-      res.set('Content-Disposition', `inline; filename="${teamId}-public-games.ics"`);
+      res.set('Content-Disposition', 'inline; filename="allplays-public-games.ics"');
       res.set('Cache-Control', 'public, max-age=300');
       res.status(200).send(req.method === 'HEAD' ? '' : icsText);
     } catch (error) {
@@ -8546,18 +8570,62 @@ async function getCalendarTokenSnapshot(teamId, tokenHash, token) {
 }
 
 async function getCalendarTokenHolderContext(tokenData) {
-  const uid = String(tokenData.uid || tokenData.userId || tokenData.createdBy || '').trim();
+  const uid = getCalendarTokenHolderId(tokenData);
   if (!uid) return null;
-  const [userSnap, authUser] = await Promise.all([
+  const [userSnap, deletionRequestSnap, authUser] = await Promise.all([
     firestore.doc(`users/${uid}`).get(),
+    firestore.doc(`accountDeletionRequests/${uid}`).get(),
     admin.auth().getUser(uid).catch((error) => {
       if (error?.code === 'auth/user-not-found') return null;
       throw error;
     })
   ]);
   if (!userSnap.exists || !authUser || authUser.disabled === true) return null;
-  return { profile: userSnap.data() || {}, authUser };
+  return {
+    profile: userSnap.data() || {},
+    authUser,
+    accountDeletionRequested: deletionRequestSnap.exists
+  };
 }
+
+const resolveTeamCalendarFeedCredential = createTeamCalendarFeedCredentialResolver({
+  loadTeam: async (teamId) => {
+    const teamSnap = await firestore.doc(`teams/${teamId}`).get();
+    return teamSnap.exists ? teamSnap.data() || {} : null;
+  },
+  loadToken: async ({ teamId, tokenHash, token }) => {
+    const tokenSnap = await getCalendarTokenSnapshot(teamId, tokenHash, token);
+    return tokenSnap.exists ? tokenSnap.data() || {} : null;
+  },
+  loadTokenHolder: getCalendarTokenHolderContext
+});
+
+const getPrivateTeamCalendarFeedTokenHandler = createGetOrCreatePrivateTeamCalendarFeedHandler({
+  firestore,
+  auth: admin.auth(),
+  HttpsError: functions.https.HttpsError,
+  serverTimestamp: () => admin.firestore.FieldValue.serverTimestamp(),
+  assertFreshAuthUser: async ({ authUser }) => {
+    const verification = await assertSensitiveEmailVerified({
+      auth: {
+        uid: authUser.uid,
+        token: {
+          ...(authUser.customClaims || {}),
+          email: authUser.email || '',
+          email_verified: authUser.emailVerified === true
+        }
+      }
+    }, 'private-team-calendar-feed');
+    if (authUser.email && !verification.verified && !verification.exempt) {
+      throw new functions.https.HttpsError(
+        'failed-precondition',
+        'Verify your email before creating a private calendar feed.'
+      );
+    }
+  }
+});
+
+exports.getPrivateTeamCalendarFeedToken = functions.https.onCall(getPrivateTeamCalendarFeedTokenHandler);
 
 exports.teamCalendarFeed = functions.https.onRequest(async (req, res) => {
   if (req.method !== 'GET') {
@@ -8565,46 +8633,14 @@ exports.teamCalendarFeed = functions.https.onRequest(async (req, res) => {
     return;
   }
 
-  const { teamId, token, tokenHash } = normalizeCalendarRequest(req.query || {});
-  if (!teamId || !token || !tokenHash) {
-    res.status(401).send('Missing calendar token');
-    return;
-  }
-
   try {
-    const [teamSnap, tokenSnap] = await Promise.all([
-      firestore.doc(`teams/${teamId}`).get(),
-      getCalendarTokenSnapshot(teamId, tokenHash, token)
-    ]);
-
-    if (!teamSnap.exists || !tokenSnap.exists) {
-      res.status(403).send('Invalid calendar token');
+    const authorization = await resolveTeamCalendarFeedCredential(req.query || {});
+    if (!authorization.allowed) {
+      res.status(authorization.status).send(authorization.message);
       return;
     }
-
-    const team = teamSnap.data() || {};
-    const tokenData = { ...(tokenSnap.data() || {}), teamId };
-    if (tokenData.revoked === true || tokenData.disabled === true || tokenData.active === false) {
-      res.status(403).send('Revoked calendar token');
-      return;
-    }
-
-    const expiresAt = tokenData.expiresAt?.toDate ? tokenData.expiresAt.toDate() : (tokenData.expiresAt ? new Date(tokenData.expiresAt) : null);
-    if (expiresAt && !Number.isNaN(expiresAt.getTime()) && expiresAt <= new Date()) {
-      res.status(403).send('Expired calendar token');
-      return;
-    }
-
-    const tokenHolder = await getCalendarTokenHolderContext(tokenData);
-    if (!calendarTokenHasTeamAccess({
-      team,
-      profile: tokenHolder?.profile,
-      authUser: tokenHolder?.authUser,
-      tokenData
-    })) {
-      res.status(403).send('Calendar token no longer has team access');
-      return;
-    }
+    const { teamId } = authorization.request;
+    const { team } = authorization;
 
     const [eventsSnap, recurringMastersSnap] = await Promise.all([
       getCalendarFeedGamesQuery(teamId).get(),
@@ -8625,7 +8661,7 @@ exports.teamCalendarFeed = functions.https.onRequest(async (req, res) => {
     const icsText = buildTeamCalendarIcs({ teamId, team, events });
 
     res.set('Content-Type', 'text/calendar; charset=utf-8');
-    res.set('Content-Disposition', `inline; filename="${teamId}-schedule.ics"`);
+    res.set('Content-Disposition', 'inline; filename="allplays-team-schedule.ics"');
     res.set('Cache-Control', 'private, max-age=300');
     res.status(200).send(icsText);
   } catch (error) {
@@ -16746,9 +16782,12 @@ exports.notifyPracticePacketAssigned = retryableNotificationFunctions.firestore
     return null;
   });
 
-function writePublicRsvpCors(req, res) {
+function writePublicRsvpCors(req, res, { allowNativeAdminOrigin = false } = {}) {
   const origin = req.headers.origin;
-  if (isAllowedPublicRsvpOrigin(origin)) {
+  const isAllowed = allowNativeAdminOrigin
+    ? isAllowedPublicRsvpAdminOrigin(origin)
+    : isAllowedPublicRsvpOrigin(origin);
+  if (isAllowed) {
     res.set('Access-Control-Allow-Origin', origin);
     res.set('Vary', 'Origin');
   }
@@ -17367,7 +17406,7 @@ async function createPublicRsvpEmailDeliveries({ teamId, gameId, actorUid = null
 }
 
 exports.sendPublicRsvpEmails = functions.https.onRequest(async (req, res) => {
-  writePublicRsvpCors(req, res);
+  writePublicRsvpCors(req, res, { allowNativeAdminOrigin: true });
   if (req.method === 'OPTIONS') {
     res.status(204).send('');
     return;
@@ -20515,6 +20554,11 @@ exports.processAccountDeletionRequest = functions
       await scrubAccountChatConversationMembership(uid, ownerEmail);
       await scrubAccountRegistrationLinks(uid, ownerEmail);
       await scrubAccountRosterParentLinks(uid, userDoc.data() || {}, authUser);
+      await cleanupAccountCalendarCredentials({
+        firestore,
+        uid,
+        documentIdField: admin.firestore.FieldPath.documentId()
+      });
 
       const directDocuments = [
         `publicUserProfiles/${uid}`,

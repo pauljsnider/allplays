@@ -416,10 +416,37 @@ service cloud.firestore {
               isGlobalAdmin());
     }
 
+    function hasNoClientCalendarCredentialFields(data) {
+      return !data.keys().hasAny([
+        'privateCalendarFeedUrl',
+        'calendarSubscriptionUrl',
+        'calendarFeedUrl',
+        'teamCalendarFeedUrl',
+        'calendarSubscriptionToken',
+        'privateCalendarToken',
+        'calendarFeedToken',
+        'teamCalendarToken'
+      ]);
+    }
+
+    function keepsCalendarCredentialFieldsImmutable() {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+        'privateCalendarFeedUrl',
+        'calendarSubscriptionUrl',
+        'calendarFeedUrl',
+        'teamCalendarFeedUrl',
+        'calendarSubscriptionToken',
+        'privateCalendarToken',
+        'calendarFeedToken',
+        'teamCalendarToken'
+      ]);
+    }
+
     function keepsOwnerControlledTeamPrivilegeFieldsImmutable() {
       return request.resource.data.get('ownerId', '') == resource.data.get('ownerId', '') &&
              request.resource.data.get('isAdmin', false) == resource.data.get('isAdmin', false) &&
-             request.resource.data.get('isPlatformAdmin', false) == resource.data.get('isPlatformAdmin', false);
+             request.resource.data.get('isPlatformAdmin', false) == resource.data.get('isPlatformAdmin', false) &&
+             keepsCalendarCredentialFieldsImmutable();
     }
 
     function keepsTeamPrivilegeFieldsImmutable() {
@@ -3416,7 +3443,9 @@ service cloud.firestore {
       allow get: if canReadTeamDocument(teamId, resource.data);
       allow list: if isBoundedGlobalAdminListQuery(100) ||
                      canListManagedTeamDocument(resource.data);
-      allow create: if isVerifiedForSensitiveWrite() && request.resource.data.ownerId == request.auth.uid;
+      allow create: if isVerifiedForSensitiveWrite() &&
+                       request.resource.data.ownerId == request.auth.uid &&
+                       hasNoClientCalendarCredentialFields(request.resource.data);
       allow update: if isVerifiedForSensitiveWrite() &&
                        ((isTeamOwnerOrGlobalAdmin(teamId) && keepsOwnerControlledTeamPrivilegeFieldsImmutable()) ||
                         (isTeamOwnerOrAdmin(teamId) && keepsTeamPrivilegeFieldsImmutable()));
@@ -3610,8 +3639,13 @@ service cloud.firestore {
       }
 
       match /calendarTokens/{tokenId} {
-        // Raw calendar subscription tokens grant private feed access and must not be public.
-        allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);
+        // Hash-only bearer lookups are written and read only by trusted server code.
+        allow read, write: if false;
+      }
+
+      match /privateCalendarSubscriptions/{principalId} {
+        // Reusable raw bearer credentials are never exposed to Firestore clients.
+        allow read, write: if false;
       }
 
       match /organizationVenues/{venueId} {

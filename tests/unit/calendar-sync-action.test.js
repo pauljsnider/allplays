@@ -25,9 +25,15 @@ describe('calendar page live sync controls', () => {
         const source = readCalendarPage();
 
         expect(source).toContain('function getSelectedSyncCalendarTeam()');
-        expect(source).toContain('function getPrivateCalendarFeedUrl(team)');
-        expect(source).toContain('team?.calendarSubscriptionUrl');
-        expect(source).toContain('team?.calendarSubscriptionToken');
+        expect(source).toContain('function getPrivateCalendarFeedUrl(team, token)');
+        expect(source).toContain('async function resolveCurrentCalendarFeedUrl()');
+        expect(source).toContain("httpsCallable(functions, 'getPrivateTeamCalendarFeedToken')");
+        expect(source).not.toContain('privateCalendarFeedTokensByTeamId');
+        expect(source).toContain("let preparedPrivateCalendarFeedUrl = '';");
+        expect(source).toContain('setSyncCalendarActionsEnabled(Boolean(feedUrl));');
+        expect(source).toContain('const feedUrl = preparedPrivateCalendarFeedUrl;');
+        expect(source).not.toContain('team?.calendarSubscriptionUrl');
+        expect(source).not.toContain('team?.calendarSubscriptionToken');
         expect(source).toContain('teamCalendarFeedFunctionUrl');
         expect(source).toContain('ALLPLAYS_TEAM_CALENDAR_FEED_URL');
         expect(source).toContain('teamCalendarFeed');

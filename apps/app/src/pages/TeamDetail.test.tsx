@@ -116,7 +116,7 @@ vi.mock('../lib/homeLogic', () => ({
   getEventDetailPath: vi.fn(() => '/schedule/team-1/game-next')
 }));
 vi.mock('../lib/parentToolsService', () => ({
-  buildPrivateTeamCalendarFeedUrl: vi.fn(() => 'https://calendar.example.test/private.ics'),
+  getPrivateTeamCalendarFeedUrl: vi.fn(async () => 'https://calendar.example.test/private.ics'),
   getAppleCalendarFeedUrl: vi.fn(() => 'webcal://calendar.example.test/private.ics'),
   getGoogleCalendarFeedUrl: vi.fn(() => 'https://calendar.google.com/calendar/render')
 }));
@@ -242,6 +242,7 @@ const model = {
   canManageTeam: false,
   canManageAdmins: false,
   canPurchaseTeamPass: false,
+  canUsePrivateCalendarSync: true,
   staffPermissions: null,
   counts: { games: 0, practices: 0, completedGames: 0 }
 };
