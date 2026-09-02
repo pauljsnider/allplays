@@ -1,4 +1,4 @@
-import { getGameReplayLifecycle, normalizeYouTubeReplayUrl } from './game-replay-video.js?v=2';
+import { getGameReplayLifecycle, normalizeYouTubeReplayUrl } from './game-replay-video.js?v=3';
 
 const DEFAULT_PERIOD = 'H1';
 

@@ -18,7 +18,7 @@ import {
     reconcileOverlayLiveEvents,
     resolvePublicProjectionVideoOptions,
     replaceOverlayChat
-} from './live-game-overlay-model.js?v=27';
+} from './live-game-overlay-model.js?v=28';
 import {
     buildReplaySessionState,
     collectReplayEventWindow,
@@ -1131,7 +1131,7 @@ async function initializeChatComposer(database, teamId, gameId) {
     try {
         const [authTools, chatTools] = await Promise.all([
             import('./auth.js?v=4433198'),
-            import('./live-game-chat.js?v=3')
+            import('./live-game-chat.js?v=4')
         ]);
         uiState.chatServices = {
             postLiveChatMessage: database.postLiveChatMessage,
@@ -2113,7 +2113,7 @@ async function startRealMode(params) {
     try {
         const [database, videoTools, stateTools] = await Promise.all([
             loadOverlayDatabase(),
-            import('./live-game-video.js?v=443318'),
+            import('./live-game-video.js?v=443319'),
             import('./live-game-state.js?v=42')
         ]);
         uiState.optionalTeamStatus = 'pending';

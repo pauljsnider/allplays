@@ -31,8 +31,13 @@ describe('live game replay video helpers', () => {
         expect(hasCompletedReplayLifecycle({ status: 'scheduled', liveStatus: 'completed' })).toBe(false);
         expect(hasCompletedReplayLifecycle({ status: 'completed', liveStatus: 'live' })).toBe(false);
         expect(hasCompletedReplayLifecycle({ status: 'completed', liveStatus: 'cancelled' })).toBe(false);
+        expect(hasCompletedReplayLifecycle({ status: ' FINAL ', liveStatus: 'scheduled' })).toBe(false);
+        expect(hasCompletedReplayLifecycle({ status: 'FINAL', liveStatus: 'scheduled' })).toBe(false);
         expect(hasActiveLiveLifecycle({ status: 'scheduled', liveStatus: 'live' })).toBe(true);
         expect(hasActiveLiveLifecycle({ status: 'live', liveStatus: 'live' })).toBe(true);
+        expect(hasActiveLiveLifecycle({ status: 'scheduled', liveStatus: ' LIVE ' })).toBe(false);
+        expect(hasActiveLiveLifecycle({ status: 'SCHEDULED', liveStatus: 'live' })).toBe(false);
+        expect(hasActiveLiveLifecycle({ type: 'practice', status: 'scheduled', liveStatus: 'live' })).toBe(false);
         expect(hasActiveLiveLifecycle({ status: 'completed', liveStatus: 'live' })).toBe(false);
         expect(hasActiveLiveLifecycle({ status: 'cancelled', liveStatus: 'live' })).toBe(false);
         expect(hasActiveLiveLifecycle({ status: 'scheduled', liveStatus: 'live', isCancelled: true })).toBe(false);
@@ -253,6 +258,43 @@ describe('live game replay video helpers', () => {
             hasVideo: true
         });
         expect(options.mediaHub.liveStream).not.toBeNull();
+    });
+
+    it.each([
+        {},
+        { status: null, liveStatus: null },
+        { status: '', liveStatus: '' },
+        { status: 'scheduled', liveStatus: null },
+        { status: null, liveStatus: 'scheduled' }
+    ])('preserves the legacy scheduled preview for exact empty lifecycle values %#', (game) => {
+        const options = resolveReplayVideoOptions({
+            team: { youtubeVideoId: 'aaaaaaaaaaa' },
+            game,
+            isReplay: false
+        });
+
+        expect(options).toMatchObject({ mode: 'embed', isRecordedReplay: false, hasVideo: true });
+        expect(options.mediaHub.liveStream).not.toBeNull();
+    });
+
+    it.each([
+        { type: 'Game', status: 'scheduled', liveStatus: 'scheduled' },
+        { type: null, status: 'scheduled', liveStatus: 'scheduled' },
+        { type: '', status: 'scheduled', liveStatus: 'scheduled' },
+        { status: ' SCHEDULED ', liveStatus: 'scheduled' },
+        { status: 'SCHEDULED', liveStatus: 'scheduled' },
+        { status: 'scheduled', liveStatus: ' SCHEDULED ' },
+        { status: 'scheduled', liveStatus: 'SCHEDULED' },
+        { status: {}, liveStatus: 'scheduled' }
+    ])('does not preview the configured team stream for an inexact scheduled lifecycle %#', (game) => {
+        const options = resolveReplayVideoOptions({
+            team: { youtubeVideoId: 'aaaaaaaaaaa' },
+            game,
+            isReplay: false
+        });
+
+        expect(options).toMatchObject({ mode: 'none', hasVideo: false, sourceUrl: null });
+        expect(options.mediaHub.liveStream).toBeNull();
     });
 
     it('does not substitute the scheduled team stream on an explicit replay route', () => {

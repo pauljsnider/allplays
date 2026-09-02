@@ -86,6 +86,16 @@ describe('schedule watch CTA resolver', () => {
         });
     });
 
+    it.each([
+        { status: ' FINAL ', liveStatus: 'scheduled', hasReplayVideo: true },
+        { status: 'FINAL', liveStatus: 'scheduled', hasReplayVideo: true },
+        { status: 'scheduled', liveStatus: ' LIVE ' },
+        { status: 'SCHEDULED', liveStatus: 'live' },
+        { type: 'practice', status: 'scheduled', liveStatus: 'live' }
+    ])('does not expose watch actions for an inexact lifecycle %#', (lifecycle) => {
+        expect(resolveScheduleWatchCta(game(lifecycle))).toBeNull();
+    });
+
     it('accepts safe server evidence and direct historical playback sources', () => {
         expect(hasReplayVideoEvidence(game({ hasReplayVideo: true }))).toBe(true);
         expect(hasReplayVideoEvidence(game({
@@ -180,14 +190,18 @@ describe('schedule watch CTA resolver', () => {
         const familyPage = readRepoFile('family.html');
         const teamPage = readRepoFile('team.html');
         const editSchedulePage = readRepoFile('edit-schedule.html');
+        const gamePage = readRepoFile('game.html');
+        const ctaSource = readRepoFile('js/schedule-watch-cta.js');
 
-        expect(parentDashboard).toContain("import { hasReplayVideoEvidence, resolveScheduleWatchCta } from './js/schedule-watch-cta.js?v=2';");
+        expect(ctaSource).toContain("from './game-replay-video.js?v=3';");
+
+        expect(parentDashboard).toContain("import { hasReplayVideoEvidence, resolveScheduleWatchCta } from './js/schedule-watch-cta.js?v=3';");
         expect(parentDashboard).toContain('const watchCta = resolveScheduleWatchCta(game);');
         expect(parentDashboard).toContain('liveStatus: game.liveStatus || null,');
         expect(parentDashboard).toContain('hasReplayVideo: hasReplayVideoEvidence(game),');
         expect(parentDashboard).toContain('View Details');
 
-        expect(familyPage).toContain("import { hasReplayVideoEvidence, resolveScheduleWatchCta } from './js/schedule-watch-cta.js?v=2';");
+        expect(familyPage).toContain("import { hasReplayVideoEvidence, resolveScheduleWatchCta } from './js/schedule-watch-cta.js?v=3';");
         expect(familyPage).toContain('const watchCta = ev.canOpenPublicViewer === true ? resolveScheduleWatchCta(ev) : null;');
         expect(familyPage).toContain('const watchCta = game.canOpenPublicViewer === true ? resolveScheduleWatchCta(game) : null;');
         expect(familyPage).toContain('liveStatus: game.liveStatus || null,');
@@ -200,6 +214,8 @@ describe('schedule watch CTA resolver', () => {
         expect(familyPage).toContain('>\n                  View\n');
 
         expect(teamPage).toContain('const hasReplayLifecycle = !isPractice');
+        expect(teamPage).toContain("import { getGameReplayLifecycle } from './js/game-replay-video.js?v=3';");
+        expect(teamPage).toContain("import { hasReplayVideoEvidence } from './js/schedule-watch-cta.js?v=3';");
         expect(teamPage).toContain('const lifecycle = getGameReplayLifecycle({');
         expect(teamPage).toContain("type: isPractice ? 'practice' : 'game'");
         expect(teamPage).toContain('finalStatuses.has(normalizedLiveStatus) || hasReplayVideoEvidence(game)');
@@ -207,8 +223,12 @@ describe('schedule watch CTA resolver', () => {
         expect(teamPage).toContain('${hasReplayPlayback ? `');
 
         expect(editSchedulePage).toContain('const lifecycle = getGameReplayLifecycle(game);');
+        expect(editSchedulePage).toContain("import { getGameReplayLifecycle } from './js/game-replay-video.js?v=3';");
+        expect(editSchedulePage).toContain("import { hasReplayVideoEvidence } from './js/schedule-watch-cta.js?v=3';");
         expect(editSchedulePage).toContain('finalStatuses.has(liveStatus) || hasReplayVideoEvidence(game)');
         expect(editSchedulePage).toContain('const hasReplayPlayback = hasReplayLifecycle');
         expect(editSchedulePage).toContain('${hasReplayPlayback ? `<a href="live-game.html');
+        expect(gamePage).toContain("from './js/game-replay-video.js?v=3';");
+        expect(gamePage).toContain("from './js/live-game-video.js?v=443319';");
     });
 });

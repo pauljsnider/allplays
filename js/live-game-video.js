@@ -4,7 +4,7 @@ import { hasStreamTeamAccess } from './team-access.js?v=44338';
 import {
     getGameReplayLifecycle,
     resolveGameReplayPlaybackSource
-} from './game-replay-video.js?v=2';
+} from './game-replay-video.js?v=3';
 
 export const MAX_HIGHLIGHT_CLIP_MS = 60_000;
 export const BROADCAST_SETUP_STATUSES = Object.freeze({
@@ -654,14 +654,17 @@ export function normalizeGameRecapHighlightClips(game, options = {}) {
 }
 
 function hasScheduledLivePreviewLifecycle(game = {}) {
-    const type = toCleanString(game?.type).toLowerCase();
-    const status = toCleanString(game?.status).toLowerCase();
-    const liveStatus = toCleanString(game?.liveStatus).toLowerCase();
-    return (!type || type === 'game')
+    const type = game?.type;
+    const isEmptyOrScheduled = (value) => value === null
+        || value === undefined
+        || value === ''
+        || value === 'scheduled';
+    return (type === undefined || type === 'game')
         && game?.isCancelled !== true
         && game?.deleted !== true
         && game?.isDeleted !== true
-        && [status, liveStatus].filter(Boolean).every((value) => value === 'scheduled');
+        && isEmptyOrScheduled(game?.status)
+        && isEmptyOrScheduled(game?.liveStatus);
 }
 
 export function resolveGameMediaHub({ team, game, durationMs = null, includeScheduledLive = true } = {}) {

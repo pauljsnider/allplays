@@ -1,7 +1,7 @@
 import {
     getGameReplayLifecycle,
     resolveGameReplayPlaybackSource
-} from './game-replay-video.js?v=2';
+} from './game-replay-video.js?v=3';
 
 function normalizeStatus(value) {
     return String(value || '').trim().toLowerCase();

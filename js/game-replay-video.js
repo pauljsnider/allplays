@@ -175,27 +175,29 @@ function isYouTubeReplayHost(host) {
 
 export function getGameReplayLifecycle(game = {}) {
     const type = game?.type;
-    const normalizeLifecycleStatus = (value) => {
+    const readLifecycleStatus = (value) => {
         if (value === null || value === undefined || value === '') return '';
         if (typeof value !== 'string') return 'invalid';
-        return value.trim().toLowerCase();
+        return value;
     };
-    const status = normalizeLifecycleStatus(game?.status);
-    const liveStatus = normalizeLifecycleStatus(game?.liveStatus);
+    const status = readLifecycleStatus(game?.status);
+    const liveStatus = readLifecycleStatus(game?.liveStatus);
     const completedStatuses = new Set(['completed', 'final']);
     const statuses = [status, liveStatus].filter(Boolean);
     const hasTerminalFlag = game?.isCancelled === true
         || game?.deleted === true
         || game?.isDeleted === true;
+    const isGameType = type === undefined || type === 'game';
 
     return {
         type,
         status,
         liveStatus,
-        isCompleted: (type === undefined || type === 'game') && !hasTerminalFlag && ((completedStatuses.has(status)
+        isCompleted: isGameType && !hasTerminalFlag && ((completedStatuses.has(status)
                 && (!liveStatus || completedStatuses.has(liveStatus) || liveStatus === 'scheduled'))
             || (!status && completedStatuses.has(liveStatus))),
-        isActiveLive: !hasTerminalFlag
+        isActiveLive: isGameType
+            && !hasTerminalFlag
             && statuses.some((value) => ACTIVE_GAME_STATUSES.has(value))
             && statuses.every((value) => ACTIVE_GAME_COMPATIBLE_STATUSES.has(value))
             && !statuses.some((value) => TERMINAL_GAME_STATUSES.has(value))

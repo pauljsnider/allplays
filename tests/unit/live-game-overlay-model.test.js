@@ -41,6 +41,8 @@ describe('live game overlay model', () => {
         expect(hasCompletedReplayLifecycle({ status: 'scheduled', liveStatus: 'completed' })).toBe(false);
         expect(hasCompletedReplayLifecycle({ status: 'completed', liveStatus: 'live' })).toBe(false);
         expect(hasCompletedReplayLifecycle({ status: 'completed', liveStatus: 'cancelled' })).toBe(false);
+        expect(hasCompletedReplayLifecycle({ status: ' FINAL ', liveStatus: 'scheduled' })).toBe(false);
+        expect(hasCompletedReplayLifecycle({ status: 'FINAL', liveStatus: 'scheduled' })).toBe(false);
         expect(hasCompletedReplayLifecycle({ type: 'practice', status: 'completed', liveStatus: 'scheduled' })).toBe(false);
         expect(hasCompletedReplayLifecycle({ status: 'completed', liveStatus: 'scheduled', isCancelled: true })).toBe(false);
         expect(hasCompletedReplayLifecycle({ status: 'completed', liveStatus: 'scheduled', deleted: true })).toBe(false);

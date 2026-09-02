@@ -52,4 +52,21 @@ describe('live game chat availability', () => {
       liveStatus: 'live'
     }, { now })).toBe(true);
   });
+
+  it.each([
+    { status: 'scheduled', liveStatus: ' LIVE ' },
+    { status: 'SCHEDULED', liveStatus: 'live' },
+    { status: ' FINAL ', liveStatus: 'scheduled' },
+    { status: 'mystery', liveStatus: 'scheduled' },
+    { status: {}, liveStatus: 'scheduled' },
+    { type: 'practice', status: 'scheduled', liveStatus: 'live' },
+    { type: 'practice', status: 'scheduled', liveStatus: 'scheduled' },
+    { type: null, status: 'scheduled', liveStatus: 'scheduled' }
+  ])('fails chat closed for a malformed or non-game lifecycle %#', (lifecycle) => {
+    const now = new Date(2026, 1, 24, 18, 0, 0);
+    expect(isViewerChatEnabled({
+      date: new Date(2026, 1, 24, 1, 0, 0),
+      ...lifecycle
+    }, { now })).toBe(false);
+  });
 });
