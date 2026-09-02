@@ -9,6 +9,9 @@ const ACCOUNT_MEDIA_CLEANUP_PAGE_SIZE = 250;
 const ACCOUNT_STORAGE_DELETE_CONCURRENCY = 10;
 const ACCOUNT_CALENDAR_CREDENTIAL_PAGE_SIZE = 250;
 const ACCOUNT_CALENDAR_CREDENTIAL_TRANSACTION_SIZE = 100;
+const ACCOUNT_REPLAY_ARCHIVE_ATTRIBUTION_FIELDS = Object.freeze(['linkedBy', 'updatedBy']);
+const ACCOUNT_REPLAY_ARCHIVE_PAGE_SIZE = 250;
+const ACCOUNT_REPLAY_ARCHIVE_TRANSACTION_SIZE = 100;
 const CALENDAR_TOKEN_HASH_PATTERN = /^[a-f0-9]{64}$/;
 
 function normalizeConfirmation(value) {
@@ -813,6 +816,147 @@ async function cleanupAccountCalendarCredentials({
   };
 }
 
+function isAccountReplayArchiveDocument(document) {
+  const path = typeof document?.ref?.path === 'string' ? document.ref.path : '';
+  const segments = path.split('/');
+  return document?.id === 'archive'
+    && segments.length >= 4
+    && segments.length % 2 === 0
+    && segments.at(-2) === 'privateReplay'
+    && segments.at(-1) === 'archive'
+    && ['games', 'sharedGames'].includes(segments.at(-4));
+}
+
+function isValidAccountReplayAttributionUid(uid) {
+  return typeof uid === 'string'
+    && uid === uid.trim()
+    && Boolean(uid)
+    && uid.length <= 128
+    && !uid.includes('/');
+}
+
+function buildReplayArchiveAttributionScrubPlan(archive = {}, uid = '') {
+  if (!archive || typeof archive !== 'object' || Array.isArray(archive)
+    || !isValidAccountReplayAttributionUid(uid)) {
+    return { changed: false, fieldsToDelete: [] };
+  }
+  const fieldsToDelete = ACCOUNT_REPLAY_ARCHIVE_ATTRIBUTION_FIELDS.filter((field) => (
+    archive[field] === uid
+  ));
+  return {
+    changed: fieldsToDelete.length > 0,
+    fieldsToDelete
+  };
+}
+
+async function collectReplayArchiveAttributionQueryPages({
+  firestore,
+  uid,
+  field,
+  documentIdField,
+  pageSize,
+  processPage
+}) {
+  let cursor = null;
+  let pagesRead = 0;
+  let candidatesRead = 0;
+  while (true) {
+    let query = firestore.collectionGroup('privateReplay')
+      .where(field, '==', uid)
+      .orderBy(documentIdField)
+      .limit(pageSize);
+    if (cursor) query = query.startAfter(cursor);
+    const snapshot = await query.get();
+    const documents = snapshot.docs || [];
+    if (!documents.length) break;
+    pagesRead += 1;
+    candidatesRead += documents.length;
+    await processPage(documents.filter(isAccountReplayArchiveDocument));
+    if (documents.length < pageSize) break;
+    cursor = documents[documents.length - 1];
+  }
+  return { candidatesRead, pagesRead };
+}
+
+async function anonymizeAccountReplayArchiveAttribution({
+  firestore,
+  uid,
+  documentIdField,
+  deleteFieldValue,
+  pageSize = ACCOUNT_REPLAY_ARCHIVE_PAGE_SIZE,
+  transactionSize = ACCOUNT_REPLAY_ARCHIVE_TRANSACTION_SIZE
+}) {
+  if (
+    !firestore
+    || typeof firestore.collectionGroup !== 'function'
+    || typeof firestore.runTransaction !== 'function'
+    || !isValidAccountReplayAttributionUid(uid)
+    || !documentIdField
+    || typeof deleteFieldValue !== 'function'
+    || !Number.isInteger(pageSize)
+    || pageSize < 1
+    || pageSize > 250
+    || !Number.isInteger(transactionSize)
+    || transactionSize < 1
+    || transactionSize > 200
+  ) {
+    throw new TypeError('Account replay archive anonymization dependencies are invalid.');
+  }
+
+  let archivesUpdated = 0;
+  let attributionFieldsDeleted = 0;
+  let candidatesRead = 0;
+  let pagesRead = 0;
+  const processPage = async (documents) => {
+    for (let index = 0; index < documents.length; index += transactionSize) {
+      const refs = documents.slice(index, index + transactionSize).map((document) => document.ref);
+      const counts = await firestore.runTransaction(async (transaction) => {
+        const currentSnapshots = await Promise.all(refs.map((ref) => transaction.get(ref)));
+        let transactionArchivesUpdated = 0;
+        let transactionFieldsDeleted = 0;
+        currentSnapshots.forEach((snapshot) => {
+          if (!snapshot.exists || !isAccountReplayArchiveDocument(snapshot)) return;
+          const plan = buildReplayArchiveAttributionScrubPlan(snapshot.data() || {}, uid);
+          if (!plan.changed) return;
+          const update = {};
+          plan.fieldsToDelete.forEach((field) => {
+            update[field] = deleteFieldValue();
+          });
+          transaction.update(snapshot.ref, update);
+          transactionArchivesUpdated += 1;
+          transactionFieldsDeleted += plan.fieldsToDelete.length;
+        });
+        return {
+          archivesUpdated: transactionArchivesUpdated,
+          attributionFieldsDeleted: transactionFieldsDeleted
+        };
+      });
+      archivesUpdated += counts.archivesUpdated;
+      attributionFieldsDeleted += counts.attributionFieldsDeleted;
+    }
+  };
+
+  for (const field of ACCOUNT_REPLAY_ARCHIVE_ATTRIBUTION_FIELDS) {
+    const queryCounts = await collectReplayArchiveAttributionQueryPages({
+      firestore,
+      uid,
+      field,
+      documentIdField,
+      pageSize,
+      processPage
+    });
+    candidatesRead += queryCounts.candidatesRead;
+    pagesRead += queryCounts.pagesRead;
+  }
+
+  return {
+    archivesUpdated,
+    attributionFieldsDeleted,
+    candidatesRead,
+    pagesRead
+  };
+}
+
 function assertDeletionRequest(data, HttpsError) {
   if (normalizeConfirmation(data?.confirmation) !== ACCOUNT_DELETION_CONFIRMATION) {
     throw new HttpsError('invalid-argument', `Type ${ACCOUNT_DELETION_CONFIRMATION} to confirm permanent account deletion.`);
@@ -973,13 +1117,18 @@ module.exports = {
   ACCOUNT_DELETION_MAX_AUTH_AGE_SECONDS,
   ACCOUNT_DELETION_MAX_DAYS,
   ACCOUNT_MEDIA_CLEANUP_PAGE_SIZE,
+  ACCOUNT_REPLAY_ARCHIVE_ATTRIBUTION_FIELDS,
+  ACCOUNT_REPLAY_ARCHIVE_PAGE_SIZE,
+  ACCOUNT_REPLAY_ARCHIVE_TRANSACTION_SIZE,
   ACCOUNT_STORAGE_DELETE_CONCURRENCY,
   accountUsesAppleProvider,
+  anonymizeAccountReplayArchiveAttribution,
   assertDeletionRequest,
   assertRecentAuthentication,
   buildChatConversationAccountScrubPlan,
   buildDeletionAuditId,
   buildRegistrationAccountScrubPlan,
+  buildReplayArchiveAttributionScrubPlan,
   buildRosterParentScrubPlan,
   buildTeamAccountGrantScrubPlan,
   classifyAccountStoragePaths,

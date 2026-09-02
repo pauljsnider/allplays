@@ -130,13 +130,18 @@ describe('authentication email delivery routing', () => {
             '&& "$deploy_targets" != "$retry_enabled_inventory_producer_target" \\'
         );
         expect(productionSource).toContain(
-            '&& "$deploy_targets" != "$retry_enabled_cleanup_compatibility_target" ]]; then'
+            '&& "$deploy_targets" != "$retry_enabled_cleanup_compatibility_target" \\'
+        );
+        expect(productionSource).toContain(
+            '&& "$deploy_targets" != "$replay_archive_cleanup_compatibility_targets" ]]; then'
         );
         expect(productionSource).toContain('deploy_args+=(--force)');
         expect(productionSource).toContain('Refusing --force outside the reviewed retry-enabled function allowlist.');
-        expect(productionSource).toContain(
-            'retry_enabled_function_targets="functions:indexCertificateLegacySignaturesOnDefaultsWrite,functions:processAccountDeletionRequest,functions:queueParentInviteEmail,functions:reconcileLegacyTeamOwnership,functions:syncLegacyTeamOwnershipOnAuthCreate,functions:syncPublicUserProfileOnUserWrite,functions:syncPublicUserProfilesOnTeamWrite,functions:syncTeamOwnerAccessOnCreate,functions:notifyConversationChatMessageCreated,functions:notifyFeeAssigned,functions:notifyFeeMarkedPaid,functions:notifyGameCreated,functions:notifyGameUpdated,functions:notifyInviteRedeemed,functions:notifyLiveEventCreated,functions:notifyOfficiatingNotificationCreated,functions:notifyOpenOfficiatingSlots,functions:notifyParentMembershipRequestCreated,functions:notifyParentMembershipRequestUpdated,functions:notifyPracticePacketAssigned,functions:notifyPracticePacketCompleted,functions:notifyPublishedCertificateAward,functions:notifyRegistrationStatusChanged,functions:notifyRegistrationSubmitted,functions:notifyRideClaimCreated,functions:notifyRideClaimUpdated,functions:notifyRideOfferCancelled,functions:notifyRideOfferCreated,functions:notifyScheduleImportBatchCompleted,functions:notifyTeamChatMessageCreated,functions:syncTeamNotificationTargetsOnDeviceWrite,functions:syncTeamNotificationTargetsOnPreferenceWrite,functions:processPasswordResetEmailRequest,functions:sweepIneligiblePublicUserProfiles,functions:dispatchDueTeamMediaNotificationBatches,functions:dispatchDuePreEventReminders,functions:queueDueRegistrationFailedPaymentReminders,functions:sendPracticePacketDueTomorrowReminders,functions:sendFeeUnpaidDueReminders"'
-        );
+        const retryTargets = productionSource.match(/retry_enabled_function_targets="([^"]+)"/)?.[1].split(',') || [];
+        expect(retryTargets).toContain('functions:cleanupPrivateReplayArchiveOnGameDelete');
+        expect(retryTargets).toContain('functions:cleanupPrivateReplayArchiveOnSharedGameDelete');
+        expect(retryTargets).toContain('functions:processAccountDeletionRequest');
+        expect(retryTargets).toContain('functions:sendFeeUnpaidDueReminders');
         expect(productionSource).toContain(
             'retry_enabled_inventory_producer_target="functions:indexCertificateLegacySignaturesOnDefaultsWrite"'
         );

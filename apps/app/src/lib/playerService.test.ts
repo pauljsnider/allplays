@@ -531,6 +531,51 @@ describe('saveParentAthleteProfileDraft', () => {
     expect(legacyPlayerDbMocks.saveAthleteProfile).not.toHaveBeenCalled();
   });
 
+  it('preserves uploaded media and its reservation when the callable commit remains unconfirmed', async () => {
+    const headshot = new File(['headshot'], 'headshot.png', { type: 'image/png' });
+    legacyPlayerDbMocks.reserveAthleteProfileMediaOwnership.mockResolvedValue({
+      id: 'profile-unconfirmed',
+      created: true
+    });
+    legacyPlayerDbMocks.uploadAthleteProfileMedia.mockResolvedValue({
+      url: 'https://cdn.example.com/headshot.png',
+      storagePath: 'athlete-profile-media/parent-1/profile-unconfirmed/headshot.png',
+      mediaType: 'image',
+      mimeType: 'image/png',
+      sizeBytes: headshot.size,
+      uploadedAtMs: 100
+    });
+    legacyPlayerDbMocks.saveAthleteProfile.mockRejectedValue(Object.assign(
+      new Error('Could not confirm whether the athlete profile was saved.'),
+      {
+        code: 'athlete-profile-save-unconfirmed',
+        preserveUploadedMedia: true
+      }
+    ));
+
+    await expect(saveParentAthleteProfileDraft({
+      user: {
+        uid: 'parent-1',
+        parentOf: [{ teamId: 'team-current', playerId: 'player-current' }]
+      } as any,
+      teamId: 'team-current',
+      playerId: 'player-current',
+      draft: {
+        athlete: { name: 'Sam Player' },
+        bio: {},
+        privacy: 'private',
+        clips: []
+      },
+      profilePhotoFile: headshot
+    })).rejects.toMatchObject({
+      code: 'athlete-profile-save-unconfirmed',
+      preserveUploadedMedia: true
+    });
+
+    expect(legacyPlayerDbMocks.deleteAthleteProfileMediaByPath).not.toHaveBeenCalled();
+    expect(legacyPlayerDbMocks.releaseAthleteProfileMediaReservation).not.toHaveBeenCalled();
+  });
+
   it('preserves privacy value through the save flow for both public and private', async () => {
     legacyPlayerDbMocks.saveAthleteProfile.mockImplementation(async (_userId, nextDraft, options) => ({
       id: options.profileId,

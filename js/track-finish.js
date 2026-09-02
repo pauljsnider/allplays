@@ -227,6 +227,7 @@ export async function commitStandardTrackerFinishData({
         scoreOrientation: 'team-opponent',
         summary,
         status: 'completed',
+        videoUrl: null,
         opponentStats
     });
     await gameUpdateBatch.commit();

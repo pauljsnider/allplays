@@ -148,6 +148,7 @@ describe('live tracker save-and-complete workflow', () => {
           summary: 'Closed well in the final minute.',
           status: 'completed',
           liveStatus: 'completed',
+          videoUrl: null,
           opponentStats: {
             'opp-1': {
               name: 'Pat',

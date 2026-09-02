@@ -146,8 +146,8 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { renderHeader, renderFooter, getUrlParams, escapeHtml, shareOrCopy } from './js/utils.js?v=443371';
-        import { requireAuth, checkAuth } from './js/auth.js?v=4433199';
+        import { renderHeader, renderFooter, getUrlParams, escapeHtml, shareOrCopy } from './js/utils.js?v=443372';
+        import { requireAuth, checkAuth } from './js/auth.js?v=4433200';
         import {
             getUserProfile,
             getAthleteProfile,
@@ -157,7 +157,7 @@
             deleteAthleteProfileMediaByPath,
             releaseAthleteProfileMediaReservation,
             reserveAthleteProfileMediaOwnership
-        } from './js/db.js?v=4433195';
+        } from './js/db.js?v=4433196';
         import { buildAthleteProfileShareUrl } from './js/athlete-profile-utils.js?v=3';
 
         const params = getUrlParams();
@@ -741,9 +741,11 @@
                 await refreshSavedProfiles();
                 setStatus('Athlete profile saved.');
             } catch (error) {
-                await Promise.allSettled(newlyUploadedPaths.map((path) => deleteAthleteProfileMediaByPath(path)));
-                if (createdMediaReservation) {
-                    await releaseAthleteProfileMediaReservation(currentUser.uid, workingProfileId).catch(() => undefined);
+                if (error?.preserveUploadedMedia !== true) {
+                    await Promise.allSettled(newlyUploadedPaths.map((path) => deleteAthleteProfileMediaByPath(path)));
+                    if (createdMediaReservation) {
+                        await releaseAthleteProfileMediaReservation(currentUser.uid, workingProfileId).catch(() => undefined);
+                    }
                 }
                 console.error('Failed to save athlete profile', error);
                 setStatus(error?.message || 'Unable to save athlete profile.', true);

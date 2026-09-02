@@ -948,11 +948,11 @@
     </div>
 
     <script type="module">
-        import { getTeam, getTeams, getGames, getEvents, addGame, updateGame, updateTeam, deleteGame, addPractice, updateEvent, deleteEvent, getConfigs, addCalendarToTeam, removeCalendarFromTeam, getTrackedCalendarEventUids, cancelOccurrence, updateOccurrence, restoreOccurrence, clearOccurrenceOverride, updateSeries, deleteSeries, getUnreadChatCount, getPracticeSessions, cancelGame, getLatestGameAssignments, postChatMessage, getRsvpBreakdownByPlayer, getPlayers, getRsvps, applyTournamentAdvancementPatches, saveTournamentPoolOverride, clearTournamentPoolOverride, getOfficials, addOfficial, updateOfficial, deleteOfficial, createOfficiatingAssignmentNotificationRecords } from './js/db.js?v=4433195';
-        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, formatTimeRange, getDefaultEndTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, getCalendarEventStatus, getCalendarEventTrackingId, isTrackedCalendarEvent, generateSeriesId, expandRecurrence, formatRecurrence, shareOrCopy, escapeHtml } from './js/utils.js?v=443371';
+        import { getTeam, getTeams, getGames, getEvents, addGame, updateGame, updateTeam, deleteGame, addPractice, updateEvent, deleteEvent, getConfigs, addCalendarToTeam, removeCalendarFromTeam, getTrackedCalendarEventUids, cancelOccurrence, updateOccurrence, restoreOccurrence, clearOccurrenceOverride, updateSeries, deleteSeries, getUnreadChatCount, getPracticeSessions, cancelGame, getLatestGameAssignments, postChatMessage, getRsvpBreakdownByPlayer, getPlayers, getRsvps, applyTournamentAdvancementPatches, saveTournamentPoolOverride, clearTournamentPoolOverride, getOfficials, addOfficial, updateOfficial, deleteOfficial, createOfficiatingAssignmentNotificationRecords } from './js/db.js?v=4433196';
+        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, formatTimeRange, getDefaultEndTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, getCalendarEventStatus, getCalendarEventTrackingId, isTrackedCalendarEvent, generateSeriesId, expandRecurrence, formatRecurrence, shareOrCopy, escapeHtml } from './js/utils.js?v=443372';
         import { mergeCalendarImportEvents, validateCalendarImportUrl } from './js/edit-schedule-calendar-import.js?v=2';
-        import { materializeCalendarGame } from './js/calendar-game-materialization.js?v=4';
-        import { checkAuth } from './js/auth.js?v=4433199';
+        import { materializeCalendarGame } from './js/calendar-game-materialization.js?v=5';
+        import { checkAuth } from './js/auth.js?v=4433200';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js?v=443347';
         import { computeOfficiatingCoverageStatus, flagRescheduledOfficiatingSlots, getOfficiatingAssignmentConflictWarnings, normalizeOfficiatingSlots as normalizeAssignmentOfficiatingSlots } from './js/officiating-utils.js?v=4';
         import { buildOfficiatingAssignmentNotificationRecords } from './js/officiating-notifications.js?v=3';
@@ -965,7 +965,7 @@
         import { buildBulkAiPracticePayload, createBulkAiImageController, normalizeBulkAiAssignments, normalizeBulkAiEventForAdd, normalizeBulkAiIsHome } from './js/edit-schedule-ai-import.js?v=2';
         import { buildSeasonRecordGameFields, hydrateSeasonRecordFormFields } from './js/edit-schedule-season-record.js?v=1';
         import { normalizeOfficialsDirectory } from './js/officiating-slots.js?v=1';
-        import { Timestamp, deleteField, auth } from "./js/firebase.js?v=33";
+        import { Timestamp, deleteField, auth } from "./js/firebase.js?v=34";
         import { getApp } from './js/vendor/firebase-app.js';
         import { getAI, getGenerativeModel, GoogleAIBackend, Schema } from './js/vendor/firebase-ai.js';
         import { buildPoolStandingsIndex, collectTournamentAdvancementPatches, collectTournamentPoolSeeds, describeTournamentSource, planTournamentPoolAdvancement } from './js/tournament-brackets.js?v=2';
@@ -973,8 +973,8 @@
         import { buildTournamentGroupOverrideKey, buildTournamentPoolStandings, buildTournamentPoolOverrideKey } from './js/tournament-standings.js?v=4';
         import { SCHEDULE_CSV_IMPORT_FIELDS, buildScheduleImportPreview, inferScheduleCsvMapping, normalizeScheduleImportDraft, parseCsvText } from './js/schedule-csv-import.js?v=2';
         import { buildRegistrationScheduleImportPreview, formatRegistrationImportResults, getRegistrationScheduleEvents, isExternallyLinkedRegistrationTeam, planRegistrationScheduleImport } from './js/edit-schedule-registration-import.js?v=4';
-        import { getGameReplayLifecycle } from './js/game-replay-video.js?v=3';
-        import { hasReplayVideoEvidence } from './js/schedule-watch-cta.js?v=3';
+        import { getGameReplayLifecycle } from './js/game-replay-video.js?v=4';
+        import { hasReplayVideoEvidence } from './js/schedule-watch-cta.js?v=4';
 
         renderFooter(document.getElementById('footer-container'));
 

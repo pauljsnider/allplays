@@ -29,7 +29,8 @@ export function buildFinishGamePayload({ homeScoreValue, awayScoreValue, postGam
         awayScore: score.away,
         postGameNotes: (postGameNotesValue || '').trim(),
         status: 'completed',
-        liveStatus: 'completed'
+        liveStatus: 'completed',
+        videoUrl: null
     };
 }
 

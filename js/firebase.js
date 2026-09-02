@@ -22,6 +22,7 @@ import {
 import {
     getFirestore,
     initializeFirestore,
+    clearIndexedDbPersistence,
     memoryLocalCache,
     persistentLocalCache,
     persistentMultipleTabManager,
@@ -62,6 +63,9 @@ const existingDefaultApp = getApps().find((candidate) => candidate.name === '[DE
 const app = existingDefaultApp || initializeApp(firebaseConfig);
 export const appCheckReady = initializePrimaryAppCheck(app);
 await appCheckReady;
+const FIRESTORE_CACHE_PRIVACY_EPOCH_KEY = 'allplays.firestore-cache-schema';
+const REPLAY_PRIVACY_CACHE_EPOCH = 'private-replay-v2';
+const replayPrivacyFunctions = getFunctions(app);
 function isCapacitorNativeRuntime() {
     const protocol = typeof window !== 'undefined' ? window.location?.protocol : '';
     if (protocol === 'capacitor:' || protocol === 'ionic:') {
@@ -88,12 +92,13 @@ function isCapacitorNativeFirestoreRuntime() {
     return protocol === 'https:' && hostname === 'localhost';
 }
 
-function createFirestoreLocalCache() {
-    if (isCapacitorNativeFirestoreRuntime()) {
+function createFirestoreLocalCache(privacyState) {
+    if (isCapacitorNativeFirestoreRuntime() && privacyState?.ready === true) {
         return persistentLocalCache({ tabManager: persistentMultipleTabManager() });
     }
-    // Browser tabs must not coordinate through a shared IndexedDB primary
-    // lease. Each tab keeps an isolated in-memory cache instead.
+    // Browser tabs always use memory. Native adoption builds also use memory
+    // until the server proves the replay migration is complete, preventing a
+    // pre-gate cache from being repopulated after it is cleared.
     return memoryLocalCache();
 }
 
@@ -112,17 +117,99 @@ function initializeFirebaseAuth(appInstance) {
     }
 }
 
-function initializeFirebaseDb(appInstance) {
+function getFirestoreCachePrivacyEpoch() {
+    try {
+        return globalThis?.localStorage?.getItem(FIRESTORE_CACHE_PRIVACY_EPOCH_KEY) || '';
+    } catch {
+        return '';
+    }
+}
+
+function markFirestoreCachePrivacyEpoch(epoch) {
+    try {
+        globalThis?.localStorage?.setItem(
+            FIRESTORE_CACHE_PRIVACY_EPOCH_KEY,
+            epoch
+        );
+    } catch {
+        // When durable marker storage is unavailable, the next cold start
+        // clears again. Repeating a pre-use clear is safer than retaining a
+        // cache that could contain a retired replay capability.
+    }
+}
+
+function forgetFirestoreCachePrivacyEpoch() {
+    try {
+        globalThis?.localStorage?.removeItem(FIRESTORE_CACHE_PRIVACY_EPOCH_KEY);
+    } catch {
+        // A missing marker forces another safe clear on the next cold start.
+    }
+}
+
+function normalizeReplayPrivacyMigrationStatus(value) {
+    const data = value?.data;
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
+    if (data.ready === false && data.cacheEpoch === null) {
+        return { ready: false, cacheEpoch: null };
+    }
+    if (data.ready === true && data.cacheEpoch === REPLAY_PRIVACY_CACHE_EPOCH) {
+        return { ready: true, cacheEpoch: REPLAY_PRIVACY_CACHE_EPOCH };
+    }
+    return null;
+}
+
+async function loadReplayPrivacyMigrationStatus() {
+    try {
+        const response = await httpsCallable(
+            replayPrivacyFunctions,
+            'getReplayPrivacyMigrationStatus'
+        )({});
+        const status = normalizeReplayPrivacyMigrationStatus(response);
+        if (status) return status;
+    } catch (error) {
+        console.warn('[firebase] Replay privacy readiness is unavailable; using an uncached session.', error);
+    }
+    // An unreadable or malformed readiness result is never permission to
+    // reuse persistent bytes. The caller clears the old database and runs in
+    // memory without recording a durable success marker.
+    return { ready: false, cacheEpoch: null };
+}
+
+async function clearRetiredFirestoreCache(firestore, privacyState) {
+    const reusableEpoch = privacyState?.ready === true
+        ? privacyState.cacheEpoch
+        : null;
+    if (reusableEpoch && getFirestoreCachePrivacyEpoch() === reusableEpoch) {
+        return;
+    }
+
+    try {
+        await clearIndexedDbPersistence(firestore);
+        if (reusableEpoch) markFirestoreCachePrivacyEpoch(reusableEpoch);
+        else forgetFirestoreCachePrivacyEpoch();
+    } catch (error) {
+        const privacyError = new Error(
+            'The data cache could not be upgraded safely. Close other AllPlays windows and reopen the app.'
+        );
+        privacyError.code = 'firestore-cache-privacy-upgrade-failed';
+        privacyError.cause = error;
+        throw privacyError;
+    }
+}
+
+async function initializeFirebaseDb(appInstance, privacyState) {
     const globalDbKey = '__allplaysFirebaseDb';
     const existingDb = globalThis?.[globalDbKey];
     if (existingDb) {
+        await clearRetiredFirestoreCache(existingDb, privacyState);
         return existingDb;
     }
 
     try {
         const firestore = initializeFirestore(appInstance, {
-            localCache: createFirestoreLocalCache()
+            localCache: createFirestoreLocalCache(privacyState)
         });
+        await clearRetiredFirestoreCache(firestore, privacyState);
         globalThis[globalDbKey] = firestore;
         return firestore;
     } catch (error) {
@@ -130,6 +217,7 @@ function initializeFirebaseDb(appInstance) {
             && String(error?.message || '').includes('initializeFirestore() has already been called');
         if (alreadyInitialized) {
             const firestore = getFirestore(appInstance);
+            await clearRetiredFirestoreCache(firestore, privacyState);
             globalThis[globalDbKey] = firestore;
             return firestore;
         }
@@ -138,9 +226,10 @@ function initializeFirebaseDb(appInstance) {
 }
 
 export const auth = initializeFirebaseAuth(app);
-export const db = initializeFirebaseDb(app);
+const replayPrivacyMigrationStatus = await loadReplayPrivacyMigrationStatus();
+export const db = await initializeFirebaseDb(app, replayPrivacyMigrationStatus);
 export const storage = getStorage(app);
-export const functions = getFunctions(app);
+export const functions = replayPrivacyFunctions;
 
 export {
     collection,

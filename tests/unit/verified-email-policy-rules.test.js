@@ -16,7 +16,7 @@ describe('staged verified-email policy rules', () => {
     expect(firestoreRules).toContain('function isVerifiedForSensitiveWrite()');
     expect(firestoreRules).toContain("get(policyPath).data.get('mode', 'observe') != 'enforce'");
     expect(firestoreRules).toContain('match /securityPolicies/{policyId}');
-    expect(firestoreRules).toContain('allow create: if isVerifiedForSensitiveWrite() &&\n                       request.resource.data.ownerId == request.auth.uid &&\n                       hasNoClientCalendarCredentialFields(request.resource.data);');
+    expect(firestoreRules).toContain('allow create: if isVerifiedForSensitiveWrite() &&\n                       request.resource.data.ownerId == request.auth.uid &&\n                       !request.resource.data.keys().hasAny(teamReplayArchiveFields()) &&\n                       hasNoClientCalendarCredentialFields(request.resource.data);');
     expect(firestoreRules).toContain('allow create: if isVerifiedForSensitiveWrite() &&\n                           canAccessChatConversation');
     expect(firestoreRules.match(/allow update: if isVerifiedForSensitiveWrite\(\) &&\n                           canAccessChatConversation/g)).toHaveLength(3);
     expect(firestoreRules).toContain('allow delete: if (resource == null && isOwnRsvpNoteId() && isParentForTeam(teamId)) ||\n                           (isVerifiedForSensitiveWrite() &&');

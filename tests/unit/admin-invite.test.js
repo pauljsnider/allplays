@@ -5,7 +5,7 @@ const firebaseMocks = vi.hoisted(() => ({
     httpsCallable: vi.fn()
 }));
 
-vi.mock('../../js/firebase.js?v=33', () => firebaseMocks);
+vi.mock('../../js/firebase.js?v=34', () => firebaseMocks);
 
 const { redeemAdminInviteAcceptance, redeemAdminInviteAtomically } = await import('../../js/admin-invite.js');
 

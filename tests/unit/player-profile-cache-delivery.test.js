@@ -11,11 +11,11 @@ describe('player profile cache delivery', () => {
         const entryModules = {
             'admin.html': 'js/admin.js?v=443359',
             'certificates.html': 'js/certificates/studio.js?v=443364',
-            'live-game.html': 'js/live-game.js?v=443355',
-            'live-tracker.html': 'js/live-tracker.js?v=443326',
+            'live-game.html': 'js/live-game.js?v=443358',
+            'live-tracker.html': 'js/live-tracker.js?v=443327',
             'team-fees.html': 'js/team-fees-admin.js?v=443362',
             'team-media.html': 'js/team-media.js?v=44543',
-            'track-basketball.html': 'js/track-basketball.js?v=443325',
+            'track-basketball.html': 'js/track-basketball.js?v=443326',
             'tracking-items.html': 'js/tracking-items-admin.js?v=443360'
         };
 

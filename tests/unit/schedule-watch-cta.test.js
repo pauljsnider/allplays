@@ -42,16 +42,7 @@ describe('schedule watch CTA resolver', () => {
         expect(resolveScheduleWatchCta(game({
             status: 'completed',
             liveStatus: 'scheduled',
-            replayVideo: { publicUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' }
-        }))).toEqual({
-            kind: 'replay',
-            label: 'Watch Replay',
-            href: 'live-game.html?teamId=team-1&gameId=game-1&replay=true'
-        });
-        expect(resolveScheduleWatchCta(game({
-            status: 'final',
-            liveStatus: '',
-            recordedVideoUrl: 'https://cdn.example.com/replay.mp4'
+            hasRecordedReplay: true
         }))).toEqual({
             kind: 'replay',
             label: 'Watch Replay',
@@ -96,22 +87,23 @@ describe('schedule watch CTA resolver', () => {
         expect(resolveScheduleWatchCta(game(lifecycle))).toBeNull();
     });
 
-    it('accepts safe server evidence and direct historical playback sources', () => {
+    it('accepts only safe server replay markers and never inspects provider capability fields', () => {
         expect(hasReplayVideoEvidence(game({ hasReplayVideo: true }))).toBe(true);
+        expect(hasReplayVideoEvidence(game({ hasRecordedReplay: true }))).toBe(true);
         expect(hasReplayVideoEvidence(game({
             recordedVideo: { src: 'https://cdn.example.com/replay.mp4' }
-        }))).toBe(true);
+        }))).toBe(false);
         expect(hasReplayVideoEvidence(game({
             recordedVideo: {
                 src: 'https://cdn.example.com/replay.mp4',
                 publicUrl: 'https://video.example.com/watch/replay-1'
             }
-        }))).toBe(true);
+        }))).toBe(false);
         expect(hasReplayVideoEvidence(game({
             status: 'completed',
             liveStatus: 'scheduled',
             videoUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
-        }))).toBe(true);
+        }))).toBe(false);
         expect(hasReplayVideoEvidence(game({ replayVideo: 'legacy-recording' }))).toBe(false);
         expect(hasReplayVideoEvidence(game({ recordedVideo: ['https://cdn.example.com/replay.mp4'] }))).toBe(false);
         expect(hasReplayVideoEvidence(game({ videoUrl: 'https://example.com/live' }))).toBe(false);
@@ -124,12 +116,12 @@ describe('schedule watch CTA resolver', () => {
         ['videoReplay.publicUrl', { videoReplay: { publicUrl: 'https://www.youtube.com/live/dQw4w9WgXcQ' } }],
         ['replayVideoPublicUrl', { replayVideoPublicUrl: 'https://www.youtube.com/embed/dQw4w9WgXcQ' }],
         ['completed videoUrl', { videoUrl: 'https://m.youtube.com/shorts/dQw4w9WgXcQ' }]
-    ])('recognizes playable historical %s evidence', (_label, replayFields) => {
+    ])('does not derive replay availability from historical %s capability data', (_label, replayFields) => {
         expect(hasReplayVideoEvidence(game({
             status: 'completed',
             liveStatus: 'scheduled',
             ...replayFields
-        }))).toBe(true);
+        }))).toBe(false);
     });
 
     it.each([
@@ -144,13 +136,13 @@ describe('schedule watch CTA resolver', () => {
         ['nested credential public URL', { videoReplay: { publicUrl: 'https://user:secret@youtu.be/dQw4w9WgXcQ' } }],
         ['flat data public URL', { replayVideoPublicUrl: 'data:text/html,unsafe' }],
         ['flat credential public URL', { replayVideoPublicUrl: 'https://user:secret@youtu.be/dQw4w9WgXcQ' }]
-    ])('rejects unsafe %s evidence', (_label, replayFields) => {
+    ])('ignores unsafe %s capability data when an authoritative marker is present', (_label, replayFields) => {
         expect(hasReplayVideoEvidence(game({
             status: 'completed',
             liveStatus: 'scheduled',
             hasReplayVideo: true,
             ...replayFields
-        }))).toBe(false);
+        }))).toBe(true);
     });
 
     it.each([
@@ -158,12 +150,12 @@ describe('schedule watch CTA resolver', () => {
         { recordedReplayStatus: 'failed' },
         { videoReplayStatus: 'mystery' },
         { replayVideo: { status: 'unknown', url: 'https://cdn.example.com/replay.mp4' } }
-    ])('rejects blocked or unknown replay availability %#', (statusFields) => {
+    ])('does not let retired status aliases override the safe replay marker %#', (statusFields) => {
         expect(hasReplayVideoEvidence(game({
             hasReplayVideo: true,
             replayVideoUrl: 'https://cdn.example.com/replay.mp4',
             ...statusFields
-        }))).toBe(false);
+        }))).toBe(true);
     });
 
     it('suppresses CTAs for practices, cancelled/deleted/private games, scheduled games, and records without viewer routes', () => {
@@ -193,15 +185,15 @@ describe('schedule watch CTA resolver', () => {
         const gamePage = readRepoFile('game.html');
         const ctaSource = readRepoFile('js/schedule-watch-cta.js');
 
-        expect(ctaSource).toContain("from './game-replay-video.js?v=3';");
+        expect(ctaSource).toContain("from './game-replay-video.js?v=4';");
 
-        expect(parentDashboard).toContain("import { hasReplayVideoEvidence, resolveScheduleWatchCta } from './js/schedule-watch-cta.js?v=3';");
+        expect(parentDashboard).toContain("import { hasReplayVideoEvidence, resolveScheduleWatchCta } from './js/schedule-watch-cta.js?v=4';");
         expect(parentDashboard).toContain('const watchCta = resolveScheduleWatchCta(game);');
         expect(parentDashboard).toContain('liveStatus: game.liveStatus || null,');
         expect(parentDashboard).toContain('hasReplayVideo: hasReplayVideoEvidence(game),');
         expect(parentDashboard).toContain('View Details');
 
-        expect(familyPage).toContain("import { hasReplayVideoEvidence, resolveScheduleWatchCta } from './js/schedule-watch-cta.js?v=3';");
+        expect(familyPage).toContain("import { hasReplayVideoEvidence, resolveScheduleWatchCta } from './js/schedule-watch-cta.js?v=4';");
         expect(familyPage).toContain('const watchCta = ev.canOpenPublicViewer === true ? resolveScheduleWatchCta(ev) : null;');
         expect(familyPage).toContain('const watchCta = game.canOpenPublicViewer === true ? resolveScheduleWatchCta(game) : null;');
         expect(familyPage).toContain('liveStatus: game.liveStatus || null,');
@@ -214,8 +206,8 @@ describe('schedule watch CTA resolver', () => {
         expect(familyPage).toContain('>\n                  View\n');
 
         expect(teamPage).toContain('const hasReplayLifecycle = !isPractice');
-        expect(teamPage).toContain("import { getGameReplayLifecycle } from './js/game-replay-video.js?v=3';");
-        expect(teamPage).toContain("import { hasReplayVideoEvidence } from './js/schedule-watch-cta.js?v=3';");
+        expect(teamPage).toContain("import { getGameReplayLifecycle } from './js/game-replay-video.js?v=4';");
+        expect(teamPage).toContain("import { hasReplayVideoEvidence } from './js/schedule-watch-cta.js?v=4';");
         expect(teamPage).toContain('const lifecycle = getGameReplayLifecycle({');
         expect(teamPage).toContain("type: isPractice ? 'practice' : 'game'");
         expect(teamPage).toContain('finalStatuses.has(normalizedLiveStatus) || hasReplayVideoEvidence(game)');
@@ -223,12 +215,12 @@ describe('schedule watch CTA resolver', () => {
         expect(teamPage).toContain('${hasReplayPlayback ? `');
 
         expect(editSchedulePage).toContain('const lifecycle = getGameReplayLifecycle(game);');
-        expect(editSchedulePage).toContain("import { getGameReplayLifecycle } from './js/game-replay-video.js?v=3';");
-        expect(editSchedulePage).toContain("import { hasReplayVideoEvidence } from './js/schedule-watch-cta.js?v=3';");
+        expect(editSchedulePage).toContain("import { getGameReplayLifecycle } from './js/game-replay-video.js?v=4';");
+        expect(editSchedulePage).toContain("import { hasReplayVideoEvidence } from './js/schedule-watch-cta.js?v=4';");
         expect(editSchedulePage).toContain('finalStatuses.has(liveStatus) || hasReplayVideoEvidence(game)');
         expect(editSchedulePage).toContain('const hasReplayPlayback = hasReplayLifecycle');
         expect(editSchedulePage).toContain('${hasReplayPlayback ? `<a href="live-game.html');
-        expect(gamePage).toContain("from './js/game-replay-video.js?v=3';");
-        expect(gamePage).toContain("from './js/live-game-video.js?v=443319';");
+        expect(gamePage).toContain("from './js/game-replay-video.js?v=4';");
+        expect(gamePage).toContain("from './js/live-game-video.js?v=443321';");
     });
 });

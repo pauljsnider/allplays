@@ -1269,12 +1269,17 @@ export async function saveParentAthleteProfileDraft({
       selectedSeasonKeys
     }, saveOptions);
   } catch (error) {
-    await cleanupUploadedAthleteProfileMedia([
-      uploadedProfilePhoto?.storagePath,
-      ...uploadedHighlightClips.map((clip) => clip.storagePath)
-    ]);
-    if (createdMediaReservation) {
-      await releaseAthleteProfileMediaReservation(user!.uid, workingProfileId).catch(() => undefined);
+    const preserveUploadedMedia = Boolean(error
+      && typeof error === 'object'
+      && (error as { preserveUploadedMedia?: unknown }).preserveUploadedMedia === true);
+    if (!preserveUploadedMedia) {
+      await cleanupUploadedAthleteProfileMedia([
+        uploadedProfilePhoto?.storagePath,
+        ...uploadedHighlightClips.map((clip) => clip.storagePath)
+      ]);
+      if (createdMediaReservation) {
+        await releaseAthleteProfileMediaReservation(user!.uid, workingProfileId).catch(() => undefined);
+      }
     }
     throw error;
   }

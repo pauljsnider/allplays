@@ -155,10 +155,7 @@ describe('team page schedule card rendering', () => {
             liveStatus: 'scheduled',
             homeScore: 62,
             awayScore: 57,
-            replayVideo: {
-                provider: 'youtube',
-                publicUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
-            }
+            hasRecordedReplay: true
         });
 
         expect(linkedStatsheetReplayHtml).toContain('Replay');
@@ -184,7 +181,7 @@ describe('team page schedule card rendering', () => {
             liveStatus: 'scheduled',
             replayVideoPublicUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
         });
-        expect(flatAliasHtml).toContain('gameId=game-flat-alias&replay=true');
+        expect(flatAliasHtml).not.toContain('gameId=game-flat-alias&replay=true');
 
         const mappedEvidenceHtml = renderDbGame({
             id: 'game-mapped-evidence',

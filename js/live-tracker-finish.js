@@ -202,6 +202,7 @@ export function buildFinishCompletionPlan({
     summary,
     status: 'completed',
     liveStatus: 'completed',
+    videoUrl: null,
     opponentStats: buildOpponentStatsSnapshotFromEntries({
       opponentEntries,
       columns: safeColumns

@@ -3,6 +3,12 @@ const test = require('node:test');
 const Module = require('node:module');
 const { DEFAULT_MAX_ICS_BYTES } = require('../calendar-ics-fetch-core.cjs');
 const { hashFamilyShareCalendarEventUid } = require('../family-share-view-core.cjs');
+const {
+  REPLAY_COMPATIBILITY_SCHEMA,
+  getReplayCompatibilityParentFingerprint,
+  getReplayCompatibilityReceiptPath,
+  getReplayIdentityHash
+} = require('../replay-private-archive-core.cjs');
 
 const repoIndexPath = require.resolve('../index.js');
 const originalModuleLoad = Module._load;
@@ -557,10 +563,21 @@ test('family share view projection omits owner UID and raw calendar URLs from th
       status: 'completed',
       liveStatus: 'scheduled',
       visibility: 'public',
+      hasRecordedReplay: true,
+      replayArchiveRevision: 'r:11111111-1111-4111-8111-111111111111',
       recordedVideo: {
         publicUrl: 'https://youtu.be/PK1HyC37doc?si=SENTINEL_PUBLIC_SHARE_TOKEN',
         status: 'available'
       }
+    },
+    'teams/private-team/games/game-public-replay/privateReplay/archive': {
+      schemaVersion: 1,
+      state: 'ready',
+      provider: 'youtube',
+      videoId: 'PK1HyC37doc',
+      revision: 'r:11111111-1111-4111-8111-111111111111',
+      lastMutationId: 'migration.public',
+      lastMutationHash: 'migration'
     },
     'teams/private-team/games/game-processing-replay': {
       type: 'game',
@@ -582,6 +599,8 @@ test('family share view projection omits owner UID and raw calendar URLs from th
       liveStatus: 'scheduled',
       visibility: 'public',
       recordedReplayPaywallEnabled: true,
+      hasRecordedReplay: true,
+      replayArchiveRevision: 'r:22222222-2222-4222-8222-222222222222',
       replayVideo: {
         provider: 'youtube',
         videoId: 'PK1HyC37doc',
@@ -589,6 +608,15 @@ test('family share view projection omits owner UID and raw calendar URLs from th
         publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
         status: 'ready'
       }
+    },
+    'teams/private-team/games/game-paywalled-replay/privateReplay/archive': {
+      schemaVersion: 1,
+      state: 'ready',
+      provider: 'youtube',
+      videoId: 'PK1HyC37doc',
+      revision: 'r:22222222-2222-4222-8222-222222222222',
+      lastMutationId: 'migration.paywalled',
+      lastMutationHash: 'migration'
     },
     'teams/private-team/games/game-flag-cancelled': {
       type: 'game',
@@ -625,7 +653,7 @@ test('family share view projection omits owner UID and raw calendar URLs from th
   assert.equal(gamesById.get('game-public-replay').hasReplayVideo, true);
   assert.equal(gamesById.get('game-public-replay').canOpenPublicViewer, true);
   assert.equal(gamesById.get('game-processing-replay').hasReplayVideo, false);
-  assert.equal(gamesById.get('game-paywalled-replay').hasReplayVideo, false);
+  assert.equal(gamesById.get('game-paywalled-replay').hasReplayVideo, true);
   assert.equal(gamesById.get('game-flag-cancelled').status, 'cancelled');
   assert.equal(gamesById.get('game-flag-cancelled').liveStatus, 'final');
   assert.equal(gamesById.get('game-flag-cancelled').hasReplayVideo, false);
@@ -714,6 +742,174 @@ test('family share schedule callable includes organization shared games for scop
     competitionType: 'tournament',
     countsTowardSeasonRecord: true
   });
+});
+
+test('family share schedule fails closed when a replay marker lacks one exact valid private archive', async () => {
+  const revision = 'r:11111111-1111-4111-8111-111111111111';
+  const gamePath = 'teams/private-team/games/game-1';
+  const cases = [
+    ['missing', undefined, 'completed'],
+    ['invalid', {
+      schemaVersion: 1,
+      state: 'ready',
+      provider: 'vimeo',
+      videoId: 'PK1HyC37doc',
+      revision,
+      lastMutationId: 'migration.invalid',
+      lastMutationHash: 'migration'
+    }, 'completed'],
+    ['revision mismatch', {
+      schemaVersion: 1,
+      state: 'ready',
+      provider: 'youtube',
+      videoId: 'PK1HyC37doc',
+      revision: 'r:22222222-2222-4222-8222-222222222222',
+      lastMutationId: 'migration.mismatch',
+      lastMutationHash: 'migration'
+    }, 'completed'],
+    ['lifecycle mismatch', {
+      schemaVersion: 1,
+      state: 'ready',
+      provider: 'youtube',
+      videoId: 'PK1HyC37doc',
+      revision,
+      lastMutationId: 'migration.lifecycle',
+      lastMutationHash: 'migration'
+    }, 'scheduled']
+  ];
+
+  for (const [index, [label, archive, status]] of cases.entries()) {
+    const tokenId = String(index + 1).repeat(40);
+    const seed = {
+      [`familyShareTokens/${tokenId}`]: {
+        active: true,
+        ownerUserId: 'parent-1',
+        children: [{ teamId: 'private-team', playerId: 'player-1' }]
+      },
+      'users/parent-1': { parentPlayerKeys: ['private-team::player-1'] },
+      'teams/private-team': { name: 'Bears', isPublic: false },
+      'teams/private-team/players/player-1': { name: 'Sam Player' },
+      [gamePath]: {
+        type: 'game',
+        date: new FakeTimestamp(Date.parse('2026-07-20T18:00:00Z')),
+        opponent: 'Tigers',
+        status,
+        hasRecordedReplay: true,
+        replayArchiveRevision: revision
+      }
+    };
+    if (archive) seed[`${gamePath}/privateReplay/archive`] = archive;
+    const callables = loadCallables(seed);
+    await assert.rejects(
+      callables.getFamilyShareSchedule(
+        { tokenId },
+        { rawRequest: { ip: `203.0.113.${50 + index}` } }
+      ),
+      (error) => error.code === 'unavailable',
+      label
+    );
+  }
+});
+
+test('family share projects URL-free replay availability from pre-gate raw and receipt-backed state', async () => {
+  const tokenId = 'cccccccccccccccccccccccccccccccccccccccc';
+  const rawPath = 'teams/private-team/games/raw-replay';
+  const receiptPath = 'teams/private-team/games/receipt-replay';
+  const receiptGame = {
+    type: 'game',
+    date: new FakeTimestamp(Date.parse('2026-07-21T18:00:00Z')),
+    opponent: 'Lions',
+    status: 'completed',
+    replayVideo: {
+      provider: 'youtube',
+      videoId: 'PK1HyC37doc',
+      publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+      status: 'ready'
+    },
+    hasRecordedReplay: true,
+    replayArchiveRevision: 'r:compatibility'
+  };
+  const callables = loadCallables({
+    [`familyShareTokens/${tokenId}`]: {
+      active: true,
+      ownerUserId: 'parent-1',
+      children: [{ teamId: 'private-team', playerId: 'player-1' }]
+    },
+    'users/parent-1': { parentPlayerKeys: ['private-team::player-1'] },
+    'teams/private-team': { name: 'Bears', isPublic: false },
+    'teams/private-team/players/player-1': { name: 'Sam Player' },
+    [rawPath]: {
+      type: 'game',
+      date: new FakeTimestamp(Date.parse('2026-07-20T18:00:00Z')),
+      opponent: 'Tigers',
+      status: 'completed',
+      replayVideoUrl: 'https://youtu.be/PK1HyC37doc'
+    },
+    [receiptPath]: receiptGame,
+    [getReplayCompatibilityReceiptPath(receiptPath)]: {
+      schema: REPLAY_COMPATIBILITY_SCHEMA,
+      version: 1,
+      teamId: 'private-team',
+      gameId: 'receipt-replay',
+      state: 'ready',
+      revision: 'r:compatibility',
+      lastMutationId: 'compatibility.mutation',
+      lastMutationHash: 'a'.repeat(64),
+      beforeStateHash: 'b'.repeat(64),
+      afterStateHash: getReplayCompatibilityParentFingerprint(receiptGame),
+      protectedIdentityHashes: [getReplayIdentityHash('youtube', 'PK1HyC37doc')]
+    }
+  });
+
+  const result = await callables.getFamilyShareSchedule({ tokenId }, {});
+  const games = new Map(result.teams[0].games.map((game) => [game.id, game]));
+  assert.equal(games.get('raw-replay').hasReplayVideo, true);
+  assert.equal(games.get('receipt-replay').hasReplayVideo, true);
+  assert.equal(JSON.stringify(result).includes('PK1HyC37doc'), false);
+  assert.equal(JSON.stringify(result).includes('youtu.be'), false);
+});
+
+test('family share schedule preserves exact server-only complete and finished replay lifecycles', async () => {
+  const revision = 'r:11111111-1111-4111-8111-111111111111';
+  for (const [index, status] of ['complete', 'finished'].entries()) {
+    const tokenId = String(index + 7).repeat(40);
+    const gamePath = `teams/private-team/games/${status}`;
+    const callables = loadCallables({
+      [`familyShareTokens/${tokenId}`]: {
+        active: true,
+        ownerUserId: 'parent-1',
+        children: [{ teamId: 'private-team', playerId: 'player-1' }]
+      },
+      'users/parent-1': { parentPlayerKeys: ['private-team::player-1'] },
+      'teams/private-team': { name: 'Bears', isPublic: false },
+      'teams/private-team/players/player-1': { name: 'Sam Player' },
+      [gamePath]: {
+        type: 'game',
+        date: new FakeTimestamp(Date.parse('2026-07-20T18:00:00Z')),
+        opponent: 'Tigers',
+        status,
+        liveStatus: 'scheduled',
+        hasRecordedReplay: true,
+        replayArchiveRevision: revision
+      },
+      [`${gamePath}/privateReplay/archive`]: {
+        schemaVersion: 1,
+        state: 'ready',
+        provider: 'youtube',
+        videoId: 'PK1HyC37doc',
+        revision,
+        lastMutationId: `migration.${status}`,
+        lastMutationHash: 'migration'
+      }
+    });
+
+    const result = await callables.getFamilyShareSchedule(
+      { tokenId },
+      { rawRequest: { ip: `203.0.113.${70 + index}` } }
+    );
+    const game = result.teams[0].games.find((entry) => entry.id === status);
+    assert.equal(game.hasReplayVideo, true);
+  }
 });
 
 for (const callableName of ['getFamilyShareSchedule', 'getFamilyShareView']) {

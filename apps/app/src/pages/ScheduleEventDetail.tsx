@@ -57,7 +57,8 @@ import {
 import { completeParentCoreWorkflowTimer } from '../lib/parentWorkflowTiming';
 import type { PracticeFeedItem } from '../lib/gameWrapupService';
 import type { AuthState } from '../lib/types';
-import { isActiveGameForLive, type ReplayArchiveState, type YouTubeReplayVideo } from '../lib/youtubeReplay';
+import type { SafeReplayArchiveState } from '../lib/replayArchiveService';
+import { isActiveGameForLive } from '../lib/youtubeReplay';
 import { ScheduleEventDetailProvider, useScheduleEventDetailContext } from './schedule/ScheduleEventDetailContext';
 import { useScheduleEventRsvp } from '../hooks/schedule/useScheduleEventRsvp';
 import { useStaffRsvpBreakdown } from '../hooks/schedule/useStaffRsvpBreakdown';
@@ -494,13 +495,15 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
     )));
   }, [decodedEventId, decodedTeamId]);
 
-  const handleReplayVideoUpdated = useCallback((replayVideo: YouTubeReplayVideo | null, rawReplayState: ReplayArchiveState) => {
+  const handleReplayArchiveUpdated = useCallback((replayState: SafeReplayArchiveState) => {
     setEvents((current) => current.map((event) => (
       event.teamId === decodedTeamId && event.id === decodedEventId
         ? {
           ...event,
-          replayVideo,
-          rawReplayState
+          hasRecordedReplay: replayState.hasRecordedReplay,
+          hasReplayVideo: replayState.hasReplayVideo,
+          replayArchiveRevision: replayState.replayArchiveRevision,
+          replayArchiveState: replayState.state
         }
         : event
     )));
@@ -748,7 +751,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
                 onGameCancelled={handleGameCancelled}
                 onPracticeOccurrenceCancelled={handlePracticeOccurrenceCancelled}
                 onGamePlanPublished={handleGamePlanPublished}
-                onReplayVideoUpdated={handleReplayVideoUpdated}
+                onReplayArchiveUpdated={handleReplayArchiveUpdated}
               />
             </Suspense>
           </ErrorBoundary>

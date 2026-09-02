@@ -24,7 +24,7 @@ describe('appDataCache replay lifecycle fidelity', () => {
 
     const stored = window.localStorage.getItem(storageKey);
     expect(stored).toContain('NonFiniteNumber');
-    expect(stored).toContain('"version":2');
+    expect(stored).toContain('"version":3');
 
     vi.resetModules();
     const reloadedModule = await import('./appDataCache');
@@ -49,9 +49,9 @@ describe('appDataCache replay lifecycle fidelity', () => {
     })).toBe(false);
   });
 
-  it('discards version-one entries that may have collapsed non-finite lifecycle values', async () => {
+  it.each([1, 2])('discards version-%s entries that may retain stale replay capabilities', async (version) => {
     window.localStorage.setItem(storageKey, JSON.stringify({
-      version: 1,
+      version,
       value: {
         events: [{ rawReplayLifecycle: { type: 'game', status: null, liveStatus: 'completed' } }]
       },
@@ -61,5 +61,64 @@ describe('appDataCache replay lifecycle fidelity', () => {
     const cacheModule = await import('./appDataCache');
     expect(cacheModule.getCachedAppData(cacheKey)).toBeNull();
     expect(window.localStorage.getItem(storageKey)).toBeNull();
+  });
+
+  it('strips replay identities and URLs from both memory and persisted schedule cache rows', async () => {
+    const cacheModule = await import('./appDataCache');
+    const loaded = await cacheModule.loadCachedAppData(cacheKey, async () => ({
+      events: [{
+        id: 'game-1',
+        eventKey: 'team-1::game-1::player-1',
+        type: 'game',
+        date: new Date('2026-08-29T18:00:00.000Z'),
+        videoUrl: 'https://youtu.be/PK1HyC37doc',
+        replayVideo: {
+          provider: 'youtube',
+          videoId: 'PK1HyC37doc',
+          publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+          linkedBy: 'private-user'
+        },
+        rawReplayState: {
+          replayVideoPublicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc'
+        },
+        hasRecordedReplay: true,
+        hasReplayVideo: true,
+        replayArchiveRevision: 'opaque-revision',
+        replayArchiveState: 'ready'
+      }]
+    }), { ttlMs: 60_000 });
+
+    expect(loaded.events[0]).toEqual(expect.objectContaining({
+      hasRecordedReplay: true,
+      hasReplayVideo: true,
+      replayArchiveRevision: 'opaque-revision',
+      replayArchiveState: 'ready'
+    }));
+    expect(loaded.events[0]).not.toHaveProperty('replayVideo');
+    expect(loaded.events[0]).not.toHaveProperty('rawReplayState');
+    expect(loaded.events[0]).not.toHaveProperty('videoUrl');
+    const stored = window.localStorage.getItem(storageKey) || '';
+    expect(stored).toContain('opaque-revision');
+    expect(stored).not.toContain('PK1HyC37doc');
+    expect(stored).not.toContain('private-user');
+    expect(stored).not.toContain('youtube.com');
+  });
+
+  it('preserves safe loaded object identity when no replay capability needs scrubbing', async () => {
+    const cacheModule = await import('./appDataCache');
+    const safeValue = {
+      events: [{
+        id: 'game-1',
+        eventKey: 'team-1::game-1::player-1',
+        type: 'game',
+        date: new Date('2026-08-29T18:00:00.000Z'),
+        hasRecordedReplay: true,
+        replayArchiveRevision: 'opaque-revision'
+      }]
+    };
+
+    const loaded = await cacheModule.loadCachedAppData(cacheKey, async () => safeValue, { ttlMs: 60_000 });
+
+    expect(loaded).toBe(safeValue);
   });
 });

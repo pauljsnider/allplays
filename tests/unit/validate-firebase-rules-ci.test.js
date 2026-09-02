@@ -5,11 +5,13 @@ import {
     assertPreviewDeploySkipHandling,
     extractMatchBlock,
     validateFirestoreRulesDeployBudget,
+    validateFirestoreRulesDeployBudgets,
     validateFirebaseDeployWorkloadIdentity,
     validatePreviewDeployCommand,
     validateProductionDeployCommand,
     validateFirebaseRulesCi
 } from '../../scripts/validate-firebase-rules-ci.mjs';
+import { compactFirestoreRules } from '../../scripts/compact-firestore-rules.mjs';
 
 describe('validate Firebase rules CI helpers', () => {
     it('keeps Firestore rules below the reliable production deploy budget', () => {
@@ -19,6 +21,35 @@ describe('validate Firebase rules CI helpers', () => {
         expect(() => validateFirestoreRulesDeployBudget(
             'x'.repeat(FIRESTORE_RULES_DEPLOY_BUDGET_BYTES + 1)
         )).toThrow(/avoid Firebase Rules backend failures/);
+    });
+
+    it('budgets both compact final and generated certificate compatibility rules', () => {
+        const finalRules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
+        const sizes = validateFirestoreRulesDeployBudgets(finalRules);
+
+        expect(sizes.finalBytes).toBeLessThanOrEqual(FIRESTORE_RULES_DEPLOY_BUDGET_BYTES);
+        expect(sizes.certificateCompatibilityBytes)
+            .toBeLessThanOrEqual(FIRESTORE_RULES_DEPLOY_BUDGET_BYTES);
+    });
+
+    it('rejects a generated certificate compatibility artifact that exceeds the budget', () => {
+        const serverOnlyDefaultsBlock = `      match /settings/{settingId} {
+        allow read: if settingId == 'certificateDefaults' &&
+                       isTeamOwnerOrAdmin(teamId);
+        // Certificate defaults can retire legacy uploader-owned Storage paths.
+        // All writes must cross the callable's trusted provenance/tombstone checks.
+        allow create, update, delete: if false;
+      }`;
+        const compactBlockBytes = Buffer.byteLength(
+            compactFirestoreRules(serverOnlyDefaultsBlock),
+            'utf8'
+        );
+        const finalRulesAtBudget = serverOnlyDefaultsBlock +
+            'x'.repeat(FIRESTORE_RULES_DEPLOY_BUDGET_BYTES - compactBlockBytes);
+
+        expect(() => validateFirestoreRulesDeployBudgets(finalRulesAtBudget)).toThrow(
+            /Compacted certificate-defaults compatibility rules.*avoid Firebase Rules backend failures/
+        );
     });
 
     it('accepts the deployed RSVP note get/list privacy contract', () => {
@@ -207,15 +238,18 @@ concurrency:
           git archive "$FIRESTORE_BASELINE_SHA" | tar -x -C "$baseline_checkout"
           baseline_compactor="$baseline_checkout/scripts/compact-firestore-rules.mjs"
           baseline_transformer="$baseline_checkout/scripts/build-certificate-defaults-compat-rules.mjs"
+          baseline_replay_transformer="$baseline_checkout/scripts/build-replay-native-compat-rules.mjs"
           baseline_node_major="$(awk baseline-node "$baseline_checkout/.github/workflows/deploy-prod.yml")"
           current_node_major="$(node -p baseline-node)"
           cd "$baseline_checkout"
           node "scripts/compact-firestore-rules.mjs" "$baseline_source" "$FIREBASE_PRODUCTION_BUNDLE/firestore-baseline.rules"
           node "scripts/build-certificate-defaults-compat-rules.mjs" "$baseline_source" "$baseline_compatibility_source"
+          node "scripts/build-replay-native-compat-rules.mjs" "$baseline_source" "$baseline_replay_compatibility_source"
           node "scripts/compact-firestore-rules.mjs" "$baseline_compatibility_source" "$FIREBASE_PRODUCTION_BUNDLE/firestore-baseline-compat.rules"
           echo "A trusted final component marker cannot reference legacy client-writable certificate defaults rules."
           FIRESTORE_BASELINE_MODE="compatibility"
           printf '%s\\n' final > "$FIREBASE_PRODUCTION_BUNDLE/firestore-baseline.mode"
+          printf '%s\\n' final > "$FIREBASE_PRODUCTION_BUNDLE/firestore-baseline-replay.mode"
       - name: Deploy Firebase Storage rules when available
         env:
           STORAGE_RULES_CHANGED: \${{ needs.prepare-deploy.outputs.storage_changed }}
@@ -241,7 +275,10 @@ concurrency:
             )
             retry_enabled_inventory_producer_target="functions:indexCertificateLegacySignaturesOnDefaultsWrite"
             retry_enabled_cleanup_compatibility_target="functions:cleanupCertificateSignature"
-            retry_enabled_function_targets="functions:indexCertificateLegacySignaturesOnDefaultsWrite,functions:processAccountDeletionRequest,functions:queueParentInviteEmail,functions:reconcileLegacyTeamOwnership,functions:syncLegacyTeamOwnershipOnAuthCreate,functions:syncPublicUserProfileOnUserWrite,functions:syncPublicUserProfilesOnTeamWrite,functions:syncTeamOwnerAccessOnCreate,functions:notifyConversationChatMessageCreated,functions:notifyFeeAssigned,functions:notifyFeeMarkedPaid,functions:notifyGameCreated,functions:notifyGameUpdated,functions:notifyInviteRedeemed,functions:notifyLiveEventCreated,functions:notifyOfficiatingNotificationCreated,functions:notifyOpenOfficiatingSlots,functions:notifyParentMembershipRequestCreated,functions:notifyParentMembershipRequestUpdated,functions:notifyPracticePacketAssigned,functions:notifyPracticePacketCompleted,functions:notifyPublishedCertificateAward,functions:notifyRegistrationStatusChanged,functions:notifyRegistrationSubmitted,functions:notifyRideClaimCreated,functions:notifyRideClaimUpdated,functions:notifyRideOfferCancelled,functions:notifyRideOfferCreated,functions:notifyScheduleImportBatchCompleted,functions:notifyTeamChatMessageCreated,functions:syncTeamNotificationTargetsOnDeviceWrite,functions:syncTeamNotificationTargetsOnPreferenceWrite,functions:processPasswordResetEmailRequest,functions:sweepIneligiblePublicUserProfiles,functions:dispatchDueTeamMediaNotificationBatches,functions:dispatchDuePreEventReminders,functions:queueDueRegistrationFailedPaymentReminders,functions:sendPracticePacketDueTomorrowReminders,functions:sendFeeUnpaidDueReminders"
+            replay_archive_reader_compatibility_targets="functions:getReplayPrivacyMigrationStatus,functions:manageGameReplayArchive,functions:saveGameHighlightClips,functions:saveAthleteProfileProjection,functions:mutateStructuredMediaIdentity,functions:getGameReplayPlayback,functions:publicHomepageGamesV1,functions:publicTeamGamesV1,functions:getFamilyShareSchedule,functions:getFamilyShareView,functions:getPublicTeamGamesProjection,functions:getPublicTeamCalendarProjection,functions:getPublicGameProjection"
+            replay_archive_cleanup_compatibility_targets="functions:cleanupPrivateReplayArchiveOnGameDelete,functions:cleanupPrivateReplayArchiveOnSharedGameDelete"
+            replay_public_cache_drain_seconds=330
+            retry_enabled_function_targets="functions:cleanupPrivateReplayArchiveOnGameDelete,functions:cleanupPrivateReplayArchiveOnSharedGameDelete,functions:indexCertificateLegacySignaturesOnDefaultsWrite,functions:processAccountDeletionRequest,functions:queueParentInviteEmail,functions:reconcileLegacyTeamOwnership,functions:syncPublicUserProfileOnUserWrite,functions:syncPublicUserProfilesOnTeamWrite,functions:syncTeamOwnerAccessOnCreate,functions:notifyConversationChatMessageCreated,functions:notifyFeeAssigned,functions:notifyFeeMarkedPaid,functions:notifyGameCreated,functions:notifyGameUpdated,functions:notifyInviteRedeemed,functions:notifyLiveEventCreated,functions:notifyOfficiatingNotificationCreated,functions:notifyOpenOfficiatingSlots,functions:notifyParentMembershipRequestCreated,functions:notifyParentMembershipRequestUpdated,functions:notifyPracticePacketAssigned,functions:notifyPracticePacketCompleted,functions:notifyPublishedCertificateAward,functions:notifyRegistrationStatusChanged,functions:notifyRegistrationSubmitted,functions:notifyRideClaimCreated,functions:notifyRideClaimUpdated,functions:notifyRideOfferCancelled,functions:notifyRideOfferCreated,functions:notifyScheduleImportBatchCompleted,functions:notifyTeamChatMessageCreated,functions:syncTeamNotificationTargetsOnDeviceWrite,functions:syncTeamNotificationTargetsOnPreferenceWrite,functions:processPasswordResetEmailRequest,functions:sweepIneligiblePublicUserProfiles,functions:dispatchDueTeamMediaNotificationBatches,functions:dispatchDuePreEventReminders,functions:queueDueRegistrationFailedPaymentReminders,functions:sendPracticePacketDueTomorrowReminders,functions:sendFeeUnpaidDueReminders"
             certificate_compatibility_recovery_ruleset="projects/game-flow-c6311/rulesets/6da601e4-12e3-420a-8db3-907153c712c7"
             certificate_compatibility_recovery_source_sha256="825ec3d3a56a067dc5c80c0e6e6f3fc1ceba2b09b249e0605889dc3d964dc6f2"
             certificate_compatibility_recovery_canonical_sha256="0334471987fba5fbb95f7acf49382e3e412849f02cb2ed333f87249f1674b4de"
@@ -256,12 +293,14 @@ concurrency:
             active_ruleset_observed_source_sha256="unknown"
             if [[ "$deploy_targets" != "$retry_enabled_function_targets"
               && "$deploy_targets" != "$retry_enabled_inventory_producer_target"
-              && "$deploy_targets" != "$retry_enabled_cleanup_compatibility_target" ]]; then
+              && "$deploy_targets" != "$retry_enabled_cleanup_compatibility_target"
+              && "$deploy_targets" != "$replay_archive_cleanup_compatibility_targets" ]]; then
               echo "Refusing --force outside the reviewed retry-enabled function allowlist."
             fi
             deploy_args+=(--force)
             node "$firebase_cli" deploy "\${deploy_args[@]}"
           env:
+            REPLAY_NATIVE_CALLABLE_READY: \${{ vars.REPLAY_NATIVE_CALLABLE_READY }}
             CERTIFICATE_DEFAULTS_NATIVE_CALLABLE_READY: \${{ vars.CERTIFICATE_DEFAULTS_NATIVE_CALLABLE_READY }}
             CERTIFICATE_DEFAULTS_LOCKDOWN_NEEDED: \${{ needs.prepare-deploy.outputs.certificate_defaults_lockdown_needed }}
             FIRESTORE_CONFIG_CHANGED: \${{ needs.prepare-deploy.outputs.firestore_changed }}
@@ -351,6 +390,22 @@ concurrency:
           write_firestore_finalization_blocked_summary() {
             echo "No client outage was introduced."
           }
+          echo 'Set \`REPLAY_NATIVE_CALLABLE_READY=true\` only after every supported installed native version uses \`manageGameReplayArchive\`, \`saveGameHighlightClips\`, \`saveAthleteProfileProjection\`, and \`mutateStructuredMediaIdentity\`, and runs the pre-Firestore \`getReplayPrivacyMigrationStatus\` cache protocol (memory-only before readiness, clear on the ready transition, then mark the returned epoch).'
+          active_replay_boundary="$baseline_replay_mode"
+          retry_firebase_deploy "$replay_archive_reader_compatibility_targets" "replay-private-archive-reader-compatibility" 3 15
+          retry_firebase_deploy "$replay_archive_cleanup_compatibility_targets" "replay-private-archive-cleanup-compatibility" 3 15 true
+          if [[ "$replay_native_callable_ready" != "true" ]]; then
+            write_replay_native_hold_summary
+            exit 2
+          fi
+          sleep "$replay_public_cache_drain_seconds"
+          retry_firebase_deploy "hosting" "replay-callable-client-compatibility" 3 15
+          activate_firestore_ruleset_with_retry "$replay_final_ruleset_name" "$replay_final_rules_source"
+          verify_active_firestore_rules "$replay_final_rules_source"
+          node "$FIREBASE_PRODUCTION_BUNDLE/_migration/backfill-game-replay-archives.mjs" --close-gate
+          verify_active_firestore_rules "$replay_final_rules_source"
+          node "$FIREBASE_PRODUCTION_BUNDLE/_migration/backfill-game-replay-archives.mjs" --activate-profile-boundary
+          node "$FIREBASE_PRODUCTION_BUNDLE/_migration/backfill-game-replay-archives.mjs" --apply
           retry_firebase_deploy "functions:indexCertificateLegacySignaturesOnDefaultsWrite" "certificate-signature-inventory-producer" 3 15
           retry_firebase_deploy "$retry_enabled_cleanup_compatibility_target" "certificate-signature-cleanup-compatibility" 3 15 true
           node "$FIREBASE_PRODUCTION_BUNDLE/_migration/backfill-certificate-legacy-signature-inventory.mjs" --apply
@@ -395,6 +450,14 @@ concurrency:
           else
             :
           fi
+          verify_active_firestore_rules "$final_firestore_rules"
+          verify_active_firestore_rules "$compatibility_firestore_rules"
+          git diff --quiet "$last_success_sha" "$GITHUB_SHA" -- functions/replay-structured-media-core.cjs
+          git diff --quiet "$last_success_sha" "$GITHUB_SHA" -- functions/structured-media-write-core.cjs
+          git diff --quiet "$last_success_sha" "$GITHUB_SHA" -- functions/athlete-profile-projection-core.cjs
+          git diff --quiet "$last_success_sha" "$GITHUB_SHA" -- js/replay-clip-sanitizer.js
+          cp --no-dereference js/replay-clip-sanitizer.js "$bundle/js/replay-clip-sanitizer.js"
+          (cd "$bundle" && sha256sum -c js/replay-clip-sanitizer.sha256)
           record_component_deployment() {
             echo 'state: "success"'
           }
@@ -406,6 +469,18 @@ concurrency:
         `;
 
         expect(() => validateProductionDeployCommand(validDeployCommand)).not.toThrow();
+        expect(() => validateProductionDeployCommand(
+            validDeployCommand.replace('replay_public_cache_drain_seconds=330', 'replay_public_cache_drain_seconds=60')
+        )).toThrow('Production replay public-cache drain exceeds the prior shared-cache TTL');
+        expect(() => validateProductionDeployCommand(
+            validDeployCommand.replace('          sleep "$replay_public_cache_drain_seconds"\n', '')
+        )).toThrow('Production replay migration must stage sanitized readers');
+        expect(() => validateProductionDeployCommand(
+            validDeployCommand.replace(
+                '          sleep "$replay_public_cache_drain_seconds"\n          retry_firebase_deploy "hosting" "replay-callable-client-compatibility" 3 15',
+                '          retry_firebase_deploy "hosting" "replay-callable-client-compatibility" 3 15\n          sleep "$replay_public_cache_drain_seconds"'
+            )
+        )).toThrow('Production replay migration must stage sanitized readers');
         expect(() => validateProductionDeployCommand(
             validDeployCommand.replace('  workflow_dispatch:', '  pull_request:')
         )).toThrow('Production push and manual retry triggers');
@@ -431,8 +506,11 @@ concurrency:
             validDeployCommand.replace('&& "$deploy_targets" != "$retry_enabled_inventory_producer_target"', '&& "disabled" == "true"')
         )).toThrow('Production force-deploy scoped inventory-producer allowlist guard');
         expect(() => validateProductionDeployCommand(
-            validDeployCommand.replace('&& "$deploy_targets" != "$retry_enabled_cleanup_compatibility_target" ]]; then', '&& "disabled" == "true" ]]; then')
+            validDeployCommand.replace('&& "$deploy_targets" != "$retry_enabled_cleanup_compatibility_target"', '&& "disabled" == "true"')
         )).toThrow('Production force-deploy scoped cleanup allowlist guard');
+        expect(() => validateProductionDeployCommand(
+            validDeployCommand.replace('&& "$deploy_targets" != "$replay_archive_cleanup_compatibility_targets" ]]; then', '&& "disabled" == "true" ]]; then')
+        )).toThrow('Production force-deploy scoped replay cleanup allowlist guard');
         expect(() => validateProductionDeployCommand(
             validDeployCommand.replace('"certificate-signature-cleanup-compatibility" 3 15 true', '"certificate-signature-cleanup-compatibility" 3 15')
         )).toThrow('Production retry-enabled cleanup compatibility failure-policy acknowledgement call');

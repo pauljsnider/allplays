@@ -5,7 +5,13 @@ const firestoreMocks = vi.hoisted(() => ({
     getFirestore: vi.fn(),
     memoryLocalCache: vi.fn(() => ({ kind: 'memoryLocalCache' })),
     persistentLocalCache: vi.fn((options) => ({ kind: 'persistentLocalCache', options })),
-    persistentMultipleTabManager: vi.fn(() => ({ kind: 'persistentMultipleTabManager' }))
+    persistentMultipleTabManager: vi.fn(() => ({ kind: 'persistentMultipleTabManager' })),
+    clearIndexedDbPersistence: vi.fn(async () => undefined)
+}));
+
+const functionsMocks = vi.hoisted(() => ({
+    getFunctions: vi.fn(() => ({ kind: 'functions' })),
+    httpsCallable: vi.fn()
 }));
 
 vi.mock('../../js/vendor/firebase-app.js', () => ({
@@ -43,6 +49,7 @@ vi.mock('../../js/vendor/firebase-firestore.js', () => ({
     memoryLocalCache: firestoreMocks.memoryLocalCache,
     persistentLocalCache: firestoreMocks.persistentLocalCache,
     persistentMultipleTabManager: firestoreMocks.persistentMultipleTabManager,
+    clearIndexedDbPersistence: firestoreMocks.clearIndexedDbPersistence,
     collection: vi.fn(),
     getDocs: vi.fn(),
     getDoc: vi.fn(),
@@ -79,8 +86,8 @@ vi.mock('../../js/vendor/firebase-storage.js', () => ({
 }));
 
 vi.mock('../../js/vendor/firebase-functions.js', () => ({
-    getFunctions: vi.fn(() => ({ kind: 'functions' })),
-    httpsCallable: vi.fn()
+    getFunctions: functionsMocks.getFunctions,
+    httpsCallable: functionsMocks.httpsCallable
 }));
 
 vi.mock('../../js/firebase-app-check.js?v=12', () => ({
@@ -114,6 +121,14 @@ describe('firebase firestore initialization', () => {
         firestoreMocks.persistentMultipleTabManager.mockImplementation(() => ({
             kind: 'persistentMultipleTabManager'
         }));
+        firestoreMocks.clearIndexedDbPersistence.mockResolvedValue(undefined);
+        functionsMocks.getFunctions.mockReturnValue({ kind: 'functions' });
+        functionsMocks.httpsCallable.mockImplementation((_instance, name) => {
+            expect(name).toBe('getReplayPrivacyMigrationStatus');
+            return vi.fn(async () => ({
+                data: { ready: true, cacheEpoch: 'private-replay-v2' }
+            }));
+        });
         delete globalThis.__allplaysFirebaseDb;
     });
 
@@ -121,8 +136,13 @@ describe('firebase firestore initialization', () => {
         vi.unstubAllGlobals();
     });
 
-    async function loadFirebaseForWindow(windowValue) {
+    async function loadFirebaseForWindow(windowValue, cacheSchema = '') {
         vi.stubGlobal('window', windowValue);
+        vi.stubGlobal('localStorage', {
+            getItem: vi.fn(() => cacheSchema),
+            setItem: vi.fn(),
+            removeItem: vi.fn()
+        });
         return import('../../js/firebase.js?v=27');
     }
 
@@ -139,6 +159,7 @@ describe('firebase firestore initialization', () => {
         expect(firestoreMocks.memoryLocalCache).toHaveBeenCalledTimes(1);
         expect(firestoreMocks.persistentLocalCache).not.toHaveBeenCalled();
         expect(firestoreMocks.persistentMultipleTabManager).not.toHaveBeenCalled();
+        expect(firestoreMocks.clearIndexedDbPersistence).toHaveBeenCalledWith(module.db);
     });
 
     it.each([
@@ -176,6 +197,58 @@ describe('firebase firestore initialization', () => {
         expect(firestoreMocks.persistentLocalCache).toHaveBeenCalledWith({
             tabManager: { kind: 'persistentMultipleTabManager' }
         });
+        expect(firestoreMocks.clearIndexedDbPersistence).toHaveBeenCalledWith(module.db);
+    });
+
+    it('does not clear a native cache whose epoch matches authoritative ready status', async () => {
+        await loadFirebaseForWindow({
+            location: { protocol: 'capacitor:', hostname: 'localhost' }
+        }, 'private-replay-v2');
+
+        expect(firestoreMocks.clearIndexedDbPersistence).not.toHaveBeenCalled();
+    });
+
+    it('keeps adoption builds in memory and does not mark the cache before migration is ready', async () => {
+        functionsMocks.httpsCallable.mockReturnValueOnce(vi.fn(async () => ({
+            data: { ready: false, cacheEpoch: null }
+        })));
+
+        const module = await loadFirebaseForWindow({
+            location: { protocol: 'capacitor:', hostname: 'localhost' }
+        }, 'private-replay-v2');
+
+        expect(module.db.options.localCache).toEqual({ kind: 'memoryLocalCache' });
+        expect(firestoreMocks.persistentLocalCache).not.toHaveBeenCalled();
+        expect(firestoreMocks.clearIndexedDbPersistence).toHaveBeenCalledWith(module.db);
+        expect(globalThis.localStorage.setItem).not.toHaveBeenCalled();
+        expect(globalThis.localStorage.removeItem).toHaveBeenCalledWith('allplays.firestore-cache-schema');
+    });
+
+    it('uses memory and clears stale bytes when readiness cannot be verified', async () => {
+        functionsMocks.httpsCallable.mockReturnValueOnce(vi.fn(async () => {
+            throw Object.assign(new Error('offline'), { code: 'functions/unavailable' });
+        }));
+
+        const module = await loadFirebaseForWindow({
+            location: { protocol: 'capacitor:', hostname: 'localhost' }
+        }, 'private-replay-v2');
+
+        expect(module.db.options.localCache).toEqual({ kind: 'memoryLocalCache' });
+        expect(firestoreMocks.clearIndexedDbPersistence).toHaveBeenCalledWith(module.db);
+        expect(globalThis.localStorage.setItem).not.toHaveBeenCalled();
+    });
+
+    it('fails closed when a retired cache cannot be cleared before first use', async () => {
+        firestoreMocks.clearIndexedDbPersistence.mockRejectedValueOnce(
+            Object.assign(new Error('Firestore has already started.'), { code: 'failed-precondition' })
+        );
+
+        await expect(loadFirebaseForWindow({
+            location: { protocol: 'capacitor:', hostname: 'localhost' }
+        })).rejects.toMatchObject({
+            code: 'firestore-cache-privacy-upgrade-failed'
+        });
+        expect(globalThis.__allplaysFirebaseDb).toBeUndefined();
     });
 
     it('reuses the existing global Firestore instance without constructing another cache', async () => {

@@ -18,7 +18,7 @@ import {
     reconcileOverlayLiveEvents,
     resolvePublicProjectionVideoOptions,
     replaceOverlayChat
-} from './live-game-overlay-model.js?v=28';
+} from './live-game-overlay-model.js?v=29';
 import {
     buildReplaySessionState,
     collectReplayEventWindow,
@@ -34,8 +34,27 @@ import {
     resolveSafeProfilePhotoWriteUrl
 } from './safe-image-url.js?v=1';
 import { buildGameWatchShareUrl } from './game-share-links.js?v=1';
-import { shareOrCopy } from './utils.js?v=443371';
+import { shareOrCopy } from './utils.js?v=443372';
 import { createPlayAnnouncer } from './live-game-announcer.js?v=1';
+import { hasRecordedReplayMarker } from './game-replay-video.js?v=4';
+
+const PRIVATE_REPLAY_GAME_FIELDS = Object.freeze([
+    'replayVideo',
+    'recordedVideo',
+    'videoReplay',
+    'replayVideoUrl',
+    'recordedVideoUrl',
+    'videoReplayUrl',
+    'archivedVideoUrl',
+    'replayVideoPublicUrl',
+    'replayVideoPosterUrl',
+    'replayVideoTitle',
+    'replayVideoDurationMs',
+    'replayStatus',
+    'recordedReplayStatus',
+    'videoReplayStatus',
+    'replayVideoFallbackDisabled'
+]);
 
 const elements = {
     body: document.body,
@@ -170,9 +189,6 @@ const uiState = {
     replayPlaybackAvailable: false,
     optionalTeamStatus: 'pending',
     optionalPlayersStatus: 'pending',
-    teamEntitlement: null,
-    teamEntitlementPromise: null,
-    teamEntitlementKey: '',
     videoDurationMs: 0,
     recentMediaSeekTargets: [],
     teamId: '',
@@ -208,16 +224,6 @@ function createTextElement(tagName, className, text) {
     return element;
 }
 
-function getRecordedReplayGameGateOverride(game = {}) {
-    return [
-        game?.teamPassConfig?.recordedReplayPaywallEnabled,
-        game?.teamPass?.recordedReplayPaywallEnabled,
-        game?.premiumFeatures?.recordedReplayPaywallEnabled,
-        game?.recordedReplayPaywallEnabled,
-        game?.recordedReplayTeamPassRequired
-    ].find((value) => typeof value === 'boolean');
-}
-
 function getQueryParams() {
     return Object.fromEntries(new URLSearchParams(window.location.search).entries());
 }
@@ -234,7 +240,7 @@ function usesCompactPanelLayout() {
 }
 
 function loadOverlayDatabase() {
-    return import('./db.js?v=4433195');
+    return import('./db.js?v=4433196');
 }
 
 function getTimestampMs(value) {
@@ -1130,8 +1136,8 @@ async function initializeChatComposer(database, teamId, gameId) {
 
     try {
         const [authTools, chatTools] = await Promise.all([
-            import('./auth.js?v=4433199'),
-            import('./live-game-chat.js?v=4')
+            import('./auth.js?v=4433200'),
+            import('./live-game-chat.js?v=5')
         ]);
         uiState.chatServices = {
             postLiveChatMessage: database.postLiveChatMessage,
@@ -2113,7 +2119,7 @@ async function startRealMode(params) {
     try {
         const [database, videoTools, stateTools] = await Promise.all([
             loadOverlayDatabase(),
-            import('./live-game-video.js?v=443319'),
+            import('./live-game-video.js?v=443321'),
             import('./live-game-state.js?v=43')
         ]);
         uiState.optionalTeamStatus = 'pending';
@@ -2155,73 +2161,55 @@ async function startRealMode(params) {
         renderChatComposer();
         const renderVideoSafely = async () => {
             const requestId = ++uiState.videoRequestId;
-            uiState.replayPlaybackAvailable = false;
+            const hasReplayMarker = hasRecordedReplayMarker(uiState.game.game);
+            uiState.replayPlaybackAvailable = hasReplayMarker;
             configureGameActions();
             try {
+                let privatePlayback = null;
+                const completedReplay = hasCompletedReplayLifecycle(uiState.game.game);
+                if (completedReplay && (isReplay || hasReplayMarker)) {
+                    showReplayAccessGate({ state: 'checking' });
+                    const { gameReplayService } = await import('./game-replay-service.js?v=2');
+                    const playbackResult = await gameReplayService.getPlayback({ teamId, gameId });
+                    if (requestId !== uiState.videoRequestId) return false;
+                    if (playbackResult.available) {
+                        privatePlayback = playbackResult.replayVideo;
+                    } else if (hasReplayMarker) {
+                        const unavailableReason = String(playbackResult.reason || '').toLowerCase();
+                        if (unavailableReason === 'team-pass-required') {
+                            showReplayAccessGate({ state: 'locked' });
+                            return true;
+                        }
+                        if (unavailableReason.includes('unavailable') || unavailableReason.includes('partial')) {
+                            showReplayAccessGate({ state: 'unavailable' });
+                            return true;
+                        }
+                        showVideoFallback('The replay is not available for playback right now. Score, plays, and chat remain available.');
+                        return true;
+                    }
+                }
+
+                const playbackGame = { ...(uiState.game.game || {}) };
+                PRIVATE_REPLAY_GAME_FIELDS.forEach((field) => delete playbackGame[field]);
+                if (hasCompletedReplayLifecycle(playbackGame)) delete playbackGame.videoUrl;
+                if (privatePlayback) playbackGame.replayVideo = privatePlayback;
                 let options = videoTools.resolveReplayVideoOptions({
                     team: uiState.game.team,
-                    game: uiState.game.game,
+                    game: playbackGame,
                     players: uiState.game.players,
                     isReplay
                 });
-                let usesSanitizedPublicProjection = options.isPublicProjectionVideo === true;
-                if (options.mode === 'none') {
+                if (options.mode === 'none' && !hasCompletedReplayLifecycle(uiState.game.game)) {
                     const publicProjectionOptions = resolvePublicProjectionVideoOptions(uiState.game.game, {
                         parentHost: window.location.hostname
                     });
                     if (publicProjectionOptions) {
                         options = publicProjectionOptions;
-                        usesSanitizedPublicProjection = true;
                     }
                 }
                 uiState.replayPlaybackAvailable = options.isRecordedReplay === true && options.hasVideo === true;
                 configureGameActions();
                 uiState.videoDurationMs = Number.isFinite(options.durationMs) ? options.durationMs : 0;
-                if (!usesSanitizedPublicProjection && options.isRecordedReplay === true && options.sourceUrl) {
-                    const gameGateOverride = getRecordedReplayGameGateOverride(uiState.game.game);
-                    if (typeof gameGateOverride !== 'boolean' && uiState.optionalTeamStatus === 'pending') {
-                        showReplayAccessGate({ state: 'checking' });
-                        return true;
-                    }
-                    if (typeof gameGateOverride !== 'boolean' && uiState.optionalTeamStatus === 'failed') {
-                        showReplayAccessGate({ state: 'unavailable' });
-                        return true;
-                    }
-                    const entitlements = await import('./team-entitlements.js?v=9');
-                    if (requestId !== uiState.videoRequestId) return false;
-                    const gateEnabled = entitlements.isRecordedReplayTeamPassGateEnabled({
-                        game: uiState.game.game,
-                        team: uiState.game.team
-                    });
-                    if (gateEnabled) {
-                        const seasonId = entitlements.resolveTeamEntitlementSeasonId({
-                            game: uiState.game.game,
-                            team: uiState.game.team
-                        });
-                        const entitlementKey = `${teamId}:${seasonId}`;
-                        if (uiState.teamEntitlementKey !== entitlementKey) {
-                            uiState.teamEntitlementKey = entitlementKey;
-                            uiState.teamEntitlement = null;
-                            uiState.teamEntitlementPromise = entitlements.getTeamEntitlementStatus({ teamId, seasonId })
-                                .then((status) => {
-                                    uiState.teamEntitlement = status;
-                                    return status;
-                                });
-                        }
-                        const entitlementStatus = uiState.teamEntitlement || await uiState.teamEntitlementPromise;
-                        if (requestId !== uiState.videoRequestId) return false;
-                        const videoUnlocked = entitlements.canAccessPremiumFanFeature(
-                            entitlements.TEAM_PASS_FEATURES.RECORDED_REPLAY,
-                            entitlementStatus
-                        );
-                        if (!videoUnlocked) {
-                            showReplayAccessGate({
-                                state: entitlementStatus?.access?.state === 'unavailable' ? 'unavailable' : 'locked'
-                            });
-                            return true;
-                        }
-                    }
-                }
                 if (options.mode === 'embed' && options.sourceUrl) {
                     showEmbedVideo(options.sourceUrl, options.publicUrl, {
                         controllableReplay: isReplay,
@@ -2235,7 +2223,10 @@ async function startRealMode(params) {
                 return true;
             } catch (error) {
                 console.warn('Overlay video refresh failed:', error);
-                if (elements.iframe.hidden && elements.recordedVideo.hidden) {
+                if (hasCompletedReplayLifecycle(uiState.game?.game || {})
+                    && (isReplay || hasRecordedReplayMarker(uiState.game?.game || {}))) {
+                    showReplayAccessGate({ state: 'unavailable' });
+                } else if (elements.iframe.hidden && elements.recordedVideo.hidden) {
                     showVideoFallback('The video feed is temporarily unavailable. Live score and play updates remain connected.');
                 }
                 setConnectionIssue('video', 'Video refresh is delayed. Score, clock, plays, and chat continue independently.');
@@ -2264,7 +2255,12 @@ async function startRealMode(params) {
             renderLineup();
             renderLeaders();
             renderOpponentStats();
-            void renderVideoSafely();
+            // Completed replay authorization and its transient URL come from
+            // the callable, not optional team/roster enrichment. Do not clear
+            // an already-approved replay while those partial reads settle.
+            if (!uiState.isReplay && !hasCompletedReplayLifecycle(uiState.game.game)) {
+                void renderVideoSafely();
+            }
         };
         void teamPromise.then((team) => {
             resolvedTeam = team || {};

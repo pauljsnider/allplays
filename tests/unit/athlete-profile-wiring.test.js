@@ -73,6 +73,10 @@ describe('athlete profile wiring', () => {
         expect(source).toContain('mediaUploadReservation: true');
         expect(source).toContain('mediaUploadReservation: deleteField()');
         expect(source).toContain('collectAthleteProfileMediaCleanupPaths');
+        expect(source).toContain('athleteProfileProjectionService.save({');
+        const saveStart = source.indexOf('export async function saveAthleteProfile');
+        const saveEnd = source.indexOf('// ============================================\n// Team Chat Functions', saveStart);
+        expect(source.slice(saveStart, saveEnd)).not.toContain('await setDoc(profileRef, {');
     });
 
     it('uses primary authenticated storage and a create-safe reservation for new profile media', () => {
@@ -94,7 +98,17 @@ describe('athlete profile wiring', () => {
         expect(releaseSource).toContain("const hasSavedProfileData = Object.prototype.hasOwnProperty.call(profile, 'athlete')");
         expect(releaseSource).toContain('transaction.update(profileRef, {');
         expect(releaseSource).toContain('mediaUploadReservation: deleteField()');
-        expect(source).toContain("options.profileId && options.isNewProfile !== true ? await getDoc(profileRef) : null");
+        expect(source).toContain('let existingSnap = await getDoc(profileRef);');
+        expect(source).toContain('await reserveAthleteProfileMediaOwnership(userId, profileRef.id, { isNewProfile: true });');
+        expect(source).toContain('const reconciledReservation = await getDoc(profileRef);');
         expect(source).toContain('const resolved = resolveAthleteProfileMediaStorage(storagePath);');
+    });
+
+    it('preserves uploaded media when an exact callable save cannot be reconciled', () => {
+        const builder = readFile('athlete-profile-builder.html');
+        const appService = readFile('apps/app/src/lib/playerService.ts');
+
+        expect(builder).toContain("if (error?.preserveUploadedMedia !== true) {");
+        expect(appService).toContain("(error as { preserveUploadedMedia?: unknown }).preserveUploadedMedia === true");
     });
 });

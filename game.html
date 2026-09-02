@@ -438,20 +438,21 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getDelegatedTeamContext, getGame, getPlayers, getUnreadChatCounts, getUserProfile, updateGame, uploadStatSheetPhoto, deleteUploadedMediaObjects, setCompletedGamePlayerStats, getTeamStatsForGame, setCompletedGameTeamStats } from './js/db.js?v=4433195';
+        import { getTeam, getDelegatedTeamContext, getGame, getPlayers, getUnreadChatCounts, getUserProfile, updateGame, uploadStatSheetPhoto, deleteUploadedMediaObjects, setCompletedGamePlayerStats, getTeamStatsForGame, setCompletedGameTeamStats } from './js/db.js?v=4433196';
         import { generateGameInsights } from './js/post-game-insights.js?v=2';
-        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, escapeHtml, shareOrCopy } from './js/utils.js?v=443371';
-        import { checkAuth } from './js/auth.js?v=4433199';
-        import { collection, deleteField, doc, getDocs, query, orderBy, runTransaction } from "./js/firebase.js?v=33";
-        import { db } from './js/firebase.js?v=33';
+        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, escapeHtml, shareOrCopy } from './js/utils.js?v=443372';
+        import { checkAuth } from './js/auth.js?v=4433200';
+        import { collection, getDocs, query, orderBy } from "./js/firebase.js?v=34";
+        import { db } from './js/firebase.js?v=34';
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=443347';
         import { resolveLiveStatConfig } from './js/live-game-state.js?v=43';
         import { splitPlayerStatsByVisibility } from './js/stat-leaderboards.js?v=4';
         import { formatGameReportEventTimestamp, resolveReportStatColumns, resolveOpponentReportStatColumns } from './js/game-report-stats.js?v=2';
         import { normalizeStatKey, resolvePostGameStatFields, resolvePostGameTeamStatFields, resolvePostGameEditorDidNotPlay, buildCompletedGamePlayerStatsPayload, buildCompletedGameTeamStatsPayload, getPostGameEditorNextIndex } from './js/post-game-stat-editor.js?v=5';
-        import { buildHighlightShareUrl, normalizeGameRecapHighlightClips, resolveReplayVideoOptions } from './js/live-game-video.js?v=443319';
+        import { buildHighlightShareUrl, normalizeGameRecapHighlightClips } from './js/live-game-video.js?v=443321';
         import { buildGameReportShareUrl } from './js/game-share-links.js?v=1';
-        import { GAME_REPLAY_ARCHIVE_FIELDS, GAME_REPLAY_CLEAR_FIELDS, buildYouTubeReplayVideo, fingerprintGameReplayArchiveState, getGameReplayArchiveState, getGameReplayLifecycle, hasGameReplayArchiveEvidence, normalizeYouTubeReplayUrl } from './js/game-replay-video.js?v=3';
+        import { getGameReplayLifecycle, normalizeYouTubeReplayUrl } from './js/game-replay-video.js?v=4';
+        import { gameReplayService, getRecordedReplayRevision, hasRecordedReplayMarker } from './js/game-replay-service.js?v=2';
 
         let currentUser = null;
         let canManageStatSheet = false;
@@ -531,15 +532,9 @@
             const gameCompleted = isCompletedGameForReplay(game);
             if (!gameCompleted) return '';
 
-            const replayOptions = resolveReplayVideoOptions({
-                team,
-                game,
-                isReplay: true
-            });
-
             const hasCompletedTimelineReplay = ['completed', 'final'].includes(game?.liveStatus)
                 && gameCompleted;
-            if ((replayOptions.hasVideo && replayOptions.isRecordedReplay === true) || hasCompletedTimelineReplay) {
+            if (hasRecordedReplayMarker(game) || hasCompletedTimelineReplay) {
                 return `
                     <a href="live-game.html?teamId=${encodeURIComponent(teamId)}&gameId=${encodeURIComponent(gameId)}&replay=true"
                        class="inline-flex items-center gap-2 bg-teal-500 text-white px-5 py-2 rounded-full font-semibold shadow hover:bg-teal-600 transition">
@@ -552,49 +547,12 @@
                 `;
             }
 
-            const replayState = replayOptions.replayState || {
-                status: 'unavailable',
-                title: 'Replay unavailable'
-            };
-            const stateLabel = replayState.status === 'processing'
-                ? 'Replay Processing'
-                : replayState.status === 'failed'
-                    ? 'Replay Failed'
-                    : 'Replay Unavailable';
-            const stateClasses = replayState.status === 'processing'
-                ? 'bg-amber-50 text-amber-700 border-amber-200'
-                : replayState.status === 'failed'
-                    ? 'bg-red-50 text-red-700 border-red-200'
-                    : 'bg-gray-50 text-gray-600 border-gray-200';
-
             return `
-                <span class="inline-flex items-center gap-2 px-5 py-2 rounded-full font-semibold shadow border ${stateClasses}"
-                      aria-label="${escapeHtml(replayState.title || stateLabel)}">
-                    ${escapeHtml(stateLabel)}
+                <span class="inline-flex items-center gap-2 px-5 py-2 rounded-full font-semibold shadow border bg-gray-50 text-gray-600 border-gray-200"
+                      aria-label="Replay unavailable">
+                    Replay Unavailable
                 </span>
             `;
-        }
-
-        function applyGameReplayArchiveState(game, archiveState = {}) {
-            GAME_REPLAY_ARCHIVE_FIELDS.forEach((field) => delete game[field]);
-            Object.assign(game, archiveState);
-        }
-
-        function resolveLinkedYouTubeReplay(replayVideo) {
-            if (!replayVideo || typeof replayVideo !== 'object') return null;
-            if (String(replayVideo.provider || '').trim().toLowerCase() !== 'youtube') return null;
-
-            const normalizedCandidates = [
-                replayVideo.videoId ? `https://youtu.be/${String(replayVideo.videoId).trim()}` : null,
-                replayVideo.embedUrl,
-                replayVideo.publicUrl
-            ]
-                .filter((value) => typeof value === 'string' && value.trim())
-                .map(normalizeYouTubeReplayUrl);
-            if (!normalizedCandidates.length || normalizedCandidates.some((candidate) => !candidate)) return null;
-
-            const videoIds = new Set(normalizedCandidates.map((candidate) => candidate.videoId));
-            return videoIds.size === 1 ? normalizedCandidates[0] : null;
         }
 
         function setReplayVideoStatus(element, message, { error = false } = {}) {
@@ -610,7 +568,7 @@
             container.innerHTML = renderReplayReportAction({ teamId, gameId, game, team });
         }
 
-        function setupReplayVideoControls({ teamId, gameId, game, team }) {
+        async function setupReplayVideoControls({ teamId, gameId, game, team }) {
             const section = document.getElementById('replay-video-admin');
             const form = document.getElementById('replay-video-form');
             const heading = document.getElementById('replay-video-heading');
@@ -629,9 +587,12 @@
             if (!section || !form || !heading || !linkFields || !help || !urlInput || !titleInput || !saveButton || !removeButton || !current || !status) {
                 return;
             }
-            const canRemoveCurrentReplay = () => hasGameReplayArchiveEvidence(game)
+            let managementState = null;
+            let managementStateComplete = false;
+            const canRemoveCurrentReplay = () => managementStateComplete
+                && managementState?.state === 'ready'
                 && (gameCompleted ? canManageReplayVideo : canRemoveReplayVideoOutsideFinal);
-            if (!isCanonicalTeamGame || !currentUser?.uid || (!canLinkReplayVideo && !canRemoveCurrentReplay())) {
+            if (!isCanonicalTeamGame || !currentUser?.uid || (!canLinkReplayVideo && !canRemoveReplayVideoOutsideFinal)) {
                 section.classList.add('hidden');
                 return;
             }
@@ -652,13 +613,19 @@
                 removeButton.disabled = isBusy;
             }
 
+            function applySafeReplayMarkers(nextState) {
+                game.hasRecordedReplay = nextState?.hasRecordedReplay === true;
+                const revision = nextState?.replayArchiveRevision || null;
+                if (revision) game.replayArchiveRevision = revision;
+                else delete game.replayArchiveRevision;
+            }
+
             function renderCurrentReplay({ resetInputs = true, keepSectionVisible = false } = {}) {
-                const linkedReplay = game.replayVideoFallbackDisabled === true
-                    ? null
-                    : resolveLinkedYouTubeReplay(game.replayVideo);
-                const hasOtherReplay = hasGameReplayArchiveEvidence(game) && !linkedReplay;
+                const linkedReplay = managementState?.state === 'ready'
+                    ? managementState.replayVideo
+                    : null;
                 if (linkedReplay) {
-                    const replayTitle = String(game.replayVideo?.title || defaultTitle).trim() || defaultTitle;
+                    const replayTitle = String(linkedReplay.title || defaultTitle).trim() || defaultTitle;
                     current.innerHTML = `
                         <span class="font-semibold text-gray-700">Linked:</span>
                         <a href="${escapeHtml(linkedReplay.publicUrl)}" target="_blank" rel="noopener noreferrer"
@@ -675,16 +642,16 @@
                     return;
                 }
 
-                current.textContent = hasOtherReplay
-                    ? 'A non-YouTube replay is attached. Linking here will replace it.'
-                    : 'No YouTube replay linked.';
-                saveButton.textContent = hasOtherReplay ? 'Replace with YouTube replay' : 'Link replay';
+                current.textContent = managementStateComplete
+                    ? 'No YouTube replay linked.'
+                    : 'Checking the current replay…';
+                saveButton.textContent = 'Link replay';
                 removeButton.classList.toggle('hidden', !canRemoveCurrentReplay());
                 if (resetInputs) {
                     urlInput.value = '';
-                    titleInput.value = String(game.replayVideo?.title || defaultTitle).trim() || defaultTitle;
+                    titleInput.value = defaultTitle;
                 }
-                if (!canLinkReplayVideo && !hasGameReplayArchiveEvidence(game) && !keepSectionVisible) {
+                if (!canLinkReplayVideo && managementStateComplete && managementState?.state !== 'ready' && !keepSectionVisible) {
                     section.classList.add('hidden');
                 }
                 if (keepSectionVisible) {
@@ -693,64 +660,26 @@
                 }
             }
 
-            async function persistReplayVideo(nextReplayVideo) {
-                const expectedFingerprint = fingerprintGameReplayArchiveState(game);
-                try {
-                    await runTransaction(db, async (transaction) => {
-                        const gameRef = doc(db, 'teams', teamId, 'games', gameId);
-                        const snapshot = await transaction.get(gameRef);
-                        if (!snapshot.exists()) {
-                            const error = new Error('This game is no longer available.');
-                            error.code = 'replay-game-missing';
-                            throw error;
-                        }
-
-                        const latestGame = snapshot.data() || {};
-                        if (!isCanonicalReplayMutationTarget(latestGame)) {
-                            const error = new Error('This game is now part of a shared schedule.');
-                            error.code = 'replay-game-shared';
-                            throw error;
-                        }
-                        if (nextReplayVideo && !isCompletedGameForReplay(latestGame)) {
-                            const error = new Error('This game is no longer final.');
-                            error.code = 'replay-game-not-final';
-                            throw error;
-                        }
-                        if (fingerprintGameReplayArchiveState(latestGame) !== expectedFingerprint) {
-                            const error = new Error('The linked replay changed.');
-                            error.code = 'replay-conflict';
-                            error.latestReplayArchiveState = getGameReplayArchiveState(latestGame);
-                            throw error;
-                        }
-
-                        const replayUpdate = {
-                            replayVideo: nextReplayVideo,
-                            updatedAt: new Date()
-                        };
-                        GAME_REPLAY_CLEAR_FIELDS.forEach((field) => {
-                            replayUpdate[field] = deleteField();
-                        });
-                        replayUpdate.replayVideoFallbackDisabled = nextReplayVideo ? deleteField() : true;
-                        transaction.update(gameRef, replayUpdate);
-                    });
-                } catch (error) {
-                    if (error?.code === 'replay-conflict') {
-                        applyGameReplayArchiveState(game, error.latestReplayArchiveState);
-                        renderCurrentReplay();
-                        updateReplayReportAction({ teamId, gameId, game, team });
-                        setReplayVideoStatus(status, 'The linked replay changed since this report loaded. Review the current replay before trying again.', { error: true });
-                        return false;
-                    }
-                    if (['replay-game-missing', 'replay-game-not-final', 'replay-game-shared'].includes(error?.code)) {
-                        setReplayVideoStatus(status, `${error.message} Refresh this report before trying again.`, { error: true });
-                        return false;
-                    }
-                    throw error;
-                }
-                return true;
-            }
-
+            setBusy(true);
             renderCurrentReplay();
+            try {
+                managementState = await gameReplayService.readManagement({ teamId, gameId });
+                managementStateComplete = true;
+                applySafeReplayMarkers(managementState);
+                renderCurrentReplay();
+                updateReplayReportAction({ teamId, gameId, game, team });
+                setReplayVideoStatus(status, '');
+            } catch (error) {
+                console.error('Error loading replay management state:', error);
+                current.textContent = 'The current replay could not be loaded.';
+                setReplayVideoStatus(status, 'Replay controls are unavailable until the current state can be verified. Refresh this report to retry.', { error: true });
+                return;
+            } finally {
+                // A failed initial read is unknown state, not an empty archive.
+                // Keep every mutation control disabled until a complete
+                // server-authoritative state can be loaded on refresh.
+                setBusy(!managementStateComplete);
+            }
 
             form.addEventListener('submit', async (event) => {
                 event.preventDefault();
@@ -773,37 +702,27 @@
                     return;
                 }
 
-                const replayVideo = buildYouTubeReplayVideo(rawUrl, {
-                    title: replayTitle,
-                    linkedBy: currentUser.uid,
-                    linkedAt: new Date()
-                });
-                if (!replayVideo) {
-                    setReplayVideoStatus(status, 'This YouTube link could not be prepared. Check the link and try again.', { error: true });
-                    urlInput.focus();
-                    return;
-                }
-                const replacesOtherProvider = hasGameReplayArchiveEvidence(game)
-                    && (game.replayVideoFallbackDisabled === true || !resolveLinkedYouTubeReplay(game.replayVideo));
-                if (replacesOtherProvider && !window.confirm('Replace the existing non-YouTube replay with this YouTube video?')) {
-                    return;
-                }
-
                 setBusy(true);
                 setReplayVideoStatus(status, 'Saving replay…');
                 try {
-                    const saved = await persistReplayVideo(replayVideo);
-                    if (!saved) return;
-                    applyGameReplayArchiveState(game, {
-                        replayVideo,
-                        ...(Object.hasOwn(game, 'videoUrl') ? { videoUrl: game.videoUrl } : {})
+                    managementState = await gameReplayService.setReplay({
+                        teamId,
+                        gameId,
+                        expectedRevision: managementState?.replayArchiveRevision || getRecordedReplayRevision(game),
+                        youtubeUrl: rawUrl,
+                        title: replayTitle
                     });
+                    managementStateComplete = true;
+                    applySafeReplayMarkers(managementState);
                     renderCurrentReplay();
                     updateReplayReportAction({ teamId, gameId, game, team });
                     setReplayVideoStatus(status, 'Replay linked. The Watch Replay button now opens this video.');
                 } catch (error) {
                     console.error('Error linking YouTube replay:', error);
-                    setReplayVideoStatus(status, 'Could not confirm whether the replay was saved. Refresh this report and check the linked replay before trying again.', { error: true });
+                    const conflict = ['functions/aborted', 'aborted', 'functions/failed-precondition', 'failed-precondition'].includes(String(error?.code || ''));
+                    setReplayVideoStatus(status, conflict
+                        ? 'The linked replay changed since this report loaded. Refresh and review the current replay before trying again.'
+                        : (error?.message || 'Could not confirm whether the replay was saved. Refresh this report and check the linked replay before trying again.'), { error: true });
                 } finally {
                     setBusy(false);
                 }
@@ -816,20 +735,23 @@
                 setBusy(true);
                 setReplayVideoStatus(status, 'Removing replay…');
                 try {
-                    const removed = await persistReplayVideo(null);
-                    if (!removed) return;
-                    applyGameReplayArchiveState(game, {
-                        replayVideo: null,
-                        replayVideoFallbackDisabled: true,
-                        ...(Object.hasOwn(game, 'videoUrl') ? { videoUrl: game.videoUrl } : {})
+                    managementState = await gameReplayService.removeReplay({
+                        teamId,
+                        gameId,
+                        expectedRevision: managementState?.replayArchiveRevision || getRecordedReplayRevision(game)
                     });
+                    managementStateComplete = true;
+                    applySafeReplayMarkers(managementState);
                     renderCurrentReplay({ keepSectionVisible: !canLinkReplayVideo });
                     updateReplayReportAction({ teamId, gameId, game, team });
                     setReplayVideoStatus(status, 'Replay removed from this game. The source video was not deleted.');
                     if (!canLinkReplayVideo) heading.focus();
                 } catch (error) {
                     console.error('Error removing YouTube replay:', error);
-                    setReplayVideoStatus(status, 'Could not confirm whether the replay was removed. Refresh this report and check the linked replay before trying again.', { error: true });
+                    const conflict = ['functions/aborted', 'aborted', 'functions/failed-precondition', 'failed-precondition'].includes(String(error?.code || ''));
+                    setReplayVideoStatus(status, conflict
+                        ? 'The linked replay changed since this report loaded. Refresh and review the current replay before trying again.'
+                        : (error?.message || 'Could not confirm whether the replay was removed. Refresh this report and check the linked replay before trying again.'), { error: true });
                 } finally {
                     setBusy(false);
                 }
@@ -1922,7 +1844,7 @@ Write the match report now:`;
                 }, 100);
 
                 renderHighlightsSection(game, players, teamId, gameId);
-                setupReplayVideoControls({ teamId, gameId, game, team: resolvedTeam });
+                void setupReplayVideoControls({ teamId, gameId, game, team: resolvedTeam });
                 setupStatSheetControls(teamId, gameId, game);
 
                 // Fetch Aggregated Stats

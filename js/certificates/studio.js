@@ -1,4 +1,4 @@
-import { checkAuth } from '../auth.js?v=4433199';
+import { checkAuth } from '../auth.js?v=4433200';
 import {
     getTeam,
     getUserProfile,
@@ -22,8 +22,8 @@ import {
     archiveCertificate,
     canAccessCertificates,
     canViewSavedCertificate
-} from '../db.js?v=4433195';
-import { renderHeader, renderFooter, escapeHtml, shareOrCopy } from '../utils.js?v=443371';
+} from '../db.js?v=4433196';
+import { renderHeader, renderFooter, escapeHtml, shareOrCopy } from '../utils.js?v=443372';
 import { renderTeamAdminBanner, getTeamAccessInfo } from '../team-admin-banner.js?v=443347';
 import { TEMPLATES } from './templates.js?v=2';
 import { CERTIFICATE_FONT_OPTIONS, renderCertificate, createPreviewDraft, resolveColors, getContrastWarning } from './renderer.js?v=2';
@@ -926,7 +926,7 @@ function bindSetupEvents() {
                 renderSetup();
                 schedulePreviewRender();
 
-                const { uploadCertificateAsset } = await import('./assets.js?v=13');
+                const { uploadCertificateAsset } = await import('./assets.js?v=14');
                 const asset = await uploadCertificateAsset(state.teamId, file, kind, state.user?.uid || null);
                 state.assets.unshift(asset);
                 state.shared[slot] = asset;
@@ -971,7 +971,7 @@ function bindSetupEvents() {
             const index = Number(input.dataset.signatureUpload);
             const previousSigner = { ...state.shared.signers[index] };
             try {
-                const { deleteSignatureImage, uploadSignatureImage } = await import('./assets.js?v=13');
+                const { deleteSignatureImage, uploadSignatureImage } = await import('./assets.js?v=14');
                 const result = await uploadSignatureImage(state.teamId, file);
                 state.shared.signers[index].signatureStyle = 'image';
                 state.shared.signers[index].signatureImageUrl = result.url;

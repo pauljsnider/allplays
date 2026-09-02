@@ -33,15 +33,12 @@ describe('player video clips tab', () => {
                 id: 'game-1',
                 opponentName: 'Tigers',
                 date: '2026-04-25',
-                replayVideo: {
-                    url: 'https://cdn.example.com/replay.mp4',
-                    posterUrl: 'https://cdn.example.com/poster.jpg',
-                    highlights: [
-                        { id: 'clip-1', playerIds: ['player-1'], title: 'Fast break', playDescription: 'Layup', startMs: 1000, endMs: 9000 },
-                        { id: 'clip-2', playerIds: ['player-1'], title: 'Bad range' },
-                        { id: 'clip-3', playerIds: ['player-2'], title: 'Other player', startMs: 0, endMs: 5000 }
-                    ]
-                },
+                hasRecordedReplay: true,
+                replayHighlights: [
+                    { id: 'clip-1', playerIds: ['player-1'], title: 'Fast break', playDescription: 'Layup', startMs: 1000, endMs: 9000 },
+                    { id: 'clip-2', playerIds: ['player-1'], title: 'Bad range' },
+                    { id: 'clip-3', playerIds: ['player-2'], title: 'Other player', startMs: 0, endMs: 5000 }
+                ],
                 gameClips: [
                     { id: 'clip-4', playerId: 'player-1', title: 'Corner three', videoUrl: 'https://video.example.com/clip-4.mp4', thumbnailUrl: 'https://video.example.com/thumb.jpg' },
                     { id: 'clip-5', playerId: 'player-1', title: 'Unsafe', videoUrl: 'javascript:alert(1)' }
@@ -71,7 +68,7 @@ describe('player video clips tab', () => {
                 gameDate: '4/25/2026',
                 playLabel: 'Three pointer',
                 url: 'live-game.html?teamId=team-1&gameId=game-1&replay=true&clipStart=10000&clipEnd=35000',
-                thumbnailUrl: 'https://cdn.example.com/poster.jpg',
+                thumbnailUrl: '',
                 gameLabel: 'Tigers'
             },
             {
@@ -80,7 +77,7 @@ describe('player video clips tab', () => {
                 gameDate: '4/25/2026',
                 playLabel: 'Highlight',
                 url: 'live-game.html?teamId=team-1&gameId=game-1&replay=true&clipStart=40000&clipEnd=52000',
-                thumbnailUrl: 'https://cdn.example.com/poster.jpg',
+                thumbnailUrl: '',
                 gameLabel: 'Tigers'
             },
             {
@@ -89,13 +86,13 @@ describe('player video clips tab', () => {
                 gameDate: '4/25/2026',
                 playLabel: 'Layup',
                 url: 'live-game.html?teamId=team-1&gameId=game-1&replay=true&clipStart=1000&clipEnd=9000',
-                thumbnailUrl: 'https://cdn.example.com/poster.jpg',
+                thumbnailUrl: '',
                 gameLabel: 'Tigers'
             }
         ]);
     });
 
-    it('does not synthesize player replay clips after every replay alias is cleared', () => {
+    it('does not synthesize timed replay routes from retired provider aliases', () => {
         const game = {
             id: 'game-legacy',
             replayVideoPublicUrl: 'https://video.example.com/legacy-replay',
@@ -104,9 +101,15 @@ describe('player video clips tab', () => {
             ]
         };
 
-        expect(collectPlayerVideoClips([game], { teamId: 'team-1', playerId: 'player-1' })).toHaveLength(1);
+        expect(collectPlayerVideoClips([game], { teamId: 'team-1', playerId: 'player-1' })).toEqual([]);
 
         GAME_REPLAY_ARCHIVE_FIELDS.forEach((field) => delete game[field]);
         expect(collectPlayerVideoClips([game], { teamId: 'team-1', playerId: 'player-1' })).toEqual([]);
+
+        game.hasRecordedReplay = true;
+        expect(collectPlayerVideoClips([game], { teamId: 'team-1', playerId: 'player-1' })[0]).toMatchObject({
+            id: 'clip-legacy',
+            url: 'live-game.html?teamId=team-1&gameId=game-legacy&replay=true&clipStart=1000&clipEnd=5000'
+        });
     });
 });

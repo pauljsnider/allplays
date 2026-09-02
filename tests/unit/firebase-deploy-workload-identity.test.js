@@ -151,7 +151,7 @@ describe('Firebase deploy Workload Identity boundary', () => {
         expect(production.slice(storageAuth, storageDeploy)).not.toContain('run:');
         expect(production.slice(productionAuth, productionDeploy)).not.toContain('run:');
         expect(production.slice(storageDeploy, storageCleanup)).toContain('timeout-minutes: 4');
-        expect(production.slice(productionDeploy)).toContain('timeout-minutes: 30');
+        expect(production.slice(productionDeploy)).toContain('timeout-minutes: 60');
         const oidcJobs = workflowJobs(production).filter((job) => job.permissions?.['id-token'] === 'write');
         expect(oidcJobs).toHaveLength(2);
         for (const oidcJob of oidcJobs) {
@@ -180,14 +180,22 @@ describe('Firebase deploy Workload Identity boundary', () => {
         const targetMatch = production.match(/retry_enabled_function_targets="([^"]+)"/);
         const inventoryProducerMatch = production.match(/retry_enabled_inventory_producer_target="([^"]+)"/);
         const cleanupCompatibilityMatch = production.match(/retry_enabled_cleanup_compatibility_target="([^"]+)"/);
+        const replayCleanupCompatibilityMatch = production.match(/replay_archive_cleanup_compatibility_targets="([^"]+)"/);
+        const standaloneRetryTargetMatch = production.match(
+            /firebase_cli" deploy --only (functions:syncLegacyTeamOwnershipOnAuthCreate)[^\n]*--force/
+        );
         expect(targetMatch).not.toBeNull();
         expect(inventoryProducerMatch).not.toBeNull();
         expect(cleanupCompatibilityMatch).not.toBeNull();
+        expect(replayCleanupCompatibilityMatch).not.toBeNull();
+        expect(standaloneRetryTargetMatch).not.toBeNull();
 
         const targets = new Set([
             ...targetMatch[1].split(','),
             inventoryProducerMatch[1],
-            cleanupCompatibilityMatch[1]
+            cleanupCompatibilityMatch[1],
+            ...replayCleanupCompatibilityMatch[1].split(','),
+            standaloneRetryTargetMatch[1]
         ]);
         const retryEnabledExports = new Set();
         for (const match of functionsSource.matchAll(
@@ -206,7 +214,6 @@ describe('Firebase deploy Workload Identity boundary', () => {
             retryEnabledExports.add(`functions:${match[1]}`);
         }
 
-        expect(retryEnabledExports.size).toBe(40);
         expect([...targets].sort()).toEqual([...retryEnabledExports].sort());
         expect(production.indexOf('"retry-enabled-functions"')).toBeLessThan(
             production.lastIndexOf('retry_firebase_deploy "hosting,functions" "application"')

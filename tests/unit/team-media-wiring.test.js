@@ -83,8 +83,10 @@ describe('team media page wiring', () => {
         expect(rules).toContain('allow create, delete: if canManageTeamMedia(teamId);');
         expect(rules).toContain('allow update: if canManageTeamMedia(teamId) || isTeamMediaUploadCounterUpdate(teamId);');
         expect(rules).toContain('allow read: if canReadTeamMediaItem(teamId, resource.data);');
-        expect(rules).toContain('allow create: if canManageTeamMedia(teamId) || isTeamMediaUploadCreate(teamId, request.resource.data);');
-        expect(rules).toContain('allow update: if canManageTeamMedia(teamId) || isOwnTeamMediaUploadSoftDelete(teamId) || isTeamMediaTitleUpdate(teamId);');
+        expect(rules).toContain('allow create: if !request.resource.data.keys().hasAny(teamMediaVideoUrlFields()) &&');
+        expect(rules).toContain('(canManageTeamMedia(teamId) || isTeamMediaUploadCreate(teamId, request.resource.data));');
+        expect(rules).toContain(".hasAny(teamMediaVideoUrlFields().concat(['type', 'mediaType'])) &&");
+        expect(rules).toContain('(canManageTeamMedia(teamId) || isOwnTeamMediaUploadSoftDelete(teamId) || isTeamMediaTitleUpdate(teamId));');
         expect(rules).toContain("teamPermission(teamId, 'teamMediaManagement').get('mode', '') == 'selected'");
         expect(rules).toContain("folderData.get('visibility', 'team') == 'team'");
         expect(rules).toContain("get(folderPath).data.get('visibility', 'team') == 'team'");

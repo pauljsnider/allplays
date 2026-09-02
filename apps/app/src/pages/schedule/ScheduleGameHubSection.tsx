@@ -60,7 +60,8 @@ import type { PracticeFeedItem } from '../../lib/gameWrapupService';
 import type { PracticeTimelineBlock, PracticeTimelineDrillOption } from '../../lib/practiceTimelineService';
 import type { TrackStatsheetReviewRow } from '../../lib/statsheetImportService';
 import type { AuthState } from '../../lib/types';
-import { isActiveGameForLive, type ReplayArchiveState, type YouTubeReplayVideo } from '../../lib/youtubeReplay';
+import type { SafeReplayArchiveState } from '../../lib/replayArchiveService';
+import { isActiveGameForLive } from '../../lib/youtubeReplay';
 import { createLogger } from '../../lib/logger';
 import { useScheduleEventDetailContext } from './ScheduleEventDetailContext';
 
@@ -867,7 +868,7 @@ function GameHubLiveClockBadge({ event }: { event: ParentScheduleEvent }) {
   );
 }
 
-export function ScheduleGameHubSection({ auth, event, childEvents, requestedPanel, onPanelChange, onScoreUpdated, onLiveClockUpdated, onWrapupCompleted, onStatsheetImported, onGameCancelled, onPracticeOccurrenceCancelled, onGamePlanPublished, onReplayVideoUpdated }: {
+export function ScheduleGameHubSection({ auth, event, childEvents, requestedPanel, onPanelChange, onScoreUpdated, onLiveClockUpdated, onWrapupCompleted, onStatsheetImported, onGameCancelled, onPracticeOccurrenceCancelled, onGamePlanPublished, onReplayArchiveUpdated }: {
   auth: AuthState;
   event: ParentScheduleEvent;
   childEvents: ParentScheduleEvent[];
@@ -880,7 +881,7 @@ export function ScheduleGameHubSection({ auth, event, childEvents, requestedPane
   onGameCancelled: () => void;
   onPracticeOccurrenceCancelled: () => void;
   onGamePlanPublished: (gamePlan: Record<string, any>) => void;
-  onReplayVideoUpdated: (replayVideo: YouTubeReplayVideo | null, replayState: ReplayArchiveState) => void;
+  onReplayArchiveUpdated: (replayState: SafeReplayArchiveState) => void;
 }) {
   const { isDesktopWeb } = useShellLayout();
   const [shareStatus, setShareStatus] = useState<string | null>(null);
@@ -1046,7 +1047,7 @@ export function ScheduleGameHubSection({ auth, event, childEvents, requestedPane
       {showNonAdminPracticePacketFirst ? <PracticePacketSection auth={auth} event={event} childEvents={childEvents} /> : null}
       {showAdminPracticeTimeline ? <PracticeTimelineSection auth={auth} event={event} /> : null}
       {!isPractice && event.isTeamAdmin && event.isDbGame && !event.isCancelled ? <GameScheduleEditPanel auth={auth} event={event} /> : null}
-      {!isPractice ? <GameReplayEditor auth={auth} event={event} onReplayVideoUpdated={onReplayVideoUpdated} /> : null}
+      {!isPractice ? <GameReplayEditor auth={auth} event={event} onReplayArchiveUpdated={onReplayArchiveUpdated} /> : null}
       {isPractice && event.isTeamAdmin && event.isDbGame && !event.isCancelled ? <PracticeScheduleEditPanel auth={auth} event={event} /> : null}
       {isPractice && event.isTeamAdmin && event.isDbGame && !event.isCancelled ? <StaffPracticePacketEditor auth={auth} event={event} childEvents={childEvents} /> : null}
       {isPractice && !showNonAdminPracticePacketFirst ? <PracticePacketSection auth={auth} event={event} childEvents={childEvents} /> : null}

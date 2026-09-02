@@ -49,45 +49,37 @@ describe('legacy game report YouTube replay management', () => {
         expect(html).toContain("return value !== null && value !== undefined && value !== '';");
         expect(html).toContain('&& !hasReplayShareMarker(game?.sharedScheduleId)');
         expect(html).toContain('&& !hasReplayShareMarker(game?.sharedGameId)');
-        expect(html).toContain('(!canLinkReplayVideo && !canRemoveCurrentReplay())');
+        expect(html).toContain('(!canLinkReplayVideo && !canRemoveReplayVideoOutsideFinal)');
+        expect(html).toContain("managementState = await gameReplayService.readManagement({ teamId, gameId });");
         expect(html).toContain('setupReplayVideoControls({ teamId, gameId, game, team: resolvedTeam });');
     });
 
-    it('normalizes and persists one canonical replayVideo field for link, replace, and removal', () => {
+    it('normalizes and manages replay state only through the private callable service', () => {
         const html = readGameReport();
 
-        expect(html).toMatch(/import \{[^}]*buildYouTubeReplayVideo[^}]*fingerprintGameReplayArchiveState[^}]*hasGameReplayArchiveEvidence[^}]*normalizeYouTubeReplayUrl[^}]*\} from '\.\/js\/game-replay-video\.js\?v=\d+';/);
+        expect(html).toContain("import { gameReplayService, getRecordedReplayRevision, hasRecordedReplayMarker } from './js/game-replay-service.js?v=2';");
         expect(html).toContain('if (!normalizeYouTubeReplayUrl(rawUrl))');
-        expect(html).toContain('normalizedCandidates.some((candidate) => !candidate)');
-        expect(html).toContain('return videoIds.size === 1 ? normalizedCandidates[0] : null;');
-        expect(html).toMatch(/buildYouTubeReplayVideo\(rawUrl, \{\s*title: replayTitle,\s*linkedBy: currentUser\.uid,\s*linkedAt: new Date\(\)\s*\}\)/);
-        expect(html).toContain("window.confirm('Replace the existing non-YouTube replay with this YouTube video?')");
-        expect(html).toContain('const saved = await persistReplayVideo(replayVideo);');
-        expect(html).toContain('const removed = await persistReplayVideo(null);');
+        expect(html).toContain('managementState = await gameReplayService.setReplay({');
+        expect(html).toContain('expectedRevision: managementState?.replayArchiveRevision || getRecordedReplayRevision(game)');
+        expect(html).toContain('youtubeUrl: rawUrl');
+        expect(html).toContain('managementState = await gameReplayService.removeReplay({');
         expect(html).toContain("saveButton.textContent = 'Replace replay';");
         expect(html).toContain("removeButton.classList.toggle('hidden', !canRemoveCurrentReplay());");
-        expect(html).toContain('const linkedReplay = game.replayVideoFallbackDisabled === true');
+        expect(html).toContain("const linkedReplay = managementState?.state === 'ready'");
         expect(html).toContain("window.confirm('Remove the replay from this game? The source video will remain with its provider.')");
-        expect(html).toContain('GAME_REPLAY_CLEAR_FIELDS.forEach((field) => {');
-        expect(html).toContain('replayUpdate[field] = deleteField();');
-        expect(html).toContain('replayUpdate.replayVideoFallbackDisabled = nextReplayVideo ? deleteField() : true;');
+        expect(html).not.toContain('runTransaction(db');
+        expect(html).not.toContain('transaction.update(gameRef');
+        expect(html).not.toContain('game.replayVideo =');
     });
 
-    it('revalidates stale state and never reports an uncertain write as success', () => {
+    it('requires an authoritative initial read and never reports an uncertain write as success', () => {
         const html = readGameReport();
 
-        expect(html).toContain('await runTransaction(db, async (transaction) => {');
-        expect(html).toContain("const gameRef = doc(db, 'teams', teamId, 'games', gameId);");
-        expect(html).toContain('const snapshot = await transaction.get(gameRef);');
-        expect(html).toContain('fingerprintGameReplayArchiveState(latestGame) !== expectedFingerprint');
-        expect(html).toContain('applyGameReplayArchiveState(game, error.latestReplayArchiveState)');
-        expect(html).toContain("...(Object.hasOwn(game, 'videoUrl') ? { videoUrl: game.videoUrl } : {})");
-        expect(html).not.toContain("if (!Object.hasOwn(archiveState, 'videoUrl')");
-        expect(html).toContain('if (nextReplayVideo && !isCompletedGameForReplay(latestGame))');
-        expect(html).toContain('if (!isCanonicalReplayMutationTarget(latestGame))');
-        expect(html).toContain("error.code = 'replay-game-shared';");
-        expect(html).toContain('transaction.update(gameRef, replayUpdate);');
-        expect(html).toContain('The linked replay changed since this report loaded. Review the current replay before trying again.');
+        expect(html).toContain('managementStateComplete = false;');
+        expect(html).toContain('Replay controls are unavailable until the current state can be verified. Refresh this report to retry.');
+        expect(html).toContain('setBusy(!managementStateComplete);');
+        expect(html).toContain("['functions/aborted', 'aborted', 'functions/failed-precondition', 'failed-precondition']");
+        expect(html).toContain('The linked replay changed since this report loaded. Refresh and review the current replay before trying again.');
         expect(html).toContain('Could not confirm whether the replay was saved. Refresh this report and check the linked replay before trying again.');
         expect(html).toContain('Could not confirm whether the replay was removed. Refresh this report and check the linked replay before trying again.');
         expect(html).toContain('updateReplayReportAction({ teamId, gameId, game, team });');
@@ -104,7 +96,7 @@ describe('legacy game report YouTube replay management', () => {
     it('does not promote an attached highlight clip to a full-game replay action', () => {
         const html = readGameReport();
 
-        expect(html).toContain('replayOptions.hasVideo && replayOptions.isRecordedReplay === true');
+        expect(html).toContain('hasRecordedReplayMarker(game) || hasCompletedTimelineReplay');
         expect(html).toContain('const hasCompletedTimelineReplay');
     });
 });

@@ -12,7 +12,6 @@ import {
   createParentMembershipRequest,
   createRegistrationCheckoutSession,
   createTeamMediaFolder,
-  createTeamMediaLink,
   db,
   deleteTeamMediaItem,
   discoverPublicTeams,
@@ -71,6 +70,7 @@ import { listParentTeamFeeRecipientsForApp } from './parentFeeRecipientsService'
 import { loadParentScheduleSummary } from './homeService';
 import { formatEventDateLabel, formatEventTimeLabel, getScheduleLocationLabel, getScheduleTitle, type ParentScheduleEvent } from './scheduleLogic';
 import type { AuthUser } from './types';
+import { createTeamMediaVideoLink, removeTeamMediaVideoLink } from './adapters/legacyStructuredMediaWrite';
 
 const legacyOrigin = 'https://allplays.ai';
 
@@ -274,8 +274,20 @@ export type TeamMediaModel = {
   folders: TeamMediaFolder[];
 };
 
+function isTeamMediaVideoLinkItem(item: TeamMediaItem) {
+  return [item?.type, item?.mediaType]
+    .some((value) => compactString(value).toLowerCase().replace(/-/g, '_') === 'video_link');
+}
+
 export async function deleteTeamMediaItemForApp(teamId: string, item: TeamMediaItem) {
   if (!teamId || !item?.id) throw new Error('Missing team or media item ID.');
+  if (isTeamMediaVideoLinkItem(item)) {
+    await removeTeamMediaVideoLink({
+      teamId,
+      targetId: item.id
+    });
+    return;
+  }
   await deleteTeamMediaItem(teamId, item);
 }
 
@@ -300,7 +312,7 @@ export async function bulkDeleteTeamMediaItemsForApp(teamId: string, items: Team
   const itemsToDelete = Array.isArray(items) ? items.filter((item) => compactString(item?.id)) : [];
   if (!teamId) throw new Error('Missing team ID.');
   if (!itemsToDelete.length) throw new Error('Select at least one media item to delete.');
-  await Promise.all(itemsToDelete.map((item) => deleteTeamMediaItem(teamId, item)));
+  await Promise.all(itemsToDelete.map((item) => deleteTeamMediaItemForApp(teamId, item)));
 }
 
 export function getLegacyUrl(path: string, params: Record<string, string> = {}, hashParams: Record<string, string> = {}) {
@@ -903,10 +915,13 @@ export async function createTeamMediaAlbumForApp(teamId: string, draft: { name: 
 
 export async function addParentTeamMediaLink(teamId: string, folderId: string, title: string, url: string) {
   const normalized = normalizeTeamMediaVideoDraft({ title, url });
-  return createTeamMediaLink(teamId, folderId, {
+  const result = await createTeamMediaVideoLink({
+    teamId,
+    folderId,
     title: normalized.title,
     url: normalized.url
   });
+  return result.targetId;
 }
 
 function normalizeAccessTeams(teams: any[]): ParentAccessTeam[] {

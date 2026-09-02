@@ -104,16 +104,18 @@ async function installMocks(page, scenario, { delayedAuth = false, accessLevel =
 
         export async function getGame() {
             const game = clone(loadStore().game);
-            const linkedAt = game?.replayVideo?.linkedAt;
-            if (typeof linkedAt === 'string' && !Number.isNaN(Date.parse(linkedAt))) {
-                const millis = Date.parse(linkedAt);
-                game.replayVideo.linkedAt = {
-                    seconds: Math.floor(millis / 1000),
-                    nanoseconds: (millis % 1000) * 1000000,
-                    toDate() {
-                        return new Date(millis);
-                    }
-                };
+            [
+                'replayVideo', 'recordedVideo', 'videoReplay', 'replayVideoUrl',
+                'recordedVideoUrl', 'videoReplayUrl', 'archivedVideoUrl',
+                'replayVideoPublicUrl', 'replayVideoPosterUrl', 'replayVideoTitle',
+                'replayVideoDurationMs', 'replayStatus', 'recordedReplayStatus',
+                'videoReplayStatus', 'replayVideoFallbackDisabled', 'isPublicProjection'
+            ].forEach((field) => delete game[field]);
+            const status = String(game.status || '').toLowerCase();
+            const liveStatus = String(game.liveStatus || '').toLowerCase();
+            if (['completed', 'final'].includes(status)
+                && (!liveStatus || ['scheduled', 'completed', 'final'].includes(liveStatus))) {
+                delete game.videoUrl;
             }
             return game;
         }
@@ -416,6 +418,108 @@ async function installMocks(page, scenario, { delayedAuth = false, accessLevel =
         export function hasCompletedReplayLifecycle() { return true; }
     `;
 
+    const replayServiceModule = `
+        const STORE_KEY = ${JSON.stringify(STORE_KEY)};
+        function loadStore() { return JSON.parse(localStorage.getItem(STORE_KEY) || '{}'); }
+        function saveStore(store) { localStorage.setItem(STORE_KEY, JSON.stringify(store)); }
+        function clone(value) { return JSON.parse(JSON.stringify(value)); }
+        function getRevision(store) { return store.replayArchive?.revision || null; }
+        function getVideoId(value) {
+            const url = new URL(String(value || ''));
+            const host = url.hostname.toLowerCase().replace(/^www\./, '');
+            if (host === 'youtu.be') return url.pathname.split('/').filter(Boolean)[0] || '';
+            if (host === 'youtube.com' || host === 'm.youtube.com') return url.searchParams.get('v') || '';
+            return '';
+        }
+        function scrubReadableReplayFields(game) {
+            [
+                'replayVideo', 'recordedVideo', 'videoReplay', 'replayVideoUrl',
+                'recordedVideoUrl', 'videoReplayUrl', 'archivedVideoUrl',
+                'replayVideoPublicUrl', 'replayVideoPosterUrl', 'replayVideoTitle',
+                'replayVideoDurationMs', 'replayStatus', 'recordedReplayStatus',
+                'videoReplayStatus', 'replayVideoFallbackDisabled', 'videoUrl'
+            ].forEach((field) => delete game[field]);
+        }
+        function serialize(store) {
+            const archive = store.replayArchive;
+            if (!archive) {
+                return { state: 'none', hasRecordedReplay: false, replayArchiveRevision: null, replayVideo: null };
+            }
+            const ready = archive.state === 'ready';
+            return {
+                state: archive.state,
+                hasRecordedReplay: ready,
+                replayArchiveRevision: archive.revision,
+                replayVideo: ready ? {
+                    provider: 'youtube',
+                    videoId: archive.videoId,
+                    embedUrl: 'https://www.youtube.com/embed/' + archive.videoId,
+                    publicUrl: 'https://www.youtube.com/watch?v=' + archive.videoId,
+                    title: archive.title || null
+                } : null
+            };
+        }
+        function recordCall(store, method, options) {
+            store.replayServiceCalls = [...(store.replayServiceCalls || []), { method, options: clone(options) }];
+        }
+        export function hasRecordedReplayMarker(game = {}) {
+            return game.hasRecordedReplay === true || game.hasReplayVideo === true;
+        }
+        export function getRecordedReplayRevision(game = {}) {
+            return typeof game.replayArchiveRevision === 'string' ? game.replayArchiveRevision : null;
+        }
+        export const gameReplayService = {
+            async readManagement(options) {
+                const store = loadStore();
+                recordCall(store, 'read', options);
+                saveStore(store);
+                if (store.failReplayManagementRead) throw new Error('management state unavailable');
+                return serialize(store);
+            },
+            async setReplay(options) {
+                const store = loadStore();
+                recordCall(store, 'set', options);
+                if (store.game?.sharedScheduleId || store.game?.sharedScheduleOpponentGameId) {
+                    saveStore(store);
+                    const error = new Error('Replay links must be managed on the original team game, not a shared schedule copy.');
+                    error.code = 'functions/failed-precondition';
+                    throw error;
+                }
+                if ((options.expectedRevision || null) !== getRevision(store)) {
+                    saveStore(store);
+                    const error = new Error('The replay changed since it was loaded.');
+                    error.code = 'functions/aborted';
+                    throw error;
+                }
+                const videoId = getVideoId(options.youtubeUrl);
+                const nextRevision = 'r:' + String((store.replayRevisionCounter || 0) + 1);
+                store.replayRevisionCounter = (store.replayRevisionCounter || 0) + 1;
+                store.replayArchive = { state: 'ready', revision: nextRevision, videoId, title: options.title || null };
+                store.game = { ...(store.game || {}), hasRecordedReplay: true, replayArchiveRevision: nextRevision };
+                scrubReadableReplayFields(store.game);
+                saveStore(store);
+                return serialize(store);
+            },
+            async removeReplay(options) {
+                const store = loadStore();
+                recordCall(store, 'remove', options);
+                if ((options.expectedRevision || null) !== getRevision(store)) {
+                    saveStore(store);
+                    const error = new Error('The replay changed since it was loaded.');
+                    error.code = 'functions/aborted';
+                    throw error;
+                }
+                const nextRevision = 'r:' + String((store.replayRevisionCounter || 0) + 1);
+                store.replayRevisionCounter = (store.replayRevisionCounter || 0) + 1;
+                store.replayArchive = { state: 'removed', revision: nextRevision };
+                store.game = { ...(store.game || {}), hasRecordedReplay: false, replayArchiveRevision: nextRevision };
+                scrubReadableReplayFields(store.game);
+                saveStore(store);
+                return serialize(store);
+            }
+        };
+    `;
+
     await page.route(/\/js\/db\.js\?v=\d+$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: dbModule }));
     await page.route(/\/js\/firebase\.js\?v=\d+$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: firebaseModule }));
     await page.route(/\/js\/utils\.js\?v=\d+$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: utilsModule }));
@@ -424,6 +528,7 @@ async function installMocks(page, scenario, { delayedAuth = false, accessLevel =
     await page.route(/\/js\/post-game-insights\.js\?v=\d+$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: insightsModule }));
     await page.route(/\/js\/live-game-state\.js\?v=\d+$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: liveGameStateModule }));
     await page.route(/\/js\/live-game-video\.js\?v=\d+$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: liveGameVideoModule }));
+    await page.route(/\/js\/game-replay-service\.js\?v=\d+$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: replayServiceModule }));
 }
 
 async function readStore(page) {
@@ -581,7 +686,7 @@ test('completed-game manager links, replaces, and removes a YouTube replay', asy
     const replayAdmin = page.locator('#replay-video-admin');
     const replayAction = page.locator('#replay-report-action');
     await expect(replayAdmin).toBeVisible();
-    await expect(page.locator('#replay-video-current')).toContainText('A non-YouTube replay is attached');
+    await expect(page.locator('#replay-video-current')).toContainText('No YouTube replay linked');
     await expect(replayAction).toContainText('Replay Unavailable');
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 
@@ -596,18 +701,17 @@ test('completed-game manager links, replaces, and removes a YouTube replay', asy
     await expect(replayAction.getByRole('link', { name: 'Watch Replay' })).toBeVisible();
 
     let store = await readStore(page);
-    expect(store.game.replayVideo).toMatchObject({
-        provider: 'youtube',
+    expect(store.replayArchive).toMatchObject({
+        state: 'ready',
+        revision: 'r:1',
         videoId: '0IuY8Oryi1k',
-        embedUrl: 'https://www.youtube.com/embed/0IuY8Oryi1k',
-        publicUrl: 'https://www.youtube.com/watch?v=0IuY8Oryi1k',
-        title: 'Vipers vs Captains replay',
-        status: 'ready',
-        linkedBy: 'coach-1'
+        title: 'Vipers vs Captains replay'
     });
+    expect(store.game.replayVideo).toBeUndefined();
     expect(store.game.recordedVideo).toBeUndefined();
     expect(store.game.replayVideoPublicUrl).toBeUndefined();
-    expect(store.game.videoUrl).toBe('https://youtu.be/PK1HyC37doc');
+    expect(store.game.videoUrl).toBeUndefined();
+    expect(store.game).toMatchObject({ hasRecordedReplay: true, replayArchiveRevision: 'r:1' });
 
     await page.locator('#replay-video-url').fill('https://youtu.be/dQw4w9WgXcQ?si=replacement');
     await page.locator('#replay-video-title').fill('Replacement replay');
@@ -615,39 +719,48 @@ test('completed-game manager links, replaces, and removes a YouTube replay', asy
     await expect(page.locator('#replay-video-status')).toContainText('Replay linked');
 
     store = await readStore(page);
-    expect(store.game.replayVideo).toMatchObject({
-        provider: 'youtube',
+    expect(store.replayArchive).toMatchObject({
+        state: 'ready',
+        revision: 'r:2',
         videoId: 'dQw4w9WgXcQ',
-        publicUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-        title: 'Replacement replay',
-        status: 'ready'
+        title: 'Replacement replay'
     });
+    expect(store.game.replayVideo).toBeUndefined();
 
     await page.locator('#replay-video-remove').click();
     await expect(page.locator('#replay-video-status')).toContainText('Replay removed');
     await expect(replayAction).toContainText('Replay Unavailable');
 
     store = await readStore(page);
-    expect(store.game.replayVideo).toBeNull();
+    expect(store.replayArchive).toMatchObject({ state: 'removed', revision: 'r:3' });
+    expect(store.game.replayVideo).toBeUndefined();
     expect(store.game.recordedVideo).toBeUndefined();
     expect(store.game.replayVideoPublicUrl).toBeUndefined();
-    expect(store.game.videoUrl).toBe('https://youtu.be/PK1HyC37doc');
-    expect(store.game.replayVideoFallbackDisabled).toBe(true);
+    expect(store.game.videoUrl).toBeUndefined();
+    expect(store.game).toMatchObject({ hasRecordedReplay: false, replayArchiveRevision: 'r:3' });
 
-    // A second write without refreshing must use the retained videoUrl and
-    // tombstone in its CAS state, then clear only the tombstone on relink.
+    // A second write without refreshing must use the revision returned by the
+    // callable. It must not recover a provider URL from the readable game.
     await page.locator('#replay-video-url').fill('https://youtu.be/PK1HyC37doc');
     await page.locator('#replay-video-title').fill('Relinked replay');
     await page.locator('#replay-video-save').click();
     await expect(page.locator('#replay-video-status')).toContainText('Replay linked');
     store = await readStore(page);
-    expect(store.game.replayVideo).toMatchObject({
+    expect(store.replayArchive).toMatchObject({
+        state: 'ready',
+        revision: 'r:4',
         videoId: 'PK1HyC37doc',
-        title: 'Relinked replay',
-        status: 'ready'
+        title: 'Relinked replay'
     });
-    expect(store.game.videoUrl).toBe('https://youtu.be/PK1HyC37doc');
-    expect(store.game.replayVideoFallbackDisabled).toBeUndefined();
+    expect(store.game.replayVideo).toBeUndefined();
+    expect(store.game.videoUrl).toBeUndefined();
+    expect(store.replayServiceCalls.map((call) => call.method)).toEqual(['read', 'set', 'set', 'remove', 'set']);
+    expect(store.replayServiceCalls.slice(1).map((call) => call.options.expectedRevision)).toEqual([
+        null,
+        'r:1',
+        'r:2',
+        'r:3'
+    ]);
     expect(pageErrors).toEqual([]);
 });
 
@@ -672,6 +785,24 @@ test('completed statsheet game with only an attached clip does not advertise a f
     expect(pageErrors).toEqual([]);
 });
 
+test('replay mutations remain disabled when the authoritative management read fails', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    const scenario = createScenario();
+    scenario.failReplayManagementRead = true;
+    await installMocks(page, scenario);
+
+    await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+    await expect.poll(() => pageErrors).toEqual([]);
+
+    await expect(page.locator('#replay-video-admin')).toBeVisible();
+    await expect(page.locator('#replay-video-current')).toContainText('could not be loaded');
+    await expect(page.locator('#replay-video-status')).toContainText('unavailable until the current state can be verified');
+    await expect(page.locator('#replay-video-url')).toBeDisabled();
+    await expect(page.locator('#replay-video-save')).toBeDisabled();
+    await expect(page.locator('#replay-video-remove')).toBeDisabled();
+});
+
 test('manager can remove an existing replay after a final game is corrected to non-final', async ({ page, baseURL }) => {
     const pageErrors = [];
     page.on('pageerror', (error) => pageErrors.push(error.message));
@@ -688,6 +819,14 @@ test('manager can remove an existing replay after a final game is corrected to n
         status: 'ready',
         linkedBy: 'coach-1',
         linkedAt: '2026-09-01T12:00:00.000Z'
+    };
+    scenario.game.hasRecordedReplay = true;
+    scenario.game.replayArchiveRevision = 'r:existing';
+    scenario.replayArchive = {
+        state: 'ready',
+        revision: 'r:existing',
+        videoId: '0IuY8Oryi1k',
+        title: 'Correction cleanup replay'
     };
     await installMocks(page, scenario);
 
@@ -707,7 +846,9 @@ test('manager can remove an existing replay after a final game is corrected to n
     await expect(page.locator('#replay-video-heading')).toBeFocused();
 
     const store = await readStore(page);
-    expect(store.game.replayVideo).toBeNull();
+    expect(store.replayArchive.state).toBe('removed');
+    expect(store.game.replayVideo).toBeUndefined();
+    expect(store.game.hasRecordedReplay).toBe(false);
     expect(pageErrors).toEqual([]);
 });
 
@@ -726,6 +867,13 @@ test('delegated full manager can remove a stale replay when direct team access i
         status: 'ready',
         linkedBy: 'coach-1',
         linkedAt: '2026-09-01T12:00:00.000Z'
+    };
+    scenario.game.hasRecordedReplay = true;
+    scenario.game.replayArchiveRevision = 'r:existing';
+    scenario.replayArchive = {
+        state: 'ready',
+        revision: 'r:existing',
+        videoId: '0IuY8Oryi1k'
     };
     scenario.delegatedTeam = {
         id: 'team-1',
@@ -746,7 +894,8 @@ test('delegated full manager can remove a stale replay when direct team access i
     await expect(page.locator('#replay-video-status')).toContainText('Replay removed');
 
     const store = await readStore(page);
-    expect(store.game.replayVideo).toBeNull();
+    expect(store.replayArchive.state).toBe('removed');
+    expect(store.game.replayVideo).toBeUndefined();
     expect(pageErrors).toEqual([]);
 });
 
@@ -769,7 +918,7 @@ test('replay transaction rejects a game that became a shared-schedule mirror aft
 
     await page.locator('#replay-video-url').fill('https://youtu.be/0IuY8Oryi1k');
     await page.locator('#replay-video-save').click();
-    await expect(page.locator('#replay-video-status')).toContainText('now part of a shared schedule');
+    await expect(page.locator('#replay-video-status')).toContainText('changed since this report loaded');
 
     const store = await readStore(page);
     expect(store.game.replayVideo).toBeUndefined();

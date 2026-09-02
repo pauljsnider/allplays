@@ -422,6 +422,28 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('public canonical Firestor
         }));
     });
 
+    it('keeps score updates available without letting scorekeepers reverse a ready replay lifecycle', async () => {
+        await testEnv.withSecurityRulesDisabled(async (context) => {
+            await setDoc(doc(context.firestore(), 'teams/public-team/games/ready-replay-game'), {
+                type: 'game',
+                visibility: 'public',
+                status: 'completed',
+                liveStatus: 'scheduled',
+                hasRecordedReplay: true,
+                replayArchiveRevision: 'r:ready-scorekeeper-lifecycle'
+            });
+        });
+
+        const gameRef = doc(authedDb('scorekeeper-1'), 'teams/public-team/games/ready-replay-game');
+        await assertSucceeds(updateDoc(gameRef, {
+            homeScore: 4,
+            awayScore: 3
+        }));
+        await assertFails(updateDoc(gameRef, {
+            liveStatus: 'live'
+        }));
+    });
+
     it('preserves delegated completion attribution across a second partial transition', async () => {
         const firstScorekeeperRef = doc(authedDb('scorekeeper-1'), 'teams/public-team/games/game-1');
         await assertSucceeds(updateDoc(firstScorekeeperRef, {

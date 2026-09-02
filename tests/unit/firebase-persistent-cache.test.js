@@ -19,8 +19,12 @@ describe('Firestore local cache policy', () => {
         expect(source).toContain('memoryLocalCache');
         expect(source).toContain('persistentLocalCache');
         expect(source).toContain('isCapacitorNativeFirestoreRuntime');
-        expect(source).toContain('localCache: createFirestoreLocalCache()');
-        expect(source).not.toContain('clearIndexedDbPersistence');
+        expect(source).toContain('localCache: createFirestoreLocalCache(privacyState)');
+        expect(source).toContain('clearIndexedDbPersistence');
+        expect(source).toContain("REPLAY_PRIVACY_CACHE_EPOCH = 'private-replay-v2'");
+        expect(source).toContain("'getReplayPrivacyMigrationStatus'");
+        expect(source).toContain('await clearRetiredFirestoreCache(firestore, privacyState)');
+        expect(source).toContain('privacyState?.ready === true');
     });
 
     it('keeps the persistent multi-tab manager scoped to native Firestore', () => {
@@ -28,6 +32,6 @@ describe('Firestore local cache policy', () => {
 
         expect(source).toContain('persistentMultipleTabManager');
         expect(source).toContain('tabManager: persistentMultipleTabManager()');
-        expect(source).toMatch(/if \(isCapacitorNativeFirestoreRuntime\(\)\)[\s\S]*persistentLocalCache/);
+        expect(source).toMatch(/if \(isCapacitorNativeFirestoreRuntime\(\) && privacyState\?\.ready === true\)[\s\S]*persistentLocalCache/);
     });
 });

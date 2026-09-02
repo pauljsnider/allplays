@@ -49,6 +49,17 @@ const TERMINAL_GAME_STATUSES = new Set([
     'deleted'
 ]);
 
+export function hasRecordedReplayMarker(game = {}) {
+    return game?.hasRecordedReplay === true || game?.hasReplayVideo === true;
+}
+
+export function getRecordedReplayRevision(game = {}) {
+    const revision = typeof game?.replayArchiveRevision === 'string'
+        ? game.replayArchiveRevision.trim()
+        : '';
+    return revision && revision.length <= 256 ? revision : null;
+}
+
 export const GAME_REPLAY_ARCHIVE_FIELDS = Object.freeze([
     'replayVideo',
     'recordedVideo',
@@ -91,7 +102,7 @@ function isValidVideoId(value) {
  * URLs are intentionally excluded because they can point at a different game
  * after the linked broadcast ends.
  */
-export function normalizeYouTubeReplayUrl(value) {
+export function extractYouTubeVideoIdForProtection(value) {
     if (typeof value !== 'string' || !value.trim()) return null;
 
     const raw = value.trim();
@@ -102,16 +113,7 @@ export function normalizeYouTubeReplayUrl(value) {
         return null;
     }
 
-    const rawAuthority = raw.match(/^https:\/\/([^/?#]+)/i)?.[1] || '';
-    if (
-        parsed.protocol !== 'https:' ||
-        rawAuthority.toLowerCase() !== parsed.hostname.toLowerCase() ||
-        parsed.username ||
-        parsed.password ||
-        parsed.port
-    ) {
-        return null;
-    }
+    if (!['http:', 'https:'].includes(parsed.protocol)) return null;
 
     const host = parsed.hostname.toLowerCase();
     let videoId = null;
@@ -133,7 +135,32 @@ export function normalizeYouTubeReplayUrl(value) {
         videoId = extractPathVideoId(parsed.pathname, new Set(['embed']));
     }
 
-    if (!isValidVideoId(videoId || '')) return null;
+    return isValidVideoId(videoId || '') ? videoId : null;
+}
+
+export function normalizeYouTubeReplayUrl(value) {
+    if (typeof value !== 'string' || value.length > 2048 || !value.trim()) return null;
+
+    const raw = value.trim();
+    let parsed;
+    try {
+        parsed = new URL(raw);
+    } catch {
+        return null;
+    }
+
+    const rawAuthority = raw.match(/^https:\/\/([^/?#]+)/i)?.[1] || '';
+    if (
+        parsed.protocol !== 'https:' ||
+        rawAuthority.toLowerCase() !== parsed.hostname.toLowerCase() ||
+        parsed.username ||
+        parsed.password ||
+        parsed.port
+    ) {
+        return null;
+    }
+    const videoId = extractYouTubeVideoIdForProtection(raw);
+    if (!videoId) return null;
 
     return {
         provider: 'youtube',

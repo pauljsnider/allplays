@@ -9,7 +9,7 @@ const firebaseMocks = vi.hoisted(() => ({
     where: vi.fn((field, op, value) => ({ type: 'where', field, op, value }))
 }));
 
-vi.mock('../../js/firebase.js?v=33', () => ({
+vi.mock('../../js/firebase.js?v=34', () => ({
     db: {},
     collection: firebaseMocks.collection,
     getDocs: firebaseMocks.getDocs,

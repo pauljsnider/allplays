@@ -19,13 +19,10 @@ function buildGame(overrides: Partial<ParentScheduleEvent> = {}): ParentSchedule
     rawReplayLifecycle: { type: 'game', status: 'completed', liveStatus: 'completed' },
     assignments: [],
     openAssignmentCount: 0,
-    replayVideo: {
-      provider: 'youtube',
-      videoId: 'PK1HyC37doc',
-      embedUrl: 'https://www.youtube.com/embed/PK1HyC37doc',
-      publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
-      status: 'ready'
-    },
+    hasRecordedReplay: true,
+    hasReplayVideo: true,
+    replayArchiveRevision: 'revision-1',
+    replayArchiveState: 'ready',
     ...overrides
   };
   if (!Object.prototype.hasOwnProperty.call(overrides, 'rawReplayLifecycle')) {
@@ -95,19 +92,21 @@ describe('buildGameHubDestinations replay lifecycle', () => {
     const destinations = buildGameHubDestinations(buildGame({
       status: 'completed',
       liveStatus: 'scheduled',
-      replayVideo: null,
-      rawReplayState: {}
+      hasRecordedReplay: false,
+      hasReplayVideo: false,
+      replayArchiveState: 'none'
     }));
 
     expect(destinations.map((destination) => destination.id)).toEqual(['match-report']);
   });
 
-  it('does not treat string-valued replay containers as playable video evidence', () => {
+  it('does not treat a false safe marker as playable video evidence', () => {
     const destinations = buildGameHubDestinations(buildGame({
       status: 'completed',
       liveStatus: 'scheduled',
-      replayVideo: 'legacy-recording' as unknown as ParentScheduleEvent['replayVideo'],
-      rawReplayState: { videoReplay: 'legacy-recording' }
+      hasRecordedReplay: false,
+      hasReplayVideo: false,
+      replayArchiveState: 'none'
     }));
 
     expect(destinations.map((destination) => destination.id)).toEqual(['match-report']);

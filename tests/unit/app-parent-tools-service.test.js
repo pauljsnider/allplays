@@ -174,6 +174,11 @@ const mediaMocks = vi.hoisted(() => ({
     sortByMediaOrder: vi.fn((items) => [...items].sort((a, b) => Number(a.order || 0) - Number(b.order || 0)))
 }));
 
+const structuredMediaMocks = vi.hoisted(() => ({
+    createTeamMediaVideoLink: vi.fn().mockResolvedValue({ targetId: 'link-1' }),
+    removeTeamMediaVideoLink: vi.fn().mockResolvedValue({ committed: true })
+}));
+
 const authMocks = vi.hoisted(() => ({
     firebaseAuth: { currentUser: { getIdToken: vi.fn().mockResolvedValue('firebase-token') } },
     getNativeAuthIdToken: vi.fn().mockResolvedValue('native-token')
@@ -199,6 +204,9 @@ vi.mock('../../js/parent-dashboard-fees.js', () => feeMocks);
 vi.mock('../../js/registration-flow.js', () => registrationMocks);
 vi.mock('../../js/registration-review.js', () => registrationReviewMocks);
 vi.mock('../../js/team-media-utils.js', () => mediaMocks);
+vi.mock('../../js/structured-media-write-service.js', () => ({
+    structuredMediaWriteService: structuredMediaMocks
+}));
 vi.mock('../../apps/app/src/lib/authService', () => authMocks);
 vi.mock('../../apps/app/src/lib/publicActions.ts', () => publicActionMocks);
 vi.mock('../../apps/app/src/lib/scheduleService.ts', () => scheduleMocks);
@@ -1006,7 +1014,6 @@ describe('React app parent tools service', () => {
         }));
         dbMocks.uploadTeamMediaPhoto.mockResolvedValue('photo-2');
         dbMocks.uploadTeamMediaFile.mockResolvedValue('file-1');
-        dbMocks.createTeamMediaLink.mockResolvedValue('link-1');
         dbMocks.createTeamMediaFolder.mockResolvedValue('folder-new');
 
         await expect(loadTeamMediaForApp(user, 'team-1')).resolves.toMatchObject({
@@ -1057,7 +1064,12 @@ describe('React app parent tools service', () => {
         expect(dbMocks.createTeamMediaFolder).toHaveBeenCalledWith('team-1', { name: 'Spring photos', visibility: 'private' });
         expect(dbMocks.uploadTeamMediaPhoto).toHaveBeenCalledWith('team-1', 'folder-1', photoFile, { returnItem: true });
         expect(dbMocks.uploadTeamMediaFile).toHaveBeenCalledWith('team-1', 'folder-1', docFile, { returnItem: true });
-        expect(dbMocks.createTeamMediaLink).toHaveBeenCalledWith('team-1', 'folder-1', { title: 'Replay', url: 'https://youtu.be/replay123' });
+        expect(structuredMediaMocks.createTeamMediaVideoLink).toHaveBeenCalledWith({
+            teamId: 'team-1',
+            folderId: 'folder-1',
+            title: 'Replay',
+            url: 'https://youtu.be/replay123'
+        });
     });
 
     it('rejects unsupported team media link hosts before calling the database helper', async () => {
@@ -1068,7 +1080,7 @@ describe('React app parent tools service', () => {
             'https://example.com/not-a-video'
         )).rejects.toThrow('Enter a valid YouTube or Vimeo URL.');
 
-        expect(dbMocks.createTeamMediaLink).not.toHaveBeenCalled();
+        expect(structuredMediaMocks.createTeamMediaVideoLink).not.toHaveBeenCalled();
     });
 
     it('returns normalized team media upload items so the app can merge them without rereading the album', async () => {
@@ -1297,6 +1309,18 @@ describe('React app parent tools service', () => {
     });
 
     describe('deleteTeamMediaItemForApp', () => {
+        it('routes video links through the permanent identity boundary', async () => {
+            const item = { id: 'video-1', title: 'Replay', type: 'video_link', url: 'https://youtu.be/replay123' };
+
+            await expect(deleteTeamMediaItemForApp('team-1', item)).resolves.toBeUndefined();
+
+            expect(structuredMediaMocks.removeTeamMediaVideoLink).toHaveBeenCalledWith({
+                teamId: 'team-1',
+                targetId: 'video-1'
+            });
+            expect(dbMocks.deleteTeamMediaItem).not.toHaveBeenCalled();
+        });
+
         it('correctly calls deleteTeamMediaItem with teamId and item', async () => {
             const teamId = 'test-team';
             const item = { id: 'media-item-1', title: 'Test Photo', type: 'photo', storagePath: 'photos/test.jpg' };

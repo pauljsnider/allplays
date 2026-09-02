@@ -7,14 +7,13 @@ function readRepoFile(relativePath) {
 }
 
 describe('game report replay action', () => {
-    it('gates the report replay action on usable replay media instead of completed status alone', () => {
+    it('gates the report replay action on a safe server marker instead of provider capability data', () => {
         const html = readRepoFile('game.html');
 
-        expect(html).toContain('resolveReplayVideoOptions');
         expect(html).toContain('renderReplayReportAction({ teamId, gameId, game, team })');
-        expect(html).toMatch(/resolveReplayVideoOptions\(\{\s*team,\s*game,\s*isReplay: true\s*\}\)/);
         expect(html).toContain('renderReplayReportAction({ teamId, gameId, game, team: resolvedTeam })');
-        expect(html).toContain('replayOptions.hasVideo && replayOptions.isRecordedReplay === true');
+        expect(html).toContain('hasRecordedReplayMarker(game) || hasCompletedTimelineReplay');
+        expect(html).not.toContain('game.replayVideo?.publicUrl');
         expect(html).toContain('const hasCompletedTimelineReplay');
         expect(html).not.toContain("${game.liveStatus === 'completed' ? `");
     });

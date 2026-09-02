@@ -568,13 +568,11 @@ service cloud.firestore {
 
     function isValidBroadcastProvider(data) {
       return data is map &&
-             data.keys().hasOnly(['type', 'name', 'channel', 'embedUrl', 'videoId']) &&
+             data.keys().hasOnly(['type', 'name', 'channel']) &&
              data.keys().hasAll(['type', 'name']) &&
              data.type in ['twitch', 'youtube', 'external_provider', 'managed_setup'] &&
              data.name is string && data.name.size() > 0 && data.name.size() <= 80 &&
-             (!('channel' in data) || (data.channel is string && data.channel.size() <= 120)) &&
-             (!('embedUrl' in data) || (data.embedUrl is string && data.embedUrl.size() <= 500)) &&
-             (!('videoId' in data) || (data.videoId is string && data.videoId.size() <= 120));
+             (!('channel' in data) || (data.channel is string && data.channel.size() <= 120));
     }
 
     function isValidBroadcastPermissions(data) {
@@ -724,7 +722,7 @@ service cloud.firestore {
              isScoreMetadataAttributionValid();
     }
 
-    function replayArchiveFields() {
+    function legacyReplayArchiveFields() {
       return [
         'replayVideo', 'recordedVideo', 'videoReplay', 'replayVideoUrl',
         'recordedVideoUrl', 'videoReplayUrl', 'archivedVideoUrl',
@@ -734,33 +732,146 @@ service cloud.firestore {
       ];
     }
 
-    function isReplayArchiveMutation() {
-      return request.resource.data.diff(resource.data).affectedKeys().hasAny(replayArchiveFields());
+    function replayArchiveFields() {
+      return legacyReplayArchiveFields().concat([
+        'hasRecordedReplay', 'hasReplayVideo', 'replayArchiveRevision',
+        'replayArchiveState', 'replayMediaVersion', 'replayMediaState',
+        'replayMediaRevision', 'streamEmbedUrl', 'youtubeEmbedUrl',
+        'youtubeVideoId'
+      ]);
     }
 
-    function isReplayArchiveOnlyUpdate() {
-      let affectedKeys = request.resource.data.diff(resource.data).affectedKeys();
-      return affectedKeys.hasAny(replayArchiveFields()) &&
-             affectedKeys.hasOnly([
-               'replayVideo', 'recordedVideo', 'videoReplay', 'replayVideoUrl',
-               'recordedVideoUrl', 'videoReplayUrl', 'archivedVideoUrl',
-               'replayVideoPublicUrl', 'replayVideoPosterUrl', 'replayVideoTitle',
-               'replayVideoDurationMs', 'replayStatus', 'recordedReplayStatus',
-               'videoReplayStatus', 'replayVideoFallbackDisabled', 'updatedAt'
-             ]);
+    function teamReplayArchiveFields() {
+      return replayArchiveFields().concat(['streamUrl', 'livestreamUrl']);
     }
 
-    function isCompletedReplayLifecycle(data) {
-      let rawStatus = data.get('status', null);
-      let rawLiveStatus = data.get('liveStatus', null);
-      let status = rawStatus == null ? '' : rawStatus;
-      let liveStatus = rawLiveStatus == null ? '' : rawLiveStatus;
+    function teamMediaVideoUrlFields() {
+      return ['url', 'src', 'downloadUrl'];
+    }
+
+    function drillVideoUrlFields() {
+      return ['youtubeUrl', 'resourceUrl'];
+    }
+
+    function athleteProfileMediaFields() {
+      return [
+        'clips', 'gameClips', 'seasons', 'profileProjectionSchemaVersion',
+        'profileProjectionMutationId', 'profileProjectionMutationHash'
+      ];
+    }
+
+    function replayClipFields() {
+      return [
+        'highlightClips', 'clipRecords', 'gameClips', 'videoClips',
+        'clips', 'mediaClips', 'clipMetadata', 'replayHighlights',
+        'highlightClipsRevision', 'highlightClipsLastMutationId'
+      ];
+    }
+
+    function unsafeReplayDeleteFields() {
+      return replayArchiveFields().removeAll([
+        'hasRecordedReplay', 'replayArchiveRevision'
+      ]);
+    }
+
+    function isReplayTerminalStatus(value) {
+      return value in ['completed', 'final', 'complete', 'finished'];
+    }
+
+    function replayLifecycleFields() {
+      return ['type', 'status', 'liveStatus', 'isCancelled', 'deleted', 'isDeleted'];
+    }
+
+    function isReplayLifecycleRecord(data, status, liveStatus) {
       return data.get('type', 'game') == 'game' &&
              data.get('isCancelled', false) != true &&
              data.get('deleted', false) != true &&
              data.get('isDeleted', false) != true &&
              status is string &&
-             liveStatus is string &&
+             liveStatus is string;
+    }
+
+    function replayLifecycleValue(data, field) {
+      let value = data.get(field, null);
+      return value == null ? '' : value;
+    }
+
+    function isReplayTerminalLifecycle(data) {
+      let status = replayLifecycleValue(data, 'status');
+      let liveStatus = replayLifecycleValue(data, 'liveStatus');
+      return isReplayLifecycleRecord(data, status, liveStatus) &&
+             ((isReplayTerminalStatus(status) &&
+               (liveStatus == '' || liveStatus == 'scheduled' || isReplayTerminalStatus(liveStatus))) ||
+              (status == '' && isReplayTerminalStatus(liveStatus)));
+    }
+
+    function hasValidReadyReplayLifecycle(data) {
+      return (data.get('hasRecordedReplay', false) != true &&
+              data.get('hasReplayVideo', false) != true) ||
+             isReplayTerminalLifecycle(data);
+    }
+
+    function preservesReadyReplayLifecycle() {
+      let affectedKeys = request.resource.data.diff(resource.data).affectedKeys();
+      return !affectedKeys.hasAny(replayLifecycleFields()) ||
+             hasValidReadyReplayLifecycle(request.resource.data);
+    }
+
+    // A completed game's videoUrl used to double as a replay fallback. Keeping
+    // it on the parent-readable game would disclose the protected media ID even
+    // after the canonical replay has moved to the server-private archive.
+    function hasNoReadableCompletedReplayFallback(data) {
+      let videoUrl = data.get('videoUrl', null);
+      // Most games have no direct video URL. Check that cheap case first so
+      // ordinary and delegated updates do not pay for terminal-state parsing.
+      return videoUrl == null || videoUrl == '' || !isReplayTerminalLifecycle(data);
+    }
+
+    function hasNoReadableBroadcastReplayCapability(data) {
+      let session = data.get('broadcastSession', null);
+      return !(session is map) ||
+             !(session.get('provider', null) is map) ||
+             !session.provider.keys().hasAny(['embedUrl', 'videoId']);
+    }
+
+    function hasNoNewReadableVideoUrl() {
+      let affectedKeys = request.resource.data.diff(resource.data).affectedKeys();
+      return !affectedKeys.hasAny(['videoUrl']) ||
+             request.resource.data.get('videoUrl', null) in [null, ''];
+    }
+
+    function isReplayArchiveMutation() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasAny(replayArchiveFields());
+    }
+
+    function isReplayClipMutation() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasAny(replayClipFields());
+    }
+
+    // Evaluate terminal replay state only when lifecycle fields change.
+    function isReplayBoundarySafeUpdate() {
+      let affectedKeys = request.resource.data.diff(resource.data).affectedKeys();
+      return hasNoReadableBroadcastReplayCapability(request.resource.data) &&
+             hasNoNewReadableVideoUrl() &&
+             (!affectedKeys.hasAny(replayLifecycleFields().concat(['videoUrl'])) ||
+              hasNoReadableCompletedReplayFallback(request.resource.data));
+    }
+
+    function isReplayBoundarySafeDelete() {
+      return !resource.data.keys().hasAny(unsafeReplayDeleteFields()) &&
+             hasNoReadableCompletedReplayFallback(resource.data);
+    }
+
+    function isReplayArchiveOnlyUpdate() {
+      let affectedKeys = request.resource.data.diff(resource.data).affectedKeys();
+      return affectedKeys.hasAny(replayArchiveFields()) &&
+             affectedKeys.hasOnly(legacyReplayArchiveFields().concat(['updatedAt']));
+    }
+
+    function isCompletedReplayLifecycle(data) {
+      let status = replayLifecycleValue(data, 'status');
+      let liveStatus = replayLifecycleValue(data, 'liveStatus');
+      return isReplayLifecycleRecord(data, status, liveStatus) &&
              ((status in ['completed', 'final'] &&
                (liveStatus == '' || liveStatus in ['scheduled', 'completed', 'final'])) ||
               (status == '' && liveStatus in ['completed', 'final']));
@@ -3391,10 +3502,13 @@ service cloud.firestore {
       allow read: if resource.data.privacy == 'public' ||
                      (isSignedIn() && resource.data.parentUserId == request.auth.uid);
       allow create: if isVerifiedForSensitiveWrite() &&
-                       request.resource.data.parentUserId == request.auth.uid;
+                       request.resource.data.parentUserId == request.auth.uid &&
+                       !request.resource.data.keys().hasAny(athleteProfileMediaFields());
       allow update: if isVerifiedForSensitiveWrite() &&
                        resource.data.parentUserId == request.auth.uid &&
-                       request.resource.data.parentUserId == resource.data.parentUserId;
+                       request.resource.data.parentUserId == resource.data.parentUserId &&
+                       !request.resource.data.diff(resource.data).affectedKeys()
+                         .hasAny(athleteProfileMediaFields());
       allow delete: if isVerifiedForSensitiveWrite() &&
                        resource.data.parentUserId == request.auth.uid;
     }
@@ -3410,6 +3524,7 @@ service cloud.firestore {
       allow create: if isVerifiedForSensitiveWrite() &&
                       hasValidDrillDiagramUrls(request.resource.data) &&
                       hasValidDrillExternalUrls(request.resource.data) &&
+                      !request.resource.data.keys().hasAny(drillVideoUrlFields()) &&
                       (
                         (request.resource.data.source == 'community' && isGlobalAdmin()) ||
                         (
@@ -3427,6 +3542,8 @@ service cloud.firestore {
       allow update: if isVerifiedForSensitiveWrite() &&
                       hasSafeDrillDiagramUrlUpdate() &&
                       hasSafeDrillExternalUrlUpdate() &&
+                      !request.resource.data.diff(resource.data).affectedKeys()
+                        .hasAny(drillVideoUrlFields()) &&
                       (
                         (resource.data.source == 'community' && isGlobalAdmin()) ||
                         (
@@ -3548,8 +3665,11 @@ service cloud.firestore {
                      canListManagedTeamDocument(resource.data);
       allow create: if isVerifiedForSensitiveWrite() &&
                        request.resource.data.ownerId == request.auth.uid &&
+                       !request.resource.data.keys().hasAny(teamReplayArchiveFields()) &&
                        hasNoClientCalendarCredentialFields(request.resource.data);
       allow update: if isVerifiedForSensitiveWrite() &&
+                       !request.resource.data.diff(resource.data).affectedKeys()
+                         .hasAny(teamReplayArchiveFields()) &&
                        ((isTeamOwnerOrGlobalAdmin(teamId) && keepsOwnerControlledTeamPrivilegeFieldsImmutable()) ||
                         (isTeamOwnerOrAdmin(teamId) && keepsTeamPrivilegeFieldsImmutable()));
       allow delete: if isVerifiedForSensitiveWrite() && isGlobalAdmin();
@@ -3648,8 +3768,11 @@ service cloud.firestore {
 
       match /mediaItems/{itemId} {
         allow read: if canReadTeamMediaItem(teamId, resource.data);
-        allow create: if canManageTeamMedia(teamId) || isTeamMediaUploadCreate(teamId, request.resource.data);
-        allow update: if canManageTeamMedia(teamId) || isOwnTeamMediaUploadSoftDelete(teamId) || isTeamMediaTitleUpdate(teamId);
+        allow create: if !request.resource.data.keys().hasAny(teamMediaVideoUrlFields()) &&
+                         (canManageTeamMedia(teamId) || isTeamMediaUploadCreate(teamId, request.resource.data));
+        allow update: if !request.resource.data.diff(resource.data).affectedKeys()
+                           .hasAny(teamMediaVideoUrlFields().concat(['type', 'mediaType'])) &&
+                         (canManageTeamMedia(teamId) || isOwnTeamMediaUploadSoftDelete(teamId) || isTeamMediaTitleUpdate(teamId));
         allow delete: if canManageTeamMedia(teamId);
       }
 
@@ -3882,26 +4005,38 @@ service cloud.firestore {
       match /games/{gameId} {
         allow read: if canReadGameDocument(teamId, gameId, resource.data);
         allow create: if isTeamOwnerOrAdmin(teamId) &&
-                         !request.resource.data.keys().hasAny(replayArchiveFields());
-        allow delete: if isTeamOwnerOrAdmin(teamId);
-        allow update: if !isBroadcastSessionOnlyUpdate() &&
-                        !isReplayArchiveMutation() &&
-                        (isTeamOwnerOrAdmin(teamId) ||
-                         (isOfficialForGame() && isOfficialGameUpdate()) ||
-                         isScorekeepingGameUpdate(teamId, gameId) ||
-                         isVideographyGameUpdate(teamId, gameId));
-        // Replay links use a separate, bounded schema path so their provider
-        // validation does not consume the expression budget of other roles.
-        allow update: if isReplayArchiveOnlyUpdate() &&
-                        ((canVideographGame(teamId, gameId) &&
-                          isGameReplayVideoMutationValid(false)) ||
-                         (isTeamOwnerOrAdmin(teamId) &&
-                          isGameReplayVideoMutationValid(true)));
-        // Keep the tightly validated streaming metadata path separate so the
-        // rules engine does not combine its schema checks with every broader
-        // game-update role and exceed the per-request expression budget.
-        allow update: if isBroadcastSessionOnlyUpdate() && isTeamOwnerOrAdmin(teamId);
+                         !request.resource.data.keys().hasAny(replayArchiveFields()) &&
+                         !request.resource.data.keys().hasAny(replayClipFields()) &&
+                         hasNoReadableBroadcastReplayCapability(request.resource.data) &&
+                         request.resource.data.get('videoUrl', null) in [null, ''];
+        allow delete: if isReplayBoundarySafeDelete() &&
+                         isTeamOwnerOrAdmin(teamId);
+        // Keep streaming branches separate for the expression budget.
+        allow update: if preservesReadyReplayLifecycle() &&
+                        !isReplayClipMutation() &&
+                        !isBroadcastSessionOnlyUpdate() &&
+                        (
+                          (isScorekeepingGameUpdate(teamId, gameId) &&
+                           hasNoReadableCompletedReplayFallback(request.resource.data)) ||
+                          (isTeamOwnerOrAdmin(teamId) &&
+                           !isReplayArchiveMutation() &&
+                           isReplayBoundarySafeUpdate()) ||
+                          (isOfficialForGame() &&
+                           isOfficialGameUpdate() &&
+                           hasNoReadableCompletedReplayFallback(request.resource.data)) ||
+                          isVideographyGameUpdate(teamId, gameId)
+                        );
+        allow update: if isBroadcastSessionOnlyUpdate() &&
+                         hasNoReadableBroadcastReplayCapability(request.resource.data) &&
+                         isTeamOwnerOrAdmin(teamId);
         allow update: if isStreamingGameUpdate(teamId, gameId);
+
+        // Replay identity is a capability. Clients must never read or write the
+        // private archive directly; server callables are the sole release and
+        // mutation boundary.
+        match /privateReplay/{archiveId} {
+          allow read, write: if false;
+        }
 
         // Events subcollection
         match /events/{eventId} {
@@ -4667,6 +4802,22 @@ service cloud.firestore {
                        request.resource.data.expiresAt > request.time;
       allow delete: if isVerifiedForSensitiveWrite() &&
                        (resource.data.ownerUserId == request.auth.uid || isGlobalAdmin());
+    }
+
+    match /systemControls/replayPrivateArchiveMigration {
+      allow read, write: if false;
+    }
+
+    match /systemControls/replayAthleteProfileProjectionBoundary {
+      allow read, write: if false;
+    }
+
+    match /replayProtectedIdentities/{identityId} {
+      allow read, write: if false;
+    }
+
+    match /replayClipIdentities/{identityId} {
+      allow read, write: if false;
     }
 
     // Deny all other paths

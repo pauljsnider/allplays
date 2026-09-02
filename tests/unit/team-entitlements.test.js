@@ -56,14 +56,15 @@ describe('team entitlement helpers', () => {
         })).toBe(false);
     });
 
-    it('wires live replay video behind the team entitlement helper', () => {
+    it('wires replay playback through the server-authoritative entitlement boundary', () => {
         const liveGame = readRepoFile('js/live-game.js');
         const html = readRepoFile('live-game.html');
 
-        expect(liveGame).toContain('isRecordedReplayTeamPassGateEnabled');
-        expect(liveGame).toContain('getTeamEntitlementStatus');
-        expect(liveGame).toContain("TEAM_PASS_FEATURES.RECORDED_REPLAY");
-        expect(liveGame).toContain('state.videoPlayback?.isRecordedReplay === true');
+        expect(liveGame).toContain('gameReplayService.getPlayback');
+        expect(liveGame).toContain('refreshPrivateReplayPlayback');
+        expect(liveGame).toContain("state.replayPlayback?.reason === 'team-pass-required'");
+        expect(liveGame).not.toContain('getTeamEntitlementStatus');
+        expect(liveGame).not.toContain('isRecordedReplayTeamPassGateEnabled');
         expect(liveGame).not.toContain("state.videoPlayback?.mode === 'recorded' && recordedReplayGateEnabled");
         expect(liveGame).not.toContain("params.config === 'team-pass-disabled'");
         expect(liveGame).not.toContain('game.recordedReplayPaywallEnabled =');

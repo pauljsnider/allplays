@@ -1,5 +1,5 @@
 import { formatLongDate, formatShortDate, formatTimeOfDay } from './datetime';
-import type { ReplayArchiveState, YouTubeReplayVideo } from './youtubeReplay';
+import type { ReplayArchiveStateMarker } from './replayArchiveService';
 
 export type ParentScheduleFilter = 'upcoming-all' | 'upcoming-games' | 'upcoming-practices' | 'availability' | 'recent-results' | 'past-all';
 export type ScheduleViewMode = 'list' | 'compact' | 'calendar' | 'packets';
@@ -175,9 +175,10 @@ export type ParentScheduleEvent = {
   awayScore?: number | null;
   postGameNotes?: string | null;
   summary?: string | null;
-  videoUrl?: string | null;
-  replayVideo?: YouTubeReplayVideo | null;
-  rawReplayState?: ReplayArchiveState;
+  hasRecordedReplay?: boolean;
+  hasReplayVideo?: boolean;
+  replayArchiveRevision?: string | null;
+  replayArchiveState?: ReplayArchiveStateMarker;
   rawReplayLifecycle?: {
     type?: unknown;
     status?: unknown;

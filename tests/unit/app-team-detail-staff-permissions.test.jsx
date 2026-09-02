@@ -31,6 +31,11 @@ const publicActionMocks = vi.hoisted(() => ({
 
 vi.mock('../../apps/app/src/lib/teamDetailService.ts', () => teamDetailMocks);
 vi.mock('../../apps/app/src/lib/publicActions.ts', () => publicActionMocks);
+vi.mock('../../apps/app/src/lib/parentToolsService.ts', () => ({
+    getAppleCalendarFeedUrl: vi.fn(() => 'webcal://example.test/calendar.ics'),
+    getGoogleCalendarFeedUrl: vi.fn(() => 'https://calendar.google.com/calendar/render'),
+    getPrivateTeamCalendarFeedUrl: vi.fn(() => 'https://example.test/private-calendar.ics')
+}));
 vi.mock('../../apps/app/src/lib/scheduleService.ts', () => ({
     createStaffRsvpReminderPreviewLoader: vi.fn(() => ({ loadPreview: vi.fn() })),
     sendStaffRsvpReminder: vi.fn()

@@ -1,4 +1,4 @@
-import { checkAuth } from './auth.js?v=4433199';
+import { checkAuth } from './auth.js?v=4433200';
 import {
     getDelegatedTeamContext,
     getTeamMediaFolders,
@@ -6,17 +6,15 @@ import {
     createTeamMediaFolder,
     updateTeamMediaFolder,
     deleteTeamMediaFolder,
-    createTeamMediaLink,
     uploadTeamMediaFile,
     uploadTeamMediaPhoto,
     deleteTeamMediaItem,
     reorderTeamMediaFolders,
     reorderTeamMediaItems,
     moveTeamMediaItems,
-    bulkDeleteTeamMediaItems,
     setTeamMediaAlbumCover,
     updateTeamMediaItem
-} from './db.js?v=4433195';
+} from './db.js?v=4433196';
 import {
     canContributeTeamMedia,
     canDeleteTeamMediaItem,
@@ -33,6 +31,7 @@ import {
     sortByMediaOrder
 } from './team-media-utils.js?v=44339';
 import { validateTeamMediaUploadBatch } from './team-media-upload-limits.js?v=44531';
+import { structuredMediaWriteService } from './structured-media-write-service.js?v=1';
 
 const state = {
     teamId: '',
@@ -182,7 +181,19 @@ const MEDIA_TYPE_FILTERS = [
 ];
 
 function isVideoMediaItem(item = {}) {
-    return String(item.type || '').toLowerCase().replace(/-/g, '_') === 'video_link';
+    return [item.type, item.mediaType]
+        .some((value) => String(value || '').toLowerCase().replace(/-/g, '_') === 'video_link');
+}
+
+async function deleteTeamMediaItemThroughBoundary(item) {
+    if (isVideoMediaItem(item)) {
+        await structuredMediaWriteService.removeTeamMediaVideoLink({
+            teamId: state.teamId,
+            targetId: item.id
+        });
+        return;
+    }
+    await deleteTeamMediaItem(state.teamId, item);
 }
 
 function matchesMediaTypeFilter(item, filterId = 'all') {
@@ -579,7 +590,7 @@ els.albumDetail.addEventListener('click', async (event) => {
         state.actionInFlight = true;
         clearAlert();
         try {
-            await deleteTeamMediaItem(state.teamId, item);
+            await deleteTeamMediaItemThroughBoundary(item);
             state.items = state.items.filter((candidate) => candidate.id !== item.id);
             state.selectedIds.delete(item.id);
             render();
@@ -707,7 +718,9 @@ els.linkForm.addEventListener('submit', (event) => {
             title: els.linkTitle.value,
             url: els.linkUrl.value
         });
-        await createTeamMediaLink(state.teamId, els.linkFolder.value, {
+        await structuredMediaWriteService.createTeamMediaVideoLink({
+            teamId: state.teamId,
+            folderId: els.linkFolder.value,
             title: normalized.title,
             url: normalized.url
         });
@@ -794,7 +807,10 @@ els.deleteSelected.addEventListener('click', () => {
     const ids = [...state.selectedIds];
     if (!window.confirm(`Delete ${ids.length} selected media item${ids.length === 1 ? '' : 's'}? This cannot be undone.`)) return;
     persistAndReload(async () => {
-        await bulkDeleteTeamMediaItems(state.teamId, ids);
+        const items = ids
+            .map((id) => state.items.find((item) => item.id === id))
+            .filter(Boolean);
+        await Promise.all(items.map(deleteTeamMediaItemThroughBoundary));
         state.selectedIds.clear();
     }, 'Selected media deleted.');
 });

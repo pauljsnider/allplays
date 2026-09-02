@@ -65,6 +65,7 @@ serviceAccountKey*.json
 _migration/*
 !_migration/
 !_migration/backfill-certificate-legacy-signature-inventory.js
+!_migration/backfill-game-replay-archives.js
 !_migration/firebase-admin-credential.mjs
 !_migration/backfill-public-user-profiles.js
 !_migration/migrate-player-private-profile.js

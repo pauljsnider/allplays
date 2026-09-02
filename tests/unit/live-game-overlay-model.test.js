@@ -82,20 +82,13 @@ describe('live game overlay model', () => {
         expect(getSafeOverlayProviderUrl('not a url')).toBeNull();
     });
 
-    it('turns only explicitly public projected game video links into playable options', () => {
+    it('turns only active public projected video links into playable options', () => {
         expect(resolvePublicProjectionVideoOptions({
             isPublicProjection: true,
             status: 'completed',
             liveStatus: 'scheduled',
             videoUrl: 'https://www.youtube.com/live/PK1HyC37doc?si=share-token'
-        })).toMatchObject({
-            mode: 'embed',
-            isRecordedReplay: true,
-            isPublicProjectionVideo: true,
-            sourceUrl: 'https://www.youtube.com/embed/PK1HyC37doc?autoplay=1&mute=1',
-            publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
-            publicLabel: 'Watch on YouTube ↗'
-        });
+        })).toBeNull();
         expect(resolvePublicProjectionVideoOptions({
             isPublicProjection: true,
             status: 'live',
@@ -128,18 +121,12 @@ describe('live game overlay model', () => {
             isPublicProjection: true,
             status: 'completed',
             videoUrl: 'https://twitch.tv/videos/123456789'
-        }, { parentHost: 'allplays.ai' })).toMatchObject({
-            mode: 'embed',
-            sourceUrl: 'https://player.twitch.tv/?video=123456789&parent=allplays.ai&autoplay=true&muted=true'
-        });
+        }, { parentHost: 'allplays.ai' })).toBeNull();
         expect(resolvePublicProjectionVideoOptions({
             isPublicProjection: true,
             status: 'final',
             videoUrl: 'https://media.example.test/game.mp4'
-        })).toMatchObject({
-            mode: 'recorded',
-            sourceUrl: 'https://media.example.test/game.mp4'
-        });
+        })).toBeNull();
         expect(resolvePublicProjectionVideoOptions({ videoUrl: 'https://media.example.test/private.mp4' })).toBeNull();
         expect(resolvePublicProjectionVideoOptions({ isPublicProjection: true, videoUrl: 'javascript:alert(1)' })).toBeNull();
         expect(resolvePublicProjectionVideoOptions({ isPublicProjection: true, videoUrl: 'https://youtube.com/not-a-video' })).toBeNull();

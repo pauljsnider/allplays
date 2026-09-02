@@ -40,13 +40,13 @@ const profileRestMocks = vi.hoisted(() => ({
     loadAuthProfileViaRest: vi.fn()
 }));
 
-vi.mock('../../js/firebase.js?v=33', () => firebaseMocks);
-vi.mock('../../js/db.js?v=4433195', () => dbMocks);
+vi.mock('../../js/firebase.js?v=34', () => firebaseMocks);
+vi.mock('../../js/db.js?v=4433196', () => dbMocks);
 vi.mock('../../js/auth-profile-rest.js?v=1', () => profileRestMocks);
 vi.mock('../../js/signup-flow.js?v=14', () => ({
     executeEmailPasswordSignup: vi.fn()
 }));
-vi.mock('../../js/admin-invite.js?v=12', () => ({
+vi.mock('../../js/admin-invite.js?v=13', () => ({
     redeemAdminInviteAcceptance: vi.fn()
 }));
 

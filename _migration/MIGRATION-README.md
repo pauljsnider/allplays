@@ -84,3 +84,62 @@ dry-run-by-default contract for registration checkout URLs, capabilities,
 provider IDs, exact requests, and nested payment-reminder retry URLs. It gives
 an existing private checkout attempt precedence, moves any remaining legacy
 state, and scrubs every readable bearer field transactionally.
+
+`backfill-game-replay-archives.js` moves replay provider identities and URLs
+from parent-readable `games` and `sharedGames` documents into each exact
+document's server-private `privateReplay/archive` child. It is dry-run-only
+without `--apply`. Apply mode first persists a durable protected-identity
+inventory, then transactionally copies or quarantines complete legacy replay
+state and scrubs every parent alias. It also scans the finite structured-media
+surface: game/shared-game clip arrays and nested legacy highlights, generated
+athlete-profile clips and seasons, team and historical game stream aliases,
+broadcast providers, non-completed game `videoUrl`, typed team video links, and
+drill video resources. Exact automated copies are removed; independently
+published media is preserved and permanently reserved so a later replay cannot
+claim the same YouTube identity. Canonical shared-event streams are independent,
+while explicit shared/public projections and generated team-game provider
+copies are automated. Verification unions frozen, durable, and fresh evidence
+and must prove that no readable protected replay, unreserved independent source,
+or automated copy remains. Existing valid private archives and removal
+tombstones take precedence on retries.
+
+A quarantine is server-private operator evidence only. Its parent game carries
+no replay marker or revision, so bounded readers treat it as no playable replay
+instead of failing an otherwise complete schedule. Apply mode deliberately
+stops with the mutation gate still closed whenever any quarantine exists. An
+operator must inspect each private child, replace it transactionally with one
+valid `ready` or `removed` archive (or explicitly retire the quarantined
+capability), and rerun the full migration; the gate cannot become `ready` while
+raw quarantine evidence remains. Quarantine data is never returned to clients
+and must be deleted as part of that resolution rather than retained as archive
+history.
+
+The confidentiality boundary prevents automatic or generated copies from
+republishing a protected replay. Team stream settings, typed team-media video
+links, drill resources, and athlete-profile clips cross server-authoritative
+transactions that reject protected identities and permanently reserve accepted
+standalone media so it cannot later be claimed as a replay. Existing structured
+publications are preserved and reserved under the same rule. Generic manual
+sharing outside those finite structured fields—such as social posts or free
+text—remains outside this migration's enforceable identity boundary.
+
+Production uses a broad `REPLAY_NATIVE_CALLABLE_READY` hold covering replay,
+structured-media, and athlete-profile mutation callables plus the
+`getReplayPrivacyMigrationStatus` cache protocol. Before Firestore starts, an
+adoption build clears any retired browser/native IndexedDB, uses memory-only
+Firestore while readiness is false or unreadable, and records the returned
+cache epoch only after the server reports the completed migration. This makes
+the post-migration restart clear again even if the same native build ran before
+the gate. While readiness is false, only the compatibility callables and
+cleanup triggers are staged; Hosting, Rules, the migration gate, and data
+remain on the trusted deployed baseline. Once every supported installed native
+build uses all callable boundaries and this cache protocol, the workflow
+deploys the sanitized public readers, drains their prior 300-second shared-cache
+TTL for 330 seconds, publishes updated Hosting callers, activates the exact
+server-only Rules, closes the mutation gate, activates the profile boundary,
+and runs migration/verification before the full application deploy. Retries
+repeat the drain and never reopen an established final boundary. Do not run the
+migration lazily from a viewer request. During the native-adoption hold,
+replay management and playback can read validated legacy state without moving
+it, but replay link and remove mutations fail closed until the migration is
+ready.
