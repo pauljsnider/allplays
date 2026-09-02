@@ -522,7 +522,7 @@ async function stubRealOverlayModules(page) {
             }
             if (window.__OVERLAY_RECORDED_VIDEO__) {
                 return {
-                    mode: 'recorded', hasVideo: true,
+                    mode: 'recorded', isRecordedReplay: true, hasVideo: true,
                     sourceUrl: '/overlay-recording-fixture.mp4',
                     publicUrl: '/overlay-recording-fixture.mp4',
                     publicLabel: 'Open replay video ↗'
