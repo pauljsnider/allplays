@@ -389,14 +389,31 @@ async function installMocks(page, scenario, { delayedAuth = false, accessLevel =
             if (replay?.provider === 'youtube' && replay?.status === 'ready' && replay?.videoId) {
                 return {
                     mode: 'embed',
+                    isRecordedReplay: true,
                     hasVideo: true,
                     sourceUrl: replay.embedUrl,
                     publicUrl: replay.publicUrl,
                     replayState: null
                 };
             }
+            const attachedClip = Array.isArray(game?.highlightClips)
+                ? game.highlightClips.find((clip) => clip?.type === 'score-linked' && clip?.mediaUrl)
+                : null;
+            if (attachedClip) {
+                return {
+                    mode: 'recorded',
+                    isRecordedReplay: false,
+                    isAttachedClip: true,
+                    hasVideo: true,
+                    sourceUrl: attachedClip.mediaUrl,
+                    publicUrl: attachedClip.mediaUrl,
+                    replayState: null
+                };
+            }
             return { mode: 'none', hasVideo: false, replayState: { status: 'unavailable', title: 'Replay unavailable' } };
         }
+
+        export function hasCompletedReplayLifecycle() { return true; }
     `;
 
     await page.route(/\/js\/db\.js\?v=\d+$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: dbModule }));
@@ -552,8 +569,10 @@ test('completed-game manager links, replaces, and removes a YouTube replay', asy
     page.on('dialog', async (dialog) => dialog.accept());
     await page.setViewportSize({ width: 390, height: 844 });
     const scenario = createScenario();
+    scenario.game.liveStatus = 'scheduled';
     scenario.game.recordedVideo = { url: 'https://cdn.example/older-replay.mp4' };
     scenario.game.replayVideoPublicUrl = 'https://video.example/older-replay';
+    scenario.game.videoUrl = 'https://youtu.be/PK1HyC37doc';
     await installMocks(page, scenario);
 
     await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
@@ -588,6 +607,7 @@ test('completed-game manager links, replaces, and removes a YouTube replay', asy
     });
     expect(store.game.recordedVideo).toBeUndefined();
     expect(store.game.replayVideoPublicUrl).toBeUndefined();
+    expect(store.game.videoUrl).toBe('https://youtu.be/PK1HyC37doc');
 
     await page.locator('#replay-video-url').fill('https://youtu.be/dQw4w9WgXcQ?si=replacement');
     await page.locator('#replay-video-title').fill('Replacement replay');
@@ -611,6 +631,44 @@ test('completed-game manager links, replaces, and removes a YouTube replay', asy
     expect(store.game.replayVideo).toBeNull();
     expect(store.game.recordedVideo).toBeUndefined();
     expect(store.game.replayVideoPublicUrl).toBeUndefined();
+    expect(store.game.videoUrl).toBe('https://youtu.be/PK1HyC37doc');
+    expect(store.game.replayVideoFallbackDisabled).toBe(true);
+
+    // A second write without refreshing must use the retained videoUrl and
+    // tombstone in its CAS state, then clear only the tombstone on relink.
+    await page.locator('#replay-video-url').fill('https://youtu.be/PK1HyC37doc');
+    await page.locator('#replay-video-title').fill('Relinked replay');
+    await page.locator('#replay-video-save').click();
+    await expect(page.locator('#replay-video-status')).toContainText('Replay linked');
+    store = await readStore(page);
+    expect(store.game.replayVideo).toMatchObject({
+        videoId: 'PK1HyC37doc',
+        title: 'Relinked replay',
+        status: 'ready'
+    });
+    expect(store.game.videoUrl).toBe('https://youtu.be/PK1HyC37doc');
+    expect(store.game.replayVideoFallbackDisabled).toBeUndefined();
+    expect(pageErrors).toEqual([]);
+});
+
+test('completed statsheet game with only an attached clip does not advertise a full replay', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    const scenario = createScenario();
+    scenario.game.liveStatus = 'scheduled';
+    scenario.game.highlightClips = [{
+        type: 'score-linked',
+        title: 'Putback clip',
+        mediaUrl: 'https://cdn.example.com/putback.mp4'
+    }];
+    await installMocks(page, scenario);
+
+    await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+    await expect.poll(() => pageErrors).toEqual([]);
+
+    const replayAction = page.locator('#replay-report-action');
+    await expect(replayAction.getByRole('link', { name: 'Watch Replay' })).toHaveCount(0);
+    await expect(replayAction).toContainText('Replay Unavailable');
     expect(pageErrors).toEqual([]);
 });
 
@@ -644,6 +702,9 @@ test('manager can remove an existing replay after a final game is corrected to n
 
     await page.locator('#replay-video-remove').click();
     await expect(page.locator('#replay-video-status')).toContainText('Replay removed');
+    await expect(page.locator('#replay-video-admin')).toBeVisible();
+    await expect(page.locator('#replay-video-status')).toBeVisible();
+    await expect(page.locator('#replay-video-heading')).toBeFocused();
 
     const store = await readStore(page);
     expect(store.game.replayVideo).toBeNull();

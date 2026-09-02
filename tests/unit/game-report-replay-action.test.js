@@ -14,7 +14,8 @@ describe('game report replay action', () => {
         expect(html).toContain('renderReplayReportAction({ teamId, gameId, game, team })');
         expect(html).toMatch(/resolveReplayVideoOptions\(\{\s*team,\s*game,\s*isReplay: true\s*\}\)/);
         expect(html).toContain('renderReplayReportAction({ teamId, gameId, game, team: resolvedTeam })');
-        expect(html).toContain('if (replayOptions.hasVideo)');
+        expect(html).toContain('replayOptions.hasVideo && replayOptions.isRecordedReplay === true');
+        expect(html).toContain('const hasCompletedTimelineReplay');
         expect(html).not.toContain("${game.liveStatus === 'completed' ? `");
     });
 

@@ -424,3 +424,110 @@ test('bounds and allowlists database schedule projection fields', () => {
   assert.equal(payload.includes('SENTINEL_DB_CALENDAR_UID'), false);
   assert.equal(Object.hasOwn(response.teams[0].games[0], 'calendarEventUid'), false);
 });
+
+test('projects normalized lifecycle and derived replay evidence without replay details', () => {
+  const replayUrl = 'https://www.youtube.com/watch?v=SENTINEL_REPLAY_VIDEO';
+  const response = sanitizeFamilyShareViewResponse({
+    token: { label: 'Family' },
+    teams: [{
+      teamId: 'team-1',
+      teamName: 'Bears',
+      games: [
+        {
+          id: 'canonical-replay',
+          status: 'completed',
+          liveStatus: '  SCHEDULED  ',
+          hasReplayVideo: true,
+          canOpenPublicViewer: true,
+          replayVideo: {
+            provider: 'SENTINEL_REPLAY_PROVIDER',
+            videoId: 'SENTINEL_REPLAY_VIDEO',
+            publicUrl: replayUrl,
+            linkedBy: 'SENTINEL_REPLAY_LINKER',
+            linkedAt: '2026-07-20T19:00:00.000Z'
+          }
+        },
+        {
+          id: 'contradictory-live',
+          status: 'completed',
+          liveStatus: ' LIVE ',
+          hasReplayVideo: false,
+          canOpenPublicViewer: true,
+          replayVideoUrl: replayUrl
+        },
+        {
+          id: 'reverse-lifecycle',
+          status: 'scheduled',
+          liveStatus: 'COMPLETED',
+          hasReplayVideo: false,
+          canOpenPublicViewer: true,
+          recordedVideo: { embedUrl: replayUrl }
+        },
+        {
+          id: 'metadata-only',
+          status: 'completed',
+          liveStatus: ` CANCELED-${'X'.repeat(80)} `,
+          replayVideo: { provider: 'youtube', videoId: 'metadata-is-not-a-source' }
+        },
+        {
+          id: 'server-derived-signal',
+          status: 'completed',
+          liveStatus: 'FINAL',
+          hasReplayVideo: true,
+          canOpenPublicViewer: true
+        }
+      ]
+    }]
+  });
+
+  const games = response.teams[0].games;
+  assert.deepEqual(games.map(({ id, liveStatus, hasReplayVideo, canOpenPublicViewer }) => ({ id, liveStatus, hasReplayVideo, canOpenPublicViewer })), [
+    { id: 'canonical-replay', liveStatus: 'scheduled', hasReplayVideo: true, canOpenPublicViewer: true },
+    { id: 'contradictory-live', liveStatus: 'live', hasReplayVideo: false, canOpenPublicViewer: true },
+    { id: 'reverse-lifecycle', liveStatus: 'completed', hasReplayVideo: false, canOpenPublicViewer: true },
+    { id: 'metadata-only', liveStatus: `canceled-${'x'.repeat(23)}`, hasReplayVideo: false, canOpenPublicViewer: false },
+    { id: 'server-derived-signal', liveStatus: 'final', hasReplayVideo: true, canOpenPublicViewer: true }
+  ]);
+  assert.equal(games[3].liveStatus.length, 32);
+
+  const payload = JSON.stringify(response);
+  assert.equal(payload.includes('SENTINEL_REPLAY_VIDEO'), false);
+  assert.equal(payload.includes('SENTINEL_REPLAY_PROVIDER'), false);
+  assert.equal(payload.includes('SENTINEL_REPLAY_LINKER'), false);
+  for (const privateField of [
+    'replayVideo',
+    'replayVideoUrl',
+    'recordedVideo',
+    'provider',
+    'videoId',
+    'linkedBy',
+    'linkedAt'
+  ]) {
+    assert.equal(Object.hasOwn(games[0], privateField), false);
+  }
+});
+
+test('preserves bounded shared-game route identities longer than a document ID', () => {
+  const sharedPath = `organizations/${'o'.repeat(128)}/sharedGames/${'g'.repeat(128)}`;
+  const syntheticId = `shared_${encodeURIComponent(sharedPath)}`;
+  assert.ok(syntheticId.length > 256);
+  const response = sanitizeFamilyShareViewResponse({
+    token: { label: 'Family' },
+    teams: [{
+      teamId: 'team-1',
+      games: [{
+        id: syntheticId,
+        gameId: syntheticId,
+        type: 'game',
+        date: '2026-07-20T19:00:00.000Z',
+        status: 'completed',
+        liveStatus: 'final',
+        isSharedGame: true,
+        canOpenPublicViewer: true
+      }]
+    }]
+  });
+
+  assert.equal(response.teams[0].games[0].id, syntheticId);
+  assert.equal(response.teams[0].games[0].gameId, syntheticId);
+});

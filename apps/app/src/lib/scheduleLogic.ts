@@ -157,6 +157,7 @@ export type ParentScheduleEvent = {
   sharedScheduleSourceTeamId?: string | null;
   sharedScheduleOpponentTeamId?: string | null;
   sharedScheduleOpponentGameId?: string | null;
+  hasReplayShareMarker?: boolean;
   counterpartTitle?: string | null;
   title?: string | null;
   childId: string;
@@ -174,8 +175,14 @@ export type ParentScheduleEvent = {
   awayScore?: number | null;
   postGameNotes?: string | null;
   summary?: string | null;
+  videoUrl?: string | null;
   replayVideo?: YouTubeReplayVideo | null;
   rawReplayState?: ReplayArchiveState;
+  rawReplayLifecycle?: {
+    type?: unknown;
+    status?: unknown;
+    liveStatus?: unknown;
+  };
   practiceFeedItems?: Array<{
     weakness: string;
     evidence: string;

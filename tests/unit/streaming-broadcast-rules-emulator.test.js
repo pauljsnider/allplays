@@ -83,6 +83,13 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('streaming broadcast rules
                 sharedScheduleOpponentTeamId: 'opponent-team',
                 sharedScheduleOpponentGameId: 'opponent-game'
             });
+            await seedTeamAndGame(firestore, 'legacy-shared-replay-team', 'legacy-shared-replay-game', {
+                teamPermissions: { videography: { mode: 'selected', memberIds: ['videographer-1'] } }
+            }, {
+                status: 'completed',
+                liveStatus: 'completed',
+                sharedGameId: 'central-shared-game'
+            });
             await seedTeamAndGame(firestore, 'nullable-status-replay-team', 'status-only-game', {
                 teamPermissions: { videography: { mode: 'selected', memberIds: ['videographer-1'] } }
             }, {
@@ -378,6 +385,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('streaming broadcast rules
         }));
         await assertSucceeds(updateDoc(videographerRef, {
             replayVideo: null,
+            replayVideoFallbackDisabled: true,
             updatedAt: nowTimestamp()
         }));
 
@@ -391,10 +399,19 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('streaming broadcast rules
             summary: 'Changed through a mixed-field replay update.',
             updatedAt: nowTimestamp()
         }));
+        await assertFails(updateDoc(gameRef(videographerDb, 'legacy-shared-replay-team', 'legacy-shared-replay-game'), {
+            replayVideo: firstReplay,
+            updatedAt: nowTimestamp()
+        }));
 
         const ownerDb = authedDb('owner-1', 'owner@example.com');
+        await assertFails(updateDoc(gameRef(ownerDb, 'replay-team', 'replay-game'), {
+            replayVideo: { ...firstReplay, linkedBy: 'owner-1' },
+            updatedAt: nowTimestamp()
+        }));
         await assertSucceeds(updateDoc(gameRef(ownerDb, 'replay-team', 'replay-game'), {
             replayVideo: { ...firstReplay, linkedBy: 'owner-1' },
+            replayVideoFallbackDisabled: deleteField(),
             updatedAt: nowTimestamp()
         }));
     });
@@ -529,6 +546,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('streaming broadcast rules
         }));
         await assertFails(updateDoc(gameRef(videographerDb, 'replay-team', 'replay-game'), {
             replayVideo: null,
+            replayVideoFallbackDisabled: true,
             updatedAt: nowTimestamp()
         }));
         await assertSucceeds(updateDoc(ref, {
@@ -538,10 +556,12 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('streaming broadcast rules
         }));
         await assertFails(updateDoc(gameRef(videographerDb, 'replay-team', 'replay-game'), {
             replayVideo: null,
+            replayVideoFallbackDisabled: true,
             updatedAt: nowTimestamp()
         }));
         await assertSucceeds(updateDoc(ref, {
             replayVideo: null,
+            replayVideoFallbackDisabled: true,
             updatedAt: nowTimestamp()
         }));
     });
@@ -571,6 +591,31 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('streaming broadcast rules
             replayVideo: canonicalReplay,
             updatedAt: nowTimestamp()
         }));
+
+        await testEnv.withSecurityRulesDisabled(async (context) => {
+            const firestore = context.firestore();
+            for (const [gameId, extra] of [
+                ['flag-cancelled', { isCancelled: true }],
+                ['flag-deleted', { deleted: true }],
+                ['flag-is-deleted', { isDeleted: true }],
+                ['practice-final', { type: 'practice' }]
+            ]) {
+                await setDoc(gameRef(firestore, 'replay-team', gameId), {
+                    type: 'game',
+                    status: 'completed',
+                    liveStatus: 'scheduled',
+                    visibility: 'public',
+                    updatedAt: nowTimestamp(),
+                    ...extra
+                });
+            }
+        });
+        for (const gameId of ['flag-cancelled', 'flag-deleted', 'flag-is-deleted', 'practice-final']) {
+            await assertFails(updateDoc(gameRef(videographerDb, 'replay-team', gameId), {
+                replayVideo: canonicalReplay,
+                updatedAt: nowTimestamp()
+            }));
+        }
 
         for (const aliasPatch of [
             { recordedVideo: { url: 'https://cdn.example/replay.mp4' } },

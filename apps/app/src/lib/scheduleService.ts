@@ -152,6 +152,7 @@ import {
   getReplayArchiveState,
   getReplayTimestampComponents,
   hasReplayArchiveEvidence,
+  hasReplayVideoSourceEvidence,
   isCompletedGameForReplay,
   legacyReplayArchiveFieldNames,
   normalizeStoredYouTubeReplay,
@@ -658,7 +659,10 @@ type LiveScoreUpdateResult = GameScoreSnapshot & {
   createdBy: string;
   createdByName: string;
   createdAt: Date;
+  committedLifecycle: { liveStatus: 'live' } | null;
 };
+
+type LiveScoreEventPayload = Omit<LiveScoreUpdateResult, 'committedLifecycle'>;
 
 export type ScheduleHomeScoringPlayer = {
   id: string;
@@ -696,6 +700,7 @@ export type PlayerGameStatResult = GameScoreSnapshot & {
   trackerEventId: string;
   liveEventId: string;
   liveEvent: Record<string, unknown>;
+  committedLifecycle: { liveStatus: 'live' } | null;
 };
 
 export type UndoPlayerGameStatInput = {
@@ -734,6 +739,7 @@ export type PlayerScoringStatResult = GameScoreSnapshot & {
   value: 2;
   playerPoints: number;
   liveEvent: Record<string, unknown>;
+  committedLifecycle: { liveStatus: 'live' } | null;
 };
 
 export type CancelScheduledGameResult = {
@@ -1815,6 +1821,18 @@ function formatCancelledGameDate(value: unknown) {
   });
 }
 
+function isTerminalScheduleRecord(game: Pick<ScheduleEventFirestoreRecord, 'status' | 'liveStatus' | 'isCancelled' | 'deleted' | 'isDeleted'>) {
+  const status = compactString(game.status).toLowerCase();
+  const liveStatus = compactString(game.liveStatus).toLowerCase();
+  return status === 'cancelled'
+    || status === 'canceled'
+    || liveStatus === 'cancelled'
+    || liveStatus === 'canceled'
+    || game.isCancelled === true
+    || game.deleted === true
+    || game.isDeleted === true;
+}
+
 export function buildCancelScheduledGameChatMessage(event: Pick<ParentScheduleEvent, 'opponent' | 'title' | 'date'>, titleOverride?: string | null) {
   const title = compactString(titleOverride);
   const opponent = compactString(event.opponent);
@@ -2503,7 +2521,13 @@ function toReplayFingerprintValue(value: unknown, seen = new WeakSet<object>()):
   if (value === null || value === undefined) return null;
   if (value instanceof Date) return toMillisecondTimestampFingerprint(value.getTime());
   if (typeof value === 'string' || typeof value === 'boolean') return value;
-  if (typeof value === 'number') return Number.isFinite(value) ? value : String(value);
+  if (typeof value === 'number') {
+    if (Number.isNaN(value)) return ['number', 'NaN'];
+    if (value === Number.POSITIVE_INFINITY) return ['number', 'Infinity'];
+    if (value === Number.NEGATIVE_INFINITY) return ['number', '-Infinity'];
+    if (Object.is(value, -0)) return ['number', '-0'];
+    return ['number', value];
+  }
   if (typeof value !== 'object') return String(value);
 
   const replayTimestamp = getReplayTimestampComponents(value);
@@ -2559,14 +2583,18 @@ function getReplayArchiveFingerprint(value: unknown) {
 }
 
 function isSharedReplayMutationTarget(gameId: string, game: Record<string, unknown>) {
+  const hasShareMarker = (value: unknown) => value !== null && value !== undefined && value !== '';
   return gameId.startsWith('shared_')
     || gameId.startsWith('sharedh_')
     || gameId.startsWith('shared::')
     || game.isSharedGame === true
-    || Boolean(compactString(game.sharedScheduleId))
-    || Boolean(compactString(game.sharedScheduleSourceTeamId))
-    || Boolean(compactString(game.sharedScheduleOpponentTeamId))
-    || Boolean(compactString(game.sharedScheduleOpponentGameId));
+    || hasShareMarker(game.sharedGameId)
+    || hasShareMarker(game.sharedGamePath)
+    || hasShareMarker(game._sharedGamePath)
+    || hasShareMarker(game.sharedScheduleId)
+    || hasShareMarker(game.sharedScheduleSourceTeamId)
+    || hasShareMarker(game.sharedScheduleOpponentTeamId)
+    || hasShareMarker(game.sharedScheduleOpponentGameId);
 }
 
 async function persistGameReplayVideo(
@@ -2581,6 +2609,7 @@ async function persistGameReplayVideo(
   legacyReplayArchiveFieldNames.forEach((field) => {
     payload[field] = deleteField();
   });
+  if (!replayVideo) payload.replayVideoFallbackDisabled = true;
   const unconfirmedError = (cause: unknown) => {
     const replayError = new Error('The replay update could not be confirmed. Refresh this game before trying again.');
     (replayError as Error & { cause?: unknown }).cause = cause;
@@ -2605,7 +2634,9 @@ async function persistGameReplayVideo(
       if (replayVideo && !isFinalLifecycle) {
         throw new GameReplayPreconditionError('Mark the game final before linking its replay.');
       }
-      if (!replayVideo && !hasReplayArchiveEvidence(currentReplayState)) {
+      const hasRemovableReplay = hasReplayArchiveEvidence(currentReplayState)
+        || (isFinalLifecycle && hasReplayVideoSourceEvidence({ ...currentGame, rawReplayState: currentReplayState }));
+      if (!replayVideo && !hasRemovableReplay) {
         throw new GameReplayPreconditionError('This game no longer has a replay to remove. Refresh the game before trying again.');
       }
       if (!replayVideo && !isFinalLifecycle && managerAccessLevel !== 'full') {
@@ -4135,6 +4166,7 @@ function createScheduleEvent(input: {
   sharedScheduleSourceTeamId?: string | null;
   sharedScheduleOpponentTeamId?: string | null;
   sharedScheduleOpponentGameId?: string | null;
+  hasReplayShareMarker?: boolean;
   counterpartTitle?: string | null;
   title?: string | null;
   isDbGame: boolean;
@@ -4149,8 +4181,14 @@ function createScheduleEvent(input: {
   awayScore?: unknown;
   postGameNotes?: string | null;
   summary?: string | null;
+  videoUrl?: string | null;
   replayVideo?: unknown;
   rawReplayState?: ReplayArchiveState;
+  rawReplayLifecycle?: {
+    type?: unknown;
+    status?: unknown;
+    liveStatus?: unknown;
+  };
   practiceFeedItems?: any[];
   isSharedGame?: boolean;
   isHome?: boolean | null;
@@ -4213,6 +4251,7 @@ function createScheduleEvent(input: {
     sharedScheduleSourceTeamId: compactString(input.sharedScheduleSourceTeamId) || null,
     sharedScheduleOpponentTeamId: compactString(input.sharedScheduleOpponentTeamId) || null,
     sharedScheduleOpponentGameId: compactString(input.sharedScheduleOpponentGameId) || null,
+    hasReplayShareMarker: input.hasReplayShareMarker === true,
     counterpartTitle: compactString(input.counterpartTitle) || null,
     title: input.title || null,
     childId: input.child.playerId,
@@ -4230,8 +4269,10 @@ function createScheduleEvent(input: {
     awayScore: toNullableScore(input.awayScore),
     postGameNotes: input.postGameNotes || null,
     summary: input.summary || null,
+    videoUrl: input.videoUrl || null,
     replayVideo: normalizeStoredYouTubeReplay(rawReplayState.replayVideo),
     rawReplayState,
+    rawReplayLifecycle: input.rawReplayLifecycle,
     practiceFeedItems: Array.isArray(input.practiceFeedItems) ? input.practiceFeedItems : [],
     canUpdateScore: input.canUpdateScore === true,
     isHome: input.isHome ?? null,
@@ -4376,7 +4417,7 @@ async function buildTeamSchedule(
   for (const game of scheduleGames) {
     const isPractice = game.type === 'practice';
     const type = isPractice ? 'practice' : 'game';
-    const isCancelled = game.status === 'cancelled';
+    const isCancelled = isTerminalScheduleRecord(game);
 
     if (isPractice && game.isSeriesMaster && game.recurrence) {
       for (const occurrence of expandRecurrence(game)) {
@@ -4462,6 +4503,7 @@ async function buildTeamSchedule(
           sharedScheduleSourceTeamId: game.sharedScheduleSourceTeamId || null,
           sharedScheduleOpponentTeamId: game.sharedScheduleOpponentTeamId || null,
           sharedScheduleOpponentGameId: game.sharedScheduleOpponentGameId || null,
+          hasReplayShareMarker: game.hasReplayShareMarker === true,
           counterpartTitle: teamName ? `vs. ${teamName}` : null,
           title: game.title || null,
           isDbGame: true,
@@ -4476,8 +4518,10 @@ async function buildTeamSchedule(
           awayScore: game.awayScore ?? null,
           postGameNotes: game.postGameNotes || null,
           summary: game.summary || null,
+          videoUrl: game.videoUrl || null,
           replayVideo: game.replayVideo || null,
           rawReplayState: game.rawReplayState,
+          rawReplayLifecycle: game.rawReplayLifecycle,
           practiceFeedItems: Array.isArray(game.practiceFeedItems) ? game.practiceFeedItems : [],
           isSharedGame: game.isSharedGame === true,
           canUpdateScore: type === 'game' && hasScorekeepingTeamAccess(user, teamWithId, game, null),
@@ -4668,7 +4712,7 @@ async function buildTargetedTeamScheduleEvent(
   const session = isPractice ? await loadPracticeSessionByEventId(teamId, eventId).catch(() => null) : null;
   const date = toEventDate(game.date);
   const normalizedId = compactString(game.id || game.gameId || eventId);
-  const isCancelled = game.status === 'cancelled';
+  const isCancelled = isTerminalScheduleRecord(game);
   if (!normalizedId) return [];
 
   if (isPractice && game.isSeriesMaster && game.recurrence) {
@@ -4758,6 +4802,7 @@ async function buildTargetedTeamScheduleEvent(
     sharedScheduleSourceTeamId: game.sharedScheduleSourceTeamId || null,
     sharedScheduleOpponentTeamId: game.sharedScheduleOpponentTeamId || null,
     sharedScheduleOpponentGameId: game.sharedScheduleOpponentGameId || null,
+    hasReplayShareMarker: game.hasReplayShareMarker === true,
     counterpartTitle: teamName ? `vs. ${teamName}` : null,
     title: game.title || null,
     isDbGame: true,
@@ -4770,8 +4815,10 @@ async function buildTargetedTeamScheduleEvent(
     liveClockUpdatedAt: game.liveClockUpdatedAt || null,
     homeScore: game.homeScore ?? null,
     awayScore: game.awayScore ?? null,
+    videoUrl: game.videoUrl || null,
     replayVideo: game.replayVideo || null,
     rawReplayState: game.rawReplayState,
+    rawReplayLifecycle: game.rawReplayLifecycle,
     isSharedGame: game.isSharedGame === true,
     canUpdateScore: type === 'game' && hasScorekeepingTeamAccess(user, teamWithId, game, null),
     isHome: game.isHome ?? null,
@@ -6303,7 +6350,7 @@ function assertGameAllowsLivePublishing(game: Record<string, any> | null | undef
 
 function buildLiveTrackingGamePatch(game: Record<string, any> | null | undefined, _user: AuthUser, now: Date) {
   const payload: Record<string, unknown> = {};
-  if (String(game?.liveStatus || '').trim().toLowerCase() !== 'live') {
+  if (game?.liveStatus !== 'live') {
     payload.liveStatus = 'live';
   }
   if (game?.liveHasData !== true) {
@@ -6376,7 +6423,10 @@ async function runNativeScoreUpdatePublish(
         homeScore: payload.homeScore,
         awayScore: payload.awayScore
       }));
-      return payload;
+      return {
+        ...payload,
+        committedLifecycle: { liveStatus: 'live' as const }
+      };
     } catch (error) {
       if (isNativeConflictError(error) && attempt < 2) continue;
       throw error;
@@ -6462,7 +6512,7 @@ export async function publishLiveScoreUpdateEvent(teamId: string, gameId: string
       }
 
       const gamePath = `teams/${teamId}/games/${gameId}`;
-      const payload: LiveScoreUpdateResult = await withTimeout(runTransaction(db, async (transaction: any) => {
+      const payload = await withTimeout(runTransaction(db, async (transaction: any) => {
         const gameRef = doc(db, gamePath);
         const gameSnap = await transaction.get(gameRef);
         const gameData = (gameSnap.exists?.() ? gameSnap.data() || {} : {}) as Record<string, unknown>;
@@ -6491,13 +6541,16 @@ export async function publishLiveScoreUpdateEvent(teamId: string, gameId: string
         }, { merge: true });
         transaction.set(doc(db, `${gamePath}/liveEvents/${nextPayload.eventId}`), nextPayload);
         return nextPayload;
-      }) as Promise<LiveScoreUpdateResult>, 'Live score event');
+      }) as Promise<LiveScoreEventPayload>, 'Live score event');
       updateLocalLiveGameSnapshot(teamId, gameId, (local) => ({
         ...local,
         homeScore: payload.homeScore,
         awayScore: payload.awayScore
       }));
-      return payload;
+      return {
+        ...payload,
+        committedLifecycle: { liveStatus: 'live' as const }
+      };
     } catch (error) {
       if (!isNativeRuntime()) throw error;
       logScheduleWarning('Queueing native live score event publish.', 'live-score-publish-queue', error, { fallback: 'queue', teamId, gameId });
@@ -6537,7 +6590,8 @@ export async function publishLiveScoreUpdateEvent(teamId: string, gameId: string
         previousAwayScore: previousScore?.awayScore !== undefined ? normalizeGameScoreValue(previousScore.awayScore) : null,
         createdBy: user.uid,
         createdByName: user.displayName || user.email || 'Staff',
-        createdAt
+        createdAt,
+        committedLifecycle: null
       };
     }
   });
@@ -6831,7 +6885,8 @@ async function runNativePlayerGameStatWrite(
           ...liveEvent,
           eventId: liveEventId,
           createdAt: scoreUpdatedAt
-        }
+        },
+        committedLifecycle: { liveStatus: 'live' }
       };
     } catch (error) {
       if (isNativeConflictError(error) && attempt < 2) continue;
@@ -6941,7 +6996,8 @@ export async function recordPlayerGameStat(teamId: string, gameId: string, playe
         playerStatTotal,
         trackerEventId,
         liveEventId,
-        liveEvent
+        liveEvent,
+        committedLifecycle: { liveStatus: 'live' }
       };
     }) as Promise<PlayerGameStatResult>, 'Player game stat');
 
@@ -7021,7 +7077,8 @@ export async function recordPlayerGameStat(teamId: string, gameId: string, playe
         playerStatTotal: optimisticPlayerStatTotal,
         trackerEventId,
         liveEventId,
-        liveEvent
+        liveEvent,
+        committedLifecycle: null
       };
     }
   });
@@ -7220,7 +7277,8 @@ export async function recordPlayerScoringStat(teamId: string, gameId: string, pl
     statKey: 'pts',
     value: 2,
     playerPoints: result.playerStatTotal,
-    liveEvent: result.liveEvent
+    liveEvent: result.liveEvent,
+    committedLifecycle: result.committedLifecycle
   };
 }
 

@@ -428,6 +428,23 @@ export function mapScheduleEventRecord(value: unknown, fallbackId = ''): Schedul
         return null;
     }
 
+    const rawReplayLifecycle = ['type', 'status', 'liveStatus'].reduce<Record<string, unknown>>((state, field) => {
+        if (Object.prototype.hasOwnProperty.call(decoded, field)) state[field] = decoded[field];
+        return state;
+    }, {});
+    const hasReplayShareMarker = [
+        'sharedGameId',
+        'sharedGamePath',
+        '_sharedGamePath',
+        'sharedScheduleId',
+        'sharedScheduleSourceTeamId',
+        'sharedScheduleOpponentTeamId',
+        'sharedScheduleOpponentGameId'
+    ].some((field) => Object.prototype.hasOwnProperty.call(decoded, field)
+        && decoded[field] !== null
+        && decoded[field] !== undefined
+        && decoded[field] !== '');
+
     return {
         id,
         type,
@@ -448,9 +465,13 @@ export function mapScheduleEventRecord(value: unknown, fallbackId = ''): Schedul
         sharedScheduleSourceTeamId: asTrimmedString(decoded.sharedScheduleSourceTeamId),
         sharedScheduleOpponentTeamId: asTrimmedString(decoded.sharedScheduleOpponentTeamId),
         sharedScheduleOpponentGameId: asTrimmedString(decoded.sharedScheduleOpponentGameId),
+        hasReplayShareMarker,
         gameId: asTrimmedString(decoded.gameId),
         status: asTrimmedString(decoded.status),
         liveStatus: asTrimmedString(decoded.liveStatus),
+        isCancelled: decoded.isCancelled === true,
+        deleted: decoded.deleted === true,
+        isDeleted: decoded.isDeleted === true,
         liveClockMs: asOptionalNumber(decoded.liveClockMs),
         liveClockRunning: asOptionalBoolean(decoded.liveClockRunning),
         liveClockPeriod: asTrimmedString(decoded.liveClockPeriod),
@@ -459,8 +480,10 @@ export function mapScheduleEventRecord(value: unknown, fallbackId = ''): Schedul
         awayScore: asOptionalNumber(decoded.awayScore),
         postGameNotes: asTrimmedString(decoded.postGameNotes),
         summary: asTrimmedString(decoded.summary),
+        videoUrl: asTrimmedString(decoded.videoUrl),
         replayVideo: asObject(decoded.replayVideo),
         rawReplayState: getReplayArchiveState(decoded),
+        rawReplayLifecycle,
         practiceFeedItems: asObjectArray(decoded.practiceFeedItems),
         isSharedGame: decoded.isSharedGame === true,
         isHome: asOptionalBoolean(decoded.isHome),

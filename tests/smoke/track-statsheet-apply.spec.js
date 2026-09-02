@@ -678,6 +678,8 @@ async function installModuleMocks(page) {
         export function resolveReplayVideoOptions() {
             return { hasVideo: false, replayState: { status: 'unavailable', title: 'Replay unavailable' } };
         }
+
+        export function hasCompletedReplayLifecycle() { return true; }
     `;
 
     const rosterProfileFieldsModule = `

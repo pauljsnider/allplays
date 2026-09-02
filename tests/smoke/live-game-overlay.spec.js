@@ -373,10 +373,17 @@ async function stubRealOverlayModules(page) {
                 homeTeamName: 'Current Academy',
                 opponentTeamPhoto: 'https://allplays.ai/test-assets/sporting-blue.svg',
                 period: 'H2', liveClockMs: 720000,
-                liveStatus: window.__OVERLAY_COMPLETED_GAME__ ? 'completed' : 'live',
-                status: window.__OVERLAY_COMPLETED_GAME__ ? 'completed' : 'live',
+                liveStatus: window.__OVERLAY_COMPLETED_LIVE_GAME__
+                    ? 'completed'
+                    : window.__OVERLAY_COMPLETED_GAME__ ? 'scheduled' : 'live',
+                status: window.__OVERLAY_COMPLETED_LIVE_GAME__ || window.__OVERLAY_COMPLETED_GAME__
+                    ? 'completed'
+                    : 'live',
+                recordedReplayTeamPassRequired: window.__OVERLAY_GAME_TEAM_PASS_OVERRIDE__,
                 viewerCount: 4, liveViewerCount: 19,
-                videoUrl: window.__OVERLAY_PUBLIC_VIDEO_URL__ || 'https://www.youtube.com/watch?v=PK1HyC37doc',
+                videoUrl: window.__OVERLAY_NO_PUBLIC_VIDEO__
+                    ? null
+                    : (window.__OVERLAY_PUBLIC_VIDEO_URL__ || 'https://www.youtube.com/watch?v=PK1HyC37doc'),
                 isPublicProjection: true,
                 liveResetAt: window.__OVERLAY_RESET_REPLAY__ ? 200000 : undefined,
                 liveLineup: { onCourt: ['p9'], bench: ['p4'] },
@@ -515,7 +522,15 @@ async function stubRealOverlayModules(page) {
     await page.route(/\/js\/live-game-video\.js(?:\?.*)?$/, (route) => route.fulfill({
         status: 200,
         contentType: 'application/javascript',
-        body: `export function resolveReplayVideoOptions() {
+        body: `export function hasCompletedReplayLifecycle(game = {}) {
+            const completedStatuses = new Set(['completed', 'final']);
+            const status = String(game.status || '').trim().toLowerCase();
+            const liveStatus = String(game.liveStatus || '').trim().toLowerCase();
+            return (completedStatuses.has(status)
+                    && (!liveStatus || completedStatuses.has(liveStatus) || liveStatus === 'scheduled'))
+                || (!status && completedStatuses.has(liveStatus));
+        }
+        export function resolveReplayVideoOptions({ game = {}, isReplay = false } = {}) {
             if (window.__OVERLAY_THROW_VIDEO__) throw new Error('provider refresh failed');
             if (window.__OVERLAY_NO_RESOLVED_VIDEO__) {
                 return { mode: 'none', hasVideo: false, sourceUrl: null, publicUrl: null, replayState: null };
@@ -528,8 +543,13 @@ async function stubRealOverlayModules(page) {
                     publicLabel: 'Open replay video ↗'
                 };
             }
+            const status = String(game.status || '').toLowerCase();
+            const liveStatus = String(game.liveStatus || '').toLowerCase();
+            const isRecordedReplay = isReplay
+                || ((status === 'completed' || status === 'final')
+                    && (!liveStatus || liveStatus === 'scheduled' || liveStatus === 'completed' || liveStatus === 'final'));
             return {
-                mode: 'embed', hasVideo: true,
+                mode: 'embed', isRecordedReplay, hasVideo: true,
                 sourceUrl: 'https://www.youtube.com/embed/PK1HyC37doc?autoplay=1&mute=1',
                 publicUrl: window.__OVERLAY_PROVIDER_PUBLIC_URL__ || 'https://www.youtube.com/watch?v=PK1HyC37doc',
                 publicLabel: 'Watch on YouTube ↗'
@@ -542,7 +562,10 @@ async function stubRealOverlayModules(page) {
         body: `
             export const TEAM_PASS_FEATURES = { RECORDED_REPLAY: 'recorded-replay' };
             export function isRecordedReplayTeamPassGateEnabled({ team = {}, game = {} } = {}) {
-                return game.recordedReplayTeamPassRequired === true || team.recordedReplayTeamPassRequired === true;
+                if (typeof game.recordedReplayTeamPassRequired === 'boolean') {
+                    return game.recordedReplayTeamPassRequired;
+                }
+                return team.recordedReplayTeamPassRequired === true;
             }
             export function resolveTeamEntitlementSeasonId() { return '2026'; }
             export function canAccessPremiumFanFeature(_feature, status = {}) {
@@ -1330,6 +1353,73 @@ test('a completed live game exposes replay actions and shares the replay URL wit
     expect(pageErrors).toEqual([]);
 });
 
+test('a completed live session keeps its event-timeline replay without a recorded video', async ({ page, baseURL }) => {
+    const pageErrors = collectPageErrors(page);
+    await page.addInitScript(() => {
+        window.__OVERLAY_COMPLETED_LIVE_GAME__ = true;
+        window.__OVERLAY_NO_RESOLVED_VIDEO__ = true;
+        window.__OVERLAY_NO_PUBLIC_VIDEO__ = true;
+        window.__OVERLAY_SHARED__ = [];
+        Object.defineProperty(navigator, 'share', {
+            configurable: true,
+            value: async (payload) => window.__OVERLAY_SHARED__.push(payload)
+        });
+    });
+    await stubRealOverlayModules(page);
+
+    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+
+    await expect(page.locator('#live-status')).toHaveText('FINAL');
+    await expect(page.locator('#watch-replay')).toBeVisible();
+    await expect(page.locator('#watch-replay')).toHaveAttribute(
+        'href',
+        'live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true'
+    );
+    await page.locator('#game-actions-toggle').click();
+    await expect(page.locator('#watch-replay-menu')).toBeVisible();
+    await page.locator('#game-actions-toggle').click();
+
+    await page.locator('#share-game').click();
+    await expect.poll(() => page.evaluate(() => window.__OVERLAY_SHARED__)).toEqual([{
+        title: 'Watch Replay',
+        text: 'Watch Current Academy vs Sporting Blue',
+        url: 'https://share.allplays.ai/watch?teamId=team-1&gameId=game-1&replay=true'
+    }]);
+    expect(pageErrors).toEqual([]);
+});
+
+test('a report-only statsheet completion does not advertise or share an unavailable replay', async ({ page, baseURL }) => {
+    const pageErrors = collectPageErrors(page);
+    await page.addInitScript(() => {
+        window.__OVERLAY_COMPLETED_GAME__ = true;
+        window.__OVERLAY_NO_RESOLVED_VIDEO__ = true;
+        window.__OVERLAY_NO_PUBLIC_VIDEO__ = true;
+        window.__OVERLAY_SHARED__ = [];
+        Object.defineProperty(navigator, 'share', {
+            configurable: true,
+            value: async (payload) => window.__OVERLAY_SHARED__.push(payload)
+        });
+    });
+    await stubRealOverlayModules(page);
+
+    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+
+    await expect(page.locator('#live-status')).toHaveText('FINAL');
+    await expect(page.locator('#watch-replay')).toBeHidden();
+    await page.locator('#game-actions-toggle').click();
+    await expect(page.locator('#watch-replay-menu')).toBeHidden();
+    await expect(page.locator('#match-report-link')).toBeVisible();
+    await page.locator('#game-actions-toggle').click();
+
+    await page.locator('#share-game').click();
+    await expect.poll(() => page.evaluate(() => window.__OVERLAY_SHARED__)).toEqual([{
+        title: 'Game Center',
+        text: 'Watch Current Academy vs Sporting Blue',
+        url: 'https://share.allplays.ai/watch?teamId=team-1&gameId=game-1'
+    }]);
+    expect(pageErrors).toEqual([]);
+});
+
 for (const accessState of ['locked', 'unavailable', 'unlocked']) {
     test(`recorded replay access fails closed when Team Pass is ${accessState}`, async ({ page, baseURL }) => {
         const pageErrors = collectPageErrors(page);
@@ -1360,6 +1450,23 @@ for (const accessState of ['locked', 'unavailable', 'unlocked']) {
     });
 }
 
+test('an explicit game replay-gate override remains authoritative when team context fails', async ({ page, baseURL }) => {
+    const pageErrors = collectPageErrors(page);
+    await page.addInitScript(() => {
+        window.__OVERLAY_RECORDED_VIDEO__ = true;
+        window.__OVERLAY_GAME_TEAM_PASS_OVERRIDE__ = false;
+        window.__OVERLAY_FAIL_TEAM_CONTEXT__ = true;
+    });
+    await stubRealOverlayModules(page);
+
+    await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true`, { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('#replay-access-gate')).toBeHidden();
+    await expect(page.locator('#overlay-recorded-video')).toBeVisible();
+    await expect(page.locator('#overlay-recorded-video')).toHaveAttribute('src', '/overlay-recording-fixture.mp4');
+    expect(await page.evaluate(() => window.__OVERLAY_ENTITLEMENT_READS__ || 0)).toBe(0);
+    expect(pageErrors).toEqual([]);
+});
+
 test('completed game gates its recorded video without requiring replay query mode', async ({ page, baseURL }) => {
     const pageErrors = collectPageErrors(page);
     await page.addInitScript(() => {
@@ -1376,6 +1483,11 @@ test('completed game gates its recorded video without requiring replay query mod
     await expect(page.locator('#replay-access-gate')).toContainText('Team Pass required');
     await expect(page.locator('#overlay-recorded-video')).not.toHaveAttribute('src', /.+/);
     await expect(page.locator('#open-stream')).toBeHidden();
+    await expect(page.locator('#watch-replay')).toBeVisible();
+    await expect(page.locator('#watch-replay')).toHaveAttribute(
+        'href',
+        'live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true'
+    );
     expect(pageErrors).toEqual([]);
 });
 
@@ -1679,7 +1791,9 @@ test('manual YouTube seeking rebuilds replay stats and the overlay offers canoni
     await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true`, { waitUntil: 'domcontentloaded' });
     await expect(page.getByRole('button', { name: 'Play replay' })).toBeVisible();
     await expect(page.locator('#home-score')).toHaveText('0');
+    await expect(page.locator('#overlay-video')).toHaveAttribute('src', /https:\/\/www\.youtube\.com\/embed\//);
 
+    await expect.poll(() => page.frames().some((frame) => frame.url().startsWith('https://www.youtube.com/embed/'))).toBe(true);
     const youtubeFrame = page.frames().find((frame) => frame.url().startsWith('https://www.youtube.com/embed/'));
     expect(youtubeFrame).toBeTruthy();
     await youtubeFrame.evaluate(() => {

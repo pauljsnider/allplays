@@ -10,6 +10,7 @@ import type { AuthState } from '../../lib/types';
 import {
   getReplayArchiveState,
   hasReplayArchiveEvidence,
+  hasReplayVideoSourceEvidence,
   isCompletedGameForReplay,
   normalizeStoredYouTubeReplay,
   normalizeYouTubeReplayUrl,
@@ -22,6 +23,7 @@ function isSharedReplayEvent(event: ParentScheduleEvent) {
     || event.id.startsWith('sharedh_')
     || event.id.startsWith('shared::')
     || event.isSharedGame === true
+    || event.hasReplayShareMarker === true
     || Boolean(event.sharedScheduleId)
     || Boolean(event.sharedScheduleSourceTeamId)
     || Boolean(event.sharedScheduleOpponentTeamId)
@@ -48,8 +50,10 @@ export function canManageGameReplay(event: ParentScheduleEvent, auth: AuthState)
   if (!hasReplayManagementAccess(event, auth)) return false;
   const rawReplayState = getEventReplayState(event);
   if (!event.isCancelled && isCompletedGameForReplay(event)) return true;
+  const hasReplayEvidence = hasReplayArchiveEvidence(rawReplayState)
+    || (isCompletedGameForReplay(event) && hasReplayVideoSourceEvidence({ ...event, rawReplayState }));
   return (event.isTeamAdmin === true || event.canManageReplayVideoAsFullManager === true)
-    && hasReplayArchiveEvidence(rawReplayState);
+    && hasReplayEvidence;
 }
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -63,7 +67,7 @@ export function GameReplayEditor({
 }: {
   auth: AuthState;
   event: ParentScheduleEvent;
-  onReplayVideoUpdated: (replayVideo: YouTubeReplayVideo | null) => void;
+  onReplayVideoUpdated: (replayVideo: YouTubeReplayVideo | null, replayState: ReplayArchiveState) => void;
 }) {
   const eventRawReplayState = event.rawReplayState;
   const eventReplayVideo = event.replayVideo;
@@ -74,7 +78,9 @@ export function GameReplayEditor({
     [eventRawReplayState, eventReplayVideo]
   );
   const incomingReplay = useMemo(
-    () => normalizeStoredYouTubeReplay(incomingRawReplayState.replayVideo),
+    () => incomingRawReplayState.replayVideoFallbackDisabled === true
+      ? null
+      : normalizeStoredYouTubeReplay(incomingRawReplayState.replayVideo),
     [incomingRawReplayState]
   );
   const [replayVideo, setReplayVideo] = useState<YouTubeReplayVideo | null>(incomingReplay);
@@ -115,7 +121,8 @@ export function GameReplayEditor({
 
   if (!isManageable && !retainRemovedReplayNotice) return null;
   const canLinkOrReplace = !event.isCancelled && isCompletedGameForReplay(event);
-  const hasArchiveReplay = hasReplayArchiveEvidence(rawReplayState);
+  const hasArchiveReplay = hasReplayArchiveEvidence(rawReplayState)
+    || (isCompletedGameForReplay(event) && hasReplayVideoSourceEvidence({ ...event, rawReplayState }));
   const hasOtherReplay = hasArchiveReplay && !replayVideo;
 
   const saveReplay = async (submitEvent: FormEvent<HTMLFormElement>) => {
@@ -151,12 +158,16 @@ export function GameReplayEditor({
         { expectedReplayState: rawReplayState }
       );
       setReplayVideo(savedReplay);
-      setRawReplayState({ replayVideo: savedReplay });
+      const nextReplayState: ReplayArchiveState = {
+        ...(rawReplayState.videoUrl !== undefined ? { videoUrl: rawReplayState.videoUrl } : {}),
+        replayVideo: savedReplay
+      };
+      setRawReplayState(nextReplayState);
       setReplayUrl(savedReplay.publicUrl);
       setReplaceOtherReplayAcknowledged(false);
       restoreFocusAfterActionRef.current = true;
       setEditorOpen(false);
-      onReplayVideoUpdated(savedReplay);
+      onReplayVideoUpdated(savedReplay, nextReplayState);
       setNotice({
         tone: 'success',
         message: replacing ? 'YouTube replay replaced.' : 'YouTube replay linked.'
@@ -183,11 +194,15 @@ export function GameReplayEditor({
     try {
       await removeGameReplayForApp(event.teamId, event.id, auth.user, rawReplayState);
       setReplayVideo(null);
-      setRawReplayState({});
+      const nextReplayState: ReplayArchiveState = {
+        ...(rawReplayState.videoUrl !== undefined ? { videoUrl: rawReplayState.videoUrl } : {}),
+        replayVideoFallbackDisabled: true
+      };
+      setRawReplayState(nextReplayState);
       setReplayUrl('');
       restoreFocusAfterActionRef.current = true;
       setEditorOpen(false);
-      onReplayVideoUpdated(null);
+      onReplayVideoUpdated(null, nextReplayState);
       setNotice({ tone: 'success', message: replayVideo ? 'YouTube replay removed.' : 'Replay removed from this game.' });
     } catch (error: unknown) {
       setNotice({

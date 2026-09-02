@@ -324,27 +324,29 @@
     </div>
 
     <script type="module">
-        import { getTeam, getPlayers, getGames, getPublicTeamCalendarEvents, getConfigs, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile, getAllUsers, saveTeamAvailabilityPreferences, grantScorekeeperAccess, revokeScorekeeperAccess, grantStreamScoreAccess, revokeStreamScoreAccess, getRsvps, getMyRsvps, getRsvpSummaries, submitRsvp, getMyRsvp, getLocalAttractionSponsors, getAdSpaceSponsors, postChatMessage, getPublicTrackingItems, getPlayerTrackingStatuses } from './js/db.js?v=4433193';
+        import { getTeam, getPlayers, getGames, getPublicTeamCalendarEvents, getConfigs, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile, getAllUsers, saveTeamAvailabilityPreferences, grantScorekeeperAccess, revokeScorekeeperAccess, grantStreamScoreAccess, revokeStreamScoreAccess, getRsvps, getMyRsvps, getRsvpSummaries, submitRsvp, getMyRsvp, getLocalAttractionSponsors, getAdSpaceSponsors, postChatMessage, getPublicTrackingItems, getPlayerTrackingStatuses } from './js/db.js?v=4433194';
         import { normalizeExternalWebsiteUrl, selectRotatingSponsor } from './js/local-attractions.js?v=2';
-        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, isTrackedCalendarEvent, expandRecurrence, escapeHtml, shareOrCopy } from './js/utils.js?v=443369';
+        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, isTrackedCalendarEvent, expandRecurrence, escapeHtml, shareOrCopy } from './js/utils.js?v=443370';
         import { buildGameReportShareUrl, buildGameWatchShareUrl } from './js/game-share-links.js?v=1';
         import { fetchLeagueStandings } from './js/league-standings.js?v=1';
         import { computeNativeStandings } from './js/native-standings.js?v=1';
         import { computeTournamentPoolStandings } from './js/tournament-standings.js?v=4';
         import { aggregateSeasonStatsByPlayerId, buildPlayerLeaderboardSnapshot, selectAnalyticsConfig } from './js/stat-leaderboards.js?v=4';
         import { calculateSeasonRecord, listSeasonLabels } from './js/season-record.js';
-        import { checkAuth } from './js/auth.js?v=4433197';
+        import { checkAuth } from './js/auth.js?v=4433198';
         import { collection, getDocs, query, where } from "./js/firebase.js?v=33";
         import { db, functions, httpsCallable } from './js/firebase.js?v=33';
-        import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=443345';
+        import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=443346';
         import { getVisibleRosterFieldValues } from './js/roster-field-privacy.js';
         import { buildAvailabilityNoteRows, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } from './js/availability-preferences.js?v=1';
         import { buildAvailabilityReminderRecipients, buildRsvpReminderMessage } from './js/schedule-notifications.js?v=6';
         import { readTeamPremiumEntitlement, renderPremiumGateState } from './js/premium-entitlements.js?v=8';
         import { renderTeamPassCard } from './js/team-pass.js?v=44347';
         import { getVisiblePlayerTrackingSummary } from './js/player-tracking-summary.js?v=1';
-        import { renderTeamStaffPermissionsSection } from './js/team-staff-permissions.js?v=443343';
+        import { renderTeamStaffPermissionsSection } from './js/team-staff-permissions.js?v=443344';
         import { getDefaultSchedulePrintOptions, printSchedule, promptSchedulePrintOptions } from './js/schedule-print.js?v=2';
+        import { getGameReplayLifecycle } from './js/game-replay-video.js?v=2';
+        import { hasReplayVideoEvidence } from './js/schedule-watch-cta.js?v=2';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -2365,7 +2367,15 @@
             for (const entry of scheduleEntries) {
                 const { game, date: gameDate, id, title, location, notes } = entry;
                 const isPractice = game.type === 'practice';
-                const isCancelled = String(game.status || '').toLowerCase() === 'cancelled';
+                const status = String(game.status || '').trim().toLowerCase();
+                const liveStatus = String(game.liveStatus || '').trim().toLowerCase();
+                const isCancelled = game.isCancelled === true
+                    || game.deleted === true
+                    || game.isDeleted === true
+                    || status === 'cancelled'
+                    || status === 'canceled'
+                    || liveStatus === 'cancelled'
+                    || liveStatus === 'canceled';
                 let availabilityNotes = [];
                 let myRsvp = null;
                 if (canSeeTeamNotes) {
@@ -2398,6 +2408,7 @@
                     liveStatus: game.liveStatus,
                     homeScore: game.homeScore,
                     awayScore: game.awayScore,
+                    hasReplayVideo: hasReplayVideoEvidence(game),
                     isHome: game.isHome,
                     kitColor: game.kitColor,
                     arrivalTime: game.arrivalTime,
@@ -2724,11 +2735,27 @@
 
         function renderDbGame(game) {
             const isPractice = !!game.isPractice;
-            const normalizedStatus = String(game.status || '').toLowerCase();
-            const normalizedLiveStatus = String(game.liveStatus || '').toLowerCase();
-            const isCancelled = normalizedStatus === 'cancelled';
-            const isCompleted = normalizedStatus === 'completed' && !isPractice;
-            const isLive = normalizedLiveStatus === 'live' && !isCancelled;
+            const normalizedStatus = String(game.status || '').trim().toLowerCase();
+            const normalizedLiveStatus = String(game.liveStatus || '').trim().toLowerCase();
+            const isCancelled = game.isCancelled === true
+                || game.deleted === true
+                || game.isDeleted === true
+                || normalizedStatus === 'cancelled'
+                || normalizedStatus === 'canceled'
+                || normalizedLiveStatus === 'cancelled'
+                || normalizedLiveStatus === 'canceled';
+            const finalStatuses = new Set(['completed', 'final']);
+            // `type` is a local schedule-source discriminator (`db`/`calendar`), not
+            // the persisted game document type consumed by the replay lifecycle.
+            const lifecycle = getGameReplayLifecycle({
+                ...game,
+                type: isPractice ? 'practice' : 'game'
+            });
+            const hasReplayLifecycle = !isPractice && lifecycle.isCompleted;
+            const hasReplayPlayback = hasReplayLifecycle
+                && (finalStatuses.has(normalizedLiveStatus) || hasReplayVideoEvidence(game));
+            const isCompleted = hasReplayLifecycle;
+            const isLive = !isPractice && lifecycle.isActiveLive && !isCancelled;
             const gameDate = game.date?.toDate ? game.date.toDate() : new Date(game.date);
             const isUpcoming = !isCancelled && !isCompleted && gameDate > new Date();
             const won = isCompleted && game.homeScore > game.awayScore;
@@ -2833,7 +2860,7 @@
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12H5m0 0l4-4m-4 4l4 4" transform="rotate(180 10 12)"></path>
                                         </svg>
                                       </button>
-                                      ${game.liveStatus === 'completed' ? `
+                                      ${hasReplayPlayback ? `
                                       <a href="live-game.html?teamId=${currentTeamId}&gameId=${game.realGameId || game.gameId || game.id}&replay=true"
                                          class="inline-flex items-center gap-1 text-sm text-teal-600 hover:text-teal-700 transition font-medium">
                                         <span>Replay</span>

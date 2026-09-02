@@ -5,7 +5,7 @@ import {
   getScheduleTitle,
   type ParentScheduleEvent
 } from './scheduleLogic';
-import { isCompletedGameForReplay } from './youtubeReplay';
+import { hasReplayVideoSourceEvidence, isActiveGameForLive, isCompletedGameForReplay } from './youtubeReplay';
 
 export type ScheduleHubIcon = 'video' | 'radio' | 'file-text' | 'share' | 'clipboard-check' | 'users';
 
@@ -31,7 +31,9 @@ export function buildGameHubDestinations(event: ParentScheduleEvent): ScheduleHu
   const whenWhere = `${formatEventDateLabel(event.date)} ${formatEventTimeLabel(event.date)} · ${getScheduleLocationLabel(event, 'Location TBD')}`;
   const destinations: ScheduleHubDestination[] = [];
 
-  if (isCompletedGameForReplay(event)) {
+  const hasCompletedLivePlayback = liveStatus === 'completed' || liveStatus === 'final';
+  if (isCompletedGameForReplay(event)
+    && (hasCompletedLivePlayback || hasReplayVideoSourceEvidence(event))) {
     destinations.push({
       id: 'watch-replay',
       title: 'Watch replay',
@@ -45,7 +47,7 @@ export function buildGameHubDestinations(event: ParentScheduleEvent): ScheduleHu
       shareText: `${title} replay · ${whenWhere}`,
       badge: 'Replay'
     });
-  } else if (liveStatus === 'live') {
+  } else if (isActiveGameForLive(event)) {
     destinations.push({
       id: 'watch-live',
       title: 'Watch live',

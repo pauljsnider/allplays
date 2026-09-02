@@ -15,6 +15,7 @@ import {
     getOverlayReplayDurationMs,
     getOverlayReplayStartAt,
     getSafeOverlayProviderUrl,
+    hasCompletedReplayLifecycle,
     parseYouTubeReplayTelemetry,
     reconcileOverlayLiveEvents,
     resolvePublicProjectionVideoOptions,
@@ -33,6 +34,18 @@ const stateTools = {
 };
 
 describe('live game overlay model', () => {
+    it('uses the ordered statsheet completion lifecycle without accepting contradictions', () => {
+        expect(hasCompletedReplayLifecycle({ status: 'completed', liveStatus: 'scheduled' })).toBe(true);
+        expect(hasCompletedReplayLifecycle({ status: 'completed', liveStatus: 'final' })).toBe(true);
+        expect(hasCompletedReplayLifecycle({ liveStatus: 'completed' })).toBe(true);
+        expect(hasCompletedReplayLifecycle({ status: 'scheduled', liveStatus: 'completed' })).toBe(false);
+        expect(hasCompletedReplayLifecycle({ status: 'completed', liveStatus: 'live' })).toBe(false);
+        expect(hasCompletedReplayLifecycle({ status: 'completed', liveStatus: 'cancelled' })).toBe(false);
+        expect(hasCompletedReplayLifecycle({ type: 'practice', status: 'completed', liveStatus: 'scheduled' })).toBe(false);
+        expect(hasCompletedReplayLifecycle({ status: 'completed', liveStatus: 'scheduled', isCancelled: true })).toBe(false);
+        expect(hasCompletedReplayLifecycle({ status: 'completed', liveStatus: 'scheduled', deleted: true })).toBe(false);
+    });
+
     it('formats a bounded broadcast clock', () => {
         expect(formatOverlayClock(0)).toBe('0:00');
         expect(formatOverlayClock(65_999)).toBe('1:05');
@@ -71,6 +84,7 @@ describe('live game overlay model', () => {
         expect(resolvePublicProjectionVideoOptions({
             isPublicProjection: true,
             status: 'completed',
+            liveStatus: 'scheduled',
             videoUrl: 'https://www.youtube.com/live/PK1HyC37doc?si=share-token'
         })).toMatchObject({
             mode: 'embed',
@@ -136,6 +150,7 @@ describe('live game overlay model', () => {
             { status: 'scheduled' },
             { status: 'cancelled' },
             { status: 'completed', liveStatus: 'live' },
+            { status: 'completed', liveStatus: 'cancelled' },
             { status: 'scheduled', liveStatus: 'completed' }
         ]) {
             expect(resolvePublicProjectionVideoOptions({
@@ -155,6 +170,21 @@ describe('live game overlay model', () => {
             status: 'completed',
             videoUrl: 'https://twitch.tv/viperslive'
         }, { parentHost: 'allplays.ai' })).toBeNull();
+    });
+
+    it('allows only compatible active-live lifecycle pairs in public projections', () => {
+        const liveUrl = 'https://www.youtube.com/embed/live_stream?channel=UCa9ghvbup6VQmnDOdqwYpqQ';
+        const resolve = (lifecycle) => resolvePublicProjectionVideoOptions({
+            isPublicProjection: true,
+            videoUrl: liveUrl,
+            ...lifecycle
+        });
+
+        expect(resolve({ status: 'scheduled', liveStatus: 'live' })?.hasVideo).toBe(true);
+        expect(resolve({ liveStatus: 'live' })?.hasVideo).toBe(true);
+        for (const status of ['completed', 'cancelled', 'postponed', 'unexpected']) {
+            expect(resolve({ status, liveStatus: 'live' })).toBeNull();
+        }
     });
 
     it('formats live and replay chat like the canonical viewer without allowing stored markup', () => {

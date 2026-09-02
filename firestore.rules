@@ -730,7 +730,7 @@ service cloud.firestore {
         'recordedVideoUrl', 'videoReplayUrl', 'archivedVideoUrl',
         'replayVideoPublicUrl', 'replayVideoPosterUrl', 'replayVideoTitle',
         'replayVideoDurationMs', 'replayStatus', 'recordedReplayStatus',
-        'videoReplayStatus'
+        'videoReplayStatus', 'replayVideoFallbackDisabled'
       ];
     }
 
@@ -746,7 +746,7 @@ service cloud.firestore {
                'recordedVideoUrl', 'videoReplayUrl', 'archivedVideoUrl',
                'replayVideoPublicUrl', 'replayVideoPosterUrl', 'replayVideoTitle',
                'replayVideoDurationMs', 'replayStatus', 'recordedReplayStatus',
-               'videoReplayStatus', 'updatedAt'
+               'videoReplayStatus', 'replayVideoFallbackDisabled', 'updatedAt'
              ]);
     }
 
@@ -755,7 +755,11 @@ service cloud.firestore {
       let rawLiveStatus = data.get('liveStatus', null);
       let status = rawStatus == null ? '' : rawStatus;
       let liveStatus = rawLiveStatus == null ? '' : rawLiveStatus;
-      return status is string &&
+      return data.get('type', 'game') == 'game' &&
+             data.get('isCancelled', false) != true &&
+             data.get('deleted', false) != true &&
+             data.get('isDeleted', false) != true &&
+             status is string &&
              liveStatus is string &&
              ((status in ['completed', 'final'] &&
                (liveStatus == '' || liveStatus in ['scheduled', 'completed', 'final'])) ||
@@ -794,6 +798,9 @@ service cloud.firestore {
 
     function isCanonicalReplayMutationTarget(data) {
       return data.get('isSharedGame', false) != true &&
+             isEmptyReplayShareMarker(data, 'sharedGameId') &&
+             isEmptyReplayShareMarker(data, 'sharedGamePath') &&
+             isEmptyReplayShareMarker(data, '_sharedGamePath') &&
              isEmptyReplayShareMarker(data, 'sharedScheduleId') &&
              isEmptyReplayShareMarker(data, 'sharedScheduleSourceTeamId') &&
              isEmptyReplayShareMarker(data, 'sharedScheduleOpponentTeamId') &&
@@ -807,12 +814,14 @@ service cloud.firestore {
 
     function isGameReplayVideoMutationValid(allowNonfinalRemoval) {
       let replayVideo = request.resource.data.get('replayVideo', null);
+      let fallbackDisabled = request.resource.data.get('replayVideoFallbackDisabled', false);
       return hasNoLegacyReplayArchiveFields(request.resource.data) &&
              isCanonicalReplayMutationTarget(request.resource.data) &&
              (
-               (replayVideo == null &&
+               (replayVideo == null && fallbackDisabled == true &&
                 (allowNonfinalRemoval || isCompletedReplayLifecycle(request.resource.data))) ||
-               (isCompletedReplayLifecycle(request.resource.data) &&
+               (fallbackDisabled != true &&
+                isCompletedReplayLifecycle(request.resource.data) &&
                 isCanonicalYouTubeReplayVideo(replayVideo))
              );
     }

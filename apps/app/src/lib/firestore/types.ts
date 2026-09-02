@@ -125,9 +125,13 @@ export type ScheduleEventFirestoreRecord = {
     sharedScheduleSourceTeamId?: string | null;
     sharedScheduleOpponentTeamId?: string | null;
     sharedScheduleOpponentGameId?: string | null;
+    hasReplayShareMarker?: boolean;
     gameId?: string | null;
     status?: string | null;
     liveStatus?: string | null;
+    isCancelled?: boolean;
+    deleted?: boolean;
+    isDeleted?: boolean;
     liveClockMs?: number | null;
     liveClockRunning?: boolean | null;
     liveClockPeriod?: string | null;
@@ -136,8 +140,14 @@ export type ScheduleEventFirestoreRecord = {
     awayScore?: number | null;
     postGameNotes?: string | null;
     summary?: string | null;
+    videoUrl?: string | null;
     replayVideo?: Record<string, unknown> | null;
     rawReplayState?: ReplayArchiveState;
+    rawReplayLifecycle?: {
+        type?: unknown;
+        status?: unknown;
+        liveStatus?: unknown;
+    };
     practiceFeedItems?: Array<Record<string, unknown>>;
     isSharedGame?: boolean;
     isHome?: boolean | null;

@@ -71,7 +71,7 @@
             <div class="bg-white shadow-sm rounded-xl p-5 md:p-6 border border-gray-200">
                 <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-3 mb-4">
                     <div>
-                        <h2 id="replay-video-heading" class="text-lg font-bold text-gray-900">YouTube Replay</h2>
+                        <h2 id="replay-video-heading" tabindex="-1" class="text-lg font-bold text-gray-900">YouTube Replay</h2>
                         <p id="replay-video-help" class="mt-1 text-sm text-gray-500">
                             Link the finished YouTube broadcast to this game so families can watch the exact replay.
                         </p>
@@ -438,20 +438,20 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getDelegatedTeamContext, getGame, getPlayers, getUnreadChatCounts, getUserProfile, updateGame, uploadStatSheetPhoto, deleteUploadedMediaObjects, setCompletedGamePlayerStats, getTeamStatsForGame, setCompletedGameTeamStats } from './js/db.js?v=4433193';
+        import { getTeam, getDelegatedTeamContext, getGame, getPlayers, getUnreadChatCounts, getUserProfile, updateGame, uploadStatSheetPhoto, deleteUploadedMediaObjects, setCompletedGamePlayerStats, getTeamStatsForGame, setCompletedGameTeamStats } from './js/db.js?v=4433194';
         import { generateGameInsights } from './js/post-game-insights.js?v=2';
-        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, escapeHtml, shareOrCopy } from './js/utils.js?v=443369';
-        import { checkAuth } from './js/auth.js?v=4433197';
+        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, escapeHtml, shareOrCopy } from './js/utils.js?v=443370';
+        import { checkAuth } from './js/auth.js?v=4433198';
         import { collection, deleteField, doc, getDocs, query, orderBy, runTransaction } from "./js/firebase.js?v=33";
         import { db } from './js/firebase.js?v=33';
-        import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=443345';
-        import { resolveLiveStatConfig } from './js/live-game-state.js?v=41';
+        import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=443346';
+        import { resolveLiveStatConfig } from './js/live-game-state.js?v=42';
         import { splitPlayerStatsByVisibility } from './js/stat-leaderboards.js?v=4';
         import { formatGameReportEventTimestamp, resolveReportStatColumns, resolveOpponentReportStatColumns } from './js/game-report-stats.js?v=2';
         import { normalizeStatKey, resolvePostGameStatFields, resolvePostGameTeamStatFields, resolvePostGameEditorDidNotPlay, buildCompletedGamePlayerStatsPayload, buildCompletedGameTeamStatsPayload, getPostGameEditorNextIndex } from './js/post-game-stat-editor.js?v=5';
-        import { buildHighlightShareUrl, normalizeGameRecapHighlightClips, resolveReplayVideoOptions } from './js/live-game-video.js?v=443317';
+        import { buildHighlightShareUrl, normalizeGameRecapHighlightClips, resolveReplayVideoOptions } from './js/live-game-video.js?v=443318';
         import { buildGameReportShareUrl } from './js/game-share-links.js?v=1';
-        import { GAME_REPLAY_ARCHIVE_FIELDS, buildYouTubeReplayVideo, fingerprintGameReplayArchiveState, getGameReplayArchiveState, hasGameReplayArchiveEvidence, normalizeYouTubeReplayUrl } from './js/game-replay-video.js?v=1';
+        import { GAME_REPLAY_ARCHIVE_FIELDS, GAME_REPLAY_CLEAR_FIELDS, buildYouTubeReplayVideo, fingerprintGameReplayArchiveState, getGameReplayArchiveState, getGameReplayLifecycle, hasGameReplayArchiveEvidence, normalizeYouTubeReplayUrl } from './js/game-replay-video.js?v=2';
 
         let currentUser = null;
         let canManageStatSheet = false;
@@ -491,6 +491,8 @@
         }
 
         function isCompletedGameForReplay(game) {
+            if (game?.isCancelled === true || game?.deleted === true || game?.isDeleted === true) return false;
+            if (game?.type !== undefined && game.type !== 'game') return false;
             const finalStatuses = new Set(['completed', 'final']);
             const normalizeLifecycleStatus = (value) => value === null || value === undefined
                 ? ''
@@ -502,14 +504,19 @@
                 || (!status && finalStatuses.has(liveStatus));
         }
 
+        function hasReplayShareMarker(value) {
+            return value !== null && value !== undefined && value !== '';
+        }
+
         function isCanonicalReplayMutationTarget(game) {
             return !game?.isSharedGame
-                && !game?.sharedGamePath
-                && !game?._sharedGamePath
-                && !game?.sharedScheduleId
-                && !game?.sharedScheduleSourceTeamId
-                && !game?.sharedScheduleOpponentTeamId
-                && !game?.sharedScheduleOpponentGameId
+                && !hasReplayShareMarker(game?.sharedGameId)
+                && !hasReplayShareMarker(game?.sharedGamePath)
+                && !hasReplayShareMarker(game?._sharedGamePath)
+                && !hasReplayShareMarker(game?.sharedScheduleId)
+                && !hasReplayShareMarker(game?.sharedScheduleSourceTeamId)
+                && !hasReplayShareMarker(game?.sharedScheduleOpponentTeamId)
+                && !hasReplayShareMarker(game?.sharedScheduleOpponentGameId)
                 && !game?.isPublicProjection;
         }
 
@@ -530,7 +537,9 @@
                 isReplay: true
             });
 
-            if (replayOptions.hasVideo) {
+            const hasCompletedTimelineReplay = ['completed', 'final'].includes(game?.liveStatus)
+                && gameCompleted;
+            if ((replayOptions.hasVideo && replayOptions.isRecordedReplay === true) || hasCompletedTimelineReplay) {
                 return `
                     <a href="live-game.html?teamId=${encodeURIComponent(teamId)}&gameId=${encodeURIComponent(gameId)}&replay=true"
                        class="inline-flex items-center gap-2 bg-teal-500 text-white px-5 py-2 rounded-full font-semibold shadow hover:bg-teal-600 transition">
@@ -604,6 +613,7 @@
         function setupReplayVideoControls({ teamId, gameId, game, team }) {
             const section = document.getElementById('replay-video-admin');
             const form = document.getElementById('replay-video-form');
+            const heading = document.getElementById('replay-video-heading');
             const linkFields = document.getElementById('replay-video-link-fields');
             const help = document.getElementById('replay-video-help');
             const urlInput = document.getElementById('replay-video-url');
@@ -616,7 +626,7 @@
             const isCanonicalTeamGame = isCanonicalReplayMutationTarget(game);
             const canLinkReplayVideo = gameCompleted && canManageReplayVideo;
 
-            if (!section || !form || !linkFields || !help || !urlInput || !titleInput || !saveButton || !removeButton || !current || !status) {
+            if (!section || !form || !heading || !linkFields || !help || !urlInput || !titleInput || !saveButton || !removeButton || !current || !status) {
                 return;
             }
             const canRemoveCurrentReplay = () => hasGameReplayArchiveEvidence(game)
@@ -642,8 +652,10 @@
                 removeButton.disabled = isBusy;
             }
 
-            function renderCurrentReplay({ resetInputs = true } = {}) {
-                const linkedReplay = resolveLinkedYouTubeReplay(game.replayVideo);
+            function renderCurrentReplay({ resetInputs = true, keepSectionVisible = false } = {}) {
+                const linkedReplay = game.replayVideoFallbackDisabled === true
+                    ? null
+                    : resolveLinkedYouTubeReplay(game.replayVideo);
                 const hasOtherReplay = hasGameReplayArchiveEvidence(game) && !linkedReplay;
                 if (linkedReplay) {
                     const replayTitle = String(game.replayVideo?.title || defaultTitle).trim() || defaultTitle;
@@ -672,8 +684,12 @@
                     urlInput.value = '';
                     titleInput.value = String(game.replayVideo?.title || defaultTitle).trim() || defaultTitle;
                 }
-                if (!canLinkReplayVideo && !hasGameReplayArchiveEvidence(game)) {
+                if (!canLinkReplayVideo && !hasGameReplayArchiveEvidence(game) && !keepSectionVisible) {
                     section.classList.add('hidden');
+                }
+                if (keepSectionVisible) {
+                    section.classList.remove('hidden');
+                    help.textContent = 'Replay removed. This game is no longer final, so a new replay cannot be linked.';
                 }
             }
 
@@ -711,11 +727,10 @@
                             replayVideo: nextReplayVideo,
                             updatedAt: new Date()
                         };
-                        GAME_REPLAY_ARCHIVE_FIELDS
-                            .filter((field) => field !== 'replayVideo')
-                            .forEach((field) => {
-                                replayUpdate[field] = deleteField();
-                            });
+                        GAME_REPLAY_CLEAR_FIELDS.forEach((field) => {
+                            replayUpdate[field] = deleteField();
+                        });
+                        replayUpdate.replayVideoFallbackDisabled = nextReplayVideo ? deleteField() : true;
                         transaction.update(gameRef, replayUpdate);
                     });
                 } catch (error) {
@@ -768,7 +783,8 @@
                     urlInput.focus();
                     return;
                 }
-                const replacesOtherProvider = hasGameReplayArchiveEvidence(game) && !resolveLinkedYouTubeReplay(game.replayVideo);
+                const replacesOtherProvider = hasGameReplayArchiveEvidence(game)
+                    && (game.replayVideoFallbackDisabled === true || !resolveLinkedYouTubeReplay(game.replayVideo));
                 if (replacesOtherProvider && !window.confirm('Replace the existing non-YouTube replay with this YouTube video?')) {
                     return;
                 }
@@ -778,7 +794,10 @@
                 try {
                     const saved = await persistReplayVideo(replayVideo);
                     if (!saved) return;
-                    applyGameReplayArchiveState(game, { replayVideo });
+                    applyGameReplayArchiveState(game, {
+                        replayVideo,
+                        ...(Object.hasOwn(game, 'videoUrl') ? { videoUrl: game.videoUrl } : {})
+                    });
                     renderCurrentReplay();
                     updateReplayReportAction({ teamId, gameId, game, team });
                     setReplayVideoStatus(status, 'Replay linked. The Watch Replay button now opens this video.');
@@ -799,10 +818,15 @@
                 try {
                     const removed = await persistReplayVideo(null);
                     if (!removed) return;
-                    applyGameReplayArchiveState(game, { replayVideo: null });
-                    renderCurrentReplay();
+                    applyGameReplayArchiveState(game, {
+                        replayVideo: null,
+                        replayVideoFallbackDisabled: true,
+                        ...(Object.hasOwn(game, 'videoUrl') ? { videoUrl: game.videoUrl } : {})
+                    });
+                    renderCurrentReplay({ keepSectionVisible: !canLinkReplayVideo });
                     updateReplayReportAction({ teamId, gameId, game, team });
                     setReplayVideoStatus(status, 'Replay removed from this game. The source video was not deleted.');
+                    if (!canLinkReplayVideo) heading.focus();
                 } catch (error) {
                     console.error('Error removing YouTube replay:', error);
                     setReplayVideoStatus(status, 'Could not confirm whether the replay was removed. Refresh this report and check the linked replay before trying again.', { error: true });
@@ -836,7 +860,7 @@
             const body = document.getElementById('highlights-body');
             if (!section || !body) return;
 
-            const gameCompleted = game?.status === 'completed' || game?.liveStatus === 'completed';
+            const gameCompleted = getGameReplayLifecycle(game).isCompleted;
             if (!gameCompleted) {
                 section.classList.add('hidden');
                 return;
@@ -1791,6 +1815,7 @@ Write the match report now:`;
                 // Render Header
                 const scoreView = resolveGameReportScoreView(game);
                 const { teamScore, opponentScore, isWin, isLoss, isTie } = scoreView;
+                const reportLifecycle = getGameReplayLifecycle(game);
                 const replayReportAction = renderReplayReportAction({ teamId, gameId, game, team: resolvedTeam });
 
                 document.getElementById('game-header').innerHTML = `
@@ -1833,14 +1858,14 @@ Write the match report now:`;
                     </div>
                     <div class="flex flex-wrap justify-center gap-3 mb-4">
                     <span id="replay-report-action">${replayReportAction}</span>
-                    ${game.liveStatus === 'live' ? `
+                    ${reportLifecycle.isActiveLive ? `
                         <a href="live-game.html?teamId=${teamId}&gameId=${gameId}"
                            class="inline-flex items-center gap-2 bg-red-500 text-white px-5 py-2 rounded-full font-semibold shadow hover:bg-red-600 transition">
                             <span class="w-2 h-2 bg-white rounded-full animate-pulse"></span>
                             Live Now
                         </a>
                     ` : ''}
-                    ${game.status !== 'completed' && game.liveStatus === 'live' ? `
+                    ${game.status !== 'completed' && reportLifecycle.isActiveLive ? `
                         <a href="live-game.html?teamId=${teamId}&gameId=${gameId}"
                            class="inline-flex items-center gap-2 bg-slate-800 text-white px-5 py-2 rounded-full font-semibold shadow hover:bg-slate-900 transition">
                             <span class="text-xs">👁️</span>

@@ -192,6 +192,11 @@ async function mockScheduleModules(page, options = {}) {
                         statTrackerConfigId: overrides.statTrackerConfigId || 'tracker-config-1',
                         status: overrides.status || 'scheduled',
                         liveStatus: overrides.liveStatus || null,
+                        rawReplayLifecycle: overrides.rawReplayLifecycle ?? {
+                            type: overrides.type ?? 'game',
+                            status: overrides.status ?? 'scheduled',
+                            liveStatus: overrides.liveStatus ?? null
+                        },
                         homeScore: overrides.homeScore ?? null,
                         awayScore: overrides.awayScore ?? null,
                         isHome: true,

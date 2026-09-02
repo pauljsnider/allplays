@@ -917,14 +917,52 @@ export function resolveBroadcastStreamControlState({ status = 'setup_required', 
         isLive: resolvedStatus === 'live'
     };
 }
-export function resolveReplayVideoOptions() {
-    return {
-        mode: 'recorded',
-        hasVideo: true,
-        isRecordedReplay: true,
-        sourceUrl: 'https://cdn.example.test/replay.mp4',
-        publicUrl: 'https://cdn.example.test/replay.mp4'
-    };
+export function resolveReplayVideoOptions({ game = {}, isReplay = false } = {}) {
+    // Sanitized public projections intentionally omit the private team stream
+    // enrichment consumed by the normal resolver. The production page must
+    // fall back to the bounded projection video helper for this case.
+    if (game?.isPublicProjection === true) {
+        return { mode: 'none', hasVideo: false, isRecordedReplay: false, sourceUrl: null, publicUrl: null };
+    }
+    if (hasActiveLiveLifecycle(game)) {
+        return {
+            mode: 'embed',
+            hasVideo: true,
+            isRecordedReplay: false,
+            sourceUrl: '',
+            publicUrl: ''
+        };
+    }
+    if (hasCompletedReplayLifecycle(game)) {
+        return {
+            mode: 'recorded',
+            hasVideo: true,
+            isRecordedReplay: true,
+            sourceUrl: 'https://cdn.example.test/replay.mp4',
+            publicUrl: 'https://cdn.example.test/replay.mp4'
+        };
+    }
+    return { mode: 'none', hasVideo: false, isRecordedReplay: false, sourceUrl: null, publicUrl: null };
+}
+export function hasActiveLiveLifecycle(game = {}) {
+    const activeStatuses = new Set(['live', 'in_progress', 'in-progress']);
+    const compatibleStatuses = new Set(['scheduled', ...activeStatuses]);
+    const status = String(game.status || '').trim().toLowerCase();
+    const liveStatus = String(game.liveStatus || '').trim().toLowerCase();
+    const statuses = [status, liveStatus].filter(Boolean);
+    return game.isCancelled !== true
+        && game.deleted !== true
+        && game.isDeleted !== true
+        && statuses.some((value) => activeStatuses.has(value))
+        && statuses.every((value) => compatibleStatuses.has(value));
+}
+export function hasCompletedReplayLifecycle(game = {}) {
+    const finalStatuses = new Set(['completed', 'final']);
+    const status = String(game.status || '').trim().toLowerCase();
+    const liveStatus = String(game.liveStatus || '').trim().toLowerCase();
+    return (finalStatuses.has(status)
+            && (!liveStatus || finalStatuses.has(liveStatus) || liveStatus === 'scheduled'))
+        || (!status && finalStatuses.has(liveStatus));
 }
 export function shouldReloadVideoPlayback() {
     return true;
@@ -1329,11 +1367,11 @@ test('live game archived replay Team Pass gate is off by default', async ({ page
     expect(pageErrors).toEqual([]);
 });
 
-test('final game standard URL promotes the replay experience without a completed live status', async ({ page, baseURL }) => {
+test('statsheet-completed game standard URL promotes the replay experience without a completed live status', async ({ page, baseURL }) => {
     const pageErrors = await collectPageErrors(page);
     await page.addInitScript(() => {
         window.__LIVE_GAME_TEAM__ = {};
-        window.__LIVE_GAME_GAME__ = { status: 'final' };
+        window.__LIVE_GAME_GAME__ = { status: 'completed', liveStatus: 'scheduled' };
     });
     await routeLiveGameStubs(page);
 
@@ -1346,10 +1384,13 @@ test('final game standard URL promotes the replay experience without a completed
         'href',
         'live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true'
     );
+    await expect(page.locator('#recorded-replay-video')).toBeVisible();
+    await expect(page.locator('#ended-overlay')).toBeVisible();
+    await expect(page.locator('#not-live-overlay')).toBeHidden();
     expect(pageErrors).toEqual([]);
 });
 
-test('final game standard URL promotes the replay experience', async ({ page, baseURL }) => {
+test('contradictory final and live statuses fail closed on the standard URL', async ({ page, baseURL }) => {
     const pageErrors = await collectPageErrors(page);
     await page.addInitScript(() => {
         window.__LIVE_GAME_TEAM__ = {};
@@ -1359,14 +1400,10 @@ test('final game standard URL promotes the replay experience', async ({ page, ba
 
     await page.goto(`${baseURL}/live-game.html?teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
 
-    await expect(page.locator('#overlay-view-link')).toBeVisible();
-    await expect(page.locator('#overlay-view-link')).toContainText('Watch Replay');
-    await expect(page.locator('#overlay-view-link')).toHaveAttribute('aria-label', 'Watch Replay');
-    await expect(page.locator('#overlay-view-link')).toHaveAttribute(
-        'href',
-        'live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true'
-    );
     expect(pageErrors).toEqual([]);
+    await expect(page.locator('#overlay-view-link')).toBeHidden();
+    await expect(page.locator('#recorded-replay-video')).toBeHidden();
+    await expect(page.locator('#youtube-stream-iframe')).toBeHidden();
 });
 
 test('private-team parent opens a live game through the bounded team projection', async ({ page, baseURL }) => {
@@ -1398,6 +1435,52 @@ test('private-team parent opens a live game through the bounded team projection'
     await expect.poll(() => page.evaluate(() => window.__LIVE_GAME_SHARE_PAYLOADS__?.[0]?.url)).toBe(
         'https://share.allplays.ai/watch?teamId=team-1&gameId=game-1'
     );
+    expect(pageErrors).toEqual([]);
+});
+
+test('classic live game renders an active sanitized public projection video without team stream enrichment', async ({ page, baseURL }) => {
+    const pageErrors = await collectPageErrors(page);
+    const channelId = 'UCa9ghvbup6VQmnDOdqwYpqQ';
+    const publicVideoUrl = `https://www.youtube.com/embed/live_stream?channel=${channelId}`;
+    let embedRequestCount = 0;
+    await page.addInitScript(({ videoUrl }) => {
+        window.__LIVE_GAME_TEAM__ = {};
+        window.__LIVE_GAME_GAME__ = {
+            type: 'game',
+            status: 'scheduled',
+            liveStatus: 'live',
+            isPublicProjection: true,
+            videoUrl
+        };
+    }, { videoUrl: publicVideoUrl });
+    await page.route('https://www.youtube.com/embed/**', (route) => {
+        embedRequestCount += 1;
+        return route.fulfill({
+            status: 200,
+            contentType: 'text/html',
+            body: '<!doctype html><title>Public projection video fixture</title>'
+        });
+    });
+    await routeLiveGameStubs(page);
+
+    await page.goto(`${baseURL}/live-game.html?teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction((expectedChannelId) => (
+        document.querySelector('#youtube-stream-iframe')?.getAttribute('src')?.includes(expectedChannelId)
+    ), channelId);
+
+    expect(pageErrors).toEqual([]);
+    await expect(page.locator('#video-panel')).toBeVisible();
+    await expect(page.locator('#youtube-stream-iframe')).toBeVisible();
+    await expect(page.locator('#youtube-stream-iframe')).toHaveAttribute(
+        'src',
+        `https://www.youtube.com/embed/live_stream?channel=${channelId}&autoplay=1&mute=1`
+    );
+    await expect(page.locator('#youtube-stream-iframe')).toHaveAttribute('title', 'Live stream');
+    await expect(page.locator('#recorded-replay-video')).toBeHidden();
+    await expect(page.locator('#stream-external-link')).toBeVisible();
+    await expect(page.locator('#stream-external-link')).toHaveAttribute('href', publicVideoUrl);
+    await expect(page.locator('#stream-external-link')).toHaveText('Watch on YouTube ↗');
+    expect(embedRequestCount).toBeGreaterThan(0);
     expect(pageErrors).toEqual([]);
 });
 

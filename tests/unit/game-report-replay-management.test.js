@@ -20,6 +20,7 @@ describe('legacy game report YouTube replay management', () => {
         expect(html).toContain('maxlength="120"');
         expect(html).toContain('text-base md:text-sm');
         expect(html).toContain('min-h-11');
+        expect(html).toMatch(/id="replay-video-heading"[^>]*tabindex="-1"/);
         expect(html).toMatch(/id="replay-video-status"[^>]*role="status"[^>]*aria-live="polite"/);
         expect(html).toContain('id="replay-video-save"');
         expect(html).toContain('id="replay-video-remove"');
@@ -45,7 +46,9 @@ describe('legacy game report YouTube replay management', () => {
         expect(html).toContain('const isCanonicalTeamGame = isCanonicalReplayMutationTarget(game);');
         expect(html).toContain('const canLinkReplayVideo = gameCompleted && canManageReplayVideo;');
         expect(html).toContain("canRemoveReplayVideoOutsideFinal = accessInfo.accessLevel === 'full';");
-        expect(html).toContain('&& !game?.sharedScheduleId');
+        expect(html).toContain("return value !== null && value !== undefined && value !== '';");
+        expect(html).toContain('&& !hasReplayShareMarker(game?.sharedScheduleId)');
+        expect(html).toContain('&& !hasReplayShareMarker(game?.sharedGameId)');
         expect(html).toContain('(!canLinkReplayVideo && !canRemoveCurrentReplay())');
         expect(html).toContain('setupReplayVideoControls({ teamId, gameId, game, team: resolvedTeam });');
     });
@@ -63,9 +66,11 @@ describe('legacy game report YouTube replay management', () => {
         expect(html).toContain('const removed = await persistReplayVideo(null);');
         expect(html).toContain("saveButton.textContent = 'Replace replay';");
         expect(html).toContain("removeButton.classList.toggle('hidden', !canRemoveCurrentReplay());");
+        expect(html).toContain('const linkedReplay = game.replayVideoFallbackDisabled === true');
         expect(html).toContain("window.confirm('Remove the replay from this game? The source video will remain with its provider.')");
-        expect(html).toContain(".filter((field) => field !== 'replayVideo')");
+        expect(html).toContain('GAME_REPLAY_CLEAR_FIELDS.forEach((field) => {');
         expect(html).toContain('replayUpdate[field] = deleteField();');
+        expect(html).toContain('replayUpdate.replayVideoFallbackDisabled = nextReplayVideo ? deleteField() : true;');
     });
 
     it('revalidates stale state and never reports an uncertain write as success', () => {
@@ -76,6 +81,8 @@ describe('legacy game report YouTube replay management', () => {
         expect(html).toContain('const snapshot = await transaction.get(gameRef);');
         expect(html).toContain('fingerprintGameReplayArchiveState(latestGame) !== expectedFingerprint');
         expect(html).toContain('applyGameReplayArchiveState(game, error.latestReplayArchiveState)');
+        expect(html).toContain("...(Object.hasOwn(game, 'videoUrl') ? { videoUrl: game.videoUrl } : {})");
+        expect(html).not.toContain("if (!Object.hasOwn(archiveState, 'videoUrl')");
         expect(html).toContain('if (nextReplayVideo && !isCompletedGameForReplay(latestGame))');
         expect(html).toContain('if (!isCanonicalReplayMutationTarget(latestGame))');
         expect(html).toContain("error.code = 'replay-game-shared';");
@@ -84,5 +91,20 @@ describe('legacy game report YouTube replay management', () => {
         expect(html).toContain('Could not confirm whether the replay was saved. Refresh this report and check the linked replay before trying again.');
         expect(html).toContain('Could not confirm whether the replay was removed. Refresh this report and check the linked replay before trying again.');
         expect(html).toContain('updateReplayReportAction({ teamId, gameId, game, team });');
+        expect(html).toContain("renderCurrentReplay({ keepSectionVisible: !canLinkReplayVideo });");
+        expect(html).toContain('if (!canLinkReplayVideo) heading.focus();');
+    });
+
+    it('uses the ordered replay lifecycle before rendering highlight links', () => {
+        const html = readGameReport();
+
+        expect(html).toContain('const gameCompleted = getGameReplayLifecycle(game).isCompleted;');
+    });
+
+    it('does not promote an attached highlight clip to a full-game replay action', () => {
+        const html = readGameReport();
+
+        expect(html).toContain('replayOptions.hasVideo && replayOptions.isRecordedReplay === true');
+        expect(html).toContain('const hasCompletedTimelineReplay');
     });
 });

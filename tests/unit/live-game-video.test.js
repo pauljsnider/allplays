@@ -8,6 +8,8 @@ import {
     buildHighlightShareUrl,
     buildStreamScoreContext,
     createHighlightClipDraft,
+    hasActiveLiveLifecycle,
+    hasCompletedReplayLifecycle,
     normalizeGameClipRecords,
     normalizeGameRecapHighlightClips,
     normalizeSavedHighlightClips,
@@ -22,6 +24,21 @@ import {
 import { GAME_REPLAY_ARCHIVE_FIELDS } from '../../js/game-replay-video.js';
 
 describe('live game replay video helpers', () => {
+    it('uses the ordered statsheet completion lifecycle without accepting contradictions', () => {
+        expect(hasCompletedReplayLifecycle({ status: 'completed', liveStatus: 'scheduled' })).toBe(true);
+        expect(hasCompletedReplayLifecycle({ status: 'completed', liveStatus: 'final' })).toBe(true);
+        expect(hasCompletedReplayLifecycle({ liveStatus: 'completed' })).toBe(true);
+        expect(hasCompletedReplayLifecycle({ status: 'scheduled', liveStatus: 'completed' })).toBe(false);
+        expect(hasCompletedReplayLifecycle({ status: 'completed', liveStatus: 'live' })).toBe(false);
+        expect(hasCompletedReplayLifecycle({ status: 'completed', liveStatus: 'cancelled' })).toBe(false);
+        expect(hasActiveLiveLifecycle({ status: 'scheduled', liveStatus: 'live' })).toBe(true);
+        expect(hasActiveLiveLifecycle({ status: 'live', liveStatus: 'live' })).toBe(true);
+        expect(hasActiveLiveLifecycle({ status: 'completed', liveStatus: 'live' })).toBe(false);
+        expect(hasActiveLiveLifecycle({ status: 'cancelled', liveStatus: 'live' })).toBe(false);
+        expect(hasActiveLiveLifecycle({ status: 'scheduled', liveStatus: 'live', isCancelled: true })).toBe(false);
+        expect(hasActiveLiveLifecycle({ status: 'mystery', liveStatus: 'live' })).toBe(false);
+    });
+
     it('prefers archived replay video for completed replay games', () => {
         const options = resolveReplayVideoOptions({
             team: {
@@ -31,7 +48,7 @@ describe('live game replay video helpers', () => {
                 liveStatus: 'completed',
                 replayVideo: {
                     url: 'https://cdn.example.com/games/game-1.mp4',
-                    publicUrl: 'https://video.example.com/game-1',
+                    publicUrl: 'https://video.example.com/games/game-1',
                     posterUrl: 'https://cdn.example.com/games/game-1.jpg',
                     durationMs: 180_000
                 }
@@ -43,7 +60,7 @@ describe('live game replay video helpers', () => {
         expect(options.isRecordedReplay).toBe(true);
         expect(options.hasVideo).toBe(true);
         expect(options.sourceUrl).toBe('https://cdn.example.com/games/game-1.mp4');
-        expect(options.publicUrl).toBe('https://video.example.com/game-1');
+        expect(options.publicUrl).toBe('https://video.example.com/games/game-1');
         expect(options.posterUrl).toBe('https://cdn.example.com/games/game-1.jpg');
     });
 
@@ -83,6 +100,30 @@ describe('live game replay video helpers', () => {
         });
     });
 
+    it('plays a statsheet-completed replay without requiring explicit replay mode', () => {
+        const options = resolveReplayVideoOptions({
+            team: {},
+            game: {
+                status: 'completed',
+                liveStatus: 'scheduled',
+                replayVideo: {
+                    provider: 'youtube',
+                    videoId: 'dQw4w9WgXcQ',
+                    embedUrl: 'https://www.youtube.com/embed/dQw4w9WgXcQ',
+                    publicUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+                    status: 'ready'
+                }
+            },
+            isReplay: false
+        });
+
+        expect(options).toMatchObject({
+            mode: 'embed',
+            isRecordedReplay: true,
+            sourceUrl: 'https://www.youtube.com/embed/dQw4w9WgXcQ'
+        });
+    });
+
     it('plays a newly linked replay after stale top-level archive metadata is cleared', () => {
         const replayVideo = {
             provider: 'youtube',
@@ -115,34 +156,11 @@ describe('live game replay video helpers', () => {
         });
     });
 
-    it('prefers an attached YouTube replay on an explicit replay view even if the game is still live', () => {
-        const options = resolveReplayVideoOptions({
-            team: {
-                youtubeVideoId: 'aaaaaaaaaaa'
-            },
-            game: {
-                liveStatus: 'live',
-                replayVideo: {
-                    provider: 'youtube',
-                    videoId: 'dQw4w9WgXcQ',
-                    embedUrl: 'https://www.youtube.com/embed/dQw4w9WgXcQ',
-                    publicUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-                    status: 'ready'
-                }
-            },
-            isReplay: true
-        });
-
-        expect(options.mode).toBe('embed');
-        expect(options.isRecordedReplay).toBe(true);
-        expect(options.sourceUrl).toBe('https://www.youtube.com/embed/dQw4w9WgXcQ');
-    });
-
-    it('keeps active live playback ahead of an archive unless the viewer explicitly opens replay', () => {
+    it.each([false, true])('keeps a pure active live feed ahead of a linked replay when isReplay=%s', (isReplay) => {
         const options = resolveReplayVideoOptions({
             team: { youtubeVideoId: 'aaaaaaaaaaa' },
             game: {
-                status: 'completed',
+                status: 'scheduled',
                 liveStatus: 'live',
                 replayVideo: {
                     provider: 'youtube',
@@ -152,7 +170,7 @@ describe('live game replay video helpers', () => {
                     status: 'ready'
                 }
             },
-            isReplay: false
+            isReplay
         });
 
         expect(options).toMatchObject({
@@ -160,6 +178,118 @@ describe('live game replay video helpers', () => {
             isRecordedReplay: false,
             sourceUrl: expect.stringContaining('/embed/aaaaaaaaaaa')
         });
+        expect(options.mediaHub.liveStream).not.toBeNull();
+        expect(options.mediaHub.replay).toBeNull();
+    });
+
+    it.each([
+        'javascript:alert(1)',
+        'data:text/html,unsafe',
+        'https://user:secret@stream.example.com/embed/game-1'
+    ])('rejects an unsafe active-live iframe source: %s', (streamEmbedUrl) => {
+        const options = resolveReplayVideoOptions({
+            team: { streamEmbedUrl },
+            game: { status: 'scheduled', liveStatus: 'live' },
+            isReplay: false
+        });
+
+        expect(options).toMatchObject({ mode: 'none', hasVideo: false, sourceUrl: null });
+        expect(options.mediaHub.liveStream).toBeNull();
+    });
+
+    it('preserves a credential-free absolute active-live iframe source', () => {
+        const options = resolveReplayVideoOptions({
+            team: { streamEmbedUrl: 'https://stream.example.com/embed/game-1' },
+            game: { status: 'scheduled', liveStatus: 'live' },
+            isReplay: false
+        });
+
+        expect(options).toMatchObject({
+            mode: 'embed',
+            isRecordedReplay: false,
+            sourceUrl: 'https://stream.example.com/embed/game-1?autoplay=1&mute=1'
+        });
+    });
+
+    it.each([false, true])('blocks full replay and live playback for contradictory lifecycles when isReplay=%s', (isReplay) => {
+        for (const lifecycle of [
+            { status: 'scheduled', liveStatus: 'completed' },
+            { status: 'completed', liveStatus: 'live' },
+            { status: 'completed', liveStatus: 'cancelled' },
+            { status: 'cancelled', liveStatus: 'completed' }
+        ]) {
+            const options = resolveReplayVideoOptions({
+                team: { youtubeVideoId: 'aaaaaaaaaaa' },
+                game: {
+                    ...lifecycle,
+                    replayVideo: {
+                        provider: 'youtube',
+                        videoId: 'dQw4w9WgXcQ',
+                        embedUrl: 'https://www.youtube.com/embed/dQw4w9WgXcQ',
+                        publicUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+                        status: 'ready'
+                    }
+                },
+                isReplay
+            });
+
+            expect(options.mode).toBe('none');
+            expect(options.sourceUrl).toBeNull();
+            expect(options.mediaHub.liveStream).toBeNull();
+            expect(options.mediaHub.replay).toBeNull();
+        }
+    });
+
+    it('preserves the configured team stream while an ordinary game is scheduled', () => {
+        const options = resolveReplayVideoOptions({
+            team: { youtubeVideoId: 'aaaaaaaaaaa' },
+            game: { status: 'scheduled', liveStatus: 'scheduled' },
+            isReplay: false
+        });
+
+        expect(options).toMatchObject({
+            mode: 'embed',
+            isRecordedReplay: false,
+            hasVideo: true
+        });
+        expect(options.mediaHub.liveStream).not.toBeNull();
+    });
+
+    it('does not substitute the scheduled team stream on an explicit replay route', () => {
+        const options = resolveReplayVideoOptions({
+            team: { youtubeVideoId: 'aaaaaaaaaaa' },
+            game: { status: 'scheduled', liveStatus: 'scheduled' },
+            isReplay: true
+        });
+
+        expect(options).toMatchObject({ mode: 'none', hasVideo: false });
+        expect(options.mediaHub.liveStream).toBeNull();
+    });
+
+    it.each([false, true])('plays a consistently completed full replay when isReplay=%s', (isReplay) => {
+        const options = resolveReplayVideoOptions({
+            team: { youtubeVideoId: 'aaaaaaaaaaa' },
+            game: {
+                status: 'completed',
+                liveStatus: 'final',
+                replayVideo: {
+                    provider: 'youtube',
+                    videoId: 'dQw4w9WgXcQ',
+                    embedUrl: 'https://www.youtube.com/embed/dQw4w9WgXcQ',
+                    publicUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+                    status: 'ready'
+                }
+            },
+            isReplay
+        });
+
+        expect(options).toMatchObject({
+            mode: 'embed',
+            isRecordedReplay: true,
+            sourceUrl: 'https://www.youtube.com/embed/dQw4w9WgXcQ'
+        });
+        expect(options.mediaHub.liveStream).toBeNull();
+        expect(options.mediaHub.replay).not.toBeNull();
     });
 
     it('plays a completed public YouTube projection as a recorded replay embed', () => {
@@ -168,6 +298,7 @@ describe('live game replay video helpers', () => {
             game: {
                 isPublicProjection: true,
                 status: 'completed',
+                liveStatus: 'scheduled',
                 videoUrl: 'https://youtu.be/dQw4w9WgXcQ?si=public-share'
             },
             isReplay: true
@@ -187,6 +318,7 @@ describe('live game replay video helpers', () => {
         for (const game of [
             { status: 'scheduled', liveStatus: 'completed' },
             { status: 'cancelled', liveStatus: 'completed' },
+            { status: 'completed', liveStatus: 'cancelled' },
             { status: 'scheduled', liveStatus: 'scheduled' }
         ]) {
             const options = resolveReplayVideoOptions({
@@ -207,7 +339,7 @@ describe('live game replay video helpers', () => {
         }
     });
 
-    it('preserves safe direct-media public projection replays and rejects unsafe provider aliases', () => {
+    it('restricts completed videoUrl fallback playback to exact HTTPS YouTube videos', () => {
         const direct = resolveReplayVideoOptions({
             team: {},
             game: {
@@ -227,16 +359,38 @@ describe('live game replay video helpers', () => {
             isReplay: true
         });
 
-        expect(direct).toMatchObject({
-            mode: 'recorded',
-            isRecordedReplay: true,
-            isPublicProjectionVideo: true,
-            sourceUrl: 'https://media.example.test/game.mp4'
-        });
+        expect(direct).toMatchObject({ mode: 'none', hasVideo: false, sourceUrl: null });
         expect(insecureYouTube).toMatchObject({
             mode: 'none',
             hasVideo: false,
             replayState: { status: 'unavailable' }
+        });
+    });
+
+    it.each([
+        ['nested javascript source', { replayVideo: { url: 'javascript:alert(1)' } }],
+        ['nested data source', { recordedVideo: { src: 'data:video/mp4;base64,AAAA' } }],
+        ['nested credential source', { videoReplay: { url: 'https://user:secret@cdn.example.com/game.mp4' } }],
+        ['flat javascript source', { replayVideoUrl: 'javascript:alert(1)' }],
+        ['flat credential source', { archivedVideoUrl: 'https://user:secret@cdn.example.com/game.mp4' }],
+        ['nested javascript public URL', { replayVideo: { publicUrl: 'javascript:alert(1)' } }],
+        ['flat data public URL', { replayVideoPublicUrl: 'data:text/html,unsafe' }]
+    ])('does not expose %s through replay playback options', (_label, replayFields) => {
+        const options = resolveReplayVideoOptions({
+            team: {},
+            game: {
+                status: 'completed',
+                liveStatus: 'scheduled',
+                ...replayFields
+            },
+            isReplay: true
+        });
+
+        expect(options).toMatchObject({
+            mode: 'none',
+            hasVideo: false,
+            sourceUrl: null,
+            publicUrl: null
         });
     });
 
@@ -293,9 +447,10 @@ describe('live game replay video helpers', () => {
 
     it('normalizes game recap clip metadata with context players and links', () => {
         const clips = normalizeGameRecapHighlightClips({
+            status: 'completed',
+            liveStatus: 'scheduled',
             replayVideo: {
-                url: 'https://cdn.example.com/full-game.mp4',
-                publicUrl: 'https://video.example.com/full-game'
+                url: 'https://cdn.example.com/full-game.mp4'
             },
             clipMetadata: [
                 {
@@ -321,7 +476,7 @@ describe('live game replay video helpers', () => {
                 title: 'Opening run',
                 startMs: 10_000,
                 endMs: 35_000,
-                videoUrl: 'https://video.example.com/full-game',
+                videoUrl: null,
                 players: [{ id: 'p2', name: 'Jordan', number: '12' }]
             },
             {
@@ -337,15 +492,57 @@ describe('live game replay video helpers', () => {
         ]);
     });
 
-    it('collects live stream, replay, and saved highlights for the media hub', () => {
+    it('keeps live and completed replay media mutually exclusive while preserving highlights', () => {
+        const team = {
+            streamEmbedUrl: 'https://www.youtube.com/embed/abcdefghijk'
+        };
+        const game = {
+            replayVideo: {
+                url: 'https://cdn.example.com/game.mp4',
+                title: 'Full replay',
+                durationMs: 120_000
+            },
+            highlightClips: [
+                { title: 'Big save', startMs: 15_000, endMs: 35_000, videoUrl: 'https://video.example.com/clip' }
+            ]
+        };
+        const liveHub = resolveGameMediaHub({
+            team,
+            game: { ...game, status: 'scheduled', liveStatus: 'live' }
+        });
+        const replayHub = resolveGameMediaHub({
+            team,
+            game: { ...game, status: 'completed', liveStatus: 'scheduled' }
+        });
+
+        expect(liveHub.liveStream).toMatchObject({
+            sourceUrl: 'https://www.youtube.com/embed/abcdefghijk?autoplay=1&mute=1',
+            publicUrl: 'https://www.youtube.com/watch?v=abcdefghijk'
+        });
+        expect(liveHub.replay).toBeNull();
+        expect(liveHub.highlights).toHaveLength(1);
+
+        expect(replayHub.liveStream).toBeNull();
+        expect(replayHub.replay).toMatchObject({
+            sourceUrl: 'https://cdn.example.com/game.mp4',
+            publicUrl: 'https://cdn.example.com/game.mp4',
+            title: 'Full replay'
+        });
+        expect(replayHub.highlights).toMatchObject([
+            { title: 'Big save', startMs: 15_000, endMs: 35_000, videoUrl: 'https://video.example.com/clip' }
+        ]);
+    });
+
+    it('suppresses live and replay media for a terminal/live contradiction', () => {
         const hub = resolveGameMediaHub({
             team: {
                 streamEmbedUrl: 'https://www.youtube.com/embed/abcdefghijk'
             },
             game: {
+                status: 'completed',
+                liveStatus: 'live',
                 replayVideo: {
                     url: 'https://cdn.example.com/game.mp4',
-                    publicUrl: 'https://video.example.com/game',
                     title: 'Full replay',
                     durationMs: 120_000
                 },
@@ -355,18 +552,9 @@ describe('live game replay video helpers', () => {
             }
         });
 
-        expect(hub.liveStream).toMatchObject({
-            sourceUrl: 'https://www.youtube.com/embed/abcdefghijk?autoplay=1&mute=1',
-            publicUrl: 'https://www.youtube.com/watch?v=abcdefghijk'
-        });
-        expect(hub.replay).toMatchObject({
-            sourceUrl: 'https://cdn.example.com/game.mp4',
-            publicUrl: 'https://video.example.com/game',
-            title: 'Full replay'
-        });
-        expect(hub.highlights).toMatchObject([
-            { title: 'Big save', startMs: 15_000, endMs: 35_000, videoUrl: 'https://video.example.com/clip' }
-        ]);
+        expect(hub.liveStream).toBeNull();
+        expect(hub.replay).toBeNull();
+        expect(hub.highlights).toHaveLength(1);
     });
 
     it('preserves normalized player tags on saved highlights', () => {
@@ -397,11 +585,12 @@ describe('live game replay video helpers', () => {
         ]);
     });
 
-    it('preserves null timing for untimed recap clips that use the replay fallback', () => {
+    it('drops untimed recap metadata instead of inheriting the full replay URL', () => {
         const clips = normalizeGameRecapHighlightClips({
+            status: 'completed',
+            liveStatus: 'scheduled',
             replayVideo: {
-                url: 'https://cdn.example.com/full-game.mp4',
-                publicUrl: 'https://video.example.com/full-game'
+                url: 'https://cdn.example.com/full-game.mp4'
             },
             clipMetadata: [
                 {
@@ -410,13 +599,66 @@ describe('live game replay video helpers', () => {
             ]
         });
 
-        expect(clips).toMatchObject([
-            {
-                title: 'Post-game note with no timestamp',
-                startMs: null,
-                endMs: null,
-                videoUrl: 'https://video.example.com/full-game'
-            }
+        expect(clips).toEqual([]);
+    });
+
+    it('keeps paywalled timestamp highlights on an internal replay route without leaking provider URLs', () => {
+        const clips = normalizeGameRecapHighlightClips({
+            id: 'game-1',
+            teamId: 'team-1',
+            status: 'completed',
+            liveStatus: 'scheduled',
+            recordedReplayPaywallEnabled: true,
+            replayVideo: {
+                provider: 'youtube',
+                videoId: 'dQw4w9WgXcQ',
+                embedUrl: 'https://www.youtube.com/embed/dQw4w9WgXcQ',
+                publicUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+                status: 'ready'
+            },
+            clipMetadata: [
+                { title: 'Go-ahead basket', startMs: 45_000, endMs: 60_000 }
+            ]
+        });
+
+        expect(clips).toEqual([
+            expect.objectContaining({
+                title: 'Go-ahead basket',
+                startMs: 45_000,
+                endMs: 60_000,
+                videoUrl: null
+            })
+        ]);
+
+        const fallbackUrl = buildHighlightShareUrl({
+            origin: 'https://allplays.ai',
+            teamId: 'team-1',
+            gameId: 'game-1',
+            startMs: clips[0].startMs,
+            endMs: clips[0].endMs
+        });
+        expect(fallbackUrl).toBe('https://allplays.ai/live-game.html?teamId=team-1&gameId=game-1&replay=true&clipStart=45000&clipEnd=60000');
+        expect(JSON.stringify({ clips, fallbackUrl })).not.toContain('dQw4w9WgXcQ');
+    });
+
+    it.each([
+        ['javascript', 'javascript:alert(1)'],
+        ['data', 'data:video/mp4;base64,AAAA'],
+        ['credential', 'https://user:secret@cdn.example.com/clip.mp4']
+    ])('rejects an unsafe explicit %s recap clip URL', (_label, videoUrl) => {
+        expect(normalizeGameRecapHighlightClips({
+            clipMetadata: [{ title: 'Unsafe clip', videoUrl }]
+        })).toEqual([]);
+    });
+
+    it('preserves a safe explicit standalone recap clip URL', () => {
+        expect(normalizeGameRecapHighlightClips({
+            clipMetadata: [{ title: 'Uploaded clip', videoUrl: 'https://cdn.example.com/clip.mp4' }]
+        })).toEqual([
+            expect.objectContaining({
+                title: 'Uploaded clip',
+                videoUrl: 'https://cdn.example.com/clip.mp4'
+            })
         ]);
     });
 
@@ -553,10 +795,48 @@ describe('live game replay video helpers', () => {
         });
 
         expect(options.mode).toBe('recorded');
+        expect(options.isRecordedReplay).toBe(false);
+        expect(options.isAttachedClip).toBe(true);
         expect(options.hasVideo).toBe(true);
         expect(options.sourceUrl).toBe('https://cdn.example.com/putback.mp4');
         expect(options.savedHighlights).toHaveLength(1);
         expect(options.gameClips).toEqual([]);
+    });
+
+    it('keeps an attached clip playable without treating it as full-replay lifecycle evidence', () => {
+        const options = resolveReplayVideoOptions({
+            team: { youtubeVideoId: 'aaaaaaaaaaa' },
+            game: {
+                status: 'completed',
+                liveStatus: 'live',
+                replayVideo: {
+                    provider: 'youtube',
+                    videoId: 'dQw4w9WgXcQ',
+                    embedUrl: 'https://www.youtube.com/embed/dQw4w9WgXcQ',
+                    publicUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+                    status: 'ready'
+                },
+                highlightClips: [
+                    {
+                        type: 'score-linked',
+                        title: 'Putback',
+                        mediaUrl: 'https://cdn.example.com/putback.mp4'
+                    }
+                ]
+            },
+            isReplay: true
+        });
+
+        expect(options).toMatchObject({
+            mode: 'recorded',
+            isRecordedReplay: false,
+            isAttachedClip: true,
+            sourceUrl: 'https://cdn.example.com/putback.mp4',
+            publicUrl: 'https://cdn.example.com/putback.mp4'
+        });
+        expect(options.mediaHub.liveStream).toBeNull();
+        expect(options.mediaHub.replay).toBeNull();
+        expect(options.savedHighlights).toHaveLength(1);
     });
 
     it('keeps the live embed visible over attached clips while a game is active', () => {

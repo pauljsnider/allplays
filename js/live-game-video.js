@@ -1,7 +1,10 @@
 import { normalizeYouTubeEmbedUrl } from './live-stream-utils.js';
 import { getChatMediaDownloadName, isSafeChatMediaUrl } from './team-chat-media.js';
 import { hasStreamTeamAccess } from './team-access.js?v=44338';
-import { normalizeYouTubeReplayUrl } from './game-replay-video.js?v=1';
+import {
+    getGameReplayLifecycle,
+    resolveGameReplayPlaybackSource
+} from './game-replay-video.js?v=2';
 
 export const MAX_HIGHLIGHT_CLIP_MS = 60_000;
 export const BROADCAST_SETUP_STATUSES = Object.freeze({
@@ -34,10 +37,23 @@ function firstSafeString(values) {
     return values.find(value => typeof value === 'string' && value.trim()) || null;
 }
 
+function normalizeSafeVideoUrl(value) {
+    if (typeof value !== 'string' || !value.trim()) return null;
+    try {
+        const parsed = new URL(value.trim());
+        if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) {
+            return null;
+        }
+        return parsed.href;
+    } catch {
+        return null;
+    }
+}
+
 function getClipVideoUrl(clip) {
     if (!clip || typeof clip !== 'object') return null;
     const video = clip.video && typeof clip.video === 'object' ? clip.video : {};
-    return firstSafeString([
+    return normalizeSafeVideoUrl(firstSafeString([
         clip.videoUrl,
         clip.url,
         clip.publicUrl,
@@ -48,7 +64,7 @@ function getClipVideoUrl(clip) {
         video.url,
         video.publicUrl,
         video.sourceUrl
-    ]);
+    ]));
 }
 
 function toCleanString(value) {
@@ -354,129 +370,29 @@ export function buildStreamScoreContext(game = {}) {
     };
 }
 
-function isSafeVideoUrl(value) {
-    if (!value) return false;
-    try {
-        const url = new URL(value, 'https://allplays.local');
-        return url.protocol === 'http:' || url.protocol === 'https:';
-    } catch {
-        return false;
-    }
+export function hasCompletedReplayLifecycle(game = {}) {
+    return getGameReplayLifecycle(game).isCompleted;
 }
 
-function hasCompletedReplayLifecycle(game = {}) {
-    const completedStatuses = new Set(['completed', 'final']);
-    const statuses = [game?.status, game?.liveStatus]
-        .map(value => toCleanString(value).toLowerCase())
-        .filter(Boolean);
-    return statuses.length > 0 && statuses.every(status => completedStatuses.has(status));
-}
-
-function getPublicProjectionReplayConfig(game) {
-    if (game?.isPublicProjection !== true || typeof game?.videoUrl !== 'string') return null;
-    if (!hasCompletedReplayLifecycle(game)) return null;
-
-    const sourceUrl = game.videoUrl.trim();
-    if (!sourceUrl) return null;
-
-    const youtubeReplay = normalizeYouTubeReplayUrl(sourceUrl);
-    if (youtubeReplay) {
-        return {
-            mode: 'embed',
-            provider: 'youtube',
-            sourceUrl: youtubeReplay.embedUrl,
-            publicUrl: youtubeReplay.publicUrl,
-            posterUrl: null,
-            title: null,
-            durationMs: null,
-            isPublicProjectionVideo: true
-        };
-    }
-
-    try {
-        const parsed = new URL(sourceUrl);
-        const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
-        if (
-            !['http:', 'https:'].includes(parsed.protocol) ||
-            parsed.username ||
-            parsed.password ||
-            ['youtube.com', 'youtube-nocookie.com', 'youtu.be', 'twitch.tv', 'player.twitch.tv'].includes(host)
-        ) {
-            return null;
-        }
-
-        return {
-            mode: 'recorded',
-            provider: null,
-            sourceUrl: parsed.href,
-            publicUrl: parsed.href,
-            posterUrl: null,
-            title: null,
-            durationMs: null,
-            isPublicProjectionVideo: true
-        };
-    } catch {
-        return null;
-    }
+export function hasActiveLiveLifecycle(game = {}) {
+    return getGameReplayLifecycle(game).isActiveLive;
 }
 
 function getRecordedReplayConfig(game) {
     if (!game || typeof game !== 'object') return null;
 
+    const playbackSource = resolveGameReplayPlaybackSource(game);
+    if (playbackSource.state !== 'playable') return null;
+
     const replayVideo = game.replayVideo && typeof game.replayVideo === 'object' ? game.replayVideo : {};
     const recordedVideo = game.recordedVideo && typeof game.recordedVideo === 'object' ? game.recordedVideo : {};
     const videoReplay = game.videoReplay && typeof game.videoReplay === 'object' ? game.videoReplay : {};
 
-    if (toCleanString(replayVideo.provider).toLowerCase() === 'youtube') {
-        const normalizedCandidates = [
-            replayVideo.videoId ? `https://youtu.be/${toCleanString(replayVideo.videoId)}` : null,
-            replayVideo.embedUrl,
-            replayVideo.publicUrl
-        ]
-            .filter(value => typeof value === 'string' && value.trim())
-            .map(normalizeYouTubeReplayUrl);
-        if (!normalizedCandidates.length || normalizedCandidates.some(candidate => !candidate)) return null;
-
-        const videoIds = new Set(normalizedCandidates.map(candidate => candidate.videoId));
-        if (videoIds.size !== 1) return null;
-
-        const normalized = normalizedCandidates[0];
-        return {
-            mode: 'embed',
-            provider: 'youtube',
-            sourceUrl: normalized.embedUrl,
-            publicUrl: normalized.publicUrl,
-            posterUrl: firstSafeString([replayVideo.posterUrl]),
-            title: firstSafeString([replayVideo.title]),
-            durationMs: toFiniteNumber(replayVideo.durationMs)
-        };
-    }
-
-    const sourceUrl = firstSafeString([
-        replayVideo.url,
-        replayVideo.src,
-        recordedVideo.url,
-        recordedVideo.src,
-        videoReplay.url,
-        videoReplay.src,
-        game.replayVideoUrl,
-        game.recordedVideoUrl,
-        game.videoReplayUrl,
-        game.archivedVideoUrl
-    ]);
-
-    if (!sourceUrl) return getPublicProjectionReplayConfig(game);
-
     return {
-        mode: 'recorded',
-        provider: null,
-        sourceUrl,
-        publicUrl: firstSafeString([
-            replayVideo.publicUrl,
-            recordedVideo.publicUrl,
-            videoReplay.publicUrl,
-            game.replayVideoPublicUrl
-        ]),
+        mode: playbackSource.mode,
+        provider: playbackSource.provider,
+        sourceUrl: playbackSource.sourceUrl,
+        publicUrl: playbackSource.publicUrl,
         posterUrl: firstSafeString([
             replayVideo.posterUrl,
             recordedVideo.posterUrl,
@@ -494,7 +410,8 @@ function getRecordedReplayConfig(game) {
             recordedVideo.durationMs ??
             videoReplay.durationMs ??
             game.replayVideoDurationMs
-        )
+        ),
+        isPublicProjectionVideo: playbackSource.isPublicProjectionVideo === true
     };
 }
 
@@ -502,7 +419,7 @@ function normalizeReplayStatus(value) {
     const status = toCleanString(value).toLowerCase().replace(/[_\s-]+/g, '-');
     if (['processing', 'pending', 'queued', 'recording', 'transcoding', 'encoding'].includes(status)) return 'processing';
     if (['failed', 'error', 'errored', 'unavailable', 'rejected'].includes(status)) return 'failed';
-    if (['ready', 'available', 'complete', 'completed', 'published'].includes(status)) return 'ready';
+    if (['ready', 'available', 'complete', 'completed', 'archived', 'published'].includes(status)) return 'ready';
     return '';
 }
 
@@ -551,9 +468,11 @@ function getReplayAvailabilityState(game = {}, { hasReplay = false, isReplay = f
 function getLiveEmbedConfig(team) {
     const parentHost = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
     if (team?.twitchChannel) {
+        const twitchChannel = toCleanString(team.twitchChannel);
+        if (!twitchChannel) return null;
         return {
-            embedUrl: `https://player.twitch.tv/?channel=${team.twitchChannel}&parent=${parentHost}&autoplay=true&muted=true`,
-            publicUrl: `https://twitch.tv/${team.twitchChannel}`,
+            embedUrl: `https://player.twitch.tv/?channel=${encodeURIComponent(twitchChannel)}&parent=${encodeURIComponent(parentHost)}&autoplay=true&muted=true`,
+            publicUrl: `https://twitch.tv/${encodeURIComponent(twitchChannel)}`,
             publicLabel: 'Watch on Twitch ↗'
         };
     }
@@ -565,7 +484,17 @@ function getLiveEmbedConfig(team) {
     ]);
     if (!sourceUrl) return null;
 
-    const embedUrl = normalizeYouTubeEmbedUrl(sourceUrl) || sourceUrl;
+    let parsedSource;
+    try {
+        parsedSource = new URL(sourceUrl);
+    } catch {
+        return null;
+    }
+    if (!['http:', 'https:'].includes(parsedSource.protocol) || parsedSource.username || parsedSource.password) {
+        return null;
+    }
+
+    const embedUrl = normalizeYouTubeEmbedUrl(parsedSource.href) || parsedSource.href;
     const channelMatch = embedUrl.match(/channel=(UC[a-zA-Z0-9_-]{22})/);
     const videoMatch = embedUrl.match(/\/embed\/([a-zA-Z0-9_-]{11})/);
 
@@ -646,8 +575,8 @@ export function normalizeSavedHighlightClips(game, options = {}) {
 
     return collectRawHighlightClips(game)
         .map((clip, index) => {
-            const mediaUrl = firstSafeString([clip?.mediaUrl, clip?.url, clip?.sourceUrl]);
-            if (clip?.type === 'score-linked' && isSafeVideoUrl(mediaUrl)) {
+            const mediaUrl = normalizeSafeVideoUrl(firstSafeString([clip?.mediaUrl, clip?.url, clip?.sourceUrl]));
+            if (clip?.type === 'score-linked' && mediaUrl) {
                 return {
                     id: clip.id || null,
                     type: 'score-linked',
@@ -692,12 +621,11 @@ export function normalizeSavedHighlightClips(game, options = {}) {
 
 export function normalizeGameRecapHighlightClips(game, options = {}) {
     const durationMs = toFiniteNumber(options.durationMs);
-    const recorded = getRecordedReplayConfig(game);
-    const replayUrl = recorded?.publicUrl || recorded?.sourceUrl || null;
+    const recorded = hasCompletedReplayLifecycle(game) ? getRecordedReplayConfig(game) : null;
 
     return collectRawHighlightClips(game)
         .map((clip, index) => {
-            const videoUrl = getClipVideoUrl(clip) || replayUrl;
+            const videoUrl = getClipVideoUrl(clip);
             const rawStartMs = toFiniteNumber(clip?.startMs ?? clip?.clipStartMs);
             const rawEndMs = toFiniteNumber(clip?.endMs ?? clip?.clipEndMs);
             const normalized = Number.isFinite(rawStartMs) ? createHighlightClipDraft({
@@ -725,9 +653,23 @@ export function normalizeGameRecapHighlightClips(game, options = {}) {
         .sort((a, b) => (a.order - b.order) || ((a.startMs ?? 0) - (b.startMs ?? 0)));
 }
 
-export function resolveGameMediaHub({ team, game, durationMs = null } = {}) {
-    const recorded = getRecordedReplayConfig(game);
-    const liveEmbed = getLiveEmbedConfig(team);
+function hasScheduledLivePreviewLifecycle(game = {}) {
+    const type = toCleanString(game?.type).toLowerCase();
+    const status = toCleanString(game?.status).toLowerCase();
+    const liveStatus = toCleanString(game?.liveStatus).toLowerCase();
+    return (!type || type === 'game')
+        && game?.isCancelled !== true
+        && game?.deleted !== true
+        && game?.isDeleted !== true
+        && [status, liveStatus].filter(Boolean).every((value) => value === 'scheduled');
+}
+
+export function resolveGameMediaHub({ team, game, durationMs = null, includeScheduledLive = true } = {}) {
+    const lifecycle = getGameReplayLifecycle(game);
+    const recorded = lifecycle.isCompleted ? getRecordedReplayConfig(game) : null;
+    const liveEmbed = lifecycle.isActiveLive || (includeScheduledLive && hasScheduledLivePreviewLifecycle(game))
+        ? getLiveEmbedConfig(team)
+        : null;
     const highlightDurationMs = toFiniteNumber(durationMs) ?? recorded?.durationMs ?? null;
 
     return {
@@ -807,22 +749,30 @@ export function buildHighlightShareUrl({ origin, pathname = '/live-game.html', t
 
 export function resolveReplayVideoOptions({ team, game, players = [], isReplay, clipStartMs = null, clipEndMs = null }) {
     const recorded = getRecordedReplayConfig(game);
-    const mediaHub = resolveGameMediaHub({ team, game, durationMs: recorded?.durationMs });
+    const lifecycle = getGameReplayLifecycle(game);
+    const completedRecorded = lifecycle.isCompleted ? recorded : null;
+    const mediaHub = resolveGameMediaHub({
+        team,
+        game,
+        durationMs: completedRecorded?.durationMs,
+        includeScheduledLive: !isReplay
+    });
     const gameClips = normalizeGameClipRecords(game, { players });
     const savedHighlights = mediaHub.highlights;
     const firstAttachedClip = savedHighlights.find(clip => clip.mediaUrl);
-    const isActiveGame = game?.liveStatus === 'live' || game?.status === 'live';
-    const isCompletedGame = !isActiveGame && hasCompletedReplayLifecycle(game);
-    const activeLiveEmbed = isActiveGame ? getLiveEmbedConfig(team) : null;
-    const canUseRecordedReplay = Boolean(recorded?.sourceUrl) && (isReplay || isCompletedGame);
-    const canUseYouTubeReplay = canUseRecordedReplay && recorded?.provider === 'youtube';
+    const isActiveGame = lifecycle.isActiveLive;
+    const isCompletedGame = lifecycle.isCompleted;
+    const activeLiveEmbed = isActiveGame || (!isReplay && hasScheduledLivePreviewLifecycle(game))
+        ? getLiveEmbedConfig(team)
+        : null;
+    const canUseRecordedReplay = Boolean(recorded?.sourceUrl) && isCompletedGame;
     const replayState = getReplayAvailabilityState(game, {
         hasReplay: canUseRecordedReplay,
         isReplay,
         isCompletedGame
     });
 
-    if (activeLiveEmbed?.embedUrl && !canUseYouTubeReplay) {
+    if (activeLiveEmbed?.embedUrl) {
         return {
             mode: 'embed',
             isRecordedReplay: false,
@@ -893,32 +843,11 @@ export function resolveReplayVideoOptions({ team, game, players = [], isReplay, 
         };
     }
 
-    const liveEmbed = activeLiveEmbed || getLiveEmbedConfig(team);
-    if (liveEmbed?.embedUrl && !isReplay && !isCompletedGame) {
-        return {
-            mode: 'embed',
-            isRecordedReplay: false,
-            isPublicProjectionVideo: false,
-            hasVideo: true,
-            sourceUrl: liveEmbed.embedUrl,
-            publicUrl: liveEmbed.publicUrl,
-            publicLabel: liveEmbed.publicLabel,
-            posterUrl: null,
-            title: null,
-            durationMs: null,
-            clipStartMs: null,
-            clipEndMs: null,
-            savedHighlights,
-            mediaHub,
-            gameClips,
-            replayState: null
-        };
-    }
-
     if (firstAttachedClip) {
         return {
             mode: 'recorded',
-            isRecordedReplay: true,
+            isRecordedReplay: false,
+            isAttachedClip: true,
             isPublicProjectionVideo: false,
             hasVideo: true,
             sourceUrl: firstAttachedClip.mediaUrl,

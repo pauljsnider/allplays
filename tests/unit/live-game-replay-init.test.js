@@ -224,11 +224,11 @@ function createEnvironment() {
 function buildModuleSource() {
     return readFileSync(new URL('../../js/live-game.js', import.meta.url), 'utf8')
         .replace(
-            "import {\n  getGameDayTeamContext,\n  getGame,\n  getPlayers,\n  subscribeLiveEvents,\n  subscribeLiveChat,\n  postLiveChatMessage,\n  subscribeReactions,\n  sendReaction,\n  trackViewerPresence,\n  getLiveEvents,\n  getLiveChatHistory,\n  getLiveReactions,\n  getConfigs,\n  getMyRsvp,\n  subscribeGame,\n  updateGame,\n  uploadGameClip,\n  deleteUploadedMediaObjects\n} from './db.js?v=4433193';",
+            "import {\n  getGameDayTeamContext,\n  getGame,\n  getPlayers,\n  subscribeLiveEvents,\n  subscribeLiveChat,\n  postLiveChatMessage,\n  subscribeReactions,\n  sendReaction,\n  trackViewerPresence,\n  getLiveEvents,\n  getLiveChatHistory,\n  getLiveReactions,\n  getConfigs,\n  getMyRsvp,\n  subscribeGame,\n  updateGame,\n  uploadGameClip,\n  deleteUploadedMediaObjects\n} from './db.js?v=4433194';",
             'const { getGameDayTeamContext, getGame, getPlayers, subscribeLiveEvents, subscribeLiveChat, postLiveChatMessage, subscribeReactions, sendReaction, trackViewerPresence, getLiveEvents, getLiveChatHistory, getLiveReactions, getConfigs, getMyRsvp, subscribeGame, updateGame, uploadGameClip, deleteUploadedMediaObjects } = deps.db;'
         )
         .replace(
-            "import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=443369';",
+            "import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=443370';",
             'const { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } = deps.utils;'
         )
         .replace(
@@ -248,7 +248,7 @@ function buildModuleSource() {
             'const { checkAuth } = deps.auth;'
         )
         .replace(
-            "import { isViewerChatEnabled } from './live-game-chat.js?v=2';",
+            /import \{ isViewerChatEnabled \} from '\.\/live-game-chat\.js\?v=\d+';/,
             'const { isViewerChatEnabled } = deps.liveGameChat;'
         )
         .replace(
@@ -264,8 +264,12 @@ function buildModuleSource() {
             'const { buildReplaySessionState, collectReplayEventWindow, collectReplayStreamWindow, getReplayElapsedMs, getReplayStartTimeAfterSpeedChange, getReplayTimestampMs, rebaseReplayStartTimeMs } = deps.liveGameReplay;'
         )
         .replace(
-            /import\s+\{\s*BROADCAST_SETUP_STATUSES,\s*BROADCAST_STREAM_STATUSES,\s*MAX_HIGHLIGHT_CLIP_MS,\s*buildBroadcastSetupSession,\s*buildHighlightShareUrl,\s*buildStreamScoreContext,\s*canAccessNativeCameraCapture,\s*canSaveBroadcastSetupSession,\s*createHighlightClipDraft,\s*resolveBroadcastProviderMetadata,\s*resolveBroadcastStreamControlState,\s*resolveReplayVideoOptions,\s*shouldReloadVideoPlayback\s*\}\s+from\s+'\.\/live-game-video\.js\?v=\d+';/,
-            'const { BROADCAST_SETUP_STATUSES, BROADCAST_STREAM_STATUSES, MAX_HIGHLIGHT_CLIP_MS, buildBroadcastSetupSession, buildHighlightShareUrl, buildStreamScoreContext, canAccessNativeCameraCapture, canSaveBroadcastSetupSession, createHighlightClipDraft, resolveBroadcastProviderMetadata, resolveBroadcastStreamControlState, resolveReplayVideoOptions, shouldReloadVideoPlayback } = deps.liveGameVideo;'
+            /import\s+\{\s*BROADCAST_SETUP_STATUSES,\s*BROADCAST_STREAM_STATUSES,\s*MAX_HIGHLIGHT_CLIP_MS,\s*buildBroadcastSetupSession,\s*buildHighlightShareUrl,\s*buildStreamScoreContext,\s*canAccessNativeCameraCapture,\s*canSaveBroadcastSetupSession,\s*createHighlightClipDraft,\s*hasActiveLiveLifecycle,\s*hasCompletedReplayLifecycle,\s*resolveBroadcastProviderMetadata,\s*resolveBroadcastStreamControlState,\s*resolveReplayVideoOptions,\s*shouldReloadVideoPlayback\s*\}\s+from\s+'\.\/live-game-video\.js\?v=\d+';/,
+            'const { BROADCAST_SETUP_STATUSES, BROADCAST_STREAM_STATUSES, MAX_HIGHLIGHT_CLIP_MS, buildBroadcastSetupSession, buildHighlightShareUrl, buildStreamScoreContext, canAccessNativeCameraCapture, canSaveBroadcastSetupSession, createHighlightClipDraft, hasActiveLiveLifecycle, hasCompletedReplayLifecycle, resolveBroadcastProviderMetadata, resolveBroadcastStreamControlState, resolveReplayVideoOptions, shouldReloadVideoPlayback } = deps.liveGameVideo;'
+        )
+        .replace(
+            /import \{ resolvePublicProjectionVideoOptions \} from '\.\/live-game-overlay-model\.js\?v=\d+';/,
+            'const { resolvePublicProjectionVideoOptions } = deps.liveGameOverlayModel;'
         )
         .replace(
             /import \{ buildGameReportShareUrl, buildGameWatchShareUrl \} from '\.\/game-share-links\.js\?v=\d+';/,
@@ -323,7 +327,20 @@ const runModule = new AsyncFunction(
     moduleSource
 );
 
-async function bootReplayPage({ config, replayEvents = [], game: gameOverrides = {}, replay = true, team: teamOverrides = {} } = {}) {
+async function bootReplayPage({
+    config,
+    replayEvents = [],
+    game: gameOverrides = {},
+    replay = true,
+    team: teamOverrides = {},
+    teamContextError = null,
+    configsError = null,
+    playersError = null,
+    videoOptions = null,
+    publicProjectionVideoOptions = null,
+    teamPassGateEnabled = false,
+    videoUnlocked = false
+} = {}) {
     const { document, ensureElement } = createEnvironment();
     const storage = new Map();
     const sessionStorage = {
@@ -369,9 +386,15 @@ async function bootReplayPage({ config, replayEvents = [], game: gameOverrides =
     const trackViewerPresence = vi.fn(() => () => {});
     const deps = {
         db: {
-            getGameDayTeamContext: async () => ({ id: 'T1', name: 'Raptors', sport: 'basketball', ...teamOverrides }),
+            getGameDayTeamContext: async () => {
+                if (teamContextError) throw teamContextError;
+                return { id: 'T1', name: 'Raptors', sport: 'basketball', ...teamOverrides };
+            },
             getGame: async () => game,
-            getPlayers: async () => [],
+            getPlayers: async () => {
+                if (playersError) throw playersError;
+                return [];
+            },
             subscribeLiveEvents: () => () => {},
             subscribeLiveChat,
             postLiveChatMessage: async () => {},
@@ -381,7 +404,10 @@ async function bootReplayPage({ config, replayEvents = [], game: gameOverrides =
             getLiveEvents: async () => replayEvents,
             getLiveChatHistory: async () => [],
             getLiveReactions: async () => [],
-            getConfigs: async () => [],
+            getConfigs: async () => {
+                if (configsError) throw configsError;
+                return [];
+            },
             subscribeGame: () => () => {},
             updateGame: async () => {},
             uploadGameClip: async () => ({ url: '' }),
@@ -510,6 +536,25 @@ async function bootReplayPage({ config, replayEvents = [], game: gameOverrides =
             canAccessNativeCameraCapture: () => false,
             canSaveBroadcastSetupSession: () => false,
             createHighlightClipDraft: () => ({ startMs: 0, endMs: 0, title: '' }),
+            hasActiveLiveLifecycle: (game = {}) => {
+                const activeStatuses = new Set(['live', 'in_progress', 'in-progress']);
+                const compatibleStatuses = new Set(['scheduled', ...activeStatuses]);
+                const status = String(game.status || '').trim().toLowerCase();
+                const liveStatus = String(game.liveStatus || '').trim().toLowerCase();
+                return activeStatuses.has(liveStatus || status)
+                    && [status, liveStatus].filter(Boolean).every((value) => compatibleStatuses.has(value))
+                    && game.isCancelled !== true
+                    && game.deleted !== true
+                    && game.isDeleted !== true;
+            },
+            hasCompletedReplayLifecycle: (game = {}) => {
+                const completedStatuses = new Set(['completed', 'final']);
+                const status = String(game.status || '').trim().toLowerCase();
+                const liveStatus = String(game.liveStatus || '').trim().toLowerCase();
+                return (completedStatuses.has(status)
+                        && (!liveStatus || completedStatuses.has(liveStatus) || liveStatus === 'scheduled'))
+                    || (!status && completedStatuses.has(liveStatus));
+            },
             resolveBroadcastStreamControlState: ({ status = 'setup_required', cameraReady = false, microphoneReady = false } = {}) => ({
                 status,
                 label: status,
@@ -519,18 +564,23 @@ async function bootReplayPage({ config, replayEvents = [], game: gameOverrides =
                 showRetry: status === 'failed',
                 isLive: status === 'live'
             }),
-            resolveReplayVideoOptions: () => null,
-            shouldReloadVideoPlayback: () => false
+            resolveReplayVideoOptions: () => videoOptions,
+            shouldReloadVideoPlayback: (current, next) => current?.mode !== next?.mode
+                || current?.sourceUrl !== next?.sourceUrl
+                || current?.isRecordedReplay !== next?.isRecordedReplay
+        },
+        liveGameOverlayModel: {
+            resolvePublicProjectionVideoOptions: () => publicProjectionVideoOptions
         },
         gameShareLinks: {
             buildGameReportShareUrl: () => 'https://share.allplays.ai/report?teamId=T1&gameId=G1',
             buildGameWatchShareUrl: () => 'https://share.allplays.ai/watch?teamId=T1&gameId=G1'
         },
         teamEntitlements: {
-            TEAM_PASS_FEATURES: {},
-            canAccessPremiumFanFeature: () => false,
-            getTeamEntitlementStatus: () => ({ isActive: false }),
-            isRecordedReplayTeamPassGateEnabled: () => false,
+            TEAM_PASS_FEATURES: { RECORDED_REPLAY: 'recorded-replay' },
+            canAccessPremiumFanFeature: () => videoUnlocked,
+            getTeamEntitlementStatus: () => ({ active: videoUnlocked, isActive: videoUnlocked }),
+            isRecordedReplayTeamPassGateEnabled: () => teamPassGateEnabled,
             resolveTeamEntitlementSeasonId: () => null
         },
         firebaseAi: {
@@ -607,6 +657,12 @@ async function bootReplayPage({ config, replayEvents = [], game: gameOverrides =
         opponentStats: ensureElement('opponent-stats'),
         lineupOnCourt: ensureElement('lineup-oncourt'),
         lineupBench: ensureElement('lineup-bench'),
+        endedOverlay: ensureElement('ended-overlay'),
+        watchReplayBtn: ensureElement('watch-replay-btn'),
+        overlayViewLink: ensureElement('overlay-view-link'),
+        overlayViewLinkLabel: ensureElement('overlay-view-link-label'),
+        videoPaywall: ensureElement('video-paywall'),
+        videoIframe: ensureElement('youtube-stream-iframe'),
         state: moduleInstance.state
     };
 }
@@ -631,6 +687,100 @@ describe('live game replay initialization', () => {
         expect(page.canAttachScoreLinkedClips()).toBe(true);
     });
 
+    it('trusts a sanitized public replay projection after the server applies the Team Pass override', async () => {
+        const page = await bootReplayPage({
+            replay: true,
+            teamPassGateEnabled: true,
+            videoOptions: {
+                mode: 'embed',
+                isRecordedReplay: true,
+                isPublicProjectionVideo: true,
+                hasVideo: true,
+                sourceUrl: 'https://www.youtube.com/embed/PK1HyC37doc',
+                publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc'
+            }
+        });
+
+        expect(page.videoPaywall.classList.contains('hidden')).toBe(true);
+        expect(page.videoIframe.classList.contains('hidden')).toBe(false);
+        expect(page.videoIframe.src).toBe('https://www.youtube.com/embed/PK1HyC37doc');
+    });
+
+    it('boots a sanitized public replay when private-team enrichment is unavailable', async () => {
+        const page = await bootReplayPage({
+            replay: true,
+            teamContextError: Object.assign(new Error('private team'), { code: 'functions/not-found' }),
+            configsError: Object.assign(new Error('private configs'), { code: 'permission-denied' }),
+            playersError: Object.assign(new Error('roster temporarily unavailable'), { code: 'unavailable' }),
+            game: {
+                status: 'completed',
+                liveStatus: 'scheduled',
+                isPublicProjection: true,
+                teamName: 'Private Raptors'
+            },
+            videoOptions: {
+                mode: 'embed',
+                isRecordedReplay: true,
+                isPublicProjectionVideo: true,
+                hasVideo: true,
+                sourceUrl: 'https://www.youtube.com/embed/PK1HyC37doc',
+                publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc'
+            }
+        });
+
+        expect(page.state.team).toMatchObject({ id: 'T1', name: 'Private Raptors' });
+        expect(page.state.game.isPublicProjection).toBe(true);
+        expect(page.videoIframe.classList.contains('hidden')).toBe(false);
+        expect(page.videoIframe.src).toBe('https://www.youtube.com/embed/PK1HyC37doc');
+    });
+
+    it('plays an active sanitized public video when private-team enrichment is unavailable', async () => {
+        const page = await bootReplayPage({
+            replay: false,
+            teamContextError: Object.assign(new Error('private team'), { code: 'functions/not-found' }),
+            configsError: Object.assign(new Error('private configs'), { code: 'permission-denied' }),
+            playersError: Object.assign(new Error('roster temporarily unavailable'), { code: 'unavailable' }),
+            game: {
+                status: 'scheduled',
+                liveStatus: 'live',
+                isPublicProjection: true,
+                teamName: 'Private Raptors',
+                videoUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc'
+            },
+            videoOptions: {
+                mode: 'none',
+                isRecordedReplay: false,
+                hasVideo: false,
+                sourceUrl: null,
+                publicUrl: null
+            },
+            publicProjectionVideoOptions: {
+                mode: 'embed',
+                isRecordedReplay: false,
+                isPublicProjectionVideo: true,
+                hasVideo: true,
+                sourceUrl: 'https://www.youtube.com/embed/PK1HyC37doc?autoplay=1&mute=1',
+                publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc'
+            }
+        });
+
+        expect(page.state.team).toMatchObject({ id: 'T1', name: 'Private Raptors' });
+        expect(page.state.game.isPublicProjection).toBe(true);
+        expect(page.videoIframe.classList.contains('hidden')).toBe(false);
+        expect(page.videoIframe.src).toBe('https://www.youtube.com/embed/PK1HyC37doc?autoplay=1&mute=1');
+    });
+
+    it('keeps a scoped private viewer available when roster access is denied', async () => {
+        const page = await bootReplayPage({
+            replay: false,
+            playersError: Object.assign(new Error('roster denied'), { code: 'permission-denied' }),
+            game: { status: 'scheduled', liveStatus: 'live' }
+        });
+
+        expect(page.state.game).toMatchObject({ status: 'scheduled', liveStatus: 'live' });
+        expect(page.state.players).toEqual([]);
+    });
+
     it('does not start engagement subscriptions for an initially cancelled stale-live game', async () => {
         const page = await bootReplayPage({
             replay: false,
@@ -647,6 +797,16 @@ describe('live game replay initialization', () => {
         expect(page.engagementSubscriptions.subscribeLiveChat).not.toHaveBeenCalled();
         expect(page.engagementSubscriptions.subscribeReactions).not.toHaveBeenCalled();
         expect(page.engagementSubscriptions.trackViewerPresence).not.toHaveBeenCalled();
+    });
+
+    it('does not advertise an overlay for a contradictory completed-live lifecycle', async () => {
+        const page = await bootReplayPage({
+            replay: false,
+            game: { status: 'completed', liveStatus: 'live' },
+            videoOptions: { mode: 'none', hasVideo: false, isRecordedReplay: false }
+        });
+
+        expect(page.overlayViewLink.classList.contains('hidden')).toBe(true);
     });
 
     it('does not open canonical presence tracking for a public projection viewer', async () => {
@@ -686,6 +846,47 @@ describe('live game replay initialization', () => {
         expect(page.state.liveEventsActive).toBe(false);
         expect(page.state.unsubscribers).toEqual([]);
         unsubscribers.forEach(unsubscribe => expect(unsubscribe).toHaveBeenCalledOnce());
+    });
+
+    it('preserves live-session timeline replay while requiring video for a statsheet-only completion', async () => {
+        const completedLiveSession = await bootReplayPage({
+            replay: false,
+            game: { status: 'completed', liveStatus: 'completed' },
+            videoOptions: { mode: 'none', isRecordedReplay: false, hasVideo: false }
+        });
+
+        expect(completedLiveSession.endedOverlay.classList.contains('hidden')).toBe(false);
+        expect(completedLiveSession.watchReplayBtn.classList.contains('hidden')).toBe(false);
+        expect(completedLiveSession.overlayViewLink.classList.contains('hidden')).toBe(false);
+        expect(completedLiveSession.overlayViewLink.href).toContain('&replay=true');
+        expect(completedLiveSession.overlayViewLinkLabel.textContent).toBe('Watch Replay');
+
+        const reportOnly = await bootReplayPage({
+            replay: false,
+            game: { status: 'completed', liveStatus: 'scheduled' },
+            videoOptions: { mode: 'none', isRecordedReplay: false, hasVideo: false }
+        });
+
+        expect(reportOnly.endedOverlay.classList.contains('hidden')).toBe(false);
+        expect(reportOnly.watchReplayBtn.classList.contains('hidden')).toBe(true);
+        expect(reportOnly.overlayViewLink.classList.contains('hidden')).toBe(true);
+
+        const linkedReplay = await bootReplayPage({
+            replay: false,
+            game: { status: 'completed', liveStatus: 'scheduled' },
+            videoOptions: {
+                mode: 'embed',
+                isRecordedReplay: true,
+                hasVideo: true,
+                sourceUrl: 'https://www.youtube.com/embed/PK1HyC37doc',
+                publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc'
+            }
+        });
+
+        expect(linkedReplay.watchReplayBtn.classList.contains('hidden')).toBe(false);
+        expect(linkedReplay.overlayViewLink.classList.contains('hidden')).toBe(false);
+        expect(linkedReplay.overlayViewLink.href).toContain('&replay=true');
+        expect(linkedReplay.overlayViewLinkLabel.textContent).toBe('Watch Replay');
     });
 
     it('keeps no-reload video refreshes from exposing the generic empty state over media content', () => {

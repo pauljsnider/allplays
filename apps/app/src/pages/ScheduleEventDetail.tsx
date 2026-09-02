@@ -57,7 +57,7 @@ import {
 import { completeParentCoreWorkflowTimer } from '../lib/parentWorkflowTiming';
 import type { PracticeFeedItem } from '../lib/gameWrapupService';
 import type { AuthState } from '../lib/types';
-import type { YouTubeReplayVideo } from '../lib/youtubeReplay';
+import { isActiveGameForLive, type ReplayArchiveState, type YouTubeReplayVideo } from '../lib/youtubeReplay';
 import { ScheduleEventDetailProvider, useScheduleEventDetailContext } from './schedule/ScheduleEventDetailContext';
 import { useScheduleEventRsvp } from '../hooks/schedule/useScheduleEventRsvp';
 import { useStaffRsvpBreakdown } from '../hooks/schedule/useStaffRsvpBreakdown';
@@ -445,7 +445,16 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   const handleLiveClockUpdated = useCallback((payload: Partial<ParentScheduleEvent> & { period?: string | null }) => {
     setEvents((current) => current.map((event) => (
       event.teamId === decodedTeamId && event.id === decodedEventId
-        ? { ...event, ...payload }
+        ? {
+          ...event,
+          ...payload,
+          rawReplayLifecycle: {
+            ...event.rawReplayLifecycle,
+            ...(Object.prototype.hasOwnProperty.call(payload, 'type') ? { type: payload.type } : {}),
+            ...(Object.prototype.hasOwnProperty.call(payload, 'status') ? { status: payload.status } : {}),
+            ...(Object.prototype.hasOwnProperty.call(payload, 'liveStatus') ? { liveStatus: payload.liveStatus } : {})
+          }
+        }
         : event
     )));
   }, [decodedEventId, decodedTeamId]);
@@ -453,7 +462,18 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   const handleGameCancelled = useCallback(() => {
     setEvents((current) => current.map((event) => (
       event.teamId === decodedTeamId && event.id === decodedEventId
-        ? { ...event, status: 'cancelled', isCancelled: true, availabilityLocked: true }
+        ? {
+          ...event,
+          status: 'cancelled',
+          liveStatus: 'cancelled',
+          rawReplayLifecycle: {
+            ...event.rawReplayLifecycle,
+            status: 'cancelled',
+            liveStatus: 'cancelled'
+          },
+          isCancelled: true,
+          availabilityLocked: true
+        }
         : event
     )));
   }, [decodedEventId, decodedTeamId]);
@@ -474,10 +494,14 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
     )));
   }, [decodedEventId, decodedTeamId]);
 
-  const handleReplayVideoUpdated = useCallback((replayVideo: YouTubeReplayVideo | null) => {
+  const handleReplayVideoUpdated = useCallback((replayVideo: YouTubeReplayVideo | null, rawReplayState: ReplayArchiveState) => {
     setEvents((current) => current.map((event) => (
       event.teamId === decodedTeamId && event.id === decodedEventId
-        ? { ...event, replayVideo, rawReplayState: replayVideo ? { replayVideo } : {} }
+        ? {
+          ...event,
+          replayVideo,
+          rawReplayState
+        }
         : event
     )));
   }, [decodedEventId, decodedTeamId]);
@@ -493,7 +517,12 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
           summary: payload.summary,
           practiceFeedItems: payload.practiceFeedItems,
           status: 'completed',
-          liveStatus: 'completed'
+          liveStatus: 'completed',
+          rawReplayLifecycle: {
+            ...event.rawReplayLifecycle,
+            status: 'completed',
+            liveStatus: 'completed'
+          }
         }
         : event
     )));
@@ -507,7 +536,12 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
           homeScore: payload.homeScore,
           awayScore: payload.awayScore,
           status: 'completed',
-          liveStatus: 'completed',
+          liveStatus: 'scheduled',
+          rawReplayLifecycle: {
+            ...event.rawReplayLifecycle,
+            status: 'completed',
+            liveStatus: 'scheduled'
+          },
           ...(payload.statSheetPhotoUrl ? { statSheetPhotoUrl: payload.statSheetPhotoUrl } : {})
         }
         : event
@@ -1063,8 +1097,9 @@ function upsertPacketCompletion(completions: PracticePacketCompletion[], complet
 function getEventStatusLabel(event: ParentScheduleEvent) {
   const liveStatus = String(event.liveStatus || '').toLowerCase();
   const status = String(event.status || '').toLowerCase();
-  if (event.isCancelled || status === 'cancelled') return 'Cancelled';
-  if (liveStatus === 'live') return 'Live now';
+  if (event.isCancelled || status === 'cancelled' || status === 'canceled'
+    || liveStatus === 'cancelled' || liveStatus === 'canceled') return 'Cancelled';
+  if (isActiveGameForLive(event)) return 'Live now';
   if (liveStatus === 'completed' || status === 'completed' || status === 'final') return 'Final';
   if (!event.isDbGame) return 'Calendar';
   return event.type === 'practice' ? 'Scheduled' : 'Upcoming';
@@ -1086,6 +1121,8 @@ function getScoreLabel(event: ParentScheduleEvent) {
   if (event.homeScore === null || event.homeScore === undefined || event.awayScore === null || event.awayScore === undefined) return '';
   const status = String(event.status || '').trim().toLowerCase();
   const liveStatus = String(event.liveStatus || '').trim().toLowerCase();
+  if (event.isCancelled || ['cancelled', 'canceled'].includes(status)
+    || ['cancelled', 'canceled'].includes(liveStatus)) return '';
   const isLive = status === 'live' || liveStatus === 'live';
   const isCompleted = status === 'completed' || status === 'final' || liveStatus === 'completed' || liveStatus === 'final';
   const isPastScheduledResult = event.date.getTime() < Date.now() - pastScheduledGameScoreCutoffMs;

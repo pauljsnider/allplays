@@ -3384,8 +3384,25 @@ describe('live score publishing', () => {
       createdBy: 'coach-1',
       createdByName: 'Coach',
       period: 'Q2',
-      gameClockMs: 321000
+      gameClockMs: 321000,
+      committedLifecycle: { liveStatus: 'live' }
     });
+  });
+
+  it('canonicalizes a padded stored live status before returning committed lifecycle evidence', async () => {
+    mocks.transactionGet.mockResolvedValueOnce({
+      exists: () => true,
+      data: () => ({ id: 'game-1', status: 'scheduled', liveStatus: ' LIVE ', liveHasData: true })
+    });
+
+    const result = await publishLiveScoreUpdateEvent('team-1', 'game-1', { homeScore: 12, awayScore: 8 }, user);
+
+    expect(mocks.transactionSet).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'teams/team-1/games/game-1' }),
+      expect.objectContaining({ liveStatus: 'live' }),
+      { merge: true }
+    );
+    expect(result.committedLifecycle).toEqual({ liveStatus: 'live' });
   });
 
   it('keeps the persisted live score when tracker totals are partial', async () => {
@@ -3496,6 +3513,7 @@ describe('native live publishing fallbacks', () => {
           updateTime: '2026-06-19T16:00:00.000Z',
           fields: {
             status: { stringValue: 'scheduled' },
+            liveStatus: { stringValue: ' LIVE ' },
             homeScore: { integerValue: '9' },
             awayScore: { integerValue: '7' },
             period: { stringValue: 'Q2' },
@@ -3514,13 +3532,16 @@ describe('native live publishing fallbacks', () => {
       previousAwayScore: 7,
       createdByName: 'coach@example.com',
       period: 'Q2',
-      gameClockMs: 321000
+      gameClockMs: 321000,
+      committedLifecycle: { liveStatus: 'live' }
     });
+    expect(String((globalThis.fetch as any).mock.calls[1]?.[1]?.body || '')).toContain('liveStatus');
+    expect(String((globalThis.fetch as any).mock.calls[1]?.[1]?.body || '')).toContain('live');
     expect(globalThis.fetch).toHaveBeenCalledTimes(2);
   });
 
   it('records native player stats from mapped Firestore documents', async () => {
-    mocks.runTransactionMock.mockRejectedValueOnce(new Error('native fallback'));
+    mocks.runTransactionMock.mockRejectedValueOnce(Object.assign(new Error('native fallback'), { status: 500 }));
     vi.mocked(globalThis.fetch).mockImplementation(async (input: any) => {
       const url = String(input || '');
       if (url.includes('/events')) {
@@ -3574,6 +3595,7 @@ describe('native live publishing fallbacks', () => {
       playerId: 'player-1',
       statKey: 'pts',
       value: 2,
+      committedLifecycle: { liveStatus: 'live' },
       liveEvent: expect.objectContaining({
         type: 'stat',
         playerId: 'player-1',
@@ -3582,6 +3604,29 @@ describe('native live publishing fallbacks', () => {
       })
     });
     expect(globalThis.fetch).toHaveBeenCalled();
+  });
+
+  it('does not claim a lifecycle write when native live-score work is only queued offline', async () => {
+    vi.mocked(globalThis.fetch).mockRejectedValue(new Error('offline'));
+
+    const result = await publishLiveScoreUpdateEvent('team-1', 'game-1', { homeScore: 12, awayScore: 8 }, user as any);
+
+    expect(result.committedLifecycle).toBeNull();
+    expect(localStorageState['allplays.pendingLivePublishQueue.v1']).toContain('score_update');
+  });
+
+  it('does not claim a lifecycle write when native player stats are only queued offline', async () => {
+    mocks.runTransactionMock.mockRejectedValueOnce(new Error('offline'));
+
+    const result = await recordPlayerGameStat('team-1', 'game-1', 'player-1', {
+      statKey: 'fouls',
+      value: 1,
+      playerName: 'Avery Smith',
+      playerNumber: '12'
+    }, user as any);
+
+    expect(result.committedLifecycle).toBeNull();
+    expect(localStorageState['allplays.pendingLivePublishQueue.v1']).toContain('player_game_stat');
   });
 
   it('keeps only failed queued publishes after a partial flush', async () => {
@@ -6202,7 +6247,13 @@ describe('team schedule game windowing (#2034)', () => {
       sharedScheduleSourceTeamId: 'team-1',
       sharedScheduleOpponentTeamId: 'team-2',
       sharedScheduleOpponentGameId: 'game-2',
-      isSharedGame: true
+      hasReplayShareMarker: true,
+      isSharedGame: true,
+      isCancelled: true,
+      deleted: true,
+      isDeleted: true,
+      status: ' completed ',
+      liveStatus: 0
     });
 
     expect(mapped).toMatchObject({
@@ -6215,7 +6266,18 @@ describe('team schedule game windowing (#2034)', () => {
       sharedScheduleSourceTeamId: 'team-1',
       sharedScheduleOpponentTeamId: 'team-2',
       sharedScheduleOpponentGameId: 'game-2',
-      isSharedGame: true
+      hasReplayShareMarker: true,
+      isSharedGame: true,
+      isCancelled: true,
+      deleted: true,
+      isDeleted: true,
+      status: 'completed',
+      liveStatus: null,
+      rawReplayLifecycle: {
+        type: 'game',
+        status: ' completed ',
+        liveStatus: 0
+      }
     });
   });
 });
@@ -6473,7 +6535,8 @@ describe('game replay mutations', () => {
     replayVideoDurationMs: { __deleteField: true },
     replayStatus: { __deleteField: true },
     recordedReplayStatus: { __deleteField: true },
-    videoReplayStatus: { __deleteField: true }
+    videoReplayStatus: { __deleteField: true },
+    replayVideoFallbackDisabled: { __deleteField: true }
   };
 
   function authorizeSelectedVideographer() {
@@ -6590,7 +6653,7 @@ describe('game replay mutations', () => {
 
     expect(mocks.transactionSet).toHaveBeenCalledWith(
       expect.objectContaining({ path: 'teams/team-1/games/game-1' }),
-      { replayVideo: null, ...clearedLegacyReplayAliases, updatedAt: expect.any(Date) },
+      { replayVideo: null, ...clearedLegacyReplayAliases, replayVideoFallbackDisabled: true, updatedAt: expect.any(Date) },
       { merge: true }
     );
   });
@@ -6634,10 +6697,32 @@ describe('game replay mutations', () => {
 
     expect(mocks.transactionSet).toHaveBeenCalledWith(
       expect.objectContaining({ path: 'teams/team-1/games/game-1' }),
-      { replayVideo: null, ...clearedLegacyReplayAliases, updatedAt: expect.any(Date) },
+      { replayVideo: null, ...clearedLegacyReplayAliases, replayVideoFallbackDisabled: true, updatedAt: expect.any(Date) },
       { merge: true }
     );
     expect(result).toEqual({ removed: true, updatedAt: expect.any(Date) });
+  });
+
+  it('suppresses a historical completed videoUrl without deleting the stream field', async () => {
+    const videoUrl = 'https://youtu.be/PK1HyC37doc';
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({ ...completedGame, liveStatus: 'scheduled', videoUrl })
+    });
+
+    await removeGameReplayForApp('team-1', 'game-1', manager, { videoUrl });
+
+    expect(mocks.transactionSet).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'teams/team-1/games/game-1' }),
+      {
+        replayVideo: null,
+        ...clearedLegacyReplayAliases,
+        replayVideoFallbackDisabled: true,
+        updatedAt: expect.any(Date)
+      },
+      { merge: true }
+    );
+    expect(mocks.transactionSet.mock.calls[0][1]).not.toHaveProperty('videoUrl');
   });
 
   it('allows a canonical replay to be removed after the lifecycle is corrected away from final', async () => {
@@ -6657,7 +6742,7 @@ describe('game replay mutations', () => {
 
     expect(mocks.transactionSet).toHaveBeenCalledWith(
       expect.objectContaining({ path: 'teams/team-1/games/game-1' }),
-      { replayVideo: null, ...clearedLegacyReplayAliases, updatedAt: expect.any(Date) },
+      { replayVideo: null, ...clearedLegacyReplayAliases, replayVideoFallbackDisabled: true, updatedAt: expect.any(Date) },
       { merge: true }
     );
   });
@@ -6679,7 +6764,7 @@ describe('game replay mutations', () => {
 
     expect(mocks.transactionSet).toHaveBeenCalledWith(
       expect.objectContaining({ path: 'teams/team-1/games/game-1' }),
-      { replayVideo: null, ...clearedLegacyReplayAliases, updatedAt: expect.any(Date) },
+      { replayVideo: null, ...clearedLegacyReplayAliases, replayVideoFallbackDisabled: true, updatedAt: expect.any(Date) },
       { merge: true }
     );
   });
@@ -6697,7 +6782,7 @@ describe('game replay mutations', () => {
 
     expect(mocks.transactionSet).toHaveBeenCalledWith(
       expect.objectContaining({ path: 'teams/team-1/games/game-1' }),
-      { replayVideo: null, ...clearedLegacyReplayAliases, updatedAt: expect.any(Date) },
+      { replayVideo: null, ...clearedLegacyReplayAliases, replayVideoFallbackDisabled: true, updatedAt: expect.any(Date) },
       { merge: true }
     );
   });
@@ -6800,6 +6885,28 @@ describe('game replay mutations', () => {
         sharedScheduleOpponentTeamId: null,
         sharedScheduleOpponentGameId: null
       })
+    });
+
+    await expect(linkGameYouTubeReplayForApp(
+      'team-1',
+      'game-1',
+      'https://youtu.be/PK1HyC37doc',
+      manager
+    )).rejects.toThrow('original team game');
+
+    expect(mocks.transactionSet).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['sharedGameId', 'central-shared-game'],
+    ['sharedGamePath', 'organizations/org-1/sharedGames/game-1'],
+    ['_sharedGamePath', 'organizations/org-1/sharedGames/game-1'],
+    ['sharedGameId', { malformed: true }],
+    ['sharedGameId', '   ']
+  ])('rejects a mirror carrying %s at the transaction boundary', async (field, value) => {
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({ ...completedGame, [field]: value })
     });
 
     await expect(linkGameYouTubeReplayForApp(
@@ -7042,6 +7149,16 @@ describe('game replay mutations', () => {
       'an unknown provider field inside an archive object',
       { recordedVideo: { url: 'https://example.com/replay', providerOpaque: { version: 1 } } },
       { recordedVideo: { url: 'https://example.com/replay', providerOpaque: { version: 2 } } }
+    ],
+    [
+      'a numeric NaN changing to a string NaN',
+      { recordedVideo: { url: 'https://example.com/replay', providerOpaque: Number.NaN } },
+      { recordedVideo: { url: 'https://example.com/replay', providerOpaque: 'NaN' } }
+    ],
+    [
+      'numeric negative zero changing to positive zero',
+      { recordedVideo: { url: 'https://example.com/replay', providerOpaque: -0 } },
+      { recordedVideo: { url: 'https://example.com/replay', providerOpaque: 0 } }
     ]
   ])('fails closed when %s changes after the screen loads', async (_label, expectedReplayState, currentReplayState) => {
     mocks.transactionGet.mockResolvedValue({

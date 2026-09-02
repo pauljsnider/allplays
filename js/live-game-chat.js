@@ -14,9 +14,14 @@ function isSameDay(left, right) {
 
 export function isViewerChatEnabled(game, { isReplay = false, now = new Date() } = {}) {
   if (isReplay) return false;
-  const gameStatus = String(game?.status || '').trim().toLowerCase();
-  if (gameStatus === 'cancelled' || gameStatus === 'canceled') return false;
-  if (game?.liveStatus === 'live') return true;
+  const lifecycle = getGameReplayLifecycle(game);
+  if (lifecycle.isActiveLive) return true;
+  const statuses = [lifecycle.status, lifecycle.liveStatus].filter(Boolean);
+  const hasActiveMarker = statuses.some((status) => ['live', 'in_progress', 'in-progress'].includes(status));
+  const hasTerminalStatus = statuses.some((status) => ['cancelled', 'canceled', 'completed', 'final', 'deleted'].includes(status));
+  if (hasActiveMarker || hasTerminalStatus
+    || game?.isCancelled === true || game?.deleted === true || game?.isDeleted === true) return false;
   const gameDate = toDate(game?.date);
   return isSameDay(gameDate, now);
 }
+import { getGameReplayLifecycle } from './game-replay-video.js?v=2';

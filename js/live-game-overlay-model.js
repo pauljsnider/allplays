@@ -1,4 +1,4 @@
-import { normalizeYouTubeReplayUrl } from './game-replay-video.js?v=1';
+import { getGameReplayLifecycle, normalizeYouTubeReplayUrl } from './game-replay-video.js?v=2';
 
 const DEFAULT_PERIOD = 'H1';
 
@@ -282,6 +282,10 @@ export function getControllableReplayEmbedUrl(sourceUrl, origin = '') {
     return getControllableYouTubeEmbedUrl(sourceUrl, origin, { replay: true });
 }
 
+export function hasCompletedReplayLifecycle(game = {}) {
+    return getGameReplayLifecycle(game).isCompleted;
+}
+
 export function resolvePublicProjectionVideoOptions(game = {}, { parentHost = 'localhost' } = {}) {
     if (game?.isPublicProjection !== true) return null;
     const publicUrl = getSafeOverlayProviderUrl(game?.videoUrl);
@@ -289,14 +293,9 @@ export function resolvePublicProjectionVideoOptions(game = {}, { parentHost = 'l
 
     const url = new URL(publicUrl);
     const host = url.hostname.toLowerCase().replace(/^www\./, '');
-    const statuses = [game?.status, game?.liveStatus]
-        .map(value => String(value || '').trim().toLowerCase())
-        .filter(Boolean);
-    const completedStatuses = new Set(['completed', 'final']);
-    const terminalStatuses = new Set(['completed', 'final', 'cancelled', 'canceled']);
-    const isCompleted = statuses.length > 0 && statuses.every(status => completedStatuses.has(status));
-    const isActiveLive = statuses.some(status => ['live', 'in_progress', 'in-progress'].includes(status))
-        && !statuses.some(status => terminalStatuses.has(status));
+    const lifecycle = getGameReplayLifecycle(game);
+    const isCompleted = lifecycle.isCompleted;
+    const isActiveLive = lifecycle.isActiveLive;
     if (!isCompleted && !isActiveLive) return null;
     const youtubeReplay = normalizeYouTubeReplayUrl(game.videoUrl);
     if (youtubeReplay) {
