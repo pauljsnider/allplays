@@ -8549,7 +8549,7 @@ exports.publicTeamGamesIcs = functions
 
       const icsText = buildPublicGamesIcs({ teamId, team, games: publicGames });
       res.set('Content-Type', 'text/calendar; charset=utf-8');
-      res.set('Content-Disposition', `inline; filename="${teamId}-public-games.ics"`);
+      res.set('Content-Disposition', 'inline; filename="allplays-public-games.ics"');
       res.set('Cache-Control', 'public, max-age=300');
       res.status(200).send(req.method === 'HEAD' ? '' : icsText);
     } catch (error) {
@@ -8661,7 +8661,7 @@ exports.teamCalendarFeed = functions.https.onRequest(async (req, res) => {
     const icsText = buildTeamCalendarIcs({ teamId, team, events });
 
     res.set('Content-Type', 'text/calendar; charset=utf-8');
-    res.set('Content-Disposition', `inline; filename="${teamId}-schedule.ics"`);
+    res.set('Content-Disposition', 'inline; filename="allplays-team-schedule.ics"');
     res.set('Cache-Control', 'private, max-age=300');
     res.status(200).send(icsText);
   } catch (error) {

@@ -754,6 +754,8 @@ describe('team calendar subscription feed', () => {
         expect(functionsSource).toContain('accountDeletionRequested: deletionRequestSnap.exists');
         expect(functionsSource).not.toContain('user?.email || tokenData.email || tokenData.userEmail');
         expect(functionsSource).toContain("res.set('Content-Type', 'text/calendar; charset=utf-8')");
+        expect(functionsSource).toContain("res.set('Content-Disposition', 'inline; filename=\"allplays-team-schedule.ics\"')");
+        expect(functionsSource).not.toContain('filename="${teamId}-schedule.ics"');
         expect(functionsSource).toContain('buildTeamCalendarIcs({ teamId, team, events })');
     });
 
