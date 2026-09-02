@@ -921,6 +921,7 @@ export function resolveReplayVideoOptions() {
     return {
         mode: 'recorded',
         hasVideo: true,
+        isRecordedReplay: true,
         sourceUrl: 'https://cdn.example.test/replay.mp4',
         publicUrl: 'https://cdn.example.test/replay.mp4'
     };
