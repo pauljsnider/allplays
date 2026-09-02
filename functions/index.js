@@ -7482,13 +7482,15 @@ function getAllowedOriginPolicy() {
   if (Array.isArray(configuredOrigins)) {
     return {
       origins: configuredOrigins.map((origin) => String(origin).trim()).filter(Boolean),
-      allowFirebaseHosting: false
+      allowFirebaseHosting: false,
+      allowNativeCalendarOrigins: false
     };
   }
   if (typeof configuredOrigins === 'string') {
     return {
       origins: configuredOrigins.split(',').map((origin) => origin.trim()).filter(Boolean),
-      allowFirebaseHosting: false
+      allowFirebaseHosting: false,
+      allowNativeCalendarOrigins: false
     };
   }
   return {
@@ -7500,14 +7502,23 @@ function getAllowedOriginPolicy() {
       'http://localhost:5174',
       'http://127.0.0.1:5174'
     ],
-    allowFirebaseHosting: true
+    allowFirebaseHosting: true,
+    allowNativeCalendarOrigins: true
   };
 }
 
 const allowedOriginPolicy = getAllowedOriginPolicy();
 const allowedOriginSet = new Set(allowedOriginPolicy.origins);
-// Capacitor's WebViews use these exact origins. Keep the exception scoped to
-// passive telemetry so it does not broaden the calendar endpoint's CORS policy.
+// Capacitor's exact WebView origins keep installed native clients on the
+// legacy HTTP calendar bridge. Configured allowlists remain authoritative.
+const calendarAllowedOriginSet = new Set([
+  ...allowedOriginSet,
+  ...(allowedOriginPolicy.allowNativeCalendarOrigins
+    ? ['https://localhost', 'capacitor://localhost']
+    : [])
+]);
+// Passive telemetry has its own native-origin policy and intentionally keeps
+// the historical Android http://localhost exception separate from calendars.
 const telemetryAllowedOriginSet = new Set([
   ...allowedOriginSet,
   'capacitor://localhost',
@@ -7518,7 +7529,7 @@ function isAllowedOrigin(origin) {
   if (!origin) {
     return true;
   }
-  return allowedOriginSet.has(origin) ||
+  return calendarAllowedOriginSet.has(origin) ||
     (allowedOriginPolicy.allowFirebaseHosting && isAllPlaysFirebaseHostingOrigin(origin));
 }
 

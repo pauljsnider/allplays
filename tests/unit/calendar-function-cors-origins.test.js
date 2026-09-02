@@ -28,6 +28,40 @@ describe('calendar function CORS origins', () => {
     expect(writeCorsSource).toContain("res.set('Access-Control-Allow-Origin', origin);");
   });
 
+  it('scopes native calendar compatibility to the exact Capacitor WebView origins', () => {
+    const calendarSetStart = functionsSource.indexOf('const calendarAllowedOriginSet = new Set([');
+    const calendarSetEnd = functionsSource.indexOf(']);', calendarSetStart) + 3;
+    const calendarSetSource = functionsSource.slice(calendarSetStart, calendarSetEnd);
+    const originCheckStart = functionsSource.indexOf('function isAllowedOrigin(origin)');
+    const originCheckEnd = functionsSource.indexOf('function writeCorsHeaders', originCheckStart);
+    const originCheckSource = functionsSource.slice(originCheckStart, originCheckEnd);
+
+    expect(calendarSetStart).toBeGreaterThanOrEqual(0);
+    expect(calendarSetEnd).toBeGreaterThan(calendarSetStart);
+    expect(calendarSetSource).toContain('allowedOriginPolicy.allowNativeCalendarOrigins');
+    expect(calendarSetSource).toContain("'https://localhost'");
+    expect(calendarSetSource).toContain("'capacitor://localhost'");
+    expect(calendarSetSource).not.toContain("'http://localhost'");
+    expect(calendarSetSource).not.toContain("'*'");
+    expect(originCheckSource).toContain('calendarAllowedOriginSet.has(origin)');
+    expect(originCheckSource).not.toContain('startsWith(');
+    expect(originCheckSource).not.toContain('includes(origin)');
+  });
+
+  it('keeps configured calendar allowlists authoritative and telemetry policy separate', () => {
+    const policyStart = functionsSource.indexOf('function getAllowedOriginPolicy()');
+    const policyEnd = functionsSource.indexOf('const allowedOriginPolicy', policyStart);
+    const policySource = functionsSource.slice(policyStart, policyEnd);
+    const telemetryStart = functionsSource.indexOf('const telemetryAllowedOriginSet = new Set([');
+    const telemetryEnd = functionsSource.indexOf(']);', telemetryStart) + 3;
+    const telemetrySource = functionsSource.slice(telemetryStart, telemetryEnd);
+
+    expect(policySource.match(/allowNativeCalendarOrigins: false/g)).toHaveLength(2);
+    expect(policySource.match(/allowNativeCalendarOrigins: true/g)).toHaveLength(1);
+    expect(telemetrySource).not.toContain('calendarAllowedOriginSet');
+    expect(telemetrySource).not.toContain("'https://localhost'");
+  });
+
   it('allows both local app and legacy development origins', () => {
     expect(functionsSource).toContain("'http://localhost:8000'");
     expect(functionsSource).toContain("'http://127.0.0.1:8000'");
