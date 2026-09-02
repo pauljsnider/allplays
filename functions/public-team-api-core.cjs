@@ -380,6 +380,30 @@ function isRecordedReplayPaywallEnabled(game = {}, team = {}) {
   ]) === true;
 }
 
+function getPublicVideoLifecycle(game = {}) {
+  const statuses = [game?.status, game?.liveStatus]
+    .map((value) => compactText(value, 32).toLowerCase())
+    .filter(Boolean);
+  const completedStatuses = new Set(['completed', 'final']);
+  const terminalStatuses = new Set(['completed', 'final', 'cancelled', 'canceled']);
+  return {
+    isCompleted: statuses.length > 0 && statuses.every((status) => completedStatuses.has(status)),
+    isActiveLive: statuses.some((status) => ['live', 'in_progress', 'in-progress'].includes(status))
+      && !statuses.some((status) => terminalStatuses.has(status))
+  };
+}
+
+function getCanonicalReplayPublicUrl(replayVideo) {
+  if (!replayVideo || typeof replayVideo !== 'object') return null;
+  const videoId = compactText(replayVideo.videoId, 32);
+  if (!/^[A-Za-z0-9_-]{11}$/.test(videoId) || videoId === 'live_stream') return null;
+  if (compactText(replayVideo.provider, 32).toLowerCase() !== 'youtube') return null;
+  if (compactText(replayVideo.status, 32).toLowerCase() !== 'ready') return null;
+  const embedUrl = `https://www.youtube.com/embed/${videoId}`;
+  const publicUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  return replayVideo.embedUrl === embedUrl && replayVideo.publicUrl === publicUrl ? publicUrl : null;
+}
+
 function finiteScore(value) {
   if (value === null || value === undefined || value === '') return null;
   const score = Number(value);
@@ -431,20 +455,16 @@ function serializePublicGame(game = {}, options = {}) {
   const teamPhotoUrl = publicHttpUrl(game?.teamPhotoUrl || game?.homeTeamPhoto);
   const opponentTeamPhoto = publicHttpUrl(game?.opponentTeamPhoto);
   const statSheetPhotoUrl = publicHttpUrl(game?.statSheetPhotoUrl);
-  const replayVideoPublicUrl = publicHttpUrl(
-    game?.replayVideo?.publicUrl ||
-    game?.recordedVideo?.publicUrl ||
-    game?.videoReplay?.publicUrl ||
-    game?.replayVideoPublicUrl
-  );
+  const replayVideoPublicUrl = getCanonicalReplayPublicUrl(game?.replayVideo);
   const replayPaywallEnabled = isRecordedReplayPaywallEnabled(game, options.team);
   const directVideoUrl = publicHttpUrl(game?.videoUrl);
+  const videoLifecycle = getPublicVideoLifecycle(game);
   // An anonymous projection cannot prove Team Pass entitlement. Keep an active
   // live feed available, but never project an archived or explicitly recorded
   // URL from a paywalled game.
-  const videoUrl = replayPaywallEnabled
-    ? (status === 'live' ? directVideoUrl : null)
-    : directVideoUrl || replayVideoPublicUrl;
+  const videoUrl = videoLifecycle.isActiveLive
+    ? directVideoUrl
+    : (videoLifecycle.isCompleted && !replayPaywallEnabled ? replayVideoPublicUrl : null);
   const id = compactText(game?.id || game?.gameId, game?.isSharedGame === true ? 1000 : 128);
   return {
     id,
@@ -667,6 +687,8 @@ module.exports = {
   comparePublicProjectionItems,
   compareRosterPlayers,
   getPublicOpponentStatKeys,
+  getCanonicalReplayPublicUrl,
+  getPublicVideoLifecycle,
   isActivePublicPlayer,
   isExplicitlyShareableGame,
   isPublicGame,

@@ -17,7 +17,7 @@ import {
     reconcileOverlayLiveEvents,
     resolvePublicProjectionVideoOptions,
     replaceOverlayChat
-} from './live-game-overlay-model.js?v=25';
+} from './live-game-overlay-model.js?v=26';
 import {
     buildReplaySessionState,
     collectReplayEventWindow,
@@ -2093,7 +2093,7 @@ async function startRealMode(params) {
     try {
         const [database, videoTools, stateTools] = await Promise.all([
             loadOverlayDatabase(),
-            import('./live-game-video.js?v=443315'),
+            import('./live-game-video.js?v=443317'),
             import('./live-game-state.js?v=41')
         ]);
         uiState.optionalTeamStatus = 'pending';
@@ -2136,13 +2136,13 @@ async function startRealMode(params) {
         const renderVideoSafely = async () => {
             const requestId = ++uiState.videoRequestId;
             try {
-                let usesSanitizedPublicProjection = false;
                 let options = videoTools.resolveReplayVideoOptions({
                     team: uiState.game.team,
                     game: uiState.game.game,
                     players: uiState.game.players,
                     isReplay
                 });
+                let usesSanitizedPublicProjection = options.isPublicProjectionVideo === true;
                 if (options.mode === 'none') {
                     const publicProjectionOptions = resolvePublicProjectionVideoOptions(uiState.game.game, {
                         parentHost: window.location.hostname
@@ -2153,7 +2153,7 @@ async function startRealMode(params) {
                     }
                 }
                 uiState.videoDurationMs = Number.isFinite(options.durationMs) ? options.durationMs : 0;
-                if (!usesSanitizedPublicProjection && options.mode === 'recorded' && options.sourceUrl) {
+                if (!usesSanitizedPublicProjection && options.isRecordedReplay === true && options.sourceUrl) {
                     if (uiState.optionalTeamStatus === 'pending') {
                         showReplayAccessGate({ state: 'checking' });
                         return true;

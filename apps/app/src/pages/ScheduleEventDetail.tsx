@@ -57,6 +57,7 @@ import {
 import { completeParentCoreWorkflowTimer } from '../lib/parentWorkflowTiming';
 import type { PracticeFeedItem } from '../lib/gameWrapupService';
 import type { AuthState } from '../lib/types';
+import type { YouTubeReplayVideo } from '../lib/youtubeReplay';
 import { ScheduleEventDetailProvider, useScheduleEventDetailContext } from './schedule/ScheduleEventDetailContext';
 import { useScheduleEventRsvp } from '../hooks/schedule/useScheduleEventRsvp';
 import { useStaffRsvpBreakdown } from '../hooks/schedule/useStaffRsvpBreakdown';
@@ -473,6 +474,14 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
     )));
   }, [decodedEventId, decodedTeamId]);
 
+  const handleReplayVideoUpdated = useCallback((replayVideo: YouTubeReplayVideo | null) => {
+    setEvents((current) => current.map((event) => (
+      event.teamId === decodedTeamId && event.id === decodedEventId
+        ? { ...event, replayVideo, rawReplayState: replayVideo ? { replayVideo } : {} }
+        : event
+    )));
+  }, [decodedEventId, decodedTeamId]);
+
   const handleWrapupCompleted = useCallback((payload: { homeScore: number; awayScore: number; postGameNotes: string; summary: string; practiceFeedItems: PracticeFeedItem[] }) => {
     setEvents((current) => current.map((event) => (
       event.teamId === decodedTeamId && event.id === decodedEventId
@@ -705,6 +714,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
                 onGameCancelled={handleGameCancelled}
                 onPracticeOccurrenceCancelled={handlePracticeOccurrenceCancelled}
                 onGamePlanPublished={handleGamePlanPublished}
+                onReplayVideoUpdated={handleReplayVideoUpdated}
               />
             </Suspense>
           </ErrorBoundary>

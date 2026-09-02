@@ -498,6 +498,7 @@ service cloud.firestore {
              isSafeDocumentId(gameId) &&
              !isTeamOwnerOrAdmin(teamId) &&
              scorekeeperVisibleGameExists(teamId, gameId) &&
+             teamPermission(teamId, 'videography').get('mode', '') == 'selected' &&
              request.auth.uid in teamPermission(teamId, 'videography').get('memberIds', []);
     }
 
@@ -717,10 +718,103 @@ service cloud.firestore {
       return canVideographGame(teamId, gameId) &&
              request.resource.data.diff(resource.data).affectedKeys().hasOnly([
                'highlightClips', 'clipRecords', 'gameClips', 'videoClips', 'mediaClips',
-               'replayVideo', 'recordedVideo', 'videoReplay', 'updatedAt',
+               'updatedAt',
                'scoreUpdatedAt', 'scoreUpdatedBy', 'scoreStreamSessionId'
              ]) &&
              isScoreMetadataAttributionValid();
+    }
+
+    function replayArchiveFields() {
+      return [
+        'replayVideo', 'recordedVideo', 'videoReplay', 'replayVideoUrl',
+        'recordedVideoUrl', 'videoReplayUrl', 'archivedVideoUrl',
+        'replayVideoPublicUrl', 'replayVideoPosterUrl', 'replayVideoTitle',
+        'replayVideoDurationMs', 'replayStatus', 'recordedReplayStatus',
+        'videoReplayStatus'
+      ];
+    }
+
+    function isReplayArchiveMutation() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasAny(replayArchiveFields());
+    }
+
+    function isReplayArchiveOnlyUpdate() {
+      let affectedKeys = request.resource.data.diff(resource.data).affectedKeys();
+      return affectedKeys.hasAny(replayArchiveFields()) &&
+             affectedKeys.hasOnly([
+               'replayVideo', 'recordedVideo', 'videoReplay', 'replayVideoUrl',
+               'recordedVideoUrl', 'videoReplayUrl', 'archivedVideoUrl',
+               'replayVideoPublicUrl', 'replayVideoPosterUrl', 'replayVideoTitle',
+               'replayVideoDurationMs', 'replayStatus', 'recordedReplayStatus',
+               'videoReplayStatus', 'updatedAt'
+             ]);
+    }
+
+    function isCompletedReplayLifecycle(data) {
+      let rawStatus = data.get('status', null);
+      let rawLiveStatus = data.get('liveStatus', null);
+      let status = rawStatus == null ? '' : rawStatus;
+      let liveStatus = rawLiveStatus == null ? '' : rawLiveStatus;
+      return status is string &&
+             liveStatus is string &&
+             (status in ['completed', 'final'] || liveStatus in ['completed', 'final']) &&
+             (status == '' || status in ['completed', 'final']) &&
+             (liveStatus == '' || liveStatus in ['completed', 'final']);
+    }
+
+    function isCanonicalYouTubeReplayVideo(replayVideo) {
+      return replayVideo is map &&
+             replayVideo.keys().hasAll([
+               'provider', 'videoId', 'embedUrl', 'publicUrl', 'status', 'linkedBy', 'linkedAt'
+             ]) &&
+             replayVideo.keys().hasOnly([
+               'provider', 'videoId', 'embedUrl', 'publicUrl', 'status', 'title', 'linkedBy', 'linkedAt'
+             ]) &&
+             replayVideo.provider == 'youtube' &&
+             replayVideo.videoId is string &&
+             replayVideo.videoId.matches('^[A-Za-z0-9_-]{11}$') &&
+             replayVideo.videoId != 'live_stream' &&
+             replayVideo.embedUrl == 'https://www.youtube.com/embed/' + replayVideo.videoId &&
+             replayVideo.publicUrl == 'https://www.youtube.com/watch?v=' + replayVideo.videoId &&
+             replayVideo.status == 'ready' &&
+             replayVideo.linkedBy == request.auth.uid &&
+             replayVideo.linkedAt is timestamp &&
+             (!replayVideo.keys().hasAny(['title']) ||
+              (replayVideo.title is string && replayVideo.title.size() > 0 && replayVideo.title.size() <= 120));
+    }
+
+    function hasNoLegacyReplayArchiveFields(data) {
+      return !data.keys().hasAny([
+        'recordedVideo', 'videoReplay', 'replayVideoUrl', 'recordedVideoUrl',
+        'videoReplayUrl', 'archivedVideoUrl', 'replayVideoPublicUrl',
+        'replayVideoPosterUrl', 'replayVideoTitle', 'replayVideoDurationMs',
+        'replayStatus', 'recordedReplayStatus', 'videoReplayStatus'
+      ]);
+    }
+
+    function isCanonicalReplayMutationTarget(data) {
+      return data.get('isSharedGame', false) != true &&
+             isEmptyReplayShareMarker(data, 'sharedScheduleId') &&
+             isEmptyReplayShareMarker(data, 'sharedScheduleSourceTeamId') &&
+             isEmptyReplayShareMarker(data, 'sharedScheduleOpponentTeamId') &&
+             isEmptyReplayShareMarker(data, 'sharedScheduleOpponentGameId');
+    }
+
+    function isEmptyReplayShareMarker(data, fieldName) {
+      let value = data.get(fieldName, null);
+      return value == null || value == '';
+    }
+
+    function isGameReplayVideoMutationValid(allowNonfinalRemoval) {
+      let replayVideo = request.resource.data.get('replayVideo', null);
+      return hasNoLegacyReplayArchiveFields(request.resource.data) &&
+             isCanonicalReplayMutationTarget(request.resource.data) &&
+             (
+               (replayVideo == null &&
+                (allowNonfinalRemoval || isCompletedReplayLifecycle(request.resource.data))) ||
+               (isCompletedReplayLifecycle(request.resource.data) &&
+                isCanonicalYouTubeReplayVideo(replayVideo))
+             );
     }
 
     function isStreamingGameUpdate(teamId, gameId) {
@@ -3778,12 +3872,22 @@ service cloud.firestore {
       // Games subcollection
       match /games/{gameId} {
         allow read: if canReadGameDocument(teamId, gameId, resource.data);
-        allow create, delete: if isTeamOwnerOrAdmin(teamId);
+        allow create: if isTeamOwnerOrAdmin(teamId) &&
+                         !request.resource.data.keys().hasAny(replayArchiveFields());
+        allow delete: if isTeamOwnerOrAdmin(teamId);
         allow update: if !isBroadcastSessionOnlyUpdate() &&
+                        !isReplayArchiveMutation() &&
                         (isTeamOwnerOrAdmin(teamId) ||
                          (isOfficialForGame() && isOfficialGameUpdate()) ||
                          isScorekeepingGameUpdate(teamId, gameId) ||
                          isVideographyGameUpdate(teamId, gameId));
+        // Replay links use a separate, bounded schema path so their provider
+        // validation does not consume the expression budget of other roles.
+        allow update: if isReplayArchiveOnlyUpdate() &&
+                        ((canVideographGame(teamId, gameId) &&
+                          isGameReplayVideoMutationValid(false)) ||
+                         (isTeamOwnerOrAdmin(teamId) &&
+                          isGameReplayVideoMutationValid(true)));
         // Keep the tightly validated streaming metadata path separate so the
         // rules engine does not combine its schema checks with every broader
         // game-update role and exceed the per-request expression budget.

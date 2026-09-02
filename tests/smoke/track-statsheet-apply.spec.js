@@ -174,6 +174,10 @@ async function installModuleMocks(page) {
             return clone(loadStore().team);
         }
 
+        export async function getDelegatedTeamContext() {
+            return clone(loadStore().team);
+        }
+
         export async function getTeam() {
             window.__CANONICAL_TEAM_READ_COUNT__ = (window.__CANONICAL_TEAM_READ_COUNT__ || 0) + 1;
             if (window.location.pathname.endsWith('/track-statsheet.html')) {
@@ -362,7 +366,32 @@ async function installModuleMocks(page) {
             return createSnapshot([]);
         }
 
+        export const appCheckReady = Promise.resolve();
+        export const auth = { currentUser: null };
         export const db = {};
+        export const storage = {};
+        export const functions = {};
+
+        export const Timestamp = {
+            now: () => new Date(),
+            fromDate: (value) => value,
+            fromMillis: (value) => new Date(value)
+        };
+
+        export function addDoc() { return Promise.resolve({ id: 'mock-doc' }); }
+        export function updateDoc() { return Promise.resolve(); }
+        export function deleteDoc() { return Promise.resolve(); }
+        export function where() { return null; }
+        export function increment(value) { return value; }
+        export function arrayUnion(...values) { return values; }
+        export function arrayRemove(...values) { return values; }
+        export function limit(value) { return value; }
+        export function startAfter(value) { return value; }
+        export function getCountFromServer() { return Promise.resolve({ data: () => ({ count: 0 }) }); }
+        export function onSnapshot() { return () => {}; }
+        export function serverTimestamp() { return new Date(); }
+        export function collectionGroup(_db, path) { return { path }; }
+        export function documentId() { return '__name__'; }
 
         export function collection(_db, path) {
             return { path };
@@ -370,6 +399,10 @@ async function installModuleMocks(page) {
 
         export function doc(_db, path, maybeId) {
             return { path: maybeId ? path + '/' + maybeId : path };
+        }
+
+        export function deleteField() {
+            return { __deleteField: true };
         }
 
         export function query(ref) {
@@ -465,6 +498,42 @@ async function installModuleMocks(page) {
         export async function setDoc() {
             return null;
         }
+
+        export async function runTransaction(_db, callback) {
+            return callback({
+                async get(ref) {
+                    return getDoc(ref);
+                },
+                set() {},
+                update() {},
+                delete() {}
+            });
+        }
+
+        export function onAuthStateChanged(_auth, callback) { callback(null); return () => {}; }
+        export function signInWithEmailAndPassword() { return Promise.resolve({}); }
+        export function createUserWithEmailAndPassword() { return Promise.resolve({}); }
+        export function signOut() { return Promise.resolve(); }
+        export class GoogleAuthProvider {}
+        export const indexedDBLocalPersistence = {};
+        export function initializeAuth() { return auth; }
+        export function signInWithCredential() { return Promise.resolve({}); }
+        export function signInWithPopup() { return Promise.resolve({}); }
+        export function signInWithRedirect() { return Promise.resolve(); }
+        export function getRedirectResult() { return Promise.resolve(null); }
+        export function isSignInWithEmailLink() { return false; }
+        export function signInWithEmailLink() { return Promise.resolve({}); }
+        export function updatePassword() { return Promise.resolve(); }
+        export function verifyPasswordResetCode() { return Promise.resolve(''); }
+        export function confirmPasswordReset() { return Promise.resolve(); }
+        export function applyActionCode() { return Promise.resolve(); }
+
+        export function ref(_storage, path) { return { path }; }
+        export function uploadBytes() { return Promise.resolve({}); }
+        export function getDownloadURL() { return Promise.resolve(''); }
+        export function deleteObject() { return Promise.resolve(); }
+        export function getFunctions() { return functions; }
+        export function httpsCallable() { return async () => ({ data: {} }); }
     `;
 
     const utilsModule = `
@@ -931,6 +1000,8 @@ test('keeps zero-stat statsheet import appearances in player history', async ({ 
 });
 
 test('respects overwrite confirmation and renders rewritten stats on the game report', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
     await seedScenario(page, baseURL, createScenario({
         aggregatedStats: {
             legacyPlayer: {
@@ -1014,6 +1085,7 @@ test('respects overwrite confirmation and renders rewritten stats on the game re
         waitUntil: 'domcontentloaded'
     });
 
+    expect(pageErrors).toEqual([]);
     await page.locator('#stats-body tr').first().waitFor();
     await expect(page.locator('#game-header')).toContainText('Comets');
     await expect(page.locator('#game-header')).toContainText('Rockets');

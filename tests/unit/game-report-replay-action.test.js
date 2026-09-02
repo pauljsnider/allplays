@@ -60,7 +60,7 @@ describe('game report replay action', () => {
         expect(ready.replayState).toBeNull();
     });
 
-    it('allows completed reports to link replay viewing when the loaded team has a usable stream embed', () => {
+    it('does not treat a team live channel as the replay for a completed game', () => {
         const youtube = resolveReplayVideoOptions({
             team: { youtubeVideoId: 'abcdefghijk' },
             game: { liveStatus: 'completed' },
@@ -72,11 +72,11 @@ describe('game report replay action', () => {
             isReplay: true
         });
 
-        expect(youtube.hasVideo).toBe(true);
-        expect(youtube.mode).toBe('embed');
-        expect(youtube.sourceUrl).toContain('youtube.com/embed/abcdefghijk');
-        expect(twitch.hasVideo).toBe(true);
-        expect(twitch.mode).toBe('embed');
-        expect(twitch.sourceUrl).toContain('player.twitch.tv');
+        expect(youtube.hasVideo).toBe(false);
+        expect(youtube.mode).toBe('none');
+        expect(youtube.replayState?.status).toBe('unavailable');
+        expect(twitch.hasVideo).toBe(false);
+        expect(twitch.mode).toBe('none');
+        expect(twitch.replayState?.status).toBe('unavailable');
     });
 });

@@ -323,7 +323,7 @@ const runModule = new AsyncFunction(
     moduleSource
 );
 
-async function bootReplayPage({ replayEvents = [], game: gameOverrides = {}, replay = true, team: teamOverrides = {} } = {}) {
+async function bootReplayPage({ config, replayEvents = [], game: gameOverrides = {}, replay = true, team: teamOverrides = {} } = {}) {
     const { document, ensureElement } = createEnvironment();
     const storage = new Map();
     const sessionStorage = {
@@ -334,7 +334,8 @@ async function bootReplayPage({ replayEvents = [], game: gameOverrides = {}, rep
             storage.set(key, String(value));
         }
     };
-    const location = new URL(`https://allplays.example/live-game.html?teamId=T1&gameId=G1&replay=${replay}`);
+    const configQuery = config ? `&config=${encodeURIComponent(config)}` : '';
+    const location = new URL(`https://allplays.example/live-game.html?teamId=T1&gameId=G1&replay=${replay}${configQuery}`);
     const window = {
         document,
         location,
@@ -387,7 +388,7 @@ async function bootReplayPage({ replayEvents = [], game: gameOverrides = {}, rep
             deleteUploadedMediaObjects: async () => undefined
         },
         utils: {
-            getUrlParams: () => ({ teamId: 'T1', gameId: 'G1', replay: String(replay) }),
+            getUrlParams: () => ({ teamId: 'T1', gameId: 'G1', replay: String(replay), config }),
             escapeHtml: (value) => String(value ?? ''),
             renderHeader() {},
             renderFooter() {},
@@ -611,6 +612,15 @@ async function bootReplayPage({ replayEvents = [], game: gameOverrides = {}, rep
 }
 
 describe('live game replay initialization', () => {
+    it.each(['team-pass-enabled', 'team-pass-disabled'])('does not let the public %s query override replay authorization config', async (config) => {
+        const page = await bootReplayPage({
+            config,
+            team: { teamPassConfig: { recordedReplayPaywallEnabled: true } }
+        });
+
+        expect(page.state.game).not.toHaveProperty('recordedReplayPaywallEnabled');
+    });
+
     it('honors server-authoritative full access for projected owner and admin controls', async () => {
         const page = await bootReplayPage({
             team: {

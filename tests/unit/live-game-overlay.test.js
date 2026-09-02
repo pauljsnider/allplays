@@ -64,7 +64,7 @@ describe('live game overlay page', () => {
         expect(html).toContain('id="away-team-photo"');
         expect(html).toContain('data-score-hidden="false"');
         expect(html).toMatch(/\.panel-tab\s*\{[^}]*min-width:\s*44px;/);
-        expect(html).toContain('js/live-game-overlay.js?v=38');
+        expect(html).toContain('js/live-game-overlay.js?v=40');
     });
 
     it('keeps the local demo isolated while wiring canonical subscriptions and authenticated chat posting', () => {
@@ -75,7 +75,7 @@ describe('live game overlay page', () => {
         expect(source).toContain("import('./live-game-state.js?v=41')");
         expect(source).toContain('stateTools.applyResetEventState');
         expect(source).toContain('reconcileOverlayLiveEvents');
-        expect(source).toContain("from './live-game-overlay-model.js?v=25'");
+        expect(source).toContain("from './live-game-overlay-model.js?v=26'");
         expect(source).not.toContain('loadPublicGameResetIdentity');
         expect(source).toContain('resolvePublicProjectionVideoOptions');
         expect(source).toContain('getSafeOverlayProviderUrl(publicUrl)');
@@ -127,6 +127,7 @@ describe('live game overlay page', () => {
         expect(source).toContain('isRecordedReplayTeamPassGateEnabled');
         expect(source).toContain('getTeamEntitlementStatus');
         expect(source).toContain('showReplayAccessGate');
+        expect(source).toContain('options.isRecordedReplay === true');
         expect(source).toContain("uiState.videoMuted ? 'mute' : 'unMute'");
         expect(source).toContain('requestFullscreen');
         expect(source).toContain('buildGameWatchShareUrl');
@@ -187,6 +188,8 @@ describe('live game overlay page', () => {
         expect(currentLiveGame).toContain('<span id="overlay-view-link-label">Watch Live</span>');
         expect(currentLiveGameSource).toContain("overlayViewLink: q('#overlay-view-link')");
         expect(currentLiveGameSource).toContain('els.overlayViewLink.href = `live-game-overlay.html?teamId=');
+        expect(currentLiveGameSource).toContain("? 'Game replay video'");
+        expect(currentLiveGameSource).toContain(": 'Live stream';");
         expect(currentLiveGameSource).toContain("isReport ? 'Watch Replay' : 'Watch Live'");
     });
 

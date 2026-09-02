@@ -34,7 +34,7 @@ import {
   getReplayTimestampMs,
   rebaseReplayStartTimeMs
 } from './live-game-replay.js?v=3';
-import { BROADCAST_SETUP_STATUSES, BROADCAST_STREAM_STATUSES, MAX_HIGHLIGHT_CLIP_MS, buildBroadcastSetupSession, buildHighlightShareUrl, buildStreamScoreContext, canAccessNativeCameraCapture, canSaveBroadcastSetupSession, createHighlightClipDraft, resolveBroadcastProviderMetadata, resolveBroadcastStreamControlState, resolveReplayVideoOptions, shouldReloadVideoPlayback } from './live-game-video.js?v=443315';
+import { BROADCAST_SETUP_STATUSES, BROADCAST_STREAM_STATUSES, MAX_HIGHLIGHT_CLIP_MS, buildBroadcastSetupSession, buildHighlightShareUrl, buildStreamScoreContext, canAccessNativeCameraCapture, canSaveBroadcastSetupSession, createHighlightClipDraft, resolveBroadcastProviderMetadata, resolveBroadcastStreamControlState, resolveReplayVideoOptions, shouldReloadVideoPlayback } from './live-game-video.js?v=443317';
 import { buildGameReportShareUrl, buildGameWatchShareUrl } from './game-share-links.js?v=1';
 import { TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, isRecordedReplayTeamPassGateEnabled, resolveTeamEntitlementSeasonId } from './team-entitlements.js?v=9';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
@@ -797,7 +797,7 @@ function refreshVideoPanel({ force = false } = {}) {
     state.videoPlayback = nextPlayback;
     const recordedReplayGateEnabled = isRecordedReplayTeamPassGateEnabled({ game: state.game, team: state.team });
     const videoUnlocked = canAccessPremiumFanFeature(TEAM_PASS_FEATURES.RECORDED_REPLAY, state.teamEntitlement);
-    const isGatedRecordedReplay = state.videoPlayback?.mode === 'recorded' && recordedReplayGateEnabled && !videoUnlocked;
+    const isGatedRecordedReplay = state.videoPlayback?.isRecordedReplay === true && recordedReplayGateEnabled && !videoUnlocked;
     const hasStreamScoreContext = Boolean(buildStreamScoreContext(state.game));
     const shouldShowVideoPanel = Boolean(
       isGatedRecordedReplay ||
@@ -828,9 +828,14 @@ function setupVideoPanel(nextPlayback = resolveVideoPlayback()) {
   const previousPlayback = state.videoPlayback;
   const shouldReloadPlayback = shouldReloadVideoPlayback(previousPlayback, nextPlayback);
   state.videoPlayback = nextPlayback;
+  if (iframe) {
+    iframe.title = state.videoPlayback?.isRecordedReplay === true
+      ? 'Game replay video'
+      : 'Live stream';
+  }
   const recordedReplayGateEnabled = isRecordedReplayTeamPassGateEnabled({ game: state.game, team: state.team });
   const videoUnlocked = canAccessPremiumFanFeature(TEAM_PASS_FEATURES.RECORDED_REPLAY, state.teamEntitlement);
-  const isGatedRecordedReplay = state.videoPlayback?.mode === 'recorded' && recordedReplayGateEnabled && !videoUnlocked;
+  const isGatedRecordedReplay = state.videoPlayback?.isRecordedReplay === true && recordedReplayGateEnabled && !videoUnlocked;
   const canUseNativeCamera = userCanUseNativeCamera();
   const hasMediaHub = hasMediaHubContent(state.videoPlayback?.mediaHub);
   const hasGameClips = Boolean(state.videoPlayback?.gameClips?.length);
@@ -2854,12 +2859,6 @@ async function init() {
   if (!game) {
     if (els.playsFeed) els.playsFeed.innerHTML = '<div class="text-sand/60 text-center py-6">Game not found.</div>';
     return;
-  }
-
-  if (params.config === 'team-pass-enabled') {
-    game.recordedReplayPaywallEnabled = true;
-  } else if (params.config === 'team-pass-disabled') {
-    game.recordedReplayPaywallEnabled = false;
   }
 
   state.team = team;

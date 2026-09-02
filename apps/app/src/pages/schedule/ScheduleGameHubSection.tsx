@@ -39,6 +39,7 @@ import {
 } from '../../lib/scheduleHub';
 import { useShellLayout } from '../../lib/useShellLayout';
 import { CompactMeta } from '../../components/schedule/CompactMeta';
+import { GameReplayEditor } from '../../components/schedule/GameReplayEditor';
 import { PracticeAttendancePanel } from '../../components/schedule/PracticeAttendancePanel';
 import { ReportMarkdownText } from '../../components/schedule/ReportMarkdownText';
 import { ScoreStepper } from '../../components/schedule/ScoreStepper';
@@ -59,6 +60,7 @@ import type { PracticeFeedItem } from '../../lib/gameWrapupService';
 import type { PracticeTimelineBlock, PracticeTimelineDrillOption } from '../../lib/practiceTimelineService';
 import type { TrackStatsheetReviewRow } from '../../lib/statsheetImportService';
 import type { AuthState } from '../../lib/types';
+import type { YouTubeReplayVideo } from '../../lib/youtubeReplay';
 import { createLogger } from '../../lib/logger';
 import { useScheduleEventDetailContext } from './ScheduleEventDetailContext';
 
@@ -865,7 +867,7 @@ function GameHubLiveClockBadge({ event }: { event: ParentScheduleEvent }) {
   );
 }
 
-export function ScheduleGameHubSection({ auth, event, childEvents, requestedPanel, onPanelChange, onScoreUpdated, onLiveClockUpdated, onWrapupCompleted, onStatsheetImported, onGameCancelled, onPracticeOccurrenceCancelled, onGamePlanPublished }: {
+export function ScheduleGameHubSection({ auth, event, childEvents, requestedPanel, onPanelChange, onScoreUpdated, onLiveClockUpdated, onWrapupCompleted, onStatsheetImported, onGameCancelled, onPracticeOccurrenceCancelled, onGamePlanPublished, onReplayVideoUpdated }: {
   auth: AuthState;
   event: ParentScheduleEvent;
   childEvents: ParentScheduleEvent[];
@@ -878,6 +880,7 @@ export function ScheduleGameHubSection({ auth, event, childEvents, requestedPane
   onGameCancelled: () => void;
   onPracticeOccurrenceCancelled: () => void;
   onGamePlanPublished: (gamePlan: Record<string, any>) => void;
+  onReplayVideoUpdated: (replayVideo: YouTubeReplayVideo | null) => void;
 }) {
   const { isDesktopWeb } = useShellLayout();
   const [shareStatus, setShareStatus] = useState<string | null>(null);
@@ -1043,6 +1046,7 @@ export function ScheduleGameHubSection({ auth, event, childEvents, requestedPane
       {showNonAdminPracticePacketFirst ? <PracticePacketSection auth={auth} event={event} childEvents={childEvents} /> : null}
       {showAdminPracticeTimeline ? <PracticeTimelineSection auth={auth} event={event} /> : null}
       {!isPractice && event.isTeamAdmin && event.isDbGame && !event.isCancelled ? <GameScheduleEditPanel auth={auth} event={event} /> : null}
+      {!isPractice ? <GameReplayEditor auth={auth} event={event} onReplayVideoUpdated={onReplayVideoUpdated} /> : null}
       {isPractice && event.isTeamAdmin && event.isDbGame && !event.isCancelled ? <PracticeScheduleEditPanel auth={auth} event={event} /> : null}
       {isPractice && event.isTeamAdmin && event.isDbGame && !event.isCancelled ? <StaffPracticePacketEditor auth={auth} event={event} childEvents={childEvents} /> : null}
       {isPractice && !showNonAdminPracticePacketFirst ? <PracticePacketSection auth={auth} event={event} childEvents={childEvents} /> : null}

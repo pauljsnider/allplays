@@ -246,10 +246,10 @@ import { addGame, addPractice, broadcastLiveEvent, buildSingleLegacyTournamentGa
 import { getNativeAuthIdToken } from './authService';
 import { expandRecurrence, fetchAndParseCalendar, getCalendarEventTrackingId, isTeamActive, isTrackedCalendarEvent, mergeAssignmentsWithClaims } from './adapters/legacyScheduleHelpers';
 import { getCachedAppData, invalidateCachedAppData, loadCachedAppData } from './appDataCache';
-import { mapScheduleEventRecord } from './firestore/mappers';
+import { mapScheduleEventDocument, mapScheduleEventRecord } from './firestore/mappers';
 import { loadManagedTeamsFromNativeCallable, loadProfileDocument } from './profileService';
 import { getScheduleTournamentInfo } from './scheduleLogic';
-import { adjustGameScore, buildPlayerScoringLiveEvent, buildSingleGameTournamentLegacySchedulePayload, cancelScheduledGameForApp, claimOfficialAssignmentItem, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createStaffRsvpAvailabilityLoader, enableRsvpForImportedCalendarEvent, flushPendingLivePublishOperations, hydrateParentScheduleDetails, hydrateParentScheduleEventOptionalDetails, hydrateParentScheduleRsvps, loadHomeScoringPlayers, loadOfficialAssignments, loadOfficialAssignmentsAccess, loadParentSchedule, loadParentScheduleAssignments, loadParentScheduleChildren, loadParentScheduleEventDetail, loadParentScheduleRideOffers, loadParentScheduleScope, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitParentScheduleRsvp, submitParentScheduleRsvpForChildren, submitStaffScheduleRsvpOverride, TournamentBlockPartialSaveError, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
+import { adjustGameScore, buildPlayerScoringLiveEvent, buildSingleGameTournamentLegacySchedulePayload, cancelScheduledGameForApp, claimOfficialAssignmentItem, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createStaffRsvpAvailabilityLoader, enableRsvpForImportedCalendarEvent, flushPendingLivePublishOperations, hydrateParentScheduleDetails, hydrateParentScheduleEventOptionalDetails, hydrateParentScheduleRsvps, linkGameYouTubeReplayForApp, loadHomeScoringPlayers, loadOfficialAssignments, loadOfficialAssignmentsAccess, loadParentSchedule, loadParentScheduleAssignments, loadParentScheduleChildren, loadParentScheduleEventDetail, loadParentScheduleRideOffers, loadParentScheduleScope, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, removeGameReplayForApp, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitParentScheduleRsvp, submitParentScheduleRsvpForChildren, submitStaffScheduleRsvpOverride, TournamentBlockPartialSaveError, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
 
 function playerSnapshot(id: string, data: Record<string, unknown> | null) {
   return {
@@ -2129,7 +2129,7 @@ describe('delegated schedule event authorization', () => {
     ]);
   });
 
-  it.each(['media', 'videography', 'streaming'] as const)(
+  it.each(['media', 'streaming'] as const)(
     'does not promote a %s-only projection to schedule access',
     async (capability) => {
       vi.mocked(getDelegatedTeamContext).mockResolvedValue({
@@ -2149,6 +2149,75 @@ describe('delegated schedule event authorization', () => {
       expect(getTeam).not.toHaveBeenCalled();
     }
   );
+
+  it('loads a completed game for an exact selected-videographer projection', async () => {
+    vi.mocked(getDelegatedTeamContext).mockResolvedValue({
+      id: 'team-1',
+      name: 'Falcons',
+      delegatedAccess: { videography: true, modes: { videography: 'selected' } },
+      teamPermissions: { videography: { mode: 'selected', memberIds: ['helper-1'] } }
+    } as any);
+    vi.mocked(getGame).mockResolvedValue({
+      ...scheduledGame,
+      status: 'completed',
+      liveStatus: 'completed',
+      replayVideo: {
+        provider: 'youtube',
+        videoId: 'PK1HyC37doc',
+        embedUrl: 'https://www.youtube.com/embed/PK1HyC37doc',
+        publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+        status: 'ready'
+      }
+    } as any);
+
+    const result = await loadParentScheduleEventDetail(delegatedUser, {
+      teamId: 'team-1',
+      eventId: 'game-1',
+      hydrateDetails: false,
+      expandStaffPlayers: false
+    });
+
+    expect(result.events).toEqual([
+      expect.objectContaining({
+        id: 'game-1',
+        canManageReplayVideo: true,
+        isTeamStaff: false,
+        status: 'completed',
+        replayVideo: expect.objectContaining({ videoId: 'PK1HyC37doc' })
+      })
+    ]);
+  });
+
+  it('projects delegated-full replay cleanup access without broad team-admin authority', async () => {
+    vi.mocked(getDelegatedTeamContext).mockResolvedValue({
+      id: 'team-1',
+      name: 'Falcons',
+      delegatedAccess: { full: true }
+    } as any);
+    vi.mocked(getGame).mockResolvedValue({
+      ...scheduledGame,
+      liveStatus: 'scheduled',
+      replayVideoPublicUrl: 'https://example.com/legacy-replay'
+    } as any);
+
+    const result = await loadParentScheduleEventDetail(delegatedUser, {
+      teamId: 'team-1',
+      eventId: 'game-1',
+      hydrateDetails: false,
+      expandStaffPlayers: false
+    });
+
+    expect(result.events).toEqual([
+      expect.objectContaining({
+        id: 'game-1',
+        status: 'scheduled',
+        canManageReplayVideo: true,
+        canManageReplayVideoAsFullManager: true,
+        isTeamAdmin: false,
+        rawReplayState: { replayVideoPublicUrl: 'https://example.com/legacy-replay' }
+      })
+    ]);
+  });
 
   it('does not use delegated access for an unscoped team schedule request', async () => {
     vi.mocked(getDelegatedTeamContext).mockResolvedValue({
@@ -6120,6 +6189,35 @@ describe('team schedule game windowing (#2034)', () => {
       }
     });
   });
+
+  it('preserves raw replay evidence and shared-game identity while mapping schedule records', () => {
+    const rawReplayVideo = { provider: 'vimeo', publicUrl: 'https://vimeo.com/12345' };
+    const mapped = mapScheduleEventRecord({
+      id: 'shared-game-1',
+      type: 'game',
+      date: new Date('2026-08-29T18:00:00.000Z'),
+      replayVideo: rawReplayVideo,
+      recordedVideoUrl: 'https://example.com/older-replay',
+      sharedScheduleId: 'shared-schedule-1',
+      sharedScheduleSourceTeamId: 'team-1',
+      sharedScheduleOpponentTeamId: 'team-2',
+      sharedScheduleOpponentGameId: 'game-2',
+      isSharedGame: true
+    });
+
+    expect(mapped).toMatchObject({
+      id: 'shared-game-1',
+      rawReplayState: {
+        replayVideo: rawReplayVideo,
+        recordedVideoUrl: 'https://example.com/older-replay'
+      },
+      sharedScheduleId: 'shared-schedule-1',
+      sharedScheduleSourceTeamId: 'team-1',
+      sharedScheduleOpponentTeamId: 'team-2',
+      sharedScheduleOpponentGameId: 'game-2',
+      isSharedGame: true
+    });
+  });
 });
 
 describe('resolveCachedParentScheduleEvents (#2649)', () => {
@@ -6348,6 +6446,660 @@ describe('enableRsvpForImportedCalendarEvent', () => {
     await expect(enableRsvpForImportedCalendarEvent({ ...calendarEvent, ...overrides } as any, user)).rejects.toThrow();
     expect(getTeam).not.toHaveBeenCalled();
     expect(mocks.runTransactionMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('game replay mutations', () => {
+  const manager = { uid: 'coach-1', displayName: 'Coach', email: 'coach@example.com', roles: [] } as any;
+  const videographer = { uid: 'video-1', displayName: 'Camera Helper', email: 'video@example.com', roles: [] } as any;
+  const completedGame = {
+    id: 'game-1',
+    type: 'game',
+    date: new Date('2026-08-29T18:00:00.000Z'),
+    opponent: 'Wolves',
+    status: 'completed',
+    liveStatus: 'completed'
+  };
+  const clearedLegacyReplayAliases = {
+    recordedVideo: { __deleteField: true },
+    videoReplay: { __deleteField: true },
+    replayVideoUrl: { __deleteField: true },
+    recordedVideoUrl: { __deleteField: true },
+    videoReplayUrl: { __deleteField: true },
+    archivedVideoUrl: { __deleteField: true },
+    replayVideoPublicUrl: { __deleteField: true },
+    replayVideoPosterUrl: { __deleteField: true },
+    replayVideoTitle: { __deleteField: true },
+    replayVideoDurationMs: { __deleteField: true },
+    replayStatus: { __deleteField: true },
+    recordedReplayStatus: { __deleteField: true },
+    videoReplayStatus: { __deleteField: true }
+  };
+
+  function authorizeSelectedVideographer() {
+    vi.mocked(getTeam).mockRejectedValue(new Error('Direct team read denied.'));
+    vi.mocked(getDelegatedTeamContext).mockResolvedValue({
+      id: 'team-1',
+      delegatedAccess: { videography: true, modes: { videography: 'selected' } },
+      teamPermissions: { videography: { mode: 'selected', memberIds: ['video-1'] } }
+    } as any);
+  }
+
+  function firestoreTimestamp(seconds: number, nanoseconds: number) {
+    return {
+      seconds,
+      nanoseconds,
+      toMillis: () => (seconds * 1000) + (nanoseconds / 1_000_000),
+      toDate: () => new Date((seconds * 1000) + (nanoseconds / 1_000_000))
+    };
+  }
+
+  beforeEach(() => {
+    (globalThis as any).window = { location: { protocol: 'https:' }, setTimeout, clearTimeout } as any;
+    vi.clearAllMocks();
+    capacitorCoreMock.isNativePlatform.mockReturnValue(false);
+    vi.mocked(getDelegatedTeamContext).mockRejectedValue(new Error('No delegated access.'));
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-1', ownerId: 'coach-1', active: true } as any);
+    mocks.transactionGet.mockReset();
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({ ...completedGame })
+    });
+  });
+
+  afterEach(() => {
+    capacitorCoreMock.isNativePlatform.mockReturnValue(false);
+  });
+
+  it('links canonical replay metadata for a full manager with one game update', async () => {
+    const result = await linkGameYouTubeReplayForApp(
+      'team-1',
+      'game-1',
+      'https://youtu.be/PK1HyC37doc?si=share-token',
+      manager,
+      { title: `  ${'Vipers replay '.repeat(20)}  `, expectedReplayState: {} }
+    );
+
+    expect(mocks.runTransactionMock).toHaveBeenCalledTimes(1);
+    expect(mocks.transactionSet).toHaveBeenCalledTimes(1);
+    const payload = mocks.transactionSet.mock.calls[0][1] as any;
+    expect(payload).toEqual({
+      replayVideo: {
+        provider: 'youtube',
+        videoId: 'PK1HyC37doc',
+        embedUrl: 'https://www.youtube.com/embed/PK1HyC37doc',
+        publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+        title: expect.any(String),
+        status: 'ready',
+        linkedBy: 'coach-1',
+        linkedAt: expect.any(Date)
+      },
+      ...clearedLegacyReplayAliases,
+      updatedAt: expect.any(Date)
+    });
+    expect(mocks.transactionSet).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'teams/team-1/games/game-1' }),
+      payload,
+      { merge: true }
+    );
+    expect(payload.replayVideo.title).toHaveLength(120);
+    expect(payload.updatedAt).toBe(payload.replayVideo.linkedAt);
+    expect(result).toEqual(payload.replayVideo);
+    expect(invalidateCachedAppData).toHaveBeenCalled();
+  });
+
+  it('authorizes an exact selected videographer projection', async () => {
+    authorizeSelectedVideographer();
+
+    await linkGameYouTubeReplayForApp(
+      'team-1',
+      'game-1',
+      'https://www.youtube.com/live/PK1HyC37doc',
+      videographer
+    );
+
+    expect(getDelegatedTeamContext).toHaveBeenCalledWith('team-1', 'game-1');
+    expect(mocks.transactionSet).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'teams/team-1/games/game-1' }),
+      expect.objectContaining({
+        replayVideo: expect.objectContaining({ linkedBy: 'video-1', videoId: 'PK1HyC37doc' })
+      }),
+      { merge: true }
+    );
+  });
+
+  it('treats a bounded delegated-full projection as full-manager access for nonfinal cleanup', async () => {
+    vi.mocked(getTeam).mockRejectedValue(new Error('Direct team read denied.'));
+    vi.mocked(getDelegatedTeamContext).mockResolvedValue({
+      id: 'team-1',
+      delegatedAccess: { full: true }
+    } as any);
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({
+        ...completedGame,
+        status: 'scheduled',
+        liveStatus: 'scheduled',
+        replayVideoPublicUrl: 'https://example.com/legacy-replay'
+      })
+    });
+
+    await removeGameReplayForApp('team-1', 'game-1', videographer, {
+      replayVideoPublicUrl: 'https://example.com/legacy-replay'
+    });
+
+    expect(mocks.transactionSet).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'teams/team-1/games/game-1' }),
+      { replayVideo: null, ...clearedLegacyReplayAliases, updatedAt: expect.any(Date) },
+      { merge: true }
+    );
+  });
+
+  it('does not trust delegated-full fields from a canonical team document', async () => {
+    vi.mocked(getTeam).mockResolvedValue({
+      id: 'team-1',
+      ownerId: 'another-manager',
+      delegatedAccess: { full: true },
+      isDelegatedTeamContext: true
+    } as any);
+
+    await expect(removeGameReplayForApp('team-1', 'game-1', videographer, {
+      replayVideoPublicUrl: 'https://example.com/legacy-replay'
+    })).rejects.toThrow('You do not have permission to manage this game replay.');
+
+    expect(mocks.runTransactionMock).not.toHaveBeenCalled();
+  });
+
+  it('removes the canonical replay and every legacy archive alias with updatedAt', async () => {
+    const existingReplay = {
+      provider: 'youtube',
+      videoId: 'PK1HyC37doc',
+      embedUrl: 'https://www.youtube.com/embed/PK1HyC37doc',
+      publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+      status: 'ready'
+    };
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({
+        ...completedGame,
+        replayVideo: existingReplay,
+        archivedVideoUrl: 'https://example.com/older-archive'
+      })
+    });
+
+    const result = await removeGameReplayForApp('team-1', 'game-1', manager, {
+      replayVideo: existingReplay,
+      archivedVideoUrl: 'https://example.com/older-archive'
+    });
+
+    expect(mocks.transactionSet).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'teams/team-1/games/game-1' }),
+      { replayVideo: null, ...clearedLegacyReplayAliases, updatedAt: expect.any(Date) },
+      { merge: true }
+    );
+    expect(result).toEqual({ removed: true, updatedAt: expect.any(Date) });
+  });
+
+  it('allows a canonical replay to be removed after the lifecycle is corrected away from final', async () => {
+    const existingReplay = {
+      provider: 'youtube',
+      videoId: 'PK1HyC37doc',
+      embedUrl: 'https://www.youtube.com/embed/PK1HyC37doc',
+      publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+      status: 'ready'
+    };
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({ ...completedGame, status: 'scheduled', liveStatus: 'scheduled', replayVideo: existingReplay })
+    });
+
+    await removeGameReplayForApp('team-1', 'game-1', manager, { replayVideo: existingReplay });
+
+    expect(mocks.transactionSet).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'teams/team-1/games/game-1' }),
+      { replayVideo: null, ...clearedLegacyReplayAliases, updatedAt: expect.any(Date) },
+      { merge: true }
+    );
+  });
+
+  it('lets a full manager remove legacy-only archive evidence from a nonfinal game', async () => {
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({
+        ...completedGame,
+        status: 'scheduled',
+        liveStatus: 'scheduled',
+        replayVideoPublicUrl: 'https://example.com/legacy-replay'
+      })
+    });
+
+    await removeGameReplayForApp('team-1', 'game-1', manager, {
+      replayVideoPublicUrl: 'https://example.com/legacy-replay'
+    });
+
+    expect(mocks.transactionSet).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'teams/team-1/games/game-1' }),
+      { replayVideo: null, ...clearedLegacyReplayAliases, updatedAt: expect.any(Date) },
+      { merge: true }
+    );
+  });
+
+  it('lets a selected videographer remove legacy-only archive evidence while the game is final', async () => {
+    authorizeSelectedVideographer();
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({ ...completedGame, recordedVideo: { url: 'https://example.com/legacy-replay' } })
+    });
+
+    await removeGameReplayForApp('team-1', 'game-1', videographer, {
+      recordedVideo: { url: 'https://example.com/legacy-replay' }
+    });
+
+    expect(mocks.transactionSet).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'teams/team-1/games/game-1' }),
+      { replayVideo: null, ...clearedLegacyReplayAliases, updatedAt: expect.any(Date) },
+      { merge: true }
+    );
+  });
+
+  it.each(['scheduled', 'cancelled'])('does not let a selected videographer remove replay evidence while the game is %s', async (lifecycle) => {
+    authorizeSelectedVideographer();
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({
+        ...completedGame,
+        status: lifecycle,
+        liveStatus: lifecycle,
+        replayVideoPublicUrl: 'https://example.com/legacy-replay'
+      })
+    });
+
+    await expect(removeGameReplayForApp('team-1', 'game-1', videographer, {
+      replayVideoPublicUrl: 'https://example.com/legacy-replay'
+    })).rejects.toThrow('Only a full team manager can remove a replay while this game is not final.');
+
+    expect(mocks.transactionSet).not.toHaveBeenCalled();
+  });
+
+  it('requires a final game before writing replay metadata', async () => {
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({ ...completedGame, status: 'scheduled', liveStatus: 'scheduled' })
+    });
+
+    await expect(linkGameYouTubeReplayForApp(
+      'team-1',
+      'game-1',
+      'https://youtu.be/PK1HyC37doc',
+      manager
+    )).rejects.toThrow('Mark the game final before linking its replay.');
+
+    expect(mocks.transactionSet).not.toHaveBeenCalled();
+  });
+
+  it('rejects contradictory completion fields inside the transaction', async () => {
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({ ...completedGame, status: 'completed', liveStatus: 'live' })
+    });
+
+    await expect(linkGameYouTubeReplayForApp(
+      'team-1',
+      'game-1',
+      'https://youtu.be/PK1HyC37doc',
+      manager
+    )).rejects.toThrow('Mark the game final before linking its replay.');
+
+    expect(mocks.transactionSet).not.toHaveBeenCalled();
+  });
+
+  it('rejects lifecycle values whose casing does not match the Rules contract', async () => {
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({ ...completedGame, status: 'FINAL', liveStatus: '' })
+    });
+
+    await expect(linkGameYouTubeReplayForApp(
+      'team-1',
+      'game-1',
+      'https://youtu.be/PK1HyC37doc',
+      manager
+    )).rejects.toThrow('Mark the game final before linking its replay.');
+
+    expect(mocks.transactionSet).not.toHaveBeenCalled();
+  });
+
+  it('rejects mirrored shared-schedule documents at the transaction boundary', async () => {
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({
+        ...completedGame,
+        sharedScheduleId: 'shared-schedule-1',
+        sharedScheduleOpponentTeamId: 'team-2',
+        sharedScheduleOpponentGameId: 'game-2'
+      })
+    });
+
+    await expect(linkGameYouTubeReplayForApp(
+      'team-1',
+      'game-1',
+      'https://youtu.be/PK1HyC37doc',
+      manager
+    )).rejects.toThrow('original team game');
+
+    expect(mocks.transactionSet).not.toHaveBeenCalled();
+  });
+
+  it('rejects a detached mirror that retains only its source-team marker at the transaction boundary', async () => {
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({
+        ...completedGame,
+        sharedScheduleId: null,
+        sharedScheduleSourceTeamId: 'team-2',
+        sharedScheduleOpponentTeamId: null,
+        sharedScheduleOpponentGameId: null
+      })
+    });
+
+    await expect(linkGameYouTubeReplayForApp(
+      'team-1',
+      'game-1',
+      'https://youtu.be/PK1HyC37doc',
+      manager
+    )).rejects.toThrow('original team game');
+
+    expect(mocks.transactionSet).not.toHaveBeenCalled();
+  });
+
+  it('rejects synthetic shared-game route identifiers at the transaction boundary', async () => {
+    await expect(linkGameYouTubeReplayForApp(
+      'team-1',
+      'sharedh_bounded-route-id',
+      'https://youtu.be/PK1HyC37doc',
+      manager
+    )).rejects.toThrow('original team game');
+
+    expect(mocks.transactionSet).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid destinations before authorization or writes', async () => {
+    await expect(linkGameYouTubeReplayForApp(
+      'team-1',
+      'game-1',
+      'https://www.youtube.com/channel/UCa9ghvbup6VQmnDOdqwYpqQ',
+      manager
+    )).rejects.toThrow('Paste a complete YouTube video link.');
+
+    expect(getDelegatedTeamContext).not.toHaveBeenCalled();
+    expect(getTeam).not.toHaveBeenCalled();
+    expect(mocks.runTransactionMock).not.toHaveBeenCalled();
+    expect(mocks.transactionSet).not.toHaveBeenCalled();
+  });
+
+  it('reports a web write failure as unconfirmed', async () => {
+    mocks.runTransactionMock.mockRejectedValueOnce(new Error('connection reset'));
+
+    await expect(linkGameYouTubeReplayForApp(
+      'team-1',
+      'game-1',
+      'https://youtu.be/PK1HyC37doc',
+      manager
+    )).rejects.toThrow('The replay update could not be confirmed. Refresh this game before trying again.');
+
+    expect(invalidateCachedAppData).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when a stale screen would overwrite a newer replay', async () => {
+    const displayedReplay = 'https://vimeo.com/old';
+    const currentReplay = 'https://vimeo.com/new';
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({ ...completedGame, recordedVideoUrl: currentReplay })
+    });
+
+    await expect(linkGameYouTubeReplayForApp(
+      'team-1',
+      'game-1',
+      'https://youtu.be/PK1HyC37doc',
+      manager,
+      { expectedReplayState: { recordedVideoUrl: displayedReplay } }
+    )).rejects.toThrow('The linked replay changed since this game loaded.');
+
+    expect(mocks.transactionSet).not.toHaveBeenCalled();
+  });
+
+  it('treats equivalent Date and Firestore Timestamp replay metadata as the same CAS state', async () => {
+    const linkedAt = new Date('2026-08-30T12:00:00.123Z');
+    const seconds = Math.floor(linkedAt.getTime() / 1000);
+    const expectedReplay = {
+      provider: 'youtube',
+      videoId: 'PK1HyC37doc',
+      publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+      status: 'ready',
+      linkedAt
+    };
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({
+        ...completedGame,
+        replayVideo: {
+          ...expectedReplay,
+          linkedAt: firestoreTimestamp(seconds, 123_000_000)
+        }
+      })
+    });
+
+    await linkGameYouTubeReplayForApp(
+      'team-1',
+      'game-1',
+      'https://youtu.be/AaBbCcDdEeF',
+      manager,
+      { expectedReplayState: { replayVideo: expectedReplay } }
+    );
+
+    expect(mocks.transactionSet).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves non-millisecond REST replay timestamp precision through cache and SDK transaction CAS', async () => {
+    const linkedAtValue = '2026-08-30T12:00:00.123456789Z';
+    const linkedAtSeconds = Math.floor(Date.parse(linkedAtValue) / 1000);
+    const mapped = mapScheduleEventDocument({
+      name: 'projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1',
+      fields: {
+        type: { stringValue: 'game' },
+        date: { timestampValue: '2026-08-29T18:00:00.000Z' },
+        status: { stringValue: 'completed' },
+        liveStatus: { stringValue: 'completed' },
+        replayVideo: {
+          mapValue: {
+            fields: {
+              provider: { stringValue: 'youtube' },
+              videoId: { stringValue: 'PK1HyC37doc' },
+              publicUrl: { stringValue: 'https://www.youtube.com/watch?v=PK1HyC37doc' },
+              status: { stringValue: 'ready' },
+              linkedAt: { timestampValue: linkedAtValue }
+            }
+          }
+        }
+      }
+    });
+    const expectedReplayState = JSON.parse(JSON.stringify(mapped?.rawReplayState || {}));
+    expect(expectedReplayState.replayVideo.linkedAt).toMatchObject({
+      seconds: linkedAtSeconds,
+      nanoseconds: 123_456_789
+    });
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({
+        ...completedGame,
+        replayVideo: {
+          provider: 'youtube',
+          videoId: 'PK1HyC37doc',
+          publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+          status: 'ready',
+          linkedAt: firestoreTimestamp(linkedAtSeconds, 123_456_789)
+        }
+      })
+    });
+
+    await linkGameYouTubeReplayForApp(
+      'team-1',
+      'game-1',
+      'https://youtu.be/AaBbCcDdEeF',
+      manager,
+      { expectedReplayState }
+    );
+
+    expect(mocks.transactionSet).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves browser-cached Firestore Timestamp JSON through replay transaction CAS', async () => {
+    const seconds = 1_788_091_200;
+    const nanoseconds = 123_456_789;
+    const cachedReplayState = JSON.parse(JSON.stringify({
+      replayVideo: {
+        provider: 'youtube',
+        videoId: 'PK1HyC37doc',
+        publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+        status: 'ready',
+        linkedAt: {
+          toJSON: () => ({
+            type: 'firestore/timestamp/1.0',
+            seconds,
+            nanoseconds
+          })
+        }
+      }
+    }));
+    expect(cachedReplayState.replayVideo.linkedAt).toEqual({
+      type: 'firestore/timestamp/1.0',
+      seconds,
+      nanoseconds
+    });
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({
+        ...completedGame,
+        replayVideo: {
+          provider: 'youtube',
+          videoId: 'PK1HyC37doc',
+          publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+          status: 'ready',
+          linkedAt: firestoreTimestamp(seconds, nanoseconds)
+        }
+      })
+    });
+
+    await linkGameYouTubeReplayForApp(
+      'team-1',
+      'game-1',
+      'https://youtu.be/AaBbCcDdEeF',
+      manager,
+      { expectedReplayState: cachedReplayState }
+    );
+
+    expect(mocks.transactionSet).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves Timestamp nanoseconds when comparing replay CAS state', async () => {
+    const expectedReplay = {
+      provider: 'youtube',
+      videoId: 'PK1HyC37doc',
+      publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+      status: 'ready',
+      linkedAt: firestoreTimestamp(1_788_091_200, 123_000_000)
+    };
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({
+        ...completedGame,
+        replayVideo: {
+          ...expectedReplay,
+          linkedAt: firestoreTimestamp(1_788_091_200, 123_000_001)
+        }
+      })
+    });
+
+    await expect(linkGameYouTubeReplayForApp(
+      'team-1',
+      'game-1',
+      'https://youtu.be/AaBbCcDdEeF',
+      manager,
+      { expectedReplayState: { replayVideo: expectedReplay } }
+    )).rejects.toThrow('The linked replay changed since this game loaded.');
+
+    expect(mocks.transactionSet).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'a legacy URL inside an archive object',
+      { recordedVideo: { url: 'https://example.com/replay-a' } },
+      { recordedVideo: { url: 'https://example.com/replay-b' } }
+    ],
+    [
+      'an unknown provider field inside an archive object',
+      { recordedVideo: { url: 'https://example.com/replay', providerOpaque: { version: 1 } } },
+      { recordedVideo: { url: 'https://example.com/replay', providerOpaque: { version: 2 } } }
+    ]
+  ])('fails closed when %s changes after the screen loads', async (_label, expectedReplayState, currentReplayState) => {
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({ ...completedGame, ...currentReplayState })
+    });
+
+    await expect(linkGameYouTubeReplayForApp(
+      'team-1',
+      'game-1',
+      'https://youtu.be/PK1HyC37doc',
+      manager,
+      { expectedReplayState }
+    )).rejects.toThrow('The linked replay changed since this game loaded.');
+
+    expect(mocks.transactionSet).not.toHaveBeenCalled();
+  });
+
+  it('includes every playback alias in CAS even when the canonical replay is unchanged', async () => {
+    const existingReplay = {
+      provider: 'youtube',
+      videoId: 'PK1HyC37doc',
+      publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+      status: 'ready'
+    };
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({
+        ...completedGame,
+        replayVideo: existingReplay,
+        videoReplayUrl: 'https://example.com/archive-added-later'
+      })
+    });
+
+    await expect(linkGameYouTubeReplayForApp(
+      'team-1',
+      'game-1',
+      'https://youtu.be/AaBbCcDdEeF',
+      manager,
+      { expectedReplayState: { replayVideo: existingReplay } }
+    )).rejects.toThrow('The linked replay changed since this game loaded.');
+
+    expect(mocks.transactionSet).not.toHaveBeenCalled();
+  });
+
+  it('uses the same transaction on native and never falls back to an unconditional REST patch', async () => {
+    capacitorCoreMock.isNativePlatform.mockReturnValue(true);
+    mocks.runTransactionMock.mockRejectedValueOnce(new Error('native transaction unavailable'));
+
+    await expect(linkGameYouTubeReplayForApp(
+      'team-1',
+      'game-1',
+      'https://youtu.be/PK1HyC37doc',
+      manager
+    )).rejects.toThrow('The replay update could not be confirmed.');
+
+    expect(capacitorCoreMock.httpPost).not.toHaveBeenCalled();
+    expect(mocks.transactionSet).not.toHaveBeenCalled();
   });
 });
 

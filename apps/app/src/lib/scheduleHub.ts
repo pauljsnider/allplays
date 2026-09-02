@@ -5,6 +5,7 @@ import {
   getScheduleTitle,
   type ParentScheduleEvent
 } from './scheduleLogic';
+import { isCompletedGameForReplay } from './youtubeReplay';
 
 export type ScheduleHubIcon = 'video' | 'radio' | 'file-text' | 'share' | 'clipboard-check' | 'users';
 
@@ -30,7 +31,7 @@ export function buildGameHubDestinations(event: ParentScheduleEvent): ScheduleHu
   const whenWhere = `${formatEventDateLabel(event.date)} ${formatEventTimeLabel(event.date)} · ${getScheduleLocationLabel(event, 'Location TBD')}`;
   const destinations: ScheduleHubDestination[] = [];
 
-  if (liveStatus === 'completed') {
+  if (isCompletedGameForReplay(event)) {
     destinations.push({
       id: 'watch-replay',
       title: 'Watch replay',

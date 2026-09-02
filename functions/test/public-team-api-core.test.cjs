@@ -20,6 +20,16 @@ const {
 } = require('../public-team-api-core.cjs');
 const { isFamilyShareCalendarEventTracked } = require('../family-share-view-core.cjs');
 
+function canonicalReplay(videoId = 'PK1HyC37doc') {
+  return {
+    provider: 'youtube',
+    videoId,
+    embedUrl: `https://www.youtube.com/embed/${videoId}`,
+    publicUrl: `https://www.youtube.com/watch?v=${videoId}`,
+    status: 'ready'
+  };
+}
+
 test('paginates more than 500 tracked calendar documents with a stable cursor', async () => {
   const trackedDocuments = Array.from({ length: 501 }, (_, index) => ({
     calendarEventUid: `tracked-${String(index).padStart(3, '0')}`,
@@ -483,14 +493,16 @@ test('game results require completed status and both scores', () => {
   }).result, 'loss');
 });
 
-test('public game projection exposes only an explicitly public replay URL', () => {
+test('public game projection exposes only a canonical replay for a consistent final lifecycle', () => {
   const withPublicReplay = serializePublicGame({
     id: 'public-replay',
     type: 'game',
     date: '2026-08-01T15:00:00Z',
+    status: 'completed',
+    liveStatus: 'final',
     replayVideo: {
+      ...canonicalReplay(),
       url: 'https://private.example.test/replay.mp4?token=private-capability',
-      publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc'
     }
   });
   assert.equal(withPublicReplay.videoUrl, 'https://www.youtube.com/watch?v=PK1HyC37doc');
@@ -500,12 +512,43 @@ test('public game projection exposes only an explicitly public replay URL', () =
     id: 'private-replay',
     type: 'game',
     date: '2026-08-01T15:00:00Z',
+    status: 'completed',
     replayVideo: {
       url: 'https://private.example.test/replay.mp4?token=private-capability'
     }
   });
   assert.equal(withoutPublicReplay.videoUrl, null);
   assert.equal(JSON.stringify(withoutPublicReplay).includes('private-capability'), false);
+
+  for (const lifecycle of [
+    { status: 'scheduled' },
+    { status: 'cancelled' },
+    { status: 'completed', liveStatus: 'live' },
+    { status: 'scheduled', liveStatus: 'completed' }
+  ]) {
+    assert.equal(serializePublicGame({
+      id: 'unsafe-lifecycle',
+      type: 'game',
+      date: '2026-08-01T15:00:00Z',
+      replayVideo: canonicalReplay(),
+      ...lifecycle
+    }).videoUrl, null);
+  }
+});
+
+test('completed public games prioritize their canonical replay and never fall back to a channel', () => {
+  const finalGame = {
+    id: 'final-video',
+    type: 'game',
+    date: '2026-08-01T15:00:00Z',
+    status: 'final',
+    videoUrl: 'https://www.youtube.com/embed/live_stream?channel=UCa9ghvbup6VQmnDOdqwYpqQ'
+  };
+  assert.equal(serializePublicGame({
+    ...finalGame,
+    replayVideo: canonicalReplay()
+  }).videoUrl, 'https://www.youtube.com/watch?v=PK1HyC37doc');
+  assert.equal(serializePublicGame(finalGame).videoUrl, null);
 });
 
 test('public game projection withholds recorded URLs when the replay paywall is enabled', () => {
@@ -515,9 +558,7 @@ test('public game projection withholds recorded URLs when the replay paywall is 
     date: '2026-08-01T15:00:00Z',
     status: 'completed',
     videoUrl: 'https://www.youtube.com/watch?v=directReplay1',
-    replayVideo: {
-      publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc'
-    }
+    replayVideo: canonicalReplay()
   };
 
   assert.equal(serializePublicGame(completedGame, {
@@ -533,7 +574,7 @@ test('public game projection withholds recorded URLs when the replay paywall is 
     teamPassConfig: { recordedReplayPaywallEnabled: false }
   }, {
     team: { teamPassConfig: { recordedReplayPaywallEnabled: true } }
-  }).videoUrl, 'https://www.youtube.com/watch?v=directReplay1');
+  }).videoUrl, 'https://www.youtube.com/watch?v=PK1HyC37doc');
 });
 
 test('public game projection preserves an active live URL when only archived replay is paywalled', () => {

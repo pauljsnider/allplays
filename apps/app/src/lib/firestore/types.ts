@@ -1,3 +1,5 @@
+import type { ReplayArchiveState } from '../youtubeReplay';
+
 export type FirestoreScalarValue = {
     stringValue?: string;
     booleanValue?: boolean;
@@ -119,7 +121,10 @@ export type ScheduleEventFirestoreRecord = {
     opponentTeamName?: string | null;
     awayTeamName?: string | null;
     opponentTeamPhoto?: string | null;
+    sharedScheduleId?: string | null;
+    sharedScheduleSourceTeamId?: string | null;
     sharedScheduleOpponentTeamId?: string | null;
+    sharedScheduleOpponentGameId?: string | null;
     gameId?: string | null;
     status?: string | null;
     liveStatus?: string | null;
@@ -131,7 +136,10 @@ export type ScheduleEventFirestoreRecord = {
     awayScore?: number | null;
     postGameNotes?: string | null;
     summary?: string | null;
+    replayVideo?: Record<string, unknown> | null;
+    rawReplayState?: ReplayArchiveState;
     practiceFeedItems?: Array<Record<string, unknown>>;
+    isSharedGame?: boolean;
     isHome?: boolean | null;
     kitColor?: string | null;
     arrivalTime?: Date | null;

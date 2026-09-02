@@ -47,6 +47,16 @@ function cleanHttpUrl(value) {
   }
 }
 
+function getRecordedReplayPaywallSetting(team = {}) {
+  return [
+    team?.teamPassConfig?.recordedReplayPaywallEnabled,
+    team?.teamPass?.recordedReplayPaywallEnabled,
+    team?.premiumFeatures?.recordedReplayPaywallEnabled,
+    team?.recordedReplayPaywallEnabled,
+    team?.recordedReplayTeamPassRequired
+  ].find((value) => typeof value === 'boolean');
+}
+
 function hasSelectedGrant(team, permissionName, uid) {
   const permission = team?.teamPermissions?.[permissionName];
   return permission?.mode === 'selected' && normalizeStringList(permission.memberIds).includes(uid);
@@ -172,6 +182,11 @@ function serializeDelegatedTeamContext(teamId, team, uid, access) {
     teamPermissions: buildCompatibilityPermissions(uid, access)
   };
 
+  const recordedReplayPaywallEnabled = getRecordedReplayPaywallSetting(team);
+  if (typeof recordedReplayPaywallEnabled === 'boolean') {
+    item.recordedReplayPaywallEnabled = recordedReplayPaywallEnabled;
+  }
+
   if (access.full || access.parent || access.streaming) {
     item.twitchChannel = cleanText(team?.twitchChannel, 160) || null;
     item.streamEmbedUrl = cleanHttpUrl(team?.streamEmbedUrl);
@@ -214,6 +229,7 @@ function createDelegatedTeamContextHandler({ loadTeam, loadUser, loadGame, loadR
 
 module.exports = {
   createDelegatedTeamContextHandler,
+  getRecordedReplayPaywallSetting,
   resolveDelegatedAccess,
   serializeDelegatedTeamContext
 };

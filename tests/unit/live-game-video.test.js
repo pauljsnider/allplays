@@ -19,6 +19,7 @@ import {
     resolveReplayVideoOptions,
     shouldReloadVideoPlayback
 } from '../../js/live-game-video.js';
+import { GAME_REPLAY_ARCHIVE_FIELDS } from '../../js/game-replay-video.js';
 
 describe('live game replay video helpers', () => {
     it('prefers archived replay video for completed replay games', () => {
@@ -39,10 +40,224 @@ describe('live game replay video helpers', () => {
         });
 
         expect(options.mode).toBe('recorded');
+        expect(options.isRecordedReplay).toBe(true);
         expect(options.hasVideo).toBe(true);
         expect(options.sourceUrl).toBe('https://cdn.example.com/games/game-1.mp4');
         expect(options.publicUrl).toBe('https://video.example.com/game-1');
         expect(options.posterUrl).toBe('https://cdn.example.com/games/game-1.jpg');
+    });
+
+    it('plays a game-specific YouTube replay as an embed instead of the team live feed', () => {
+        const options = resolveReplayVideoOptions({
+            team: {
+                youtubeVideoId: 'aaaaaaaaaaa'
+            },
+            game: {
+                liveStatus: 'completed',
+                replayVideo: {
+                    provider: 'youtube',
+                    videoId: 'dQw4w9WgXcQ',
+                    embedUrl: 'https://www.youtube.com/embed/dQw4w9WgXcQ',
+                    publicUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+                    title: 'Vipers replay',
+                    status: 'ready'
+                }
+            },
+            isReplay: true
+        });
+
+        expect(options).toMatchObject({
+            mode: 'embed',
+            isRecordedReplay: true,
+            hasVideo: true,
+            sourceUrl: 'https://www.youtube.com/embed/dQw4w9WgXcQ',
+            publicUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+            publicLabel: 'Watch replay on YouTube ↗',
+            title: 'Vipers replay',
+            replayState: null
+        });
+        expect(options.mediaHub.replay).toMatchObject({
+            mode: 'embed',
+            provider: 'youtube',
+            sourceUrl: 'https://www.youtube.com/embed/dQw4w9WgXcQ'
+        });
+    });
+
+    it('plays a newly linked replay after stale top-level archive metadata is cleared', () => {
+        const replayVideo = {
+            provider: 'youtube',
+            videoId: 'dQw4w9WgXcQ',
+            embedUrl: 'https://www.youtube.com/embed/dQw4w9WgXcQ',
+            publicUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+            status: 'ready'
+        };
+        const game = {
+            status: 'completed',
+            liveStatus: 'completed',
+            replayVideo,
+            replayStatus: 'failed',
+            replayVideoTitle: 'Older failed archive'
+        };
+
+        expect(resolveReplayVideoOptions({ team: {}, game, isReplay: true })).toMatchObject({
+            mode: 'none',
+            replayState: { status: 'failed' }
+        });
+
+        GAME_REPLAY_ARCHIVE_FIELDS
+            .filter((field) => field !== 'replayVideo')
+            .forEach((field) => delete game[field]);
+        expect(resolveReplayVideoOptions({ team: {}, game, isReplay: true })).toMatchObject({
+            mode: 'embed',
+            isRecordedReplay: true,
+            sourceUrl: replayVideo.embedUrl,
+            replayState: null
+        });
+    });
+
+    it('prefers an attached YouTube replay on an explicit replay view even if the game is still live', () => {
+        const options = resolveReplayVideoOptions({
+            team: {
+                youtubeVideoId: 'aaaaaaaaaaa'
+            },
+            game: {
+                liveStatus: 'live',
+                replayVideo: {
+                    provider: 'youtube',
+                    videoId: 'dQw4w9WgXcQ',
+                    embedUrl: 'https://www.youtube.com/embed/dQw4w9WgXcQ',
+                    publicUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+                    status: 'ready'
+                }
+            },
+            isReplay: true
+        });
+
+        expect(options.mode).toBe('embed');
+        expect(options.isRecordedReplay).toBe(true);
+        expect(options.sourceUrl).toBe('https://www.youtube.com/embed/dQw4w9WgXcQ');
+    });
+
+    it('keeps active live playback ahead of an archive unless the viewer explicitly opens replay', () => {
+        const options = resolveReplayVideoOptions({
+            team: { youtubeVideoId: 'aaaaaaaaaaa' },
+            game: {
+                status: 'completed',
+                liveStatus: 'live',
+                replayVideo: {
+                    provider: 'youtube',
+                    videoId: 'dQw4w9WgXcQ',
+                    embedUrl: 'https://www.youtube.com/embed/dQw4w9WgXcQ',
+                    publicUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+                    status: 'ready'
+                }
+            },
+            isReplay: false
+        });
+
+        expect(options).toMatchObject({
+            mode: 'embed',
+            isRecordedReplay: false,
+            sourceUrl: expect.stringContaining('/embed/aaaaaaaaaaa')
+        });
+    });
+
+    it('plays a completed public YouTube projection as a recorded replay embed', () => {
+        const options = resolveReplayVideoOptions({
+            team: {},
+            game: {
+                isPublicProjection: true,
+                status: 'completed',
+                videoUrl: 'https://youtu.be/dQw4w9WgXcQ?si=public-share'
+            },
+            isReplay: true
+        });
+
+        expect(options).toMatchObject({
+            mode: 'embed',
+            isRecordedReplay: true,
+            isPublicProjectionVideo: true,
+            hasVideo: true,
+            sourceUrl: 'https://www.youtube.com/embed/dQw4w9WgXcQ',
+            publicUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
+        });
+    });
+
+    it('rejects public replay projections with contradictory or non-final lifecycle state', () => {
+        for (const game of [
+            { status: 'scheduled', liveStatus: 'completed' },
+            { status: 'cancelled', liveStatus: 'completed' },
+            { status: 'scheduled', liveStatus: 'scheduled' }
+        ]) {
+            const options = resolveReplayVideoOptions({
+                team: {},
+                game: {
+                    ...game,
+                    isPublicProjection: true,
+                    videoUrl: 'https://youtu.be/dQw4w9WgXcQ'
+                },
+                isReplay: true
+            });
+
+            expect(options).toMatchObject({
+                mode: 'none',
+                hasVideo: false,
+                replayState: { status: 'unavailable' }
+            });
+        }
+    });
+
+    it('preserves safe direct-media public projection replays and rejects unsafe provider aliases', () => {
+        const direct = resolveReplayVideoOptions({
+            team: {},
+            game: {
+                isPublicProjection: true,
+                status: 'completed',
+                videoUrl: 'https://media.example.test/game.mp4'
+            },
+            isReplay: true
+        });
+        const insecureYouTube = resolveReplayVideoOptions({
+            team: {},
+            game: {
+                isPublicProjection: true,
+                status: 'completed',
+                videoUrl: 'http://www.youtube.com/watch?v=dQw4w9WgXcQ'
+            },
+            isReplay: true
+        });
+
+        expect(direct).toMatchObject({
+            mode: 'recorded',
+            isRecordedReplay: true,
+            isPublicProjectionVideo: true,
+            sourceUrl: 'https://media.example.test/game.mp4'
+        });
+        expect(insecureYouTube).toMatchObject({
+            mode: 'none',
+            hasVideo: false,
+            replayState: { status: 'unavailable' }
+        });
+    });
+
+    it('fails closed when stored YouTube replay fields identify different videos', () => {
+        const options = resolveReplayVideoOptions({
+            team: {},
+            game: {
+                liveStatus: 'completed',
+                replayVideo: {
+                    provider: 'youtube',
+                    videoId: 'dQw4w9WgXcQ',
+                    embedUrl: 'https://www.youtube.com/embed/abcdefghijk',
+                    status: 'ready'
+                }
+            },
+            isReplay: true
+        });
+
+        expect(options.mode).toBe('none');
+        expect(options.hasVideo).toBe(false);
+        expect(options.replayState?.status).toBe('unavailable');
     });
 
     it('clamps new highlight clips to 60 seconds and the source duration', () => {
@@ -363,6 +578,7 @@ describe('live game replay video helpers', () => {
         });
 
         expect(options.mode).toBe('embed');
+        expect(options.isRecordedReplay).toBe(false);
         expect(options.hasVideo).toBe(true);
         expect(options.sourceUrl).toContain('youtube.com/embed/dQw4w9WgXcQ');
         expect(options.savedHighlights).toHaveLength(1);
@@ -504,6 +720,15 @@ describe('live game replay video helpers', () => {
         expect(shouldReloadVideoPlayback(
             { mode: 'embed', sourceUrl: 'https://www.youtube.com/embed/live123?autoplay=1&mute=1' },
             { mode: 'embed', sourceUrl: 'https://www.youtube.com/embed/live456?autoplay=1&mute=1' }
+        )).toBe(true);
+    });
+
+    it('reloads an unchanged embed when it changes from live to recorded-replay semantics', () => {
+        const sourceUrl = 'https://www.youtube.com/embed/dQw4w9WgXcQ';
+
+        expect(shouldReloadVideoPlayback(
+            { mode: 'embed', sourceUrl, isRecordedReplay: false },
+            { mode: 'embed', sourceUrl, isRecordedReplay: true }
         )).toBe(true);
     });
 
