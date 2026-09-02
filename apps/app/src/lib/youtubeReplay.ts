@@ -238,8 +238,12 @@ export function normalizeStoredYouTubeReplay(value: unknown): YouTubeReplayVideo
 }
 
 export function isCompletedGameForReplay(game: { status?: unknown; liveStatus?: unknown } | null | undefined) {
-  const statuses = [game?.status, game?.liveStatus]
-    .filter((value) => value !== null && value !== undefined && value !== '');
-  return statuses.length > 0
-    && statuses.every((status) => status === 'completed' || status === 'final');
+  const status = game?.status;
+  const liveStatus = game?.liveStatus;
+  const isFinalStatus = status === 'completed' || status === 'final';
+  const isFinalLiveStatus = liveStatus === 'completed' || liveStatus === 'final';
+  const isEmptyStatus = status === null || status === undefined || status === '';
+  const isEmptyLiveStatus = liveStatus === null || liveStatus === undefined || liveStatus === '';
+  return (isFinalStatus && (isEmptyLiveStatus || isFinalLiveStatus || liveStatus === 'scheduled'))
+    || (isEmptyStatus && isFinalLiveStatus);
 }

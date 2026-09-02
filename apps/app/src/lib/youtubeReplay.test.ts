@@ -164,10 +164,12 @@ describe('isCompletedGameForReplay', () => {
     expect(isCompletedGameForReplay({ status: 'completed' })).toBe(true);
     expect(isCompletedGameForReplay({ status: 'completed', liveStatus: '' })).toBe(true);
     expect(isCompletedGameForReplay({ status: 'completed', liveStatus: 'final' })).toBe(true);
+    expect(isCompletedGameForReplay({ status: 'completed', liveStatus: 'scheduled' })).toBe(true);
     expect(isCompletedGameForReplay({ liveStatus: 'FINAL' })).toBe(false);
     expect(isCompletedGameForReplay({ status: ' final ' })).toBe(false);
     expect(isCompletedGameForReplay({ status: 'scheduled', liveStatus: 'live' })).toBe(false);
     expect(isCompletedGameForReplay({ status: 'completed', liveStatus: 'live' })).toBe(false);
     expect(isCompletedGameForReplay({ status: 'final', liveStatus: 'cancelled' })).toBe(false);
+    expect(isCompletedGameForReplay({ status: 'scheduled', liveStatus: 'completed' })).toBe(false);
   });
 });

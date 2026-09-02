@@ -492,12 +492,14 @@
 
         function isCompletedGameForReplay(game) {
             const finalStatuses = new Set(['completed', 'final']);
-            const statuses = [game?.status, game?.liveStatus]
-                .map((value) => value === null || value === undefined
-                    ? ''
-                    : typeof value === 'string' ? value : '__invalid__');
-            return statuses.some((status) => finalStatuses.has(status))
-                && statuses.every((status) => !status || finalStatuses.has(status));
+            const normalizeLifecycleStatus = (value) => value === null || value === undefined
+                ? ''
+                : typeof value === 'string' ? value : '__invalid__';
+            const status = normalizeLifecycleStatus(game?.status);
+            const liveStatus = normalizeLifecycleStatus(game?.liveStatus);
+            return (finalStatuses.has(status)
+                    && (!liveStatus || finalStatuses.has(liveStatus) || liveStatus === 'scheduled'))
+                || (!status && finalStatuses.has(liveStatus));
         }
 
         function isCanonicalReplayMutationTarget(game) {

@@ -39,7 +39,8 @@ describe('legacy game report YouTube replay management', () => {
         expect(html).toContain('const gameCompleted = isCompletedGameForReplay(game);');
         expect(html).toContain("const finalStatuses = new Set(['completed', 'final']);");
         expect(html).toContain("typeof value === 'string' ? value : '__invalid__'");
-        expect(html).toContain('statuses.every((status) => !status || finalStatuses.has(status))');
+        expect(html).toContain("finalStatuses.has(liveStatus) || liveStatus === 'scheduled'");
+        expect(html).toContain('(!status && finalStatuses.has(liveStatus))');
         expect(html).toContain('function isCanonicalReplayMutationTarget(game)');
         expect(html).toContain('const isCanonicalTeamGame = isCanonicalReplayMutationTarget(game);');
         expect(html).toContain('const canLinkReplayVideo = gameCompleted && canManageReplayVideo;');

@@ -381,15 +381,16 @@ function isRecordedReplayPaywallEnabled(game = {}, team = {}) {
 }
 
 function getPublicVideoLifecycle(game = {}) {
-  const statuses = [game?.status, game?.liveStatus]
-    .map((value) => compactText(value, 32).toLowerCase())
-    .filter(Boolean);
+  const status = compactText(game?.status, 32).toLowerCase();
+  const liveStatus = compactText(game?.liveStatus, 32).toLowerCase();
   const completedStatuses = new Set(['completed', 'final']);
   const terminalStatuses = new Set(['completed', 'final', 'cancelled', 'canceled']);
   return {
-    isCompleted: statuses.length > 0 && statuses.every((status) => completedStatuses.has(status)),
-    isActiveLive: statuses.some((status) => ['live', 'in_progress', 'in-progress'].includes(status))
-      && !statuses.some((status) => terminalStatuses.has(status))
+    isCompleted: (completedStatuses.has(status)
+        && (!liveStatus || completedStatuses.has(liveStatus) || liveStatus === 'scheduled'))
+      || (!status && completedStatuses.has(liveStatus)),
+    isActiveLive: [status, liveStatus].some((value) => ['live', 'in_progress', 'in-progress'].includes(value))
+      && ![status, liveStatus].some((value) => terminalStatuses.has(value))
   };
 }
 

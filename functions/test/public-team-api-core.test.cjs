@@ -508,6 +508,16 @@ test('public game projection exposes only a canonical replay for a consistent fi
   assert.equal(withPublicReplay.videoUrl, 'https://www.youtube.com/watch?v=PK1HyC37doc');
   assert.equal(JSON.stringify(withPublicReplay).includes('private-capability'), false);
 
+  const statsheetReplay = serializePublicGame({
+    id: 'statsheet-replay',
+    type: 'game',
+    date: '2026-08-01T15:00:00Z',
+    status: 'completed',
+    liveStatus: 'scheduled',
+    replayVideo: canonicalReplay()
+  });
+  assert.equal(statsheetReplay.videoUrl, 'https://www.youtube.com/watch?v=PK1HyC37doc');
+
   const withoutPublicReplay = serializePublicGame({
     id: 'private-replay',
     type: 'game',
@@ -524,6 +534,7 @@ test('public game projection exposes only a canonical replay for a consistent fi
     { status: 'scheduled' },
     { status: 'cancelled' },
     { status: 'completed', liveStatus: 'live' },
+    { status: 'completed', liveStatus: 'cancelled' },
     { status: 'scheduled', liveStatus: 'completed' }
   ]) {
     assert.equal(serializePublicGame({

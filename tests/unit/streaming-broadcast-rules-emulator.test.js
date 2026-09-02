@@ -60,13 +60,19 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('streaming broadcast rules
                 teamPermissions: { videography: { mode: 'selected', memberIds: ['videographer-1'] } }
             }, {
                 status: 'completed',
-                liveStatus: 'completed'
+                liveStatus: 'scheduled'
             });
             await seedTeamAndGame(firestore, 'contradictory-replay-team', 'contradictory-replay-game', {
                 teamPermissions: { videography: { mode: 'selected', memberIds: ['videographer-1'] } }
             }, {
                 status: 'completed',
                 liveStatus: 'live'
+            });
+            await seedTeamAndGame(firestore, 'cancelled-replay-team', 'cancelled-replay-game', {
+                teamPermissions: { videography: { mode: 'selected', memberIds: ['videographer-1'] } }
+            }, {
+                status: 'completed',
+                liveStatus: 'cancelled'
             });
             await seedTeamAndGame(firestore, 'shared-replay-team', 'shared-replay-game', {
                 teamPermissions: { videography: { mode: 'selected', memberIds: ['videographer-1'] } }
@@ -558,6 +564,10 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('streaming broadcast rules
             updatedAt: nowTimestamp()
         }));
         await assertFails(updateDoc(gameRef(videographerDb, 'contradictory-replay-team', 'contradictory-replay-game'), {
+            replayVideo: canonicalReplay,
+            updatedAt: nowTimestamp()
+        }));
+        await assertFails(updateDoc(gameRef(videographerDb, 'cancelled-replay-team', 'cancelled-replay-game'), {
             replayVideo: canonicalReplay,
             updatedAt: nowTimestamp()
         }));

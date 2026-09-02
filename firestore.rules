@@ -757,9 +757,9 @@ service cloud.firestore {
       let liveStatus = rawLiveStatus == null ? '' : rawLiveStatus;
       return status is string &&
              liveStatus is string &&
-             (status in ['completed', 'final'] || liveStatus in ['completed', 'final']) &&
-             (status == '' || status in ['completed', 'final']) &&
-             (liveStatus == '' || liveStatus in ['completed', 'final']);
+             ((status in ['completed', 'final'] &&
+               (liveStatus == '' || liveStatus in ['scheduled', 'completed', 'final'])) ||
+              (status == '' && liveStatus in ['completed', 'final']));
     }
 
     function isCanonicalYouTubeReplayVideo(replayVideo) {
