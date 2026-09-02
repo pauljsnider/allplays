@@ -39,6 +39,7 @@ import {
 } from '../../lib/scheduleHub';
 import { useShellLayout } from '../../lib/useShellLayout';
 import { CompactMeta } from '../../components/schedule/CompactMeta';
+import { GameReplayEditor } from '../../components/schedule/GameReplayEditor';
 import { PracticeAttendancePanel } from '../../components/schedule/PracticeAttendancePanel';
 import { ReportMarkdownText } from '../../components/schedule/ReportMarkdownText';
 import { ScoreStepper } from '../../components/schedule/ScoreStepper';
@@ -59,6 +60,7 @@ import type { PracticeFeedItem } from '../../lib/gameWrapupService';
 import type { PracticeTimelineBlock, PracticeTimelineDrillOption } from '../../lib/practiceTimelineService';
 import type { TrackStatsheetReviewRow } from '../../lib/statsheetImportService';
 import type { AuthState } from '../../lib/types';
+import { isActiveGameForLive, type ReplayArchiveState, type YouTubeReplayVideo } from '../../lib/youtubeReplay';
 import { createLogger } from '../../lib/logger';
 import { useScheduleEventDetailContext } from './ScheduleEventDetailContext';
 
@@ -865,7 +867,7 @@ function GameHubLiveClockBadge({ event }: { event: ParentScheduleEvent }) {
   );
 }
 
-export function ScheduleGameHubSection({ auth, event, childEvents, requestedPanel, onPanelChange, onScoreUpdated, onLiveClockUpdated, onWrapupCompleted, onStatsheetImported, onGameCancelled, onPracticeOccurrenceCancelled, onGamePlanPublished }: {
+export function ScheduleGameHubSection({ auth, event, childEvents, requestedPanel, onPanelChange, onScoreUpdated, onLiveClockUpdated, onWrapupCompleted, onStatsheetImported, onGameCancelled, onPracticeOccurrenceCancelled, onGamePlanPublished, onReplayVideoUpdated }: {
   auth: AuthState;
   event: ParentScheduleEvent;
   childEvents: ParentScheduleEvent[];
@@ -878,6 +880,7 @@ export function ScheduleGameHubSection({ auth, event, childEvents, requestedPane
   onGameCancelled: () => void;
   onPracticeOccurrenceCancelled: () => void;
   onGamePlanPublished: (gamePlan: Record<string, any>) => void;
+  onReplayVideoUpdated: (replayVideo: YouTubeReplayVideo | null, replayState: ReplayArchiveState) => void;
 }) {
   const { isDesktopWeb } = useShellLayout();
   const [shareStatus, setShareStatus] = useState<string | null>(null);
@@ -1043,6 +1046,7 @@ export function ScheduleGameHubSection({ auth, event, childEvents, requestedPane
       {showNonAdminPracticePacketFirst ? <PracticePacketSection auth={auth} event={event} childEvents={childEvents} /> : null}
       {showAdminPracticeTimeline ? <PracticeTimelineSection auth={auth} event={event} /> : null}
       {!isPractice && event.isTeamAdmin && event.isDbGame && !event.isCancelled ? <GameScheduleEditPanel auth={auth} event={event} /> : null}
+      {!isPractice ? <GameReplayEditor auth={auth} event={event} onReplayVideoUpdated={onReplayVideoUpdated} /> : null}
       {isPractice && event.isTeamAdmin && event.isDbGame && !event.isCancelled ? <PracticeScheduleEditPanel auth={auth} event={event} /> : null}
       {isPractice && event.isTeamAdmin && event.isDbGame && !event.isCancelled ? <StaffPracticePacketEditor auth={auth} event={event} childEvents={childEvents} /> : null}
       {isPractice && !showNonAdminPracticePacketFirst ? <PracticePacketSection auth={auth} event={event} childEvents={childEvents} /> : null}
@@ -1117,6 +1121,7 @@ export function ScheduleGameHubSection({ auth, event, childEvents, requestedPane
               showStickyControls={!isDesktopWeb}
               onHomePlayersUpdated={updateHomeScoringPlayers}
               onScoreUpdated={onScoreUpdated}
+              onLiveStatusUpdated={() => onLiveClockUpdated({ liveStatus: 'live' })}
             />
           ) : null}
           {canUpdateScore && hasBasketballGameTools ? (
@@ -1134,6 +1139,7 @@ export function ScheduleGameHubSection({ auth, event, childEvents, requestedPane
                 homePlayers={homeScoringPlayers}
                 loadingHomePlayers={loadingHomeScoringPlayers}
                 onHomePlayersUpdated={updateHomeScoringPlayers}
+                onLiveStatusUpdated={() => onLiveClockUpdated({ liveStatus: 'live' })}
               />
             </LazyGameHubPanel>
           ) : null}
@@ -2651,7 +2657,7 @@ function getBonusState(teamFouls: number) {
   };
 }
 
-function LiveScoreEditor({ auth, event, homePlayers, loadingHomePlayers, showStickyControls, onHomePlayersUpdated, onScoreUpdated }: { auth: AuthState; event: ParentScheduleEvent; homePlayers: ScheduleHomeScoringPlayer[]; loadingHomePlayers: boolean; showStickyControls: boolean; onHomePlayersUpdated: (updater: HomeScoringPlayersUpdater) => void; onScoreUpdated: (homeScore: number, awayScore: number) => void }) {
+function LiveScoreEditor({ auth, event, homePlayers, loadingHomePlayers, showStickyControls, onHomePlayersUpdated, onScoreUpdated, onLiveStatusUpdated }: { auth: AuthState; event: ParentScheduleEvent; homePlayers: ScheduleHomeScoringPlayer[]; loadingHomePlayers: boolean; showStickyControls: boolean; onHomePlayersUpdated: (updater: HomeScoringPlayersUpdater) => void; onScoreUpdated: (homeScore: number, awayScore: number) => void; onLiveStatusUpdated: () => void }) {
   const autosaveDelayMs = 700;
   const hasBasketballGameTools = supportsBasketballGameTools(event);
   const savedHomeScore = Math.max(0, Number(event.homeScore ?? 0));
@@ -2744,7 +2750,8 @@ function LiveScoreEditor({ auth, event, homePlayers, loadingHomePlayers, showSti
       }
       try {
         const { publishLiveScoreUpdateEvent } = await loadScheduleGameDayService();
-        await publishLiveScoreUpdateEvent(event.teamId, event.id, { homeScore: nextHomeScore, awayScore: nextAwayScore }, auth.user, previousScore);
+        const published = await publishLiveScoreUpdateEvent(event.teamId, event.id, { homeScore: nextHomeScore, awayScore: nextAwayScore }, auth.user, previousScore);
+        if (published?.committedLifecycle?.liveStatus === 'live') onLiveStatusUpdated();
         setStatus({ tone: 'success', message: mode === 'autosave' ? 'Score autosaved and posted to live play-by-play.' : 'Score saved and posted to live play-by-play.' });
       } catch (publishError) {
         logger.warn('Score saved but live play-by-play posting failed.', { error: publishError });
@@ -2758,7 +2765,7 @@ function LiveScoreEditor({ auth, event, homePlayers, loadingHomePlayers, showSti
     } finally {
       setSaving(false);
     }
-  }, [auth.user, awayScore, event.id, event.teamId, homeScore, onScoreUpdated, savedAwayScore, savedHomeScore]);
+  }, [auth.user, awayScore, event.id, event.teamId, homeScore, onLiveStatusUpdated, onScoreUpdated, savedAwayScore, savedHomeScore]);
 
   useEffect(() => {
     if (!auth.user || !dirty || saving || playerScoringId) return undefined;
@@ -2815,6 +2822,7 @@ function LiveScoreEditor({ auth, event, homePlayers, loadingHomePlayers, showSti
       setAwayScore(result.awayScore);
       pendingLocalSaveRef.current = { homeScore: result.homeScore, awayScore: result.awayScore };
       onScoreUpdated(result.homeScore, result.awayScore);
+      if (result.committedLifecycle?.liveStatus === 'live') onLiveStatusUpdated();
       onHomePlayersUpdated((players) => players.map((candidate) => (
         candidate.id === player.id ? { ...candidate, points: result.playerPoints } : candidate
       )));
@@ -2927,7 +2935,7 @@ function LiveScoreEditor({ auth, event, homePlayers, loadingHomePlayers, showSti
   );
 }
 
-function GameDayFoulTrackerPanel({ auth, event, homePlayers, loadingHomePlayers, onHomePlayersUpdated }: { auth: AuthState; event: ParentScheduleEvent; homePlayers: ScheduleHomeScoringPlayer[]; loadingHomePlayers: boolean; onHomePlayersUpdated: (updater: HomeScoringPlayersUpdater) => void }) {
+function GameDayFoulTrackerPanel({ auth, event, homePlayers, loadingHomePlayers, onHomePlayersUpdated, onLiveStatusUpdated }: { auth: AuthState; event: ParentScheduleEvent; homePlayers: ScheduleHomeScoringPlayer[]; loadingHomePlayers: boolean; onHomePlayersUpdated: (updater: HomeScoringPlayersUpdater) => void; onLiveStatusUpdated: () => void }) {
   const [loading, setLoading] = useState(false);
   const [savingPlayerId, setSavingPlayerId] = useState<string | null>(null);
   const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
@@ -2999,6 +3007,7 @@ function GameDayFoulTrackerPanel({ auth, event, homePlayers, loadingHomePlayers,
       )));
       setLiveEvents((entries) => [...entries, result.liveEvent]);
       setRecordedFouls((entries) => [...entries, result]);
+      if (result.committedLifecycle?.liveStatus === 'live') onLiveStatusUpdated();
       setStatus({ tone: 'success', message: result.playerStatTotal >= 5 ? `${player.name} reached 5 fouls. Use the substitution panel if they must come off.` : `${player.name} foul recorded.` });
     } catch (error: any) {
       setStatus({ tone: 'error', message: error?.message || 'Unable to record the foul.' });
@@ -3883,8 +3892,9 @@ function upsertPacketCompletion(completions: PracticePacketCompletion[], complet
 function getEventStatusLabel(event: ParentScheduleEvent) {
   const liveStatus = String(event.liveStatus || '').toLowerCase();
   const status = String(event.status || '').toLowerCase();
-  if (event.isCancelled || status === 'cancelled') return 'Cancelled';
-  if (liveStatus === 'live') return 'Live now';
+  if (event.isCancelled || status === 'cancelled' || status === 'canceled'
+    || liveStatus === 'cancelled' || liveStatus === 'canceled') return 'Cancelled';
+  if (isActiveGameForLive(event)) return 'Live now';
   if (liveStatus === 'completed' || status === 'completed' || status === 'final') return 'Final';
   if (!event.isDbGame) return 'Calendar';
   return event.type === 'practice' ? 'Scheduled' : 'Upcoming';
@@ -3906,6 +3916,8 @@ function getScoreLabel(event: ParentScheduleEvent) {
   if (event.homeScore === null || event.homeScore === undefined || event.awayScore === null || event.awayScore === undefined) return '';
   const status = String(event.status || '').trim().toLowerCase();
   const liveStatus = String(event.liveStatus || '').trim().toLowerCase();
+  if (event.isCancelled || ['cancelled', 'canceled'].includes(status)
+    || ['cancelled', 'canceled'].includes(liveStatus)) return '';
   const isLive = status === 'live' || liveStatus === 'live';
   const isCompleted = status === 'completed' || status === 'final' || liveStatus === 'completed' || liveStatus === 'final';
   const isPastScheduledResult = event.date.getTime() < Date.now() - pastScheduledGameScoreCutoffMs;

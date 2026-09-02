@@ -10,7 +10,7 @@ describe('React app schedule event detail hook dependencies', () => {
         expect(source).toContain('}, [formResetKey]);');
         expect(source).toContain('}, [columns, event.id, event.teamId, roster])');
         expect(source).toContain('const saveScore = useCallback(async');
-        expect(source).toContain('}, [auth.user, awayScore, event.id, event.teamId, homeScore, onScoreUpdated, savedAwayScore, savedHomeScore]);');
+        expect(source).toContain('}, [auth.user, awayScore, event.id, event.teamId, homeScore, onLiveStatusUpdated, onScoreUpdated, savedAwayScore, savedHomeScore]);');
         expect(source).toContain('}, [auth.user, awayScore, dirty, homeScore, playerScoringId, saveScore, saving]);');
         expect(source).toContain('}, [childEvents, event]);');
         expect(source).toContain('}, [event.eventKey, eventFormationId, resetLineupBuilderState]);');

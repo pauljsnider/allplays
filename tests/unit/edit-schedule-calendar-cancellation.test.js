@@ -30,7 +30,12 @@ describe('edit schedule calendar cancellation handling', () => {
     it('excludes cancelled calendar and DB events from upcoming schedule filters', () => {
         const source = readEditSchedule();
 
-        expect(source).toContain("return event?.isCancelled === true || status === 'cancelled' || status === 'canceled';");
+        expect(source).toContain("const liveStatus = String(event?.liveStatus || '').toLowerCase();");
+        expect(source).toContain("return event?.isCancelled === true");
+        expect(source).toContain("|| status === 'cancelled'");
+        expect(source).toContain("|| status === 'canceled'");
+        expect(source).toContain("|| liveStatus === 'cancelled'");
+        expect(source).toContain("|| liveStatus === 'canceled';");
         expect(source).toContain('const isUpcomingScheduleEvent = (event) => event.date >= cutoff && !isCancelledScheduleEvent(event);');
         expect(source).toContain("filteredEvents = filteredEvents.filter(event => isUpcomingScheduleEvent(event));");
         expect(source).toContain("filteredEvents = filteredEvents.filter(event => !event.isPractice && isUpcomingScheduleEvent(event));");

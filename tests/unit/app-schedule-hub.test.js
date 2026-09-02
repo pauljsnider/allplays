@@ -15,7 +15,7 @@ import {
 } from '../../apps/app/src/lib/scheduleHub';
 
 function event(overrides = {}) {
-    return {
+    const value = {
         eventKey: overrides.eventKey || `${overrides.teamId || 'team-1'}::${overrides.id || 'game-1'}::${overrides.childId || 'player-1'}`,
         id: overrides.id || 'game-1',
         teamId: overrides.teamId || 'team-1',
@@ -32,6 +32,14 @@ function event(overrides = {}) {
         assignments: overrides.assignments || [],
         ...overrides
     };
+    if (!Object.prototype.hasOwnProperty.call(overrides, 'rawReplayLifecycle')) {
+        value.rawReplayLifecycle = {
+            type: value.type,
+            status: value.status,
+            liveStatus: value.liveStatus
+        };
+    }
+    return value;
 }
 
 describe('React app schedule More tab hub helpers', () => {

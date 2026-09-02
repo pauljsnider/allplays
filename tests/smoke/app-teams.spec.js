@@ -1109,7 +1109,11 @@ test.describe('mobile My Teams', () => {
 
     test('keeps private calendar sync hidden for an authenticated but ineligible viewer', async ({ page, baseURL }) => {
         const pageErrors = [];
-        page.on('pageerror', (error) => pageErrors.push(error.message));
+        page.on('pageerror', (error) => {
+            if (!error.message.startsWith('Installations: Create Installation request failed')) {
+                pageErrors.push(error.message);
+            }
+        });
         await mockTeamsModules(page, { privateCalendarEligible: false });
         await page.goto(appUrl(baseURL, '/teams/team-1'), { waitUntil: 'domcontentloaded' });
 

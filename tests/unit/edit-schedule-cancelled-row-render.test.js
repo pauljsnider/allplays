@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { getGameReplayLifecycle } from '../../js/game-replay-video.js';
+import { hasReplayVideoEvidence } from '../../js/schedule-watch-cta.js';
 
 function readEditSchedule() {
     return readFileSync(new URL('../../edit-schedule.html', import.meta.url), 'utf8');
@@ -24,11 +26,13 @@ function buildRenderDbGame(overrides = {}) {
         renderTournamentSummary: () => '',
         renderOfficiatingSummary: () => '',
         isCancelledGame: (game) => ['cancelled', 'canceled'].includes(String(game?.status || '').toLowerCase()),
+        getGameReplayLifecycle,
+        hasReplayVideoEvidence,
         ...overrides
     };
 
     const createRenderer = new Function('deps', `
-        const { gamesCache, currentTeamId, formatDate, formatTime, escapeHtml, mapLink, renderTournamentSummary, renderOfficiatingSummary, isCancelledGame } = deps;
+        const { gamesCache, currentTeamId, formatDate, formatTime, escapeHtml, mapLink, renderTournamentSummary, renderOfficiatingSummary, isCancelledGame, getGameReplayLifecycle, hasReplayVideoEvidence } = deps;
         return function(game) {
 ${body}
         };

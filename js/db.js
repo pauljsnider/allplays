@@ -795,7 +795,7 @@ export async function uploadStatSheetPhoto(teamId, gameId, file, options = {}) {
         : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=443369'; // Import resolveZip
+import { resolveZip } from './utils.js?v=443370'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -4090,8 +4090,12 @@ function mapPublicGameProjection(game = {}, teamId = '') {
         opponent: String(game?.opponent || 'TBD'),
         location: String(game?.location || ''),
         isHome,
-        status: String(game?.status || 'scheduled'),
-        liveStatus: String(game?.status || 'scheduled'),
+        status: Object.prototype.hasOwnProperty.call(game, 'sourceStatus')
+            ? String(game?.sourceStatus || '')
+            : String(game?.status || 'scheduled'),
+        liveStatus: Object.prototype.hasOwnProperty.call(game, 'liveStatus')
+            ? String(game?.liveStatus || '')
+            : String(game?.status || 'scheduled'),
         homeScore: isHome ? teamScore : opponentScore,
         awayScore: isHome ? opponentScore : teamScore,
         summary: game?.summary || null,
@@ -4115,6 +4119,17 @@ function mapPublicGameProjection(game = {}, teamId = '') {
             : '',
         isSharedGame: game?.isSharedGame === true || String(game?.id || '').startsWith('shared_'),
         isPublicProjection: true
+    };
+}
+
+function markCanonicalGameProjectionProvenance(game) {
+    if (!game || typeof game !== 'object') return game;
+    return {
+        ...game,
+        // This marker is trusted only when this module constructs a sanitized
+        // callable projection through mapPublicGameProjection(). A canonical
+        // Firestore document cannot opt itself into projection-only behavior.
+        isPublicProjection: false
     };
 }
 
@@ -4409,7 +4424,7 @@ export async function getGame(teamId, gameId) {
     if (docSnap.exists()) {
         const data = docSnap.data();
         if (isSharedGameSyntheticId(gameId)) {
-            return projectSharedGameForTeam({
+            return markCanonicalGameProjectionProvenance(projectSharedGameForTeam({
                 id: docSnap.id,
                 ...data,
                 _sharedGamePath: docRef.path
@@ -4419,12 +4434,12 @@ export async function getGame(teamId, gameId) {
                 sharedGameId: docSnap.id,
                 sharedGamePath: docRef.path,
                 isSharedGame: true
-            };
+            });
         }
-        return {
+        return markCanonicalGameProjectionProvenance({
             id: docSnap.id,
             ...data
-        };
+        });
     } else {
         return null;
     }
@@ -4481,7 +4496,7 @@ export function subscribeGame(teamId, gameId, callback, onError, options = {}) {
         }
         const data = snapshot.data();
         if (isSharedGameSyntheticId(gameId)) {
-            callback(projectSharedGameForTeam({
+            callback(markCanonicalGameProjectionProvenance(projectSharedGameForTeam({
                 id: snapshot.id,
                 ...data,
                 _sharedGamePath: docRef.path
@@ -4491,13 +4506,13 @@ export function subscribeGame(teamId, gameId, callback, onError, options = {}) {
                 sharedGameId: snapshot.id,
                 sharedGamePath: docRef.path,
                 isSharedGame: true
-            });
+            }));
             return;
         }
-        callback({
+        callback(markCanonicalGameProjectionProvenance({
             id: snapshot.id,
             ...data
-        });
+        }));
     }, (error) => {
         if (isPermissionDeniedError(error)) {
             startProjectionPolling();

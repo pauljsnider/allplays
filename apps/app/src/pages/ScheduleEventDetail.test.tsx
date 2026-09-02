@@ -951,7 +951,8 @@ describe('ScheduleEventDetail loading states', () => {
         homeScore: 3,
         awayScore: 2,
         status: 'live',
-        liveStatus: 'live'
+        liveStatus: 'live',
+        rawReplayLifecycle: { type: 'game', status: 'live', liveStatus: 'live' }
       })],
       children: []
     });
@@ -1906,11 +1907,18 @@ describe('ScheduleEventDetail assignments', () => {
 
   it('keeps mobile sticky score controls synchronized with the existing autosave path', async () => {
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
-      events: [buildEvent({ liveStatus: 'live', status: 'live', canUpdateScore: true, homeScore: 41, awayScore: 38 })],
+      events: [buildEvent({
+        liveStatus: 'scheduled',
+        status: 'scheduled',
+        rawReplayLifecycle: { type: 'game', status: 'scheduled', liveStatus: 'scheduled' },
+        canUpdateScore: true,
+        homeScore: 41,
+        awayScore: 38
+      })],
       children: []
     });
     scheduleServiceMocks.updateGameScore.mockResolvedValue({ homeScore: 42, awayScore: 38 });
-    scheduleServiceMocks.publishLiveScoreUpdateEvent.mockResolvedValue({});
+    scheduleServiceMocks.publishLiveScoreUpdateEvent.mockResolvedValue({ committedLifecycle: { liveStatus: 'live' } });
 
     renderScheduleEventDetailWithRouteControls();
 
@@ -1930,6 +1938,9 @@ describe('ScheduleEventDetail assignments', () => {
     await waitFor(() => {
       expect(within(tray).getByText('Score autosaved and posted to live play-by-play.')).toBeTruthy();
     });
+    expect(scheduleHubMocks.buildGameHubDestinations).toHaveBeenLastCalledWith(expect.objectContaining({
+      rawReplayLifecycle: { type: 'game', status: 'scheduled', liveStatus: 'live' }
+    }));
   });
 
   it('warns when a score autosaves but the live play-by-play post fails', async () => {
@@ -2535,6 +2546,7 @@ describe('ScheduleEventDetail assignments', () => {
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
       events: [buildEvent({
         liveStatus: 'scheduled',
+        rawReplayLifecycle: { type: 'game', status: 'scheduled', liveStatus: 'scheduled' },
         canUpdateScore: true,
         liveClockMs: 0,
         liveClockRunning: false,
@@ -2568,6 +2580,9 @@ describe('ScheduleEventDetail assignments', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'Pause clock' })).toBeTruthy();
     });
+    expect(scheduleHubMocks.buildGameHubDestinations).toHaveBeenLastCalledWith(expect.objectContaining({
+      rawReplayLifecycle: { type: 'game', status: 'scheduled', liveStatus: 'live' }
+    }));
 
     fireEvent.click(screen.getByRole('button', { name: 'Advance period' }));
 
@@ -2676,7 +2691,8 @@ describe('ScheduleEventDetail assignments', () => {
       playerStatTotal: 4,
       trackerEventId: 'tracker-foul-1',
       liveEventId: 'live-foul-1',
-      liveEvent: { eventId: 'live-foul-1', type: 'stat', statKey: 'fouls', value: 1, period: 'Q1', isOpponent: false }
+      liveEvent: { eventId: 'live-foul-1', type: 'stat', statKey: 'fouls', value: 1, period: 'Q1', isOpponent: false },
+      committedLifecycle: { liveStatus: 'live' }
     });
     scheduleServiceMocks.undoRecordedPlayerGameStat.mockResolvedValue({
       homeScore: 10,
@@ -2698,7 +2714,9 @@ describe('ScheduleEventDetail assignments', () => {
     });
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
       events: [buildEvent({
-        liveStatus: 'live',
+        status: 'scheduled',
+        liveStatus: 'scheduled',
+        rawReplayLifecycle: { type: 'game', status: 'scheduled', liveStatus: 'scheduled' },
         canUpdateScore: true,
         homeScore: 10,
         awayScore: 8,
@@ -2739,6 +2757,9 @@ describe('ScheduleEventDetail assignments', () => {
     });
     expect(screen.getByLabelText('Team foul bonus state').textContent).toContain('Q1 · Bonus');
     expect(screen.getByText('7 team fouls this period')).toBeTruthy();
+    expect(scheduleHubMocks.buildGameHubDestinations).toHaveBeenLastCalledWith(expect.objectContaining({
+      rawReplayLifecycle: { type: 'game', status: 'scheduled', liveStatus: 'live' }
+    }));
 
     fireEvent.click(screen.getByRole('button', { name: 'Foul tracker' }));
     expect(screen.getByRole('button', { name: 'Foul tracker' }).getAttribute('aria-expanded')).toBe('false');
@@ -4676,7 +4697,15 @@ describe('ScheduleEventDetail wrap-up', () => {
 
   it('completes wrap-up with AI artifacts and broadcasts score corrections', async () => {
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
-      events: [buildEvent({ isTeamStaff: true, canUpdateScore: true, homeScore: 51, awayScore: 47 })],
+      events: [buildEvent({
+        isTeamStaff: true,
+        isTeamAdmin: true,
+        canUpdateScore: true,
+        homeScore: 51,
+        awayScore: 47,
+        liveStatus: 'scheduled',
+        rawReplayLifecycle: { type: 'game', status: 'scheduled', liveStatus: 'scheduled' }
+      })],
       children: []
     });
     scheduleServiceMocks.updateGameScore.mockResolvedValue({ homeScore: 52, awayScore: 47 });
@@ -4692,6 +4721,7 @@ describe('ScheduleEventDetail wrap-up', () => {
       expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0);
     });
     fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+    expect(screen.queryByRole('heading', { name: 'YouTube replay' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Post-game wrap-up' }));
 
     await waitFor(() => {
@@ -4729,6 +4759,10 @@ describe('ScheduleEventDetail wrap-up', () => {
     await waitFor(() => {
       expect(screen.getByText('Wrap-up saved with 1 practice focus item.')).toBeTruthy();
     });
+    expect(scheduleHubMocks.buildGameHubDestinations).toHaveBeenLastCalledWith(expect.objectContaining({
+      rawReplayLifecycle: { type: 'game', status: 'completed', liveStatus: 'completed' }
+    }));
+    expect(await screen.findByRole('heading', { name: 'YouTube replay' })).toBeTruthy();
   });
 
   it('completes wrap-up even when AI analysis fails', async () => {
@@ -5397,7 +5431,10 @@ describe('ScheduleEventDetail statsheet import', () => {
     }
   ])('keeps $button permission recovery copy specific to statsheet import', async ({ button, source, message }) => {
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
-      events: [buildEvent({ isTeamStaff: true, canUpdateScore: true })],
+      events: [buildEvent({
+        isTeamStaff: true,
+        canUpdateScore: true
+      })],
       children: []
     });
     statsheetImportServiceMocks.acquireTrackStatsheetPhoto.mockRejectedValue({
@@ -5422,7 +5459,13 @@ describe('ScheduleEventDetail statsheet import', () => {
 
   it('lets coaches correct home row fouls before applying a statsheet photo', async () => {
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
-      events: [buildEvent({ isTeamStaff: true, canUpdateScore: true })],
+      events: [buildEvent({
+        isTeamStaff: true,
+        isTeamAdmin: true,
+        canUpdateScore: true,
+        liveStatus: 'scheduled',
+        rawReplayLifecycle: { type: 'game', status: 'scheduled', liveStatus: 'scheduled' }
+      })],
       children: []
     });
     statsheetImportServiceMocks.loadTrackStatsheetContextForApp.mockResolvedValue({
@@ -5469,6 +5512,10 @@ describe('ScheduleEventDetail statsheet import', () => {
         homeRows: [expect.objectContaining({ mappedPlayerId: 'p1', fouls: 4, totalPoints: 10 })]
       }));
     });
+    expect(scheduleHubMocks.buildGameHubDestinations).toHaveBeenLastCalledWith(expect.objectContaining({
+      rawReplayLifecycle: { type: 'game', status: 'completed', liveStatus: 'scheduled' }
+    }));
+    expect(await screen.findByRole('heading', { name: 'YouTube replay' })).toBeTruthy();
   });
 
   it('applies matched statsheet rows while leaving unmatched rows available for manual mapping', async () => {
