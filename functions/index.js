@@ -133,7 +133,12 @@ const {
   normalizePublicRegistrationSecurityMode,
   resolvePublicRegistrationGuardianEmail
 } = require('./public-registration-abuse-core.cjs');
-const { buildPublicGamesIcs, canExposeEmptyPublicFeed, isPublicFanGame } = require('./public-calendar-core.cjs');
+const {
+  buildPublicGamesIcs,
+  canExposeEmptyPublicFeed,
+  isPublicFanGame,
+  normalizePublicCalendarTeamId
+} = require('./public-calendar-core.cjs');
 const {
   buildPublicGamesResponse,
   buildPublicRosterResponse,
@@ -8518,8 +8523,8 @@ exports.publicTeamGamesIcs = functions
       return;
     }
 
-    const teamId = String(req.query.teamId || '').trim();
-    if (!teamId || !/^[A-Za-z0-9_-]{1,128}$/.test(teamId)) {
+    const teamId = normalizePublicCalendarTeamId(req.query.teamId);
+    if (!teamId) {
       res.status(400).send('Missing or invalid teamId');
       return;
     }

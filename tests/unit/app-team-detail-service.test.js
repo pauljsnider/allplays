@@ -1178,8 +1178,9 @@ describe('React app team detail model', () => {
             calendarFetchFunctionUrl: 'https://calendar.example.test/fetchCalendarIcs'
         };
 
-        expect(buildPublicTeamGamesIcsUrl('team-1_blue')).toBe('https://calendar.example.test/publicTeamGamesIcs?teamId=team-1_blue');
+        expect(buildPublicTeamGamesIcsUrl('team 1.blue:varsity')).toBe('https://calendar.example.test/publicTeamGamesIcs?teamId=team%201.blue%3Avarsity');
         expect(buildPublicTeamGamesIcsUrl('team/1')).toBe('');
+        expect(buildPublicTeamGamesIcsUrl('x'.repeat(129))).toBe('');
         expect(buildPublicTeamGamesIcsUrl('')).toBe('');
         expect(canExposePublicFanFeed(
             { isPublic: false, active: true },

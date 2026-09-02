@@ -1,8 +1,7 @@
 const defaultFunctionsOrigin = 'https://us-central1-game-flow-c6311.cloudfunctions.net';
-const publicTeamIdPattern = /^[A-Za-z0-9_-]{1,128}$/;
 const privateTokenPattern = /^[A-Za-z0-9_-]{1,128}$/;
 
-function isValidPrivateTeamId(value: string) {
+function isValidTeamId(value: string) {
   return value.length > 0 && value.length <= 128 && !value.includes('/');
 }
 
@@ -34,7 +33,7 @@ function getConfiguredFunctionUrl(configKey: string, globalKey: keyof CalendarFe
 export function buildPrivateTeamCalendarFeedUrl(teamId: string, token: unknown) {
   const normalizedTeamId = String(teamId || '').trim();
   const normalizedToken = typeof token === 'string' ? token.trim() : '';
-  if (!isValidPrivateTeamId(normalizedTeamId) || !privateTokenPattern.test(normalizedToken)) return '';
+  if (!isValidTeamId(normalizedTeamId) || !privateTokenPattern.test(normalizedToken)) return '';
 
   const baseUrl = getConfiguredFunctionUrl(
     'teamCalendarFeedFunctionUrl',
@@ -47,7 +46,7 @@ export function buildPrivateTeamCalendarFeedUrl(teamId: string, token: unknown) 
 
 export function buildPublicTeamGamesIcsUrl(teamId: string) {
   const normalizedTeamId = String(teamId || '').trim();
-  if (!publicTeamIdPattern.test(normalizedTeamId)) return '';
+  if (!isValidTeamId(normalizedTeamId)) return '';
 
   const baseUrl = getConfiguredFunctionUrl(
     'publicTeamGamesIcsFunctionUrl',

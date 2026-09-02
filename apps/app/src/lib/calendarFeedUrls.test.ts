@@ -20,8 +20,8 @@ describe('calendar feed URLs', () => {
     expect(buildPrivateTeamCalendarFeedUrl('team 1.blue:varsity', 'private-token')).toBe(
       'https://us-central1-game-flow-c6311.cloudfunctions.net/teamCalendarFeed?teamId=team%201.blue%3Avarsity&token=private-token'
     );
-    expect(buildPublicTeamGamesIcsUrl('team-1_blue')).toBe(
-      'https://us-central1-game-flow-c6311.cloudfunctions.net/publicTeamGamesIcs?teamId=team-1_blue'
+    expect(buildPublicTeamGamesIcsUrl(' team 1.blue:varsity ')).toBe(
+      'https://us-central1-game-flow-c6311.cloudfunctions.net/publicTeamGamesIcs?teamId=team%201.blue%3Avarsity'
     );
   });
 
@@ -56,5 +56,6 @@ describe('calendar feed URLs', () => {
     expect(buildPrivateTeamCalendarFeedUrl('team/1', 'token-1')).toBe('');
     expect(buildPrivateTeamCalendarFeedUrl('team-1', 'token with spaces')).toBe('');
     expect(buildPublicTeamGamesIcsUrl('team/1')).toBe('');
+    expect(buildPublicTeamGamesIcsUrl('x'.repeat(129))).toBe('');
   });
 });
