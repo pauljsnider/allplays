@@ -1789,6 +1789,7 @@ test('manual YouTube seeking rebuilds replay stats and the overlay offers canoni
     await stubYouTubeEmbed(page);
 
     await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true`, { waitUntil: 'domcontentloaded' });
+    expect(pageErrors).toEqual([]);
     await expect(page.getByRole('button', { name: 'Play replay' })).toBeVisible();
     await expect(page.locator('#home-score')).toHaveText('0');
     await expect(page.locator('#overlay-video')).toHaveAttribute('src', /https:\/\/www\.youtube\.com\/embed\//);
@@ -1796,6 +1797,9 @@ test('manual YouTube seeking rebuilds replay stats and the overlay offers canoni
     await expect.poll(() => page.frames().some((frame) => frame.url().startsWith('https://www.youtube.com/embed/'))).toBe(true);
     const youtubeFrame = page.frames().find((frame) => frame.url().startsWith('https://www.youtube.com/embed/'));
     expect(youtubeFrame).toBeTruthy();
+    await expect.poll(async () => page.evaluate(() => (
+        window.__OVERLAY_YOUTUBE_COMMANDS__ || []
+    ).map((command) => command.func))).toContain('seekTo');
     await youtubeFrame.evaluate(() => {
         parent.postMessage(JSON.stringify({
             event: 'infoDelivery',
