@@ -234,7 +234,7 @@ function usesCompactPanelLayout() {
 }
 
 function loadOverlayDatabase() {
-    return import('./db.js?v=4433194');
+    return import('./db.js?v=4433195');
 }
 
 function getTimestampMs(value) {
