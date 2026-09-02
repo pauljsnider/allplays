@@ -150,10 +150,11 @@ async function seedState(page, {
     sourceOnlyCancellation = false
 } = {}) {
     await page.addInitScript((options) => {
+        const scheduledAt = new Date(Date.now() + (30 * 24 * 60 * 60 * 1000)).toISOString();
         const source = {
             id: 'source-1',
             type: 'game',
-            date: '2026-09-01T18:00:00.000Z',
+            date: scheduledAt,
             location: 'Main Field',
             status: 'scheduled',
             isHome: true,
@@ -164,7 +165,7 @@ async function seedState(page, {
         const counterpart = {
             id: 'mirror-1',
             type: 'game',
-            date: '2026-09-01T18:00:00.000Z',
+            date: scheduledAt,
             location: 'Main Field',
             status: 'scheduled',
             isHome: false,
@@ -199,8 +200,8 @@ test('reviews and cancels one reciprocal organization matchup', async ({ page, b
     const bootIssues = createBootIssueCollector(page, { baseURL });
     await page.goto(buildUrl(baseURL, '/organization-schedule.html#teamId=team-1'), { waitUntil: 'domcontentloaded' });
 
-    await expect(page.locator('[data-shared-schedule-id]')).toHaveCount(1);
     expect(bootIssues).toEqual([]);
+    await expect(page.locator('[data-shared-schedule-id]')).toHaveCount(1);
     const row = page.locator('[data-shared-schedule-id="shared-team-1-source-1"]');
     await expect(row).toContainText('Alpha');
     await expect(row).toContainText('Bravo');
@@ -237,9 +238,9 @@ test('reports notification partial failure without claiming cancellation success
     const bootIssues = createBootIssueCollector(page, { baseURL });
     await page.goto(buildUrl(baseURL, '/organization-schedule.html#teamId=team-1'), { waitUntil: 'domcontentloaded' });
 
+    expect(bootIssues).toEqual([]);
     const row = page.locator('[data-shared-schedule-id="shared-team-1-source-1"]');
     await expect(row).toBeVisible();
-    expect(bootIssues).toEqual([]);
     page.once('dialog', (dialog) => dialog.accept());
     await row.getByRole('button', { name: 'Cancel' }).click();
 
@@ -254,9 +255,9 @@ test('reports one-sided cancellation for retry without notifications or success'
     const bootIssues = createBootIssueCollector(page, { baseURL });
     await page.goto(buildUrl(baseURL, '/organization-schedule.html#teamId=team-1'), { waitUntil: 'domcontentloaded' });
 
+    expect(bootIssues).toEqual([]);
     const row = page.locator('[data-shared-schedule-id="shared-team-1-source-1"]');
     await expect(row).toBeVisible();
-    expect(bootIssues).toEqual([]);
     page.once('dialog', (dialog) => dialog.accept());
     await row.getByRole('button', { name: 'Cancel' }).click();
 
@@ -276,9 +277,9 @@ test('keeps verified cancellation disabled when the organization refresh fails',
     const bootIssues = createBootIssueCollector(page, { baseURL });
     await page.goto(buildUrl(baseURL, '/organization-schedule.html#teamId=team-1'), { waitUntil: 'domcontentloaded' });
 
+    expect(bootIssues).toEqual([]);
     const row = page.locator('[data-shared-schedule-id="shared-team-1-source-1"]');
     await expect(row).toBeVisible();
-    expect(bootIssues).toEqual([]);
     page.once('dialog', (dialog) => dialog.accept());
     await row.getByRole('button', { name: 'Cancel' }).click();
 
@@ -294,9 +295,9 @@ test('ignores an overlapping pre-cancellation refresh after verified cancellatio
     const bootIssues = createBootIssueCollector(page, { baseURL });
     await page.goto(buildUrl(baseURL, '/organization-schedule.html#teamId=team-1'), { waitUntil: 'domcontentloaded' });
 
+    expect(bootIssues).toEqual([]);
     const row = page.locator('[data-shared-schedule-id="shared-team-1-source-1"]');
     await expect(row).toBeVisible();
-    expect(bootIssues).toEqual([]);
     await page.evaluate(() => { window.__organizationScheduleTestState.delayPreCancellationRefresh = true; });
     await page.locator('#refresh-published-matchups-btn').click();
     await expect.poll(() => page.evaluate(() => window.__organizationScheduleTestState.delayedRefreshCaptures)).toBe(2);
