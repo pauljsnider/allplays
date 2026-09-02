@@ -794,7 +794,7 @@ export async function uploadStatSheetPhoto(teamId, gameId, file, options = {}) {
         : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=443370'; // Import resolveZip
+import { resolveZip } from './utils.js?v=443371'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -8773,10 +8773,12 @@ export async function broadcastLiveEvent(teamId, gameId, eventData) {
  */
 export function subscribeLiveEvents(teamId, gameId, callback, onError) {
     const eventsRef = getGameSubcollectionRef(teamId, gameId, 'liveEvents');
-    const q = query(eventsRef, orderBy('createdAt', 'asc'));
+    const q = query(eventsRef, orderBy('createdAt', 'desc'), limit(20));
 
     return onSnapshot(q, (snapshot) => {
-        const events = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const events = snapshot.docs
+            .map(doc => ({ id: doc.id, ...doc.data() }))
+            .reverse();
         callback(events);
     }, onError);
 }
