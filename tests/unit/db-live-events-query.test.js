@@ -52,7 +52,7 @@ vi.mock('../../js/firebase-images.js?v=18', () => ({
     requireImageAuth: vi.fn()
 }));
 
-const { subscribeLiveEvents, getLiveEvents } = await import('../../js/db.js?v=4433194-live-events');
+const { subscribeLiveEvents, getLiveEvents } = await import('../../js/db.js?v=4433195-live-events');
 
 function createEventDocs(count) {
     return Array.from({ length: count }, (_, index) => ({
