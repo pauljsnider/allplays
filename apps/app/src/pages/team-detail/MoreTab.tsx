@@ -21,7 +21,7 @@ import {
   Trophy
 } from 'lucide-react';
 import { copyPublicText, openPublicUrl, sharePublicUrl } from '../../lib/publicActions';
-import { buildPrivateTeamCalendarFeedUrl, getAppleCalendarFeedUrl, getGoogleCalendarFeedUrl } from '../../lib/parentToolsService';
+import { getAppleCalendarFeedUrl, getGoogleCalendarFeedUrl, getPrivateTeamCalendarFeedUrl } from '../../lib/parentToolsService';
 import {
   buildPublicTeamGamesIcsUrl,
   canExposePublicFanFeed,
@@ -534,7 +534,7 @@ function PrivateCalendarSyncCard({ model }: { model: TeamDetailModel }) {
     setBusyTarget(target);
     setStatus(null);
     try {
-      const feedUrl = buildPrivateTeamCalendarFeedUrl(model.team.id, model.team);
+      const feedUrl = await getPrivateTeamCalendarFeedUrl(model.team.id);
       if (!feedUrl) throw new Error('Unable to create private calendar feed. Sign in again and retry.');
       if (target === 'copy') {
         const result = await copyPublicText(feedUrl);

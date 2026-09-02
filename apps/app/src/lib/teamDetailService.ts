@@ -68,6 +68,7 @@ import {
   where
 } from './adapters/legacyTeamDetail';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
+import { buildPublicTeamGamesIcsUrl as buildPublicTeamGamesIcsUrlFromRuntime } from './calendarFeedUrls';
 import { getPrimaryAppCheckHeaders } from './adapters/legacyFirebaseAppCheck';
 import { isRetryableReadTransportError, raceFirstSuccessfulRead } from './adapters/legacyHedgedRead';
 import { buildAppAcceptInviteUrl } from './inviteUrls';
@@ -1993,17 +1994,7 @@ export function buildAdminAcceptInviteUrl(code: string, baseUrl = getPublicBaseU
 }
 
 export function buildPublicTeamGamesIcsUrl(teamId: string) {
-  const normalizedTeamId = cleanString(teamId);
-  if (!normalizedTeamId) return '';
-  const configured = (window as any).__ALLPLAYS_CONFIG__?.publicTeamGamesIcsFunctionUrl || (window as any).ALLPLAYS_PUBLIC_GAMES_ICS_URL;
-  const fallback = (window as any).__ALLPLAYS_CONFIG__?.calendarFetchFunctionUrl || (window as any).ALLPLAYS_CALENDAR_FUNCTION_URL;
-  const baseUrl = typeof configured === 'string' && configured.trim()
-    ? configured.trim()
-    : typeof fallback === 'string' && fallback.includes('fetchCalendarIcs')
-      ? fallback.replace('fetchCalendarIcs', 'publicTeamGamesIcs')
-      : 'https://us-central1-all-plays-prod.cloudfunctions.net/publicTeamGamesIcs';
-  const separator = baseUrl.includes('?') ? '&' : '?';
-  return `${baseUrl}${separator}teamId=${encodeURIComponent(normalizedTeamId)}`;
+  return buildPublicTeamGamesIcsUrlFromRuntime(cleanString(teamId));
 }
 
 export function isShareableFanFeedEvent(event: Partial<TeamDetailEvent> = {}) {

@@ -5,14 +5,18 @@ import { readFileSync } from 'node:fs';
 const require = createRequire(import.meta.url);
 const {
   buildTeamCalendarIcs,
+  calendarTokenLookupMatchesRequest,
   calendarTokenHasTeamAccess,
+  createTeamCalendarFeedCredentialResolver,
   expandRecurringCalendarEvent,
-    formatRsvpSummary,
-    hashCalendarToken,
-    normalizeCalendarRequest
+  formatRsvpSummary,
+  getCalendarTokenHolderId,
+  hashCalendarToken,
+  normalizeCalendarRequest
 } = require('../../functions/team-calendar-feed-core.cjs');
 
 const functionsSource = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
+const feedCoreSource = readFileSync(new URL('../../functions/team-calendar-feed-core.cjs', import.meta.url), 'utf8');
 
 describe('team calendar subscription feed', () => {
     it('builds valid ICS for visible games and practices with stable UIDs', () => {
@@ -498,8 +502,8 @@ describe('team calendar subscription feed', () => {
         expect(formatRsvpSummary(null)).toBe('');
     });
 
-    it('normalizes stable private token requests without exposing raw tokens', () => {
-        const request = normalizeCalendarRequest({ teamId: 'team-1', token: ' secret-token ' });
+    it('normalizes exact bounded private token requests without exposing raw tokens', () => {
+        const request = normalizeCalendarRequest({ teamId: 'team-1', token: 'secret-token' });
 
         expect(request).toEqual({
             teamId: 'team-1',
@@ -510,6 +514,109 @@ describe('team calendar subscription feed', () => {
         expect(request.tokenHash).not.toBe('secret-token');
     });
 
+    it('rejects malformed calendar request values before they can become document paths', () => {
+        const invalidQueries = [
+            { teamId: 7, token: 'secret-token' },
+            { teamId: ' team-1', token: 'secret-token' },
+            { teamId: 'team-1 ', token: 'secret-token' },
+            { teamId: 'team/1', token: 'secret-token' },
+            { teamId: 'x'.repeat(129), token: 'secret-token' },
+            { teamId: 'team-1', team: 'team-2', token: 'secret-token' },
+            { teamId: 'team-1', token: 7 },
+            { teamId: 'team-1', token: ' secret-token' },
+            { teamId: 'team-1', token: 'secret/token' },
+            { teamId: 'team-1', token: 'x'.repeat(129) }
+        ];
+
+        invalidQueries.forEach((query) => {
+            expect(normalizeCalendarRequest(query)).toEqual({ teamId: '', token: '', tokenHash: '' });
+        });
+    });
+
+    it('accepts only unambiguous bounded token-holder aliases and request bindings', () => {
+        const request = normalizeCalendarRequest({ teamId: 'team-1', token: 'secret-token' });
+
+        expect(getCalendarTokenHolderId({ uid: 'user.with:punctuation' })).toBe('user.with:punctuation');
+        expect(getCalendarTokenHolderId({ uid: 'user-1', userId: 'user-1', createdBy: 'user-1' })).toBe('user-1');
+        expect(getCalendarTokenHolderId({ uid: 'user-1', createdBy: 'different-user' })).toBe('');
+        expect(getCalendarTokenHolderId({ uid: ' user-1' })).toBe('');
+        expect(getCalendarTokenHolderId({ uid: 'user/1' })).toBe('');
+
+        expect(calendarTokenLookupMatchesRequest({
+            schemaVersion: 1,
+            teamId: request.teamId,
+            uid: 'user-1',
+            tokenHash: request.tokenHash
+        }, request)).toBe(true);
+        expect(calendarTokenLookupMatchesRequest({ uid: 'user-1' }, request)).toBe(true);
+        expect(calendarTokenLookupMatchesRequest({ uid: 'user-1', teamId: 'team-2' }, request)).toBe(false);
+        expect(calendarTokenLookupMatchesRequest({ uid: 'user-1', tokenHash: 'f'.repeat(64) }, request)).toBe(false);
+        expect(calendarTokenLookupMatchesRequest({ uid: 'user-1', userId: 'user-2' }, request)).toBe(false);
+        expect(calendarTokenLookupMatchesRequest({
+            schemaVersion: 1,
+            uid: 'user-1'
+        }, request)).toBe(false);
+    });
+
+    it('performs zero datastore reads for malformed calendar requests', async () => {
+        const reads = [];
+        const resolveCredential = createTeamCalendarFeedCredentialResolver({
+            loadTeam: async (teamId) => {
+                reads.push(['team', teamId]);
+                return null;
+            },
+            loadToken: async (request) => {
+                reads.push(['token', request]);
+                return null;
+            },
+            loadTokenHolder: async (tokenData) => {
+                reads.push(['holder', tokenData]);
+                return null;
+            }
+        });
+
+        for (const query of [
+            { teamId: ' team-1', token: 'secret-token' },
+            { teamId: 'team/1', token: 'secret-token' },
+            { teamId: 'team-1', token: 'secret/token' },
+            { teamId: 'team-1', token: 'x'.repeat(129) }
+        ]) {
+            await expect(resolveCredential(query)).resolves.toEqual({
+                allowed: false,
+                status: 401,
+                message: 'Missing or invalid calendar token'
+            });
+        }
+        expect(reads).toEqual([]);
+    });
+
+    it('rejects conflicting or malformed stored token bindings before holder reads', async () => {
+        const request = normalizeCalendarRequest({ teamId: 'team-1', token: 'secret-token' });
+        const holderReads = [];
+        const resolveCredential = createTeamCalendarFeedCredentialResolver({
+            loadTeam: async () => ({ ownerId: 'owner-1' }),
+            loadToken: async () => ({
+                schemaVersion: 1,
+                teamId: 'team-2',
+                uid: 'owner-1',
+                createdBy: 'other-user',
+                tokenHash: request.tokenHash,
+                active: true
+            }),
+            loadTokenHolder: async (tokenData) => {
+                holderReads.push(tokenData);
+                return null;
+            }
+        });
+
+        await expect(resolveCredential({ teamId: 'team-1', token: 'secret-token' })).resolves.toEqual({
+            allowed: false,
+            status: 403,
+            message: 'Invalid calendar token'
+        });
+        expect(holderReads).toEqual([]);
+    });
+
     it('revalidates private calendar token access against the current Auth identity', () => {
         const tokenData = { teamId: 'team-1', uid: 'admin-1', email: 'stale@example.com' };
         const team = { ownerId: 'owner-1', adminEmails: ['current@example.com'] };
@@ -517,7 +624,7 @@ describe('team calendar subscription feed', () => {
         expect(calendarTokenHasTeamAccess({
             team,
             profile: { email: 'stale@example.com' },
-            authUser: { uid: 'admin-1', email: 'CURRENT@example.com', disabled: false },
+            authUser: { uid: 'admin-1', email: 'CURRENT@example.com', emailVerified: true, disabled: false },
             tokenData
         })).toBe(true);
         expect(calendarTokenHasTeamAccess({
@@ -537,14 +644,14 @@ describe('team calendar subscription feed', () => {
                 ownerEmailLower: 'legacy.owner@example.com'
             },
             profile: {},
-            authUser: { uid: 'legacy-owner', email: 'LEGACY.OWNER@example.com', disabled: false },
+            authUser: { uid: 'legacy-owner', email: 'LEGACY.OWNER@example.com', emailVerified: true, disabled: false },
             tokenData
         })).toBe(true);
     });
 
     it('fails closed for conflicting or stale legacy owner aliases', () => {
         const tokenData = { teamId: 'team-1', uid: 'legacy-owner' };
-        const authUser = { uid: 'legacy-owner', email: 'owner@example.com', disabled: false };
+        const authUser = { uid: 'legacy-owner', email: 'owner@example.com', emailVerified: true, disabled: false };
 
         expect(calendarTokenHasTeamAccess({
             team: { ownerEmail: 'owner@example.com', ownerEmailLower: 'former@example.com' },
@@ -564,6 +671,56 @@ describe('team calendar subscription feed', () => {
             authUser: { ...authUser, disabled: true },
             tokenData
         })).toBe(false);
+    });
+
+    it.each([
+        7,
+        ' owner-1 ',
+        'owner/1',
+        'o'.repeat(129),
+        null
+    ])('fails closed for a malformed canonical ownerId (%j)', (ownerId) => {
+        const tokenData = { teamId: 'team-1', uid: 'owner-1' };
+
+        expect(calendarTokenHasTeamAccess({
+            team: {
+                ownerId,
+                ownerEmail: 'owner@example.com',
+                adminEmails: ['owner@example.com']
+            },
+            profile: { parentTeamIds: ['team-1'] },
+            authUser: {
+                uid: ownerId === 7 ? '7' : 'owner-1',
+                email: 'owner@example.com',
+                emailVerified: true,
+                disabled: false
+            },
+            tokenData: ownerId === 7 ? { ...tokenData, uid: '7' } : tokenData
+        })).toBe(false);
+    });
+
+    it('suspends an issued private feed as soon as account deletion is requested', async () => {
+        const resolveCredential = createTeamCalendarFeedCredentialResolver({
+            loadTeam: async () => ({ ownerId: 'owner-1' }),
+            loadToken: async ({ teamId, tokenHash }) => ({
+                teamId,
+                uid: 'owner-1',
+                tokenHash,
+                schemaVersion: 1,
+                active: true
+            }),
+            loadTokenHolder: async () => ({
+                profile: { parentTeamIds: ['team-1'] },
+                authUser: { uid: 'owner-1', disabled: false },
+                accountDeletionRequested: true
+            })
+        });
+
+        await expect(resolveCredential({ teamId: 'team-1', token: 'secret-token' })).resolves.toEqual({
+            allowed: false,
+            status: 403,
+            message: 'Calendar token no longer has team access'
+        });
     });
 
     it('rejects private calendar tokens for disabled, deleted, or mismatched Auth identities', () => {
@@ -587,10 +744,14 @@ describe('team calendar subscription feed', () => {
 
     it('registers an HTTPS endpoint that rejects missing, invalid, and revoked tokens', () => {
         expect(functionsSource).toContain('exports.teamCalendarFeed = functions.https.onRequest');
-        expect(functionsSource).toContain("res.status(401).send('Missing calendar token')");
-        expect(functionsSource).toContain("res.status(403).send('Invalid calendar token')");
-        expect(functionsSource).toContain("res.status(403).send('Revoked calendar token')");
+        expect(functionsSource).toContain('resolveTeamCalendarFeedCredential(req.query || {})');
+        expect(functionsSource).toContain('res.status(authorization.status).send(authorization.message)');
+        expect(feedCoreSource).toContain("message: 'Missing or invalid calendar token'");
+        expect(feedCoreSource).toContain("message: 'Invalid calendar token'");
+        expect(feedCoreSource).toContain("message: 'Revoked calendar token'");
         expect(functionsSource).toContain('admin.auth().getUser(uid)');
+        expect(functionsSource).toContain('firestore.doc(`accountDeletionRequests/${uid}`).get()');
+        expect(functionsSource).toContain('accountDeletionRequested: deletionRequestSnap.exists');
         expect(functionsSource).not.toContain('user?.email || tokenData.email || tokenData.userEmail');
         expect(functionsSource).toContain("res.set('Content-Type', 'text/calendar; charset=utf-8')");
         expect(functionsSource).toContain('buildTeamCalendarIcs({ teamId, team, events })');

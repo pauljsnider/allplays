@@ -59,7 +59,11 @@ describe('calendar function CORS origins', () => {
     expect(policySource.match(/allowNativeCalendarOrigins: false/g)).toHaveLength(2);
     expect(policySource.match(/allowNativeCalendarOrigins: true/g)).toHaveLength(1);
     expect(telemetrySource).not.toContain('calendarAllowedOriginSet');
-    expect(telemetrySource).not.toContain("'https://localhost'");
+    expect(telemetrySource).not.toContain('allowNativeCalendarOrigins');
+    expect(telemetrySource).toContain("'https://localhost'");
+    expect(telemetrySource).toContain("'capacitor://localhost'");
+    expect(telemetrySource).toContain("'http://localhost'");
+    expect(telemetrySource).not.toContain("'*'");
   });
 
   it('allows both local app and legacy development origins', () => {

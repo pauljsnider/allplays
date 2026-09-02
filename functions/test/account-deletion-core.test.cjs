@@ -510,7 +510,7 @@ test('deletes account-owned share links and invite records', () => {
   assert.ok(queries.some(([collection, field]) => collection === 'accessCodes' && field === 'usedBy'));
 });
 
-test('deletes current team media and denormalized notification indexes', () => {
+test('keeps private calendar credentials out of generic account query deletion', () => {
   assert.deepEqual(getAccountDeletionCollectionGroupQueries(), [
     ['messages', 'authorId'],
     ['chatMessages', 'senderId'],

@@ -29,8 +29,9 @@ async function waitForTeamsRoute(page, readyLocator, { requireSearchInput = true
     }).toPass({ timeout: 45000 });
 }
 
-async function waitForTeamDetailRoute(page, teamName) {
+async function waitForTeamDetailRoute(page, teamName, { pageErrors = [] } = {}) {
     await expect(async () => {
+        expect(pageErrors).toEqual([]);
         await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 3000 });
         await expect(page.getByText('Loading team')).toHaveCount(0, { timeout: 3000 });
         await expect(page.getByRole('heading', { name: teamName })).toBeVisible({ timeout: 3000 });
@@ -40,6 +41,9 @@ async function waitForTeamDetailRoute(page, teamName) {
 async function mockTeamsModules(page, { scenario = '', managedTeam = false, rosterPlayerCount = 2 } = {}) {
     await page.addInitScript(({ scenarioName, shouldManageTeam, teamRosterPlayerCount }) => {
         window.__openedPublicUrls = [];
+        window.__copiedPublicTexts = [];
+        window.__sharedPublicUrls = [];
+        window.__privateCalendarTeamIds = [];
         window.__homeLoads = 0;
         window.__teamsScenario = scenarioName;
         window.__managedTeam = shouldManageTeam;
@@ -89,11 +93,34 @@ async function mockTeamsModules(page, { scenario = '', managedTeam = false, rost
                 export async function openPublicUrl(url) {
                     window.__openedPublicUrls.push(String(url));
                 }
-                export async function copyPublicText() {
+                export async function copyPublicText(text) {
+                    window.__copiedPublicTexts.push(String(text));
                     return 'copied';
                 }
-                export async function sharePublicUrl() {
+                export async function sharePublicUrl(payload) {
+                    window.__sharedPublicUrls.push(String(payload?.url || ''));
                     return 'shared';
+                }
+            `
+        });
+    });
+
+    await page.route(/\/src\/lib\/parentToolsService\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                export async function getPrivateTeamCalendarFeedUrl(teamId) {
+                    window.__privateCalendarTeamIds.push(String(teamId));
+                    return 'https://us-central1-game-flow-c6311.cloudfunctions.net/teamCalendarFeed?teamId=' + encodeURIComponent(teamId) + '&token=stored-token';
+                }
+
+                export function getAppleCalendarFeedUrl(feedUrl) {
+                    return String(feedUrl || '').replace(/^https?:\\/\\//i, 'webcal://');
+                }
+
+                export function getGoogleCalendarFeedUrl(feedUrl) {
+                    return 'https://calendar.google.com/calendar/render?cid=' + encodeURIComponent(feedUrl);
                 }
             `
         });
@@ -367,7 +394,7 @@ async function mockTeamsModules(page, { scenario = '', managedTeam = false, rost
                 }
 
                 export function buildPublicTeamGamesIcsUrl(teamId) {
-                    return teamId ? 'https://calendar.example.test/publicTeamGamesIcs?teamId=' + encodeURIComponent(teamId) : '';
+                    return teamId ? 'https://us-central1-game-flow-c6311.cloudfunctions.net/publicTeamGamesIcs?teamId=' + encodeURIComponent(teamId) : '';
                 }
 
                 export function canExposePublicFanFeed(team = {}, events = []) {
@@ -1005,10 +1032,16 @@ test.describe('mobile My Teams', () => {
     });
 
     test('team detail tabs expose parent-facing team page features', async ({ page, baseURL }) => {
+        const pageErrors = [];
+        page.on('pageerror', (error) => {
+            if (!error.message.startsWith('Installations: Create Installation request failed')) {
+                pageErrors.push(error.message);
+            }
+        });
         await mockTeamsModules(page);
         await page.goto(appUrl(baseURL, '/teams/team-1'), { waitUntil: 'domcontentloaded' });
 
-        await waitForTeamDetailRoute(page, 'Bears');
+        await waitForTeamDetailRoute(page, 'Bears', { pageErrors });
         await expect(page.getByText('4-2').first()).toBeVisible();
         await expect(page.getByText('Parent actions')).toBeVisible();
         await expect(page.locator('a[href="#/schedule?teamId=team-1&filter=availability"]')).toBeVisible();
@@ -1035,6 +1068,22 @@ test.describe('mobile My Teams', () => {
         await expect(page.getByText('88')).toBeVisible();
 
         await page.getByTestId('team-detail-tab-nav').getByRole('button', { name: /More/ }).click();
+        await expect(async () => {
+            expect(pageErrors).toEqual([]);
+            await expect(page.getByText('Private calendar sync')).toBeVisible({ timeout: 3000 });
+        }).toPass({ timeout: 10000 });
+        await page.getByRole('button', { name: 'Copy Link' }).click();
+        await expect(page.getByText('Private calendar link copied.')).toBeVisible();
+        await expect.poll(() => page.evaluate(() => window.__privateCalendarTeamIds)).toEqual(['team-1']);
+        await expect.poll(() => page.evaluate(() => window.__copiedPublicTexts.at(-1))).toBe(
+            'https://us-central1-game-flow-c6311.cloudfunctions.net/teamCalendarFeed?teamId=team-1&token=stored-token'
+        );
+        await expect(page.getByText('Fan Feed', { exact: true })).toBeVisible();
+        await page.getByRole('button', { name: 'Copy or Share Fan Feed' }).click();
+        await expect(page.getByText('Fan feed share sheet opened.')).toBeVisible();
+        await expect.poll(() => page.evaluate(() => window.__sharedPublicUrls.at(-1))).toBe(
+            'https://us-central1-game-flow-c6311.cloudfunctions.net/publicTeamGamesIcs?teamId=team-1'
+        );
         await expect(page.getByText('Website team page')).toBeVisible();
         await expect(page.getByText('Media albums')).toBeVisible();
         await expect(page.getByText('Watch stream')).toBeVisible();
@@ -1050,6 +1099,7 @@ test.describe('mobile My Teams', () => {
         await page.getByRole('link', { name: /Pizza Place/ }).click();
         await expect.poll(() => page.evaluate(() => window.__openedPublicUrls.at(-1))).toBe('https://pizza.example.test');
         await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+        expect(pageErrors).toEqual([]);
     });
 
     test('keeps a complete schedule event on the team overview across tab changes when the bootstrap is stale', async ({ page, baseURL }) => {

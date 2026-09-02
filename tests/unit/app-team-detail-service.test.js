@@ -1178,7 +1178,8 @@ describe('React app team detail model', () => {
             calendarFetchFunctionUrl: 'https://calendar.example.test/fetchCalendarIcs'
         };
 
-        expect(buildPublicTeamGamesIcsUrl('team 1/blue')).toBe('https://calendar.example.test/publicTeamGamesIcs?teamId=team%201%2Fblue');
+        expect(buildPublicTeamGamesIcsUrl('team-1_blue')).toBe('https://calendar.example.test/publicTeamGamesIcs?teamId=team-1_blue');
+        expect(buildPublicTeamGamesIcsUrl('team/1')).toBe('');
         expect(buildPublicTeamGamesIcsUrl('')).toBe('');
         expect(canExposePublicFanFeed(
             { isPublic: false, active: true },
@@ -1209,6 +1210,7 @@ describe('React app team detail model', () => {
         )).toBe(true);
 
         delete window.__ALLPLAYS_CONFIG__;
+        expect(buildPublicTeamGamesIcsUrl('team-1_blue')).toBe('https://us-central1-game-flow-c6311.cloudfunctions.net/publicTeamGamesIcs?teamId=team-1_blue');
     });
 
     it('projects team.html parent features into the native team model', () => {
@@ -1221,7 +1223,9 @@ describe('React app team detail model', () => {
                 leagueUrl: 'https://league.example.test',
                 bracketUrl: 'https://bracket.example.test/path',
                 standingsConfig: { enabled: true },
-                registrationSource: { provider: 'Sports Connect', externalTeamId: 'EXT-1' }
+                registrationSource: { provider: 'Sports Connect', externalTeamId: 'EXT-1' },
+                privateCalendarFeedUrl: 'https://calendar.example.test/private.ics?token=must-not-project',
+                calendarSubscriptionToken: 'must-not-project'
             },
             players: [
                 { id: 'player-1', name: 'Pat Star', number: '9', photoUrl: 'https://img.example.test/player.png' },
@@ -1262,6 +1266,8 @@ describe('React app team detail model', () => {
             summary: 'Fallback reminder window: 24 hours before event start. No team default is set yet.'
         });
         expect(model.team.registrationProvider.map((row) => row.value)).toContain('Sports Connect');
+        expect(model.team).not.toHaveProperty('privateCalendarFeedUrl');
+        expect(model.team).not.toHaveProperty('calendarSubscriptionToken');
         expect(model.players.find((player) => player.id === 'player-1').photoUrl).toBe('https://img.example.test/player.png');
         expect(model.players.map((player) => player.id)).toEqual(['player-1', 'player-2']);
         expect(model.inactivePlayers).toEqual([

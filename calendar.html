@@ -194,6 +194,7 @@
         import { getDefaultSchedulePrintOptions, printSchedule, promptSchedulePrintOptions } from './js/schedule-print.js?v=2';
         import { addCalendarLoadedRange, createLatestCalendarRangeLoader, getMissingCalendarLoadRanges } from './js/calendar-load-window.js?v=2';
         import { fetchLegacyCalendarFeed } from './js/calendar-feed-loading.js?v=1';
+        import { functions, httpsCallable } from './js/firebase.js?v=33';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -209,6 +210,8 @@
         let calendarYear = new Date().getFullYear();
         let activeDayDetail = null;
         let linkedPlayersByTeam = new Map();
+        let preparedPrivateCalendarFeedUrl = '';
+        let syncCalendarPreparationId = 0;
         let calendarTeams = [];
         const RSVP_HYDRATION_CONCURRENCY = 6;
         const rsvpHydrationCache = new Map();
@@ -1163,19 +1166,7 @@
             return candidateTeams.length === 1 ? candidateTeams[0] : null;
         }
 
-        function getPrivateCalendarFeedUrl(team) {
-            const directUrl = team?.privateCalendarFeedUrl ||
-                team?.calendarSubscriptionUrl ||
-                team?.calendarFeedUrl ||
-                team?.teamCalendarFeedUrl;
-            if (typeof directUrl === 'string' && directUrl.trim()) {
-                return directUrl.trim().replace(/^webcal:\/\//i, 'https://');
-            }
-
-            const token = team?.calendarSubscriptionToken ||
-                team?.privateCalendarToken ||
-                team?.calendarFeedToken ||
-                team?.teamCalendarToken;
+        function getPrivateCalendarFeedUrl(team, token) {
             if (!token || !team?.id) return '';
 
             const configuredUrl = window.__ALLPLAYS_CONFIG__?.teamCalendarFeedFunctionUrl || window.ALLPLAYS_TEAM_CALENDAR_FEED_URL;
@@ -1184,7 +1175,7 @@
                 ? configuredUrl.trim()
                 : (typeof fallbackUrl === 'string' && fallbackUrl.includes('fetchCalendarIcs')
                     ? fallbackUrl.replace('fetchCalendarIcs', 'teamCalendarFeed')
-                    : 'https://us-central1-all-plays-prod.cloudfunctions.net/teamCalendarFeed');
+                    : 'https://us-central1-game-flow-c6311.cloudfunctions.net/teamCalendarFeed');
             const separator = baseUrl.includes('?') ? '&' : '?';
             return `${baseUrl}${separator}teamId=${encodeURIComponent(team.id)}&token=${encodeURIComponent(token)}`;
         }
@@ -1204,23 +1195,50 @@
             feedback.className = `text-sm ${tone === 'error' ? 'text-red-600' : tone === 'success' ? 'text-emerald-700' : 'text-gray-600'}`;
         }
 
-        function getCurrentCalendarFeedUrl() {
-            const team = getSelectedSyncCalendarTeam();
-            return team ? getPrivateCalendarFeedUrl(team) : '';
+        function setSyncCalendarActionsEnabled(enabled) {
+            ['sync-calendar-apple', 'sync-calendar-google', 'sync-calendar-copy'].forEach((id) => {
+                const button = document.getElementById(id);
+                if (button) button.disabled = !enabled;
+            });
         }
 
-        function openSyncCalendarModal() {
+        async function resolveCurrentCalendarFeedUrl() {
             const team = getSelectedSyncCalendarTeam();
-            const feedUrl = team ? getPrivateCalendarFeedUrl(team) : '';
+            if (!team) return '';
+
+            try {
+                const getPrivateTeamCalendarFeedToken = httpsCallable(functions, 'getPrivateTeamCalendarFeedToken');
+                const result = await getPrivateTeamCalendarFeedToken({ teamId: team.id });
+                const token = typeof result?.data?.token === 'string' ? result.data.token.trim() : '';
+                if (!token) return '';
+                return getPrivateCalendarFeedUrl(team, token);
+            } catch {
+                return '';
+            }
+        }
+
+        async function openSyncCalendarModal() {
+            const team = getSelectedSyncCalendarTeam();
+            const preparationId = ++syncCalendarPreparationId;
+            preparedPrivateCalendarFeedUrl = '';
+            setSyncCalendarActionsEnabled(false);
             document.getElementById('sync-calendar-modal')?.classList.remove('hidden');
             if (!team) {
                 setSyncCalendarFeedback('Select a team before opening a live calendar subscription.', 'error');
                 return;
             }
+            setSyncCalendarFeedback('Preparing your private calendar link…');
+            const feedUrl = await resolveCurrentCalendarFeedUrl();
+            if (preparationId !== syncCalendarPreparationId) return;
+            preparedPrivateCalendarFeedUrl = feedUrl;
+            setSyncCalendarActionsEnabled(Boolean(feedUrl));
             setSyncCalendarFeedback(feedUrl ? `Choose where to subscribe to ${team.name || 'this team'} schedule.` : 'Calendar subscription link is not available yet.', feedUrl ? 'neutral' : 'error');
         }
 
         function closeSyncCalendarModal() {
+            syncCalendarPreparationId += 1;
+            preparedPrivateCalendarFeedUrl = '';
+            setSyncCalendarActionsEnabled(false);
             document.getElementById('sync-calendar-modal')?.classList.add('hidden');
         }
 
@@ -1289,7 +1307,7 @@
                 ? configuredUrl.trim()
                 : (typeof fallbackUrl === 'string' && fallbackUrl.includes('fetchCalendarIcs')
                     ? fallbackUrl.replace('fetchCalendarIcs', 'publicTeamGamesIcs')
-                    : 'https://us-central1-all-plays-prod.cloudfunctions.net/publicTeamGamesIcs');
+                    : 'https://us-central1-game-flow-c6311.cloudfunctions.net/publicTeamGamesIcs');
             const separator = baseUrl.includes('?') ? '&' : '?';
             return `${baseUrl}${separator}teamId=${encodeURIComponent(team.id)}`;
         }
@@ -1339,7 +1357,7 @@
         }
 
         document.getElementById('sync-calendar-apple')?.addEventListener('click', () => {
-            const feedUrl = getCurrentCalendarFeedUrl();
+            const feedUrl = preparedPrivateCalendarFeedUrl;
             if (!feedUrl) {
                 setSyncCalendarFeedback('Calendar subscription link is not available yet.', 'error');
                 return;
@@ -1348,7 +1366,7 @@
             setSyncCalendarFeedback('Opening Apple Calendar subscription.', 'success');
         });
         document.getElementById('sync-calendar-google')?.addEventListener('click', () => {
-            const feedUrl = getCurrentCalendarFeedUrl();
+            const feedUrl = preparedPrivateCalendarFeedUrl;
             if (!feedUrl) {
                 setSyncCalendarFeedback('Calendar subscription link is not available yet.', 'error');
                 return;
@@ -1356,8 +1374,8 @@
             window.open(getGoogleCalendarFeedUrl(feedUrl), '_blank', 'noopener');
             setSyncCalendarFeedback('Opening Google Calendar subscription.', 'success');
         });
-        document.getElementById('sync-calendar-copy')?.addEventListener('click', () => {
-            copyPrivateCalendarFeedUrl(getCurrentCalendarFeedUrl());
+        document.getElementById('sync-calendar-copy')?.addEventListener('click', async () => {
+            await copyPrivateCalendarFeedUrl(preparedPrivateCalendarFeedUrl);
         });
         document.getElementById('public-games-feed')?.addEventListener('click', copyPublicGamesFeedUrl);
 
