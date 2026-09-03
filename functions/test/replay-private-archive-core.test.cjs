@@ -496,6 +496,21 @@ test('revision generation fails closed and season resolution uses authoritative 
   assert.throws(() => createReplayRevision(() => 'weak'), /Secure replay revision/);
   assert.equal(resolveReplaySeasonId({ seasonId: 'spring-27' }, { currentSeasonId: 'fall-27' }), 'spring-27');
   assert.equal(resolveReplaySeasonId({}, { currentSeasonId: 'fall-27' }), 'fall-27');
+  assert.equal(resolveReplaySeasonId(
+    { date: '2025-08-01T12:00:00Z' },
+    {},
+    new Date('2032-05-01T00:00:00Z')
+  ), '2025');
+  assert.equal(resolveReplaySeasonId(
+    { startTime: { toDate: () => new Date('2024-07-01T12:00:00Z') } },
+    {},
+    new Date('2032-05-01T00:00:00Z')
+  ), '2024');
+  assert.equal(resolveReplaySeasonId(
+    { scheduledAt: 'not-a-date' },
+    {},
+    new Date('2032-05-01T00:00:00Z')
+  ), '2032');
   assert.equal(resolveReplaySeasonId({}, {}, new Date('2032-05-01T00:00:00Z')), '2032');
   assert.equal(resolveReplaySeasonId({ seasonId: 'bad season' }, {}), '');
   assert.deepEqual(normalizeReplayPremiumConfig(null, { exists: false }), {

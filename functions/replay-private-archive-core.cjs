@@ -1284,13 +1284,31 @@ function serializeReplayManagementState(game = {}, archive = null) {
 }
 
 function resolveReplaySeasonId(game = {}, team = {}, now = new Date()) {
-  const candidate = [
+  const explicitCandidate = [
     game?.seasonId,
     game?.season,
     team?.currentSeasonId,
     team?.seasonId,
     team?.season
-  ].map((value) => compactText(value, 41)).find(Boolean) || String(new Date(now).getUTCFullYear());
+  ].map((value) => compactText(value, 41)).find(Boolean);
+  let candidate = explicitCandidate;
+  if (!candidate) {
+    const dateValue = game?.date || game?.startTime || game?.scheduledAt || now;
+    let parsedDate;
+    try {
+      parsedDate = typeof dateValue?.toDate === 'function'
+        ? dateValue.toDate()
+        : new Date(dateValue);
+    } catch {
+      parsedDate = null;
+    }
+    const fallbackDate = parsedDate instanceof Date && Number.isFinite(parsedDate.getTime())
+      ? parsedDate
+      : new Date(now);
+    candidate = Number.isFinite(fallbackDate.getTime())
+      ? String(fallbackDate.getUTCFullYear())
+      : '';
+  }
   return /^[A-Za-z0-9_-]{1,40}$/.test(candidate) ? candidate : '';
 }
 

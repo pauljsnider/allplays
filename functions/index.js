@@ -653,6 +653,11 @@ const checkPublicTeamApiRateLimit = createInMemoryRateLimiter({
   maxRequests: 120,
   maxKeys: 5_000
 });
+const checkReplayPlaybackRateLimit = createInMemoryRateLimiter({
+  windowMs: 60_000,
+  maxRequests: 120,
+  maxKeys: 5_000
+});
 const checkCalendarForceRefreshRateLimit = createInMemoryRateLimiter({
   windowMs: 60_000,
   maxRequests: 10,
@@ -6562,6 +6567,21 @@ function normalizeReplayPlaybackInput(data = {}) {
   return { teamId, gameId, requestedSeasonId };
 }
 
+function assertReplayPlaybackRateLimit(context = {}) {
+  const uid = String(context.auth?.uid || '').trim();
+  const boundary = uid
+    ? `principal:${uid}`
+    : `network:${getRequestIp(context.rawRequest || {})}`;
+  const rateLimit = checkReplayPlaybackRateLimit({ ip: `replay-playback|${boundary}` });
+  if (!rateLimit.allowed) {
+    throw new functions.https.HttpsError(
+      'resource-exhausted',
+      'Too many replay requests. Please wait a moment and try again.',
+      { retryAfterSeconds: rateLimit.retryAfterSeconds }
+    );
+  }
+}
+
 exports.getGameReplayPlayback = functions.https.onCall(async (data, context = {}) => {
   setReplayCallableNoStore(context);
   let input;
@@ -6582,6 +6602,7 @@ exports.getGameReplayPlayback = functions.https.onCall(async (data, context = {}
   if (!sharedPath && !canonicalGameId) {
     throw new functions.https.HttpsError('invalid-argument', 'gameId is invalid.');
   }
+  assertReplayPlaybackRateLimit(context);
   const gameRef = firestore.doc(sharedPath || `teams/${input.teamId}/games/${canonicalGameId}`);
   const archiveRef = firestore.doc(`${gameRef.path}/privateReplay/archive`);
   const compatibilityReceiptRef = firestore.doc(getReplayCompatibilityReceiptPath(gameRef.path));

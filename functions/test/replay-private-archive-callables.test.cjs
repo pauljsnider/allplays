@@ -1184,6 +1184,52 @@ test('playback releases the private URL only across public/global or exact Team 
   assert.equal(globallyOpen.reason, 'global-open');
 });
 
+test('anonymous playback is rate limited before datastore reads', async () => {
+  const revision = 'r:11111111-1111-4111-8111-111111111111';
+  const path = 'teams/team-1/games/game-1';
+  const { callables, firestore } = loadCallables({
+    'teams/team-1': {
+      isPublic: true,
+      active: true,
+      currentSeasonId: 'fall-26',
+      recordedReplayPaywallEnabled: false
+    },
+    [path]: {
+      type: 'game',
+      status: 'completed',
+      visibility: 'public',
+      hasRecordedReplay: true,
+      replayArchiveRevision: revision
+    },
+    [`${path}/privateReplay/archive`]: readyArchive(revision)
+  });
+  const context = { rawRequest: { ip: '203.0.113.44' } };
+
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    const result = await callables.getGameReplayPlayback(
+      { teamId: 'team-1', gameId: 'game-1' },
+      context
+    );
+    assert.equal(result.available, true);
+  }
+
+  const signedIn = await callables.getGameReplayPlayback(
+    { teamId: 'team-1', gameId: 'game-1' },
+    {
+      ...authContext('viewer.uid', 'viewer@example.test'),
+      rawRequest: { ip: '203.0.113.44' }
+    }
+  );
+  assert.equal(signedIn.available, true);
+
+  firestore.fail('teams/team-1', Object.assign(new Error('must not read'), { code: 'unavailable' }));
+  await assert.rejects(
+    callables.getGameReplayPlayback({ teamId: 'team-1', gameId: 'game-1' }, context),
+    (error) => error.code === 'resource-exhausted'
+      && Number.isSafeInteger(error.details?.retryAfterSeconds)
+  );
+});
+
 test('private playback preserves exact server-only complete and finished compatibility aliases', async () => {
   const revision = 'r:11111111-1111-4111-8111-111111111111';
   for (const status of ['complete', 'finished']) {
