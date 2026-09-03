@@ -14,11 +14,70 @@ const trackerSource = readFileSync(new URL('../../track-live.html', import.meta.
 const legacyTrackerSource = readFileSync(new URL('../../js/live-tracker.js', import.meta.url), 'utf8');
 const appTrackerSource = readFileSync(new URL('../../apps/app/src/lib/scheduleService.ts', import.meta.url), 'utf8');
 
+function extractFunction(sourceText, name) {
+    const start = sourceText.indexOf(`function ${name}(`);
+    const signatureEnd = sourceText.indexOf('\n', start);
+    const bodyStart = sourceText.lastIndexOf('{', signatureEnd);
+    let depth = 0;
+
+    for (let index = bodyStart; index < sourceText.length; index += 1) {
+        if (sourceText[index] === '{') depth += 1;
+        if (sourceText[index] === '}') depth -= 1;
+        if (depth === 0) return sourceText.slice(start, index + 1);
+    }
+
+    throw new Error(`Unable to extract ${name}`);
+}
+
+function processLiveEventSnapshots(snapshots) {
+    const processNewEventsSource = extractFunction(currentLiveGameSource, 'processNewEvents');
+    const retainActiveLiveEventWindowSource = extractFunction(currentLiveGameSource, 'retainActiveLiveEventWindow');
+    const runSnapshots = new Function('collectVisibleLiveEventsSequentially', 'applyViewerEventToState', `
+        return (snapshots) => {
+            const state = { events: [], eventIds: new Set(), lastResetAt: 0 };
+            const ACTIVE_LIVE_EVENTS_LIMIT = 20;
+            const rerenderPlayFeed = () => {};
+            ${processNewEventsSource}
+            ${retainActiveLiveEventWindowSource}
+            snapshots.forEach((events) => {
+                processNewEvents(events);
+                retainActiveLiveEventWindow();
+            });
+            return state.events;
+        };
+    `)(
+        (events, { seenIds }) => events.filter((event) => !seenIds.has(event.id)),
+        (state, event) => ({
+            state: { ...state, events: [...state.events, event] },
+            shouldRenderLineup: false,
+            shouldRenderScoreboard: false,
+            shouldRenderPlayByPlay: false,
+            shouldRenderStats: false,
+            shouldCelebrateScore: false,
+            shouldCelebrateEvent: false
+        })
+    );
+
+    return runSnapshots(snapshots);
+}
+
 describe('live game overlay page', () => {
-    it('keeps the active live viewer on the newest bounded event window', () => {
-        expect(currentLiveGameSource).toContain('const ACTIVE_LIVE_EVENTS_LIMIT = 20;');
-        expect(currentLiveGameSource).toContain('state.events = state.events.slice(-ACTIVE_LIVE_EVENTS_LIMIT);');
-        expect(currentLiveGameSource).toContain('retainActiveLiveEventWindow();');
+    it('keeps exactly the newest 20 events from overlapping live snapshots in chronological order', () => {
+        const events = Array.from({ length: 25 }, (_, index) => ({
+            id: `event-${index + 1}`,
+            type: 'stat',
+            createdAt: index + 1
+        }));
+
+        const retainedEvents = processLiveEventSnapshots([
+            events.slice(0, 20),
+            events.slice(5, 25)
+        ]);
+
+        expect(retainedEvents).toHaveLength(20);
+        expect(retainedEvents.map((event) => event.id)).toEqual(
+            events.slice(5, 25).map((event) => event.id)
+        );
         expect(currentLiveGameSource).toContain('getLiveEvents(state.teamId, state.gameId)');
     });
 
