@@ -81,11 +81,13 @@ function serializeHomepageGame(game = {}, teamId, team = {}) {
     ? projectSharedGameForPublicTeam(game, teamId)
     : { ...game, teamId };
   if (!projected) return null;
-  const serialized = serializePublicGame(projected, { team });
+  const serialized = serializePublicGame(projected, { team, recordedReplayMarkerOnly: true });
   if (!serialized) return null;
 
   const homeScore = serialized.isHome ? serialized.teamScore : serialized.opponentScore;
   const awayScore = serialized.isHome ? serialized.opponentScore : serialized.teamScore;
+  const hasRecordedReplay = serialized.videoLifecycle === 'completed'
+    && game.hasRecordedReplay === true;
   return {
     id: serialized.id,
     teamId,
@@ -100,7 +102,10 @@ function serializeHomepageGame(game = {}, teamId, team = {}) {
     awayScore,
     liveViewerCount: finiteNonNegative(game.liveViewerCount),
     videoLifecycle: serialized.videoLifecycle,
-    videoUrl: serialized.videoUrl,
+    // Homepage cards only need a safe capability marker for recorded replay
+    // navigation. The playback callable is the sole URL-release boundary.
+    videoUrl: serialized.videoLifecycle === 'live' ? serialized.videoUrl : null,
+    hasRecordedReplay,
     isSharedGame: projected.isSharedGame === true,
     team: serializePublicTeam(teamId, team)
   };
@@ -147,7 +152,7 @@ async function serializePublicHomepageCandidates({
       const videoLifecycle = game?.videoLifecycle;
       const hasCompletedLivePlayback = ['completed', 'final'].includes(game?.liveStatus);
       const hasReplayExperience = videoLifecycle === 'completed'
-        && (hasCompletedLivePlayback || Boolean(game?.videoUrl));
+        && (hasCompletedLivePlayback || game?.hasRecordedReplay === true);
       const categoryMatches = game && (
         category === 'live'
           ? videoLifecycle === 'live'
