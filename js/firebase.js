@@ -225,9 +225,26 @@ async function initializeFirebaseDb(appInstance, privacyState) {
     }
 }
 
+function initializeFirebaseDbOnce(appInstance) {
+    const globalInitializationKey = '__allplaysFirebaseDbInitialization';
+    const existingInitialization = globalThis?.[globalInitializationKey];
+    if (existingInitialization) {
+        return existingInitialization;
+    }
+
+    // Vite can load this legacy module through both plain and query-versioned
+    // URLs. Publish the promise before its first await so every module identity
+    // shares the same privacy check, cache clear, and Firestore initialization.
+    const initialization = (async () => {
+        const privacyState = await loadReplayPrivacyMigrationStatus();
+        return initializeFirebaseDb(appInstance, privacyState);
+    })();
+    globalThis[globalInitializationKey] = initialization;
+    return initialization;
+}
+
 export const auth = initializeFirebaseAuth(app);
-const replayPrivacyMigrationStatus = await loadReplayPrivacyMigrationStatus();
-export const db = await initializeFirebaseDb(app, replayPrivacyMigrationStatus);
+export const db = await initializeFirebaseDbOnce(app);
 export const storage = getStorage(app);
 export const functions = replayPrivacyFunctions;
 

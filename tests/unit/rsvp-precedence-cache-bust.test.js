@@ -54,25 +54,25 @@ describe('RSVP precedence cache delivery', () => {
     it('propagates fresh keys through cached wrapper and shared utility entry modules', () => {
         const consumerVersions = {
             'admin.html': 'js/admin.js?v=443359',
-            'certificates.html': 'js/certificates/studio.js?v=443364',
+            'certificates.html': 'js/certificates/studio.js?v=443365',
             'live-game.html': 'js/live-game.js?v=443358',
             'live-tracker.html': 'js/live-tracker.js?v=443327',
-            'team-fees.html': 'js/team-fees-admin.js?v=443362',
+            'team-fees.html': 'js/team-fees-admin.js?v=443363',
             'team-media.html': 'js/team-media.js?v=44543',
             'track-basketball.html': 'js/track-basketball.js?v=443326',
-            'tracking-items.html': 'js/tracking-items-admin.js?v=443360',
-            'team.html': 'js/team-staff-permissions.js?v=443345',
-            'game-day.html': 'js/team-admin-banner.js?v=443347'
+            'tracking-items.html': 'js/tracking-items-admin.js?v=443361',
+            'team.html': 'js/team-staff-permissions.js?v=443346',
+            'game-day.html': 'js/team-admin-banner.js?v=443348'
         };
 
         for (const [path, expectedVersion] of Object.entries(consumerVersions)) {
             expect(readRepoFile(path)).toContain(expectedVersion);
         }
 
-        expect(readRepoFile('js/utils.js')).toContain("import('./global-search.js?v=443353')");
+        expect(readRepoFile('js/utils.js')).toContain("import('./global-search.js?v=443354')");
         expect(readRepoFile('js/db.js')).toContain("from './utils.js?v=443372';");
         expect(readRepoFile('parent-dashboard.html')).toContain('js/utils.js?v=443372');
-        expect(readRepoFile('js/live-game.js')).toContain("from './live-game-state.js?v=43';");
+        expect(readRepoFile('js/live-game.js')).toContain("from './live-game-state.js?v=44';");
     });
 
     it('guards the shared utils cache key and all of its production consumers', () => {

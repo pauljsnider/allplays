@@ -130,6 +130,7 @@ describe('firebase firestore initialization', () => {
             }));
         });
         delete globalThis.__allplaysFirebaseDb;
+        delete globalThis.__allplaysFirebaseDbInitialization;
     });
 
     afterEach(() => {
@@ -263,6 +264,35 @@ describe('firebase firestore initialization', () => {
         expect(firestoreMocks.initializeFirestore).not.toHaveBeenCalled();
         expect(firestoreMocks.memoryLocalCache).not.toHaveBeenCalled();
         expect(firestoreMocks.persistentLocalCache).not.toHaveBeenCalled();
+    });
+
+    it('shares one cache upgrade across plain and versioned module identities after Firestore starts', async () => {
+        vi.stubGlobal('window', {
+            location: { protocol: 'https:', hostname: 'allplays.ai' }
+        });
+        vi.stubGlobal('localStorage', {
+            getItem: vi.fn(() => ''),
+            setItem: vi.fn(),
+            removeItem: vi.fn()
+        });
+        let firestoreStarted = false;
+        firestoreMocks.clearIndexedDbPersistence.mockImplementation(async () => {
+            if (firestoreStarted) {
+                throw Object.assign(
+                    new Error('Persistence can only be cleared before a Firestore instance is initialized or after it is terminated.'),
+                    { code: 'failed-precondition' }
+                );
+            }
+        });
+
+        const plainModule = await import('../../js/firebase.js');
+        firestoreStarted = true;
+        const versionedModule = await import('../../js/firebase.js?v=34');
+
+        expect(versionedModule.db).toBe(plainModule.db);
+        expect(functionsMocks.httpsCallable).toHaveBeenCalledTimes(1);
+        expect(firestoreMocks.initializeFirestore).toHaveBeenCalledTimes(1);
+        expect(firestoreMocks.clearIndexedDbPersistence).toHaveBeenCalledTimes(1);
     });
 
     it('falls back to getFirestore when initializeFirestore was already called elsewhere', async () => {

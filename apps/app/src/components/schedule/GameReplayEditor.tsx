@@ -92,11 +92,13 @@ export function GameReplayEditor({
   const restoreFocusAfterActionRef = useRef(false);
   const visibilityRef = useRef({ eventKey: event.eventKey, wasManageable: canManageGameReplay(event, auth) });
   const replayFormId = `game-replay-form-${event.id.replace(/[^A-Za-z0-9_-]/g, '-')}`;
+  const hasManagementAccess = hasReplayManagementAccess(event, auth);
+  const managementPrincipalId = auth.user?.uid || '';
   const isManageable = canManageGameReplay(event, auth);
   const eventSafeState = getEventSafeReplayState(event);
 
   const loadManagementState = useCallback(async () => {
-    if (!hasReplayManagementAccess(event, auth)) return;
+    if (!hasManagementAccess || !managementPrincipalId) return;
     setLoadingState(true);
     setLoadError(null);
     try {
@@ -110,11 +112,11 @@ export function GameReplayEditor({
     } finally {
       setLoadingState(false);
     }
-  }, [auth, event.id, event.teamId]);
+  }, [event.id, event.teamId, hasManagementAccess, managementPrincipalId]);
 
   useEffect(() => {
     let active = true;
-    if (!hasReplayManagementAccess(event, auth)) {
+    if (!hasManagementAccess || !managementPrincipalId) {
       setManagementState(null);
       setReplayUrl('');
       setLoadError(null);
@@ -140,7 +142,7 @@ export function GameReplayEditor({
     return () => {
       active = false;
     };
-  }, [auth, event.eventKey, event.id, event.replayArchiveRevision, event.teamId]);
+  }, [event.eventKey, event.id, event.replayArchiveRevision, event.teamId, hasManagementAccess, managementPrincipalId]);
 
   useEffect(() => {
     if (savingAction !== null || !restoreFocusAfterActionRef.current) return;
@@ -154,7 +156,7 @@ export function GameReplayEditor({
     visibilityRef.current.wasManageable = true;
   }
   const retainRemovedReplayNotice =
-    visibilityRef.current.wasManageable && hasReplayManagementAccess(event, auth) && !hasSafeReplayMarker(event);
+    visibilityRef.current.wasManageable && hasManagementAccess && !hasSafeReplayMarker(event);
 
   if (!isManageable && !retainRemovedReplayNotice) return null;
   const canLinkOrReplace = !event.isCancelled && isCompletedGameForReplay(event);

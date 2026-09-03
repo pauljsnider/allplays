@@ -24,7 +24,7 @@ import {
     canViewSavedCertificate
 } from '../db.js?v=4433196';
 import { renderHeader, renderFooter, escapeHtml, shareOrCopy } from '../utils.js?v=443372';
-import { renderTeamAdminBanner, getTeamAccessInfo } from '../team-admin-banner.js?v=443347';
+import { renderTeamAdminBanner, getTeamAccessInfo } from '../team-admin-banner.js?v=443348';
 import { TEMPLATES } from './templates.js?v=2';
 import { CERTIFICATE_FONT_OPTIONS, renderCertificate, createPreviewDraft, resolveColors, getContrastWarning } from './renderer.js?v=2';
 import { buildDefaultSigners, normalizeSigners } from './signers.js?v=2';
