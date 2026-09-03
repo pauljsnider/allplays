@@ -29,13 +29,15 @@ function loadPublicTeamDataAccess(firestore) {
     'normalizeTeamId',
     'isPublicProjectionItemAfterCursor',
     'serializePublicGame',
+    'loadServerReplayProjection',
     implementation
   )(
     firestore,
     getPublicOpponentStatKeys,
     normalizeTeamId,
     isPublicProjectionItemAfterCursor,
-    serializePublicGame
+    serializePublicGame,
+    async (game) => game
   );
 }
 
@@ -78,7 +80,11 @@ function makeQuerySnapshot(docs) {
 }
 
 function makeDoc(id, data) {
-  return { id, data: () => data };
+  return {
+    id,
+    ref: { path: `teams/team-1/games/${id}` },
+    data: () => data
+  };
 }
 
 function makeFirestore({ players = [], games = [], configs = {}, metrics = {} } = {}) {

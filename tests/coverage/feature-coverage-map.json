@@ -581,6 +581,7 @@
                 "commitCertificateDefaults",
                 "dispatchDueTeamMediaNotificationBatches",
                 "indexCertificateLegacySignaturesOnDefaultsWrite",
+                "mutateStructuredMediaIdentity",
                 "notifyPublishedCertificateAward",
                 "queueTeamMediaNotificationBatch"
             ],
@@ -641,14 +642,24 @@
                 "apps/app/src/pages/StandardTracker.tsx"
             ],
             "cloudFunctions": [
+                "cleanupPrivateReplayArchiveOnGameDelete",
+                "cleanupPrivateReplayArchiveOnSharedGameDelete",
                 "deleteStatConfig",
                 "gameReportSharePreview",
+                "getGameReplayPlayback",
+                "getReplayPrivacyMigrationStatus",
                 "liveGameSharePreview",
+                "manageGameReplayArchive",
                 "resetTeamStatConfigs",
-                "notifyLiveEventCreated"
+                "notifyLiveEventCreated",
+                "saveAthleteProfileProjection",
+                "saveGameHighlightClips"
             ],
             "unitTests": [
+                "functions/test/athlete-profile-projection-core.test.cjs",
                 "functions/test/live-game-share-preview-core.test.cjs",
+                "functions/test/replay-private-archive-callables.test.cjs",
+                "functions/test/replay-private-archive-core.test.cjs",
                 "functions/test/stat-config-management-core.test.cjs",
                 "tests/unit/app-baseball-scorekeeping-service.test.ts",
                 "tests/unit/app-game-report-service.test.js",

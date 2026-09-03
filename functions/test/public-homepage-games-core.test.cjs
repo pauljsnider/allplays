@@ -49,6 +49,7 @@ test('homepage serializer exposes only public game and team fields', () => {
     liveViewerCount: 12,
     videoLifecycle: 'live',
     videoUrl: null,
+    hasRecordedReplay: false,
     isSharedGame: false,
     team: {
       id: 'team-public',
@@ -91,6 +92,7 @@ test('homepage projection preserves and classifies the ordered replay lifecycle'
       date: '2026-07-28T18:00:00Z',
       status: 'completed',
       liveStatus: 'scheduled',
+      hasRecordedReplay: true,
       replayVideo: {
         provider: 'youtube',
         videoId: 'PK1HyC37doc',
@@ -109,6 +111,7 @@ test('homepage projection preserves and classifies the ordered replay lifecycle'
       id: 'legacy-final-replay',
       date: '2026-07-29T00:10:00Z',
       status: 'final',
+      hasRecordedReplay: true,
       replayVideo: {
         provider: 'youtube',
         videoId: 'PK1HyC37doc',
@@ -156,6 +159,8 @@ test('homepage projection preserves and classifies the ordered replay lifecycle'
   assert.equal(statsheetProjection.status, 'completed');
   assert.equal(statsheetProjection.liveStatus, 'scheduled');
   assert.equal(statsheetProjection.videoLifecycle, 'completed');
+  assert.equal(statsheetProjection.hasRecordedReplay, true);
+  assert.equal(statsheetProjection.videoUrl, null);
 
   for (const candidate of [candidates[9], candidates[10], candidates[13], candidates[14]]) {
     const projection = serializeHomepageGame(candidate, 'team-public', publicTeam);

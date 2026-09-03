@@ -723,6 +723,20 @@
       ]
     },
     {
+      "collectionGroup": "privateReplay",
+      "fieldPath": "linkedBy",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
+    },
+    {
+      "collectionGroup": "privateReplay",
+      "fieldPath": "updatedBy",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
+    },
+    {
       "collectionGroup": "calendarTokens",
       "fieldPath": "uid",
       "indexes": [
