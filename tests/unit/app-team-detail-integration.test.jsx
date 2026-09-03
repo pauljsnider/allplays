@@ -25,7 +25,7 @@ const teamDetailMocks = vi.hoisted(() => ({
     revokeVideographerAccessForApp: vi.fn(),
     inviteTeamAdminForApp: vi.fn(),
     saveTeamScheduleNotificationsForApp: vi.fn(),
-    buildPublicTeamGamesIcsUrl: vi.fn((teamId) => `https://us-central1-all-plays-prod.cloudfunctions.net/publicTeamGamesIcs?teamId=${encodeURIComponent(teamId)}`),
+    buildPublicTeamGamesIcsUrl: vi.fn((teamId) => `https://us-central1-game-flow-c6311.cloudfunctions.net/publicTeamGamesIcs?teamId=${encodeURIComponent(teamId)}`),
     canExposePublicFanFeed: vi.fn((team, events = []) => (events || []).some((event) => event?.type === 'game' && event?.visibility !== 'private' && event?.isPrivate !== true && event?.status !== 'deleted' && event?.liveStatus !== 'deleted' && ((team?.isPublic !== false && team?.active !== false) || event?.isPublic === true || event?.shareable === true || event?.publicCalendar === true)))
 }));
 const publicActionMocks = vi.hoisted(() => ({
@@ -34,7 +34,7 @@ const publicActionMocks = vi.hoisted(() => ({
     sharePublicUrl: vi.fn()
 }));
 const parentToolsMocks = vi.hoisted(() => ({
-    buildPrivateTeamCalendarFeedUrl: vi.fn(),
+    getPrivateTeamCalendarFeedUrl: vi.fn(),
     getAppleCalendarFeedUrl: vi.fn((url) => String(url).replace(/^https?:\/\//i, 'webcal://')),
     getGoogleCalendarFeedUrl: vi.fn((url) => `https://calendar.google.com/calendar/render?cid=${encodeURIComponent(url)}`)
 }));
@@ -173,6 +173,7 @@ function model() {
             assignedUpcomingGames: [{ gameId: 'game-1', title: 'vs. Falcons', date: nextDate }]
         }],
         canManageTeam: false,
+        canUsePrivateCalendarSync: true,
         staffPermissions: null,
         counts: { games: 8, practices: 3, completedGames: 7 }
     };
@@ -326,7 +327,7 @@ beforeEach(() => {
     };
     publicActionMocks.copyPublicText.mockResolvedValue('copied');
     publicActionMocks.sharePublicUrl.mockResolvedValue('copied');
-    parentToolsMocks.buildPrivateTeamCalendarFeedUrl.mockReturnValue('https://feed.example.test/private-team.ics?teamId=team-1&token=abc123');
+    parentToolsMocks.getPrivateTeamCalendarFeedUrl.mockResolvedValue('https://feed.example.test/private-team.ics?teamId=team-1&token=abc123');
     scheduleServiceMocks.loadParentSchedule.mockResolvedValue(scheduleResultForModel(coreModel()));
     scheduleServiceMocks.loadPreview.mockResolvedValue({
         missingPlayerCount: 0,
@@ -430,7 +431,7 @@ describe('React app TeamDetail page', () => {
         fanModel.team.name = 'Bears & Wolves';
         teamDetailMocks.loadParentTeamDetailBootstrap.mockResolvedValueOnce(fanModel);
         teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(fanModel);
-        parentToolsMocks.buildPrivateTeamCalendarFeedUrl.mockReturnValue('https://feed.example.test/private-team.ics?teamId=team%201%2Fblue&token=abc123');
+        parentToolsMocks.getPrivateTeamCalendarFeedUrl.mockResolvedValue('https://feed.example.test/private-team.ics?teamId=team%201%2Fblue&token=abc123');
 
         const { container } = await renderTeamDetail();
 
@@ -440,7 +441,7 @@ describe('React app TeamDetail page', () => {
         expect(container.textContent).toContain('Open team schedule for one-time .ics export');
 
         await clickButtonInCard(container, 'Private calendar sync', 'Copy Link');
-        expect(parentToolsMocks.buildPrivateTeamCalendarFeedUrl).toHaveBeenCalledWith('team 1/blue', expect.objectContaining({ id: 'team 1/blue' }));
+        expect(parentToolsMocks.getPrivateTeamCalendarFeedUrl).toHaveBeenCalledWith('team 1/blue');
         expect(publicActionMocks.copyPublicText).toHaveBeenCalledWith('https://feed.example.test/private-team.ics?teamId=team%201%2Fblue&token=abc123');
         expect(container.textContent).toContain('Private calendar link copied.');
 
@@ -470,8 +471,8 @@ describe('React app TeamDetail page', () => {
         expect(publicActionMocks.sharePublicUrl).toHaveBeenCalledWith({
             title: 'Bears & Wolves fan feed',
             text: 'Bears & Wolves public games calendar feed',
-            url: 'https://us-central1-all-plays-prod.cloudfunctions.net/publicTeamGamesIcs?teamId=team%201%2Fblue',
-            clipboardText: 'https://us-central1-all-plays-prod.cloudfunctions.net/publicTeamGamesIcs?teamId=team%201%2Fblue'
+            url: 'https://us-central1-game-flow-c6311.cloudfunctions.net/publicTeamGamesIcs?teamId=team%201%2Fblue',
+            clipboardText: 'https://us-central1-game-flow-c6311.cloudfunctions.net/publicTeamGamesIcs?teamId=team%201%2Fblue'
         });
         expect(container.textContent).toContain('Fan feed link copied.');
 
@@ -490,8 +491,8 @@ describe('React app TeamDetail page', () => {
         expect(hidden.container.textContent).not.toContain('Fan Feed');
     });
 
-    it('shows a private calendar sync error and hides sync actions without a signed-in user', async () => {
-        parentToolsMocks.buildPrivateTeamCalendarFeedUrl.mockImplementationOnce(() => { throw new Error('Unable to create private calendar feed. Sign in again and retry.'); });
+    it('shows private calendar errors only to eligible users and hides sync for denied or signed-out users', async () => {
+        parentToolsMocks.getPrivateTeamCalendarFeedUrl.mockRejectedValueOnce(new Error('Unable to create private calendar feed. Sign in again and retry.'));
         const { container } = await renderTeamDetail();
 
         await clickButton(container, 'More');
@@ -506,6 +507,15 @@ describe('React app TeamDetail page', () => {
         });
         await clickButton(signedOut.container, 'More');
         expect(signedOut.container.textContent).not.toContain('Private calendar sync');
+
+        const deniedModel = model();
+        deniedModel.canUsePrivateCalendarSync = false;
+        teamDetailMocks.loadParentTeamDetailBootstrap.mockResolvedValueOnce(deniedModel);
+        teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(deniedModel);
+        const denied = await renderTeamDetail();
+        await clickButton(denied.container, 'More');
+        expect(denied.container.textContent).not.toContain('Private calendar sync');
+        expect(parentToolsMocks.getPrivateTeamCalendarFeedUrl).toHaveBeenCalledTimes(1);
     });
 
     it('renders scoreboard widget copy tools only for managers', async () => {

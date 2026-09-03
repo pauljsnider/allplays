@@ -440,9 +440,13 @@ function sanitizeFamilyShareChild(child = {}) {
 
 function sanitizeFamilyShareGame(game = {}) {
   const safe = {
-    id: compactText(game.id || game.gameId, 256),
-    gameId: compactText(game.gameId || game.id, 256),
-    type: game.type === 'practice' ? 'practice' : 'game'
+    // Shared-game route IDs include an encoded bounded document path and can
+    // legitimately exceed a normal Firestore document ID.
+    id: compactText(game.id || game.gameId, 1000),
+    gameId: compactText(game.gameId || game.id, 1000),
+    type: game.type === 'practice' ? 'practice' : 'game',
+    hasReplayVideo: game.hasReplayVideo === true,
+    canOpenPublicViewer: game.canOpenPublicViewer === true
   };
   ['date', 'end', 'endDate', 'instanceDate'].forEach((field) => {
     const value = toIso(game[field]);
@@ -458,12 +462,14 @@ function sanitizeFamilyShareGame(game = {}) {
     if (game[field] != null) safe[field] = compactText(game[field], 240);
   });
   if (game.location != null) safe.location = compactText(game.location, 300);
-  if (game.status != null) safe.status = compactText(game.status, 32);
+  if (game.status != null) safe.status = compactText(game.status, 32).toLowerCase();
+  if (game.liveStatus != null) safe.liveStatus = compactText(game.liveStatus, 32).toLowerCase();
   if (game.opponentTeamPhoto != null) safe.opponentTeamPhoto = compactText(game.opponentTeamPhoto, 2048);
   if (game.competitionType != null) safe.competitionType = compactText(game.competitionType, 64);
   ['isSeriesMaster', 'isHome', 'isSharedGame', 'countsTowardSeasonRecord'].forEach((field) => {
     if (typeof game[field] === 'boolean') safe[field] = game[field];
   });
+  if (game.isCancelled === true) safe.isCancelled = true;
   ['endDayOffset', 'homeScore', 'awayScore'].forEach((field) => {
     if (game[field] == null || game[field] === '') return;
     const value = Number(game[field]);

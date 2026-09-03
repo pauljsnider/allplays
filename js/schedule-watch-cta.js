@@ -1,3 +1,8 @@
+import {
+    getGameReplayLifecycle,
+    resolveGameReplayPlaybackSource
+} from './game-replay-video.js?v=3';
+
 function normalizeStatus(value) {
     return String(value || '').trim().toLowerCase();
 }
@@ -11,7 +16,20 @@ function isDeletedGame(game) {
 }
 
 function isCancelledGame(game) {
-    return game?.isCancelled === true || normalizeStatus(game?.status) === 'cancelled';
+    return game?.isCancelled === true
+        || ['cancelled', 'canceled'].includes(normalizeStatus(game?.status))
+        || ['cancelled', 'canceled'].includes(normalizeStatus(game?.liveStatus));
+}
+
+function hasCompletedReplayLifecycle(game) {
+    return getGameReplayLifecycle(game).isCompleted;
+}
+
+export function hasReplayVideoEvidence(game) {
+    const playbackSource = resolveGameReplayPlaybackSource(game);
+    if (playbackSource.state === 'playable') return true;
+    if (playbackSource.state !== 'none') return false;
+    return game?.hasReplayVideo === true;
 }
 
 export function resolveScheduleWatchCta(game) {
@@ -22,8 +40,10 @@ export function resolveScheduleWatchCta(game) {
     const gameId = String(game.gameId || game.id || '').trim();
     if (!teamId || !gameId) return null;
 
-    const liveStatus = normalizeStatus(game.liveStatus);
-    if (liveStatus === 'completed') {
+    const lifecycle = getGameReplayLifecycle(game);
+    const hasCompletedLivePlayback = ['completed', 'final'].includes(lifecycle.liveStatus);
+    if (hasCompletedReplayLifecycle(game)
+        && (hasCompletedLivePlayback || hasReplayVideoEvidence(game))) {
         return {
             kind: 'replay',
             label: 'Watch Replay',
@@ -31,7 +51,7 @@ export function resolveScheduleWatchCta(game) {
         };
     }
 
-    if (liveStatus === 'live') {
+    if (lifecycle.isActiveLive) {
         return {
             kind: 'live',
             label: 'Watch Live',

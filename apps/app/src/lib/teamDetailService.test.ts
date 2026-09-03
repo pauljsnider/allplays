@@ -172,6 +172,7 @@ import {
   buildTeamDetailModel,
   createTeamPassCheckoutForApp,
   createStatTrackerConfigForApp,
+  isEligiblePrivateCalendarSubscriberForApp,
   loadParentTeamDetail,
   loadParentTeamDetailBootstrap,
   loadTeamDetailInsights,
@@ -1593,6 +1594,38 @@ describe('buildTeamDetailModel registration provider', () => {
     });
 
     expect(built.canPurchaseTeamPass).toBe(expected);
+  });
+
+  it.each([
+    ['canonical owner', { uid: 'owner-1', email: 'owner@example.com' }, { ownerId: 'owner-1' }, true],
+    ['verified current-email team admin', { uid: 'admin-1', email: 'ADMIN@example.com', emailVerified: true }, { ownerId: 'owner-1', adminEmails: ['admin@example.com'] }, true],
+    ['unverified current-email team admin', { uid: 'admin-1', email: 'admin@example.com', emailVerified: false }, { ownerId: 'owner-1', adminEmails: ['admin@example.com'] }, false],
+    ['confirmed parent', { uid: 'parent-1', email: 'parent@example.com', parentTeamIds: ['team-1'] }, { ownerId: 'owner-1' }, true],
+    ['platform-admin-only user', { uid: 'platform-1', email: 'platform@example.com', isAdmin: true }, { ownerId: 'owner-1' }, false],
+    ['verified legacy email-only owner', { uid: 'legacy-1', email: 'legacy@example.com', emailVerified: true }, { ownerEmail: 'legacy@example.com' }, true],
+    ['unverified legacy email-only owner', { uid: 'legacy-1', email: 'legacy@example.com', emailVerified: false }, { ownerEmail: 'legacy@example.com' }, false],
+    ['conflicting legacy owner aliases', { uid: 'legacy-1', email: 'legacy@example.com', emailVerified: true }, { ownerEmail: 'legacy@example.com', ownerEmailLower: 'other@example.com' }, false],
+    ['stale legacy alias behind a canonical owner', { uid: 'legacy-1', email: 'legacy@example.com', emailVerified: true }, { ownerId: 'owner-1', ownerEmail: 'legacy@example.com' }, false],
+    ['parent behind a malformed canonical owner', { uid: 'parent-1', email: 'parent@example.com', parentTeamIds: ['team-1'] }, { ownerId: ' owner-1 ' }, false],
+    ['coach-only delegate', { uid: 'coach-1', email: 'coach@example.com', coachOf: ['team-1'] }, { ownerId: 'owner-1' }, false],
+    ['linked-player-only user', { uid: 'member-1', email: 'member@example.com', parentOf: [{ teamId: 'team-1' }], parentPlayerKeys: ['team-1:player-1'] }, { ownerId: 'owner-1' }, false],
+    ['scorekeeper delegate', { uid: 'scorekeeper-1', email: 'score@example.com', scorekeeperTeamIds: ['team-1'] }, { ownerId: 'owner-1' }, false],
+    ['stream delegate', { uid: 'stream-1', email: 'stream@example.com', streamTeamIds: ['team-1'] }, { ownerId: 'owner-1' }, false],
+    ['media and video delegate', { uid: 'media-1', email: 'media@example.com', teamMediaUploadTeamIds: ['team-1'], mediaUploadTeamIds: ['team-1'], videographerTeamIds: ['team-1'] }, { ownerId: 'owner-1' }, false],
+    ['wrong-team parent', { uid: 'parent-1', email: 'parent@example.com', parentTeamIds: ['team-2'] }, { ownerId: 'owner-1' }, false]
+  ])('projects private calendar eligibility for a %s', (_label, user, team, expected) => {
+    expect(isEligiblePrivateCalendarSubscriberForApp(
+      user as any,
+      'team-1',
+      { id: 'team-1', name: 'Bears', ...team }
+    )).toBe(expected);
+
+    const built = buildTeamDetailModel({
+      teamId: 'team-1',
+      team: { id: 'team-1', name: 'Bears', ...team },
+      user: user as any
+    });
+    expect(built.canUsePrivateCalendarSync).toBe(expected);
   });
 
   it('returns no registration provider rows when the team has no registration source', () => {

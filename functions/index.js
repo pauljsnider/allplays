@@ -133,13 +133,19 @@ const {
   normalizePublicRegistrationSecurityMode,
   resolvePublicRegistrationGuardianEmail
 } = require('./public-registration-abuse-core.cjs');
-const { buildPublicGamesIcs, canExposeEmptyPublicFeed, isPublicFanGame } = require('./public-calendar-core.cjs');
+const {
+  buildPublicGamesIcs,
+  canExposeEmptyPublicFeed,
+  isPublicFanGame,
+  normalizePublicCalendarTeamId
+} = require('./public-calendar-core.cjs');
 const {
   buildPublicGamesResponse,
   buildPublicRosterResponse,
   canTrackedCalendarEventSuppressPublicProjection,
   canProjectPublicGame,
   getPublicOpponentStatKeys,
+  getPublicVideoLifecycle,
   isStrictPublicTeam,
   isPublicProjectionItemAfterCursor,
   normalizeTeamId,
@@ -196,9 +202,12 @@ const {
 } = require('./public-rsvp-idempotency-core.cjs');
 const {
   buildTeamCalendarIcs,
-  calendarTokenHasTeamAccess,
-  normalizeCalendarRequest
+  createTeamCalendarFeedCredentialResolver,
+  getCalendarTokenHolderId
 } = require('./team-calendar-feed-core.cjs');
+const {
+  createGetOrCreatePrivateTeamCalendarFeedHandler
+} = require('./team-calendar-subscription-core.cjs');
 const {
   isFamilyShareTokenReadable,
   resolveFamilyShareChildrenFromOwnerProfile
@@ -215,7 +224,10 @@ const {
   validateRsvpTokenRedemption,
   buildRsvpTokenAuditPayload
 } = require('./rsvp-token-core.cjs');
-const { isAllowedPublicRsvpOrigin } = require('./public-rsvp-cors-core.cjs');
+const {
+  isAllowedPublicRsvpAdminOrigin,
+  isAllowedPublicRsvpOrigin
+} = require('./public-rsvp-cors-core.cjs');
 const {
   normalizeText,
   resolveTeamEmailRecipients,
@@ -386,6 +398,7 @@ const {
   buildTeamAccountGrantScrubPlan,
   collectAccountRosterScopes,
   collectAccountTeamIds,
+  cleanupAccountCalendarCredentials,
   createAccountDeletionRequestHandler,
   deleteAccountMediaStoragePages,
   getAccountDeletionCollectionQueries,
@@ -7489,13 +7502,15 @@ function getAllowedOriginPolicy() {
   if (Array.isArray(configuredOrigins)) {
     return {
       origins: configuredOrigins.map((origin) => String(origin).trim()).filter(Boolean),
-      allowFirebaseHosting: false
+      allowFirebaseHosting: false,
+      allowNativeCalendarOrigins: false
     };
   }
   if (typeof configuredOrigins === 'string') {
     return {
       origins: configuredOrigins.split(',').map((origin) => origin.trim()).filter(Boolean),
-      allowFirebaseHosting: false
+      allowFirebaseHosting: false,
+      allowNativeCalendarOrigins: false
     };
   }
   return {
@@ -7507,16 +7522,26 @@ function getAllowedOriginPolicy() {
       'http://localhost:5174',
       'http://127.0.0.1:5174'
     ],
-    allowFirebaseHosting: true
+    allowFirebaseHosting: true,
+    allowNativeCalendarOrigins: true
   };
 }
 
 const allowedOriginPolicy = getAllowedOriginPolicy();
 const allowedOriginSet = new Set(allowedOriginPolicy.origins);
-// Capacitor's WebViews use these exact origins. Keep the exception scoped to
-// passive telemetry so it does not broaden the calendar endpoint's CORS policy.
+// Capacitor's exact WebView origins keep installed native clients on the
+// legacy HTTP calendar bridge. Configured allowlists remain authoritative.
+const calendarAllowedOriginSet = new Set([
+  ...allowedOriginSet,
+  ...(allowedOriginPolicy.allowNativeCalendarOrigins
+    ? ['https://localhost', 'capacitor://localhost']
+    : [])
+]);
+// Passive telemetry has its own exact native-origin policy, separate from the
+// calendar allowlist and its configured-origin compatibility behavior.
 const telemetryAllowedOriginSet = new Set([
   ...allowedOriginSet,
+  'https://localhost',
   'capacitor://localhost',
   'http://localhost'
 ]);
@@ -7525,7 +7550,7 @@ function isAllowedOrigin(origin) {
   if (!origin) {
     return true;
   }
-  return allowedOriginSet.has(origin) ||
+  return calendarAllowedOriginSet.has(origin) ||
     (allowedOriginPolicy.allowFirebaseHosting && isAllPlaysFirebaseHostingOrigin(origin));
 }
 
@@ -8272,6 +8297,7 @@ async function getPublicGameProjection(teamId, gameId, team) {
   if (!game || !canProjectPublicGame(team, game)) return null;
   const opponentStatKeysByGameId = await getPublicOpponentStatKeysByGameId(teamId, [game]);
   return serializePublicGame(game, {
+    team,
     opponentStatKeys: opponentStatKeysByGameId.get(String(game.id || game.gameId || ''))
   });
 }
@@ -8322,17 +8348,42 @@ function buildPublicHomepageCandidateQuery(collectionName, category, now = new D
   } else {
     const start = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     query = query
-      .where('liveStatus', '==', 'completed')
+      .where('liveStatus', 'in', ['completed', 'final', 'complete', 'finished'])
       .where('date', '>=', start)
       .orderBy('date', 'desc');
   }
   return query.limit(PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY + 1);
 }
 
+function buildPublicHomepageStatsheetReplayCandidateQuery(collectionName, now = new Date()) {
+  const start = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  return firestore.collectionGroup(collectionName)
+    .where('status', 'in', ['completed', 'final', 'complete', 'finished'])
+    .where('date', '>=', start)
+    .orderBy('date', 'desc')
+    .limit(PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY + 1);
+}
+
 async function getPublicHomepageCandidateDocuments(collectionName, category, now) {
   const snapshot = await buildPublicHomepageCandidateQuery(collectionName, category, now).get();
-  const batch = buildPublicHomepageCandidateBatch(snapshot.docs);
-  if (batch.truncated) {
+  const statsheetSnapshot = category === 'replays'
+    ? await buildPublicHomepageStatsheetReplayCandidateQuery(collectionName, now).get()
+    : null;
+  const candidateDocs = [...snapshot.docs, ...(statsheetSnapshot?.docs || [])];
+  const uniqueDocs = [...new Map(candidateDocs.map((docSnap) => [
+    String(docSnap.ref?.path || `${collectionName}/${docSnap.id}`),
+    docSnap
+  ])).values()]
+    .sort((left, right) => {
+      const rightMillis = firestoreTimestampToMillis(right.data()?.date) ?? Number.NEGATIVE_INFINITY;
+      const leftMillis = firestoreTimestampToMillis(left.data()?.date) ?? Number.NEGATIVE_INFINITY;
+      return rightMillis - leftMillis
+        || String(left.ref?.path || left.id).localeCompare(String(right.ref?.path || right.id));
+    });
+  const batch = buildPublicHomepageCandidateBatch(uniqueDocs);
+  const queryTruncated = snapshot.docs.length > PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY
+    || (statsheetSnapshot?.docs.length || 0) > PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY;
+  if (batch.truncated || queryTruncated) {
     functions.logger.warn('Truncating a public homepage candidate query at the scan limit.', {
       collectionName,
       category,
@@ -8340,7 +8391,7 @@ async function getPublicHomepageCandidateDocuments(collectionName, category, now
     });
   }
   return {
-    truncated: batch.truncated,
+    truncated: batch.truncated || queryTruncated,
     candidates: batch.candidates.map((docSnap) => ({
       id: docSnap.id,
       ...(docSnap.data() || {}),
@@ -8505,8 +8556,8 @@ exports.publicTeamGamesIcs = functions
       return;
     }
 
-    const teamId = String(req.query.teamId || '').trim();
-    if (!teamId || !/^[A-Za-z0-9_-]{1,128}$/.test(teamId)) {
+    const teamId = normalizePublicCalendarTeamId(req.query.teamId);
+    if (!teamId) {
       res.status(400).send('Missing or invalid teamId');
       return;
     }
@@ -8531,7 +8582,7 @@ exports.publicTeamGamesIcs = functions
 
       const icsText = buildPublicGamesIcs({ teamId, team, games: publicGames });
       res.set('Content-Type', 'text/calendar; charset=utf-8');
-      res.set('Content-Disposition', `inline; filename="${teamId}-public-games.ics"`);
+      res.set('Content-Disposition', 'inline; filename="allplays-public-games.ics"');
       res.set('Cache-Control', 'public, max-age=300');
       res.status(200).send(req.method === 'HEAD' ? '' : icsText);
     } catch (error) {
@@ -8552,18 +8603,62 @@ async function getCalendarTokenSnapshot(teamId, tokenHash, token) {
 }
 
 async function getCalendarTokenHolderContext(tokenData) {
-  const uid = String(tokenData.uid || tokenData.userId || tokenData.createdBy || '').trim();
+  const uid = getCalendarTokenHolderId(tokenData);
   if (!uid) return null;
-  const [userSnap, authUser] = await Promise.all([
+  const [userSnap, deletionRequestSnap, authUser] = await Promise.all([
     firestore.doc(`users/${uid}`).get(),
+    firestore.doc(`accountDeletionRequests/${uid}`).get(),
     admin.auth().getUser(uid).catch((error) => {
       if (error?.code === 'auth/user-not-found') return null;
       throw error;
     })
   ]);
   if (!userSnap.exists || !authUser || authUser.disabled === true) return null;
-  return { profile: userSnap.data() || {}, authUser };
+  return {
+    profile: userSnap.data() || {},
+    authUser,
+    accountDeletionRequested: deletionRequestSnap.exists
+  };
 }
+
+const resolveTeamCalendarFeedCredential = createTeamCalendarFeedCredentialResolver({
+  loadTeam: async (teamId) => {
+    const teamSnap = await firestore.doc(`teams/${teamId}`).get();
+    return teamSnap.exists ? teamSnap.data() || {} : null;
+  },
+  loadToken: async ({ teamId, tokenHash, token }) => {
+    const tokenSnap = await getCalendarTokenSnapshot(teamId, tokenHash, token);
+    return tokenSnap.exists ? tokenSnap.data() || {} : null;
+  },
+  loadTokenHolder: getCalendarTokenHolderContext
+});
+
+const getPrivateTeamCalendarFeedTokenHandler = createGetOrCreatePrivateTeamCalendarFeedHandler({
+  firestore,
+  auth: admin.auth(),
+  HttpsError: functions.https.HttpsError,
+  serverTimestamp: () => admin.firestore.FieldValue.serverTimestamp(),
+  assertFreshAuthUser: async ({ authUser }) => {
+    const verification = await assertSensitiveEmailVerified({
+      auth: {
+        uid: authUser.uid,
+        token: {
+          ...(authUser.customClaims || {}),
+          email: authUser.email || '',
+          email_verified: authUser.emailVerified === true
+        }
+      }
+    }, 'private-team-calendar-feed');
+    if (authUser.email && !verification.verified && !verification.exempt) {
+      throw new functions.https.HttpsError(
+        'failed-precondition',
+        'Verify your email before creating a private calendar feed.'
+      );
+    }
+  }
+});
+
+exports.getPrivateTeamCalendarFeedToken = functions.https.onCall(getPrivateTeamCalendarFeedTokenHandler);
 
 exports.teamCalendarFeed = functions.https.onRequest(async (req, res) => {
   if (req.method !== 'GET') {
@@ -8571,46 +8666,14 @@ exports.teamCalendarFeed = functions.https.onRequest(async (req, res) => {
     return;
   }
 
-  const { teamId, token, tokenHash } = normalizeCalendarRequest(req.query || {});
-  if (!teamId || !token || !tokenHash) {
-    res.status(401).send('Missing calendar token');
-    return;
-  }
-
   try {
-    const [teamSnap, tokenSnap] = await Promise.all([
-      firestore.doc(`teams/${teamId}`).get(),
-      getCalendarTokenSnapshot(teamId, tokenHash, token)
-    ]);
-
-    if (!teamSnap.exists || !tokenSnap.exists) {
-      res.status(403).send('Invalid calendar token');
+    const authorization = await resolveTeamCalendarFeedCredential(req.query || {});
+    if (!authorization.allowed) {
+      res.status(authorization.status).send(authorization.message);
       return;
     }
-
-    const team = teamSnap.data() || {};
-    const tokenData = { ...(tokenSnap.data() || {}), teamId };
-    if (tokenData.revoked === true || tokenData.disabled === true || tokenData.active === false) {
-      res.status(403).send('Revoked calendar token');
-      return;
-    }
-
-    const expiresAt = tokenData.expiresAt?.toDate ? tokenData.expiresAt.toDate() : (tokenData.expiresAt ? new Date(tokenData.expiresAt) : null);
-    if (expiresAt && !Number.isNaN(expiresAt.getTime()) && expiresAt <= new Date()) {
-      res.status(403).send('Expired calendar token');
-      return;
-    }
-
-    const tokenHolder = await getCalendarTokenHolderContext(tokenData);
-    if (!calendarTokenHasTeamAccess({
-      team,
-      profile: tokenHolder?.profile,
-      authUser: tokenHolder?.authUser,
-      tokenData
-    })) {
-      res.status(403).send('Calendar token no longer has team access');
-      return;
-    }
+    const { teamId } = authorization.request;
+    const { team } = authorization;
 
     const [eventsSnap, recurringMastersSnap] = await Promise.all([
       getCalendarFeedGamesQuery(teamId).get(),
@@ -8631,7 +8694,7 @@ exports.teamCalendarFeed = functions.https.onRequest(async (req, res) => {
     const icsText = buildTeamCalendarIcs({ teamId, team, events });
 
     res.set('Content-Type', 'text/calendar; charset=utf-8');
-    res.set('Content-Disposition', `inline; filename="${teamId}-schedule.ics"`);
+    res.set('Content-Disposition', 'inline; filename="allplays-team-schedule.ics"');
     res.set('Cache-Control', 'private, max-age=300');
     res.status(200).send(icsText);
   } catch (error) {
@@ -8659,6 +8722,8 @@ const FAMILY_SHARE_GAME_PROJECTION_FIELDS = [
   'opponent',
   'location',
   'status',
+  'liveStatus',
+  'isCancelled',
   'homeScore',
   'awayScore',
   'sharedGameId',
@@ -8814,7 +8879,10 @@ function serializeFamilyShareOverrides(value) {
     }));
 }
 
-function serializeFamilyShareGame(docSnap, { includeInternalCalendarUidHash = false } = {}) {
+function serializeFamilyShareGame(docSnap, {
+  includeInternalCalendarUidHash = false,
+  team = null
+} = {}) {
   const data = docSnap.data() || {};
   const game = {
     id: docSnap.id,
@@ -8835,11 +8903,32 @@ function serializeFamilyShareGame(docSnap, { includeInternalCalendarUidHash = fa
           .map(normalizeFamilyShareText)
           .filter((dateKey) => /^\d{4}-\d{2}-\d{2}$/.test(dateKey))
           .slice(0, 1000);
+      } else if (field === 'liveStatus') {
+        game[field] = normalizeFamilyShareText(data[field]).slice(0, 32).toLowerCase();
       } else {
         game[field] = serializeFamilyShareValue(data[field]);
       }
     }
   });
+  const publicProjection = canProjectPublicGame(team || {}, data)
+    ? serializePublicGame({ id: docSnap.id, ...data }, { team: team || {} })
+    : null;
+  if (publicProjection) {
+    game.status = publicProjection.sourceStatus || publicProjection.status || null;
+    game.liveStatus = publicProjection.liveStatus || null;
+  }
+  if (data.isCancelled === true
+    || ['cancelled', 'canceled'].includes(normalizeFamilyShareText(game.status).toLowerCase())
+    || ['cancelled', 'canceled'].includes(normalizeFamilyShareText(game.liveStatus).toLowerCase())) {
+    game.isCancelled = true;
+  } else {
+    delete game.isCancelled;
+  }
+  game.canOpenPublicViewer = Boolean(publicProjection);
+  game.hasReplayVideo = Boolean(
+    publicProjection?.videoUrl
+    && publicProjection.videoLifecycle === 'completed'
+  );
   return game;
 }
 
@@ -8902,7 +8991,7 @@ function chargeFamilyShareReadBudget(teamBudget, count) {
   teamBudget.remaining -= charged;
 }
 
-async function loadFamilyShareSharedGamesForTeam(teamId, teamBudget, includeInternalCalendarUidHash) {
+async function loadFamilyShareSharedGamesForTeam(teamId, team, teamBudget, includeInternalCalendarUidHash) {
   if (
     typeof firestore.collectionGroup !== 'function'
     || teamBudget.remaining <= 0
@@ -8942,7 +9031,7 @@ async function loadFamilyShareSharedGamesForTeam(teamId, teamBudget, includeInte
       return serializeFamilyShareGame({
         id: buildFamilyShareSharedGameSyntheticId(sharedGamePath),
         data: () => projected
-      }, { includeInternalCalendarUidHash });
+      }, { includeInternalCalendarUidHash, team });
     })
     .filter(Boolean);
 }
@@ -8985,11 +9074,13 @@ async function loadFamilyShareScheduleTeams(children, {
       const boundedDocs = gamesSnap.docs.slice(0, directQueryLimit);
       chargeFamilyShareReadBudget(teamBudget, boundedDocs.length);
       directGames = boundedDocs.map((docSnap) => serializeFamilyShareGame(docSnap, {
-        includeInternalCalendarUidHash
+        includeInternalCalendarUidHash,
+        team
       }));
     }
     const sharedGames = await loadFamilyShareSharedGamesForTeam(
       teamId,
+      team,
       teamBudget,
       includeInternalCalendarUidHash
     );
@@ -16965,9 +17056,12 @@ exports.notifyPracticePacketAssigned = retryableNotificationFunctions.firestore
     return null;
   });
 
-function writePublicRsvpCors(req, res) {
+function writePublicRsvpCors(req, res, { allowNativeAdminOrigin = false } = {}) {
   const origin = req.headers.origin;
-  if (isAllowedPublicRsvpOrigin(origin)) {
+  const isAllowed = allowNativeAdminOrigin
+    ? isAllowedPublicRsvpAdminOrigin(origin)
+    : isAllowedPublicRsvpOrigin(origin);
+  if (isAllowed) {
     res.set('Access-Control-Allow-Origin', origin);
     res.set('Vary', 'Origin');
   }
@@ -17586,7 +17680,7 @@ async function createPublicRsvpEmailDeliveries({ teamId, gameId, actorUid = null
 }
 
 exports.sendPublicRsvpEmails = functions.https.onRequest(async (req, res) => {
-  writePublicRsvpCors(req, res);
+  writePublicRsvpCors(req, res, { allowNativeAdminOrigin: true });
   if (req.method === 'OPTIONS') {
     res.status(204).send('');
     return;
@@ -20734,6 +20828,11 @@ exports.processAccountDeletionRequest = functions
       await scrubAccountChatConversationMembership(uid, ownerEmail);
       await scrubAccountRegistrationLinks(uid, ownerEmail);
       await scrubAccountRosterParentLinks(uid, userDoc.data() || {}, authUser);
+      await cleanupAccountCalendarCredentials({
+        firestore,
+        uid,
+        documentIdField: admin.firestore.FieldPath.documentId()
+      });
 
       const directDocuments = [
         `publicUserProfiles/${uid}`,

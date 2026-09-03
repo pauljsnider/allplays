@@ -7,6 +7,11 @@ const PRODUCTION_FIREBASE_HOSTING_HOSTNAMES = new Set([
     'game-flow-c6311.web.app',
     'game-flow-c6311.firebaseapp.com'
 ]);
+const LOCAL_FIREBASE_HOSTING_ORIGINS = new Set([
+    'http://localhost:8000',
+    'http://127.0.0.1:8000'
+]);
+const LOCAL_FIREBASE_PROJECT_HEADER = 'X-AllPlays-Local-Firebase-Project';
 const DEFAULT_PRIMARY_FIREBASE_CONFIG = {
     apiKey: 'AIzaSyDoixIoKJuUVWdmImwjYRTthjKOv2mU0Jc',
     authDomain: 'game-flow-c6311.firebaseapp.com',
@@ -180,6 +185,10 @@ function isProductionFirebaseHostingHostname(hostname) {
     return PRODUCTION_FIREBASE_HOSTING_HOSTNAMES.has(String(hostname || '').trim().toLowerCase());
 }
 
+function isLocalFirebaseHostingOrigin(origin) {
+    return LOCAL_FIREBASE_HOSTING_ORIGINS.has(String(origin || '').trim().toLowerCase());
+}
+
 function isBundledProductionFirebaseConfig(config) {
     return config?.projectId === DEFAULT_PRIMARY_FIREBASE_CONFIG.projectId;
 }
@@ -188,7 +197,7 @@ function isNativeRuntimeProtocol(protocol) {
     return protocol === 'capacitor:' || protocol === 'ionic:';
 }
 
-async function fetchFirebaseConfigFromHosting() {
+async function fetchFirebaseConfigFromHosting({ requireExpectedLocalProject = false } = {}) {
     const baseUrl = (typeof window !== 'undefined' && window.location && window.location.origin)
         ? window.location.origin
         : 'http://localhost'; // Fallback for Node.js tests
@@ -202,10 +211,25 @@ async function fetchFirebaseConfigFromHosting() {
         throw new Error(`Firebase config request failed (${response.status})`);
     }
 
-    const payload = await response.json();
+    const expectedLocalProjectId = requireExpectedLocalProject
+        ? String(response.headers?.get?.(LOCAL_FIREBASE_PROJECT_HEADER) || '').trim()
+        : '';
+    if (requireExpectedLocalProject && !/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(expectedLocalProjectId)) {
+        throw new Error('Local Firebase Hosting did not declare its expected project.');
+    }
+
+    let payload;
+    try {
+        payload = await response.json();
+    } catch (_error) {
+        throw new Error('Firebase Hosting init config returned an empty or invalid response.');
+    }
     const normalized = normalizeFirebaseConfig(payload);
     if (!normalized) {
         throw new Error('Firebase config payload is missing required fields');
+    }
+    if (requireExpectedLocalProject && normalized.projectId !== expectedLocalProjectId) {
+        throw new Error('Local Firebase Hosting project does not match the declared project.');
     }
 
     return normalized;
@@ -227,7 +251,24 @@ async function fetchProductionFirebaseConfigFromHosting() {
     return config;
 }
 
+async function fetchLocalFirebaseConfigFromHosting() {
+    try {
+        return await fetchFirebaseConfigFromHosting({ requireExpectedLocalProject: true });
+    } catch (error) {
+        console.warn('[firebase-config] Local Hosting config read failed.', {
+            name: String(error?.name || 'Error'),
+            message: String(error?.message || 'Unknown local Hosting error')
+        });
+        throw new Error(
+            'Firebase Hosting config is unavailable on localhost:8000. Start the site with npm run serve:firebase or npm run serve:firebase:live.'
+        );
+    }
+}
+
 export async function resolvePrimaryFirebaseConfig() {
+    const runtimeOrigin = typeof window !== 'undefined'
+        ? window.location?.origin
+        : globalThis.location?.origin;
     const runtimeHostname = typeof window !== 'undefined'
         ? window.location?.hostname
         : globalThis.location?.hostname;
@@ -237,6 +278,7 @@ export async function resolvePrimaryFirebaseConfig() {
     const canonicalProductionHost = isCanonicalProductionHostname(runtimeHostname);
     const productionFirebaseHostingHost = isProductionFirebaseHostingHostname(runtimeHostname);
     const productionRuntimeHost = canonicalProductionHost || productionFirebaseHostingHost;
+    const localFirebaseHostingRuntime = isLocalFirebaseHostingOrigin(runtimeOrigin);
     const nativeRuntime = isNativeRuntimeProtocol(runtimeProtocol);
     const globalConfig = readGlobalConfig();
     const inlineConfig = normalizeFirebaseConfig(
@@ -284,6 +326,10 @@ export async function resolvePrimaryFirebaseConfig() {
 
     if (productionFirebaseHostingHost) {
         return fetchProductionFirebaseConfigFromHosting();
+    }
+
+    if (localFirebaseHostingRuntime) {
+        return fetchLocalFirebaseConfigFromHosting();
     }
 
     if (!runtimeHostname || localDevelopmentHost || firebaseHostingHost) {

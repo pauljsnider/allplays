@@ -12,8 +12,11 @@ test('exports a bounded and cached public homepage games handler', () => {
 
   assert.match(handler, /exports\.publicHomepageGamesV1 = functions/);
   assert.match(handler, /collectionGroup\(collectionName\)/);
+  assert.match(handler, /where\('status', 'in', \['completed', 'final', 'complete', 'finished'\]\)/);
+  assert.match(handler, /where\('liveStatus', 'in', \['completed', 'final', 'complete', 'finished'\]\)/);
+  assert.match(handler, /statsheetSnapshot/);
   assert.match(handler, /PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY \+ 1/);
-  assert.match(handler, /buildPublicHomepageCandidateBatch\(snapshot\.docs\)/);
+  assert.match(handler, /buildPublicHomepageCandidateBatch\(uniqueDocs\)/);
   assert.match(handler, /Truncating a public homepage candidate query at the scan limit/);
   assert.doesNotMatch(handler, /candidate scan limit exceeded/);
   assert.match(handler, /getStrictPublicTeam\(teamId\)/);

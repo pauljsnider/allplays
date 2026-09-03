@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { collectPlayerVideoClips } from '../../js/player-profile-stats.js';
+import { GAME_REPLAY_ARCHIVE_FIELDS } from '../../js/game-replay-video.js';
 
 function readPlayerPage() {
     return readFileSync(new URL('../../player.html', import.meta.url), 'utf8');
@@ -92,5 +93,20 @@ describe('player video clips tab', () => {
                 gameLabel: 'Tigers'
             }
         ]);
+    });
+
+    it('does not synthesize player replay clips after every replay alias is cleared', () => {
+        const game = {
+            id: 'game-legacy',
+            replayVideoPublicUrl: 'https://video.example.com/legacy-replay',
+            clipMetadata: [
+                { id: 'clip-legacy', playerIds: ['player-1'], startMs: 1_000, endMs: 5_000 }
+            ]
+        };
+
+        expect(collectPlayerVideoClips([game], { teamId: 'team-1', playerId: 'player-1' })).toHaveLength(1);
+
+        GAME_REPLAY_ARCHIVE_FIELDS.forEach((field) => delete game[field]);
+        expect(collectPlayerVideoClips([game], { teamId: 'team-1', playerId: 'player-1' })).toEqual([]);
     });
 });

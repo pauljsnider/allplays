@@ -6,7 +6,8 @@ import { FamilyShare } from './FamilyShare';
 import { FamilyShareTokenError } from '../lib/familyShareViewerService';
 
 const familyShareMocks = vi.hoisted(() => ({
-  loadFamilyShareView: vi.fn()
+  loadFamilyShareView: vi.fn(),
+  resolveFamilyShareWatchCta: vi.fn()
 }));
 
 vi.mock('../lib/familyShareViewerService', () => {
@@ -22,7 +23,16 @@ vi.mock('../lib/familyShareViewerService', () => {
 
   return {
     FamilyShareTokenError,
-    loadFamilyShareView: familyShareMocks.loadFamilyShareView
+    isFamilyShareCompletedGame: (event: { status?: string; liveStatus?: string | null; isCancelled?: boolean }) => {
+      if (event.isCancelled) return false;
+      const status = event.status || '';
+      const liveStatus = event.liveStatus || '';
+      return ((status === 'completed' || status === 'final')
+          && (!liveStatus || liveStatus === 'completed' || liveStatus === 'final' || liveStatus === 'scheduled'))
+        || (!status && (liveStatus === 'completed' || liveStatus === 'final'));
+    },
+    loadFamilyShareView: familyShareMocks.loadFamilyShareView,
+    resolveFamilyShareWatchCta: familyShareMocks.resolveFamilyShareWatchCta
   };
 });
 
@@ -33,6 +43,8 @@ vi.mock('lucide-react', () => {
     CalendarDays: Icon,
     Loader2: Icon,
     MapPin: Icon,
+    PlayCircle: Icon,
+    Radio: Icon,
     RefreshCw: Icon,
     ShieldCheck: Icon,
     Trophy: Icon,
@@ -43,6 +55,7 @@ vi.mock('lucide-react', () => {
 afterEach(() => {
   cleanup();
   familyShareMocks.loadFamilyShareView.mockReset();
+  familyShareMocks.resolveFamilyShareWatchCta.mockReset();
 });
 
 describe('FamilyShare', () => {
@@ -108,7 +121,116 @@ describe('FamilyShare', () => {
     expect(screen.getByText('vs Tigers')).toBeTruthy();
     expect(screen.getByText('vs Owls')).toBeTruthy();
     expect(screen.getByText('Final 4-2')).toBeTruthy();
+    expect(screen.queryByRole('link', { name: /watch replay/i })).toBeNull();
     expect(familyShareMocks.loadFamilyShareView).toHaveBeenCalledWith('token-1');
+  });
+
+  it('renders server-approved live and replay actions as public live-game links', async () => {
+    const liveEvent = {
+      eventKey: 'team-1:game-live',
+      id: 'game-live',
+      teamId: 'team-1',
+      teamName: 'Bears',
+      type: 'game',
+      date: new Date('2026-07-13T18:00:00Z'),
+      title: '',
+      opponent: 'Tigers',
+      location: 'Field 1',
+      status: 'scheduled',
+      liveStatus: 'live',
+      isCancelled: false,
+      isDbGame: true,
+      hasReplayVideo: false,
+      canOpenPublicViewer: true,
+      childIds: [],
+      childNames: [],
+      homeScore: 0,
+      awayScore: 0
+    } as const;
+    const replayEvent = {
+      ...liveEvent,
+      eventKey: 'team-1:game-replay',
+      id: 'game-replay',
+      date: new Date('2026-07-08T18:00:00Z'),
+      opponent: 'Owls',
+      status: 'completed',
+      liveStatus: 'scheduled',
+      hasReplayVideo: true,
+      homeScore: 4,
+      awayScore: 2
+    } as const;
+    familyShareMocks.resolveFamilyShareWatchCta.mockImplementation((event) => event.id === 'game-live'
+      ? {
+          kind: 'live',
+          label: 'Watch Live',
+          href: 'https://allplays.ai/live-game.html?teamId=team-1&gameId=game-live'
+        }
+      : {
+          kind: 'replay',
+          label: 'Watch Replay',
+          href: 'https://allplays.ai/live-game.html?teamId=team-1&gameId=game-replay&replay=true'
+        });
+    familyShareMocks.loadFamilyShareView.mockResolvedValue({
+      tokenId: 'token-1',
+      label: 'Grandma schedule',
+      expiresAt: null,
+      children: [],
+      teams: [],
+      events: [liveEvent, replayEvent],
+      upcomingEvents: [liveEvent],
+      recentResults: [replayEvent],
+      calendarWarnings: []
+    });
+
+    render(<MemoryRouter initialEntries={['/family/token-1']}><Routes><Route path="/family/:token" element={<FamilyShare />} /></Routes></MemoryRouter>);
+
+    const liveLink = await screen.findByRole('link', { name: 'Watch Live: vs Tigers' });
+    const replayLink = screen.getByRole('link', { name: 'Watch Replay: vs Owls' });
+    expect(liveLink.getAttribute('href')).toBe('https://allplays.ai/live-game.html?teamId=team-1&gameId=game-live');
+    expect(replayLink.getAttribute('href')).toBe('https://allplays.ai/live-game.html?teamId=team-1&gameId=game-replay&replay=true');
+    expect(liveLink.getAttribute('rel')).toBe('noopener noreferrer');
+    expect(replayLink.getAttribute('target')).toBe('_blank');
+    expect(screen.queryByText('Final 0-0')).toBeNull();
+  });
+
+  it.each(['cancelled', 'canceled'])('does not label a %s result with retained scores as final', async (liveStatus) => {
+    const cancelledEvent = {
+      eventKey: `team-1:game-${liveStatus}`,
+      id: `game-${liveStatus}`,
+      teamId: 'team-1',
+      teamName: 'Bears',
+      type: 'game',
+      date: new Date('2026-07-08T18:00:00Z'),
+      title: '',
+      opponent: 'Owls',
+      location: 'Field 2',
+      status: 'scheduled',
+      liveStatus,
+      isCancelled: true,
+      isDbGame: true,
+      hasReplayVideo: false,
+      canOpenPublicViewer: false,
+      childIds: [],
+      childNames: [],
+      homeScore: 0,
+      awayScore: 0
+    } as const;
+    familyShareMocks.loadFamilyShareView.mockResolvedValue({
+      tokenId: 'token-1',
+      label: 'Grandma schedule',
+      expiresAt: null,
+      children: [],
+      teams: [],
+      events: [cancelledEvent],
+      upcomingEvents: [],
+      recentResults: [cancelledEvent],
+      calendarWarnings: []
+    });
+
+    render(<MemoryRouter initialEntries={['/family/token-1']}><Routes><Route path="/family/:token" element={<FamilyShare />} /></Routes></MemoryRouter>);
+
+    expect(await screen.findByText('Cancelled')).toBeTruthy();
+    expect(screen.queryByText('Final 0-0')).toBeNull();
   });
 
   it('shows the expired-token error state instead of redirecting to auth', async () => {

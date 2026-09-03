@@ -23,7 +23,38 @@ vi.mock('./adapters/legacyParentTools', () => familyShareMocks);
 vi.mock('./adapters/legacyScheduleDb', () => scheduleDbMocks);
 vi.mock('./adapters/legacyScheduleHelpers', () => scheduleHelperMocks);
 
-import { FamilyShareTokenError, loadFamilyShareView, normalizeFamilyShareChildren } from './familyShareViewerService';
+import {
+  FamilyShareTokenError,
+  loadFamilyShareView,
+  normalizeFamilyShareChildren,
+  resolveFamilyShareWatchCta,
+  type FamilyShareEvent
+} from './familyShareViewerService';
+
+function buildFamilyEvent(overrides: Partial<FamilyShareEvent> = {}): FamilyShareEvent {
+  return {
+    eventKey: 'team-1:game-1',
+    id: 'game-1',
+    teamId: 'team-1',
+    teamName: 'Bears',
+    type: 'game',
+    date: new Date('2026-07-08T18:00:00Z'),
+    title: '',
+    opponent: 'Owls',
+    location: 'Field 2',
+    status: 'completed',
+    liveStatus: 'scheduled',
+    isCancelled: false,
+    isDbGame: true,
+    hasReplayVideo: true,
+    canOpenPublicViewer: true,
+    childIds: ['player-1'],
+    childNames: ['Sam Player'],
+    homeScore: 4,
+    awayScore: 2,
+    ...overrides
+  };
+}
 
 describe('familyShareViewerService', () => {
   beforeEach(() => {
@@ -148,6 +179,39 @@ describe('familyShareViewerService', () => {
     ]);
   });
 
+  it('does not classify an active game with scores as a recent result', async () => {
+    const viewCallable = vi.fn(async () => ({
+      data: {
+        projectionVersion: 2,
+        presentation: { label: 'Live family schedule', expiresAt: null },
+        children: [{ teamId: 'team-live', teamName: 'Bears', playerId: 'player-1', playerName: 'Sam Player' }],
+        teams: [{
+          teamId: 'team-live',
+          teamName: 'Bears',
+          games: [{
+            id: 'game-live',
+            type: 'game',
+            date: '2026-07-12T18:00:00.000Z',
+            opponent: 'Tigers',
+            status: 'scheduled',
+            liveStatus: 'live',
+            homeScore: 3,
+            awayScore: 2,
+            canOpenPublicViewer: true
+          }]
+        }],
+        externalEvents: [],
+        calendarWarnings: []
+      }
+    }));
+    familyShareMocks.httpsCallable.mockReturnValue(viewCallable);
+
+    const model = await loadFamilyShareView('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+
+    expect(model.upcomingEvents.map((event) => event.id)).toEqual(['game-live']);
+    expect(model.recentResults).toEqual([]);
+  });
+
   it('uses the versioned view projection without reading token source fields or fetching raw calendars', async () => {
     const viewCallable = vi.fn(async () => ({
       data: {
@@ -157,7 +221,27 @@ describe('familyShareViewerService', () => {
         teams: [{
           teamId: 'team-private',
           teamName: 'Bears',
-          games: [{ id: 'game-1', type: 'game', date: '2026-07-13T18:00:00.000Z', opponent: 'Tigers' }]
+          games: [
+            {
+              id: 'game-1',
+              type: 'game',
+              date: '2026-07-13T18:00:00.000Z',
+              opponent: 'Tigers',
+              status: 'completed',
+              liveStatus: 'scheduled',
+              hasReplayVideo: true,
+              canOpenPublicViewer: true
+            },
+            {
+              id: 'game-timeline',
+              type: 'game',
+              date: '2026-07-12T18:00:00.000Z',
+              opponent: 'Foxes',
+              liveStatus: 'completed',
+              hasReplayVideo: false,
+              canOpenPublicViewer: true
+            }
+          ]
         }],
         externalEvents: [{
           eventKey: 'external-1',
@@ -186,8 +270,30 @@ describe('familyShareViewerService', () => {
     expect(scheduleDbMocks.getTeam).not.toHaveBeenCalled();
     expect(scheduleDbMocks.getGames).not.toHaveBeenCalled();
     expect(scheduleHelperMocks.fetchAndParseCalendar).not.toHaveBeenCalled();
-    expect(model.events.map((event) => event.id)).toEqual(['game-1', 'external-1']);
+    expect(model.events.map((event) => event.id)).toEqual(['game-timeline', 'game-1', 'external-1']);
     expect(model.events.find((event) => event.id === 'external-1')?.locationDetail).toBe('Field 2');
+    expect(model.events.find((event) => event.id === 'game-1')).toMatchObject({
+      status: 'completed',
+      liveStatus: 'scheduled',
+      hasReplayVideo: true,
+      canOpenPublicViewer: true
+    });
+    expect(model.events.find((event) => event.id === 'external-1')).toMatchObject({
+      liveStatus: null,
+      hasReplayVideo: false,
+      canOpenPublicViewer: false
+    });
+    const timelineEvent = model.events.find((event) => event.id === 'game-timeline');
+    expect(timelineEvent).toMatchObject({
+      status: '',
+      liveStatus: 'completed',
+      hasReplayVideo: false,
+      canOpenPublicViewer: true
+    });
+    expect(timelineEvent && resolveFamilyShareWatchCta(timelineEvent)).toMatchObject({
+      kind: 'replay',
+      label: 'Watch Replay'
+    });
     expect(JSON.stringify(model)).not.toContain('extraCalendarUrls');
     expect(JSON.stringify(model)).not.toContain('ownerUserId');
   });
@@ -309,5 +415,52 @@ describe('familyShareViewerService', () => {
       expect.objectContaining({ teamId: 'team-1', playerId: 'player-1', playerName: 'Sam' }),
       expect.objectContaining({ teamId: 'team-2', playerId: 'player-2', playerName: 'Ari' })
     ]);
+  });
+
+  it('builds public replay and live links only from ordered server-projected lifecycle signals', () => {
+    expect(resolveFamilyShareWatchCta(buildFamilyEvent())).toEqual({
+      kind: 'replay',
+      label: 'Watch Replay',
+      href: 'https://allplays.ai/live-game.html?teamId=team-1&gameId=game-1&replay=true'
+    });
+    expect(resolveFamilyShareWatchCta(buildFamilyEvent({
+      hasReplayVideo: false,
+      liveStatus: 'FINAL'
+    }))).toBeNull();
+    expect(resolveFamilyShareWatchCta(buildFamilyEvent({
+      status: '',
+      liveStatus: 'completed',
+      hasReplayVideo: false
+    }))).toMatchObject({ kind: 'replay', label: 'Watch Replay' });
+    expect(resolveFamilyShareWatchCta(buildFamilyEvent({
+      status: 'scheduled',
+      liveStatus: 'live',
+      hasReplayVideo: false
+    }))).toEqual({
+      kind: 'live',
+      label: 'Watch Live',
+      href: 'https://allplays.ai/live-game.html?teamId=team-1&gameId=game-1'
+    });
+    const sharedPath = `organizations/${'o'.repeat(128)}/sharedGames/${'g'.repeat(128)}`;
+    const sharedId = `shared_${encodeURIComponent(sharedPath)}`;
+    expect(resolveFamilyShareWatchCta(buildFamilyEvent({ id: sharedId }))).toEqual({
+      kind: 'replay',
+      label: 'Watch Replay',
+      href: `https://allplays.ai/live-game.html?teamId=team-1&gameId=${encodeURIComponent(sharedId)}&replay=true`
+    });
+  });
+
+  it.each([
+    ['missing replay evidence', { hasReplayVideo: false }],
+    ['private public projection', { canOpenPublicViewer: false }],
+    ['completed report while still live', { liveStatus: 'live' }],
+    ['reverse completion lifecycle', { status: 'scheduled', liveStatus: 'completed' }],
+    ['padded lifecycle rejected by server', { status: ' completed ', liveStatus: 'scheduled' }],
+    ['cancelled game', { isCancelled: true }],
+    ['practice', { type: 'practice' as const }],
+    ['missing team identifier', { teamId: '' }],
+    ['missing game identifier', { id: '' }]
+  ])('does not expose a family watch link for %s', (_label, overrides) => {
+    expect(resolveFamilyShareWatchCta(buildFamilyEvent(overrides))).toBeNull();
   });
 });

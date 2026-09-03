@@ -68,6 +68,7 @@ import {
   where
 } from './adapters/legacyTeamDetail';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
+import { buildPublicTeamGamesIcsUrl as buildPublicTeamGamesIcsUrlFromRuntime } from './calendarFeedUrls';
 import { getPrimaryAppCheckHeaders } from './adapters/legacyFirebaseAppCheck';
 import { isRetryableReadTransportError, raceFirstSuccessfulRead } from './adapters/legacyHedgedRead';
 import { buildAppAcceptInviteUrl } from './inviteUrls';
@@ -451,6 +452,7 @@ export type TeamDetailModel = {
   canManageTeam: boolean;
   canManageAdmins: boolean;
   canPurchaseTeamPass: boolean;
+  canUsePrivateCalendarSync: boolean;
   staffPermissions: TeamStaffPermissionsSummary | null;
   counts: {
     games: number;
@@ -1993,17 +1995,7 @@ export function buildAdminAcceptInviteUrl(code: string, baseUrl = getPublicBaseU
 }
 
 export function buildPublicTeamGamesIcsUrl(teamId: string) {
-  const normalizedTeamId = cleanString(teamId);
-  if (!normalizedTeamId) return '';
-  const configured = (window as any).__ALLPLAYS_CONFIG__?.publicTeamGamesIcsFunctionUrl || (window as any).ALLPLAYS_PUBLIC_GAMES_ICS_URL;
-  const fallback = (window as any).__ALLPLAYS_CONFIG__?.calendarFetchFunctionUrl || (window as any).ALLPLAYS_CALENDAR_FUNCTION_URL;
-  const baseUrl = typeof configured === 'string' && configured.trim()
-    ? configured.trim()
-    : typeof fallback === 'string' && fallback.includes('fetchCalendarIcs')
-      ? fallback.replace('fetchCalendarIcs', 'publicTeamGamesIcs')
-      : 'https://us-central1-all-plays-prod.cloudfunctions.net/publicTeamGamesIcs';
-  const separator = baseUrl.includes('?') ? '&' : '?';
-  return `${baseUrl}${separator}teamId=${encodeURIComponent(normalizedTeamId)}`;
+  return buildPublicTeamGamesIcsUrlFromRuntime(cleanString(teamId));
 }
 
 export function isShareableFanFeedEvent(event: Partial<TeamDetailEvent> = {}) {
@@ -2431,6 +2423,7 @@ export function buildTeamDetailModel({
 }): TeamDetailModel {
   const canManageTeam = hasFullTeamAccess(user, team);
   const canPurchaseTeamPass = isEligibleTeamPassPurchaserForApp(user, teamId, team);
+  const canUsePrivateCalendarSync = isEligiblePrivateCalendarSubscriberForApp(user, teamId, team);
   const normalizedPlayers = normalizePlayers(players, linkedPlayerIds, { includeParentContacts: canManageTeam });
   const normalizedInactivePlayers = normalizePlayers(players, linkedPlayerIds, { inactiveOnly: true, includeParentContacts: canManageTeam });
   const normalizedStatTrackerConfigs = buildTeamStatTrackerConfigs(configs, games);
@@ -2497,6 +2490,7 @@ export function buildTeamDetailModel({
     canManageTeam,
     canManageAdmins,
     canPurchaseTeamPass,
+    canUsePrivateCalendarSync,
     staffPermissions,
     counts: {
       games: games.filter((game: any) => game?.type !== 'practice').length,
@@ -2515,6 +2509,55 @@ function isEligibleTeamPassPurchaserForApp(user: AuthUser | null, teamId: string
   if (currentAuthEmail && normalizeAdminEmailList(team?.adminEmails).includes(currentAuthEmail)) return true;
 
   return Array.isArray(user?.parentTeamIds) && user.parentTeamIds.includes(cleanString(teamId));
+}
+
+function normalizeExactPrivateCalendarId(value: unknown) {
+  if (
+    typeof value !== 'string'
+    || value !== value.trim()
+    || !value
+    || value.length > 128
+    || value.includes('/')
+  ) {
+    return '';
+  }
+  return value;
+}
+
+export function isEligiblePrivateCalendarSubscriberForApp(
+  user: AuthUser | null,
+  teamId: string,
+  team: Record<string, any>
+) {
+  // This only keeps guaranteed-denial controls out of the UI. The callable
+  // remains authoritative for fresh Auth, profile, and deletion-request state.
+  const uid = normalizeExactPrivateCalendarId(user?.uid);
+  const normalizedTeamId = normalizeExactPrivateCalendarId(teamId);
+  if (!uid || !normalizedTeamId || !team) return false;
+
+  const hasStoredOwnerId = Object.prototype.hasOwnProperty.call(team, 'ownerId');
+  const hasEmptyLegacyOwnerId = !hasStoredOwnerId || team.ownerId === '';
+  const ownerId = hasEmptyLegacyOwnerId ? '' : normalizeExactPrivateCalendarId(team.ownerId);
+  if (!hasEmptyLegacyOwnerId && !ownerId) return false;
+  if (ownerId === uid) return true;
+
+  const currentAuthEmail = cleanString(user?.email).toLowerCase();
+  const hasVerifiedAuthEmail = Boolean(currentAuthEmail && user?.emailVerified === true);
+  const legacyOwnerEmails = [...new Set([team?.ownerEmail, team?.ownerEmailLower]
+    .map((value) => cleanString(value).toLowerCase())
+    .filter(Boolean))];
+  if (
+    hasEmptyLegacyOwnerId
+    && hasVerifiedAuthEmail
+    && legacyOwnerEmails.length === 1
+    && legacyOwnerEmails[0] === currentAuthEmail
+  ) {
+    return true;
+  }
+  if (hasVerifiedAuthEmail && normalizeAdminEmailList(team?.adminEmails).includes(currentAuthEmail)) {
+    return true;
+  }
+  return Array.isArray(user?.parentTeamIds) && user.parentTeamIds.includes(normalizedTeamId);
 }
 
 export async function createTeamPassCheckoutForApp(teamId: string, seasonId: string): Promise<string> {

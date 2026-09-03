@@ -250,8 +250,8 @@ describe('TeamMedia bulk delete', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Show more' }));
 
-    expect(screen.getByText('Photo 25')).toBeTruthy();
-    expect(screen.getByText('Photo 48')).toBeTruthy();
+    expect(await screen.findByText('Photo 25')).toBeTruthy();
+    expect(await screen.findByText('Photo 48')).toBeTruthy();
     expect(screen.queryByText('Photo 49')).toBeNull();
   });
 
@@ -277,15 +277,17 @@ describe('TeamMedia bulk delete', () => {
 
     await screen.findByText('Bears media');
     fireEvent.click(screen.getByRole('button', { name: 'Show more' }));
-    expect(screen.getByText('Photo 36')).toBeTruthy();
-    expect(screen.getByText('File 12')).toBeTruthy();
+    expect(await screen.findByText('Photo 36')).toBeTruthy();
+    expect(await screen.findByText('File 12')).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'Photos36' }));
 
-    expect(screen.getByText('Photo 24')).toBeTruthy();
-    expect(screen.queryByText('Photo 25')).toBeNull();
-    expect(screen.queryByText('Photo 36')).toBeNull();
-    expect(screen.queryByText('File 01')).toBeNull();
+    await waitFor(() => {
+      expect(screen.getByText('Photo 24')).toBeTruthy();
+      expect(screen.queryByText('Photo 25')).toBeNull();
+      expect(screen.queryByText('Photo 36')).toBeNull();
+      expect(screen.queryByText('File 01')).toBeNull();
+    });
   });
 
   it('bulk deletes only selected visible items after filtering a loaded album', async () => {
