@@ -1490,6 +1490,45 @@ test('playback joins an exact shared-game child archive and fails closed on mark
   );
 });
 
+test('shared playback preserves owner access for an ownerId-less legacy team', async () => {
+  const sharedPath = 'organizations/org-1/sharedGames/shared-1';
+  const syntheticId = `shared_${encodeURIComponent(sharedPath)}`;
+  const revision = 'r:11111111-1111-4111-8111-111111111111';
+  const { callables } = loadCallables({
+    'teams/team-1': {
+      ownerEmail: 'manager@example.test',
+      ownerEmailLower: 'manager@example.test',
+      isPublic: false,
+      active: true,
+      currentSeasonId: 'fall-26',
+      recordedReplayPaywallEnabled: false
+    },
+    'users/manager.uid': {},
+    [sharedPath]: {
+      type: 'game',
+      status: 'completed',
+      visibility: 'private',
+      homeTeamId: 'team-1',
+      awayTeamId: 'team-2',
+      hasRecordedReplay: true,
+      replayArchiveRevision: revision
+    },
+    [`${sharedPath}/privateReplay/archive`]: readyArchive(revision)
+  }, {
+    authUsers: {
+      'manager.uid': { email: 'manager@example.test', disabled: false }
+    }
+  });
+
+  const playback = await callables.getGameReplayPlayback(
+    { teamId: 'team-1', gameId: syntheticId },
+    authContext()
+  );
+  assert.equal(playback.available, true);
+  assert.equal(playback.reason, 'normal-access');
+  assert.equal(playback.replayVideo.videoId, 'abcdefghijk');
+});
+
 test('parent deletion removes archives and only deletes compatibility receipts after finalization', async () => {
   const canonicalParent = 'teams/team-1/games/game-1';
   const sharedParent = 'organizations/org-1/sharedGames/shared-1';

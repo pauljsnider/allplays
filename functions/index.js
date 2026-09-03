@@ -6631,12 +6631,15 @@ exports.getGameReplayPlayback = functions.https.onCall(async (data, context = {}
     ? getReplayDelegatedAccess({ context, authUser, teamId: input.teamId, team, game, user })
     : {};
   const managerAccess = !sharedPath && canManageReplayArchive(access);
-  const currentTeamAccess = Boolean(uid && hasCurrentTeamAccess({
-    team,
-    user,
-    userId: uid,
-    email
-  }));
+  const currentTeamAccess = Boolean(uid && (
+    access.full === true
+    || hasCurrentTeamAccess({
+      team,
+      user,
+      userId: uid,
+      email
+    })
+  ));
   const publicAccess = canProjectPublicGame(team, game);
   if (!managerAccess && !currentTeamAccess && !publicAccess) {
     throw new functions.https.HttpsError('permission-denied', 'You do not have access to this replay.');
