@@ -15,6 +15,13 @@ const legacyTrackerSource = readFileSync(new URL('../../js/live-tracker.js', imp
 const appTrackerSource = readFileSync(new URL('../../apps/app/src/lib/scheduleService.ts', import.meta.url), 'utf8');
 
 describe('live game overlay page', () => {
+    it('keeps the active live viewer on the newest bounded event window', () => {
+        expect(currentLiveGameSource).toContain('const ACTIVE_LIVE_EVENTS_LIMIT = 20;');
+        expect(currentLiveGameSource).toContain('state.events = state.events.slice(-ACTIVE_LIVE_EVENTS_LIMIT);');
+        expect(currentLiveGameSource).toContain('retainActiveLiveEventWindow();');
+        expect(currentLiveGameSource).toContain('getLiveEvents(state.teamId, state.gameId)');
+    });
+
     it('ships as a separate no-index broadcast canvas with accessible overlay regions', () => {
         expect(html).toContain('<meta name="robots" content="noindex, nofollow">');
         expect(html).toContain('id="broadcast-stage"');
