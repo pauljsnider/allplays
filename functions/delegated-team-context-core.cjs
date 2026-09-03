@@ -25,6 +25,21 @@ function normalizeEmail(value) {
   return cleanText(value, 320).toLowerCase();
 }
 
+function getCanonicalOwnerIdState(team = {}) {
+  if (!Object.prototype.hasOwnProperty.call(team || {}, 'ownerId')) {
+    return { state: 'legacy', ownerId: '' };
+  }
+  const ownerId = team.ownerId;
+  if (ownerId === '') return { state: 'legacy', ownerId: '' };
+  if (typeof ownerId === 'string'
+    && ownerId === ownerId.trim()
+    && ownerId.length <= 128
+    && !ownerId.includes('/')) {
+    return { state: 'canonical', ownerId };
+  }
+  return { state: 'invalid', ownerId: '' };
+}
+
 function normalizeStringList(value) {
   return Array.from(new Set(
     (Array.isArray(value) ? value : [])
@@ -83,15 +98,17 @@ function hasAllConfirmedGrant(team, permissionName, rsvp, game) {
 
 function hasFullTeamAccess({ uid, email, user }, team) {
   if (user?.isAdmin === true || user?.isPlatformAdmin === true) return true;
-  if (cleanText(team?.ownerId, 128) === uid) return true;
+  const owner = getCanonicalOwnerIdState(team);
+  if (owner.state === 'canonical' && owner.ownerId === uid) return true;
   if (!email) return false;
   const adminEmails = normalizeStringList(team?.adminEmails).map(normalizeEmail);
   if (adminEmails.includes(email)) return true;
-  const ownerId = cleanText(team?.ownerId, 128);
   const legacyOwnerEmails = Array.from(new Set(
     [team?.ownerEmail, team?.ownerEmailLower].map(normalizeEmail).filter(Boolean)
   ));
-  return !ownerId && legacyOwnerEmails.length === 1 && legacyOwnerEmails[0] === email;
+  return owner.state === 'legacy'
+    && legacyOwnerEmails.length === 1
+    && legacyOwnerEmails[0] === email;
 }
 
 function resolveDelegatedAccess({ uid, email, user, teamId, team, game, rsvp }) {
