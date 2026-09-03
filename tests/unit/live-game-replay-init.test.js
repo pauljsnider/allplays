@@ -224,11 +224,11 @@ function createEnvironment() {
 function buildModuleSource() {
     return readFileSync(new URL('../../js/live-game.js', import.meta.url), 'utf8')
         .replace(
-            "import {\n  getGameDayTeamContext,\n  getGame,\n  getPlayers,\n  subscribeLiveEvents,\n  subscribeLiveChat,\n  postLiveChatMessage,\n  subscribeReactions,\n  sendReaction,\n  trackViewerPresence,\n  getLiveEvents,\n  getLiveChatHistory,\n  getLiveReactions,\n  getConfigs,\n  getMyRsvp,\n  subscribeGame,\n  updateGame,\n  uploadGameClip,\n  deleteUploadedMediaObjects\n} from './db.js?v=4433195';",
+            "import {\n  getGameDayTeamContext,\n  getGame,\n  getPlayers,\n  subscribeLiveEvents,\n  subscribeLiveChat,\n  postLiveChatMessage,\n  subscribeReactions,\n  sendReaction,\n  trackViewerPresence,\n  getLiveEvents,\n  getLiveChatHistory,\n  getLiveReactions,\n  getConfigs,\n  getMyRsvp,\n  subscribeGame,\n  updateGame,\n  uploadGameClip,\n  deleteUploadedMediaObjects\n} from './db.js?v=4433196';",
             'const { getGameDayTeamContext, getGame, getPlayers, subscribeLiveEvents, subscribeLiveChat, postLiveChatMessage, subscribeReactions, sendReaction, trackViewerPresence, getLiveEvents, getLiveChatHistory, getLiveReactions, getConfigs, getMyRsvp, subscribeGame, updateGame, uploadGameClip, deleteUploadedMediaObjects } = deps.db;'
         )
         .replace(
-            "import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=443371';",
+            "import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=443372';",
             'const { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } = deps.utils;'
         )
         .replace(
@@ -256,6 +256,10 @@ function buildModuleSource() {
             'const { createSafeImageElement, resolveSafeProfilePhotoUrl, resolveSafeProfilePhotoWriteUrl } = deps.safeImage;'
         )
         .replace(
+            /import \{ gameReplayService, hasRecordedReplayMarker \} from '\.\/game-replay-service\.js\?v=\d+';/,
+            'const { gameReplayService, hasRecordedReplayMarker } = deps.gameReplayService;'
+        )
+        .replace(
             "import { createPlayAnnouncer } from './live-game-announcer.js?v=1';",
             'const { createPlayAnnouncer } = deps.liveGameAnnouncer;'
         )
@@ -274,14 +278,6 @@ function buildModuleSource() {
         .replace(
             /import \{ buildGameReportShareUrl, buildGameWatchShareUrl \} from '\.\/game-share-links\.js\?v=\d+';/,
             'const { buildGameReportShareUrl, buildGameWatchShareUrl } = deps.gameShareLinks;'
-        )
-        .replace(
-            /import \{ TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, isRecordedReplayTeamPassGateEnabled, resolveTeamEntitlementSeasonId \} from '\.\/team-entitlements\.js\?v=\d+';/,
-            'const { TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, isRecordedReplayTeamPassGateEnabled, resolveTeamEntitlementSeasonId } = deps.teamEntitlements;'
-        )
-        .replace(
-            /import \{ TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, isRecordedReplayTeamPassGateEnabled, resolveTeamEntitlementSeasonId \} from '\.\/team-entitlements\.js\?v=\d+';/,
-            'const { TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, isRecordedReplayTeamPassGateEnabled, resolveTeamEntitlementSeasonId } = deps.teamEntitlements;'
         )
         .replace(
             "import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';",
@@ -338,8 +334,8 @@ async function bootReplayPage({
     playersError = null,
     videoOptions = null,
     publicProjectionVideoOptions = null,
-    teamPassGateEnabled = false,
-    videoUnlocked = false
+    replayPlaybackResult = null,
+    replayPlaybackError = null
 } = {}) {
     const { document, ensureElement } = createEnvironment();
     const storage = new Map();
@@ -445,6 +441,30 @@ async function bootReplayPage({
             createSafeImageElement: () => null,
             resolveSafeProfilePhotoUrl: () => '',
             resolveSafeProfilePhotoWriteUrl: () => ''
+        },
+        gameReplayService: {
+            gameReplayService: {
+                getPlayback: async () => {
+                    if (replayPlaybackError) throw replayPlaybackError;
+                    return replayPlaybackResult || {
+                        available: videoOptions?.isRecordedReplay === true && videoOptions?.hasVideo === true,
+                        hasRecordedReplay: game.hasRecordedReplay === true || game.hasReplayVideo === true,
+                        replayArchiveRevision: game.replayArchiveRevision || null,
+                        replayVideo: videoOptions?.isRecordedReplay === true && videoOptions?.hasVideo === true
+                            ? {
+                                provider: 'youtube',
+                                videoId: 'PK1HyC37doc',
+                                publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+                                embedUrl: 'https://www.youtube.com/embed/PK1HyC37doc'
+                            }
+                            : null,
+                        reason: videoOptions?.isRecordedReplay === true && videoOptions?.hasVideo === true
+                            ? 'normal-access'
+                            : 'not-available'
+                    };
+                }
+            },
+            hasRecordedReplayMarker: (value = {}) => value.hasRecordedReplay === true || value.hasReplayVideo === true
         },
         liveGameAnnouncer: {
             createPlayAnnouncer: () => ({
@@ -576,13 +596,6 @@ async function bootReplayPage({
             buildGameReportShareUrl: () => 'https://share.allplays.ai/report?teamId=T1&gameId=G1',
             buildGameWatchShareUrl: () => 'https://share.allplays.ai/watch?teamId=T1&gameId=G1'
         },
-        teamEntitlements: {
-            TEAM_PASS_FEATURES: { RECORDED_REPLAY: 'recorded-replay' },
-            canAccessPremiumFanFeature: () => videoUnlocked,
-            getTeamEntitlementStatus: () => ({ active: videoUnlocked, isActive: videoUnlocked }),
-            isRecordedReplayTeamPassGateEnabled: () => teamPassGateEnabled,
-            resolveTeamEntitlementSeasonId: () => null
-        },
         firebaseAi: {
             getAI: () => ({}),
             getGenerativeModel: () => ({ generateContent: async () => ({ response: { text: () => '' } }) }),
@@ -687,10 +700,9 @@ describe('live game replay initialization', () => {
         expect(page.canAttachScoreLinkedClips()).toBe(true);
     });
 
-    it('trusts a sanitized public replay projection after the server applies the Team Pass override', async () => {
+    it('trusts callable-approved replay playback after the server applies the Team Pass boundary', async () => {
         const page = await bootReplayPage({
             replay: true,
-            teamPassGateEnabled: true,
             videoOptions: {
                 mode: 'embed',
                 isRecordedReplay: true,

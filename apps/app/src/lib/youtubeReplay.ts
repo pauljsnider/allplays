@@ -328,6 +328,71 @@ export function hasReplayVideoSourceEvidence(value: unknown) {
   return !hasLocalEvidence && source.hasReplayVideo === true;
 }
 
+/**
+ * Match the server-side legacy replay migration boundary when the native app
+ * must derive a capability-free availability marker before migration. Generic
+ * recorded URLs remain unsupported/quarantined by that boundary and must not
+ * manufacture a Watch Replay state that the playback callable cannot honor.
+ */
+export function hasLegacyPrivateYouTubeReplayEvidence(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const source = value as Record<string, unknown>;
+  if (source.replayVideoFallbackDisabled === true || !hasSafeReplayAvailability(source)) return false;
+  const canonicalizeHistoricalLifecycle = (status: unknown) => (
+    status === 'complete' || status === 'finished' ? 'completed' : status
+  );
+  const compatibleSource = {
+    ...source,
+    ...(Object.prototype.hasOwnProperty.call(source, 'status')
+      ? { status: canonicalizeHistoricalLifecycle(source.status) }
+      : {}),
+    ...(Object.prototype.hasOwnProperty.call(source, 'liveStatus')
+      ? { liveStatus: canonicalizeHistoricalLifecycle(source.liveStatus) }
+      : {})
+  };
+  const videoIds: string[] = [];
+  const addUrl = (candidate: unknown) => {
+    if (!hasReplayFieldValue(candidate)) return true;
+    const normalized = normalizeYouTubeReplayUrl(candidate);
+    if (!normalized) return false;
+    videoIds.push(normalized.videoId);
+    return true;
+  };
+
+  for (const field of ['replayVideo', 'recordedVideo', 'videoReplay']) {
+    if (!hasReplayFieldValue(source[field])) continue;
+    const replay = replayRecord(source[field]);
+    if (!replay) return false;
+    if (hasReplayFieldValue(replay.provider)
+      && (typeof replay.provider !== 'string' || replay.provider.trim().toLowerCase() !== 'youtube')) {
+      return false;
+    }
+    const identityValues: unknown[] = [];
+    if (hasReplayFieldValue(replay.videoId)) {
+      if (typeof replay.videoId !== 'string') return false;
+      identityValues.push(`https://youtu.be/${replay.videoId.trim()}`);
+    }
+    for (const property of ['publicUrl', 'embedUrl', 'url', 'src']) {
+      if (hasReplayFieldValue(replay[property])) identityValues.push(replay[property]);
+    }
+    if (!identityValues.length || identityValues.some((candidate) => !addUrl(candidate))) return false;
+  }
+
+  for (const field of [
+    'replayVideoUrl',
+    'recordedVideoUrl',
+    'videoReplayUrl',
+    'archivedVideoUrl',
+    'replayVideoPublicUrl'
+  ]) {
+    if (!addUrl(source[field])) return false;
+  }
+  if (hasReplayFieldValue(source.videoUrl) && isCompletedGameForReplay(compatibleSource)) {
+    if (!addUrl(source.videoUrl)) return false;
+  }
+  return videoIds.length > 0 && new Set(videoIds).size === 1;
+}
+
 function getRawHttpsAuthority(value: string) {
   const match = value.match(/^https:\/\/([^/?#]+)/i);
   return match?.[1] || '';
@@ -365,7 +430,7 @@ function getYouTubeVideoId(url: URL) {
  * they do not identify a durable replay for one game.
  */
 export function normalizeYouTubeReplayUrl(value: unknown): NormalizedYouTubeReplay | null {
-  if (typeof value !== 'string') return null;
+  if (typeof value !== 'string' || value.length > 2048) return null;
   const raw = value.trim();
   if (!raw) return null;
 

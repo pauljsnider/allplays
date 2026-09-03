@@ -1382,25 +1382,28 @@ describe('broadcast setup session helpers', () => {
         });
     });
 
-    it('records external provider metadata and score correlation context', () => {
+    it('keeps provider capabilities transient while recording safe score correlation metadata', () => {
         expect(resolveBroadcastProviderMetadata({ twitchChannel: 'allplayslive' })).toEqual({
             type: BROADCAST_PROVIDER_TYPES.TWITCH,
             name: 'Twitch',
             channel: 'allplayslive'
         });
 
+        const provider = resolveBroadcastProviderMetadata({
+            youtubeEmbedUrl: 'https://www.youtube.com/embed/abc12345678'
+        });
+        expect(provider.embedUrl).toContain('abc12345678');
         const session = buildBroadcastSetupSession({
             sessionName: 'Game stream',
-            provider: resolveBroadcastProviderMetadata({ youtubeEmbedUrl: 'https://www.youtube.com/embed/abc12345678' }),
+            provider,
             status: BROADCAST_SETUP_STATUSES.READY,
             permissions: { camera: true, microphone: true },
             now: new Date('2026-05-10T09:00:00.000Z')
         });
 
-        expect(session.provider).toMatchObject({
+        expect(session.provider).toEqual({
             type: BROADCAST_PROVIDER_TYPES.YOUTUBE,
-            name: 'YouTube',
-            embedUrl: 'https://www.youtube.com/embed/abc12345678'
+            name: 'YouTube'
         });
         expect(buildStreamScoreContext({
             homeScore: 12,

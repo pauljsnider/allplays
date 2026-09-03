@@ -49,8 +49,10 @@ describe('app legacy adapter boundary', () => {
             ['apps/app/src/lib/chatService.ts', "from './adapters/legacyChatService'"],
             ['apps/app/src/lib/socialService.ts', "from './adapters/legacySocialDb'"],
             ['apps/app/src/lib/teamDetailService.ts', "from './adapters/legacyTeamDetail'"],
+            ['apps/app/src/lib/teamDetailService.ts', "from './adapters/legacyStructuredMediaWrite'"],
             ['apps/app/src/lib/teamFeesService.ts', "from './adapters/legacyTeamFees'"],
             ['apps/app/src/lib/parentToolsService.ts', "from './adapters/legacyParentTools'"],
+            ['apps/app/src/lib/parentToolsService.ts', "from './adapters/legacyStructuredMediaWrite'"],
             ['apps/app/src/lib/practiceTimelineService.ts', "from './adapters/legacyPracticeTimeline'"],
             ['apps/app/src/lib/gameReportService.ts', "from './adapters/legacyGameReport'"]
         ];
@@ -67,6 +69,7 @@ describe('app legacy adapter boundary', () => {
             'apps/app/src/lib/adapters/legacyChatService.ts',
             'apps/app/src/lib/adapters/legacySocialDb.ts',
             'apps/app/src/lib/adapters/legacyTeamDetail.ts',
+            'apps/app/src/lib/adapters/legacyStructuredMediaWrite.ts',
             'apps/app/src/lib/adapters/legacyTeamFees.ts',
             'apps/app/src/lib/adapters/legacyParentTools.ts',
             'apps/app/src/lib/adapters/legacyPracticeTimeline.ts',

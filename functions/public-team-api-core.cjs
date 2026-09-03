@@ -760,6 +760,7 @@ function serializePublicGame(game = {}, options = {}) {
   const opponentTeamPhoto = publicHttpUrl(game?.opponentTeamPhoto);
   const statSheetPhotoUrl = publicHttpUrl(game?.statSheetPhotoUrl);
   const replayPaywallEnabled = isRecordedReplayPaywallEnabled(game, options.team);
+  const recordedReplayMarkerOnly = options.recordedReplayMarkerOnly === true;
   const directVideoUrl = publicHttpUrl(game?.videoUrl);
   const replayVideoPublicUrl = videoLifecycle.isCompleted && !replayPaywallEnabled
     ? getHistoricalReplayPublicUrl(game)
@@ -769,7 +770,10 @@ function serializePublicGame(game = {}, options = {}) {
   // URL from a paywalled game.
   const videoUrl = videoLifecycle.isActiveLive
     ? directVideoUrl
-    : (videoLifecycle.isCompleted && !replayPaywallEnabled ? replayVideoPublicUrl : null);
+    : (videoLifecycle.isCompleted && !recordedReplayMarkerOnly && !replayPaywallEnabled
+        ? replayVideoPublicUrl
+        : null);
+  const hasRecordedReplay = videoLifecycle.isCompleted && game?.hasRecordedReplay === true;
   const id = compactText(game?.id || game?.gameId, game?.isSharedGame === true ? 1000 : 128);
   return {
     id,
@@ -790,6 +794,7 @@ function serializePublicGame(game = {}, options = {}) {
     summary: nullableText(game?.summary || game?.publicSummary, 2000),
     videoLifecycle: videoLifecycle.state,
     videoUrl,
+    ...(recordedReplayMarkerOnly ? { hasRecordedReplay } : {}),
     ...(liveResetAt ? { liveResetAt: liveResetAt.toISOString() } : {}),
     ...(liveResetEventId ? { liveResetEventId } : {}),
     ...(tournament ? { tournament } : {}),
@@ -886,11 +891,13 @@ function buildPublicGamesResponse({
   limit = PUBLIC_TEAM_API_DEFAULT_GAMES,
   now = new Date(),
   opponentStatKeysByGameId = new Map(),
-  cursor = null
+  cursor = null,
+  recordedReplayMarkerOnly = false
 }) {
   const publicGames = games
     .map((game) => serializePublicGame(game, {
       team,
+      recordedReplayMarkerOnly,
       opponentStatKeys: opponentStatKeysByGameId instanceof Map
         ? opponentStatKeysByGameId.get(String(game?.id || game?.gameId || ''))
         : undefined

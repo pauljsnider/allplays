@@ -162,6 +162,121 @@ async function mockScheduleModules(page, options = {}) {
         });
     });
 
+    await page.route(/\/src\/lib\/replayArchiveService\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                function emptyReplayState() {
+                    return {
+                        state: 'none',
+                        hasRecordedReplay: false,
+                        hasReplayVideo: false,
+                        replayArchiveRevision: null,
+                        replayVideo: null,
+                        lastMutationId: null
+                    };
+                }
+
+                function currentReplayState() {
+                    return window.__mockReplayArchiveState || emptyReplayState();
+                }
+
+                function nextReplayRevision() {
+                    window.__mockReplayRevision = (window.__mockReplayRevision || 0) + 1;
+                    return 'replay-revision-' + window.__mockReplayRevision;
+                }
+
+                export function createReplayMutationId() {
+                    window.__mockReplayMutation = (window.__mockReplayMutation || 0) + 1;
+                    return 'smoke-replay-mutation-' + window.__mockReplayMutation;
+                }
+
+                export function isReplayMutationUnconfirmedError(error) {
+                    return error?.code === 'replay-mutation-unconfirmed';
+                }
+
+                export async function readGameReplayArchiveForApp() {
+                    return currentReplayState();
+                }
+
+                export async function linkGameYouTubeReplayForApp(teamId, gameId, replayUrl, options = {}) {
+                    const parsed = new URL(replayUrl);
+                    const videoId = parsed.searchParams.get('v');
+                    const replayVideo = {
+                        provider: 'youtube',
+                        videoId,
+                        embedUrl: 'https://www.youtube.com/embed/' + videoId,
+                        publicUrl: 'https://www.youtube.com/watch?v=' + videoId,
+                        status: 'ready'
+                    };
+                    const nextState = {
+                        state: 'ready',
+                        hasRecordedReplay: true,
+                        hasReplayVideo: true,
+                        replayArchiveRevision: nextReplayRevision(),
+                        replayVideo,
+                        lastMutationId: options.mutationId || null
+                    };
+                    window.__mockReplayArchiveState = nextState;
+                    window.__scheduleCalls.replayUpdates = (window.__scheduleCalls.replayUpdates || []).concat({
+                        action: 'link',
+                        teamId,
+                        gameId,
+                        replayUrl,
+                        userId: options.userId || null,
+                        expectedRevision: options.expectedRevision ?? null,
+                        mutationId: options.mutationId || null,
+                        replayVideo
+                    });
+                    return nextState;
+                }
+
+                export async function removeGameReplayForApp(teamId, gameId, options = {}) {
+                    const nextState = {
+                        state: 'removed',
+                        hasRecordedReplay: false,
+                        hasReplayVideo: false,
+                        replayArchiveRevision: nextReplayRevision(),
+                        replayVideo: null,
+                        lastMutationId: options.mutationId || null
+                    };
+                    window.__mockReplayArchiveState = nextState;
+                    window.__scheduleCalls.replayUpdates = (window.__scheduleCalls.replayUpdates || []).concat({
+                        action: 'remove',
+                        teamId,
+                        gameId,
+                        userId: options.userId || null,
+                        expectedRevision: options.expectedRevision ?? null,
+                        mutationId: options.mutationId || null
+                    });
+                    return nextState;
+                }
+
+                export async function getGameReplayPlaybackForApp() {
+                    const state = currentReplayState();
+                    return {
+                        state: state.state,
+                        hasRecordedReplay: state.hasRecordedReplay,
+                        hasReplayVideo: state.hasReplayVideo,
+                        replayArchiveRevision: state.replayArchiveRevision,
+                        available: Boolean(state.replayVideo),
+                        replayVideo: state.replayVideo
+                    };
+                }
+
+                export function toSafeReplayArchiveState(state) {
+                    return {
+                        state: state.state,
+                        hasRecordedReplay: state.hasRecordedReplay,
+                        hasReplayVideo: state.hasReplayVideo,
+                        replayArchiveRevision: state.replayArchiveRevision
+                    };
+                }
+            `
+        });
+    });
+
     await page.route(/\/src\/lib\/scheduleService\.ts(\?.*)?$/, async (route) => {
         await route.fulfill({
             status: 200,
@@ -394,43 +509,6 @@ async function mockScheduleModules(page, options = {}) {
                 export async function updateScheduledGameForApp(teamId, gameId, input, user) {
                     window.__scheduleCalls.gameUpdates = (window.__scheduleCalls.gameUpdates || []).concat({ teamId, gameId, input, userId: user?.uid || null });
                     return { success: true };
-                }
-
-                export async function linkGameYouTubeReplayForApp(teamId, gameId, replayUrl, user, options = {}) {
-                    const parsed = new URL(replayUrl);
-                    const videoId = parsed.searchParams.get('v');
-                    const replayVideo = {
-                        provider: 'youtube',
-                        videoId,
-                        embedUrl: 'https://www.youtube.com/embed/' + videoId,
-                        publicUrl: 'https://www.youtube.com/watch?v=' + videoId,
-                        status: 'ready',
-                        linkedBy: user?.uid || null,
-                        linkedAt: new Date()
-                    };
-                    window.__mockReplayVideo = replayVideo;
-                    window.__scheduleCalls.replayUpdates = (window.__scheduleCalls.replayUpdates || []).concat({
-                        action: 'link',
-                        teamId,
-                        gameId,
-                        replayUrl,
-                        userId: user?.uid || null,
-                        expectedReplayState: options.expectedReplayState ?? {},
-                        replayVideo
-                    });
-                    return replayVideo;
-                }
-
-                export async function removeGameReplayForApp(teamId, gameId, user, expectedReplayState = {}) {
-                    window.__mockReplayVideo = null;
-                    window.__scheduleCalls.replayUpdates = (window.__scheduleCalls.replayUpdates || []).concat({
-                        action: 'remove',
-                        teamId,
-                        gameId,
-                        userId: user?.uid || null,
-                        expectedReplayState
-                    });
-                    return { removed: true, updatedAt: new Date() };
                 }
 
                 export async function updateScheduledPracticeForApp(teamId, input, user, options) {
@@ -1879,7 +1957,7 @@ test('app completed-game manager links, replaces, and removes a YouTube replay',
         gameId: 'game-1',
         replayUrl: 'https://www.youtube.com/watch?v=0IuY8Oryi1k',
         userId: 'user-1',
-        expectedReplayState: {},
+        expectedRevision: null,
         replayVideo: {
             provider: 'youtube',
             videoId: '0IuY8Oryi1k',
@@ -1892,7 +1970,7 @@ test('app completed-game manager links, replaces, and removes a YouTube replay',
     await replaySection.getByLabel('YouTube video URL').fill('https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=30');
     await replaySection.getByRole('button', { name: 'Replace replay' }).click();
     await expect.poll(() => page.evaluate(() => window.__scheduleCalls.replayUpdates?.[1]?.replayVideo?.videoId)).toBe('dQw4w9WgXcQ');
-    await expect.poll(() => page.evaluate(() => window.__scheduleCalls.replayUpdates?.[1]?.expectedReplayState?.replayVideo?.videoId)).toBe('0IuY8Oryi1k');
+    await expect.poll(() => page.evaluate(() => window.__scheduleCalls.replayUpdates?.[1]?.expectedRevision)).toBe('replay-revision-1');
 
     await replaySection.getByRole('button', { name: 'Remove' }).click();
     await expect(replaySection.getByRole('button', { name: 'Link YouTube replay' })).toBeVisible();
@@ -1901,11 +1979,7 @@ test('app completed-game manager links, replaces, and removes a YouTube replay',
         teamId: 'team-1',
         gameId: 'game-1',
         userId: 'user-1',
-        expectedReplayState: {
-            replayVideo: {
-                videoId: 'dQw4w9WgXcQ'
-            }
-        }
+        expectedRevision: 'replay-revision-2'
     });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
     expect(pageErrors).toEqual([]);

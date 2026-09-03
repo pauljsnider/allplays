@@ -1,11 +1,11 @@
 import { readFileSync } from 'node:fs';
-import { afterAll, beforeAll, beforeEach, describe, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
     assertFails,
     assertSucceeds,
     initializeTestEnvironment
 } from '@firebase/rules-unit-testing';
-import { deleteField, doc, getDoc, setDoc, Timestamp, updateDoc } from 'firebase/firestore';
+import { deleteDoc, deleteField, doc, getDoc, setDoc, Timestamp, updateDoc } from 'firebase/firestore';
 
 const rules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
 const nowTimestamp = () => Timestamp.now();
@@ -25,16 +25,22 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('streaming broadcast rules
         await testEnv.withSecurityRulesDisabled(async (context) => {
             const firestore = context.firestore();
             const users = [
-                ['owner-1', 'owner@example.com'],
-                ['selected-1', 'selected@example.com'],
-                ['confirmed-1', 'confirmed@example.com'],
-                ['unrelated-1', 'unrelated@example.com'],
-                ['legacy-1', 'legacy@example.com'],
-                ['videographer-1', 'videographer@example.com']
+                ['owner-1', 'owner@example.com', []],
+                ['selected-1', 'selected@example.com', []],
+                ['confirmed-1', 'confirmed@example.com', []],
+                ['unrelated-1', 'unrelated@example.com', []],
+                ['legacy-1', 'legacy@example.com', []],
+                ['videographer-1', 'videographer@example.com', []],
+                ['parent-1', 'parent@example.com', ['replay-team']]
             ];
-            for (const [uid, email] of users) {
-                await setDoc(doc(firestore, `users/${uid}`), { email, isAdmin: false, parentTeamIds: [] });
+            for (const [uid, email, parentTeamIds] of users) {
+                await setDoc(doc(firestore, `users/${uid}`), { email, isAdmin: false, parentTeamIds });
             }
+            await setDoc(doc(firestore, 'users/global-admin-1'), {
+                email: 'global-admin@example.com',
+                isAdmin: true,
+                parentTeamIds: []
+            });
             await seedTeamAndGame(firestore, 'selected-team', 'selected-game', {
                 teamPermissions: { streaming: { mode: 'selected', memberIds: ['selected-1'] } }
             });
@@ -138,6 +144,26 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('streaming broadcast rules
 
     function gameRef(firestore, teamId, gameId) {
         return doc(firestore, `teams/${teamId}/games/${gameId}`);
+    }
+
+    function privateReplayRef(firestore, teamId, gameId) {
+        return doc(firestore, `teams/${teamId}/games/${gameId}/privateReplay/archive`);
+    }
+
+    function sharedPrivateReplayRef(firestore, teamId, gameId) {
+        return doc(firestore, `teams/${teamId}/sharedGames/${gameId}/privateReplay/archive`);
+    }
+
+    function replayMigrationControlRef(firestore) {
+        return doc(firestore, 'systemControls/replayPrivateArchiveMigration');
+    }
+
+    function replayProtectedIdentityRef(firestore, videoId = '0IuY8Oryi1k') {
+        return doc(firestore, `replayProtectedIdentities/youtube:${videoId}`);
+    }
+
+    function replayClipIdentityRef(firestore, videoId = '0IuY8Oryi1k') {
+        return doc(firestore, `replayClipIdentities/youtube:${videoId}`);
     }
 
     function readySession(overrides = {}) {
@@ -352,7 +378,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('streaming broadcast rules
         }
     });
 
-    it('allows completed-game replay links only for managers and selected videographers', async () => {
+    it('denies every direct client replay mutation after the archive moves server-side', async () => {
         const linkedAt = nowTimestamp();
         const firstReplay = {
             provider: 'youtube',
@@ -375,15 +401,15 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('streaming broadcast rules
         const videographerDb = authedDb('videographer-1', 'videographer@example.com');
         const videographerRef = gameRef(videographerDb, 'replay-team', 'replay-game');
 
-        await assertSucceeds(updateDoc(videographerRef, {
+        await assertFails(updateDoc(videographerRef, {
             replayVideo: firstReplay,
             updatedAt: nowTimestamp()
         }));
-        await assertSucceeds(updateDoc(videographerRef, {
+        await assertFails(updateDoc(videographerRef, {
             replayVideo: replacementReplay,
             updatedAt: nowTimestamp()
         }));
-        await assertSucceeds(updateDoc(videographerRef, {
+        await assertFails(updateDoc(videographerRef, {
             replayVideo: null,
             replayVideoFallbackDisabled: true,
             updatedAt: nowTimestamp()
@@ -409,11 +435,265 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('streaming broadcast rules
             replayVideo: { ...firstReplay, linkedBy: 'owner-1' },
             updatedAt: nowTimestamp()
         }));
-        await assertSucceeds(updateDoc(gameRef(ownerDb, 'replay-team', 'replay-game'), {
+        await assertFails(updateDoc(gameRef(ownerDb, 'replay-team', 'replay-game'), {
             replayVideo: { ...firstReplay, linkedBy: 'owner-1' },
             replayVideoFallbackDisabled: deleteField(),
             updatedAt: nowTimestamp()
         }));
+    });
+
+    it('keeps private replay archives unreadable and unwritable for every client role', async () => {
+        await testEnv.withSecurityRulesDisabled(async (context) => {
+            const firestore = context.firestore();
+            await setDoc(privateReplayRef(firestore, 'replay-team', 'replay-game'), {
+                schemaVersion: 1,
+                state: 'ready',
+                provider: 'youtube',
+                videoId: '0IuY8Oryi1k',
+                revision: 'opaque-revision-1'
+            });
+            await updateDoc(gameRef(firestore, 'replay-team', 'replay-game'), {
+                hasRecordedReplay: true,
+                replayArchiveRevision: 'opaque-revision-1'
+            });
+            await setDoc(doc(firestore, 'teams/replay-team/sharedGames/shared-replay-game'), {
+                type: 'game',
+                status: 'completed',
+                liveStatus: 'completed',
+                visibility: 'public',
+                hasRecordedReplay: true,
+                replayArchiveRevision: 'opaque-shared-revision-1'
+            });
+            await setDoc(sharedPrivateReplayRef(firestore, 'replay-team', 'shared-replay-game'), {
+                schemaVersion: 1,
+                state: 'ready',
+                provider: 'youtube',
+                videoId: '0IuY8Oryi1k',
+                revision: 'opaque-shared-revision-1'
+            });
+            await setDoc(replayMigrationControlRef(firestore), {
+                schema: 'replay-private-archive-migration',
+                status: 'ready',
+                version: 1,
+                attemptId: 'migration:seed'
+            });
+            await setDoc(replayProtectedIdentityRef(firestore), {
+                schema: 'replay-protected-identity',
+                version: 1,
+                kind: 'youtube',
+                videoId: '0IuY8Oryi1k'
+            });
+            await setDoc(replayClipIdentityRef(firestore), {
+                schema: 'replay-clip-identity',
+                version: 1,
+                kind: 'youtube',
+                videoId: '0IuY8Oryi1k'
+            });
+        });
+
+        for (const [uid, email] of [
+            ['owner-1', 'owner@example.com'],
+            ['videographer-1', 'videographer@example.com'],
+            ['parent-1', 'parent@example.com'],
+            ['unrelated-1', 'unrelated@example.com']
+        ]) {
+            const firestore = authedDb(uid, email);
+            const archiveRef = privateReplayRef(firestore, 'replay-team', 'replay-game');
+            await assertFails(getDoc(archiveRef));
+            await assertFails(setDoc(archiveRef, {
+                schemaVersion: 1,
+                state: 'ready',
+                provider: 'youtube',
+                videoId: 'dQw4w9WgXcQ',
+                revision: 'forged-revision'
+            }));
+            const sharedArchiveRef = sharedPrivateReplayRef(
+                firestore,
+                'replay-team',
+                'shared-replay-game'
+            );
+            await assertFails(getDoc(sharedArchiveRef));
+            await assertFails(setDoc(sharedArchiveRef, {
+                schemaVersion: 1,
+                state: 'ready',
+                provider: 'youtube',
+                videoId: 'dQw4w9WgXcQ',
+                revision: 'forged-shared-revision'
+            }));
+            const controlRef = replayMigrationControlRef(firestore);
+            await assertFails(getDoc(controlRef));
+            await assertFails(setDoc(controlRef, {
+                schema: 'replay-private-archive-migration',
+                status: 'ready',
+                version: 1,
+                attemptId: 'migration:forged'
+            }));
+            const identityRef = replayProtectedIdentityRef(firestore);
+            await assertFails(getDoc(identityRef));
+            await assertFails(setDoc(identityRef, {
+                schema: 'replay-protected-identity',
+                version: 1,
+                kind: 'youtube',
+                videoId: '0IuY8Oryi1k'
+            }));
+            const clipIdentityRef = replayClipIdentityRef(firestore);
+            await assertFails(getDoc(clipIdentityRef));
+            await assertFails(setDoc(clipIdentityRef, {
+                schema: 'replay-clip-identity',
+                version: 1,
+                kind: 'youtube',
+                videoId: '0IuY8Oryi1k'
+            }));
+        }
+
+        const ownerGameRef = gameRef(authedDb('owner-1', 'owner@example.com'), 'replay-team', 'replay-game');
+        await assertFails(updateDoc(ownerGameRef, { hasRecordedReplay: false, updatedAt: nowTimestamp() }));
+        await assertFails(updateDoc(ownerGameRef, { replayArchiveRevision: 'forged-revision', updatedAt: nowTimestamp() }));
+
+        const parentGame = await assertSucceeds(getDoc(gameRef(
+            authedDb('parent-1', 'parent@example.com'),
+            'replay-team',
+            'replay-game'
+        )));
+        const parentGameData = parentGame.data();
+        expect(parentGameData.hasRecordedReplay).toBe(true);
+        expect(parentGameData.replayArchiveRevision).toBe('opaque-revision-1');
+        expect(parentGameData).not.toHaveProperty('replayVideo');
+        expect(parentGameData).not.toHaveProperty('videoId');
+    });
+
+    it('prevents a readable live URL from becoming a completed replay fallback', async () => {
+        await testEnv.withSecurityRulesDisabled(async (context) => {
+            const firestore = context.firestore();
+            for (const terminalStatus of ['completed', 'final', 'complete', 'finished']) {
+                await seedTeamAndGame(firestore, 'replay-team', `active-video-fallback-${terminalStatus}`, {}, {
+                    status: 'scheduled',
+                    liveStatus: 'live',
+                    videoUrl: 'https://www.youtube.com/watch?v=0IuY8Oryi1k'
+                });
+            }
+        });
+        const ownerDb = authedDb('owner-1', 'owner@example.com');
+        for (const terminalStatus of ['completed', 'final', 'complete', 'finished']) {
+            const ref = gameRef(ownerDb, 'replay-team', `active-video-fallback-${terminalStatus}`);
+            await assertSucceeds(updateDoc(ref, {
+                summary: 'The legacy public live source remains unchanged.',
+                updatedAt: nowTimestamp()
+            }));
+            await assertFails(updateDoc(ref, {
+                status: terminalStatus,
+                liveStatus: 'scheduled',
+                updatedAt: nowTimestamp()
+            }));
+        }
+
+        const ref = gameRef(ownerDb, 'replay-team', 'active-video-fallback-completed');
+        await assertSucceeds(updateDoc(ref, {
+            videoUrl: deleteField(),
+            status: 'completed',
+            liveStatus: 'scheduled',
+            updatedAt: nowTimestamp()
+        }));
+        await assertFails(updateDoc(ref, {
+            videoUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+            updatedAt: nowTimestamp()
+        }));
+    });
+
+    it('rejects broadcast provider capabilities on create, dedicated updates, and mixed owner updates', async () => {
+        const ownerDb = authedDb('owner-1', 'owner@example.com');
+        const unsafeProvider = {
+            type: 'youtube',
+            name: 'YouTube',
+            videoId: '0IuY8Oryi1k',
+            embedUrl: 'https://www.youtube.com/embed/0IuY8Oryi1k'
+        };
+        await assertFails(setDoc(gameRef(ownerDb, 'replay-team', 'provider-create'), {
+            type: 'game',
+            status: 'scheduled',
+            liveStatus: 'scheduled',
+            broadcastSession: readySession({ provider: unsafeProvider }),
+            updatedAt: nowTimestamp()
+        }));
+        await assertFails(updateDoc(gameRef(ownerDb, 'replay-team', 'replay-game'), {
+            broadcastSession: readySession({ provider: unsafeProvider }),
+            updatedAt: nowTimestamp()
+        }));
+        await assertFails(updateDoc(gameRef(ownerDb, 'replay-team', 'replay-game'), {
+            summary: 'Mixed update must not bypass the provider boundary.',
+            broadcastSession: readySession({ provider: unsafeProvider }),
+            updatedAt: nowTimestamp()
+        }));
+        await assertSucceeds(updateDoc(gameRef(ownerDb, 'replay-team', 'replay-game'), {
+            broadcastSession: readySession({
+                provider: { type: 'youtube', name: 'YouTube', channel: 'team-channel' }
+            }),
+            updatedAt: nowTimestamp()
+        }));
+    });
+
+    it('grandfathers historical game stream aliases while making them server-migration-only', async () => {
+        await testEnv.withSecurityRulesDisabled(async (context) => {
+            await seedTeamAndGame(context.firestore(), 'replay-team', 'legacy-game-stream-aliases', {}, {
+                streamEmbedUrl: 'https://www.youtube.com/embed/0IuY8Oryi1k',
+                youtubeEmbedUrl: 'https://www.youtube.com/embed/0IuY8Oryi1k',
+                youtubeVideoId: '0IuY8Oryi1k'
+            });
+        });
+        const ownerDb = authedDb('owner-1', 'owner@example.com');
+        const ref = gameRef(ownerDb, 'replay-team', 'legacy-game-stream-aliases');
+        await assertSucceeds(updateDoc(ref, {
+            summary: 'Existing public stream remains unchanged.',
+            updatedAt: nowTimestamp()
+        }));
+        await assertFails(updateDoc(ref, {
+            youtubeVideoId: 'dQw4w9WgXcQ',
+            updatedAt: nowTimestamp()
+        }));
+        await assertFails(updateDoc(gameRef(ownerDb, 'replay-team', 'replay-game'), {
+            streamEmbedUrl: 'https://www.youtube.com/embed/dQw4w9WgXcQ',
+            updatedAt: nowTimestamp()
+        }));
+        await assertFails(updateDoc(ref, {
+            streamEmbedUrl: deleteField(),
+            youtubeEmbedUrl: deleteField(),
+            youtubeVideoId: deleteField(),
+            updatedAt: nowTimestamp()
+        }));
+    });
+
+    it('blocks deletion until readable replay identities are migrated', async () => {
+        await testEnv.withSecurityRulesDisabled(async (context) => {
+            const firestore = context.firestore();
+            await seedTeamAndGame(firestore, 'delete-replay-team', 'raw-replay-game', {}, {
+                status: 'completed',
+                liveStatus: 'completed',
+                replayVideoUrl: 'https://www.youtube.com/watch?v=0IuY8Oryi1k'
+            });
+            await seedTeamAndGame(firestore, 'delete-replay-team', 'terminal-video-game', {}, {
+                status: 'finished',
+                liveStatus: 'scheduled',
+                videoUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
+            });
+            await seedTeamAndGame(firestore, 'delete-replay-team', 'migrated-marker-game', {}, {
+                status: 'complete',
+                liveStatus: 'scheduled',
+                hasRecordedReplay: true,
+                replayArchiveRevision: 'opaque-migrated-revision'
+            });
+            await setDoc(privateReplayRef(firestore, 'delete-replay-team', 'migrated-marker-game'), {
+                schemaVersion: 1,
+                state: 'ready',
+                provider: 'youtube',
+                videoId: '0IuY8Oryi1k',
+                revision: 'opaque-migrated-revision'
+            });
+        });
+
+        const ownerDb = authedDb('owner-1', 'owner@example.com');
+        await assertFails(deleteDoc(gameRef(ownerDb, 'delete-replay-team', 'raw-replay-game')));
+        await assertFails(deleteDoc(gameRef(ownerDb, 'delete-replay-team', 'terminal-video-game')));
+        await assertSucceeds(deleteDoc(gameRef(ownerDb, 'delete-replay-team', 'migrated-marker-game')));
     });
 
     it('forbids replay archive fields on game creation while allowing ordinary owner-created games', async () => {
@@ -453,9 +733,96 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('streaming broadcast rules
             liveStatus: 'completed',
             recordedVideo: { url: 'https://cdn.example/replay.mp4' }
         }));
+        for (const markerPatch of [
+            { hasRecordedReplay: true },
+            { hasReplayVideo: true },
+            { replayArchiveRevision: 'forged-revision' },
+            { replayArchiveState: 'ready' },
+            { replayMediaVersion: 1 },
+            { replayMediaState: 'ready' },
+            { replayMediaRevision: 'forged-revision' }
+        ]) {
+            await assertFails(setDoc(gameRef(ownerDb, 'replay-team', `marker-${Object.keys(markerPatch)[0]}`), {
+                ...baseGame,
+                ...markerPatch
+            }));
+        }
+        await assertFails(setDoc(gameRef(ownerDb, 'replay-team', 'completed-video-url-create'), {
+            ...baseGame,
+            status: 'completed',
+            liveStatus: 'scheduled',
+            videoUrl: 'https://www.youtube.com/watch?v=0IuY8Oryi1k'
+        }));
+        await assertFails(setDoc(gameRef(ownerDb, 'replay-team', 'active-video-url-create'), {
+            ...baseGame,
+            liveStatus: 'live',
+            videoUrl: 'https://www.youtube.com/embed/live_stream?channel=UC123'
+        }));
+        for (const [field, value] of [
+            ['streamEmbedUrl', 'https://www.youtube.com/embed/0IuY8Oryi1k'],
+            ['youtubeEmbedUrl', 'https://www.youtube.com/embed/0IuY8Oryi1k'],
+            ['youtubeVideoId', '0IuY8Oryi1k']
+        ]) {
+            await assertFails(setDoc(gameRef(ownerDb, 'replay-team', `fixed-video-${field}`), {
+                ...baseGame,
+                [field]: value
+            }));
+        }
     });
 
-    it('atomically replaces every historical replay alias with the canonical replay', async () => {
+    it('freezes every replay clip container and server mutation marker on game create and update', async () => {
+        const fields = [
+            'highlightClips',
+            'clipRecords',
+            'gameClips',
+            'videoClips',
+            'clips',
+            'mediaClips',
+            'clipMetadata',
+            'replayHighlights',
+            'highlightClipsRevision',
+            'highlightClipsLastMutationId'
+        ];
+        const baseGame = {
+            type: 'game',
+            status: 'scheduled',
+            liveStatus: 'scheduled',
+            visibility: 'public',
+            updatedAt: nowTimestamp()
+        };
+        const ownerDb = authedDb('owner-1', 'owner@example.com');
+        const globalAdminDb = authedDb('global-admin-1', 'global-admin@example.com');
+        const videographerDb = authedDb('videographer-1', 'videographer@example.com');
+
+        for (const [index, field] of fields.entries()) {
+            const value = field.startsWith('highlightClipsR') || field.endsWith('MutationId')
+                ? `forged-${field}`
+                : [{ mediaUrl: 'https://cdn.example.test/clip.mp4' }];
+            await assertFails(setDoc(gameRef(ownerDb, 'replay-team', `owner-clip-create-${index}`), {
+                ...baseGame,
+                [field]: value
+            }));
+            await assertFails(setDoc(gameRef(globalAdminDb, 'replay-team', `admin-clip-create-${index}`), {
+                ...baseGame,
+                [field]: value
+            }));
+            await assertFails(updateDoc(gameRef(ownerDb, 'replay-team', 'replay-game'), {
+                [field]: value,
+                updatedAt: nowTimestamp()
+            }));
+            await assertFails(updateDoc(gameRef(videographerDb, 'replay-team', 'replay-game'), {
+                [field]: value,
+                updatedAt: nowTimestamp()
+            }));
+        }
+
+        await assertSucceeds(updateDoc(gameRef(ownerDb, 'replay-team', 'replay-game'), {
+            summary: 'An unrelated manager edit remains available.',
+            updatedAt: nowTimestamp()
+        }));
+    });
+
+    it('requires the server migration to replace historical replay aliases', async () => {
         await testEnv.withSecurityRulesDisabled(async (context) => {
             await updateDoc(gameRef(context.firestore(), 'replay-team', 'replay-game'), {
                 recordedVideo: { url: 'https://cdn.example/recorded.mp4' },
@@ -475,7 +842,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('streaming broadcast rules
         });
 
         const videographerDb = authedDb('videographer-1', 'videographer@example.com');
-        await assertSucceeds(updateDoc(gameRef(videographerDb, 'replay-team', 'replay-game'), {
+        await assertFails(updateDoc(gameRef(videographerDb, 'replay-team', 'replay-game'), {
             replayVideo: {
                 provider: 'youtube',
                 videoId: '0IuY8Oryi1k',
@@ -502,13 +869,13 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('streaming broadcast rules
         }));
     });
 
-    it('accepts a final lifecycle when the unused status field is null', async () => {
+    it('still denies direct replay writes for legacy null-compatible final lifecycles', async () => {
         const videographerDb = authedDb('videographer-1', 'videographer@example.com');
         for (const [teamId, gameId] of [
             ['nullable-status-replay-team', 'status-only-game'],
             ['nullable-live-replay-team', 'live-only-game']
         ]) {
-            await assertSucceeds(updateDoc(gameRef(videographerDb, teamId, gameId), {
+            await assertFails(updateDoc(gameRef(videographerDb, teamId, gameId), {
                 replayVideo: {
                     provider: 'youtube',
                     videoId: '0IuY8Oryi1k',
@@ -523,11 +890,11 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('streaming broadcast rules
         }
     });
 
-    it('allows only a full manager to unlink stale replay state after lifecycle corrections', async () => {
+    it('denies manager and videographer direct unlink after lifecycle corrections', async () => {
         const ownerDb = authedDb('owner-1', 'owner@example.com');
         const videographerDb = authedDb('videographer-1', 'videographer@example.com');
         const ref = gameRef(ownerDb, 'replay-team', 'replay-game');
-        await assertSucceeds(updateDoc(ref, {
+        await assertFails(updateDoc(ref, {
             replayVideo: {
                 provider: 'youtube',
                 videoId: '0IuY8Oryi1k',
@@ -539,7 +906,22 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('streaming broadcast rules
             },
             updatedAt: nowTimestamp()
         }));
-        await assertSucceeds(updateDoc(ref, {
+        await testEnv.withSecurityRulesDisabled(async (context) => {
+            await updateDoc(gameRef(context.firestore(), 'replay-team', 'replay-game'), {
+                hasRecordedReplay: true,
+                replayArchiveRevision: 'r:ready-lifecycle',
+                updatedAt: nowTimestamp()
+            });
+            await setDoc(privateReplayRef(context.firestore(), 'replay-team', 'replay-game'), {
+                schemaVersion: 1,
+                state: 'ready',
+                revision: 'r:ready-lifecycle',
+                provider: 'youtube',
+                videoId: '0IuY8Oryi1k',
+                protectedVideoIdHashes: []
+            });
+        });
+        await assertFails(updateDoc(ref, {
             status: 'scheduled',
             liveStatus: 'scheduled',
             updatedAt: nowTimestamp()
@@ -549,7 +931,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('streaming broadcast rules
             replayVideoFallbackDisabled: true,
             updatedAt: nowTimestamp()
         }));
-        await assertSucceeds(updateDoc(ref, {
+        await assertFails(updateDoc(ref, {
             status: 'cancelled',
             liveStatus: 'cancelled',
             updatedAt: nowTimestamp()
@@ -559,7 +941,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('streaming broadcast rules
             replayVideoFallbackDisabled: true,
             updatedAt: nowTimestamp()
         }));
-        await assertSucceeds(updateDoc(ref, {
+        await assertFails(updateDoc(ref, {
             replayVideo: null,
             replayVideoFallbackDisabled: true,
             updatedAt: nowTimestamp()
@@ -703,9 +1085,9 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('streaming broadcast rules
         }));
     });
 
-    it('allows replay mutation after shared-schedule markers are detached to null', async () => {
+    it('keeps detached games on the server-only replay mutation path', async () => {
         const videographerDb = authedDb('videographer-1', 'videographer@example.com');
-        await assertSucceeds(updateDoc(gameRef(videographerDb, 'detached-replay-team', 'detached-game'), {
+        await assertFails(updateDoc(gameRef(videographerDb, 'detached-replay-team', 'detached-game'), {
             replayVideo: {
                 provider: 'youtube',
                 videoId: '0IuY8Oryi1k',

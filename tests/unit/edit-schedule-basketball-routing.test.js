@@ -291,7 +291,7 @@ describe('edit schedule basketball tracker routing', () => {
         expect(source).toContain('${hasReplayPlayback ? `<a href="live-game.html?teamId=${currentTeamId}&gameId=${game.id}&replay=true"');
     });
 
-    it('renders replay actions only for playable object or flat URL evidence', () => {
+    it('renders replay actions only from the server-safe replay marker', () => {
         const renderDbGame = buildRenderDbGame();
         const baseGame = {
             opponent: 'Tigers',
@@ -310,13 +310,18 @@ describe('edit schedule basketball tracker routing', () => {
         })).not.toContain('Watch Replay');
         expect(renderDbGame({
             ...baseGame,
-            id: 'object-container',
+            id: 'legacy-object-container',
             replayVideo: { publicUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' }
-        })).toContain('gameId=object-container&replay=true');
+        })).not.toContain('Watch Replay');
         expect(renderDbGame({
             ...baseGame,
-            id: 'flat-alias',
+            id: 'legacy-flat-alias',
             replayVideoPublicUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
-        })).toContain('gameId=flat-alias&replay=true');
+        })).not.toContain('Watch Replay');
+        expect(renderDbGame({
+            ...baseGame,
+            id: 'protected-marker',
+            hasRecordedReplay: true
+        })).toContain('gameId=protected-marker&replay=true');
     });
 });

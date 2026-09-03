@@ -79,25 +79,6 @@ function firstCleanString(values = []) {
     return values.map(toCleanString).find(Boolean) || '';
 }
 
-function getGameReplayUrl(game = {}) {
-    return firstCleanString([
-        game.replayVideo?.publicUrl,
-        game.recordedVideo?.publicUrl,
-        game.videoReplay?.publicUrl,
-        game.replayVideo?.url,
-        game.replayVideo?.src,
-        game.recordedVideo?.url,
-        game.recordedVideo?.src,
-        game.videoReplay?.url,
-        game.videoReplay?.src,
-        game.replayVideoPublicUrl,
-        game.replayVideoUrl,
-        game.recordedVideoUrl,
-        game.videoReplayUrl,
-        game.archivedVideoUrl
-    ]);
-}
-
 function isSafeHttpUrl(value) {
     try {
         const parsed = new URL(value);
@@ -128,14 +109,13 @@ function buildReplayClipUrl({ teamId, gameId, startMs, endMs }) {
 export function collectPlayerVideoClips(games = [], { teamId = '', playerId = '' } = {}) {
     return (Array.isArray(games) ? games : []).flatMap((game = {}) => {
         const gameId = toCleanString(game.id || game.gameId);
-        const replayUrl = getGameReplayUrl(game);
+        const hasRecordedReplay = game.hasRecordedReplay === true || game.hasReplayVideo === true;
         const rawClips = [
             ...(Array.isArray(game.gameClips) ? game.gameClips : []),
             ...(Array.isArray(game.highlightClips) ? game.highlightClips : []),
             ...(Array.isArray(game.clipMetadata) ? game.clipMetadata : []),
             ...(Array.isArray(game.clips) ? game.clips : []),
             ...(Array.isArray(game.videoClips) ? game.videoClips : []),
-            ...(Array.isArray(game.replayVideo?.highlights) ? game.replayVideo.highlights : []),
             ...(Array.isArray(game.replayHighlights) ? game.replayHighlights : [])
         ];
 
@@ -148,7 +128,7 @@ export function collectPlayerVideoClips(games = [], { teamId = '', playerId = ''
                 const explicitUrl = firstCleanString([clip.url, clip.publicUrl, clip.videoUrl, clip.href]);
                 const url = isSafeClipUrl(explicitUrl)
                     ? explicitUrl
-                    : (replayUrl && isSafeClipUrl(replayUrl)
+                    : (hasRecordedReplay
                         ? buildReplayClipUrl({ teamId: teamId || game.teamId, gameId, startMs, endMs })
                         : '');
 
@@ -157,11 +137,7 @@ export function collectPlayerVideoClips(games = [], { teamId = '', playerId = ''
                 const thumbnailUrl = firstCleanString([
                     clip.thumbnailUrl,
                     clip.posterUrl,
-                    clip.imageUrl,
-                    game.replayVideo?.posterUrl,
-                    game.recordedVideo?.posterUrl,
-                    game.videoReplay?.posterUrl,
-                    game.replayVideoPosterUrl
+                    clip.imageUrl
                 ]);
 
                 return {

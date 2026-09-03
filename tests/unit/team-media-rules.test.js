@@ -134,8 +134,11 @@ describe('team media Firestore rules', () => {
         expect(mediaRules).toContain('allow create, delete: if canManageTeamMedia(teamId);');
         expect(mediaRules).toContain('allow update: if canManageTeamMedia(teamId) || isTeamMediaUploadCounterUpdate(teamId);');
         expect(mediaRules).toContain('allow read: if canReadTeamMediaItem(teamId, resource.data);');
-        expect(mediaRules).toContain('allow create: if canManageTeamMedia(teamId) || isTeamMediaUploadCreate(teamId, request.resource.data);');
-        expect(mediaRules).toContain('allow update: if canManageTeamMedia(teamId) || isOwnTeamMediaUploadSoftDelete(teamId) || isTeamMediaTitleUpdate(teamId);');
+        expect(rules).toContain('function teamMediaVideoUrlFields() {');
+        expect(mediaRules).toContain('allow create: if !request.resource.data.keys().hasAny(teamMediaVideoUrlFields()) &&');
+        expect(mediaRules).toContain('(canManageTeamMedia(teamId) || isTeamMediaUploadCreate(teamId, request.resource.data));');
+        expect(mediaRules).toContain(".hasAny(teamMediaVideoUrlFields().concat(['type', 'mediaType'])) &&");
+        expect(mediaRules).toContain('(canManageTeamMedia(teamId) || isOwnTeamMediaUploadSoftDelete(teamId) || isTeamMediaTitleUpdate(teamId));');
         expect(rules).toContain('function canManageTeamMedia(teamId) {');
         expect(rules).toContain("teamPermission(teamId, 'teamMediaManagement').get('mode', '') == 'selected'");
         expect(rules).toContain("request.auth.uid in teamPermission(teamId, 'teamMediaManagement').get('memberIds', [])");

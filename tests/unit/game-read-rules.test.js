@@ -33,12 +33,16 @@ const officiatingNotificationRules = rules.match(
 
 describe('game Firestore read rules', () => {
     it('keeps staff assignment-array updates on the team-admin game write path', () => {
-        expect(teamGamesRules).toContain('allow update: if !isBroadcastSessionOnlyUpdate() &&');
+        expect(teamGamesRules).toContain('allow update: if preservesReadyReplayLifecycle() &&');
+        expect(teamGamesRules).toContain('!isReplayClipMutation() &&');
+        expect(teamGamesRules).toContain('!isBroadcastSessionOnlyUpdate() &&');
+        expect(teamGamesRules).toContain('(isTeamOwnerOrAdmin(teamId) &&');
         expect(teamGamesRules).toContain('!isReplayArchiveMutation() &&');
-        expect(teamGamesRules).toContain('(isTeamOwnerOrAdmin(teamId) ||');
-        expect(teamGamesRules).toContain('allow update: if isReplayArchiveOnlyUpdate() &&');
-        expect(teamGamesRules).toContain('isGameReplayVideoMutationValid(true)');
-        expect(teamGamesRules).toContain('allow update: if isBroadcastSessionOnlyUpdate() && isTeamOwnerOrAdmin(teamId);');
+        expect(teamGamesRules).toContain('isReplayBoundarySafeUpdate()) ||');
+        expect(teamGamesRules).not.toContain('allow update: if isReplayArchiveOnlyUpdate() &&');
+        expect(teamGamesRules).not.toContain('isGameReplayVideoMutationValid(true)');
+        expect(teamGamesRules).toContain('allow update: if isBroadcastSessionOnlyUpdate() &&');
+        expect(teamGamesRules).toContain('hasNoReadableBroadcastReplayCapability(request.resource.data) &&');
     });
 
     it('replaces unconditional game reads with shared visibility helpers', () => {

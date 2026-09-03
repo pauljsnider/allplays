@@ -18,7 +18,7 @@ const firebaseMocks = vi.hoisted(() => ({
   onSnapshot: vi.fn()
 }));
 
-vi.mock('../../js/firebase.js?v=33', () => ({
+vi.mock('../../js/firebase.js?v=34', () => ({
   db: {},
   auth: firebaseMocks.auth,
   storage: {},
@@ -92,7 +92,7 @@ const {
   getGameDayTeamContext,
   getTeams,
   getUserTeamsWithAccess
-} = await import('../../js/db.js?v=4433195');
+} = await import('../../js/db.js?v=4433196');
 
 describe('team access query resilience', () => {
   beforeEach(() => {
@@ -553,17 +553,337 @@ describe('game access query resilience', () => {
       data: () => ({
         opponent: 'Rockets',
         videoUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+        broadcastSession: {
+          status: 'ready_for_managed_stream',
+          provider: {
+            type: 'youtube',
+            name: 'YouTube',
+            channel: 'team-channel',
+            embedUrl: 'https://www.youtube.com/embed/PK1HyC37doc',
+            videoId: 'PK1HyC37doc'
+          }
+        },
+        youtubeVideoId: 'PK1HyC37doc',
+        streamEmbedUrl: 'https://www.youtube.com/embed/PK1HyC37doc',
+        youtubeEmbedUrl: 'https://youtu.be/PK1HyC37doc',
         isPublicProjection: true
       })
     });
 
-    await expect(getGame('team-1', 'game-2')).resolves.toEqual(expect.objectContaining({
+    const game = await getGame('team-1', 'game-2');
+    expect(game).toEqual(expect.objectContaining({
       id: 'game-2',
       opponent: 'Rockets',
-      videoUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+      broadcastSession: {
+        status: 'ready_for_managed_stream',
+        provider: {
+          type: 'youtube',
+          name: 'YouTube',
+          channel: 'team-channel'
+        }
+      },
       isPublicProjection: false
     }));
+    expect(game).not.toHaveProperty('videoUrl');
+    expect(game).not.toHaveProperty('youtubeVideoId');
+    expect(game).not.toHaveProperty('streamEmbedUrl');
+    expect(game).not.toHaveProperty('youtubeEmbedUrl');
     expect(firebaseMocks.getPublicGameProjection).not.toHaveBeenCalled();
+  });
+
+  it('preserves an unmarked canonical team live transport while scrubbing automated aliases', async () => {
+    firebaseMocks.getDoc.mockResolvedValue({
+      id: 'game-2',
+      exists: () => true,
+      data: () => ({
+        type: 'game',
+        status: 'scheduled',
+        liveStatus: 'live',
+        videoUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+        youtubeVideoId: 'PK1HyC37doc',
+        streamEmbedUrl: 'https://www.youtube.com/embed/PK1HyC37doc'
+      })
+    });
+
+    const game = await getGame('team-1', 'game-2');
+    expect(game.videoUrl).toBe('https://www.youtube.com/watch?v=PK1HyC37doc');
+    expect(game).not.toHaveProperty('youtubeVideoId');
+    expect(game).not.toHaveProperty('streamEmbedUrl');
+  });
+
+  it('strips stale replay capabilities from completed canonical game reads and keeps only safe markers', async () => {
+    firebaseMocks.getDoc.mockResolvedValue({
+      id: 'game-2',
+      exists: () => true,
+      data: () => ({
+        type: 'game',
+        status: 'completed',
+        liveStatus: 'scheduled',
+        replayVideo: {
+          provider: 'youtube',
+          videoId: 'PK1HyC37doc',
+          publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc'
+        },
+        recordedVideoUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+        videoUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+        highlightClips: [
+          { id: 'protected-copy', publicUrl: 'https://youtu.be/PK1HyC37doc', startMs: 1_000 },
+          { id: 'standalone', videoUrl: 'https://youtu.be/dQw4w9WgXcQ' }
+        ],
+        hasRecordedReplay: true,
+        replayArchiveRevision: 'r:opaque-1',
+        isPublicProjection: true
+      })
+    });
+
+    const game = await getGame('team-1', 'game-2');
+    expect(game).toMatchObject({
+      id: 'game-2',
+      status: 'completed',
+      liveStatus: 'scheduled',
+      hasRecordedReplay: true,
+      replayArchiveRevision: 'r:opaque-1',
+      isPublicProjection: false
+    });
+    expect(game).not.toHaveProperty('replayVideo');
+    expect(game).not.toHaveProperty('recordedVideoUrl');
+    expect(game).not.toHaveProperty('videoUrl');
+    expect(game.highlightClips).toEqual([
+      { id: 'protected-copy', startMs: 1_000 },
+      { id: 'standalone', videoUrl: 'https://youtu.be/dQw4w9WgXcQ' }
+    ]);
+  });
+
+  it('derives only a capability-free marker for a valid unmigrated YouTube replay', async () => {
+    firebaseMocks.getDoc.mockResolvedValue({
+      id: 'game-2',
+      exists: () => true,
+      data: () => ({
+        type: 'game',
+        status: 'completed',
+        replayVideoUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc'
+      })
+    });
+
+    const game = await getGame('team-1', 'game-2');
+    expect(game).toMatchObject({
+      id: 'game-2',
+      hasRecordedReplay: true,
+      replayArchiveRevision: 'legacy:unmigrated'
+    });
+    expect(game).not.toHaveProperty('replayVideoUrl');
+    expect(JSON.stringify(game)).not.toContain('PK1HyC37doc');
+  });
+
+  it.each([
+    ['blocked status', { replayStatus: 'processing', replayVideoUrl: 'https://youtu.be/PK1HyC37doc' }],
+    ['generic replay URL', { archivedVideoUrl: 'https://cdn.example.test/replay.mp4' }],
+    ['conflicting identities', {
+      replayVideoUrl: 'https://youtu.be/PK1HyC37doc',
+      recordedVideoUrl: 'https://youtu.be/dQw4w9WgXcQ'
+    }],
+    ['overlong YouTube URL', {
+      replayVideoUrl: `https://youtu.be/PK1HyC37doc?padding=${'x'.repeat(2048)}`
+    }],
+    ['explicit marker-free state', {
+      hasRecordedReplay: false,
+      replayVideoUrl: 'https://youtu.be/PK1HyC37doc'
+    }]
+  ])('does not derive an unmigrated marker for %s', async (_label, replayState) => {
+    firebaseMocks.getDoc.mockResolvedValue({
+      id: 'game-2',
+      exists: () => true,
+      data: () => ({
+        type: 'game',
+        status: 'completed',
+        ...replayState
+      })
+    });
+
+    const game = await getGame('team-1', 'game-2');
+    expect(game).toMatchObject({
+      id: 'game-2',
+      hasRecordedReplay: false,
+      replayArchiveRevision: null
+    });
+    expect(JSON.stringify(game)).not.toContain('PK1HyC37doc');
+    expect(JSON.stringify(game)).not.toContain('cdn.example.test');
+  });
+
+  it.each(['complete', 'finished'])(
+    'treats the exact historical %s status as completed for readable videoUrl scrubbing',
+    async (status) => {
+      firebaseMocks.getDoc.mockResolvedValue({
+        id: 'game-2',
+        exists: () => true,
+        data: () => ({
+          type: 'game',
+          status,
+          liveStatus: 'scheduled',
+          videoUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc'
+        })
+      });
+
+      const game = await getGame('team-1', 'game-2');
+      expect(game).toMatchObject({ id: 'game-2', status, liveStatus: 'scheduled' });
+      expect(game).not.toHaveProperty('videoUrl');
+    }
+  );
+
+  it.each([
+    ['videoUrl', (url) => ({ videoUrl: url }), 'https://youtu.be/PK1HyC37doc'],
+    ['url', (url) => ({ url }), 'https://youtu.be/PK1HyC37doc'],
+    ['publicUrl', (url) => ({ publicUrl: url }), 'https://youtu.be/PK1HyC37doc'],
+    ['sourceUrl', (url) => ({ sourceUrl: url }), 'https://youtu.be/PK1HyC37doc'],
+    ['downloadUrl', (url) => ({ downloadUrl: url }), 'https://youtu.be/PK1HyC37doc'],
+    ['href', (url) => ({ href: url }), 'https://youtu.be/PK1HyC37doc'],
+    ['embedUrl', (url) => ({ embedUrl: url }), 'https://youtu.be/PK1HyC37doc'],
+    ['src', (url) => ({ src: url }), 'https://youtu.be/PK1HyC37doc'],
+    ['mediaUrl', (url) => ({ mediaUrl: url }), 'https://youtu.be/PK1HyC37doc'],
+    ['videoId', (videoId) => ({ videoId }), ' PK1HyC37doc '],
+    ['video.url', (url) => ({ video: { url, posterUrl: 'https://cdn.example/poster.jpg' } }), 'https://youtu.be/PK1HyC37doc'],
+    ['video.publicUrl', (url) => ({ video: { publicUrl: url, posterUrl: 'https://cdn.example/poster.jpg' } }), 'https://youtu.be/PK1HyC37doc'],
+    ['video.sourceUrl', (url) => ({ video: { sourceUrl: url, posterUrl: 'https://cdn.example/poster.jpg' } }), 'https://youtu.be/PK1HyC37doc'],
+    ['video.videoId', (videoId) => ({ video: { videoId, posterUrl: 'https://cdn.example/poster.jpg' } }), ' PK1HyC37doc ']
+  ])('strips a protected replay copy from the live clip reader field %s', async (_field, makeClipPatch, protectedValue) => {
+    firebaseMocks.getDoc.mockResolvedValue({
+      id: 'game-2',
+      exists: () => true,
+      data: () => ({
+        type: 'game',
+        status: 'completed',
+        liveStatus: 'scheduled',
+        replayVideoUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+        gameClips: [{
+          id: 'protected-copy',
+          title: 'Keep metadata',
+          ...makeClipPatch(protectedValue)
+        }]
+      })
+    });
+
+    const game = await getGame('team-1', 'game-2');
+    expect(game.gameClips).toEqual([{
+      id: 'protected-copy',
+      title: 'Keep metadata',
+      ...(_field.startsWith('video.')
+        ? { video: { posterUrl: 'https://cdn.example/poster.jpg' } }
+        : {})
+    }]);
+  });
+
+  it('matches canonical URL variants when stripping a generic protected replay copy', async () => {
+    firebaseMocks.getDoc.mockResolvedValue({
+      id: 'game-2',
+      exists: () => true,
+      data: () => ({
+        type: 'game',
+        status: 'completed',
+        liveStatus: 'scheduled',
+        archivedVideoUrl: 'https://private.example',
+        gameClips: [{ id: 'protected-copy', downloadUrl: 'https://private.example/#watch' }]
+      })
+    });
+
+    const game = await getGame('team-1', 'game-2');
+    expect(game).not.toHaveProperty('archivedVideoUrl');
+    expect(game.gameClips).toEqual([{ id: 'protected-copy' }]);
+  });
+
+  it('recursively strips protected replay copies from nested clip maps and arrays', async () => {
+    firebaseMocks.getDoc.mockResolvedValue({
+      id: 'game-2',
+      exists: () => true,
+      data: () => ({
+        type: 'game',
+        status: 'completed',
+        liveStatus: 'scheduled',
+        replayVideoUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+        gameClips: [{
+          id: 'protected-copy',
+          asset: {
+            sources: [
+              { url: 'https://youtu.be/PK1HyC37doc', label: 'protected' },
+              { url: 'https://cdn.example/clip.mp4', label: 'standalone' }
+            ]
+          }
+        }]
+      })
+    });
+
+    const game = await getGame('team-1', 'game-2');
+    expect(game.gameClips).toEqual([{
+      id: 'protected-copy',
+      asset: {
+        sources: [
+          { label: 'protected' },
+          { url: 'https://cdn.example/clip.mp4', label: 'standalone' }
+        ]
+      }
+    }]);
+  });
+
+  it('withholds a protected clip collection when bounded recursive sanitization cannot complete', async () => {
+    let nested = 'https://youtu.be/PK1HyC37doc';
+    for (let index = 0; index < 21; index += 1) nested = { child: nested };
+    firebaseMocks.getDoc.mockResolvedValue({
+      id: 'game-2',
+      exists: () => true,
+      data: () => ({
+        type: 'game',
+        status: 'completed',
+        liveStatus: 'scheduled',
+        replayVideoUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+        gameClips: [nested]
+      })
+    });
+
+    const game = await getGame('team-1', 'game-2');
+    expect(game.gameClips).toEqual([]);
+  });
+
+  it('withholds completed projection URLs while preserving an active-live projection URL', async () => {
+    firebaseMocks.getDoc.mockRejectedValue(Object.assign(new Error('denied'), {
+      code: 'permission-denied'
+    }));
+    firebaseMocks.getPublicGameProjection
+      .mockResolvedValueOnce({
+        data: {
+          item: {
+            id: 'completed-game',
+            status: 'completed',
+            sourceStatus: 'completed',
+            liveStatus: 'scheduled',
+            videoLifecycle: 'completed',
+            videoUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+            hasRecordedReplay: true,
+            replayArchiveRevision: 'r:opaque-1'
+          }
+        }
+      })
+      .mockResolvedValueOnce({
+        data: {
+          item: {
+            id: 'live-game',
+            status: 'live',
+            sourceStatus: 'scheduled',
+            liveStatus: 'live',
+            videoLifecycle: 'live',
+            videoUrl: 'https://www.youtube.com/embed/live_stream?channel=UC123'
+          }
+        }
+      });
+
+    const completed = await getGame('team-1', 'completed-game');
+    const live = await getGame('team-1', 'live-game');
+    expect(completed).toMatchObject({
+      hasRecordedReplay: true,
+      hasReplayVideo: true,
+      replayArchiveRevision: 'r:opaque-1',
+      videoUrl: null,
+      isPublicProjection: true
+    });
+    expect(live.videoUrl).toBe('https://www.youtube.com/embed/live_stream?channel=UC123');
   });
 
   it('does not trust a stored public-projection marker in the shared-game fallback', async () => {
@@ -575,6 +895,20 @@ describe('game access query resilience', () => {
         homeTeamId: 'team-other-home',
         awayTeamId: 'team-other-away',
         sourceNote: 'preserved fallback field',
+        status: 'scheduled',
+        liveStatus: 'live',
+        videoUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+        youtubeVideoId: 'PK1HyC37doc',
+        streamEmbedUrl: 'https://www.youtube.com/embed/PK1HyC37doc',
+        youtubeEmbedUrl: 'https://youtu.be/PK1HyC37doc',
+        broadcastSession: {
+          status: 'ready',
+          provider: {
+            type: 'external_provider',
+            videoId: 'PK1HyC37doc',
+            embedUrl: 'https://www.youtube.com/embed/PK1HyC37doc'
+          }
+        },
         isPublicProjection: true
       })
     });
@@ -584,6 +918,18 @@ describe('game access query resilience', () => {
       sharedGameId: 'shared-1',
       isSharedGame: true,
       sourceNote: 'preserved fallback field',
+      videoUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+      youtubeVideoId: 'PK1HyC37doc',
+      streamEmbedUrl: 'https://www.youtube.com/embed/PK1HyC37doc',
+      youtubeEmbedUrl: 'https://youtu.be/PK1HyC37doc',
+      broadcastSession: {
+        status: 'ready',
+        provider: {
+          type: 'external_provider',
+          videoId: 'PK1HyC37doc',
+          embedUrl: 'https://www.youtube.com/embed/PK1HyC37doc'
+        }
+      },
       isPublicProjection: false
     }));
   });
@@ -598,7 +944,11 @@ describe('game access query resilience', () => {
         exists: () => true,
         data: () => ({
           opponent: 'Rockets',
+          status: 'scheduled',
           liveStatus: 'live',
+          videoUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+          youtubeVideoId: 'PK1HyC37doc',
+          streamEmbedUrl: 'https://www.youtube.com/embed/PK1HyC37doc',
           isPublicProjection: true
         })
       });
@@ -612,6 +962,10 @@ describe('game access query resilience', () => {
       liveStatus: 'live',
       isPublicProjection: false
     }));
+    const [canonicalUpdate] = callback.mock.calls[0];
+    expect(canonicalUpdate).not.toHaveProperty('videoUrl');
+    expect(canonicalUpdate).not.toHaveProperty('youtubeVideoId');
+    expect(canonicalUpdate).not.toHaveProperty('streamEmbedUrl');
     expect(onError).not.toHaveBeenCalled();
 
     unsubscribe();
@@ -631,6 +985,11 @@ describe('game access query resilience', () => {
           awayTeamId: 'team-2',
           awayTeamName: 'Falcons',
           sourceNote: 'preserved projection field',
+          status: 'scheduled',
+          liveStatus: 'live',
+          videoUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+          youtubeVideoId: 'PK1HyC37doc',
+          streamEmbedUrl: 'https://www.youtube.com/embed/PK1HyC37doc',
           isPublicProjection: true
         })
       });
@@ -642,6 +1001,9 @@ describe('game access query resilience', () => {
       sharedGameId: 'shared-1',
       opponent: 'Falcons',
       sourceNote: 'preserved projection field',
+      videoUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+      youtubeVideoId: 'PK1HyC37doc',
+      streamEmbedUrl: 'https://www.youtube.com/embed/PK1HyC37doc',
       isPublicProjection: false
     }));
 

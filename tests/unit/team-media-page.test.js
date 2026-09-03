@@ -36,7 +36,7 @@ describe('team media entry point', () => {
         expect(pageHtml).toContain('CSVs up to 10 MB each');
         expect(pageHtml).toContain('Save video link');
         expect(pageJs).toMatch(/import \{ checkAuth \} from '\.\/auth\.js\?v=\d+';/);
-        expect(pageJs).toContain("from './db.js?v=4433195'");
+        expect(pageJs).toContain("from './db.js?v=4433196'");
         expect(pageJs).toContain('getDelegatedTeamContext');
         expect(pageJs).not.toMatch(/\bgetTeam\(/);
         expect(pageJs).toContain('normalizeTeamMediaVideoDraft');
@@ -51,7 +51,9 @@ describe('team media entry point', () => {
         expect(pageJs).toContain('await deleteTeamMediaFolder(state.teamId, folder.id);');
         expect(pageJs).toContain("}, 'Album deleted.');");
         expect(pageJs).toContain('canReadTeamMediaAlbum');
-        expect(pageJs).toContain('bulkDeleteTeamMediaItems');
+        expect(pageJs).toContain('structuredMediaWriteService.createTeamMediaVideoLink');
+        expect(pageJs).toContain('structuredMediaWriteService.removeTeamMediaVideoLink');
+        expect(pageJs).toContain('Promise.all(items.map(deleteTeamMediaItemThroughBoundary))');
         expect(pageJs).toContain('setTeamMediaAlbumCover');
         expect(pageJs).toContain('getTeamMediaItemsPage');
         expect(pageJs).toContain('TEAM_MEDIA_PAGE_SIZE');
@@ -69,8 +71,10 @@ describe('team media entry point', () => {
         expect(rules).toContain('match /mediaFolders/{folderId}');
         expect(rules).toContain('allow read: if canReadTeamMediaFolder(teamId, resource.data);');
         expect(rules).toContain('allow read: if canReadTeamMediaItem(teamId, resource.data);');
-        expect(rules).toContain('allow create: if canManageTeamMedia(teamId) || isTeamMediaUploadCreate(teamId, request.resource.data);');
-        expect(rules).toContain('allow update: if canManageTeamMedia(teamId) || isOwnTeamMediaUploadSoftDelete(teamId) || isTeamMediaTitleUpdate(teamId);');
+        expect(rules).toContain('allow create: if !request.resource.data.keys().hasAny(teamMediaVideoUrlFields()) &&');
+        expect(rules).toContain('(canManageTeamMedia(teamId) || isTeamMediaUploadCreate(teamId, request.resource.data));');
+        expect(rules).toContain(".hasAny(teamMediaVideoUrlFields().concat(['type', 'mediaType'])) &&");
+        expect(rules).toContain('(canManageTeamMedia(teamId) || isOwnTeamMediaUploadSoftDelete(teamId) || isTeamMediaTitleUpdate(teamId));');
         expect(rules).toContain("teamPermission(teamId, 'teamMediaManagement').get('mode', '') == 'selected'");
     });
 });

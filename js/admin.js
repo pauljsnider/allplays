@@ -15,7 +15,7 @@ import {
     getTelemetryRouteDaily,
     getTelemetryEventDaily,
     getTelemetrySessions
-} from './db.js?v=4433195';
+} from './db.js?v=4433196';
 import {
     db,
     collection,
@@ -29,9 +29,9 @@ import {
     startAfter,
     updateDoc,
     serverTimestamp
-} from './firebase.js?v=33';
-import { renderHeader, renderFooter, escapeHtml } from './utils.js?v=443371';
-import { checkAuth } from './auth.js?v=4433199';
+} from './firebase.js?v=34';
+import { renderHeader, renderFooter, escapeHtml } from './utils.js?v=443372';
+import { checkAuth } from './auth.js?v=4433200';
 import { DEFAULT_ADMIN_PAGE_SIZE, buildBoundedAdminDashboardScope, loadAdminCollectionPage, loadInitialAdminBootstrap } from './admin-bootstrap.js?v=2';
 import {
     adminRegistrationDefaults,
@@ -59,7 +59,7 @@ import {
     normalizeAdminTeamSearchTerm,
     resolveAdminTeamSearchResult,
     searchAdminTeams
-} from './admin-team-search.js?v=7';
+} from './admin-team-search.js?v=8';
 import {
     createDebouncedAdminUserSearch,
     normalizeAdminSearchTerm,
@@ -72,7 +72,7 @@ import {
     formatPerformanceDuration,
     formatPerformanceValue
 } from './telemetry-performance.js?v=4';
-import { createAdminPremiumAccessControl } from './admin-premium-access-control.js?v=7';
+import { createAdminPremiumAccessControl } from './admin-premium-access-control.js?v=8';
 
 let allTeams = [];
 let allUsers = [];

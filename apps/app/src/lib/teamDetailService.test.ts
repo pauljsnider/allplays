@@ -88,6 +88,10 @@ const nativeFirestoreMutationMocks = vi.hoisted(() => ({
 const nativeCallableMocks = vi.hoisted(() => ({
   callNativeFirebaseFunction: vi.fn()
 }));
+const structuredMediaMocks = vi.hoisted(() => ({
+  setTeamFixedVideo: vi.fn().mockResolvedValue({ committed: true }),
+  removeTeamFixedVideo: vi.fn().mockResolvedValue({ committed: true })
+}));
 
 const seasonRecordMocks = vi.hoisted(() => ({
   calculateSeasonRecord: vi.fn(() => ({ wins: 0, losses: 0, ties: 0 })),
@@ -155,6 +159,9 @@ vi.mock('../../../../js/team-access.js', () => ({
   )))
 }));
 vi.mock('../../../../js/team-staff-permissions.js', () => ({ buildTeamStaffPermissionsViewModel: vi.fn(() => ({ staff: [], pendingInvites: [], helperPermissions: [], hasAnyStaff: false })) }));
+vi.mock('../../../../js/structured-media-write-service.js', () => ({
+  structuredMediaWriteService: structuredMediaMocks
+}));
 vi.mock('./authService', () => authServiceMocks);
 vi.mock('./inviteUrls', () => ({ buildAppAcceptInviteUrl: vi.fn(() => 'https://allplays.ai/app/#/accept-invite') }));
 vi.mock('./nativeRuntime', () => ({ isNativeRuntime: () => nativeRuntimeState.isNative }));
@@ -424,10 +431,18 @@ describe('updateTeamSettingsForApp', () => {
 
     expect(dbMocks.updateTeam).toHaveBeenCalledWith('team-1', expect.objectContaining({
       leagueUrl: 'http://league.example.test/standings',
-      twitchChannel: null,
-      streamEmbedUrl: 'https://www.youtube.com/embed/LJNfHqRRhBI?autoplay=1&mute=1',
-      youtubeEmbedUrl: null
+      twitchChannel: null
     }));
+    expect(dbMocks.updateTeam.mock.calls[0][1]).not.toHaveProperty('streamEmbedUrl');
+    expect(dbMocks.updateTeam.mock.calls[0][1]).not.toHaveProperty('youtubeEmbedUrl');
+    expect(structuredMediaMocks.setTeamFixedVideo).toHaveBeenCalledWith({
+      teamId: 'team-1',
+      streamEmbedUrl: 'https://www.youtube.com/embed/LJNfHqRRhBI?autoplay=1&mute=1',
+      youtubeEmbedUrl: null,
+      streamUrl: null,
+      livestreamUrl: null,
+      youtubeVideoId: null
+    });
   });
 
   it('clears link fields with null values when a staff user removes them', async () => {
@@ -439,10 +454,9 @@ describe('updateTeamSettingsForApp', () => {
 
     expect(dbMocks.updateTeam).toHaveBeenCalledWith('team-1', expect.objectContaining({
       leagueUrl: null,
-      twitchChannel: null,
-      streamEmbedUrl: null,
-      youtubeEmbedUrl: null
+      twitchChannel: null
     }));
+    expect(structuredMediaMocks.removeTeamFixedVideo).toHaveBeenCalledWith({ teamId: 'team-1' });
   });
 
   it('binds a browser team photo upload to the team and primary Storage contract', async () => {

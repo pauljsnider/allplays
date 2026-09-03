@@ -84,7 +84,10 @@ describe('certificate defaults Firestore rules', () => {
             '&& "$deploy_targets" != "$retry_enabled_inventory_producer_target" \\'
         );
         expect(deployWorkflow).toContain(
-            '&& "$deploy_targets" != "$retry_enabled_cleanup_compatibility_target" ]]; then'
+            '&& "$deploy_targets" != "$retry_enabled_cleanup_compatibility_target" \\'
+        );
+        expect(deployWorkflow).toContain(
+            '&& "$deploy_targets" != "$replay_archive_cleanup_compatibility_targets" ]]; then'
         );
         expect(deployWorkflow).toMatch(
             /retry_firebase_deploy\s+\\\s+"\$retry_enabled_inventory_producer_target"\s+\\\s+"certificate-signature-inventory-producer"\s+\\\s+3\s+\\\s+15\s+\\\s+true/

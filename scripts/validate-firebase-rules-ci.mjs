@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { parse as parseYaml } from 'yaml';
+import { buildCertificateDefaultsCompatibilityRules } from './build-certificate-defaults-compat-rules.mjs';
 import { compactFirestoreRules } from './compact-firestore-rules.mjs';
 
 function readText(path) {
@@ -27,14 +28,32 @@ function assertEquals(actual, expected, label) {
 
 export const FIRESTORE_RULES_DEPLOY_BUDGET_BYTES = 132 * 1024;
 
-export function validateFirestoreRulesDeployBudget(rulesSource) {
+export function validateFirestoreRulesDeployBudget(rulesSource, artifactLabel = 'firestore.rules') {
     const sourceBytes = Buffer.byteLength(rulesSource, 'utf8');
     if (sourceBytes > FIRESTORE_RULES_DEPLOY_BUDGET_BYTES) {
         throw new Error(
-            `firestore.rules is ${sourceBytes} bytes; keep it at or below ` +
+            `${artifactLabel} is ${sourceBytes} bytes; keep it at or below ` +
             `${FIRESTORE_RULES_DEPLOY_BUDGET_BYTES} bytes to avoid Firebase Rules backend failures.`
         );
     }
+    return sourceBytes;
+}
+
+export function validateFirestoreRulesDeployBudgets(finalRulesSource) {
+    const compactFinalRules = compactFirestoreRules(finalRulesSource);
+    const compactCompatibilityRules = compactFirestoreRules(
+        buildCertificateDefaultsCompatibilityRules(finalRulesSource)
+    );
+    return {
+        finalBytes: validateFirestoreRulesDeployBudget(
+            compactFinalRules,
+            'Compacted final firestore.rules'
+        ),
+        certificateCompatibilityBytes: validateFirestoreRulesDeployBudget(
+            compactCompatibilityRules,
+            'Compacted certificate-defaults compatibility rules'
+        )
+    };
 }
 
 function canDeleteOwnScopedStorageUpload({ authUid, pathUserId, isTeamAdmin = false, hasCurrentScopeAccess = false }) {
@@ -175,14 +194,17 @@ export function validateFirebaseDeployWorkloadIdentity(workflow, label) {
                 continue;
             }
             deployStepCount += 1;
-            const maxTimeoutMinutes = label === 'Production deploy' &&
-                step.name === 'Deploy Firebase production'
-                ? 30
-                : 4;
+            const isProductionDeployStep = label === 'Production deploy'
+                && step.name === 'Deploy Firebase production';
+            const minTimeoutMinutes = isProductionDeployStep ? 60 : 1;
+            const maxTimeoutMinutes = isProductionDeployStep ? 90 : 4;
             if (!Number.isInteger(step['timeout-minutes']) ||
-                step['timeout-minutes'] < 1 ||
+                step['timeout-minutes'] < minTimeoutMinutes ||
                 step['timeout-minutes'] > maxTimeoutMinutes) {
-                throw new Error(`${label} credentialed deploy step ${step.name || '(unnamed)'} must have a timeout from one to ${maxTimeoutMinutes} minutes.`);
+                const timeoutRange = minTimeoutMinutes === 1
+                    ? `one to ${maxTimeoutMinutes}`
+                    : `${minTimeoutMinutes} to ${maxTimeoutMinutes}`;
+                throw new Error(`${label} credentialed deploy step ${step.name || '(unnamed)'} must have a timeout from ${timeoutRange} minutes.`);
             }
             const authStep = object.steps[index - 1];
             if (!authStep || typeof authStep.uses !== 'string' ||
@@ -305,7 +327,122 @@ export function validateProductionDeployCommand(deployProd) {
     );
     assertIncludes(
         deployProd,
-        'retry_enabled_function_targets="functions:indexCertificateLegacySignaturesOnDefaultsWrite,functions:processAccountDeletionRequest,functions:queueParentInviteEmail,functions:reconcileLegacyTeamOwnership,functions:syncLegacyTeamOwnershipOnAuthCreate,functions:syncPublicUserProfileOnUserWrite,functions:syncPublicUserProfilesOnTeamWrite,functions:syncTeamOwnerAccessOnCreate,functions:notifyConversationChatMessageCreated,functions:notifyFeeAssigned,functions:notifyFeeMarkedPaid,functions:notifyGameCreated,functions:notifyGameUpdated,functions:notifyInviteRedeemed,functions:notifyLiveEventCreated,functions:notifyOfficiatingNotificationCreated,functions:notifyOpenOfficiatingSlots,functions:notifyParentMembershipRequestCreated,functions:notifyParentMembershipRequestUpdated,functions:notifyPracticePacketAssigned,functions:notifyPracticePacketCompleted,functions:notifyPublishedCertificateAward,functions:notifyRegistrationStatusChanged,functions:notifyRegistrationSubmitted,functions:notifyRideClaimCreated,functions:notifyRideClaimUpdated,functions:notifyRideOfferCancelled,functions:notifyRideOfferCreated,functions:notifyScheduleImportBatchCompleted,functions:notifyTeamChatMessageCreated,functions:syncTeamNotificationTargetsOnDeviceWrite,functions:syncTeamNotificationTargetsOnPreferenceWrite,functions:processPasswordResetEmailRequest,functions:sweepIneligiblePublicUserProfiles,functions:dispatchDueTeamMediaNotificationBatches,functions:dispatchDuePreEventReminders,functions:queueDueRegistrationFailedPaymentReminders,functions:sendPracticePacketDueTomorrowReminders,functions:sendFeeUnpaidDueReminders"',
+        'replay_archive_reader_compatibility_targets="functions:getReplayPrivacyMigrationStatus,functions:manageGameReplayArchive,functions:saveGameHighlightClips,functions:saveAthleteProfileProjection,functions:mutateStructuredMediaIdentity,functions:getGameReplayPlayback,functions:publicHomepageGamesV1,functions:publicTeamGamesV1,functions:getFamilyShareSchedule,functions:getFamilyShareView,functions:getPublicTeamGamesProjection,functions:getPublicTeamCalendarProjection,functions:getPublicGameProjection"',
+        'Production replay archive reader compatibility allowlist'
+    );
+    assertIncludes(
+        deployProd,
+        'every supported installed native version uses `manageGameReplayArchive`, `saveGameHighlightClips`, `saveAthleteProfileProjection`, and `mutateStructuredMediaIdentity`',
+        'Production replay and structured-media installed-native readiness scope'
+    );
+    assertIncludes(
+        deployProd,
+        'runs the pre-Firestore `getReplayPrivacyMigrationStatus` cache protocol (memory-only before readiness, clear on the ready transition, then mark the returned epoch)',
+        'Production replay installed-native cache-privacy readiness scope'
+    );
+    assertIncludes(
+        deployProd,
+        'replay_archive_cleanup_compatibility_targets="functions:cleanupPrivateReplayArchiveOnGameDelete,functions:cleanupPrivateReplayArchiveOnSharedGameDelete"',
+        'Production replay archive cleanup compatibility allowlist'
+    );
+    assertIncludes(
+        deployProd,
+        'replay_public_cache_drain_seconds=330',
+        'Production replay public-cache drain exceeds the prior shared-cache TTL'
+    );
+    assertIncludes(deployProd, '"replay-callable-client-compatibility"', 'Production replay callable Hosting deploy');
+    const replayClipCallableDeploy = deployProd.indexOf('"replay-private-archive-reader-compatibility"');
+    const replayNativeHold = deployProd.indexOf('if [[ "$replay_native_callable_ready" != "true" ]]');
+    const replayPublicCacheDrain = deployProd.indexOf('sleep "$replay_public_cache_drain_seconds"');
+    const replayClipHostingDeploy = deployProd.indexOf('"replay-callable-client-compatibility"');
+    const replayFreezeActivation = deployProd.indexOf('activate_firestore_ruleset_with_retry "$replay_final_ruleset_name"');
+    const replayFreezeVerification = deployProd.indexOf('verify_active_firestore_rules "$replay_final_rules_source"');
+    const replayGateClose = deployProd.indexOf('backfill-game-replay-archives.mjs" --close-gate');
+    const profileBoundaryActivation = deployProd.indexOf('backfill-game-replay-archives.mjs" --activate-profile-boundary');
+    const replayMigration = deployProd.indexOf('backfill-game-replay-archives.mjs" --apply');
+    const replayNextCertificateInventoryProducer = deployProd.indexOf('"certificate-signature-inventory-producer"');
+    if (!(replayFreezeActivation >= 0
+        && replayFreezeVerification > replayFreezeActivation
+        && replayGateClose > replayFreezeVerification
+        && replayClipCallableDeploy >= 0
+        && replayNativeHold > replayClipCallableDeploy
+        && replayPublicCacheDrain > replayNativeHold
+        && replayClipHostingDeploy > replayPublicCacheDrain
+        && replayFreezeActivation > replayClipHostingDeploy
+        && profileBoundaryActivation > replayGateClose
+        && replayMigration > profileBoundaryActivation
+        && replayNextCertificateInventoryProducer > replayMigration)) {
+        throw new Error('Production replay migration must stage sanitized readers, gate on native readiness, drain prior public caches, publish callable clients, activate exact final Rules, close the gate, activate the profile boundary, and apply before unrelated certificate deployment work.');
+    }
+    assertIncludes(
+        deployProd,
+        'REPLAY_NATIVE_CALLABLE_READY: ${{ vars.REPLAY_NATIVE_CALLABLE_READY }}',
+        'Production replay installed-native readiness gate'
+    );
+    assertIncludes(
+        deployProd,
+        'write_replay_native_hold_summary',
+        'Production replay native compatibility hold'
+    );
+    assertIncludes(
+        deployProd,
+        'scripts/build-replay-native-compat-rules.mjs',
+        'Production replay native compatibility rules generator'
+    );
+    assertIncludes(
+        deployProd,
+        'baseline_replay_transformer="$baseline_checkout/scripts/build-replay-native-compat-rules.mjs"',
+        'Production exact-baseline replay mode provenance'
+    );
+    assertIncludes(
+        deployProd,
+        'firestore-baseline-replay.mode',
+        'Production durable replay baseline mode handoff'
+    );
+    assertIncludes(
+        deployProd,
+        'active_replay_boundary="$baseline_replay_mode"',
+        'Production established replay final-boundary preservation'
+    );
+    const nativeHoldBlock = deployProd.slice(replayNativeHold, replayClipHostingDeploy);
+    assertIncludes(nativeHoldBlock, 'write_replay_native_hold_summary', 'Production native hold summary before Hosting');
+    assertIncludes(nativeHoldBlock, 'exit 2', 'Production native hold stops before Hosting and Rules');
+    if (nativeHoldBlock.includes('--close-gate') || nativeHoldBlock.includes('--activate-profile-boundary')) {
+        throw new Error('Production false native readiness must not touch either replay migration gate.');
+    }
+    assertIncludes(
+        deployProd,
+        'functions/replay-structured-media-core.cjs',
+        'Production replay structured-media migration change detector'
+    );
+    assertIncludes(
+        deployProd,
+        'functions/structured-media-write-core.cjs',
+        'Production structured-media writer migration change detector'
+    );
+    assertIncludes(
+        deployProd,
+        'js/replay-clip-sanitizer.js',
+        'Production replay sanitizer migration dependency detector'
+    );
+    assertIncludes(
+        deployProd,
+        'cp --no-dereference js/replay-clip-sanitizer.js',
+        'Production replay sanitizer non-symlink staging'
+    );
+    assertIncludes(
+        deployProd,
+        '(cd "$bundle" && sha256sum -c js/replay-clip-sanitizer.sha256)',
+        'Production replay sanitizer checksum verification'
+    );
+    assertIncludes(
+        deployProd,
+        'functions/athlete-profile-projection-core.cjs',
+        'Production athlete profile migration change detector'
+    );
+    assertIncludes(
+        deployProd,
+        'retry_enabled_function_targets="functions:cleanupPrivateReplayArchiveOnGameDelete,functions:cleanupPrivateReplayArchiveOnSharedGameDelete,functions:indexCertificateLegacySignaturesOnDefaultsWrite,functions:processAccountDeletionRequest,functions:queueParentInviteEmail,functions:reconcileLegacyTeamOwnership,functions:syncPublicUserProfileOnUserWrite,functions:syncPublicUserProfilesOnTeamWrite,functions:syncTeamOwnerAccessOnCreate,functions:notifyConversationChatMessageCreated,functions:notifyFeeAssigned,functions:notifyFeeMarkedPaid,functions:notifyGameCreated,functions:notifyGameUpdated,functions:notifyInviteRedeemed,functions:notifyLiveEventCreated,functions:notifyOfficiatingNotificationCreated,functions:notifyOpenOfficiatingSlots,functions:notifyParentMembershipRequestCreated,functions:notifyParentMembershipRequestUpdated,functions:notifyPracticePacketAssigned,functions:notifyPracticePacketCompleted,functions:notifyPublishedCertificateAward,functions:notifyRegistrationStatusChanged,functions:notifyRegistrationSubmitted,functions:notifyRideClaimCreated,functions:notifyRideClaimUpdated,functions:notifyRideOfferCancelled,functions:notifyRideOfferCreated,functions:notifyScheduleImportBatchCompleted,functions:notifyTeamChatMessageCreated,functions:syncTeamNotificationTargetsOnDeviceWrite,functions:syncTeamNotificationTargetsOnPreferenceWrite,functions:processPasswordResetEmailRequest,functions:sweepIneligiblePublicUserProfiles,functions:dispatchDueTeamMediaNotificationBatches,functions:dispatchDuePreEventReminders,functions:queueDueRegistrationFailedPaymentReminders,functions:sendPracticePacketDueTomorrowReminders,functions:sendFeeUnpaidDueReminders"',
         'Production retry-enabled function allowlist'
     );
     assertIncludes(
@@ -320,8 +457,13 @@ export function validateProductionDeployCommand(deployProd) {
     );
     assertIncludes(
         deployProd,
-        '&& "$deploy_targets" != "$retry_enabled_cleanup_compatibility_target" ]]; then',
+        '&& "$deploy_targets" != "$retry_enabled_cleanup_compatibility_target"',
         'Production force-deploy scoped cleanup allowlist guard'
+    );
+    assertIncludes(
+        deployProd,
+        '&& "$deploy_targets" != "$replay_archive_cleanup_compatibility_targets" ]]; then',
+        'Production force-deploy scoped replay cleanup allowlist guard'
     );
     assertIncludes(deployProd, 'deploy_args+=(--force)', 'Production targeted failure-policy acknowledgement');
     assertMatches(
@@ -338,6 +480,11 @@ export function validateProductionDeployCommand(deployProd) {
         deployProd,
         /retry_firebase_deploy\s+\\?\s*"\$retry_enabled_cleanup_compatibility_target"\s+\\?\s*"certificate-signature-cleanup-compatibility"\s+\\?\s*3\s+\\?\s*15\s+\\?\s*true/,
         'Production retry-enabled cleanup compatibility failure-policy acknowledgement call'
+    );
+    assertMatches(
+        deployProd,
+        /retry_firebase_deploy\s+\\?\s*"\$replay_archive_cleanup_compatibility_targets"\s+\\?\s*"replay-private-archive-cleanup-compatibility"\s+\\?\s*3\s+\\?\s*15\s+\\?\s*true/,
+        'Production replay archive cleanup failure-policy acknowledgement call'
     );
     assertIncludes(
         deployProd,
@@ -966,7 +1113,7 @@ export function validateFirebaseRulesCi() {
     const prPreview = readText('.github/workflows/pr-preview.yml');
     const regressionGuards = readText('.github/workflows/regression-guards.yml');
 
-    validateFirestoreRulesDeployBudget(compactFirestoreRules(firestoreRules));
+    validateFirestoreRulesDeployBudgets(firestoreRules);
 
     if (firebaseJson.firestore?.rules !== 'firestore.rules') {
         throw new Error('firebase.json must deploy firestore.rules.');
@@ -1028,8 +1175,26 @@ export function validateFirebaseRulesCi() {
     assertIncludes(firestoreRules, "request.auth.uid in teamPermission(teamId, 'teamMediaManagement').get('memberIds', [])", 'Firestore team media manager member ID check');
     assertIncludes(firestoreRules, 'allow create, delete: if canManageTeamMedia(teamId);', 'Firestore media folder create/delete rules');
     assertIncludes(firestoreRules, 'allow update: if canManageTeamMedia(teamId) || isTeamMediaUploadCounterUpdate(teamId);', 'Firestore media folder update rules');
-    assertIncludes(firestoreRules, 'allow create: if canManageTeamMedia(teamId) || isTeamMediaUploadCreate(teamId, request.resource.data);', 'Firestore media item create rules');
-    assertIncludes(firestoreRules, 'allow update: if canManageTeamMedia(teamId) || isOwnTeamMediaUploadSoftDelete(teamId) || isTeamMediaTitleUpdate(teamId);', 'Firestore media item update rules');
+    assertIncludes(
+        firestoreRules,
+        "function teamMediaVideoUrlFields() {",
+        'Firestore media video-link field helper'
+    );
+    assertIncludes(
+        firestoreRules,
+        'allow create: if !request.resource.data.keys().hasAny(teamMediaVideoUrlFields()) &&',
+        'Firestore server-reserved media video-link create rules'
+    );
+    assertIncludes(
+        firestoreRules,
+        ".hasAny(teamMediaVideoUrlFields().concat(['type', 'mediaType'])) &&",
+        'Firestore server-reserved media video-link update rules'
+    );
+    assertIncludes(
+        firestoreRules,
+        '(canManageTeamMedia(teamId) || isOwnTeamMediaUploadSoftDelete(teamId) || isTeamMediaTitleUpdate(teamId));',
+        'Firestore media item update rules'
+    );
     assertIncludes(firestoreRules, 'allow delete: if canManageTeamMedia(teamId);', 'Firestore media item delete rules');
     assertIncludes(firestoreRules, 'match /adminBilling/{billingId}', 'Firestore team fee admin billing rules');
     assertIncludes(firestoreRules, 'allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);', 'Firestore team fee admin billing admin-only rules');

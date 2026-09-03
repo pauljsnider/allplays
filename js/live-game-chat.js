@@ -24,4 +24,4 @@ export function isViewerChatEnabled(game, { isReplay = false, now = new Date() }
   const gameDate = toDate(game?.date);
   return isSameDay(gameDate, now);
 }
-import { getGameReplayLifecycle } from './game-replay-video.js?v=3';
+import { getGameReplayLifecycle } from './game-replay-video.js?v=4';

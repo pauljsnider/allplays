@@ -28,10 +28,80 @@ type LoadCachedAppDataOptions<T> = {
 };
 
 type StoredCacheEntry = {
-  version: 2;
+  version: 3;
   value: unknown;
   expiresAt: number;
 };
+
+const privateReplayCacheFields = new Set([
+  'replayVideo',
+  'recordedVideo',
+  'videoReplay',
+  'rawReplayState',
+  'replayVideoUrl',
+  'recordedVideoUrl',
+  'videoReplayUrl',
+  'archivedVideoUrl',
+  'replayVideoPublicUrl',
+  'replayVideoPosterUrl',
+  'replayVideoTitle',
+  'replayVideoDurationMs',
+  'replayStatus',
+  'recordedReplayStatus',
+  'videoReplayStatus',
+  'replayVideoFallbackDisabled'
+]);
+
+/**
+ * Cached app summaries may be hydrated while older servers or browser SDK
+ * persistence still expose legacy replay aliases. Keep only the safe marker
+ * fields in memory and localStorage; replay capabilities are resolved through
+ * a non-cached callable at the moment they are used.
+ */
+export function sanitizeAppDataCacheValue<T>(value: T): T {
+  const seen = new WeakMap<object, unknown>();
+  const sanitize = (candidate: unknown): unknown => {
+    if (!candidate || typeof candidate !== 'object' || candidate instanceof Date) return candidate;
+    if (seen.has(candidate)) return seen.get(candidate);
+    if (Array.isArray(candidate)) {
+      const result: unknown[] = [];
+      seen.set(candidate, result);
+      let changed = false;
+      candidate.forEach((entry) => {
+        const sanitizedEntry = sanitize(entry);
+        result.push(sanitizedEntry);
+        if (sanitizedEntry !== entry) changed = true;
+      });
+      if (!changed) {
+        seen.set(candidate, candidate);
+        return candidate;
+      }
+      return result;
+    }
+    const source = candidate as Record<string, unknown>;
+    const result: Record<string, unknown> = {};
+    seen.set(candidate, result);
+    let changed = false;
+    const isScheduleEvent = (source.type === 'game' || source.type === 'practice')
+      && ('date' in source || 'eventKey' in source)
+      && ('id' in source || 'gameId' in source);
+    Object.entries(source).forEach(([key, entry]) => {
+      if (privateReplayCacheFields.has(key) || (isScheduleEvent && key === 'videoUrl')) {
+        changed = true;
+        return;
+      }
+      const sanitizedEntry = sanitize(entry);
+      result[key] = sanitizedEntry;
+      if (sanitizedEntry !== entry) changed = true;
+    });
+    if (!changed) {
+      seen.set(candidate, candidate);
+      return candidate;
+    }
+    return result;
+  };
+  return sanitize(value) as T;
+}
 
 export function getParentScheduleSummaryCacheKey(userId: string) {
   return `app-schedule-summary:${userId}`;
@@ -142,7 +212,8 @@ function loadAndStoreCachedAppData<T>(
 ) {
   const loadInvalidationVersion = cacheInvalidationVersion;
   const loadKeyInvalidationVersion = getCacheKeyInvalidationVersion(key);
-  const promise = loader().then((value) => {
+  const promise = loader().then((loadedValue) => {
+    const value = sanitizeAppDataCacheValue(loadedValue);
     if (
       loadInvalidationVersion !== cacheInvalidationVersion
       || loadKeyInvalidationVersion !== getCacheKeyInvalidationVersion(key)
@@ -242,7 +313,7 @@ function readStoredCacheEntry<T>(key: string, now: number, maxStaleMs: number): 
     return null;
   }
 
-  if (!parsed || parsed.version !== 2 || !Number.isFinite(parsed.expiresAt)) {
+  if (!parsed || parsed.version !== 3 || !Number.isFinite(parsed.expiresAt)) {
     storage.removeItem(storageKey);
     return null;
   }
@@ -267,7 +338,7 @@ function writeStoredCacheEntry<T>(key: string, entry: CacheEntry<T>) {
 
   try {
     const stored: StoredCacheEntry = {
-      version: 2,
+      version: 3,
       value: entry.value,
       expiresAt: entry.expiresAt
     };

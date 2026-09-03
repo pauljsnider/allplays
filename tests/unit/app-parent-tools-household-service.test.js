@@ -36,7 +36,7 @@ vi.mock('../../js/db.js', () => ({
     moveTeamMediaItems: dbMocks.moveTeamMediaItems,
     setTeamMediaAlbumCover: dbMocks.setTeamMediaAlbumCover
 }));
-vi.mock('../../js/firebase.js?v=33', () => ({
+vi.mock('../../js/firebase.js?v=34', () => ({
     db: {},
     doc: vi.fn(),
     collection: vi.fn(),
@@ -70,6 +70,12 @@ vi.mock('../../js/team-media-utils.js', () => ({
     isSafeTeamMediaUrl: vi.fn(() => true),
     normalizeTeamMediaVideoDraft: vi.fn((draft) => draft),
     sortByMediaOrder: vi.fn((items) => items)
+}));
+vi.mock('../../js/structured-media-write-service.js', () => ({
+    structuredMediaWriteService: {
+        createTeamMediaVideoLink: vi.fn(),
+        removeTeamMediaVideoLink: vi.fn()
+    }
 }));
 vi.mock('../../apps/app/src/lib/authService.ts', () => ({
     firebaseAuth: { currentUser: null },

@@ -82,6 +82,7 @@ import { normalizeOptionalHttpUrl, parseTeamLivestreamInput } from './teamLinks'
 import type { ParentScheduleEvent } from './scheduleLogic';
 import { requireTrustedStripeCheckoutUrl } from './stripeCheckoutUrl';
 import type { AuthUser } from './types';
+import { removeTeamFixedVideo, setTeamFixedVideo } from './adapters/legacyStructuredMediaWrite';
 
 const primaryDataTimeoutMs = 5000;
 const restReadHedgeDelayMs = 750;
@@ -1892,8 +1893,6 @@ export async function updateTeamSettingsForApp(teamId: string, user: AuthUser | 
     photoPath,
     leagueUrl,
     twitchChannel: parsedLivestream?.twitchChannel ?? null,
-    streamEmbedUrl: parsedLivestream?.streamEmbedUrl ?? null,
-    youtubeEmbedUrl: null,
     updatedAt: new Date()
   };
 
@@ -1921,6 +1920,25 @@ export async function updateTeamSettingsForApp(teamId: string, user: AuthUser | 
       }
       throw error;
     }
+  }
+
+  try {
+    if (parsedLivestream?.streamEmbedUrl) {
+      await setTeamFixedVideo({
+        teamId: normalizedTeamId,
+        streamEmbedUrl: parsedLivestream.streamEmbedUrl,
+        youtubeEmbedUrl: null,
+        streamUrl: null,
+        livestreamUrl: null,
+        youtubeVideoId: null
+      });
+    } else {
+      await removeTeamFixedVideo({ teamId: normalizedTeamId });
+    }
+  } catch (error) {
+    throw new Error(
+      `Team settings were saved, but the livestream update failed. Refresh the team before trying the livestream again. ${error instanceof Error ? error.message : ''}`.trim()
+    );
   }
 
   if (previousPhotoPath && previousPhotoPath !== photoPath) {

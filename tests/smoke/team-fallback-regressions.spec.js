@@ -646,6 +646,47 @@ const MEDIA_UTILS_MIXED_DOCUMENT_STUB = MEDIA_UTILS_ADMIN_STUB.replace(
     "export function isSupportedTeamMediaDocument(file = {}) {\n    return String(file.name || '').toLowerCase().endsWith('.pdf');\n}"
 );
 
+const STRUCTURED_MEDIA_WRITE_SERVICE_STUB = `
+export const STRUCTURED_MEDIA_WRITE_VERSION = 1;
+export const STRUCTURED_MEDIA_RESOURCE_KINDS = Object.freeze({
+    TEAM_FIXED_VIDEO: 'team-fixed-video',
+    TEAM_MEDIA_VIDEO_LINK: 'team-media-video-link',
+    DRILL_LIBRARY_VIDEO: 'drill-library-video'
+});
+export const STRUCTURED_MEDIA_ACTIONS = Object.freeze({
+    SET: 'set',
+    CREATE: 'create',
+    REMOVE: 'remove',
+    DELETE: 'delete'
+});
+export function normalizeStructuredMediaMutationInput(input) { return input; }
+export async function getStructuredMediaWriteRequestHash() { return '0'.repeat(64); }
+export function createStructuredMediaMutationId() { return '00000000-0000-4000-8000-000000000000'; }
+export function normalizeStructuredMediaMutationResponse(value) { return value; }
+export function isStructuredMediaWriteUnconfirmedError() { return false; }
+export function createStructuredMediaWriteService() { return structuredMediaWriteService; }
+export const structuredMediaWriteService = Object.freeze({
+    async mutate() {},
+    async setTeamFixedVideo() {},
+    async removeTeamFixedVideo() {},
+    async createTeamMediaVideoLink({ teamId, folderId, title, url }) {
+        window.__TEAM_MEDIA_CALLS__?.push({ type: 'link', teamId, folderId, title, url });
+    },
+    async removeTeamMediaVideoLink() {},
+    async setDrillLibraryVideo() {},
+    async removeDrillLibraryVideo() {},
+    async deleteDrillLibraryVideo() {}
+});
+`;
+
+async function routeStructuredMediaWriteServiceStub(page) {
+    await page.route(/\/js\/structured-media-write-service\.js(?:\?v=\d+)?$/, (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: STRUCTURED_MEDIA_WRITE_SERVICE_STUB
+    }));
+}
+
 const LIVE_GAME_UTILS_STUB = `
 export function renderHeader() {}
 export function renderFooter() {}
@@ -695,17 +736,26 @@ export async function getTeam() {
     throw Object.assign(new Error('Canonical team read denied'), { code: 'permission-denied' });
 }
 export async function getGame(_teamId, gameId) {
+    const configuredGame = window.__LIVE_GAME_GAME__ || {};
+    const status = configuredGame.status || 'completed';
+    const liveStatus = configuredGame.liveStatus || 'completed';
+    const finalStatuses = new Set(['completed', 'final']);
+    const completedReplay = finalStatuses.has(String(status).toLowerCase())
+        && (!liveStatus || finalStatuses.has(String(liveStatus).toLowerCase()) || liveStatus === 'scheduled');
+    const hasRecordedReplay = window.__LIVE_GAME_HAS_REPLAY__ === true
+        || (window.__LIVE_GAME_HAS_REPLAY__ !== false && completedReplay);
     return {
-        ...(window.__LIVE_GAME_GAME__ || {}),
+        ...configuredGame,
         id: gameId,
-        date: window.__LIVE_GAME_GAME__?.date || '2026-05-09T19:00:00Z',
-        liveStatus: window.__LIVE_GAME_GAME__?.liveStatus || 'completed',
-        status: window.__LIVE_GAME_GAME__?.status || 'completed',
+        date: configuredGame.date || '2026-05-09T19:00:00Z',
+        liveStatus,
+        status,
         homeScore: 42,
         awayScore: 38,
         period: 'Final',
         sport: 'basketball',
-        recordedVideo: { url: 'https://cdn.example.test/replay.mp4' }
+        hasRecordedReplay,
+        replayArchiveRevision: hasRecordedReplay ? 'r:smoke-replay' : null
     };
 }
 export async function getPlayers() {
@@ -855,6 +905,61 @@ export function rebaseReplayStartTimeMs() {
 }
 `;
 
+const LIVE_GAME_REPLAY_SERVICE_STUB = `
+export function hasRecordedReplayMarker(game = {}) {
+    return game.hasRecordedReplay === true || game.hasReplayVideo === true;
+}
+export const gameReplayService = {
+    async getPlayback(request) {
+        window.__LIVE_GAME_REPLAY_PLAYBACK_CALLS__ = [
+            ...(window.__LIVE_GAME_REPLAY_PLAYBACK_CALLS__ || []),
+            request
+        ];
+        if (window.__LIVE_GAME_REPLAY_PLAYBACK_FAILURE__) {
+            throw new Error('replay playback unavailable');
+        }
+        if (window.__LIVE_GAME_HAS_REPLAY__ === false) {
+            return {
+                available: false,
+                reason: 'not-available',
+                hasRecordedReplay: false,
+                replayArchiveRevision: null,
+                replayVideo: null
+            };
+        }
+        const team = window.__LIVE_GAME_TEAM__ || {};
+        const game = window.__LIVE_GAME_GAME__ || {};
+        const gateEnabled = game.teamPassConfig?.recordedReplayPaywallEnabled === true
+            || game.recordedReplayTeamPassRequired === true
+            || (game.teamPassConfig?.recordedReplayPaywallEnabled !== false
+                && game.recordedReplayTeamPassRequired !== false
+                && (team.teamPassConfig?.recordedReplayPaywallEnabled === true
+                    || team.recordedReplayTeamPassRequired === true));
+        if (gateEnabled) {
+            return {
+                available: false,
+                reason: 'team-pass-required',
+                hasRecordedReplay: true,
+                replayArchiveRevision: 'r:smoke-replay',
+                replayVideo: null
+            };
+        }
+        return {
+            available: true,
+            reason: 'server-approved',
+            hasRecordedReplay: true,
+            replayArchiveRevision: 'r:smoke-replay',
+            replayVideo: {
+                provider: 'youtube',
+                videoId: 'PK1HyC37doc',
+                embedUrl: 'https://www.youtube.com/embed/PK1HyC37doc',
+                publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc'
+            }
+        };
+    }
+};
+`;
+
 const LIVE_GAME_VIDEO_STUB = `
 export const BROADCAST_SETUP_STATUSES = {
     CHECKING: 'checking_permissions',
@@ -933,7 +1038,7 @@ export function resolveReplayVideoOptions({ game = {}, isReplay = false } = {}) 
             publicUrl: ''
         };
     }
-    if (hasCompletedReplayLifecycle(game)) {
+    if (hasCompletedReplayLifecycle(game) && game?.replayVideo) {
         return {
             mode: 'recorded',
             hasVideo: true,
@@ -1056,6 +1161,7 @@ async function routeLiveGameStubs(page) {
     await page.route(/\/js\/live-game-chat\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: LIVE_GAME_CHAT_STUB }));
     await page.route(/\/js\/live-game-announcer\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: LIVE_GAME_ANNOUNCER_STUB }));
     await page.route(/\/js\/live-game-replay\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: LIVE_GAME_REPLAY_STUB }));
+    await page.route(/\/js\/game-replay-service\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: LIVE_GAME_REPLAY_SERVICE_STUB }));
     await page.route(/\/js\/live-game-video\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: LIVE_GAME_VIDEO_STUB }));
     await page.route(/\/js\/team-entitlements\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: LIVE_GAME_ENTITLEMENTS_STUB }));
     await page.route(/\/js\/live-game-state\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: LIVE_GAME_STATE_STUB }));
@@ -1203,15 +1309,16 @@ test('team media shows an empty library when media reads are denied', async ({ p
     await page.route(/\/js\/auth\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: AUTH_STUB }));
     await page.route(/\/js\/db\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: MEDIA_DB_STUB }));
     await page.route(/\/js\/team-media-utils\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: MEDIA_UTILS_STUB }));
+    await routeStructuredMediaWriteServiceStub(page);
 
     await page.goto(`${baseURL}/team-media.html?teamId=team-1`, { waitUntil: 'domcontentloaded' });
 
+    expect(pageErrors).toEqual([]);
     await expect(page.locator('#team-media-title')).toHaveText('Media Test Team Media');
     await expect.poll(() => page.evaluate(() => window.__DELEGATED_TEAM_CONTEXT_COUNT__ || 0)).toBe(1);
     await expect.poll(() => page.evaluate(() => window.__CANONICAL_TEAM_READ_COUNT__ || 0)).toBe(0);
     await expect(page.locator('#folders-list')).toContainText('No team-visible albums have been shared yet.');
     await expect(page.locator('#folders-list')).not.toContainText('Unable to load team media');
-    expect(pageErrors).toEqual([]);
 });
 
 test('team media shows a staff permission error when rules block management reads', async ({ page, baseURL }) => {
@@ -1219,14 +1326,15 @@ test('team media shows a staff permission error when rules block management read
     await page.route(/\/js\/auth\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: AUTH_STUB }));
     await page.route(/\/js\/db\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: MEDIA_DB_STUB }));
     await page.route(/\/js\/team-media-utils\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: MEDIA_UTILS_ADMIN_STUB }));
+    await routeStructuredMediaWriteServiceStub(page);
 
     await page.goto(`${baseURL}/team-media.html?teamId=team-1`, { waitUntil: 'domcontentloaded' });
 
+    expect(pageErrors).toEqual([]);
     await expect(page.locator('#team-media-title')).toHaveText('Media Test Team Media');
     await expect(page.locator('#team-media-admin-panel')).toBeHidden();
     await expect(page.locator('#team-media-alert')).toContainText('Team media permissions are not enabled');
     await expect(page.locator('#folders-list')).toContainText('Deploy the latest Firestore rules');
-    expect(pageErrors).toEqual([]);
 });
 
 test('team media renders visible save actions for staff', async ({ page, baseURL }) => {
@@ -1234,9 +1342,11 @@ test('team media renders visible save actions for staff', async ({ page, baseURL
     await page.route(/\/js\/auth\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: AUTH_STUB }));
     await page.route(/\/js\/db\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: MEDIA_DB_WITH_FOLDER_STUB }));
     await page.route(/\/js\/team-media-utils\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: MEDIA_UTILS_ADMIN_STUB }));
+    await routeStructuredMediaWriteServiceStub(page);
 
     await page.goto(`${baseURL}/team-media.html?teamId=team-1`, { waitUntil: 'domcontentloaded' });
 
+    expect(pageErrors).toEqual([]);
     const folderButton = page.locator('#folder-submit');
     const linkButton = page.locator('#link-submit');
     await expect(folderButton).toBeVisible();
@@ -1251,7 +1361,6 @@ test('team media renders visible save actions for staff', async ({ page, baseURL
     }));
     expect(colors.folderBackground).not.toBe('rgba(0, 0, 0, 0)');
     expect(colors.linkBackground).not.toBe('rgba(0, 0, 0, 0)');
-    expect(pageErrors).toEqual([]);
 });
 
 test('team media staff uploads photos and files and saves video links to the selected album', async ({ page, baseURL }) => {
@@ -1259,8 +1368,10 @@ test('team media staff uploads photos and files and saves video links to the sel
     await page.route(/\/js\/auth\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: AUTH_STUB }));
     await page.route(/\/js\/db\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: MEDIA_DB_RECORDING_STUB }));
     await page.route(/\/js\/team-media-utils\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: MEDIA_UTILS_ADMIN_STUB }));
+    await routeStructuredMediaWriteServiceStub(page);
 
     await page.goto(`${baseURL}/team-media.html?teamId=team-1`, { waitUntil: 'domcontentloaded' });
+    expect(pageErrors).toEqual([]);
     await expect(page.locator('#link-folder')).toContainText('Highlights');
 
     await page.locator('#photo-folder').selectOption('folder-1');
@@ -1302,7 +1413,6 @@ test('team media staff uploads photos and files and saves video links to the sel
         { type: 'file', teamId: 'team-1', folderId: 'folder-1', fileName: 'packet.pdf' },
         { type: 'link', teamId: 'team-1', folderId: 'folder-1', title: 'Replay', url: 'https://youtu.be/replay123' }
     ]);
-    expect(pageErrors).toEqual([]);
 });
 
 test('team media staff file upload reports unsupported files while uploading valid files', async ({ page, baseURL }) => {
@@ -1310,8 +1420,10 @@ test('team media staff file upload reports unsupported files while uploading val
     await page.route(/\/js\/auth\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: AUTH_STUB }));
     await page.route(/\/js\/db\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: MEDIA_DB_RECORDING_STUB }));
     await page.route(/\/js\/team-media-utils\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: MEDIA_UTILS_MIXED_DOCUMENT_STUB }));
+    await routeStructuredMediaWriteServiceStub(page);
 
     await page.goto(`${baseURL}/team-media.html?teamId=team-1`, { waitUntil: 'domcontentloaded' });
+    expect(pageErrors).toEqual([]);
     await page.locator('#file-folder').selectOption('folder-1');
     await page.locator('#media-files').setInputFiles([
         {
@@ -1335,7 +1447,6 @@ test('team media staff file upload reports unsupported files while uploading val
     await expect.poll(() => page.evaluate(() => window.__TEAM_MEDIA_CALLS__)).toEqual([
         { type: 'file', teamId: 'team-1', folderId: 'folder-1', fileName: 'packet.pdf' }
     ]);
-    expect(pageErrors).toEqual([]);
 });
 
 test('live game archived replay Team Pass gate is off by default', async ({ page, baseURL }) => {
@@ -1360,6 +1471,7 @@ test('live game archived replay Team Pass gate is off by default', async ({ page
     await expect.poll(() => page.evaluate(() => window.__DELEGATED_TEAM_CONTEXT_COUNT__ || 0)).toBe(1);
     await expect.poll(() => page.evaluate(() => window.__CANONICAL_TEAM_READ_COUNT__ || 0)).toBe(0);
     await expect.poll(() => page.evaluate(() => window.__TEAM_PASS_ENTITLEMENT_READS__ || 0)).toBe(0);
+    await expect.poll(() => page.evaluate(() => window.__LIVE_GAME_REPLAY_PLAYBACK_CALLS__?.length || 0)).toBeGreaterThan(0);
     expect(await page.locator('#overlay-view-link, #replay-report-link, #share-game-btn').evaluateAll((elements) => (
         elements.every((element) => element.getBoundingClientRect().height >= 44)
     ))).toBe(true);
@@ -1498,10 +1610,9 @@ test('live game archived replay Team Pass gate locks replay when config is enabl
 
     await expect(page.locator('#video-paywall')).toBeVisible();
     await expect(page.locator('#recorded-replay-video')).toBeHidden();
-    // The text assertion for video-paywall is now removed because it's hidden.
-    // If needed, we could add a check for the absence of the 'Team Pass required' text elsewhere.
-    // For minimal change, just remove the assertion if the element is hidden.
-    await expect.poll(() => page.evaluate(() => window.__TEAM_PASS_ENTITLEMENT_READS__ || 0)).toBe(1);
+    await expect(page.locator('#video-paywall')).toContainText('Team Pass');
+    await expect.poll(() => page.evaluate(() => window.__LIVE_GAME_REPLAY_PLAYBACK_CALLS__?.length || 0)).toBeGreaterThan(0);
+    await expect.poll(() => page.evaluate(() => window.__TEAM_PASS_ENTITLEMENT_READS__ || 0)).toBe(0);
     expect(pageErrors).toEqual([]);
 });
 

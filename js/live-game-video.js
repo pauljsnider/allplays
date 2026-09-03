@@ -4,7 +4,7 @@ import { hasStreamTeamAccess } from './team-access.js?v=44338';
 import {
     getGameReplayLifecycle,
     resolveGameReplayPlaybackSource
-} from './game-replay-video.js?v=3';
+} from './game-replay-video.js?v=4';
 
 export const MAX_HIGHLIGHT_CLIP_MS = 60_000;
 export const BROADCAST_SETUP_STATUSES = Object.freeze({
@@ -333,9 +333,7 @@ export function buildBroadcastSetupSession({ existingSession = {}, sessionName =
         provider: compactObject({
             type: toCleanString(providerMetadata?.type) || BROADCAST_PROVIDER_TYPES.MANAGED_SETUP,
             name: toCleanString(providerMetadata?.name) || 'ALL PLAYS managed setup',
-            channel: toCleanString(providerMetadata?.channel),
-            embedUrl: toCleanString(providerMetadata?.embedUrl),
-            videoId: toCleanString(providerMetadata?.videoId)
+            channel: toCleanString(providerMetadata?.channel)
         }),
         permissions: {
             camera: permissions.camera === true,

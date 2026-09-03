@@ -33,7 +33,7 @@ import {
     uploadBytes,
     getDownloadURL,
     deleteObject
-} from './firebase.js?v=33';
+} from './firebase.js?v=34';
 import { getPrimaryAppCheckHeaders } from './firebase-app-check-rest.js?v=1';
 import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=18';
 import { uploadBytesResumable } from './vendor/firebase-storage.js';
@@ -56,6 +56,12 @@ import { buildCoachOverrideRsvpDocId, shouldDeleteLegacyRsvpForOverride } from '
 import { computeEffectiveRsvpSummary } from './rsvp-summary.js?v=2';
 import { assertTeamFeeRecipientLimit, normalizeTeamFeeRecipientRecords } from './team-fee-batch-limits.js?v=1';
 import { buildGameDayRsvpBreakdown } from './game-day-rsvp-breakdown.js?v=3';
+import {
+    extractYouTubeVideoIdForProtection,
+    normalizeYouTubeReplayUrl,
+    resolveGameReplayPlaybackSource
+} from './game-replay-video.js?v=4';
+import { transformReplayClipValue } from './replay-clip-sanitizer.js?v=1';
 import {
     buildRsvpFallbackPlayerIdsByUser,
     extractDirectRsvpPlayerIds,
@@ -115,6 +121,10 @@ import {
     collectAthleteGameClipsForPlayer
 } from './athlete-profile-utils.js?v=3';
 import {
+    athleteProfileProjectionService,
+    isAthleteProfileSaveUnconfirmedError
+} from './athlete-profile-projection-service.js?v=1';
+import {
     isTeamActive,
     filterTeamsByActive,
     shouldIncludeTeamInLiveOrUpcoming,
@@ -124,7 +134,7 @@ import {
     FRIEND_INVITE_TYPE,
     buildFriendInviteAccessCodeData
 } from './friend-invite.js?v=1';
-import { commitCertificateDefaults } from './certificates/persistence.js?v=7';
+import { commitCertificateDefaults } from './certificates/persistence.js?v=8';
 
 export async function normalizeParentScopeLinks(parentLinks = []) {
     // Dedupe first (no I/O) so every remaining link is fetched exactly once.
@@ -261,7 +271,7 @@ import { buildOfficiatingNotificationRecord } from './officiating-notifications.
 import {
     getTeamEmailAttachmentTotalBytes,
     normalizeTeamEmailAttachments
-} from './team-email-attachments.js?v=9';
+} from './team-email-attachments.js?v=10';
 export {
     TEAM_EMAIL_ATTACHMENT_LIMIT_BYTES,
     assertTeamEmailAttachmentLimit,
@@ -270,7 +280,7 @@ export {
     getTeamEmailDraft,
     normalizeTeamEmailAttachments,
     uploadTeamEmailAttachment
-} from './team-email-attachments.js?v=9';
+} from './team-email-attachments.js?v=10';
 // import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-vertexai.js';
 export { collection, getDocs, deleteDoc, query };
 const limitQuery = limit;
@@ -794,7 +804,7 @@ export async function uploadStatSheetPhoto(teamId, gameId, file, options = {}) {
         : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=443371'; // Import resolveZip
+import { resolveZip } from './utils.js?v=443372'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -4099,7 +4109,14 @@ function mapPublicGameProjection(game = {}, teamId = '') {
         awayScore: isHome ? opponentScore : teamScore,
         summary: game?.summary || null,
         publicSummary: game?.summary || null,
-        videoUrl: game?.videoUrl || null,
+        // Completed replay identity is released only by the dedicated playback
+        // callable. Public projections may retain an active-live source.
+        videoUrl: game?.videoLifecycle === 'live' ? (game?.videoUrl || null) : null,
+        hasRecordedReplay: game?.hasRecordedReplay === true,
+        hasReplayVideo: game?.hasRecordedReplay === true,
+        replayArchiveRevision: typeof game?.replayArchiveRevision === 'string'
+            ? game.replayArchiveRevision.slice(0, 128)
+            : null,
         seasonLabel: game?.seasonLabel || null,
         competitionType: game?.competitionType || null,
         countsTowardSeasonRecord: game?.countsTowardSeasonRecord !== false,
@@ -4121,10 +4138,269 @@ function mapPublicGameProjection(game = {}, teamId = '') {
     };
 }
 
-function markCanonicalGameProjectionProvenance(game) {
-    if (!game || typeof game !== 'object') return game;
-    return {
+const READABLE_REPLAY_CAPABILITY_FIELDS = Object.freeze([
+    'replayVideo',
+    'recordedVideo',
+    'videoReplay',
+    'replayVideoUrl',
+    'recordedVideoUrl',
+    'videoReplayUrl',
+    'archivedVideoUrl',
+    'replayVideoPublicUrl',
+    'replayVideoPosterUrl',
+    'replayVideoTitle',
+    'replayVideoDurationMs',
+    'replayStatus',
+    'recordedReplayStatus',
+    'videoReplayStatus',
+    'replayVideoFallbackDisabled',
+    'hasReplayVideo',
+    'replayArchiveState',
+    'replayMediaVersion',
+    'replayMediaState',
+    'replayMediaRevision'
+]);
+const READABLE_AUTOMATED_GAME_STREAM_CAPABILITY_FIELDS = Object.freeze([
+    'youtubeVideoId',
+    'streamEmbedUrl',
+    'youtubeEmbedUrl'
+]);
+const READABLE_AUTOMATED_GAME_COPY_MARKER_FIELDS = Object.freeze([
+    'sharedGameId',
+    'sharedGamePath',
+    '_sharedGamePath',
+    'sharedScheduleId',
+    'sharedScheduleSourceTeamId',
+    'sharedScheduleOpponentTeamId',
+    'sharedScheduleOpponentGameId'
+]);
+// Only objects built from an actual collection-group sharedGames read enter
+// this set. Stored team-game flags such as isSharedGame remain untrusted.
+const canonicalSharedGameReadObjects = new WeakSet();
+const READABLE_REPLAY_CLIP_COLLECTION_FIELDS = Object.freeze([
+    'clipRecords',
+    'gameClips',
+    'videoClips',
+    'clips',
+    'mediaClips',
+    'highlightClips',
+    'clipMetadata',
+    'replayHighlights'
+]);
+
+function hasExactCompletedReplayLifecycle(game = {}) {
+    const readStatus = (value) => {
+        if (value === null || value === undefined || value === '') return '';
+        return typeof value === 'string' ? value : 'invalid';
+    };
+    const type = Object.prototype.hasOwnProperty.call(game, 'type') ? game.type : undefined;
+    const status = readStatus(game.status);
+    const liveStatus = readStatus(game.liveStatus);
+    // Historical game documents also used the exact lowercase aliases
+    // `complete` and `finished`. This compatibility is deliberately local to
+    // readable-state scrubbing; mutation and playback lifecycle checks remain
+    // on their stricter server-authoritative contract.
+    const finalStatuses = new Set(['complete', 'completed', 'final', 'finished']);
+    return (type === undefined || type === 'game')
+        && game.isCancelled !== true
+        && game.deleted !== true
+        && game.isDeleted !== true
+        && status !== 'invalid'
+        && liveStatus !== 'invalid'
+        && ((finalStatuses.has(status)
+            && (!liveStatus || liveStatus === 'scheduled' || finalStatuses.has(liveStatus)))
+            || (!status && finalStatuses.has(liveStatus)));
+}
+
+function getReadableReplayIdentityInventory(game = {}) {
+    const exactUrls = new Set();
+    const youtubeVideoIds = new Set();
+    const addValue = (value, { videoId = false } = {}) => {
+        if (typeof value !== 'string' || !value.trim()) return;
+        const normalizedValue = value.trim();
+        if (videoId && /^[A-Za-z0-9_-]{11}$/.test(normalizedValue) && normalizedValue !== 'live_stream') {
+            youtubeVideoIds.add(normalizedValue);
+            return;
+        }
+        const extractedVideoId = extractYouTubeVideoIdForProtection(normalizedValue);
+        if (extractedVideoId) youtubeVideoIds.add(extractedVideoId);
+        getReadableReplayUrlIdentityCandidates(normalizedValue).forEach((candidate) => {
+            exactUrls.add(candidate);
+        });
+    };
+    ['replayVideo', 'recordedVideo', 'videoReplay'].forEach((field) => {
+        const container = game[field];
+        if (!container || typeof container !== 'object' || Array.isArray(container)) return;
+        addValue(container.videoId, { videoId: true });
+        ['publicUrl', 'embedUrl', 'url', 'src'].forEach((urlField) => addValue(container[urlField]));
+    });
+    [
+        'replayVideoUrl',
+        'recordedVideoUrl',
+        'videoReplayUrl',
+        'archivedVideoUrl',
+        'replayVideoPublicUrl'
+    ].forEach((field) => addValue(game[field]));
+    if (hasExactCompletedReplayLifecycle(game)) addValue(game.videoUrl);
+    return { exactUrls, youtubeVideoIds };
+}
+
+function getReadableReplayUrlIdentityCandidates(value) {
+    if (typeof value !== 'string' || !value.trim()) return [];
+    const exactValue = value.trim();
+    let parsed;
+    try {
+        parsed = new URL(exactValue);
+    } catch {
+        return [];
+    }
+    if (!['http:', 'https:'].includes(parsed.protocol)) return [];
+    const canonicalValue = parsed.href;
+    parsed.hash = '';
+    return [...new Set([exactValue, canonicalValue, parsed.href])];
+}
+
+function hasReadableAutomatedGameCopyMarker(game = {}) {
+    if (game.isSharedGame === true || game.isPublicProjection === true) return true;
+    return READABLE_AUTOMATED_GAME_COPY_MARKER_FIELDS.some((field) => {
+        const value = game[field];
+        return value !== null && value !== undefined && value !== '';
+    });
+}
+
+function hasReadableUnmigratedYouTubeReplay(game = {}) {
+    const canonicalizeHistoricalLifecycle = (value) => (
+        value === 'complete' || value === 'finished' ? 'completed' : value
+    );
+    const compatibleGame = {
         ...game,
+        ...(Object.prototype.hasOwnProperty.call(game, 'status')
+            ? { status: canonicalizeHistoricalLifecycle(game.status) }
+            : {}),
+        ...(Object.prototype.hasOwnProperty.call(game, 'liveStatus')
+            ? { liveStatus: canonicalizeHistoricalLifecycle(game.liveStatus) }
+            : {})
+    };
+    const playback = resolveGameReplayPlaybackSource(compatibleGame);
+    if (playback.state !== 'playable' || playback.provider !== 'youtube') return false;
+
+    const identityValues = [];
+    for (const field of ['replayVideo', 'recordedVideo', 'videoReplay']) {
+        const container = game[field];
+        if (container === null || container === undefined || container === '') continue;
+        if (!container || typeof container !== 'object' || Array.isArray(container)) return false;
+        if (container.videoId !== null && container.videoId !== undefined && container.videoId !== '') {
+            if (typeof container.videoId !== 'string') return false;
+            identityValues.push(`https://youtu.be/${container.videoId.trim()}`);
+        }
+        ['publicUrl', 'embedUrl', 'url', 'src'].forEach((fieldName) => {
+            if (container[fieldName] !== null && container[fieldName] !== undefined && container[fieldName] !== '') {
+                identityValues.push(container[fieldName]);
+            }
+        });
+    }
+    [
+        'replayVideoUrl',
+        'recordedVideoUrl',
+        'videoReplayUrl',
+        'archivedVideoUrl',
+        'replayVideoPublicUrl'
+    ].forEach((field) => {
+        if (game[field] !== null && game[field] !== undefined && game[field] !== '') {
+            identityValues.push(game[field]);
+        }
+    });
+    if (hasExactCompletedReplayLifecycle(game)
+        && game.videoUrl !== null
+        && game.videoUrl !== undefined
+        && game.videoUrl !== '') {
+        identityValues.push(game.videoUrl);
+    }
+    return identityValues.length > 0
+        && identityValues.every((value) => Boolean(normalizeYouTubeReplayUrl(value)));
+}
+
+function stripMatchingReplayUrlsFromClipCollections(game, sanitized) {
+    const inventory = getReadableReplayIdentityInventory(game);
+    if (!inventory.exactUrls.size && !inventory.youtubeVideoIds.size) return;
+    const isReplayUrl = (value, { videoId = false } = {}) => {
+        if (typeof value !== 'string' || !value.trim()) return false;
+        const normalizedValue = value.trim();
+        if (videoId) return inventory.youtubeVideoIds.has(normalizedValue);
+        if (getReadableReplayUrlIdentityCandidates(normalizedValue)
+            .some((candidate) => inventory.exactUrls.has(candidate))) return true;
+        const extractedVideoId = extractYouTubeVideoIdForProtection(normalizedValue);
+        return Boolean(extractedVideoId && inventory.youtubeVideoIds.has(extractedVideoId));
+    };
+    READABLE_REPLAY_CLIP_COLLECTION_FIELDS.forEach((field) => {
+        if (!Array.isArray(game[field])) return;
+        try {
+            const result = transformReplayClipValue(game[field], {
+                onString(value, { key }) {
+                    return isReplayUrl(value, { videoId: key === 'videoId' });
+                }
+            });
+            if (result.changed) sanitized[field] = result.value;
+        } catch (error) {
+            console.warn(`Withholding malformed replay clip collection ${field}:`, error);
+            sanitized[field] = [];
+        }
+    });
+}
+
+export function stripReadableReplayCapabilities(game, options = {}) {
+    if (!game || typeof game !== 'object' || Array.isArray(game)) return game;
+    const sanitized = { ...game };
+    const hasStoredReplayMarker = Object.prototype.hasOwnProperty.call(game, 'hasRecordedReplay')
+        || Object.prototype.hasOwnProperty.call(game, 'hasReplayVideo')
+        || Object.prototype.hasOwnProperty.call(game, 'replayArchiveRevision');
+    const hasLegacyReplayAvailability = !hasStoredReplayMarker
+        && hasReadableUnmigratedYouTubeReplay(game);
+    const preserveIndependentSharedStreamCapabilities = options.preserveIndependentSharedStreamCapabilities === true;
+    if (!preserveIndependentSharedStreamCapabilities
+        && game.broadcastSession
+        && typeof game.broadcastSession === 'object'
+        && !Array.isArray(game.broadcastSession)
+        && game.broadcastSession.provider
+        && typeof game.broadcastSession.provider === 'object'
+        && !Array.isArray(game.broadcastSession.provider)) {
+        const provider = { ...game.broadcastSession.provider };
+        delete provider.embedUrl;
+        delete provider.videoId;
+        sanitized.broadcastSession = {
+            ...game.broadcastSession,
+            provider
+        };
+    }
+    stripMatchingReplayUrlsFromClipCollections(game, sanitized);
+    READABLE_REPLAY_CAPABILITY_FIELDS.forEach((field) => delete sanitized[field]);
+    if (!preserveIndependentSharedStreamCapabilities) {
+        READABLE_AUTOMATED_GAME_STREAM_CAPABILITY_FIELDS.forEach((field) => delete sanitized[field]);
+    }
+    if (hasExactCompletedReplayLifecycle(game)
+        || (!preserveIndependentSharedStreamCapabilities && hasReadableAutomatedGameCopyMarker(game))) {
+        delete sanitized.videoUrl;
+    }
+    sanitized.hasRecordedReplay = game.hasRecordedReplay === true
+        || game.hasReplayVideo === true
+        || hasLegacyReplayAvailability;
+    sanitized.replayArchiveRevision = typeof game.replayArchiveRevision === 'string'
+        && game.replayArchiveRevision === game.replayArchiveRevision.trim()
+        && game.replayArchiveRevision.length <= 128
+        ? game.replayArchiveRevision
+        : (hasLegacyReplayAvailability ? 'legacy:unmigrated' : null);
+    return sanitized;
+}
+
+function markCanonicalGameProjectionProvenance(game, options = {}) {
+    if (!game || typeof game !== 'object') return game;
+    const preserveIndependentSharedStreamCapabilities = options.preserveIndependentSharedStreamCapabilities === true
+        || canonicalSharedGameReadObjects.has(game);
+    return {
+        ...stripReadableReplayCapabilities(game, {
+            ...options,
+            preserveIndependentSharedStreamCapabilities
+        }),
         // This marker is trusted only when this module constructs a sanitized
         // callable projection through mapPublicGameProjection(). A canonical
         // Firestore document cannot opt itself into projection-only behavior.
@@ -4310,12 +4586,17 @@ export async function getGames(teamId, options = {}) {
     }
 
     const merged = mergeGamesForTeam(teamGames, sharedGames, teamId);
+    const canonicalSharedKeys = new Set(sharedGames.map((game) => `${game?._sharedGamePath || ''}\0${game?.id || ''}`));
+    const sanitizedMerged = merged.map((game) => markCanonicalGameProjectionProvenance(game, {
+        preserveIndependentSharedStreamCapabilities: game?.isSharedGame === true
+            && canonicalSharedKeys.has(`${game?.sharedGamePath || ''}\0${game?.sharedGameId || ''}`)
+    }));
     if (hasTournamentGroup) {
-        return merged.filter(game => tournamentGroups.some((group) => matchesTournamentStandingsGroup(game, group)));
+        return sanitizedMerged.filter(game => tournamentGroups.some((group) => matchesTournamentStandingsGroup(game, group)));
     }
     return (startDate || endDate)
-        ? merged.filter(game => isGameWithinDateRange(game, startDate, endDate))
-        : merged;
+        ? sanitizedMerged.filter(game => isGameWithinDateRange(game, startDate, endDate))
+        : sanitizedMerged;
 }
 
 export async function getOfficiatingGames(teamId, user = auth.currentUser) {
@@ -4334,7 +4615,10 @@ export async function getOfficiatingGames(teamId, user = auth.currentUser) {
     const gamesById = new Map();
     snapshots.forEach((snapshot) => {
         snapshot.docs.forEach((gameDoc) => {
-            gamesById.set(gameDoc.id, { id: gameDoc.id, ...gameDoc.data() });
+            gamesById.set(gameDoc.id, markCanonicalGameProjectionProvenance({
+                id: gameDoc.id,
+                ...gameDoc.data()
+            }));
         });
     });
     return Array.from(gamesById.values())
@@ -4433,6 +4717,8 @@ export async function getGame(teamId, gameId) {
                 sharedGameId: docSnap.id,
                 sharedGamePath: docRef.path,
                 isSharedGame: true
+            }, {
+                preserveIndependentSharedStreamCapabilities: true
             });
         }
         return markCanonicalGameProjectionProvenance({
@@ -4505,6 +4791,8 @@ export function subscribeGame(teamId, gameId, callback, onError, options = {}) {
                 sharedGameId: snapshot.id,
                 sharedGamePath: docRef.path,
                 isSharedGame: true
+            }, {
+                preserveIndependentSharedStreamCapabilities: true
             }));
             return;
         }
@@ -7179,15 +7467,38 @@ export async function saveAthleteProfile(userId, draft, options = {}) {
     const profileRef = options.profileId
         ? doc(db, 'athleteProfiles', options.profileId)
         : doc(collection(db, 'athleteProfiles'));
-    const existingSnap = options.profileId && options.isNewProfile !== true ? await getDoc(profileRef) : null;
-    const existingProfile = existingSnap?.exists() ? { id: existingSnap.id, ...(existingSnap.data() || {}) } : null;
+    let existingSnap = await getDoc(profileRef);
+    let createdReservationHere = false;
+    if (!existingSnap.exists()) {
+        try {
+            await reserveAthleteProfileMediaOwnership(userId, profileRef.id, { isNewProfile: true });
+        } catch (reservationError) {
+            try {
+                const reconciledReservation = await getDoc(profileRef);
+                if (!reconciledReservation.exists()
+                    || reconciledReservation.data()?.parentUserId !== userId) {
+                    throw reservationError;
+                }
+                existingSnap = reconciledReservation;
+            } catch {
+                throw reservationError;
+            }
+        }
+        if (!existingSnap.exists()) {
+            existingSnap = await getDoc(profileRef);
+        }
+        if (!existingSnap.exists() || existingSnap.data()?.parentUserId !== userId) {
+            throw new Error('The athlete profile reservation could not be verified.');
+        }
+        createdReservationHere = true;
+    }
+    const existingProfile = { id: existingSnap.id, ...(existingSnap.data() || {}) };
     if (existingProfile && existingProfile.parentUserId !== userId) {
         throw new Error('You do not have permission to edit this athlete profile.');
     }
 
     const cleanupPaths = collectAthleteProfileMediaCleanupPaths(existingProfile || {}, normalized);
     const payload = {
-        parentUserId: userId,
         athlete: {
             name: normalized.athlete.name || coverSeason.playerName,
             headline: normalized.athlete.headline
@@ -7202,18 +7513,21 @@ export async function saveAthleteProfile(userId, draft, options = {}) {
         profilePhotoPath: normalized.profilePhoto?.storagePath || null,
         profilePhotoMimeType: normalized.profilePhoto?.mimeType || null,
         profilePhotoSizeBytes: normalized.profilePhoto?.sizeBytes ?? null,
-        profilePhotoUploadedAtMs: normalized.profilePhoto?.uploadedAtMs ?? null,
-        updatedAt: serverTimestamp()
+        profilePhotoUploadedAtMs: normalized.profilePhoto?.uploadedAtMs ?? null
     };
 
-    if (!existingProfile) {
-        payload.createdAt = serverTimestamp();
+    let savedProfile;
+    try {
+        savedProfile = await athleteProfileProjectionService.save({
+            profileId: profileRef.id,
+            profile: payload
+        });
+    } catch (error) {
+        if (createdReservationHere && !isAthleteProfileSaveUnconfirmedError(error)) {
+            await releaseAthleteProfileMediaReservation(userId, profileRef.id).catch(() => undefined);
+        }
+        throw error;
     }
-
-    await setDoc(profileRef, {
-        ...payload,
-        mediaUploadReservation: deleteField()
-    }, { merge: true });
 
     const cleanupResults = await Promise.allSettled(cleanupPaths.map((path) => deleteAthleteProfileMediaByPath(path)));
     cleanupResults.forEach((result) => {
@@ -7222,13 +7536,10 @@ export async function saveAthleteProfile(userId, draft, options = {}) {
         }
     });
 
-    const savedProfile = {
-        id: profileRef.id,
-        ...(existingProfile || {}),
-        ...payload
+    return {
+        ...savedProfile,
+        parentUserId: userId
     };
-    delete savedProfile.mediaUploadReservation;
-    return savedProfile;
 }
 
 // ============================================
@@ -8726,6 +9037,7 @@ async function getSharedHomepageGames(queryConstraints, shouldIncludeTeam, maxRe
             continue;
         }
 
+        canonicalSharedGameReadObjects.add(projectedGame);
         games.push(projectedGame);
         if (maxResults && games.length >= maxResults) {
             break;
@@ -9073,7 +9385,7 @@ export async function getUpcomingLiveGames(limitCount = 10) {
 
     games.sort(compareGamesByDateAsc);
 
-    return games.slice(0, limitCount);
+    return games.slice(0, limitCount).map((game) => markCanonicalGameProjectionProvenance(game));
 }
 
 // ============================================
@@ -9572,7 +9884,7 @@ export async function getLiveGamesNow() {
         console.warn('Could not load shared live games:', error?.message || error);
     }
 
-    return games;
+    return games.map((game) => markCanonicalGameProjectionProvenance(game));
 }
 
 /**
@@ -9622,7 +9934,7 @@ export async function getRecentLiveTrackedGames(limitCount = 6) {
 
     games.sort(compareGamesByDateDesc);
 
-    return games.slice(0, limitCount);
+    return games.slice(0, limitCount).map((game) => markCanonicalGameProjectionProvenance(game));
 }
 
 // ============================================
@@ -9753,6 +10065,7 @@ export async function submitOfficiatingAssignmentResult(teamId, gameId, slotId, 
             awayScore: submittedResult.awayScore,
             status: 'completed',
             liveStatus: 'completed',
+            videoUrl: null,
             scoreUpdatedAt: timestamp,
             scoreUpdatedBy: submittedResult.submittedByUserId || String(official?.uid || '').trim() || null,
             officiatingSlots,

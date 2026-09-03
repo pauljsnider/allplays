@@ -111,9 +111,85 @@ function collectFirestoreRuleFunctionNames(rulesSource) {
     return names;
 }
 
+function collectFirestoreRuleIdentifiers(rulesSource) {
+    const identifiers = new Set();
+    let quote = '';
+    let escaped = false;
+
+    for (let index = 0; index < rulesSource.length;) {
+        const character = rulesSource[index];
+        if (quote) {
+            index += 1;
+            if (escaped) {
+                escaped = false;
+            } else if (character === '\\') {
+                escaped = true;
+            } else if (character === quote) {
+                quote = '';
+            }
+            continue;
+        }
+
+        if (character === '"' || character === "'") {
+            quote = character;
+            index += 1;
+            continue;
+        }
+
+        if (!isIdentifierStart(character)) {
+            index += 1;
+            continue;
+        }
+
+        let identifierEnd = index + 1;
+        while (isIdentifierCharacter(rulesSource[identifierEnd])) identifierEnd += 1;
+        identifiers.add(rulesSource.slice(index, identifierEnd));
+        index = identifierEnd;
+    }
+
+    return identifiers;
+}
+
+function *shortFirestoreRuleIdentifiers() {
+    const firstCharacters = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_';
+    const remainingCharacters = `${firstCharacters}0123456789`;
+
+    // A single ASCII letter cannot collide with a Rules/CEL keyword. For longer
+    // generated names, an uppercase first character keeps the candidates out of
+    // the lowercase keyword namespace while still using the shortest grammar-
+    // valid identifiers. Source identifiers are filtered separately below.
+    for (const character of firstCharacters.slice(0, -1)) yield character;
+
+    for (let length = 2; ; length += 1) {
+        const suffixLength = length - 1;
+        const suffixCount = remainingCharacters.length ** suffixLength;
+        for (const firstCharacter of 'ABCDEFGHIJKLMNOPQRSTUVWXYZ') {
+            for (let suffixIndex = 0; suffixIndex < suffixCount; suffixIndex += 1) {
+                let encodedSuffix = '';
+                let remainder = suffixIndex;
+                for (let position = 0; position < suffixLength; position += 1) {
+                    encodedSuffix = remainingCharacters[remainder % remainingCharacters.length] + encodedSuffix;
+                    remainder = Math.floor(remainder / remainingCharacters.length);
+                }
+                yield firstCharacter + encodedSuffix;
+            }
+        }
+    }
+}
+
 function shortenFirestoreRuleFunctionNames(rulesSource) {
     const names = collectFirestoreRuleFunctionNames(rulesSource);
-    const replacements = new Map(names.map((name, index) => [name, `f${index.toString(36)}`]));
+    const reservedIdentifiers = collectFirestoreRuleIdentifiers(rulesSource);
+    const candidates = shortFirestoreRuleIdentifiers();
+    const replacements = new Map();
+    for (const name of names) {
+        let candidate;
+        do {
+            candidate = candidates.next().value;
+        } while (reservedIdentifiers.has(candidate));
+        replacements.set(name, candidate);
+        reservedIdentifiers.add(candidate);
+    }
     let result = '';
     let quote = '';
     let escaped = false;

@@ -1,7 +1,4 @@
-import {
-    getGameReplayLifecycle,
-    resolveGameReplayPlaybackSource
-} from './game-replay-video.js?v=3';
+import { getGameReplayLifecycle, hasRecordedReplayMarker } from './game-replay-video.js?v=4';
 
 function normalizeStatus(value) {
     return String(value || '').trim().toLowerCase();
@@ -26,10 +23,7 @@ function hasCompletedReplayLifecycle(game) {
 }
 
 export function hasReplayVideoEvidence(game) {
-    const playbackSource = resolveGameReplayPlaybackSource(game);
-    if (playbackSource.state === 'playable') return true;
-    if (playbackSource.state !== 'none') return false;
-    return game?.hasReplayVideo === true;
+    return hasRecordedReplayMarker(game);
 }
 
 export function resolveScheduleWatchCta(game) {

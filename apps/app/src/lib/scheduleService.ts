@@ -148,18 +148,6 @@ import { getNativeRestDedupKey, loadDedupedNativeRestRequest, shouldDedupNativeR
 import { mapFirestoreDocument, mapScheduleEventDocument, mapScheduleEventDocuments, mapScheduleEventRecord, mapScheduleEventRecords } from './firestore/mappers';
 import type { FirestoreDecodedDocument, FirestoreDocument as NativeFirestoreDocument, ScheduleEventFirestoreRecord } from './firestore/types';
 import type { AuthUser } from './types';
-import {
-  getReplayArchiveState,
-  getReplayTimestampComponents,
-  hasReplayArchiveEvidence,
-  hasReplayVideoSourceEvidence,
-  isCompletedGameForReplay,
-  legacyReplayArchiveFieldNames,
-  normalizeStoredYouTubeReplay,
-  normalizeYouTubeReplayUrl,
-  type ReplayArchiveState,
-  type YouTubeReplayVideo
-} from './youtubeReplay';
 
 const buildPracticePacketCompletionPayloadBase = buildPracticePacketCompletionPayload;
 
@@ -2492,234 +2480,6 @@ export async function updateScheduledGameForApp(teamId: string, gameId: string, 
   return { updated: true, eventId: normalizedGameId };
 }
 
-class GameReplayPreconditionError extends Error {}
-
-function toTimestampFingerprint(secondsValue: unknown, nanosecondsValue: unknown) {
-  const seconds = Number(secondsValue);
-  const nanoseconds = Number(nanosecondsValue);
-  if (!Number.isSafeInteger(seconds)
-    || !Number.isInteger(nanoseconds)
-    || nanoseconds < 0
-    || nanoseconds >= 1_000_000_000) {
-    return null;
-  }
-  return { timestampSeconds: seconds, timestampNanoseconds: nanoseconds };
-}
-
-function toMillisecondTimestampFingerprint(milliseconds: number) {
-  if (!Number.isFinite(milliseconds)) return { invalidTimestamp: String(milliseconds) };
-  let seconds = Math.floor(milliseconds / 1000);
-  let nanoseconds = Math.round((milliseconds - (seconds * 1000)) * 1_000_000);
-  if (nanoseconds >= 1_000_000_000) {
-    seconds += 1;
-    nanoseconds -= 1_000_000_000;
-  }
-  return { timestampSeconds: seconds, timestampNanoseconds: nanoseconds };
-}
-
-function toReplayFingerprintValue(value: unknown, seen = new WeakSet<object>()): unknown {
-  if (value === null || value === undefined) return null;
-  if (value instanceof Date) return toMillisecondTimestampFingerprint(value.getTime());
-  if (typeof value === 'string' || typeof value === 'boolean') return value;
-  if (typeof value === 'number') {
-    if (Number.isNaN(value)) return ['number', 'NaN'];
-    if (value === Number.POSITIVE_INFINITY) return ['number', 'Infinity'];
-    if (value === Number.NEGATIVE_INFINITY) return ['number', '-Infinity'];
-    if (Object.is(value, -0)) return ['number', '-0'];
-    return ['number', value];
-  }
-  if (typeof value !== 'object') return String(value);
-
-  const replayTimestamp = getReplayTimestampComponents(value);
-  if (replayTimestamp) {
-    return toTimestampFingerprint(replayTimestamp.seconds, replayTimestamp.nanoseconds);
-  }
-
-  const timestampValue = value as {
-    seconds?: unknown;
-    nanoseconds?: unknown;
-    _seconds?: unknown;
-    _nanoseconds?: unknown;
-    toMillis?: () => unknown;
-    toDate?: () => unknown;
-  };
-  const hasTimestampMethod = typeof timestampValue.toMillis === 'function'
-    || typeof timestampValue.toDate === 'function';
-  if (hasTimestampMethod) {
-    const exactTimestamp = toTimestampFingerprint(
-      timestampValue.seconds ?? timestampValue._seconds,
-      timestampValue.nanoseconds ?? timestampValue._nanoseconds
-    );
-    if (exactTimestamp) return exactTimestamp;
-  }
-  if (typeof timestampValue.toMillis === 'function') {
-    return toMillisecondTimestampFingerprint(Number(timestampValue.toMillis()));
-  }
-  if (typeof timestampValue.toDate === 'function') {
-    const date = timestampValue.toDate();
-    if (date instanceof Date) return toMillisecondTimestampFingerprint(date.getTime());
-  }
-  if (seen.has(value)) throw new Error('Replay metadata cannot contain a circular value.');
-  seen.add(value);
-  if (Array.isArray(value)) {
-    const normalized = value.map((entry) => toReplayFingerprintValue(entry, seen));
-    seen.delete(value);
-    return normalized;
-  }
-
-  const normalized = Object.keys(value as Record<string, unknown>)
-    .sort()
-    .reduce<Record<string, unknown>>((result, key) => {
-      const fieldValue = (value as Record<string, unknown>)[key];
-      if (fieldValue !== undefined) result[key] = toReplayFingerprintValue(fieldValue, seen);
-      return result;
-    }, {});
-  seen.delete(value);
-  return normalized;
-}
-
-function getReplayArchiveFingerprint(value: unknown) {
-  return JSON.stringify(toReplayFingerprintValue(value));
-}
-
-function isSharedReplayMutationTarget(gameId: string, game: Record<string, unknown>) {
-  const hasShareMarker = (value: unknown) => value !== null && value !== undefined && value !== '';
-  return gameId.startsWith('shared_')
-    || gameId.startsWith('sharedh_')
-    || gameId.startsWith('shared::')
-    || game.isSharedGame === true
-    || hasShareMarker(game.sharedGameId)
-    || hasShareMarker(game.sharedGamePath)
-    || hasShareMarker(game._sharedGamePath)
-    || hasShareMarker(game.sharedScheduleId)
-    || hasShareMarker(game.sharedScheduleSourceTeamId)
-    || hasShareMarker(game.sharedScheduleOpponentTeamId)
-    || hasShareMarker(game.sharedScheduleOpponentGameId);
-}
-
-async function persistGameReplayVideo(
-  teamId: string,
-  gameId: string,
-  replayVideo: YouTubeReplayVideo | null,
-  updatedAt: Date,
-  expectedReplayState: ReplayArchiveState,
-  managerAccessLevel: GameReplayManagerAccessLevel
-) {
-  const payload: Record<string, unknown> = { replayVideo, updatedAt };
-  legacyReplayArchiveFieldNames.forEach((field) => {
-    payload[field] = deleteField();
-  });
-  if (!replayVideo) payload.replayVideoFallbackDisabled = true;
-  const unconfirmedError = (cause: unknown) => {
-    const replayError = new Error('The replay update could not be confirmed. Refresh this game before trying again.');
-    (replayError as Error & { cause?: unknown }).cause = cause;
-    return replayError;
-  };
-  try {
-    const gameRef = doc(db, `teams/${teamId}/games/${gameId}`);
-    await withTimeout(runTransaction(db, async (transaction: any) => {
-      const snapshot = await transaction.get(gameRef);
-      if (!snapshot.exists()) {
-        throw new GameReplayPreconditionError('This game is no longer available. Refresh Schedule and try again.');
-      }
-      const currentGame = snapshot.data() || {};
-      if (isSharedReplayMutationTarget(gameId, currentGame)) {
-        throw new GameReplayPreconditionError('Replay links must be managed from the original team game, not a shared schedule copy.');
-      }
-      const currentReplayState = getReplayArchiveState(currentGame);
-      if (getReplayArchiveFingerprint(currentReplayState) !== getReplayArchiveFingerprint(expectedReplayState)) {
-        throw new GameReplayPreconditionError('The linked replay changed since this game loaded. Refresh the game and review it before trying again.');
-      }
-      const isFinalLifecycle = isCompletedGameForReplay(currentGame);
-      if (replayVideo && !isFinalLifecycle) {
-        throw new GameReplayPreconditionError('Mark the game final before linking its replay.');
-      }
-      const hasRemovableReplay = hasReplayArchiveEvidence(currentReplayState)
-        || (isFinalLifecycle && hasReplayVideoSourceEvidence({ ...currentGame, rawReplayState: currentReplayState }));
-      if (!replayVideo && !hasRemovableReplay) {
-        throw new GameReplayPreconditionError('This game no longer has a replay to remove. Refresh the game before trying again.');
-      }
-      if (!replayVideo && !isFinalLifecycle && managerAccessLevel !== 'full') {
-        throw new GameReplayPreconditionError('Only a full team manager can remove a replay while this game is not final.');
-      }
-      transaction.set(gameRef, payload, { merge: true });
-    }), 'Game replay update');
-  } catch (error) {
-    if (error instanceof GameReplayPreconditionError) throw error;
-    throw unconfirmedError(error);
-  }
-}
-
-export type GameReplayMutationOptions = {
-  expectedReplayState?: ReplayArchiveState;
-  title?: string;
-};
-
-export async function linkGameYouTubeReplayForApp(
-  teamId: string,
-  gameId: string,
-  replayUrl: string,
-  user: AuthUser | null,
-  options: GameReplayMutationOptions = {}
-) {
-  const normalizedTeamId = compactString(teamId);
-  const normalizedGameId = compactString(gameId);
-  if (!normalizedTeamId) throw new Error('Team is required.');
-  if (!normalizedGameId) throw new Error('Game is required.');
-  const normalizedReplay = normalizeYouTubeReplayUrl(replayUrl);
-  if (!normalizedReplay) {
-    throw new Error('Paste a complete YouTube video link. Channel and live-feed links cannot be used as a game replay.');
-  }
-
-  const managerAccess = await requireGameReplayManager(normalizedTeamId, normalizedGameId, user);
-
-  const linkedAt = new Date();
-  const normalizedTitle = compactString(options.title).replace(/\s+/g, ' ').slice(0, 120);
-  const replayVideo: YouTubeReplayVideo = {
-    ...normalizedReplay,
-    ...(normalizedTitle ? { title: normalizedTitle } : {}),
-    status: 'ready',
-    linkedBy: user!.uid,
-    linkedAt
-  };
-  await persistGameReplayVideo(
-    normalizedTeamId,
-    normalizedGameId,
-    replayVideo,
-    linkedAt,
-    getReplayArchiveState(options.expectedReplayState),
-    managerAccess.accessLevel
-  );
-  invalidateParentScheduleCaches(user, { teamId: normalizedTeamId, id: normalizedGameId });
-  return replayVideo;
-}
-
-export async function removeGameReplayForApp(
-  teamId: string,
-  gameId: string,
-  user: AuthUser | null,
-  expectedReplayState: ReplayArchiveState = {}
-) {
-  const normalizedTeamId = compactString(teamId);
-  const normalizedGameId = compactString(gameId);
-  if (!normalizedTeamId) throw new Error('Team is required.');
-  if (!normalizedGameId) throw new Error('Game is required.');
-
-  const managerAccess = await requireGameReplayManager(normalizedTeamId, normalizedGameId, user);
-
-  const updatedAt = new Date();
-  await persistGameReplayVideo(
-    normalizedTeamId,
-    normalizedGameId,
-    null,
-    updatedAt,
-    getReplayArchiveState(expectedReplayState),
-    managerAccess.accessLevel
-  );
-  invalidateParentScheduleCaches(user, { teamId: normalizedTeamId, id: normalizedGameId });
-  return { removed: true, updatedAt };
-}
-
 function sanitizePracticeRecurrenceInput(input?: PracticeRecurrenceFormInput | null) {
   const byDays = Array.isArray(input?.byDays) ? input?.byDays.map((value) => compactString(value).toUpperCase()).filter(Boolean) : [];
   return {
@@ -4181,9 +3941,10 @@ function createScheduleEvent(input: {
   awayScore?: unknown;
   postGameNotes?: string | null;
   summary?: string | null;
-  videoUrl?: string | null;
-  replayVideo?: unknown;
-  rawReplayState?: ReplayArchiveState;
+  hasRecordedReplay?: boolean;
+  hasReplayVideo?: boolean;
+  replayArchiveRevision?: unknown;
+  replayArchiveState?: unknown;
   rawReplayLifecycle?: {
     type?: unknown;
     status?: unknown;
@@ -4228,9 +3989,12 @@ function createScheduleEvent(input: {
   const attendanceSummary = getPracticeAttendanceSummary(input.practiceAttendance);
   const packetSummary = getPracticePacketSummary(input.practiceHomePacket);
   const availabilityNotesVisible = canViewAvailabilityNotes(availabilityPreferences, input.isTeamAdmin === true);
-  const rawReplayState = input.rawReplayState !== undefined
-    ? getReplayArchiveState(input.rawReplayState)
-    : getReplayArchiveState({ replayVideo: input.replayVideo });
+  const hasRecordedReplay = input.hasRecordedReplay === true || input.hasReplayVideo === true;
+  const replayArchiveState = input.replayArchiveState === 'ready'
+    || input.replayArchiveState === 'removed'
+    || input.replayArchiveState === 'none'
+    ? input.replayArchiveState
+    : (hasRecordedReplay ? 'ready' : 'none');
   return {
     eventKey: makeEventKey(input.teamId, input.id, input.child.playerId, input.date, input.type),
     id: input.id,
@@ -4269,9 +4033,10 @@ function createScheduleEvent(input: {
     awayScore: toNullableScore(input.awayScore),
     postGameNotes: input.postGameNotes || null,
     summary: input.summary || null,
-    videoUrl: input.videoUrl || null,
-    replayVideo: normalizeStoredYouTubeReplay(rawReplayState.replayVideo),
-    rawReplayState,
+    hasRecordedReplay,
+    hasReplayVideo: hasRecordedReplay,
+    replayArchiveRevision: compactString(input.replayArchiveRevision) || null,
+    replayArchiveState,
     rawReplayLifecycle: input.rawReplayLifecycle,
     practiceFeedItems: Array.isArray(input.practiceFeedItems) ? input.practiceFeedItems : [],
     canUpdateScore: input.canUpdateScore === true,
@@ -4518,9 +4283,10 @@ async function buildTeamSchedule(
           awayScore: game.awayScore ?? null,
           postGameNotes: game.postGameNotes || null,
           summary: game.summary || null,
-          videoUrl: game.videoUrl || null,
-          replayVideo: game.replayVideo || null,
-          rawReplayState: game.rawReplayState,
+          hasRecordedReplay: game.hasRecordedReplay === true || game.hasReplayVideo === true,
+          hasReplayVideo: game.hasRecordedReplay === true || game.hasReplayVideo === true,
+          replayArchiveRevision: game.replayArchiveRevision || null,
+          replayArchiveState: game.replayArchiveState || null,
           rawReplayLifecycle: game.rawReplayLifecycle,
           practiceFeedItems: Array.isArray(game.practiceFeedItems) ? game.practiceFeedItems : [],
           isSharedGame: game.isSharedGame === true,
@@ -4815,9 +4581,10 @@ async function buildTargetedTeamScheduleEvent(
     liveClockUpdatedAt: game.liveClockUpdatedAt || null,
     homeScore: game.homeScore ?? null,
     awayScore: game.awayScore ?? null,
-    videoUrl: game.videoUrl || null,
-    replayVideo: game.replayVideo || null,
-    rawReplayState: game.rawReplayState,
+    hasRecordedReplay: game.hasRecordedReplay === true || game.hasReplayVideo === true,
+    hasReplayVideo: game.hasRecordedReplay === true || game.hasReplayVideo === true,
+    replayArchiveRevision: game.replayArchiveRevision || null,
+    replayArchiveState: game.replayArchiveState || null,
     rawReplayLifecycle: game.rawReplayLifecycle,
     isSharedGame: game.isSharedGame === true,
     canUpdateScore: type === 'game' && hasScorekeepingTeamAccess(user, teamWithId, game, null),
@@ -6213,11 +5980,19 @@ export async function completeGameWrapupForApp(teamId: string, gameId: string, p
   };
 
   try {
-    await withTimeout(Promise.resolve(updateGame(teamId, gameId, wrappedPayload)), 'Wrap-up save');
+    await withTimeout(Promise.resolve(updateGame(teamId, gameId, {
+      ...wrappedPayload,
+      // A live-stream URL must never become a readable post-game replay
+      // capability when this same write finalizes the game.
+      videoUrl: deleteField()
+    })), 'Wrap-up save');
   } catch (error) {
     if (!isNativeRuntime()) throw error;
     logScheduleWarning('Falling back to REST wrap-up save.', 'game-wrapup-save', error, { fallback: 'rest', teamId, gameId });
-    await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`, wrappedPayload);
+    await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`, {
+      ...wrappedPayload,
+      videoUrl: nativeDeleteFieldSentinel
+    });
   }
 
   return wrappedPayload;

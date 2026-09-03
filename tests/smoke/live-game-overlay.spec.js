@@ -6,8 +6,65 @@ function collectPageErrors(page) {
     return errors;
 }
 
+const OVERLAY_REPLAY_SERVICE_STUB = `
+    export function hasRecordedReplayMarker(game = {}) {
+        return game.hasRecordedReplay === true || game.hasReplayVideo === true;
+    }
+    export const gameReplayService = {
+        async getPlayback(request) {
+            window.__OVERLAY_REPLAY_PLAYBACK_CALLS__ = [
+                ...(window.__OVERLAY_REPLAY_PLAYBACK_CALLS__ || []),
+                request
+            ];
+            if (window.__OVERLAY_REPLAY_PLAYBACK_FAILURE__) {
+                throw new Error('replay playback unavailable');
+            }
+            if (!window.__OVERLAY_RECORDED_VIDEO__) {
+                return {
+                    available: false,
+                    reason: 'not-available',
+                    hasRecordedReplay: false,
+                    replayArchiveRevision: null,
+                    replayVideo: null
+                };
+            }
+            const gateEnabled = window.__OVERLAY_GAME_TEAM_PASS_OVERRIDE__ === true
+                || (window.__OVERLAY_GAME_TEAM_PASS_OVERRIDE__ !== false
+                    && window.__OVERLAY_TEAM_PASS_GATE__ === true);
+            const accessState = window.__OVERLAY_TEAM_PASS_STATE__ || 'locked';
+            if (gateEnabled && accessState !== 'unlocked') {
+                return {
+                    available: false,
+                    reason: accessState === 'unavailable' ? 'archive-unavailable' : 'team-pass-required',
+                    hasRecordedReplay: true,
+                    replayArchiveRevision: 'r:overlay-test',
+                    replayVideo: null
+                };
+            }
+            return {
+                available: true,
+                reason: 'server-approved',
+                hasRecordedReplay: true,
+                replayArchiveRevision: 'r:overlay-test',
+                replayVideo: {
+                    provider: 'youtube',
+                    videoId: 'PK1HyC37doc',
+                    embedUrl: 'https://www.youtube.com/embed/PK1HyC37doc',
+                    publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+                    title: 'Current Academy replay'
+                }
+            };
+        }
+    };
+`;
+
 async function stubYouTubeEmbed(page) {
     const requests = { count: 0 };
+    await page.route(/\/js\/game-replay-service\.js(?:\?.*)?$/, (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: OVERLAY_REPLAY_SERVICE_STUB
+    }));
     await page.route('https://www.youtube.com/embed/**', (route) => {
         requests.count += 1;
         return route.fulfill({
@@ -26,6 +83,9 @@ async function stubYouTubeEmbed(page) {
                                     event: 'infoDelivery',
                                     info: { currentTime, playerState: command.func === 'playVideo' ? 1 : 2 }
                                 }), '*');
+                                if (command.func === 'pauseVideo') {
+                                    parent.postMessage({ source: 'overlay-youtube-pause-settled' }, '*');
+                                }
                             }
                         } catch {}
                     });
@@ -375,10 +435,12 @@ async function stubRealOverlayModules(page) {
                 period: 'H2', liveClockMs: 720000,
                 liveStatus: window.__OVERLAY_COMPLETED_LIVE_GAME__
                     ? 'completed'
-                    : window.__OVERLAY_COMPLETED_GAME__ ? 'scheduled' : 'live',
-                status: window.__OVERLAY_COMPLETED_LIVE_GAME__ || window.__OVERLAY_COMPLETED_GAME__
+                    : window.__OVERLAY_COMPLETED_GAME__ || window.__OVERLAY_RECORDED_VIDEO__ ? 'scheduled' : 'live',
+                status: window.__OVERLAY_COMPLETED_LIVE_GAME__ || window.__OVERLAY_COMPLETED_GAME__ || window.__OVERLAY_RECORDED_VIDEO__
                     ? 'completed'
                     : 'live',
+                hasRecordedReplay: window.__OVERLAY_RECORDED_VIDEO__ === true,
+                replayArchiveRevision: window.__OVERLAY_RECORDED_VIDEO__ ? 'r:overlay-test' : undefined,
                 recordedReplayTeamPassRequired: window.__OVERLAY_GAME_TEAM_PASS_OVERRIDE__,
                 viewerCount: 4, liveViewerCount: 19,
                 videoUrl: window.__OVERLAY_NO_PUBLIC_VIDEO__
@@ -519,6 +581,11 @@ async function stubRealOverlayModules(page) {
             ]; }
         `
     }));
+    await page.route(/\/js\/game-replay-service\.js(?:\?.*)?$/, (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: OVERLAY_REPLAY_SERVICE_STUB
+    }));
     await page.route(/\/js\/live-game-video\.js(?:\?.*)?$/, (route) => route.fulfill({
         status: 200,
         contentType: 'application/javascript',
@@ -535,7 +602,7 @@ async function stubRealOverlayModules(page) {
             if (window.__OVERLAY_NO_RESOLVED_VIDEO__) {
                 return { mode: 'none', hasVideo: false, sourceUrl: null, publicUrl: null, replayState: null };
             }
-            if (window.__OVERLAY_RECORDED_VIDEO__) {
+            if (window.__OVERLAY_RECORDED_VIDEO__ && game?.replayVideo) {
                 return {
                     mode: 'recorded', isRecordedReplay: true, hasVideo: true,
                     sourceUrl: '/overlay-recording-fixture.mp4',
@@ -1431,7 +1498,7 @@ for (const accessState of ['locked', 'unavailable', 'unlocked']) {
         await stubRealOverlayModules(page);
 
         await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true`, { waitUntil: 'domcontentloaded' });
-        await expect.poll(() => page.evaluate(() => window.__OVERLAY_ENTITLEMENT_READS__ || 0)).toBe(1);
+        await expect.poll(() => page.evaluate(() => window.__OVERLAY_REPLAY_PLAYBACK_CALLS__?.length || 0)).toBeGreaterThan(0);
         if (accessState === 'unlocked') {
             await expect(page.locator('#replay-access-gate')).toBeHidden();
             await expect(page.locator('#overlay-recorded-video')).toBeVisible();
@@ -1446,6 +1513,7 @@ for (const accessState of ['locked', 'unavailable', 'unlocked']) {
             await expect(page.locator('#overlay-recorded-video')).not.toHaveAttribute('src', /.+/);
             await expect(page.locator('#open-stream')).toBeHidden();
         }
+        expect(await page.evaluate(() => window.__OVERLAY_ENTITLEMENT_READS__ || 0)).toBe(0);
         expect(pageErrors).toEqual([]);
     });
 }
@@ -1478,7 +1546,7 @@ test('completed game gates its recorded video without requiring replay query mod
     await stubRealOverlayModules(page);
 
     await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
-    await expect.poll(() => page.evaluate(() => window.__OVERLAY_ENTITLEMENT_READS__ || 0)).toBe(1);
+    await expect.poll(() => page.evaluate(() => window.__OVERLAY_REPLAY_PLAYBACK_CALLS__?.length || 0)).toBeGreaterThan(0);
     await expect(page.locator('#replay-access-gate')).toBeVisible();
     await expect(page.locator('#replay-access-gate')).toContainText('Team Pass required');
     await expect(page.locator('#overlay-recorded-video')).not.toHaveAttribute('src', /.+/);
@@ -1488,6 +1556,7 @@ test('completed game gates its recorded video without requiring replay query mod
         'href',
         'live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true'
     );
+    expect(await page.evaluate(() => window.__OVERLAY_ENTITLEMENT_READS__ || 0)).toBe(0);
     expect(pageErrors).toEqual([]);
 });
 
@@ -1545,25 +1614,20 @@ test('signed-out public replay uses the sanitized projected game video when priv
     expect(pageErrors).toEqual([]);
 });
 
-test('signed-out public replay can use a server-approved recording without private team context', async ({ page, baseURL }) => {
+test('signed-out public replay uses only callable-approved playback without private team context', async ({ page, baseURL }) => {
     const pageErrors = collectPageErrors(page);
     await page.addInitScript(() => {
         window.__OVERLAY_AUTH_USER__ = null;
-        window.__OVERLAY_NO_RESOLVED_VIDEO__ = true;
-        window.__OVERLAY_PUBLIC_VIDEO_URL__ = 'https://cdn.example.test/public-replay.mp4';
+        window.__OVERLAY_RECORDED_VIDEO__ = true;
         window.__OVERLAY_FAIL_TEAM_CONTEXT__ = true;
     });
-    await page.route('https://cdn.example.test/public-replay.mp4', (route) => route.fulfill({
-        status: 200,
-        contentType: 'video/mp4',
-        body: ''
-    }));
     await stubRealOverlayModules(page);
 
     await page.goto(`${baseURL}/live-game-overlay.html?teamId=team-1&gameId=game-1&replay=true`, { waitUntil: 'domcontentloaded' });
 
-    await expect(page.locator('#overlay-recorded-video')).toHaveAttribute('src', 'https://cdn.example.test/public-replay.mp4');
+    await expect(page.locator('#overlay-recorded-video')).toHaveAttribute('src', '/overlay-recording-fixture.mp4');
     await expect(page.locator('#replay-access-gate')).toBeHidden();
+    await expect.poll(() => page.evaluate(() => window.__OVERLAY_REPLAY_PLAYBACK_CALLS__?.length || 0)).toBeGreaterThan(0);
     expect(await page.evaluate(() => window.__OVERLAY_ENTITLEMENT_READS__ || 0)).toBe(0);
     expect(pageErrors).toEqual([]);
 });
@@ -1776,7 +1840,12 @@ test('manual YouTube seeking rebuilds replay stats and the overlay offers canoni
     const pageErrors = collectPageErrors(page);
     await page.addInitScript(() => {
         window.__OVERLAY_YOUTUBE_COMMANDS__ = [];
+        window.__OVERLAY_YOUTUBE_PAUSE_SETTLED__ = false;
         window.addEventListener('message', (event) => {
+            if (event.data?.source === 'overlay-youtube-pause-settled') {
+                window.__OVERLAY_YOUTUBE_PAUSE_SETTLED__ = true;
+                return;
+            }
             if (event.data?.source !== 'overlay-youtube-fixture') return;
             try {
                 window.__OVERLAY_YOUTUBE_COMMANDS__.push(JSON.parse(event.data.payload));
@@ -1797,9 +1866,7 @@ test('manual YouTube seeking rebuilds replay stats and the overlay offers canoni
     await expect.poll(() => page.frames().some((frame) => frame.url().startsWith('https://www.youtube.com/embed/'))).toBe(true);
     const youtubeFrame = page.frames().find((frame) => frame.url().startsWith('https://www.youtube.com/embed/'));
     expect(youtubeFrame).toBeTruthy();
-    await expect.poll(async () => page.evaluate(() => (
-        window.__OVERLAY_YOUTUBE_COMMANDS__ || []
-    ).map((command) => command.func))).toContain('seekTo');
+    await expect.poll(() => page.evaluate(() => window.__OVERLAY_YOUTUBE_PAUSE_SETTLED__)).toBe(true);
     await youtubeFrame.evaluate(() => {
         parent.postMessage(JSON.stringify({
             event: 'infoDelivery',
@@ -1944,7 +2011,7 @@ test('recorded replay scan keeps the event timeline moving while the video is in
     expect(pageErrors).toEqual([]);
 });
 
-test('a delayed recorded replay joins the current timeline instead of restarting out of sync', async ({ page, baseURL }) => {
+test('callable-approved replay playback does not wait for optional team context or restart the timeline', async ({ page, baseURL }) => {
     const pageErrors = collectPageErrors(page);
     await page.addInitScript(() => {
         window.__OVERLAY_RECORDED_VIDEO__ = true;
@@ -1979,10 +2046,26 @@ test('a delayed recorded replay joins the current timeline instead of restarting
     });
     await expect(page.locator('#replay-current')).toHaveText('5:45');
     await expect(page.locator('#home-score')).toHaveText('1');
-    await expect(page.locator('#overlay-recorded-video')).toBeHidden();
+    await expect(page.locator('#overlay-recorded-video')).toBeVisible();
+    await page.locator('#overlay-recorded-video').dispatchEvent('loadedmetadata');
+    await expect.poll(() => page.locator('#overlay-recorded-video').evaluate((video) => video.currentTime)).toBe(345);
 
     await page.evaluate(() => window.__OVERLAY_RELEASE_TEAM_CONTEXT__());
-    await expect(page.locator('#overlay-recorded-video')).toBeVisible();
+    await expect.poll(() => page.evaluate(() => ({
+        recordedHidden: document.querySelector('#overlay-recorded-video').hidden,
+        recordedSource: document.querySelector('#overlay-recorded-video').getAttribute('src'),
+        gateHidden: document.querySelector('#replay-access-gate').hidden,
+        fallbackHidden: document.querySelector('#video-fallback').hidden,
+        playbackCalls: window.__OVERLAY_REPLAY_PLAYBACK_CALLS__?.length || 0,
+        connection: document.querySelector('#connection-message').textContent
+    }))).toEqual({
+        recordedHidden: false,
+        recordedSource: '/overlay-recording-fixture.mp4',
+        gateHidden: true,
+        fallbackHidden: true,
+        playbackCalls: 1,
+        connection: ''
+    });
     await page.locator('#overlay-recorded-video').dispatchEvent('loadedmetadata');
     await expect.poll(() => page.locator('#overlay-recorded-video').evaluate((video) => video.currentTime)).toBe(345);
     await expect(page.locator('#home-score')).toHaveText('1');

@@ -588,7 +588,7 @@ describe('standard tracker finish batch limits', () => {
         const helperAwaitIndex = source.indexOf('await commitStandardTrackerFinishData({', saveAndCompleteIndex);
         const catchIndex = source.indexOf('} catch (error) {', helperAwaitIndex);
 
-        expect(source).toContain("import { commitStandardTrackerFinishData } from './track-finish.js?v=3';");
+        expect(source).toContain("import { commitStandardTrackerFinishData } from './track-finish.js?v=4';");
         expect(helperAwaitIndex).toBeGreaterThan(saveAndCompleteIndex);
         expect(source.indexOf('includeTimeMs: true', helperAwaitIndex)).toBeGreaterThan(helperAwaitIndex);
         expect(source.indexOf('const batch = writeBatch(db);', saveAndCompleteIndex)).toBe(-1);
@@ -598,7 +598,7 @@ describe('standard tracker finish batch limits', () => {
     it('wires the production track.html submit path through the tested finish helper before success-only side effects', () => {
         const source = readFileSync(new URL('../../track.html', import.meta.url), 'utf8');
 
-        expect(source).toContain("import { commitStandardTrackerFinishData } from './js/track-finish.js?v=3';");
+        expect(source).toContain("import { commitStandardTrackerFinishData } from './js/track-finish.js?v=4';");
         expect(source).toContain('await commitStandardTrackerFinishData({');
         expect(source).toContain('gameState.playerParticipationByPlayerId[doc.id]');
 

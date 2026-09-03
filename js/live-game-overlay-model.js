@@ -1,4 +1,4 @@
-import { getGameReplayLifecycle, normalizeYouTubeReplayUrl } from './game-replay-video.js?v=3';
+import { getGameReplayLifecycle, normalizeYouTubeReplayUrl } from './game-replay-video.js?v=4';
 
 const DEFAULT_PERIOD = 'H1';
 
@@ -296,12 +296,16 @@ export function resolvePublicProjectionVideoOptions(game = {}, { parentHost = 'l
     const lifecycle = getGameReplayLifecycle(game);
     const isCompleted = lifecycle.isCompleted;
     const isActiveLive = lifecycle.isActiveLive;
-    if (!isCompleted && !isActiveLive) return null;
+    // Completed replay capabilities are released only by
+    // getGameReplayPlayback. Public projections may still carry an active-live
+    // provider URL, but this helper must never turn one into an archive after
+    // the lifecycle becomes final.
+    if (isCompleted || !isActiveLive) return null;
     const youtubeReplay = normalizeYouTubeReplayUrl(game.videoUrl);
     if (youtubeReplay) {
         return {
             mode: 'embed',
-            isRecordedReplay: isCompleted && !isActiveLive,
+            isRecordedReplay: false,
             isPublicProjectionVideo: true,
             hasVideo: true,
             sourceUrl: `${youtubeReplay.embedUrl}?autoplay=1&mute=1`,

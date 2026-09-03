@@ -193,7 +193,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('stored image URL rules en
         }
     });
 
-    it('allows safe published drill links across teams while denying cross-team updates', async () => {
+    it('allows safe published attribution links across teams while freezing drill video URLs', async () => {
         const db = ownerDb();
         const drillRef = doc(db, 'drillLibrary/published-safe-links');
         await assertSucceeds(setDoc(drillRef, {
@@ -203,12 +203,14 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('stored image URL rules en
             authorId: 'owner-1',
             title: 'Published safe links',
             publishedToCommunity: true,
-            youtubeUrl: 'https://video.example.test/watch?v=123',
             attribution: {
                 source: 'Coaching library',
                 license: 'CC BY',
                 url: 'http://source.example.test/drills/press'
             }
+        }));
+        await assertFails(updateDoc(drillRef, {
+            youtubeUrl: 'https://video.example.test/watch?v=123'
         }));
 
         const otherDb = otherTeamOwnerDb();
@@ -218,7 +220,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('stored image URL rules en
         }));
     });
 
-    it('accepts absent and null external drill links', async () => {
+    it('accepts absent external drill links but requires null video aliases to use the server boundary', async () => {
         const db = ownerDb();
         await assertSucceeds(setDoc(doc(db, 'drillLibrary/absent-external-links'), {
             source: 'custom',
@@ -227,7 +229,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('stored image URL rules en
             title: 'Absent links',
             publishedToCommunity: false
         }));
-        await assertSucceeds(setDoc(doc(db, 'drillLibrary/null-external-links'), {
+        await assertFails(setDoc(doc(db, 'drillLibrary/null-external-links'), {
             source: 'custom',
             teamId: 'team-1',
             createdBy: 'owner-1',
@@ -264,7 +266,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('stored image URL rules en
         }));
     });
 
-    it('rejects unsafe external drill URL updates', async () => {
+    it('rejects direct drill video URL updates while retaining safe attribution updates', async () => {
         const db = ownerDb();
         const drillRef = doc(db, 'drillLibrary/safe-external-update');
         await assertSucceeds(setDoc(drillRef, {
@@ -272,13 +274,14 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('stored image URL rules en
             teamId: 'team-1',
             createdBy: 'owner-1',
             title: 'Safe external update',
-            publishedToCommunity: false,
-            youtubeUrl: 'https://video.example.test/original'
+            publishedToCommunity: false
         }));
 
         await assertSucceeds(updateDoc(drillRef, {
-            youtubeUrl: 'http://video.example.test/replacement',
             'attribution.url': 'https://source.example.test/drill'
+        }));
+        await assertFails(updateDoc(drillRef, {
+            youtubeUrl: 'http://video.example.test/replacement'
         }));
         await assertFails(updateDoc(drillRef, { youtubeUrl: 'javascript:alert(1)' }));
         await assertFails(updateDoc(drillRef, { 'attribution.url': '//unsafe.example.test/source' }));
@@ -289,7 +292,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('stored image URL rules en
         const legacyRef = doc(db, 'drillLibrary/legacy-drill');
 
         await assertSucceeds(updateDoc(legacyRef, { title: 'Legacy drill renamed' }));
-        await assertSucceeds(updateDoc(legacyRef, { youtubeUrl: deleteField() }));
+        await assertFails(updateDoc(legacyRef, { youtubeUrl: deleteField() }));
         await assertSucceeds(updateDoc(legacyRef, { 'attribution.url': deleteField() }));
         await assertFails(updateDoc(legacyRef, { youtubeUrl: 'data:text/html,unsafe' }));
         await assertFails(updateDoc(legacyRef, { 'attribution.url': 'javascript:alert(1)' }));

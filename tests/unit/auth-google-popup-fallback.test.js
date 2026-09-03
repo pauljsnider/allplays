@@ -6,7 +6,7 @@ const getRedirectResultMock = vi.fn();
 const validateAccessCodeMock = vi.fn();
 const markAccessCodeAsUsedMock = vi.fn();
 
-vi.mock('../../js/firebase.js?v=33', () => ({
+vi.mock('../../js/firebase.js?v=34', () => ({
     auth: { currentUser: null },
     signInWithEmailAndPassword: vi.fn(),
     createUserWithEmailAndPassword: vi.fn(),
@@ -24,7 +24,7 @@ vi.mock('../../js/firebase.js?v=33', () => ({
     updatePassword: vi.fn()
 }));
 
-vi.mock('../../js/db.js?v=4433195', () => ({
+vi.mock('../../js/db.js?v=4433196', () => ({
     validateAccessCode: validateAccessCodeMock,
     markAccessCodeAsUsed: markAccessCodeAsUsedMock,
     updateUserProfile: vi.fn(),
@@ -45,7 +45,7 @@ vi.mock('../../js/signup-flow.js?v=14', () => ({
     executeEmailPasswordSignup: vi.fn()
 }));
 
-vi.mock('../../js/admin-invite.js?v=12', () => ({
+vi.mock('../../js/admin-invite.js?v=13', () => ({
     redeemAdminInviteAcceptance: vi.fn(),
     redeemAdminInviteAtomically: vi.fn()
 }));

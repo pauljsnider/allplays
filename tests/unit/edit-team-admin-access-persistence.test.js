@@ -390,6 +390,10 @@ function extractEditTeamModule() {
             'const { normalizeYouTubeEmbedUrl } = deps.liveStreamUtils;'
         )
         .replace(
+            "import { structuredMediaWriteService } from './js/structured-media-write-service.js?v=1';",
+            'const { structuredMediaWriteService } = deps.structuredMedia;'
+        )
+        .replace(
             /import\s+\{\s*hasFullTeamAccess,\s*normalizeAdminEmailList,\s*normalizeStreamVolunteerEmailList,\s*normalizeTeamPermissions\s*\}\s+from\s+'\.\/js\/team-access\.js\?v=\d+';/,
             'const { hasFullTeamAccess, normalizeAdminEmailList, normalizeStreamVolunteerEmailList, normalizeTeamPermissions } = deps.teamAccess;'
         )
@@ -540,6 +544,18 @@ async function bootEditTeam(initialState, overrides = {}, dependencyOverrides = 
                 return url;
             }
         },
+        structuredMedia: {
+            structuredMediaWriteService: {
+                async setTeamFixedVideo(input) {
+                    env.state.structuredMediaCalls = env.state.structuredMediaCalls || [];
+                    env.state.structuredMediaCalls.push({ method: 'setTeamFixedVideo', input: deepClone(input) });
+                },
+                async removeTeamFixedVideo(input) {
+                    env.state.structuredMediaCalls = env.state.structuredMediaCalls || [];
+                    env.state.structuredMediaCalls.push({ method: 'removeTeamFixedVideo', input: deepClone(input) });
+                }
+            }
+        },
         statConfigPresets: {
             getDefaultStatConfigForSport() {
                 return null;
@@ -595,6 +611,14 @@ async function bootEditTeam(initialState, overrides = {}, dependencyOverrides = 
         liveStreamUtils: {
             ...baseDeps.liveStreamUtils,
             ...(dependencyOverrides.liveStreamUtils || {})
+        },
+        structuredMedia: {
+            ...baseDeps.structuredMedia,
+            ...(dependencyOverrides.structuredMedia || {}),
+            structuredMediaWriteService: {
+                ...baseDeps.structuredMedia.structuredMediaWriteService,
+                ...(dependencyOverrides.structuredMedia?.structuredMediaWriteService || {})
+            }
         },
         statConfigPresets: {
             ...baseDeps.statConfigPresets,
@@ -967,11 +991,11 @@ describe('edit team admin access persistence', () => {
                 streamVolunteerEmails: [],
                 defaultAssignments: [],
                 twitchChannel: null,
-                streamEmbedUrl: null,
-                youtubeEmbedUrl: null,
                 ownerId: 'owner-1',
                 ownerEmail: 'owner@example.com'
             });
+            expect(env.state.createCalls[0].teamData).not.toHaveProperty('streamEmbedUrl');
+            expect(env.state.createCalls[0].teamData).not.toHaveProperty('youtubeEmbedUrl');
             expect(env.state.createCalls[0].teamData.registrationSource).toBeNull();
         } finally {
             env.cleanup();

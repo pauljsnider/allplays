@@ -98,6 +98,7 @@ export function buildTrackStatsheetApplyPlan({
             opponentStats,
             status: 'completed',
             liveStatus: 'scheduled',
+            videoUrl: null,
             liveHasData: false,
             liveClockMs: 0,
             liveClockRunning: false,

@@ -2,6 +2,11 @@
 import { fileURLToPath } from 'node:url';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+const structuredMediaMocks = vi.hoisted(() => ({
+    setTeamFixedVideo: vi.fn().mockResolvedValue({ committed: true }),
+    removeTeamFixedVideo: vi.fn().mockResolvedValue({ committed: true })
+}));
+
 vi.mock('@capacitor/core', () => ({
     Capacitor: {
         isNativePlatform: () => false
@@ -58,6 +63,9 @@ vi.mock('../../js/firebase.js', () => ({
     httpsCallable: vi.fn(() => vi.fn().mockResolvedValue({ data: { success: true } })),
     query: vi.fn((...parts) => parts),
     where: vi.fn((field, op, value) => ({ field, op, value }))
+}));
+vi.mock('../../js/structured-media-write-service.js', () => ({
+    structuredMediaWriteService: structuredMediaMocks
 }));
 
 vi.mock('../../js/auth.js', () => ({
@@ -2136,10 +2144,9 @@ describe('React app team detail model', () => {
             photoPath: 'profile-photos/teams/team-1/team/team.png',
             leagueUrl: null,
             twitchChannel: null,
-            streamEmbedUrl: null,
-            youtubeEmbedUrl: null,
             updatedAt: expect.any(Date)
         });
+        expect(structuredMediaMocks.removeTeamFixedVideo).toHaveBeenCalledWith({ teamId: 'team-1' });
     });
 
     it('rolls back a browser team photo when the team document save fails', async () => {

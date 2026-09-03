@@ -1,5 +1,3 @@
-import type { ReplayArchiveState } from '../youtubeReplay';
-
 export type FirestoreScalarValue = {
     stringValue?: string;
     booleanValue?: boolean;
@@ -140,9 +138,10 @@ export type ScheduleEventFirestoreRecord = {
     awayScore?: number | null;
     postGameNotes?: string | null;
     summary?: string | null;
-    videoUrl?: string | null;
-    replayVideo?: Record<string, unknown> | null;
-    rawReplayState?: ReplayArchiveState;
+    hasRecordedReplay?: boolean;
+    hasReplayVideo?: boolean;
+    replayArchiveRevision?: string | null;
+    replayArchiveState?: 'none' | 'ready' | 'removed';
     rawReplayLifecycle?: {
         type?: unknown;
         status?: unknown;

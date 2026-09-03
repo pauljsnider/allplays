@@ -580,19 +580,20 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, getPlayerPrivateProfile, copySelectedPlayersForTeamRollover, uploadTeamPhoto, deleteLegacyImageUpload, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail, getTeamAccessCodes, getConfigs, getGames, updateGame, getRegistrationSources, syncRegistrationProvider } from './js/db.js?v=4433195';
+        import { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, getPlayerPrivateProfile, copySelectedPlayersForTeamRollover, uploadTeamPhoto, deleteLegacyImageUpload, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail, getTeamAccessCodes, getConfigs, getGames, updateGame, getRegistrationSources, syncRegistrationProvider } from './js/db.js?v=4433196';
         import { validateProfilePhotoFile } from './js/profile-photo-paths.js?v=3';
         import { getDefaultStatConfigForSport } from './js/stat-config-presets.js?v=3';
         import { buildTeamSportConfigMigrationPlan } from './js/team-stat-config-migration.js?v=3';
-        import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=443371';
-        import { checkAuth, sendInviteEmail } from './js/auth.js?v=4433199';
-        import { renderTeamAdminBanner } from './js/team-admin-banner.js?v=443347';
+        import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=443372';
+        import { checkAuth, sendInviteEmail } from './js/auth.js?v=4433200';
+        import { renderTeamAdminBanner } from './js/team-admin-banner.js?v=443348';
         import { normalizeYouTubeEmbedUrl } from './js/live-stream-utils.js?v=2';
         import { hasFullTeamAccess, normalizeAdminEmailList, normalizeStreamVolunteerEmailList, normalizeTeamPermissions } from './js/team-access.js?v=44338';
         import { processPendingAdminInvites, buildAdminInviteFollowUp, inviteExistingTeamAdmin, loadPendingAdminInviteEmails } from './js/edit-team-admin-invites.js?v=5';
         import { buildRolloverAccessPreview, buildStaffAdminRolloverUpdate } from './js/rollover-access.js?v=1';
         import { buildRosterRolloverPreviewRows } from './js/roster-rollover-preview.js?v=1';
         import { buildAppJoinUrl } from './js/join-code.js?v=2';
+        import { structuredMediaWriteService } from './js/structured-media-write-service.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -2045,6 +2046,7 @@
                     })
                     : null;
 
+                const parsedStream = parseStreamUrl(document.getElementById('streamUrl').value);
                 const teamData = {
                     name: document.getElementById('name').value,
                     description: document.getElementById('description').value,
@@ -2093,14 +2095,7 @@
                     streamAccessMode: document.getElementById('streamAccessMode').value,
                     streamVolunteerEmails: normalizedStreamVolunteerEmails,
                     defaultAssignments: getDefaultAssignmentsFromForm(),
-                    ...((() => {
-                        const sr = parseStreamUrl(document.getElementById('streamUrl').value);
-                        return {
-                            twitchChannel: sr?.platform === 'twitch' ? sr.twitchChannel : null,
-                            streamEmbedUrl: sr?.platform === 'youtube' ? sr.streamEmbedUrl : null,
-                            youtubeEmbedUrl: null, // clear legacy field on every save
-                        };
-                    })())
+                    twitchChannel: parsedStream?.platform === 'twitch' ? parsedStream.twitchChannel : null
                 };
 
                 if (!currentTeamId) {
@@ -2160,6 +2155,22 @@
                     }
                     currentTeamSport = teamData.sport;
                     loadedAdminEmails = [...normalizedAdminEmails];
+                    try {
+                        if (parsedStream?.platform === 'youtube') {
+                            await structuredMediaWriteService.setTeamFixedVideo({
+                                teamId: currentTeamId,
+                                streamEmbedUrl: parsedStream.streamEmbedUrl,
+                                youtubeEmbedUrl: null,
+                                streamUrl: null,
+                                livestreamUrl: null,
+                                youtubeVideoId: null
+                            });
+                        } else {
+                            await structuredMediaWriteService.removeTeamFixedVideo({ teamId: currentTeamId });
+                        }
+                    } catch (streamError) {
+                        throw new Error(`Team settings were saved, but the livestream update failed. Reload the team before trying the livestream again. ${streamError.message}`);
+                    }
                 } else {
                     const newTeamId = await createTeam(teamData);
                     currentTeamId = newTeamId;
@@ -2266,6 +2277,21 @@
                     }
                     if (inviteFollowUp.unresolvedCount > 0) {
                         alert(`Team created. ${inviteFollowUp.unresolvedCount} admin invite(s) need manual follow-up. Open Edit Team to resend or share invite links.`);
+                    }
+
+                    if (parsedStream?.platform === 'youtube') {
+                        try {
+                            await structuredMediaWriteService.setTeamFixedVideo({
+                                teamId: newTeamId,
+                                streamEmbedUrl: parsedStream.streamEmbedUrl,
+                                youtubeEmbedUrl: null,
+                                streamUrl: null,
+                                livestreamUrl: null,
+                                youtubeVideoId: null
+                            });
+                        } catch (streamError) {
+                            throw new Error(`Team was created, but its livestream was not saved. Open the team before trying the livestream again. ${streamError.message}`);
+                        }
                     }
 
                     window.location.href = buildTeamEditUrl(newTeamId, true);

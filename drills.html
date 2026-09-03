@@ -609,15 +609,15 @@
         import {
             getTeam, getGames, getPlayers, getUserProfile, getUserTeamsWithAccess,
             getGameEvents, getAggregatedStatsForGames,
-            getDrills, getPublishedDrills, getTeamDrills, getDrill, createDrill, updateDrill, deleteDrill, uploadDrillDiagram, deleteUploadedMediaObjects,
+            getDrills, getPublishedDrills, getTeamDrills, getDrill, createDrill, updateDrill, uploadDrillDiagram, deleteUploadedMediaObjects,
             getDrillFavorites, addDrillFavorite, removeDrillFavorite,
             createPracticeSession, updatePracticeSession,
             getPracticeSessionByEvent, upsertPracticeSessionForEvent, updatePracticeAttendance, getPracticeSessions, getPracticePacketCompletions,
             savePracticeTemplate, getPracticeTemplates, deletePracticeTemplate
-        } from './js/db.js?v=4433195';
-        import { renderHeader, renderFooter, escapeHtml, shareOrCopy } from './js/utils.js?v=443371';
-        import { requireAuth } from './js/auth.js?v=4433199';
-        import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=443347';
+        } from './js/db.js?v=4433196';
+        import { renderHeader, renderFooter, escapeHtml, shareOrCopy } from './js/utils.js?v=443372';
+        import { requireAuth } from './js/auth.js?v=4433200';
+        import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=443348';
         import { DRILL_TYPES, DRILL_LEVELS, DRILL_TYPE_COLORS, getAllSkillTags } from './js/drill-constants.js?v=1';
         import { getStarterDrillById, getStarterDrills } from './js/practice-starter-drills.js?v=1';
         import { mergeUniqueDrills, linkifySafeText, parseMarkdown } from './js/drills-issue28-helpers.js?v=3';
@@ -625,6 +625,7 @@
         import { createSafeImageElement, resolveSafeDrillDiagramUrl } from './js/safe-image-url.js?v=1';
         import { getAI, getGenerativeModel, GoogleAIBackend } from './js/vendor/firebase-ai.js';
         import { getApp } from './js/vendor/firebase-app.js';
+        import { structuredMediaWriteService } from './js/structured-media-write-service.js?v=1';
 
         // ==================== STATE ====================
         const state = {
@@ -3048,6 +3049,9 @@ ${text}
             }
             const id = document.getElementById('form-drill-id').value;
             const youtubeUrl = document.getElementById('drillYoutubeUrl').value.trim();
+            const resourceUrl = id && state.currentDetailDrill?.id === id
+                ? String(state.currentDetailDrill.resourceUrl || '').trim()
+                : '';
             const data = {
                 title: document.getElementById('form-drill-title').value.trim(),
                 sport: state.team?.sport || 'Soccer',
@@ -3057,7 +3061,6 @@ ${text}
                 description: document.getElementById('form-drill-desc').value.trim(),
                 instructions: document.getElementById('form-drill-instructions').value.trim(),
                 publishedToCommunity: !!document.getElementById('form-publish-community').checked,
-                youtubeUrl: youtubeUrl || null,
                 setup: {
                     duration: parseInt(document.getElementById('form-drill-duration').value) || 15,
                     players: document.getElementById('form-drill-players').value.trim(),
@@ -3078,6 +3081,24 @@ ${text}
                 } else {
                     drillId = await createDrill(state.teamId, data);
                     document.getElementById('form-drill-id').value = drillId;
+                }
+
+                try {
+                    if (youtubeUrl || resourceUrl) {
+                        await structuredMediaWriteService.setDrillLibraryVideo({
+                            teamId: state.teamId,
+                            targetId: drillId,
+                            youtubeUrl: youtubeUrl || null,
+                            resourceUrl: resourceUrl || null
+                        });
+                    } else if (id) {
+                        await structuredMediaWriteService.removeDrillLibraryVideo({
+                            teamId: state.teamId,
+                            targetId: drillId
+                        });
+                    }
+                } catch (videoError) {
+                    throw new Error(`Drill details were saved, but the video link update failed. Reload the drill before trying the video link again. ${videoError.message}`);
                 }
 
                 // Upload new diagram files if selected
@@ -3136,7 +3157,10 @@ ${text}
             if (!state.currentDetailDrill) return;
             if (!confirm(`Delete "${state.currentDetailDrill.title}"? This cannot be undone.`)) return;
             try {
-                await deleteDrill(state.currentDetailDrill.id);
+                await structuredMediaWriteService.deleteDrillLibraryVideo({
+                    teamId: state.teamId,
+                    targetId: state.currentDetailDrill.id
+                });
                 invalidateAiDrillUniverse();
                 showToast('Drill deleted');
                 closeDrillDetail();

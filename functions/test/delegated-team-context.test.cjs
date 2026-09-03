@@ -175,6 +175,41 @@ test('fails closed for unsigned, revoked, cross-team, stale-email, and unrelated
   await assert.rejects(handler({ teamId: 'team-1' }, context('unrelated-1')), { code: 'permission-denied' });
 });
 
+test('canonical owner IDs are exact and malformed values never reopen legacy email ownership', () => {
+  const base = {
+    ownerEmail: 'manager@example.test',
+    ownerEmailLower: 'manager@example.test',
+    adminEmails: []
+  };
+  for (const ownerId of [
+    `${'manager.uid'}${'x'.repeat(130)}`,
+    ' manager.uid ',
+    { uid: 'manager.uid' },
+    0,
+    null
+  ]) {
+    const access = resolveDelegatedAccess({
+      uid: 'manager.uid',
+      email: 'manager@example.test',
+      user: {},
+      teamId: 'team-1',
+      team: { ...base, ownerId },
+      game: {},
+      rsvp: null
+    });
+    assert.equal(access.full, false, JSON.stringify(ownerId));
+  }
+  assert.equal(resolveDelegatedAccess({
+    uid: 'manager.uid',
+    email: 'manager@example.test',
+    user: {},
+    teamId: 'team-1',
+    team: { ...base, ownerId: '' },
+    game: {},
+    rsvp: null
+  }).full, true);
+});
+
 test('requires a current game and RSVP for all-confirmed capability modes', async () => {
   const team = productionTeam({
     teamPermissions: {
