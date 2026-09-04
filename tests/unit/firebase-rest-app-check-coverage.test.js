@@ -18,7 +18,6 @@ const primaryRestCallers = [
     '../../js/dashboard-team-load.js',
     '../../js/db.js',
     '../../js/schedule-notifications.js',
-    '../../js/team-pass.js',
     '../../js/telemetry.js',
     '../../js/utils.js'
 ];
@@ -66,7 +65,6 @@ describe('raw Firebase REST App Check coverage', () => {
             'js/dashboard-team-load.js',
             'js/db.js',
             'js/schedule-notifications.js',
-            'js/team-pass.js',
             'js/telemetry.js',
             'js/utils.js'
         ]);

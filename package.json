@@ -7,6 +7,7 @@
     "npm": ">=10"
   },
   "scripts": {
+    "postinstall": "node scripts/prepare-ios-auth-spm.mjs",
     "test": "vitest run tests/unit",
     "test:unit": "vitest run tests/unit",
     "test:unit:ci": "vitest run tests/unit --reporter=dot && npm run test:storage-rules:ci",
@@ -39,8 +40,9 @@
     "app:preview": "npm --prefix apps/app run preview",
     "app:validate-performance-measurements": "node scripts/validate-app-performance-measurements.mjs",
     "mobile:serve": "npm run app:dev",
-    "mobile:sync": "npm run app:build:native && npx cap sync",
-    "mobile:sync:native-debug": "npm --prefix apps/app run build:native-debug && node scripts/verify-app-bundle-visualizer.mjs && npx cap sync",
+    "mobile:sync": "npm run prepare:ios-auth-spm && npm run app:build:native && npx cap sync",
+    "mobile:sync:native-debug": "npm run prepare:ios-auth-spm && npm --prefix apps/app run build:native-debug && node scripts/verify-app-bundle-visualizer.mjs && npx cap sync",
+    "prepare:ios-auth-spm": "node scripts/prepare-ios-auth-spm.mjs",
     "mobile:build:ios": "npm run mobile:sync:native-debug && DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build",
     "mobile:build:android": "npm run mobile:sync:native-debug && cd android && JAVA_HOME=\"/Applications/Android Studio.app/Contents/jbr/Contents/Home\" ./gradlew :app:assembleDebug",
     "mobile:bundle:android": "npm run mobile:sync && cd android && ./gradlew :app:bundleRelease",
@@ -51,7 +53,8 @@
     "mobile:run:android": "npm run mobile:sync:native-debug && JAVA_HOME=\"/Applications/Android Studio.app/Contents/jbr/Contents/Home\" npx cap run android",
     "store:play:generate-assets": "node scripts/generate-play-store-assets.mjs",
     "store:play:validate": "node scripts/sync-play-listing.mjs --validate-only",
-    "store:play:sync": "node scripts/sync-play-listing.mjs"
+    "store:play:sync": "node scripts/sync-play-listing.mjs",
+    "store:app-store:generate-assets": "node scripts/generate-app-store-assets.mjs"
   },
   "devDependencies": {
     "@capacitor/cli": "^8.5.0",

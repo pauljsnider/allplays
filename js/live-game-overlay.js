@@ -1707,9 +1707,9 @@ function showReplayAccessGate({ state = 'checking' } = {}) {
             copy: 'The scoreboard and saved game timeline remain available while replay access is verified.'
         },
         locked: {
-            kicker: 'Team Pass required',
+            kicker: 'Replay access required',
             title: 'Archived replay video is locked',
-            copy: 'This premium fan feature unlocks when the team has an active paid Team Pass for the season. Ask a coach or team admin to activate access.'
+            copy: 'Archived replay is not available for this team. Live scores, play-by-play, and other available game details remain accessible.'
         },
         unavailable: {
             kicker: 'Access check delayed',

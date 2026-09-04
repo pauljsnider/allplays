@@ -32,6 +32,34 @@ function writeFile(filePath, contents = '') {
     fs.writeFileSync(filePath, contents);
 }
 
+function writeValidMobileAssociations(rootDir) {
+    writeFile(
+        path.join(rootDir, '.well-known', 'apple-app-site-association'),
+        JSON.stringify({
+            applinks: {
+                apps: [],
+                details: [{
+                    appIDs: ['4CSFFZLL37.ai.allplays.lite'],
+                    components: [{ '/': '/app' }, { '/': '/app/*' }]
+                }]
+            }
+        })
+    );
+    writeFile(
+        path.join(rootDir, '.well-known', 'assetlinks.json'),
+        JSON.stringify([{
+            relation: ['delegate_permission/common.handle_all_urls'],
+            target: {
+                namespace: 'android_app',
+                package_name: 'ai.allplays.lite',
+                sha256_cert_fingerprints: [
+                    '5A:C2:50:E0:78:32:24:D7:96:12:63:9C:73:AF:93:C7:59:C3:98:86:46:4C:CD:63:FB:5F:29:53:39:D6:C4:94'
+                ]
+            }
+        }])
+    );
+}
+
 function sha256(contents) {
     return createHash('sha256').update(contents).digest('hex');
 }
@@ -220,6 +248,60 @@ describe('pages bundle staging', () => {
         expect(fs.existsSync(path.join(destinationDir, 'apps', 'app', 'src', 'main.tsx'))).toBe(false);
         expect(fs.existsSync(path.join(destinationDir, 'tests', 'unit', 'example.test.js'))).toBe(false);
         expect(fs.existsSync(path.join(destinationDir, 'tests', 'manual', 'local-adapter.js'))).toBe(false);
+    });
+
+    it('publishes only verified mobile associations behind the explicit production opt-in', () => {
+        const rootDir = makeTempDir();
+        const destinationDir = path.join(makeTempDir(), 'site');
+
+        writeFile(path.join(rootDir, 'index.html'), '<!doctype html><html><head></head><body>Root</body></html>');
+        writeFile(path.join(rootDir, 'widget-scoreboard.html'), '<!doctype html><html><head></head><body>Score</body></html>');
+        writeFile(path.join(rootDir, 'apps', 'app', 'dist', 'index.html'), '<!doctype html><html><head></head><body>App</body></html>');
+        writeFile(path.join(rootDir, 'firebase.json'), JSON.stringify(makePagesSecurityFirebaseConfig()));
+        writeValidMobileAssociations(rootDir);
+
+        const result = stagePagesBundle(destinationDir, {
+            rootDir,
+            publishMobileAssociations: true
+        });
+
+        expect(result.mobileAssociationPaths).toHaveLength(2);
+        expect(JSON.parse(fs.readFileSync(
+            path.join(destinationDir, '.well-known', 'apple-app-site-association'),
+            'utf8'
+        )).applinks.details[0].appIDs).toEqual(['4CSFFZLL37.ai.allplays.lite']);
+        expect(JSON.parse(fs.readFileSync(
+            path.join(destinationDir, '.well-known', 'apple-app-site-association'),
+            'utf8'
+        )).applinks.details[0].components.map((component) => component['/'])).toEqual([
+            '/app',
+            '/app/*'
+        ]);
+        expect(JSON.parse(fs.readFileSync(
+            path.join(destinationDir, '.well-known', 'assetlinks.json'),
+            'utf8'
+        ))[0].target.sha256_cert_fingerprints).toEqual([
+            '5A:C2:50:E0:78:32:24:D7:96:12:63:9C:73:AF:93:C7:59:C3:98:86:46:4C:CD:63:FB:5F:29:53:39:D6:C4:94'
+        ]);
+    });
+
+    it('fails closed instead of publishing a stale mobile signing identity', () => {
+        const rootDir = makeTempDir();
+        const destinationDir = path.join(makeTempDir(), 'site');
+
+        writeFile(path.join(rootDir, 'index.html'), '<!doctype html><html><head></head><body>Root</body></html>');
+        writeFile(path.join(rootDir, 'apps', 'app', 'dist', 'index.html'), '<!doctype html><html><head></head><body>App</body></html>');
+        writeFile(path.join(rootDir, 'firebase.json'), JSON.stringify(makePagesSecurityFirebaseConfig()));
+        writeValidMobileAssociations(rootDir);
+        writeFile(
+            path.join(rootDir, '.well-known', 'assetlinks.json'),
+            '[{"relation":["delegate_permission/common.handle_all_urls"],"target":{"namespace":"android_app","package_name":"ai.allplays.lite","sha256_cert_fingerprints":["67:51:02:58:4E:AA:DF:85:24:EE:76:AB:4F:E4:69:99:2A:95:4A:AF:BB:5F:0D:AF:4C:F1:CE:18:60:FE:D8:50"]}}]'
+        );
+
+        expect(() => stagePagesBundle(destinationDir, {
+            rootDir,
+            publishMobileAssociations: true
+        })).toThrow(/verified Google Play signing certificate/);
     });
 
     it('stages every public-boundary db consumer with the fresh module key', () => {

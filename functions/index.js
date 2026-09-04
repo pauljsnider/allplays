@@ -6884,7 +6884,7 @@ exports.cleanupPrivateReplayArchiveOnSharedGameDelete = functions
   .document('{rootCollection}/{rootId}/sharedGames/{gameId}')
   .onDelete(cleanupReplayArchiveForDeletedParent);
 
-exports.createStripeTeamPassCheckout = functions.https.onCall(async (data, context) => {
+async function createStripeTeamPassCheckoutLegacyForTest(data, context) {
   assertPaymentsEnabled();
   if (!context.auth?.uid) {
     throw new functions.https.HttpsError('unauthenticated', 'Sign in before purchasing a team pass.');
@@ -7001,6 +7001,16 @@ exports.createStripeTeamPassCheckout = functions.https.onCall(async (data, conte
   }
 
   return { checkoutUrl: session.url, sessionId: session.id };
+}
+
+exports.createStripeTeamPassCheckout = functions.https.onCall(async () => {
+  // Keep the deployed callable name so installed older clients fail closed.
+  // The legacy implementation remains private for durability/webhook regression
+  // coverage and cannot be invoked as a deployed Firebase function.
+  throw new functions.https.HttpsError(
+    'failed-precondition',
+    'Team Pass sales are not available.'
+  );
 });
 
 exports.createStripeTeamFeeCheckout = functions.https.onCall(async (data, context) => {
@@ -13875,6 +13885,7 @@ const FEE_REMINDER_CLAIM_LEASE_MS = 10 * 60 * 1000;
 const FEE_REMINDER_STALE_RECOVERY_GRACE_MS = 48 * 60 * 60 * 1000;
 
 exports._internal = {
+  createStripeTeamPassCheckoutLegacyForTest,
   getTargetsForCategoryUserIds,
   buildTeamMediaNotificationBatchId,
   buildTeamMediaNotificationBatchMetadata,
