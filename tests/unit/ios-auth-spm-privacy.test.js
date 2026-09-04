@@ -1,4 +1,7 @@
-import { readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
 import { buildAppleGoogleOnlyAuthenticationManifest } from '../../scripts/prepare-ios-auth-spm.mjs';
 
@@ -37,5 +40,37 @@ describe('iOS authentication Swift package privacy boundary', () => {
   it('verifies the signed archive in the release workflow', () => {
     const workflow = readFileSync('.github/workflows/mobile-release.yml', 'utf8');
     expect(workflow).toContain('node scripts/verify-ios-release-privacy.mjs "$RUNNER_TEMP/ALLPLAYS.xcarchive"');
+  });
+
+  it.each([
+    'FacebookCore.framework',
+    'FacebookLogin.framework',
+    'FBSDKCoreKit.framework',
+    'FBAEMKit.framework'
+  ])('rejects a large standard Facebook SDK bundle named %s', (frameworkName) => {
+    const fixtureRoot = mkdtempSync(path.join(tmpdir(), 'allplays-ios-privacy-'));
+    const archivePath = path.join(fixtureRoot, 'ALLPLAYS.xcarchive');
+    const frameworkPath = path.join(
+      archivePath,
+      'Products/Applications/ALLPLAYS.app/Frameworks',
+      frameworkName
+    );
+    mkdirSync(frameworkPath, { recursive: true });
+    writeFileSync(
+      path.join(frameworkPath, frameworkName.replace(/\.framework$/, '')),
+      Buffer.alloc(2 * 1024 * 1024 + 1)
+    );
+
+    try {
+      const result = spawnSync(
+        process.execPath,
+        ['scripts/verify-ios-release-privacy.mjs', archivePath],
+        { cwd: process.cwd(), encoding: 'utf8' }
+      );
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain(frameworkName);
+    } finally {
+      rmSync(fixtureRoot, { recursive: true, force: true });
+    }
   });
 });

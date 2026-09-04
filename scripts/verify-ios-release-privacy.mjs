@@ -6,7 +6,7 @@ if (!archivePath || !existsSync(archivePath)) {
   throw new Error('Pass the completed .xcarchive path to verify-ios-release-privacy.mjs.');
 }
 
-const forbiddenName = /(?:^|[-_.])(facebook|fbsdk|fbaem)(?:[-_.]|$)/i;
+const forbiddenName = /(?:^|[-_.])(facebook|fbsdk|fbaem)/i;
 const forbiddenContent = /facebook-ios-sdk|RGCFA_INCLUDE_FACEBOOK|ep1\.facebook\.com/i;
 const findings = [];
 
