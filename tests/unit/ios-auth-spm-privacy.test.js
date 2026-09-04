@@ -2,8 +2,13 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { buildAppleGoogleOnlyAuthenticationManifest } from '../../scripts/prepare-ios-auth-spm.mjs';
+
+const archiveVerifierPath = fileURLToPath(
+  new URL('../../scripts/verify-ios-release-privacy.mjs', import.meta.url)
+);
 
 const upstreamManifest = `
 dependencies: [
@@ -47,30 +52,46 @@ describe('iOS authentication Swift package privacy boundary', () => {
     'FacebookLogin.framework',
     'FBSDKCoreKit.framework',
     'FBAEMKit.framework'
-  ])('rejects a large standard Facebook SDK bundle named %s', (frameworkName) => {
-    const fixtureRoot = mkdtempSync(path.join(tmpdir(), 'allplays-ios-privacy-'));
-    const archivePath = path.join(fixtureRoot, 'ALLPLAYS.xcarchive');
-    const frameworkPath = path.join(
-      archivePath,
-      'Products/Applications/ALLPLAYS.app/Frameworks',
-      frameworkName
-    );
-    mkdirSync(frameworkPath, { recursive: true });
-    writeFileSync(
-      path.join(frameworkPath, frameworkName.replace(/\.framework$/, '')),
-      Buffer.alloc(2 * 1024 * 1024 + 1)
-    );
-
+  ])('rejects a standard Facebook SDK bundle named %s', (frameworkName) => {
+    const archivePath = mkdtempSync(path.join(tmpdir(), 'allplays-ios-privacy-'));
     try {
-      const result = spawnSync(
-        process.execPath,
-        ['scripts/verify-ios-release-privacy.mjs', archivePath],
-        { cwd: process.cwd(), encoding: 'utf8' }
+      const frameworkPath = path.join(
+        archivePath,
+        'Products',
+        'Applications',
+        'App.app',
+        'Frameworks',
+        frameworkName
       );
+      mkdirSync(frameworkPath, { recursive: true });
+
+      const result = spawnSync(process.execPath, [archiveVerifierPath, archivePath], {
+        encoding: 'utf8'
+      });
       expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain('Unused Facebook SDK/privacy artifacts found');
       expect(result.stderr).toContain(frameworkName);
     } finally {
-      rmSync(fixtureRoot, { recursive: true, force: true });
+      rmSync(archivePath, { recursive: true, force: true });
+    }
+  });
+
+  it('scans large compiled files for forbidden Facebook privacy residue', () => {
+    const archivePath = mkdtempSync(path.join(tmpdir(), 'allplays-ios-privacy-'));
+    try {
+      const executablePath = path.join(archivePath, 'Products', 'Applications', 'App.app', 'App');
+      mkdirSync(path.dirname(executablePath), { recursive: true });
+      const executable = Buffer.alloc(3 * 1024 * 1024, 0);
+      executable.write('ep1.facebook.com', executable.length - 128, 'utf8');
+      writeFileSync(executablePath, executable);
+
+      const result = spawnSync(process.execPath, [archiveVerifierPath, archivePath], {
+        encoding: 'utf8'
+      });
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain('App.app/App (content)');
+    } finally {
+      rmSync(archivePath, { recursive: true, force: true });
     }
   });
 });
