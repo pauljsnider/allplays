@@ -51,7 +51,8 @@
     "mobile:run:android": "npm run mobile:sync:native-debug && JAVA_HOME=\"/Applications/Android Studio.app/Contents/jbr/Contents/Home\" npx cap run android",
     "store:play:generate-assets": "node scripts/generate-play-store-assets.mjs",
     "store:play:validate": "node scripts/sync-play-listing.mjs --validate-only",
-    "store:play:sync": "node scripts/sync-play-listing.mjs"
+    "store:play:sync": "node scripts/sync-play-listing.mjs",
+    "store:app-store:generate-assets": "node scripts/generate-app-store-assets.mjs"
   },
   "devDependencies": {
     "@capacitor/cli": "^8.5.0",
