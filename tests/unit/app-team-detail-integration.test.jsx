@@ -391,7 +391,7 @@ describe('React app TeamDetail page', () => {
         expect(container.querySelector('img[src="https://img.example.test/team.png"]')).toBeTruthy();
         expect(container.textContent).toContain('Season record (2100)');
         expect(container.textContent).toContain('Parent actions');
-        expect(container.textContent).toContain('Team Pass');
+        expect(container.textContent).not.toContain('Team Pass');
         expect(Array.from(container.querySelectorAll('a')).map((link) => link.getAttribute('href'))).toContain('/schedule?teamId=team-1&filter=availability');
 
         await clickButton(container, 'Roster');

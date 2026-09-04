@@ -74,13 +74,11 @@ import { isRetryableReadTransportError, raceFirstSuccessfulRead } from './adapte
 import { buildAppAcceptInviteUrl } from './inviteUrls';
 import { createLogger } from './logger';
 import { getNativeRestDedupKey, loadDedupedNativeRestRequest, shouldDedupNativeRestRequest } from './nativeRestDedup';
-import { callNativeFirebaseFunction } from './nativeCallable';
 import { isNativeRuntime as isNativeAppRuntime } from './nativeRuntime';
 import { loadProfileDocument } from './profileService';
 import { listNativeFirestoreCollectionPages } from './nativeFirestoreListPager';
 import { normalizeOptionalHttpUrl, parseTeamLivestreamInput } from './teamLinks';
 import type { ParentScheduleEvent } from './scheduleLogic';
-import { requireTrustedStripeCheckoutUrl } from './stripeCheckoutUrl';
 import type { AuthUser } from './types';
 
 const primaryDataTimeoutMs = 5000;
@@ -451,7 +449,6 @@ export type TeamDetailModel = {
   statTrackerConfigs: TeamDetailStatTrackerConfig[];
   canManageTeam: boolean;
   canManageAdmins: boolean;
-  canPurchaseTeamPass: boolean;
   canUsePrivateCalendarSync: boolean;
   staffPermissions: TeamStaffPermissionsSummary | null;
   counts: {
@@ -2422,7 +2419,6 @@ export function buildTeamDetailModel({
   includeInsights?: boolean;
 }): TeamDetailModel {
   const canManageTeam = hasFullTeamAccess(user, team);
-  const canPurchaseTeamPass = isEligibleTeamPassPurchaserForApp(user, teamId, team);
   const canUsePrivateCalendarSync = isEligiblePrivateCalendarSubscriberForApp(user, teamId, team);
   const normalizedPlayers = normalizePlayers(players, linkedPlayerIds, { includeParentContacts: canManageTeam });
   const normalizedInactivePlayers = normalizePlayers(players, linkedPlayerIds, { inactiveOnly: true, includeParentContacts: canManageTeam });
@@ -2489,7 +2485,6 @@ export function buildTeamDetailModel({
     statTrackerConfigs: normalizedStatTrackerConfigs.items,
     canManageTeam,
     canManageAdmins,
-    canPurchaseTeamPass,
     canUsePrivateCalendarSync,
     staffPermissions,
     counts: {
@@ -2498,17 +2493,6 @@ export function buildTeamDetailModel({
       completedGames: completedGames.length
     }
   };
-}
-
-function isEligibleTeamPassPurchaserForApp(user: AuthUser | null, teamId: string, team: Record<string, any>) {
-  const userId = cleanString(user?.uid);
-  if (!userId) return false;
-  if (team?.ownerId === userId) return true;
-
-  const currentAuthEmail = cleanString(user?.email).toLowerCase();
-  if (currentAuthEmail && normalizeAdminEmailList(team?.adminEmails).includes(currentAuthEmail)) return true;
-
-  return Array.isArray(user?.parentTeamIds) && user.parentTeamIds.includes(cleanString(teamId));
 }
 
 function normalizeExactPrivateCalendarId(value: unknown) {
@@ -2558,24 +2542,6 @@ export function isEligiblePrivateCalendarSubscriberForApp(
     return true;
   }
   return Array.isArray(user?.parentTeamIds) && user.parentTeamIds.includes(normalizedTeamId);
-}
-
-export async function createTeamPassCheckoutForApp(teamId: string, seasonId: string): Promise<string> {
-  const normalizedTeamId = cleanString(teamId);
-  const normalizedSeasonId = cleanString(seasonId);
-  if (!normalizedTeamId) throw new Error('Team ID is required for Team Pass checkout.');
-  if (!normalizedSeasonId) throw new Error('Current season is required for Team Pass checkout.');
-
-  const input = { teamId: normalizedTeamId, seasonId: normalizedSeasonId, tier: 'team-pass' };
-  const checkoutResult = isNativeAppRuntime()
-    ? await callNativeFirebaseFunction<{ checkoutUrl?: unknown }>(
-      'createStripeTeamPassCheckout',
-      input,
-      { errorLabel: 'Team Pass checkout' }
-    )
-    : (await httpsCallable(functions, 'createStripeTeamPassCheckout')(input))?.data as { checkoutUrl?: unknown } | undefined;
-
-  return requireTrustedStripeCheckoutUrl(checkoutResult?.checkoutUrl);
 }
 
 export function buildRosterParentInviteSummaries({

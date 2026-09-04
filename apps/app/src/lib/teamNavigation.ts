@@ -31,7 +31,7 @@ export function buildTeamNavigation(team: ParentHomeTeam): TeamNavigationSection
     {
       id: 'team-page',
       label: 'Team page',
-      detail: 'Team photo, roster, schedule, pass, standings, and player insights',
+      detail: 'Team photo, roster, schedule, standings, and player insights',
       href: `/teams/${encodeURIComponent(teamId)}`,
       kind: 'native'
     },

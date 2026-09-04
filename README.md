@@ -53,14 +53,14 @@ Notes:
 - Do not add `localhost` to the reCAPTCHA Enterprise production allowlist. Local web development automatically uses the App Check debug provider after a site key is configured; register the generated debug token in Firebase Console.
 - `VITE_APP_CHECK_DEBUG_TOKEN=true` is for explicit local development only; production app builds reject enabled or token-shaped values.
 
-### 1.1 Stripe Team Pass configuration
+### 1.1 Legacy Stripe Team Pass fulfillment
 
-Team Pass checkout is handled by Firebase Functions and Stripe. Do not commit Stripe secrets.
+New Team Pass sales are disabled. The Stripe webhook and entitlement records remain in place so purchases that completed before sales were removed continue to unlock the features they paid for. Do not commit Stripe secrets.
 
 Required function configuration or environment variables:
 - `STRIPE_SECRET_KEY` or `stripe.secret_key` — Stripe restricted/secret API key used by Cloud Functions.
 - `STRIPE_WEBHOOK_SECRET` or `stripe.webhook_secret` — signing secret for the Stripe webhook endpoint.
-- `STRIPE_TEAM_PASS_PRICE_ID` or `stripe.team_pass_price_id` — Stripe Price ID for the season Team Pass tier.
+- `STRIPE_TEAM_PASS_PRICE_ID` or `stripe.team_pass_price_id` — retained only for legacy checkout reconciliation tests and records; the production checkout callable rejects new sales.
 - `ALLPLAYS_APP_URL` or `stripe.app_url` — public app URL used for checkout success/cancel redirects. Defaults to `https://allplays.ai`.
 
 Firebase config example:
