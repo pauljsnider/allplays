@@ -4,7 +4,11 @@ import { Link, MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PublicTeamDetail } from './PublicTeamDetail';
 
-const publicTeamMocks = vi.hoisted(() => ({ getPublicTeamDetail: vi.fn(), getPublicTeamRecentResults: vi.fn() }));
+const publicTeamMocks = vi.hoisted(() => ({
+  getPublicTeamDetail: vi.fn(),
+  getPublicTeamRecentResults: vi.fn(),
+  getPublicTeamStandings: vi.fn()
+}));
 vi.mock('../lib/publicTeamsService', () => publicTeamMocks);
 vi.mock('lucide-react', () => {
   const Icon = () => null;
@@ -17,16 +21,24 @@ describe('PublicTeamDetail', () => {
   beforeEach(() => {
     publicTeamMocks.getPublicTeamDetail.mockReset();
     publicTeamMocks.getPublicTeamRecentResults.mockReset();
+    publicTeamMocks.getPublicTeamStandings.mockReset();
     publicTeamMocks.getPublicTeamRecentResults.mockResolvedValue([]);
+    publicTeamMocks.getPublicTeamStandings.mockResolvedValue(null);
   });
 
-  it('shows the standings loading state while the public team request is pending', () => {
-    publicTeamMocks.getPublicTeamDetail.mockImplementation(() => new Promise(() => {}));
+  it('keeps the public profile usable while standings are loading', async () => {
+    publicTeamMocks.getPublicTeamDetail.mockResolvedValue({
+      id: 'team-1', name: 'Austin Bats', sport: 'Baseball', description: null, photoUrl: null,
+      city: 'Austin', state: 'TX', zip: '78701', location: 'Austin, TX'
+    });
+    publicTeamMocks.getPublicTeamStandings.mockImplementation(() => new Promise(() => {}));
 
     render(<MemoryRouter initialEntries={['/teams/team-1/public']}><Routes><Route path="/teams/:teamId/public" element={<PublicTeamDetail authUser={null} />} /></Routes></MemoryRouter>);
 
-    expect(screen.getByRole('status').textContent).toContain('Loading public team');
+    expect(await screen.findByRole('heading', { name: 'Austin Bats' })).toBeTruthy();
     expect(screen.getByText('Loading standings')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Recent results' })).toBeTruthy();
+    expect(publicTeamMocks.getPublicTeamStandings).toHaveBeenCalledWith('team-1');
   });
 
   it('renders an allow-listed public team profile without private collections', async () => {
@@ -88,9 +100,9 @@ describe('PublicTeamDetail', () => {
     ];
     publicTeamMocks.getPublicTeamDetail.mockResolvedValue({
       id: 'team-1', name: 'Austin Bats', sport: 'Baseball', description: null, photoUrl: null,
-      city: 'Austin', state: 'TX', zip: '78701', location: 'Austin, TX',
-      standings: { label: 'Points table', rows: standingsRows, currentRow: standingsRows[0] }
+      city: 'Austin', state: 'TX', zip: '78701', location: 'Austin, TX'
     });
+    publicTeamMocks.getPublicTeamStandings.mockResolvedValue({ label: 'Points table', rows: standingsRows, currentRow: standingsRows[0] });
 
     render(<MemoryRouter initialEntries={['/teams/team-1/public']}><Routes><Route path="/teams/:teamId/public" element={<PublicTeamDetail authUser={null} />} /></Routes></MemoryRouter>);
 
@@ -104,12 +116,32 @@ describe('PublicTeamDetail', () => {
     expect(screen.getByText('8-1')).toBeTruthy();
     expect(screen.getByText('16')).toBeTruthy();
     expect(screen.getAllByText('Austin Bats').find((element) => element.closest('tr')?.getAttribute('aria-current') === 'true')).toBeTruthy();
+    expect(publicTeamMocks.getPublicTeamStandings).toHaveBeenCalledWith('team-1');
+  });
+
+  it('renders the configured win-percentage metric', async () => {
+    const standingsRows = [
+      { rank: 1, team: 'Austin Bats', record: '4-1', winPct: 0.8 },
+      { rank: 2, team: 'Northside Owls', record: '3-2', winPct: 0.6 }
+    ];
+    publicTeamMocks.getPublicTeamDetail.mockResolvedValue({
+      id: 'team-1', name: 'Austin Bats', sport: 'Baseball', description: null, photoUrl: null,
+      city: 'Austin', state: 'TX', zip: '78701', location: 'Austin, TX'
+    });
+    publicTeamMocks.getPublicTeamStandings.mockResolvedValue({ label: 'Win percentage', rows: standingsRows, currentRow: standingsRows[0] });
+
+    render(<MemoryRouter initialEntries={['/teams/team-1/public']}><Routes><Route path="/teams/:teamId/public" element={<PublicTeamDetail authUser={null} />} /></Routes></MemoryRouter>);
+
+    expect(await screen.findByRole('columnheader', { name: 'PCT' })).toBeTruthy();
+    expect(screen.getByText('0.800')).toBeTruthy();
+    expect(screen.getByText('4-1')).toBeTruthy();
   });
 
   it('explains unavailable standings and links to the league when configured', async () => {
     publicTeamMocks.getPublicTeamDetail.mockResolvedValue({
       id: 'team-1', name: 'Austin Bats', sport: 'Baseball', description: null, photoUrl: null,
-      city: 'Austin', state: 'TX', zip: '78701', location: 'Austin, TX', leagueUrl: 'https://league.example.test/standings', standings: null
+      city: 'Austin', state: 'TX', zip: '78701', location: 'Austin, TX', leagueUrl: 'https://league.example.test/standings',
+      standingsConfig: { enabled: false, rankingMode: 'points', points: null, maxGoalDiff: null, tiebreakers: [], twoTeamTiebreakers: [], multiTeamTiebreakers: [] }
     });
 
     render(<MemoryRouter initialEntries={['/teams/team-1/public']}><Routes><Route path="/teams/:teamId/public" element={<PublicTeamDetail authUser={null} />} /></Routes></MemoryRouter>);
@@ -125,11 +157,30 @@ describe('PublicTeamDetail', () => {
       id: 'team-1', name: 'Austin Bats', sport: 'Baseball', description: null, photoUrl: null,
       city: 'Austin', state: 'TX', zip: '78701', location: 'Austin, TX', leagueUrl: null, standings: null
     });
+    publicTeamMocks.getPublicTeamStandings.mockResolvedValue({ label: 'Points table', rows: [], currentRow: null });
 
     render(<MemoryRouter initialEntries={['/teams/team-1/public']}><Routes><Route path="/teams/:teamId/public" element={<PublicTeamDetail authUser={null} />} /></Routes></MemoryRouter>);
 
     expect(await screen.findByText('Standings are currently unavailable')).toBeTruthy();
     expect(screen.queryByRole('link', { name: 'View league standings' })).toBeNull();
+  });
+
+  it('keeps the public profile and recent results available when standings cannot load', async () => {
+    publicTeamMocks.getPublicTeamDetail.mockResolvedValue({
+      id: 'team-1', name: 'Austin Bats', sport: 'Baseball', description: 'Community baseball team.', photoUrl: null,
+      city: 'Austin', state: 'TX', zip: '78701', location: 'Austin, TX'
+    });
+    publicTeamMocks.getPublicTeamStandings.mockRejectedValue(new Error('standings unavailable'));
+    publicTeamMocks.getPublicTeamRecentResults.mockResolvedValue([
+      { id: 'game-1', date: new Date('2026-08-06T18:00:00.000Z'), opponent: 'Northside Owls', teamScore: 4, opponentScore: 1, result: 'win' }
+    ]);
+
+    render(<MemoryRouter initialEntries={['/teams/team-1/public']}><Routes><Route path="/teams/:teamId/public" element={<PublicTeamDetail authUser={null} />} /></Routes></MemoryRouter>);
+
+    expect(await screen.findByRole('heading', { name: 'Austin Bats' })).toBeTruthy();
+    expect(await screen.findByText('Northside Owls')).toBeTruthy();
+    expect(screen.getByText('Standings are temporarily unavailable.')).toBeTruthy();
+    expect(screen.queryByRole('table')).toBeNull();
   });
 
   it('shows an explicit empty state when there are no completed public results', async () => {
