@@ -31,6 +31,13 @@ const feeMocks = vi.hoisted(() => ({
     }))
 }));
 
+const uxTimingMocks = vi.hoisted(() => ({
+    startUxTimer: vi.fn(() => ({
+        end: vi.fn(),
+        cancel: vi.fn()
+    }))
+}));
+
 vi.mock('@capacitor/core', () => ({
     Capacitor: {
         isNativePlatform: () => false
@@ -67,6 +74,8 @@ vi.mock('../../apps/app/src/lib/chatService.ts', () => chatMocks);
 vi.mock('../../apps/app/src/lib/chatService', () => chatMocks);
 vi.mock('../../js/db.js', () => dbMocks);
 vi.mock('../../js/parent-dashboard-fees.js', () => feeMocks);
+vi.mock('../../apps/app/src/lib/uxTiming.ts', () => uxTimingMocks);
+vi.mock('../../apps/app/src/lib/uxTiming', () => uxTimingMocks);
 
 const user = {
     uid: 'user-1',

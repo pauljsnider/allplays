@@ -8,6 +8,9 @@ const DEFAULT_EVENT_DURATION_MS = 60 * 60 * 1000;
 const DEFAULT_RECURRENCE_TIME_ZONE = 'America/Chicago';
 const MILLIS_PER_DAY = 24 * 60 * 60 * 1000;
 const RECURRENCE_DAY_CODES = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
+const CALENDAR_FEED_ID_MAX_LENGTH = 128;
+const CALENDAR_FEED_TOKEN_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
+const CALENDAR_FEED_TOKEN_HASH_PATTERN = /^[a-f0-9]{64}$/;
 
 function hashCalendarToken(token) {
   const normalized = String(token || '').trim();
@@ -16,25 +19,121 @@ function hashCalendarToken(token) {
 }
 
 function normalizeCalendarRequest(query = {}) {
-  const teamId = String(query.teamId || query.team || '').trim();
-  const token = String(query.token || '').trim();
+  const primaryTeamId = query?.teamId;
+  const legacyTeamId = query?.team;
+  const hasPrimaryTeamId = primaryTeamId !== undefined && primaryTeamId !== null && primaryTeamId !== '';
+  const hasLegacyTeamId = legacyTeamId !== undefined && legacyTeamId !== null && legacyTeamId !== '';
+  const teamId = hasPrimaryTeamId ? primaryTeamId : legacyTeamId;
+  const token = query?.token;
+  const hasConflictingTeamIds = hasPrimaryTeamId && hasLegacyTeamId && primaryTeamId !== legacyTeamId;
+  const hasValidTeamId = typeof teamId === 'string'
+    && teamId === teamId.trim()
+    && teamId.length > 0
+    && teamId.length <= CALENDAR_FEED_ID_MAX_LENGTH
+    && !teamId.includes('/');
+  const hasValidToken = typeof token === 'string'
+    && token === token.trim()
+    && CALENDAR_FEED_TOKEN_PATTERN.test(token);
+  if (hasConflictingTeamIds || !hasValidTeamId || !hasValidToken) {
+    return { teamId: '', token: '', tokenHash: '' };
+  }
   return { teamId, token, tokenHash: hashCalendarToken(token) };
 }
 
-function calendarTokenHasTeamAccess({ team, profile = {}, authUser = null, tokenData }) {
-  if (!team || !tokenData || !authUser || authUser.disabled === true) return false;
-  const uid = String(authUser.uid || '').trim();
-  const tokenUid = String(tokenData.uid || tokenData.userId || tokenData.createdBy || '').trim();
+function getCalendarTokenHolderId(tokenData = {}) {
+  if (!tokenData || typeof tokenData !== 'object') return '';
+  const aliases = ['uid', 'userId', 'createdBy'];
+  const presentValues = [];
+  for (const field of aliases) {
+    if (!Object.prototype.hasOwnProperty.call(tokenData, field)) continue;
+    const value = tokenData[field];
+    if (
+      typeof value !== 'string'
+      || value !== value.trim()
+      || !value
+      || value.length > CALENDAR_FEED_ID_MAX_LENGTH
+      || value.includes('/')
+    ) {
+      return '';
+    }
+    presentValues.push(value);
+  }
+  if (!presentValues.length || presentValues.some((value) => value !== presentValues[0])) return '';
+  return presentValues[0];
+}
+
+function calendarTokenLookupMatchesRequest(tokenData, { teamId, tokenHash }) {
+  if (!getCalendarTokenHolderId(tokenData)) return false;
+  if (
+    Object.prototype.hasOwnProperty.call(tokenData, 'teamId')
+    && tokenData.teamId !== teamId
+  ) {
+    return false;
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(tokenData, 'tokenHash')
+    && (
+      typeof tokenData.tokenHash !== 'string'
+      || !CALENDAR_FEED_TOKEN_HASH_PATTERN.test(tokenData.tokenHash)
+      || tokenData.tokenHash !== tokenHash
+    )
+  ) {
+    return false;
+  }
+  if (
+    tokenData.schemaVersion === 1
+    && (tokenData.teamId !== teamId || tokenData.tokenHash !== tokenHash)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function normalizeExactPrincipalId(value) {
+  if (
+    typeof value !== 'string'
+    || value !== value.trim()
+    || !value
+    || value.length > CALENDAR_FEED_ID_MAX_LENGTH
+    || value.includes('/')
+  ) {
+    return '';
+  }
+  return value;
+}
+
+function calendarTokenHasTeamAccess({
+  team,
+  profile = {},
+  authUser = null,
+  tokenData,
+  accountDeletionRequested = false
+}) {
+  if (
+    !team
+    || !tokenData
+    || !authUser
+    || authUser.disabled === true
+    || accountDeletionRequested === true
+  ) {
+    return false;
+  }
+  const uid = normalizeExactPrincipalId(authUser.uid);
+  const tokenUid = getCalendarTokenHolderId(tokenData);
   if (!uid || tokenUid !== uid) return false;
 
   const email = String(authUser.email || '').trim().toLowerCase();
-  const ownerId = String(team.ownerId || '').trim();
+  const hasVerifiedAuthEmail = Boolean(email && authUser.emailVerified === true);
+  const hasStoredOwnerId = Object.prototype.hasOwnProperty.call(team, 'ownerId');
+  const hasEmptyLegacyOwnerId = !hasStoredOwnerId || team.ownerId === '';
+  const ownerId = hasEmptyLegacyOwnerId ? '' : normalizeExactPrincipalId(team.ownerId);
+  if (!hasEmptyLegacyOwnerId && !ownerId) return false;
   const legacyOwnerEmails = [...new Set([team.ownerEmail, team.ownerEmailLower]
     .map((entry) => String(entry || '').trim().toLowerCase())
     .filter(Boolean))];
   const hasLegacyOwnerAccess = Boolean(
-    !ownerId &&
-    email &&
+    hasEmptyLegacyOwnerId &&
+    hasVerifiedAuthEmail &&
     legacyOwnerEmails.length === 1 &&
     legacyOwnerEmails[0] === email
   );
@@ -44,8 +143,76 @@ function calendarTokenHasTeamAccess({ team, profile = {}, authUser = null, token
   const parentTeamIds = Array.isArray(profile.parentTeamIds) ? profile.parentTeamIds : [];
   return ownerId === uid ||
     hasLegacyOwnerAccess ||
-    (email && adminEmails.includes(email)) ||
+    (hasVerifiedAuthEmail && adminEmails.includes(email)) ||
     parentTeamIds.includes(tokenData.teamId);
+}
+
+function createTeamCalendarFeedCredentialResolver({
+  loadTeam,
+  loadToken,
+  loadTokenHolder,
+  hasTeamAccess = calendarTokenHasTeamAccess,
+  now = () => new Date()
+}) {
+  if (
+    typeof loadTeam !== 'function'
+    || typeof loadToken !== 'function'
+    || typeof loadTokenHolder !== 'function'
+    || typeof hasTeamAccess !== 'function'
+    || typeof now !== 'function'
+  ) {
+    throw new TypeError('Calendar feed credential resolver dependencies are invalid.');
+  }
+
+  return async function resolveTeamCalendarFeedCredential(query = {}) {
+    const request = normalizeCalendarRequest(query);
+    if (!request.teamId || !request.token || !request.tokenHash) {
+      return { allowed: false, status: 401, message: 'Missing or invalid calendar token' };
+    }
+
+    const [team, storedTokenData] = await Promise.all([
+      loadTeam(request.teamId),
+      loadToken(request)
+    ]);
+    if (!team || !storedTokenData || !calendarTokenLookupMatchesRequest(storedTokenData, request)) {
+      return { allowed: false, status: 403, message: 'Invalid calendar token' };
+    }
+    if (isRevokedCalendarToken(storedTokenData)) {
+      return { allowed: false, status: 403, message: 'Revoked calendar token' };
+    }
+
+    if (Object.prototype.hasOwnProperty.call(storedTokenData, 'expiresAt')) {
+      const expiresAt = toDate(storedTokenData.expiresAt);
+      if (!expiresAt || expiresAt <= now()) {
+        return { allowed: false, status: 403, message: 'Expired or invalid calendar token' };
+      }
+    }
+
+    const tokenData = { ...storedTokenData, teamId: request.teamId };
+    const tokenHolder = await loadTokenHolder(tokenData);
+    if (!hasTeamAccess({
+      team,
+      profile: tokenHolder?.profile,
+      authUser: tokenHolder?.authUser,
+      tokenData,
+      accountDeletionRequested: tokenHolder?.accountDeletionRequested === true
+    })) {
+      return { allowed: false, status: 403, message: 'Calendar token no longer has team access' };
+    }
+    return {
+      allowed: true,
+      request,
+      team,
+      tokenData
+    };
+  };
+}
+
+function isRevokedCalendarToken(tokenData = {}) {
+  return tokenData.revoked === true
+    || tokenData.disabled === true
+    || tokenData.active === false
+    || tokenData.status === 'revoked';
 }
 
 function toDate(value) {
@@ -484,12 +651,17 @@ function buildTeamCalendarIcs({ teamId, team = {}, events = [], now = new Date()
 }
 
 module.exports = {
+  CALENDAR_FEED_ID_MAX_LENGTH,
+  CALENDAR_FEED_TOKEN_PATTERN,
   buildTeamCalendarIcs,
+  calendarTokenLookupMatchesRequest,
   calendarTokenHasTeamAccess,
+  createTeamCalendarFeedCredentialResolver,
   expandRecurringCalendarEvent,
   escapeIcsText,
   formatIcsDate,
   formatRsvpSummary,
+  getCalendarTokenHolderId,
   hashCalendarToken,
   isCancelledEvent,
   isVisibleCalendarEvent,

@@ -341,6 +341,7 @@
                 "createScopedRsvpToken",
                 "dispatchDuePreEventReminders",
                 "fetchCalendarIcs",
+                "getPrivateTeamCalendarFeedToken",
                 "getPublicGameProjection",
                 "getPublicRsvp",
                 "getPublicTeamGamesProjection",
@@ -580,6 +581,7 @@
                 "commitCertificateDefaults",
                 "dispatchDueTeamMediaNotificationBatches",
                 "indexCertificateLegacySignaturesOnDefaultsWrite",
+                "mutateStructuredMediaIdentity",
                 "notifyPublishedCertificateAward",
                 "queueTeamMediaNotificationBatch"
             ],
@@ -624,6 +626,8 @@
                 "game-day.html",
                 "game-plan.html",
                 "game.html",
+                "live-game-overlay-poc.html",
+                "live-game-overlay.html",
                 "live-game.html",
                 "live-tracker.html",
                 "track-basketball.html",
@@ -638,14 +642,24 @@
                 "apps/app/src/pages/StandardTracker.tsx"
             ],
             "cloudFunctions": [
+                "cleanupPrivateReplayArchiveOnGameDelete",
+                "cleanupPrivateReplayArchiveOnSharedGameDelete",
                 "deleteStatConfig",
                 "gameReportSharePreview",
+                "getGameReplayPlayback",
+                "getReplayPrivacyMigrationStatus",
                 "liveGameSharePreview",
+                "manageGameReplayArchive",
                 "resetTeamStatConfigs",
-                "notifyLiveEventCreated"
+                "notifyLiveEventCreated",
+                "saveAthleteProfileProjection",
+                "saveGameHighlightClips"
             ],
             "unitTests": [
+                "functions/test/athlete-profile-projection-core.test.cjs",
                 "functions/test/live-game-share-preview-core.test.cjs",
+                "functions/test/replay-private-archive-callables.test.cjs",
+                "functions/test/replay-private-archive-core.test.cjs",
                 "functions/test/stat-config-management-core.test.cjs",
                 "tests/unit/app-baseball-scorekeeping-service.test.ts",
                 "tests/unit/app-game-report-service.test.js",
@@ -655,6 +669,8 @@
                 "tests/unit/live-game-share-preview.test.js",
                 "functions/test/live-event-notification-core.test.cjs",
                 "functions/test/notification-triggers.test.js",
+                "tests/unit/live-game-overlay-model.test.js",
+                "tests/unit/live-game-overlay.test.js",
                 "tests/unit/live-game-replay-init.test.js",
                 "tests/unit/live-tracker-opponent-stats.test.js",
                 "tests/unit/scoreboard-widget.test.js",
@@ -671,6 +687,7 @@
                 "tests/smoke/live-tracker-foul-workflow.spec.js",
                 "tests/smoke/game-day-live-substitution.spec.js",
                 "tests/smoke/game-day-delegated-scorekeeper.spec.js",
+                "tests/smoke/live-game-overlay.spec.js",
                 "tests/smoke/widget-scoreboard.spec.js"
             ],
             "knownGaps": [

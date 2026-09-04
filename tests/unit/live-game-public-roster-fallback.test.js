@@ -14,10 +14,12 @@ describe('live game public roster fallback', () => {
     it('keeps roster loading optional when Firestore denies public player reads', () => {
         const source = readFile('js/live-game.js');
 
-        expect(source).toContain("console.warn('Failed to load public roster for live game viewer:', error);");
-        expect(source).toContain("if (error?.code === 'permission-denied') {");
+        expect(source).toContain("console.warn('Failed to load optional roster for live game viewer:', error);");
+        expect(source).toContain("if (!['permission-denied', 'firestore/permission-denied'].includes(code)) {");
+        expect(source).toContain('playersError = error;');
         expect(source).toContain('return [];');
-        expect(source).toContain('throw error;');
+        expect(source).toContain('if (game && game.isPublicProjection !== true && (teamContextError || configsError || playersError)) {');
+        expect(source).toContain('throw teamContextError || configsError || playersError;');
     });
 
     it('keeps projection-backed viewers off the forbidden canonical listener', () => {

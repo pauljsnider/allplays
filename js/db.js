@@ -33,9 +33,9 @@ import {
     uploadBytes,
     getDownloadURL,
     deleteObject
-} from './firebase.js?v=27';
+} from './firebase.js?v=33';
 import { getPrimaryAppCheckHeaders } from './firebase-app-check-rest.js?v=1';
-import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=11';
+import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=18';
 import { uploadBytesResumable } from './vendor/firebase-storage.js';
 import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=3';
 import { buildChatAttachmentFallbackPath, buildGameClipFallbackPath, buildGameScopedStatSheetFallbackPath } from './fallback-media-paths.js?v=4';
@@ -124,7 +124,7 @@ import {
     FRIEND_INVITE_TYPE,
     buildFriendInviteAccessCodeData
 } from './friend-invite.js?v=1';
-import { commitCertificateDefaults } from './certificates/persistence.js?v=5';
+import { commitCertificateDefaults } from './certificates/persistence.js?v=7';
 
 export async function normalizeParentScopeLinks(parentLinks = []) {
     // Dedupe first (no I/O) so every remaining link is fetched exactly once.
@@ -261,7 +261,7 @@ import { buildOfficiatingNotificationRecord } from './officiating-notifications.
 import {
     getTeamEmailAttachmentTotalBytes,
     normalizeTeamEmailAttachments
-} from './team-email-attachments.js?v=7';
+} from './team-email-attachments.js?v=9';
 export {
     TEAM_EMAIL_ATTACHMENT_LIMIT_BYTES,
     assertTeamEmailAttachmentLimit,
@@ -270,7 +270,7 @@ export {
     getTeamEmailDraft,
     normalizeTeamEmailAttachments,
     uploadTeamEmailAttachment
-} from './team-email-attachments.js?v=7';
+} from './team-email-attachments.js?v=9';
 // import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-vertexai.js';
 export { collection, getDocs, deleteDoc, query };
 const limitQuery = limit;
@@ -794,7 +794,7 @@ export async function uploadStatSheetPhoto(teamId, gameId, file, options = {}) {
         : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=443359'; // Import resolveZip
+import { resolveZip } from './utils.js?v=443371'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -4076,6 +4076,7 @@ function getPublicProjectionRange(options = {}) {
 function mapPublicGameProjection(game = {}, teamId = '') {
     const startsAt = game?.startsAt ? new Date(game.startsAt) : null;
     const endsAt = game?.endsAt ? new Date(game.endsAt) : null;
+    const liveResetAt = game?.liveResetAt ? new Date(game.liveResetAt) : null;
     const isHome = game?.isHome !== false;
     const teamScore = Number.isFinite(game?.teamScore) ? game.teamScore : null;
     const opponentScore = Number.isFinite(game?.opponentScore) ? game.opponentScore : null;
@@ -4088,8 +4089,12 @@ function mapPublicGameProjection(game = {}, teamId = '') {
         opponent: String(game?.opponent || 'TBD'),
         location: String(game?.location || ''),
         isHome,
-        status: String(game?.status || 'scheduled'),
-        liveStatus: String(game?.status || 'scheduled'),
+        status: Object.prototype.hasOwnProperty.call(game, 'sourceStatus')
+            ? String(game?.sourceStatus || '')
+            : String(game?.status || 'scheduled'),
+        liveStatus: Object.prototype.hasOwnProperty.call(game, 'liveStatus')
+            ? String(game?.liveStatus || '')
+            : String(game?.status || 'scheduled'),
         homeScore: isHome ? teamScore : opponentScore,
         awayScore: isHome ? opponentScore : teamScore,
         summary: game?.summary || null,
@@ -4107,8 +4112,23 @@ function mapPublicGameProjection(game = {}, teamId = '') {
         homeTeamPhoto: game?.homeTeamPhoto || game?.teamPhotoUrl || null,
         opponentTeamPhoto: game?.opponentTeamPhoto || null,
         statSheetPhotoUrl: game?.statSheetPhotoUrl || null,
+        liveResetAt: liveResetAt && !Number.isNaN(liveResetAt.getTime()) ? liveResetAt : null,
+        liveResetEventId: typeof game?.liveResetEventId === 'string'
+            ? game.liveResetEventId.trim().slice(0, 128)
+            : '',
         isSharedGame: game?.isSharedGame === true || String(game?.id || '').startsWith('shared_'),
         isPublicProjection: true
+    };
+}
+
+function markCanonicalGameProjectionProvenance(game) {
+    if (!game || typeof game !== 'object') return game;
+    return {
+        ...game,
+        // This marker is trusted only when this module constructs a sanitized
+        // callable projection through mapPublicGameProjection(). A canonical
+        // Firestore document cannot opt itself into projection-only behavior.
+        isPublicProjection: false
     };
 }
 
@@ -4403,7 +4423,7 @@ export async function getGame(teamId, gameId) {
     if (docSnap.exists()) {
         const data = docSnap.data();
         if (isSharedGameSyntheticId(gameId)) {
-            return projectSharedGameForTeam({
+            return markCanonicalGameProjectionProvenance(projectSharedGameForTeam({
                 id: docSnap.id,
                 ...data,
                 _sharedGamePath: docRef.path
@@ -4413,12 +4433,12 @@ export async function getGame(teamId, gameId) {
                 sharedGameId: docSnap.id,
                 sharedGamePath: docRef.path,
                 isSharedGame: true
-            };
+            });
         }
-        return {
+        return markCanonicalGameProjectionProvenance({
             id: docSnap.id,
             ...data
-        };
+        });
     } else {
         return null;
     }
@@ -4429,10 +4449,26 @@ export function subscribeGame(teamId, gameId, callback, onError, options = {}) {
     let stopped = false;
     let projectionTimer = null;
     let projectionPollingStarted = false;
+    let projectionPollRevision = 0;
+    let latestSettledProjectionPollRevision = 0;
     const pollProjection = async () => {
+        if (stopped) return;
+        // Order completed requests without suppressing every response when the
+        // projection service is consistently slower than the polling interval.
+        const pollRevision = ++projectionPollRevision;
+        let projectedGame;
         try {
-            const projectedGame = await getPublicGameProjection(teamId, gameId);
-            if (!stopped) callback(projectedGame);
+            projectedGame = await getPublicGameProjection(teamId, gameId);
+        } catch (error) {
+            if (stopped || pollRevision <= latestSettledProjectionPollRevision) return;
+            latestSettledProjectionPollRevision = pollRevision;
+            if (typeof onError === 'function') onError(error);
+            return;
+        }
+        if (stopped || pollRevision <= latestSettledProjectionPollRevision) return;
+        latestSettledProjectionPollRevision = pollRevision;
+        try {
+            callback(projectedGame);
         } catch (error) {
             if (!stopped && typeof onError === 'function') onError(error);
         }
@@ -4459,7 +4495,7 @@ export function subscribeGame(teamId, gameId, callback, onError, options = {}) {
         }
         const data = snapshot.data();
         if (isSharedGameSyntheticId(gameId)) {
-            callback(projectSharedGameForTeam({
+            callback(markCanonicalGameProjectionProvenance(projectSharedGameForTeam({
                 id: snapshot.id,
                 ...data,
                 _sharedGamePath: docRef.path
@@ -4469,13 +4505,13 @@ export function subscribeGame(teamId, gameId, callback, onError, options = {}) {
                 sharedGameId: snapshot.id,
                 sharedGamePath: docRef.path,
                 isSharedGame: true
-            });
+            }));
             return;
         }
-        callback({
+        callback(markCanonicalGameProjectionProvenance({
             id: snapshot.id,
             ...data
-        });
+        }));
     }, (error) => {
         if (isPermissionDeniedError(error)) {
             startProjectionPolling();
@@ -8737,10 +8773,12 @@ export async function broadcastLiveEvent(teamId, gameId, eventData) {
  */
 export function subscribeLiveEvents(teamId, gameId, callback, onError) {
     const eventsRef = getGameSubcollectionRef(teamId, gameId, 'liveEvents');
-    const q = query(eventsRef, orderBy('createdAt', 'asc'));
+    const q = query(eventsRef, orderBy('createdAt', 'desc'), limit(20));
 
     return onSnapshot(q, (snapshot) => {
-        const events = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const events = snapshot.docs
+            .map(doc => ({ id: doc.id, ...doc.data() }))
+            .reverse();
         callback(events);
     }, onError);
 }

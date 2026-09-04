@@ -42,12 +42,14 @@ test('homepage serializer exposes only public game and team fields', () => {
     endsAt: null,
     location: '',
     isHome: true,
-    status: 'live',
+    status: '',
     liveStatus: 'live',
     homeScore: 3,
     awayScore: 2,
     liveViewerCount: 12,
+    videoLifecycle: 'live',
     videoUrl: null,
+    hasRecordedReplay: false,
     isSharedGame: false,
     team: {
       id: 'team-public',
@@ -63,6 +65,130 @@ test('homepage serializer exposes only public game and team fields', () => {
   assert.equal(json.includes('ownerEmail'), false);
   assert.equal(json.includes('assignments'), false);
   assert.equal(json.includes('private note'), false);
+});
+
+test('homepage serializer does not publish completed replay URLs for a gated team', () => {
+  const game = serializeHomepageGame({
+    id: 'gated-replay',
+    date: '2026-07-28T18:00:00Z',
+    opponent: 'Falcons',
+    status: 'completed',
+    videoUrl: 'https://www.youtube.com/watch?v=privateReplay1',
+    replayVideo: { publicUrl: 'https://cdn.example.test/private-replay.mp4' }
+  }, 'team-public', {
+    ...publicTeam,
+    teamPassConfig: { recordedReplayPaywallEnabled: true }
+  });
+
+  assert.equal(game.videoUrl, null);
+  assert.equal(JSON.stringify(game).includes('privateReplay1'), false);
+  assert.equal(JSON.stringify(game).includes('private-replay'), false);
+});
+
+test('homepage projection preserves and classifies the ordered replay lifecycle', async () => {
+  const candidates = [
+    {
+      id: 'statsheet',
+      date: '2026-07-28T18:00:00Z',
+      status: 'completed',
+      liveStatus: 'scheduled',
+      hasRecordedReplay: true,
+      replayVideo: {
+        provider: 'youtube',
+        videoId: 'PK1HyC37doc',
+        embedUrl: 'https://www.youtube.com/embed/PK1HyC37doc',
+        publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+        status: 'ready'
+      }
+    },
+    { id: 'report-only-statsheet', date: '2026-07-28T18:30:00Z', status: 'completed', liveStatus: 'scheduled' },
+    { id: 'reverse', date: '2026-07-28T19:00:00Z', status: 'scheduled', liveStatus: 'completed' },
+    { id: 'contradictory-live', date: '2026-07-28T20:00:00Z', status: 'completed', liveStatus: 'live' },
+    { id: 'contradictory-cancelled', date: '2026-07-28T21:00:00Z', status: 'completed', liveStatus: 'cancelled' },
+    { id: 'pure-live', date: '2026-07-28T22:00:00Z', status: 'scheduled', liveStatus: 'live' },
+    { id: 'upcoming', date: '2026-07-29T00:00:00Z', status: 'scheduled', liveStatus: 'scheduled' },
+    {
+      id: 'legacy-final-replay',
+      date: '2026-07-29T00:10:00Z',
+      status: 'final',
+      hasRecordedReplay: true,
+      replayVideo: {
+        provider: 'youtube',
+        videoId: 'PK1HyC37doc',
+        embedUrl: 'https://www.youtube.com/embed/PK1HyC37doc',
+        publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+        status: 'ready'
+      }
+    },
+    { id: 'legacy-live-final', date: '2026-07-29T00:20:00Z', liveStatus: 'final' },
+    {
+      id: 'padded-completed',
+      date: '2026-07-29T01:00:00Z',
+      status: ' completed ',
+      liveStatus: 'scheduled',
+      replayVideo: {
+        provider: 'youtube',
+        videoId: 'PK1HyC37doc',
+        embedUrl: 'https://www.youtube.com/embed/PK1HyC37doc',
+        publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+        status: 'ready'
+      }
+    },
+    { id: 'uppercase-live', date: '2026-07-29T02:00:00Z', status: 'scheduled', liveStatus: 'LIVE', videoUrl: 'https://live.example.test/feed' },
+    { id: 'complete-alias', date: '2026-07-29T03:00:00Z', status: 'complete', liveStatus: 'scheduled' },
+    { id: 'finished-alias', date: '2026-07-29T04:00:00Z', status: 'finished', liveStatus: 'scheduled' },
+    { id: 'nonstring-status', date: '2026-07-29T05:00:00Z', status: { private: true }, liveStatus: 'scheduled' },
+    { id: 'padded-type', date: '2026-07-29T06:00:00Z', type: ' game ', status: 'scheduled', liveStatus: 'live', videoUrl: 'https://live.example.test/feed' }
+  ];
+  const serialize = (category) => serializePublicHomepageCandidates({
+    candidates,
+    category,
+    getTeamIds: () => ['team-public'],
+    getTeam: async () => publicTeam
+  });
+
+  const [replays, live, upcoming] = await Promise.all([
+    serialize('replays'),
+    serialize('live'),
+    serialize('upcoming')
+  ]);
+  assert.deepEqual(replays.games.map((game) => game.id), ['statsheet', 'legacy-final-replay', 'legacy-live-final']);
+  assert.deepEqual(live.games.map((game) => game.id), ['pure-live']);
+  assert.deepEqual(upcoming.games.map((game) => game.id), ['upcoming']);
+  const statsheetProjection = serializeHomepageGame(candidates[0], 'team-public', publicTeam);
+  assert.equal(statsheetProjection.status, 'completed');
+  assert.equal(statsheetProjection.liveStatus, 'scheduled');
+  assert.equal(statsheetProjection.videoLifecycle, 'completed');
+  assert.equal(statsheetProjection.hasRecordedReplay, true);
+  assert.equal(statsheetProjection.videoUrl, null);
+
+  for (const candidate of [candidates[9], candidates[10], candidates[13], candidates[14]]) {
+    const projection = serializeHomepageGame(candidate, 'team-public', publicTeam);
+    assert.equal(projection.videoLifecycle, 'invalid');
+    assert.equal(projection.videoUrl, null);
+    assert.equal(
+      [...replays.games, ...live.games, ...upcoming.games].some((game) => game.id === candidate.id),
+      false
+    );
+  }
+
+  for (const candidate of [candidates[11], candidates[12]]) {
+    const projection = serializeHomepageGame(candidate, 'team-public', publicTeam);
+    assert.equal(projection.status, 'completed');
+    assert.equal(projection.videoLifecycle, 'completed');
+    assert.equal(projection.videoUrl, null);
+  }
+
+  const privateStatusGame = serializeHomepageGame({
+    id: 'private-status',
+    date: '2026-07-28T23:00:00Z',
+    status: 'SENTINEL_PRIVATE_STATUS',
+    liveStatus: 'SENTINEL_PRIVATE_LIVE_STATUS'
+  }, 'team-public', publicTeam);
+  assert.equal(privateStatusGame.status, 'invalid');
+  assert.equal(privateStatusGame.liveStatus, 'invalid');
+  assert.equal(privateStatusGame.videoLifecycle, 'invalid');
+  assert.equal(JSON.stringify(privateStatusGame).includes('SENTINEL_PRIVATE'), false);
 });
 
 test('homepage serializer rejects private teams and unsafe games', () => {

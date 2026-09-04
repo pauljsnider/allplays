@@ -41,6 +41,14 @@ test('homepage collection-group query shapes have deployed index definitions', (
       `${collectionGroup} replay query needs liveStatus/date composite index`
     );
     assert.equal(
+      hasComposite(collectionGroup, [
+        { fieldPath: 'status', order: 'ASCENDING' },
+        { fieldPath: 'date', order: 'DESCENDING' }
+      ]),
+      true,
+      `${collectionGroup} statsheet replay query needs status/date composite index`
+    );
+    assert.equal(
       hasCollectionGroupFieldOrder(collectionGroup, 'date', 'ASCENDING'),
       true,
       `${collectionGroup} upcoming query needs ascending collection-group date index`

@@ -97,6 +97,12 @@ export function getPublicSmokePages() {
             readySelectors: ['#scoreboard-widget']
         },
         {
+            name: 'live game overlay preview',
+            path: '/live-game-overlay.html?demo=1',
+            titlePatterns: [/Live Game Broadcast - ALL PLAYS/i],
+            readySelectors: ['#broadcast-stage', '#score-bug', '#overlay-video']
+        },
+        {
             name: 'privacy policy',
             path: '/privacy.html',
             titlePatterns: [/Privacy Policy.*ALL PLAYS/i],

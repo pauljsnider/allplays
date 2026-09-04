@@ -133,13 +133,20 @@ const {
   normalizePublicRegistrationSecurityMode,
   resolvePublicRegistrationGuardianEmail
 } = require('./public-registration-abuse-core.cjs');
-const { buildPublicGamesIcs, canExposeEmptyPublicFeed, isPublicFanGame } = require('./public-calendar-core.cjs');
+const {
+  buildPublicGamesIcs,
+  canExposeEmptyPublicFeed,
+  isPublicFanGame,
+  normalizePublicCalendarTeamId
+} = require('./public-calendar-core.cjs');
 const {
   buildPublicGamesResponse,
   buildPublicRosterResponse,
   canTrackedCalendarEventSuppressPublicProjection,
   canProjectPublicGame,
   getPublicOpponentStatKeys,
+  getPublicVideoLifecycle,
+  isRecordedReplayPaywallEnabled,
   isStrictPublicTeam,
   isPublicProjectionItemAfterCursor,
   normalizeTeamId,
@@ -196,9 +203,12 @@ const {
 } = require('./public-rsvp-idempotency-core.cjs');
 const {
   buildTeamCalendarIcs,
-  calendarTokenHasTeamAccess,
-  normalizeCalendarRequest
+  createTeamCalendarFeedCredentialResolver,
+  getCalendarTokenHolderId
 } = require('./team-calendar-feed-core.cjs');
+const {
+  createGetOrCreatePrivateTeamCalendarFeedHandler
+} = require('./team-calendar-subscription-core.cjs');
 const {
   isFamilyShareTokenReadable,
   resolveFamilyShareChildrenFromOwnerProfile
@@ -215,7 +225,10 @@ const {
   validateRsvpTokenRedemption,
   buildRsvpTokenAuditPayload
 } = require('./rsvp-token-core.cjs');
-const { isAllowedPublicRsvpOrigin } = require('./public-rsvp-cors-core.cjs');
+const {
+  isAllowedPublicRsvpAdminOrigin,
+  isAllowedPublicRsvpOrigin
+} = require('./public-rsvp-cors-core.cjs');
 const {
   normalizeText,
   resolveTeamEmailRecipients,
@@ -369,9 +382,63 @@ const {
 } = require('./managed-team-projection-core.cjs');
 const { createOfficialTeamDiscoveryHandler } = require('./official-team-discovery-core.cjs');
 const { createStatConfigManagementHandlers } = require('./stat-config-management-core.cjs');
-const { createDelegatedTeamContextHandler } = require('./delegated-team-context-core.cjs');
+const {
+  createDelegatedTeamContextHandler,
+  resolveDelegatedAccess
+} = require('./delegated-team-context-core.cjs');
+const {
+  REPLAY_ARCHIVE_MIGRATION_CONTROL_PATH,
+  buildReplayClipScrubUpdate,
+  buildReplayArchiveWrite,
+  buildReplayParentUpdate,
+  buildReplayServerProjectionGame,
+  canManageReplayArchive,
+  collectHighlightProtectedUrlIdentityRecords,
+  createReplayRevision,
+  getCompatibleReplayLifecycle,
+  getExactReplayLifecycle,
+  getReplayClipYouTubeIdentityRecord,
+  getReplayArchiveChildPath,
+  getReplayCompatibilityReceiptPath,
+  getReplayCompatibilityState,
+  getReplayMutationHash,
+  getReplayProjectionVideo,
+  getReplayProtectedYouTubeIdentityRecord,
+  isCanonicalReplayGame,
+  isReplayArchiveConsistent,
+  isReplayArchiveMigrationReady,
+  inspectLegacyReplayArchive,
+  normalizeHighlightClipPayload,
+  normalizeHighlightClipWrite,
+  normalizeReplayManagementInput,
+  normalizeReplayArchiveMigrationControl,
+  normalizeReplayPremiumConfig,
+  normalizeReplayClipIdentity,
+  normalizeReplayCompatibilityReceipt,
+  normalizeReplayProtectedIdentity,
+  normalizeReplayRevision,
+  normalizeReplayResourceId,
+  normalizeStoredReplayArchive,
+  replayClipValuesEqual,
+  resolveReplaySeasonId,
+  serializeReplayManagementState
+} = require('./replay-private-archive-core.cjs');
+const {
+  AUTOMATED_GAME_COPY_MARKER_FIELDS,
+  buildStructuredReplayClipIdentityReport,
+  extractStructuredReplayIdentitySources
+} = require('./replay-structured-media-core.cjs');
+const {
+  ATHLETE_PROFILE_PROJECTION_BOUNDARY_CONTROL_PATH,
+  createAthleteProfileProjectionSaveHandler,
+  isAthleteProfileProjectionBoundaryReady
+} = require('./athlete-profile-projection-core.cjs');
+const {
+  createStructuredMediaWriteHandler
+} = require('./structured-media-write-core.cjs');
 const { createAutoAcceptParentInviteHandler } = require('./parent-invite-auto-link-callable.cjs');
 const {
+  anonymizeAccountReplayArchiveAttribution,
   buildChatConversationAccountScrubPlan,
   buildDeletionAuditId,
   buildRegistrationAccountScrubPlan,
@@ -379,6 +446,7 @@ const {
   buildTeamAccountGrantScrubPlan,
   collectAccountRosterScopes,
   collectAccountTeamIds,
+  cleanupAccountCalendarCredentials,
   createAccountDeletionRequestHandler,
   deleteAccountMediaStoragePages,
   getAccountDeletionCollectionQueries,
@@ -429,6 +497,14 @@ if (admin.apps.length === 0) {
 }
 
 const firestore = admin.firestore();
+const assertSensitiveEmailVerified = createVerifiedEmailSensitiveActionGuard({
+  firestore,
+  HttpsError: functions.https.HttpsError,
+  logger: functions.logger,
+  configuredMode: process.env.VERIFIED_EMAIL_SENSITIVE_WRITES_MODE ||
+    functions.config()?.security?.verified_email_mode ||
+    'observe'
+});
 const createNativeWebAuthToken = createNativeWebAuthTokenHandler({
   getAuth: () => admin.auth(),
   HttpsError: functions.https.HttpsError
@@ -443,6 +519,21 @@ const statConfigManagementHandlers = createStatConfigManagementHandlers({
   auth: admin.auth(),
   hasTeamAdminAccess,
   HttpsError: functions.https.HttpsError
+});
+const saveAthleteProfileProjectionHandler = createAthleteProfileProjectionSaveHandler({
+  firestore,
+  auth: admin.auth(),
+  FieldValue: admin.firestore.FieldValue,
+  HttpsError: functions.https.HttpsError,
+  assertSensitiveWrite: assertSensitiveEmailVerified
+});
+const mutateStructuredMediaIdentityHandler = createStructuredMediaWriteHandler({
+  firestore,
+  auth: admin.auth(),
+  FieldValue: admin.firestore.FieldValue,
+  HttpsError: functions.https.HttpsError,
+  hasTeamAdminAccess,
+  assertSensitiveWrite: assertSensitiveEmailVerified
 });
 function assertPaymentsEnabled() {
   if (process.env.PAYMENTS_ENABLED !== 'true') {
@@ -479,14 +570,6 @@ async function assertTeamPassCheckoutAvailable() {
     );
   }
 }
-const assertSensitiveEmailVerified = createVerifiedEmailSensitiveActionGuard({
-  firestore,
-  HttpsError: functions.https.HttpsError,
-  logger: functions.logger,
-  configuredMode: process.env.VERIFIED_EMAIL_SENSITIVE_WRITES_MODE ||
-    functions.config()?.security?.verified_email_mode ||
-    'observe'
-});
 const INVITE_EMAIL_TYPES = new Set(['parent_invite', 'household_invite', 'coparent_invite']);
 const EMAIL_LINK_INVITE_TYPES = new Set(['parent_invite', 'household_invite', 'coparent_invite', 'admin_invite']);
 const AUTH_EMAIL_COOLDOWN_MS = 60 * 1000;
@@ -566,6 +649,11 @@ const checkCalendarFetchRateLimit = createInMemoryRateLimiter({
   maxKeys: 5_000
 });
 const checkPublicTeamApiRateLimit = createInMemoryRateLimiter({
+  windowMs: 60_000,
+  maxRequests: 120,
+  maxKeys: 5_000
+});
+const checkReplayPlaybackRateLimit = createInMemoryRateLimiter({
   windowMs: 60_000,
   maxRequests: 120,
   maxKeys: 5_000
@@ -5927,6 +6015,875 @@ exports.getPublicTeamPassStatus = functions.https.onCall(async (data, context = 
   };
 });
 
+exports.saveAthleteProfileProjection = functions.https.onCall(saveAthleteProfileProjectionHandler);
+exports.mutateStructuredMediaIdentity = functions.https.onCall(mutateStructuredMediaIdentityHandler);
+
+function toReplayArchiveHttpsError(error, fallbackCode = 'internal') {
+  if (error instanceof functions.https.HttpsError) return error;
+  const supportedCodes = new Set([
+    'aborted',
+    'already-exists',
+    'failed-precondition',
+    'invalid-argument',
+    'not-found',
+    'permission-denied',
+    'unauthenticated',
+    'unavailable'
+  ]);
+  const code = supportedCodes.has(error?.code) ? error.code : fallbackCode;
+  return new functions.https.HttpsError(code, error?.message || 'Replay archive request failed.');
+}
+
+function setReplayCallableNoStore(context = {}) {
+  const response = context?.rawRequest?.res;
+  if (typeof response?.set === 'function') response.set('Cache-Control', 'private, no-store, max-age=0');
+  if (typeof response?.setHeader === 'function') response.setHeader('Cache-Control', 'private, no-store, max-age=0');
+}
+
+async function loadEnabledReplayAuthUser(context = {}) {
+  const uid = String(context?.auth?.uid || '').trim();
+  if (!uid) return null;
+  try {
+    const authUser = await admin.auth().getUser(uid);
+    if (!authUser || authUser.uid !== uid) {
+      throw new functions.https.HttpsError('unauthenticated', 'The signed-in account could not be verified.');
+    }
+    if (authUser.disabled === true) {
+      throw new functions.https.HttpsError('permission-denied', 'This account is disabled.');
+    }
+    return authUser;
+  } catch (error) {
+    if (error instanceof functions.https.HttpsError) throw error;
+    if (error?.code === 'auth/user-not-found') {
+      throw new functions.https.HttpsError('unauthenticated', 'The signed-in account no longer exists.');
+    }
+    throw new functions.https.HttpsError('unavailable', 'The signed-in account could not be verified.');
+  }
+}
+
+function getReplayDelegatedAccess({ context, authUser, teamId, team, game, user }) {
+  const uid = String(context?.auth?.uid || '').trim();
+  const email = String(authUser?.email || '').trim().toLowerCase();
+  return resolveDelegatedAccess({ uid, email, user: user || {}, teamId, team, game, rsvp: null });
+}
+
+function getEmptyReplayManagementState() {
+  return {
+    state: 'none',
+    hasRecordedReplay: false,
+    replayArchiveRevision: null,
+    lastMutationId: null
+  };
+}
+
+function serializeReplayCompatibilityManagementState(state = {}) {
+  return {
+    state: state.state,
+    hasRecordedReplay: state.state === 'ready',
+    replayArchiveRevision: state.state === 'none' ? null : state.replayArchiveRevision,
+    lastMutationId: state.lastMutationId || null,
+    ...(state.state === 'ready' && state.replayVideo ? { replayVideo: state.replayVideo } : {})
+  };
+}
+
+const REPLAY_PRIVACY_CACHE_EPOCH = 'private-replay-v2';
+
+// This callable is deliberately capability-free and anonymous. It lets a
+// shipped web/native client decide whether an old Firestore IndexedDB may be
+// reused without reading Firestore itself (which could hydrate retired replay
+// fields before the migration boundary is authoritative).
+exports.getReplayPrivacyMigrationStatus = functions.https.onCall(async (_data, context = {}) => {
+  setReplayCallableNoStore(context);
+  let controlSnapshot;
+  try {
+    controlSnapshot = await firestore.doc(REPLAY_ARCHIVE_MIGRATION_CONTROL_PATH).get();
+  } catch {
+    throw new functions.https.HttpsError(
+      'unavailable',
+      'Replay privacy readiness could not be verified.'
+    );
+  }
+  if (!controlSnapshot.exists) {
+    return { ready: false, cacheEpoch: null };
+  }
+  const control = normalizeReplayArchiveMigrationControl(controlSnapshot.data() || {});
+  if (!control) {
+    throw new functions.https.HttpsError(
+      'unavailable',
+      'Replay privacy readiness could not be verified.'
+    );
+  }
+  const ready = control.status === 'ready';
+  return {
+    ready,
+    cacheEpoch: ready ? REPLAY_PRIVACY_CACHE_EPOCH : null
+  };
+});
+
+exports.manageGameReplayArchive = functions.https.onCall(async (data, context = {}) => {
+  setReplayCallableNoStore(context);
+  const uid = String(context.auth?.uid || '').trim();
+  if (!uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in to manage a game replay.');
+  }
+  const authUser = await loadEnabledReplayAuthUser(context);
+
+  let input;
+  try {
+    input = normalizeReplayManagementInput(data || {});
+  } catch (error) {
+    throw toReplayArchiveHttpsError(error, 'invalid-argument');
+  }
+
+  const teamRef = firestore.doc(`teams/${input.teamId}`);
+  const gameRef = firestore.doc(`teams/${input.teamId}/games/${input.gameId}`);
+  const userRef = firestore.doc(`users/${uid}`);
+  const archiveRef = firestore.doc(`${gameRef.path}/privateReplay/archive`);
+  const compatibilityReceiptRef = firestore.doc(getReplayCompatibilityReceiptPath(gameRef.path));
+  const migrationControlRef = firestore.doc(REPLAY_ARCHIVE_MIGRATION_CONTROL_PATH);
+  const boundaryControlRef = firestore.doc(ATHLETE_PROFILE_PROJECTION_BOUNDARY_CONTROL_PATH);
+  const clipIdentityRecord = input.action === 'set'
+    ? getReplayClipYouTubeIdentityRecord(input.replay.videoId)
+    : null;
+  const clipIdentityRef = clipIdentityRecord
+    ? firestore.doc(clipIdentityRecord.path)
+    : null;
+  const proposedRevision = input.action === 'read' ? null : createReplayRevision();
+
+  try {
+    return await firestore.runTransaction(async (transaction) => {
+      const [
+        teamSnap,
+        gameSnap,
+        userSnap,
+        archiveSnap,
+        compatibilityReceiptSnap,
+        migrationControlSnap,
+        boundaryControlSnap,
+        clipIdentitySnap
+      ] = await Promise.all([
+        transaction.get(teamRef),
+        transaction.get(gameRef),
+        transaction.get(userRef),
+        transaction.get(archiveRef),
+        transaction.get(compatibilityReceiptRef),
+        transaction.get(migrationControlRef),
+        transaction.get(boundaryControlRef),
+        clipIdentityRef ? transaction.get(clipIdentityRef) : Promise.resolve(null)
+      ]);
+      if (!teamSnap.exists || !gameSnap.exists) {
+        throw new functions.https.HttpsError('not-found', 'Game not found.');
+      }
+      const team = { id: input.teamId, ...(teamSnap.data() || {}) };
+      const game = gameSnap.data() || {};
+      const user = userSnap.exists ? userSnap.data() || {} : {};
+      if (!isCanonicalReplayGame(input.gameId, game)) {
+        throw new functions.https.HttpsError(
+          'failed-precondition',
+          'Replay links must be managed on the original team game, not a shared schedule copy.'
+        );
+      }
+      const access = getReplayDelegatedAccess({
+        context,
+        authUser,
+        teamId: input.teamId,
+        team,
+        game,
+        user
+      });
+      if (!canManageReplayArchive(access)) {
+        throw new functions.https.HttpsError(
+          'permission-denied',
+          'Only a team manager or selected videographer can manage this replay.'
+        );
+      }
+
+      const archive = archiveSnap.exists ? normalizeStoredReplayArchive(archiveSnap.data() || {}) : null;
+      if (archiveSnap.exists && !archive) {
+        throw new functions.https.HttpsError('failed-precondition', 'The replay archive is unavailable for safe updates.');
+      }
+      const compatibilityReceipt = compatibilityReceiptSnap.exists
+        ? normalizeReplayCompatibilityReceipt(compatibilityReceiptSnap.data() || {})
+        : null;
+      if (compatibilityReceiptSnap.exists && (!compatibilityReceipt
+        || compatibilityReceipt.teamId !== input.teamId
+        || compatibilityReceipt.gameId !== input.gameId
+        || compatibilityReceiptSnap.ref?.path !== compatibilityReceiptRef.path)) {
+        throw new functions.https.HttpsError(
+          'failed-precondition',
+          'The legacy replay mutation receipt is unavailable for safe updates.'
+        );
+      }
+      const parentHasMarkers = typeof game.hasRecordedReplay === 'boolean'
+        || (game.replayArchiveRevision !== null && game.replayArchiveRevision !== undefined);
+      if ((archive && !isReplayArchiveConsistent(game, archive))
+        || (archive && compatibilityReceipt)
+        || (!archive && parentHasMarkers && !compatibilityReceipt)) {
+        throw new functions.https.HttpsError(
+          'failed-precondition',
+          'The replay archive markers are inconsistent. Retry after the archive is repaired.'
+        );
+      }
+      const migrationControl = migrationControlSnap.exists
+        ? normalizeReplayArchiveMigrationControl(migrationControlSnap.data() || {})
+        : null;
+      const migrationReady = migrationControl?.status === 'ready';
+      const boundaryReady = boundaryControlSnap.exists
+        && isAthleteProfileProjectionBoundaryReady(boundaryControlSnap.data() || {});
+      const compatibilityBoundary = !migrationControlSnap.exists
+        && !boundaryControlSnap.exists
+        && !archive;
+
+      if (input.action === 'read') {
+        if (archive) return serializeReplayManagementState(game, archive);
+        if (compatibilityBoundary) {
+          const compatibilityState = getReplayCompatibilityState(
+            game,
+            compatibilityReceiptSnap.exists ? compatibilityReceiptSnap.data() || {} : null,
+            { teamId: input.teamId, gameId: input.gameId }
+          );
+          if (!compatibilityState.receiptValid || compatibilityState.state === 'unavailable') {
+            throw new functions.https.HttpsError(
+              'failed-precondition',
+              'This legacy replay requires migration review before it can be managed.'
+            );
+          }
+          return serializeReplayCompatibilityManagementState(compatibilityState);
+        }
+        if (migrationReady && boundaryReady && !parentHasMarkers) {
+          return getEmptyReplayManagementState();
+        }
+        throw new functions.https.HttpsError(
+          'failed-precondition',
+          'Replay management is temporarily unavailable while private storage is verified.'
+        );
+      }
+
+      if (compatibilityBoundary) {
+        throw new functions.https.HttpsError(
+          'failed-precondition',
+          'Replay changes are temporarily unavailable until the private replay migration completes.',
+          { reason: 'private-replay-migration-pending' }
+        );
+      }
+
+      if (!migrationReady || !boundaryReady || compatibilityReceipt) {
+        throw new functions.https.HttpsError(
+          'failed-precondition',
+          'Replay archive updates are temporarily unavailable while private storage is verified.'
+        );
+      }
+      if (clipIdentitySnap?.exists) {
+        const clipIdentity = normalizeReplayClipIdentity(clipIdentitySnap.data() || {});
+        if (!clipIdentity
+          || clipIdentity.kind !== clipIdentityRecord.data.kind
+          || clipIdentity.identityHash !== clipIdentityRecord.data.identityHash
+          || clipIdentitySnap.ref?.path !== clipIdentityRecord.path) {
+          throw new functions.https.HttpsError(
+            'failed-precondition',
+            'The replay clip exclusion index is unavailable for safe updates.'
+          );
+        }
+        throw new functions.https.HttpsError(
+          'failed-precondition',
+          'This YouTube video is already published as a standalone clip and cannot become a protected replay.'
+        );
+      }
+      if (input.action === 'set') {
+        const structuredReport = buildStructuredReplayClipIdentityReport([
+          ...extractStructuredReplayIdentitySources(teamRef.path, team),
+          ...extractStructuredReplayIdentitySources(gameRef.path, game)
+        ], {
+          protectedVideoIds: [input.replay.videoId]
+        });
+        if (structuredReport.protectedSources.length) {
+          throw new functions.https.HttpsError(
+            'failed-precondition',
+            'This YouTube video is already published through the team or game stream and cannot become a protected replay.'
+          );
+        }
+      }
+
+      const mutationHash = getReplayMutationHash(input);
+      if (archive?.lastMutationId === input.mutationId) {
+        if (archive.lastMutationHash !== mutationHash) {
+          throw new functions.https.HttpsError(
+            'already-exists',
+            'This replay mutation ID was already used for a different request.'
+          );
+        }
+        return serializeReplayManagementState(game, archive);
+      }
+      const currentRevision = archive?.revision || null;
+      if (!archive && inspectLegacyReplayArchive(game).state !== 'none') {
+        throw new functions.https.HttpsError(
+          'failed-precondition',
+          'Refresh this legacy replay before changing it so its exact state can be promoted safely.'
+        );
+      }
+      if (input.expectedRevision !== currentRevision) {
+        throw new functions.https.HttpsError(
+          'aborted',
+          'The replay changed since it was loaded. Refresh the game and try again.',
+          { currentRevision }
+        );
+      }
+
+      const lifecycle = getExactReplayLifecycle(game);
+      if (input.action === 'set' && !lifecycle.isCompleted) {
+        throw new functions.https.HttpsError('failed-precondition', 'Mark the game final before linking its replay.');
+      }
+      if (input.action === 'remove') {
+        if (!archive || archive.state !== 'ready') {
+          throw new functions.https.HttpsError('failed-precondition', 'This game does not have a replay to remove.');
+        }
+        if (!lifecycle.isCompleted && access.full !== true) {
+          throw new functions.https.HttpsError(
+            'failed-precondition',
+            'Only a full team manager can remove a replay while the game is not final.'
+          );
+        }
+      }
+
+      const timestamp = admin.firestore.FieldValue.serverTimestamp();
+      const protectedIdentity = input.action === 'set'
+        ? getReplayProtectedYouTubeIdentityRecord(input.replay.videoId)
+        : null;
+      const nextArchive = buildReplayArchiveWrite({
+        input,
+        uid,
+        revision: proposedRevision,
+        timestamp,
+        existingArchive: archive
+      });
+      const parentUpdate = {
+        ...buildReplayParentUpdate({
+          state: nextArchive.state,
+          revision: proposedRevision,
+          deleteValue: admin.firestore.FieldValue.delete(),
+          timestamp,
+          isCompleted: lifecycle.isCompleted
+        }),
+        ...(input.action === 'set' ? buildReplayClipScrubUpdate(game, nextArchive) : {})
+      };
+      transaction.set(archiveRef, nextArchive);
+      if (protectedIdentity && migrationReady) {
+        transaction.set(firestore.doc(protectedIdentity.path), {
+          ...protectedIdentity.data,
+          updatedAt: timestamp
+        }, { merge: false });
+      }
+      transaction.set(gameRef, parentUpdate, { merge: true });
+      return serializeReplayManagementState({
+        ...game,
+        hasRecordedReplay: nextArchive.state === 'ready',
+        replayArchiveRevision: proposedRevision
+      }, nextArchive);
+    });
+  } catch (error) {
+    throw toReplayArchiveHttpsError(error);
+  }
+});
+
+function normalizeHighlightClipManagementInput(data = {}) {
+  const input = {
+    teamId: normalizeReplayResourceId(data.teamId, 'teamId'),
+    gameId: normalizeReplayResourceId(data.gameId, 'gameId'),
+    mutationId: normalizeReplayResourceId(data.mutationId, 'mutationId'),
+    expectedRevision: normalizeReplayRevision(data.expectedRevision),
+    highlightClips: normalizeHighlightClipPayload(data.highlightClips)
+  };
+  if (!Object.prototype.hasOwnProperty.call(data, 'expectedRevision')) {
+    const error = new Error('expectedRevision must be supplied (use null when no clip revision exists).');
+    error.code = 'invalid-argument';
+    throw error;
+  }
+  return input;
+}
+
+function serializeHighlightClipManagementState(game = {}) {
+  return {
+    highlightClips: Array.isArray(game.highlightClips) ? game.highlightClips : [],
+    highlightClipsRevision: normalizeReplayRevision(game.highlightClipsRevision),
+    lastMutationId: typeof game.highlightClipsLastMutationId === 'string'
+      ? game.highlightClipsLastMutationId
+      : null
+  };
+}
+
+// Clip URLs live on a parent-readable game document, so the server must own
+// this write. The migration reserves existing standalone YouTube identities;
+// this boundary lets users remove them, requires every retained entry to stay
+// byte-for-byte unchanged, and rejects introductions without a client flag.
+exports.saveGameHighlightClips = functions.https.onCall(async (data, context = {}) => {
+  setReplayCallableNoStore(context);
+  const uid = String(context.auth?.uid || '').trim();
+  if (!uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in to save game highlights.');
+  }
+  const authUser = await loadEnabledReplayAuthUser(context);
+
+  let input;
+  try {
+    input = normalizeHighlightClipManagementInput(data || {});
+  } catch (error) {
+    throw toReplayArchiveHttpsError(error, 'invalid-argument');
+  }
+
+  const teamRef = firestore.doc(`teams/${input.teamId}`);
+  const gameRef = firestore.doc(`teams/${input.teamId}/games/${input.gameId}`);
+  const userRef = firestore.doc(`users/${uid}`);
+  const migrationControlRef = firestore.doc(REPLAY_ARCHIVE_MIGRATION_CONTROL_PATH);
+  const boundaryControlRef = firestore.doc(ATHLETE_PROFILE_PROJECTION_BOUNDARY_CONTROL_PATH);
+  const protectedUrlIdentityRecords = collectHighlightProtectedUrlIdentityRecords(input.highlightClips);
+  const protectedUrlIdentityRefs = protectedUrlIdentityRecords.map((record) => firestore.doc(record.path));
+  const proposedRevision = createReplayRevision();
+
+  try {
+    return await firestore.runTransaction(async (transaction) => {
+      const [
+        teamSnap,
+        gameSnap,
+        userSnap,
+        migrationControlSnap,
+        boundaryControlSnap,
+        protectedUrlIdentitySnaps
+      ] = await Promise.all([
+        transaction.get(teamRef),
+        transaction.get(gameRef),
+        transaction.get(userRef),
+        transaction.get(migrationControlRef),
+        transaction.get(boundaryControlRef),
+        Promise.all(protectedUrlIdentityRefs.map((ref) => transaction.get(ref)))
+      ]);
+      if (!teamSnap.exists || !gameSnap.exists) {
+        throw new functions.https.HttpsError('not-found', 'Game not found.');
+      }
+      const finalizedBoundary = migrationControlSnap.exists
+        && isReplayArchiveMigrationReady(migrationControlSnap.data() || {})
+        && boundaryControlSnap.exists
+        && isAthleteProfileProjectionBoundaryReady(boundaryControlSnap.data() || {});
+      const compatibilityBoundary = !migrationControlSnap.exists && !boundaryControlSnap.exists;
+      if (!finalizedBoundary && !compatibilityBoundary) {
+        throw new functions.https.HttpsError(
+          'failed-precondition',
+          'Highlight updates are temporarily unavailable while private replay storage is verified.'
+        );
+      }
+
+      const team = { id: input.teamId, ...(teamSnap.data() || {}) };
+      const game = gameSnap.data() || {};
+      const user = userSnap.exists ? userSnap.data() || {} : {};
+      if (!isCanonicalReplayGame(input.gameId, game)) {
+        throw new functions.https.HttpsError(
+          'failed-precondition',
+          'Highlights must be saved on the original team game, not a shared schedule copy.'
+        );
+      }
+      const access = getReplayDelegatedAccess({
+        context,
+        authUser,
+        teamId: input.teamId,
+        team,
+        game,
+        user
+      });
+      if (!canManageReplayArchive(access)) {
+        throw new functions.https.HttpsError(
+          'permission-denied',
+          'Only a team manager or selected videographer can save game highlights.'
+        );
+      }
+
+      const current = serializeHighlightClipManagementState(game);
+      const normalizedHighlightClips = normalizeHighlightClipWrite(input.highlightClips, {
+        existingClips: current.highlightClips
+      });
+      protectedUrlIdentitySnaps.forEach((snapshot, index) => {
+        if (!snapshot.exists) return;
+        const expected = protectedUrlIdentityRecords[index];
+        const identity = normalizeReplayProtectedIdentity(snapshot.data() || {});
+        if (!identity
+          || identity.kind !== expected.data.kind
+          || identity.identityHash !== expected.data.identityHash
+          || snapshot.ref?.path !== expected.path) {
+          throw new functions.https.HttpsError(
+            'failed-precondition',
+            'The protected replay identity index is unavailable for safe highlight updates.'
+          );
+        }
+        throw new functions.https.HttpsError(
+          'failed-precondition',
+          'A highlight URL is protected replay media and cannot be published.'
+        );
+      });
+      if (current.lastMutationId === input.mutationId) {
+        if (!replayClipValuesEqual(current.highlightClips, normalizedHighlightClips)) {
+          throw new functions.https.HttpsError(
+            'already-exists',
+            'This highlight mutation ID was already used for a different request.'
+          );
+        }
+        return current;
+      }
+      if (current.highlightClipsRevision !== input.expectedRevision) {
+        throw new functions.https.HttpsError(
+          'aborted',
+          'The game highlights changed since they were loaded. Refresh the game and try again.',
+          { currentRevision: current.highlightClipsRevision }
+        );
+      }
+
+      const next = {
+        highlightClips: normalizedHighlightClips,
+        highlightClipsRevision: proposedRevision,
+        highlightClipsLastMutationId: input.mutationId,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      };
+      transaction.set(gameRef, next, { merge: true });
+      return serializeHighlightClipManagementState(next);
+    });
+  } catch (error) {
+    throw toReplayArchiveHttpsError(error);
+  }
+});
+
+function normalizeReplayPlaybackInput(data = {}) {
+  const teamId = normalizeReplayResourceId(data.teamId, 'teamId');
+  const gameId = typeof data.gameId === 'string' ? data.gameId.trim() : '';
+  if (!gameId || gameId.length > 1000 || gameId.includes('/')) {
+    const error = new Error('gameId is invalid.');
+    error.code = 'invalid-argument';
+    throw error;
+  }
+  const requestedSeasonId = data.seasonId === null || data.seasonId === undefined || data.seasonId === ''
+    ? ''
+    : String(data.seasonId).trim();
+  if (requestedSeasonId && !/^[A-Za-z0-9_-]{1,40}$/.test(requestedSeasonId)) {
+    const error = new Error('seasonId is invalid.');
+    error.code = 'invalid-argument';
+    throw error;
+  }
+  return { teamId, gameId, requestedSeasonId };
+}
+
+function assertReplayPlaybackRateLimit(context = {}) {
+  const uid = String(context.auth?.uid || '').trim();
+  const boundary = uid
+    ? `principal:${uid}`
+    : `network:${getRequestIp(context.rawRequest || {})}`;
+  const rateLimit = checkReplayPlaybackRateLimit({ ip: `replay-playback|${boundary}` });
+  if (!rateLimit.allowed) {
+    throw new functions.https.HttpsError(
+      'resource-exhausted',
+      'Too many replay requests. Please wait a moment and try again.',
+      { retryAfterSeconds: rateLimit.retryAfterSeconds }
+    );
+  }
+}
+
+exports.getGameReplayPlayback = functions.https.onCall(async (data, context = {}) => {
+  setReplayCallableNoStore(context);
+  let input;
+  try {
+    input = normalizeReplayPlaybackInput(data || {});
+  } catch (error) {
+    throw toReplayArchiveHttpsError(error, 'invalid-argument');
+  }
+
+  const sharedPath = decodePublicSharedGamePath(input.gameId);
+  const canonicalGameId = sharedPath ? '' : (() => {
+    try {
+      return normalizeReplayResourceId(input.gameId, 'gameId');
+    } catch {
+      return '';
+    }
+  })();
+  if (!sharedPath && !canonicalGameId) {
+    throw new functions.https.HttpsError('invalid-argument', 'gameId is invalid.');
+  }
+  assertReplayPlaybackRateLimit(context);
+  const gameRef = firestore.doc(sharedPath || `teams/${input.teamId}/games/${canonicalGameId}`);
+  const archiveRef = firestore.doc(`${gameRef.path}/privateReplay/archive`);
+  const compatibilityReceiptRef = firestore.doc(getReplayCompatibilityReceiptPath(gameRef.path));
+  const migrationControlRef = firestore.doc(REPLAY_ARCHIVE_MIGRATION_CONTROL_PATH);
+  const boundaryControlRef = firestore.doc(ATHLETE_PROFILE_PROJECTION_BOUNDARY_CONTROL_PATH);
+  const uid = String(context.auth?.uid || '').trim();
+  const authUser = uid ? await loadEnabledReplayAuthUser(context) : null;
+  const [
+    teamSnap,
+    gameSnap,
+    archiveSnap,
+    compatibilityReceiptSnap,
+    migrationControlSnap,
+    boundaryControlSnap,
+    userSnap
+  ] = await Promise.all([
+    firestore.doc(`teams/${input.teamId}`).get(),
+    gameRef.get(),
+    archiveRef.get(),
+    compatibilityReceiptRef.get(),
+    migrationControlRef.get(),
+    boundaryControlRef.get(),
+    uid ? firestore.doc(`users/${uid}`).get() : Promise.resolve(null)
+  ]).catch((error) => {
+    throw new functions.https.HttpsError('unavailable', 'Replay playback is temporarily unavailable.', {
+      reason: error?.code || 'read-failed'
+    });
+  });
+  if (!teamSnap.exists || !gameSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Replay not found.');
+  }
+  const team = { id: input.teamId, ...(teamSnap.data() || {}) };
+  const rawGame = gameSnap.data() || {};
+  const game = sharedPath
+    ? projectSharedGameForPublicTeam({
+        id: gameSnap.id,
+        ...rawGame,
+        _sharedGamePath: gameRef.path,
+        isSharedGame: true
+      }, input.teamId)
+    : { id: canonicalGameId, ...rawGame };
+  if (!game) throw new functions.https.HttpsError('not-found', 'Replay not found.');
+
+  const user = userSnap?.exists ? userSnap.data() || {} : {};
+  const email = String(authUser?.email || '').trim().toLowerCase();
+  const access = uid
+    ? getReplayDelegatedAccess({ context, authUser, teamId: input.teamId, team, game, user })
+    : {};
+  const managerAccess = !sharedPath && canManageReplayArchive(access);
+  const currentTeamAccess = Boolean(uid && (
+    access.full === true
+    || hasCurrentTeamAccess({
+      team,
+      user,
+      userId: uid,
+      email
+    })
+  ));
+  const publicAccess = canProjectPublicGame(team, game);
+  if (!managerAccess && !currentTeamAccess && !publicAccess) {
+    throw new functions.https.HttpsError('permission-denied', 'You do not have access to this replay.');
+  }
+
+  const archive = archiveSnap.exists ? normalizeStoredReplayArchive(archiveSnap.data() || {}) : null;
+  if (archiveSnap.exists && !archive) {
+    throw new functions.https.HttpsError('unavailable', 'Replay playback is temporarily unavailable.');
+  }
+  if (archive && !isReplayArchiveConsistent(rawGame, archive)) {
+    throw new functions.https.HttpsError('unavailable', 'Replay playback is temporarily unavailable.');
+  }
+  const migrationControl = migrationControlSnap.exists
+    ? normalizeReplayArchiveMigrationControl(migrationControlSnap.data() || {})
+    : null;
+  const migrationReady = migrationControl?.status === 'ready';
+  const boundaryReady = boundaryControlSnap.exists
+    && isAthleteProfileProjectionBoundaryReady(boundaryControlSnap.data() || {});
+  const compatibilityBoundary = !migrationControlSnap.exists && !boundaryControlSnap.exists;
+  let replayVideo = archive ? getReplayProjectionVideo(rawGame, archive) : null;
+  if (archive?.state === 'ready' && !replayVideo) {
+    throw new functions.https.HttpsError('unavailable', 'Replay playback is temporarily unavailable.');
+  }
+  let resolvedRevision = archive?.revision || null;
+  let compatibilityState = null;
+  if (!archive && compatibilityBoundary) {
+    if (sharedPath && compatibilityReceiptSnap.exists) {
+      throw new functions.https.HttpsError('unavailable', 'Replay playback is temporarily unavailable.');
+    }
+    compatibilityState = getReplayCompatibilityState(
+      rawGame,
+      compatibilityReceiptSnap.exists ? compatibilityReceiptSnap.data() || {} : null,
+      { teamId: input.teamId, gameId: canonicalGameId }
+    );
+    if (!compatibilityState.receiptValid || compatibilityState.state === 'unavailable') {
+      throw new functions.https.HttpsError('unavailable', 'Replay playback is temporarily unavailable.');
+    }
+    replayVideo = compatibilityState.state === 'ready' ? compatibilityState.replayVideo : null;
+    resolvedRevision = compatibilityState.replayArchiveRevision;
+  } else if (!archive && (!migrationReady || !boundaryReady)) {
+    throw new functions.https.HttpsError('unavailable', 'Replay playback is temporarily unavailable.');
+  }
+  const markerRevision = typeof game.replayArchiveRevision === 'string' ? game.replayArchiveRevision : null;
+  if (!replayVideo) {
+    const unavailableState = archive?.state === 'removed' || compatibilityState?.state === 'removed'
+      ? 'removed'
+      : 'none';
+    return {
+      state: unavailableState,
+      available: false,
+      reason: archiveSnap.exists || markerRevision || compatibilityState?.state === 'removed'
+        ? 'archive-unavailable'
+        : 'not-available',
+      hasRecordedReplay: false,
+      replayArchiveRevision: compatibilityState?.state === 'removed'
+        ? resolvedRevision
+        : compatibilityState?.state === 'none'
+          ? null
+          : markerRevision
+    };
+  }
+
+  const seasonId = resolveReplaySeasonId(game, team);
+  if (!seasonId || (input.requestedSeasonId && input.requestedSeasonId !== seasonId)) {
+    throw new functions.https.HttpsError('failed-precondition', 'The replay season could not be verified.');
+  }
+  if (managerAccess) {
+    return {
+      state: 'ready',
+      available: true,
+      reason: 'manager-access',
+      seasonId,
+      tier: 'team-pass',
+      hasRecordedReplay: true,
+      replayArchiveRevision: resolvedRevision,
+      replayVideo
+    };
+  }
+  const paywallEnabled = isRecordedReplayPaywallEnabled(game, team);
+  if (!paywallEnabled) {
+    return {
+      state: 'ready',
+      available: true,
+      reason: 'normal-access',
+      seasonId,
+      tier: 'team-pass',
+      hasRecordedReplay: true,
+      replayArchiveRevision: resolvedRevision,
+      replayVideo
+    };
+  }
+  const premiumConfigSnap = await firestore.doc('platformConfig/premium').get().catch(() => {
+    throw new functions.https.HttpsError('unavailable', 'Premium replay access is temporarily unavailable.');
+  });
+  const premiumConfig = normalizeReplayPremiumConfig(
+    premiumConfigSnap.exists ? premiumConfigSnap.data() || {} : null,
+    { exists: premiumConfigSnap.exists }
+  );
+  if (premiumConfig.state !== 'ready') {
+    throw new functions.https.HttpsError('unavailable', 'Premium replay access is temporarily unavailable.');
+  }
+
+  if (premiumConfig.openToAll !== true) {
+    if (!uid || !currentTeamAccess) {
+      return {
+        state: 'ready',
+        available: false,
+        reason: 'team-pass-required',
+        seasonId,
+        tier: 'team-pass',
+        hasRecordedReplay: true,
+        replayArchiveRevision: resolvedRevision
+      };
+    }
+    const entitlementSnap = await firestore.doc(`teams/${input.teamId}/entitlements/${seasonId}_team-pass`)
+      .get()
+      .catch(() => {
+        throw new functions.https.HttpsError('unavailable', 'Team Pass status is temporarily unavailable.');
+      });
+    if (!entitlementSnap.exists || !isTeamPassEntitlementActive(entitlementSnap.data() || {}, {
+      teamId: input.teamId,
+      seasonId,
+      tier: 'team-pass'
+    })) {
+      return {
+        state: 'ready',
+        available: false,
+        reason: 'team-pass-required',
+        seasonId,
+        tier: 'team-pass',
+        hasRecordedReplay: true,
+        replayArchiveRevision: resolvedRevision
+      };
+    }
+  }
+
+  return {
+    state: 'ready',
+    available: true,
+    reason: premiumConfig.openToAll === true ? premiumConfig.reason : 'team-pass-active',
+    seasonId,
+    tier: 'team-pass',
+    hasRecordedReplay: true,
+    replayArchiveRevision: resolvedRevision,
+    replayVideo
+  };
+});
+
+async function cleanupReplayArchiveForDeletedParent(snapshot) {
+  const parentPath = String(snapshot?.ref?.path || '').trim();
+  const archivePath = getReplayArchiveChildPath(parentPath);
+  const compatibilityReceiptPath = getReplayCompatibilityReceiptPath(parentPath);
+  try {
+    const parentRef = firestore.doc(parentPath);
+    const archiveRef = firestore.doc(archivePath);
+    const compatibilityReceiptRef = firestore.doc(compatibilityReceiptPath);
+    const migrationControlRef = firestore.doc(REPLAY_ARCHIVE_MIGRATION_CONTROL_PATH);
+    const boundaryControlRef = firestore.doc(ATHLETE_PROFILE_PROJECTION_BOUNDARY_CONTROL_PATH);
+    await firestore.runTransaction(async (transaction) => {
+      const [parentSnap, archiveSnap, compatibilityReceiptSnap, migrationControlSnap, boundaryControlSnap] = await Promise.all([
+        transaction.get(parentRef),
+        transaction.get(archiveRef),
+        transaction.get(compatibilityReceiptRef),
+        transaction.get(migrationControlRef),
+        transaction.get(boundaryControlRef)
+      ]);
+      const finalBoundaryReady = migrationControlSnap.exists
+        && boundaryControlSnap.exists
+        && isReplayArchiveMigrationReady(migrationControlSnap.data() || {})
+        && isAthleteProfileProjectionBoundaryReady(boundaryControlSnap.data() || {});
+      if (!parentSnap.exists) {
+        if (archiveSnap.exists) transaction.delete(archiveRef);
+        if (finalBoundaryReady && compatibilityReceiptSnap.exists) {
+          transaction.delete(compatibilityReceiptRef);
+        }
+        return;
+      }
+
+      // A delayed retry can observe a recreated parent at the same path. Keep
+      // only a child that is exactly bound to that new generation; otherwise
+      // the old private capability would survive while every runtime reader
+      // correctly rejects its stale revision.
+      if (archiveSnap.exists) {
+        const parent = parentSnap.data() || {};
+        const archive = normalizeStoredReplayArchive(archiveSnap.data() || {});
+        const archiveIsCurrent = archive
+          && isReplayArchiveConsistent(parent, archive)
+          && (archive.state !== 'ready' || getCompatibleReplayLifecycle(parent).isCompleted);
+        if (!archiveIsCurrent) transaction.delete(archiveRef);
+      }
+      // Compatibility receipts are migration-only hash evidence. Once both
+      // final controls are ready, any residual receipt is stale and safe to
+      // remove; before then it must survive for the migration's orphan sweep.
+      if (finalBoundaryReady && compatibilityReceiptSnap.exists) {
+        transaction.delete(compatibilityReceiptRef);
+      }
+    });
+  } catch (error) {
+    functions.logger.error('Failed to clean up a private replay archive after parent deletion.', {
+      parentPath,
+      archivePath,
+      compatibilityReceiptPath,
+      error: error?.message || String(error)
+    });
+    throw error;
+  }
+}
+
+exports.cleanupPrivateReplayArchiveOnGameDelete = functions
+  .runWith({ failurePolicy: true })
+  .firestore
+  .document('teams/{teamId}/games/{gameId}')
+  .onDelete(cleanupReplayArchiveForDeletedParent);
+
+exports.cleanupPrivateReplayArchiveOnSharedGameDelete = functions
+  .runWith({ failurePolicy: true })
+  .firestore
+  // First-generation Firestore triggers require one wildcard per path
+  // segment. All supported shared-game parents are four-segment documents
+  // (organizations, tournaments, and retained legacy roots).
+  .document('{rootCollection}/{rootId}/sharedGames/{gameId}')
+  .onDelete(cleanupReplayArchiveForDeletedParent);
+
 exports.createStripeTeamPassCheckout = functions.https.onCall(async (data, context) => {
   assertPaymentsEnabled();
   if (!context.auth?.uid) {
@@ -7482,13 +8439,15 @@ function getAllowedOriginPolicy() {
   if (Array.isArray(configuredOrigins)) {
     return {
       origins: configuredOrigins.map((origin) => String(origin).trim()).filter(Boolean),
-      allowFirebaseHosting: false
+      allowFirebaseHosting: false,
+      allowNativeCalendarOrigins: false
     };
   }
   if (typeof configuredOrigins === 'string') {
     return {
       origins: configuredOrigins.split(',').map((origin) => origin.trim()).filter(Boolean),
-      allowFirebaseHosting: false
+      allowFirebaseHosting: false,
+      allowNativeCalendarOrigins: false
     };
   }
   return {
@@ -7500,16 +8459,26 @@ function getAllowedOriginPolicy() {
       'http://localhost:5174',
       'http://127.0.0.1:5174'
     ],
-    allowFirebaseHosting: true
+    allowFirebaseHosting: true,
+    allowNativeCalendarOrigins: true
   };
 }
 
 const allowedOriginPolicy = getAllowedOriginPolicy();
 const allowedOriginSet = new Set(allowedOriginPolicy.origins);
-// Capacitor's WebViews use these exact origins. Keep the exception scoped to
-// passive telemetry so it does not broaden the calendar endpoint's CORS policy.
+// Capacitor's exact WebView origins keep installed native clients on the
+// legacy HTTP calendar bridge. Configured allowlists remain authoritative.
+const calendarAllowedOriginSet = new Set([
+  ...allowedOriginSet,
+  ...(allowedOriginPolicy.allowNativeCalendarOrigins
+    ? ['https://localhost', 'capacitor://localhost']
+    : [])
+]);
+// Passive telemetry has its own exact native-origin policy, separate from the
+// calendar allowlist and its configured-origin compatibility behavior.
 const telemetryAllowedOriginSet = new Set([
   ...allowedOriginSet,
+  'https://localhost',
   'capacitor://localhost',
   'http://localhost'
 ]);
@@ -7518,7 +8487,7 @@ function isAllowedOrigin(origin) {
   if (!origin) {
     return true;
   }
-  return allowedOriginSet.has(origin) ||
+  return calendarAllowedOriginSet.has(origin) ||
     (allowedOriginPolicy.allowFirebaseHosting && isAllPlaysFirebaseHostingOrigin(origin));
 }
 
@@ -8131,6 +9100,149 @@ async function getStrictPublicTeam(teamId) {
   return isStrictPublicTeam(team) ? team : null;
 }
 
+function hasReplayArchiveMarker(game = {}) {
+  return typeof game?.hasRecordedReplay === 'boolean'
+    || (typeof game?.replayArchiveRevision === 'string' && Boolean(game.replayArchiveRevision));
+}
+
+function buildSanitizedReplayServerProjection(game = {}, archive = null, documentPath = '') {
+  const isCanonicalSharedDocument = /(^|\/)sharedGames\/[^/]+$/.test(documentPath)
+    && !/^teams\/[^/]+\/games\/[^/]+$/.test(documentPath);
+  const hasAutomatedCopyMarker = game?.isSharedGame === true
+    || game?.isPublicProjection === true
+    || AUTOMATED_GAME_COPY_MARKER_FIELDS.some((field) => {
+      const value = game?.[field];
+      return value !== null && value !== undefined && value !== '';
+    });
+  // The exact Firestore reference is trusted provenance. Stored `isSharedGame`
+  // and path-like fields are not: a forged marker on a team game must never
+  // turn an automated active/generic capability into a canonical shared feed.
+  const stripNonCompletedVideoUrl = hasAutomatedCopyMarker && !isCanonicalSharedDocument;
+  return buildReplayServerProjectionGame(game, archive, { stripNonCompletedVideoUrl });
+}
+
+function getReplayCompatibilityProjectionBinding(documentPath) {
+  const path = String(documentPath || '');
+  const teamGameMatch = path.match(/^teams\/([^/]+)\/games\/([^/]+)$/);
+  if (teamGameMatch) {
+    return { kind: 'team-game', teamId: teamGameMatch[1], gameId: teamGameMatch[2] };
+  }
+  if (/(^|\/)sharedGames\/[^/]+$/.test(path)) {
+    return { kind: 'shared-game', teamId: '', gameId: path.split('/').pop() };
+  }
+  return null;
+}
+
+async function loadReplayCompatibilityServerProjection(game = {}, documentPath = '', {
+  requireReceipt = false
+} = {}) {
+  const binding = getReplayCompatibilityProjectionBinding(documentPath);
+  if (!binding) return null;
+  let migrationControlSnap;
+  let boundaryControlSnap;
+  let receiptSnap = null;
+  try {
+    [migrationControlSnap, boundaryControlSnap, receiptSnap] = await Promise.all([
+      firestore.doc(REPLAY_ARCHIVE_MIGRATION_CONTROL_PATH).get(),
+      firestore.doc(ATHLETE_PROFILE_PROJECTION_BOUNDARY_CONTROL_PATH).get(),
+      binding.kind === 'team-game'
+        ? firestore.doc(getReplayCompatibilityReceiptPath(documentPath)).get()
+        : Promise.resolve(null)
+    ]);
+  } catch (error) {
+    throw new functions.https.HttpsError(
+      'unavailable',
+      'Replay archive status is temporarily unavailable.',
+      { reason: error?.code || 'compatibility-state-read-failed' }
+    );
+  }
+  if (migrationControlSnap.exists || boundaryControlSnap.exists) return null;
+  if (requireReceipt && !receiptSnap?.exists) return null;
+  const receipt = receiptSnap?.exists
+    ? normalizeReplayCompatibilityReceipt(receiptSnap.data() || {})
+    : null;
+  if (receiptSnap?.exists && (!receipt
+    || receipt.teamId !== binding.teamId
+    || receipt.gameId !== binding.gameId)) {
+    throw new functions.https.HttpsError(
+      'unavailable',
+      'Replay archive status is temporarily unavailable.',
+      { reason: 'compatibility-receipt-invalid' }
+    );
+  }
+  const compatibilityState = getReplayCompatibilityState(game, receipt, binding);
+  if (!compatibilityState.receiptValid || compatibilityState.state === 'unavailable') {
+    throw new functions.https.HttpsError(
+      'unavailable',
+      'Replay archive status is temporarily unavailable.',
+      { reason: 'compatibility-state-invalid' }
+    );
+  }
+  if (!receipt && compatibilityState.state === 'none') return null;
+  const projected = buildSanitizedReplayServerProjection(game, null, documentPath);
+  projected.hasRecordedReplay = compatibilityState.state === 'ready';
+  if (compatibilityState.replayArchiveRevision) {
+    projected.replayArchiveRevision = compatibilityState.replayArchiveRevision;
+  } else {
+    delete projected.replayArchiveRevision;
+  }
+  delete projected.replayVideo;
+  return { game: projected, compatibilityState };
+}
+
+async function loadServerReplayProjection(game = {}, documentPath = '') {
+  const hasMarker = hasReplayArchiveMarker(game);
+  if (!hasMarker) {
+    const rawCompatibilityState = getReplayCompatibilityState(game);
+    if (['ready', 'removed'].includes(rawCompatibilityState.state)) {
+      const compatibilityProjection = await loadReplayCompatibilityServerProjection(
+        game,
+        documentPath
+      );
+      if (compatibilityProjection) return compatibilityProjection.game;
+      throw new functions.https.HttpsError(
+        'unavailable',
+        'Replay archive status is temporarily unavailable.',
+        { reason: 'legacy-replay-state-not-compatible' }
+      );
+    }
+    return buildSanitizedReplayServerProjection(game, null, documentPath);
+  }
+  if (!documentPath) {
+    throw new functions.https.HttpsError('unavailable', 'Replay archive status is temporarily unavailable.');
+  }
+  let archiveSnap;
+  try {
+    archiveSnap = await firestore.doc(`${documentPath}/privateReplay/archive`).get();
+  } catch (error) {
+    throw new functions.https.HttpsError('unavailable', 'Replay archive status is temporarily unavailable.', {
+      reason: error?.code || 'archive-read-failed'
+    });
+  }
+  const archive = archiveSnap.exists ? normalizeStoredReplayArchive(archiveSnap.data() || {}) : null;
+  if (!archiveSnap.exists) {
+    const compatibilityProjection = await loadReplayCompatibilityServerProjection(
+      game,
+      documentPath,
+      { requireReceipt: true }
+    );
+    if (compatibilityProjection) return compatibilityProjection.game;
+  }
+  const lifecycleMismatch = archive?.state === 'ready' && !getCompatibleReplayLifecycle(game).isCompleted;
+  if (!archive || !isReplayArchiveConsistent(game, archive) || lifecycleMismatch) {
+    throw new functions.https.HttpsError('unavailable', 'Replay archive status is temporarily unavailable.', {
+      reason: !archiveSnap.exists
+        ? 'archive-missing'
+        : !archive
+          ? 'archive-invalid'
+          : lifecycleMismatch
+            ? 'archive-lifecycle-mismatch'
+            : 'archive-marker-mismatch'
+    });
+  }
+  return buildSanitizedReplayServerProjection(game, archive, documentPath);
+}
+
 async function getPublicTeamPlayers(teamId) {
   const playersSnap = await firestore.collection(`teams/${teamId}/players`)
     .limit(PUBLIC_TEAM_API_MAX_ROSTER_SCAN_DOCUMENTS + 1)
@@ -8169,7 +9281,9 @@ async function getPublicTeamGames(teamId, range, cursor = null) {
     gamesSnap.forEach((docSnap) => {
       const game = { id: docSnap.id, ...(docSnap.data() || {}) };
       const projection = serializePublicGame(game);
-      if (projection && isPublicProjectionItemAfterCursor(projection, cursor)) games.push(game);
+      if (projection && isPublicProjectionItemAfterCursor(projection, cursor)) {
+        games.push({ game, documentPath: docSnap.ref.path });
+      }
     });
     scannedDocuments += gamesSnap.size;
     lastDoc = gamesSnap.docs[gamesSnap.docs.length - 1];
@@ -8205,11 +9319,16 @@ async function getPublicTeamGames(teamId, range, cursor = null) {
       }, teamId);
       const projection = projected && serializePublicGame(projected);
       if (projection && isPublicProjectionItemAfterCursor(projection, cursor)) {
-        sharedGamesByPath.set(docSnap.ref.path, projected);
+        sharedGamesByPath.set(docSnap.ref.path, {
+          game: projected,
+          documentPath: docSnap.ref.path
+        });
       }
     });
   });
-  return [...games, ...sharedGamesByPath.values()];
+  return Promise.all([...games, ...sharedGamesByPath.values()].map(({ game, documentPath }) => {
+    return loadServerReplayProjection(game, documentPath);
+  }));
 }
 
 async function getPublicOpponentStatKeysByGameId(teamId, games = []) {
@@ -8261,10 +9380,13 @@ async function getPublicGameProjection(teamId, gameId, team) {
     ...(gameSnap.data() || {}),
     ...(sharedPath ? { _sharedGamePath: gameSnap.ref.path, isSharedGame: true } : {})
   };
-  const game = sharedPath ? projectSharedGameForPublicTeam(rawGame, teamId) : rawGame;
+  const privateProjectedGame = await loadServerReplayProjection(rawGame, gameSnap.ref.path);
+  const game = sharedPath ? projectSharedGameForPublicTeam(privateProjectedGame, teamId) : privateProjectedGame;
   if (!game || !canProjectPublicGame(team, game)) return null;
   const opponentStatKeysByGameId = await getPublicOpponentStatKeysByGameId(teamId, [game]);
   return serializePublicGame(game, {
+    team,
+    recordedReplayMarkerOnly: true,
     opponentStatKeys: opponentStatKeysByGameId.get(String(game.id || game.gameId || ''))
   });
 }
@@ -8315,32 +9437,61 @@ function buildPublicHomepageCandidateQuery(collectionName, category, now = new D
   } else {
     const start = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     query = query
-      .where('liveStatus', '==', 'completed')
+      .where('liveStatus', 'in', ['completed', 'final', 'complete', 'finished'])
       .where('date', '>=', start)
       .orderBy('date', 'desc');
   }
   return query.limit(PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY + 1);
 }
 
+function buildPublicHomepageStatsheetReplayCandidateQuery(collectionName, now = new Date()) {
+  const start = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  return firestore.collectionGroup(collectionName)
+    .where('status', 'in', ['completed', 'final', 'complete', 'finished'])
+    .where('date', '>=', start)
+    .orderBy('date', 'desc')
+    .limit(PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY + 1);
+}
+
 async function getPublicHomepageCandidateDocuments(collectionName, category, now) {
   const snapshot = await buildPublicHomepageCandidateQuery(collectionName, category, now).get();
-  const batch = buildPublicHomepageCandidateBatch(snapshot.docs);
-  if (batch.truncated) {
+  const statsheetSnapshot = category === 'replays'
+    ? await buildPublicHomepageStatsheetReplayCandidateQuery(collectionName, now).get()
+    : null;
+  const candidateDocs = [...snapshot.docs, ...(statsheetSnapshot?.docs || [])];
+  const uniqueDocs = [...new Map(candidateDocs.map((docSnap) => [
+    String(docSnap.ref?.path || `${collectionName}/${docSnap.id}`),
+    docSnap
+  ])).values()]
+    .sort((left, right) => {
+      const rightMillis = firestoreTimestampToMillis(right.data()?.date) ?? Number.NEGATIVE_INFINITY;
+      const leftMillis = firestoreTimestampToMillis(left.data()?.date) ?? Number.NEGATIVE_INFINITY;
+      return rightMillis - leftMillis
+        || String(left.ref?.path || left.id).localeCompare(String(right.ref?.path || right.id));
+    });
+  const batch = buildPublicHomepageCandidateBatch(uniqueDocs);
+  const queryTruncated = snapshot.docs.length > PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY
+    || (statsheetSnapshot?.docs.length || 0) > PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY;
+  if (batch.truncated || queryTruncated) {
     functions.logger.warn('Truncating a public homepage candidate query at the scan limit.', {
       collectionName,
       category,
       candidateLimit: PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY
     });
   }
-  return {
-    truncated: batch.truncated,
-    candidates: batch.candidates.map((docSnap) => ({
+  const candidates = await Promise.all(batch.candidates.map(async (docSnap) => {
+    const projected = await loadServerReplayProjection({
       id: docSnap.id,
       ...(docSnap.data() || {}),
       _sharedGamePath: collectionName === 'sharedGames' ? docSnap.ref.path : null,
       _teamId: collectionName === 'games' ? docSnap.ref?.parent?.parent?.id || '' : '',
       isSharedGame: collectionName === 'sharedGames'
-    }))
+    }, docSnap.ref?.path || '');
+    return projected;
+  }));
+  return {
+    truncated: batch.truncated || queryTruncated,
+    candidates
   };
 }
 
@@ -8477,7 +9628,8 @@ exports.publicTeamGamesV1 = functions
         from: range.from,
         to: range.to,
         limit: range.limit,
-        opponentStatKeysByGameId
+        opponentStatKeysByGameId,
+        recordedReplayMarkerOnly: true
       });
       sendPublicTeamApiSuccess(req, res, body);
     } catch (error) {
@@ -8498,8 +9650,8 @@ exports.publicTeamGamesIcs = functions
       return;
     }
 
-    const teamId = String(req.query.teamId || '').trim();
-    if (!teamId || !/^[A-Za-z0-9_-]{1,128}$/.test(teamId)) {
+    const teamId = normalizePublicCalendarTeamId(req.query.teamId);
+    if (!teamId) {
       res.status(400).send('Missing or invalid teamId');
       return;
     }
@@ -8524,7 +9676,7 @@ exports.publicTeamGamesIcs = functions
 
       const icsText = buildPublicGamesIcs({ teamId, team, games: publicGames });
       res.set('Content-Type', 'text/calendar; charset=utf-8');
-      res.set('Content-Disposition', `inline; filename="${teamId}-public-games.ics"`);
+      res.set('Content-Disposition', 'inline; filename="allplays-public-games.ics"');
       res.set('Cache-Control', 'public, max-age=300');
       res.status(200).send(req.method === 'HEAD' ? '' : icsText);
     } catch (error) {
@@ -8545,18 +9697,62 @@ async function getCalendarTokenSnapshot(teamId, tokenHash, token) {
 }
 
 async function getCalendarTokenHolderContext(tokenData) {
-  const uid = String(tokenData.uid || tokenData.userId || tokenData.createdBy || '').trim();
+  const uid = getCalendarTokenHolderId(tokenData);
   if (!uid) return null;
-  const [userSnap, authUser] = await Promise.all([
+  const [userSnap, deletionRequestSnap, authUser] = await Promise.all([
     firestore.doc(`users/${uid}`).get(),
+    firestore.doc(`accountDeletionRequests/${uid}`).get(),
     admin.auth().getUser(uid).catch((error) => {
       if (error?.code === 'auth/user-not-found') return null;
       throw error;
     })
   ]);
   if (!userSnap.exists || !authUser || authUser.disabled === true) return null;
-  return { profile: userSnap.data() || {}, authUser };
+  return {
+    profile: userSnap.data() || {},
+    authUser,
+    accountDeletionRequested: deletionRequestSnap.exists
+  };
 }
+
+const resolveTeamCalendarFeedCredential = createTeamCalendarFeedCredentialResolver({
+  loadTeam: async (teamId) => {
+    const teamSnap = await firestore.doc(`teams/${teamId}`).get();
+    return teamSnap.exists ? teamSnap.data() || {} : null;
+  },
+  loadToken: async ({ teamId, tokenHash, token }) => {
+    const tokenSnap = await getCalendarTokenSnapshot(teamId, tokenHash, token);
+    return tokenSnap.exists ? tokenSnap.data() || {} : null;
+  },
+  loadTokenHolder: getCalendarTokenHolderContext
+});
+
+const getPrivateTeamCalendarFeedTokenHandler = createGetOrCreatePrivateTeamCalendarFeedHandler({
+  firestore,
+  auth: admin.auth(),
+  HttpsError: functions.https.HttpsError,
+  serverTimestamp: () => admin.firestore.FieldValue.serverTimestamp(),
+  assertFreshAuthUser: async ({ authUser }) => {
+    const verification = await assertSensitiveEmailVerified({
+      auth: {
+        uid: authUser.uid,
+        token: {
+          ...(authUser.customClaims || {}),
+          email: authUser.email || '',
+          email_verified: authUser.emailVerified === true
+        }
+      }
+    }, 'private-team-calendar-feed');
+    if (authUser.email && !verification.verified && !verification.exempt) {
+      throw new functions.https.HttpsError(
+        'failed-precondition',
+        'Verify your email before creating a private calendar feed.'
+      );
+    }
+  }
+});
+
+exports.getPrivateTeamCalendarFeedToken = functions.https.onCall(getPrivateTeamCalendarFeedTokenHandler);
 
 exports.teamCalendarFeed = functions.https.onRequest(async (req, res) => {
   if (req.method !== 'GET') {
@@ -8564,46 +9760,14 @@ exports.teamCalendarFeed = functions.https.onRequest(async (req, res) => {
     return;
   }
 
-  const { teamId, token, tokenHash } = normalizeCalendarRequest(req.query || {});
-  if (!teamId || !token || !tokenHash) {
-    res.status(401).send('Missing calendar token');
-    return;
-  }
-
   try {
-    const [teamSnap, tokenSnap] = await Promise.all([
-      firestore.doc(`teams/${teamId}`).get(),
-      getCalendarTokenSnapshot(teamId, tokenHash, token)
-    ]);
-
-    if (!teamSnap.exists || !tokenSnap.exists) {
-      res.status(403).send('Invalid calendar token');
+    const authorization = await resolveTeamCalendarFeedCredential(req.query || {});
+    if (!authorization.allowed) {
+      res.status(authorization.status).send(authorization.message);
       return;
     }
-
-    const team = teamSnap.data() || {};
-    const tokenData = { ...(tokenSnap.data() || {}), teamId };
-    if (tokenData.revoked === true || tokenData.disabled === true || tokenData.active === false) {
-      res.status(403).send('Revoked calendar token');
-      return;
-    }
-
-    const expiresAt = tokenData.expiresAt?.toDate ? tokenData.expiresAt.toDate() : (tokenData.expiresAt ? new Date(tokenData.expiresAt) : null);
-    if (expiresAt && !Number.isNaN(expiresAt.getTime()) && expiresAt <= new Date()) {
-      res.status(403).send('Expired calendar token');
-      return;
-    }
-
-    const tokenHolder = await getCalendarTokenHolderContext(tokenData);
-    if (!calendarTokenHasTeamAccess({
-      team,
-      profile: tokenHolder?.profile,
-      authUser: tokenHolder?.authUser,
-      tokenData
-    })) {
-      res.status(403).send('Calendar token no longer has team access');
-      return;
-    }
+    const { teamId } = authorization.request;
+    const { team } = authorization;
 
     const [eventsSnap, recurringMastersSnap] = await Promise.all([
       getCalendarFeedGamesQuery(teamId).get(),
@@ -8624,7 +9788,7 @@ exports.teamCalendarFeed = functions.https.onRequest(async (req, res) => {
     const icsText = buildTeamCalendarIcs({ teamId, team, events });
 
     res.set('Content-Type', 'text/calendar; charset=utf-8');
-    res.set('Content-Disposition', `inline; filename="${teamId}-schedule.ics"`);
+    res.set('Content-Disposition', 'inline; filename="allplays-team-schedule.ics"');
     res.set('Cache-Control', 'private, max-age=300');
     res.status(200).send(icsText);
   } catch (error) {
@@ -8652,6 +9816,8 @@ const FAMILY_SHARE_GAME_PROJECTION_FIELDS = [
   'opponent',
   'location',
   'status',
+  'liveStatus',
+  'isCancelled',
   'homeScore',
   'awayScore',
   'sharedGameId',
@@ -8807,7 +9973,11 @@ function serializeFamilyShareOverrides(value) {
     }));
 }
 
-function serializeFamilyShareGame(docSnap, { includeInternalCalendarUidHash = false } = {}) {
+function serializeFamilyShareGame(docSnap, {
+  includeInternalCalendarUidHash = false,
+  team = null,
+  replayProjection = null
+} = {}) {
   const data = docSnap.data() || {};
   const game = {
     id: docSnap.id,
@@ -8828,12 +9998,54 @@ function serializeFamilyShareGame(docSnap, { includeInternalCalendarUidHash = fa
           .map(normalizeFamilyShareText)
           .filter((dateKey) => /^\d{4}-\d{2}-\d{2}$/.test(dateKey))
           .slice(0, 1000);
+      } else if (field === 'liveStatus') {
+        game[field] = normalizeFamilyShareText(data[field]).slice(0, 32).toLowerCase();
       } else {
         game[field] = serializeFamilyShareValue(data[field]);
       }
     }
   });
+  const serverProjectionData = replayProjection || buildSanitizedReplayServerProjection(
+    data,
+    null,
+    normalizeFamilyShareText(docSnap?.ref?.path)
+  );
+  const publicProjection = canProjectPublicGame(team || {}, serverProjectionData)
+    ? serializePublicGame({ id: docSnap.id, ...serverProjectionData }, {
+        team: team || {},
+        recordedReplayMarkerOnly: true
+      })
+    : null;
+  if (publicProjection) {
+    game.status = publicProjection.sourceStatus || publicProjection.status || null;
+    game.liveStatus = publicProjection.liveStatus || null;
+  }
+  if (data.isCancelled === true
+    || ['cancelled', 'canceled'].includes(normalizeFamilyShareText(game.status).toLowerCase())
+    || ['cancelled', 'canceled'].includes(normalizeFamilyShareText(game.liveStatus).toLowerCase())) {
+    game.isCancelled = true;
+  } else {
+    delete game.isCancelled;
+  }
+  game.canOpenPublicViewer = Boolean(publicProjection);
+  game.hasReplayVideo = serverProjectionData.hasRecordedReplay === true;
   return game;
+}
+
+async function loadFamilyShareReplayProjection(docSnap, projectedData = null) {
+  const data = projectedData || docSnap?.data?.() || {};
+  const path = normalizeFamilyShareText(docSnap?.ref?.path);
+  if (!path) {
+    throw new functions.https.HttpsError('unavailable', 'Family replay status is temporarily unavailable.');
+  }
+  try {
+    return await loadServerReplayProjection(data, path);
+  } catch (error) {
+    if (error instanceof functions.https.HttpsError) throw error;
+    throw new functions.https.HttpsError('unavailable', 'Family replay status is temporarily unavailable.', {
+      reason: error?.code || 'archive-read-failed'
+    });
+  }
 }
 
 function getFamilyShareSharedGamePath(docSnap) {
@@ -8895,7 +10107,7 @@ function chargeFamilyShareReadBudget(teamBudget, count) {
   teamBudget.remaining -= charged;
 }
 
-async function loadFamilyShareSharedGamesForTeam(teamId, teamBudget, includeInternalCalendarUidHash) {
+async function loadFamilyShareSharedGamesForTeam(teamId, team, teamBudget, includeInternalCalendarUidHash) {
   if (
     typeof firestore.collectionGroup !== 'function'
     || teamBudget.remaining <= 0
@@ -8927,16 +10139,17 @@ async function loadFamilyShareSharedGamesForTeam(teamId, teamBudget, includeInte
     }
   }
 
-  return [...docsByPath.values()]
-    .map((docSnap) => {
+  return (await Promise.all([...docsByPath.values()]
+    .map(async (docSnap) => {
       const projected = projectFamilyShareSharedGameForTeam(docSnap, teamId);
       if (!projected) return null;
+      const replayProjection = await loadFamilyShareReplayProjection(docSnap, projected);
       const sharedGamePath = projected.sharedGamePath || getFamilyShareSharedGamePath(docSnap);
       return serializeFamilyShareGame({
         id: buildFamilyShareSharedGameSyntheticId(sharedGamePath),
         data: () => projected
-      }, { includeInternalCalendarUidHash });
-    })
+      }, { includeInternalCalendarUidHash, team, replayProjection });
+    })))
     .filter(Boolean);
 }
 
@@ -8977,12 +10190,15 @@ async function loadFamilyShareScheduleTeams(children, {
         .get();
       const boundedDocs = gamesSnap.docs.slice(0, directQueryLimit);
       chargeFamilyShareReadBudget(teamBudget, boundedDocs.length);
-      directGames = boundedDocs.map((docSnap) => serializeFamilyShareGame(docSnap, {
-        includeInternalCalendarUidHash
-      }));
+      directGames = await Promise.all(boundedDocs.map(async (docSnap) => serializeFamilyShareGame(docSnap, {
+        includeInternalCalendarUidHash,
+        team,
+        replayProjection: await loadFamilyShareReplayProjection(docSnap)
+      })));
     }
     const sharedGames = await loadFamilyShareSharedGamesForTeam(
       teamId,
+      team,
       teamBudget,
       includeInternalCalendarUidHash
     );
@@ -16745,9 +17961,12 @@ exports.notifyPracticePacketAssigned = retryableNotificationFunctions.firestore
     return null;
   });
 
-function writePublicRsvpCors(req, res) {
+function writePublicRsvpCors(req, res, { allowNativeAdminOrigin = false } = {}) {
   const origin = req.headers.origin;
-  if (isAllowedPublicRsvpOrigin(origin)) {
+  const isAllowed = allowNativeAdminOrigin
+    ? isAllowedPublicRsvpAdminOrigin(origin)
+    : isAllowedPublicRsvpOrigin(origin);
+  if (isAllowed) {
     res.set('Access-Control-Allow-Origin', origin);
     res.set('Vary', 'Origin');
   }
@@ -17366,7 +18585,7 @@ async function createPublicRsvpEmailDeliveries({ teamId, gameId, actorUid = null
 }
 
 exports.sendPublicRsvpEmails = functions.https.onRequest(async (req, res) => {
-  writePublicRsvpCors(req, res);
+  writePublicRsvpCors(req, res, { allowNativeAdminOrigin: true });
   if (req.method === 'OPTIONS') {
     res.status(204).send('');
     return;
@@ -19558,7 +20777,8 @@ exports.getPublicTeamGamesProjection = functions.https.onCall(async (data, conte
     to: range.to,
     limit: range.limit,
     cursor,
-    opponentStatKeysByGameId
+    opponentStatKeysByGameId,
+    recordedReplayMarkerOnly: true
   });
 });
 
@@ -20514,6 +21734,17 @@ exports.processAccountDeletionRequest = functions
       await scrubAccountChatConversationMembership(uid, ownerEmail);
       await scrubAccountRegistrationLinks(uid, ownerEmail);
       await scrubAccountRosterParentLinks(uid, userDoc.data() || {}, authUser);
+      await cleanupAccountCalendarCredentials({
+        firestore,
+        uid,
+        documentIdField: admin.firestore.FieldPath.documentId()
+      });
+      await anonymizeAccountReplayArchiveAttribution({
+        firestore,
+        uid,
+        documentIdField: admin.firestore.FieldPath.documentId(),
+        deleteFieldValue: () => admin.firestore.FieldValue.delete()
+      });
 
       const directDocuments = [
         `publicUserProfiles/${uid}`,

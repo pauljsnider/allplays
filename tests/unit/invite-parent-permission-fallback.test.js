@@ -13,7 +13,7 @@ const getDocsMock = vi.fn();
 const runTransactionMock = vi.fn();
 const authMock = { currentUser: { uid: 'coach-1', email: 'coach@allplays.ai' } };
 
-vi.mock('../../js/firebase.js?v=27', () => ({
+vi.mock('../../js/firebase.js?v=33', () => ({
     db: {},
     auth: authMock,
     functions: {},
@@ -53,7 +53,7 @@ vi.mock('../../js/firebase.js?v=27', () => ({
     deleteObject: vi.fn()
 }));
 
-vi.mock('../../js/firebase-images.js?v=11', () => ({
+vi.mock('../../js/firebase-images.js?v=18', () => ({
     imageStorage: {},
     ensureImageAuth: vi.fn(),
     requireImageAuth: vi.fn()

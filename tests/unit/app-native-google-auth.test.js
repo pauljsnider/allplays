@@ -92,7 +92,7 @@ vi.mock('../../apps/app/node_modules/@capacitor-firebase/authentication/dist/plu
 vi.mock('../../apps/app/src/lib/firebaseAuthRuntime.ts', () => firebaseMocks);
 vi.mock('../../apps/app/src/lib/nativeCallable.ts', () => nativeCallableMocks);
 
-vi.mock('../../js/firebase.js?v=27', () => firebaseMocks);
+vi.mock('../../js/firebase.js?v=33', () => firebaseMocks);
 vi.mock('../../js/db.js', () => dbMocks);
 vi.mock('../../js/admin-invite.js', () => ({
     redeemAdminInviteAcceptance: vi.fn()

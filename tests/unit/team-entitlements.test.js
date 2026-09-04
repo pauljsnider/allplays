@@ -8,6 +8,7 @@ import {
     isTeamEntitlementActive,
     resolveTeamEntitlementSeasonId
 } from '../../js/team-entitlements-core.js';
+import { resolveReplayVideoOptions } from '../../js/live-game-video.js';
 
 function readRepoFile(path) {
     return readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8');
@@ -62,12 +63,49 @@ describe('team entitlement helpers', () => {
         expect(liveGame).toContain('isRecordedReplayTeamPassGateEnabled');
         expect(liveGame).toContain('getTeamEntitlementStatus');
         expect(liveGame).toContain("TEAM_PASS_FEATURES.RECORDED_REPLAY");
-        expect(liveGame).toContain("state.videoPlayback?.mode === 'recorded'");
+        expect(liveGame).toContain('state.videoPlayback?.isRecordedReplay === true');
+        expect(liveGame).not.toContain("state.videoPlayback?.mode === 'recorded' && recordedReplayGateEnabled");
+        expect(liveGame).not.toContain("params.config === 'team-pass-disabled'");
+        expect(liveGame).not.toContain('game.recordedReplayPaywallEnabled =');
         expect(html).toContain('id="video-paywall"');
         expect(html).toContain('id="recorded-replay-video"');
         expect(html).toMatch(/id="recorded-replay-video"[\s\S]*?class="hidden /);
         expect(html).toMatch(/id="video-paywall" class="hidden /);
         expect(html).toContain('Team Pass required');
+    });
+
+    it('classifies YouTube archives for the replay paywall without classifying active live embeds', () => {
+        const archivedYouTube = resolveReplayVideoOptions({
+            team: { teamPassConfig: { recordedReplayPaywallEnabled: true } },
+            game: {
+                status: 'completed',
+                replayVideo: {
+                    provider: 'youtube',
+                    videoId: 'PK1HyC37doc',
+                    embedUrl: 'https://www.youtube.com/embed/PK1HyC37doc',
+                    publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+                    status: 'ready'
+                }
+            },
+            isReplay: true
+        });
+        const activeLive = resolveReplayVideoOptions({
+            team: {
+                teamPassConfig: { recordedReplayPaywallEnabled: true },
+                youtubeVideoId: 'PK1HyC37doc'
+            },
+            game: { status: 'live' },
+            isReplay: false
+        });
+        const locked = (playback) => playback.isRecordedReplay === true &&
+            isRecordedReplayTeamPassGateEnabled({ team: { teamPassConfig: { recordedReplayPaywallEnabled: true } } }) &&
+            !canAccessPremiumFanFeature(TEAM_PASS_FEATURES.RECORDED_REPLAY, { active: false });
+
+        expect(archivedYouTube.mode).toBe('embed');
+        expect(locked(archivedYouTube)).toBe(true);
+        expect(activeLive.mode).toBe('embed');
+        expect(activeLive.isRecordedReplay).toBe(false);
+        expect(locked(activeLive)).toBe(false);
     });
 
     it('routes active entitlement writes through trusted server paths', () => {

@@ -6,6 +6,23 @@ function readTrackLive() {
 }
 
 describe('track-live live event publishing', () => {
+  it('publishes lineup changes while an already-live game is paused', () => {
+    const source = readTrackLive();
+    const start = source.indexOf('async function syncLiveLineup()');
+    const end = source.indexOf('function broadcastReversedStatEvent', start);
+    const syncLiveLineup = source.slice(start, end);
+
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    expect(syncLiveLineup).toContain("shouldPublish: gameState.isRunning || liveState.isLive || currentGame?.liveStatus === 'live'");
+    expect(syncLiveLineup).toContain("type: 'lineup'");
+    expect(syncLiveLineup).toContain('onCourt: liveLineup.onCourt');
+    expect(syncLiveLineup).toContain('bench: liveLineup.bench');
+    expect(syncLiveLineup).toContain('persistThenPublishLiveLineup');
+    expect(syncLiveLineup).toContain('persistLineup: () => updateGame');
+    expect(syncLiveLineup.indexOf('persistLineup: () => updateGame')).toBeLessThan(syncLiveLineup.indexOf("type: 'lineup'"));
+  });
+
   it('publishes reverse stat events when stats are undone or corrected', () => {
     const source = readTrackLive();
 
@@ -43,7 +60,7 @@ describe('track-live live event publishing', () => {
     expect(source).toContain('id="goal-note-input"');
     expect(source).toContain('id="live-notes-list"');
     expect(source).toContain('resolveGoalSportTrackerProfile');
-    expect(source).toContain("from './js/live-game-state.js?v=34'");
+    expect(source).toContain("from './js/live-game-state.js?v=43'");
     expect(source).toContain("from './js/live-tracker-notes.js?v=3'");
     expect(source).toContain('buildGoalSportNoteText');
     expect(source).toContain('removeGameSummaryLine');

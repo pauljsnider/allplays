@@ -25,6 +25,21 @@ function normalizeEmail(value) {
   return cleanText(value, 320).toLowerCase();
 }
 
+function getCanonicalOwnerIdState(team = {}) {
+  if (!Object.prototype.hasOwnProperty.call(team || {}, 'ownerId')) {
+    return { state: 'legacy', ownerId: '' };
+  }
+  const ownerId = team.ownerId;
+  if (ownerId === '') return { state: 'legacy', ownerId: '' };
+  if (typeof ownerId === 'string'
+    && ownerId === ownerId.trim()
+    && ownerId.length <= 128
+    && !ownerId.includes('/')) {
+    return { state: 'canonical', ownerId };
+  }
+  return { state: 'invalid', ownerId: '' };
+}
+
 function normalizeStringList(value) {
   return Array.from(new Set(
     (Array.isArray(value) ? value : [])
@@ -45,6 +60,16 @@ function cleanHttpUrl(value) {
   } catch {
     return null;
   }
+}
+
+function getRecordedReplayPaywallSetting(team = {}) {
+  return [
+    team?.teamPassConfig?.recordedReplayPaywallEnabled,
+    team?.teamPass?.recordedReplayPaywallEnabled,
+    team?.premiumFeatures?.recordedReplayPaywallEnabled,
+    team?.recordedReplayPaywallEnabled,
+    team?.recordedReplayTeamPassRequired
+  ].find((value) => typeof value === 'boolean');
 }
 
 function hasSelectedGrant(team, permissionName, uid) {
@@ -73,15 +98,17 @@ function hasAllConfirmedGrant(team, permissionName, rsvp, game) {
 
 function hasFullTeamAccess({ uid, email, user }, team) {
   if (user?.isAdmin === true || user?.isPlatformAdmin === true) return true;
-  if (cleanText(team?.ownerId, 128) === uid) return true;
+  const owner = getCanonicalOwnerIdState(team);
+  if (owner.state === 'canonical' && owner.ownerId === uid) return true;
   if (!email) return false;
   const adminEmails = normalizeStringList(team?.adminEmails).map(normalizeEmail);
   if (adminEmails.includes(email)) return true;
-  const ownerId = cleanText(team?.ownerId, 128);
   const legacyOwnerEmails = Array.from(new Set(
     [team?.ownerEmail, team?.ownerEmailLower].map(normalizeEmail).filter(Boolean)
   ));
-  return !ownerId && legacyOwnerEmails.length === 1 && legacyOwnerEmails[0] === email;
+  return owner.state === 'legacy'
+    && legacyOwnerEmails.length === 1
+    && legacyOwnerEmails[0] === email;
 }
 
 function resolveDelegatedAccess({ uid, email, user, teamId, team, game, rsvp }) {
@@ -172,6 +199,11 @@ function serializeDelegatedTeamContext(teamId, team, uid, access) {
     teamPermissions: buildCompatibilityPermissions(uid, access)
   };
 
+  const recordedReplayPaywallEnabled = getRecordedReplayPaywallSetting(team);
+  if (typeof recordedReplayPaywallEnabled === 'boolean') {
+    item.recordedReplayPaywallEnabled = recordedReplayPaywallEnabled;
+  }
+
   if (access.full || access.parent || access.streaming) {
     item.twitchChannel = cleanText(team?.twitchChannel, 160) || null;
     item.streamEmbedUrl = cleanHttpUrl(team?.streamEmbedUrl);
@@ -214,6 +246,7 @@ function createDelegatedTeamContextHandler({ loadTeam, loadUser, loadGame, loadR
 
 module.exports = {
   createDelegatedTeamContextHandler,
+  getRecordedReplayPaywallSetting,
   resolveDelegatedAccess,
   serializeDelegatedTeamContext
 };

@@ -3,6 +3,12 @@ const test = require('node:test');
 const Module = require('node:module');
 const { DEFAULT_MAX_ICS_BYTES } = require('../calendar-ics-fetch-core.cjs');
 const { hashFamilyShareCalendarEventUid } = require('../family-share-view-core.cjs');
+const {
+  REPLAY_COMPATIBILITY_SCHEMA,
+  getReplayCompatibilityParentFingerprint,
+  getReplayCompatibilityReceiptPath,
+  getReplayIdentityHash
+} = require('../replay-private-archive-core.cjs');
 
 const repoIndexPath = require.resolve('../index.js');
 const originalModuleLoad = Module._load;
@@ -161,7 +167,9 @@ function makeFirestore(seed = {}, metrics = {}) {
   };
 }
 
-function makeFunctionsStub() {
+function makeFunctionsStub(runtimeConfig = {
+  stripe: { secret_key: 'sk_test_123', app_url: 'https://allplays.test' }
+}) {
   class HttpsError extends Error {
     constructor(code, message, details) {
       super(message);
@@ -189,7 +197,7 @@ function makeFunctionsStub() {
   triggerChain.pubsub = triggerChain;
 
   return {
-    config: () => ({ stripe: { secret_key: 'sk_test_123', app_url: 'https://allplays.test' } }),
+    config: () => runtimeConfig,
     auth: { user: () => triggerChain },
     https: { HttpsError, onCall: (fn) => fn, onRequest: (fn) => fn },
     firestore: { document: () => triggerChain },
@@ -199,7 +207,12 @@ function makeFunctionsStub() {
   };
 }
 
-function loadCallables(seed = {}, { metrics = {}, securityUtils = null, firestore: firestoreOverride = null } = {}) {
+function loadCallables(seed = {}, {
+  metrics = {},
+  securityUtils = null,
+  firestore: firestoreOverride = null,
+  functionsConfig = undefined
+} = {}) {
   delete require.cache[repoIndexPath];
   const firestore = firestoreOverride || makeFirestore(seed, metrics);
   adminStub = {
@@ -218,7 +231,7 @@ function loadCallables(seed = {}, { metrics = {}, securityUtils = null, firestor
     auth: () => ({ verifyIdToken: async () => null }),
     messaging: () => ({})
   };
-  functionsStub = makeFunctionsStub();
+  functionsStub = makeFunctionsStub(functionsConfig);
   StripeStub = class StripeMock {
     constructor() {
       return {
@@ -233,11 +246,13 @@ function loadCallables(seed = {}, { metrics = {}, securityUtils = null, firestor
 
 function makeCalendarSecurityUtilsStub(icsText, counters = {}) {
   counters.fetchCount = 0;
+  counters.normalizeCount = 0;
   return {
     isPrivateIpAddress: () => false,
     isBlockedHostname: () => false,
     assertPublicHost: async () => ['203.0.113.10'],
     normalizeTargetUrl: async (rawUrl) => {
+      counters.normalizeCount += 1;
       const url = new URL(rawUrl);
       return { url: url.toString(), hostname: url.hostname, publicIps: ['203.0.113.10'] };
     },
@@ -364,6 +379,8 @@ test('family share schedule callable validates bearer token and projects private
       id: 'game-1',
       gameId: 'game-1',
       type: 'game',
+      hasReplayVideo: false,
+      canOpenPublicViewer: false,
       date: '2026-07-13T18:00:00.000Z',
       opponent: 'Tigers',
       location: 'Private Field',
@@ -494,7 +511,7 @@ test('family share view projection omits owner UID and raw calendar URLs from th
       active: true,
       ownerUserId: 'SENTINEL_OWNER_UID',
       label: 'Grandma',
-      expiresAt: new FakeTimestamp(Date.parse('2026-08-20T00:00:00Z')),
+      expiresAt: new FakeTimestamp(Date.now() + 60 * 60 * 1000),
       children: [{ teamId: 'private-team', playerId: 'player-1' }],
       extraCalendarUrls: []
     },
@@ -511,7 +528,112 @@ test('family share view projection omits owner UID and raw calendar URLs from th
       type: 'game',
       date: new FakeTimestamp(Date.parse('2026-07-20T18:00:00Z')),
       opponent: 'Tigers',
+      status: 'completed',
+      liveStatus: ' SCHEDULED ',
+      replayVideo: {
+        provider: 'SENTINEL_REPLAY_PROVIDER',
+        videoId: 'SENTINEL_REPLAY_VIDEO_ID',
+        embedUrl: 'https://www.youtube.com/embed/SENTINEL_REPLAY_VIDEO_ID',
+        linkedBy: 'SENTINEL_REPLAY_LINKER',
+        linkedAt: new FakeTimestamp(Date.parse('2026-07-20T20:00:00Z'))
+      },
       internalNotes: 'SENTINEL_STAFF_NOTE'
+    },
+    'teams/private-team/games/game-string-container': {
+      type: 'game',
+      date: new FakeTimestamp(Date.parse('2026-07-21T18:00:00Z')),
+      opponent: 'String Container',
+      status: 'completed',
+      liveStatus: 'scheduled',
+      replayVideo: 'https://www.youtube.com/watch?v=SENTINEL_STRING_CONTAINER'
+    },
+    'teams/private-team/games/game-flat-source': {
+      type: 'game',
+      date: new FakeTimestamp(Date.parse('2026-07-22T18:00:00Z')),
+      opponent: 'Flat Source',
+      status: 'completed',
+      liveStatus: 'scheduled',
+      visibility: 'public',
+      recordedVideoUrl: 'https://cdn.example.test/SENTINEL_FLAT_SOURCE.mp4'
+    },
+    'teams/private-team/games/game-public-replay': {
+      type: 'game',
+      date: new FakeTimestamp(Date.parse('2026-07-23T18:00:00Z')),
+      opponent: 'Public Replay',
+      status: 'completed',
+      liveStatus: 'scheduled',
+      visibility: 'public',
+      hasRecordedReplay: true,
+      replayArchiveRevision: 'r:11111111-1111-4111-8111-111111111111',
+      recordedVideo: {
+        publicUrl: 'https://youtu.be/PK1HyC37doc?si=SENTINEL_PUBLIC_SHARE_TOKEN',
+        status: 'available'
+      }
+    },
+    'teams/private-team/games/game-public-replay/privateReplay/archive': {
+      schemaVersion: 1,
+      state: 'ready',
+      provider: 'youtube',
+      videoId: 'PK1HyC37doc',
+      revision: 'r:11111111-1111-4111-8111-111111111111',
+      lastMutationId: 'migration.public',
+      lastMutationHash: 'migration'
+    },
+    'teams/private-team/games/game-processing-replay': {
+      type: 'game',
+      date: new FakeTimestamp(Date.parse('2026-07-24T18:00:00Z')),
+      opponent: 'Processing Replay',
+      status: 'completed',
+      liveStatus: 'scheduled',
+      visibility: 'public',
+      recordedVideo: {
+        publicUrl: 'https://youtu.be/PK1HyC37doc',
+        status: 'processing'
+      }
+    },
+    'teams/private-team/games/game-paywalled-replay': {
+      type: 'game',
+      date: new FakeTimestamp(Date.parse('2026-07-25T18:00:00Z')),
+      opponent: 'Paywalled Replay',
+      status: 'completed',
+      liveStatus: 'scheduled',
+      visibility: 'public',
+      recordedReplayPaywallEnabled: true,
+      hasRecordedReplay: true,
+      replayArchiveRevision: 'r:22222222-2222-4222-8222-222222222222',
+      replayVideo: {
+        provider: 'youtube',
+        videoId: 'PK1HyC37doc',
+        embedUrl: 'https://www.youtube.com/embed/PK1HyC37doc',
+        publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+        status: 'ready'
+      }
+    },
+    'teams/private-team/games/game-paywalled-replay/privateReplay/archive': {
+      schemaVersion: 1,
+      state: 'ready',
+      provider: 'youtube',
+      videoId: 'PK1HyC37doc',
+      revision: 'r:22222222-2222-4222-8222-222222222222',
+      lastMutationId: 'migration.paywalled',
+      lastMutationHash: 'migration'
+    },
+    'teams/private-team/games/game-flag-cancelled': {
+      type: 'game',
+      date: new FakeTimestamp(Date.parse('2026-07-26T18:00:00Z')),
+      opponent: 'Flag Cancelled',
+      status: 'completed',
+      liveStatus: 'final',
+      isCancelled: true,
+      visibility: 'public'
+    },
+    'teams/private-team/games/game-live-status-cancelled': {
+      type: 'game',
+      date: new FakeTimestamp(Date.parse('2026-07-27T18:00:00Z')),
+      opponent: 'Live Status Cancelled',
+      status: 'completed',
+      liveStatus: 'canceled',
+      visibility: 'public'
     }
   });
 
@@ -520,12 +642,42 @@ test('family share view projection omits owner UID and raw calendar URLs from th
 
   assert.equal(result.projectionVersion, 2);
   assert.equal(result.presentation.label, 'Grandma');
+  const gamesById = new Map(result.teams[0].games.map((game) => [game.id, game]));
+  assert.equal(gamesById.get('game-1').status, 'completed');
+  assert.equal(gamesById.get('game-1').liveStatus, 'scheduled');
+  assert.equal(gamesById.get('game-1').hasReplayVideo, false);
+  assert.equal(gamesById.get('game-1').canOpenPublicViewer, false);
+  assert.equal(gamesById.get('game-string-container').hasReplayVideo, false);
+  assert.equal(gamesById.get('game-flat-source').hasReplayVideo, false);
+  assert.equal(gamesById.get('game-flat-source').canOpenPublicViewer, true);
+  assert.equal(gamesById.get('game-public-replay').hasReplayVideo, true);
+  assert.equal(gamesById.get('game-public-replay').canOpenPublicViewer, true);
+  assert.equal(gamesById.get('game-processing-replay').hasReplayVideo, false);
+  assert.equal(gamesById.get('game-paywalled-replay').hasReplayVideo, true);
+  assert.equal(gamesById.get('game-flag-cancelled').status, 'cancelled');
+  assert.equal(gamesById.get('game-flag-cancelled').liveStatus, 'final');
+  assert.equal(gamesById.get('game-flag-cancelled').hasReplayVideo, false);
+  assert.equal(gamesById.get('game-flag-cancelled').isCancelled, true);
+  assert.equal(gamesById.get('game-live-status-cancelled').status, 'completed');
+  assert.equal(gamesById.get('game-live-status-cancelled').liveStatus, 'cancelled');
+  assert.equal(gamesById.get('game-live-status-cancelled').hasReplayVideo, false);
+  assert.equal(gamesById.get('game-live-status-cancelled').isCancelled, true);
   assert.equal(payload.includes('SENTINEL_OWNER_UID'), false);
   assert.equal(payload.includes('SENTINEL_CALENDAR_SECRET'), false);
   assert.equal(payload.includes('SENTINEL_STAFF_NOTE'), false);
+  assert.equal(payload.includes('SENTINEL_REPLAY_PROVIDER'), false);
+  assert.equal(payload.includes('SENTINEL_REPLAY_VIDEO_ID'), false);
+  assert.equal(payload.includes('SENTINEL_REPLAY_LINKER'), false);
+  assert.equal(payload.includes('SENTINEL_STRING_CONTAINER'), false);
+  assert.equal(payload.includes('SENTINEL_FLAT_SOURCE'), false);
+  assert.equal(payload.includes('SENTINEL_PUBLIC_SHARE_TOKEN'), false);
   assert.equal(payload.includes('ownerUserId'), false);
   assert.equal(payload.includes('extraCalendarUrls'), false);
   assert.equal(payload.includes('calendarUrls'), false);
+  assert.equal(payload.includes('replayVideo'), false);
+  assert.equal(payload.includes('videoId'), false);
+  assert.equal(payload.includes('linkedBy'), false);
+  assert.equal(payload.includes('linkedAt'), false);
 });
 
 test('family share schedule callable includes organization shared games for scoped teams', async () => {
@@ -574,6 +726,8 @@ test('family share schedule callable includes organization shared games for scop
     id: 'shared_organizations%2Forg-1%2FsharedGames%2Fshared-game',
     gameId: 'shared_organizations%2Forg-1%2FsharedGames%2Fshared-game',
     type: 'game',
+    hasReplayVideo: false,
+    canOpenPublicViewer: false,
     date: '2026-07-14T19:00:00.000Z',
     location: 'Org Field',
     opponent: 'Wolves',
@@ -588,6 +742,174 @@ test('family share schedule callable includes organization shared games for scop
     competitionType: 'tournament',
     countsTowardSeasonRecord: true
   });
+});
+
+test('family share schedule fails closed when a replay marker lacks one exact valid private archive', async () => {
+  const revision = 'r:11111111-1111-4111-8111-111111111111';
+  const gamePath = 'teams/private-team/games/game-1';
+  const cases = [
+    ['missing', undefined, 'completed'],
+    ['invalid', {
+      schemaVersion: 1,
+      state: 'ready',
+      provider: 'vimeo',
+      videoId: 'PK1HyC37doc',
+      revision,
+      lastMutationId: 'migration.invalid',
+      lastMutationHash: 'migration'
+    }, 'completed'],
+    ['revision mismatch', {
+      schemaVersion: 1,
+      state: 'ready',
+      provider: 'youtube',
+      videoId: 'PK1HyC37doc',
+      revision: 'r:22222222-2222-4222-8222-222222222222',
+      lastMutationId: 'migration.mismatch',
+      lastMutationHash: 'migration'
+    }, 'completed'],
+    ['lifecycle mismatch', {
+      schemaVersion: 1,
+      state: 'ready',
+      provider: 'youtube',
+      videoId: 'PK1HyC37doc',
+      revision,
+      lastMutationId: 'migration.lifecycle',
+      lastMutationHash: 'migration'
+    }, 'scheduled']
+  ];
+
+  for (const [index, [label, archive, status]] of cases.entries()) {
+    const tokenId = String(index + 1).repeat(40);
+    const seed = {
+      [`familyShareTokens/${tokenId}`]: {
+        active: true,
+        ownerUserId: 'parent-1',
+        children: [{ teamId: 'private-team', playerId: 'player-1' }]
+      },
+      'users/parent-1': { parentPlayerKeys: ['private-team::player-1'] },
+      'teams/private-team': { name: 'Bears', isPublic: false },
+      'teams/private-team/players/player-1': { name: 'Sam Player' },
+      [gamePath]: {
+        type: 'game',
+        date: new FakeTimestamp(Date.parse('2026-07-20T18:00:00Z')),
+        opponent: 'Tigers',
+        status,
+        hasRecordedReplay: true,
+        replayArchiveRevision: revision
+      }
+    };
+    if (archive) seed[`${gamePath}/privateReplay/archive`] = archive;
+    const callables = loadCallables(seed);
+    await assert.rejects(
+      callables.getFamilyShareSchedule(
+        { tokenId },
+        { rawRequest: { ip: `203.0.113.${50 + index}` } }
+      ),
+      (error) => error.code === 'unavailable',
+      label
+    );
+  }
+});
+
+test('family share projects URL-free replay availability from pre-gate raw and receipt-backed state', async () => {
+  const tokenId = 'cccccccccccccccccccccccccccccccccccccccc';
+  const rawPath = 'teams/private-team/games/raw-replay';
+  const receiptPath = 'teams/private-team/games/receipt-replay';
+  const receiptGame = {
+    type: 'game',
+    date: new FakeTimestamp(Date.parse('2026-07-21T18:00:00Z')),
+    opponent: 'Lions',
+    status: 'completed',
+    replayVideo: {
+      provider: 'youtube',
+      videoId: 'PK1HyC37doc',
+      publicUrl: 'https://www.youtube.com/watch?v=PK1HyC37doc',
+      status: 'ready'
+    },
+    hasRecordedReplay: true,
+    replayArchiveRevision: 'r:compatibility'
+  };
+  const callables = loadCallables({
+    [`familyShareTokens/${tokenId}`]: {
+      active: true,
+      ownerUserId: 'parent-1',
+      children: [{ teamId: 'private-team', playerId: 'player-1' }]
+    },
+    'users/parent-1': { parentPlayerKeys: ['private-team::player-1'] },
+    'teams/private-team': { name: 'Bears', isPublic: false },
+    'teams/private-team/players/player-1': { name: 'Sam Player' },
+    [rawPath]: {
+      type: 'game',
+      date: new FakeTimestamp(Date.parse('2026-07-20T18:00:00Z')),
+      opponent: 'Tigers',
+      status: 'completed',
+      replayVideoUrl: 'https://youtu.be/PK1HyC37doc'
+    },
+    [receiptPath]: receiptGame,
+    [getReplayCompatibilityReceiptPath(receiptPath)]: {
+      schema: REPLAY_COMPATIBILITY_SCHEMA,
+      version: 1,
+      teamId: 'private-team',
+      gameId: 'receipt-replay',
+      state: 'ready',
+      revision: 'r:compatibility',
+      lastMutationId: 'compatibility.mutation',
+      lastMutationHash: 'a'.repeat(64),
+      beforeStateHash: 'b'.repeat(64),
+      afterStateHash: getReplayCompatibilityParentFingerprint(receiptGame),
+      protectedIdentityHashes: [getReplayIdentityHash('youtube', 'PK1HyC37doc')]
+    }
+  });
+
+  const result = await callables.getFamilyShareSchedule({ tokenId }, {});
+  const games = new Map(result.teams[0].games.map((game) => [game.id, game]));
+  assert.equal(games.get('raw-replay').hasReplayVideo, true);
+  assert.equal(games.get('receipt-replay').hasReplayVideo, true);
+  assert.equal(JSON.stringify(result).includes('PK1HyC37doc'), false);
+  assert.equal(JSON.stringify(result).includes('youtu.be'), false);
+});
+
+test('family share schedule preserves exact server-only complete and finished replay lifecycles', async () => {
+  const revision = 'r:11111111-1111-4111-8111-111111111111';
+  for (const [index, status] of ['complete', 'finished'].entries()) {
+    const tokenId = String(index + 7).repeat(40);
+    const gamePath = `teams/private-team/games/${status}`;
+    const callables = loadCallables({
+      [`familyShareTokens/${tokenId}`]: {
+        active: true,
+        ownerUserId: 'parent-1',
+        children: [{ teamId: 'private-team', playerId: 'player-1' }]
+      },
+      'users/parent-1': { parentPlayerKeys: ['private-team::player-1'] },
+      'teams/private-team': { name: 'Bears', isPublic: false },
+      'teams/private-team/players/player-1': { name: 'Sam Player' },
+      [gamePath]: {
+        type: 'game',
+        date: new FakeTimestamp(Date.parse('2026-07-20T18:00:00Z')),
+        opponent: 'Tigers',
+        status,
+        liveStatus: 'scheduled',
+        hasRecordedReplay: true,
+        replayArchiveRevision: revision
+      },
+      [`${gamePath}/privateReplay/archive`]: {
+        schemaVersion: 1,
+        state: 'ready',
+        provider: 'youtube',
+        videoId: 'PK1HyC37doc',
+        revision,
+        lastMutationId: `migration.${status}`,
+        lastMutationHash: 'migration'
+      }
+    });
+
+    const result = await callables.getFamilyShareSchedule(
+      { tokenId },
+      { rawRequest: { ip: `203.0.113.${70 + index}` } }
+    );
+    const game = result.teams[0].games.find((entry) => entry.id === status);
+    assert.equal(game.hasReplayVideo, true);
+  }
 });
 
 for (const callableName of ['getFamilyShareSchedule', 'getFamilyShareView']) {
@@ -847,4 +1169,157 @@ test('family share schedule callable rejects inactive bearer tokens before sched
     callables.getFamilyShareSchedule({ tokenId }, {}),
     (error) => error.code === 'permission-denied'
   );
+});
+
+const VALID_NATIVE_CALENDAR_ICS = [
+  'BEGIN:VCALENDAR',
+  'BEGIN:VEVENT',
+  'UID:native-team-event',
+  'DTSTART:20260820T180000Z',
+  'SUMMARY:Private practice',
+  'END:VEVENT',
+  'END:VCALENDAR'
+].join('\r\n');
+
+function createCalendarHttpResponse() {
+  return {
+    statusCode: 200,
+    body: null,
+    headers: {},
+    set(name, value) {
+      this.headers[name] = value;
+      return this;
+    },
+    status(code) {
+      this.statusCode = code;
+      return this;
+    },
+    send(payload) {
+      this.body = payload;
+      return this;
+    },
+    json(payload) {
+      this.body = payload;
+      return this;
+    }
+  };
+}
+
+async function invokeCalendarHttp(handler, {
+  origin,
+  method = 'GET',
+  ip = '203.0.113.80',
+  url = 'https://203.0.113.10/native-calendar.ics'
+} = {}) {
+  const req = {
+    method,
+    ip,
+    headers: { origin },
+    query: { url }
+  };
+  const res = createCalendarHttpResponse();
+  await handler(req, res);
+  return res;
+}
+
+test('legacy calendar HTTP bridge accepts exact native origins for preflight and GET requests', async () => {
+  const counters = {};
+  const callables = loadCallables({}, {
+    securityUtils: makeCalendarSecurityUtilsStub(VALID_NATIVE_CALENDAR_ICS, counters)
+  });
+  const nativeOrigins = ['https://localhost', 'capacitor://localhost'];
+
+  for (const [index, origin] of nativeOrigins.entries()) {
+    const optionsResponse = await invokeCalendarHttp(callables.fetchCalendarIcs, {
+      origin,
+      method: 'OPTIONS',
+      ip: `203.0.113.${80 + index}`
+    });
+    assert.equal(optionsResponse.statusCode, 204);
+    assert.equal(optionsResponse.headers['Access-Control-Allow-Origin'], origin);
+    assert.equal(optionsResponse.headers.Vary, 'Origin');
+    assert.equal(optionsResponse.headers['Access-Control-Allow-Methods'], 'GET,OPTIONS');
+    assert.equal(
+      optionsResponse.headers['Access-Control-Allow-Headers'],
+      'Authorization, Content-Type, X-Firebase-AppCheck'
+    );
+
+    const getResponse = await invokeCalendarHttp(callables.fetchCalendarIcs, {
+      origin,
+      ip: `203.0.113.${82 + index}`,
+      url: `https://203.0.113.10/native-calendar-${index}.ics`
+    });
+    assert.equal(getResponse.statusCode, 200);
+    assert.equal(getResponse.headers['Access-Control-Allow-Origin'], origin);
+    assert.equal(getResponse.headers.Vary, 'Origin');
+    assert.equal(getResponse.body.ok, true);
+    assert.equal(getResponse.body.icsText, VALID_NATIVE_CALENDAR_ICS);
+  }
+
+  assert.equal(counters.normalizeCount, 2);
+  assert.equal(counters.fetchCount, 2);
+});
+
+test('legacy calendar HTTP bridge denies native-origin lookalikes and wrong schemes without reflection', async () => {
+  const counters = {};
+  const callables = loadCallables({}, {
+    securityUtils: makeCalendarSecurityUtilsStub(VALID_NATIVE_CALENDAR_ICS, counters)
+  });
+  const deniedOrigins = [
+    'http://localhost',
+    'https://localhost:444',
+    'https://localhost.evil.test',
+    'capacitor://localhost.evil.test',
+    'https://127.0.0.1',
+    'capacitor://127.0.0.1'
+  ];
+
+  for (const [originIndex, origin] of deniedOrigins.entries()) {
+    for (const method of ['OPTIONS', 'GET']) {
+      const response = await invokeCalendarHttp(callables.fetchCalendarIcs, {
+        origin,
+        method,
+        ip: `198.51.100.${90 + originIndex}`
+      });
+      assert.equal(response.statusCode, 403);
+      assert.deepEqual(response.body, { ok: false, error: 'Origin not allowed' });
+      assert.equal(response.headers['Access-Control-Allow-Origin'], undefined);
+      assert.equal(response.headers.Vary, undefined);
+    }
+  }
+
+  assert.equal(counters.normalizeCount, 0);
+  assert.equal(counters.fetchCount, 0);
+});
+
+test('configured calendar origin allowlist remains authoritative over native compatibility defaults', async () => {
+  const counters = {};
+  const configuredOrigin = 'https://calendar-proxy.example';
+  const callables = loadCallables({}, {
+    securityUtils: makeCalendarSecurityUtilsStub(VALID_NATIVE_CALENDAR_ICS, counters),
+    functionsConfig: {
+      stripe: { secret_key: 'sk_test_123', app_url: 'https://allplays.test' },
+      calendar: { allowed_origins: configuredOrigin }
+    }
+  });
+
+  for (const [index, origin] of ['https://localhost', 'capacitor://localhost'].entries()) {
+    const deniedResponse = await invokeCalendarHttp(callables.fetchCalendarIcs, {
+      origin,
+      ip: `198.51.100.${110 + index}`
+    });
+    assert.equal(deniedResponse.statusCode, 403);
+    assert.deepEqual(deniedResponse.body, { ok: false, error: 'Origin not allowed' });
+    assert.equal(deniedResponse.headers['Access-Control-Allow-Origin'], undefined);
+  }
+
+  const configuredResponse = await invokeCalendarHttp(callables.fetchCalendarIcs, {
+    origin: configuredOrigin,
+    ip: '198.51.100.112'
+  });
+  assert.equal(configuredResponse.statusCode, 200);
+  assert.equal(configuredResponse.headers['Access-Control-Allow-Origin'], configuredOrigin);
+  assert.equal(configuredResponse.body.ok, true);
+  assert.equal(counters.normalizeCount, 1);
+  assert.equal(counters.fetchCount, 1);
 });

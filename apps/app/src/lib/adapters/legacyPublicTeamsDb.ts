@@ -38,6 +38,7 @@ export type PublicTeamProjectedGame = {
   opponent?: unknown;
   isHome?: unknown;
   status?: unknown;
+  sourceStatus?: unknown;
   liveStatus?: unknown;
   type?: unknown;
   visibility?: unknown;
