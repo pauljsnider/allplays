@@ -115,6 +115,7 @@ const state = {
 };
 
 const playAnnouncer = createPlayAnnouncer();
+const ACTIVE_LIVE_EVENTS_LIMIT = 20;
 
 const els = {
   homeTeamName: q('#home-team-name'),
@@ -2246,6 +2247,12 @@ function processNewEvents(events, { announce = true, preserveSeededOpponentGoalS
   });
 }
 
+function retainActiveLiveEventWindow() {
+  if (state.events.length <= ACTIVE_LIVE_EVENTS_LIMIT) return;
+  state.events = state.events.slice(-ACTIVE_LIVE_EVENTS_LIMIT);
+  rerenderPlayFeed();
+}
+
 function startLiveMode() {
   state.isLive = true;
   els.liveBadge?.classList.remove('hidden');
@@ -2315,6 +2322,7 @@ function startLiveEvents() {
       announce: !isInitialLiveEventsLoad,
       preserveSeededOpponentGoalStats: isInitialLiveEventsLoad
     });
+    retainActiveLiveEventWindow();
   }, (error) => {
     console.warn('Live events subscription failed:', error);
     setConnectionBanner(true, formatFirestoreError(error));
