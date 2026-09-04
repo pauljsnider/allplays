@@ -85,7 +85,7 @@ To deploy manually:
 
 ```bash
 npm run app:build
-node scripts/stage-pages-bundle.mjs /tmp/allplays-site
+ALLPLAYS_PUBLISH_MOBILE_ASSOCIATIONS=true node scripts/stage-pages-bundle.mjs /tmp/allplays-site
 node scripts/write-firebase-hosting-config.mjs /tmp/allplays-site /tmp/firebase-prod.json
 npx firebase-tools deploy --only hosting --project game-flow-c6311 --config /tmp/firebase-prod.json
 ```

@@ -19,4 +19,11 @@ describe('mobile association deployment boundary', () => {
             expect(readWorkflow(workflow)).not.toContain('ALLPLAYS_PUBLISH_MOBILE_ASSOCIATIONS');
         }
     });
+
+    it('preserves verified associations in the documented manual production deploy', () => {
+        const readme = readFileSync(new URL('../../README.md', import.meta.url), 'utf8');
+        expect(readme).toContain(
+            'ALLPLAYS_PUBLISH_MOBILE_ASSOCIATIONS=true node scripts/stage-pages-bundle.mjs /tmp/allplays-site'
+        );
+    });
 });
