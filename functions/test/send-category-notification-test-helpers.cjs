@@ -121,6 +121,7 @@ function buildNotificationTestEnv({
     deferNotificationInboxOperations = false,
     transactionErrors = [],
     transactionPostCommitErrors = [],
+    feeRecipientQueryErrors = [],
     initialDocs = {},
     nowMillis = Date.parse('2026-06-28T12:00:00.000Z'),
     nowMillisProvider = null
@@ -132,6 +133,7 @@ function buildNotificationTestEnv({
     const pendingAuthGetUsersErrors = [...authGetUsersErrors];
     const pendingTransactionErrors = [...transactionErrors];
     const pendingTransactionPostCommitErrors = [...transactionPostCommitErrors];
+    const pendingFeeRecipientQueryErrors = [...feeRecipientQueryErrors];
     const pendingDocGetErrors = new Map(
         Object.entries(docGetErrors || {}).map(([path, errors]) => [path, [...(errors || [])]])
     );
@@ -139,6 +141,7 @@ function buildNotificationTestEnv({
     const updatedDocs = [];
     const messagingCalls = [];
     const feeRecipientDocGetPaths = [];
+    const feeRecipientQueryLog = [];
     const getAllCalls = [];
     const docStore = new Map();
     const teamMediaQueryLog = [];
@@ -278,18 +281,111 @@ function buildNotificationTestEnv({
         return false;
     }
 
-    function makeQuery(getDocs) {
-        const filters = [];
+    function makeQuery(getDocs, {
+        filters = [],
+        order = null,
+        cursor = null,
+        limitCount = null,
+        queryLog = null,
+        queryErrors = null
+    } = {}) {
         return {
             where(field, op, value) {
-                filters.push({ field, op, value });
-                return this;
+                return makeQuery(getDocs, {
+                    filters: [...filters, { field, op, value }],
+                    order,
+                    cursor,
+                    limitCount,
+                    queryLog,
+                    queryErrors
+                });
+            },
+            orderBy(field, direction = 'asc') {
+                if (field === '__name__' && order) return this;
+                return makeQuery(getDocs, {
+                    filters,
+                    order: { field, direction },
+                    cursor,
+                    limitCount,
+                    queryLog,
+                    queryErrors
+                });
+            },
+            startAfter(...cursorValues) {
+                const nextCursor = cursorValues.length > 1
+                    ? { value: cursorValues[0], path: cursorValues[1] }
+                    : cursorValues[0];
+                return makeQuery(getDocs, {
+                    filters,
+                    order,
+                    cursor: nextCursor,
+                    limitCount,
+                    queryLog,
+                    queryErrors
+                });
+            },
+            limit(nextLimitCount) {
+                return makeQuery(getDocs, {
+                    filters,
+                    order,
+                    cursor,
+                    limitCount: nextLimitCount,
+                    queryLog,
+                    queryErrors
+                });
             },
             async get() {
-                const docs = getDocs().filter((docSnap) => {
+                const queryError = queryErrors?.shift?.();
+                if (queryError) throw queryError;
+                let docs = getDocs().filter((docSnap) => {
                     const data = docSnap.data() || {};
                     return filters.every((filter) => matchesQueryFilter(data, filter));
                 });
+                if (order) {
+                    docs.sort((left, right) => {
+                        const valueComparison = order.field === '__name__'
+                            ? left.ref.path.localeCompare(right.ref.path)
+                            : comparableMillis(left.data()?.[order.field]) - comparableMillis(right.data()?.[order.field]);
+                        const pathComparison = left.ref.path.localeCompare(right.ref.path);
+                        const comparison = valueComparison || pathComparison;
+                        return order.direction === 'desc' ? -comparison : comparison;
+                    });
+                }
+                if (cursor) {
+                    docs = docs.filter((docSnap) => {
+                        const cursorPath = typeof cursor === 'string'
+                            ? cursor
+                            : cursor.path || cursor.ref?.path;
+                        const pathComparison = order?.field === '__name__' && typeof cursor === 'string'
+                            ? docSnap.id.localeCompare(cursor)
+                            : docSnap.ref.path.localeCompare(cursorPath);
+                        if (!order) return pathComparison > 0;
+                        if (order.field === '__name__') {
+                            return order.direction === 'desc' ? pathComparison < 0 : pathComparison > 0;
+                        }
+                        const docMillis = comparableMillis(docSnap.data()?.[order.field]);
+                        const cursorMillis = comparableMillis(
+                            Object.prototype.hasOwnProperty.call(cursor, 'value')
+                                ? cursor.value
+                                : cursor.data()?.[order.field]
+                        );
+                        const valueComparison = docMillis - cursorMillis;
+                        const comparison = valueComparison || pathComparison;
+                        return order.direction === 'desc' ? comparison < 0 : comparison > 0;
+                    });
+                }
+                if (Number.isFinite(limitCount)) {
+                    docs = docs.slice(0, limitCount);
+                }
+                if (Array.isArray(queryLog)) {
+                    queryLog.push({
+                        filters: clone(filters),
+                        order: clone(order),
+                        cursorPath: cursor?.path || cursor?.ref?.path || null,
+                        limit: limitCount,
+                        resultPaths: docs.map((docSnap) => docSnap.ref.path)
+                    });
+                }
                 return makeQuerySnapshot(docs);
             }
         };
@@ -297,6 +393,12 @@ function buildNotificationTestEnv({
 
     function isDeleteSentinel(value) {
         return Boolean(value && typeof value === 'object' && value.__delete === true);
+    }
+
+    function containsDeleteSentinel(value) {
+        if (isDeleteSentinel(value)) return true;
+        if (!value || typeof value !== 'object') return false;
+        return Object.values(value).some((entryValue) => containsDeleteSentinel(entryValue));
     }
 
     function setValueAtPath(target, pathSegments, value) {
@@ -336,10 +438,49 @@ function buildNotificationTestEnv({
         const current = clone(docStore.get(path) || {});
         const incoming = clone(value) || {};
 
+        function mergeEntry(target, key, entryValue) {
+            if (
+                entryValue
+                && typeof entryValue === 'object'
+                && !Array.isArray(entryValue)
+                && !isDeleteSentinel(entryValue)
+                && entryValue.__serverTimestamp !== true
+                && !Object.keys(entryValue).some((nestedKey) => nestedKey.includes('.'))
+            ) {
+                const nestedTarget = target[key] && typeof target[key] === 'object' && !Array.isArray(target[key])
+                    ? target[key]
+                    : {};
+                Object.entries(entryValue).forEach(([nestedKey, nestedValue]) => {
+                    mergeEntry(nestedTarget, nestedKey, nestedValue);
+                });
+                target[key] = nestedTarget;
+                return;
+            }
+            target[key] = entryValue;
+        }
+
         Object.entries(incoming).forEach(([key, entryValue]) => {
             const pathSegments = key.split('.');
             if (isDeleteSentinel(entryValue)) {
                 deleteValueAtPath(current, pathSegments);
+                return;
+            }
+            if (pathSegments.length === 1) {
+                if (entryValue && typeof entryValue === 'object' && !Array.isArray(entryValue)) {
+                    const target = current[key] && typeof current[key] === 'object' && !Array.isArray(current[key])
+                        ? current[key]
+                        : {};
+                    Object.entries(entryValue).forEach(([nestedKey, nestedValue]) => {
+                        if (isDeleteSentinel(nestedValue)) {
+                            delete target[nestedKey];
+                        } else {
+                            mergeEntry(target, nestedKey, nestedValue);
+                        }
+                    });
+                    current[key] = target;
+                    return;
+                }
+                current[key] = entryValue;
                 return;
             }
             setValueAtPath(current, pathSegments, entryValue);
@@ -473,7 +614,10 @@ function buildNotificationTestEnv({
                 }
                 return makeDocSnapshot({ id: this.id, ref: this, data: undefined, exists: false });
             },
-            async set(value) {
+            async set(value, options = undefined) {
+                if (containsDeleteSentinel(value) && options?.merge !== true) {
+                    throw new Error('FieldValue.delete() requires a merge set or update.');
+                }
                 if (path.startsWith(`teams/${teamId}/notificationSendLog/`)) {
                     const sentAtMillis = Date.now();
                     docStore.set(path, {
@@ -482,6 +626,8 @@ function buildNotificationTestEnv({
                             toMillis: () => sentAtMillis
                         }
                     });
+                } else if (options?.merge === true) {
+                    mergeStoredDoc(path, value);
                 } else {
                     writeStoredDoc(path, value);
                 }
@@ -503,6 +649,27 @@ function buildNotificationTestEnv({
     }
 
     function collection(path) {
+        if (path === '_notificationDispatcherState/feeDueReminders/retries') {
+            const getRetryDocs = () => {
+                const prefix = `${path}/`;
+                return Array.from(docStore.entries())
+                    .filter(([docPath]) => docPath.startsWith(prefix) && !docPath.slice(prefix.length).includes('/'))
+                    .map(([docPath, data]) => makeDocSnapshot({
+                        id: docPath.slice(prefix.length),
+                        ref: doc(docPath),
+                        data,
+                        exists: true
+                    }));
+            };
+            const query = makeQuery(getRetryDocs);
+            return {
+                ...query,
+                doc(id) {
+                    return doc(`${path}/${id}`);
+                }
+            };
+        }
+
         if (path === 'teamMediaNotificationBatches') {
             const getBatchDocs = () => {
                 const prefix = `${path}/`;
@@ -934,7 +1101,10 @@ function buildNotificationTestEnv({
                     ref: doc(path),
                     data,
                     exists: true
-                })));
+                })), {
+                    queryLog: feeRecipientQueryLog,
+                    queryErrors: pendingFeeRecipientQueryErrors
+                });
         },
         async getAll(...refs) {
             getAllCalls.push(refs.map((ref) => ref.path));
@@ -974,6 +1144,9 @@ function buildNotificationTestEnv({
             serverTimestamp: () => ({ __serverTimestamp: true }),
             increment: (amount) => ({ __increment: amount }),
             delete: () => ({ __delete: true })
+        },
+        FieldPath: {
+            documentId: () => '__name__'
         },
         Timestamp: {
             now: () => makeTimestamp(
@@ -1097,6 +1270,7 @@ function buildNotificationTestEnv({
         updatedDocs,
         messagingCalls,
         feeRecipientDocGetPaths,
+        feeRecipientQueryLog,
         getAllCalls,
         teamMediaQueryLog,
         get activeNotificationInboxPipelines() {
