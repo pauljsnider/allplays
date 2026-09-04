@@ -48,6 +48,11 @@ const excludedPublicClaimPaths = new Set([
     '.well-known/apple-app-site-association',
     '.well-known/assetlinks.json'
 ]);
+const appleAssociationRelativePath = '.well-known/apple-app-site-association';
+const androidAssociationRelativePath = '.well-known/assetlinks.json';
+const expectedAppleApplicationId = '4CSFFZLL37.ai.allplays.lite';
+const expectedAndroidPackageName = 'ai.allplays.lite';
+const expectedPlaySigningFingerprint = '5A:C2:50:E0:78:32:24:D7:96:12:63:9C:73:AF:93:C7:59:C3:98:86:46:4C:CD:63:FB:5F:29:53:39:D6:C4:94';
 
 const appCheckRuntimeConfigRelativePath = path.join('.well-known', 'allplays-runtime-config.json');
 const primaryFirebaseRuntimeConfig = {
@@ -84,6 +89,92 @@ function normalizePublicSiteKey(value) {
 export function isAppCheckEnforcementReady(value) {
     if (value === true) return true;
     return typeof value === 'string' && ['true', '1'].includes(value.trim().toLowerCase());
+}
+
+export function isMobileAssociationPublishingEnabled(value) {
+    if (value === true) return true;
+    return typeof value === 'string' && ['true', '1'].includes(value.trim().toLowerCase());
+}
+
+function readJsonFile(filePath, label) {
+    try {
+        return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    } catch (error) {
+        throw new Error(`${label} must be present and valid JSON: ${error.message}`);
+    }
+}
+
+export function validateMobileAssociationFiles(rootDir = defaultRootDir) {
+    const resolvedRoot = path.resolve(rootDir);
+    const applePath = path.join(resolvedRoot, appleAssociationRelativePath);
+    const androidPath = path.join(resolvedRoot, androidAssociationRelativePath);
+    const apple = readJsonFile(applePath, 'Apple app-site association');
+    const android = readJsonFile(androidPath, 'Android Digital Asset Links association');
+
+    const appleDetails = apple?.applinks?.details;
+    const appleEntry = Array.isArray(appleDetails) && appleDetails.length === 1
+        ? appleDetails[0]
+        : null;
+    const appleComponentPaths = Array.isArray(appleEntry?.components)
+        ? appleEntry.components.map((component) => component?.['/'])
+        : [];
+    if (
+        !Array.isArray(apple?.applinks?.apps)
+        || apple.applinks.apps.length !== 0
+        || !appleEntry
+        || !Array.isArray(appleEntry.appIDs)
+        || appleEntry.appIDs.length !== 1
+        || appleEntry.appIDs[0] !== expectedAppleApplicationId
+        || appleComponentPaths.length !== 2
+        || !appleComponentPaths.includes('/app')
+        || !appleComponentPaths.includes('/app/*')
+    ) {
+        throw new Error(
+            `Apple app-site association must bind only /app and /app/* links to ${expectedAppleApplicationId}.`
+        );
+    }
+
+    const androidEntry = Array.isArray(android) && android.length === 1
+        ? android[0]
+        : null;
+    if (
+        !androidEntry
+        || !Array.isArray(androidEntry.relation)
+        || androidEntry.relation.length !== 1
+        || androidEntry.relation[0] !== 'delegate_permission/common.handle_all_urls'
+        || androidEntry.target?.namespace !== 'android_app'
+        || androidEntry.target?.package_name !== expectedAndroidPackageName
+        || !Array.isArray(androidEntry.target?.sha256_cert_fingerprints)
+        || androidEntry.target.sha256_cert_fingerprints.length !== 1
+        || androidEntry.target.sha256_cert_fingerprints[0] !== expectedPlaySigningFingerprint
+    ) {
+        throw new Error(
+            `Android Digital Asset Links association must bind ${expectedAndroidPackageName} to the verified Google Play signing certificate.`
+        );
+    }
+
+    return {
+        applePath,
+        androidPath,
+        appleApplicationId: expectedAppleApplicationId,
+        androidPackageName: expectedAndroidPackageName,
+        playSigningFingerprint: expectedPlaySigningFingerprint
+    };
+}
+
+function stageMobileAssociationFiles(rootDir, destinationDir, publish) {
+    if (!isMobileAssociationPublishingEnabled(publish)) return [];
+
+    const validated = validateMobileAssociationFiles(rootDir);
+    const stagedPaths = [];
+    for (const sourcePath of [validated.applePath, validated.androidPath]) {
+        const relativePath = path.relative(rootDir, sourcePath);
+        const destinationPath = path.join(destinationDir, relativePath);
+        fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
+        fs.copyFileSync(sourcePath, destinationPath);
+        stagedPaths.push(destinationPath);
+    }
+    return stagedPaths;
 }
 
 function readFirebaseHostingHeader(firebaseConfig, source, key) {
@@ -367,7 +458,11 @@ function copyPublicRoot(rootDir, destinationDir, currentDir = rootDir) {
 
 export function stagePagesBundle(
     destinationDir,
-    { rootDir = defaultRootDir, appDistDir: appDistDirOverride = null } = {}
+    {
+        rootDir = defaultRootDir,
+        appDistDir: appDistDirOverride = null,
+        publishMobileAssociations = process.env.ALLPLAYS_PUBLISH_MOBILE_ASSOCIATIONS
+    } = {}
 ) {
     if (!destinationDir) {
         throw new Error('Destination directory is required.');
@@ -388,6 +483,11 @@ export function stagePagesBundle(
     fs.mkdirSync(resolvedDestination, { recursive: true });
 
     copyPublicRoot(resolvedRoot, resolvedDestination);
+    const mobileAssociationPaths = stageMobileAssociationFiles(
+        resolvedRoot,
+        resolvedDestination,
+        publishMobileAssociations
+    );
 
     fs.rmSync(appDestinationDir, { recursive: true, force: true });
     fs.mkdirSync(appDestinationDir, { recursive: true });
@@ -422,6 +522,7 @@ export function stagePagesBundle(
         rootIndexPath,
         appIndexPath,
         appCheckRuntimeConfigPath,
+        mobileAssociationPaths,
         securityMeta
     };
 }

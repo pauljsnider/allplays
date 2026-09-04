@@ -25,6 +25,34 @@ function writeRuntimeConfig(artifactDir, appCheck) {
     );
 }
 
+function writeValidMobileAssociations(artifactDir) {
+    writeFile(
+        path.join(artifactDir, '.well-known', 'apple-app-site-association'),
+        JSON.stringify({
+            applinks: {
+                apps: [],
+                details: [{
+                    appIDs: ['4CSFFZLL37.ai.allplays.lite'],
+                    components: [{ '/': '/app' }, { '/': '/app/*' }]
+                }]
+            }
+        })
+    );
+    writeFile(
+        path.join(artifactDir, '.well-known', 'assetlinks.json'),
+        JSON.stringify([{
+            relation: ['delegate_permission/common.handle_all_urls'],
+            target: {
+                namespace: 'android_app',
+                package_name: 'ai.allplays.lite',
+                sha256_cert_fingerprints: [
+                    '5A:C2:50:E0:78:32:24:D7:96:12:63:9C:73:AF:93:C7:59:C3:98:86:46:4C:CD:63:FB:5F:29:53:39:D6:C4:94'
+                ]
+            }
+        }])
+    );
+}
+
 afterEach(() => {
     while (tempDirs.length) {
         fs.rmSync(tempDirs.pop(), { recursive: true, force: true });
@@ -132,7 +160,7 @@ describe('Pages deployment artifact verification', () => {
         })).toThrow(/not enabled with the expected public site key/);
     });
 
-    it('rejects unpublished mobile association claims even when hidden files are preserved', () => {
+    it('rejects mobile association claims without explicit production opt-in', () => {
         const artifactDir = makeArtifact();
         writeFile(path.join(artifactDir, '.nojekyll'));
         writeFile(
@@ -141,7 +169,25 @@ describe('Pages deployment artifact verification', () => {
         );
 
         expect(() => verifyPagesDeployArtifact(artifactDir))
-            .toThrow(/must not publish \.well-known.assetlinks\.json until real mobile app association identifiers are configured/);
+            .toThrow(/must not publish \.well-known.assetlinks\.json without explicit production mobile-association opt-in/);
+    });
+
+    it('requires and accepts the verified association identities when production opts in', () => {
+        const artifactDir = makeArtifact();
+        writeFile(path.join(artifactDir, '.nojekyll'));
+        writeRuntimeConfig(artifactDir, {
+            enabled: false,
+            isTokenAutoRefreshEnabled: true
+        });
+
+        expect(() => verifyPagesDeployArtifact(artifactDir, {
+            expectedMobileAssociations: true
+        })).toThrow(/Apple app-site association must be present and valid JSON/);
+
+        writeValidMobileAssociations(artifactDir);
+        expect(verifyPagesDeployArtifact(artifactDir, {
+            expectedMobileAssociations: true
+        })).toBeUndefined();
     });
 
     it('rejects local development artifacts from a downloaded Pages bundle', () => {

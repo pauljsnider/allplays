@@ -4,12 +4,16 @@
     "details": [
       {
         "appIDs": [
-          "REPLACE_WITH_APPLE_TEAM_ID.ai.allplays.lite"
+          "4CSFFZLL37.ai.allplays.lite"
         ],
         "components": [
           {
-            "/": "/app*",
-            "comment": "Route all hosted React app links into the native ALL PLAYS app."
+            "/": "/app",
+            "comment": "Route the hosted React app root into the native ALL PLAYS app."
+          },
+          {
+            "/": "/app/*",
+            "comment": "Route hosted React app subpaths into the native ALL PLAYS app."
           }
         ]
       }

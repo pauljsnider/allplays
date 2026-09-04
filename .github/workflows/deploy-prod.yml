@@ -518,6 +518,7 @@ jobs:
         env:
           ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY: ${{ vars.APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY }}
           ALLPLAYS_APP_CHECK_ENFORCEMENT_READY: ${{ vars.APP_CHECK_ENFORCEMENT_READY }}
+          ALLPLAYS_PUBLISH_MOBILE_ASSOCIATIONS: 'true'
         run: |
           set -euo pipefail
           bundle_dir="$RUNNER_TEMP/firebase-production-ready"
