@@ -1999,9 +1999,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       return newEventId;
     };
     const fullReplayCommand =
-      command.type === "void_event" ||
-      command.type === "supersede_event" ||
-      command.type === "finalize";
+      CORRECTION_COMMANDS.has(command.type) || command.type === "finalize";
     let needsFullHistory = fullReplayCommand;
     let preparedHistory = null;
     if (fullReplayCommand) {
@@ -2775,27 +2773,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       previousHash: checkpoint.previousHash,
       state: replay.state,
     };
-    let statsProjection = null;
-    if (typeof domainEngine.projectDiamondStats === "function") {
-      try {
-        statsProjection = domainEngine.projectDiamondStats({
-          teamId,
-          gameId,
-          rulesProfileId: root.rulesProfileId,
-          rulesProfileVersion: root.rulesProfileVersion,
-          captureMode: root.captureMode,
-          initialState: root.initialState,
-          state: replay.state,
-          events,
-        });
-      } catch {
-        throw makeError(
-          "failed-precondition",
-          "The verified history could not be projected into Diamond statistics.",
-        );
-      }
-    }
-    const projectionStatus = statsProjection ? "complete" : "pending";
+    const projectionStatus = "pending";
     return firestore.runTransaction(async (transaction) => {
       const loaded = await loadAccessDocuments(
         transaction,
@@ -2835,47 +2813,20 @@ function createDiamondScorebookHandlers(dependencies = {}) {
         ...rootCurrent,
         checkpoint: repairedCheckpoint,
         projectionStatus,
+        projectionRequest: {
+          requestId: auditId,
+          sourceRevision: replay.state.revision,
+          requestedBy: caller.uid,
+          requestedAt: timestampIso(nowMs),
+        },
         updatedAt: timestampIso(nowMs),
       };
-      const publicProjection = buildPublicProjection({
-        state: replay.state,
-        root: nextRoot,
-        team: loaded.team,
-        game: loaded.game,
-        nowMs,
-        core,
-        projectionStatus,
-      });
       transaction.update(rootRef, {
         checkpoint: repairedCheckpoint,
         projectionStatus,
+        projectionRequest: nextRoot.projectionRequest,
         updatedAt: timestampIso(nowMs),
       });
-      transaction.set(firestore.doc(resourcePaths.publicState), {
-        ...publicProjection,
-        instanceId: root.instanceId,
-        publicEventCount: events.filter(
-          (event) => !PRIVATE_EVENT_TYPES.has(event.type),
-        ).length,
-      });
-      transaction.set(
-        firestore.doc(resourcePaths.projection("stats")),
-        statsProjection
-          ? {
-              ...statsProjection,
-              instanceId: root.instanceId,
-              status: "complete",
-              updatedAt: timestampIso(nowMs),
-            }
-          : {
-              schemaVersion: 1,
-              instanceId: root.instanceId,
-              status: "pending",
-              sourceRevision: replay.state.revision,
-              updatedAt: timestampIso(nowMs),
-              reason: "full-stat-projector-unavailable",
-            },
-      );
       transaction.update(
         loaded.gameRef,
         gameProjectionPatch(replay.state, projectionStatus),
@@ -2883,14 +2834,16 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       transaction.create(firestore.doc(resourcePaths.audit(auditId)), {
         schemaVersion: 1,
         instanceId: root.instanceId,
-        type: "projection-regenerated",
+        type: "projection-regeneration-requested",
         sourceRevision: replay.state.revision,
         actorUid: caller.uid,
         createdAt: timestampIso(nowMs),
         notificationsSuppressed: true,
       });
       return {
-        regenerated: true,
+        regenerated: false,
+        regenerationQueued: true,
+        projectionStatus,
         revision: replay.state.revision,
         state: buildPrivateSnapshot({
           state: replay.state,

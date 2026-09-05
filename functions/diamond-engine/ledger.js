@@ -13,6 +13,13 @@ const canonical_1 = require("./canonical");
 const contracts_1 = require("./contracts");
 const reducer_1 = require("./reducer");
 const UUID_V4_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const HISTORY_REQUIRED_COMMANDS = new Set([
+    'record_fielding',
+    'record_scoring_judgment',
+    'void_event',
+    'supersede_event'
+]);
+const ATTACHABLE_PLAY_TYPES = new Set(['record_plate_appearance', 'advance_runner']);
 function deepFreeze(value) {
     if (value && typeof value === 'object' && !Object.isFrozen(value)) {
         Object.freeze(value);
@@ -91,11 +98,22 @@ function getCorrectionDirectives(events) {
 function asReducerAction(type, payload, eventId) {
     return { type, payload, eventId };
 }
+function attachmentTargetsVoidedPlay(event, voidedEventIds) {
+    if (event.type !== 'record_fielding' && event.type !== 'record_scoring_judgment')
+        return false;
+    const payload = event.payload;
+    return voidedEventIds.has(payload.playEventId);
+}
 function getEffectiveDiamondEvents(events) {
     const directives = getCorrectionDirectives(events);
+    const voidedEventIds = new Set([...directives.entries()]
+        .filter(([, directive]) => directive.kind === 'void')
+        .map(([eventId]) => eventId));
     const effective = [];
     events.forEach((event) => {
         if (event.type === 'void_event' || event.type === 'supersede_event')
+            return;
+        if (attachmentTargetsVoidedPlay(event, voidedEventIds))
             return;
         const directive = directives.get(event.eventId);
         if (directive?.kind === 'void')
@@ -142,6 +160,9 @@ function replayDiamondEvents(initialState, events, options = {}) {
     if (options.verifyHashes !== false)
         verifyEventChain(events);
     const directives = getCorrectionDirectives(events);
+    const voidedEventIds = new Set([...directives.entries()]
+        .filter(([, directive]) => directive.kind === 'void')
+        .map(([eventId]) => eventId));
     let state = (0, reducer_1.cloneDiamondState)(initialState);
     const effectiveEvents = [];
     events.forEach((event) => {
@@ -149,7 +170,7 @@ function replayDiamondEvents(initialState, events, options = {}) {
         if (event.type === 'void_event' || event.type === 'supersede_event') {
             state = (0, reducer_1.reduceDiamondEvent)(state, asReducerAction(event.type, event.payload, event.eventId));
         }
-        else if (directive?.kind === 'void') {
+        else if (directive?.kind === 'void' || attachmentTargetsVoidedPlay(event, voidedEventIds)) {
             // Its canonical record remains immutable, but its state effect is removed.
         }
         else if (directive?.kind === 'supersede' && directive.replacement) {
@@ -282,6 +303,40 @@ function validateCorrection(ledger, command) {
         throw new contracts_1.DiamondDomainError('already-corrected', 'The target event already has a correction.');
     }
 }
+function lineupContainsPlayer(state, side, playerId) {
+    const lineup = state.lineups[side];
+    return lineup.battingOrder.some((slot) => slot.starterPlayerId === playerId ||
+        slot.activePlayerId === playerId ||
+        slot.substitutions.includes(playerId)) || Object.values(lineup.defense).includes(playerId);
+}
+function validateAttachment(ledger, command) {
+    if (command.type !== 'record_fielding' && command.type !== 'record_scoring_judgment')
+        return;
+    const payload = command.payload;
+    const effectiveEvents = getEffectiveDiamondEvents(ledger.events);
+    const target = effectiveEvents.find((event) => event.eventId === payload.playEventId || event.sourceEventId === payload.playEventId);
+    if (!target || !ATTACHABLE_PLAY_TYPES.has(target.type)) {
+        throw new contracts_1.DiamondDomainError('unknown-play-target', 'Fielding and scoring judgments must cite an effective earlier play.');
+    }
+    if (command.type !== 'record_scoring_judgment')
+        return;
+    const scoringPayload = command.payload;
+    if (!scoringPayload.pitcherOfRecord)
+        return;
+    const decision = scoringPayload.pitcherOfRecord;
+    if (!lineupContainsPlayer(ledger.state, decision.side, decision.playerId)) {
+        throw new contracts_1.DiamondDomainError('pitcher-not-in-lineup', 'A pitcher decision must name a player recorded in that side’s lineup.');
+    }
+    const duplicateDecision = effectiveEvents.some((event) => {
+        if (event.type !== 'record_scoring_judgment')
+            return false;
+        const judgment = event.payload;
+        return judgment.pitcherOfRecord?.decision === decision.decision;
+    });
+    if (duplicateDecision) {
+        throw new contracts_1.DiamondDomainError('duplicate-pitcher-decision', `A ${decision.decision} decision is already recorded. Correct the earlier judgment instead.`);
+    }
+}
 function reject(ledger, error) {
     const domainError = error instanceof contracts_1.DiamondDomainError
         ? error
@@ -393,8 +448,8 @@ function executeDiamondCommandFromCheckpoint(checkpoint, command, context, exist
         if (command.expectedRevision !== checkpoint.sequence) {
             throw new contracts_1.DiamondDomainError('stale-revision', `Expected revision ${String(command.expectedRevision)}, current revision is ${String(checkpoint.sequence)}.`, true);
         }
-        if (command.type === 'void_event' || command.type === 'supersede_event') {
-            throw new contracts_1.DiamondDomainError('history-required', 'Void and supersede commands require the complete canonical event history.', true);
+        if (HISTORY_REQUIRED_COMMANDS.has(command.type)) {
+            throw new contracts_1.DiamondDomainError('history-required', 'Corrections and play-linked scoring details require the complete canonical event history.', true);
         }
         const sequence = checkpoint.sequence + 1;
         const before = checkpoint.state;
@@ -475,6 +530,7 @@ function executeDiamondCommand(ledger, command, context) {
             throw new contracts_1.DiamondDomainError('stale-revision', `Expected revision ${String(command.expectedRevision)}, current revision is ${String(ledger.state.revision)}.`, true);
         }
         validateCorrection(ledger, command);
+        validateAttachment(ledger, command);
         const sequence = ledger.events.length + 1;
         const before = ledger.state;
         let after = (0, reducer_1.reduceDiamondEvent)(before, asReducerAction(command.type, command.payload, context.eventId));

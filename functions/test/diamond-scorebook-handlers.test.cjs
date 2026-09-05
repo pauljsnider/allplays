@@ -1071,6 +1071,56 @@ describe("Diamond scorebook handler factory", () => {
     );
   });
 
+  it("validates play-linked details against complete canonical history before writing", async () => {
+    const harness = createHarness();
+    await activate(harness);
+    await startGame(harness);
+    const play = await submit(harness, {
+      commandId: makeUuid(45),
+      expectedRevision: 4,
+      type: "record_plate_appearance",
+      payload: {
+        batterId: "away-1",
+        pitcherId: "home-1",
+        result: "ground_out",
+        batterAdvance: { to: "out", outKind: "batter_runner" },
+        runnerAdvances: [],
+        outsOnPlay: 1,
+      },
+    });
+    assert.equal(play.outcome, "accepted");
+    assert.equal(play.revision, 5);
+
+    const rejected = await submit(harness, {
+      commandId: makeUuid(46),
+      expectedRevision: 5,
+      type: "record_fielding",
+      payload: {
+        playEventId: "missing-play",
+        fielding: { putoutBy: "home-1", battedBall: "ground" },
+      },
+    });
+    assert.equal(rejected.outcome, "rejected");
+    assert.equal(rejected.revision, 5);
+    assert.equal(rejected.rejection.code, "unknown-play-target");
+    assert.equal(
+      harness.firestore.read(paths("team-1", "game-1").command(makeUuid(46))),
+      undefined,
+    );
+
+    const accepted = await submit(harness, {
+      commandId: makeUuid(47),
+      expectedRevision: 5,
+      type: "record_fielding",
+      payload: {
+        playEventId: play.eventId,
+        fielding: { putoutBy: "home-1", battedBall: "ground" },
+      },
+    });
+    assert.equal(accepted.outcome, "accepted");
+    assert.equal(accepted.revision, 6);
+  });
+
   it("uses revision/hash CAS when a correction races another authoritative update", async () => {
     const harness = createHarness();
     await activate(harness);
@@ -1111,7 +1161,7 @@ describe("Diamond scorebook handler factory", () => {
     );
   });
 
-  it("regenerates from complete paginated history without notifications", async () => {
+  it("repairs from complete history and queues the authoritative projector without notifications", async () => {
     const harness = createHarness();
     await activate(harness);
     const rootPath = paths("team-1", "game-1").scorebook;
@@ -1129,18 +1179,24 @@ describe("Diamond scorebook handler factory", () => {
       },
       harness.managerContext,
     );
-    assert.equal(result.regenerated, true);
+    assert.equal(result.regenerated, false);
+    assert.equal(result.regenerationQueued, true);
+    assert.equal(result.projectionStatus, "pending");
     assert.equal(result.notificationsSuppressed, true);
     assert.deepEqual(result.state.state.score, { home: 0, away: 0 });
     assert.equal(
       harness.firestore.read(rootPath).checkpoint.state.score.home,
       0,
     );
-    const stats = harness.firestore.read(
-      paths("team-1", "game-1").projection("stats"),
+    const repairedRoot = harness.firestore.read(rootPath);
+    assert.equal(repairedRoot.projectionStatus, "pending");
+    assert.equal(repairedRoot.projectionRequest.sourceRevision, 1);
+    assert.equal(repairedRoot.projectionRequest.requestedBy, "manager-1");
+    assert.equal(
+      harness.firestore.read(paths("team-1", "game-1").game)
+        .diamondProjectionStatus,
+      "pending",
     );
-    assert.equal(stats.status, "complete");
-    assert.equal(stats.instanceId, harness.firestore.read(rootPath).instanceId);
   });
 
   it("serves newest public plays first and pins each page to the loaded projection revision", async () => {

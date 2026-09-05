@@ -11,6 +11,7 @@ import {
   type DiamondCommandPayloadMap,
   type DiamondCommandResult,
   type DiamondCommandReceipt,
+  type DiamondCommandType,
   type DiamondEffectiveEvent,
   type DiamondEvent,
   type DiamondExecution,
@@ -35,6 +36,13 @@ type CorrectionDirective = Readonly<{
 }>;
 
 const UUID_V4_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const HISTORY_REQUIRED_COMMANDS = new Set<DiamondCommandType>([
+  'record_fielding',
+  'record_scoring_judgment',
+  'void_event',
+  'supersede_event'
+]);
+const ATTACHABLE_PLAY_TYPES = new Set<DiamondCommandType>(['record_plate_appearance', 'advance_runner']);
 
 function deepFreeze<T>(value: T): T {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
@@ -127,11 +135,25 @@ function asReducerAction(
   return { type, payload, eventId } as DiamondReducerAction;
 }
 
+function attachmentTargetsVoidedPlay(event: Pick<DiamondEffectiveEvent, 'type' | 'payload'>, voidedEventIds: ReadonlySet<string>) {
+  if (event.type !== 'record_fielding' && event.type !== 'record_scoring_judgment') return false;
+  const payload = event.payload as
+    | DiamondCommandPayloadMap['record_fielding']
+    | DiamondCommandPayloadMap['record_scoring_judgment'];
+  return voidedEventIds.has(payload.playEventId);
+}
+
 export function getEffectiveDiamondEvents(events: readonly DiamondEvent[]): readonly DiamondEffectiveEvent[] {
   const directives = getCorrectionDirectives(events);
+  const voidedEventIds = new Set(
+    [...directives.entries()]
+      .filter(([, directive]) => directive.kind === 'void')
+      .map(([eventId]) => eventId)
+  );
   const effective: DiamondEffectiveEvent[] = [];
   events.forEach((event) => {
     if (event.type === 'void_event' || event.type === 'supersede_event') return;
+    if (attachmentTargetsVoidedPlay(event, voidedEventIds)) return;
     const directive = directives.get(event.eventId);
     if (directive?.kind === 'void') return;
     if (directive?.kind === 'supersede' && directive.replacement) {
@@ -188,6 +210,11 @@ export function replayDiamondEvents(
 ): DiamondReplayResult {
   if (options.verifyHashes !== false) verifyEventChain(events);
   const directives = getCorrectionDirectives(events);
+  const voidedEventIds = new Set(
+    [...directives.entries()]
+      .filter(([, directive]) => directive.kind === 'void')
+      .map(([eventId]) => eventId)
+  );
   let state = cloneDiamondState(initialState);
   const effectiveEvents: DiamondEffectiveEvent[] = [];
 
@@ -195,7 +222,7 @@ export function replayDiamondEvents(
     const directive = directives.get(event.eventId);
     if (event.type === 'void_event' || event.type === 'supersede_event') {
       state = reduceDiamondEvent(state, asReducerAction(event.type, event.payload, event.eventId));
-    } else if (directive?.kind === 'void') {
+    } else if (directive?.kind === 'void' || attachmentTargetsVoidedPlay(event, voidedEventIds)) {
       // Its canonical record remains immutable, but its state effect is removed.
     } else if (directive?.kind === 'supersede' && directive.replacement) {
       state = reduceDiamondEvent(
@@ -333,6 +360,54 @@ function validateCorrection(ledger: DiamondLedger, command: DiamondCommand) {
   }
 }
 
+function lineupContainsPlayer(state: DiamondGameState, side: 'home' | 'away', playerId: string) {
+  const lineup = state.lineups[side];
+  return lineup.battingOrder.some(
+    (slot) =>
+      slot.starterPlayerId === playerId ||
+      slot.activePlayerId === playerId ||
+      slot.substitutions.includes(playerId)
+  ) || Object.values(lineup.defense).includes(playerId);
+}
+
+function validateAttachment(ledger: DiamondLedger, command: DiamondCommand) {
+  if (command.type !== 'record_fielding' && command.type !== 'record_scoring_judgment') return;
+  const payload = command.payload as
+    | DiamondCommandPayloadMap['record_fielding']
+    | DiamondCommandPayloadMap['record_scoring_judgment'];
+  const effectiveEvents = getEffectiveDiamondEvents(ledger.events);
+  const target = effectiveEvents.find(
+    (event) => event.eventId === payload.playEventId || event.sourceEventId === payload.playEventId
+  );
+  if (!target || !ATTACHABLE_PLAY_TYPES.has(target.type)) {
+    throw new DiamondDomainError(
+      'unknown-play-target',
+      'Fielding and scoring judgments must cite an effective earlier play.'
+    );
+  }
+  if (command.type !== 'record_scoring_judgment') return;
+  const scoringPayload = command.payload as DiamondCommandPayloadMap['record_scoring_judgment'];
+  if (!scoringPayload.pitcherOfRecord) return;
+  const decision = scoringPayload.pitcherOfRecord;
+  if (!lineupContainsPlayer(ledger.state, decision.side, decision.playerId)) {
+    throw new DiamondDomainError(
+      'pitcher-not-in-lineup',
+      'A pitcher decision must name a player recorded in that side’s lineup.'
+    );
+  }
+  const duplicateDecision = effectiveEvents.some((event) => {
+    if (event.type !== 'record_scoring_judgment') return false;
+    const judgment = event.payload as DiamondCommandPayloadMap['record_scoring_judgment'];
+    return judgment.pitcherOfRecord?.decision === decision.decision;
+  });
+  if (duplicateDecision) {
+    throw new DiamondDomainError(
+      'duplicate-pitcher-decision',
+      `A ${decision.decision} decision is already recorded. Correct the earlier judgment instead.`
+    );
+  }
+}
+
 function reject(ledger: DiamondLedger, error: unknown): DiamondExecution {
   const domainError =
     error instanceof DiamondDomainError
@@ -464,8 +539,12 @@ export function executeDiamondCommandFromCheckpoint(
         true
       );
     }
-    if (command.type === 'void_event' || command.type === 'supersede_event') {
-      throw new DiamondDomainError('history-required', 'Void and supersede commands require the complete canonical event history.', true);
+    if (HISTORY_REQUIRED_COMMANDS.has(command.type)) {
+      throw new DiamondDomainError(
+        'history-required',
+        'Corrections and play-linked scoring details require the complete canonical event history.',
+        true
+      );
     }
 
     const sequence = checkpoint.sequence + 1;
@@ -552,6 +631,7 @@ export function executeDiamondCommand(ledger: DiamondLedger, command: DiamondCom
       );
     }
     validateCorrection(ledger, command);
+    validateAttachment(ledger, command);
 
     const sequence = ledger.events.length + 1;
     const before = ledger.state;

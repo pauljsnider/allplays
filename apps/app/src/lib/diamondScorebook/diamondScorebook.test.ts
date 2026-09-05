@@ -471,6 +471,90 @@ describe('Diamond command ledger', () => {
     });
     expect(correctionResult.result.rejection).toMatchObject({ code: 'history-required', retryable: true });
     expect(correctionResult.checkpoint).toBe(checkpoint);
+
+    const attachment = {
+      schemaVersion: DIAMOND_SCHEMA_VERSION,
+      commandId: uuid(index + 1),
+      teamId: checkpoint.teamId,
+      gameId: checkpoint.gameId,
+      expectedRevision: checkpoint.sequence,
+      rulesProfileId: checkpoint.rulesProfileId,
+      rulesProfileVersion: checkpoint.rulesProfileVersion,
+      type: 'record_fielding',
+      payload: { playEventId: receipt!.event.eventId, fielding: { putoutBy: 'home-1' } }
+    } as const satisfies DiamondCommand;
+    const attachmentResult = executeDiamondCommandFromCheckpoint(checkpoint, attachment, {
+      actorUid: SCORER,
+      eventId: 'bounded-fielding-event',
+      serverTimestampMs: 1_900_000_000_002
+    });
+    expect(attachmentResult.result.rejection).toMatchObject({ code: 'history-required', retryable: true });
+    expect(attachmentResult.checkpoint).toBe(checkpoint);
+  });
+
+  it('validates play-linked details against full history and cascades a void into attached stats', () => {
+    const game = harness();
+    setBasicLineups(game);
+    recordPitch(game, 'away-1', 'home-1');
+    const play = game.submit('record_plate_appearance', {
+      batterId: 'away-1',
+      pitcherId: 'home-1',
+      result: 'ground_out',
+      batterAdvance: { to: 'out', outKind: 'batter_runner' },
+      runnerAdvances: [],
+      outsOnPlay: 1
+    });
+
+    const missingTarget = game.submit(
+      'record_scoring_judgment',
+      { playEventId: 'missing-play', earned: true },
+      { accept: false }
+    );
+    expect(missingTarget.result.rejection?.code).toBe('unknown-play-target');
+
+    const unknownPitcher = game.submit(
+      'record_scoring_judgment',
+      {
+        playEventId: play.event!.eventId,
+        pitcherOfRecord: { side: 'home', playerId: 'not-in-lineup', decision: 'win' }
+      },
+      { accept: false }
+    );
+    expect(unknownPitcher.result.rejection?.code).toBe('pitcher-not-in-lineup');
+
+    game.submit('record_fielding', {
+      playEventId: play.event!.eventId,
+      fielding: { putoutBy: 'home-2', assists: ['home-3'], battedBall: 'ground' }
+    });
+    game.submit('record_scoring_judgment', {
+      playEventId: play.event!.eventId,
+      pitcherOfRecord: { side: 'home', playerId: 'home-1', decision: 'win' }
+    });
+    const duplicateDecision = game.submit(
+      'record_scoring_judgment',
+      {
+        playEventId: play.event!.eventId,
+        pitcherOfRecord: { side: 'home', playerId: 'home-2', decision: 'win' }
+      },
+      { accept: false }
+    );
+    expect(duplicateDecision.result.rejection?.code).toBe('duplicate-pitcher-decision');
+
+    const beforeCorrection = projectDiamondStats(game.ledger);
+    expect(beforeCorrection.players['home-2'].raw.fielding.PO).toBe(1);
+    expect(beforeCorrection.players['home-1'].raw.pitching.W).toBe(1);
+
+    game.submit('void_event', {
+      targetEventId: play.event!.eventId,
+      reason: 'The batter was called back before the pitch.'
+    });
+    const afterCorrection = projectDiamondStats(game.ledger);
+    expect(afterCorrection.players['home-2'].raw.fielding.PO).toBe(0);
+    expect(afterCorrection.players['home-1'].raw.pitching.W).toBe(0);
+    expect(getEffectiveDiamondEvents(game.ledger.events).some((event) => event.type === 'record_fielding')).toBe(false);
+    expect(
+      getEffectiveDiamondEvents(game.ledger.events).some((event) => event.type === 'record_scoring_judgment')
+    ).toBe(false);
   });
 
   it('replays more than 1,500 immutable events from zero without a bounded-window shortcut', () => {
