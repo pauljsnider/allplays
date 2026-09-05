@@ -1624,6 +1624,57 @@ describe('loadParentPlayerDetail custom roster fields', () => {
     expect(detail.summary.totalTimeMs).toBe(960000);
     expect(detail.summary.totals).toEqual({ pts: 14, reb: 6 });
   });
+
+  it('keeps configured private Diamond stats out of public rows, totals, and rankings', async () => {
+    const config = {
+      id: 'baseball',
+      baseType: 'Baseball',
+      columns: ['H'],
+      statDefinitions: [
+        { id: 'h', label: 'Hits', scope: 'player', visibility: 'public', topStat: true },
+        { id: 'pitches', label: 'Pitch count', scope: 'player', visibility: 'private', topStat: true }
+      ]
+    };
+    legacyPlayerDbMocks.getTeam.mockResolvedValue({ id: 'team-1', name: 'Comets', sport: 'Baseball' });
+    legacyPlayerDbMocks.getPlayers.mockResolvedValue([
+      { id: 'player-1', name: 'Sam Player' },
+      { id: 'player-2', name: 'Other Player' }
+    ]);
+    legacyPlayerDbMocks.getGames.mockResolvedValue([{
+      id: 'game-1',
+      status: 'completed',
+      date: '2026-03-01T18:00:00Z',
+      opponent: 'Owls',
+      trackingEngine: 'diamond-v2',
+      diamondProjectionStatus: 'current',
+      diamondProjectionRevision: 4,
+      rulesProfileId: 'baseball-youth@1'
+    }]);
+    legacyPlayerDbMocks.getConfigs.mockResolvedValue([config]);
+    legacyPlayerProfileMocks.selectAnalyticsConfig.mockReturnValue(config as any);
+    legacyPlayerDbMocks.getAggregatedStatsDocumentForPlayer.mockResolvedValue({
+      trackingEngine: 'diamond-v2',
+      sourceRevision: 4,
+      complete: true,
+      participated: true,
+      stats: { h: 2, pitches: 81 },
+      statCoverage: { h: 'complete', pitches: 'complete' },
+      coverage: { batting: 'complete', pitches: 'complete' }
+    });
+
+    const detail = await loadParentPlayerStatsDetail({
+      uid: 'parent-1',
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
+    } as any, 'team-1', 'player-1');
+
+    expect(detail.statRows[0].stats).toEqual({ h: 2 });
+    expect(detail.summary.totals).toEqual(expect.objectContaining({ h: 2 }));
+    expect(detail.summary.totals).not.toHaveProperty('pitches');
+    expect(detail.summary.statDefinitions?.map((definition) => definition.id)).not.toContain('pitches');
+    expect(legacyPlayerProfileMocks.buildPlayerLeaderboardSnapshot).toHaveBeenCalledWith(expect.objectContaining({
+      players: [{ id: 'player-1', name: 'Sam Player' }]
+    }));
+  });
 });
 
 describe('loadParentPlayerAthleteProfile', () => {

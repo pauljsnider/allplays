@@ -447,8 +447,9 @@
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=443347';
         import { resolveLiveStatConfig } from './js/live-game-state.js?v=43';
         import { splitPlayerStatsByVisibility } from './js/stat-leaderboards.js?v=4';
-        import { formatGameReportEventTimestamp, resolveReportStatColumns, resolveOpponentReportStatColumns } from './js/game-report-stats.js?v=2';
-        import { normalizeStatKey, resolvePostGameStatFields, resolvePostGameTeamStatFields, resolvePostGameEditorDidNotPlay, buildCompletedGamePlayerStatsPayload, buildCompletedGameTeamStatsPayload, getPostGameEditorNextIndex } from './js/post-game-stat-editor.js?v=5';
+        import { formatGameReportEventTimestamp, resolveReportStatColumns, resolveOpponentReportStatColumns } from './js/game-report-stats.js?v=3';
+        import { normalizeStatKey, resolvePostGameStatFields, resolvePostGameTeamStatFields, resolvePostGameEditorDidNotPlay, buildCompletedGamePlayerStatsPayload, buildCompletedGameTeamStatsPayload, getPostGameEditorNextIndex } from './js/post-game-stat-editor.js?v=6';
+        import { getCoverageAwareStatValue, getPublicDiamondStatCatalog, isDiamondV2Game, readCoverageAwareOpponentStats, readCoverageAwareStatDocument, resolveDiamondProjectionState } from './js/diamond-stat-presentation.js?v=1';
         import { buildHighlightShareUrl, normalizeGameRecapHighlightClips, resolveReplayVideoOptions } from './js/live-game-video.js?v=443319';
         import { buildGameReportShareUrl } from './js/game-share-links.js?v=1';
         import { GAME_REPLAY_ARCHIVE_FIELDS, GAME_REPLAY_CLEAR_FIELDS, buildYouTubeReplayVideo, fingerprintGameReplayArchiveState, getGameReplayArchiveState, getGameReplayLifecycle, hasGameReplayArchiveEvidence, normalizeYouTubeReplayUrl } from './js/game-replay-video.js?v=3';
@@ -1333,7 +1334,50 @@ Write the match report now:`;
             return Object.prototype.hasOwnProperty.call(stats || {}, key);
         }
 
-        function renderPlayerStatsTable({ teamId, gameId, players, statsMap, didNotPlayMap, timeMap, statKeys, hasPlayingTime }) {
+        function filterStatsMapToKeys(statsMap, keys) {
+            const allowedKeys = new Set(keys || []);
+            return Object.fromEntries(Object.entries(statsMap || {}).map(([playerId, stats]) => [
+                playerId,
+                Object.fromEntries(Object.entries(stats || {}).filter(([key]) => allowedKeys.has(key)))
+            ]));
+        }
+
+        function renderCoverageAwareStat({ presentation = null, stats = {}, key, definition = {}, didNotPlay = false, legacyMissingAsZero = false } = {}) {
+            if (didNotPlay) return '&mdash;';
+            if (presentation?.isDiamond !== true) {
+                return hasRecordedStatValue(stats, key) ? escapeHtml(String(stats[key])) : (legacyMissingAsZero ? '0' : '&mdash;');
+            }
+            const displayed = getCoverageAwareStatValue(presentation, stats, key, definition);
+            const value = displayed.available ? escapeHtml(displayed.text) : '&mdash;';
+            return displayed.observed
+                ? `<span class="inline-flex flex-col items-center" title="Observed from partial tracking"><span>${value}</span><span class="text-[9px] font-sans font-bold uppercase tracking-wide text-amber-700">Observed</span></span>`
+                : value;
+        }
+
+        function renderDiamondProjectionNotice(game, sourceRevisions = [], documentsComplete = true) {
+            document.getElementById('diamond-report-status')?.remove();
+            if (!isDiamondV2Game(game)) return;
+            const projection = resolveDiamondProjectionState(game, sourceRevisions, {
+                expectDocuments: true,
+                documentsComplete
+            });
+            const notice = document.createElement('div');
+            notice.id = 'diamond-report-status';
+            notice.className = `mb-8 rounded-2xl border px-5 py-4 ${projection.pending ? 'border-amber-200 bg-amber-50 text-amber-950' : 'border-sky-200 bg-sky-50 text-sky-950'}`;
+            notice.setAttribute('role', 'status');
+            const authoritativeRevision = projection.authoritativeRevision === null ? 'unavailable' : projection.authoritativeRevision;
+            const statRevisions = projection.sourceRevisions.length ? projection.sourceRevisions.join(', ') : 'unavailable';
+            notice.innerHTML = `
+                <div class="text-xs font-bold uppercase tracking-wider">Diamond scorebook &middot; Read only</div>
+                <div class="mt-1 text-sm font-semibold">${projection.pending
+                    ? 'Stats projection is pending. Unavailable values remain an em dash and are never counted as zero.'
+                    : 'Stats are derived from the authoritative play ledger. Make corrections in the scorebook.'}</div>
+                <div class="mt-1 text-xs font-semibold opacity-75">Ledger rev ${authoritativeRevision} &middot; Stats rev ${statRevisions}</div>
+            `;
+            document.getElementById('game-header')?.insertAdjacentElement('afterend', notice);
+        }
+
+        function renderPlayerStatsTable({ teamId, gameId, players, statsMap, statPresentationMap = {}, statDefinitions = {}, didNotPlayMap, timeMap, statKeys, hasPlayingTime }) {
             const tbody = document.getElementById('stats-body');
             if (!tbody) return;
 
@@ -1347,7 +1391,7 @@ Write the match report now:`;
                 const pTime = timeMap[p.id] || 0;
                 const didNotPlay = didNotPlayMap[p.id] === true;
                 const statCells = statKeys.map((key) => `
-                    <td class="px-4 py-4 text-center font-mono text-gray-700 font-semibold">${didNotPlay ? '&mdash;' : (hasRecordedStatValue(pStats, key) ? pStats[key] : '&mdash;')}</td>
+                    <td class="px-4 py-4 text-center font-mono text-gray-700 font-semibold">${renderCoverageAwareStat({ presentation: statPresentationMap[p.id], stats: pStats, key, definition: statDefinitions[key], didNotPlay })}</td>
                 `).join('');
                 const minutesCell = hasPlayingTime ? `
                     <td class="px-4 py-4 text-center font-mono text-gray-700 font-semibold">${didNotPlay ? '&mdash;' : formatMMSS(pTime)}</td>
@@ -1379,13 +1423,13 @@ Write the match report now:`;
         }
 
 
-        function renderTeamStatsSection({ teamStats = {}, teamStatFields = [] } = {}) {
+        function renderTeamStatsSection({ game = {}, teamStats = {}, teamStatFields = [], teamStatPresentation = null } = {}) {
             const section = document.getElementById('team-stats-section');
             const body = document.getElementById('team-stats-body');
             if (!section || !body) return;
 
             const visibleFields = (teamStatFields || []).filter((field) => field?.fieldName);
-            if (!canEditStats || visibleFields.length === 0) {
+            if ((!canEditStats && !isDiamondV2Game(game)) || visibleFields.length === 0) {
                 section.classList.add('hidden');
                 body.innerHTML = '';
                 return;
@@ -1397,7 +1441,7 @@ Write the match report now:`;
                 return `
                     <div class="rounded-xl border border-gray-200 bg-gray-50 p-4">
                         <div class="text-xs font-semibold uppercase tracking-wider text-gray-500">${escapeHtml(field.label || key.toUpperCase())}</div>
-                        <div class="mt-2 text-2xl font-bold font-mono text-gray-900">${escapeHtml(String(teamStats[key] || 0))}</div>
+                        <div class="mt-2 text-2xl font-bold font-mono text-gray-900">${renderCoverageAwareStat({ presentation: teamStatPresentation, stats: teamStats, key, definition: field, legacyMissingAsZero: true })}</div>
                     </div>
                 `;
             }).join('');
@@ -1812,6 +1856,13 @@ Write the match report now:`;
                     return;
                 }
 
+                const diamondGame = isDiamondV2Game(game);
+                if (diamondGame) {
+                    // Diamond projections are corrected through append-only scorebook
+                    // commands, never by mutating legacy aggregate documents.
+                    canEditStats = false;
+                }
+
                 // Render Header
                 const scoreView = resolveGameReportScoreView(game);
                 const { teamScore, opponentScore, isWin, isLoss, isTie } = scoreView;
@@ -1929,22 +1980,64 @@ Write the match report now:`;
                 // We need to fetch from subcollection: teams/{teamId}/games/{gameId}/aggregatedStats
                 const statsSnapshot = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`));
                 const statsMap = {};
+                const completeStatsMap = {};
+                const statPresentationMap = {};
+                const sourceRevisions = [];
+                let diamondDocumentsComplete = true;
                 const timeMap = {};
                 const didNotPlayMap = {};
                 statsSnapshot.forEach(doc => {
-                    const data = doc.data();
-                    statsMap[doc.id] = data.stats;
+                    const data = doc.data() || {};
+                    if (diamondGame) {
+                        const presentation = readCoverageAwareStatDocument(data, game);
+                        statsMap[doc.id] = presentation.values;
+                        completeStatsMap[doc.id] = presentation.completeValues;
+                        statPresentationMap[doc.id] = presentation;
+                        if (presentation.sourceRevision !== null) sourceRevisions.push(presentation.sourceRevision);
+                        if (data.complete !== true) diamondDocumentsComplete = false;
+                    } else {
+                        statsMap[doc.id] = data.stats;
+                        completeStatsMap[doc.id] = data.stats;
+                    }
                     timeMap[doc.id] = data.timeMs || 0;
                     didNotPlayMap[doc.id] = data.didNotPlay === true;
                 });
+                if (diamondGame && players.length > 0 && Object.keys(statPresentationMap).length === 0) {
+                    diamondDocumentsComplete = false;
+                }
 
                 let teamStats = {};
-                if (canEditStats) {
+                let teamStatPresentation = null;
+                if (canEditStats || diamondGame) {
                     try {
-                        teamStats = await getTeamStatsForGame(teamId, gameId);
+                        if (diamondGame) {
+                            const teamStatsSnapshot = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/teamStats`));
+                            const teamDocument = teamStatsSnapshot.docs?.find((entry) => entry.id === 'team') || teamStatsSnapshot.docs?.[0] || null;
+                            const teamData = teamDocument?.data?.() || {};
+                            teamStatPresentation = readCoverageAwareStatDocument(teamData, game);
+                            teamStats = teamStatPresentation.values;
+                            if (teamStatPresentation.sourceRevision !== null) sourceRevisions.push(teamStatPresentation.sourceRevision);
+                            if (!teamDocument || teamData.complete !== true) diamondDocumentsComplete = false;
+                        } else {
+                            teamStats = await getTeamStatsForGame(teamId, gameId);
+                        }
                     } catch (err) {
                         console.error('Error fetching team stats:', err);
+                        if (diamondGame) {
+                            teamStatPresentation = readCoverageAwareStatDocument({}, game);
+                            diamondDocumentsComplete = false;
+                        }
                     }
+                }
+
+                const opponentStatPresentationMap = {};
+                if (diamondGame) {
+                    Object.entries(game.opponentStats || {}).forEach(([playerId, stats]) => {
+                        const presentation = readCoverageAwareOpponentStats(stats, game);
+                        opponentStatPresentationMap[playerId] = presentation;
+                        if (presentation.sourceRevision !== null) sourceRevisions.push(presentation.sourceRevision);
+                    });
+                    renderDiamondProjectionNotice(game, sourceRevisions, diamondDocumentsComplete);
                 }
 
                 // Fetch the config used for this game
@@ -1978,19 +2071,24 @@ Write the match report now:`;
                     }
                 }
 
-                const { statKeys, statLabels } = resolveReportStatColumns({
+                const { statKeys, statLabels, statDefinitions = {} } = resolveReportStatColumns({
                     statsMap,
-                    resolvedConfig
+                    resolvedConfig,
+                    trackingEngine: game.trackingEngine
                 });
+                const publicCompleteStatsMap = diamondGame
+                    ? filterStatsMapToKeys(completeStatsMap, statKeys)
+                    : completeStatsMap;
 
                 // Setup summary controls
-                setupSummaryControls(teamId, gameId, game, resolvedTeam, players, statsMap, statKeys, statLabels);
+                setupSummaryControls(teamId, gameId, game, resolvedTeam, players, diamondGame ? publicCompleteStatsMap : statsMap, statKeys, statLabels);
                 const headerRow = document.getElementById('stats-header-row');
                 const computeHasPlayingTime = () => Object.values(timeMap).some((t) => t > 0);
                 function renderStatsTable() {
-                    const { statKeys: tableStatKeys, statLabels: tableStatLabels } = resolveReportStatColumns({
+                    const { statKeys: tableStatKeys, statLabels: tableStatLabels, statDefinitions: tableStatDefinitions = {} } = resolveReportStatColumns({
                         statsMap,
-                        resolvedConfig
+                        resolvedConfig,
+                        trackingEngine: game.trackingEngine
                     });
                     const hasPlayingTime = computeHasPlayingTime();
 
@@ -2019,6 +2117,8 @@ Write the match report now:`;
                         gameId,
                         players,
                         statsMap,
+                        statPresentationMap,
+                        statDefinitions: tableStatDefinitions,
                         didNotPlayMap,
                         timeMap,
                         statKeys: tableStatKeys,
@@ -2028,9 +2128,11 @@ Write the match report now:`;
 
                 renderStatsTable();
 
-                const teamStatFields = resolvePostGameTeamStatFields({ resolvedConfig, teamStats });
+                const teamStatFields = diamondGame
+                    ? getPublicDiamondStatCatalog(resolvedConfig, 'team').map((definition) => ({ ...definition, fieldName: definition.id }))
+                    : resolvePostGameTeamStatFields({ resolvedConfig, teamStats });
                 function rerenderTeamStats() {
-                    renderTeamStatsSection({ teamStats, teamStatFields });
+                    renderTeamStatsSection({ game, teamStats, teamStatFields, teamStatPresentation });
                 }
                 rerenderTeamStats();
                 setupPostGameTeamStatEditor({
@@ -2159,9 +2261,10 @@ Write the match report now:`;
                     const opponentHeaderRow = document.getElementById('opponent-stats-header-row');
                     const opponentTbody = document.getElementById('opponent-stats-body');
 
-                    const { oppKeys, oppLabels } = resolveOpponentReportStatColumns({
+                    const { oppKeys, oppLabels, oppDefinitions = {} } = resolveOpponentReportStatColumns({
                         opponentStats: game.opponentStats,
-                        resolvedConfig
+                        resolvedConfig,
+                        trackingEngine: game.trackingEngine
                     });
 
                     // Render header
@@ -2178,19 +2281,24 @@ Write the match report now:`;
 
                     // Render rows
                     const opponentPlayers = Object.entries(game.opponentStats).map(([id, stats]) => {
-                        const { name, number, notes, photoUrl, ...statValues } = stats;
+                        const { name, number, notes, photoUrl, playerId, diamondCoverage, diamondSourceRevision, ...statValues } = stats;
+                        void notes;
+                        void playerId;
+                        void diamondCoverage;
+                        void diamondSourceRevision;
                         return {
                             id,
                             number: number || '-',
                             name: name || 'Opponent Player',
                             photoUrl: photoUrl || '',
-                            stats: statValues
+                            stats: diamondGame ? (opponentStatPresentationMap[id]?.values || {}) : statValues,
+                            statPresentation: opponentStatPresentationMap[id] || null
                         };
                     });
 
                     opponentTbody.innerHTML = opponentPlayers.map(p => {
                         const statCells = oppKeys.map(key => `
-                            <td class="px-4 py-4 text-center font-mono text-gray-700 font-semibold">${hasRecordedStatValue(p.stats, key) ? p.stats[key] : '&mdash;'}</td>
+                            <td class="px-4 py-4 text-center font-mono text-gray-700 font-semibold">${renderCoverageAwareStat({ presentation: p.statPresentation, stats: p.stats, key, definition: oppDefinitions[key] })}</td>
                         `).join('');
                         return `
                             <tr class="bg-white hover:bg-gray-50 transition">
@@ -2226,7 +2334,7 @@ Write the match report now:`;
                         team,
                         game,
                         players,
-                        statsMap,
+                        statsMap: diamondGame ? publicCompleteStatsMap : statsMap,
                         timeMap,
                         events
                     }),

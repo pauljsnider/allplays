@@ -262,6 +262,7 @@
         import { hasFullTeamAccess } from './js/team-access.js?v=44338';
         import { getVisibleRosterFieldValues } from './js/roster-field-privacy.js';
         import { readAccountPremiumEntitlement, renderPremiumGateState } from './js/premium-entitlements.js?v=8';
+        import { DIAMOND_PLAYER_STAT_CATALOG, aggregateCoverageAwareSeasonStats, getCoverageAwareStatValue, getPublicDiamondStatCatalog, isDiamondV2Game, readCoverageAwareStatDocument } from './js/diamond-stat-presentation.js?v=1';
 
         let currentUser = null;
         let currentPlayer = null; // Store for modal access
@@ -271,6 +272,7 @@
         let privateProfileLoadFailed = false;
         let rosterFieldDefinitions = [];
         let currentCanEditRosterProfile = false;
+        let currentDiamondPlayerStatCatalog = DIAMOND_PLAYER_STAT_CATALOG;
         let privateFieldsDirty = {
             emergencyContact: false,
             medicalInfo: false
@@ -312,6 +314,76 @@
             const minutes = Math.floor(totalSeconds / 60);
             const seconds = totalSeconds % 60;
             return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+        }
+
+        function renderCoverageAwarePlayerStat(presentation, stats, definition) {
+            const key = definition?.id || definition;
+            if (presentation?.isDiamond !== true) {
+                return Object.prototype.hasOwnProperty.call(stats || {}, key)
+                    ? escapeHtml(String(stats[key]))
+                    : '&mdash;';
+            }
+            const displayed = getCoverageAwareStatValue(presentation, stats, key, definition || {});
+            const value = displayed.available ? escapeHtml(displayed.text) : '&mdash;';
+            return displayed.observed
+                ? `<span class="inline-flex flex-col items-center" title="Observed from partial tracking"><span>${value}</span><span class="text-[9px] font-bold uppercase tracking-wide text-amber-700">Observed</span></span>`
+                : value;
+        }
+
+        function renderPlayerStatCards(stats = {}, presentation = null) {
+            const definitions = presentation?.isDiamond === true
+                ? currentDiamondPlayerStatCatalog
+                : Object.keys(stats || {}).map((id) => ({ id, label: id }));
+            return definitions.map((definition) => `
+                <div class="text-center p-4 bg-white rounded-lg border border-gray-200 hover:border-primary-300 transition">
+                    <div class="text-2xl md:text-3xl font-bold text-primary-600">${renderCoverageAwarePlayerStat(presentation, stats, definition)}</div>
+                    <div class="text-xs text-gray-600 uppercase mt-1 font-medium">${escapeHtml(definition.label || definition.id)}</div>
+                </div>
+            `).join('');
+        }
+
+        function renderDiamondPlayerProjectionNotice(projection) {
+            document.getElementById('diamond-player-stats-status')?.remove();
+            if (!projection?.hasDiamond) return;
+            const notice = document.createElement('div');
+            notice.id = 'diamond-player-stats-status';
+            notice.className = `mb-8 rounded-2xl border px-5 py-4 ${projection.pending ? 'border-amber-200 bg-amber-50 text-amber-950' : 'border-sky-200 bg-sky-50 text-sky-950'}`;
+            notice.setAttribute('role', 'status');
+            notice.innerHTML = `
+                <div class="text-xs font-bold uppercase tracking-wider">Diamond scorebook stats &middot; Read only</div>
+                <div class="mt-1 text-sm font-semibold">${projection.pending
+                    ? 'One or more stat projections are pending. Unavailable values remain an em dash and are never counted as zero.'
+                    : 'Season values trace to the authoritative play ledger. Partial capture is labeled as observed.'}</div>
+                <div class="mt-1 text-xs font-semibold opacity-75">Source revisions: ${projection.sourceRevisions.length ? projection.sourceRevisions.join(', ') : 'unavailable'}</div>
+            `;
+            document.getElementById('player-header')?.insertAdjacentElement('afterend', notice);
+        }
+
+        function buildCompleteDiamondLeaderboardSnapshot({ config, players, completeStatsByPlayerId }) {
+            const publicTopDefinitions = (config?.statDefinitions || []).filter((definition) => (
+                definition?.topStat === true
+                && definition?.scope !== 'team'
+                && definition?.visibility !== 'private'
+            ));
+            const topStats = publicTopDefinitions.flatMap((definition) => {
+                const statId = String(definition?.id || '').trim().toLowerCase();
+                const eligiblePlayers = (players || []).filter((candidate) => (
+                    statId && Object.prototype.hasOwnProperty.call(completeStatsByPlayerId?.[candidate.id] || {}, statId)
+                ));
+                if (!eligiblePlayers.length) return [];
+                return buildPlayerLeaderboardSnapshot({
+                    config: { ...config, statDefinitions: [definition] },
+                    players: eligiblePlayers,
+                    seasonStatsByPlayerId: completeStatsByPlayerId
+                }).topStats;
+            });
+            const groupsById = new Map();
+            topStats.forEach((stat) => {
+                const groupId = String(stat.group || 'general').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'general';
+                if (!groupsById.has(groupId)) groupsById.set(groupId, { id: groupId, label: stat.group || 'General', stats: [] });
+                groupsById.get(groupId).stats.push(stat);
+            });
+            return { config, topStats, groups: [...groupsById.values()] };
         }
 
         function insightToneClasses(tone) {
@@ -479,19 +551,31 @@
         async function loadPlayerGameData(teamId, games, playerId, playerName) {
             return Promise.all(games.map(async (game) => {
                 const gameId = game.id;
+                const diamondGame = isDiamondV2Game(game);
                 const teamStatsByPlayerId = {};
+                const completeStatsByPlayerId = {};
+                const statPresentationByPlayerId = {};
+                const statDocuments = [];
                 let selectedPlayerStats = null;
 
                 try {
                     const statsSnapshot = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`));
                     statsSnapshot.forEach((docSnap) => {
                         const statData = docSnap.data() || {};
-                        const playerStats = statData.stats || {};
+                        const presentation = readCoverageAwareStatDocument(statData, game);
+                        const playerStats = presentation.isDiamond ? presentation.values : (statData.stats || {});
                         teamStatsByPlayerId[docSnap.id] = playerStats;
+                        completeStatsByPlayerId[docSnap.id] = presentation.isDiamond ? presentation.completeValues : playerStats;
+                        if (presentation.isDiamond) {
+                            statPresentationByPlayerId[docSnap.id] = presentation;
+                            statDocuments.push({ id: docSnap.id, data: statData });
+                        }
 
                         if (docSnap.id === playerId && hasPlayerProfileParticipation(statData)) {
                             selectedPlayerStats = {
                                 stats: playerStats,
+                                completeStats: completeStatsByPlayerId[docSnap.id],
+                                statPresentation: statPresentationByPlayerId[docSnap.id] || null,
                                 timeMs: typeof statData.timeMs === 'number' ? statData.timeMs : 0
                             };
                         }
@@ -503,7 +587,12 @@
                 if (!selectedPlayerStats) {
                     return {
                         gameId,
+                        game,
+                        diamondGame,
+                        statDocuments,
                         statsByPlayerId: teamStatsByPlayerId,
+                        completeStatsByPlayerId,
+                        statPresentationByPlayerId,
                         playerGameStats: null,
                         events: []
                     };
@@ -530,12 +619,19 @@
 
                 return {
                     gameId,
+                    game,
+                    diamondGame,
+                    statDocuments,
                     statsByPlayerId: teamStatsByPlayerId,
+                    completeStatsByPlayerId,
+                    statPresentationByPlayerId,
                     playerGameStats: {
                         gameId,
                         date: game.date.toDate ? game.date.toDate() : new Date(game.date),
                         opponent: game.opponent || 'Opponent',
                         stats: selectedPlayerStats.stats,
+                        completeStats: selectedPlayerStats.completeStats,
+                        statPresentation: selectedPlayerStats.statPresentation,
                         timeMs: selectedPlayerStats.timeMs
                     },
                     events
@@ -558,6 +654,9 @@
                     getGames(teamId),
                     getConfigs(teamId)
                 ]);
+                const resolvedDiamondConfig = selectAnalyticsConfig(configs, team?.sport || team?.baseType || '');
+                const diamondStatCatalog = getPublicDiamondStatCatalog(resolvedDiamondConfig, 'player');
+                currentDiamondPlayerStatCatalog = diamondStatCatalog;
                 rosterFieldDefinitions = normalizeRosterFieldDefinitions(await getRosterFieldDefinitions(teamId, team));
 
                 const player = players.find(p => p.id === playerId);
@@ -613,29 +712,38 @@
                 // Build per-game stats across all games
                 const perGameStats = [];
                 let gamesPlayed = 0;
-                const seasonTotals = {};
-                const seasonStatsByPlayerId = {};
+                let seasonTotals = {};
+                let seasonStatsByPlayerId = {};
+                let seasonCompleteStatsByPlayerId = {};
+                let seasonStatPresentation = null;
+                const legacySeasonStatsByPlayerId = {};
+                const diamondGames = [];
                 const allEvents = [];
                 let totalTimeMs = 0;
                 let gamesWithTime = 0;
                 const gameLoadResults = await loadPlayerGameData(teamId, games, playerId, player.name);
 
-                gameLoadResults.forEach(({ playerGameStats, statsByPlayerId, events }) => {
+                gameLoadResults.forEach(({ game, diamondGame, statDocuments, playerGameStats, statsByPlayerId, events }) => {
+                    if (diamondGame) {
+                        diamondGames.push({ game, documents: statDocuments });
+                    }
                     Object.entries(statsByPlayerId || {}).forEach(([statsPlayerId, playerStats]) => {
-                        if (!seasonStatsByPlayerId[statsPlayerId]) {
-                            seasonStatsByPlayerId[statsPlayerId] = {};
+                        if (!diamondGame) {
+                            legacySeasonStatsByPlayerId[statsPlayerId] ||= {};
+                            Object.entries(playerStats || {}).forEach(([stat, value]) => {
+                                legacySeasonStatsByPlayerId[statsPlayerId][stat] = (legacySeasonStatsByPlayerId[statsPlayerId][stat] || 0) + (Number(value) || 0);
+                            });
                         }
-                        Object.entries(playerStats || {}).forEach(([stat, value]) => {
-                            seasonStatsByPlayerId[statsPlayerId][stat] = (seasonStatsByPlayerId[statsPlayerId][stat] || 0) + (Number(value) || 0);
-                        });
                     });
 
                     if (playerGameStats) {
                         const { stats, timeMs } = playerGameStats;
                         gamesPlayed++;
-                        Object.entries(stats).forEach(([stat, value]) => {
-                            seasonTotals[stat] = (seasonTotals[stat] || 0) + value;
-                        });
+                        if (!diamondGame) {
+                            Object.entries(stats).forEach(([stat, value]) => {
+                                seasonTotals[stat] = (seasonTotals[stat] || 0) + value;
+                            });
+                        }
                         if (timeMs > 0) {
                             totalTimeMs += timeMs;
                             gamesWithTime++;
@@ -645,6 +753,27 @@
 
                     allEvents.push(...events);
                 });
+
+                if (diamondGames.length > 0) {
+                    const seasonProjection = aggregateCoverageAwareSeasonStats({
+                        legacyStatsByPlayerId: legacySeasonStatsByPlayerId,
+                        diamondGames
+                    });
+                    seasonStatsByPlayerId = seasonProjection.statsByPlayerId;
+                    seasonCompleteStatsByPlayerId = seasonProjection.completeStatsByPlayerId;
+                    seasonTotals = seasonStatsByPlayerId[playerId] || {};
+                    seasonStatPresentation = seasonProjection.presentationByPlayerId[playerId] || {
+                        isDiamond: true,
+                        statCoverage: {},
+                        observedStatKeys: [],
+                        unavailableStatKeys: diamondStatCatalog.map((definition) => definition.id),
+                        projectionPending: true
+                    };
+                    renderDiamondPlayerProjectionNotice(seasonProjection.projection);
+                } else {
+                    seasonStatsByPlayerId = legacySeasonStatsByPlayerId;
+                    seasonCompleteStatsByPlayerId = legacySeasonStatsByPlayerId;
+                }
 
                 // Choose a primary game for back link and insights. Honor a requested game
                 // even when the player has a filtered DNP/zero-stat entry for that game.
@@ -706,9 +835,17 @@
                 configurePublicPlayerShare({ team, player, teamId, playerId, gameId });
 
                 // Calculate key stats for overview
-                const statKeys = Object.keys(seasonTotals);
+                const hasDiamondStats = diamondGames.length > 0;
+                const statKeys = hasDiamondStats
+                    ? diamondStatCatalog
+                        .filter((definition) => !definition.formula
+                            && seasonStatPresentation?.statCoverage?.[definition.id] === 'complete'
+                            && Object.prototype.hasOwnProperty.call(seasonTotals, definition.id))
+                        .map((definition) => definition.id)
+                    : Object.keys(seasonTotals);
                 const averages = {};
-                Object.entries(seasonTotals).forEach(([stat, total]) => {
+                statKeys.forEach((stat) => {
+                    const total = seasonTotals[stat];
                     averages[stat] = (total / gamesPlayed).toFixed(1);
                 });
 
@@ -728,14 +865,28 @@
                     });
                 }
 
-                statKeys.forEach(stat => {
-                    if (overviewCards.length >= 4) return;
-                    overviewCards.push({
-                        label: stat,
-                        value: averages[stat],
-                        sub: 'per game'
+                if (hasDiamondStats) {
+                    diamondStatCatalog
+                        .filter((definition) => definition.topStat === true)
+                        .forEach((definition) => {
+                            if (overviewCards.length >= 4) return;
+                            const displayed = getCoverageAwareStatValue(seasonStatPresentation, seasonTotals, definition.id, definition);
+                            overviewCards.push({
+                                label: definition.label,
+                                value: displayed.text,
+                                sub: displayed.observed ? 'Observed · partial tracking' : (displayed.available ? 'season' : 'not collected')
+                            });
+                        });
+                } else {
+                    statKeys.forEach(stat => {
+                        if (overviewCards.length >= 4) return;
+                        overviewCards.push({
+                            label: stat,
+                            value: averages[stat],
+                            sub: 'per game'
+                        });
                     });
-                });
+                }
 
                 while (overviewCards.length < 4) {
                     overviewCards.push({ label: '—', value: '—', sub: '' });
@@ -751,7 +902,10 @@
 
                 if (gameId && selectedGame) {
                     const selectedStats = perGameStats.find((entry) => entry.gameId === selectedGameId) || null;
-                    const gameTeamStats = gameLoadResults.find((entry) => entry.gameId === selectedGameId)?.statsByPlayerId || {};
+                    const selectedGameLoad = gameLoadResults.find((entry) => entry.gameId === selectedGameId);
+                    const gameTeamStats = selectedGameLoad?.diamondGame
+                        ? (selectedGameLoad.completeStatsByPlayerId || {})
+                        : (selectedGameLoad?.statsByPlayerId || {});
                     const selectedEvents = allEvents
                         .filter((event) => event.gameId === selectedGameId)
                         .map((event) => ({
@@ -761,7 +915,7 @@
                     renderPlayerGameInsights(selectedGame, generatePlayerGameInsights({
                         player,
                         game: selectedGame,
-                        playerStats: selectedStats?.stats || {},
+                        playerStats: selectedStats?.completeStats || selectedStats?.stats || {},
                         playerTimeMs: selectedStats?.timeMs || 0,
                         gameTeamStats,
                         events: selectedEvents
@@ -773,22 +927,31 @@
                 const gameStatsForDisplay = [...perGameStats];
                 if (requestedGame && selectedGame && selectedGameId && !gameStatsForDisplay.some((entry) => entry.gameId === selectedGameId)) {
                     const selectedStatsByPlayerId = gameLoadResults.find((entry) => entry.gameId === selectedGameId)?.statsByPlayerId || {};
+                    const selectedPresentationByPlayerId = gameLoadResults.find((entry) => entry.gameId === selectedGameId)?.statPresentationByPlayerId || {};
                     gameStatsForDisplay.push({
                         gameId: selectedGameId,
                         date: selectedGame.date?.toDate ? selectedGame.date.toDate() : new Date(selectedGame.date),
                         opponent: selectedGame.opponent || 'Opponent',
                         stats: selectedStatsByPlayerId[playerId] || {},
+                        completeStats: gameLoadResults.find((entry) => entry.gameId === selectedGameId)?.completeStatsByPlayerId?.[playerId] || selectedStatsByPlayerId[playerId] || {},
+                        statPresentation: selectedPresentationByPlayerId[playerId] || null,
                         timeMs: 0
                     });
                 }
 
-                const analyticsConfig = selectAnalyticsConfig(configs, team?.sport || team?.baseType || '');
+                const analyticsConfig = resolvedDiamondConfig;
                 const leaderboardSnapshot = analyticsConfig
-                    ? buildPlayerLeaderboardSnapshot({
-                        config: analyticsConfig,
-                        players,
-                        seasonStatsByPlayerId
-                    })
+                    ? (hasDiamondStats
+                        ? buildCompleteDiamondLeaderboardSnapshot({
+                            config: analyticsConfig,
+                            players,
+                            completeStatsByPlayerId: seasonCompleteStatsByPlayerId
+                        })
+                        : buildPlayerLeaderboardSnapshot({
+                            config: analyticsConfig,
+                            players,
+                            seasonStatsByPlayerId
+                        }))
                     : null;
                 const playerTopStats = summarizePlayerTopStats(leaderboardSnapshot, playerId);
 
@@ -810,8 +973,8 @@
                     const trends = {};
 
                     statKeys.forEach(stat => {
-                        const recentAvg = recentGames.reduce((sum, g) => sum + (g.stats[stat] || 0), 0) / recentGames.length;
-                        const earlierAvg = earlierGames.reduce((sum, g) => sum + (g.stats[stat] || 0), 0) / earlierGames.length;
+                        const recentAvg = recentGames.reduce((sum, g) => sum + ((g.completeStats || g.stats)[stat] || 0), 0) / recentGames.length;
+                        const earlierAvg = earlierGames.reduce((sum, g) => sum + ((g.completeStats || g.stats)[stat] || 0), 0) / earlierGames.length;
                         const change = recentAvg - earlierAvg;
                         trends[stat] = {
                             direction: change > 0 ? 'up' : change < 0 ? 'down' : 'neutral',
@@ -822,7 +985,7 @@
                     // Find max value for each stat to normalize progress bars
                     const maxValues = {};
                     statKeys.forEach(stat => {
-                        maxValues[stat] = Math.max(...perGameStats.map(g => g.stats[stat] || 0), parseFloat(averages[stat]));
+                        maxValues[stat] = Math.max(...perGameStats.map(g => (g.completeStats || g.stats)[stat] || 0), parseFloat(averages[stat]));
                     });
 
                     advancedStatsDiv.innerHTML = `
@@ -905,11 +1068,11 @@
                                 ${(() => {
                             const recent5 = [...perGameStats].sort((a, b) => b.date - a.date).slice(0, 5).reverse();
                             const primaryStat = statKeys[0];
-                            const maxInRecent = Math.max(...recent5.map(g => g.stats[primaryStat] || 0));
+                            const maxInRecent = Math.max(...recent5.map(g => (g.completeStats || g.stats)[primaryStat] || 0));
                             return `
                                         <div class="flex items-end justify-around gap-2 h-48 bg-gradient-to-t from-gray-50 to-transparent rounded-lg p-4">
                                             ${recent5.map((g, idx) => {
-                                const value = g.stats[primaryStat] || 0;
+                                const value = (g.completeStats || g.stats)[primaryStat] || 0;
                                 const height = maxInRecent > 0 ? (value / maxInRecent) * 100 : 0;
                                 return `
                                                     <div class="flex-1 flex flex-col items-center gap-2">
@@ -1052,12 +1215,7 @@
                                         <div class="text-xs text-gray-600 uppercase mt-1 font-medium">MIN</div>
                                     </div>
                                 ` : ''}
-                                ${Object.entries(g.stats).map(([stat, value]) => `
-                                    <div class="text-center p-4 bg-white rounded-lg border border-gray-200 hover:border-primary-300 transition">
-                                        <div class="text-2xl md:text-3xl font-bold text-primary-600">${value}</div>
-                                        <div class="text-xs text-gray-600 uppercase mt-1 font-medium">${stat}</div>
-                                    </div>
-                                `).join('')}
+                                ${renderPlayerStatCards(g.stats, g.statPresentation)}
                             </div>
                         </div>
                     `).join('');
@@ -1097,27 +1255,39 @@
                                 ` : ''}
                             </div>
                         </div>
-                        <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-                            ${Object.entries(averages).map(([stat, avg]) => `
-                                <div class="bg-gradient-to-br from-white to-gray-50 rounded-xl p-6 border border-gray-200 hover:border-primary-300 hover:shadow-lg transition text-center">
-                                    <div class="text-3xl md:text-4xl font-bold text-primary-600 mb-2">${avg}</div>
-                                    <div class="text-sm text-gray-600 uppercase font-semibold tracking-wide">${stat}</div>
-                                    <div class="text-xs text-gray-400 mt-1">avg</div>
+                        ${hasDiamondStats ? `
+                            <div class="p-6 bg-gradient-to-r from-gray-50 to-white rounded-xl border border-gray-200">
+                                <div class="mb-4">
+                                    <h3 class="text-lg font-bold text-gray-900">Season Stat Catalog</h3>
+                                    <p class="mt-1 text-sm text-gray-500">Complete values and labeled partial observations from the Diamond ledger.</p>
                                 </div>
-                            `).join('')}
-                        </div>
-
-                        <div class="mt-8 p-6 bg-gradient-to-r from-gray-50 to-white rounded-xl border border-gray-200">
-                            <h3 class="text-lg font-bold text-gray-900 mb-4">Season Totals</h3>
+                                <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                                    ${renderPlayerStatCards(seasonTotals, seasonStatPresentation)}
+                                </div>
+                            </div>
+                        ` : `
                             <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-                                ${Object.entries(seasonTotals).map(([stat, total]) => `
-                                    <div class="text-center">
-                                        <div class="text-2xl font-bold text-gray-900">${total}</div>
-                                        <div class="text-xs text-gray-500 uppercase mt-1">${stat}</div>
+                                ${Object.entries(averages).map(([stat, avg]) => `
+                                    <div class="bg-gradient-to-br from-white to-gray-50 rounded-xl p-6 border border-gray-200 hover:border-primary-300 hover:shadow-lg transition text-center">
+                                        <div class="text-3xl md:text-4xl font-bold text-primary-600 mb-2">${avg}</div>
+                                        <div class="text-sm text-gray-600 uppercase font-semibold tracking-wide">${stat}</div>
+                                        <div class="text-xs text-gray-400 mt-1">avg</div>
                                     </div>
                                 `).join('')}
                             </div>
-                        </div>
+
+                            <div class="mt-8 p-6 bg-gradient-to-r from-gray-50 to-white rounded-xl border border-gray-200">
+                                <h3 class="text-lg font-bold text-gray-900 mb-4">Season Totals</h3>
+                                <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                                    ${Object.entries(seasonTotals).map(([stat, total]) => `
+                                        <div class="text-center">
+                                            <div class="text-2xl font-bold text-gray-900">${total}</div>
+                                            <div class="text-xs text-gray-500 uppercase mt-1">${stat}</div>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+                        `}
                     `;
                 } else {
                     seasonStatsDiv.innerHTML = `

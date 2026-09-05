@@ -34,6 +34,13 @@ import {
 } from './adapters/legacyPlayerDb';
 import { createSecureUploadToken } from './secureUploadToken';
 import {
+  aggregateCoverageAwareSeasonStats,
+  getPublicDiamondStatCatalog,
+  isDiamondV2Game,
+  readCoverageAwareStatDocument,
+  type CoverageAwareStatPresentation
+} from './adapters/legacyDiamondStatPresentation';
+import {
   buildAthleteProfileShareUrl,
   buildPlayerLeaderboardSnapshot,
   calculateEarnings,
@@ -85,6 +92,10 @@ export type ParentPlayerStatRow = {
   event: ParentScheduleEvent;
   stats: Record<string, unknown>;
   timeMs?: number;
+  completeStats?: Record<string, unknown>;
+  statPresentation?: CoverageAwareStatPresentation;
+  participated?: boolean;
+  statDefinitions?: ReadonlyArray<Record<string, unknown>>;
 };
 
 export type ParentPlayerTopStat = {
@@ -130,6 +141,13 @@ export type ParentPlayerStatsSummary = {
   trends: ParentPlayerTrend[];
   gameLimit: number;
   hasMoreGames: boolean;
+  statDefinitions?: Array<Record<string, unknown>>;
+  statPresentation?: CoverageAwareStatPresentation;
+  diamond?: {
+    hasDiamond: boolean;
+    pending: boolean;
+    sourceRevisions: readonly number[];
+  };
 };
 
 export type ParentPlayerStatsDetailData = {
@@ -144,6 +162,12 @@ export type ParentPlayerStatTotals = {
   gameCount: number;
   gameIds: string[];
   totals: Record<string, number>;
+  statPresentation?: CoverageAwareStatPresentation;
+  diamond?: {
+    hasDiamond: boolean;
+    pending: boolean;
+    sourceRevisions: readonly number[];
+  };
 };
 
 export type ParentPlayerPrivateProfile = {
@@ -324,7 +348,8 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
     incentiveRules,
     paidGames,
     maxPerGameCents,
-    statOptions
+    statOptions,
+    configs
   ] = await Promise.all([
     getPlayers(resolvedTeamId, { includeInactive: true }).catch(() => []),
     listCertificatesForPlayer(resolvedTeamId, resolvedPlayerId, { status: 'published', limit: 5 }).catch(() => []),
@@ -335,7 +360,8 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
     routeAccess.isLinkedParent ? getIncentiveRules(user.uid, resolvedPlayerId).catch(() => []) : Promise.resolve([]),
     routeAccess.isLinkedParent ? getPaidGames(user.uid, resolvedPlayerId).catch(() => new Map()) : Promise.resolve(new Map()),
     routeAccess.isLinkedParent ? getCapSetting(user.uid, resolvedPlayerId).catch(() => null) : Promise.resolve(null),
-    getStatOptionsForTeam(resolvedTeamId).catch(() => [])
+    getStatOptionsForTeam(resolvedTeamId).catch(() => []),
+    getConfigs(resolvedTeamId).catch(() => [])
   ]);
 
   const playerDoc = (Array.isArray(players) ? players : []).find((candidate: LegacyPlayerRecord) => candidate?.id === resolvedPlayerId) || {};
@@ -362,11 +388,31 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
     .filter((event) => event.type === 'game' && event.isDbGame && isPastOrCompleted(event))
     .sort((a, b) => b.date.getTime() - a.date.getTime())
     .slice(0, 6);
+  const publicDiamondStatDefinitions = getPublicDiamondStatCatalog(
+    selectAnalyticsConfig(configs, String(team?.sport || team?.baseType || '')),
+    'player'
+  );
+  const publicDiamondStatIds = new Set(publicDiamondStatDefinitions.map((definition) => String(definition.id || '')));
 
-  const statRows = await Promise.all(completedGameEvents.map(async (event) => ({
-    event,
-    stats: await getAggregatedStatsForPlayer(resolvedTeamId, event.id, resolvedPlayerId).catch(() => ({})) || {}
-  })));
+  const statRows = await Promise.all(completedGameEvents.map(async (event): Promise<ParentPlayerStatRow> => {
+    if (!isDiamondV2Game(event)) {
+      return {
+        event,
+        stats: await getAggregatedStatsForPlayer(resolvedTeamId, event.id, resolvedPlayerId).catch(() => ({})) || {}
+      };
+    }
+    const statDocument: Record<string, any> = await getAggregatedStatsDocumentForPlayer(resolvedTeamId, event.id, resolvedPlayerId).catch(() => ({})) || {};
+    const presentation = readCoverageAwareStatDocument(statDocument, event);
+    return {
+      event,
+      stats: filterStatRecordByIds(presentation.values, publicDiamondStatIds),
+      completeStats: filterStatRecordByIds(presentation.completeValues, publicDiamondStatIds),
+      statPresentation: presentation,
+      statDefinitions: publicDiamondStatDefinitions,
+      participated: statDocument?.participated === true,
+      timeMs: getGamePlayerTimeMs(event, resolvedPlayerId, presentation.values, statDocument)
+    };
+  }));
 
   const trackingSummary = getVisiblePlayerTrackingSummary({
     items: trackingItems,
@@ -411,7 +457,9 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
       paidGames,
       statOptions,
       maxPerGameCents,
-      statRows
+      statRows: statRows.map((row) => row.statPresentation?.isDiamond
+        ? { ...row, stats: row.completeStats || {} }
+        : row)
     }),
     athleteProfile: buildParentAthleteProfileShell(
       Array.isArray(accessUser.parentOf) ? accessUser.parentOf : [],
@@ -454,30 +502,82 @@ async function loadParentPlayerStatsDetailUncached(user: AuthUser, teamId: strin
     .filter(isCompletedGame)
     .sort((a, b) => getGameDate(b).getTime() - getGameDate(a).getTime());
   const limitedGames = completedGames.slice(0, playerStatsDetailGameLimit);
-  const statRows = await Promise.all(limitedGames.map(async (game) => {
-    const statDocument = await getAggregatedStatsDocumentForPlayer(teamId, String(game.id || ''), playerId).catch(() => ({})) || {};
-    const stats = getAggregatedStatsDocumentStats(statDocument);
+  const publicDiamondStatDefinitions = getPublicDiamondStatCatalog(
+    selectAnalyticsConfig(configs, String(team?.sport || team?.baseType || '')),
+    'player'
+  );
+  const publicDiamondStatIds = new Set(publicDiamondStatDefinitions.map((definition) => String(definition.id || '')));
+  const loadedStatRows = await Promise.all(limitedGames.map(async (game) => {
+    const statDocument: Record<string, any> = await getAggregatedStatsDocumentForPlayer(teamId, String(game.id || ''), playerId).catch(() => ({})) || {};
+    const presentation = readCoverageAwareStatDocument(statDocument, game);
+    const stats = presentation.isDiamond
+      ? filterStatRecordByIds(presentation.values, publicDiamondStatIds)
+      : getAggregatedStatsDocumentStats(statDocument);
+    const completeStats = presentation.isDiamond
+      ? filterStatRecordByIds(presentation.completeValues, publicDiamondStatIds)
+      : stats;
     return {
+      game,
+      statDocument,
       event: buildStatsEventFromGame(game, teamId, team, playerId),
       stats,
+      completeStats,
+      statPresentation: presentation.isDiamond ? presentation : undefined,
+      statDefinitions: presentation.isDiamond ? publicDiamondStatDefinitions : undefined,
+      participated: statDocument?.participated === true,
       timeMs: getGamePlayerTimeMs(game, playerId, stats, statDocument)
     };
   }));
+  const statRows: ParentPlayerStatRow[] = loadedStatRows.map(({ event, stats, completeStats, statPresentation, statDefinitions, participated, timeMs }) => ({
+    event,
+    stats,
+    completeStats,
+    ...(statPresentation ? { statPresentation } : {}),
+    ...(statDefinitions ? { statDefinitions } : {}),
+    participated,
+    timeMs
+  }));
 
-  const participatingRows = statRows.filter((row) => hasStatParticipation(row.stats, row.timeMs));
-  const totals = buildStatTotals(participatingRows);
+  const participatingRows = statRows.filter((row) => row.participated === true || hasStatParticipation(row.stats, row.timeMs));
   const gamesPlayed = participatingRows.length;
-  const averages = buildStatAverages(totals, gamesPlayed);
+  const diamondGames = loadedStatRows
+    .filter(({ game }) => isDiamondV2Game(game))
+    .map(({ game, statDocument }) => ({
+      game,
+      documents: Object.keys(statDocument || {}).length ? [{ id: playerId, data: statDocument }] : []
+    }));
+  const legacyTotals = buildStatTotals(loadedStatRows
+    .filter(({ game }) => !isDiamondV2Game(game))
+    .map(({ event, stats, timeMs }) => ({ event, stats, timeMs })));
+  const seasonProjection = aggregateCoverageAwareSeasonStats({
+    legacyStatsByPlayerId: { [playerId]: legacyTotals },
+    diamondGames
+  });
+  const hasDiamondStats = diamondGames.length > 0;
+  const totals = hasDiamondStats
+    ? normalizeNumericStatRecord(seasonProjection.statsByPlayerId[playerId] || {}, publicDiamondStatIds)
+    : buildStatTotals(participatingRows);
+  const completeTotals = hasDiamondStats
+    ? normalizeNumericStatRecord(seasonProjection.completeStatsByPlayerId[playerId] || {}, publicDiamondStatIds)
+    : totals;
+  const averages = buildStatAverages(completeTotals, gamesPlayed);
   const totalTimeMs = participatingRows.reduce((total, row) => total + (Number(row.timeMs || 0) || 0), 0);
   const gamesWithTime = participatingRows.filter((row) => Number(row.timeMs || 0) > 0).length;
-  const trends = buildPlayerTrends(participatingRows);
+  const trendRows = participatingRows.map((row) => ({
+    ...row,
+    stats: row.statPresentation?.isDiamond ? (row.completeStats || {}) : row.stats
+  }));
+  const trends = buildPlayerTrends(trendRows, hasDiamondStats ? Object.keys(completeTotals) : undefined);
   const topStats = await buildConfiguredTopStats({
     teamId,
     playerId,
     players: Array.isArray(players) ? players : [],
     games: limitedGames,
     configs,
-    team
+    team,
+    seasonStatsByPlayerId: hasDiamondStats
+      ? filterStatsByPlayerIds(seasonProjection.completeStatsByPlayerId, publicDiamondStatIds)
+      : undefined
   });
   const gameEventRows = await loadPlayerGameEventRows({ teamId, playerId, games: limitedGames, team });
 
@@ -491,7 +591,18 @@ async function loadParentPlayerStatsDetailUncached(user: AuthUser, teamId: strin
       topStats,
       trends,
       gameLimit: playerStatsDetailGameLimit,
-      hasMoreGames: completedGames.length > limitedGames.length
+      hasMoreGames: completedGames.length > limitedGames.length,
+      ...(hasDiamondStats ? {
+        statDefinitions: publicDiamondStatDefinitions.map((definition) => ({ ...definition })),
+        statPresentation: seasonProjection.presentationByPlayerId[playerId] || {
+          isDiamond: true,
+          statCoverage: {},
+          observedStatKeys: [],
+          unavailableStatKeys: publicDiamondStatDefinitions.map((definition) => String(definition.id || '')),
+          projectionPending: true
+        },
+        diamond: seasonProjection.projection
+      } : {})
     },
     statRows: participatingRows,
     gameEventRows
@@ -562,28 +673,66 @@ export async function loadParentPlayerStatTotals(user: AuthUser | null, teamId: 
     throw new Error('This player is not linked to your account.');
   }
 
-  const games = await getGames(requestedTeamId).catch(() => []);
-  const gameIds = (Array.isArray(games) ? games : [])
+  const [games, configs] = await Promise.all([
+    getGames(requestedTeamId).catch(() => []),
+    getConfigs(requestedTeamId).catch(() => [])
+  ]);
+  const normalizedGames = Array.isArray(games) ? games : [];
+  const gameIds = normalizedGames
     .map((game: any) => String(game?.id || game?.gameId || '').trim())
     .filter(Boolean);
-  const totalsByPlayer: Record<string, Record<string, unknown>> = gameIds.length
-    ? await getAggregatedStatsForGames(requestedTeamId, gameIds).catch(() => ({}))
+  const diamondGames = normalizedGames.filter((game: any) => isDiamondV2Game(game));
+  const publicDiamondStatDefinitions = getPublicDiamondStatCatalog(
+    selectAnalyticsConfig(configs, String(team?.sport || team?.baseType || '')),
+    'player'
+  );
+  const publicDiamondStatIds = new Set(publicDiamondStatDefinitions.map((definition) => String(definition.id || '')));
+  const diamondGameIds = new Set(diamondGames.map((game: any) => String(game?.id || game?.gameId || '').trim()).filter(Boolean));
+  const legacyGameIds = gameIds.filter((gameId) => !diamondGameIds.has(gameId));
+  const legacyTotalsByPlayer: Record<string, Record<string, unknown>> = legacyGameIds.length
+    ? await getAggregatedStatsForGames(requestedTeamId, legacyGameIds).catch(() => ({}))
     : {};
-  const rawTotals = totalsByPlayer?.[requestedPlayerId] || {};
-  const totals = Object.entries(rawTotals).reduce<Record<string, number>>((acc, [key, value]) => {
-    const numeric = Number(value);
-    if (key && Number.isFinite(numeric)) {
-      acc[key] = numeric;
-    }
-    return acc;
-  }, {});
+
+  if (!diamondGames.length) {
+    return {
+      teamId: requestedTeamId,
+      playerId: requestedPlayerId,
+      gameCount: gameIds.length,
+      gameIds,
+      totals: normalizeNumericStatRecord(legacyTotalsByPlayer?.[requestedPlayerId] || {})
+    };
+  }
+
+  const diamondDocuments = await Promise.all(diamondGames.map(async (game: any) => {
+    const diamondGameId = String(game?.id || game?.gameId || '').trim();
+    const data = diamondGameId
+      ? await getAggregatedStatsDocumentForPlayer(requestedTeamId, diamondGameId, requestedPlayerId).catch(() => ({})) || {}
+      : {};
+    return {
+      game,
+      documents: Object.keys(data).length ? [{ id: requestedPlayerId, data }] : []
+    };
+  }));
+  const projection = aggregateCoverageAwareSeasonStats({
+    legacyStatsByPlayerId: legacyTotalsByPlayer,
+    diamondGames: diamondDocuments
+  });
+  const statPresentation = projection.presentationByPlayerId[requestedPlayerId] || {
+    isDiamond: true,
+    statCoverage: {},
+    observedStatKeys: [],
+    unavailableStatKeys: publicDiamondStatDefinitions.map((definition) => String(definition.id || '')),
+    projectionPending: true
+  };
 
   return {
     teamId: requestedTeamId,
     playerId: requestedPlayerId,
     gameCount: gameIds.length,
     gameIds,
-    totals
+    totals: normalizeNumericStatRecord(projection.statsByPlayerId[requestedPlayerId] || {}, publicDiamondStatIds),
+    statPresentation,
+    diamond: projection.projection
   };
 }
 
@@ -625,6 +774,10 @@ function buildStatsEventFromGame(game: Record<string, any>, teamId: string, team
     liveStatus: game?.liveStatus || null,
     homeScore: typeof game?.homeScore === 'number' ? game.homeScore : null,
     awayScore: typeof game?.awayScore === 'number' ? game.awayScore : null,
+    trackingEngine: game?.trackingEngine || null,
+    diamondRevision: Number.isSafeInteger(Number(game?.diamondProjectionRevision ?? game?.diamondRevision))
+      ? Number(game?.diamondProjectionRevision ?? game?.diamondRevision)
+      : null,
     statTrackerConfigId: game?.statTrackerConfigId || null,
     assignments: [],
     openAssignmentCount: 0
@@ -662,21 +815,50 @@ function buildStatTotals(rows: ParentPlayerStatRow[]) {
   return totals;
 }
 
+function normalizeNumericStatRecord(value: Record<string, unknown>, allowedIds?: ReadonlySet<string>) {
+  return Object.entries(value || {}).reduce<Record<string, number>>((result, [key, rawValue]) => {
+    const numeric = Number(rawValue);
+    if (key && (!allowedIds || allowedIds.has(key)) && Number.isFinite(numeric)) result[key] = numeric;
+    return result;
+  }, {});
+}
+
+function filterStatRecordByIds(value: Record<string, unknown>, allowedIds: ReadonlySet<string>) {
+  return Object.fromEntries(Object.entries(value || {}).filter(([key]) => allowedIds.has(key)));
+}
+
+function filterStatsByPlayerIds(
+  value: Record<string, Record<string, unknown>>,
+  allowedIds: ReadonlySet<string>
+) {
+  return Object.fromEntries(Object.entries(value || {}).map(([playerId, stats]) => [
+    playerId,
+    filterStatRecordByIds(stats, allowedIds)
+  ]));
+}
+
 function buildStatAverages(totals: Record<string, number>, gamesPlayed: number) {
   if (gamesPlayed <= 0) return {};
   return Object.fromEntries(Object.entries(totals).map(([key, total]) => [key, total / gamesPlayed]));
 }
 
-function buildPlayerTrends(rows: ParentPlayerStatRow[]): ParentPlayerTrend[] {
+function buildPlayerTrends(rows: ParentPlayerStatRow[], allowedStatKeys?: string[]): ParentPlayerTrend[] {
   const chronological = [...rows].sort((a, b) => a.event.date.getTime() - b.event.date.getTime());
   if (chronological.length < 2) return [];
   const earlier = chronological.slice(0, Math.min(3, chronological.length));
   const recent = chronological.slice(-Math.min(3, chronological.length));
-  const keys = Object.keys(buildStatTotals(rows)).slice(0, 5);
+  const keys = (allowedStatKeys || Object.keys(buildStatTotals(rows))).slice(0, 5);
 
-  return keys.map((key) => {
-    const earlierAverage = averageStat(earlier, key);
-    const recentAverage = averageStat(recent, key);
+  return keys.map((key): ParentPlayerTrend | null => {
+    const earlierRows = allowedStatKeys
+      ? earlier.filter((row) => Object.prototype.hasOwnProperty.call(row.stats || {}, key))
+      : earlier;
+    const recentRows = allowedStatKeys
+      ? recent.filter((row) => Object.prototype.hasOwnProperty.call(row.stats || {}, key))
+      : recent;
+    if (!earlierRows.length || !recentRows.length) return null;
+    const earlierAverage = averageStat(earlierRows, key);
+    const recentAverage = averageStat(recentRows, key);
     const change = recentAverage - earlierAverage;
     const percentChange = earlierAverage > 0 ? Math.round((change / earlierAverage) * 100) : (change > 0 ? 100 : 0);
     return {
@@ -687,7 +869,7 @@ function buildPlayerTrends(rows: ParentPlayerStatRow[]): ParentPlayerTrend[] {
       direction: change > 0 ? 'up' : change < 0 ? 'down' : 'neutral',
       percentChange
     };
-  });
+  }).filter((trend): trend is ParentPlayerTrend => !!trend);
 }
 
 function averageStat(rows: ParentPlayerStatRow[], key: string) {
@@ -701,7 +883,8 @@ async function buildConfiguredTopStats({
   players,
   games,
   configs,
-  team
+  team,
+  seasonStatsByPlayerId: suppliedSeasonStatsByPlayerId
 }: {
   teamId: string;
   playerId: string;
@@ -709,6 +892,7 @@ async function buildConfiguredTopStats({
   games: Record<string, any>[];
   configs: Record<string, any>[];
   team: LegacyTeamRecord | null;
+  seasonStatsByPlayerId?: Record<string, Record<string, unknown>>;
 }): Promise<ParentPlayerTopStat[]> {
   const analyticsConfig = selectAnalyticsConfig(configs, String(team?.sport || team?.baseType || ''));
   const topDefinitions = Array.isArray(analyticsConfig?.statDefinitions)
@@ -716,7 +900,32 @@ async function buildConfiguredTopStats({
     : [];
   if (!analyticsConfig || !topDefinitions.length || !games.length) return [];
 
-  const seasonStatsByPlayerId = await getAggregatedStatsForGames(teamId, games.map((game) => String(game.id || '')).filter(Boolean)).catch(() => ({}));
+  const seasonStatsByPlayerId: Record<string, Record<string, unknown>> = suppliedSeasonStatsByPlayerId
+    || await getAggregatedStatsForGames(teamId, games.map((game) => String(game.id || '')).filter(Boolean)).catch(() => ({}));
+  if (suppliedSeasonStatsByPlayerId) {
+    const summaries = topDefinitions.flatMap((definition: any) => {
+      const statId = String(definition?.id || '').trim().toLowerCase();
+      const eligiblePlayers = players.filter((player) => {
+        const candidateId = String(player?.id || '').trim();
+        return Boolean(statId && candidateId && Object.prototype.hasOwnProperty.call(seasonStatsByPlayerId?.[candidateId] || {}, statId));
+      });
+      if (!eligiblePlayers.length) return [];
+      const snapshot = buildPlayerLeaderboardSnapshot({
+        config: { ...analyticsConfig, statDefinitions: [definition] },
+        players: eligiblePlayers,
+        seasonStatsByPlayerId
+      });
+      return summarizePlayerTopStats(snapshot, playerId);
+    });
+    return summaries.map((stat: any) => ({
+      id: String(stat.id || ''),
+      label: String(stat.label || stat.id || 'Stat'),
+      rank: Number(stat.rank || 0),
+      totalPlayers: Number(stat.totalPlayers || 0),
+      value: Number(stat.value || 0),
+      formattedValue: String(stat.formattedValue || stat.value || '0')
+    })).filter((stat: ParentPlayerTopStat) => stat.id && stat.rank > 0);
+  }
   const snapshot = buildPlayerLeaderboardSnapshot({
     config: analyticsConfig,
     players,

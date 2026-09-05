@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { GameReportSections } from './GameReportSections';
 
@@ -64,6 +64,51 @@ function buildReport(summary: string, gameOverrides: Record<string, unknown> = {
 }
 
 describe('GameReportSections', () => {
+  it('labels partial Diamond observations and renders not-collected values as em dashes', async () => {
+    gameReportServiceMocks.loadGameReportSections.mockResolvedValue({
+      ...buildReport('', { trackingEngine: 'diamond-v2' }),
+      diamond: {
+        isDiamond: true,
+        readOnly: true,
+        status: 'pending',
+        pending: true,
+        authoritativeRevision: 9,
+        sourceRevisions: [8]
+      },
+      statKeys: ['h', 'sb', 'era', 'whip'],
+      statLabels: { h: 'H', sb: 'SB', era: 'ERA', whip: 'WHIP' },
+      statDefinitions: { era: { precision: 2 }, whip: { precision: 2 } },
+      playerRows: [{
+        playerId: 'player-1',
+        playerName: 'Avery Smith',
+        number: '1',
+        stats: { h: 0, sb: 2 },
+        timeMs: 0,
+        didNotPlay: false,
+        statPresentation: {
+          isDiamond: true,
+          statCoverage: { h: 'complete', sb: 'partial', era: 'not_collected', whip: 'not_collected' },
+          observedStatKeys: ['sb'],
+          unavailableStatKeys: ['era', 'whip']
+        }
+      }],
+      visiblePlayerRows: [],
+      deferredPlayerRows: []
+    });
+
+    render(<GameReportSections event={buildEvent()} />);
+    await waitFor(() => expect(screen.getByText('Diamond scorebook · Read only')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Players' }));
+
+    const player = screen.getByRole('link', { name: /Avery Smith/i });
+    expect(within(player).getByText('Observed')).toBeTruthy();
+    expect(within(player).getAllByLabelText('Not collected')).toHaveLength(2);
+    expect(within(player).getAllByText('—')).toHaveLength(2);
+    expect(within(player).getByLabelText('0')).toBeTruthy();
+    expect(screen.getByText(/projection is pending/i)).toBeTruthy();
+    expect(screen.getByText('Ledger rev 9 · Stats rev 8')).toBeTruthy();
+  });
+
   it('keeps the empty play state primary and hides audio controls until a play exists', async () => {
     gameReportServiceMocks.loadGameReportSections.mockResolvedValue(buildReport('Live report.'));
 

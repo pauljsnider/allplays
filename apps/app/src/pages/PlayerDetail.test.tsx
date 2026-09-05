@@ -597,6 +597,60 @@ describe('PlayerDetail athlete profile season selection', () => {
     expect(await screen.findByText('PTS · 2')).toBeTruthy();
   });
 
+  it('renders Diamond partial observations and not-collected season stats without zero filling', async () => {
+    const gameEvent = {
+      eventKey: 'team-current-game-1-player-current',
+      id: 'game-1',
+      teamId: 'team-current',
+      teamName: 'Current Team',
+      type: 'game',
+      date: new Date('2026-03-01T18:00:00Z'),
+      location: '',
+      opponent: 'Owls',
+      childId: 'player-current',
+      childName: 'Sam Player',
+      isDbGame: true,
+      isCancelled: false,
+      assignments: []
+    };
+    const statPresentation = {
+      isDiamond: true,
+      statCoverage: { h: 'complete', sb: 'partial', era: 'not_collected' },
+      observedStatKeys: ['sb'],
+      unavailableStatKeys: ['era'],
+      sourceRevision: 14,
+      projection: { isDiamond: true, status: 'pending', pending: true, authoritativeRevision: 15, sourceRevisions: [14] }
+    };
+    playerServiceMocks.loadParentPlayerStatsDetail.mockResolvedValue({
+      summary: {
+        gamesPlayed: 1,
+        gamesWithTime: 0,
+        totalTimeMs: 0,
+        totals: { h: 0, sb: 2 },
+        averages: { h: 0 },
+        topStats: [],
+        trends: [],
+        gameLimit: 20,
+        hasMoreGames: false,
+        statDefinitions: [{ id: 'h', label: 'H', precision: 0 }, { id: 'sb', label: 'SB', precision: 0 }, { id: 'era', label: 'ERA', precision: 2 }],
+        statPresentation,
+        diamond: { hasDiamond: true, pending: true, sourceRevisions: [14] }
+      },
+      statRows: [{ event: gameEvent, stats: { h: 0, sb: 2 }, completeStats: { h: 0 }, statPresentation, participated: true }],
+      gameEventRows: []
+    });
+
+    renderPlayerDetail();
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Reports' }));
+
+    expect(await screen.findByText('Diamond scorebook stats · Read only')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Season Averages' }));
+    expect((await screen.findAllByText('Observed')).length).toBeGreaterThan(0);
+    expect(screen.getByLabelText('Not collected')).toHaveTextContent('—');
+    expect(screen.getByText('Source revisions: 14')).toBeTruthy();
+  });
+
   it('does not auto-retry failed stats loads until the user retries', async () => {
     playerServiceMocks.loadParentPlayerStatsDetail
       .mockRejectedValueOnce(new Error('Stats network failed.'))

@@ -216,6 +216,14 @@ async function installMocks(page, scenario, { delayedAuth = false, accessLevel =
                 ]));
             }
 
+            if (path.endsWith('/teamStats')) {
+                return createSnapshot(store.teamStatsDocument ? [[
+                    'team',
+                    store.teamStatsDocument,
+                    collectionPath(store.team.id, store.game.id, 'teamStats', 'team')
+                ]] : []);
+            }
+
             if (path.endsWith('/statTrackerConfigs')) {
                 return createSnapshot(store.config ? [[
                     store.config.id,
@@ -429,6 +437,64 @@ async function installMocks(page, scenario, { delayedAuth = false, accessLevel =
 async function readStore(page) {
     return page.evaluate((storeKey) => JSON.parse(localStorage.getItem(storeKey) || '{}'), STORE_KEY);
 }
+
+test('Diamond report labels partial observations, leaves uncollected stats unavailable, and disables legacy edits', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    const scenario = createScenario();
+    scenario.team.sport = 'Baseball';
+    scenario.game = {
+        ...scenario.game,
+        trackingEngine: 'diamond-v2',
+        diamondProjectionStatus: 'current',
+        diamondProjectionRevision: 8
+    };
+    scenario.config = {
+        id: 'cfg-1',
+        baseType: 'Baseball',
+        columns: ['H', 'SB', 'ERA'],
+        statDefinitions: [
+            { id: 'h', label: 'H', scope: 'player', visibility: 'public' },
+            { id: 'sb', label: 'SB', scope: 'player', visibility: 'public' },
+            { id: 'era', label: 'ERA', scope: 'player', visibility: 'public', precision: 2 }
+        ]
+    };
+    scenario.aggregatedStats = {
+        p1: {
+            trackingEngine: 'diamond-v2',
+            sourceRevision: 8,
+            complete: true,
+            participated: true,
+            playerName: 'Ava Cole',
+            playerNumber: '3',
+            stats: { h: 0 },
+            observedStats: { sb: 2 },
+            statCoverage: { h: 'complete', sb: 'partial', era: 'not_collected' },
+            coverage: { batting: 'complete', baserunning: 'partial', pitching: 'not_collected' }
+        }
+    };
+    scenario.teamStatsDocument = {
+        trackingEngine: 'diamond-v2',
+        sourceRevision: 8,
+        complete: true,
+        stats: { r: 3 },
+        statCoverage: { r: 'complete' },
+        coverage: { batting: 'complete' }
+    };
+    await installMocks(page, scenario);
+
+    await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+    await expect.poll(() => pageErrors).toEqual([]);
+
+    await expect(page.getByText('Diamond scorebook · Read only')).toBeVisible();
+    const row = page.locator('#stats-body tr').filter({ hasText: 'Ava Cole' });
+    await expect(row).toHaveCount(1);
+    await expect(row.locator('td').nth(2)).toHaveText('0');
+    await expect(row.locator('td').nth(3)).toContainText('Observed');
+    await expect(row.locator('td').nth(4)).toHaveText('—');
+    await expect(page.locator('#edit-stats-btn')).toBeHidden();
+    expect(pageErrors).toEqual([]);
+});
 
 test('completed-game stat editor saves corrections and DNP state through real controls', async ({ page, baseURL }) => {
     const pageErrors = [];

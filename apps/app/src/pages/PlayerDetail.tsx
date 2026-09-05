@@ -79,6 +79,11 @@ import type { AuthState, AuthUser } from '../lib/types';
 import type { ProfilePhotoSource } from '../lib/profilePhotoService';
 import { PREMIUM_FEATURES, PREMIUM_SCOPES, type PremiumAccessResult } from '../lib/premiumAccessService';
 import { usePremiumFeatureAccess } from '../lib/usePremiumFeatureAccess';
+import {
+  DIAMOND_PLAYER_STAT_CATALOG,
+  getCoverageAwareStatValue,
+  type CoverageAwareStatPresentation
+} from '../lib/adapters/legacyDiamondStatPresentation';
 
 type PlayerSectionId = 'overview' | 'schedule' | 'performance' | 'profile';
 type AthleteProfilePrivacy = 'private' | 'public';
@@ -1030,21 +1035,42 @@ function StatsOverviewPanel({
   premiumAccess: PremiumAccessResult;
 }) {
   const summary = statsDetail?.summary;
-  const averages = summary?.averages || Object.fromEntries(getSeasonAverages(rows).map(([key, value]) => [key.toLowerCase(), Number(value) || 0]));
-  const totals = summary?.totals || buildDisplayTotals(rows);
+  const hasDiamondRows = rows.some((row) => row.statPresentation?.isDiamond === true);
+  const averages = summary?.averages || (hasDiamondRows ? {} : Object.fromEntries(getSeasonAverages(rows).map(([key, value]) => [key.toLowerCase(), Number(value) || 0])));
+  const totals = summary?.totals || (hasDiamondRows ? {} : buildDisplayTotals(rows, { completeOnly: true }));
   const primaryAverage = Object.entries(averages)[0];
   const primaryTotal = Object.entries(totals)[0];
-  const primaryStatKey = primaryAverage?.[0] || primaryTotal?.[0] || Object.keys(rows[0]?.stats || {})[0] || '';
+  const primaryStatKey = primaryAverage?.[0] || primaryTotal?.[0] || (hasDiamondRows ? '' : Object.keys(rows[0]?.stats || {})[0] || '');
   const avgMinutes = summary && summary.gamesWithTime > 0 ? summary.totalTimeMs / 60000 / summary.gamesWithTime : null;
-  const cards = [
-    { label: 'Games', value: String(summary?.gamesPlayed ?? rows.length), sub: summary?.hasMoreGames ? `Last ${summary.gameLimit}` : 'Tracked' },
-    primaryAverage ? { label: `${primaryAverage[0].toUpperCase()}/G`, value: formatAverage(Number(primaryAverage[1])), sub: 'Average' } : null,
-    primaryTotal ? { label: primaryTotal[0].toUpperCase(), value: formatAverage(Number(primaryTotal[1])), sub: 'Total' } : null,
-    avgMinutes !== null ? { label: 'MIN/G', value: formatAverage(avgMinutes), sub: 'Playing time' } : null
-  ].filter(Boolean) as Array<{ label: string; value: string; sub: string }>;
+  const diamondPresentation = summary?.diamond?.hasDiamond ? summary.statPresentation : undefined;
+  const chartTotals = diamondPresentation
+    ? Object.fromEntries(Object.entries(totals).filter(([key]) => diamondPresentation.statCoverage[key.toLowerCase()] === 'complete'))
+    : totals;
+  const cards = diamondPresentation
+    ? [
+        { label: 'Games', value: String(summary?.gamesPlayed ?? rows.length), sub: summary?.hasMoreGames ? `Last ${summary.gameLimit}` : 'Tracked' },
+        ...(summary?.statDefinitions || DIAMOND_PLAYER_STAT_CATALOG)
+          .filter((definition) => definition.topStat === true)
+          .slice(0, 3)
+          .map((definition) => {
+            const displayed = getCoverageAwareStatValue(diamondPresentation, totals, String(definition.id || ''), definition);
+            return {
+              label: String(definition.label || definition.id || ''),
+              value: displayed.text,
+              sub: displayed.observed ? 'Observed · partial' : displayed.available ? 'Season' : 'Not collected'
+            };
+          })
+      ]
+    : [
+        { label: 'Games', value: String(summary?.gamesPlayed ?? rows.length), sub: summary?.hasMoreGames ? `Last ${summary.gameLimit}` : 'Tracked' },
+        primaryAverage ? { label: `${primaryAverage[0].toUpperCase()}/G`, value: formatAverage(Number(primaryAverage[1])), sub: 'Average' } : null,
+        primaryTotal ? { label: primaryTotal[0].toUpperCase(), value: formatAverage(Number(primaryTotal[1])), sub: 'Total' } : null,
+        avgMinutes !== null ? { label: 'MIN/G', value: formatAverage(avgMinutes), sub: 'Playing time' } : null
+      ].filter(Boolean) as Array<{ label: string; value: string; sub: string }>;
 
   return (
     <div className="space-y-3">
+      {summary?.diamond?.hasDiamond ? <DiamondPlayerStatsNotice summary={summary} /> : null}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         {cards.length ? cards.slice(0, 4).map((card) => (
           <div key={card.label} className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-center">
@@ -1074,7 +1100,7 @@ function StatsOverviewPanel({
             </div>
           ) : null}
 
-          <PlayerChartsPanel rows={rows} totals={totals} primaryStatKey={primaryStatKey} />
+          <PlayerChartsPanel rows={rows} totals={chartTotals} primaryStatKey={primaryStatKey} />
 
           {summary?.trends.length ? (
             <div className="space-y-2">
@@ -1095,6 +1121,45 @@ function StatsOverviewPanel({
         </div>
       </PremiumGate>
     </div>
+  );
+}
+
+function DiamondPlayerStatsNotice({ summary }: { summary: ParentPlayerStatsDetailData['summary'] }) {
+  if (!summary.diamond?.hasDiamond) return null;
+  return (
+    <div
+      className={`rounded-xl border p-3 ${summary.diamond.pending ? 'border-amber-200 bg-amber-50 text-amber-950' : 'border-sky-200 bg-sky-50 text-sky-950'}`}
+      role="status"
+      aria-label="Diamond player statistics status"
+    >
+      <div className="text-xs font-black uppercase tracking-[0.04em]">Diamond scorebook stats · Read only</div>
+      <div className="mt-0.5 text-xs font-semibold">
+        {summary.diamond.pending
+          ? 'A projection is pending. Missing values stay unavailable instead of becoming zero.'
+          : 'Complete values and partial observations are derived from the authoritative play ledger.'}
+      </div>
+      <div className="mt-1 text-[11px] font-bold opacity-75">
+        Source revisions: {summary.diamond.sourceRevisions.length ? summary.diamond.sourceRevisions.join(', ') : 'unavailable'}
+      </div>
+    </div>
+  );
+}
+
+function CoverageAwarePlayerValue({ presentation, stats, statKey, definition }: {
+  presentation: CoverageAwareStatPresentation;
+  stats: Record<string, unknown>;
+  statKey: string;
+  definition?: Record<string, unknown>;
+}) {
+  const displayed = getCoverageAwareStatValue(presentation, stats, statKey, definition || {});
+  return (
+    <span
+      className="inline-flex flex-col items-center"
+      aria-label={displayed.observed ? `${displayed.text}, observed from partial tracking` : displayed.available ? displayed.text : 'Not collected'}
+    >
+      <span>{displayed.text}</span>
+      {displayed.observed ? <span className="text-[8px] font-black uppercase tracking-wide text-amber-700">Observed</span> : null}
+    </span>
   );
 }
 
@@ -1130,7 +1195,7 @@ function PlayerChartsPanel({
     .reverse()
     .map((row) => ({
       label: row.event.date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-      value: Number((row.stats || {})[primaryStatKey]) || 0,
+      value: Number((row.statPresentation?.isDiamond ? row.completeStats : row.stats)?.[primaryStatKey]) || 0,
       opponent: String(row.event.opponent || row.event.title || 'Game').replace(/^vs\.?\s*/i, '')
     }));
   const minuteSeries = rows
@@ -1234,12 +1299,21 @@ function RecentMinutesChart({ series }: { series: Array<{ label: string; value: 
 }
 
 function GameStatsTrendPanel({ rows }: { rows: ParentPlayerStatRow[] }) {
-  const statKeys = Object.keys(buildDisplayTotals(rows)).slice(0, 3);
+  const hasDiamondRows = rows.some((row) => row.statPresentation?.isDiamond === true);
+  const statKeys = Object.keys(buildDisplayTotals(rows, { completeOnly: true }))
+    .filter((key) => !hasDiamondRows || rows.every((row) => {
+      if (row.statPresentation?.isDiamond !== true) return Object.prototype.hasOwnProperty.call(row.stats || {}, key) || Object.prototype.hasOwnProperty.call(row.stats || {}, key.toLowerCase());
+      return Object.prototype.hasOwnProperty.call(row.completeStats || {}, key) || Object.prototype.hasOwnProperty.call(row.completeStats || {}, key.toLowerCase());
+    }))
+    .slice(0, 3);
   const recentRows = rows.slice(0, 6).reverse();
   if (!statKeys.length || !recentRows.length) {
     return null;
   }
-  const maxValue = Math.max(...recentRows.flatMap((row) => statKeys.map((key) => Number((row.stats || {})[key]) || Number((row.stats || {})[key.toLowerCase()]) || 0)), 1);
+  const maxValue = Math.max(...recentRows.flatMap((row) => {
+    const stats = row.statPresentation?.isDiamond ? (row.completeStats || {}) : (row.stats || {});
+    return statKeys.map((key) => Number(stats[key]) || Number(stats[key.toLowerCase()]) || 0);
+  }), 1);
   return (
     <div className="rounded-xl border border-gray-200 bg-white p-3">
       <div className="flex items-center justify-between gap-3">
@@ -1251,11 +1325,12 @@ function GameStatsTrendPanel({ rows }: { rows: ParentPlayerStatRow[] }) {
           <div key={key} className="rounded-lg bg-gray-50 p-2">
             <div className="mb-2 flex items-center justify-between">
               <div className="text-[10px] font-black uppercase tracking-[0.04em] text-gray-500">{key}</div>
-              <div className="text-xs font-black text-gray-950">{formatAverage(Number(recentRows[recentRows.length - 1]?.stats?.[key] || recentRows[recentRows.length - 1]?.stats?.[key.toLowerCase()] || 0))}</div>
+              <div className="text-xs font-black text-gray-950">{formatAverage(Number((recentRows[recentRows.length - 1]?.statPresentation?.isDiamond ? recentRows[recentRows.length - 1]?.completeStats : recentRows[recentRows.length - 1]?.stats)?.[key] || (recentRows[recentRows.length - 1]?.statPresentation?.isDiamond ? recentRows[recentRows.length - 1]?.completeStats : recentRows[recentRows.length - 1]?.stats)?.[key.toLowerCase()] || 0))}</div>
             </div>
             <div className="flex h-24 items-end gap-1">
               {recentRows.map((row) => {
-                const value = Number((row.stats || {})[key]) || Number((row.stats || {})[key.toLowerCase()]) || 0;
+                const stats = row.statPresentation?.isDiamond ? (row.completeStats || {}) : (row.stats || {});
+                const value = Number(stats[key]) || Number(stats[key.toLowerCase()]) || 0;
                 const height = Math.max(8, Math.round((value / maxValue) * 100));
                 return (
                   <div key={`${row.event.eventKey}-${key}`} className="flex min-w-0 flex-1 flex-col items-center justify-end gap-1">
@@ -1277,6 +1352,41 @@ function GameStatsTrendPanel({ rows }: { rows: ParentPlayerStatRow[] }) {
 }
 
 function SeasonAveragesPanel({ rows, statsDetail }: { rows: ParentPlayerStatRow[]; statsDetail: ParentPlayerStatsDetailData | null }) {
+  const summary = statsDetail?.summary;
+  if (summary?.diamond?.hasDiamond && summary.statPresentation) {
+    const definitions = summary.statDefinitions?.length ? summary.statDefinitions : DIAMOND_PLAYER_STAT_CATALOG;
+    return (
+      <div className="space-y-3">
+        <DiamondPlayerStatsNotice summary={summary} />
+        <div className="rounded-xl border border-gray-200 bg-white p-3">
+          <div className="text-sm font-black text-gray-950">Season stat catalog</div>
+          <div className="mt-0.5 text-xs font-semibold text-gray-500">Unavailable fields were not collected; they are not zero.</div>
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {definitions.map((definition) => {
+              const key = String(definition.id || '');
+              return (
+                <div key={key} className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-center">
+                  <div className="text-lg font-black text-gray-950">
+                    <CoverageAwarePlayerValue presentation={summary.statPresentation!} stats={summary.totals} statKey={key} definition={definition} />
+                  </div>
+                  <div className="mt-1 truncate text-[10px] font-black uppercase tracking-[0.04em] text-gray-500">{String(definition.label || key)}</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!summary && rows.some((row) => row.statPresentation?.isDiamond === true)) {
+    return (
+      <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-900" role="status">
+        Coverage-aware season totals are loading. Missing Diamond values will remain unavailable instead of becoming zero.
+      </div>
+    );
+  }
+
   const averages = statsDetail
     ? Object.entries(statsDetail.summary.averages).map(([key, value]) => [key.toUpperCase(), formatAverage(value)] as [string, string])
     : getSeasonAverages(rows);
@@ -3323,9 +3433,18 @@ function PlayerEventCard({ event, featured = false }: { event: ParentScheduleEve
 }
 
 function StatRow({ row }: { row: ParentPlayerStatRow }) {
-  const statEntries = Object.entries(row.stats || {})
-    .filter(([, value]) => Number.isFinite(Number(value)))
-    .slice(0, 5);
+  const diamond = row.statPresentation?.isDiamond === true;
+  const diamondDefinitions = Array.isArray(row.statDefinitions) ? row.statDefinitions : DIAMOND_PLAYER_STAT_CATALOG;
+  const statEntries: Array<{ key: string; value: unknown; definition?: Record<string, unknown> }> = diamond
+    ? diamondDefinitions.slice(0, 5).map((definition) => ({
+        key: String(definition.id || ''),
+        value: row.stats?.[String(definition.id || '')],
+        definition
+      }))
+    : Object.entries(row.stats || {})
+        .filter(([, value]) => Number.isFinite(Number(value)))
+        .slice(0, 5)
+        .map(([key, value]) => ({ key, value }));
   const timeMs = Number(row.timeMs || 0);
   return (
     <Link to={getEventDetailPath(row.event, 'game')} className="block rounded-xl border border-gray-200 bg-gray-50 p-3 transition hover:border-primary-200 hover:bg-primary-50/40">
@@ -3333,6 +3452,11 @@ function StatRow({ row }: { row: ParentPlayerStatRow }) {
         <div className="min-w-0">
           <div className="truncate text-sm font-black text-gray-950">{getScheduleTitle(row.event)}</div>
           <div className="mt-0.5 truncate text-xs font-semibold text-gray-500">{formatEventDateLabel(row.event.date)}</div>
+          {diamond ? (
+            <div className="mt-0.5 text-[10px] font-bold text-sky-700">
+              Diamond stats rev {row.statPresentation?.sourceRevision ?? 'unavailable'}{row.statPresentation?.projection?.pending ? ' · projection pending' : ''}
+            </div>
+          ) : null}
         </div>
         <ChevronRight className="h-4 w-4 flex-none text-gray-400" aria-hidden="true" />
       </div>
@@ -3344,10 +3468,14 @@ function StatRow({ row }: { row: ParentPlayerStatRow }) {
               <div className="mt-0.5 truncate text-[10px] font-black uppercase tracking-[0.04em] text-gray-500">MIN</div>
             </div>
           ) : null}
-          {statEntries.map(([key, value]) => (
+          {statEntries.map(({ key, value, definition }) => (
             <div key={key} className="rounded-lg border border-gray-200 bg-white p-2 text-center">
-              <div className="text-base font-black text-gray-950">{String(value)}</div>
-              <div className="mt-0.5 truncate text-[10px] font-black uppercase tracking-[0.04em] text-gray-500">{key}</div>
+              <div className="text-base font-black text-gray-950">
+                {diamond && row.statPresentation
+                  ? <CoverageAwarePlayerValue presentation={row.statPresentation} stats={row.stats} statKey={key} definition={definition} />
+                  : String(value)}
+              </div>
+              <div className="mt-0.5 truncate text-[10px] font-black uppercase tracking-[0.04em] text-gray-500">{String(definition?.label || key)}</div>
             </div>
           ))}
         </div>
@@ -3474,7 +3602,8 @@ const defaultStatOptions = [
 function getSeasonAverages(rows: ParentPlayerStatRow[]) {
   const totals = new Map<string, number>();
   rows.forEach((row) => {
-    Object.entries(row.stats || {}).forEach(([key, value]) => {
+    const stats = row.statPresentation?.isDiamond ? (row.completeStats || {}) : (row.stats || {});
+    Object.entries(stats).forEach(([key, value]) => {
       const numeric = Number(value);
       if (!Number.isFinite(numeric)) return;
       totals.set(key, (totals.get(key) || 0) + numeric);
@@ -3486,10 +3615,11 @@ function getSeasonAverages(rows: ParentPlayerStatRow[]) {
     .slice(0, 8);
 }
 
-function buildDisplayTotals(rows: ParentPlayerStatRow[]) {
+function buildDisplayTotals(rows: ParentPlayerStatRow[], { completeOnly = false } = {}) {
   const totals = new Map<string, number>();
   rows.forEach((row) => {
-    Object.entries(row.stats || {}).forEach(([key, value]) => {
+    const stats = row.statPresentation?.isDiamond && completeOnly ? (row.completeStats || {}) : (row.stats || {});
+    Object.entries(stats).forEach(([key, value]) => {
       const numeric = Number(value);
       if (!Number.isFinite(numeric)) return;
       totals.set(key.toUpperCase(), (totals.get(key.toUpperCase()) || 0) + numeric);

@@ -1763,6 +1763,53 @@ describe('TeamDetail', () => {
     expect(screen.queryByRole('cell', { name: '0' })).toBeNull();
   });
 
+  it('renders Diamond partial roster values as observed and not-collected values as em dashes', async () => {
+    const teamAnalytics = {
+      ...model.teamAnalytics,
+      seasonLabel: '2026',
+      availableSeasons: ['2026'],
+      seasons: []
+    };
+    teamDetailServiceMocks.loadTeamDetailInsights.mockResolvedValue({
+      leaderboards: [],
+      trackingSummaries: [],
+      teamAnalytics,
+      rosterStatistics: {
+        seasonLabel: '2026',
+        availableSeasons: ['2026'],
+        unavailableSeasons: [],
+        seasons: [{
+          seasonLabel: '2026',
+          columns: [{ id: 'h', label: 'H' }, { id: 'sb', label: 'SB' }, { id: 'era', label: 'ERA' }],
+          rows: [{
+            playerId: 'player-1',
+            playerName: 'Pat Star',
+            playerNumber: '9',
+            values: {
+              h: { value: 0, formattedValue: '0', available: true, observed: false, status: 'complete' },
+              sb: { value: 2, formattedValue: '2', available: true, observed: true, status: 'partial' },
+              era: { value: null, formattedValue: '—', available: false, observed: false, status: 'not_collected' }
+            }
+          }],
+          diamond: { hasDiamond: true, pending: true, sourceRevisions: [14] }
+        }]
+      }
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1?tab=insights']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('Diamond scorebook stats · Read only')).toBeTruthy();
+    expect(screen.getByText('Observed')).toBeTruthy();
+    expect(screen.getByRole('cell', { name: 'Not collected' })).toHaveTextContent('—');
+    expect(screen.getByText('Source revisions: 14')).toBeTruthy();
+  });
+
   it('renders an explicit team performance empty state in Insights', async () => {
     render(
       <MemoryRouter initialEntries={['/teams/team-1?tab=insights']}>

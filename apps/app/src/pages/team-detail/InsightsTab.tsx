@@ -324,8 +324,27 @@ function RosterStatisticsCard({ model, loading, error, selectedSeason }: { model
       {loading ? <InlineDeferredLoading copy="Loading roster statistics…" /> : null}
       {!loading && error ? <InlineDeferredError title="Roster statistics unavailable" message={error} /> : null}
       {!loading && !error && seasonUnavailable ? <InlineDeferredError title="Roster statistics unavailable" message={`Statistics for the ${selectedSeason} season could not be loaded.`} /> : null}
+      {!loading && !error && !seasonUnavailable && table?.diamond?.hasDiamond ? (
+        <div
+          className={`mb-3 rounded-xl border p-3 ${table.diamond.pending ? 'border-amber-200 bg-amber-50 text-amber-950' : 'border-sky-200 bg-sky-50 text-sky-950'}`}
+          role="status"
+          aria-label="Diamond roster statistics status"
+        >
+          <div className="text-xs font-black uppercase tracking-[0.04em]">Diamond scorebook stats · Read only</div>
+          <div className="mt-0.5 text-xs font-semibold">
+            {table.diamond.pending
+              ? 'A projection is pending. Unavailable fields remain an em dash and are never counted as zero.'
+              : 'Partial capture is labeled as observed; rankings use complete values only.'}
+          </div>
+          <div className="mt-1 text-[11px] font-bold opacity-75">Source revisions: {table.diamond.sourceRevisions.length ? table.diamond.sourceRevisions.join(', ') : 'unavailable'}</div>
+        </div>
+      ) : null}
       {!loading && !error && !seasonUnavailable && table?.columns.length ? <div className="overflow-x-auto rounded-xl border border-gray-200">
-        <table className="min-w-max w-full text-left text-xs"><thead className="bg-gray-50 text-[10px] font-black uppercase tracking-wide text-gray-500"><tr><th className="sticky left-0 bg-gray-50 px-3 py-2">Player</th>{table.columns.map((column) => <th key={column.id} className="whitespace-nowrap px-3 py-2">{column.label}</th>)}</tr></thead><tbody>{table.rows.map((row) => <tr key={row.playerId} className="border-t border-gray-100"><th className="sticky left-0 bg-white px-3 py-2 font-black text-gray-900">{row.playerNumber ? `#${row.playerNumber} ` : ''}{row.playerName}</th>{table.columns.map((column) => <td key={column.id} className="px-3 py-2 font-bold text-gray-700">{row.values[column.id]?.formattedValue || '0'}</td>)}</tr>)}</tbody></table>
+        <table className="min-w-max w-full text-left text-xs"><thead className="bg-gray-50 text-[10px] font-black uppercase tracking-wide text-gray-500"><tr><th className="sticky left-0 bg-gray-50 px-3 py-2">Player</th>{table.columns.map((column) => <th key={column.id} className="whitespace-nowrap px-3 py-2">{column.label}</th>)}</tr></thead><tbody>{table.rows.map((row) => <tr key={row.playerId} className="border-t border-gray-100"><th className="sticky left-0 bg-white px-3 py-2 font-black text-gray-900">{row.playerNumber ? `#${row.playerNumber} ` : ''}{row.playerName}</th>{table.columns.map((column) => {
+          const value = row.values[column.id];
+          const formattedValue = table.diamond?.hasDiamond ? (value?.formattedValue ?? '—') : (value?.formattedValue || '0');
+          return <td key={column.id} className="px-3 py-2 font-bold text-gray-700"><span className="inline-flex flex-col items-start" aria-label={value?.observed ? `${formattedValue}, observed from partial tracking` : formattedValue === '—' ? 'Not collected' : formattedValue}><span>{formattedValue}</span>{value?.observed ? <span className="text-[8px] font-black uppercase tracking-wide text-amber-700">Observed</span> : null}</span></td>;
+        })}</tr>)}</tbody></table>
       </div> : null}
       {!loading && !error && !seasonUnavailable && !table?.columns.length ? <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">Roster statistics appear after public player stats are configured.</div> : null}
     </div>
