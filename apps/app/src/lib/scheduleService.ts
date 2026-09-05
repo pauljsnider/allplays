@@ -4199,6 +4199,8 @@ function createScheduleEvent(input: {
   competitionType?: string | null;
   countsTowardSeasonRecord?: boolean | null;
   tournament?: Record<string, any> | null;
+  trackingEngine?: string | null;
+  diamondRevision?: unknown;
   statTrackerConfigId?: string | null;
   sourceType?: string | null;
   sourceLabel?: string | null;
@@ -4283,6 +4285,8 @@ function createScheduleEvent(input: {
     competitionType: input.competitionType || null,
     countsTowardSeasonRecord: input.countsTowardSeasonRecord ?? null,
     tournament: input.tournament && typeof input.tournament === 'object' ? input.tournament : null,
+    trackingEngine: compactString(input.trackingEngine) || null,
+    diamondRevision: toNullableScore(input.diamondRevision),
     statTrackerConfigId: input.statTrackerConfigId || null,
     sourceType: input.sourceType || (input.isDbGame ? 'db' : 'calendar'),
     sourceLabel: input.sourceLabel || (input.isDbGame ? 'ALL PLAYS schedule' : 'Team calendar'),
@@ -4533,6 +4537,8 @@ async function buildTeamSchedule(
           competitionType: game.competitionType || null,
           countsTowardSeasonRecord: game.countsTowardSeasonRecord ?? null,
           tournament: game.tournament || null,
+          trackingEngine: game.trackingEngine || null,
+          diamondRevision: game.diamondRevision ?? null,
           statTrackerConfigId: game.statTrackerConfigId || null,
           sourceType: game.sourceMetadata?.sourceType || game.source || 'db',
           sourceLabel: getScheduleSourceLabel(game),
@@ -4829,6 +4835,8 @@ async function buildTargetedTeamScheduleEvent(
     competitionType: game.competitionType || null,
     countsTowardSeasonRecord: game.countsTowardSeasonRecord ?? null,
     tournament: game.tournament || null,
+    trackingEngine: game.trackingEngine || null,
+    diamondRevision: game.diamondRevision ?? null,
     statTrackerConfigId: game.statTrackerConfigId || null,
     sourceType: game.sourceMetadata?.sourceType || game.source || 'db',
     sourceLabel: getScheduleSourceLabel(game),

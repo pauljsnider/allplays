@@ -51,6 +51,18 @@ test('preserves only safe replay and highlight query parameters', () => {
     clipStart: '-1',
     clipEnd: '999999999'
   }).toString(), 'teamId=team-1&gameId=game-1');
+
+  assert.equal(buildLiveGameShareParams({
+    teamId: 'team-1',
+    gameId: 'game-1',
+    classic: '1'
+  }).toString(), 'teamId=team-1&gameId=game-1&classic=1');
+
+  assert.equal(buildLiveGameShareParams({
+    teamId: 'team-1',
+    gameId: 'game-1',
+    classic: 'yes'
+  }).toString(), 'teamId=team-1&gameId=game-1');
 });
 
 test('builds game-specific share metadata with the ALL PLAYS logo', () => {

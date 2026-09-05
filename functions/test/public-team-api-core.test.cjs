@@ -498,6 +498,24 @@ test('game results require completed status and both scores', () => {
   }).result, 'loss');
 });
 
+test('public game projection exposes only the recognized Diamond engine discriminator', () => {
+  const baseGame = {
+    id: 'game-1',
+    type: 'game',
+    date: '2026-08-01T15:00:00Z'
+  };
+
+  assert.equal(serializePublicGame({
+    ...baseGame,
+    trackingEngine: 'diamond-v2'
+  }).trackingEngine, 'diamond-v2');
+  assert.equal(Object.hasOwn(serializePublicGame({
+    ...baseGame,
+    trackingEngine: 'future-private-engine'
+  }), 'trackingEngine'), false);
+  assert.equal(Object.hasOwn(serializePublicGame(baseGame), 'trackingEngine'), false);
+});
+
 test('public game projection exposes only a canonical replay for a consistent final lifecycle', () => {
   const withPublicReplay = serializePublicGame({
     id: 'public-replay',

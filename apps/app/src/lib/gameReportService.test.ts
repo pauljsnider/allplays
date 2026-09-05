@@ -10,14 +10,14 @@ const dbMocks = vi.hoisted(() => ({
 }));
 
 const firebaseMocks = vi.hoisted(() => ({
-  collection: vi.fn(() => 'aggregated-stats-ref'),
+  collection: vi.fn((_db: unknown, path: string) => path),
   db: {},
   getDocs: vi.fn()
 }));
 
 const gameReportStatsMocks = vi.hoisted(() => ({
-  resolveReportStatColumns: vi.fn(() => ({ statKeys: [], statLabels: {} })),
-  resolveOpponentReportStatColumns: vi.fn(() => ({ oppKeys: [], oppLabels: {} }))
+  resolveReportStatColumns: vi.fn(() => ({ statKeys: [] as string[], statLabels: {} as Record<string, string>, statDefinitions: {} as Record<string, Record<string, unknown>> })),
+  resolveOpponentReportStatColumns: vi.fn(() => ({ oppKeys: [] as string[], oppLabels: {} as Record<string, string>, oppDefinitions: {} as Record<string, Record<string, unknown>> }))
 }));
 
 vi.mock('../../../../js/db.js', () => dbMocks);
@@ -233,6 +233,91 @@ describe('gameReportService', () => {
       }),
       plays: [],
       playsFresh: false
+    });
+  });
+
+  it('preserves Diamond complete, observed, and unavailable evidence with source revisions', async () => {
+    dbMocks.getGame.mockResolvedValue({
+      id: 'game-1',
+      trackingEngine: 'diamond-v2',
+      diamondProjectionStatus: 'current',
+      diamondProjectionRevision: 7,
+      opponentStats: {
+        visitor: {
+          name: 'Visiting Batter',
+          h: 0,
+          sb: 1,
+          diamondCoverage: { batting: 'complete', baserunning: 'partial' },
+          diamondSourceRevision: 7
+        }
+      }
+    });
+    gameReportStatsMocks.resolveReportStatColumns.mockReturnValue({
+      statKeys: ['h', 'sb', 'era'],
+      statLabels: { h: 'H', sb: 'SB', era: 'ERA' },
+      statDefinitions: { h: { id: 'h', precision: 0 }, sb: { id: 'sb', precision: 0 }, era: { id: 'era', precision: 2 } }
+    });
+    gameReportStatsMocks.resolveOpponentReportStatColumns.mockReturnValue({
+      oppKeys: ['h', 'sb', 'era'],
+      oppLabels: { h: 'H', sb: 'SB', era: 'ERA' },
+      oppDefinitions: { h: { id: 'h' }, sb: { id: 'sb' }, era: { id: 'era', precision: 2 } }
+    });
+    firebaseMocks.getDocs.mockImplementation(async (path: string) => {
+      const documents = path.endsWith('/teamStats')
+        ? [{
+            id: 'team',
+            data: () => ({
+              trackingEngine: 'diamond-v2',
+              sourceRevision: 7,
+              complete: true,
+              stats: { r: 3 },
+              observedStats: { h: 2 },
+              statCoverage: { r: 'complete', h: 'partial', e: 'not_collected' }
+            })
+          }]
+        : [{
+            id: 'player-recorded',
+            data: () => ({
+              trackingEngine: 'diamond-v2',
+              sourceRevision: 7,
+              complete: true,
+              stats: { h: 0, pitches: 81 },
+              observedStats: { sb: 2 },
+              statCoverage: { h: 'complete', pitches: 'complete', sb: 'partial', era: 'not_collected' },
+              participated: true
+            })
+          }];
+      return {
+        docs: documents,
+        forEach(callback: (docSnap: any) => void) {
+          documents.forEach(callback);
+        }
+      };
+    });
+
+    const report = await loadGameReportSections('team-1', 'game-1');
+
+    expect(report.playerRows[0]).toMatchObject({
+      stats: { h: 0, sb: 2 },
+      statPresentation: {
+        statCoverage: { h: 'complete', sb: 'partial', era: 'not_collected' },
+        observedStatKeys: ['sb'],
+        sourceRevision: 7
+      }
+    });
+    expect(report.playerRows[0].stats).not.toHaveProperty('pitches');
+    expect(report.teamStats).toEqual({ r: 3, h: 2 });
+    expect(report.opponentRows[0]).toMatchObject({
+      stats: { h: 0, sb: 1 },
+      statPresentation: { sourceRevision: 7, observedStatKeys: ['sb'] }
+    });
+    expect(report.diamond).toEqual({
+      isDiamond: true,
+      readOnly: true,
+      status: 'current',
+      pending: false,
+      authoritativeRevision: 7,
+      sourceRevisions: [7]
     });
   });
 });

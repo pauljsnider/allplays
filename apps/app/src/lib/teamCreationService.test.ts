@@ -12,8 +12,12 @@ const legacyMocks = vi.hoisted(() => ({
   getDefaultStatConfigForSport: vi.fn(),
   getStatConfigPresetOptions: vi.fn()
 }));
+const diamondMocks = vi.hoisted(() => ({
+  configureDiamondTeam: vi.fn()
+}));
 
 vi.mock('./adapters/legacyTeamCreation', () => legacyMocks);
+vi.mock('./diamondScorebookService', () => diamondMocks);
 
 import { createTeamForApp, getCreateTeamSportOptions } from './teamCreationService';
 
@@ -35,6 +39,13 @@ beforeEach(() => {
     { baseType: 'Soccer' },
     { baseType: 'Basketball' }
   ]);
+  diamondMocks.configureDiamondTeam.mockResolvedValue({
+    configured: true,
+    teamId: 'team-new',
+    sport: 'baseball',
+    rulesProfileId: 'baseball-youth',
+    rulesProfileVersion: 1
+  });
 });
 
 describe('createTeamForApp', () => {
@@ -97,6 +108,36 @@ describe('createTeamForApp', () => {
       defaultStatConfigError: 'permission denied'
     });
     expect(legacyMocks.createTeam).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['Baseball', 'baseball'],
+    ['Softball', 'fastpitch'],
+    ['Fastpitch', 'fastpitch']
+  ] as const)('best-effort configures %s with the shared Diamond profile contract', async (sport, diamondSport) => {
+    await createTeamForApp(user, { name: 'Diamond team', sport });
+
+    expect(diamondMocks.configureDiamondTeam).toHaveBeenCalledWith('team-new', diamondSport);
+  });
+
+  it('keeps the new team and legacy stat config usable when optional Diamond setup is unavailable', async () => {
+    diamondMocks.configureDiamondTeam.mockRejectedValueOnce(new Error('policy disabled'));
+
+    await expect(createTeamForApp(user, {
+      name: 'Baseball team',
+      sport: 'Baseball'
+    })).resolves.toEqual({
+      teamId: 'team-new',
+      defaultStatConfigCreated: true,
+      defaultStatConfigError: null
+    });
+    expect(legacyMocks.createConfig).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not call Diamond setup for a non-diamond sport', async () => {
+    await createTeamForApp(user, { name: 'Soccer team', sport: 'Soccer' });
+
+    expect(diamondMocks.configureDiamondTeam).not.toHaveBeenCalled();
   });
 
   it('returns the created team id when preset resolution fails after the team write', async () => {
@@ -171,6 +212,7 @@ describe('getCreateTeamSportOptions', () => {
       'Soccer',
       'Baseball',
       'Softball',
+      'Fastpitch',
       'Football',
       'Volleyball'
     ]);

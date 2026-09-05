@@ -30,6 +30,8 @@
     "ops:sanitize-rsvp-pii": "node scripts/sanitize-rsvp-pii.mjs",
     "stage:pages": "node scripts/stage-pages-bundle.mjs",
     "app:build-help-index": "node scripts/build-app-help-knowledge-index.mjs",
+    "build:diamond-engine": "apps/app/node_modules/.bin/tsc -p functions/tsconfig.diamond.json",
+    "check:diamond-engine": "npm run build:diamond-engine && git diff --exit-code -- functions/diamond-engine",
     "app:check-bundle-size": "node scripts/check-app-bundle-size.mjs",
     "serve:firebase": "node scripts/serve-firebase-local.mjs demo-allplays",
     "serve:firebase:safe": "node scripts/serve-firebase-local.mjs demo-allplays",

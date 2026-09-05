@@ -301,6 +301,8 @@ beforeEach(() => {
   nativeRuntimeState.isNative = false;
   firebaseMocks.httpsCallable.mockReturnValue(vi.fn().mockResolvedValue({ data: { success: true } }));
   vi.mocked(hasFullTeamAccess).mockImplementation(() => true);
+  vi.mocked(selectAnalyticsConfig).mockReturnValue(null);
+  vi.mocked(buildPlayerLeaderboardSnapshot).mockReturnValue({ topStats: [] } as any);
   seasonRecordMocks.listSeasonLabels.mockReturnValue([]);
   dbMocks.getPlayersWithPrivateRosterContacts.mockImplementation((_teamId: string, options: any = {}) => (
     Array.isArray(options.players) ? options.players : dbMocks.getPlayers(_teamId, options)
@@ -1295,6 +1297,79 @@ describe('team detail bootstrap loading', () => {
     expect(dbMocks.getAggregatedStatsForGames).toHaveBeenCalledWith('team-1', ['current-game', 'old-game']);
     expect(dbMocks.getAggregatedStatsForGames).toHaveBeenCalledWith('team-1', ['current-game']);
     expect(dbMocks.getAggregatedStatsForGames).toHaveBeenCalledWith('team-1', ['old-game']);
+  });
+
+  it('omits configured private Diamond stats and never ranks an unavailable player as zero', async () => {
+    __resetTeamDetailBaseSnapshotCacheForTests();
+    seasonRecordMocks.listSeasonLabels.mockReturnValue(['2026']);
+    dbMocks.getTeam.mockResolvedValue({ id: 'team-1', sport: 'Baseball' });
+    dbMocks.getPlayers.mockResolvedValue([
+      { id: 'player-1', name: 'Pat Star', number: '9', active: true },
+      { id: 'player-2', name: 'Sam Bench', number: '12', active: true }
+    ]);
+    dbMocks.getGames.mockResolvedValue([{
+      id: 'game-1',
+      status: 'completed',
+      seasonLabel: '2026',
+      date: '2026-03-01',
+      trackingEngine: 'diamond-v2',
+      diamondProjectionStatus: 'current',
+      diamondProjectionRevision: 8,
+      rulesProfileId: 'baseball-youth@1',
+      homeScore: 2,
+      awayScore: 1
+    }]);
+    const config = {
+      id: 'baseball',
+      baseType: 'Baseball',
+      columns: ['H'],
+      statDefinitions: [
+        { id: 'h', label: 'Hits', scope: 'player', visibility: 'public', topStat: true },
+        { id: 'pitches', label: 'Pitch count', scope: 'player', visibility: 'private', topStat: true }
+      ]
+    };
+    dbMocks.getConfigs.mockResolvedValue([config]);
+    vi.mocked(selectAnalyticsConfig).mockReturnValue(config as any);
+    firebaseMocks.collection.mockImplementation((_db: unknown, path: string) => path);
+    firebaseMocks.getDocs.mockResolvedValue({
+      forEach(callback: (docSnap: any) => void) {
+        [
+          {
+            id: 'player-1',
+            data: () => ({
+              trackingEngine: 'diamond-v2',
+              sourceRevision: 8,
+              complete: true,
+              stats: { h: 2, pitches: 81 },
+              statCoverage: { h: 'complete', pitches: 'complete' },
+              coverage: { batting: 'complete', pitches: 'complete' }
+            })
+          },
+          {
+            id: 'player-2',
+            data: () => ({
+              trackingEngine: 'diamond-v2',
+              sourceRevision: 8,
+              complete: true,
+              stats: { pitches: 23 },
+              statCoverage: { h: 'not_collected', pitches: 'complete' },
+              coverage: { batting: 'not_collected', pitches: 'complete' }
+            })
+          }
+        ].forEach(callback);
+      }
+    });
+
+    const insights = await loadTeamDetailInsights('team-1', { uid: 'parent-1' } as any);
+    const season = insights.rosterStatistics.seasons[0];
+
+    expect(season.columns.map((column) => column.id)).toContain('h');
+    expect(season.columns.map((column) => column.id)).not.toContain('pitches');
+    expect(season.rows[0].values.h).toMatchObject({ value: 2, status: 'complete' });
+    expect(season.rows[1].values.h).toMatchObject({ value: null, formattedValue: '—', status: 'not_collected' });
+    expect(buildPlayerLeaderboardSnapshot).toHaveBeenCalledWith(expect.objectContaining({
+      players: [{ id: 'player-1', name: 'Pat Star', number: '9' }]
+    }));
   });
 
   it('marks only the season whose roster aggregation fails as unavailable', async () => {

@@ -51,6 +51,8 @@ describe('live game share preview wiring', () => {
         expect(handler).toContain('setPublicSharePreviewCorsHeaders(res)');
         expect(handler).toContain('`${PUBLIC_SHARE_PREVIEW_ORIGIN}/watch?${query}`');
         expect(handler).toContain('buildLiveGameShareParams');
+        expect(handler).toContain("game.trackingEngine === 'diamond-v2'");
+        expect(handler).toContain("const viewerPath = useDiamondViewer ? 'live-game-diamond-v2.html' : 'live-game.html'");
         expect(handler).not.toContain('`https://allplays.ai/watch?${query}`');
         expect(source).toContain("const PUBLIC_SHARE_PREVIEW_ORIGIN = 'https://share.allplays.ai'");
         expect(source).not.toContain("const PUBLIC_SHARE_PREVIEW_ORIGIN = 'https://game-flow-c6311.web.app'");

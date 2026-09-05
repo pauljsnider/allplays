@@ -158,6 +158,8 @@ export type ScheduleEventFirestoreRecord = {
     competitionType?: string | null;
     countsTowardSeasonRecord?: boolean | null;
     tournament?: Record<string, unknown> | null;
+    trackingEngine?: string | null;
+    diamondRevision?: number | null;
     statTrackerConfigId?: string | null;
     source?: string | null;
     sourceMetadata?: (Record<string, unknown> & { sourceType?: string | null }) | null;

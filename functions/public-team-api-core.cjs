@@ -759,6 +759,9 @@ function serializePublicGame(game = {}, options = {}) {
   const teamPhotoUrl = publicHttpUrl(game?.teamPhotoUrl || game?.homeTeamPhoto);
   const opponentTeamPhoto = publicHttpUrl(game?.opponentTeamPhoto);
   const statSheetPhotoUrl = publicHttpUrl(game?.statSheetPhotoUrl);
+  // The public watch dispatcher only needs to know whether this game is owned by
+  // the immutable Diamond ledger. Never reflect arbitrary/internal engine names.
+  const trackingEngine = game?.trackingEngine === 'diamond-v2' ? 'diamond-v2' : null;
   const replayPaywallEnabled = isRecordedReplayPaywallEnabled(game, options.team);
   const recordedReplayMarkerOnly = options.recordedReplayMarkerOnly === true;
   const directVideoUrl = publicHttpUrl(game?.videoUrl);
@@ -805,6 +808,7 @@ function serializePublicGame(game = {}, options = {}) {
     ...(teamPhotoUrl ? { teamPhotoUrl, homeTeamPhoto: teamPhotoUrl } : {}),
     ...(opponentTeamPhoto ? { opponentTeamPhoto } : {}),
     ...(statSheetPhotoUrl ? { statSheetPhotoUrl } : {}),
+    ...(trackingEngine ? { trackingEngine } : {}),
     ...(game?.isSharedGame === true ? { isSharedGame: true } : {})
   };
 }

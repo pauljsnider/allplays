@@ -13,6 +13,11 @@ describe('sport stat templates', () => {
             baseType: 'Softball',
             columns: ['AB', 'H', 'R', 'RBI', 'BB', 'FP']
         });
+        expect(getSportStatTemplate('fastpitch')).toMatchObject({
+            name: 'Fastpitch Standard',
+            baseType: 'Fastpitch',
+            columns: ['AB', 'H', 'R', 'RBI', 'BB', 'FP']
+        });
     });
 
     it('keeps existing basketball and soccer templates available', () => {
@@ -20,8 +25,8 @@ describe('sport stat templates', () => {
             'Basketball',
             'Soccer',
             'Baseball',
-            'Softball'
+            'Softball',
+            'Fastpitch'
         ]);
     });
 });
-

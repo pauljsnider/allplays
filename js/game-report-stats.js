@@ -1,3 +1,8 @@
+import {
+  DIAMOND_TRACKING_ENGINE,
+  getPublicDiamondStatCatalog
+} from './diamond-stat-presentation.js?v=1';
+
 export function buildConfiguredStatFields(columns = [], statsObjects = []) {
   const actualFields = new Set();
   (statsObjects || []).forEach((stats) => {
@@ -29,7 +34,40 @@ export function buildConfiguredStatFields(columns = [], statsObjects = []) {
   });
 }
 
-export function resolveReportStatColumns({ statsMap = {}, resolvedConfig = null } = {}) {
+function getDiamondReportDefinitions(resolvedConfig = null) {
+  return getPublicDiamondStatCatalog(resolvedConfig, 'player');
+}
+
+function resolveDiamondColumns(statsMap, resolvedConfig) {
+  const definitions = getDiamondReportDefinitions(resolvedConfig);
+  const actualFields = Object.values(statsMap || {});
+  const orderedDefinitions = [];
+  const seen = new Set();
+  const byId = new Map(definitions.map((definition) => [definition.id, definition]));
+
+  buildConfiguredStatFields(resolvedConfig?.columns || [], actualFields).forEach(({ fieldName, label }) => {
+    const id = String(fieldName || '').trim().toLowerCase();
+    if (!id || seen.has(id)) return;
+    orderedDefinitions.push({ ...(byId.get(id) || {}), id, label });
+    seen.add(id);
+  });
+  definitions.forEach((definition) => {
+    if (seen.has(definition.id)) return;
+    orderedDefinitions.push(definition);
+    seen.add(definition.id);
+  });
+
+  return {
+    statKeys: orderedDefinitions.map((definition) => definition.id),
+    statLabels: Object.fromEntries(orderedDefinitions.map((definition) => [definition.id, definition.label || definition.acronym || definition.id.toUpperCase()])),
+    statDefinitions: Object.fromEntries(orderedDefinitions.map((definition) => [definition.id, definition]))
+  };
+}
+
+export function resolveReportStatColumns({ statsMap = {}, resolvedConfig = null, trackingEngine = '' } = {}) {
+  if (trackingEngine === DIAMOND_TRACKING_ENGINE) {
+    return resolveDiamondColumns(statsMap, resolvedConfig);
+  }
   let statKeys = [];
   const statLabels = {};
 
@@ -97,8 +135,12 @@ export function formatGameReportEventTimestamp(timestamp) {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-export function resolveOpponentReportStatColumns({ opponentStats = {}, resolvedConfig = null } = {}) {
-  const metadataKeys = new Set(['name', 'number', 'notes', 'photoUrl']);
+export function resolveOpponentReportStatColumns({ opponentStats = {}, resolvedConfig = null, trackingEngine = '' } = {}) {
+  if (trackingEngine === DIAMOND_TRACKING_ENGINE) {
+    const { statKeys, statLabels, statDefinitions } = resolveDiamondColumns(opponentStats, resolvedConfig);
+    return { oppKeys: statKeys, oppLabels: statLabels, oppDefinitions: statDefinitions };
+  }
+  const metadataKeys = new Set(['name', 'number', 'notes', 'photoUrl', 'playerId', 'diamondCoverage', 'diamondSourceRevision']);
   let oppKeys = [];
   const oppLabels = {};
 

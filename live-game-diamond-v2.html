@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex,nofollow" />
+    <title>Diamond Live — ALL PLAYS</title>
+    <meta
+      name="description"
+      content="Follow a Baseball or Fastpitch game live on ALL PLAYS."
+    />
+    <link rel="icon" type="image/png" href="img/logo_small.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600;700&family=Roboto+Slab:wght@700;800;900&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="css/diamond-scorebook.css?v=1" />
+  </head>
+  <body class="diamond-viewer">
+    <main class="diamond-shell">
+      <header class="diamond-masthead">
+        <a class="diamond-brand" href="/" aria-label="ALL PLAYS home"
+          >ALL PLAYS · Diamond</a
+        >
+        <span
+          class="diamond-connection"
+          data-diamond-status
+          role="status"
+          aria-live="polite"
+          >Connecting…</span
+        >
+      </header>
+
+      <div class="diamond-loading" data-diamond-loading>
+        Loading the scorebook…
+      </div>
+      <div class="diamond-error" data-diamond-error role="alert" hidden></div>
+
+      <div data-diamond-content hidden>
+        <section class="diamond-scoreboard" aria-label="Live game score">
+          <div class="diamond-scoreboard__header">
+            <div class="diamond-team">
+              <div class="diamond-team__label">Home</div>
+              <div class="diamond-team__name" data-diamond-home-name>Home</div>
+            </div>
+            <div class="diamond-score" aria-label="Score">
+              <span data-diamond-home-score>0</span
+              ><span data-diamond-away-score>0</span>
+            </div>
+            <div class="diamond-team">
+              <div class="diamond-team__label">Away</div>
+              <div class="diamond-team__name" data-diamond-away-name>
+                Opponent
+              </div>
+            </div>
+          </div>
+          <div class="diamond-situation">
+            <dl class="diamond-fact">
+              <dt>Inning</dt>
+              <dd data-diamond-inning>Top 1</dd>
+              <dt>Count</dt>
+              <dd data-diamond-count>0–0</dd>
+              <dt>Outs</dt>
+              <dd data-diamond-outs>0 outs</dd>
+            </dl>
+            <div class="diamond-field" aria-label="Occupied bases">
+              <span
+                class="diamond-base"
+                data-diamond-base="first"
+                aria-label="First base"
+              ></span>
+              <span
+                class="diamond-base"
+                data-diamond-base="second"
+                aria-label="Second base"
+              ></span>
+              <span
+                class="diamond-base"
+                data-diamond-base="third"
+                aria-label="Third base"
+              ></span>
+              <span class="diamond-home-plate" aria-hidden="true"></span>
+            </div>
+            <dl class="diamond-fact">
+              <dt>At bat</dt>
+              <dd data-diamond-batter>—</dd>
+              <dt>Pitching</dt>
+              <dd data-diamond-pitcher>—</dd>
+            </dl>
+          </div>
+        </section>
+
+        <section class="diamond-card" aria-labelledby="diamond-plays-title">
+          <h2 id="diamond-plays-title">Play ledger</h2>
+          <ul class="diamond-warnings" data-diamond-warnings hidden></ul>
+          <ol class="diamond-plays" data-diamond-plays></ol>
+          <p class="diamond-empty" data-diamond-empty>No scored plays yet.</p>
+          <button
+            class="diamond-action"
+            type="button"
+            data-diamond-load-more
+            hidden
+          >
+            Load earlier plays
+          </button>
+        </section>
+
+        <section
+          class="diamond-card diamond-engagements"
+          aria-labelledby="diamond-chat-title"
+        >
+          <div class="diamond-card__heading">
+            <div>
+              <h2 id="diamond-chat-title">Live chat</h2>
+              <p>
+                Shared with everyone following this game in the classic viewer.
+              </p>
+            </div>
+            <a class="diamond-sign-in" data-diamond-sign-in href="/app/#/auth"
+              >Sign in to join</a
+            >
+          </div>
+          <div class="diamond-chat" data-diamond-chat aria-live="polite">
+            <p class="diamond-empty" data-diamond-chat-empty>
+              No messages yet.
+            </p>
+          </div>
+          <form class="diamond-chat-form" data-diamond-chat-form>
+            <label class="diamond-sr-only" for="diamond-chat-input"
+              >Message</label
+            >
+            <input
+              id="diamond-chat-input"
+              data-diamond-chat-input
+              type="text"
+              maxlength="2000"
+              autocomplete="off"
+              placeholder="Sign in to join live chat"
+              disabled
+            />
+            <button
+              class="diamond-action"
+              data-diamond-chat-submit
+              type="submit"
+              disabled
+            >
+              Send
+            </button>
+          </form>
+          <div
+            class="diamond-engagement-status"
+            data-diamond-engagement-status
+            role="status"
+            aria-live="polite"
+          ></div>
+          <div
+            class="diamond-reactions"
+            data-diamond-reactions
+            aria-label="Live reactions"
+          >
+            <span>React</span>
+            <button
+              type="button"
+              data-diamond-reaction="fire"
+              aria-label="Fire reaction"
+            >
+              🔥
+            </button>
+            <button
+              type="button"
+              data-diamond-reaction="clap"
+              aria-label="Clap reaction"
+            >
+              👏
+            </button>
+            <button
+              type="button"
+              data-diamond-reaction="wow"
+              aria-label="Wow reaction"
+            >
+              😮
+            </button>
+            <button
+              type="button"
+              data-diamond-reaction="heart"
+              aria-label="Heart reaction"
+            >
+              ❤️
+            </button>
+            <button
+              type="button"
+              data-diamond-reaction="hundred"
+              aria-label="Hundred reaction"
+            >
+              💯
+            </button>
+          </div>
+          <div
+            class="diamond-reaction-overlay"
+            data-diamond-reaction-overlay
+            aria-hidden="true"
+          ></div>
+        </section>
+
+        <footer class="diamond-footer">
+          <span
+            >Stats and plays reflect the scorekeeper’s captured coverage.</span
+          >
+          <a data-diamond-classic-link href="/live-game.html"
+            >Open classic video and clips</a
+          >
+        </footer>
+      </div>
+    </main>
+    <script type="module" src="js/diamond-live-game.js?v=1"></script>
+  </body>
+</html>

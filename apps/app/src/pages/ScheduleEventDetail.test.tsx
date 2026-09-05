@@ -253,6 +253,7 @@ import {
   setScheduleGameDayServiceImporterForTest,
   shouldAutosaveGeneratedLineupDraft,
   shouldAutosaveLineupDraft,
+  shouldCheckDiamondActivation,
   shouldShowLiveScoreControls,
   shouldPersistLineupDraft
 } from './schedule/ScheduleGameHubSection';
@@ -1663,6 +1664,21 @@ describe('ScheduleEventDetail live score control visibility', () => {
     expect(shouldShowLiveScoreControls({ ...scoreCapableGame, type: 'practice' }, auth.user)).toBe(false);
     expect(shouldShowLiveScoreControls(scoreCapableGame, null)).toBe(false);
   });
+
+  it('checks Diamond activation only for unclaimed Baseball and Fastpitch games with score permission', () => {
+    const baseball = buildEvent({ sport: 'Baseball', canUpdateScore: true, trackingEngine: null, statTrackerConfigId: 'baseball-default' });
+    const fastpitch = buildEvent({ sport: 'Fastpitch', canUpdateScore: true, trackingEngine: null, statTrackerConfigId: 'fastpitch-default' });
+
+    expect(shouldCheckDiamondActivation(baseball, true)).toBe(true);
+    expect(shouldCheckDiamondActivation(fastpitch, true)).toBe(true);
+    expect(shouldCheckDiamondActivation({ ...baseball, sport: 'Softball' }, true)).toBe(true);
+    expect(shouldCheckDiamondActivation({ ...baseball, trackingEngine: 'diamond-v2' }, true)).toBe(false);
+    expect(shouldCheckDiamondActivation({ ...baseball, trackingEngine: 'future-engine' }, true)).toBe(false);
+    expect(shouldCheckDiamondActivation({ ...baseball, isDbGame: false }, true)).toBe(false);
+    expect(shouldCheckDiamondActivation({ ...baseball, sport: 'Soccer' }, true)).toBe(false);
+    expect(shouldCheckDiamondActivation({ ...baseball, statTrackerConfigId: null }, true)).toBe(false);
+    expect(shouldCheckDiamondActivation(baseball, false)).toBe(false);
+  });
 });
 
 describe('ScheduleEventDetail rideshare permissions', () => {
@@ -2521,7 +2537,7 @@ describe('ScheduleEventDetail assignments', () => {
 
     renderScheduleEventDetailWithRouteControls();
 
-    expect(await screen.findByText('Assign a tracker config in Edit game before opening the standard tracker.')).toBeTruthy();
+    expect(await screen.findByText('Assign a tracker config in Edit game before opening Standard or Diamond scoring.')).toBeTruthy();
     expect(screen.queryByTestId('standard-tracker-launch')).toBeNull();
   });
 
