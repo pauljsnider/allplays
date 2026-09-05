@@ -274,6 +274,9 @@ function validateCorrection(ledger, command) {
     if (uncorrectable.has(target.type)) {
         throw new contracts_1.DiamondDomainError('uncorrectable-event', `A ${target.type} event cannot be voided or superseded.`);
     }
+    if (command.type === 'supersede_event' && uncorrectable.has(command.payload.replacement.type)) {
+        throw new contracts_1.DiamondDomainError('invalid-replacement', 'A correction replacement must be a correctable scoring command.');
+    }
     const directives = getCorrectionDirectives(ledger.events);
     if (directives.has(target.eventId)) {
         throw new contracts_1.DiamondDomainError('already-corrected', 'The target event already has a correction.');
@@ -308,6 +311,7 @@ function rejectCheckpoint(checkpoint, error) {
     };
 }
 function validateCheckpoint(checkpoint) {
+    (0, reducer_1.validateDiamondState)(checkpoint.state);
     requireId(checkpoint.teamId, 'checkpoint.teamId');
     requireId(checkpoint.gameId, 'checkpoint.gameId');
     requireId(checkpoint.rulesProfileId, 'checkpoint.rulesProfileId');

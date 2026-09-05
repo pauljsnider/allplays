@@ -272,7 +272,7 @@ export type DiamondCommandPayloadMap = {
   resume: Readonly<Record<string, never>>;
   finalize: Readonly<{ confirmed: true }>;
   reopen_for_correction: Readonly<{ reason: string }>;
-  private_note: Readonly<{ text: string; attachedEventId?: string }>;
+  private_note: Readonly<{ text: string; attachedEventId?: string; visibility?: 'staff-private' }>;
   rules_decision: Readonly<{
     code: string;
     description: string;

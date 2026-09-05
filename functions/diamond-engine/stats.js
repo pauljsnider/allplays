@@ -430,6 +430,11 @@ function projectDiamondStats(ledger) {
                 const placement = before.bases[payload.from];
                 const responsiblePitcherId = payload.responsiblePitcherId ?? placement?.chargedToPitcherId;
                 const currentPitcherId = before.lineups[pitchingSide].defense.P;
+                if (payload.to === 'out' && currentPitcherId) {
+                    credit(ensure(currentPitcherId, pitchingSide), 'pitching', 'outs', 1, eventId);
+                    const defenders = new Set(Object.values(before.lineups[pitchingSide].defense).filter(Boolean));
+                    defenders.forEach((playerId) => credit(ensure(playerId, pitchingSide), 'fielding', 'defensiveOuts', 1, eventId));
+                }
                 if (payload.to === 'home' && payload.countsRun !== false) {
                     credit(runner, 'batting', 'R', 1, eventId);
                     teams[battingSide].R += 1;

@@ -24,6 +24,7 @@ import {
   createInitialDiamondState,
   reduceDiamondEvent,
   setDiamondStateRevision,
+  validateDiamondState,
   type DiamondReducerAction
 } from './reducer';
 
@@ -323,6 +324,9 @@ function validateCorrection(ledger: DiamondLedger, command: DiamondCommand) {
   if (uncorrectable.has(target.type)) {
     throw new DiamondDomainError('uncorrectable-event', `A ${target.type} event cannot be voided or superseded.`);
   }
+  if (command.type === 'supersede_event' && uncorrectable.has(command.payload.replacement.type)) {
+    throw new DiamondDomainError('invalid-replacement', 'A correction replacement must be a correctable scoring command.');
+  }
   const directives = getCorrectionDirectives(ledger.events);
   if (directives.has(target.eventId)) {
     throw new DiamondDomainError('already-corrected', 'The target event already has a correction.');
@@ -362,6 +366,7 @@ function rejectCheckpoint(checkpoint: DiamondCheckpoint, error: unknown): Diamon
 }
 
 function validateCheckpoint(checkpoint: DiamondCheckpoint) {
+  validateDiamondState(checkpoint.state);
   requireId(checkpoint.teamId, 'checkpoint.teamId');
   requireId(checkpoint.gameId, 'checkpoint.gameId');
   requireId(checkpoint.rulesProfileId, 'checkpoint.rulesProfileId');

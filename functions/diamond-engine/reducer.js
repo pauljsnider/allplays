@@ -18,14 +18,7 @@ const EMPTY_LINEUP = Object.freeze({
 const BASES = ['first', 'second', 'third'];
 const COVERAGE_VALUES = ['complete', 'partial', 'not_collected'];
 const SIDES = ['home', 'away'];
-const LIFECYCLES = [
-    'configured',
-    'ready',
-    'active',
-    'suspended',
-    'final',
-    'correction'
-];
+const LIFECYCLES = ['configured', 'ready', 'active', 'suspended', 'final', 'correction'];
 const POSITIONS = [
     'P',
     'C',
@@ -746,7 +739,7 @@ function reduceDiamondEvent(state, action) {
             };
             const runnerMoves = action.payload.runnerAdvances.map((advance) => {
                 validateAdvanceShape(advance);
-                const placement = state.bases[advance.from];
+                const placement = state.bases[requireMember(advance.from, BASES, 'runner source')];
                 return {
                     runnerId: advance.runnerId,
                     from: advance.from,
@@ -821,8 +814,11 @@ function reduceDiamondEvent(state, action) {
                 requireId(action.payload.runnerId, 'runnerId');
             if (action.payload.responsiblePitcherId)
                 requireId(action.payload.responsiblePitcherId, 'responsiblePitcherId');
-            if (action.payload.pitcherOfRecord)
+            if (action.payload.pitcherOfRecord) {
+                requireSide(action.payload.pitcherOfRecord.side, 'pitcherOfRecord.side');
                 requireId(action.payload.pitcherOfRecord.playerId, 'pitcherOfRecord.playerId');
+                requireMember(action.payload.pitcherOfRecord.decision, ['win', 'loss', 'save'], 'pitcher decision');
+            }
             break;
         }
         case 'advance_half_inning': {
@@ -848,13 +844,15 @@ function reduceDiamondEvent(state, action) {
         case 'place_tiebreaker_runner': {
             requireLifecycle(state, ['active'], 'place tiebreaker runner');
             const profile = (0, rules_1.requireDiamondRulesProfile)(state.rulesProfileId, state.rulesProfileVersion);
+            const side = requireSide(action.payload.side);
+            const base = requireMember(action.payload.base, BASES, 'tiebreaker base');
             if (!profile.tiebreaker.enabled || state.inning.number < profile.tiebreaker.startInning) {
                 throw new contracts_1.DiamondDomainError('rule-not-enabled', 'The tiebreaker runner is not active for this inning.');
             }
-            if (action.payload.side !== getBattingSide(state) || action.payload.base !== profile.tiebreaker.runnerBase) {
+            if (side !== getBattingSide(state) || base !== profile.tiebreaker.runnerBase) {
                 throw new contracts_1.DiamondDomainError('invalid-tiebreaker-runner', 'The tiebreaker runner must use the configured batting side and base.');
             }
-            if (state.bases[action.payload.base]) {
+            if (state.bases[base]) {
                 throw new contracts_1.DiamondDomainError('occupied-base', 'The configured tiebreaker base is already occupied.');
             }
             const runnerId = requireId(action.payload.runnerId, 'runnerId');
@@ -862,7 +860,7 @@ function reduceDiamondEvent(state, action) {
                 ...next,
                 bases: {
                     ...next.bases,
-                    [action.payload.base]: {
+                    [base]: {
                         runnerId,
                         chargedToPitcherId: action.payload.chargedToPitcherId
                             ? requireId(action.payload.chargedToPitcherId, 'chargedToPitcherId')
@@ -885,20 +883,23 @@ function reduceDiamondEvent(state, action) {
         case 'add_courtesy_runner': {
             requireLifecycle(state, ['active'], 'add courtesy runner');
             const profile = (0, rules_1.requireDiamondRulesProfile)(state.rulesProfileId, state.rulesProfileVersion);
-            if (!profile.courtesyRunner[action.payload.forRole]) {
-                throw new contracts_1.DiamondDomainError('rule-not-enabled', `Courtesy runners for ${action.payload.forRole}s are disabled.`);
+            const side = requireSide(action.payload.side);
+            const base = requireMember(action.payload.base, BASES, 'courtesy runner base');
+            const forRole = requireMember(action.payload.forRole, ['pitcher', 'catcher'], 'courtesy runner role');
+            if (!profile.courtesyRunner[forRole]) {
+                throw new contracts_1.DiamondDomainError('rule-not-enabled', `Courtesy runners for ${forRole}s are disabled.`);
             }
-            if (action.payload.side !== getBattingSide(state)) {
+            if (side !== getBattingSide(state)) {
                 throw new contracts_1.DiamondDomainError('invalid-courtesy-runner', 'A courtesy runner may replace only a runner on the batting team.');
             }
             const forPlayerId = requireId(action.payload.forPlayerId, 'forPlayerId');
             const runnerId = requireId(action.payload.runnerId, 'runnerId');
-            const placement = state.bases[action.payload.base];
+            const placement = state.bases[base];
             if (!placement || placement.runnerId !== forPlayerId) {
                 throw new contracts_1.DiamondDomainError('runner-not-on-base', 'The pitcher or catcher is not on the declared base.');
             }
-            const position = action.payload.forRole === 'pitcher' ? 'P' : 'C';
-            if (state.lineups[action.payload.side].defense[position] !== forPlayerId) {
+            const position = forRole === 'pitcher' ? 'P' : 'C';
+            if (state.lineups[side].defense[position] !== forPlayerId) {
                 throw new contracts_1.DiamondDomainError('invalid-courtesy-runner', `The replaced player is not the recorded ${position}.`);
             }
             if (BASES.some((base) => state.bases[base]?.runnerId === runnerId)) {
@@ -908,7 +909,7 @@ function reduceDiamondEvent(state, action) {
                 ...next,
                 bases: {
                     ...next.bases,
-                    [action.payload.base]: {
+                    [base]: {
                         ...placement,
                         runnerId,
                         courtesyForPlayerId: forPlayerId
@@ -951,6 +952,9 @@ function reduceDiamondEvent(state, action) {
             requireText(action.payload.text, 'note', 2000);
             if (action.payload.attachedEventId)
                 requireId(action.payload.attachedEventId, 'attachedEventId');
+            if (action.payload.visibility !== undefined) {
+                requireMember(action.payload.visibility, ['staff-private'], 'note visibility');
+            }
             break;
         }
         case 'rules_decision': {
