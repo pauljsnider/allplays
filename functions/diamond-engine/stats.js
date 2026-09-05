@@ -316,7 +316,7 @@ function projectDiamondStats(ledger) {
                 const bases = hitBases[payload.result];
                 if (bases) {
                     credit(batter, 'batting', 'H', 1, eventId);
-                    credit(batter, 'batting', `${String(bases)}B`, 1, eventId);
+                    credit(batter, 'batting', bases === 4 ? 'HR' : `${String(bases)}B`, 1, eventId);
                     credit(batter, 'batting', 'TB', bases, eventId);
                     credit(pitcher, 'pitching', 'H', 1, eventId);
                     teams[battingSide].H += 1;

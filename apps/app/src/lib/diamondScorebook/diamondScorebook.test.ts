@@ -540,6 +540,8 @@ describe('Diamond reducer and golden stats', () => {
     expect(stats.players['home-1'].derived).toMatchObject({ inningsPitched: '1.0', ERA: 14, WHIP: 3 });
     expect(stats.players['away-2'].sources['batting.H']).toHaveLength(1);
     expect(stats.players['away-2'].sources['batting.GIDP']).toHaveLength(1);
+    expect(stats.players['home-1'].raw.batting).toMatchObject({ H: 1, HR: 1, TB: 4 });
+    expect(stats.players['home-1'].sources['batting.HR']).toHaveLength(1);
   });
 
   it('requires explicit run timing on a third-out play', () => {
