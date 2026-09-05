@@ -22,6 +22,12 @@ export const SPORT_STAT_TEMPLATES = {
         name: 'Softball Standard',
         baseType: 'Softball',
         columns: ['AB', 'H', 'R', 'RBI', 'BB', 'FP']
+    },
+    Fastpitch: {
+        sport: 'Fastpitch',
+        name: 'Fastpitch Standard',
+        baseType: 'Fastpitch',
+        columns: ['AB', 'H', 'R', 'RBI', 'BB', 'FP']
     }
 };
 
@@ -37,4 +43,3 @@ export function getSportStatTemplate(sport) {
 export function getSportTemplateOptions() {
     return Object.values(SPORT_STAT_TEMPLATES);
 }
-

@@ -193,7 +193,15 @@ export function StandardTracker({ auth }: { auth: AuthState }) {
           return;
         }
         const loadedEvent = detail.events.find((candidate) => candidate.teamId === decodedTeamId && candidate.id === decodedEventId) || detail.events[0] || null;
-        const canTrack = Boolean(loadedEvent && loadedEvent.type === 'game' && loadedEvent.isDbGame && !loadedEvent.isCancelled && loadedEvent.canUpdateScore);
+        // Any explicit engine is server-owned. The legacy tracker may only write
+        // games that have no engine discriminator; Diamond and unknown future
+        // engines fail closed before loading mutable tracker state.
+        const canTrack = Boolean(loadedEvent
+          && loadedEvent.type === 'game'
+          && loadedEvent.isDbGame
+          && !loadedEvent.isCancelled
+          && loadedEvent.canUpdateScore
+          && !loadedEvent.trackingEngine);
         if (!canTrack) {
           setEvent(loadedEvent);
           setConfig(null);

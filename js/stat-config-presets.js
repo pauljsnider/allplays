@@ -1,20 +1,24 @@
 import { normalizeStatTrackerConfig } from './stat-leaderboards.js?v=4';
+import { DIAMOND_PLAYER_STAT_CATALOG } from './diamond-stat-presentation.js?v=1';
 
 const DIAMOND_STAT_COLUMNS = ['AB', 'H', 'R', 'RBI', 'BB', 'FP'];
 
-function createDiamondSportConfig(sport) {
+function createDiamondSportConfig(sport, { fullCatalog = false } = {}) {
+    const coreDefinitions = [
+        { label: 'AB', acronym: 'AB', group: 'Batting' },
+        { label: 'H', acronym: 'H', group: 'Batting', topStat: true },
+        { label: 'R', acronym: 'R', group: 'Batting', topStat: true },
+        { label: 'RBI', acronym: 'RBI', group: 'Batting', topStat: true },
+        { label: 'BB', acronym: 'BB', group: 'Plate Discipline', topStat: true },
+        { label: 'FP', acronym: 'FP', group: 'Fielding', topStat: true }
+    ];
     return {
         name: `${sport} Standard`,
         baseType: sport,
         columns: [...DIAMOND_STAT_COLUMNS],
-        statDefinitions: [
-            { label: 'AB', acronym: 'AB', group: 'Batting' },
-            { label: 'H', acronym: 'H', group: 'Batting', topStat: true },
-            { label: 'R', acronym: 'R', group: 'Batting', topStat: true },
-            { label: 'RBI', acronym: 'RBI', group: 'Batting', topStat: true },
-            { label: 'BB', acronym: 'BB', group: 'Plate Discipline', topStat: true },
-            { label: 'FP', acronym: 'FP', group: 'Fielding', topStat: true }
-        ]
+        statDefinitions: fullCatalog
+            ? DIAMOND_PLAYER_STAT_CATALOG.map((definition) => ({ ...definition }))
+            : coreDefinitions
     };
 }
 
@@ -72,14 +76,20 @@ const PRESET_DEFINITIONS = [
     {
         id: 'baseball',
         label: 'Baseball Standard',
-        description: 'At-bats, hits, runs, RBI, walks, and fielding plays.',
-        config: createDiamondSportConfig('Baseball')
+        description: 'Traditional batting, baserunning, pitching, fielding, and rate statistics.',
+        config: createDiamondSportConfig('Baseball', { fullCatalog: true })
     },
     {
         id: 'softball',
         label: 'Softball Standard',
         description: 'At-bats, hits, runs, RBI, walks, and fielding plays.',
         config: createDiamondSportConfig('Softball')
+    },
+    {
+        id: 'fastpitch',
+        label: 'Fastpitch Standard',
+        description: 'Traditional fastpitch batting, baserunning, pitching, fielding, and rate statistics.',
+        config: createDiamondSportConfig('Fastpitch', { fullCatalog: true })
     },
     {
         id: 'football',

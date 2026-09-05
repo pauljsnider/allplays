@@ -366,12 +366,16 @@ function extractEditTeamModule() {
             'const { validateProfilePhotoFile } = deps.profilePhotoPaths;'
         )
         .replace(
-            "import { getDefaultStatConfigForSport } from './js/stat-config-presets.js?v=3';",
+            "import { getDefaultStatConfigForSport } from './js/stat-config-presets.js?v=5';",
             'const { getDefaultStatConfigForSport } = deps.statConfigPresets;'
         )
         .replace(
-            "import { buildTeamSportConfigMigrationPlan } from './js/team-stat-config-migration.js?v=3';",
+            "import { buildTeamSportConfigMigrationPlan } from './js/team-stat-config-migration.js?v=4';",
             'const { buildTeamSportConfigMigrationPlan } = deps.teamStatConfigMigration;'
+        )
+        .replace(
+            "import { configureDiamondTeamForSport } from './js/diamond-scorebook-client.js?v=1';",
+            'const { configureDiamondTeamForSport } = deps.diamondScorebookClient;'
         )
         .replace(
             /import\s+\{\s*renderHeader,\s*renderFooter,\s*getUrlParams,\s*escapeHtml\s*\}\s+from\s+'\.\/js\/utils\.js\?v=\d+';/,
@@ -555,6 +559,11 @@ async function bootEditTeam(initialState, overrides = {}, dependencyOverrides = 
                 };
             }
         },
+        diamondScorebookClient: {
+            async configureDiamondTeamForSport() {
+                return { configured: false };
+            }
+        },
         teamAccess: await import('../../js/team-access.js'),
         rolloverAccess: await import('../../js/rollover-access.js'),
         rosterRolloverPreview: await import('../../js/roster-rollover-preview.js'),
@@ -603,6 +612,10 @@ async function bootEditTeam(initialState, overrides = {}, dependencyOverrides = 
         teamStatConfigMigration: {
             ...baseDeps.teamStatConfigMigration,
             ...(dependencyOverrides.teamStatConfigMigration || {})
+        },
+        diamondScorebookClient: {
+            ...baseDeps.diamondScorebookClient,
+            ...(dependencyOverrides.diamondScorebookClient || {})
         },
         teamAccess: {
             ...baseDeps.teamAccess,

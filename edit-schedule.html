@@ -847,6 +847,14 @@
                         class="w-full px-4 py-3 bg-gray-100 text-gray-800 rounded-lg hover:bg-gray-200 transition font-semibold">
                         <span data-tracker-label-text>Photo Score Sheet</span>
                     </button>
+                    <button id="diamond-tracker-quick" data-tracker-label="Diamond — Quick capture"
+                        class="hidden w-full px-4 py-3 bg-gray-100 text-gray-800 rounded-lg hover:bg-gray-200 transition font-semibold">
+                        <span data-tracker-label-text>Diamond — Quick capture</span>
+                    </button>
+                    <button id="diamond-tracker-full" data-tracker-label="Diamond — Full capture"
+                        class="hidden w-full px-4 py-3 bg-gray-100 text-gray-800 rounded-lg hover:bg-gray-200 transition font-semibold">
+                        <span data-tracker-label-text>Diamond — Full capture</span>
+                    </button>
                 </div>
             </details>
             <div class="flex justify-end mt-4">
@@ -975,6 +983,8 @@
         import { buildRegistrationScheduleImportPreview, formatRegistrationImportResults, getRegistrationScheduleEvents, isExternallyLinkedRegistrationTeam, planRegistrationScheduleImport } from './js/edit-schedule-registration-import.js?v=4';
         import { getGameReplayLifecycle } from './js/game-replay-video.js?v=3';
         import { hasReplayVideoEvidence } from './js/schedule-watch-cta.js?v=3';
+        import { DIAMOND_ENGINE, buildDiamondTrackerUrl } from './js/diamond-scorebook-routing.js?v=1';
+        import { activateDiamondGameForLegacy, getDiamondGameAccess } from './js/diamond-scorebook-client.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -2701,6 +2711,7 @@
         let pendingTrackGameId = null;
         let pendingTrackIsBasketball = false;
         let pendingTrackSupportsSimpleLive = false;
+        let pendingTrackDiamondAvailable = false;
 
         // Helper function to check if a stat config is for basketball
         function isBasketballConfig(configId) {
@@ -2740,9 +2751,10 @@
             pendingTrackGameId = null;
             pendingTrackIsBasketball = false;
             pendingTrackSupportsSimpleLive = false;
+            pendingTrackDiamondAvailable = false;
         }
 
-        function configureTrackerChoiceModal(isBasketball, supportsSimpleLive) {
+        function configureTrackerChoiceModal(isBasketball, supportsSimpleLive, diamondAvailable = false) {
             const description = document.getElementById('tracker-choice-description');
             const recommendedAction = document.getElementById('tracker-recommended-action');
             const advancedActions = document.getElementById('tracker-advanced-actions');
@@ -2752,8 +2764,12 @@
             const liveBtn = document.getElementById('basketball-tracker-live');
             const simpleBtn = document.getElementById('basketball-tracker-live-simple');
             const photoBtn = document.getElementById('basketball-tracker-photo');
+            const diamondQuickBtn = document.getElementById('diamond-tracker-quick');
+            const diamondFullBtn = document.getElementById('diamond-tracker-full');
             if (description) {
-                if (isBasketball) {
+                if (diamondAvailable) {
+                    description.textContent = 'Diamond Quick capture is recommended. It keeps the scorebook simple while preserving a correction-safe play ledger.';
+                } else if (isBasketball) {
                     description.textContent = 'This game uses a Basketball stat config. Live tracking is recommended.';
                 } else if (supportsSimpleLive) {
                     description.textContent = 'Simple live tracking is recommended for this goal sport.';
@@ -2764,9 +2780,17 @@
             if (betaBtn) betaBtn.classList.toggle('hidden', !isBasketball);
             if (simpleBtn) simpleBtn.classList.toggle('hidden', !supportsSimpleLive);
             if (photoBtn) photoBtn.classList.toggle('hidden', !isBasketball);
+            if (diamondQuickBtn) diamondQuickBtn.classList.toggle('hidden', !diamondAvailable);
+            if (diamondFullBtn) diamondFullBtn.classList.toggle('hidden', !diamondAvailable);
 
-            const trackerButtons = [standardBtn, betaBtn, liveBtn, simpleBtn, photoBtn].filter(Boolean);
-            const recommendedBtn = isBasketball ? liveBtn : supportsSimpleLive ? simpleBtn : standardBtn;
+            const trackerButtons = [standardBtn, betaBtn, liveBtn, simpleBtn, photoBtn, diamondQuickBtn, diamondFullBtn].filter(Boolean);
+            const recommendedBtn = diamondAvailable
+                ? diamondQuickBtn
+                : isBasketball
+                    ? liveBtn
+                    : supportsSimpleLive
+                        ? simpleBtn
+                        : standardBtn;
             trackerButtons.forEach((button) => {
                 const label = button.dataset.trackerLabel || 'Tracker';
                 button.dataset.recommended = 'false';
@@ -2776,11 +2800,13 @@
                 advancedActions?.appendChild(button);
             });
             if (recommendedBtn) {
-                const label = isBasketball
-                    ? 'Start Live Tracker'
-                    : supportsSimpleLive
-                        ? 'Start Simple Live Tracker'
-                        : 'Start Standard Tracker';
+                const label = diamondAvailable
+                    ? 'Start Diamond — Quick capture'
+                    : isBasketball
+                        ? 'Start Live Tracker'
+                        : supportsSimpleLive
+                            ? 'Start Simple Live Tracker'
+                            : 'Start Standard Tracker';
                 recommendedBtn.dataset.recommended = 'true';
                 recommendedBtn.classList.remove('bg-gray-100', 'text-gray-800', 'hover:bg-gray-200');
                 recommendedBtn.classList.add('bg-indigo-600', 'text-white', 'hover:bg-indigo-700');
@@ -2790,11 +2816,12 @@
             if (advancedOptions) advancedOptions.open = false;
         }
 
-        function openTrackerChoiceModal(gameId, isBasketball, supportsSimpleLive = false) {
+        function openTrackerChoiceModal(gameId, isBasketball, supportsSimpleLive = false, diamondAvailable = false) {
             pendingTrackGameId = gameId;
             pendingTrackIsBasketball = !!isBasketball;
             pendingTrackSupportsSimpleLive = !!supportsSimpleLive;
-            configureTrackerChoiceModal(pendingTrackIsBasketball, pendingTrackSupportsSimpleLive);
+            pendingTrackDiamondAvailable = !!diamondAvailable;
+            configureTrackerChoiceModal(pendingTrackIsBasketball, pendingTrackSupportsSimpleLive, pendingTrackDiamondAvailable);
             document.getElementById('basketball-tracker-modal')?.classList.remove('hidden');
         }
 
@@ -2810,14 +2837,37 @@
                 || liveStatus === 'canceled';
         }
 
-        function handleTrackClick(gameId) {
+        function isDiamondSport(game) {
+            const sport = String(game?.sport || currentTeam?.sport || '').trim().toLowerCase();
+            return sport === 'baseball' || sport === 'softball' || sport === 'fastpitch' || sport === 'fastpitch softball';
+        }
+
+        async function handleTrackClick(gameId) {
             const game = gamesCache[gameId];
             if (!game) return;
             if (isCancelledGame(game)) {
                 alert('Cancelled games cannot be tracked. Restore or reschedule the game before tracking.');
                 return;
             }
-            openTrackerChoiceModal(gameId, isBasketballForGame(game), isGoalSportForGame(game));
+            if (game.trackingEngine === DIAMOND_ENGINE) {
+                window.location.href = buildDiamondTrackerUrl(currentTeamId, gameId);
+                return;
+            }
+            if (game.trackingEngine) {
+                alert('This game uses a newer scoring engine that this page cannot edit.');
+                return;
+            }
+            let diamondAvailable = false;
+            if (isDiamondSport(game)) {
+                try {
+                    const access = await getDiamondGameAccess(currentTeamId, gameId);
+                    diamondAvailable = access?.canActivate === true
+                        || (access?.eligible === true && access?.canManage === true && access?.teamOptIn === true);
+                } catch (error) {
+                    console.warn('Diamond access check failed closed; legacy trackers remain available.', error);
+                }
+            }
+            openTrackerChoiceModal(gameId, isBasketballForGame(game), isGoalSportForGame(game), diamondAvailable);
         }
 
         function renderDbGame(game) {
@@ -5194,6 +5244,40 @@ PARSING RULES:
 
         // Basketball tracker choice modal handlers
         document.getElementById('basketball-tracker-cancel')?.addEventListener('click', closeBasketballTrackerModal);
+        async function startPendingDiamondTracker(captureMode) {
+            if (!pendingTrackGameId || !pendingTrackDiamondAvailable) return;
+            const mode = captureMode === 'full' ? 'full' : 'quick';
+            const confirmed = window.confirm(
+                `Start Diamond ${mode === 'full' ? 'Full' : 'Quick'} capture? `
+                + 'This permanently assigns this untracked game to the Diamond ledger. Other games and all existing legacy games are unchanged.'
+            );
+            if (!confirmed) return;
+            const gameId = pendingTrackGameId;
+            const buttons = [
+                document.getElementById('diamond-tracker-quick'),
+                document.getElementById('diamond-tracker-full')
+            ].filter(Boolean);
+            buttons.forEach(button => {
+                button.disabled = true;
+                button.setAttribute('aria-busy', 'true');
+            });
+            try {
+                await activateDiamondGameForLegacy(currentTeamId, gameId, mode);
+                closeBasketballTrackerModal();
+                window.location.href = buildDiamondTrackerUrl(currentTeamId, gameId);
+            } catch (error) {
+                console.error('Diamond activation failed:', error);
+                alert(error?.message || 'Diamond could not claim this game. The legacy tracker is still available.');
+            } finally {
+                buttons.forEach(button => {
+                    if (!button.isConnected) return;
+                    button.disabled = false;
+                    button.removeAttribute('aria-busy');
+                });
+            }
+        }
+        document.getElementById('diamond-tracker-quick')?.addEventListener('click', () => void startPendingDiamondTracker('quick'));
+        document.getElementById('diamond-tracker-full')?.addEventListener('click', () => void startPendingDiamondTracker('full'));
         document.getElementById('basketball-tracker-standard')?.addEventListener('click', () => {
             if (!pendingTrackGameId) return closeBasketballTrackerModal();
             const gameId = pendingTrackGameId;

@@ -690,6 +690,7 @@
         import { getApp } from './js/vendor/firebase-app.js';
         import { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLine, removeGameSummaryLine, buildGameNoteLogText, buildGoalSportNoteText } from './js/live-tracker-notes.js?v=3';
         import { collectTournamentAdvancementPatches } from './js/tournament-brackets.js?v=1';
+        import { DIAMOND_ENGINE, buildDiamondTrackerUrl } from './js/diamond-scorebook-routing.js?v=1';
         // Note: firebase-ai will be lazy-loaded when AI summary is requested
 
         renderFooter(document.getElementById('footer-container'));
@@ -848,6 +849,16 @@
                     console.error('Game not found for teamId:', teamId, 'gameId:', gameId);
                     alert("Game not found");
                     window.location.href = 'dashboard.html';
+                    return;
+                }
+
+                if (game.trackingEngine === DIAMOND_ENGINE) {
+                    window.location.replace(buildDiamondTrackerUrl(teamId, gameId));
+                    return;
+                }
+                if (game.trackingEngine) {
+                    alert('This game uses a newer scoring engine that this tracker cannot edit.');
+                    window.location.href = `edit-schedule.html#teamId=${encodeURIComponent(teamId)}`;
                     return;
                 }
 

@@ -51,6 +51,7 @@ const OpportunityInquiry = lazyNamedPage(() => import('./pages/OpportunityInquir
 const ResetPassword = lazyNamedPage(() => import('./pages/ResetPassword'), 'ResetPassword');
 const Schedule = lazyNamedPage(() => import('./pages/Schedule'), 'Schedule');
 const ScheduleEventDetail = lazyNamedPage(() => import('./pages/ScheduleEventDetail'), 'ScheduleEventDetail');
+const DiamondScorebook = lazyNamedPage(() => import('./pages/DiamondScorebook'), 'DiamondScorebook');
 const StandardTracker = lazyNamedPage(() => import('./pages/StandardTracker'), 'StandardTracker');
 const TeamDetail = lazyNamedPage(() => import('./pages/TeamDetail'), 'TeamDetail');
 const TeamSettings = lazyNamedPage(() => import('./pages/TeamSettings'), 'TeamSettings');
@@ -239,6 +240,7 @@ export default function App() {
         <Route path="/home" element={auth.user || auth.loading ? <Protected auth={auth}><Home auth={auth} /></Protected> : <AppShell auth={auth}><Home auth={auth} /></AppShell>} />
         <Route path="/officials" element={<Protected auth={auth}><Officials auth={auth} /></Protected>} />
         <Route path="/schedule" element={<Protected auth={auth}><Schedule auth={auth} /></Protected>} />
+        <Route path="/schedule/:teamId/:eventId/diamond-v2" element={<Protected auth={auth}><DiamondScorebook auth={auth} /></Protected>} />
         <Route path="/schedule/:teamId/:eventId/track" element={<Protected auth={auth}><StandardTracker auth={auth} /></Protected>} />
         <Route path="/schedule/:teamId/:eventId" element={<Protected auth={auth}><ScheduleEventDetail auth={auth} /></Protected>} />
         <Route path="/messages" element={<Protected auth={auth}><Messages auth={auth} /></Protected>} />

@@ -1,5 +1,5 @@
 import { Suspense, createContext, lazy, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { ChevronDown, ClipboardCheck, ExternalLink, FileText, Radio, RefreshCw, Share2, Users, Video, type LucideIcon } from 'lucide-react';
 import {
   cancelPracticeOccurrenceForApp,
@@ -75,6 +75,7 @@ type StatsheetImportServiceModule = typeof import('../../lib/statsheetImportServ
 type LegacyScheduleHelpersModule = typeof import('../../lib/adapters/legacyScheduleHelpers');
 type GameReportSectionsModule = typeof import('../../components/schedule/GameReportSections');
 type ScheduleGameDayServiceModule = typeof import('../../lib/scheduleGameDayService');
+type DiamondScorebookServiceModule = typeof import('../../lib/diamondScorebookService');
 
 let liveGameChatModulePromise: Promise<LiveGameChatModule> | null = null;
 let liveGameReactionsModulePromise: Promise<LiveGameReactionsModule> | null = null;
@@ -85,6 +86,7 @@ let statsheetImportServiceModulePromise: Promise<StatsheetImportServiceModule> |
 let legacyScheduleHelpersModulePromise: Promise<LegacyScheduleHelpersModule> | null = null;
 let gameReportSectionsModulePromise: Promise<GameReportSectionsModule> | null = null;
 let scheduleGameDayServiceModulePromise: Promise<ScheduleGameDayServiceModule> | null = null;
+let diamondScorebookServiceModulePromise: Promise<DiamondScorebookServiceModule> | null = null;
 let scheduleGameDayServiceImporter = () => import('../../lib/scheduleGameDayService');
 
 function loadLiveGameChatModule() {
@@ -132,9 +134,32 @@ export function loadScheduleGameDayService() {
   return scheduleGameDayServiceModulePromise;
 }
 
+export function loadDiamondScorebookService() {
+  if (!diamondScorebookServiceModulePromise) diamondScorebookServiceModulePromise = import('../../lib/diamondScorebookService');
+  return diamondScorebookServiceModulePromise;
+}
+
 export function setScheduleGameDayServiceImporterForTest(importer?: () => Promise<ScheduleGameDayServiceModule>) {
   scheduleGameDayServiceModulePromise = null;
   scheduleGameDayServiceImporter = importer || (() => import('../../lib/scheduleGameDayService'));
+}
+
+export function shouldCheckDiamondActivation(event?: ParentScheduleEvent | null, canUpdateScore = false) {
+  const sport = String(event?.sport || '').trim().toLowerCase();
+  const isDiamondSport = sport === 'baseball'
+    || sport === 'softball'
+    || sport === 'fastpitch'
+    || sport === 'fastpitch softball';
+  return Boolean(
+    event
+    && canUpdateScore
+    && event.type === 'game'
+    && event.isDbGame
+    && !event.isCancelled
+    && !event.trackingEngine
+    && Boolean(event.statTrackerConfigId)
+    && isDiamondSport
+  );
 }
 
 const DeferredGameReportSections = lazy(() => (
@@ -867,6 +892,86 @@ function GameHubLiveClockBadge({ event }: { event: ParentScheduleEvent }) {
   );
 }
 
+function DiamondActivationCard({ event, canUpdateScore }: { event: ParentScheduleEvent; canUpdateScore: boolean }) {
+  const navigate = useNavigate();
+  const [access, setAccess] = useState<Awaited<ReturnType<DiamondScorebookServiceModule['getDiamondAccess']>> | null>(null);
+  const [captureMode, setCaptureMode] = useState<'quick' | 'full'>('quick');
+  const [activating, setActivating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const shouldCheck = shouldCheckDiamondActivation(event, canUpdateScore);
+
+  useEffect(() => {
+    let cancelled = false;
+    setAccess(null);
+    setError(null);
+    if (!shouldCheck) return undefined;
+    void loadDiamondScorebookService()
+      .then((service) => service.getDiamondAccess(event.teamId, { gameId: event.id }))
+      .then((result) => {
+        if (!cancelled) setAccess(result);
+      })
+      .catch(() => {
+        // Access and rollout reads fail closed. In disabled/unreadable mode this
+        // optional card stays absent and the existing legacy tools remain intact.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [event.eventKey, event.id, event.teamId, shouldCheck]);
+
+  if (!shouldCheck || !access?.eligible || !access.canManage || !access.teamOptIn || access.policyMode === 'disabled') {
+    return null;
+  }
+
+  const activate = async () => {
+    if (activating) return;
+    const confirmed = window.confirm(
+      `Use Diamond ${captureMode === 'full' ? 'Full' : 'Quick'} capture for this game? `
+      + 'This permanently assigns this untracked game to the Diamond ledger; the legacy tracker will remain available for every other game.'
+    );
+    if (!confirmed) return;
+    setActivating(true);
+    setError(null);
+    try {
+      const service = await loadDiamondScorebookService();
+      await service.activateDiamondGame({ teamId: event.teamId, gameId: event.id, captureMode });
+      navigate(`/schedule/${encodeURIComponent(event.teamId)}/${encodeURIComponent(event.id)}/diamond-v2`);
+    } catch (activationError: any) {
+      setError(activationError?.message || 'Diamond could not claim this game. The legacy tracker is still available.');
+    } finally {
+      setActivating(false);
+    }
+  };
+
+  return (
+    <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-3" data-testid="diamond-activation-card">
+      <div className="text-sm font-black text-emerald-950">Diamond scorebook</div>
+      <p className="mt-1 text-xs font-semibold leading-5 text-emerald-900">
+        Quick keeps taps minimal. Full records pitches, fielding chains, and scoring judgments for complete stats.
+      </p>
+      <div className="mt-3 grid grid-cols-2 gap-2" role="group" aria-label="Diamond capture mode">
+        {(['quick', 'full'] as const).map((mode) => (
+          <button
+            key={mode}
+            type="button"
+            className={`min-h-11 rounded-xl border px-3 text-sm font-black ${captureMode === mode ? 'border-emerald-700 bg-emerald-700 text-white' : 'border-emerald-300 bg-white text-emerald-900'}`}
+            aria-pressed={captureMode === mode}
+            onClick={() => setCaptureMode(mode)}
+            disabled={activating}
+          >
+            {mode === 'quick' ? 'Quick capture' : 'Full capture'}
+          </button>
+        ))}
+      </div>
+      <button type="button" className="primary-button mt-3 min-h-11 w-full justify-center px-4 text-sm" onClick={() => void activate()} disabled={activating}>
+        <ClipboardCheck className="h-4 w-4" aria-hidden="true" />
+        {activating ? 'Starting Diamond…' : 'Start Diamond scorebook'}
+      </button>
+      {error ? <div className="mt-2 text-xs font-bold text-red-700" role="alert">{error}</div> : null}
+    </div>
+  );
+}
+
 export function ScheduleGameHubSection({ auth, event, childEvents, requestedPanel, onPanelChange, onScoreUpdated, onLiveClockUpdated, onWrapupCompleted, onStatsheetImported, onGameCancelled, onPracticeOccurrenceCancelled, onGamePlanPublished, onReplayVideoUpdated }: {
   auth: AuthState;
   event: ParentScheduleEvent;
@@ -895,25 +1000,29 @@ export function ScheduleGameHubSection({ auth, event, childEvents, requestedPane
   const showAdminPracticeTimeline = Boolean(isPractice && event.isTeamAdmin);
   const showNonAdminPracticePacketFirst = Boolean(isPractice && !event.isTeamAdmin);
   const canUpdateScore = shouldShowLiveScoreControls(event, auth.user);
-  const canLaunchStandardTracker = canUpdateScore && Boolean(event.statTrackerConfigId);
+  const isDiamondOwned = event.trackingEngine === 'diamond-v2';
+  const hasUnknownTrackingEngine = Boolean(event.trackingEngine && !isDiamondOwned);
+  const canUseLegacyScoring = canUpdateScore && !event.trackingEngine;
+  const canLaunchStandardTracker = canUseLegacyScoring && Boolean(event.statTrackerConfigId);
   const hasBasketballGameTools = supportsBasketballGameTools(event);
-  const canWrapup = canUpdateScore;
+  const canWrapup = canUseLegacyScoring;
   const canCancelGame = Boolean(!isPractice && event.isDbGame && !event.isCancelled && event.canUpdateScore && auth.user);
   const isRecurringPracticeOccurrence = Boolean(isPractice && event.id.includes('__'));
   const canCancelPracticeOccurrence = Boolean(isRecurringPracticeOccurrence && event.isDbGame && !event.isCancelled && event.isTeamAdmin && auth.user);
-  const canPublishLineup = Boolean(!isPractice && event.isDbGame && event.isTeamStaff);
+  const canPublishLineup = Boolean(!isPractice && event.isDbGame && event.isTeamStaff && !event.trackingEngine);
   const notifiesCounterpartTeam = Boolean(event.sharedScheduleOpponentTeamId);
   const hubDestinations = isPractice ? buildPracticeHubDestinations(event) : buildGameHubDestinations(event);
   const standardTrackerHref = `/schedule/${encodeURIComponent(event.teamId)}/${encodeURIComponent(event.id)}/track`;
+  const diamondScorebookHref = `/schedule/${encodeURIComponent(event.teamId)}/${encodeURIComponent(event.id)}/diamond-v2`;
   const availablePanelIds = useMemo(() => {
     const panels: GameHubPanelId[] = [];
-    if (canUpdateScore && hasBasketballGameTools) panels.push('foul');
+    if (canUseLegacyScoring && hasBasketballGameTools) panels.push('foul');
     if (!isPractice) panels.push('reactions', 'chat');
     if (canWrapup) panels.push('wrapup', 'statsheet');
     if (canPublishLineup) panels.push('lineup', 'substitutions');
     if (!isPractice) panels.push('report');
     return panels;
-  }, [canPublishLineup, canUpdateScore, canWrapup, hasBasketballGameTools, isPractice]);
+  }, [canPublishLineup, canUseLegacyScoring, canWrapup, hasBasketballGameTools, isPractice]);
   const requestedPanelAvailable = requestedPanel && availablePanelIds.includes(requestedPanel)
     ? requestedPanel
     : null;
@@ -945,7 +1054,7 @@ export function ScheduleGameHubSection({ auth, event, childEvents, requestedPane
 
   useEffect(() => {
     let cancelled = false;
-    if (!canUpdateScore || !hasBasketballGameTools) {
+    if (!canUseLegacyScoring || !hasBasketballGameTools) {
       setHomeScoringPlayers([]);
       setLoadingHomeScoringPlayers(false);
       return undefined;
@@ -966,7 +1075,7 @@ export function ScheduleGameHubSection({ auth, event, childEvents, requestedPane
     return () => {
       cancelled = true;
     };
-  }, [canUpdateScore, event.teamId, event.id, event.eventKey, hasBasketballGameTools]);
+  }, [canUseLegacyScoring, event.teamId, event.id, event.eventKey, hasBasketballGameTools]);
 
   const updateHomeScoringPlayers = useCallback((updater: HomeScoringPlayersUpdater) => {
     setHomeScoringPlayers(updater);
@@ -1042,7 +1151,7 @@ export function ScheduleGameHubSection({ auth, event, childEvents, requestedPane
   };
 
   return (
-    <section className={`space-y-3 ${canUpdateScore && !isDesktopWeb ? 'mobile-live-score-tray-offset' : ''}`}>
+    <section className={`space-y-3 ${canUseLegacyScoring && !isDesktopWeb ? 'mobile-live-score-tray-offset' : ''}`}>
       {showNonAdminPracticePacketFirst ? <PracticePacketSection auth={auth} event={event} childEvents={childEvents} /> : null}
       {showAdminPracticeTimeline ? <PracticeTimelineSection auth={auth} event={event} /> : null}
       {!isPractice && event.isTeamAdmin && event.isDbGame && !event.isCancelled ? <GameScheduleEditPanel auth={auth} event={event} /> : null}
@@ -1099,20 +1208,37 @@ export function ScheduleGameHubSection({ auth, event, childEvents, requestedPane
               </div>
             </div>
 
-            {canUpdateScore ? <LiveGameClockPanel auth={auth} event={event} onLiveClockUpdated={onLiveClockUpdated} /> : null}
+            {canUseLegacyScoring ? <LiveGameClockPanel auth={auth} event={event} onLiveClockUpdated={onLiveClockUpdated} /> : null}
           </LiveGameClockTickerProvider>
+          <DiamondActivationCard event={event} canUpdateScore={canUpdateScore} />
+          {isDiamondOwned && canUpdateScore ? (
+            <Link to={diamondScorebookHref} className="primary-button mt-3 min-h-11 w-full justify-center px-4 text-sm" data-testid="diamond-scorebook-launch">
+              <ClipboardCheck className="h-4 w-4" aria-hidden="true" />
+              Open Diamond scorebook
+            </Link>
+          ) : null}
+          {isDiamondOwned ? (
+            <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-900" role="status">
+              Score, plays, lineups, and corrections are controlled by the Diamond ledger.
+            </div>
+          ) : null}
+          {hasUnknownTrackingEngine ? (
+            <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-bold text-amber-900" role="alert">
+              Update ALL PLAYS before editing this game’s scorebook.
+            </div>
+          ) : null}
           {canLaunchStandardTracker ? (
             <Link to={standardTrackerHref} className="secondary-button mt-3 min-h-11 w-full justify-center px-4 text-sm" data-testid="standard-tracker-launch">
               <ClipboardCheck className="h-4 w-4" aria-hidden="true" />
               Standard tracker
             </Link>
           ) : null}
-          {canUpdateScore && !event.statTrackerConfigId ? (
+          {canUseLegacyScoring && !event.statTrackerConfigId ? (
             <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-bold text-amber-800" role="status">
-              Assign a tracker config in Edit game before opening the standard tracker.
+              Assign a tracker config in Edit game before opening Standard or Diamond scoring.
             </div>
           ) : null}
-          {canUpdateScore ? (
+          {canUseLegacyScoring ? (
             <LiveScoreEditor
               auth={auth}
               event={event}
@@ -1124,7 +1250,7 @@ export function ScheduleGameHubSection({ auth, event, childEvents, requestedPane
               onLiveStatusUpdated={() => onLiveClockUpdated({ liveStatus: 'live' })}
             />
           ) : null}
-          {canUpdateScore && hasBasketballGameTools ? (
+          {canUseLegacyScoring && hasBasketballGameTools ? (
             <LazyGameHubPanel
               panelId="game-hub-foul-panel"
               title="Foul tracker"

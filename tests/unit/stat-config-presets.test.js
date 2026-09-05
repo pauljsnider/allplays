@@ -18,6 +18,7 @@ describe('stat config presets', () => {
             'soccer',
             'baseball',
             'softball',
+            'fastpitch',
             'football',
             'volleyball'
         ]));
@@ -54,6 +55,7 @@ describe('stat config presets', () => {
 
         const baseball = getDefaultStatConfigForSport('Baseball');
         const softball = getDefaultStatConfigForSport('softball');
+        const fastpitch = getDefaultStatConfigForSport('fastpitch');
 
         expect(baseball).toEqual(expect.objectContaining({
             name: 'Baseball Standard',
@@ -65,6 +67,15 @@ describe('stat config presets', () => {
                 expect.objectContaining({ id: 'fp', label: 'FP', group: 'Fielding', type: 'base', format: 'number', precision: 0, topStat: true })
             ])
         }));
+        expect(baseball.statDefinitions).toEqual(expect.arrayContaining([
+            expect.objectContaining({ id: 'pa', group: 'Batting', type: 'base' }),
+            expect.objectContaining({ id: 'avg', group: 'Batting Rates', type: 'derived', precision: 3 }),
+            expect.objectContaining({ id: 'sb', group: 'Baserunning', type: 'base' }),
+            expect.objectContaining({ id: 'ip_outs', group: 'Pitching', type: 'base' }),
+            expect.objectContaining({ id: 'era', group: 'Pitching Rates', type: 'derived', precision: 2, rankingOrder: 'asc' }),
+            expect.objectContaining({ id: 'fpct', group: 'Fielding Rates', type: 'derived', precision: 3 })
+        ]));
+        expect(baseball.statDefinitions.length).toBeGreaterThan(60);
         expect(softball).toEqual(expect.objectContaining({
             name: 'Softball Standard',
             baseType: 'Softball',
@@ -75,7 +86,30 @@ describe('stat config presets', () => {
                 expect.objectContaining({ id: 'fp', label: 'FP', group: 'Fielding', type: 'base', format: 'number', precision: 0, topStat: true })
             ])
         }));
+        expect(fastpitch).toEqual(expect.objectContaining({
+            name: 'Fastpitch Standard',
+            baseType: 'Fastpitch',
+            columns: expectedColumns
+        }));
+        expect(fastpitch.statDefinitions).toEqual(baseball.statDefinitions.map((definition) => ({ ...definition })));
 
+        // The established generic Softball preset remains deliberately small;
+        // Diamond v2 uses the explicit Fastpitch contract above.
+        expect(softball.statDefinitions).toHaveLength(6);
+
+    });
+
+    it('does not change non-Diamond preset defaults', () => {
+        expect(getStatConfigPresetById('football')).toMatchObject({
+            name: 'Football Standard',
+            baseType: 'Football',
+            columns: ['TD', 'YDS', 'TACK', 'SACK', 'TO']
+        });
+        expect(getStatConfigPresetById('volleyball')).toMatchObject({
+            name: 'Volleyball Standard',
+            baseType: 'Volleyball',
+            columns: ['KILLS', 'AST', 'DIGS', 'ACES', 'BLKS']
+        });
     });
 
     it('serializes editable stat definitions for reload into the config form', () => {
