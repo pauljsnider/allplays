@@ -900,9 +900,13 @@ function buildViewerLink(teamId, gameId) {
 function normalizeNotificationProviderResult(value, dedupKey, instanceId) {
   if (
     !isPlainObject(value) ||
-    !["sent", "partial", "deduplicated", "no-recipients"].includes(
-      value.outcome,
-    ) ||
+    ![
+      "sent",
+      "partial",
+      "deduplicated",
+      "no-recipients",
+      "delivery-uncertain",
+    ].includes(value.outcome) ||
     value.idempotencyKey !== dedupKey ||
     value.instanceId !== instanceId
   ) {
@@ -1302,11 +1306,15 @@ function createDiamondScorebookEffectHandlers(dependencies = {}) {
             { retryable: true },
           );
         }
+        const completionReason =
+          providerResult.providerOutcome === "delivery-uncertain"
+            ? "notification-push-uncertain-inbox-authoritative"
+            : "notification-provider-confirmed";
         const patch = terminalPatch(
           core,
           prepared.effect,
           "processed",
-          "notification-provider-confirmed",
+          completionReason,
           nowMs,
           providerResult,
         );
@@ -1314,7 +1322,7 @@ function createDiamondScorebookEffectHandlers(dependencies = {}) {
         return {
           processed: true,
           status: "completed",
-          reason: "notification-provider-confirmed",
+          reason: completionReason,
           terminalResult: patch.terminalResult,
         };
       });
@@ -1357,7 +1365,7 @@ function createDiamondScorebookEffectHandlers(dependencies = {}) {
     } catch (error) {
       throw new DiamondEffectError(
         "notification-send-failed",
-        "Diamond notification delivery is uncertain and will retry with the same idempotency key.",
+        "Diamond notification delivery stopped before a terminal sender result and will retry behind its durable dispatch boundary.",
         {
           retryable: true,
           details: { causeCode: error?.code || "provider-failed" },

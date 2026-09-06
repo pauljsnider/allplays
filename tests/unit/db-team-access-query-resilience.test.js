@@ -92,7 +92,7 @@ const {
   getGameDayTeamContext,
   getTeams,
   getUserTeamsWithAccess
-} = await import('../../js/db.js?v=4433195');
+} = await import('../../js/db.js?v=4433196');
 
 describe('team access query resilience', () => {
   beforeEach(() => {
@@ -524,6 +524,7 @@ describe('game access query resilience', () => {
           teamScore: 4,
           opponentScore: 5,
           status: 'completed',
+          trackingEngine: 'diamond-v2',
           liveResetAt: '2026-08-02T18:15:00.000Z',
           liveResetEventId: 'reset-public-2',
           isPublicProjection: false
@@ -536,6 +537,7 @@ describe('game access query resilience', () => {
       teamId: 'team-1',
       homeScore: 5,
       awayScore: 4,
+      trackingEngine: 'diamond-v2',
       liveResetAt: new Date('2026-08-02T18:15:00.000Z'),
       liveResetEventId: 'reset-public-2',
       isPublicProjection: true

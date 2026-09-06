@@ -392,7 +392,7 @@ function extractEditTeamModule() {
             'const { listDiamondRulesProfilesForSport } = deps.diamondRulesProfiles;'
         )
         .replace(
-            "import { isDiamondScorebookUiEnabled } from './js/launch-features.js?v=1';",
+            "import { isDiamondScorebookUiEnabled } from './js/launch-features.js?v=3';",
             'const { isDiamondScorebookUiEnabled } = deps.launchFeatures;'
         )
         .replace(

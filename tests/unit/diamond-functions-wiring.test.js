@@ -112,7 +112,7 @@ describe("Diamond Scorebook Functions wiring", () => {
       "delivery?.providerRequestId !== diamondNotificationProviderReceiptId(request)",
     );
     expect(source).toMatch(
-      /function deliverDiamondScorebookNotification\(request, delivery\) \{[\s\S]*?delivery\?\.instanceId !== request\.instanceId[\s\S]*?deliveryIdempotencyKey: delivery\.providerRequestId,[\s\S]*?suppressResourceTelemetry: true,[\s\S]*?dedupKeys: \[\]/,
+      /function deliverDiamondScorebookNotification\(request, delivery, hooks = \{\}\) \{[\s\S]*?delivery\?\.instanceId !== request\.instanceId[\s\S]*?typeof hooks\.beforeProviderDispatch !== 'function'[\s\S]*?deliveryIdempotencyKey: delivery\.providerRequestId,[\s\S]*?beforeProviderDispatch: hooks\.beforeProviderDispatch,[\s\S]*?suppressResourceTelemetry: true,[\s\S]*?dedupKeys: \[\]/,
     );
     expect(source).toMatch(
       /exports\.processDiamondScorebookEffect = functions[\s\S]*?failurePolicy: true[\s\S]*?\.document\('teams\/\{teamId\}\/games\/\{gameId\}\/diamondScorebooks\/v2\/effects\/\{effectId\}'\)[\s\S]*?\.onWrite\(diamondScorebookEffectHandlers\.onDiamondEffectWrite\)/,

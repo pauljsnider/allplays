@@ -183,27 +183,39 @@ describe('sendCategoryNotification load coverage', () => {
         const replacementRequest = makeRequest(replacementInstanceId);
         const firstProviderId = diamondNotificationProviderReceiptId(firstRequest);
         const replacementProviderId = diamondNotificationProviderReceiptId(replacementRequest);
+        const dispatchedProviderIds = new Set();
+        const deliveryHooks = (providerId) => ({
+            beforeProviderDispatch: async () => {
+                if (dispatchedProviderIds.has(providerId)) {
+                    throw new Error('The durable provider boundary was already crossed.');
+                }
+                dispatchedProviderIds.add(providerId);
+            }
+        });
 
         try {
             await internals.deliverDiamondScorebookNotification(firstRequest, {
                 instanceId: firstInstanceId,
                 idempotencyKey: firstRequest.idempotencyKey,
                 providerRequestId: firstProviderId
-            });
+            }, deliveryHooks(firstProviderId));
             const firstInboxPath = `users/coach-1/notificationInbox/${firstProviderId}`;
             const retainedFirst = env.getStoredDoc(firstInboxPath);
             env.setStoredDoc(firstInboxPath, { ...retainedFirst, readAt: 'read-marker' });
 
-            await internals.deliverDiamondScorebookNotification(firstRequest, {
-                instanceId: firstInstanceId,
-                idempotencyKey: firstRequest.idempotencyKey,
-                providerRequestId: firstProviderId
-            });
+            await assert.rejects(
+                internals.deliverDiamondScorebookNotification(firstRequest, {
+                    instanceId: firstInstanceId,
+                    idempotencyKey: firstRequest.idempotencyKey,
+                    providerRequestId: firstProviderId
+                }, deliveryHooks(firstProviderId)),
+                /provider boundary was already crossed/
+            );
             await internals.deliverDiamondScorebookNotification(replacementRequest, {
                 instanceId: replacementInstanceId,
                 idempotencyKey: replacementRequest.idempotencyKey,
                 providerRequestId: replacementProviderId
-            });
+            }, deliveryHooks(replacementProviderId));
 
             assert.equal(env.getNotificationInboxDocCount('coach-1'), 2);
             assert.equal(env.getStoredDoc(firstInboxPath).readAt, 'read-marker');
@@ -214,7 +226,7 @@ describe('sendCategoryNotification load coverage', () => {
             );
             assert.deepEqual(
                 env.messagingCalls.map((call) => call.webpush?.notification?.tag),
-                [firstProviderId, firstProviderId, replacementProviderId]
+                [firstProviderId, replacementProviderId]
             );
 
             await assert.rejects(
@@ -224,7 +236,8 @@ describe('sendCategoryNotification load coverage', () => {
                         instanceId: firstInstanceId,
                         idempotencyKey: firstRequest.idempotencyKey,
                         providerRequestId: firstProviderId
-                    }
+                    },
+                    deliveryHooks(firstProviderId)
                 ),
                 /idempotency validation failed/
             );
@@ -233,10 +246,96 @@ describe('sendCategoryNotification load coverage', () => {
                     instanceId: replacementInstanceId,
                     idempotencyKey: firstRequest.idempotencyKey,
                     providerRequestId: replacementProviderId
-                }),
+                }, deliveryHooks(replacementProviderId)),
                 /generation is inconsistent/
             );
             assert.equal(env.getNotificationInboxDocCount('coach-1'), 2);
+        } finally {
+            cleanup();
+        }
+    });
+
+    it('surfaces an ambiguous FCM response after the durable boundary and never bypasses that fence', async () => {
+        const instanceId = '00000000-0000-4000-8000-000000000101';
+        const { internals, env, cleanup } = loadNotificationInternals({
+            teamDoc: {
+                ownerId: 'coach-1',
+                adminEmails: []
+            },
+            indexedTargets: [
+                {
+                    uid: 'coach-1',
+                    deviceId: 'coach-device',
+                    token: 'coach-token',
+                    categories: { liveScore: true }
+                }
+            ],
+            sendEachErrors: [Object.assign(new Error('Response lost after send'), {
+                code: 'messaging/internal-error'
+            })]
+        });
+        const deliveryRequest = {
+            teamId: 'team-1',
+            gameId: 'game-1',
+            instanceId,
+            sourceEventId: 'event-8',
+            category: 'liveScore',
+            title: 'Game update',
+            body: 'Away Player homered · Score 0–1',
+            link: 'https://share.allplays.ai/watch?teamId=team-1&gameId=game-1',
+            dedupKey: `diamond-v2:team-1:game-1:instance:${instanceId}:notification:r0000000008`
+        };
+        const providerId = diamondNotificationProviderReceiptId(deliveryRequest);
+        let dispatchBoundaryCrossed = false;
+        const metadata = {
+            instanceId,
+            idempotencyKey: deliveryRequest.idempotencyKey,
+            providerRequestId: providerId
+        };
+        const hooks = {
+            beforeProviderDispatch: async () => {
+                if (dispatchBoundaryCrossed) {
+                    throw new Error('The durable provider boundary was already crossed.');
+                }
+                assert.equal(env.getNotificationInboxDocCount('coach-1'), 1);
+                assert.equal(env.messagingCalls.length, 0);
+                dispatchBoundaryCrossed = true;
+            }
+        };
+
+        try {
+            await assert.rejects(
+                async () => internals.deliverDiamondScorebookNotification(
+                    deliveryRequest,
+                    metadata
+                ),
+                /provider-dispatch boundary is required/
+            );
+            assert.equal(env.getNotificationInboxDocCount('coach-1'), 0);
+            assert.equal(env.messagingCalls.length, 0);
+
+            const result = await internals.deliverDiamondScorebookNotification(
+                deliveryRequest,
+                metadata,
+                hooks
+            );
+            assert.equal(result.providerDispatchAttempted, true);
+            assert.equal(result.providerDeliveryUncertain, true);
+            assert.equal(result.uncertainFailureCount, 1);
+            assert.equal(result.inboxWriteCount, 1);
+            assert.equal(env.messagingCalls.length, 1);
+            assert.equal(env.getNotificationInboxDocCount('coach-1'), 1);
+
+            await assert.rejects(
+                internals.deliverDiamondScorebookNotification(
+                    deliveryRequest,
+                    metadata,
+                    hooks
+                ),
+                /provider boundary was already crossed/
+            );
+            assert.equal(env.messagingCalls.length, 1);
+            assert.equal(env.getNotificationInboxDocCount('coach-1'), 1);
         } finally {
             cleanup();
         }

@@ -515,12 +515,15 @@ jobs:
         run: npm ci --prefix apps/app
 
       - name: Build React app
+        env:
+          VITE_DIAMOND_SCOREBOOK_UI_ENABLED: ${{ vars.DIAMOND_SCOREBOOK_UI_ENABLED }}
         run: npm run app:build
 
       - name: Stage Firebase production bundle
         env:
           ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY: ${{ vars.APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY }}
           ALLPLAYS_APP_CHECK_ENFORCEMENT_READY: ${{ vars.APP_CHECK_ENFORCEMENT_READY }}
+          ALLPLAYS_DIAMOND_SCOREBOOK_UI_ENABLED: ${{ vars.DIAMOND_SCOREBOOK_UI_ENABLED }}
           ALLPLAYS_PUBLISH_MOBILE_ASSOCIATIONS: 'true'
         run: |
           set -euo pipefail
@@ -2306,6 +2309,7 @@ jobs:
         env:
           EXPECTED_APP_CHECK_ENFORCEMENT_READY: ${{ vars.APP_CHECK_ENFORCEMENT_READY }}
           EXPECTED_APP_CHECK_SITE_KEY: ${{ vars.APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY }}
+          EXPECTED_DIAMOND_SCOREBOOK_UI_ENABLED: ${{ vars.DIAMOND_SCOREBOOK_UI_ENABLED }}
           PREPARED_HEAD_SHA: ${{ needs.prepare-deploy.outputs.head_sha }}
         run: |
           set -euo pipefail
@@ -2316,6 +2320,14 @@ jobs:
           test -f "$bundle/site/index.html"
           test -f "$bundle/site/app/index.html"
           test -f "$bundle/site/.nojekyll"
+          expected_diamond_scorebook_ui_enabled=false
+          if [ "$EXPECTED_DIAMOND_SCOREBOOK_UI_ENABLED" = "true" ]; then
+            expected_diamond_scorebook_ui_enabled=true
+          fi
+          jq -e \
+            --argjson expected "$expected_diamond_scorebook_ui_enabled" \
+            '.diamondScorebookUiEnabled == $expected' \
+            "$runtime_config" >/dev/null
           case "${EXPECTED_APP_CHECK_ENFORCEMENT_READY,,}" in
             true|1)
               [[ "$EXPECTED_APP_CHECK_SITE_KEY" =~ ^[A-Za-z0-9_-]{10,200}$ ]]

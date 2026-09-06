@@ -5,7 +5,8 @@ import { pathToFileURL } from 'node:url';
 import { getPublicSmokePages } from '../tests/smoke/page-registry.js';
 import {
     createAppCheckRuntimeConfig,
-    isAppCheckEnforcementReady
+    isAppCheckEnforcementReady,
+    isDiamondScorebookUiRolloutEnabled
 } from './stage-pages-bundle.mjs';
 
 const runtimeConfigPath = '/.well-known/allplays-runtime-config.json';
@@ -26,9 +27,15 @@ export function getExpectedRuntimeConfig({
     siteKey = process.env.ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY,
     enforcementReady = isAppCheckEnforcementReady(
         process.env.ALLPLAYS_APP_CHECK_ENFORCEMENT_READY
+    ),
+    diamondScorebookUiEnabled = isDiamondScorebookUiRolloutEnabled(
+        process.env.ALLPLAYS_DIAMOND_SCOREBOOK_UI_ENABLED
     )
 } = {}) {
-    return createAppCheckRuntimeConfig(siteKey, { enforcementReady });
+    return createAppCheckRuntimeConfig(siteKey, {
+        enforcementReady,
+        diamondScorebookUiEnabled
+    });
 }
 
 export function configuredHeadersFor(path, config = firebaseConfig) {

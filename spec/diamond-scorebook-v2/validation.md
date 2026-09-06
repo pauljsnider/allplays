@@ -31,6 +31,18 @@ must remain 0 until hosted generation 2 and separately released native builds
 have been verified; native compatibility uses the installed package build, not
 the hosted Vite value.
 
+The deployable client gate is the GitHub Actions variable
+`DIAMOND_SCOREBOOK_UI_ENABLED`. It is deliberately unset for the dark merge.
+Only the exact lowercase string `true` enables it: Hosting staging writes the
+resulting boolean to `.well-known/allplays-runtime-config.json`, while React web
+and Capacitor release builds receive the same value through
+`VITE_DIAMOND_SCOREBOOK_UI_ENABLED`. Missing, empty, differently cased, numeric,
+or otherwise malformed values resolve to boolean `false`, and artifact checks
+must reject a staged value that differs from the release input. A newly changed
+variable reaches hosted clients only after a deployment and reaches Capacitor
+clients only in a newly released binary; the server policy remains the immediate
+fail-closed kill switch for activation and ordinary scoring.
+
 ## Automated gates
 
 - Pure reducer fixtures cover Baseball and Fastpitch rules, complex runner

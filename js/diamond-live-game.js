@@ -3,7 +3,7 @@ import {
   subscribeLiveChat,
   subscribeReactions,
 } from "./diamond-live-engagement-subscriptions.js?v=1";
-import { checkAuth } from "./auth.js?v=4433199";
+import { checkAuth } from "./auth.js?v=4433200";
 import { isViewerChatEnabled } from "./live-game-chat.js?v=4";
 import {
   formatDiamondInning,

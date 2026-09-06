@@ -385,7 +385,7 @@ describe("diamond live view model", () => {
     expect(html).toContain("data-diamond-media-frame");
     expect(html).toContain("data-diamond-mode-label");
     expect(html).toContain('aria-label="Live game score"');
-    expect(html).toContain("js/diamond-live-game.js?v=8");
+    expect(html).toContain("js/diamond-live-game.js?v=9");
 
     const script = readFileSync(
       new URL("../../js/diamond-live-game.js", import.meta.url),

@@ -42,14 +42,14 @@ const adminAuthMocks = vi.hoisted(() => ({
     })
 }));
 
-vi.mock('../../js/db.js?v=4433195', () => adminDbMocks);
+vi.mock('../../js/db.js?v=4433196', () => adminDbMocks);
 vi.mock('../../js/firebase.js?v=33', () => adminFirebaseMocks);
-vi.mock('../../js/utils.js?v=443371', () => ({
+vi.mock('../../js/utils.js?v=443372', () => ({
     renderHeader: vi.fn(),
     renderFooter: vi.fn(),
     escapeHtml: (value) => String(value || '')
 }));
-vi.mock('../../js/auth.js?v=4433199', () => adminAuthMocks);
+vi.mock('../../js/auth.js?v=4433200', () => adminAuthMocks);
 vi.mock('../../js/admin-premium-access-control.js?v=7', () => ({
     createAdminPremiumAccessControl: () => ({ load: vi.fn() })
 }));
@@ -399,7 +399,7 @@ describe('admin registration form setup', () => {
 
         expect(adminPage).toContain('registration-forms-modal');
         expect(adminPage).toContain('registration-forms-load-more');
-        expect(adminPage).toContain('src="js/admin.js?v=443359"');
+        expect(adminPage).toContain('src="js/admin.js?v=443360"');
         expect(adminPage).toContain('registration-advanced-settings');
         expect(adminPage).toContain('Advanced registration settings');
         expect(adminPage).toContain('registration-participant-fields');

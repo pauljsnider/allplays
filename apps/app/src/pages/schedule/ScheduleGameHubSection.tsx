@@ -1138,7 +1138,9 @@ export function ScheduleGameHubSection({ auth, event, childEvents, requestedPane
   const canLaunchStandardTracker = canUseLegacyScoring && Boolean(event.statTrackerConfigId);
   const hasBasketballGameTools = supportsBasketballGameTools(event);
   const canWrapup = canUseLegacyScoring;
-  const canCancelGame = Boolean(!isPractice && event.isDbGame && !event.isCancelled && event.canUpdateScore && auth.user);
+  const canCancelGame = Boolean(
+    !isPractice && event.isDbGame && !event.isCancelled && event.canUpdateScore && (!isDiamondOwned || event.isTeamAdmin) && auth.user
+  );
   const isRecurringPracticeOccurrence = Boolean(isPractice && event.id.includes('__'));
   const canCancelPracticeOccurrence = Boolean(isRecurringPracticeOccurrence && event.isDbGame && !event.isCancelled && event.isTeamAdmin && auth.user);
   const canPublishLineup = Boolean(!isPractice && event.isDbGame && event.isTeamStaff && isLegacyOwned);

@@ -589,13 +589,16 @@ const diamondScorebookProjectorHandlers = createDiamondScorebookProjectorHandler
   loadClipTimings: loadDiamondClipTimings,
   resolveSharedGame: resolveDiamondSharedGame
 });
-function deliverDiamondScorebookNotification(request, delivery) {
+function deliverDiamondScorebookNotification(request, delivery, hooks = {}) {
   if (
     delivery?.instanceId !== request.instanceId ||
     delivery?.idempotencyKey !== request.idempotencyKey ||
     delivery?.providerRequestId !== diamondNotificationProviderReceiptId(request)
   ) {
     throw new TypeError('The Diamond notification delivery generation is inconsistent.');
+  }
+  if (typeof hooks.beforeProviderDispatch !== 'function') {
+    throw new TypeError('The Diamond notification provider-dispatch boundary is required.');
   }
   return sendCategoryNotification({
     teamId: request.teamId,
@@ -607,10 +610,10 @@ function deliverDiamondScorebookNotification(request, delivery) {
     linkOverride: request.link,
     dedupKey: request.dedupKey,
     deliveryIdempotencyKey: delivery.providerRequestId,
+    beforeProviderDispatch: hooks.beforeProviderDispatch,
     suppressResourceTelemetry: true,
-    // The Diamond sender owns a durable renewable delivery receipt and stable
-    // provider request ID. Avoid the generic pre-delivery dedup record, which
-    // cannot reconcile an uncertain delivery response with a later retry.
+    // The Diamond sender owns the durable receipt and writes an irreversible
+    // dispatch fence after the deterministic inbox is ready but before FCM.
     dedupKeys: []
   });
 }
@@ -13378,6 +13381,7 @@ async function sendCategoryNotification({
   audienceContext = {},
   timeSensitive = false,
   deliveryIdempotencyKey = null,
+  beforeProviderDispatch = null,
   suppressResourceTelemetry = false,
 }) {
   if (!NOTIFICATION_CATEGORIES.includes(category)) return null;
@@ -13484,6 +13488,7 @@ async function sendCategoryNotification({
   const allResponses = [];
   let successCount = 0;
   let failureCount = 0;
+  let uncertainFailureCount = 0;
   let inboxResult = { writeCount: 0, cleanupCount: 0, failureCount: 0 };
 
   if (normalizedDeliveryIdempotencyKey) {
@@ -13503,6 +13508,10 @@ async function sendCategoryNotification({
     if (inboxResult.failureCount > 0) {
       throw new Error('Notification inbox idempotency validation failed before push delivery.');
     }
+  }
+
+  if (pushTargets.length && typeof beforeProviderDispatch === 'function') {
+    await beforeProviderDispatch();
   }
 
   for (let i = 0; i < pushTargets.length; i += maxMulticastTokens) {
@@ -13534,6 +13543,10 @@ async function sendCategoryNotification({
       await pruneInvalidTokens(sendResult, targetChunk);
     } catch (error) {
       failureCount += targetChunk.length;
+      // A thrown multicast call can mean FCM accepted the request but its
+      // response was lost. Preserve that distinction so callers never replay
+      // the whole generation as though the push provider were idempotent.
+      uncertainFailureCount += targetChunk.length;
       allResponses.push(...targetChunk.map((target) => ({
         success: false,
         error: new Error(`Push delivery failed for ${target.uid || 'unknown-user'}: ${error?.message || String(error || 'Unknown error')}`)
@@ -13591,7 +13604,10 @@ async function sendCategoryNotification({
     failureCount,
     inboxWriteCount: inboxResult.writeCount,
     inboxCleanupCount: inboxResult.cleanupCount,
-    inboxFailureCount: inboxResult.failureCount
+    inboxFailureCount: inboxResult.failureCount,
+    providerDispatchAttempted: pushTargets.length > 0,
+    providerDeliveryUncertain: uncertainFailureCount > 0,
+    uncertainFailureCount
   };
 }
 

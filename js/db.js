@@ -794,7 +794,7 @@ export async function uploadStatSheetPhoto(teamId, gameId, file, options = {}) {
         : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=443371'; // Import resolveZip
+import { resolveZip } from './utils.js?v=443372'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -4108,6 +4108,9 @@ function mapPublicGameProjection(game = {}, teamId = '') {
         teamName: game?.teamName || null,
         homeTeamName: game?.homeTeamName || null,
         sport: game?.sport || null,
+        ...(game?.trackingEngine === 'diamond-v2'
+            ? { trackingEngine: 'diamond-v2' }
+            : {}),
         teamPhotoUrl: game?.teamPhotoUrl || null,
         homeTeamPhoto: game?.homeTeamPhoto || game?.teamPhotoUrl || null,
         opponentTeamPhoto: game?.opponentTeamPhoto || null,

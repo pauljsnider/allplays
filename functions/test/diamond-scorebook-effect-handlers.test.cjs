@@ -562,41 +562,41 @@ describe("Diamond scorebook effect processor", () => {
     assert.equal(calls, 1);
   });
 
-  it("replays one provider idempotency key after a post-send ambiguous failure", async () => {
+  it("terminalizes post-send ambiguity and never asks the sender to dispatch again", async () => {
     const fixture = createEffect();
-    const seen = new Set();
     const keys = [];
-    let physicalSends = 0;
     const harness = createHarness({
       sendNotification: async ({ idempotencyKey, instanceId }) => {
         keys.push(idempotencyKey);
-        if (!seen.has(idempotencyKey)) {
-          seen.add(idempotencyKey);
-          physicalSends += 1;
-          throw Object.assign(new Error("Response lost after send"), {
-            code: "unavailable",
-          });
-        }
-        return { outcome: "deduplicated", instanceId, idempotencyKey };
+        return {
+          outcome: "delivery-uncertain",
+          instanceId,
+          idempotencyKey,
+          providerReceiptId: "provider-uncertain",
+        };
       },
     });
     seedEffect(harness.firestore, fixture);
 
-    await assert.rejects(
-      harness.handlers.processDiamondEffect(requestFor(fixture)),
-      (error) => error.code === "notification-send-failed" && error.retryable,
+    const first = await harness.handlers.processDiamondEffect(
+      requestFor(fixture),
+    );
+    assert.equal(first.processed, true);
+    assert.equal(first.status, "completed");
+    assert.equal(
+      first.reason,
+      "notification-push-uncertain-inbox-authoritative",
     );
     assert.equal(
-      harness.firestore.read(fixture.paths.effect).status,
-      "pending",
+      first.terminalResult.providerOutcome,
+      "delivery-uncertain",
     );
-    harness.setNow(1_760_000_001_001);
     const retry = await harness.handlers.processDiamondEffect(
       requestFor(fixture),
     );
-    assert.equal(retry.processed, true);
-    assert.deepEqual(keys, [fixture.effect.dedupKey, fixture.effect.dedupKey]);
-    assert.equal(physicalSends, 1);
+    assert.equal(retry.processed, false);
+    assert.equal(retry.reason, "already-terminal");
+    assert.deepEqual(keys, [fixture.effect.dedupKey]);
   });
 
   it("reconciles a committed terminal write whose response was lost", async () => {

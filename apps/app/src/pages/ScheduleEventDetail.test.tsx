@@ -3798,6 +3798,29 @@ describe('ScheduleEventDetail assignments', () => {
     });
   });
 
+  it('does not offer Diamond cancellation to a delegated scorekeeper without manager access', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [
+        buildEvent({
+          trackingEngine: 'diamond-v2',
+          diamondScorebookInstanceId: '11111111-1111-4111-8111-111111111111',
+          canUpdateScore: true,
+          isTeamStaff: true,
+          isTeamAdmin: false
+        })
+      ],
+      children: []
+    });
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0);
+    });
+    expect(screen.queryByRole('button', { name: 'Cancel game' })).toBeNull();
+    expect(scheduleServiceMocks.cancelScheduledGameForApp).not.toHaveBeenCalled();
+  });
+
   it('passes the recurring practice occurrence through cancellation without falling back to the series', async () => {
     const recurringOccurrence = buildEvent({
       eventKey: 'team-1::practice-master__2026-06-04::player-1::2026-06-04T18:00:00.000Z::practice',

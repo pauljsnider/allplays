@@ -17,7 +17,14 @@ function readRuntimeConfig(): Record<string, unknown> | undefined {
 
 function isRuntimeFeatureEnabled(feature: string): boolean {
   try {
-    return readRuntimeConfig()?.[feature] === true;
+    const runtimeConfig = readRuntimeConfig();
+    if (runtimeConfig && Object.prototype.hasOwnProperty.call(runtimeConfig, feature)) {
+      return runtimeConfig[feature] === true;
+    }
+    if (feature === 'diamondScorebookUiEnabled') {
+      return import.meta.env.VITE_DIAMOND_SCOREBOOK_UI_ENABLED === 'true';
+    }
+    return false;
   } catch {
     return false;
   }

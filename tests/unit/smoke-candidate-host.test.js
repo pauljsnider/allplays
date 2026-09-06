@@ -70,11 +70,24 @@ describe('candidate host public smoke', () => {
         expect(getExpectedRuntimeConfig({
             siteKey: ' public-site-key_123 '
         })).toMatchObject({
+            diamondScorebookUiEnabled: false,
             appCheck: {
                 enabled: false,
                 isTokenAutoRefreshEnabled: true
             }
         });
+    });
+
+    it('expects the Diamond UI only for an exact staged true', () => {
+        expect(getExpectedRuntimeConfig({
+            diamondScorebookUiEnabled: 'TRUE'
+        }).diamondScorebookUiEnabled).toBe(false);
+        expect(getExpectedRuntimeConfig({
+            diamondScorebookUiEnabled: '1'
+        }).diamondScorebookUiEnabled).toBe(false);
+        expect(getExpectedRuntimeConfig({
+            diamondScorebookUiEnabled: 'true'
+        }).diamondScorebookUiEnabled).toBe(true);
     });
 
     it('expects an enabled runtime configuration only with a rollout-ready key', () => {

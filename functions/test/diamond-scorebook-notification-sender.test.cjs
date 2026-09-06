@@ -162,6 +162,9 @@ function deliveryResult(overrides = {}) {
     inboxWriteCount: 1,
     inboxCleanupCount: 0,
     inboxFailureCount: 0,
+    providerDispatchAttempted: true,
+    providerDeliveryUncertain: false,
+    uncertainFailureCount: 0,
     ...overrides,
   };
 }
@@ -180,8 +183,9 @@ function harness(options = {}) {
     logger: options.logger || { info() {}, warn() {}, error() {} },
     deliverNotification:
       options.deliverNotification ||
-      (async (value) => {
+      (async (value, _metadata, hooks) => {
         calls.push(clone(value));
+        await hooks.beforeProviderDispatch();
         return deliveryResult();
       }),
   });
@@ -245,7 +249,8 @@ describe("Diamond scorebook notification sender", () => {
     });
     let physicalSends = 0;
     const setup = harness({
-      deliverNotification: async () => {
+      deliverNotification: async (_value, _metadata, hooks) => {
+        await hooks.beforeProviderDispatch();
         physicalSends += 1;
         enteredFirst();
         await blocker;
@@ -289,8 +294,9 @@ describe("Diamond scorebook notification sender", () => {
         warn: (...args) => platformLogs.push(["warn", ...args]),
         error: (...args) => platformLogs.push(["error", ...args]),
       },
-      deliverNotification: async (value, metadata) => {
+      deliverNotification: async (value, metadata, hooks) => {
         deliveryMetadata.push(clone(metadata));
+        await hooks.beforeProviderDispatch();
         inboxRows.set(metadata.providerRequestId, {
           title: value.title,
           gameId: value.gameId,
@@ -357,48 +363,137 @@ describe("Diamond scorebook notification sender", () => {
     assert.equal(setup.calls.length, 1);
   });
 
-  it("delays then retries an uncertain provider response with one stable request ID", async () => {
+  it("makes a post-dispatch provider ambiguity terminal and never sends again", async () => {
     let physicalSends = 0;
     const metadata = [];
     const setup = harness({
-      deliverNotification: async (_request, deliveryMetadata) => {
+      deliverNotification: async (_request, deliveryMetadata, hooks) => {
+        await hooks.beforeProviderDispatch();
         physicalSends += 1;
         metadata.push(deliveryMetadata);
-        if (physicalSends === 1) {
-          throw Object.assign(new Error("Response lost after send"), {
+        return deliveryResult({
+          successCount: 0,
+          failureCount: 1,
+          providerDeliveryUncertain: true,
+          uncertainFailureCount: 1,
+        });
+      },
+    });
+    assert.equal(
+      (await setup.sender.sendDiamondNotification(request())).outcome,
+      "delivery-uncertain",
+    );
+    assert.equal(
+      (await setup.sender.sendDiamondNotification(request())).outcome,
+      "delivery-uncertain",
+    );
+    setup.setNow(1_760_000_005_001);
+    const retry = await setup.sender.sendDiamondNotification(request());
+    assert.equal(retry.outcome, "delivery-uncertain");
+    assert.equal(physicalSends, 1);
+    assert.equal(metadata.length, 1);
+    const path = receiptPath(
+      request().teamId,
+      request().gameId,
+      request().instanceId,
+      request().idempotencyKey,
+    );
+    assert.equal(setup.firestore.read(path).status, "completed");
+    assert.equal(
+      setup.firestore.read(path).providerOutcome,
+      "delivery-uncertain",
+    );
+  });
+
+  it("also suppresses retry when the adapter throws after crossing the provider boundary", async () => {
+    let physicalSends = 0;
+    const setup = harness({
+      deliverNotification: async (_request, _metadata, hooks) => {
+        await hooks.beforeProviderDispatch();
+        physicalSends += 1;
+        throw Object.assign(new Error("Response lost after send"), {
+          code: "unavailable",
+        });
+      },
+    });
+
+    assert.equal(
+      (await setup.sender.sendDiamondNotification(request())).outcome,
+      "delivery-uncertain",
+    );
+    assert.equal(
+      (await setup.sender.sendDiamondNotification(request())).outcome,
+      "delivery-uncertain",
+    );
+    assert.equal(physicalSends, 1);
+  });
+
+  it("retries a same-generation failure that occurs before provider dispatch", async () => {
+    let adapterAttempts = 0;
+    let physicalSends = 0;
+    const setup = harness({
+      deliverNotification: async (_request, _metadata, hooks) => {
+        adapterAttempts += 1;
+        if (adapterAttempts === 1) {
+          throw Object.assign(new Error("Inbox unavailable"), {
             code: "unavailable",
           });
         }
+        await hooks.beforeProviderDispatch();
+        physicalSends += 1;
         return deliveryResult();
       },
     });
     await assert.rejects(
       setup.sender.sendDiamondNotification(request()),
       (error) =>
-        error.code === "notification-delivery-uncertain" && error.retryable,
-    );
-    await assert.rejects(
-      setup.sender.sendDiamondNotification(request()),
-      (error) => error.code === "notification-delivery-pending",
+        error.code === "notification-delivery-failed-before-provider" &&
+        error.retryable,
     );
     setup.setNow(1_760_000_005_001);
-    const retry = await setup.sender.sendDiamondNotification(request());
-    assert.equal(retry.outcome, "sent");
-    assert.equal(physicalSends, 2);
-    assert.equal(metadata[0].providerRequestId, metadata[1].providerRequestId);
-    assert.equal(metadata[0].idempotencyKey, metadata[1].idempotencyKey);
-    assert.notEqual(metadata[0].attemptId, metadata[1].attemptId);
+    assert.equal(
+      (await setup.sender.sendDiamondNotification(request())).outcome,
+      "sent",
+    );
+    assert.equal(adapterAttempts, 2);
+    assert.equal(physicalSends, 1);
   });
 
   it("reconciles a committed completion when its transaction response is lost", async () => {
     const firestore = new FakeFirestore();
-    firestore.failAfterTransactions.add(2);
+    firestore.failAfterTransactions.add(3);
     const setup = harness({ firestore });
     const first = await setup.sender.sendDiamondNotification(request());
     const retry = await setup.sender.sendDiamondNotification(request());
     assert.equal(first.outcome, "sent");
     assert.equal(retry.outcome, "deduplicated");
     assert.equal(setup.calls.length, 1);
+  });
+
+  it("uses the dispatch fence after an uncommitted completion update instead of resending", async () => {
+    const firestore = new FakeFirestore();
+    firestore.failBeforeTransactions.add(3);
+    const setup = harness({ firestore, leaseMillis: 1_000 });
+
+    await assert.rejects(
+      setup.sender.sendDiamondNotification(request()),
+      (error) =>
+        error.code === "notification-receipt-unavailable" && error.retryable,
+    );
+    setup.setNow(1_760_000_001_001);
+    assert.equal(
+      (await setup.sender.sendDiamondNotification(request())).outcome,
+      "delivery-uncertain",
+    );
+    assert.equal(setup.calls.length, 1);
+    const path = receiptPath(
+      request().teamId,
+      request().gameId,
+      request().instanceId,
+      request().idempotencyKey,
+    );
+    assert.equal(setup.firestore.read(path).status, "processing");
+    assert.equal(setup.firestore.read(path).providerDispatch.attempt, 1);
   });
 
   it("records no-recipient completion and keeps malformed delivery evidence retryable", async () => {
@@ -429,13 +524,15 @@ describe("Diamond scorebook notification sender", () => {
 
   it("keeps complete delivery failure retryable and reports partial delivery honestly", async () => {
     const failed = harness({
-      deliverNotification: async () =>
-        deliveryResult({
+      deliverNotification: async (_request, _metadata, hooks) => {
+        await hooks.beforeProviderDispatch();
+        return deliveryResult({
           successCount: 0,
           failureCount: 2,
           inboxWriteCount: 0,
-          inboxFailureCount: 2,
-        }),
+          inboxFailureCount: 0,
+        });
+      },
     });
     await assert.rejects(
       failed.sender.sendDiamondNotification(request()),
@@ -451,13 +548,15 @@ describe("Diamond scorebook notification sender", () => {
     assert.equal(failed.firestore.read(failedPath).status, "retryable-failure");
 
     const partial = harness({
-      deliverNotification: async () =>
-        deliveryResult({
+      deliverNotification: async (_request, _metadata, hooks) => {
+        await hooks.beforeProviderDispatch();
+        return deliveryResult({
           successCount: 1,
           failureCount: 1,
           inboxWriteCount: 1,
           inboxFailureCount: 1,
-        }),
+        });
+      },
     });
     assert.equal(
       (await partial.sender.sendDiamondNotification(request())).outcome,
@@ -465,7 +564,7 @@ describe("Diamond scorebook notification sender", () => {
     );
   });
 
-  it("allows an expired worker lease to be taken over without accepting the stale lease", async () => {
+  it("suppresses takeover after an expired worker crossed the provider boundary", async () => {
     let releaseFirst;
     let enteredFirst;
     const entered = new Promise((resolve) => {
@@ -477,7 +576,8 @@ describe("Diamond scorebook notification sender", () => {
     let calls = 0;
     const setup = harness({
       leaseMillis: 1_000,
-      deliverNotification: async () => {
+      deliverNotification: async (_request, _metadata, hooks) => {
+        await hooks.beforeProviderDispatch();
         calls += 1;
         if (calls === 1) {
           enteredFirst();
@@ -491,11 +591,11 @@ describe("Diamond scorebook notification sender", () => {
     setup.setNow(1_760_000_001_001);
     assert.equal(
       (await setup.sender.sendDiamondNotification(request())).outcome,
-      "sent",
+      "delivery-uncertain",
     );
     releaseFirst();
     assert.equal((await first).outcome, "sent");
-    assert.equal(calls, 2);
+    assert.equal(calls, 1);
     const path = receiptPath(
       request().teamId,
       request().gameId,
@@ -503,7 +603,7 @@ describe("Diamond scorebook notification sender", () => {
       request().idempotencyKey,
     );
     assert.equal(setup.firestore.read(path).status, "completed");
-    assert.equal(setup.firestore.read(path).attemptCount, 2);
+    assert.equal(setup.firestore.read(path).attemptCount, 1);
   });
 
   it("rejects noncanonical links, keys, hidden fields, and unverifiable claims", async () => {

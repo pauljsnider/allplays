@@ -1722,12 +1722,12 @@ describe('TeamDetail', () => {
     expect(screen.getByLabelText('W against Bears, 4 to 1')).toBeTruthy();
     expect(screen.getByLabelText('Mar 2 against Cats: 1 point for and 3 points against')).toBeTruthy();
     expect(screen.getByText('Roster statistics')).toBeTruthy();
-    expect(screen.getByText('12')).toBeTruthy();
+    expect(await screen.findByText('12')).toBeTruthy();
     expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual(['2026', '2025']);
     fireEvent.change(screen.getByLabelText('Season'), { target: { value: '2025' } });
     expect(await screen.findByText('Positive margin: +5 points per game')).toBeTruthy();
     expect(screen.getByLabelText('W against Foxes, 5 to 0')).toBeTruthy();
-    expect(screen.getByText('4')).toBeTruthy();
+    expect(await screen.findByText('4')).toBeTruthy();
   });
 
   it('renders an unavailable state instead of zero totals when season aggregation fails', async () => {

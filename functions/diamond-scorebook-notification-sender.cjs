@@ -23,6 +23,7 @@ const PROVIDER_OUTCOMES = new Set([
   "partial",
   "failed",
   "no-recipients",
+  "delivery-uncertain",
 ]);
 const REQUEST_FIELDS = new Set([
   "teamId",
@@ -252,6 +253,24 @@ function validateExistingReceipt(receipt, expected) {
       "The durable Diamond notification receipt is malformed.",
     );
   }
+  const providerDispatch = receipt.providerDispatch;
+  if (
+    providerDispatch !== undefined &&
+    providerDispatch !== null &&
+    (!isPlainObject(providerDispatch) ||
+      !UUID_V4_PATTERN.test(providerDispatch.attemptId || "") ||
+      providerDispatch.requestHash !== expected.requestHash ||
+      !Number.isSafeInteger(providerDispatch.attempt) ||
+      providerDispatch.attempt < 1 ||
+      providerDispatch.attempt > receipt.attemptCount ||
+      !Number.isSafeInteger(providerDispatch.startedAtMs) ||
+      providerDispatch.startedAtMs < 0)
+  ) {
+    throw new DiamondNotificationSenderError(
+      "notification-receipt-conflict",
+      "The durable Diamond notification provider-dispatch boundary is malformed.",
+    );
+  }
   if (
     !Number.isSafeInteger(receipt.attemptCount) ||
     receipt.attemptCount < 1 ||
@@ -271,7 +290,12 @@ function validateExistingReceipt(receipt, expected) {
       (!Number.isSafeInteger(receipt.nextAttemptAtMs) ||
         receipt.nextAttemptAtMs < 0)) ||
     (receipt.status === RECEIPT_STATUS_COMPLETED &&
-      !["sent", "partial", "no-recipients"].includes(receipt.providerOutcome))
+      ![
+        "sent",
+        "partial",
+        "no-recipients",
+        "delivery-uncertain",
+      ].includes(receipt.providerOutcome))
   ) {
     throw new DiamondNotificationSenderError(
       "notification-receipt-conflict",
@@ -309,13 +333,27 @@ function normalizeDeliveryOutcome(value) {
     !Number.isSafeInteger(value.inboxWriteCount) ||
     value.inboxWriteCount < 0 ||
     !Number.isSafeInteger(value.inboxFailureCount) ||
-    value.inboxFailureCount < 0
+    value.inboxFailureCount < 0 ||
+    (value.providerDeliveryUncertain !== undefined &&
+      typeof value.providerDeliveryUncertain !== "boolean") ||
+    (value.providerDispatchAttempted !== undefined &&
+      typeof value.providerDispatchAttempted !== "boolean") ||
+    (value.uncertainFailureCount !== undefined &&
+      (!Number.isSafeInteger(value.uncertainFailureCount) ||
+        value.uncertainFailureCount < 0)) ||
+    (value.providerDeliveryUncertain === true &&
+      (value.providerDispatchAttempted !== true ||
+        !Number.isSafeInteger(value.uncertainFailureCount) ||
+        value.uncertainFailureCount < 1))
   ) {
     throw new DiamondNotificationSenderError(
       "notification-delivery-ambiguous",
       "The Diamond notification delivery result is malformed.",
       { retryable: true },
     );
+  }
+  if (value.providerDeliveryUncertain === true) {
+    return "delivery-uncertain";
   }
   const delivered = value.successCount + value.inboxWriteCount;
   const failed = value.failureCount + value.inboxFailureCount;
@@ -342,6 +380,15 @@ function safeProviderErrorCode(error) {
 function duplicateResult(request, receiptDocumentId) {
   return {
     outcome: "deduplicated",
+    instanceId: request.instanceId,
+    idempotencyKey: request.idempotencyKey,
+    providerReceiptId: providerReceiptId(receiptDocumentId),
+  };
+}
+
+function uncertainResult(request, receiptDocumentId) {
+  return {
+    outcome: "delivery-uncertain",
     instanceId: request.instanceId,
     idempotencyKey: request.idempotencyKey,
     providerReceiptId: providerReceiptId(receiptDocumentId),
@@ -405,9 +452,24 @@ function createDiamondScorebookNotificationSender(dependencies = {}) {
       return { acquired: false, state: "lease-active", receipt };
     }
     if (
-      [RECEIPT_STATUS_UNCERTAIN, RECEIPT_STATUS_RETRYABLE].includes(
-        receipt.status,
-      ) &&
+      receipt.status === RECEIPT_STATUS_PROCESSING &&
+      receipt.providerDispatch
+    ) {
+      return {
+        acquired: false,
+        state: "provider-dispatch-uncertain",
+        receipt,
+      };
+    }
+    if (receipt.status === RECEIPT_STATUS_UNCERTAIN) {
+      return {
+        acquired: false,
+        state: "provider-dispatch-uncertain",
+        receipt,
+      };
+    }
+    if (
+      receipt.status === RECEIPT_STATUS_RETRYABLE &&
       receipt.nextAttemptAtMs > nowMs
     ) {
       return { acquired: false, state: "retry-delayed", receipt };
@@ -449,6 +511,7 @@ function createDiamondScorebookNotificationSender(dependencies = {}) {
           status: RECEIPT_STATUS_PROCESSING,
           attemptCount,
           dispatchLease: lease,
+          providerDispatch: null,
           providerRequestId: providerReceiptId(expected.receiptId),
           updatedAt: timestampIso(nowMs),
           ...(existing ? {} : { createdAt: timestampIso(nowMs) }),
@@ -544,6 +607,81 @@ function createDiamondScorebookNotificationSender(dependencies = {}) {
     }
   }
 
+  async function markProviderDispatchStarting(
+    reference,
+    expected,
+    lease,
+    startedAtMs,
+  ) {
+    const providerDispatch = {
+      attemptId: lease.leaseId,
+      requestHash: expected.requestHash,
+      attempt: lease.attempt,
+      startedAtMs,
+    };
+    try {
+      return await firestore.runTransaction(async (transaction) => {
+        const snapshot = await transaction.get(reference);
+        const existing = validateExistingReceipt(
+          snapshotData(snapshot),
+          expected,
+        );
+        if (
+          existing.status !== RECEIPT_STATUS_PROCESSING ||
+          existing.dispatchLease?.leaseId !== lease.leaseId
+        ) {
+          throw new DiamondNotificationSenderError(
+            "notification-lease-lost",
+            "The Diamond notification delivery lease changed before provider dispatch.",
+            { retryable: true },
+          );
+        }
+        if (existing.providerDispatch) {
+          if (
+            existing.providerDispatch.attemptId === lease.leaseId &&
+            existing.providerDispatch.requestHash === expected.requestHash
+          ) {
+            return existing.providerDispatch;
+          }
+          throw new DiamondNotificationSenderError(
+            "notification-receipt-conflict",
+            "Another provider dispatch is already bound to this notification.",
+          );
+        }
+        transaction.update(reference, {
+          providerDispatch,
+          updatedAt: timestampIso(startedAtMs),
+        });
+        return providerDispatch;
+      });
+    } catch (error) {
+      if (error instanceof DiamondNotificationSenderError) throw error;
+      try {
+        const existing = validateExistingReceipt(
+          snapshotData(await reference.get()),
+          expected,
+        );
+        if (
+          existing.status === RECEIPT_STATUS_PROCESSING &&
+          existing.dispatchLease?.leaseId === lease.leaseId &&
+          existing.providerDispatch?.attemptId === lease.leaseId &&
+          existing.providerDispatch?.requestHash === expected.requestHash
+        ) {
+          return existing.providerDispatch;
+        }
+      } catch (reconcileError) {
+        if (reconcileError instanceof DiamondNotificationSenderError) {
+          throw reconcileError;
+        }
+      }
+      throw new DiamondNotificationSenderError(
+        "notification-receipt-unavailable",
+        "The durable provider-dispatch boundary could not be verified.",
+        { retryable: true, details: { causeCode: error?.code || "unknown" } },
+      );
+    }
+  }
+
   function pendingError(state) {
     return new DiamondNotificationSenderError(
       "notification-delivery-pending",
@@ -564,12 +702,35 @@ function createDiamondScorebookNotificationSender(dependencies = {}) {
   }) {
     await markReceipt(reference, expected, lease, {
       status,
+      providerDispatch: null,
       nextAttemptAtMs: nowMs + retryDelayMillis,
       lastDeliveryError: {
         code: safeProviderErrorCode(error),
         failedAt: timestampIso(nowMs),
         attempt: lease.attempt,
       },
+      updatedAt: timestampIso(nowMs),
+    });
+  }
+
+  async function recordUncertainDelivery({
+    reference,
+    expected,
+    lease,
+    nowMs,
+    error,
+  }) {
+    await markReceipt(reference, expected, lease, {
+      status: RECEIPT_STATUS_COMPLETED,
+      providerOutcome: "delivery-uncertain",
+      providerReceiptId: providerReceiptId(expected.receiptId),
+      lastDeliveryError: {
+        code: safeProviderErrorCode(error),
+        failedAt: timestampIso(nowMs),
+        attempt: lease.attempt,
+      },
+      nextAttemptAtMs: null,
+      completedAt: timestampIso(nowMs),
       updatedAt: timestampIso(nowMs),
     });
   }
@@ -607,7 +768,12 @@ function createDiamondScorebookNotificationSender(dependencies = {}) {
       getLeaseId,
     );
     if (reservation.state === "completed") {
-      return duplicateResult(request, documentId);
+      return reservation.receipt.providerOutcome === "delivery-uncertain"
+        ? uncertainResult(request, documentId)
+        : duplicateResult(request, documentId);
+    }
+    if (reservation.state === "provider-dispatch-uncertain") {
+      return uncertainResult(request, documentId);
     }
     if (!reservation.acquired) throw pendingError(reservation.state);
     const lease = reservation.lease;
@@ -618,39 +784,108 @@ function createDiamondScorebookNotificationSender(dependencies = {}) {
       idempotencyKey: request.idempotencyKey,
       providerRequestId: providerReceiptId(documentId),
     };
+    let providerDispatchStarted = false;
+    const deliveryHooks = {
+      beforeProviderDispatch: async () => {
+        const startedAtMs = nowMilliseconds(clock);
+        await markProviderDispatchStarting(
+          reference,
+          expected,
+          lease,
+          startedAtMs,
+        );
+        providerDispatchStarted = true;
+      },
+    };
 
     let deliveryResult;
     try {
-      deliveryResult = await deliverNotification(request, deliveryMetadata);
+      deliveryResult = await deliverNotification(
+        request,
+        deliveryMetadata,
+        deliveryHooks,
+      );
     } catch (error) {
+      if (providerDispatchStarted) {
+        await recordUncertainDelivery({
+          reference,
+          expected,
+          lease,
+          nowMs,
+          error,
+        });
+        return uncertainResult(request, documentId);
+      }
       await recordFailure({
         reference,
         expected,
         lease,
         nowMs,
-        status: RECEIPT_STATUS_UNCERTAIN,
+        status: RECEIPT_STATUS_RETRYABLE,
         error,
       });
       throw new DiamondNotificationSenderError(
-        "notification-delivery-uncertain",
-        "Diamond notification delivery is uncertain and remains retryable with the same provider request ID.",
+        "notification-delivery-failed-before-provider",
+        "Diamond notification delivery stopped before provider dispatch and remains retryable.",
         { retryable: true, details: { causeCode: error?.code || "unknown" } },
       );
+    }
+
+    if (
+      isPlainObject(deliveryResult) &&
+      ((deliveryResult.providerDispatchAttempted === true &&
+        !providerDispatchStarted) ||
+        (deliveryResult.providerDispatchAttempted === false &&
+          providerDispatchStarted))
+    ) {
+      await recordUncertainDelivery({
+        reference,
+        expected,
+        lease,
+        nowMs,
+        error: Object.assign(
+          new Error("The delivery adapter bypassed its provider boundary."),
+          { code: "provider-boundary-mismatch" },
+        ),
+      });
+      return uncertainResult(request, documentId);
     }
 
     let outcome;
     try {
       outcome = normalizeDeliveryOutcome(deliveryResult);
     } catch (error) {
+      if (providerDispatchStarted) {
+        await recordUncertainDelivery({
+          reference,
+          expected,
+          lease,
+          nowMs,
+          error,
+        });
+        return uncertainResult(request, documentId);
+      }
       await recordFailure({
         reference,
         expected,
         lease,
         nowMs,
-        status: RECEIPT_STATUS_UNCERTAIN,
+        status: RECEIPT_STATUS_RETRYABLE,
         error,
       });
       throw error;
+    }
+    if (outcome === "delivery-uncertain") {
+      await recordUncertainDelivery({
+        reference,
+        expected,
+        lease,
+        nowMs,
+        error: Object.assign(new Error("Provider response was uncertain."), {
+          code: "provider-response-uncertain",
+        }),
+      });
+      return uncertainResult(request, documentId);
     }
     if (outcome === "failed") {
       const error = new DiamondNotificationSenderError(
