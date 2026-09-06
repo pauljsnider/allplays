@@ -534,7 +534,10 @@ function LiveGameReactionsPanel({ auth, event }: { auth: AuthState; event: Paren
   }, []);
 
   const isDiamondGame = event.trackingEngine === 'diamond-v2';
-  const diamondContext = getDiamondLiveEngagementContext(event);
+  const diamondContext = useMemo(
+    () => getDiamondLiveEngagementContext(event),
+    [event]
+  );
   const canReact = reactionsModule
     ? reactionsModule.canUseLiveGameReactions(event, { now: new Date() })
       && (!isDiamondGame || Boolean(diamondContext && auth.user?.uid))
@@ -597,8 +600,8 @@ function LiveGameReactionsPanel({ auth, event }: { auth: AuthState; event: Paren
     event.id,
     event.isDbGame,
     event.teamId,
-    event.trackingEngine,
-    event.diamondScorebookInstanceId,
+    isDiamondGame,
+    diamondContext,
   ]);
 
   const sendReaction = async (type: LiveGameReactionType) => {
@@ -700,7 +703,10 @@ function LiveGameChatPanel({ auth, event }: { auth: AuthState; event: ParentSche
   }, []);
 
   const isDiamondGame = event.trackingEngine === 'diamond-v2';
-  const diamondContext = getDiamondLiveEngagementContext(event);
+  const diamondContext = useMemo(
+    () => getDiamondLiveEngagementContext(event),
+    [event]
+  );
   const canChat = chatModule
     ? chatModule.canUseLiveGameChat(event, { now: new Date() })
       && (!isDiamondGame || Boolean(diamondContext && auth.user?.uid))
@@ -786,8 +792,8 @@ function LiveGameChatPanel({ auth, event }: { auth: AuthState; event: ParentSche
     event.id,
     event.isDbGame,
     event.teamId,
-    event.trackingEngine,
-    event.diamondScorebookInstanceId,
+    isDiamondGame,
+    diamondContext,
     scrollScheduler,
   ]);
 
