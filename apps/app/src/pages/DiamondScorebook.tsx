@@ -30,10 +30,27 @@ import {
   startNativeSpeechDictation,
   type SpeechRecognitionLike
 } from '../lib/dictation';
-import { interpretDiamondTranscript, type DiamondAiCommandContext, type DiamondAiDependencies } from '../lib/diamondScorebookAi';
+import {
+  draftDiamondGameSummary,
+  interpretDiamondTranscript,
+  type DiamondAiCommandContext,
+  type DiamondAiDependencies,
+  type DiamondAiGameDraft
+} from '../lib/diamondScorebookAi';
+import {
+  getDiamondRulesProfile,
+  type DiamondBattingRole,
+  type DiamondDefensivePosition,
+  type DiamondOutKind,
+  type DiamondRunnerAdvanceCause,
+  type DiamondRuleDecisionCode,
+  type DiamondRulesProfile
+} from '../lib/diamondScorebook';
 import {
   DiamondScorebookError,
   diamondScorebookClient,
+  mergeDiamondPrivateHistoryWindows,
+  type DiamondAiPublicationEvidence,
   type DiamondCaptureMode,
   type DiamondCommandEnvelope,
   type DiamondCommandOutcome,
@@ -41,6 +58,10 @@ import {
   type DiamondJsonObject,
   type DiamondLineupEntry,
   type DiamondPlayerRef,
+  type DiamondPrivateEvent,
+  type DiamondPrivateHistoryWindow,
+  type DiamondQueueIdentity,
+  type DiamondRecapSource,
   type DiamondScorebookClient,
   type DiamondScorebookSnapshot,
   type DiamondSide,
@@ -69,9 +90,16 @@ type RunnerMoveDraft = {
   playerId: string;
   from: 'batter' | 'first' | 'second' | 'third';
   to: RunnerDestination;
+  cause: DiamondRunnerAdvanceCause;
+  outKind?: DiamondOutKind;
+  countsRun?: boolean;
+  rbi?: boolean;
+  responsiblePitcherId?: string;
+  earned?: boolean;
 };
 
 type LineupDrafts = Record<DiamondSide, DiamondLineupEntry[]>;
+type DefenseDrafts = Record<DiamondSide, Partial<Record<DiamondDefensivePosition, string>>>;
 
 type PendingPlay = {
   source: 'tap' | 'voice';
@@ -91,6 +119,9 @@ type PendingPlay = {
   ambiguityConfirmed: boolean;
   aiConfidence: number | null;
   sourceRevision: number | null;
+  batterId?: string;
+  pitcherId?: string;
+  correction?: { targetEventId: string; reason: string };
 };
 
 type PendingVoiceProposal = {
@@ -102,7 +133,27 @@ type PendingVoiceProposal = {
 };
 
 type Confirmation =
-  { kind: 'void'; eventId: string; label: string } | { kind: 'finalize' } | { kind: 'handoff'; toUid: string; toName: string };
+  | { kind: 'void'; eventId: string; label: string; reason: string }
+  | { kind: 'finalize' }
+  | {
+      kind: 'rules-decision';
+      code: SupportedRulesDecisionCode;
+      label: string;
+      description: string;
+      opensFinalization: boolean;
+    }
+  | { kind: 'reopen'; reason: string }
+  | { kind: 'handoff'; toUid: string; toName: string };
+
+type SupportedRulesDecisionCode = Exclude<DiamondRuleDecisionCode, 'coverage_adjustment'>;
+type CommandSubmissionResult = 'accepted' | 'queued' | 'reconciling' | false;
+
+type DiamondAiDraftState = {
+  source: DiamondRecapSource;
+  draft: DiamondAiGameDraft;
+  stale: boolean;
+  publication: DiamondAiPublicationEvidence | null;
+};
 
 type OutcomeOption = {
   result: string;
@@ -112,21 +163,82 @@ type OutcomeOption = {
   fullOnly?: boolean;
 };
 
+type DiamondEffectivePrivateEvent = DiamondPrivateEvent & {
+  sourceEventId: string;
+  effectiveType: DiamondCommandType;
+  effectivePayload: DiamondJsonObject;
+  corrected: boolean;
+};
+
+const uncorrectableEventTypes = new Set<DiamondCommandType>([
+  'activate',
+  'start',
+  'scorer_handoff',
+  'suspend',
+  'resume',
+  'cancel',
+  'finalize',
+  'reopen_for_correction',
+  'void_event',
+  'supersede_event'
+]);
+
+function effectivePrivateEvents(events: DiamondPrivateEvent[]): DiamondEffectivePrivateEvent[] {
+  const directives = new Map<string, DiamondPrivateEvent>();
+  events.forEach((event) => {
+    if ((event.type === 'void_event' || event.type === 'supersede_event') && (event.voidsEventId || event.supersedesEventId)) {
+      directives.set(event.voidsEventId || event.supersedesEventId || '', event);
+    }
+  });
+  return events.flatMap<DiamondEffectivePrivateEvent>((event) => {
+    if (event.type === 'void_event' || event.type === 'supersede_event') return [];
+    const correction = directives.get(event.eventId);
+    if (correction?.type === 'void_event') return [];
+    if (correction?.type === 'supersede_event') {
+      const replacement = correction.payload.replacement;
+      if (!replacement || Array.isArray(replacement) || typeof replacement !== 'object') return [];
+      const replacementRecord = replacement as DiamondJsonObject;
+      const effectiveType = readString(replacementRecord.type) as DiamondCommandType;
+      const effectivePayload = replacementRecord.payload;
+      if (!effectiveType || !effectivePayload || Array.isArray(effectivePayload) || typeof effectivePayload !== 'object') return [];
+      return [
+        { ...event, sourceEventId: event.eventId, effectiveType, effectivePayload: effectivePayload as DiamondJsonObject, corrected: true }
+      ];
+    }
+    return [{ ...event, sourceEventId: event.eventId, effectiveType: event.type, effectivePayload: event.payload, corrected: false }];
+  });
+}
+
+function privateEventLabel(event: Pick<DiamondEffectivePrivateEvent, 'effectiveType' | 'effectivePayload' | 'revision'>) {
+  const result = readString(event.effectivePayload.result);
+  if (event.effectiveType === 'private_note') return `Private note · revision ${event.revision}`;
+  if (event.effectiveType === 'record_plate_appearance' && result) return `${result.replace(/_/g, ' ')} · revision ${event.revision}`;
+  if (event.effectiveType === 'advance_runner') {
+    return `${readString(event.effectivePayload.cause).replace(/_/g, ' ') || 'Runner play'} · revision ${event.revision}`;
+  }
+  return `${event.effectiveType.replace(/_/g, ' ')} · revision ${event.revision}`;
+}
+
 const outcomeOptions: OutcomeOption[] = [
   { result: 'single', label: 'Single', batterTo: 'first', outs: 0 },
   { result: 'double', label: 'Double', batterTo: 'second', outs: 0 },
   { result: 'triple', label: 'Triple', batterTo: 'third', outs: 0 },
   { result: 'home_run', label: 'Home run', batterTo: 'home', outs: 0 },
   { result: 'walk', label: 'Walk', batterTo: 'first', outs: 0 },
+  { result: 'intentional_walk', label: 'Intentional walk', batterTo: 'first', outs: 0 },
   { result: 'hit_by_pitch', label: 'Hit by pitch', batterTo: 'first', outs: 0 },
   { result: 'strikeout', label: 'Strikeout', batterTo: 'out', outs: 1 },
   { result: 'ground_out', label: 'Ground out', batterTo: 'out', outs: 1 },
   { result: 'fly_out', label: 'Fly out', batterTo: 'out', outs: 1 },
+  { result: 'line_out', label: 'Line out', batterTo: 'out', outs: 1, fullOnly: true },
   { result: 'reached_on_error', label: 'Reached on error', batterTo: 'first', outs: 0, fullOnly: true },
   { result: 'fielders_choice', label: "Fielder's choice", batterTo: 'first', outs: 1, fullOnly: true },
   { result: 'sacrifice_bunt', label: 'Sac bunt', batterTo: 'out', outs: 1, fullOnly: true },
   { result: 'sacrifice_fly', label: 'Sac fly', batterTo: 'out', outs: 1, fullOnly: true },
-  { result: 'double_play', label: 'Double play', batterTo: 'out', outs: 2, fullOnly: true }
+  { result: 'interference', label: 'Interference', batterTo: 'first', outs: 0, fullOnly: true },
+  { result: 'dropped_third_strike', label: 'Dropped third strike', batterTo: 'first', outs: 0, fullOnly: true },
+  { result: 'double_play', label: 'Double play', batterTo: 'out', outs: 2, fullOnly: true },
+  { result: 'triple_play', label: 'Triple play', batterTo: 'out', outs: 3, fullOnly: true }
 ];
 
 const pitchOptions = [
@@ -135,7 +247,12 @@ const pitchOptions = [
   { result: 'swinging_strike', label: 'Swinging strike' },
   { result: 'foul', label: 'Foul' },
   { result: 'foul_bunt', label: 'Foul bunt' },
-  { result: 'in_play', label: 'In play' }
+  { result: 'in_play', label: 'In play' },
+  { result: 'hit_by_pitch', label: 'Hit batter' },
+  { result: 'catcher_interference', label: 'Catcher interference' },
+  { result: 'illegal_pitch', label: 'Illegal pitch' },
+  { result: 'balk', label: 'Balk' },
+  { result: 'pickoff_attempt', label: 'Pickoff attempt' }
 ] as const;
 
 const destinationOptions: Array<{ value: RunnerDestination; label: string }> = [
@@ -147,14 +264,109 @@ const destinationOptions: Array<{ value: RunnerDestination; label: string }> = [
   { value: 'out', label: 'Out' }
 ];
 
+const runnerCauseOptions: Array<{ value: DiamondRunnerAdvanceCause; label: string }> = [
+  { value: 'batted_ball', label: 'Batted ball' },
+  { value: 'walk', label: 'Walk' },
+  { value: 'hit_by_pitch', label: 'Hit by pitch' },
+  { value: 'stolen_base', label: 'Stolen base' },
+  { value: 'caught_stealing', label: 'Caught stealing' },
+  { value: 'pickoff', label: 'Pickoff' },
+  { value: 'wild_pitch', label: 'Wild pitch' },
+  { value: 'passed_ball', label: 'Passed ball' },
+  { value: 'balk', label: 'Balk' },
+  { value: 'illegal_pitch', label: 'Illegal pitch' },
+  { value: 'defensive_indifference', label: 'Defensive indifference' },
+  { value: 'error', label: 'Error' },
+  { value: 'obstruction', label: 'Obstruction' },
+  { value: 'force_out', label: 'Force out' },
+  { value: 'tag_out', label: 'Tag out' },
+  { value: 'appeal_out', label: 'Appeal out' },
+  { value: 'courtesy_runner', label: 'Courtesy runner' },
+  { value: 'tiebreaker', label: 'Tiebreaker' },
+  { value: 'other', label: 'Other' }
+];
+
+const outKindOptions: Array<{ value: DiamondOutKind; label: string }> = [
+  { value: 'force', label: 'Force' },
+  { value: 'tag', label: 'Tag' },
+  { value: 'appeal', label: 'Appeal' },
+  { value: 'batter_runner', label: 'Batter-runner before first' },
+  { value: 'strikeout', label: 'Strikeout' },
+  { value: 'catch', label: 'Catch' }
+];
+
 const defensivePositions = ['P', 'C', '1B', '2B', '3B', 'SS', 'LF', 'LCF', 'CF', 'RCF', 'RF'] as const;
+const diamondCoverageFamilies = ['batting', 'baserunning', 'pitching', 'fielding', 'situational', 'pitches', 'sensors'] as const;
 const minimumVoiceProposalConfidence = 0.75;
+
+const battingRoleLabels: Readonly<Record<DiamondBattingRole, string>> = {
+  regular: 'Regular',
+  dh: 'DH',
+  dp: 'DP',
+  flex: 'FLEX',
+  eh: 'EH',
+  ep: 'EP'
+};
+
+function resolvePinnedRulesProfile(snapshot: DiamondScorebookSnapshot | null): DiamondRulesProfile | null {
+  if (!snapshot) return null;
+  const suffix = `@${snapshot.rulesProfileVersion}`;
+  const profileId = snapshot.rulesProfileId.endsWith(suffix) ? snapshot.rulesProfileId.slice(0, -suffix.length) : snapshot.rulesProfileId;
+  return getDiamondRulesProfile(profileId, snapshot.rulesProfileVersion);
+}
+
+function initialLineupBattingRoles(profile: DiamondRulesProfile | null, dpFlexAvailable: boolean): DiamondBattingRole[] {
+  if (!profile) return ['regular'];
+  const roles: DiamondBattingRole[] = ['regular'];
+  if (profile.allowsDh) roles.push('dh');
+  if (profile.dpFlex.enabled && dpFlexAvailable) roles.push('dp');
+  if (profile.allowsEh) roles.push('eh');
+  if (profile.allowsEp) roles.push('ep');
+  // FLEX never occupies an initial batting slot. It is linked separately by set_dp_flex.
+  return roles;
+}
+
+function normalizeInitialBattingRole(value: string | null | undefined, supported: readonly DiamondBattingRole[]): DiamondBattingRole {
+  return supported.includes(value as DiamondBattingRole) ? (value as DiamondBattingRole) : 'regular';
+}
+
+function getQueueIdentity(
+  snapshot: DiamondScorebookSnapshot | null,
+  authenticatedUid: string | null | undefined
+): DiamondQueueIdentity | null {
+  if (
+    !snapshot ||
+    !authenticatedUid ||
+    !snapshot.lease.canScore ||
+    !snapshot.lease.holderUid ||
+    !snapshot.lease.leaseId ||
+    snapshot.lease.holderUid !== authenticatedUid
+  ) {
+    return null;
+  }
+  return {
+    teamId: snapshot.teamId,
+    gameId: snapshot.gameId,
+    authenticatedUid,
+    scorerUid: snapshot.lease.holderUid,
+    instanceId: snapshot.instanceId,
+    leaseId: snapshot.lease.leaseId
+  };
+}
 
 function copyLineupDrafts(snapshot: DiamondScorebookSnapshot | null): LineupDrafts {
   return {
     home: snapshot?.lineups.home.map((entry) => ({ ...entry })) || [],
     away: snapshot?.lineups.away.map((entry) => ({ ...entry })) || []
   };
+}
+
+function copyDefenseDrafts(snapshot: DiamondScorebookSnapshot | null): DefenseDrafts {
+  const copySide = (side: DiamondSide) =>
+    Object.fromEntries(
+      Object.entries(snapshot?.defense[side] || {}).map(([position, player]) => [position, player?.playerId || ''])
+    ) as Partial<Record<DiamondDefensivePosition, string>>;
+  return { home: copySide('home'), away: copySide('away') };
 }
 
 function buildDiamondAiCommandContext(snapshot: DiamondScorebookSnapshot): DiamondAiCommandContext {
@@ -249,13 +461,35 @@ function getDefaultDestination(
   if (result === 'home_run' || result === 'triple') return 'home';
   if (result === 'double') return from === 'first' ? 'third' : 'home';
   if (result === 'single') return from === 'first' ? 'second' : from === 'second' ? 'third' : 'home';
-  if (result === 'walk' || result === 'hit_by_pitch') {
+  if (result === 'walk' || result === 'intentional_walk' || result === 'hit_by_pitch' || result === 'interference') {
     if (from === 'third') return occupiedBases.has('first') && occupiedBases.has('second') ? 'home' : 'stay';
     if (from === 'second') return occupiedBases.has('first') ? 'third' : 'stay';
     if (from === 'first') return 'second';
   }
   if (result === 'double_play' && from === 'first') return 'out';
+  if (result === 'fielders_choice' && from === 'first') return 'out';
   return 'stay';
+}
+
+function defaultRunnerCause(result: string, to: RunnerDestination): DiamondRunnerAdvanceCause {
+  if (result === 'walk' || result === 'intentional_walk') return 'walk';
+  if (result === 'hit_by_pitch') return 'hit_by_pitch';
+  if (result === 'reached_on_error') return 'error';
+  if (result === 'interference') return 'obstruction';
+  if (to === 'out' && ['fielders_choice', 'double_play', 'triple_play'].includes(result)) return 'force_out';
+  if (result === 'dropped_third_strike') return 'other';
+  return 'batted_ball';
+}
+
+function defaultOutKind(result: string, from: RunnerMoveDraft['from']): DiamondOutKind {
+  if (from !== 'batter') return ['fielders_choice', 'double_play', 'triple_play'].includes(result) ? 'force' : 'tag';
+  if (result === 'strikeout' || result === 'dropped_third_strike') return 'strikeout';
+  if (result === 'fly_out' || result === 'line_out' || result === 'sacrifice_fly') return 'catch';
+  return 'batter_runner';
+}
+
+function resultAllowsRbi(result: string) {
+  return !['reached_on_error', 'fielders_choice', 'double_play', 'triple_play'].includes(result);
 }
 
 function buildRunnerMoves(snapshot: DiamondScorebookSnapshot, result: string): RunnerMoveDraft[] {
@@ -264,6 +498,10 @@ function buildRunnerMoves(snapshot: DiamondScorebookSnapshot, result: string): R
     if (snapshot.bases[base]) occupiedBases.add(base);
   });
   const batter = snapshot.currentBatter;
+  const batterDestination =
+    result === 'dropped_third_strike' && snapshot.bases.first && snapshot.inning.outs < 2
+      ? 'out'
+      : getDefaultDestination(result, 'batter', occupiedBases);
   const moves: RunnerMoveDraft[] = batter
     ? [
         {
@@ -271,27 +509,57 @@ function buildRunnerMoves(snapshot: DiamondScorebookSnapshot, result: string): R
           label: `Batter · ${playerLabel(batter)}`,
           playerId: batter.playerId,
           from: 'batter',
-          to: getDefaultDestination(result, 'batter', occupiedBases)
+          to: batterDestination,
+          cause: defaultRunnerCause(result, batterDestination),
+          ...(batterDestination === 'out' ? { outKind: defaultOutKind(result, 'batter') } : {}),
+          ...(batterDestination === 'home'
+            ? { countsRun: true, rbi: resultAllowsRbi(result), responsiblePitcherId: snapshot.currentPitcher?.playerId }
+            : {})
         }
       ]
     : [];
   (['third', 'second', 'first'] as const).forEach((base) => {
     const runner = snapshot.bases[base];
     if (!runner) return;
+    const destination = getDefaultDestination(result, base, occupiedBases);
     moves.push({
       key: `${base}:${runner.playerId}`,
       label: `${base[0]!.toUpperCase()}${base.slice(1)} · ${playerLabel(runner)}`,
       playerId: runner.playerId,
       from: base,
-      to: getDefaultDestination(result, base, occupiedBases)
+      to: destination,
+      cause: defaultRunnerCause(result, destination),
+      ...(destination === 'out' ? { outKind: defaultOutKind(result, base) } : {}),
+      ...(destination === 'home'
+        ? {
+            countsRun: true,
+            rbi: resultAllowsRbi(result),
+            responsiblePitcherId: runner.responsiblePitcherId || snapshot.currentPitcher?.playerId
+          }
+        : {})
     });
   });
+  const requiredOuts = outcomeOptions.find((option) => option.result === result)?.outs || 0;
+  if (requiredOuts > moves.filter((move) => move.to === 'out').length) {
+    const extraOuts = moves
+      .filter((move) => move.from !== 'batter' && move.to !== 'out')
+      .sort((left, right) => ['first', 'second', 'third'].indexOf(left.from) - ['first', 'second', 'third'].indexOf(right.from))
+      .slice(0, requiredOuts - moves.filter((move) => move.to === 'out').length);
+    extraOuts.forEach((move) => {
+      move.to = 'out';
+      move.cause = 'force_out';
+      move.outKind = 'force';
+      move.countsRun = undefined;
+      move.rbi = undefined;
+      move.earned = undefined;
+    });
+  }
   return moves;
 }
 
 function buildPendingOutcome(snapshot: DiamondScorebookSnapshot, option: OutcomeOption, source: 'tap' | 'voice' = 'tap'): PendingPlay {
   const runnerMoves = buildRunnerMoves(snapshot, option.result);
-  const homeMoves = runnerMoves.filter((move) => move.to === 'home').length;
+  const homeMoves = runnerMoves.filter((move) => move.to === 'home' && move.rbi).length;
   return {
     source,
     label: option.label,
@@ -311,6 +579,146 @@ function buildPendingOutcome(snapshot: DiamondScorebookSnapshot, option: Outcome
     aiConfidence: null,
     sourceRevision: null
   };
+}
+
+function retargetCorrectionOutcome(snapshot: DiamondScorebookSnapshot, pending: PendingPlay, option: OutcomeOption): PendingPlay {
+  const occupiedBases = new Set(pending.runnerMoves.flatMap((move) => (move.from === 'batter' ? [] : [move.from])));
+  const runnerMoves = pending.runnerMoves.map((move): RunnerMoveDraft => {
+    const to =
+      move.from === 'batter' && option.result === 'dropped_third_strike' && occupiedBases.has('first') && snapshot.inning.outs < 2
+        ? 'out'
+        : getDefaultDestination(option.result, move.from, occupiedBases);
+    return {
+      ...move,
+      to,
+      cause: defaultRunnerCause(option.result, to),
+      ...(to === 'out' ? { outKind: defaultOutKind(option.result, move.from) } : { outKind: undefined }),
+      ...(to === 'home'
+        ? {
+            countsRun: true,
+            rbi: resultAllowsRbi(option.result),
+            ...(move.responsiblePitcherId ? { responsiblePitcherId: move.responsiblePitcherId } : {}),
+            ...(typeof move.earned === 'boolean' ? { earned: move.earned } : {})
+          }
+        : { countsRun: undefined, rbi: undefined, responsiblePitcherId: undefined, earned: undefined })
+    };
+  });
+  const recordedOuts = runnerMoves.filter((move) => move.to === 'out').length;
+  if (option.outs > recordedOuts) {
+    runnerMoves
+      .filter((move) => move.from !== 'batter' && move.to !== 'out')
+      .sort((left, right) => ['first', 'second', 'third'].indexOf(left.from) - ['first', 'second', 'third'].indexOf(right.from))
+      .slice(0, option.outs - recordedOuts)
+      .forEach((move) => {
+        move.to = 'out';
+        move.cause = 'force_out';
+        move.outKind = 'force';
+        move.countsRun = undefined;
+        move.rbi = undefined;
+        move.responsiblePitcherId = undefined;
+        move.earned = undefined;
+      });
+  }
+  return {
+    ...pending,
+    label: `${option.label} replacement`,
+    result: option.result,
+    runnerMoves,
+    outsOnPlay: runnerMoves.filter((move) => move.to === 'out').length,
+    runsBattedIn: runnerMoves.filter((move) => move.to === 'home' && move.rbi).length
+  };
+}
+
+function buildPendingPlateAppearanceCorrection(
+  snapshot: DiamondScorebookSnapshot,
+  event: DiamondEffectivePrivateEvent,
+  reason: string
+): PendingPlay {
+  const payload = event.effectivePayload as Record<string, unknown>;
+  const result = readString(payload.result);
+  const option = outcomeOptions.find((candidate) => candidate.result === result);
+  if (!option) throw new Error('This plate-appearance result cannot be edited with the standard correction form.');
+  const allPlayers = [
+    ...snapshot.availablePlayers.home,
+    ...snapshot.availablePlayers.away,
+    ...snapshot.lineups.home,
+    ...snapshot.lineups.away
+  ];
+  const labelForId = (playerId: string, role: string) => {
+    const player = allPlayers.find((candidate) => candidate.playerId === playerId) || { playerId, name: playerId };
+    return `${role} · ${playerLabel(player)}`;
+  };
+  const batterId = readString(payload.batterId);
+  const pitcherId = readString(payload.pitcherId);
+  const batterAdvance = asJsonObject(payload.batterAdvance);
+  const runnerMoves: RunnerMoveDraft[] = [
+    {
+      key: `batter:${batterId}`,
+      label: labelForId(batterId, 'Batter'),
+      playerId: batterId,
+      from: 'batter',
+      to: readString(batterAdvance.to) as RunnerDestination,
+      cause: (readString(batterAdvance.cause) ||
+        defaultRunnerCause(result, readString(batterAdvance.to) as RunnerDestination)) as DiamondRunnerAdvanceCause,
+      ...(readString(batterAdvance.outKind) ? { outKind: readString(batterAdvance.outKind) as DiamondOutKind } : {}),
+      ...(typeof batterAdvance.countsRun === 'boolean' ? { countsRun: batterAdvance.countsRun } : {}),
+      ...(typeof batterAdvance.earned === 'boolean' ? { earned: batterAdvance.earned } : {}),
+      ...(typeof batterAdvance.rbi === 'boolean' ? { rbi: batterAdvance.rbi } : {}),
+      ...(readString(batterAdvance.responsiblePitcherId) ? { responsiblePitcherId: readString(batterAdvance.responsiblePitcherId) } : {})
+    },
+    ...(Array.isArray(payload.runnerAdvances) ? payload.runnerAdvances : []).flatMap((value) => {
+      const advance = asJsonObject(value);
+      const runnerId = readString(advance.runnerId);
+      const from = readString(advance.from) as RunnerMoveDraft['from'];
+      const to = readString(advance.to) as RunnerDestination;
+      if (!runnerId || !['first', 'second', 'third'].includes(from) || !destinationOptions.some((candidate) => candidate.value === to))
+        return [];
+      return [
+        {
+          key: `${from}:${runnerId}`,
+          label: labelForId(runnerId, `${from[0]!.toUpperCase()}${from.slice(1)}`),
+          playerId: runnerId,
+          from,
+          to,
+          cause: (readString(advance.cause) || defaultRunnerCause(result, to)) as DiamondRunnerAdvanceCause,
+          ...(readString(advance.outKind) ? { outKind: readString(advance.outKind) as DiamondOutKind } : {}),
+          ...(typeof advance.countsRun === 'boolean' ? { countsRun: advance.countsRun } : {}),
+          ...(typeof advance.earned === 'boolean' ? { earned: advance.earned } : {}),
+          ...(typeof advance.rbi === 'boolean' ? { rbi: advance.rbi } : {}),
+          ...(readString(advance.responsiblePitcherId) ? { responsiblePitcherId: readString(advance.responsiblePitcherId) } : {})
+        } satisfies RunnerMoveDraft
+      ];
+    })
+  ];
+  const fielding = asJsonObject(payload.fielding);
+  const assists = Array.isArray(fielding.assists) ? fielding.assists.map(readString).filter(Boolean) : [];
+  const errors = Array.isArray(fielding.errors) ? fielding.errors.map(asJsonObject) : [];
+  return {
+    source: 'tap',
+    label: `${option.label} replacement`,
+    type: 'record_plate_appearance',
+    payload: event.effectivePayload,
+    payloadDraft: JSON.stringify(event.effectivePayload, null, 2),
+    result,
+    runnerMoves,
+    outsOnPlay: readNumber(payload.outsOnPlay, runnerMoves.filter((move) => move.to === 'out').length),
+    runsBattedIn: readNumber(payload.runsBattedIn, runnerMoves.filter((move) => move.to === 'home' && move.rbi).length),
+    putoutBy: readString(fielding.putoutBy),
+    assistBy: assists[0] || '',
+    errorBy: readString(errors[0]?.playerId),
+    battedBall: readString(fielding.battedBall) || 'unknown',
+    unresolvedFields: [],
+    ambiguityConfirmed: true,
+    aiConfidence: null,
+    sourceRevision: null,
+    batterId,
+    pitcherId,
+    correction: { targetEventId: event.sourceEventId, reason }
+  };
+}
+
+function asJsonObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
 function readString(value: unknown) {
@@ -354,13 +762,39 @@ function buildPendingVoicePlay(snapshot: DiamondScorebookSnapshot, proposal: Pen
     pending.runnerMoves = pending.runnerMoves.map((move) => {
       if (move.from === 'batter') {
         const to = readString(batterAdvance.to) as RunnerDestination;
-        return destinationOptions.some((option) => option.value === to) ? { ...move, to } : move;
+        const earned = typeof batterAdvance.earned === 'boolean' ? batterAdvance.earned : move.earned;
+        const cause = readString(batterAdvance.cause) as DiamondRunnerAdvanceCause;
+        const outKind = readString(batterAdvance.outKind) as DiamondOutKind;
+        return {
+          ...move,
+          ...(destinationOptions.some((option) => option.value === to) ? { to } : {}),
+          ...(runnerCauseOptions.some((option) => option.value === cause) ? { cause } : {}),
+          ...(outKindOptions.some((option) => option.value === outKind) ? { outKind } : {}),
+          ...(typeof batterAdvance.countsRun === 'boolean' ? { countsRun: batterAdvance.countsRun } : {}),
+          ...(typeof batterAdvance.rbi === 'boolean' ? { rbi: batterAdvance.rbi } : {}),
+          ...(readString(batterAdvance.responsiblePitcherId)
+            ? { responsiblePitcherId: readString(batterAdvance.responsiblePitcherId) }
+            : {}),
+          earned
+        };
       }
       const proposedMove = runnerAdvances.find(
         (entry) => entry && typeof entry === 'object' && readString((entry as Record<string, unknown>).runnerId) === move.playerId
       ) as Record<string, unknown> | undefined;
       const to = readString(proposedMove?.to) as RunnerDestination;
-      return destinationOptions.some((option) => option.value === to) ? { ...move, to } : move;
+      const earned = typeof proposedMove?.earned === 'boolean' ? proposedMove.earned : move.earned;
+      const cause = readString(proposedMove?.cause) as DiamondRunnerAdvanceCause;
+      const outKind = readString(proposedMove?.outKind) as DiamondOutKind;
+      return {
+        ...move,
+        ...(destinationOptions.some((option) => option.value === to) ? { to } : {}),
+        ...(runnerCauseOptions.some((option) => option.value === cause) ? { cause } : {}),
+        ...(outKindOptions.some((option) => option.value === outKind) ? { outKind } : {}),
+        ...(typeof proposedMove?.countsRun === 'boolean' ? { countsRun: proposedMove.countsRun } : {}),
+        ...(typeof proposedMove?.rbi === 'boolean' ? { rbi: proposedMove.rbi } : {}),
+        ...(readString(proposedMove?.responsiblePitcherId) ? { responsiblePitcherId: readString(proposedMove?.responsiblePitcherId) } : {}),
+        earned
+      };
     });
     pending.outsOnPlay = readNumber(payload.outsOnPlay, pending.outsOnPlay);
     pending.runsBattedIn = readNumber(payload.runsBattedIn, pending.runsBattedIn);
@@ -413,10 +847,23 @@ function validateRunnerReview(pending: PendingPlay, currentOuts: number) {
     return 'Two runners cannot finish on the same base. Review every runner destination.';
   }
   const computedOuts = pending.runnerMoves.filter((move) => move.to === 'out').length;
-  if (pending.outsOnPlay < computedOuts) return 'Outs on play cannot be lower than the runners marked out.';
+  if (pending.outsOnPlay !== computedOuts) return 'Outs on play must exactly match the runners marked out.';
   if (currentOuts + pending.outsOnPlay > 3) return 'This play would record more than three outs in the half inning.';
   const scored = pending.runnerMoves.filter((move) => move.to === 'home').length;
-  if (pending.runsBattedIn > scored) return 'RBI credit cannot exceed the runners marked safe at home.';
+  const rbi = pending.runnerMoves.filter((move) => move.to === 'home' && move.rbi).length;
+  if (pending.runsBattedIn !== rbi) return 'RBI total must match the individual runners credited with an RBI.';
+  if (rbi > scored) return 'RBI credit cannot exceed the runners marked safe at home.';
+  if (pending.runnerMoves.some((move) => move.to === 'out' && !move.outKind)) return 'Choose an out kind for every runner marked out.';
+  if (pending.runnerMoves.some((move) => move.to !== 'out' && move.outKind)) return 'Only runners marked out may have an out kind.';
+  if (pending.runnerMoves.some((move) => move.to === 'home' && typeof move.countsRun !== 'boolean')) {
+    return 'Choose whether every runner crossing home counts.';
+  }
+  const thirdOutCancelsRuns =
+    currentOuts + pending.outsOnPlay === 3 &&
+    pending.runnerMoves.some((move) => move.to === 'out' && (move.outKind === 'force' || move.outKind === 'batter_runner'));
+  if (thirdOutCancelsRuns && pending.runnerMoves.some((move) => move.to === 'home' && move.countsRun !== false)) {
+    return 'A run cannot count when the third out is a force or the batter-runner is retired before first.';
+  }
   return '';
 }
 
@@ -430,41 +877,34 @@ function canChooseDestination(from: RunnerMoveDraft['from'], destination: Runner
 
 function buildPendingPayload(snapshot: DiamondScorebookSnapshot, pending: PendingPlay, controlMode: DiamondCaptureMode): DiamondJsonObject {
   if (pending.type !== 'record_plate_appearance') return parseEditableProposalPayload(pending);
-  const batter = snapshot.currentBatter;
-  const pitcher = snapshot.currentPitcher;
-  if (!batter || !pitcher) throw new Error('Set the current batter and pitcher before recording a plate appearance.');
+  const batterId = pending.batterId || snapshot.currentBatter?.playerId;
+  const pitcherId = pending.pitcherId || snapshot.currentPitcher?.playerId;
+  if (!batterId || !pitcherId) throw new Error('Set the current batter and pitcher before recording a plate appearance.');
   const batterMove = pending.runnerMoves.find((move) => move.from === 'batter');
   if (!batterMove) throw new Error('Review the batter destination before recording this play.');
-  const cause =
-    pending.result === 'walk'
-      ? 'walk'
-      : pending.result === 'hit_by_pitch'
-        ? 'hit_by_pitch'
-        : pending.result === 'reached_on_error'
-          ? 'error'
-          : 'batted_ball';
   const fielding: DiamondJsonObject = {};
   if (pending.putoutBy) fielding.putoutBy = pending.putoutBy;
   if (pending.assistBy) fielding.assists = [pending.assistBy];
   if (pending.errorBy) fielding.errors = [{ playerId: pending.errorBy, kind: 'fielding' }];
   if (pending.battedBall !== 'unknown') fielding.battedBall = pending.battedBall;
   const hasFielding = Object.keys(fielding).length > 0;
-  const scoredMoves = pending.runnerMoves.filter((move) => move.to === 'home');
-  let remainingRbi = pending.runsBattedIn;
-  const applyRbi = (to: RunnerDestination) => {
-    if (to !== 'home' || remainingRbi <= 0) return false;
-    remainingRbi -= 1;
-    return true;
-  };
+  const scoredMoves = pending.runnerMoves.filter((move) => move.to === 'home' && move.countsRun !== false);
   return {
-    batterId: batter.playerId,
-    pitcherId: pitcher.playerId,
+    batterId,
+    pitcherId,
     result: pending.result,
     batterAdvance: {
       to: batterMove.to,
-      cause,
-      ...(batterMove.to === 'home' ? { countsRun: true, rbi: applyRbi('home') } : {}),
-      ...(batterMove.to === 'out' ? { outKind: pending.result === 'strikeout' ? 'strikeout' : 'batter_runner' } : {})
+      cause: batterMove.cause,
+      ...(batterMove.to === 'home'
+        ? {
+            countsRun: batterMove.countsRun,
+            rbi: batterMove.rbi === true,
+            ...(batterMove.responsiblePitcherId ? { responsiblePitcherId: batterMove.responsiblePitcherId } : {}),
+            ...(typeof batterMove.earned === 'boolean' ? { earned: batterMove.earned } : {})
+          }
+        : {}),
+      ...(batterMove.to === 'out' ? { outKind: batterMove.outKind } : {})
     },
     runnerAdvances: pending.runnerMoves
       .filter((move) => move.from !== 'batter')
@@ -472,12 +912,19 @@ function buildPendingPayload(snapshot: DiamondScorebookSnapshot, pending: Pendin
         runnerId: move.playerId,
         from: move.from,
         to: move.to,
-        cause,
-        ...(move.to === 'home' ? { countsRun: true, rbi: applyRbi('home') } : {}),
-        ...(move.to === 'out' ? { outKind: 'force' } : {})
+        cause: move.cause,
+        ...(move.to === 'home'
+          ? {
+              countsRun: move.countsRun,
+              rbi: move.rbi === true,
+              ...(move.responsiblePitcherId ? { responsiblePitcherId: move.responsiblePitcherId } : {}),
+              ...(typeof move.earned === 'boolean' ? { earned: move.earned } : {})
+            }
+          : {}),
+        ...(move.to === 'out' ? { outKind: move.outKind } : {})
       })),
     outsOnPlay: pending.outsOnPlay,
-    runsBattedIn: Math.min(pending.runsBattedIn, scoredMoves.length),
+    runsBattedIn: Math.min(pending.runnerMoves.filter((move) => move.to === 'home' && move.rbi).length, scoredMoves.length),
     ...(hasFielding ? { fielding } : {}),
     ...(snapshot.captureMode === 'quick' || controlMode === 'quick' ? { omissions: ['fielding', 'situational', 'pitches'] } : {})
   };
@@ -494,12 +941,13 @@ export function DiamondScorebook({
   const params = useParams();
   const teamId = decodeURIComponent(teamIdProp || params.teamId || '');
   const gameId = decodeURIComponent(gameIdProp || params.gameId || params.eventId || '');
+  const initialQueueIdentity = getQueueIdentity(initialSnapshot, auth.user?.uid);
   const [snapshot, setSnapshot] = useState<DiamondScorebookSnapshot | null>(initialSnapshot);
   const [loading, setLoading] = useState(!initialSnapshot);
   const [busy, setBusy] = useState(false);
   const [reconciling, setReconciling] = useState(false);
   const [networkOnline, setNetworkOnline] = useState(() => typeof navigator === 'undefined' || navigator.onLine !== false);
-  const [queueCount, setQueueCount] = useState(() => (teamId && gameId ? client.readQueue(teamId, gameId).length : 0));
+  const [queueCount, setQueueCount] = useState(() => (initialQueueIdentity ? client.readQueue(initialQueueIdentity).length : 0));
   const [controlMode, setControlMode] = useState<DiamondCaptureMode>(initialSnapshot?.captureMode || 'quick');
   const [notice, setNotice] = useState<Notice | null>(null);
   const [pendingPlay, setPendingPlay] = useState<PendingPlay | null>(null);
@@ -514,16 +962,32 @@ export function DiamondScorebook({
   const [savingNote, setSavingNote] = useState(false);
   const [attachNoteToLastPlay, setAttachNoteToLastPlay] = useState(false);
   const [handoffTarget, setHandoffTarget] = useState('');
+  const [correctionReason, setCorrectionReason] = useState('');
+  const [recapState, setRecapState] = useState<DiamondAiDraftState | null>(null);
+  const [generatingRecap, setGeneratingRecap] = useState(false);
+  const [publishingRecap, setPublishingRecap] = useState(false);
+  const [publishRecapOpen, setPublishRecapOpen] = useState(false);
   const [lineupDrafts, setLineupDrafts] = useState<LineupDrafts>(() => copyLineupDrafts(initialSnapshot));
   const [lineupDirty, setLineupDirty] = useState<Record<DiamondSide, boolean>>({ home: false, away: false });
+  const [defenseDrafts, setDefenseDrafts] = useState<DefenseDrafts>(() => copyDefenseDrafts(initialSnapshot));
+  const [defenseDirty, setDefenseDirty] = useState<Record<DiamondSide, boolean>>({ home: false, away: false });
+  const [privateHistory, setPrivateHistory] = useState<DiamondPrivateHistoryWindow | null>(null);
+  const [loadingPrivateHistory, setLoadingPrivateHistory] = useState(false);
+  const [loadingOlderPrivateHistory, setLoadingOlderPrivateHistory] = useState(false);
+  const [eventCorrectionReason, setEventCorrectionReason] = useState('');
+  const [correctionSearch, setCorrectionSearch] = useState('');
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const stopNativeDictationRef = useRef<(() => Promise<void>) | null>(null);
   const reconcileKeyRef = useRef('');
   const snapshotRef = useRef<DiamondScorebookSnapshot | null>(initialSnapshot);
   const queueCountRef = useRef(queueCount);
+  const authenticatedUidRef = useRef(auth.user?.uid || null);
+  const appBuildRef = useRef<number | null>(null);
+  const appBuildPromiseRef = useRef<Promise<number> | null>(null);
 
   snapshotRef.current = snapshot;
   queueCountRef.current = queueCount;
+  authenticatedUidRef.current = auth.user?.uid || null;
 
   const backTarget = teamId && gameId ? `/schedule/${encodeURIComponent(teamId)}/${encodeURIComponent(gameId)}?section=game` : '/schedule';
 
@@ -538,7 +1002,8 @@ export function DiamondScorebook({
       try {
         const next = await client.load(teamId, gameId);
         setSnapshot(next);
-        setControlMode(next.captureMode);
+        const nextQueueIdentity = getQueueIdentity(next, auth.user.uid);
+        setQueueCount(nextQueueIdentity ? client.readQueue(nextQueueIdentity).length : 0);
         setNotice(null);
         return next;
       } catch (error) {
@@ -570,6 +1035,55 @@ export function DiamondScorebook({
   }, [lineupDirty.away, lineupDirty.home, snapshot]);
 
   useEffect(() => {
+    if (!snapshot) return;
+    const next = copyDefenseDrafts(snapshot);
+    setDefenseDrafts((current) => ({
+      home: defenseDirty.home ? current.home : next.home,
+      away: defenseDirty.away ? current.away : next.away
+    }));
+  }, [defenseDirty.away, defenseDirty.home, snapshot]);
+
+  useEffect(() => {
+    setRecapState(null);
+    setPublishRecapOpen(false);
+    setPrivateHistory(null);
+    setCorrectionSearch('');
+  }, [gameId, teamId]);
+
+  useEffect(() => {
+    if (privateHistory && snapshot && privateHistory.sourceRevision !== snapshot.revision) setPrivateHistory(null);
+  }, [privateHistory, snapshot]);
+
+  useEffect(() => {
+    appBuildRef.current = null;
+    appBuildPromiseRef.current = null;
+  }, [client]);
+
+  useEffect(() => {
+    const identity = getQueueIdentity(snapshot, auth.user?.uid);
+    if (!identity) {
+      setQueueCount(0);
+      reconcileKeyRef.current = '';
+      return;
+    }
+    setQueueCount(client.readQueue(identity).length);
+  }, [auth.user?.uid, client, snapshot]);
+
+  useEffect(() => {
+    if (!recapState || recapState.stale) return;
+    const remainsCurrent = Boolean(
+      snapshot?.authoritative &&
+      snapshot.lifecycle === 'final' &&
+      snapshot.revision === recapState.source.sourceRevision &&
+      snapshot.checkpointHash === recapState.source.checkpointHash
+    );
+    if (!remainsCurrent) {
+      setRecapState((current) => (current ? { ...current, stale: true } : current));
+      setPublishRecapOpen(false);
+    }
+  }, [recapState, snapshot]);
+
+  useEffect(() => {
     const handleOnline = () => setNetworkOnline(true);
     const handleOffline = () => setNetworkOnline(false);
     window.addEventListener('online', handleOnline);
@@ -592,13 +1106,22 @@ export function DiamondScorebook({
 
   const reconcileQueue = useCallback(async () => {
     if (!networkOnline || !teamId || !gameId || reconciling || queueCount === 0) return;
+    const identity = getQueueIdentity(snapshotRef.current, auth.user?.uid);
+    if (!identity) {
+      setQueueCount(0);
+      setNotice({
+        tone: 'error',
+        message: 'Queued plays are quarantined because the signed-in scorer, scoring lease, or Diamond game instance changed.'
+      });
+      return;
+    }
     setReconciling(true);
     setNotice({
       tone: 'info',
       message: `Reconciling ${queueCount} queued ${queueCount === 1 ? 'play' : 'plays'} with the authoritative game.`
     });
     try {
-      const result = await client.reconcileQueue(teamId, gameId);
+      const result = await client.reconcileQueue(identity);
       setQueueCount(result.remaining.length);
       if (result.lastSnapshot) setSnapshot(result.lastSnapshot);
       const refreshed = await refreshSnapshot(false);
@@ -609,7 +1132,8 @@ export function DiamondScorebook({
         });
       }
     } catch (error) {
-      setQueueCount(client.readQueue(teamId, gameId).length);
+      const currentIdentity = getQueueIdentity(snapshotRef.current, auth.user?.uid);
+      setQueueCount(currentIdentity ? client.readQueue(currentIdentity).length : 0);
       setNotice({ tone: 'error', message: describeError(error, 'Queued plays could not be reconciled. Refresh before continuing.') });
       if (error instanceof DiamondScorebookError && error.code === 'stale-revision') {
         await refreshSnapshot(false);
@@ -617,18 +1141,20 @@ export function DiamondScorebook({
     } finally {
       setReconciling(false);
     }
-  }, [client, gameId, networkOnline, queueCount, reconciling, refreshSnapshot, teamId]);
+  }, [auth.user?.uid, client, gameId, networkOnline, queueCount, reconciling, refreshSnapshot, teamId]);
 
   useEffect(() => {
     if (!networkOnline || queueCount === 0) {
       if (queueCount === 0) reconcileKeyRef.current = '';
       return;
     }
-    const key = `${teamId}:${gameId}:${queueCount}`;
+    const identity = getQueueIdentity(snapshot, auth.user?.uid);
+    if (!identity) return;
+    const key = `${identity.teamId}:${identity.gameId}:${identity.instanceId}:${identity.authenticatedUid}:${identity.leaseId}:${queueCount}`;
     if (reconcileKeyRef.current === key) return;
     reconcileKeyRef.current = key;
     void reconcileQueue();
-  }, [gameId, networkOnline, queueCount, reconcileQueue, teamId]);
+  }, [auth.user?.uid, networkOnline, queueCount, reconcileQueue, snapshot]);
 
   const applyOutcome = useCallback(
     async (outcome: DiamondCommandOutcome, successMessage: string) => {
@@ -658,16 +1184,43 @@ export function DiamondScorebook({
           ? { tone: 'success', message: `${successMessage} Authoritative revision ${refreshed.revision}.` }
           : { tone: 'error', message: `${successMessage} The state is reconciling; refresh before recording another play.` }
       );
+      return Boolean(refreshed);
     },
     [refreshSnapshot]
   );
 
+  const resolveAppBuildForMutation = useCallback(async () => {
+    if (appBuildRef.current !== null) return appBuildRef.current;
+    const pending = appBuildPromiseRef.current || client.resolveAppBuild();
+    appBuildPromiseRef.current = pending;
+    try {
+      const appBuild = await pending;
+      if (!Number.isSafeInteger(appBuild) || appBuild < 1) {
+        throw new DiamondScorebookError(
+          'invalid-input',
+          'This app does not expose a valid build number. Diamond scoring remains read only until the app is updated or rebuilt.'
+        );
+      }
+      appBuildRef.current = appBuild;
+      return appBuild;
+    } catch (error) {
+      appBuildPromiseRef.current = null;
+      throw error;
+    }
+  }, [client]);
+
   const buildCommand = useCallback(
-    (type: DiamondCommandType, payload: DiamondJsonObject) => {
+    (type: DiamondCommandType, payload: DiamondJsonObject, appBuild: number) => {
       if (!snapshot) throw new Error('Load the authoritative scorebook before recording a play.');
+      if (!snapshot.lease.canScore || !snapshot.lease.leaseId) {
+        throw new DiamondScorebookError('conflict', 'Acquire the current scoring lease before recording a play.');
+      }
       return client.createCommand({
         teamId,
         gameId,
+        appBuild,
+        expectedInstanceId: snapshot.instanceId,
+        leaseId: snapshot.lease.leaseId,
         expectedRevision: snapshot.revision + queueCount,
         rulesProfileId: snapshot.rulesProfileId,
         rulesProfileVersion: snapshot.rulesProfileVersion,
@@ -679,19 +1232,54 @@ export function DiamondScorebook({
   );
 
   const submitCommand = useCallback(
-    async (type: DiamondCommandType, payload: DiamondJsonObject, successMessage: string, options: { allowWhenFinal?: boolean } = {}) => {
+    async (
+      type: DiamondCommandType,
+      payload: DiamondJsonObject,
+      successMessage: string,
+      options: { allowWhenFinal?: boolean } = {}
+    ): Promise<CommandSubmissionResult> => {
       if (!snapshot || busy || reconciling) return false;
       if (!snapshot.lease.canScore) {
         setNotice({ tone: 'error', message: 'This scorebook is read only because another scorekeeper holds the scoring lease.' });
+        return false;
+      }
+      const scoringIdentity = getQueueIdentity(snapshot, auth.user?.uid);
+      if (!scoringIdentity) {
+        setNotice({
+          tone: 'error',
+          message: 'Refresh after signing in as the scorer who currently owns this Diamond scorebook.'
+        });
         return false;
       }
       if (snapshot.lifecycle === 'final' && !options.allowWhenFinal) {
         setNotice({ tone: 'error', message: 'This game is final. Reopen it for a confirmed correction before changing the scorebook.' });
         return false;
       }
+      if (snapshot.lifecycle === 'cancelled') {
+        setNotice({ tone: 'error', message: 'This game is cancelled. Its Diamond scorebook is permanently read only.' });
+        return false;
+      }
       let command: DiamondCommandEnvelope;
       try {
-        command = buildCommand(type, payload);
+        const appBuild = await resolveAppBuildForMutation();
+        const currentSnapshot = snapshotRef.current;
+        const currentIdentity = getQueueIdentity(currentSnapshot, authenticatedUidRef.current);
+        if (
+          !currentSnapshot ||
+          !currentIdentity ||
+          currentIdentity.authenticatedUid !== scoringIdentity.authenticatedUid ||
+          currentIdentity.scorerUid !== scoringIdentity.scorerUid ||
+          currentIdentity.instanceId !== scoringIdentity.instanceId ||
+          currentIdentity.leaseId !== scoringIdentity.leaseId ||
+          currentSnapshot.revision !== snapshot.revision ||
+          queueCountRef.current !== queueCount
+        ) {
+          throw new DiamondScorebookError(
+            'conflict',
+            'The signed-in scorer, scoring lease, game instance, or revision changed while preparing this command.'
+          );
+        }
+        command = buildCommand(type, payload, appBuild);
       } catch (error) {
         setNotice({ tone: 'error', message: describeError(error, 'This play could not be prepared safely.') });
         return false;
@@ -699,13 +1287,13 @@ export function DiamondScorebook({
 
       if (!networkOnline || queueCount > 0) {
         try {
-          const queue = client.enqueue(command);
+          const queue = client.enqueue(command, scoringIdentity);
           setQueueCount(queue.length);
           setNotice({
             tone: 'info',
             message: `${successMessage} queued with command ${command.commandId.slice(0, 8)}. The displayed field remains revision ${snapshot.revision} until reconciliation.`
           });
-          return true;
+          return 'queued';
         } catch (error) {
           setNotice({ tone: 'error', message: describeError(error, 'This play could not be retained offline.') });
           return false;
@@ -716,18 +1304,18 @@ export function DiamondScorebook({
       setNotice(null);
       try {
         const outcome = await client.submitCommand(command);
-        await applyOutcome(outcome, successMessage);
-        return true;
+        const authoritative = await applyOutcome(outcome, successMessage);
+        return authoritative ? 'accepted' : 'reconciling';
       } catch (error) {
         if (error instanceof DiamondScorebookError && error.retryable) {
           try {
-            const queue = client.enqueue(command);
+            const queue = client.enqueue(command, scoringIdentity);
             setQueueCount(queue.length);
             setNotice({
               tone: 'info',
               message: `Confirmation was interrupted. The same command ID is queued for idempotent reconciliation; do not re-enter the play.`
             });
-            return true;
+            return 'queued';
           } catch (queueError) {
             setNotice({
               tone: 'error',
@@ -743,7 +1331,120 @@ export function DiamondScorebook({
         setBusy(false);
       }
     },
-    [applyOutcome, buildCommand, busy, client, networkOnline, queueCount, reconciling, refreshSnapshot, snapshot]
+    [
+      applyOutcome,
+      auth.user?.uid,
+      buildCommand,
+      busy,
+      client,
+      networkOnline,
+      queueCount,
+      reconciling,
+      refreshSnapshot,
+      resolveAppBuildForMutation,
+      snapshot
+    ]
+  );
+
+  const changeScorerLease = useCallback(
+    async (operation: 'acquire' | 'recover') => {
+      const requestedSnapshot = snapshotRef.current;
+      const requestedUid = authenticatedUidRef.current;
+      if (!requestedSnapshot || !requestedUid || busy || reconciling) return;
+      if (!networkOnline) {
+        setNotice({ tone: 'error', message: 'Reconnect before acquiring the scoring lease.' });
+        return;
+      }
+      if (!requestedSnapshot.authoritative || queueCountRef.current > 0 || requestedSnapshot.lifecycle === 'cancelled') {
+        setNotice({
+          tone: 'error',
+          message: 'Refresh the authoritative scorebook and reconcile any queued plays before changing the scoring lease.'
+        });
+        return;
+      }
+      const operationAllowed = operation === 'recover' ? requestedSnapshot.lease.canRecover : requestedSnapshot.lease.canAcquire;
+      if (!operationAllowed || requestedSnapshot.lease.canScore) {
+        setNotice({ tone: 'error', message: 'The scoring lease is no longer available. Refresh before trying again.' });
+        return;
+      }
+
+      setBusy(true);
+      setNotice(null);
+      try {
+        const appBuild = await resolveAppBuildForMutation();
+        const currentSnapshot = snapshotRef.current;
+        const stillAllowed =
+          operation === 'recover' ? currentSnapshot?.lease.canRecover === true : currentSnapshot?.lease.canAcquire === true;
+        if (
+          !currentSnapshot ||
+          !currentSnapshot.authoritative ||
+          !stillAllowed ||
+          currentSnapshot.lease.canScore ||
+          currentSnapshot.lifecycle === 'cancelled' ||
+          currentSnapshot.instanceId !== requestedSnapshot.instanceId ||
+          currentSnapshot.revision !== requestedSnapshot.revision ||
+          authenticatedUidRef.current !== requestedUid ||
+          queueCountRef.current !== 0
+        ) {
+          throw new DiamondScorebookError(
+            'conflict',
+            'The signed-in user, scorebook revision, or lease availability changed before acquisition.'
+          );
+        }
+        const outcome = await client.acquireLease({
+          teamId,
+          gameId,
+          appBuild,
+          expectedInstanceId: currentSnapshot.instanceId,
+          expectedRevision: currentSnapshot.revision,
+          operation
+        });
+        const acquired = outcome.snapshot;
+        if (
+          !acquired.authoritative ||
+          acquired.instanceId !== currentSnapshot.instanceId ||
+          acquired.revision !== outcome.revision ||
+          acquired.lease.holderUid !== requestedUid ||
+          !acquired.lease.canScore ||
+          !acquired.lease.leaseId
+        ) {
+          throw new DiamondScorebookError('invalid-response', 'The server did not return an authoritative lease owned by you.');
+        }
+        const acquiredIdentity = getQueueIdentity(acquired, requestedUid);
+        setSnapshot(acquired);
+        setControlMode(acquired.captureMode);
+        setQueueCount(acquiredIdentity ? client.readQueue(acquiredIdentity).length : 0);
+        reconcileKeyRef.current = '';
+        setNotice({
+          tone: 'success',
+          message:
+            operation === 'recover'
+              ? `Scoring lease recovered at revision ${acquired.revision}. The expired lease can no longer submit plays.`
+              : `You acquired the scoring lease at revision ${acquired.revision}.`
+        });
+      } catch (error) {
+        let reconciled: DiamondScorebookSnapshot | null = null;
+        if (error instanceof DiamondScorebookError && error.retryable) {
+          reconciled = await refreshSnapshot(false);
+        }
+        if (
+          reconciled?.authoritative &&
+          reconciled.lease.canScore &&
+          reconciled.lease.holderUid === requestedUid &&
+          reconciled.lease.leaseId
+        ) {
+          setNotice({
+            tone: 'success',
+            message: `The response was interrupted, but your scoring lease is authoritative at revision ${reconciled.revision}.`
+          });
+        } else {
+          setNotice({ tone: 'error', message: describeError(error, 'The scoring lease could not be confirmed.') });
+        }
+      } finally {
+        setBusy(false);
+      }
+    },
+    [busy, client, gameId, networkOnline, reconciling, refreshSnapshot, resolveAppBuildForMutation, teamId]
   );
 
   const recordPitch = async (result: string, label: string) => {
@@ -783,7 +1484,17 @@ export function DiamondScorebook({
     }
     try {
       const payload = buildPendingPayload(snapshot, pendingPlay, controlMode);
-      const submitted = await submitCommand(pendingPlay.type, payload, `${pendingPlay.label} recorded.`);
+      const submitted = pendingPlay.correction
+        ? await submitCommand(
+            'supersede_event',
+            {
+              targetEventId: pendingPlay.correction.targetEventId,
+              reason: pendingPlay.correction.reason,
+              replacement: { type: pendingPlay.type, payload }
+            },
+            `${pendingPlay.label} appended as a correction.`
+          )
+        : await submitCommand(pendingPlay.type, payload, `${pendingPlay.label} recorded.`);
       if (submitted) setPendingPlay(null);
     } catch (error) {
       setNotice({ tone: 'error', message: describeError(error, 'Review this play before submitting it.') });
@@ -797,11 +1508,31 @@ export function DiamondScorebook({
         'void_event',
         {
           targetEventId: confirmation.eventId,
-          reason: 'Scorekeeper undo from recent plays'
+          reason: confirmation.reason
         },
         `Correction appended for ${confirmation.label}.`
       );
-      if (submitted) setConfirmation(null);
+      if (submitted) {
+        setEventCorrectionReason('');
+        setConfirmation(null);
+      }
+      return;
+    }
+    if (confirmation.kind === 'rules-decision') {
+      const decision = confirmation;
+      const submitted = await submitCommand(
+        'rules_decision',
+        {
+          code: decision.code,
+          description: decision.description
+        },
+        `${decision.label} recorded.`
+      );
+      if (submitted === 'accepted' && decision.opensFinalization) {
+        setConfirmation({ kind: 'finalize' });
+      } else if (submitted) {
+        setConfirmation(null);
+      }
       return;
     }
     if (confirmation.kind === 'finalize') {
@@ -809,11 +1540,36 @@ export function DiamondScorebook({
       if (submitted) setConfirmation(null);
       return;
     }
+    if (confirmation.kind === 'reopen') {
+      const submitted = await submitCommand('reopen_for_correction', { reason: confirmation.reason }, 'Correction session opened.', {
+        allowWhenFinal: true
+      });
+      if (submitted) {
+        setCorrectionReason('');
+        setConfirmation(null);
+      }
+      return;
+    }
     setBusy(true);
     try {
+      const appBuild = await resolveAppBuildForMutation();
+      const currentIdentity = getQueueIdentity(snapshotRef.current, authenticatedUidRef.current);
+      if (
+        !currentIdentity ||
+        currentIdentity.authenticatedUid !== auth.user?.uid ||
+        currentIdentity.scorerUid !== snapshot.lease.holderUid ||
+        currentIdentity.instanceId !== snapshot.instanceId ||
+        currentIdentity.leaseId !== snapshot.lease.leaseId ||
+        snapshotRef.current?.revision !== snapshot.revision
+      ) {
+        throw new DiamondScorebookError('conflict', 'The scoring lease or Diamond game instance changed before handoff confirmation.');
+      }
       const outcome = await client.requestHandoff({
         teamId,
         gameId,
+        appBuild,
+        expectedInstanceId: snapshot.instanceId,
+        leaseId: snapshot.lease.leaseId,
         expectedRevision: snapshot.revision,
         rulesProfileId: snapshot.rulesProfileId,
         rulesProfileVersion: snapshot.rulesProfileVersion,
@@ -1016,14 +1772,29 @@ export function DiamondScorebook({
     setSavingNote(true);
     setNotice(null);
     try {
+      const appBuild = await resolveAppBuildForMutation();
+      const currentIdentity = getQueueIdentity(snapshotRef.current, authenticatedUidRef.current);
+      if (
+        !currentIdentity ||
+        currentIdentity.authenticatedUid !== auth.user?.uid ||
+        currentIdentity.scorerUid !== snapshot.lease.holderUid ||
+        currentIdentity.instanceId !== snapshot.instanceId ||
+        currentIdentity.leaseId !== snapshot.lease.leaseId ||
+        snapshotRef.current?.revision !== snapshot.revision
+      ) {
+        throw new DiamondScorebookError('conflict', 'The scoring lease or Diamond game instance changed before this note was saved.');
+      }
       const outcome = await client.savePrivateNote({
         teamId,
         gameId,
+        appBuild,
+        expectedInstanceId: snapshot.instanceId,
+        leaseId: snapshot.lease.leaseId,
         expectedRevision: snapshot.revision,
         rulesProfileId: snapshot.rulesProfileId,
         rulesProfileVersion: snapshot.rulesProfileVersion,
         text: voiceDraft,
-        attachedEventId: attachNoteToLastPlay ? snapshot.recentPlays[snapshot.recentPlays.length - 1]?.eventId || null : null
+        attachedEventId: attachNoteToLastPlay ? attachableHistory[attachableHistory.length - 1]?.sourceEventId || null : null
       });
       await applyOutcome(outcome, 'Private staff note saved.');
       setVoiceDraft('');
@@ -1035,6 +1806,58 @@ export function DiamondScorebook({
       setNotice({ tone: 'error', message: describeError(error, 'The private note was not saved.') });
     } finally {
       setSavingNote(false);
+    }
+  };
+
+  const loadPrivateHistory = async (loadOlder = false) => {
+    const requested = snapshotRef.current;
+    const currentWindow = privateHistory;
+    if (
+      !requested ||
+      loadingPrivateHistory ||
+      loadingOlderPrivateHistory ||
+      !networkOnline ||
+      !requested.authoritative ||
+      queueCountRef.current > 0 ||
+      (loadOlder && (!currentWindow?.hasOlder || currentWindow.oldestSequence === null))
+    ) {
+      setNotice({ tone: 'error', message: 'Refresh online and reconcile queued plays before loading private history.' });
+      return;
+    }
+    if (loadOlder) setLoadingOlderPrivateHistory(true);
+    else setLoadingPrivateHistory(true);
+    try {
+      const history = await client.loadPrivateHistoryWindow({
+        teamId,
+        gameId,
+        expectedRevision: requested.revision,
+        ...(loadOlder && currentWindow?.oldestSequence ? { beforeSequence: currentWindow.oldestSequence } : {})
+      });
+      if (snapshotRef.current?.revision !== history.sourceRevision || !snapshotRef.current.authoritative) {
+        throw new DiamondScorebookError('stale-revision', 'The scorebook changed while private history was loading.');
+      }
+      const combined = loadOlder && currentWindow ? mergeDiamondPrivateHistoryWindows(currentWindow, history) : history;
+      setPrivateHistory(combined);
+      setNotice({
+        tone: 'success',
+        message: combined.historyComplete
+          ? `Complete private history loaded through revision ${combined.sourceRevision}.`
+          : `Verified events ${combined.oldestSequence}–${combined.newestSequence} through current revision ${combined.sourceRevision}. Older history remains available.`
+      });
+    } catch (error) {
+      if (!loadOlder) setPrivateHistory(null);
+      setNotice({
+        tone: 'error',
+        message: describeError(
+          error,
+          loadOlder
+            ? 'Older private history could not be loaded. The verified current window was preserved.'
+            : 'The current private-history window could not be loaded completely.'
+        )
+      });
+    } finally {
+      if (loadOlder) setLoadingOlderPrivateHistory(false);
+      else setLoadingPrivateHistory(false);
     }
   };
 
@@ -1091,7 +1914,7 @@ export function DiamondScorebook({
           displayName: entry.name,
           ...(entry.number ? { jerseyNumber: entry.number } : {}),
           starter: true,
-          battingRole: entry.battingRole || 'regular'
+          battingRole: normalizeInitialBattingRole(entry.battingRole, supportedInitialBattingRoles)
         }))
       },
       `${side === 'home' ? snapshot?.homeName || 'Home' : snapshot?.awayName || 'Away'} lineup saved.`
@@ -1099,19 +1922,272 @@ export function DiamondScorebook({
     if (submitted) setLineupDirty((current) => ({ ...current, [side]: false }));
   };
 
+  const updateDefense = (side: DiamondSide, position: DiamondDefensivePosition, playerId: string) => {
+    setDefenseDrafts((current) => {
+      const next = { ...current[side] };
+      if (playerId) next[position] = playerId;
+      else delete next[position];
+      return { ...current, [side]: next };
+    });
+    setDefenseDirty((current) => ({ ...current, [side]: true }));
+  };
+
+  const saveDefense = async (side: DiamondSide) => {
+    const assignments = Object.entries(defenseDrafts[side]).flatMap(([position, playerId]) =>
+      playerId ? [{ position: position as DiamondDefensivePosition, playerId }] : []
+    );
+    if (!defenseDrafts[side].P) {
+      setNotice({ tone: 'error', message: `Choose the ${side} starting pitcher before saving defense.` });
+      return;
+    }
+    if (new Set(assignments.map((assignment) => assignment.playerId)).size !== assignments.length) {
+      setNotice({ tone: 'error', message: 'A player may hold only one defensive position in the saved alignment.' });
+      return;
+    }
+    if (!networkOnline) {
+      setNotice({ tone: 'error', message: 'Reconnect before saving defense so the official pitcher is authoritative.' });
+      return;
+    }
+    const submitted = await submitCommand(
+      'set_defensive_alignment',
+      { side, assignments },
+      `${side === 'home' ? snapshot?.homeName || 'Home' : snapshot?.awayName || 'Away'} defense saved.`
+    );
+    if (submitted) setDefenseDirty((current) => ({ ...current, [side]: false }));
+  };
+
+  const recapSourceIsCurrent = (source: DiamondRecapSource) => {
+    const current = snapshotRef.current;
+    return Boolean(
+      current?.authoritative &&
+      current.lifecycle === 'final' &&
+      current.lease.canScore &&
+      current.revision === source.sourceRevision &&
+      current.checkpointHash === source.checkpointHash &&
+      queueCountRef.current === 0
+    );
+  };
+
+  const markRecapStale = () => {
+    setRecapState((current) => (current ? { ...current, stale: true } : current));
+    setPublishRecapOpen(false);
+  };
+
+  const generateRecap = async () => {
+    if (!snapshot || generatingRecap || publishingRecap) return;
+    if (snapshot.lifecycle !== 'final' || !snapshot.authoritative || !snapshot.lease.canScore || queueCount > 0 || !networkOnline) {
+      setNotice({
+        tone: 'error',
+        message: 'Use the current online final scorebook with no queued commands before generating a post-game draft.'
+      });
+      return;
+    }
+    const requestedRevision = snapshot.revision;
+    const requestedCheckpointHash = snapshot.checkpointHash;
+    setGeneratingRecap(true);
+    setNotice(null);
+    try {
+      const source = await client.getRecapSource({ teamId, gameId, sourceRevision: requestedRevision });
+      if (source.checkpointHash !== requestedCheckpointHash || !recapSourceIsCurrent(source)) {
+        markRecapStale();
+        setNotice({
+          tone: 'error',
+          message: `The final scorebook changed after revision ${requestedRevision}. Generate a new recap from the current final revision.`
+        });
+        return;
+      }
+      const result = await draftDiamondGameSummary(source.packet, aiDependencies);
+      if (!recapSourceIsCurrent(source)) {
+        markRecapStale();
+        setNotice({
+          tone: 'error',
+          message: `The final scorebook changed while AI was drafting revision ${requestedRevision}. That draft was discarded.`
+        });
+        return;
+      }
+      if (result.status !== 'draft' || !result.draft) {
+        setNotice({
+          tone: result.status === 'insufficient-source' ? 'info' : 'error',
+          message: `${result.message} Scorebook, reports, and correction controls remain available.`
+        });
+        return;
+      }
+      setRecapState({ source, draft: result.draft, stale: false, publication: null });
+      setNotice({ tone: 'success', message: 'AI prepared an unpublished draft. Review every source before choosing publication.' });
+    } catch (error) {
+      const stale = error instanceof DiamondScorebookError && error.code === 'stale-revision';
+      if (stale) {
+        markRecapStale();
+        await refreshSnapshot(false);
+      }
+      setNotice({
+        tone: 'error',
+        message: `${describeError(error, 'The AI recap source could not be prepared.')} Scorebook, reports, and correction controls remain available.`
+      });
+    } finally {
+      setGeneratingRecap(false);
+    }
+  };
+
+  const publishRecap = async () => {
+    const pending = recapState;
+    if (!pending || publishingRecap || pending.stale || pending.publication) return;
+    if (!networkOnline || !recapSourceIsCurrent(pending.source)) {
+      markRecapStale();
+      setNotice({
+        tone: 'error',
+        message: 'The AI draft is stale or offline. Return to the current final revision and generate a new draft before publishing.'
+      });
+      return;
+    }
+    setPublishingRecap(true);
+    setNotice(null);
+    try {
+      const evidence = await client.publishAiDraft({
+        requestId: client.createSecureId(),
+        teamId,
+        gameId,
+        sourceRevision: pending.source.sourceRevision,
+        checkpointHash: pending.source.checkpointHash,
+        draft: pending.draft
+      });
+      const remainedCurrent = recapSourceIsCurrent(pending.source);
+      setRecapState((current) =>
+        current?.source.sourceRevision === pending.source.sourceRevision && current.source.checkpointHash === pending.source.checkpointHash
+          ? { ...current, publication: evidence, stale: !remainedCurrent }
+          : current
+      );
+      setNotice(
+        remainedCurrent
+          ? { tone: 'success', message: `AI recap publication confirmed at revision ${evidence.sourceRevision}.` }
+          : {
+              tone: 'info',
+              message: `Publication was confirmed at revision ${evidence.sourceRevision}, then the scorebook changed. The published recap is marked stale.`
+            }
+      );
+    } catch (error) {
+      const stale = error instanceof DiamondScorebookError && error.code === 'stale-revision';
+      if (stale) {
+        markRecapStale();
+        await refreshSnapshot(false);
+      }
+      setNotice({
+        tone: 'error',
+        message: `${describeError(error, 'The AI recap was not published.')} Reports and correction controls remain available.`
+      });
+    } finally {
+      setPublishingRecap(false);
+      setPublishRecapOpen(false);
+    }
+  };
+
   const visibleOutcomes = outcomeOptions.filter((option) => controlMode === 'full' || !option.fullOnly);
-  const latestCorrectablePlay = snapshot ? [...snapshot.recentPlays].reverse().find((play) => !play.voided) || null : null;
+  const effectiveHistory = useMemo(() => effectivePrivateEvents(privateHistory?.items || []), [privateHistory]);
+  const correctedEventIds = useMemo(
+    () =>
+      new Set(
+        (privateHistory?.items || []).flatMap((event) =>
+          event.voidsEventId || event.supersedesEventId ? [event.voidsEventId || event.supersedesEventId || ''] : []
+        )
+      ),
+    [privateHistory]
+  );
+  const correctionCandidates = useMemo(
+    () =>
+      (privateHistory?.items || []).filter((event) => !uncorrectableEventTypes.has(event.type) && !correctedEventIds.has(event.eventId)),
+    [correctedEventIds, privateHistory]
+  );
+  const visibleCorrectionCandidates = useMemo(() => {
+    const search = correctionSearch.replace(/\s+/g, ' ').trim().toLowerCase();
+    const matches = search
+      ? correctionCandidates.filter((event) => {
+          const view: DiamondEffectivePrivateEvent = {
+            ...event,
+            sourceEventId: event.eventId,
+            effectiveType: event.type,
+            effectivePayload: event.payload,
+            corrected: false
+          };
+          const searchable = [
+            event.eventId,
+            `revision ${event.revision}`,
+            event.type.replace(/_/g, ' '),
+            privateEventLabel(view),
+            readString(event.payload.result).replace(/_/g, ' '),
+            readString(event.payload.batterId),
+            readString(event.payload.runnerId),
+            readString(event.payload.playEventId)
+          ]
+            .filter(Boolean)
+            .join(' ')
+            .toLowerCase();
+          return searchable.includes(search);
+        })
+      : correctionCandidates;
+    return matches.slice(-50).reverse();
+  }, [correctionCandidates, correctionSearch]);
+  const attachableHistory = effectiveHistory.filter(
+    (event) => event.effectiveType === 'record_plate_appearance' || event.effectiveType === 'advance_runner'
+  );
+  const privateNotes = effectiveHistory.filter((event) => event.effectiveType === 'private_note');
   const otherScorers = useMemo(
     () => snapshot?.lease.eligibleScorers.filter((scorer) => scorer.playerId !== snapshot.lease.holderUid) || [],
     [snapshot?.lease.eligibleScorers, snapshot?.lease.holderUid]
   );
-  const mutationDisabled = Boolean(
-    !snapshot || busy || reconciling || !snapshot.lease.canScore || !snapshot.authoritative || queueCount > 0
+  const leaseAction: 'acquire' | 'recover' | null =
+    snapshot && !snapshot.lease.canScore && snapshot.lifecycle !== 'cancelled'
+      ? snapshot.lease.status === 'expired' && snapshot.lease.canRecover
+        ? 'recover'
+        : snapshot.lease.canAcquire
+          ? 'acquire'
+          : snapshot.lease.canRecover
+            ? 'recover'
+            : null
+      : null;
+  const pinnedRulesProfile = useMemo(() => resolvePinnedRulesProfile(snapshot), [snapshot]);
+  const supportedInitialBattingRoles = useMemo(
+    () => initialLineupBattingRoles(pinnedRulesProfile, snapshot?.ruleCapabilities.dpFlex === true),
+    [pinnedRulesProfile, snapshot?.ruleCapabilities.dpFlex]
   );
-  const playControlsDisabled = mutationDisabled || snapshot?.lifecycle !== 'active';
+  const mutationDisabled = Boolean(
+    !snapshot ||
+    busy ||
+    reconciling ||
+    !snapshot.lease.canScore ||
+    !snapshot.authoritative ||
+    queueCount > 0 ||
+    snapshot.lifecycle === 'cancelled'
+  );
+  const battingSide: DiamondSide | null = snapshot ? (snapshot.inning.half === 'top' ? 'away' : 'home') : null;
+  const tiebreakerPending = Boolean(
+    snapshot &&
+    battingSide &&
+    snapshot.lifecycle === 'active' &&
+    pinnedRulesProfile?.tiebreaker.enabled &&
+    snapshot.inning.number >= pinnedRulesProfile.tiebreaker.startInning &&
+    snapshot.inning.outs === 0 &&
+    snapshot.inning.balls === 0 &&
+    snapshot.inning.strikes === 0 &&
+    !snapshot.bases.first &&
+    !snapshot.bases.second &&
+    !snapshot.bases.third
+  );
+  const tiebreakerRunner =
+    snapshot && battingSide && snapshot.lineups[battingSide].length
+      ? snapshot.lineups[battingSide][
+          (snapshot.nextBatterSlot[battingSide] - 1 + snapshot.lineups[battingSide].length) % snapshot.lineups[battingSide].length
+        ] || null
+      : null;
+  const playControlsDisabled = mutationDisabled || snapshot?.lifecycle !== 'active' || tiebreakerPending;
   const correctionControlsDisabled = mutationDisabled || !snapshot || !['active', 'correction'].includes(snapshot.lifecycle);
   const privateNoteDisabled = mutationDisabled || snapshot?.lifecycle === 'configured';
   const lineupsReady = Boolean(snapshot?.lineups.home.length && snapshot.lineups.away.length);
+  const defensesReady = Boolean(snapshot?.defense.home.P && snapshot.defense.away.P);
+  const finalizationCanBeReviewed = Boolean(
+    snapshot &&
+    (['active', 'correction'].includes(snapshot.lifecycle) ||
+      (['ready', 'suspended'].includes(snapshot.lifecycle) && snapshot.gameEndDecision))
+  );
 
   useEffect(() => {
     if (!handoffTarget && otherScorers.length) setHandoffTarget(otherScorers[0]!.playerId);
@@ -1175,49 +2251,56 @@ export function DiamondScorebook({
             tone: 'amber' as const,
             icon: RefreshCw
           }
-        : !snapshot.lease.canScore || snapshot.lifecycle === 'final'
+        : snapshot.lifecycle === 'cancelled'
           ? {
-              label: 'Read only',
-              detail:
-                snapshot.readOnlyReason ||
-                (snapshot.lifecycle === 'final'
-                  ? 'This game is final.'
-                  : `${snapshot.lease.holderName || 'Another scorekeeper'} has the scorebook.`),
+              label: `Cancelled · revision ${snapshot.revision}`,
+              detail: snapshot.readOnlyReason || 'This game was cancelled. Its scorebook remains available as a read-only audit record.',
               tone: 'gray' as const,
               icon: LockKeyhole
             }
-          : snapshot.lifecycle === 'suspended'
+          : !snapshot.lease.canScore || snapshot.lifecycle === 'final'
             ? {
-                label: `Suspended · revision ${snapshot.revision}`,
-                detail: 'Resume explicitly before recording another play.',
-                tone: 'amber' as const,
+                label: 'Read only',
+                detail:
+                  snapshot.readOnlyReason ||
+                  (snapshot.lifecycle === 'final'
+                    ? 'This game is final.'
+                    : `${snapshot.lease.holderName || 'Another scorekeeper'} has the scorebook.`),
+                tone: 'gray' as const,
                 icon: LockKeyhole
               }
-            : snapshot.lifecycle === 'configured' || snapshot.lifecycle === 'ready'
+            : snapshot.lifecycle === 'suspended'
               ? {
-                  label: `Ready · revision ${snapshot.revision}`,
-                  detail:
-                    snapshot.lifecycle === 'ready'
-                      ? lineupsReady
-                        ? 'Both lineups are set. Start the game when both teams are ready.'
-                        : 'Build and save both batting orders before starting.'
-                      : 'Complete both lineups before starting the game.',
-                  tone: 'gray' as const,
-                  icon: ShieldCheck
+                  label: `Suspended · revision ${snapshot.revision}`,
+                  detail: 'Resume explicitly before recording another play.',
+                  tone: 'amber' as const,
+                  icon: LockKeyhole
                 }
-              : snapshot.lifecycle === 'correction'
+              : snapshot.lifecycle === 'configured' || snapshot.lifecycle === 'ready'
                 ? {
-                    label: `Correction · revision ${snapshot.revision}`,
-                    detail: 'Only append-only corrections and finalization are available.',
-                    tone: 'amber' as const,
-                    icon: RotateCcw
+                    label: `Ready · revision ${snapshot.revision}`,
+                    detail:
+                      snapshot.lifecycle === 'ready'
+                        ? lineupsReady && defensesReady
+                          ? 'Both lineups and starting pitchers are authoritative. Start when both teams are ready.'
+                          : 'Save both batting orders and each starting pitcher before starting.'
+                        : 'Complete both lineups and defensive alignments before starting the game.',
+                    tone: 'gray' as const,
+                    icon: ShieldCheck
                   }
-                : {
-                    label: `Live · revision ${snapshot.revision}`,
-                    detail: 'This field, score, and count are authoritative.',
-                    tone: 'green' as const,
-                    icon: Wifi
-                  };
+                : snapshot.lifecycle === 'correction'
+                  ? {
+                      label: `Correction · revision ${snapshot.revision}`,
+                      detail: 'Only append-only corrections and finalization are available.',
+                      tone: 'amber' as const,
+                      icon: RotateCcw
+                    }
+                  : {
+                      label: `Live · revision ${snapshot.revision}`,
+                      detail: 'This field, score, and count are authoritative.',
+                      tone: 'green' as const,
+                      icon: Wifi
+                    };
   const ConnectionIcon = connection.icon;
 
   return (
@@ -1232,7 +2315,7 @@ export function DiamondScorebook({
             Game
           </Link>
           <div className="min-w-0 text-center">
-            <div className="truncate text-xs font-black tracking-widest text-emerald-200 uppercase">Diamond Scorebook</div>
+            <h1 className="truncate text-xs font-black tracking-widest text-emerald-200 uppercase">Diamond Scorebook</h1>
             <div className="truncate text-sm font-black">
               {snapshot.teamName} vs {snapshot.opponentName}
             </div>
@@ -1303,18 +2386,35 @@ export function DiamondScorebook({
 
       {notice ? <NoticeCard notice={notice} /> : null}
 
+      {snapshot.lifecycle === 'cancelled' ? (
+        <section className="rounded-2xl border border-gray-200 bg-gray-50 p-3 text-gray-800" aria-labelledby="diamond-cancelled-title">
+          <div id="diamond-cancelled-title" className="text-sm font-black">
+            Cancelled game · scorebook closed
+          </div>
+          <div className="mt-1 text-xs leading-5 font-semibold">
+            Confirmed history stays visible for audit and replay, but no plays, notes, corrections, handoffs, or AI publication can be
+            added. Team managers handle cancellation from the schedule—not from scorer controls.
+          </div>
+        </section>
+      ) : null}
+
       {snapshot.lifecycle === 'ready' ? (
         <LineupSetup
           snapshot={snapshot}
           drafts={lineupDrafts}
           dirty={lineupDirty}
+          defenseDrafts={defenseDrafts}
+          defenseDirty={defenseDirty}
           disabled={mutationDisabled}
           online={networkOnline}
           onChange={updateLineup}
           onAddManual={addManualLineupPlayer}
           onSave={(side) => void saveLineup(side)}
+          onDefenseChange={updateDefense}
+          onDefenseSave={(side) => void saveDefense(side)}
           onStart={() => void submitCommand('start', {}, 'Game started.')}
-          canStart={lineupsReady && !lineupDirty.home && !lineupDirty.away}
+          canStart={lineupsReady && defensesReady && !lineupDirty.home && !lineupDirty.away && !defenseDirty.home && !defenseDirty.away}
+          battingRoles={supportedInitialBattingRoles}
         />
       ) : snapshot.lifecycle === 'suspended' ? (
         <section className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-amber-950">
@@ -1350,6 +2450,37 @@ export function DiamondScorebook({
             <BaseDiamond snapshot={snapshot} />
           </section>
 
+          {tiebreakerPending && battingSide && pinnedRulesProfile ? (
+            <section className="rounded-2xl border border-amber-300 bg-amber-50 p-4" aria-labelledby="diamond-tiebreaker-title">
+              <h2 id="diamond-tiebreaker-title" className="text-sm font-black text-amber-950">
+                Tiebreaker runner required
+              </h2>
+              <p className="mt-1 text-xs leading-5 font-semibold text-amber-900">
+                {playerLabel(tiebreakerRunner)} is the previous scheduled batter and must begin on{' '}
+                {pinnedRulesProfile.tiebreaker.runnerBase} before the first play of this half.
+              </p>
+              <button
+                type="button"
+                className="primary-button mt-3 w-full justify-center sm:w-auto"
+                disabled={mutationDisabled || !tiebreakerRunner}
+                onClick={() =>
+                  tiebreakerRunner &&
+                  void submitCommand(
+                    'place_tiebreaker_runner',
+                    {
+                      side: battingSide,
+                      runnerId: tiebreakerRunner.playerId,
+                      base: pinnedRulesProfile.tiebreaker.runnerBase
+                    },
+                    'Tiebreaker runner placed.'
+                  )
+                }
+              >
+                Confirm tiebreaker runner
+              </button>
+            </section>
+          ) : null}
+
           <section className="app-card p-3 sm:p-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
@@ -1363,8 +2494,9 @@ export function DiamondScorebook({
                   <button
                     key={mode}
                     type="button"
-                    className={`min-h-9 rounded-lg px-3 text-xs font-black capitalize ${controlMode === mode ? 'text-primary-700 bg-white shadow-sm' : 'text-gray-500'}`}
+                    className={`min-h-11 rounded-lg px-3 text-xs font-black capitalize ${controlMode === mode ? 'text-primary-700 bg-white shadow-sm' : 'text-gray-500'}`}
                     aria-pressed={controlMode === mode}
+                    disabled={mode === 'quick' && snapshot.captureMode === 'full'}
                     onClick={() => setControlMode(mode)}
                   >
                     {mode}
@@ -1375,8 +2507,8 @@ export function DiamondScorebook({
             {controlMode !== snapshot.captureMode ? (
               <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-900">
                 {controlMode === 'full'
-                  ? 'Full controls are visible, but this game was activated in Quick capture; uncollected stat families remain explicitly partial.'
-                  : 'Quick controls are visible. The game still retains its Full capture requirement.'}
+                  ? 'Full controls are visible, but this game began in Quick capture; earlier uncollected detail remains explicitly partial.'
+                  : 'Quick controls cannot satisfy this game’s Full capture contract.'}
               </div>
             ) : null}
 
@@ -1447,21 +2579,33 @@ export function DiamondScorebook({
               </button>
             </div>
 
-            {snapshot.inning.outs === 3 ? (
+            {snapshot.inning.outs === 3 || snapshot.halfInningEnd ? (
               <button
                 type="button"
                 className="primary-button mt-3 w-full justify-center"
                 disabled={playControlsDisabled}
-                onClick={() => void submitCommand('advance_half_inning', {}, 'Half inning advanced.')}
+                onClick={() =>
+                  void submitCommand(
+                    'advance_half_inning',
+                    {},
+                    snapshot.halfInningEnd ? 'Run-limited half inning advanced.' : 'Half inning advanced.'
+                  )
+                }
               >
-                Advance to {snapshot.inning.half === 'top' ? `bottom ${snapshot.inning.number}` : `top ${snapshot.inning.number + 1}`}
+                {snapshot.halfInningEnd ? 'Advance ended half inning' : 'Advance'} to{' '}
+                {snapshot.inning.half === 'top' ? `bottom ${snapshot.inning.number}` : `top ${snapshot.inning.number + 1}`}
               </button>
             ) : null}
 
             {controlMode === 'full' ? (
               <AdvancedScoringPanel
                 snapshot={snapshot}
+                rulesProfile={pinnedRulesProfile}
                 disabled={mutationDisabled}
+                attachableEvents={attachableHistory}
+                historyLoaded={privateHistory?.headComplete === true}
+                historyLoading={loadingPrivateHistory || loadingOlderPrivateHistory}
+                onLoadHistory={() => void loadPrivateHistory(false)}
                 onReview={(type, label, payload) => setPendingPlay(buildStructuredPending(type, label, payload))}
               />
             ) : null}
@@ -1477,15 +2621,18 @@ export function DiamondScorebook({
               </div>
               <button
                 type="button"
-                className="ghost-button !min-h-9 !px-3 text-xs"
-                disabled={!latestCorrectablePlay || correctionControlsDisabled}
-                onClick={() =>
-                  latestCorrectablePlay &&
-                  setConfirmation({ kind: 'void', eventId: latestCorrectablePlay.eventId, label: latestCorrectablePlay.label })
+                className="ghost-button min-h-11 px-3 text-xs"
+                disabled={
+                  loadingPrivateHistory || loadingOlderPrivateHistory || !networkOnline || !snapshot.authoritative || queueCount > 0
                 }
+                onClick={() => void loadPrivateHistory(false)}
               >
-                <RotateCcw className="h-4 w-4" aria-hidden="true" />
-                Correct last
+                {loadingPrivateHistory ? (
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                ) : (
+                  <LockKeyhole className="h-4 w-4" aria-hidden="true" />
+                )}
+                {privateHistory ? 'Refresh recent private history' : 'Load recent private history'}
               </button>
             </div>
             <ol className="mt-3 divide-y divide-gray-100" aria-label="Recent scorebook plays">
@@ -1511,7 +2658,167 @@ export function DiamondScorebook({
                 <li className="py-4 text-center text-sm font-semibold text-gray-500">No confirmed plays yet.</li>
               )}
             </ol>
+            {privateHistory ? (
+              <div className="mt-4 space-y-4 border-t border-gray-100 pt-4" data-testid="diamond-private-history">
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs font-bold text-emerald-900">
+                  {privateHistory.historyComplete
+                    ? `Complete private history: ${privateHistory.items.length} canonical events through revision ${privateHistory.sourceRevision}.`
+                    : `Verified private-history window: events ${privateHistory.oldestSequence}–${privateHistory.newestSequence} of ${privateHistory.sourceRevision}. Older events are not loaded yet.`}{' '}
+                  The newest 20 notes and up to 50 matching correction candidates are rendered.
+                </div>
+                {privateHistory.hasOlder ? (
+                  <button
+                    type="button"
+                    className="ghost-button min-h-11 w-full justify-center text-xs"
+                    disabled={loadingPrivateHistory || loadingOlderPrivateHistory || !networkOnline || queueCount > 0}
+                    onClick={() => void loadPrivateHistory(true)}
+                  >
+                    {loadingOlderPrivateHistory ? (
+                      <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                    ) : (
+                      <ArrowDown className="h-4 w-4" aria-hidden="true" />
+                    )}
+                    Load 200 older events
+                  </button>
+                ) : null}
+                <section aria-labelledby="diamond-private-notes-title">
+                  <h3 id="diamond-private-notes-title" className="text-xs font-black text-gray-900">
+                    Staff-private notes
+                  </h3>
+                  <ul className="mt-2 space-y-2">
+                    {privateNotes.length ? (
+                      privateNotes
+                        .slice(-20)
+                        .reverse()
+                        .map((note) => (
+                          <li key={note.sourceEventId} className="rounded-xl border border-violet-200 bg-violet-50 p-3">
+                            <div className="text-xs font-black text-violet-950">Revision {note.revision}</div>
+                            <div className="mt-1 text-sm font-semibold whitespace-pre-wrap text-gray-800">
+                              {readString(note.effectivePayload.text)}
+                            </div>
+                            {readString(note.effectivePayload.attachedEventId) ? (
+                              <div className="mt-1 text-[11px] font-bold text-gray-500">
+                                Attached to {readString(note.effectivePayload.attachedEventId)}
+                              </div>
+                            ) : null}
+                          </li>
+                        ))
+                    ) : (
+                      <li className="text-xs font-semibold text-gray-500">No effective staff-private notes.</li>
+                    )}
+                  </ul>
+                </section>
+                <section aria-labelledby="diamond-correction-events-title">
+                  <h3 id="diamond-correction-events-title" className="text-xs font-black text-gray-900">
+                    Append-only correction candidates
+                  </h3>
+                  <label className="mt-2 block text-[11px] font-black text-gray-700">
+                    Search loaded correction candidates
+                    <input
+                      className="mt-1 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-semibold"
+                      value={correctionSearch}
+                      maxLength={128}
+                      placeholder="Event ID, revision, result, player, or command"
+                      onChange={(event) => setCorrectionSearch(event.target.value)}
+                    />
+                  </label>
+                  <label className="mt-2 block text-[11px] font-black text-gray-700">
+                    Correction reason
+                    <input
+                      className="mt-1 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-semibold"
+                      value={eventCorrectionReason}
+                      maxLength={300}
+                      placeholder="Describe the official scoring correction"
+                      onChange={(event) => setEventCorrectionReason(event.target.value)}
+                    />
+                  </label>
+                  <ol className="mt-2 space-y-2">
+                    {visibleCorrectionCandidates.length ? (
+                      visibleCorrectionCandidates.map((event) => {
+                        const view: DiamondEffectivePrivateEvent = {
+                          ...event,
+                          sourceEventId: event.eventId,
+                          effectiveType: event.type,
+                          effectivePayload: event.payload,
+                          corrected: false
+                        };
+                        return (
+                          <li key={event.eventId} className="rounded-xl border border-gray-200 p-3">
+                            <div className="text-sm font-black text-gray-900">{privateEventLabel(view)}</div>
+                            <div className="mt-2 grid grid-cols-2 gap-2">
+                              <button
+                                type="button"
+                                className="ghost-button min-h-11 justify-center text-xs"
+                                disabled={correctionControlsDisabled || !eventCorrectionReason.trim()}
+                                onClick={() =>
+                                  setConfirmation({
+                                    kind: 'void',
+                                    eventId: event.eventId,
+                                    label: privateEventLabel(view),
+                                    reason: eventCorrectionReason.replace(/\s+/g, ' ').trim()
+                                  })
+                                }
+                              >
+                                Void effect
+                              </button>
+                              <button
+                                type="button"
+                                className="ghost-button min-h-11 justify-center text-xs"
+                                disabled={
+                                  correctionControlsDisabled || !eventCorrectionReason.trim() || event.type !== 'record_plate_appearance'
+                                }
+                                onClick={() => {
+                                  try {
+                                    setPendingPlay(
+                                      buildPendingPlateAppearanceCorrection(
+                                        snapshot,
+                                        view,
+                                        eventCorrectionReason.replace(/\s+/g, ' ').trim()
+                                      )
+                                    );
+                                  } catch (error) {
+                                    setNotice({
+                                      tone: 'error',
+                                      message: describeError(error, 'This event needs the advanced correction workflow.')
+                                    });
+                                  }
+                                }}
+                              >
+                                Replace PA
+                              </button>
+                            </div>
+                          </li>
+                        );
+                      })
+                    ) : (
+                      <li className="text-xs font-semibold text-gray-500">
+                        {correctionSearch.trim()
+                          ? `No loaded correction candidate matches “${correctionSearch.replace(/\s+/g, ' ').trim()}”. Load older events to widen the search.`
+                          : 'No uncorrected events are eligible in the loaded window.'}
+                      </li>
+                    )}
+                  </ol>
+                </section>
+              </div>
+            ) : (
+              <p className="mt-3 text-xs leading-5 font-semibold text-gray-500">
+                Load a verified manager-private window before attaching notes or choosing a correction target. It reaches the current
+                revision, and older blocks can be loaded progressively. Public recent-play rows are never treated as authoritative
+                correction status.
+              </p>
+            )}
           </section>
+
+          {snapshot.lifecycle === 'final' ? (
+            <DiamondAiRecapCard
+              state={recapState}
+              generating={generatingRecap}
+              publishing={publishingRecap}
+              disabled={mutationDisabled || !networkOnline}
+              onGenerate={() => void generateRecap()}
+              onReviewPublication={() => setPublishRecapOpen(true)}
+            />
+          ) : null}
         </div>
 
         <aside className="space-y-3">
@@ -1522,15 +2829,48 @@ export function DiamondScorebook({
             </div>
             <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50 p-3">
               <div className="text-sm font-black text-gray-900">
-                {snapshot.lease.canScore ? 'You have the scorebook' : `${snapshot.lease.holderName || 'Another scorekeeper'} is scoring`}
+                {snapshot.lifecycle === 'cancelled'
+                  ? 'Scorebook closed'
+                  : snapshot.lease.canScore
+                    ? 'You have the scorebook'
+                    : snapshot.lease.status === 'available'
+                      ? 'Scorebook is available'
+                      : snapshot.lease.status === 'expired'
+                        ? 'Scoring lease expired'
+                        : snapshot.lease.status === 'unavailable'
+                          ? 'Scoring lease unavailable'
+                          : `${snapshot.lease.holderName || 'Another scorekeeper'} is scoring`}
               </div>
               <div className="mt-1 text-xs leading-5 font-semibold text-gray-600">
-                {snapshot.lease.canScore
-                  ? 'Only your confirmed commands can advance this revision.'
-                  : 'Controls stay read only until the current scorer hands off.'}
+                {snapshot.lifecycle === 'cancelled'
+                  ? 'The former lease grants no write authority after cancellation.'
+                  : snapshot.lease.canScore
+                    ? 'Only your confirmed commands can advance this revision.'
+                    : leaseAction
+                      ? 'Take the lease before recording a play. The server will invalidate any expired lease.'
+                      : snapshot.lease.status === 'unavailable'
+                        ? 'Lease evidence is incomplete, so all scoring writes remain disabled.'
+                        : 'Controls stay read only until the current scorer hands off.'}
               </div>
             </div>
-            {snapshot.lease.canScore && otherScorers.length ? (
+            {leaseAction ? (
+              <button
+                type="button"
+                className="primary-button mt-3 w-full justify-center text-xs"
+                disabled={
+                  busy || reconciling || !networkOnline || !snapshot.authoritative || queueCount > 0 || snapshot.lifecycle === 'cancelled'
+                }
+                onClick={() => void changeScorerLease(leaseAction)}
+              >
+                {busy ? (
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                ) : (
+                  <UserRoundCheck className="h-4 w-4" aria-hidden="true" />
+                )}
+                {leaseAction === 'recover' ? 'Recover scoring' : 'Acquire scorebook'}
+              </button>
+            ) : null}
+            {snapshot.lifecycle !== 'cancelled' && snapshot.lease.canScore && otherScorers.length ? (
               <div className="mt-3">
                 <label className="text-xs font-black text-gray-700" htmlFor="diamond-handoff-target">
                   Hand off to
@@ -1597,24 +2937,82 @@ export function DiamondScorebook({
 
           <CompletenessCard snapshot={snapshot} />
 
+          {pinnedRulesProfile && ['ready', 'active', 'suspended', 'correction'].includes(snapshot.lifecycle) ? (
+            <RulesDecisionPanel
+              snapshot={snapshot}
+              rulesProfile={pinnedRulesProfile}
+              disabled={mutationDisabled}
+              online={networkOnline}
+              onReview={(decision) => setConfirmation({ kind: 'rules-decision', ...decision })}
+            />
+          ) : null}
+
           <section className="app-card p-3 sm:p-4">
             <div className="flex items-start gap-3">
               <ShieldCheck className="mt-0.5 h-5 w-5 flex-none text-emerald-600" aria-hidden="true" />
               <div>
                 <h2 className="text-sm font-black text-gray-950">Finish deliberately</h2>
                 <p className="mt-1 text-xs leading-5 font-semibold text-gray-600">
-                  Finalizing locks ordinary scoring. Any later change must reopen a visible correction session.
+                  Finalizing locks ordinary scoring. The server accepts it only after a regulation, walkoff, run-ahead, or audited
+                  game-ending decision. Any later change must reopen a visible correction session.
                 </p>
               </div>
             </div>
-            <button
-              type="button"
-              className="mt-3 min-h-11 w-full rounded-xl border border-rose-200 bg-rose-50 px-3 text-sm font-black text-rose-700 disabled:cursor-not-allowed disabled:opacity-50"
-              disabled={mutationDisabled || !['active', 'correction'].includes(snapshot.lifecycle)}
-              onClick={() => setConfirmation({ kind: 'finalize' })}
-            >
-              Review final score
-            </button>
+            {snapshot.lifecycle === 'cancelled' ? (
+              <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50 p-3 text-xs leading-5 font-semibold text-gray-700">
+                A cancelled game cannot be finalized or reopened from the scorer. Its existing history remains read only.
+              </div>
+            ) : snapshot.lifecycle === 'final' ? (
+              <div className="mt-3">
+                {snapshot.finalizationReason ? (
+                  <div className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs leading-5 font-semibold text-emerald-900">
+                    Finalized by {snapshot.finalizationReason.kind.replace('-', ' ')} evidence
+                    {snapshot.finalizationReason.decisionEventId ? ` · ${snapshot.finalizationReason.decisionEventId}` : ''}.
+                  </div>
+                ) : null}
+                <label className="text-xs font-black text-gray-700" htmlFor="diamond-correction-reason">
+                  Correction reason
+                </label>
+                <textarea
+                  id="diamond-correction-reason"
+                  className="mt-1 min-h-20 w-full rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-900"
+                  value={correctionReason}
+                  maxLength={300}
+                  placeholder="What official scoring decision needs review?"
+                  onChange={(event) => setCorrectionReason(event.target.value)}
+                  disabled={mutationDisabled}
+                />
+                <button
+                  type="button"
+                  className="mt-2 min-h-11 w-full rounded-xl border border-amber-200 bg-amber-50 px-3 text-sm font-black text-amber-800 disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={mutationDisabled || !networkOnline || !correctionReason.trim()}
+                  onClick={() => setConfirmation({ kind: 'reopen', reason: correctionReason.replace(/\s+/g, ' ').trim() })}
+                >
+                  Review correction reopening
+                </button>
+              </div>
+            ) : (
+              <div className="mt-3">
+                {snapshot.gameEndDecision ? (
+                  <div className="mb-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 font-semibold text-amber-950">
+                    Audited {snapshot.gameEndDecision.reason.replace('-', ' ')} ending recorded at{' '}
+                    {snapshot.gameEndDecision.decisionEventId}. Finalization still requires a separate confirmation.
+                  </div>
+                ) : ['ready', 'suspended'].includes(snapshot.lifecycle) ? (
+                  <div className="mb-2 text-xs leading-5 font-semibold text-gray-600">
+                    Record an applicable audited game-ending decision before finalizing from this {snapshot.lifecycle} state.
+                  </div>
+                ) : null}
+                <button
+                  type="button"
+                  className="min-h-11 w-full rounded-xl border border-rose-200 bg-rose-50 px-3 text-sm font-black text-rose-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={mutationDisabled || !finalizationCanBeReviewed}
+                  onClick={() => setConfirmation({ kind: 'finalize' })}
+                >
+                  Review final score
+                </button>
+              </div>
+            )}
           </section>
         </aside>
       </section>
@@ -1643,7 +3041,7 @@ export function DiamondScorebook({
           online={networkOnline}
           canInterpret={!mutationDisabled && snapshot.lifecycle === 'active'}
           attachToLastPlay={attachNoteToLastPlay}
-          hasRecentPlay={Boolean(latestCorrectablePlay)}
+          hasRecentPlay={Boolean(attachableHistory.length)}
           onDraftChange={(value) => {
             setVoiceDraft(value);
             setVoiceQuestions([]);
@@ -1677,7 +3075,233 @@ export function DiamondScorebook({
           onConfirm={() => void handleConfirmation()}
         />
       ) : null}
+
+      {publishRecapOpen && recapState ? (
+        <DiamondAiPublishModal
+          state={recapState}
+          busy={publishingRecap}
+          onClose={() => setPublishRecapOpen(false)}
+          onConfirm={() => void publishRecap()}
+        />
+      ) : null}
     </div>
+  );
+}
+
+function DiamondAiRecapCard({
+  state,
+  generating,
+  publishing,
+  disabled,
+  onGenerate,
+  onReviewPublication
+}: {
+  state: DiamondAiDraftState | null;
+  generating: boolean;
+  publishing: boolean;
+  disabled: boolean;
+  onGenerate: () => void;
+  onReviewPublication: () => void;
+}) {
+  return (
+    <section className="app-card border-violet-200 p-3 sm:p-4" aria-labelledby="diamond-ai-recap-title">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex min-w-0 items-start gap-3">
+          <div className="flex h-10 w-10 flex-none items-center justify-center rounded-xl bg-violet-50 text-violet-700">
+            <Sparkles className="h-5 w-5" aria-hidden="true" />
+          </div>
+          <div>
+            <h2 id="diamond-ai-recap-title" className="text-base font-black text-gray-950">
+              Post-game AI draft
+            </h2>
+            <p className="mt-0.5 text-xs leading-5 font-semibold text-gray-600">
+              Generated only from the sanitized, revision-pinned play and stat packet. Nothing publishes automatically.
+            </p>
+          </div>
+        </div>
+        <button
+          type="button"
+          className="ghost-button !min-h-10 !px-3 text-xs"
+          disabled={disabled || generating || publishing}
+          onClick={onGenerate}
+        >
+          {generating ? (
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+          ) : (
+            <Sparkles className="h-4 w-4" aria-hidden="true" />
+          )}
+          {generating ? 'Generating draft…' : state ? 'Regenerate AI draft' : 'Generate AI draft'}
+        </button>
+      </div>
+
+      {!state ? (
+        <div className="mt-4 rounded-xl border border-dashed border-violet-200 bg-violet-50/50 p-4 text-center text-sm font-semibold text-violet-900">
+          Generate creates an unpublished local review draft. Publication requires a separate confirmation.
+        </div>
+      ) : (
+        <div className="mt-4 space-y-4">
+          <div className="flex flex-wrap items-center gap-2 text-[10px] font-black tracking-wide uppercase">
+            <span className="rounded-full bg-violet-100 px-2 py-1 text-violet-800">Draft · unpublished</span>
+            <span className="rounded-full bg-gray-100 px-2 py-1 text-gray-700">Source revision {state.source.sourceRevision}</span>
+            {state.stale ? <span className="rounded-full bg-rose-100 px-2 py-1 text-rose-800">Stale after correction</span> : null}
+          </div>
+
+          {state.stale ? (
+            <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs leading-5 font-bold text-rose-900" role="alert">
+              The scorebook no longer matches this source revision. This draft cannot be published; generate a new one after corrections are
+              final.
+            </div>
+          ) : null}
+
+          <DiamondAiDraftBlockView title="Draft recap" block={state.draft.recap} source={state.source} />
+
+          <div>
+            <h3 className="text-xs font-black tracking-wide text-gray-700 uppercase">Stat insights</h3>
+            {state.draft.insights.length ? (
+              <div className="mt-2 space-y-2">
+                {state.draft.insights.map((insight, index) => (
+                  <DiamondAiDraftBlockView
+                    key={`${index}:${insight.text}`}
+                    title={`Insight ${index + 1}`}
+                    block={insight}
+                    source={state.source}
+                  />
+                ))}
+              </div>
+            ) : (
+              <p className="mt-2 text-xs font-semibold text-gray-500">
+                No supported statistical insight was available in the source packet.
+              </p>
+            )}
+          </div>
+
+          <div>
+            <h3 className="text-xs font-black tracking-wide text-gray-700 uppercase">Coverage disclosure</h3>
+            <ul className="mt-2 flex flex-wrap gap-2" aria-label="AI draft source coverage">
+              {diamondCoverageFamilies.map((family) => {
+                const status = state.draft.coverage[family];
+                return (
+                  <li
+                    key={family}
+                    className={`rounded-full px-2.5 py-1 text-[11px] font-black ${status === 'complete' ? 'bg-emerald-50 text-emerald-800' : status === 'partial' ? 'bg-amber-50 text-amber-900' : 'bg-gray-100 text-gray-700'}`}
+                  >
+                    {family.replace('_', ' ')} · {status.replace('_', ' ')}
+                  </li>
+                );
+              })}
+            </ul>
+            {state.draft.dataQualityNotes.length ? (
+              <ul className="mt-2 space-y-1 text-xs leading-5 font-semibold text-gray-600" aria-label="AI draft data quality notes">
+                {state.draft.dataQualityNotes.map((note) => (
+                  <li key={note}>• {note}</li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-2 text-xs font-semibold text-gray-600">Every supplied stat family is marked complete.</p>
+            )}
+          </div>
+
+          {state.publication ? (
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-emerald-950">
+              <div className="text-sm font-black">Publication confirmed</div>
+              <div className="mt-1 text-xs leading-5 font-semibold">
+                {state.publication.publicationId} · revision {state.publication.sourceRevision} · {state.publication.publishedAt}
+              </div>
+            </div>
+          ) : (
+            <button
+              type="button"
+              className="primary-button w-full justify-center"
+              disabled={disabled || state.stale || generating || publishing}
+              onClick={onReviewPublication}
+            >
+              <ShieldCheck className="h-4 w-4" aria-hidden="true" />
+              Review publication
+            </button>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function DiamondAiDraftBlockView({
+  title,
+  block,
+  source
+}: {
+  title: string;
+  block: DiamondAiGameDraft['recap'];
+  source: DiamondRecapSource;
+}) {
+  const playLookup = new Map(source.packet.plays.map((play) => [play.eventId, play]));
+  return (
+    <article className="rounded-xl border border-gray-200 bg-white p-3">
+      <h3 className="text-xs font-black tracking-wide text-gray-700 uppercase">{title}</h3>
+      <p className="mt-2 text-sm leading-6 font-semibold text-gray-900">{block.text}</p>
+      <div className="mt-3">
+        <div className="text-[10px] font-black tracking-wider text-gray-500 uppercase">Play citations</div>
+        <ul className="mt-1 space-y-1 text-xs leading-5 font-semibold text-gray-600">
+          {block.citations.map((citation) => {
+            const play = playLookup.get(citation.eventId);
+            return (
+              <li key={`${citation.eventId}:${citation.revision}`}>
+                <span className="font-black text-gray-800">{citation.eventId}</span> · rev {citation.revision}
+                {play?.inningLabel ? ` · ${play.inningLabel}` : ''}
+                {play?.summary ? ` — ${play.summary}` : ''}
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+      {block.statRefs.length ? (
+        <div className="mt-2 text-[11px] font-bold text-gray-500">
+          Stat sources: {block.statRefs.map((reference) => `${reference.statId}.${reference.metric}`).join(', ')}
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
+function DiamondAiPublishModal({
+  state,
+  busy,
+  onClose,
+  onConfirm
+}: {
+  state: DiamondAiDraftState;
+  busy: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <Modal onClose={onClose} ariaLabelledBy="diamond-ai-publish-title">
+      <section className="app-card w-full max-w-md p-5">
+        <div className="flex h-11 w-11 items-center justify-center rounded-full bg-violet-50 text-violet-700">
+          <Sparkles className="h-5 w-5" aria-hidden="true" />
+        </div>
+        <h2 id="diamond-ai-publish-title" className="mt-3 text-xl font-black text-gray-950">
+          Publish AI recap?
+        </h2>
+        <p className="mt-2 text-sm leading-6 font-semibold text-gray-600">
+          AI can be wrong. Publish only after checking every cited play, statistic, and coverage disclosure against final revision{' '}
+          {state.source.sourceRevision}. The server will reject publication if the checkpoint changed.
+        </p>
+        <div className="mt-5 grid grid-cols-2 gap-2">
+          <button type="button" className="ghost-button justify-center" onClick={onClose} disabled={busy}>
+            Cancel
+          </button>
+          <button type="button" className="primary-button justify-center" onClick={onConfirm} disabled={busy || state.stale}>
+            {busy ? (
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            ) : (
+              <ShieldCheck className="h-4 w-4" aria-hidden="true" />
+            )}
+            Publish recap
+          </button>
+        </div>
+      </section>
+    </Modal>
   );
 }
 
@@ -1685,24 +3309,34 @@ function LineupSetup({
   snapshot,
   drafts,
   dirty,
+  defenseDrafts,
+  defenseDirty,
   disabled,
   online,
   onChange,
   onAddManual,
   onSave,
+  onDefenseChange,
+  onDefenseSave,
   onStart,
-  canStart
+  canStart,
+  battingRoles
 }: {
   snapshot: DiamondScorebookSnapshot;
   drafts: LineupDrafts;
   dirty: Record<DiamondSide, boolean>;
+  defenseDrafts: DefenseDrafts;
+  defenseDirty: Record<DiamondSide, boolean>;
   disabled: boolean;
   online: boolean;
   onChange: (side: DiamondSide, entries: DiamondLineupEntry[]) => void;
   onAddManual: (side: DiamondSide, name: string, number: string) => boolean;
   onSave: (side: DiamondSide) => void;
+  onDefenseChange: (side: DiamondSide, position: DiamondDefensivePosition, playerId: string) => void;
+  onDefenseSave: (side: DiamondSide) => void;
   onStart: () => void;
   canStart: boolean;
+  battingRoles: readonly DiamondBattingRole[];
 }) {
   return (
     <section className="app-card border-sky-200 p-3 sm:p-4" aria-labelledby="diamond-lineup-setup-title">
@@ -1710,37 +3344,52 @@ function LineupSetup({
         <ShieldCheck className="mt-0.5 h-5 w-5 flex-none text-sky-700" aria-hidden="true" />
         <div>
           <h2 id="diamond-lineup-setup-title" className="text-base font-black text-gray-950">
-            Set both batting orders
+            Set lineups and defense
           </h2>
           <p className="mt-1 text-xs leading-5 font-semibold text-gray-600">
-            Save each side as one authoritative command. Start stays locked until both saved lineups are confirmed.
+            Save each batting order and defensive alignment. Start stays locked until both lineups and both starting pitchers are
+            authoritative.
           </p>
         </div>
       </div>
       <div className="mt-4 grid gap-3 lg:grid-cols-2">
         {(['away', 'home'] as const).map((side) => (
-          <LineupSideEditor
-            key={side}
-            side={side}
-            name={side === 'home' ? snapshot.homeName : snapshot.awayName}
-            entries={drafts[side]}
-            candidates={snapshot.availablePlayers[side]}
-            dirty={dirty[side]}
-            disabled={disabled}
-            online={online}
-            showBattingRole={snapshot.ruleCapabilities.dpFlex}
-            onChange={(entries) => onChange(side, entries)}
-            onAddManual={(name, number) => onAddManual(side, name, number)}
-            onSave={() => onSave(side)}
-          />
+          <div key={side} className="space-y-3">
+            <LineupSideEditor
+              side={side}
+              name={side === 'home' ? snapshot.homeName : snapshot.awayName}
+              entries={drafts[side]}
+              candidates={snapshot.availablePlayers[side]}
+              dirty={dirty[side]}
+              disabled={disabled}
+              online={online}
+              battingRoles={battingRoles}
+              onChange={(entries) => onChange(side, entries)}
+              onAddManual={(name, number) => onAddManual(side, name, number)}
+              onSave={() => onSave(side)}
+            />
+            <DefenseAlignmentEditor
+              side={side}
+              name={side === 'home' ? snapshot.homeName : snapshot.awayName}
+              assignments={defenseDrafts[side]}
+              players={[...snapshot.availablePlayers[side], ...drafts[side]].filter(
+                (player, index, all) => all.findIndex((candidate) => candidate.playerId === player.playerId) === index
+              )}
+              dirty={defenseDirty[side]}
+              disabled={disabled}
+              online={online}
+              onChange={(position, playerId) => onDefenseChange(side, position, playerId)}
+              onSave={() => onDefenseSave(side)}
+            />
+          </div>
         ))}
       </div>
       <div className="mt-4 rounded-2xl border border-sky-200 bg-sky-50 p-3 text-sky-950">
-        <div className="text-sm font-black">{canStart ? 'Both lineups are authoritative' : 'Start is locked'}</div>
+        <div className="text-sm font-black">{canStart ? 'Lineups and pitchers are authoritative' : 'Start is locked'}</div>
         <div className="mt-1 text-xs leading-5 font-semibold">
           {canStart
-            ? 'Confirm the batting orders once more, then start the game.'
-            : 'Add at least one player to each side and save every unsaved change.'}
+            ? 'Confirm the batting orders and starting pitchers once more, then start the game.'
+            : 'Save each batting order, choose each starting pitcher, and save every unsaved change.'}
         </div>
         <button
           type="button"
@@ -1755,6 +3404,82 @@ function LineupSetup({
   );
 }
 
+function DefenseAlignmentEditor({
+  side,
+  name,
+  assignments,
+  players,
+  dirty,
+  disabled,
+  online,
+  onChange,
+  onSave
+}: {
+  side: DiamondSide;
+  name: string;
+  assignments: Partial<Record<DiamondDefensivePosition, string>>;
+  players: DiamondPlayerRef[];
+  dirty: boolean;
+  disabled: boolean;
+  online: boolean;
+  onChange: (position: DiamondDefensivePosition, playerId: string) => void;
+  onSave: () => void;
+}) {
+  const assignedCount = Object.values(assignments).filter(Boolean).length;
+  const selectedIds = new Set(Object.values(assignments).filter(Boolean));
+  return (
+    <fieldset className="rounded-2xl border border-emerald-200 bg-emerald-50/40 p-3">
+      <legend className="px-1 text-sm font-black text-gray-950">{name} defense</legend>
+      <p className="mt-1 text-xs leading-5 font-semibold text-gray-600">
+        Pitcher is required. Add catcher and every observed position for a complete defensive lineup; use LCF/RCF only for four-outfielder
+        rules.
+      </p>
+      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+        {defensivePositions.map((position) => {
+          const current = assignments[position] || '';
+          return (
+            <label key={position} className="text-[11px] font-black text-gray-700">
+              {position === 'P' ? 'P · required' : position}
+              <select
+                aria-label={`${name} ${position}`}
+                className="mt-1 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-2 text-sm font-bold"
+                value={current}
+                disabled={disabled}
+                onChange={(event) => onChange(position, event.target.value)}
+              >
+                <option value="">Unassigned</option>
+                {players.map((player) => (
+                  <option
+                    key={player.playerId}
+                    value={player.playerId}
+                    disabled={selectedIds.has(player.playerId) && player.playerId !== current}
+                  >
+                    {playerLabel(player)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          );
+        })}
+      </div>
+      {assignedCount > 10 ? (
+        <div className="mt-2 text-xs font-bold text-rose-700" role="alert">
+          A saved defensive alignment can contain at most 10 assignments.
+        </div>
+      ) : null}
+      <button
+        type="button"
+        className="primary-button mt-3 w-full justify-center"
+        disabled={disabled || !online || !dirty || !assignments.P || assignedCount > 10}
+        onClick={onSave}
+      >
+        Save {side} defense
+      </button>
+      {!online ? <div className="mt-2 text-xs font-bold text-amber-800">Reconnect to save this defense.</div> : null}
+    </fieldset>
+  );
+}
+
 function LineupSideEditor({
   side,
   name,
@@ -1763,7 +3488,7 @@ function LineupSideEditor({
   dirty,
   disabled,
   online,
-  showBattingRole,
+  battingRoles,
   onChange,
   onAddManual,
   onSave
@@ -1775,7 +3500,7 @@ function LineupSideEditor({
   dirty: boolean;
   disabled: boolean;
   online: boolean;
-  showBattingRole: boolean;
+  battingRoles: readonly DiamondBattingRole[];
   onChange: (entries: DiamondLineupEntry[]) => void;
   onAddManual: (name: string, number: string) => boolean;
   onSave: () => void;
@@ -1807,7 +3532,7 @@ function LineupSideEditor({
               <span className="min-w-0 flex-1 truncate text-sm font-black text-gray-950">{playerLabel(entry)}</span>
               <button
                 type="button"
-                className="ghost-button !h-9 !min-h-9 !w-9 !p-0"
+                className="ghost-button !h-11 !min-h-11 !w-11 !p-0"
                 aria-label={`Move ${entry.name} up`}
                 disabled={disabled || index === 0}
                 onClick={() => move(index, -1)}
@@ -1816,7 +3541,7 @@ function LineupSideEditor({
               </button>
               <button
                 type="button"
-                className="ghost-button !h-9 !min-h-9 !w-9 !p-0"
+                className="ghost-button !h-11 !min-h-11 !w-11 !p-0"
                 aria-label={`Move ${entry.name} down`}
                 disabled={disabled || index === entries.length - 1}
                 onClick={() => move(index, 1)}
@@ -1825,7 +3550,7 @@ function LineupSideEditor({
               </button>
               <button
                 type="button"
-                className="ghost-button !h-9 !min-h-9 !w-9 !p-0 text-rose-700"
+                className="ghost-button !h-11 !min-h-11 !w-11 !p-0 text-rose-700"
                 aria-label={`Remove ${entry.name}`}
                 disabled={disabled}
                 onClick={() => onChange(entries.filter((candidate) => candidate.playerId !== entry.playerId))}
@@ -1833,27 +3558,29 @@ function LineupSideEditor({
                 <Trash2 className="h-4 w-4" aria-hidden="true" />
               </button>
             </div>
-            {showBattingRole ? (
+            {battingRoles.length > 1 ? (
               <label className="mt-2 block text-[11px] font-black text-gray-600">
                 Batting role
                 <select
                   aria-label={`${entry.name} batting role`}
                   className="mt-1 min-h-10 w-full rounded-lg border border-gray-300 bg-white px-2 text-xs font-bold"
-                  value={entry.battingRole || 'regular'}
+                  value={normalizeInitialBattingRole(entry.battingRole, battingRoles)}
                   disabled={disabled}
                   onChange={(event) =>
                     onChange(
                       entries.map((candidate) =>
-                        candidate.playerId === entry.playerId ? { ...candidate, battingRole: event.target.value } : candidate
+                        candidate.playerId === entry.playerId
+                          ? { ...candidate, battingRole: event.target.value as DiamondBattingRole }
+                          : candidate
                       )
                     )
                   }
                 >
-                  <option value="regular">Regular</option>
-                  <option value="dp">DP</option>
-                  <option value="flex">FLEX</option>
-                  <option value="eh">EH</option>
-                  <option value="ep">EP</option>
+                  {battingRoles.map((role) => (
+                    <option key={role} value={role}>
+                      {battingRoleLabels[role]}
+                    </option>
+                  ))}
                 </select>
               </label>
             ) : null}
@@ -1954,13 +3681,194 @@ function LineupSideEditor({
   );
 }
 
-function AdvancedScoringPanel({
+type RulesDecisionChoice = {
+  code: SupportedRulesDecisionCode;
+  label: string;
+  detail: string;
+  opensFinalization: boolean;
+};
+
+function getRulesDecisionChoices(snapshot: DiamondScorebookSnapshot, profile: DiamondRulesProfile): RulesDecisionChoice[] {
+  if (snapshot.gameEndDecision) return [];
+  const choices: RulesDecisionChoice[] = [];
+  if (snapshot.lifecycle === 'active' && profile.inningRunLimit !== null && !snapshot.halfInningEnd) {
+    choices.push({
+      code: 'end_half_inning_run_limit',
+      label: `End half at ${profile.inningRunLimit}-run cap`,
+      detail: 'The server verifies that this half reached the pinned run limit. This does not finalize the game.',
+      opensFinalization: false
+    });
+  }
+  if (['active', 'suspended', 'correction'].includes(snapshot.lifecycle) && profile.timeLimitMinutes !== null) {
+    choices.push({
+      code: 'end_game_time_limit',
+      label: `End game at ${profile.timeLimitMinutes}-minute limit`,
+      detail: 'Use only after the umpire or tournament authority has ended the game; the scorebook does not infer elapsed time.',
+      opensFinalization: true
+    });
+  }
+  if (['active', 'suspended', 'correction'].includes(snapshot.lifecycle)) {
+    choices.push({
+      code: 'end_game_weather',
+      label: 'End game for weather or field conditions',
+      detail: 'Records an observed official ending. It does not decide whether the game is complete under local competition policy.',
+      opensFinalization: true
+    });
+  }
+  if (['ready', 'active', 'suspended', 'correction'].includes(snapshot.lifecycle)) {
+    choices.push(
+      {
+        code: 'end_game_forfeit_home',
+        label: `Forfeit — award ${snapshot.homeName} (home)`,
+        detail: 'Records the home side as the awarded winner. Confirm the official ruling before continuing.',
+        opensFinalization: true
+      },
+      {
+        code: 'end_game_forfeit_away',
+        label: `Forfeit — award ${snapshot.awayName} (away)`,
+        detail: 'Records the away side as the awarded winner. Confirm the official ruling before continuing.',
+        opensFinalization: true
+      }
+    );
+  }
+  return choices;
+}
+
+function RulesDecisionPanel({
   snapshot,
+  rulesProfile,
   disabled,
+  online,
   onReview
 }: {
   snapshot: DiamondScorebookSnapshot;
+  rulesProfile: DiamondRulesProfile;
   disabled: boolean;
+  online: boolean;
+  onReview: (decision: Omit<Extract<Confirmation, { kind: 'rules-decision' }>, 'kind'>) => void;
+}) {
+  const choices = getRulesDecisionChoices(snapshot, rulesProfile);
+  const [selectedCode, setSelectedCode] = useState<SupportedRulesDecisionCode>(choices[0]?.code || 'end_game_weather');
+  const [description, setDescription] = useState('');
+  const selected = choices.find((choice) => choice.code === selectedCode) || choices[0] || null;
+  const normalizedDescription = description.replace(/\s+/g, ' ').trim();
+  const descriptionValid = normalizedDescription.length >= 1 && normalizedDescription.length <= 500;
+
+  useEffect(() => {
+    if (selected && selected.code !== selectedCode) setSelectedCode(selected.code);
+  }, [selected, selectedCode]);
+
+  useEffect(() => {
+    setDescription('');
+  }, [snapshot.gameEndDecision?.decisionEventId, snapshot.halfInningEnd?.decisionEventId]);
+
+  return (
+    <section className="app-card border-amber-200 p-3 sm:p-4" aria-labelledby="diamond-rules-decision-title">
+      <div className="flex items-start gap-3">
+        <ShieldCheck className="mt-0.5 h-5 w-5 flex-none text-amber-700" aria-hidden="true" />
+        <div>
+          <h2 id="diamond-rules-decision-title" className="text-sm font-black text-gray-950">
+            Official rules decision
+          </h2>
+          <p className="mt-1 text-xs leading-5 font-semibold text-gray-600">
+            The current scorer records the observed ruling; the server verifies the pinned {rulesProfile.name} profile and lifecycle.
+          </p>
+        </div>
+      </div>
+
+      {snapshot.gameEndDecision ? (
+        <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 font-semibold text-amber-950">
+          {snapshot.gameEndDecision.reason === 'forfeit'
+            ? `${snapshot.gameEndDecision.awardedSide === 'home' ? snapshot.homeName : snapshot.awayName} was awarded the game`
+            : `Game ended for ${snapshot.gameEndDecision.reason.replace('-', ' ')}`}{' '}
+          · decision {snapshot.gameEndDecision.decisionEventId}. Use the separate final-score confirmation below.
+        </div>
+      ) : choices.length ? (
+        <fieldset className="mt-3" aria-describedby="diamond-rules-decision-scope">
+          <legend className="sr-only">Choose and describe an official rules decision</legend>
+          <label className="text-xs font-black text-gray-700" htmlFor="diamond-rules-decision-code">
+            Ruling
+          </label>
+          <select
+            id="diamond-rules-decision-code"
+            className="mt-1 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-bold text-gray-900"
+            value={selected?.code || ''}
+            disabled={disabled || !online}
+            onChange={(event) => {
+              setSelectedCode(event.target.value as SupportedRulesDecisionCode);
+              setDescription('');
+            }}
+          >
+            {choices.map((choice) => (
+              <option key={choice.code} value={choice.code}>
+                {choice.label}
+              </option>
+            ))}
+          </select>
+          {selected ? <p className="mt-2 text-xs leading-5 font-semibold text-gray-600">{selected.detail}</p> : null}
+          <label className="mt-3 block text-xs font-black text-gray-700" htmlFor="diamond-rules-decision-description">
+            Official ruling description
+          </label>
+          <textarea
+            id="diamond-rules-decision-description"
+            className="mt-1 min-h-20 w-full rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-900"
+            value={description}
+            maxLength={500}
+            aria-describedby="diamond-rules-decision-description-help"
+            placeholder="Who made the ruling, and what was announced?"
+            disabled={disabled || !online}
+            onChange={(event) => setDescription(event.target.value)}
+          />
+          <div id="diamond-rules-decision-description-help" className="mt-1 text-[11px] font-semibold text-gray-500">
+            Required · 1–500 characters · stored in the append-only audit trail.
+          </div>
+          <button
+            type="button"
+            className="mt-3 min-h-11 w-full rounded-xl border border-amber-200 bg-amber-50 px-3 text-sm font-black text-amber-900 disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={disabled || !online || !selected || !descriptionValid}
+            onClick={() =>
+              selected &&
+              onReview({
+                code: selected.code,
+                label: selected.label,
+                description: normalizedDescription,
+                opensFinalization: selected.opensFinalization
+              })
+            }
+          >
+            Review rule decision
+          </button>
+        </fieldset>
+      ) : (
+        <p className="mt-3 text-xs leading-5 font-semibold text-gray-600">No additional audited ending is available for this game state.</p>
+      )}
+
+      <p id="diamond-rules-decision-scope" className="mt-3 text-[11px] leading-5 font-semibold text-gray-500">
+        These controls do not infer missing facts or automate advisory look-back and leaving-early calls. A run cap ends only the current
+        half; every game ending still requires a separate final confirmation.
+      </p>
+      {!online ? <div className="mt-2 text-xs font-bold text-amber-800">Reconnect before recording an official ruling.</div> : null}
+    </section>
+  );
+}
+
+function AdvancedScoringPanel({
+  snapshot,
+  rulesProfile,
+  disabled,
+  attachableEvents,
+  historyLoaded,
+  historyLoading,
+  onLoadHistory,
+  onReview
+}: {
+  snapshot: DiamondScorebookSnapshot;
+  rulesProfile: DiamondRulesProfile | null;
+  disabled: boolean;
+  attachableEvents: DiamondEffectivePrivateEvent[];
+  historyLoaded: boolean;
+  historyLoading: boolean;
+  onLoadHistory: () => void;
   onReview: (type: DiamondCommandType, label: string, payload: DiamondJsonObject) => void;
 }) {
   const battingSide: DiamondSide = snapshot.inning.half === 'top' ? 'away' : 'home';
@@ -1969,18 +3877,36 @@ function AdvancedScoringPanel({
     return runner ? [{ base, runner }] : [];
   });
   const [runnerBase, setRunnerBase] = useState<'first' | 'second' | 'third'>('first');
-  const [runnerAction, setRunnerAction] = useState<'stolen_base' | 'caught_stealing' | 'pickoff' | 'wild_pitch' | 'passed_ball'>(
-    'stolen_base'
-  );
+  const [runnerAction, setRunnerAction] = useState<DiamondRunnerAdvanceCause>('stolen_base');
+  const [runnerDestination, setRunnerDestination] = useState<RunnerDestination>('second');
+  const [runnerOutKind, setRunnerOutKind] = useState<DiamondOutKind>('tag');
+  const [runnerCountsRun, setRunnerCountsRun] = useState(true);
+  const [runnerEarned, setRunnerEarned] = useState<'' | 'earned' | 'unearned'>('');
+  const [runnerRbi, setRunnerRbi] = useState(false);
   const [suspendReason, setSuspendReason] = useState('');
   const [subSide, setSubSide] = useState<DiamondSide>(battingSide);
   const [subSlot, setSubSlot] = useState('1');
   const [incomingPlayerId, setIncomingPlayerId] = useState('');
+  const [subDefensivePosition, setSubDefensivePosition] = useState<DiamondDefensivePosition | ''>('');
   const [structuredType, setStructuredType] = useState<'record_fielding' | 'record_scoring_judgment'>('record_fielding');
-  const latestEventId = [...snapshot.recentPlays].reverse().find((play) => !play.voided)?.eventId || '';
-  const [structuredDraft, setStructuredDraft] = useState(() =>
-    JSON.stringify({ playEventId: latestEventId, fielding: { putoutBy: '' } }, null, 2)
-  );
+  const [structuredPlayId, setStructuredPlayId] = useState('');
+  const [fieldingPutout, setFieldingPutout] = useState('');
+  const [fieldingAssistOne, setFieldingAssistOne] = useState('');
+  const [fieldingAssistTwo, setFieldingAssistTwo] = useState('');
+  const [fieldingErrorPlayer, setFieldingErrorPlayer] = useState('');
+  const [fieldingErrorKind, setFieldingErrorKind] = useState<'fielding' | 'throwing'>('fielding');
+  const [fieldingPassedBall, setFieldingPassedBall] = useState('');
+  const [fieldingBattedBall, setFieldingBattedBall] = useState<'unknown' | 'ground' | 'line' | 'fly' | 'bunt'>('unknown');
+  const [fieldingLocation, setFieldingLocation] = useState('');
+  const [fieldingDoublePlay, setFieldingDoublePlay] = useState(false);
+  const [fieldingTriplePlay, setFieldingTriplePlay] = useState(false);
+  const [judgmentRunnerId, setJudgmentRunnerId] = useState('');
+  const [judgmentEarned, setJudgmentEarned] = useState<'' | 'yes' | 'no'>('');
+  const [judgmentRbi, setJudgmentRbi] = useState<'' | 'yes' | 'no'>('');
+  const [judgmentPitcherId, setJudgmentPitcherId] = useState('');
+  const [pitcherDecision, setPitcherDecision] = useState<'' | 'win' | 'loss' | 'save'>('');
+  const [pitcherDecisionSide, setPitcherDecisionSide] = useState<DiamondSide>('home');
+  const [pitcherDecisionPlayerId, setPitcherDecisionPlayerId] = useState('');
   const [structuredError, setStructuredError] = useState('');
   const [dpSide, setDpSide] = useState<DiamondSide>(battingSide);
   const [dpPlayerId, setDpPlayerId] = useState('');
@@ -1990,9 +3916,29 @@ function AdvancedScoringPanel({
   const [courtesyRole, setCourtesyRole] = useState<'pitcher' | 'catcher'>('pitcher');
   const [courtesyRunnerId, setCourtesyRunnerId] = useState('');
 
+  useEffect(() => {
+    if (!attachableEvents.length) {
+      setStructuredPlayId('');
+      return;
+    }
+    if (!attachableEvents.some((event) => event.sourceEventId === structuredPlayId)) {
+      setStructuredPlayId(attachableEvents[attachableEvents.length - 1]!.sourceEventId);
+    }
+  }, [attachableEvents, structuredPlayId]);
+
   const activeRunner = occupiedBases.find((entry) => entry.base === runnerBase) || occupiedBases[0] || null;
   const subLineup = snapshot.lineups[subSide];
   const subEntry = subLineup.find((entry) => entry.slot === Number(subSlot)) || subLineup[0] || null;
+  const currentSubPosition = subEntry
+    ? (Object.entries(snapshot.defense[subSide]).find(([, player]) => player?.playerId === subEntry.playerId)?.[0] as
+        DiamondDefensivePosition | undefined)
+    : undefined;
+  const reentryAvailable = Boolean(
+    subEntry &&
+    subEntry.starterPlayerId &&
+    subEntry.starterPlayerId !== subEntry.playerId &&
+    (rulesProfile?.freeSubstitution || (subEntry.starterReentriesUsed || 0) < (rulesProfile?.starterReentryLimit || 0))
+  );
   const subCandidates = snapshot.availablePlayers[subSide].filter(
     (player) => !subLineup.some((entry) => entry.playerId === player.playerId) && player.playerId !== subEntry?.playerId
   );
@@ -2000,54 +3946,93 @@ function AdvancedScoringPanel({
   const dpCandidates = [...snapshot.availablePlayers[dpSide], ...dpLineup].filter(
     (player, index, all) => all.findIndex((candidate) => candidate.playerId === player.playerId) === index
   );
-  const courtesyPlacement = occupiedBases.find((entry) => entry.base === courtesyBase) || occupiedBases[0] || null;
+  const effectiveCourtesyRole: 'pitcher' | 'catcher' = snapshot.ruleCapabilities.courtesyRunner[courtesyRole]
+    ? courtesyRole
+    : snapshot.ruleCapabilities.courtesyRunner.pitcher
+      ? 'pitcher'
+      : 'catcher';
+  const courtesyPosition = effectiveCourtesyRole === 'pitcher' ? 'P' : 'C';
+  const courtesyPlayerId = snapshot.defense[battingSide][courtesyPosition]?.playerId || '';
+  const courtesyEligiblePlacements = occupiedBases.filter((entry) => entry.runner.playerId === courtesyPlayerId);
+  const courtesyPlacement =
+    courtesyEligiblePlacements.find((entry) => entry.base === courtesyBase) || courtesyEligiblePlacements[0] || null;
   const occupiedIds = new Set(occupiedBases.map((entry) => entry.runner.playerId));
   const courtesyCandidates = snapshot.availablePlayers[battingSide].filter((player) => !occupiedIds.has(player.playerId));
-  const canUseCourtesy = snapshot.ruleCapabilities.courtesyRunner[courtesyRole];
+  const canUseCourtesy = snapshot.ruleCapabilities.courtesyRunner[effectiveCourtesyRole];
+  const allKnownPlayers = [
+    ...snapshot.availablePlayers.home,
+    ...snapshot.availablePlayers.away,
+    ...snapshot.lineups.home,
+    ...snapshot.lineups.away,
+    ...snapshot.defensiveLineup
+  ].filter((player, index, all) => all.findIndex((candidate) => candidate.playerId === player.playerId) === index);
 
   const reviewRunnerEvent = () => {
     if (!activeRunner) return;
-    const to =
-      runnerAction === 'caught_stealing' || runnerAction === 'pickoff'
-        ? 'out'
-        : activeRunner.base === 'first'
-          ? 'second'
-          : activeRunner.base === 'second'
-            ? 'third'
-            : 'home';
+    const allowedDestinations = destinationOptions.filter((option) => canChooseDestination(activeRunner.base, option.value));
+    const to = allowedDestinations.some((option) => option.value === runnerDestination)
+      ? runnerDestination
+      : activeRunner.base === 'first'
+        ? 'second'
+        : activeRunner.base === 'second'
+          ? 'third'
+          : 'home';
     onReview('advance_runner', runnerAction.replace(/_/g, ' '), {
       runnerId: activeRunner.runner.playerId,
       from: activeRunner.base,
       to,
       cause: runnerAction,
-      ...(to === 'out' ? { outKind: 'tag' } : {}),
-      ...(to === 'home' ? { countsRun: true } : {}),
+      ...(to === 'out' ? { outKind: runnerOutKind } : {}),
+      ...(to === 'home'
+        ? {
+            countsRun: runnerCountsRun,
+            rbi: runnerRbi,
+            ...(runnerEarned ? { earned: runnerEarned === 'earned' } : {})
+          }
+        : {}),
       omissions: ['fielding', 'situational']
     });
   };
 
   const reviewStructured = () => {
     try {
-      const payload = JSON.parse(structuredDraft) as unknown;
-      if (!payload || Array.isArray(payload) || typeof payload !== 'object' || containsSensitiveProposalField(payload)) {
-        throw new Error('Enter a JSON object without audio, transcripts, or private-note fields.');
+      if (!structuredPlayId || !attachableEvents.some((event) => event.sourceEventId === structuredPlayId)) {
+        throw new Error('Choose a play from complete private history.');
       }
-      const record = payload as Record<string, unknown>;
-      if (!readString(record.playEventId)) throw new Error('A confirmed playEventId is required.');
       if (structuredType === 'record_fielding') {
-        const fielding = record.fielding && typeof record.fielding === 'object' ? (record.fielding as Record<string, unknown>) : {};
-        if (!Object.values(fielding).some((value) => value !== '' && value !== null && value !== undefined)) {
+        const assists = [fieldingAssistOne, fieldingAssistTwo].filter(Boolean);
+        const fielding: DiamondJsonObject = {
+          ...(fieldingPutout ? { putoutBy: fieldingPutout } : {}),
+          ...(assists.length ? { assists } : {}),
+          ...(fieldingErrorPlayer ? { errors: [{ playerId: fieldingErrorPlayer, kind: fieldingErrorKind }] } : {}),
+          ...(fieldingPassedBall ? { passedBallBy: fieldingPassedBall } : {}),
+          ...(fieldingDoublePlay ? { doublePlay: true } : {}),
+          ...(fieldingTriplePlay ? { triplePlay: true } : {}),
+          ...(fieldingBattedBall !== 'unknown' ? { battedBall: fieldingBattedBall } : {}),
+          ...(fieldingLocation.trim() ? { location: fieldingLocation.replace(/\s+/g, ' ').trim() } : {})
+        };
+        if (!Object.keys(fielding).length) {
           throw new Error('Enter at least one fielding detail; never guess an omitted value.');
         }
-      } else if (Object.keys(record).every((key) => key === 'playEventId')) {
-        throw new Error('Enter at least one explicit scoring judgment.');
+        setStructuredError('');
+        onReview('record_fielding', 'fielding detail', { playEventId: structuredPlayId, fielding });
+        return;
       }
+      const judgment: DiamondJsonObject = {
+        playEventId: structuredPlayId,
+        ...(judgmentRunnerId ? { runnerId: judgmentRunnerId } : {}),
+        ...(judgmentEarned ? { earned: judgmentEarned === 'yes' } : {}),
+        ...(judgmentRbi ? { rbi: judgmentRbi === 'yes' } : {}),
+        ...(judgmentPitcherId ? { responsiblePitcherId: judgmentPitcherId } : {}),
+        ...(pitcherDecision && pitcherDecisionPlayerId
+          ? { pitcherOfRecord: { side: pitcherDecisionSide, playerId: pitcherDecisionPlayerId, decision: pitcherDecision } }
+          : {})
+      };
+      if (Object.keys(judgment).length === 1) throw new Error('Enter at least one explicit scoring judgment.');
       setStructuredError('');
-      onReview(structuredType, structuredType === 'record_fielding' ? 'fielding detail' : 'scoring judgment', record as DiamondJsonObject);
+      onReview('record_scoring_judgment', 'scoring judgment', judgment);
     } catch (error) {
-      setStructuredError(
-        error instanceof SyntaxError ? 'The structured command is not valid JSON.' : describeError(error, 'Review the command details.')
-      );
+      setStructuredError(describeError(error, 'Review the command details.'));
     }
   };
 
@@ -2067,7 +4052,11 @@ function AdvancedScoringPanel({
               className="mt-1 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-bold"
               value={activeRunner?.base || ''}
               disabled={disabled || !occupiedBases.length || snapshot.lifecycle !== 'active'}
-              onChange={(event) => setRunnerBase(event.target.value as typeof runnerBase)}
+              onChange={(event) => {
+                const base = event.target.value as typeof runnerBase;
+                setRunnerBase(base);
+                setRunnerDestination(base === 'first' ? 'second' : base === 'second' ? 'third' : 'home');
+              }}
             >
               {!occupiedBases.length ? <option value="">No runners on base</option> : null}
               {occupiedBases.map(({ base, runner }) => (
@@ -2083,16 +4072,89 @@ function AdvancedScoringPanel({
               className="mt-1 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-bold"
               value={runnerAction}
               disabled={disabled || snapshot.lifecycle !== 'active'}
-              onChange={(event) => setRunnerAction(event.target.value as typeof runnerAction)}
+              onChange={(event) => setRunnerAction(event.target.value as DiamondRunnerAdvanceCause)}
             >
-              <option value="stolen_base">Stolen base</option>
-              <option value="caught_stealing">Caught stealing</option>
-              <option value="pickoff">Pickoff</option>
-              <option value="wild_pitch">Wild pitch</option>
-              <option value="passed_ball">Passed ball</option>
+              {runnerCauseOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
             </select>
           </label>
+          <label className="text-[11px] font-black text-gray-600">
+            Destination
+            <select
+              className="mt-1 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-bold"
+              value={
+                activeRunner && canChooseDestination(activeRunner.base, runnerDestination)
+                  ? runnerDestination
+                  : activeRunner?.base === 'first'
+                    ? 'second'
+                    : activeRunner?.base === 'second'
+                      ? 'third'
+                      : 'home'
+              }
+              disabled={disabled || !activeRunner || snapshot.lifecycle !== 'active'}
+              onChange={(event) => setRunnerDestination(event.target.value as RunnerDestination)}
+            >
+              {activeRunner
+                ? destinationOptions
+                    .filter((option) => canChooseDestination(activeRunner.base, option.value))
+                    .map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))
+                : null}
+            </select>
+          </label>
+          {(activeRunner && canChooseDestination(activeRunner.base, runnerDestination) ? runnerDestination : '') === 'out' ? (
+            <label className="text-[11px] font-black text-gray-600">
+              Out kind
+              <select
+                className="mt-1 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-bold"
+                value={runnerOutKind}
+                disabled={disabled || snapshot.lifecycle !== 'active'}
+                onChange={(event) => setRunnerOutKind(event.target.value as DiamondOutKind)}
+              >
+                {outKindOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
         </div>
+        {(activeRunner && canChooseDestination(activeRunner.base, runnerDestination) ? runnerDestination : '') === 'home' ? (
+          <div className="mt-2 grid gap-2 sm:grid-cols-3">
+            <label className="flex min-h-11 items-center gap-2 rounded-xl border border-gray-200 px-3 text-xs font-black text-gray-700">
+              <input type="checkbox" checked={runnerCountsRun} onChange={(event) => setRunnerCountsRun(event.target.checked)} />
+              Run counts
+            </label>
+            <label className="flex min-h-11 items-center gap-2 rounded-xl border border-gray-200 px-3 text-xs font-black text-gray-700">
+              <input
+                type="checkbox"
+                checked={runnerRbi}
+                disabled={!runnerCountsRun}
+                onChange={(event) => setRunnerRbi(event.target.checked)}
+              />
+              Credit RBI
+            </label>
+            <label className="text-[11px] font-black text-gray-600">
+              Run charge
+              <select
+                className="mt-1 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-bold"
+                value={runnerEarned}
+                onChange={(event) => setRunnerEarned(event.target.value as typeof runnerEarned)}
+              >
+                <option value="">Not entered</option>
+                <option value="earned">Earned</option>
+                <option value="unearned">Unearned</option>
+              </select>
+            </label>
+          </div>
+        ) : null}
         <button
           type="button"
           className="ghost-button mt-2 w-full justify-center text-xs"
@@ -2105,7 +4167,7 @@ function AdvancedScoringPanel({
 
       <fieldset className="mt-3 rounded-xl border border-violet-200 bg-white p-3">
         <legend className="px-1 text-xs font-black text-gray-800">Substitution</legend>
-        <div className="grid gap-2 sm:grid-cols-3">
+        <div className="grid gap-2 sm:grid-cols-2">
           <label className="text-[11px] font-black text-gray-600">
             Side
             <select
@@ -2116,6 +4178,7 @@ function AdvancedScoringPanel({
                 setSubSide(event.target.value as DiamondSide);
                 setSubSlot('1');
                 setIncomingPlayerId('');
+                setSubDefensivePosition('');
               }}
             >
               <option value="away">Away</option>
@@ -2128,7 +4191,10 @@ function AdvancedScoringPanel({
               className="mt-1 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-2 text-sm font-bold"
               value={subEntry?.slot || ''}
               disabled={disabled || !subLineup.length || snapshot.lifecycle !== 'active'}
-              onChange={(event) => setSubSlot(event.target.value)}
+              onChange={(event) => {
+                setSubSlot(event.target.value);
+                setSubDefensivePosition('');
+              }}
             >
               {subLineup.map((entry) => (
                 <option key={entry.slot} value={entry.slot}>
@@ -2153,26 +4219,68 @@ function AdvancedScoringPanel({
               ))}
             </select>
           </label>
+          <label className="text-[11px] font-black text-gray-600">
+            Defensive assignment
+            <select
+              className="mt-1 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-2 text-sm font-bold"
+              value={subDefensivePosition}
+              disabled={disabled || snapshot.lifecycle !== 'active'}
+              onChange={(event) => setSubDefensivePosition(event.target.value as DiamondDefensivePosition | '')}
+            >
+              <option value="">{currentSubPosition ? `Replace at ${currentSubPosition}` : 'Batting only'}</option>
+              {defensivePositions.map((position) => (
+                <option key={position} value={position}>
+                  {position}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
-        <button
-          type="button"
-          className="ghost-button mt-2 w-full justify-center text-xs"
-          disabled={disabled || snapshot.lifecycle !== 'active' || !subEntry || !incomingPlayerId}
-          onClick={() =>
-            subEntry &&
-            onReview('substitute', 'substitution', {
-              side: subSide,
-              battingSlot: subEntry.slot,
-              outgoingPlayerId: subEntry.playerId,
-              incomingPlayerId
-            })
-          }
-        >
-          Review substitution
-        </button>
+        <div className="mt-2 grid gap-2 sm:grid-cols-2">
+          <button
+            type="button"
+            className="ghost-button w-full justify-center text-xs"
+            disabled={disabled || snapshot.lifecycle !== 'active' || !subEntry || !incomingPlayerId}
+            onClick={() =>
+              subEntry &&
+              onReview('substitute', 'substitution', {
+                side: subSide,
+                battingSlot: subEntry.slot,
+                outgoingPlayerId: subEntry.playerId,
+                incomingPlayerId,
+                ...(subDefensivePosition ? { defensivePosition: subDefensivePosition } : {})
+              })
+            }
+          >
+            Review substitution
+          </button>
+          <button
+            type="button"
+            className="ghost-button w-full justify-center text-xs"
+            disabled={disabled || snapshot.lifecycle !== 'active' || !subEntry || !reentryAvailable}
+            onClick={() =>
+              subEntry?.starterPlayerId &&
+              onReview('re_enter', 'starter re-entry', {
+                side: subSide,
+                battingSlot: subEntry.slot,
+                starterPlayerId: subEntry.starterPlayerId,
+                replacedPlayerId: subEntry.playerId,
+                ...(subDefensivePosition ? { defensivePosition: subDefensivePosition } : {})
+              })
+            }
+          >
+            Review starter re-entry
+          </button>
+        </div>
+        {subEntry && subEntry.starterPlayerId !== subEntry.playerId ? (
+          <p className="mt-2 text-[11px] font-semibold text-gray-600">
+            Starter {subEntry.starterPlayerId} · re-entries used {subEntry.starterReentriesUsed || 0}
+            {reentryAvailable ? '' : ' · no verified re-entry remains'}
+          </p>
+        ) : null}
       </fieldset>
 
-      {snapshot.ruleCapabilities.dpFlex ? (
+      {snapshot.lifecycle === 'ready' && snapshot.ruleCapabilities.dpFlex && rulesProfile?.dpFlex.enabled ? (
         <fieldset className="mt-3 rounded-xl border border-violet-200 bg-white p-3">
           <legend className="px-1 text-xs font-black text-gray-800">Fastpitch DP/FLEX</legend>
           <div className="grid gap-2 sm:grid-cols-2">
@@ -2181,7 +4289,7 @@ function AdvancedScoringPanel({
               <select
                 className="mt-1 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-2 text-sm font-bold"
                 value={dpSide}
-                disabled={disabled || !['ready', 'active'].includes(snapshot.lifecycle)}
+                disabled={disabled}
                 onChange={(event) => {
                   setDpSide(event.target.value as DiamondSide);
                   setDpPlayerId('');
@@ -2197,7 +4305,7 @@ function AdvancedScoringPanel({
               <select
                 className="mt-1 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-2 text-sm font-bold"
                 value={dpPlayerId}
-                disabled={disabled || !dpLineup.length || !['ready', 'active'].includes(snapshot.lifecycle)}
+                disabled={disabled || !dpLineup.length}
                 onChange={(event) => setDpPlayerId(event.target.value)}
               >
                 <option value="">Choose DP</option>
@@ -2213,7 +4321,7 @@ function AdvancedScoringPanel({
               <select
                 className="mt-1 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-2 text-sm font-bold"
                 value={flexPlayerId}
-                disabled={disabled || !['ready', 'active'].includes(snapshot.lifecycle)}
+                disabled={disabled}
                 onChange={(event) => setFlexPlayerId(event.target.value)}
               >
                 <option value="">Choose FLEX</option>
@@ -2231,7 +4339,7 @@ function AdvancedScoringPanel({
               <select
                 className="mt-1 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-2 text-sm font-bold"
                 value={dpPosition}
-                disabled={disabled || !['ready', 'active'].includes(snapshot.lifecycle)}
+                disabled={disabled}
                 onChange={(event) => setDpPosition(event.target.value as typeof dpPosition)}
               >
                 {defensivePositions.map((position) => (
@@ -2245,7 +4353,7 @@ function AdvancedScoringPanel({
           <button
             type="button"
             className="ghost-button mt-2 w-full justify-center text-xs"
-            disabled={disabled || !['ready', 'active'].includes(snapshot.lifecycle) || !dpPlayerId || !flexPlayerId}
+            disabled={disabled || !dpPlayerId || !flexPlayerId}
             onClick={() => {
               const dp = dpLineup.find((entry) => entry.playerId === dpPlayerId);
               if (dp)
@@ -2272,11 +4380,11 @@ function AdvancedScoringPanel({
               <select
                 className="mt-1 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-2 text-sm font-bold"
                 value={courtesyPlacement?.base || ''}
-                disabled={disabled || !occupiedBases.length || snapshot.lifecycle !== 'active'}
+                disabled={disabled || !courtesyEligiblePlacements.length || snapshot.lifecycle !== 'active'}
                 onChange={(event) => setCourtesyBase(event.target.value as typeof courtesyBase)}
               >
-                {!occupiedBases.length ? <option value="">No runners</option> : null}
-                {occupiedBases.map(({ base, runner }) => (
+                {!courtesyEligiblePlacements.length ? <option value="">Recorded {courtesyPosition} is not on base</option> : null}
+                {courtesyEligiblePlacements.map(({ base, runner }) => (
                   <option key={base} value={base}>
                     {base} · {playerLabel(runner)}
                   </option>
@@ -2287,7 +4395,7 @@ function AdvancedScoringPanel({
               For role
               <select
                 className="mt-1 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-2 text-sm font-bold"
-                value={courtesyRole}
+                value={effectiveCourtesyRole}
                 disabled={disabled || snapshot.lifecycle !== 'active'}
                 onChange={(event) => setCourtesyRole(event.target.value as typeof courtesyRole)}
               >
@@ -2327,7 +4435,7 @@ function AdvancedScoringPanel({
                 forPlayerId: courtesyPlacement.runner.playerId,
                 runnerId: courtesyRunnerId,
                 base: courtesyPlacement.base,
-                forRole: courtesyRole
+                forRole: effectiveCourtesyRole
               })
             }
           >
@@ -2361,39 +4469,223 @@ function AdvancedScoringPanel({
       <fieldset className="mt-3 rounded-xl border border-violet-200 bg-white p-3">
         <legend className="px-1 text-xs font-black text-gray-800">Structured fielding or scoring judgment</legend>
         <p className="text-[11px] leading-5 font-semibold text-gray-600">
-          For experienced scorers. Enter only observed details using player and play IDs. Empty detail is rejected.
+          Attach observed detail to an exact effective play. The verified window reaches the current revision, so later correction
+          directives are applied before a loaded play can be targeted. Load older blocks to find earlier plays.
         </p>
+        {!historyLoaded ? (
+          <button
+            type="button"
+            className="ghost-button mt-2 w-full justify-center text-xs"
+            disabled={historyLoading}
+            onClick={onLoadHistory}
+          >
+            {historyLoading ? (
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            ) : (
+              <LockKeyhole className="h-4 w-4" aria-hidden="true" />
+            )}
+            Load exact play targets
+          </button>
+        ) : null}
+        <label className="mt-2 block text-[11px] font-black text-gray-600">
+          Effective play
+          <select
+            className="mt-1 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-bold"
+            value={structuredPlayId}
+            disabled={disabled || !attachableEvents.length || !['active', 'correction'].includes(snapshot.lifecycle)}
+            onChange={(event) => setStructuredPlayId(event.target.value)}
+          >
+            {!attachableEvents.length ? <option value="">No verified play targets loaded</option> : null}
+            {attachableEvents
+              .slice(-50)
+              .reverse()
+              .map((event) => (
+                <option key={event.sourceEventId} value={event.sourceEventId}>
+                  {privateEventLabel(event)}
+                </option>
+              ))}
+          </select>
+        </label>
         <select
           aria-label="Structured command type"
           className="mt-2 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-bold"
           value={structuredType}
           disabled={disabled || !['active', 'correction'].includes(snapshot.lifecycle)}
           onChange={(event) => {
-            const type = event.target.value as typeof structuredType;
-            setStructuredType(type);
-            setStructuredDraft(
-              JSON.stringify(
-                type === 'record_fielding'
-                  ? { playEventId: latestEventId, fielding: { putoutBy: '' } }
-                  : { playEventId: latestEventId, earned: true },
-                null,
-                2
-              )
-            );
+            setStructuredType(event.target.value as typeof structuredType);
             setStructuredError('');
           }}
         >
           <option value="record_fielding">Fielding detail</option>
           <option value="record_scoring_judgment">Scoring judgment</option>
         </select>
-        <textarea
-          aria-label="Structured command details"
-          className="mt-2 min-h-40 w-full rounded-xl border border-gray-300 bg-white p-3 font-mono text-xs leading-5"
-          value={structuredDraft}
-          disabled={disabled || !['active', 'correction'].includes(snapshot.lifecycle)}
-          onChange={(event) => setStructuredDraft(event.target.value)}
-          spellCheck={false}
-        />
+        {structuredType === 'record_fielding' ? (
+          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+            <FielderSelect label="Putout" value={fieldingPutout} players={allKnownPlayers} onChange={setFieldingPutout} />
+            <FielderSelect label="First assist" value={fieldingAssistOne} players={allKnownPlayers} onChange={setFieldingAssistOne} />
+            <FielderSelect label="Second assist" value={fieldingAssistTwo} players={allKnownPlayers} onChange={setFieldingAssistTwo} />
+            <FielderSelect
+              label="Error charged to"
+              value={fieldingErrorPlayer}
+              players={allKnownPlayers}
+              onChange={setFieldingErrorPlayer}
+            />
+            {fieldingErrorPlayer ? (
+              <label className="text-xs font-black text-gray-700">
+                Error kind
+                <select
+                  className="mt-1 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-bold"
+                  value={fieldingErrorKind}
+                  onChange={(event) => setFieldingErrorKind(event.target.value as typeof fieldingErrorKind)}
+                >
+                  <option value="fielding">Fielding</option>
+                  <option value="throwing">Throwing</option>
+                </select>
+              </label>
+            ) : null}
+            <FielderSelect
+              label="Passed ball charged to"
+              value={fieldingPassedBall}
+              players={allKnownPlayers}
+              onChange={setFieldingPassedBall}
+            />
+            <label className="text-xs font-black text-gray-700">
+              Batted ball
+              <select
+                className="mt-1 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-bold"
+                value={fieldingBattedBall}
+                onChange={(event) => setFieldingBattedBall(event.target.value as typeof fieldingBattedBall)}
+              >
+                <option value="unknown">Not entered</option>
+                <option value="ground">Ground</option>
+                <option value="line">Line</option>
+                <option value="fly">Fly</option>
+                <option value="bunt">Bunt</option>
+              </select>
+            </label>
+            <label className="text-xs font-black text-gray-700">
+              Location
+              <input
+                className="mt-1 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-semibold"
+                value={fieldingLocation}
+                maxLength={80}
+                onChange={(event) => setFieldingLocation(event.target.value)}
+              />
+            </label>
+            <label className="flex min-h-11 items-center gap-2 rounded-xl border border-gray-200 px-3 text-xs font-black text-gray-700">
+              <input
+                type="checkbox"
+                checked={fieldingDoublePlay}
+                disabled={fieldingTriplePlay}
+                onChange={(event) => setFieldingDoublePlay(event.target.checked)}
+              />{' '}
+              Double play
+            </label>
+            <label className="flex min-h-11 items-center gap-2 rounded-xl border border-gray-200 px-3 text-xs font-black text-gray-700">
+              <input
+                type="checkbox"
+                checked={fieldingTriplePlay}
+                disabled={fieldingDoublePlay}
+                onChange={(event) => setFieldingTriplePlay(event.target.checked)}
+              />{' '}
+              Triple play
+            </label>
+          </div>
+        ) : (
+          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+            <label className="text-xs font-black text-gray-700">
+              Runner (optional)
+              <select
+                className="mt-1 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-bold"
+                value={judgmentRunnerId}
+                onChange={(event) => setJudgmentRunnerId(event.target.value)}
+              >
+                <option value="">Play-level judgment</option>
+                {allKnownPlayers.map((player) => (
+                  <option key={player.playerId} value={player.playerId}>
+                    {playerLabel(player)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="text-xs font-black text-gray-700">
+              Earned run
+              <select
+                className="mt-1 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-bold"
+                value={judgmentEarned}
+                onChange={(event) => setJudgmentEarned(event.target.value as typeof judgmentEarned)}
+              >
+                <option value="">Not entered</option>
+                <option value="yes">Earned</option>
+                <option value="no">Unearned</option>
+              </select>
+            </label>
+            <label className="text-xs font-black text-gray-700">
+              RBI
+              <select
+                className="mt-1 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-bold"
+                value={judgmentRbi}
+                onChange={(event) => setJudgmentRbi(event.target.value as typeof judgmentRbi)}
+              >
+                <option value="">Not entered</option>
+                <option value="yes">Credit RBI</option>
+                <option value="no">No RBI</option>
+              </select>
+            </label>
+            <FielderSelect
+              label="Responsible pitcher"
+              value={judgmentPitcherId}
+              players={allKnownPlayers}
+              onChange={setJudgmentPitcherId}
+            />
+            <label className="text-xs font-black text-gray-700">
+              Pitcher decision
+              <select
+                className="mt-1 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-bold"
+                value={pitcherDecision}
+                onChange={(event) => setPitcherDecision(event.target.value as typeof pitcherDecision)}
+              >
+                <option value="">None</option>
+                <option value="win">Win</option>
+                <option value="loss">Loss</option>
+                <option value="save">Save</option>
+              </select>
+            </label>
+            {pitcherDecision ? (
+              <>
+                <label className="text-xs font-black text-gray-700">
+                  Decision side
+                  <select
+                    className="mt-1 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-bold"
+                    value={pitcherDecisionSide}
+                    onChange={(event) => {
+                      setPitcherDecisionSide(event.target.value as DiamondSide);
+                      setPitcherDecisionPlayerId('');
+                    }}
+                  >
+                    <option value="away">Away</option>
+                    <option value="home">Home</option>
+                  </select>
+                </label>
+                <label className="text-xs font-black text-gray-700">
+                  Decision pitcher
+                  <select
+                    className="mt-1 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-bold"
+                    value={pitcherDecisionPlayerId}
+                    onChange={(event) => setPitcherDecisionPlayerId(event.target.value)}
+                  >
+                    <option value="">Choose pitcher</option>
+                    {snapshot.availablePlayers[pitcherDecisionSide].map((player) => (
+                      <option key={player.playerId} value={player.playerId}>
+                        {playerLabel(player)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </>
+            ) : null}
+          </div>
+        )}
         {structuredError ? (
           <div className="mt-2 text-xs font-bold text-rose-700" role="alert">
             {structuredError}
@@ -2402,10 +4694,10 @@ function AdvancedScoringPanel({
         <button
           type="button"
           className="ghost-button mt-2 w-full justify-center text-xs"
-          disabled={disabled || !['active', 'correction'].includes(snapshot.lifecycle)}
+          disabled={disabled || !structuredPlayId || !['active', 'correction'].includes(snapshot.lifecycle)}
           onClick={reviewStructured}
         >
-          Review structured command
+          Review {structuredType === 'record_fielding' ? 'fielding detail' : 'scoring judgment'}
         </button>
       </fieldset>
     </details>
@@ -2432,7 +4724,7 @@ function PlayerContext({ label, player }: { label: string; player: DiamondPlayer
 
 function BaseDiamond({ snapshot }: { snapshot: DiamondScorebookSnapshot }) {
   return (
-    <div className="relative mx-auto h-48 max-w-sm" aria-label="Base runners">
+    <div className="relative mx-auto h-48 max-w-sm" role="group" aria-label="Base runners">
       <div
         className="absolute inset-x-0 bottom-3 mx-auto h-36 w-36 rotate-45 rounded-2xl border-2 border-emerald-200 bg-emerald-50"
         aria-hidden="true"
@@ -2480,9 +4772,14 @@ function CompletenessCard({ snapshot }: { snapshot: DiamondScorebookSnapshot }) 
   const families = Object.entries(snapshot.completeness.families);
   return (
     <section className="app-card p-3 sm:p-4">
-      <div className="flex items-center gap-2">
-        <CircleDot className="text-primary-600 h-5 w-5" aria-hidden="true" />
-        <h2 className="text-sm font-black text-gray-950">Stat coverage</h2>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <CircleDot className="text-primary-600 h-5 w-5" aria-hidden="true" />
+          <h2 className="text-sm font-black text-gray-950">Stat coverage</h2>
+        </div>
+        <span className="rounded-full border border-gray-200 bg-gray-50 px-2 py-1 text-[10px] font-black tracking-wide text-gray-700 uppercase">
+          {snapshot.completeness.status.replace(/_/g, ' ')} · revision {snapshot.completeness.authoritativeRevision}
+        </span>
       </div>
       <div className="mt-3 flex flex-wrap gap-2">
         {families.length ? (
@@ -2501,6 +4798,19 @@ function CompletenessCard({ snapshot }: { snapshot: DiamondScorebookSnapshot }) 
       <p className="mt-3 text-xs leading-5 font-semibold text-gray-600">
         Missing capture is labeled partial or not collected; it is never converted to zero.
       </p>
+      {snapshot.completeness.omissions.length ? (
+        <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-950">
+          <div className="font-black">Known omissions</div>
+          <ul className="mt-1 list-disc space-y-1 pl-4 font-semibold">
+            {snapshot.completeness.omissions.slice(0, 20).map((omission) => (
+              <li key={omission}>{omission}</li>
+            ))}
+          </ul>
+          {snapshot.completeness.omissions.length > 20 ? (
+            <div className="mt-2 font-bold">{snapshot.completeness.omissions.length - 20} more omissions are recorded.</div>
+          ) : null}
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -2526,7 +4836,9 @@ function PlayReviewModal({
   const setOutcome = (result: string) => {
     const option = outcomeOptions.find((candidate) => candidate.result === result);
     if (!option) return;
-    const next = buildPendingOutcome(snapshot, option, pending.source);
+    const next = pending.correction
+      ? retargetCorrectionOutcome(snapshot, pending, option)
+      : buildPendingOutcome(snapshot, option, pending.source);
     onChange({
       ...next,
       unresolvedFields: pending.unresolvedFields,
@@ -2535,13 +4847,22 @@ function PlayReviewModal({
       sourceRevision: pending.sourceRevision
     });
   };
+  const updateRunnerMove = (key: string, updates: Partial<RunnerMoveDraft>) => {
+    const runnerMoves = pending.runnerMoves.map((move) => (move.key === key ? { ...move, ...updates } : move));
+    onChange({
+      ...pending,
+      runnerMoves,
+      outsOnPlay: runnerMoves.filter((move) => move.to === 'out').length,
+      runsBattedIn: runnerMoves.filter((move) => move.to === 'home' && move.countsRun !== false && move.rbi).length
+    });
+  };
   return (
     <Modal
       onClose={onClose}
       ariaLabelledBy="diamond-play-review-title"
       overlayClassName="z-50 flex items-end justify-center bg-gray-950/50 p-0 backdrop-blur-sm sm:items-center sm:p-4"
     >
-      <section className="shadow-app-lg max-h-[92dvh] w-full max-w-xl overflow-y-auto rounded-t-3xl bg-white p-4 sm:rounded-3xl sm:p-5">
+      <section className="shadow-app-lg max-h-[92dvh] w-full max-w-xl overflow-y-auto rounded-t-3xl bg-white p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:rounded-3xl sm:p-5">
         <div className="flex items-start justify-between gap-3">
           <div>
             <div className="text-primary-600 text-[10px] font-black tracking-widest uppercase">
@@ -2550,7 +4871,9 @@ function PlayReviewModal({
             <h2 id="diamond-play-review-title" className="mt-1 text-xl font-black text-gray-950">
               Review {pending.label}
             </h2>
-            <p className="mt-1 text-xs leading-5 font-semibold text-gray-600">Nothing is recorded until you confirm this complete play.</p>
+            <p className="mt-1 text-xs leading-5 font-semibold text-gray-600">
+              Nothing is recorded until you confirm. Any uncollected detail remains explicitly partial.
+            </p>
           </div>
           <button type="button" className="ghost-button !h-10 !min-h-10 !w-10 !p-0" onClick={onClose} aria-label="Close play review">
             ×
@@ -2608,66 +4931,149 @@ function PlayReviewModal({
               <legend className="text-xs font-black text-gray-700">Runner destinations</legend>
               <div className="mt-2 space-y-2">
                 {pending.runnerMoves.map((move) => (
-                  <label
-                    key={move.key}
-                    className="grid min-h-12 grid-cols-[minmax(0,1fr)_7rem] items-center gap-3 rounded-xl border border-gray-200 px-3"
-                  >
-                    <span className="truncate text-sm font-bold text-gray-900">{move.label}</span>
-                    <select
-                      aria-label={`${move.label} destination`}
-                      className="min-h-10 rounded-lg border border-gray-300 bg-white px-2 text-sm font-black"
-                      value={move.to}
-                      onChange={(event) =>
-                        onChange({
-                          ...pending,
-                          runnerMoves: pending.runnerMoves.map((candidate) =>
-                            candidate.key === move.key ? { ...candidate, to: event.target.value as RunnerDestination } : candidate
-                          )
-                        })
-                      }
-                    >
-                      {destinationOptions
-                        .filter((option) => canChooseDestination(move.from, option.value))
-                        .map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                    </select>
-                  </label>
+                  <fieldset key={move.key} className="rounded-xl border border-gray-200 p-3">
+                    <legend className="px-1 text-sm font-black text-gray-900">{move.label}</legend>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <label className="text-[11px] font-black text-gray-700">
+                        Destination
+                        <select
+                          aria-label={`${move.label} destination`}
+                          className="mt-1 min-h-11 w-full rounded-lg border border-gray-300 bg-white px-2 text-sm font-black"
+                          value={move.to}
+                          onChange={(event) => {
+                            const to = event.target.value as RunnerDestination;
+                            updateRunnerMove(move.key, {
+                              to,
+                              cause: defaultRunnerCause(pending.result, to),
+                              outKind: to === 'out' ? defaultOutKind(pending.result, move.from) : undefined,
+                              countsRun: to === 'home' ? true : undefined,
+                              rbi: to === 'home' ? resultAllowsRbi(pending.result) : undefined,
+                              earned: to === 'home' ? move.earned : undefined,
+                              responsiblePitcherId:
+                                to === 'home' ? move.responsiblePitcherId || snapshot.currentPitcher?.playerId : undefined
+                            });
+                          }}
+                        >
+                          {destinationOptions
+                            .filter((option) => canChooseDestination(move.from, option.value))
+                            .map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                        </select>
+                      </label>
+                      <label className="text-[11px] font-black text-gray-700">
+                        Advance cause
+                        <select
+                          aria-label={`${move.label} cause`}
+                          className="mt-1 min-h-11 w-full rounded-lg border border-gray-300 bg-white px-2 text-sm font-bold"
+                          value={move.cause}
+                          onChange={(event) => updateRunnerMove(move.key, { cause: event.target.value as DiamondRunnerAdvanceCause })}
+                        >
+                          {runnerCauseOptions.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      {move.to === 'out' ? (
+                        <label className="text-[11px] font-black text-gray-700 sm:col-span-2">
+                          Out kind
+                          <select
+                            aria-label={`${move.label} out kind`}
+                            className="mt-1 min-h-11 w-full rounded-lg border border-gray-300 bg-white px-2 text-sm font-bold"
+                            value={move.outKind || ''}
+                            onChange={(event) => updateRunnerMove(move.key, { outKind: event.target.value as DiamondOutKind })}
+                          >
+                            <option value="">Choose out kind</option>
+                            {outKindOptions.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      ) : null}
+                      {move.to === 'home' ? (
+                        <>
+                          <label className="flex min-h-11 items-center gap-2 rounded-lg border border-gray-200 px-3 text-xs font-black text-gray-700">
+                            <input
+                              type="checkbox"
+                              checked={move.countsRun === true}
+                              onChange={(event) =>
+                                updateRunnerMove(move.key, {
+                                  countsRun: event.target.checked,
+                                  ...(event.target.checked ? {} : { rbi: false })
+                                })
+                              }
+                            />
+                            Run counts
+                          </label>
+                          <label className="flex min-h-11 items-center gap-2 rounded-lg border border-gray-200 px-3 text-xs font-black text-gray-700">
+                            <input
+                              type="checkbox"
+                              checked={move.rbi === true}
+                              disabled={move.countsRun !== true}
+                              onChange={(event) => updateRunnerMove(move.key, { rbi: event.target.checked })}
+                            />
+                            Credit RBI
+                          </label>
+                          {controlMode === 'full' ? (
+                            <label className="text-[11px] font-black text-gray-700 sm:col-span-2">
+                              Run charge
+                              <select
+                                aria-label={`${move.label} run charge`}
+                                className="mt-1 min-h-11 w-full rounded-lg border border-gray-300 bg-white px-2 text-sm font-black"
+                                value={move.earned === undefined ? '' : move.earned ? 'earned' : 'unearned'}
+                                onChange={(event) =>
+                                  updateRunnerMove(move.key, {
+                                    earned: event.target.value === 'earned' ? true : event.target.value === 'unearned' ? false : undefined
+                                  })
+                                }
+                              >
+                                <option value="">Not entered</option>
+                                <option value="earned">Earned</option>
+                                <option value="unearned">Unearned</option>
+                              </select>
+                            </label>
+                          ) : null}
+                        </>
+                      ) : null}
+                    </div>
+                  </fieldset>
                 ))}
               </div>
             </fieldset>
 
-            <div className="mt-4 grid grid-cols-2 gap-3">
-              <label className="text-xs font-black text-gray-700">
+            {controlMode === 'full' && pending.runnerMoves.some((move) => move.to === 'home' && move.earned === undefined) ? (
+              <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-bold text-amber-950">
+                Choose earned or unearned for each run to keep pitching coverage complete. Leaving it unentered records the play but marks
+                pitching stats partial.
+              </div>
+            ) : null}
+
+            {controlMode === 'full' && pending.result === 'reached_on_error' && !pending.errorBy ? (
+              <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-bold text-amber-950">
+                Select the fielder charged with the error to keep fielding coverage complete. Leaving it unentered records the play but
+                marks fielding stats partial.
+              </div>
+            ) : null}
+
+            <div className="mt-4 grid grid-cols-2 gap-3" aria-label="Play totals derived from runner decisions">
+              <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-xs font-black text-gray-700">
                 Outs on play
-                <select
-                  className="mt-1 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-black"
-                  value={pending.outsOnPlay}
-                  onChange={(event) => onChange({ ...pending, outsOnPlay: Number(event.target.value) })}
-                >
-                  {[0, 1, 2, 3].map((value) => (
-                    <option key={value} value={value}>
-                      {value}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="text-xs font-black text-gray-700">
+                <output className="mt-1 block text-lg text-gray-950" aria-label="Outs on play">
+                  {pending.outsOnPlay}
+                </output>
+              </div>
+              <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-xs font-black text-gray-700">
                 RBI credit
-                <select
-                  className="mt-1 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-black"
-                  value={pending.runsBattedIn}
-                  onChange={(event) => onChange({ ...pending, runsBattedIn: Number(event.target.value) })}
-                >
-                  {[0, 1, 2, 3, 4].map((value) => (
-                    <option key={value} value={value}>
-                      {value}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                <output className="mt-1 block text-lg text-gray-950" aria-label="RBI credit">
+                  {pending.runsBattedIn}
+                </output>
+              </div>
             </div>
 
             {controlMode === 'full' ? (
@@ -2710,11 +5116,13 @@ function PlayReviewModal({
               </fieldset>
             ) : null}
           </>
-        ) : (
-          <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 p-3">
-            <div className="text-sm font-semibold text-gray-700">
-              Proposed command: <span className="font-black">{pending.type.replace(/_/g, ' ')}</span>
-            </div>
+        ) : pending.source === 'voice' ? (
+          <details className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3">
+            <summary className="cursor-pointer text-sm font-black text-amber-950">Advanced JSON fallback</summary>
+            <p className="mt-2 text-xs leading-5 font-semibold text-amber-900">
+              This proposal does not yet have a dedicated form. Use only if you understand the canonical command contract; ordinary controls
+              remain available.
+            </p>
             <label className="mt-3 block text-xs font-black text-gray-700" htmlFor="diamond-proposal-payload">
               Editable command details
             </label>
@@ -2725,6 +5133,24 @@ function PlayReviewModal({
               onChange={(event) => onChange({ ...pending, payloadDraft: event.target.value })}
               spellCheck={false}
             />
+          </details>
+        ) : (
+          <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 p-3">
+            <div className="text-xs font-black tracking-wide text-gray-500 uppercase">Confirmed fields</div>
+            <dl className="mt-2 space-y-2">
+              {Object.entries(pending.payload).map(([key, value]) => (
+                <div key={key} className="grid grid-cols-[8rem_minmax(0,1fr)] gap-2 text-xs">
+                  <dt className="font-black text-gray-600">{key.replace(/([A-Z])/g, ' $1').replace(/_/g, ' ')}</dt>
+                  <dd className="font-semibold break-words text-gray-900">
+                    {Array.isArray(value)
+                      ? `${value.length} ${value.length === 1 ? 'entry' : 'entries'}`
+                      : value && typeof value === 'object'
+                        ? 'Structured detail included'
+                        : String(value)}
+                  </dd>
+                </div>
+              ))}
+            </dl>
           </div>
         )}
 
@@ -2744,7 +5170,7 @@ function PlayReviewModal({
             disabled={busy || Boolean(validationError) || !pending.ambiguityConfirmed}
           >
             {busy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Check className="h-4 w-4" aria-hidden="true" />}
-            Confirm play
+            {pending.correction ? 'Confirm correction' : pending.type === 'record_plate_appearance' ? 'Confirm play' : 'Confirm action'}
           </button>
         </div>
       </section>
@@ -2827,7 +5253,7 @@ function VoiceModal({
       ariaLabelledBy="diamond-voice-title"
       overlayClassName="z-50 flex items-end justify-center bg-gray-950/50 p-0 backdrop-blur-sm sm:items-center sm:p-4"
     >
-      <section className="shadow-app-lg w-full max-w-lg rounded-t-3xl bg-white p-4 sm:rounded-3xl sm:p-5">
+      <section className="shadow-app-lg max-h-[92dvh] w-full max-w-lg overflow-y-auto rounded-t-3xl bg-white p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:rounded-3xl sm:p-5">
         <div className="flex items-start justify-between gap-3">
           <div>
             <div className="text-[10px] font-black tracking-widest text-violet-600 uppercase">Dictate + confirm</div>
@@ -2987,15 +5413,27 @@ function ConfirmationModal({
   const title =
     confirmation.kind === 'finalize'
       ? 'Confirm final score'
-      : confirmation.kind === 'handoff'
-        ? 'Hand off the scorebook?'
-        : 'Append this correction?';
+      : confirmation.kind === 'rules-decision'
+        ? `Confirm ${confirmation.label}?`
+        : confirmation.kind === 'reopen'
+          ? 'Reopen for correction?'
+          : confirmation.kind === 'handoff'
+            ? 'Hand off the scorebook?'
+            : 'Append this correction?';
   const detail =
     confirmation.kind === 'finalize'
       ? `${snapshot.awayName} ${snapshot.score.away}, ${snapshot.homeName} ${snapshot.score.home}. Ordinary scoring will become read only.`
-      : confirmation.kind === 'handoff'
-        ? `${confirmation.toName} will become the only active scorekeeper after the authoritative revision advances.`
-        : `${confirmation.label} remains in canonical history, but its effect will be voided by a new correction event.`;
+      : confirmation.kind === 'rules-decision'
+        ? `${confirmation.description} This appends an audited ${confirmation.label.toLowerCase()} decision. ${
+            confirmation.opensFinalization
+              ? 'If the server accepts it, a separate final-score confirmation opens; this decision does not finalize by itself.'
+              : 'This ends only the current half inning; advance the half separately after the server accepts it.'
+          }`
+        : confirmation.kind === 'reopen'
+          ? `Reason: ${confirmation.reason}. The final game will enter a visible correction session; changes remain append-only and require finalization again.`
+          : confirmation.kind === 'handoff'
+            ? `${confirmation.toName} will become the only active scorekeeper after the authoritative revision advances.`
+            : `${confirmation.label} remains in canonical history, but its effect will be voided by a new correction event.`;
   return (
     <Modal onClose={onClose} ariaLabelledBy="diamond-confirmation-title">
       <section className="app-card w-full max-w-md p-5">

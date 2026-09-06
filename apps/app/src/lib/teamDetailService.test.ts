@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { deriveAgeClassification } from './teamDetailService';
+import { deriveAgeClassification, getDiamondLeaderboardQualification } from './teamDetailService';
 
 describe('deriveAgeClassification', () => {
   it('uses age group, birth year, grade, then birth date year in precedence order', () => {
@@ -15,6 +15,23 @@ describe('deriveAgeClassification', () => {
     expect(classification).toBe('Grade 6');
     expect(classification).not.toContain('2014-02-03');
     expect(deriveAgeClassification({ privateProfileRosterFields: {} })).toBe('');
+  });
+});
+
+describe('Diamond leaderboard qualification', () => {
+  it('requires complete denominator evidence and the team-game PA threshold for rates', () => {
+    const batting = getDiamondLeaderboardQualification({ id: 'avg', formula: 'H/AB' }, 4);
+    expect(batting.label).toBe('9 PA minimum (2.1/team game)');
+    expect(batting.qualifies({ pa: 8, ab: 8, h: 8 })).toBe(false);
+    expect(batting.qualifies({ pa: 9, ab: 0, h: 0 })).toBe(false);
+    expect(batting.qualifies({ pa: 9, ab: 8, h: 3 })).toBe(true);
+
+    const stealRate = getDiamondLeaderboardQualification({ id: 'stolen_base_rate', formula: 'SB/(SB+CS)' }, 4);
+    expect(stealRate.qualifies({ sb: 0, cs: 0 })).toBe(false);
+    expect(stealRate.qualifies({ sb: 1, cs: 0 })).toBe(true);
+
+    const unsupported = getDiamondLeaderboardQualification({ id: 'model_rate', formula: 'MODEL' }, 4);
+    expect(unsupported.qualifies({ model_rate: 1 })).toBe(false);
   });
 });
 
@@ -1307,14 +1324,44 @@ describe('team detail bootstrap loading', () => {
       { id: 'player-1', name: 'Pat Star', number: '9', active: true },
       { id: 'player-2', name: 'Sam Bench', number: '12', active: true }
     ]);
+    const instanceId = '00000000-0000-4000-8000-000000000001';
+    const checkpointHash = `sha256:${'a'.repeat(64)}`;
+    const configHash = `sha256:${'b'.repeat(64)}`;
+    const projectionHash = `sha256:${'c'.repeat(64)}`;
     dbMocks.getGames.mockResolvedValue([{
       id: 'game-1',
+      teamId: 'team-1',
       status: 'completed',
       seasonLabel: '2026',
       date: '2026-03-01',
       trackingEngine: 'diamond-v2',
       diamondProjectionStatus: 'current',
       diamondProjectionRevision: 8,
+      diamondProjectionComplete: true,
+      diamondScorebookInstanceId: instanceId,
+      diamondProjectionCheckpointHash: checkpointHash,
+      diamondStatConfigSnapshotHash: configHash,
+      diamondProjectionHash: projectionHash,
+      diamondPublicTeamStats: {
+        trackingEngine: 'diamond-v2',
+        projectionSchemaVersion: 1,
+        sourceRevision: 8,
+        checkpointHash,
+        coverage: { batting: 'complete', fielding: 'complete' },
+        publicStatIds: ['r'],
+        side: 'home',
+        complete: true,
+        stats: { r: 2 },
+        observedStats: {},
+        statCoverage: { r: 'complete' },
+        teamId: 'team-1',
+        diamondGameId: 'game-1',
+        instanceId,
+        diamondScorebookInstanceId: instanceId,
+        projectionGeneration: instanceId,
+        statConfigSnapshotHash: configHash,
+        projectionHash
+      },
       rulesProfileId: 'baseball-youth@1',
       homeScore: 2,
       awayScore: 1
@@ -1325,7 +1372,9 @@ describe('team detail bootstrap loading', () => {
       columns: ['H'],
       statDefinitions: [
         { id: 'h', label: 'Hits', scope: 'player', visibility: 'public', topStat: true },
-        { id: 'pitches', label: 'Pitch count', scope: 'player', visibility: 'private', topStat: true }
+        { id: 'pitches', label: 'Pitch count', scope: 'player', visibility: 'private', topStat: true },
+        { id: 'r', label: 'Runs', scope: 'team', visibility: 'public' },
+        { id: 'h', label: 'Team hits', scope: 'team', visibility: 'private' }
       ]
     };
     dbMocks.getConfigs.mockResolvedValue([config]);
@@ -1337,23 +1386,72 @@ describe('team detail bootstrap loading', () => {
           {
             id: 'player-1',
             data: () => ({
+              schemaVersion: 1,
               trackingEngine: 'diamond-v2',
+              projectionSchemaVersion: 1,
+              playerId: 'player-1',
+              playerName: 'Pat Star',
+              playerNumber: '9',
               sourceRevision: 8,
+              checkpointHash,
               complete: true,
-              stats: { h: 2, pitches: 81 },
-              statCoverage: { h: 'complete', pitches: 'complete' },
-              coverage: { batting: 'complete', pitches: 'complete' }
+              publicStatIds: ['h'],
+              stats: { h: 2 },
+              observedStats: {},
+              derivedStats: {},
+              observedDerivedStats: {},
+              statCoverage: { h: 'complete' },
+              statSources: {},
+              sourcePlayIds: [],
+              unavailableDerivedStats: [],
+              missingStatFamilies: [],
+              coverage: { batting: 'complete' },
+              participated: true,
+              participationStatus: 'appeared',
+              participationSource: 'diamond-v2',
+              teamId: 'team-1',
+              diamondGameId: 'game-1',
+              instanceId,
+              diamondScorebookInstanceId: instanceId,
+              projectionGeneration: instanceId,
+              statConfigSnapshotHash: configHash,
+              projectionHash
             })
           },
           {
             id: 'player-2',
             data: () => ({
+              schemaVersion: 1,
               trackingEngine: 'diamond-v2',
+              projectionSchemaVersion: 1,
+              playerId: 'player-2',
+              playerName: 'Sam Bench',
+              playerNumber: '12',
               sourceRevision: 8,
+              checkpointHash,
               complete: true,
-              stats: { pitches: 23 },
-              statCoverage: { h: 'not_collected', pitches: 'complete' },
-              coverage: { batting: 'not_collected', pitches: 'complete' }
+              publicStatIds: ['h'],
+              stats: {},
+              observedStats: {},
+              derivedStats: {},
+              observedDerivedStats: {},
+              statCoverage: { h: 'not_collected' },
+              statSources: {},
+              sourcePlayIds: [],
+              unavailableDerivedStats: [],
+              missingStatFamilies: [],
+              coverage: { batting: 'not_collected' },
+              participated: false,
+              participationStatus: 'did-not-appear',
+              participationSource: 'diamond-v2',
+              didNotPlay: true,
+              teamId: 'team-1',
+              diamondGameId: 'game-1',
+              instanceId,
+              diamondScorebookInstanceId: instanceId,
+              projectionGeneration: instanceId,
+              statConfigSnapshotHash: configHash,
+              projectionHash
             })
           }
         ].forEach(callback);
@@ -1367,6 +1465,14 @@ describe('team detail bootstrap loading', () => {
     expect(season.columns.map((column) => column.id)).not.toContain('pitches');
     expect(season.rows[0].values.h).toMatchObject({ value: 2, status: 'complete' });
     expect(season.rows[1].values.h).toMatchObject({ value: null, formattedValue: '—', status: 'not_collected' });
+    expect(season.teamStats?.columns.map((column) => column.id)).toEqual(['r']);
+    expect(season.teamStats?.values.r).toMatchObject({ value: 2, formattedValue: '2', status: 'complete' });
+    expect(season.teamStats?.values).not.toHaveProperty('h');
+    expect(firebaseMocks.getDocs).toHaveBeenCalledTimes(1);
+    expect(firebaseMocks.collection).toHaveBeenCalledWith(
+      firebaseMocks.db,
+      `teams/team-1/games/game-1/diamondStatGenerations/${instanceId}/publicPlayerStats`
+    );
     expect(buildPlayerLeaderboardSnapshot).toHaveBeenCalledWith(expect.objectContaining({
       players: [{ id: 'player-1', name: 'Pat Star', number: '9' }]
     }));

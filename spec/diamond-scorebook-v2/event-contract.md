@@ -23,9 +23,11 @@ allowlisted projections stored separately from private canonical data.
 ```ts
 type DiamondCommand<TType extends DiamondCommandType> = {
   schemaVersion: 2;
-  commandId: string;          // cryptographically random UUID
+  commandId: string; // cryptographically random UUID
   teamId: string;
   gameId: string;
+  appBuild: number; // positive client build (hosted generation or installed native package build)
+  expectedInstanceId: string; // loaded scorebook UUID; fences recreation
   expectedRevision: number;
   rulesProfileId: string;
   rulesProfileVersion: number;
@@ -48,7 +50,8 @@ hash returns the original result; a different hash is rejected.
 
 ## Command families
 
-- Lifecycle: activate, start, suspend, resume, finalize, reopen-for-correction.
+- Lifecycle: activate, start, suspend, resume, manager-confirmed cancellation,
+  finalize, reopen-for-correction.
 - Roster: set lineup, set defensive alignment, substitute, re-enter, set DP/FLEX,
   add courtesy runner, scorer handoff.
 - Pitch: ball, called/swinging strike, foul, foul bunt, in-play, hit-by-pitch,
@@ -85,8 +88,17 @@ only at the presentation boundary.
   engine.
 - `submitDiamondCommand` validates and appends one command/event revision.
 - `getDiamondState` returns authorized private state or sanitized public state.
-- `listDiamondEvents` returns a bounded page plus cursor, completion, revision,
-  and truncation evidence.
+- `listDiamondEvents` returns an authorized, bounded scorer-history page plus
+  cursor, completion, source-revision, and exact UTF-8 byte evidence. Each item
+  is an allowlisted command summary (`eventId`, sequence/revision, type, typed
+  payload, timestamps, and correction links); canonical before/after state,
+  actor identity, command/hash data, and audit fields are never returned.
+  The scorer initially reads an exact contiguous suffix ending at the requested
+  authoritative revision, then can page through adjacent older blocks. A suffix
+  is described as head-complete, never whole-history complete unless it reaches
+  sequence 1. Because blocks remain contiguous through the head, correction
+  directives newer than an older target are applied as soon as that target is
+  loaded without scanning the entire ledger first.
 - `parseDiamondVoice` returns a non-mutating command proposal.
 - `regenerateDiamondProjection` is manager/admin recovery and emits no live
   notifications.
@@ -94,4 +106,3 @@ only at the presentation boundary.
 Every interface validates nonempty slash-free IDs, bounded strings/arrays,
 supported schema versions, authorization, active-team state, game identity, and
 engine ownership before reading or mutating canonical data.
-

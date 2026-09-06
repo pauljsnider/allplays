@@ -48,16 +48,32 @@ describe('scorekeeping access wiring', () => {
 
     it('allows scoped scorekeeper writes in Firestore rules without opening roster or schedule writes', () => {
         const rules = readFileSync(resolve(process.cwd(), 'firestore.rules'), 'utf8');
+        const gameRulesStart = rules.indexOf('match /games/{gameId} {');
+        const gameRulesEnd = rules.indexOf('match /liveChat/{messageId} {', gameRulesStart);
+        const gameRules = rules.slice(gameRulesStart, gameRulesEnd);
+        const eventsRule = gameRules.match(/match \/events\/\{eventId\} \{[\s\S]*?\n        \}/)?.[0] || '';
+        const aggregatedStatsRule = gameRules.match(/match \/aggregatedStats\/\{statId\} \{[\s\S]*?\n        \}/)?.[0] || '';
+        const teamStatsRule = gameRules.match(/match \/teamStats\/\{statId\} \{[\s\S]*?\n        \}/)?.[0] || '';
+        const privatePlayerStatsRule = gameRules.match(/match \/privatePlayerStats\/\{statId\} \{[\s\S]*?\n        \}/)?.[0] || '';
+        const liveEventsRule = gameRules.match(/match \/liveEvents\/\{eventId\} \{[\s\S]*?\n        \}/)?.[0] || '';
 
         expect(rules).toContain('function canScorekeepGame(teamId, gameId)');
-        expect(rules).toMatch(/allow update: if !isBroadcastSessionOnlyUpdate\(\) &&\s+!isReplayArchiveMutation\(\) &&\s+\(isTeamOwnerOrAdmin\(teamId\) \|\|\s+\(isOfficialForGame\(\) && isOfficialGameUpdate\(\)\) \|\|\s+isScorekeepingGameUpdate\(teamId, gameId\) \|\|\s+isVideographyGameUpdate\(teamId, gameId\)\);/);
+        expect(rules).toContain('allow update: if isScorekeepingGameUpdate(teamId, gameId);');
+        expect(rules).toMatch(/allow update: if !isDiamondProtectedGameMutation\(\) &&\s+!isBroadcastSessionOnlyUpdate\(\) &&\s+!isReplayArchiveMutation\(\) &&\s+\(isTeamOwnerOrAdmin\(teamId\) \|\|\s+\(isOfficialForGame\(\) && isOfficialGameUpdate\(\)\) \|\|\s+isVideographyGameUpdate\(teamId, gameId\)\);/);
         expect(rules).toContain('allow update: if isReplayArchiveOnlyUpdate() &&');
         expect(rules).toContain('allow update: if isStreamingGameUpdate(teamId, gameId);');
-        expect(rules).toContain('allow create, update: if isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId);');
-        const privatePlayerStatsRule = rules.match(/match \/privatePlayerStats\/\{statId\} \{[\s\S]*?\n        \}/)?.[0] || '';
-        expect(privatePlayerStatsRule).toContain('allow read, create, update: if isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId);');
-        expect(privatePlayerStatsRule).toContain('allow delete: if isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId);');
-        const liveEventsRule = rules.match(/match \/liveEvents\/\{eventId\} \{[\s\S]*?\n        \}/)?.[0] || '';
+        for (const legacyProjectionRule of [eventsRule, aggregatedStatsRule, teamStatsRule]) {
+            expect(legacyProjectionRule).toContain('allow create, update: if !gameUsesDiamondScorebook(teamId, gameId) &&');
+            expect(legacyProjectionRule).toContain('(isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId));');
+        }
+        expect(privatePlayerStatsRule).toContain('allow create, update, delete: if !gameUsesDiamondScorebook(teamId, gameId) &&');
+        expect(privatePlayerStatsRule).toContain('(isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId));');
+        expect(eventsRule).toContain('allow delete: if !gameUsesDiamondScorebook(teamId, gameId) && isTeamOwnerOrAdmin(teamId);');
+        expect(aggregatedStatsRule).toMatch(/allow delete: if !gameUsesDiamondScorebook\(teamId, gameId\) &&\s+isTeamOwnerOrAdmin\(teamId\);/);
+        expect(teamStatsRule).toMatch(/allow delete: if !gameUsesDiamondScorebook\(teamId, gameId\) &&\s+isTeamOwnerOrAdmin\(teamId\);/);
+        expect(teamStatsRule).toContain('allow read: if !gameUsesDiamondScorebook(teamId, gameId) &&');
+        expect(privatePlayerStatsRule).toContain('allow read: if !gameUsesDiamondScorebook(teamId, gameId) &&');
+        expect(liveEventsRule).toContain('allow create: if !gameUsesDiamondScorebook(teamId, gameId) &&');
         expect(liveEventsRule).toContain('hasValidLiveEventAttribution(request.resource.data)');
         expect(liveEventsRule).toContain("data.createdBy == request.auth.uid");
         expect(liveEventsRule).toContain("data.actorUid == request.auth.uid");

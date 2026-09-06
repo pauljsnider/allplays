@@ -27,7 +27,10 @@ import {
     uploadPlayerPhoto as legacyUploadPlayerPhoto
 } from '@legacy/db.js';
 import {
+    db as legacyDbInstance,
+    doc as legacyDoc,
     functions as legacyFunctions,
+    getDoc as legacyGetDoc,
     httpsCallable as legacyHttpsCallable
 } from '@legacy/firebase.js';
 import { collectRosterParentContacts as legacyCollectRosterParentContacts } from '@legacy/roster-profile-fields.js';
@@ -129,6 +132,11 @@ export async function getAggregatedStatsForPlayer(teamId: string, gameId: string
 
 export async function getAggregatedStatsDocumentForPlayer(teamId: string, gameId: string, playerId: string): Promise<Record<string, any>> {
     return await Promise.resolve(legacyGetAggregatedStatsDocumentForPlayer(teamId, gameId, playerId));
+}
+
+export async function getDiamondPublicPlayerStatDocument(collectionPath: string, playerId: string): Promise<Record<string, any>> {
+    const snapshot = await Promise.resolve(legacyGetDoc(legacyDoc(legacyDbInstance, collectionPath, playerId)));
+    return snapshot.exists() ? (snapshot.data() || {}) : {};
 }
 
 export async function getAggregatedStatsForGames(teamId: string, gameIds: string[]): Promise<Record<string, Record<string, unknown>>> {

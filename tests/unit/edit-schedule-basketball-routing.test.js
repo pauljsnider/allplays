@@ -48,9 +48,21 @@ function goalSportProfileStub({ sport }) {
         : null;
 }
 
-function buildTrackChoiceDomHarness({ allConfigs, currentTeam, gamesCache, currentTeamId = 'team-123' }) {
+function buildTrackChoiceDomHarness({
+    allConfigs,
+    currentTeam,
+    gamesCache,
+    currentTeamId = 'team-123',
+    diamondScorebookUiEnabled = false,
+    diamondAccess = {
+        canActivate: false,
+        eligible: false,
+        canManage: false,
+        teamOptIn: false
+    }
+}) {
     const source = readEditSchedule();
-    const helpersMatch = source.match(/let pendingTrackGameId = null;[\s\S]*?function handleTrackClick\(gameId\) \{[\s\S]*?\n\s+\}(?=\n\n\s+function renderDbGame)/);
+    const helpersMatch = source.match(/let pendingTrackGameId = null;[\s\S]*?async function handleTrackClick\(gameId\) \{[\s\S]*?\n\s+\}(?=\n\n\s+function renderDbGame)/);
     const handlersMatch = source.match(/document\.getElementById\('basketball-tracker-cancel'\)[\s\S]*?window\.location\.href = `track-statsheet\.html#teamId=\$\{currentTeamId\}&gameId=\$\{gameId\}`;[\s\S]*?\}\);/);
     expect(helpersMatch, 'track choice helpers should exist').toBeTruthy();
     expect(handlersMatch, 'track choice click handlers should exist').toBeTruthy();
@@ -77,6 +89,12 @@ function buildTrackChoiceDomHarness({ allConfigs, currentTeam, gamesCache, curre
                     <button id="basketball-tracker-photo" data-tracker-label="Photo Score Sheet">
                         <span data-tracker-label-text>Photo Score Sheet</span>
                     </button>
+                    <button id="diamond-tracker-quick" hidden data-tracker-label="Diamond — Quick capture" class="hidden">
+                        <span data-tracker-label-text>Diamond — Quick capture</span>
+                    </button>
+                    <button id="diamond-tracker-full" hidden data-tracker-label="Diamond — Full capture" class="hidden">
+                        <span data-tracker-label-text>Diamond — Full capture</span>
+                    </button>
                 </div>
             </details>
             <button id="basketball-tracker-cancel"></button>
@@ -85,7 +103,7 @@ function buildTrackChoiceDomHarness({ allConfigs, currentTeam, gamesCache, curre
     const fakeWindow = { location: { href: '' } };
 
     const createHarness = new Function('deps', `
-        const { document, window, alert, allConfigs, currentTeam, currentTeamId, getGoalSportProfile } = deps;
+        const { document, window, alert, allConfigs, currentTeam, currentTeamId, diamondScorebookUiEnabled, getGoalSportProfile, DIAMOND_ENGINE, buildDiamondTrackerUrl, getDiamondGameAccess } = deps;
         ${helpersMatch[0]}
         gamesCache = deps.gamesCache;
         ${handlersMatch[0]}
@@ -100,6 +118,8 @@ function buildTrackChoiceDomHarness({ allConfigs, currentTeam, gamesCache, curre
             getRecommendedCount: () => document.querySelectorAll('[data-recommended="true"]').length,
             isAdvancedOpen: () => document.getElementById('tracker-advanced-options').open,
             isHidden: (id) => document.getElementById(id).classList.contains('hidden'),
+            isHtmlHidden: (id) => document.getElementById(id).hidden,
+            getDiamondGameAccess,
             click: (id) => document.getElementById(id).click()
         };
     `);
@@ -111,8 +131,12 @@ function buildTrackChoiceDomHarness({ allConfigs, currentTeam, gamesCache, curre
         allConfigs,
         currentTeam,
         currentTeamId,
+        diamondScorebookUiEnabled,
         gamesCache,
-        getGoalSportProfile: goalSportProfileStub
+        getGoalSportProfile: goalSportProfileStub,
+        DIAMOND_ENGINE: 'diamond-v2',
+        buildDiamondTrackerUrl: (teamId, gameId) => `/app/#/schedule/${encodeURIComponent(teamId)}/${encodeURIComponent(gameId)}/diamond-v2`,
+        getDiamondGameAccess: vi.fn(async () => diamondAccess)
     });
 }
 
@@ -200,14 +224,14 @@ describe('edit schedule basketball tracker routing', () => {
         expect(source).toContain('More tracker options');
         expect(source).toContain("const simpleBtn = document.getElementById('basketball-tracker-live-simple');");
         expect(source).toContain("if (simpleBtn) simpleBtn.classList.toggle('hidden', !supportsSimpleLive);");
-        expect(source).toContain('openTrackerChoiceModal(gameId, isBasketballForGame(game), isGoalSportForGame(game));');
+        expect(source).toContain('openTrackerChoiceModal(gameId, isBasketballForGame(game), isGoalSportForGame(game), diamondAvailable);');
         expect(source).toContain('const trackingGame = {');
         expect(source).toContain('openTrackerChoiceModal(gameId, isBasketballConfig(configId), isGoalSportForGame(trackingGame));');
         expect(source).toContain('window.location.href = `track-live.html?v=2#teamId=${currentTeamId}&gameId=${gameId}`;');
         expect(source).toContain('window.location.href = `track-live.html?v=2#teamId=${currentTeamId}&gameId=${gameId}&trackerMode=simple`;');
     });
 
-    it('opens the schedule Track chooser for basketball games and preserves team/game routing', () => {
+    it('opens the schedule Track chooser for basketball games and preserves team/game routing', async () => {
         for (const [buttonId, expectedHref] of [
             ['basketball-tracker-standard', 'track.html#teamId=team-123&gameId=game-456'],
             ['basketball-tracker-beta', 'track-basketball.html#teamId=team-123&gameId=game-456'],
@@ -221,7 +245,7 @@ describe('edit schedule basketball tracker routing', () => {
                     'game-456': { id: 'game-456', statTrackerConfigId: 'basketball-config' }
                 }
             });
-            harness.handleTrackClick('game-456');
+            await harness.handleTrackClick('game-456');
             expect(harness.isHidden('basketball-tracker-modal')).toBe(false);
             expect(harness.isHidden('basketball-tracker-beta')).toBe(false);
             expect(harness.isHidden('basketball-tracker-photo')).toBe(false);
@@ -236,7 +260,7 @@ describe('edit schedule basketball tracker routing', () => {
         }
     });
 
-    it('hides basketball-only chooser actions for non-basketball games and routes live tracking', () => {
+    it('hides basketball-only chooser actions for non-basketball games and routes live tracking', async () => {
         const harness = buildTrackChoiceDomHarness({
             allConfigs: [{ id: 'soccer-config', baseType: 'Soccer' }],
             currentTeam: { sport: 'Soccer' },
@@ -245,7 +269,7 @@ describe('edit schedule basketball tracker routing', () => {
             }
         });
 
-        harness.handleTrackClick('game-789');
+        await harness.handleTrackClick('game-789');
 
         expect(harness.isHidden('basketball-tracker-modal')).toBe(false);
         expect(harness.isHidden('basketball-tracker-beta')).toBe(true);
@@ -259,7 +283,7 @@ describe('edit schedule basketball tracker routing', () => {
         expect(harness.getHref()).toBe('track-live.html?v=2#teamId=team-123&gameId=game-789');
     });
 
-    it('recommends the standard tracker for a generic sport while keeping live advanced', () => {
+    it('recommends the standard tracker for a generic sport while keeping live advanced', async () => {
         const harness = buildTrackChoiceDomHarness({
             allConfigs: [{ id: 'baseball-config', baseType: 'Baseball' }],
             currentTeam: { sport: 'Baseball' },
@@ -268,7 +292,7 @@ describe('edit schedule basketball tracker routing', () => {
             }
         });
 
-        harness.handleTrackClick('game-generic');
+        await harness.handleTrackClick('game-generic');
 
         expect(harness.getRecommendedId()).toBe('basketball-tracker-standard');
         expect(harness.getTrackerLabel('basketball-tracker-standard')).toBe('Start Standard Tracker');
@@ -279,6 +303,95 @@ describe('edit schedule basketball tracker routing', () => {
         expect(harness.getTrackerParentId('basketball-tracker-live')).toBe('tracker-advanced-actions');
         harness.click('basketball-tracker-standard');
         expect(harness.getHref()).toBe('track.html#teamId=team-123&gameId=game-generic');
+    });
+
+    it.each([
+        ['missing', undefined],
+        ['false', false]
+    ])('keeps Diamond actions absent with %s UI launch config and does not query activation access', async (_label, diamondScorebookUiEnabled) => {
+        const harness = buildTrackChoiceDomHarness({
+            allConfigs: [{ id: 'baseball-config', baseType: 'Baseball' }],
+            currentTeam: { sport: 'Baseball' },
+            gamesCache: {
+                'game-baseball': { id: 'game-baseball', sport: 'Baseball', statTrackerConfigId: 'baseball-config' }
+            },
+            diamondScorebookUiEnabled
+        });
+
+        await harness.handleTrackClick('game-baseball');
+
+        expect(harness.getDiamondGameAccess).not.toHaveBeenCalled();
+        expect(harness.isHidden('diamond-tracker-quick')).toBe(true);
+        expect(harness.isHidden('diamond-tracker-full')).toBe(true);
+        expect(harness.isHtmlHidden('diamond-tracker-quick')).toBe(true);
+        expect(harness.isHtmlHidden('diamond-tracker-full')).toBe(true);
+        expect(harness.getRecommendedId()).toBe('basketball-tracker-standard');
+    });
+
+    it('exposes Diamond capture actions only after the UI key and server access both allow activation', async () => {
+        const harness = buildTrackChoiceDomHarness({
+            allConfigs: [{ id: 'baseball-config', baseType: 'Baseball' }],
+            currentTeam: { sport: 'Baseball' },
+            gamesCache: {
+                'game-baseball': { id: 'game-baseball', sport: 'Baseball', statTrackerConfigId: 'baseball-config' }
+            },
+            diamondScorebookUiEnabled: true,
+            diamondAccess: {
+                canActivate: true,
+                eligible: true,
+                canManage: true,
+                teamOptIn: true
+            }
+        });
+
+        await harness.handleTrackClick('game-baseball');
+
+        expect(harness.getDiamondGameAccess).toHaveBeenCalledWith('team-123', 'game-baseball');
+        expect(harness.isHidden('diamond-tracker-quick')).toBe(false);
+        expect(harness.isHidden('diamond-tracker-full')).toBe(false);
+        expect(harness.isHtmlHidden('diamond-tracker-quick')).toBe(false);
+        expect(harness.isHtmlHidden('diamond-tracker-full')).toBe(false);
+        expect(harness.getRecommendedId()).toBe('diamond-tracker-quick');
+        expect(harness.getTrackerLabel('diamond-tracker-quick')).toBe('Start Diamond — Quick capture');
+    });
+
+    it('keeps classic tracking recommended when the UI key is true but server access denies activation', async () => {
+        const harness = buildTrackChoiceDomHarness({
+            allConfigs: [{ id: 'baseball-config', baseType: 'Baseball' }],
+            currentTeam: { sport: 'Baseball' },
+            gamesCache: {
+                'game-baseball': { id: 'game-baseball', sport: 'Baseball', statTrackerConfigId: 'baseball-config' }
+            },
+            diamondScorebookUiEnabled: true
+        });
+
+        await harness.handleTrackClick('game-baseball');
+
+        expect(harness.getDiamondGameAccess).toHaveBeenCalledWith('team-123', 'game-baseball');
+        expect(harness.isHidden('diamond-tracker-quick')).toBe(true);
+        expect(harness.isHidden('diamond-tracker-full')).toBe(true);
+        expect(harness.getRecommendedId()).toBe('basketball-tracker-standard');
+    });
+
+    it('preserves direct recovery routing for games already owned by Diamond while the UI key is off', async () => {
+        const harness = buildTrackChoiceDomHarness({
+            allConfigs: [{ id: 'baseball-config', baseType: 'Baseball' }],
+            currentTeam: { sport: 'Baseball' },
+            gamesCache: {
+                'game-owned': {
+                    id: 'game-owned',
+                    sport: 'Baseball',
+                    trackingEngine: 'diamond-v2',
+                    statTrackerConfigId: 'baseball-config'
+                }
+            },
+            diamondScorebookUiEnabled: false
+        });
+
+        await harness.handleTrackClick('game-owned');
+
+        expect(harness.getHref()).toBe('/app/#/schedule/team-123/game-owned/diamond-v2');
+        expect(harness.getDiamondGameAccess).not.toHaveBeenCalled();
     });
 
     it('renders completed schedule games with Report instead of Track', () => {

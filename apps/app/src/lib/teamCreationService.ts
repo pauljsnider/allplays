@@ -5,20 +5,42 @@ import {
   getStatConfigPresetOptions
 } from './adapters/legacyTeamCreation';
 import { clearAppDataCache, getTeamsSummaryBootstrapCacheKey } from './appDataCache';
-import { configureDiamondTeam, type DiamondSport } from './diamondScorebookService';
+import {
+  configureDiamondTeam,
+  type DiamondCaptureMode,
+  type DiamondSport
+} from './diamondScorebookService';
+import { listDiamondRulesProfiles } from './diamondScorebook/rules';
 import type { AuthUser } from './types';
+
+export type CreateTeamDiamondSetup = {
+  enabled: boolean;
+  rulesProfileId?: string;
+  rulesProfileVersion?: number;
+  captureMode?: DiamondCaptureMode;
+};
 
 export type CreateTeamForAppInput = {
   name: string;
   sport: string;
   zip?: string;
   isPublic?: boolean;
+  diamondScorebook?: CreateTeamDiamondSetup;
 };
 
 export type CreateTeamForAppResult = {
   teamId: string;
   defaultStatConfigCreated: boolean;
   defaultStatConfigError: string | null;
+  diamondScorebookConfigured: boolean;
+  diamondScorebookError: string | null;
+};
+
+export type CreateTeamDiamondProfileOption = {
+  id: string;
+  version: number;
+  label: string;
+  sport: DiamondSport;
 };
 
 const fallbackSportOptions = ['Basketball', 'Soccer', 'Baseball', 'Softball', 'Fastpitch', 'Football', 'Volleyball'];
@@ -29,6 +51,19 @@ export function getCreateTeamSportOptions() {
     .filter((sport) => sport && sport.toLowerCase() !== 'custom');
   const options = presetSports.length ? presetSports : fallbackSportOptions;
   return [...new Set(options)];
+}
+
+export function getCreateTeamDiamondProfileOptions(sport: unknown): CreateTeamDiamondProfileOption[] {
+  const diamondSport = getDiamondSport(sport);
+  if (!diamondSport) return [];
+  return listDiamondRulesProfiles()
+    .filter((profile) => profile.sport === diamondSport)
+    .map((profile) => ({
+      id: profile.id,
+      version: profile.version,
+      label: profile.name,
+      sport: profile.sport
+    }));
 }
 
 export async function createTeamForApp(user: AuthUser | null, input: CreateTeamForAppInput): Promise<CreateTeamForAppResult> {
@@ -59,44 +94,51 @@ export async function createTeamForApp(user: AuthUser | null, input: CreateTeamF
 
   clearAppDataCache(getTeamsSummaryBootstrapCacheKey(user.uid));
 
+  let defaultStatConfigCreated = false;
+  let defaultStatConfigError: string | null = null;
+  try {
+    const defaultStatConfig = getDefaultStatConfigForSport(sport);
+    if (defaultStatConfig) {
+      await createConfig(teamId, defaultStatConfig);
+      defaultStatConfigCreated = true;
+    }
+  } catch (error: any) {
+    defaultStatConfigError = error?.message || 'Unable to create the default stat config.';
+  }
+
+  let diamondScorebookConfigured = false;
+  let diamondScorebookError: string | null = null;
   const diamondSport = getDiamondSport(sport);
-  const configureDiamond = async () => {
-    if (!diamondSport) return;
+  if (diamondSport && input.diamondScorebook?.enabled === true) {
+    const availableProfiles = getCreateTeamDiamondProfileOptions(sport);
+    const requestedProfile = availableProfiles.find((profile) =>
+      profile.id === cleanString(input.diamondScorebook?.rulesProfileId) &&
+      profile.version === Number(input.diamondScorebook?.rulesProfileVersion ?? 1)
+    );
+    const selectedProfile = requestedProfile || availableProfiles.find((profile) => profile.id === `${diamondSport}-youth`);
     try {
-      await configureDiamondTeam(teamId, diamondSport);
-    } catch {
+      if (!selectedProfile) throw new Error('No supported Diamond rules profile is available for this sport.');
+      await configureDiamondTeam(teamId, diamondSport, selectedProfile.id, {
+        enabled: true,
+        rulesProfileVersion: selectedProfile.version,
+        captureMode: input.diamondScorebook.captureMode === 'full' ? 'full' : 'quick'
+      });
+      diamondScorebookConfigured = true;
+    } catch (error: any) {
+      diamondScorebookError = error?.message || 'Unable to enable Diamond Scorebook v2.';
       // Diamond is intentionally optional and policy-gated. A missing, disabled,
       // or unreadable rollout policy must never roll back a usable team or its
       // existing legacy tracker configuration.
     }
-  };
-
-  try {
-    const defaultStatConfig = getDefaultStatConfigForSport(sport);
-    if (!defaultStatConfig) {
-      await configureDiamond();
-      return {
-        teamId,
-        defaultStatConfigCreated: false,
-        defaultStatConfigError: null
-      };
-    }
-
-    await createConfig(teamId, defaultStatConfig);
-    await configureDiamond();
-    return {
-      teamId,
-      defaultStatConfigCreated: true,
-      defaultStatConfigError: null
-    };
-  } catch (error: any) {
-    await configureDiamond();
-    return {
-      teamId,
-      defaultStatConfigCreated: false,
-      defaultStatConfigError: error?.message || 'Unable to create the default stat config.'
-    };
   }
+
+  return {
+    teamId,
+    defaultStatConfigCreated,
+    defaultStatConfigError,
+    diamondScorebookConfigured,
+    diamondScorebookError
+  };
 }
 
 function cleanString(value: unknown) {

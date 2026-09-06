@@ -1,18 +1,31 @@
 import { useMemo, useRef, useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, CheckCircle2, Loader2, Save, Shield, Users } from 'lucide-react';
-import { createTeamForApp, getCreateTeamSportOptions } from '../lib/teamCreationService';
+import {
+  createTeamForApp,
+  getCreateTeamDiamondProfileOptions,
+  getCreateTeamSportOptions
+} from '../lib/teamCreationService';
+import { isDiamondScorebookUiEnabled } from '../lib/launchFeatures';
 import type { AuthState } from '../lib/types';
 
 export function CreateTeam({ auth }: { auth: AuthState }) {
   const navigate = useNavigate();
+  const diamondScorebookUiEnabled = isDiamondScorebookUiEnabled();
   const sportOptions = useMemo(() => getCreateTeamSportOptions(), []);
   const [form, setForm] = useState({
     name: '',
     sport: sportOptions[0] || 'Basketball',
     zip: '',
-    isPublic: true
+    isPublic: true,
+    diamondEnabled: false,
+    diamondRulesProfileId: '',
+    diamondCaptureMode: 'quick' as 'quick' | 'full'
   });
+  const diamondProfiles = useMemo(
+    () => diamondScorebookUiEnabled ? getCreateTeamDiamondProfileOptions(form.sport) : [],
+    [diamondScorebookUiEnabled, form.sport]
+  );
   const [saving, setSaving] = useState(false);
   const [nameError, setNameError] = useState('');
   const [sportError, setSportError] = useState('');
@@ -58,12 +71,28 @@ export function CreateTeam({ auth }: { auth: AuthState }) {
         name: trimmedName,
         sport: trimmedSport,
         zip: form.zip,
-        isPublic: form.isPublic
+        isPublic: form.isPublic,
+        ...(diamondScorebookUiEnabled ? {
+          diamondScorebook: {
+            enabled: form.diamondEnabled,
+            rulesProfileId: form.diamondRulesProfileId || diamondProfiles[0]?.id,
+            rulesProfileVersion: diamondProfiles.find((profile) => profile.id === form.diamondRulesProfileId)?.version || diamondProfiles[0]?.version,
+            captureMode: form.diamondCaptureMode
+          }
+        } : {})
       });
       completedTeamIdRef.current = result.teamId;
-      if (result.defaultStatConfigError) {
+      const warnings = [
+        result.defaultStatConfigError
+          ? `the default stat config could not be added: ${result.defaultStatConfigError}`
+          : '',
+        diamondScorebookUiEnabled && result.diamondScorebookError
+          ? `Diamond Scorebook v2 could not be enabled: ${result.diamondScorebookError}`
+          : ''
+      ].filter(Boolean);
+      if (warnings.length) {
         setCreatedTeamId(result.teamId);
-        setStatConfigWarning(`Team created, but the default stat config could not be added: ${result.defaultStatConfigError}`);
+        setStatConfigWarning(`Team created, but ${warnings.join(' Also, ')}.`);
         return;
       }
       navigate(`/teams/${encodeURIComponent(result.teamId)}`, { replace: true });
@@ -140,7 +169,15 @@ export function CreateTeam({ auth }: { auth: AuthState }) {
             <select
               value={form.sport}
               onChange={(event) => {
-                setForm((current) => ({ ...current, sport: event.target.value }));
+                const sport = event.target.value;
+                const profiles = diamondScorebookUiEnabled ? getCreateTeamDiamondProfileOptions(sport) : [];
+                setForm((current) => ({
+                  ...current,
+                  sport,
+                  diamondEnabled: false,
+                  diamondRulesProfileId: profiles[0]?.id || '',
+                  diamondCaptureMode: 'quick'
+                }));
                 if (sportError) setSportError('');
               }}
               className={`auth-input mt-1 ${sportError ? '!border-rose-400 !bg-rose-50' : ''}`}
@@ -149,6 +186,64 @@ export function CreateTeam({ auth }: { auth: AuthState }) {
             </select>
             {sportError ? <span className="mt-1 block text-xs font-semibold text-rose-700">{sportError}</span> : null}
           </label>
+
+          {diamondScorebookUiEnabled && diamondProfiles.length ? (
+            <fieldset className="rounded-2xl border border-sky-200 bg-sky-50 p-4">
+              <legend className="px-1 text-sm font-black text-gray-950">Diamond Scorebook v2</legend>
+              <label className="flex items-start gap-3">
+                <input
+                  type="checkbox"
+                  aria-label="Enable for new games"
+                  checked={form.diamondEnabled}
+                  onChange={(event) => setForm((current) => ({
+                    ...current,
+                    diamondEnabled: event.target.checked,
+                    diamondRulesProfileId: current.diamondRulesProfileId || diamondProfiles[0]?.id || ''
+                  }))}
+                  className="mt-1 h-4 w-4 rounded border-gray-300 text-primary-600"
+                />
+                <span>
+                  <span className="block text-sm font-black text-gray-950">Enable for new games</span>
+                  <span className="mt-1 block text-xs font-semibold leading-5 text-gray-600">
+                    Off by default. Existing games and the classic tracker stay unchanged.
+                  </span>
+                </span>
+              </label>
+
+              {form.diamondEnabled ? (
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <label className="block">
+                    <span className="text-xs font-black text-gray-800">Rules profile</span>
+                    <select
+                      aria-label="Diamond rules profile"
+                      value={form.diamondRulesProfileId || diamondProfiles[0]?.id || ''}
+                      onChange={(event) => setForm((current) => ({ ...current, diamondRulesProfileId: event.target.value }))}
+                      className="auth-input mt-1"
+                    >
+                      {diamondProfiles.map((profile) => (
+                        <option key={`${profile.id}@${profile.version}`} value={profile.id}>{profile.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="block">
+                    <span className="text-xs font-black text-gray-800">Capture mode</span>
+                    <select
+                      aria-label="Diamond capture mode"
+                      value={form.diamondCaptureMode}
+                      onChange={(event) => setForm((current) => ({
+                        ...current,
+                        diamondCaptureMode: event.target.value === 'full' ? 'full' : 'quick'
+                      }))}
+                      className="auth-input mt-1"
+                    >
+                      <option value="quick">Quick — fewer prompts</option>
+                      <option value="full">Full — pitches and fielding detail</option>
+                    </select>
+                  </label>
+                </div>
+              ) : null}
+            </fieldset>
+          ) : null}
 
           <label className="block">
             <span className="text-sm font-black text-gray-950">ZIP</span>

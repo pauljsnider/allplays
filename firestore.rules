@@ -35,10 +35,33 @@ service cloud.firestore {
              data.mode in ['disabled', 'observe', 'enforce'] &&
              data.exemptUserIds is list &&
              data.exemptUserIds.size() <= 1000 &&
-             (!data.keys().hasAny(['updatedAt']) || data.updatedAt is timestamp) &&
+             isPolicyAuditFieldsValid(data);
+    }
+
+    function isPolicyAuditFieldsValid(data) {
+      return (!data.keys().hasAny(['updatedAt']) || data.updatedAt is timestamp) &&
              (!data.keys().hasAny(['updatedBy']) || data.updatedBy == request.auth.uid) &&
              (!data.keys().hasAny(['rolloutNote']) ||
                (data.rolloutNote is string && data.rolloutNote.size() <= 500));
+    }
+
+    function isDiamondScorebookPolicyPayloadValid(data) {
+      return data.keys().hasOnly([
+               'mode', 'revision', 'teamIds', 'rolloutPercent', 'minimumAppBuild', 'updatedAt', 'updatedBy', 'rolloutNote'
+             ]) &&
+             data.keys().hasAll(['mode', 'revision', 'teamIds']) &&
+             data.mode in ['disabled', 'internal', 'pilot', 'enabled'] &&
+             data.revision is int && data.revision > 0 &&
+             data.teamIds is list && data.teamIds.size() <= 500 &&
+             ((data.mode == 'enabled' &&
+               data.keys().hasAll(['rolloutPercent']) &&
+               data.rolloutPercent is int &&
+               data.rolloutPercent in [1, 10, 50, 100]) ||
+              (data.mode != 'enabled' &&
+               !data.keys().hasAny(['rolloutPercent']))) &&
+             (!data.keys().hasAny(['minimumAppBuild']) ||
+               (data.minimumAppBuild is int && data.minimumAppBuild >= 0)) &&
+             isPolicyAuditFieldsValid(data);
     }
 
     function isPremiumAccessConfigPayloadValid(data) {
@@ -426,7 +449,8 @@ service cloud.firestore {
         'privateCalendarToken',
         'calendarFeedToken',
         'teamCalendarToken'
-      ]);
+      ]) &&
+      !data.keys().hasAny(['diamondScorebook']);
     }
 
     function keepsCalendarCredentialFieldsImmutable() {
@@ -446,6 +470,7 @@ service cloud.firestore {
       return request.resource.data.get('ownerId', '') == resource.data.get('ownerId', '') &&
              request.resource.data.get('isAdmin', false) == resource.data.get('isAdmin', false) &&
              request.resource.data.get('isPlatformAdmin', false) == resource.data.get('isPlatformAdmin', false) &&
+             request.resource.data.get('diamondScorebook', null) == resource.data.get('diamondScorebook', null) &&
              keepsCalendarCredentialFieldsImmutable();
     }
 
@@ -490,6 +515,49 @@ service cloud.firestore {
                (teamPermission(teamId, 'scorekeeping').get('mode', '') == 'selected' &&
                 request.auth.uid in teamPermission(teamId, 'scorekeeping').get('memberIds', []))
              );
+    }
+
+    function gameUsesDiamondScorebook(teamId, gameId) {
+      return get(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId))
+               .data.get('trackingEngine', '') == 'diamond-v2';
+    }
+
+    function gameUsesDiamondGeneration(teamId, gameId, instanceId) {
+      let gameData = get(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)).data;
+      return gameData.get('trackingEngine', '') == 'diamond-v2' &&
+             gameData.get('diamondScorebookInstanceId', '') == instanceId;
+    }
+
+    function diamondServerOwnedGameFields() {
+      return [
+        'trackingEngine', 'trackingEngineActivatedAt', 'trackingEngineActivatedBy',
+        'trackingEngineRevision', 'diamondScorebookInstanceId',
+        'diamondStatConfigSnapshotHash', 'diamondProjectionRevision',
+        'diamondProjectionCheckpointHash', 'diamondProjectionHash',
+        'diamondProjectionStatus', 'diamondProjectionComplete', 'diamondLifecycle',
+        'diamondPublicTeamStats',
+        'diamondAiState', 'aiRecap', 'gameRecap', 'recap',
+        'aiInsights', 'gameInsights', 'insights'
+      ];
+    }
+
+    function diamondProtectedGameFields() {
+      return [
+        'statTrackerConfigId', 'isHome', 'teamSide', 'homeAway',
+        'homeTeamId', 'awayTeamId', 'opponentTeamId', 'teamScore', 'opponentScore',
+        'score', 'liveBaseballState', 'currentInning', 'inningHalf',
+        'balls', 'strikes', 'outs', 'currentPeriod', 'period',
+        'liveHasData', 'liveLineup',
+        'liveClockMs', 'liveClockRunning', 'liveClockPeriod', 'liveClockUpdatedAt',
+        'liveResetAt', 'liveResetEventId', 'servingTeam'
+      ].concat(scoreProjectionGameFields());
+    }
+
+    function isDiamondProtectedGameMutation() {
+      let affected = request.resource.data.diff(resource.data).affectedKeys();
+      return affected.hasAny(diamondServerOwnedGameFields()) ||
+             (resource.data.get('trackingEngine', '') == 'diamond-v2' &&
+               affected.hasAny(diamondProtectedGameFields()));
     }
 
     function canVideographGame(teamId, gameId) {
@@ -702,13 +770,19 @@ service cloud.firestore {
              request.resource.data.scoreUpdatedBy == request.auth.uid;
     }
 
+    function scoreProjectionGameFields() {
+      return [
+        'homeScore', 'awayScore', 'summary', 'status', 'liveStatus',
+        'opponentStats', 'completedAt', 'completedBy', 'completedByName',
+        'scoreUpdatedAt', 'scoreUpdatedBy', 'scoreStreamSessionId'
+      ];
+    }
+
     function isScorekeepingGameUpdate(teamId, gameId) {
       return canScorekeepGame(teamId, gameId) &&
-             request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-               'homeScore', 'awayScore', 'summary', 'status', 'liveStatus', 'opponentStats',
-               'completedAt', 'completedBy', 'completedByName', 'updatedAt',
-               'scoreUpdatedAt', 'scoreUpdatedBy', 'scoreStreamSessionId'
-             ]) &&
+             !gameUsesDiamondScorebook(teamId, gameId) &&
+             request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(scoreProjectionGameFields().concat(['updatedAt'])) &&
              isScoreMetadataAttributionValid() &&
              isDelegatedScorekeeperLifecycleTransitionAllowed() &&
              isDelegatedScorekeeperCompletionAttributionValid();
@@ -724,14 +798,20 @@ service cloud.firestore {
              isScoreMetadataAttributionValid();
     }
 
-    function replayArchiveFields() {
+    function legacyReplayArchiveFields() {
       return [
-        'replayVideo', 'recordedVideo', 'videoReplay', 'replayVideoUrl',
+        'recordedVideo', 'videoReplay', 'replayVideoUrl',
         'recordedVideoUrl', 'videoReplayUrl', 'archivedVideoUrl',
         'replayVideoPublicUrl', 'replayVideoPosterUrl', 'replayVideoTitle',
         'replayVideoDurationMs', 'replayStatus', 'recordedReplayStatus',
-        'videoReplayStatus', 'replayVideoFallbackDisabled'
+        'videoReplayStatus'
       ];
+    }
+
+    function replayArchiveFields() {
+      return legacyReplayArchiveFields().concat([
+        'replayVideo', 'replayVideoFallbackDisabled'
+      ]);
     }
 
     function isReplayArchiveMutation() {
@@ -741,13 +821,7 @@ service cloud.firestore {
     function isReplayArchiveOnlyUpdate() {
       let affectedKeys = request.resource.data.diff(resource.data).affectedKeys();
       return affectedKeys.hasAny(replayArchiveFields()) &&
-             affectedKeys.hasOnly([
-               'replayVideo', 'recordedVideo', 'videoReplay', 'replayVideoUrl',
-               'recordedVideoUrl', 'videoReplayUrl', 'archivedVideoUrl',
-               'replayVideoPublicUrl', 'replayVideoPosterUrl', 'replayVideoTitle',
-               'replayVideoDurationMs', 'replayStatus', 'recordedReplayStatus',
-               'videoReplayStatus', 'replayVideoFallbackDisabled', 'updatedAt'
-             ]);
+             affectedKeys.hasOnly(replayArchiveFields().concat(['updatedAt']));
     }
 
     function isCompletedReplayLifecycle(data) {
@@ -788,12 +862,7 @@ service cloud.firestore {
     }
 
     function hasNoLegacyReplayArchiveFields(data) {
-      return !data.keys().hasAny([
-        'recordedVideo', 'videoReplay', 'replayVideoUrl', 'recordedVideoUrl',
-        'videoReplayUrl', 'archivedVideoUrl', 'replayVideoPublicUrl',
-        'replayVideoPosterUrl', 'replayVideoTitle', 'replayVideoDurationMs',
-        'replayStatus', 'recordedReplayStatus', 'videoReplayStatus'
-      ]);
+      return !data.keys().hasAny(legacyReplayArchiveFields());
     }
 
     function isCanonicalReplayMutationTarget(data) {
@@ -3498,11 +3567,14 @@ service cloud.firestore {
     // Server and rules share this staged rollout policy. Keeping emergency
     // policy control with global admins avoids exposing the exemption list.
     match /securityPolicies/{policyId} {
-      allow read: if isGlobalAdmin() && policyId == 'verifiedEmail';
+      allow read: if isGlobalAdmin() && policyId in ['verifiedEmail', 'diamondScorebook'];
       allow create, update: if isGlobalAdmin() &&
                                policyId == 'verifiedEmail' &&
                                isVerifiedEmailPolicyPayloadValid(request.resource.data);
-      allow delete: if isGlobalAdmin() && policyId == 'verifiedEmail';
+      allow create, update: if isGlobalAdmin() &&
+                               policyId == 'diamondScorebook' &&
+                               isDiamondScorebookPolicyPayloadValid(request.resource.data);
+      allow delete: if isGlobalAdmin() && policyId in ['verifiedEmail', 'diamondScorebook'];
     }
 
     match /accountMergeRequests/{requestId} {
@@ -3851,6 +3923,10 @@ service cloud.firestore {
         allow read, write: if false;
       }
 
+      match /featureSettings/{settingId} {
+        allow read, write: if false;
+      }
+
       // In-app audit records for officiating assignment lifecycle changes.
       match /officiatingNotifications/{notificationId} {
         allow read: if isTeamOwnerOrAdmin(teamId) ||
@@ -3882,13 +3958,20 @@ service cloud.firestore {
       match /games/{gameId} {
         allow read: if canReadGameDocument(teamId, gameId, resource.data);
         allow create: if isTeamOwnerOrAdmin(teamId) &&
+                         !request.resource.data.keys().hasAny(diamondServerOwnedGameFields()) &&
                          !request.resource.data.keys().hasAny(replayArchiveFields());
         allow delete: if isTeamOwnerOrAdmin(teamId);
-        allow update: if !isBroadcastSessionOnlyUpdate() &&
+        // Keep the delegated scorekeeping path independent from the broader
+        // owner/official/video mutation checks. Its narrow affected-key schema
+        // already rejects every Diamond-owned field and explicitly rejects v2
+        // games; combining both paths exceeds Firestore's expression budget for
+        // otherwise valid legacy delegated-scorekeeper writes.
+        allow update: if isScorekeepingGameUpdate(teamId, gameId);
+        allow update: if !isDiamondProtectedGameMutation() &&
+                        !isBroadcastSessionOnlyUpdate() &&
                         !isReplayArchiveMutation() &&
                         (isTeamOwnerOrAdmin(teamId) ||
                          (isOfficialForGame() && isOfficialGameUpdate()) ||
-                         isScorekeepingGameUpdate(teamId, gameId) ||
                          isVideographyGameUpdate(teamId, gameId));
         // Replay links use a separate, bounded schema path so their provider
         // validation does not consume the expression budget of other roles.
@@ -3905,29 +3988,39 @@ service cloud.firestore {
 
         // Events subcollection
         match /events/{eventId} {
-          allow read: if canReadGameSubcollectionDocument(teamId, gameId);
-          allow create, update: if isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId);
-          allow delete: if isTeamOwnerOrAdmin(teamId);
+          allow read: if !gameUsesDiamondScorebook(teamId, gameId) &&
+                         canReadGameSubcollectionDocument(teamId, gameId);
+          allow create, update: if !gameUsesDiamondScorebook(teamId, gameId) &&
+                                  (isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId));
+          allow delete: if !gameUsesDiamondScorebook(teamId, gameId) && isTeamOwnerOrAdmin(teamId);
         }
 
         // Aggregated stats subcollection
         match /aggregatedStats/{statId} {
-          allow read: if canReadGameSubcollectionDocument(teamId, gameId);
-          allow create, update: if isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId);
-          allow delete: if isTeamOwnerOrAdmin(teamId);
+          allow read: if !gameUsesDiamondScorebook(teamId, gameId) &&
+                         canReadGameSubcollectionDocument(teamId, gameId);
+          allow create, update: if !gameUsesDiamondScorebook(teamId, gameId) &&
+                                  (isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId));
+          allow delete: if !gameUsesDiamondScorebook(teamId, gameId) &&
+                           isTeamOwnerOrAdmin(teamId);
         }
 
         // Manager-only team-scoped stats subcollection
         match /teamStats/{statId} {
-          allow read: if isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId);
-          allow create, update: if isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId);
-          allow delete: if isTeamOwnerOrAdmin(teamId);
+          allow read: if !gameUsesDiamondScorebook(teamId, gameId) &&
+                         (isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId));
+          allow create, update: if !gameUsesDiamondScorebook(teamId, gameId) &&
+                                  (isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId));
+          allow delete: if !gameUsesDiamondScorebook(teamId, gameId) &&
+                           isTeamOwnerOrAdmin(teamId);
         }
 
         // Manager-only player stats subcollection for private player-scoped metrics.
         match /privatePlayerStats/{statId} {
-          allow read, create, update: if isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId);
-          allow delete: if isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId);
+          allow read: if !gameUsesDiamondScorebook(teamId, gameId) &&
+                         (isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId));
+          allow create, update, delete: if !gameUsesDiamondScorebook(teamId, gameId) &&
+                                          (isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId));
         }
 
         // Live Events subcollection - for real-time game broadcasting
@@ -3937,10 +4030,44 @@ service cloud.firestore {
                    (!data.keys().hasAny(['actorUid']) || data.actorUid == null || data.actorUid == request.auth.uid);
           }
 
-          allow read: if canReadGameSubcollectionDocument(teamId, gameId);
-          allow create: if (isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId)) &&
+          allow read: if !gameUsesDiamondScorebook(teamId, gameId) &&
+                         canReadGameSubcollectionDocument(teamId, gameId);
+          allow create: if !gameUsesDiamondScorebook(teamId, gameId) &&
+                           (isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId)) &&
                            hasValidLiveEventAttribution(request.resource.data);  // Stat tracker writes
           allow update, delete: if false;  // Events are immutable
+        }
+
+        match /diamondScorebooks/{document=**} {
+          allow read, write: if false;
+        }
+
+        match /diamondPublic/{document=**} {
+          allow read, write: if false;
+        }
+
+        // Generation-scoped Diamond projections never share a list namespace
+        // with legacy stats, so a deleted/recreated game cannot expose stale data.
+        match /diamondStatGenerations/{instanceId} {
+          match /publicPlayerStats/{playerId} {
+            allow read: if canReadGameSubcollectionDocument(teamId, gameId) &&
+                           gameUsesDiamondGeneration(teamId, gameId, instanceId);
+          }
+        }
+
+        // Live interactions are isolated by immutable Diamond instance in the
+        // path. Clients can read only the current generation; all writes,
+        // including manager moderation, go through verified callables.
+        match /diamondLiveGenerations/{instanceId} {
+          match /chat/{messageId} {
+            allow read: if canReadGameSubcollectionDocument(teamId, gameId) &&
+                           gameUsesDiamondGeneration(teamId, gameId, instanceId);
+          }
+
+          match /reactions/{reactionId} {
+            allow read: if canReadGameSubcollectionDocument(teamId, gameId) &&
+                           gameUsesDiamondGeneration(teamId, gameId, instanceId);
+          }
         }
 
         // Live Chat subcollection - game-specific chat for live viewers
@@ -3980,8 +4107,10 @@ service cloud.firestore {
         }
 
         match /liveChat/{messageId} {
-          allow read: if canReadGameSubcollectionDocument(teamId, gameId);
-          allow create: if isVerifiedForSensitiveWrite()
+          allow read: if !gameUsesDiamondScorebook(teamId, gameId) &&
+                         canReadGameSubcollectionDocument(teamId, gameId);
+          allow create: if !gameUsesDiamondScorebook(teamId, gameId)
+            && isVerifiedForSensitiveWrite()
             && canCreateLiveGameInteraction(teamId, gameId)
             && (isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId) ||
                 (exists(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)) &&
@@ -3995,8 +4124,10 @@ service cloud.firestore {
 
         // Live Reactions subcollection - ephemeral reactions during live games
         match /liveReactions/{reactionId} {
-          allow read: if canReadGameSubcollectionDocument(teamId, gameId);
-          allow create: if isVerifiedForSensitiveWrite()
+          allow read: if !gameUsesDiamondScorebook(teamId, gameId) &&
+                         canReadGameSubcollectionDocument(teamId, gameId);
+          allow create: if !gameUsesDiamondScorebook(teamId, gameId)
+            && isVerifiedForSensitiveWrite()
             && canCreateLiveGameInteraction(teamId, gameId)
             && (isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId) ||
                 (exists(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)) &&

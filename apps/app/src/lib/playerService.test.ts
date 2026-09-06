@@ -7,6 +7,7 @@ const legacyPlayerDbMocks = vi.hoisted(() => ({
   deleteLegacyImageUpload: vi.fn(),
   getAggregatedStatsForGames: vi.fn(),
   getAggregatedStatsDocumentForPlayer: vi.fn(),
+  getDiamondPublicPlayerStatDocument: vi.fn(),
   getAggregatedStatsForPlayer: vi.fn(),
   getConfigs: vi.fn(),
   getGameEvents: vi.fn(),
@@ -142,11 +143,43 @@ import {
   loadParentPlayerStatsDetail,
   loadParentPlayerVideoClips,
   normalizeAthleteProfileHighlightClipUrl,
+  resolvePlayerDiamondStatDocument,
   saveParentAthleteProfileDraft,
   savePlayerCustomRosterFieldValues,
   saveStaffPlayerRosterDetails,
   updateParentPlayerEditableProfile
 } from './playerService';
+
+describe('Diamond player season absence evidence', () => {
+  const game = {
+    id: 'game-1',
+    trackingEngine: 'diamond-v2',
+    diamondProjectionStatus: 'current',
+    diamondProjectionComplete: true,
+    diamondScorebookInstanceId: '00000000-0000-4000-8000-000000000001',
+    diamondProjectionRevision: 8,
+    diamondProjectionCheckpointHash: `sha256:${'a'.repeat(64)}`,
+    diamondStatConfigSnapshotHash: `sha256:${'b'.repeat(64)}`,
+    diamondProjectionHash: `sha256:${'c'.repeat(64)}`
+  };
+
+  it('accepts confirmed DNP/roster absence but never turns a public read failure into absence', () => {
+    expect(resolvePlayerDiamondStatDocument({
+      playerId: 'p1', game, publicDocument: {}, privateDocument: null,
+      privateLoadStatus: 'complete', publicLoadStatus: 'complete'
+    })).toMatchObject({ statVisibility: 'manager-internal', privateStatsStatus: 'complete', absenceConfirmed: true });
+
+    expect(resolvePlayerDiamondStatDocument({
+      playerId: 'p1', game, publicDocument: {}, privateDocument: null,
+      privateLoadStatus: 'complete', publicLoadStatus: 'unavailable'
+    })).toMatchObject({ statVisibility: 'public', privateStatsStatus: 'unavailable', absenceConfirmed: false });
+
+    expect(resolvePlayerDiamondStatDocument({
+      playerId: 'p1', game: { ...game, diamondProjectionHash: '' }, publicDocument: {}, privateDocument: null,
+      privateLoadStatus: 'complete', publicLoadStatus: 'complete'
+    })).toMatchObject({ statVisibility: 'public', absenceConfirmed: false });
+  });
+});
 
 beforeEach(() => {
   nativeRuntimeState.isNative = false;
@@ -1626,6 +1659,10 @@ describe('loadParentPlayerDetail custom roster fields', () => {
   });
 
   it('keeps configured private Diamond stats out of public rows, totals, and rankings', async () => {
+    const instanceId = '00000000-0000-4000-8000-000000000001';
+    const checkpointHash = `sha256:${'a'.repeat(64)}`;
+    const configHash = `sha256:${'b'.repeat(64)}`;
+    const projectionHash = `sha256:${'c'.repeat(64)}`;
     const config = {
       id: 'baseball',
       baseType: 'Baseball',
@@ -1648,18 +1685,46 @@ describe('loadParentPlayerDetail custom roster fields', () => {
       trackingEngine: 'diamond-v2',
       diamondProjectionStatus: 'current',
       diamondProjectionRevision: 4,
+      diamondProjectionComplete: true,
+      diamondScorebookInstanceId: instanceId,
+      diamondProjectionCheckpointHash: checkpointHash,
+      diamondStatConfigSnapshotHash: configHash,
+      diamondProjectionHash: projectionHash,
       rulesProfileId: 'baseball-youth@1'
     }]);
     legacyPlayerDbMocks.getConfigs.mockResolvedValue([config]);
     legacyPlayerProfileMocks.selectAnalyticsConfig.mockReturnValue(config as any);
-    legacyPlayerDbMocks.getAggregatedStatsDocumentForPlayer.mockResolvedValue({
+    legacyPlayerDbMocks.getDiamondPublicPlayerStatDocument.mockResolvedValue({
+      schemaVersion: 1,
       trackingEngine: 'diamond-v2',
+      projectionSchemaVersion: 1,
+      playerId: 'player-1',
+      playerName: 'Sam Player',
+      playerNumber: '',
       sourceRevision: 4,
+      checkpointHash,
       complete: true,
       participated: true,
-      stats: { h: 2, pitches: 81 },
-      statCoverage: { h: 'complete', pitches: 'complete' },
-      coverage: { batting: 'complete', pitches: 'complete' }
+      participationStatus: 'appeared',
+      participationSource: 'diamond-v2',
+      publicStatIds: ['h'],
+      stats: { h: 2 },
+      observedStats: {},
+      derivedStats: {},
+      observedDerivedStats: {},
+      statCoverage: { h: 'complete' },
+      statSources: {},
+      sourcePlayIds: [],
+      unavailableDerivedStats: [],
+      missingStatFamilies: [],
+      coverage: { batting: 'complete' },
+      teamId: 'team-1',
+      diamondGameId: 'game-1',
+      instanceId,
+      diamondScorebookInstanceId: instanceId,
+      projectionGeneration: instanceId,
+      statConfigSnapshotHash: configHash,
+      projectionHash
     });
 
     const detail = await loadParentPlayerStatsDetail({
@@ -1671,9 +1736,46 @@ describe('loadParentPlayerDetail custom roster fields', () => {
     expect(detail.summary.totals).toEqual(expect.objectContaining({ h: 2 }));
     expect(detail.summary.totals).not.toHaveProperty('pitches');
     expect(detail.summary.statDefinitions?.map((definition) => definition.id)).not.toContain('pitches');
+    expect(legacyPlayerDbMocks.getDiamondPublicPlayerStatDocument).toHaveBeenCalledWith(
+      `teams/team-1/games/game-1/diamondStatGenerations/${instanceId}/publicPlayerStats`,
+      'player-1'
+    );
+    expect(legacyPlayerDbMocks.getAggregatedStatsDocumentForPlayer).not.toHaveBeenCalled();
     expect(legacyPlayerProfileMocks.buildPlayerLeaderboardSnapshot).toHaveBeenCalledWith(expect.objectContaining({
       players: [{ id: 'player-1', name: 'Sam Player' }]
     }));
+  });
+
+  it('aggregates the complete 40-game season while limiting only visible game history', async () => {
+    const games = Array.from({ length: 40 }, (_, index) => ({
+      id: `game-${String(index + 1)}`,
+      status: 'completed',
+      date: new Date(Date.UTC(2026, 7, 1, 18, 0, index)).toISOString(),
+      opponent: `Opponent ${String(index + 1)}`
+    }));
+    legacyPlayerDbMocks.getGames.mockResolvedValue(games);
+    legacyPlayerDbMocks.getAggregatedStatsDocumentForPlayer.mockImplementation(async () => ({
+      stats: { pts: 1 },
+      timeMs: 60_000
+    }));
+
+    const detail = await loadParentPlayerStatsDetail({
+      uid: 'parent-1',
+      email: 'parent@example.com',
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
+    } as any, 'team-1', 'player-1');
+
+    expect(legacyPlayerDbMocks.getAggregatedStatsDocumentForPlayer).toHaveBeenCalledTimes(40);
+    expect(detail.statRows).toHaveLength(20);
+    expect(detail.summary).toMatchObject({
+      gamesPlayed: 40,
+      gamesWithTime: 40,
+      totalTimeMs: 2_400_000,
+      totals: { pts: 40 },
+      averages: { pts: 1 },
+      gameLimit: 20,
+      hasMoreGames: true
+    });
   });
 });
 

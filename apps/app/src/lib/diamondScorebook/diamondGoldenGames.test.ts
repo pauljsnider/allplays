@@ -14,6 +14,7 @@ import {
   requireDiamondRulesProfile,
   verifyDiamondLedger,
   type DiamondCaptureMode,
+  type DiamondBattingRole,
   type DiamondCommand,
   type DiamondCommandPayloadMap,
   type DiamondCommandType,
@@ -47,6 +48,7 @@ const COMMAND_GOLDEN_INVENTORY = {
   scorer_handoff: 'fastpitch lifecycle fixture',
   suspend: 'fastpitch lifecycle fixture',
   resume: 'fastpitch lifecycle fixture',
+  cancel: 'manager-authorized cancellation fixture',
   finalize: 'walkoff, mercy, and correction fixtures',
   reopen_for_correction: 'correction fixture',
   private_note: 'correction fixture',
@@ -55,31 +57,31 @@ const COMMAND_GOLDEN_INVENTORY = {
   supersede_event: 'correction fixture'
 } as const satisfies Record<DiamondCommandType, string>;
 
-type RuleBehavior = 'identity' | 'enforced' | 'stats' | 'metadata-only' | 'partially-enforced';
+type RuleBehavior = 'identity' | 'enforced' | 'stats' | 'explicit-decision' | 'advisory' | 'partially-enforced';
 
 const RULE_BEHAVIOR_INVENTORY = {
   id: 'identity',
   version: 'identity',
   name: 'identity',
   sport: 'identity',
-  scheduledInnings: 'metadata-only',
+  scheduledInnings: 'enforced',
   eraInningsBasis: 'stats',
-  timeLimitMinutes: 'metadata-only',
-  inningRunLimit: 'metadata-only',
-  runAheadRules: 'metadata-only',
-  tiebreaker: 'partially-enforced',
-  continuousBatting: 'metadata-only',
-  freeSubstitution: 'enforced',
-  starterReentryLimit: 'enforced',
-  allowsDh: 'metadata-only',
-  allowsEh: 'metadata-only',
-  allowsEp: 'metadata-only',
+  timeLimitMinutes: 'explicit-decision',
+  inningRunLimit: 'explicit-decision',
+  runAheadRules: 'enforced',
+  tiebreaker: 'enforced',
+  continuousBatting: 'advisory',
+  freeSubstitution: 'partially-enforced',
+  starterReentryLimit: 'partially-enforced',
+  allowsDh: 'partially-enforced',
+  allowsEh: 'partially-enforced',
+  allowsEp: 'partially-enforced',
   dpFlex: 'partially-enforced',
   courtesyRunner: 'partially-enforced',
-  droppedThirdStrike: 'partially-enforced',
+  droppedThirdStrike: 'enforced',
   illegalPitchPolicy: 'partially-enforced',
-  lookBackRule: 'metadata-only',
-  leavingEarlyRule: 'metadata-only'
+  lookBackRule: 'advisory',
+  leavingEarlyRule: 'advisory'
 } as const satisfies Record<keyof DiamondRulesProfile, RuleBehavior>;
 
 function uuid(index: number) {
@@ -119,13 +121,14 @@ function createHarness(profileId = 'baseball-nfhs', captureMode: DiamondCaptureM
   const submit = <K extends DiamondCommandType>(
     type: K,
     payload: DiamondCommandPayloadMap[K],
-    options: Readonly<{ actorUid?: string; accept?: boolean }> = {}
+    options: Readonly<{ actorUid?: string; accept?: boolean; managerAuthorized?: boolean }> = {}
   ): DiamondExecution => {
     const id = nextId;
     const execution = executeDiamondCommand(ledger, command(type, payload), {
       actorUid: options.actorUid ?? activeScorer,
       eventId: `golden-event-${String(id)}`,
-      serverTimestampMs: 1_900_000_000_000 + id
+      serverTimestampMs: 1_900_000_000_000 + id,
+      ...(options.managerAuthorized === undefined ? {} : { managerAuthorized: options.managerAuthorized })
     });
     nextId += 1;
     if (options.accept !== false) {
@@ -149,11 +152,18 @@ function createHarness(profileId = 'baseball-nfhs', captureMode: DiamondCaptureM
 
 type Harness = ReturnType<typeof createHarness>;
 
-function setLineups(game: Harness, lineupSize = 6) {
+function setLineups(
+  game: Harness,
+  lineupSize = 6,
+  options: Readonly<{ dpSide?: DiamondSide; firstBattingRole?: DiamondBattingRole }> = {}
+) {
   const entries = (side: DiamondSide) =>
     Array.from({ length: lineupSize }, (_, index) => ({
       slot: index + 1,
-      playerId: `${side}-${String(index + 1)}`
+      playerId: `${side}-${String(index + 1)}`,
+      ...(index === 0 && (options.dpSide === side || options.firstBattingRole)
+        ? { battingRole: options.dpSide === side ? ('dp' as const) : options.firstBattingRole }
+        : {})
     }));
 
   game.submit('activate', { initialScorerUid: INITIAL_SCORER, captureMode: game.ledger.captureMode });
@@ -177,8 +187,8 @@ function setLineups(game: Harness, lineupSize = 6) {
   });
 }
 
-function configureGame(game: Harness, options: Readonly<{ lineupSize?: number; start?: boolean }> = {}) {
-  setLineups(game, options.lineupSize);
+function configureGame(game: Harness, options: Readonly<{ lineupSize?: number; start?: boolean; dpSide?: DiamondSide }> = {}) {
+  setLineups(game, options.lineupSize, { dpSide: options.dpSide });
   if (options.start !== false) game.submit('start', {});
 }
 
@@ -190,6 +200,14 @@ function currentMatchup(game: Harness) {
   const pitcherId = game.ledger.state.lineups[fieldingSide].defense.P;
   if (!batterId || !pitcherId) throw new Error('Golden fixture requires a current batter and pitcher.');
   return { battingSide, fieldingSide, batterId, pitcherId };
+}
+
+function previousScheduledBatterId(game: Harness, side: DiamondSide) {
+  const order = game.ledger.state.lineups[side].battingOrder;
+  const previousIndex = (game.ledger.state.nextBatterSlot[side] - 1 + order.length) % order.length;
+  const playerId = order[previousIndex]?.activePlayerId;
+  if (!playerId) throw new Error('Golden fixture requires a previous scheduled batter.');
+  return playerId;
 }
 
 function recordPitch(game: Harness, result: DiamondCommandPayloadMap['record_pitch']['result'] = 'in_play') {
@@ -337,6 +355,7 @@ describe('Diamond public command and rules inventory', () => {
       'add_courtesy_runner',
       'advance_half_inning',
       'advance_runner',
+      'cancel',
       'finalize',
       'place_tiebreaker_runner',
       'private_note',
@@ -360,7 +379,7 @@ describe('Diamond public command and rules inventory', () => {
     ]);
   });
 
-  it('documents enforced, partial, and metadata-only rule-profile behavior without skipped claims', () => {
+  it('documents deterministic, explicit-decision, partial, and advisory rule behavior without skipped claims', () => {
     expect(Object.keys(RULE_BEHAVIOR_INVENTORY).sort()).toEqual([
       'allowsDh',
       'allowsEh',
@@ -387,21 +406,16 @@ describe('Diamond public command and rules inventory', () => {
     ]);
     expect(
       Object.entries(RULE_BEHAVIOR_INVENTORY)
-        .filter(([, behavior]) => behavior === 'metadata-only')
+        .filter(([, behavior]) => behavior === 'advisory')
         .map(([field]) => field)
         .sort()
-    ).toEqual([
-      'allowsDh',
-      'allowsEh',
-      'allowsEp',
-      'continuousBatting',
-      'inningRunLimit',
-      'leavingEarlyRule',
-      'lookBackRule',
-      'runAheadRules',
-      'scheduledInnings',
-      'timeLimitMinutes'
-    ]);
+    ).toEqual(['continuousBatting', 'leavingEarlyRule', 'lookBackRule']);
+    expect(
+      Object.entries(RULE_BEHAVIOR_INVENTORY)
+        .filter(([, behavior]) => behavior === 'explicit-decision')
+        .map(([field]) => field)
+        .sort()
+    ).toEqual(['inningRunLimit', 'timeLimitMinutes']);
 
     const baseball = requireDiamondRulesProfile('baseball-nfhs', 1);
     const fastpitch = requireDiamondRulesProfile('fastpitch-nfhs', 1);
@@ -413,15 +427,15 @@ describe('Diamond public command and rules inventory', () => {
       tiebreaker: { enabled: true, startInning: 8, runnerBase: 'second' }
     });
 
-    // Deliberate gaps in the current public domain contract: there is no clock or
-    // automatic end command, batting-role eligibility is metadata, and neither
-    // look-back nor leaving-early behavior is reduced. DP/FLEX does not enforce
-    // FLEX batting, courtesy runners do not model full participation eligibility,
-    // tiebreakers validate a supplied runner rather than select the prior batter,
-    // dropped-third-strike is scorer-entered, and ball_and_advance does not move
-    // runners automatically. The goldens below assert the supported boundaries.
+    // Deliberate boundaries in the public domain contract: wall-clock expiration
+    // is never inferred; an authorized scorer records the umpire's time/run-cap
+    // decision. Role flags gate lineup admission but do not encode every league's
+    // participation rule. Continuous batting, look-back, and leaving-early remain
+    // advisory. DP/FLEX supports a bounded linked-slot exchange, courtesy runners
+    // do not model every eligibility restriction, and ball_and_advance does not
+    // infer runner movement. The goldens below assert only these supported edges.
     expect(Object.values(RULE_BEHAVIOR_INVENTORY)).toContain('partially-enforced');
-    expect(Object.values(RULE_BEHAVIOR_INVENTORY)).toContain('metadata-only');
+    expect(Object.values(RULE_BEHAVIOR_INVENTORY)).toContain('advisory');
   });
 });
 
@@ -453,32 +467,68 @@ describe('Baseball golden games', () => {
     expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
   });
 
-  it('keeps mercy, scheduled-inning, clock, and inning-cap rules metadata-only until explicit finalization', () => {
+  it('enforces run-ahead finalization and an explicit audited inning run-limit ending', () => {
     const mercy = createHarness('baseball-nfhs', 'quick');
     configureGame(mercy);
     for (let run = 0; run < 10; run += 1) recordSoloHomeRun(mercy);
-    advanceToHalf(mercy, 6, 'top');
+    advanceToHalf(mercy, 5, 'bottom');
+    while (mercy.ledger.state.inning.outs < 3) recordOut(mercy);
 
     const nfhs = requireDiamondRulesProfile('baseball-nfhs', 1);
     expect(nfhs.runAheadRules).toEqual([{ afterInning: 5, runDifferential: 10 }]);
     expect(mercy.ledger.state).toMatchObject({
       lifecycle: 'active',
-      inning: { number: 6, half: 'top' },
+      inning: { number: 5, half: 'bottom', outs: 3 },
       score: { away: 10, home: 0 }
     });
+    const blockedAdvance = mercy.submit('advance_half_inning', {}, { accept: false });
+    expectRejected(blockedAdvance, 'game-ending-condition-met', mercy.ledger.state.revision);
     mercy.submit('finalize', { confirmed: true });
-    expect(mercy.ledger.state.lifecycle).toBe('final');
+    expect(mercy.ledger.state).toMatchObject({
+      lifecycle: 'final',
+      finalizationReason: { kind: 'run-ahead', decisionEventId: null }
+    });
 
     const capped = createHarness('baseball-youth', 'quick');
     configureGame(capped);
-    for (let run = 0; run < 6; run += 1) recordSoloHomeRun(capped);
+    const earlyDecision = capped.submit(
+      'rules_decision',
+      {
+        code: 'end_half_inning_run_limit',
+        description: 'The scorer confirms the inning run limit.'
+      },
+      { accept: false }
+    );
+    expectRejected(earlyDecision, 'run-limit-not-reached', capped.ledger.state.revision);
+    for (let run = 0; run < 5; run += 1) recordSoloHomeRun(capped);
     const youth = requireDiamondRulesProfile('baseball-youth', 1);
     expect(youth).toMatchObject({ scheduledInnings: 6, timeLimitMinutes: 90, inningRunLimit: 5 });
+    const matchup = currentMatchup(capped);
+    const blockedPlay = capped.submit(
+      'record_pitch',
+      { batterId: matchup.batterId, pitcherId: matchup.pitcherId, result: 'in_play' },
+      { accept: false }
+    );
+    expectRejected(blockedPlay, 'run-limit-decision-required', capped.ledger.state.revision);
+    const decision = capped.submit('rules_decision', {
+      code: 'end_half_inning_run_limit',
+      description: 'The scorer and umpire confirm the five-run half-inning limit.'
+    });
     expect(capped.ledger.state).toMatchObject({
       lifecycle: 'active',
-      inningRuns: { T1: 6 },
-      score: { away: 6, home: 0 }
+      inningRuns: { T1: 5 },
+      score: { away: 5, home: 0 },
+      halfInningEnd: { reason: 'run-limit', decisionEventId: decision.event!.eventId }
     });
+    const endedMatchup = currentMatchup(capped);
+    const afterDecision = capped.submit(
+      'record_pitch',
+      { batterId: endedMatchup.batterId, pitcherId: endedMatchup.pitcherId, result: 'in_play' },
+      { accept: false }
+    );
+    expectRejected(afterDecision, 'half-inning-complete', capped.ledger.state.revision);
+    capped.submit('advance_half_inning', {});
+    expect(capped.ledger.state).toMatchObject({ inning: { number: 1, half: 'bottom', outs: 0 }, halfInningEnd: null });
   });
 
   it('enforces dropped-third-strike first-base eligibility and permits it with two outs', () => {
@@ -615,7 +665,7 @@ describe('Baseball golden games', () => {
 describe('Fastpitch golden game', () => {
   it('covers DP/FLEX, scorer lifecycle, courtesy running, one re-entry, and the inning-eight tiebreaker', () => {
     const game = createHarness('fastpitch-nfhs', 'quick');
-    configureGame(game, { start: false });
+    configureGame(game, { start: false, dpSide: 'home' });
     game.submit('set_dp_flex', {
       side: 'home',
       dpPlayerId: 'home-1',
@@ -705,15 +755,16 @@ describe('Fastpitch golden game', () => {
     });
 
     advanceToHalf(game, 8, 'top');
+    const tiebreakerRunnerId = previousScheduledBatterId(game, 'away');
     const wrongBaseRevision = game.ledger.state.revision;
     expectRejected(
-      game.submit('place_tiebreaker_runner', { side: 'away', runnerId: 'away-tiebreak', base: 'third' }, { accept: false }),
+      game.submit('place_tiebreaker_runner', { side: 'away', runnerId: tiebreakerRunnerId, base: 'third' }, { accept: false }),
       'invalid-tiebreaker-runner',
       wrongBaseRevision
     );
     game.submit('place_tiebreaker_runner', {
       side: 'away',
-      runnerId: 'away-tiebreak',
+      runnerId: tiebreakerRunnerId,
       base: 'second',
       chargedToPitcherId: 'home-1'
     });
@@ -721,7 +772,7 @@ describe('Fastpitch golden game', () => {
     recordPitch(game, 'illegal_pitch');
     expect(game.ledger.state).toMatchObject({
       inning: { balls: 1 },
-      bases: { second: { runnerId: 'away-tiebreak' } }
+      bases: { second: { runnerId: tiebreakerRunnerId } }
     });
     const { batterId, pitcherId } = currentMatchup(game);
     game.submit('record_plate_appearance', {
@@ -731,7 +782,7 @@ describe('Fastpitch golden game', () => {
       batterAdvance: { to: 'first' },
       runnerAdvances: [
         {
-          runnerId: 'away-tiebreak',
+          runnerId: tiebreakerRunnerId,
           from: 'second',
           to: 'home',
           cause: 'batted_ball',
@@ -770,6 +821,74 @@ describe('Fastpitch golden game', () => {
 });
 
 describe('Scoring decisions and correction reconciliation', () => {
+  it('keeps an unassigned tiebreaker run unknown while preserving explicit inherited-pitcher responsibility', () => {
+    const seed = createHarness('fastpitch-nfhs', 'quick');
+    configureGame(seed);
+    advanceToHalf(seed, 8, 'top');
+    const tiebreakerRunnerId = previousScheduledBatterId(seed, 'away');
+
+    const scoreTwoRunHomer = (chargedToPitcherId?: string) => {
+      const game = createHarness('fastpitch-nfhs', 'quick', seed.ledger);
+      game.submit('place_tiebreaker_runner', {
+        side: 'away',
+        runnerId: tiebreakerRunnerId,
+        base: 'second',
+        ...(chargedToPitcherId ? { chargedToPitcherId } : {})
+      });
+      expect(game.ledger.state.bases.second?.chargedToPitcherId).toBe(chargedToPitcherId ?? null);
+      game.submit('substitute', {
+        side: 'home',
+        battingSlot: 1,
+        outgoingPlayerId: 'home-1',
+        incomingPlayerId: 'home-reliever',
+        defensivePosition: 'P'
+      });
+      const { batterId, pitcherId } = currentMatchup(game);
+      expect(pitcherId).toBe('home-reliever');
+      game.submit('record_plate_appearance', {
+        batterId,
+        pitcherId,
+        result: 'home_run',
+        batterAdvance: { to: 'home', cause: 'batted_ball', countsRun: true, earned: true, rbi: true },
+        runnerAdvances: [
+          {
+            runnerId: tiebreakerRunnerId,
+            from: 'second',
+            to: 'home',
+            cause: 'batted_ball',
+            countsRun: true,
+            earned: true,
+            rbi: true
+          }
+        ],
+        outsOnPlay: 0,
+        runsBattedIn: 2
+      });
+      return projectDiamondStats(game.ledger);
+    };
+
+    const unknown = scoreTwoRunHomer();
+    expect(unknown.teams.away.R).toBe(2);
+    expect(unknown.players['home-1'].raw.pitching).toMatchObject({ APP: 1, R: 0, ER: 0 });
+    expect(unknown.players['home-reliever'].raw.pitching).toMatchObject({
+      APP: 1,
+      R: 1,
+      ER: 1,
+      inheritedRunners: 1,
+      inheritedScored: 0
+    });
+
+    const assigned = scoreTwoRunHomer('home-1');
+    expect(assigned.players['home-1'].raw.pitching).toMatchObject({ APP: 1, R: 1, ER: 1 });
+    expect(assigned.players['home-reliever'].raw.pitching).toMatchObject({
+      APP: 1,
+      R: 1,
+      ER: 1,
+      inheritedRunners: 1,
+      inheritedScored: 1
+    });
+  });
+
   it('pins an inherited runner to the responsible pitcher and applies explicit earned-run and RBI decisions', () => {
     const game = createHarness('baseball-nfhs', 'full');
     configureGame(game);
@@ -854,6 +973,10 @@ describe('Scoring decisions and correction reconciliation', () => {
       visibility: 'staff-private'
     });
     game.submit('void_event', { targetEventId: note.event!.eventId, reason: 'Note resolved by scorer.' });
+    const endingDecision = game.submit('rules_decision', {
+      code: 'end_game_weather',
+      description: 'The umpire declared the shortened game official after weather stopped play.'
+    });
     game.submit('finalize', { confirmed: true });
 
     const canonicalPrefix = game.ledger.events;
@@ -879,6 +1002,10 @@ describe('Scoring decisions and correction reconciliation', () => {
       }
     });
     game.submit('finalize', { confirmed: true });
+    expect(game.ledger.state.finalizationReason).toEqual({
+      kind: 'weather',
+      decisionEventId: endingDecision.event!.eventId
+    });
 
     expect(game.ledger.events.slice(0, canonicalPrefix.length)).toEqual(canonicalPrefix);
     expect(game.ledger.events.find((event) => event.eventId === double.event!.eventId)?.type).toBe('record_plate_appearance');
@@ -1027,7 +1154,7 @@ describe('Formula and capture-coverage goldens', () => {
       omissions: ['situational']
     });
     untouchedFull.submit('rules_decision', {
-      code: 'manual-runner-ruling',
+      code: 'coverage_adjustment',
       description: 'The scorer did not collect enough detail to classify the runner advance.',
       affectedFamilies: ['baserunning']
     });

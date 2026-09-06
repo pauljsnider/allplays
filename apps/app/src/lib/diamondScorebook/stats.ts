@@ -8,7 +8,14 @@ import {
   type DiamondSide
 } from './contracts';
 import { getEffectiveDiamondEvents } from './ledger';
-import { getBattingSide, reduceDiamondEvent, setDiamondStateRevision, type DiamondReducerAction } from './reducer';
+import {
+  deriveDiamondCoverageFromEvents,
+  getBattingSide,
+  isDiamondDeliveredPitch,
+  reduceDiamondEvent,
+  setDiamondStateRevision,
+  type DiamondReducerAction
+} from './reducer';
 import { requireDiamondRulesProfile } from './rules';
 
 export type DiamondBattingRaw = {
@@ -242,14 +249,14 @@ export function deriveDiamondPlayerStats(
   coverage: DiamondCoverageMap,
   eraInningsBasis: number
 ): DiamondPlayerDerivedStats {
-  const battingDenominator = raw.batting.AB + raw.batting.BB + raw.batting.HBP + raw.batting.SF;
+  const battingDenominator = raw.batting.AB + raw.batting.BB + raw.batting.IBB + raw.batting.HBP + raw.batting.SF;
   const battingComplete = coverage.batting === 'complete';
   const baserunningComplete = coverage.baserunning === 'complete';
   const pitchingComplete = coverage.pitching === 'complete';
   const pitchComplete = coverage.pitches === 'complete';
   const fieldingComplete = coverage.fielding === 'complete';
   const average = battingComplete ? safeRatio(raw.batting.H, raw.batting.AB) : null;
-  const obp = battingComplete ? safeRatio(raw.batting.H + raw.batting.BB + raw.batting.HBP, battingDenominator) : null;
+  const obp = battingComplete ? safeRatio(raw.batting.H + raw.batting.BB + raw.batting.IBB + raw.batting.HBP, battingDenominator) : null;
   const slugging = battingComplete ? safeRatio(raw.batting.TB, raw.batting.AB) : null;
   const chances = raw.fielding.PO + raw.fielding.A + raw.fielding.E;
   return {
@@ -285,13 +292,16 @@ function addFielding(
   side: DiamondSide,
   eventId: string,
   ensure: (playerId: string, side: DiamondSide) => MutablePlayerLine,
-  credit: (line: MutablePlayerLine, family: keyof DiamondPlayerRawStats, stat: string, value: number, eventId: string) => void
+  credit: (line: MutablePlayerLine, family: keyof DiamondPlayerRawStats, stat: string, value: number, eventId: string) => void,
+  options: Readonly<{ creditPassedBall?: boolean }> = {}
 ) {
   if (!fielding) return;
   if (fielding.putoutBy) credit(ensure(fielding.putoutBy, side), 'fielding', 'PO', 1, eventId);
   (fielding.assists ?? []).forEach((playerId) => credit(ensure(playerId, side), 'fielding', 'A', 1, eventId));
   (fielding.errors ?? []).forEach(({ playerId }) => credit(ensure(playerId, side), 'fielding', 'E', 1, eventId));
-  if (fielding.passedBallBy) credit(ensure(fielding.passedBallBy, side), 'fielding', 'PB', 1, eventId);
+  if (fielding.passedBallBy && options.creditPassedBall !== false) {
+    credit(ensure(fielding.passedBallBy, side), 'fielding', 'PB', 1, eventId);
+  }
   const participants = new Set<string>([...(fielding.putoutBy ? [fielding.putoutBy] : []), ...(fielding.assists ?? [])]);
   if (fielding.doublePlay) {
     participants.forEach((playerId) => credit(ensure(playerId, side), 'fielding', 'DP', 1, eventId));
@@ -321,8 +331,23 @@ function collectAttachmentMaps(events: readonly SimulatedEvent[]) {
   return { fielding, judgments };
 }
 
+function latestJudgmentValue<K extends 'earned' | 'rbi' | 'responsiblePitcherId'>(
+  judgments: readonly DiamondCommandPayloadMap['record_scoring_judgment'][],
+  runnerId: string,
+  field: K
+): DiamondCommandPayloadMap['record_scoring_judgment'][K] | undefined {
+  for (let index = judgments.length - 1; index >= 0; index -= 1) {
+    const judgment = judgments[index];
+    if ((!judgment.runnerId || judgment.runnerId === runnerId) && judgment[field] !== undefined) {
+      return judgment[field];
+    }
+  }
+  return undefined;
+}
+
 export function projectDiamondStats(ledger: DiamondLedger): DiamondStatProjection {
   const simulated = simulate(ledger);
+  const coverage = deriveDiamondCoverageFromEvents(ledger.initialState, getEffectiveDiamondEvents(ledger.events));
   const profile = requireDiamondRulesProfile(ledger.rulesProfileId, ledger.rulesProfileVersion);
   const lines = new Map<string, MutablePlayerLine>();
   const gameSeen = new Set<string>();
@@ -358,6 +383,13 @@ export function projectDiamondStats(ledger: DiamondLedger): DiamondStatProjectio
     }
   };
   const attachments = collectAttachmentMaps(simulated);
+  let physicalCauseCluster: {
+    cause: 'wild_pitch' | 'passed_ball' | 'balk' | 'illegal_pitch' | null;
+    pitcherId: string | null;
+    anchoredByPitch: boolean;
+    pitchingCreditRecorded: boolean;
+    passedBallCreditRecorded: boolean;
+  } | null = null;
 
   const ensure = (playerId: string, side: DiamondSide) => {
     const existing = lines.get(playerId);
@@ -398,6 +430,7 @@ export function projectDiamondStats(ledger: DiamondLedger): DiamondStatProjectio
 
   simulated.forEach(({ event, before }) => {
     const eventId = event.eventId;
+    if (event.type !== 'advance_runner' && event.type !== 'record_plate_appearance') physicalCauseCluster = null;
     switch (event.type) {
       case 'start': {
         (['home', 'away'] as const).forEach((side) => {
@@ -441,18 +474,31 @@ export function projectDiamondStats(ledger: DiamondLedger): DiamondStatProjectio
         const pitchingSide = before.inning.half === 'top' ? 'home' : 'away';
         const pitcher = ensure(payload.pitcherId, pitchingSide);
         creditPitchingAppearance(payload.pitcherId, pitchingSide, eventId, false);
-        credit(pitcher, 'pitching', 'pitches', 1, eventId);
-        if (isStrikePitch(payload.result)) credit(pitcher, 'pitching', 'strikes', 1, eventId);
-        if (before.inning.pitchesInPlateAppearance === 0) {
-          teams[pitchingSide].firstPitchStrikeOpportunities += 1;
-          if (isStrikePitch(payload.result)) {
-            credit(pitcher, 'pitching', 'firstPitchStrikes', 1, eventId);
-            teams[pitchingSide].firstPitchStrikes += 1;
+        if (isDiamondDeliveredPitch(payload.result)) {
+          credit(pitcher, 'pitching', 'pitches', 1, eventId);
+          if (isStrikePitch(payload.result)) credit(pitcher, 'pitching', 'strikes', 1, eventId);
+          if (before.inning.pitchesInPlateAppearance === 0) {
+            teams[pitchingSide].firstPitchStrikeOpportunities += 1;
+            if (isStrikePitch(payload.result)) {
+              credit(pitcher, 'pitching', 'firstPitchStrikes', 1, eventId);
+              teams[pitchingSide].firstPitchStrikes += 1;
+            }
           }
         }
-        if (payload.result === 'balk' || payload.result === 'illegal_pitch') {
+        const alreadyCreditedPitchingInfraction = payload.result === 'balk' || payload.result === 'illegal_pitch';
+        if (alreadyCreditedPitchingInfraction) {
           credit(pitcher, 'pitching', 'balkIllegalPitch', 1, eventId);
         }
+        // A following set of independent runner moves can cite the same physical
+        // pitch. Without this pitch anchor, consecutive advance commands remain
+        // separate plays because the schema contains no trustworthy group ID.
+        physicalCauseCluster = {
+          cause: alreadyCreditedPitchingInfraction ? payload.result : null,
+          pitcherId: payload.pitcherId,
+          anchoredByPitch: true,
+          pitchingCreditRecorded: alreadyCreditedPitchingInfraction,
+          passedBallCreditRecorded: false
+        };
         break;
       }
       case 'record_plate_appearance': {
@@ -504,7 +550,7 @@ export function projectDiamondStats(ledger: DiamondLedger): DiamondStatProjectio
         const hasRisp = Boolean(before.bases.second || before.bases.third);
         if (hasRisp) teams[battingSide].rispOpportunities += 1;
         if (hasRisp && bases) teams[battingSide].rispHits += 1;
-        if (before.inning.strikes === 2) {
+        if (before.inning.strikes >= 2) {
           teams[battingSide].twoStrikePlateAppearances += 1;
           if (bases) teams[battingSide].twoStrikeHits += 1;
         }
@@ -514,7 +560,8 @@ export function projectDiamondStats(ledger: DiamondLedger): DiamondStatProjectio
         allAdvances.forEach((advance) => {
           if (advance.from !== 'batter') {
             const runner = ensure(advance.runnerId, battingSide);
-            credit(runner, 'baserunning', advance.to === 'out' ? 'outs' : 'advances', 1, eventId);
+            if (advance.to === 'out') credit(runner, 'baserunning', 'outs', 1, eventId);
+            else if (advance.to !== 'stay') credit(runner, 'baserunning', 'advances', 1, eventId);
             if (advance.cause === 'stolen_base') credit(runner, 'baserunning', 'SB', 1, eventId);
             if (advance.cause === 'caught_stealing') credit(runner, 'baserunning', 'CS', 1, eventId);
             if (advance.cause === 'pickoff') credit(runner, 'baserunning', 'pickoffs', 1, eventId);
@@ -530,22 +577,34 @@ export function projectDiamondStats(ledger: DiamondLedger): DiamondStatProjectio
             attachments.judgments.get(event.eventId) ??
             []
           ).filter((candidate) => !candidate.runnerId || candidate.runnerId === advance.runnerId);
-          const judgment = matchingJudgments.length ? matchingJudgments[matchingJudgments.length - 1] : undefined;
           const responsiblePitcherId =
-            judgment?.responsiblePitcherId ?? advance.responsiblePitcherId ?? placement?.chargedToPitcherId ?? payload.pitcherId;
-          const responsiblePitcher = ensure(responsiblePitcherId, pitchingSide);
-          creditPitchingAppearance(responsiblePitcherId, pitchingSide, eventId, false);
-          credit(responsiblePitcher, 'pitching', 'R', 1, eventId);
-          if (currentPitcherId !== responsiblePitcherId) {
-            credit(ensure(currentPitcherId, pitchingSide), 'pitching', 'inheritedScored', 1, eventId);
+            latestJudgmentValue(matchingJudgments, advance.runnerId, 'responsiblePitcherId') ??
+            advance.responsiblePitcherId ??
+            (advance.from === 'batter' ? payload.pitcherId : placement?.chargedToPitcherId);
+          const earned = latestJudgmentValue(matchingJudgments, advance.runnerId, 'earned') ?? advance.earned;
+          if (responsiblePitcherId) {
+            const responsiblePitcher = ensure(responsiblePitcherId, pitchingSide);
+            creditPitchingAppearance(responsiblePitcherId, pitchingSide, eventId, false);
+            credit(responsiblePitcher, 'pitching', 'R', 1, eventId);
+            if (currentPitcherId !== responsiblePitcherId) {
+              credit(ensure(currentPitcherId, pitchingSide), 'pitching', 'inheritedScored', 1, eventId);
+            }
+            if (earned === true) credit(responsiblePitcher, 'pitching', 'ER', 1, eventId);
           }
-          const earned = judgment?.earned ?? advance.earned;
-          if (earned === true) credit(responsiblePitcher, 'pitching', 'ER', 1, eventId);
-          const rbi = judgment?.rbi ?? advance.rbi;
+          const rbi = latestJudgmentValue(matchingJudgments, advance.runnerId, 'rbi') ?? advance.rbi;
           if (payload.runsBattedIn === undefined && rbi === true) credit(batter, 'batting', 'RBI', 1, eventId);
         });
         if (payload.runsBattedIn !== undefined) {
           credit(batter, 'batting', 'RBI', payload.runsBattedIn, eventId);
+        }
+        const physicalCauses = new Set(allAdvances.map((advance) => advance.cause));
+        if (physicalCauses.has('wild_pitch')) credit(pitcher, 'pitching', 'WP', 1, eventId);
+        if (physicalCauses.has('balk') || physicalCauses.has('illegal_pitch')) {
+          const matchingPriorCredit =
+            physicalCauseCluster?.pitcherId === payload.pitcherId &&
+            (physicalCauseCluster.cause === 'balk' || physicalCauseCluster.cause === 'illegal_pitch') &&
+            physicalCauseCluster.pitchingCreditRecorded;
+          if (!matchingPriorCredit) credit(pitcher, 'pitching', 'balkIllegalPitch', 1, eventId);
         }
         credit(pitcher, 'pitching', 'outs', payload.outsOnPlay, eventId);
         teams[battingSide].R += runsOnPlay;
@@ -553,9 +612,16 @@ export function projectDiamondStats(ledger: DiamondLedger): DiamondStatProjectio
 
         const defenders = new Set(Object.values(before.lineups[pitchingSide].defense).filter(Boolean));
         defenders.forEach((playerId) => credit(ensure(playerId, pitchingSide), 'fielding', 'defensiveOuts', payload.outsOnPlay, eventId));
-        addFielding(payload.fielding, pitchingSide, eventId, ensure, credit);
+        let passedBallCredited = false;
+        addFielding(payload.fielding, pitchingSide, eventId, ensure, credit, {
+          creditPassedBall: !passedBallCredited
+        });
+        if (payload.fielding?.passedBallBy) passedBallCredited = true;
         (attachments.fielding.get(event.sourceEventId) ?? attachments.fielding.get(event.eventId) ?? []).forEach((fielding) => {
-          addFielding(fielding, pitchingSide, eventId, ensure, credit);
+          addFielding(fielding, pitchingSide, eventId, ensure, credit, {
+            creditPassedBall: !passedBallCredited
+          });
+          if (fielding.passedBallBy) passedBallCredited = true;
           (fielding.errors ?? []).forEach(() => {
             teams[pitchingSide].E += 1;
           });
@@ -563,6 +629,7 @@ export function projectDiamondStats(ledger: DiamondLedger): DiamondStatProjectio
         (payload.fielding?.errors ?? []).forEach(() => {
           teams[pitchingSide].E += 1;
         });
+        physicalCauseCluster = null;
         break;
       }
       case 'advance_runner': {
@@ -571,13 +638,42 @@ export function projectDiamondStats(ledger: DiamondLedger): DiamondStatProjectio
         const pitchingSide = battingSide === 'home' ? 'away' : 'home';
         const runner = ensure(payload.runnerId, battingSide);
         creditGame(payload.runnerId, battingSide, eventId, false);
-        credit(runner, 'baserunning', payload.to === 'out' ? 'outs' : 'advances', 1, eventId);
+        if (payload.to === 'out') credit(runner, 'baserunning', 'outs', 1, eventId);
+        else if (payload.to !== 'stay') credit(runner, 'baserunning', 'advances', 1, eventId);
         if (payload.cause === 'stolen_base') credit(runner, 'baserunning', 'SB', 1, eventId);
         if (payload.cause === 'caught_stealing') credit(runner, 'baserunning', 'CS', 1, eventId);
         if (payload.cause === 'pickoff') credit(runner, 'baserunning', 'pickoffs', 1, eventId);
         const placement = before.bases[payload.from];
-        const responsiblePitcherId = payload.responsiblePitcherId ?? placement?.chargedToPitcherId;
+        const matchingJudgments = (attachments.judgments.get(event.sourceEventId) ?? attachments.judgments.get(event.eventId) ?? []).filter(
+          (candidate) => !candidate.runnerId || candidate.runnerId === payload.runnerId
+        );
+        const responsiblePitcherId =
+          latestJudgmentValue(matchingJudgments, payload.runnerId, 'responsiblePitcherId') ??
+          payload.responsiblePitcherId ??
+          placement?.chargedToPitcherId;
         const currentPitcherId = before.lineups[pitchingSide].defense.P;
+        const physicalCause = ['wild_pitch', 'passed_ball', 'balk', 'illegal_pitch'].includes(payload.cause)
+          ? (payload.cause as 'wild_pitch' | 'passed_ball' | 'balk' | 'illegal_pitch')
+          : null;
+        const sharesAnchoredPitch = Boolean(
+          physicalCause &&
+          physicalCauseCluster?.anchoredByPitch &&
+          physicalCauseCluster.pitcherId === (currentPitcherId ?? null) &&
+          (physicalCauseCluster.cause === null || physicalCauseCluster.cause === physicalCause)
+        );
+        if (!physicalCause) {
+          physicalCauseCluster = null;
+        } else if (!sharesAnchoredPitch) {
+          physicalCauseCluster = {
+            cause: physicalCause,
+            pitcherId: currentPitcherId ?? null,
+            anchoredByPitch: false,
+            pitchingCreditRecorded: false,
+            passedBallCreditRecorded: false
+          };
+        } else if (physicalCauseCluster?.cause === null) {
+          physicalCauseCluster.cause = physicalCause;
+        }
         if (payload.to === 'out' && currentPitcherId) {
           credit(ensure(currentPitcherId, pitchingSide), 'pitching', 'outs', 1, eventId);
           const defenders = new Set(Object.values(before.lineups[pitchingSide].defense).filter(Boolean));
@@ -590,19 +686,29 @@ export function projectDiamondStats(ledger: DiamondLedger): DiamondStatProjectio
           if (responsiblePitcherId) {
             const responsiblePitcher = ensure(responsiblePitcherId, pitchingSide);
             credit(responsiblePitcher, 'pitching', 'R', 1, eventId);
-            if (payload.earned === true) credit(responsiblePitcher, 'pitching', 'ER', 1, eventId);
+            const earned = latestJudgmentValue(matchingJudgments, payload.runnerId, 'earned') ?? payload.earned;
+            if (earned === true) credit(responsiblePitcher, 'pitching', 'ER', 1, eventId);
             if (currentPitcherId && currentPitcherId !== responsiblePitcherId) {
               credit(ensure(currentPitcherId, pitchingSide), 'pitching', 'inheritedScored', 1, eventId);
             }
           }
         }
-        if (currentPitcherId && payload.cause === 'wild_pitch') {
+        if (currentPitcherId && payload.cause === 'wild_pitch' && !physicalCauseCluster?.pitchingCreditRecorded) {
           credit(ensure(currentPitcherId, pitchingSide), 'pitching', 'WP', 1, eventId);
+          if (physicalCauseCluster) physicalCauseCluster.pitchingCreditRecorded = true;
         }
-        if (currentPitcherId && (payload.cause === 'balk' || payload.cause === 'illegal_pitch')) {
+        if (
+          currentPitcherId &&
+          (payload.cause === 'balk' || payload.cause === 'illegal_pitch') &&
+          !physicalCauseCluster?.pitchingCreditRecorded
+        ) {
           credit(ensure(currentPitcherId, pitchingSide), 'pitching', 'balkIllegalPitch', 1, eventId);
+          if (physicalCauseCluster) physicalCauseCluster.pitchingCreditRecorded = true;
         }
-        addFielding(payload.fielding, pitchingSide, eventId, ensure, credit);
+        addFielding(payload.fielding, pitchingSide, eventId, ensure, credit, {
+          creditPassedBall: !physicalCauseCluster?.passedBallCreditRecorded
+        });
+        if (payload.fielding?.passedBallBy && physicalCauseCluster) physicalCauseCluster.passedBallCreditRecorded = true;
         (payload.fielding?.errors ?? []).forEach(() => {
           teams[pitchingSide].E += 1;
         });
@@ -644,8 +750,8 @@ export function projectDiamondStats(ledger: DiamondLedger): DiamondStatProjectio
           playerId,
           side: line.side,
           raw: line.raw,
-          derived: deriveDiamondPlayerStats(line.raw, ledger.state.coverage, profile.eraInningsBasis),
-          coverage: ledger.state.coverage,
+          derived: deriveDiamondPlayerStats(line.raw, coverage, profile.eraInningsBasis),
+          coverage,
           sources: Object.fromEntries(Object.entries(line.sources).map(([stat, sourceIds]) => [stat, Array.from(sourceIds).sort()]))
         } satisfies DiamondPlayerStatLine
       ])
@@ -656,7 +762,7 @@ export function projectDiamondStats(ledger: DiamondLedger): DiamondStatProjectio
     catalogVersion: 1,
     sourceRevision: ledger.state.revision,
     checkpointHash: ledger.state.checkpointHash,
-    coverage: ledger.state.coverage,
+    coverage,
     players,
     teams,
     inningLines: ledger.state.inningRuns,

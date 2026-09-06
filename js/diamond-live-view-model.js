@@ -6,6 +6,7 @@ const TERMINAL_STATES = new Set([
   "canceled",
   "deleted",
 ]);
+const MAX_CLIP_MS = 24 * 60 * 60 * 1000;
 
 function compactText(value, maxLength = 256) {
   if (typeof value !== "string" && typeof value !== "number") return "";
@@ -17,6 +18,66 @@ function boundedInteger(value, minimum, maximum, fallback = 0) {
   return Number.isInteger(number) && number >= minimum && number <= maximum
     ? number
     : fallback;
+}
+
+function normalizeHttpsUrl(value) {
+  if (typeof value !== "string" || !value.trim()) return "";
+  const raw = value.trim();
+  try {
+    const url = new URL(raw);
+    const rawAuthority = raw.match(/^https:\/\/([^/?#]+)/i)?.[1] || "";
+    if (
+      url.protocol !== "https:" ||
+      rawAuthority.toLowerCase() !== url.hostname.toLowerCase() ||
+      url.username ||
+      url.password ||
+      url.port
+    ) {
+      return "";
+    }
+    return url.href;
+  } catch {
+    return "";
+  }
+}
+
+function normalizeClipMs(value) {
+  const raw =
+    typeof value === "string" ? value.trim() : String(value ?? "").trim();
+  if (!/^\d{1,8}$/.test(raw)) return null;
+  const milliseconds = Number(raw);
+  return milliseconds <= MAX_CLIP_MS ? milliseconds : null;
+}
+
+export function normalizeDiamondViewerMode({
+  replay = false,
+  overlay = false,
+  clipStart = null,
+  clipEnd = null,
+} = {}) {
+  const clipStartMs = normalizeClipMs(clipStart);
+  const clipEndMs = normalizeClipMs(clipEnd);
+  const hasClip =
+    clipStartMs !== null && clipEndMs !== null && clipEndMs > clipStartMs;
+  return {
+    replay: replay === true || replay === "true" || replay === "1" || hasClip,
+    overlay: overlay === true || overlay === "true" || overlay === "1",
+    clipStartMs: hasClip ? clipStartMs : null,
+    clipEndMs: hasClip ? clipEndMs : null,
+  };
+}
+
+export function normalizeDiamondPublicMedia(value = {}) {
+  const media =
+    value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const publicUrl = normalizeHttpsUrl(media.publicUrl);
+  const mode = compactText(media.mode, 16).toLowerCase();
+  if (!publicUrl || !["live", "replay"].includes(mode)) return null;
+  return {
+    mode,
+    publicUrl,
+    durationMs: boundedInteger(media.durationMs, 0, MAX_CLIP_MS, 0),
+  };
 }
 
 export function normalizeDiamondPublicState(value = {}) {
@@ -67,6 +128,7 @@ export function normalizeDiamondPublicGame(value = {}) {
     location: compactText(game.location, 160),
     trackingEngine: compactText(game.trackingEngine, 64),
     state: normalizeDiamondPublicState(game.state),
+    media: normalizeDiamondPublicMedia(game.media),
     warnings: Array.isArray(game.warnings)
       ? game.warnings
           .map((warning) => compactText(warning, 240))

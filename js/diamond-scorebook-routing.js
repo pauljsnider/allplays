@@ -1,150 +1,317 @@
-export const DIAMOND_ENGINE = 'diamond-v2';
-export const DIAMOND_POLICY_MODES = Object.freeze(['disabled', 'internal', 'pilot', 'enabled']);
+export const DIAMOND_ENGINE = "diamond-v2";
+export const DIAMOND_POLICY_MODES = Object.freeze([
+  "disabled",
+  "internal",
+  "pilot",
+  "enabled",
+]);
+export const DIAMOND_ROLLOUT_PERCENTAGES = Object.freeze([1, 10, 50, 100]);
 
-const TERMINAL_GAME_STATES = new Set(['completed', 'final', 'cancelled', 'canceled', 'deleted']);
-const DIAMOND_SPORTS = new Set(['baseball', 'softball', 'fastpitch', 'fastpitch softball']);
+const TERMINAL_GAME_STATES = new Set([
+  "completed",
+  "final",
+  "cancelled",
+  "canceled",
+  "deleted",
+]);
+const DIAMOND_SPORTS = new Set([
+  "baseball",
+  "softball",
+  "fastpitch",
+  "fastpitch softball",
+]);
+const DIAMOND_POLICY_FIELDS = new Set([
+  "mode",
+  "revision",
+  "teamIds",
+  "rolloutPercent",
+  "minimumAppBuild",
+  "updatedAt",
+  "updatedBy",
+  "rolloutNote",
+]);
 
 function compactText(value, maxLength = 256) {
-    if (typeof value !== 'string' && typeof value !== 'number') return '';
-    return String(value).replace(/\s+/g, ' ').trim().slice(0, maxLength);
+  if (typeof value !== "string" && typeof value !== "number") return "";
+  return String(value).replace(/\s+/g, " ").trim().slice(0, maxLength);
 }
 
 export function normalizeDiamondSport(value) {
-    const sport = compactText(value, 64).toLowerCase();
-    if (sport === 'baseball') return 'baseball';
-    if (sport === 'softball' || sport === 'fastpitch' || sport === 'fastpitch softball') return 'softball';
-    return '';
+  const sport = compactText(value, 64).toLowerCase();
+  if (sport === "baseball") return "baseball";
+  if (
+    sport === "softball" ||
+    sport === "fastpitch" ||
+    sport === "fastpitch softball"
+  )
+    return "softball";
+  return "";
+}
+
+function normalizeDiamondCohortId(value) {
+  return typeof value === "string" &&
+    value &&
+    value === value.trim() &&
+    value.length <= 128 &&
+    !value.includes("/") &&
+    !/[\u0000-\u001f\u007f]/.test(value)
+    ? value
+    : "";
+}
+
+function isDiamondPolicyTimestamp(value) {
+  if (Number.isSafeInteger(value) && value >= 0) return true;
+  if (value && typeof value.toMillis === "function") {
+    try {
+      const millis = value.toMillis();
+      return Number.isSafeInteger(millis) && millis >= 0;
+    } catch {
+      return false;
+    }
+  }
+  return Boolean(
+    value && Number.isSafeInteger(value.millis) && value.millis >= 0,
+  );
+}
+
+export function diamondRolloutBucket(teamId, gameId) {
+  const team = normalizeDiamondCohortId(teamId);
+  const game = normalizeDiamondCohortId(gameId);
+  if (!team || !game) return null;
+  const input = `diamond-v2-rollout\u001f${team}\u001f${game}`;
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return ((hash >>> 0) % 100) + 1;
 }
 
 export function normalizeDiamondPolicy(policy) {
-    if (!policy || typeof policy !== 'object' || Array.isArray(policy)) {
-        return { mode: 'disabled', revision: 0, teamIds: [], reason: 'missing-policy' };
-    }
-    const mode = compactText(policy.mode, 24).toLowerCase();
-    const revision = Number(policy.revision);
-    if (!DIAMOND_POLICY_MODES.includes(mode) || !Number.isInteger(revision) || revision < 1) {
-        return { mode: 'disabled', revision: 0, teamIds: [], reason: 'invalid-policy' };
-    }
-    const teamIds = Array.isArray(policy.teamIds)
-        ? [...new Set(policy.teamIds.map((id) => compactText(id, 128)).filter(Boolean))].slice(0, 500)
-        : [];
-    return { mode, revision, teamIds, reason: null };
+  if (!policy || typeof policy !== "object" || Array.isArray(policy)) {
+    return {
+      mode: "disabled",
+      revision: 0,
+      teamIds: [],
+      rolloutPercent: null,
+      minimumAppBuild: 0,
+      reason: "missing-policy",
+    };
+  }
+  const mode = typeof policy.mode === "string" ? policy.mode : "";
+  const revision = policy.revision;
+  const policyKeysValid = Object.keys(policy).every((key) =>
+    DIAMOND_POLICY_FIELDS.has(key),
+  );
+  const rawTeamIds = policy.teamIds;
+  const teamIds = Array.isArray(rawTeamIds)
+    ? rawTeamIds.map(normalizeDiamondCohortId)
+    : [];
+  const rolloutPercent = policy.rolloutPercent;
+  const rolloutValid =
+    mode === "enabled"
+      ? DIAMOND_ROLLOUT_PERCENTAGES.includes(rolloutPercent)
+      : !Object.prototype.hasOwnProperty.call(policy, "rolloutPercent");
+  const minimumBuildValid =
+    !Object.prototype.hasOwnProperty.call(policy, "minimumAppBuild") ||
+    (Number.isSafeInteger(policy.minimumAppBuild) &&
+      policy.minimumAppBuild >= 0);
+  const updatedAtValid =
+    !Object.prototype.hasOwnProperty.call(policy, "updatedAt") ||
+    isDiamondPolicyTimestamp(policy.updatedAt);
+  const updatedByValid =
+    !Object.prototype.hasOwnProperty.call(policy, "updatedBy") ||
+    Boolean(normalizeDiamondCohortId(policy.updatedBy));
+  const rolloutNoteValid =
+    !Object.prototype.hasOwnProperty.call(policy, "rolloutNote") ||
+    (typeof policy.rolloutNote === "string" &&
+      policy.rolloutNote.length <= 500);
+  if (
+    !policyKeysValid ||
+    !DIAMOND_POLICY_MODES.includes(mode) ||
+    !Number.isSafeInteger(revision) ||
+    revision < 1 ||
+    !Array.isArray(rawTeamIds) ||
+    rawTeamIds.length > 500 ||
+    teamIds.some((id) => !id) ||
+    new Set(teamIds).size !== teamIds.length ||
+    !rolloutValid ||
+    !minimumBuildValid ||
+    !updatedAtValid ||
+    !updatedByValid ||
+    !rolloutNoteValid
+  ) {
+    return {
+      mode: "disabled",
+      revision: 0,
+      teamIds: [],
+      rolloutPercent: null,
+      minimumAppBuild: 0,
+      reason: "invalid-policy",
+    };
+  }
+  return {
+    mode,
+    revision,
+    teamIds,
+    rolloutPercent: mode === "enabled" ? rolloutPercent : null,
+    minimumAppBuild: policy.minimumAppBuild || 0,
+    reason: mode === "disabled" ? "policy-disabled" : null,
+  };
 }
 
 export function hasMeaningfulLegacyTracking(game = {}) {
-    if (!game || typeof game !== 'object' || Array.isArray(game)) return false;
-    const status = compactText(game.status || game.liveStatus, 32).toLowerCase();
-    const scoreIsMeaningful = [game.homeScore, game.awayScore, game.teamScore, game.opponentScore]
-        .some((value) => Number.isFinite(Number(value)) && Number(value) !== 0);
-    const collectionEvidence = [
-        game.hasLegacyEvents,
-        game.hasLegacyAggregates,
-        game.hasLegacyLiveEvents,
-        game.hasLegacyTeamStats,
-        game.hasLegacyPrivatePlayerStats
-    ].some((value) => value === true);
-    const stateEvidence = Boolean(
-        game.liveBaseballState ||
-        game.currentPeriod ||
-        game.liveClockRunning ||
-        game.trackingStartedAt ||
-        game.trackerStartedAt
-    );
-    return TERMINAL_GAME_STATES.has(status) || scoreIsMeaningful || collectionEvidence || stateEvidence;
+  if (!game || typeof game !== "object" || Array.isArray(game)) return false;
+  const status = compactText(game.status || game.liveStatus, 32).toLowerCase();
+  const scoreIsMeaningful = [
+    game.homeScore,
+    game.awayScore,
+    game.teamScore,
+    game.opponentScore,
+  ].some((value) => Number.isFinite(Number(value)) && Number(value) !== 0);
+  const collectionEvidence = [
+    game.hasLegacyEvents,
+    game.hasLegacyAggregates,
+    game.hasLegacyLiveEvents,
+    game.hasLegacyTeamStats,
+    game.hasLegacyPrivatePlayerStats,
+  ].some((value) => value === true);
+  const stateEvidence = Boolean(
+    game.liveBaseballState ||
+    game.currentPeriod ||
+    game.liveClockRunning ||
+    game.trackingStartedAt ||
+    game.trackerStartedAt,
+  );
+  return (
+    TERMINAL_GAME_STATES.has(status) ||
+    scoreIsMeaningful ||
+    collectionEvidence ||
+    stateEvidence
+  );
 }
 
 export function resolveDiamondGameRoute({
-    team = {},
-    game = {},
-    policy = null,
-    teamSettings = null,
-    canManage = false,
-    canScore = false
+  team = {},
+  game = {},
+  policy = null,
+  teamSettings = null,
+  canManage = false,
+  canScore = false,
 } = {}) {
-    const engine = compactText(game.trackingEngine, 64);
-    const sport = normalizeDiamondSport(game.sport || team.sport);
+  const engine = compactText(game.trackingEngine, 64);
+  const sport = normalizeDiamondSport(game.sport || team.sport);
 
-    if (engine === DIAMOND_ENGINE) {
-        return {
-            engine: DIAMOND_ENGINE,
-            scorer: canScore ? 'diamond' : 'read-only',
-            viewer: 'diamond',
-            canActivate: false,
-            reason: canScore ? null : 'read-only-access'
-        };
-    }
-    if (engine) {
-        return {
-            engine,
-            scorer: 'blocked',
-            viewer: 'classic',
-            canActivate: false,
-            reason: 'unknown-engine'
-        };
-    }
-
-    const normalizedPolicy = normalizeDiamondPolicy(policy);
-    const activeTeam = team.active !== false && team.archived !== true &&
-        !['archived', 'inactive', 'disabled'].includes(compactText(team.status, 32).toLowerCase());
-    const optedIn = teamSettings?.enabled === true;
-    const cohortAllowed = normalizedPolicy.mode === 'enabled' ||
-        (['internal', 'pilot'].includes(normalizedPolicy.mode) && normalizedPolicy.teamIds.includes(compactText(team.id, 128)));
-    const eligible = Boolean(
-        sport &&
-        activeTeam &&
-        optedIn &&
-        cohortAllowed &&
-        canManage &&
-        canScore &&
-        game.isDbGame !== false &&
-        game.isSharedGame !== true &&
-        !hasMeaningfulLegacyTracking(game)
-    );
-
+  if (engine === DIAMOND_ENGINE) {
     return {
-        engine: 'legacy',
-        scorer: 'legacy',
-        viewer: 'classic',
-        canActivate: eligible,
-        reason: eligible
-            ? null
-            : !sport
-                ? 'unsupported-sport'
-                : !activeTeam
-                    ? 'inactive-team'
-                    : normalizedPolicy.mode === 'disabled'
-                        ? normalizedPolicy.reason || 'policy-disabled'
-                        : !cohortAllowed
-                            ? 'team-not-in-cohort'
-                            : !optedIn
-                                ? 'team-not-opted-in'
-                                : !canManage || !canScore
-                                    ? 'insufficient-access'
-                                    : game.isSharedGame === true
-                                        ? 'shared-game-not-eligible'
-                                        : hasMeaningfulLegacyTracking(game)
-                                            ? 'legacy-data-present'
-                                            : 'game-not-eligible'
+      engine: DIAMOND_ENGINE,
+      scorer: canScore ? "diamond" : "read-only",
+      viewer: "diamond",
+      canActivate: false,
+      reason: canScore ? null : "read-only-access",
     };
+  }
+  if (engine) {
+    return {
+      engine,
+      scorer: "blocked",
+      viewer: "classic",
+      canActivate: false,
+      reason: "unknown-engine",
+    };
+  }
+
+  const normalizedPolicy = normalizeDiamondPolicy(policy);
+  const normalizedTeamId = normalizeDiamondCohortId(team.id);
+  const rolloutBucket = diamondRolloutBucket(normalizedTeamId, game.id);
+  const activeTeam =
+    team.active !== false &&
+    team.archived !== true &&
+    !["archived", "inactive", "disabled"].includes(
+      compactText(team.status, 32).toLowerCase(),
+    );
+  const optedIn = teamSettings?.enabled === true;
+  const explicitlyAllowlisted =
+    normalizedPolicy.teamIds.includes(normalizedTeamId);
+  const cohortAllowed = ["internal", "pilot"].includes(normalizedPolicy.mode)
+    ? explicitlyAllowlisted
+    : normalizedPolicy.mode === "enabled" &&
+      rolloutBucket !== null &&
+      (explicitlyAllowlisted ||
+        rolloutBucket <= normalizedPolicy.rolloutPercent);
+  const eligible = Boolean(
+    sport &&
+    activeTeam &&
+    optedIn &&
+    cohortAllowed &&
+    canManage &&
+    canScore &&
+    game.isDbGame !== false &&
+    game.isSharedGame !== true &&
+    !hasMeaningfulLegacyTracking(game),
+  );
+
+  return {
+    engine: "legacy",
+    scorer: "legacy",
+    viewer: "classic",
+    canActivate: eligible,
+    reason: eligible
+      ? null
+      : !sport
+        ? "unsupported-sport"
+        : !activeTeam
+          ? "inactive-team"
+          : normalizedPolicy.mode === "disabled"
+            ? normalizedPolicy.reason || "policy-disabled"
+            : !cohortAllowed
+              ? "team-not-in-cohort"
+              : !optedIn
+                ? "team-not-opted-in"
+                : !canManage || !canScore
+                  ? "insufficient-access"
+                  : game.isSharedGame === true
+                    ? "shared-game-not-eligible"
+                    : hasMeaningfulLegacyTracking(game)
+                      ? "legacy-data-present"
+                      : "game-not-eligible",
+  };
 }
 
 export function buildDiamondTrackerUrl(teamId, gameId) {
-    const team = encodeURIComponent(compactText(teamId, 128));
-    const game = encodeURIComponent(compactText(gameId, 1000));
-    return `/app/#/schedule/${team}/${game}/diamond-v2`;
+  const team = encodeURIComponent(compactText(teamId, 128));
+  const game = encodeURIComponent(compactText(gameId, 1000));
+  return `/app/#/schedule/${team}/${game}/diamond-v2`;
 }
 
-export function buildDiamondViewerUrl({ teamId, gameId, replay = false, clipStart = null, clipEnd = null } = {}) {
-    const params = new URLSearchParams({
-        teamId: compactText(teamId, 128),
-        gameId: compactText(gameId, 1000)
-    });
-    if (replay === true || replay === 'true' || replay === '1') params.set('replay', 'true');
-    const start = Number(clipStart);
-    const end = Number(clipEnd);
-    if (Number.isFinite(start) && Number.isFinite(end) && start >= 0 && end > start) {
-        params.set('clipStart', String(start));
-        params.set('clipEnd', String(end));
-    }
-    return `/live-game-diamond-v2.html?${params.toString()}`;
+export function buildDiamondViewerUrl({
+  teamId,
+  gameId,
+  replay = false,
+  overlay = false,
+  clipStart = null,
+  clipEnd = null,
+} = {}) {
+  const params = new URLSearchParams({
+    teamId: compactText(teamId, 128),
+    gameId: compactText(gameId, 1000),
+  });
+  if (replay === true || replay === "true" || replay === "1")
+    params.set("replay", "true");
+  const start = Number(clipStart);
+  const end = Number(clipEnd);
+  if (
+    Number.isSafeInteger(start) &&
+    Number.isSafeInteger(end) &&
+    start >= 0 &&
+    end > start &&
+    end <= 24 * 60 * 60 * 1000
+  ) {
+    params.set("replay", "true");
+    params.set("clipStart", String(start));
+    params.set("clipEnd", String(end));
+  }
+  if (overlay === true || overlay === "true" || overlay === "1")
+    params.set("overlay", "true");
+  return `/live-game-diamond-v2.html?${params.toString()}`;
 }

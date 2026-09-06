@@ -35,7 +35,7 @@ test('builds report and replay-specific preview metadata', () => {
   assert.equal(buildLiveGameShareMetadata({ teamName: 'Vipers', mode: 'replay' }).title, 'Vipers game replay');
 });
 
-test('preserves only safe replay and highlight query parameters', () => {
+test('preserves only safe replay, overlay, and highlight query parameters', () => {
   assert.equal(buildLiveGameShareParams({
     teamId: 'team-1',
     gameId: 'game-1',
@@ -50,6 +50,19 @@ test('preserves only safe replay and highlight query parameters', () => {
     replay: 'false',
     clipStart: '-1',
     clipEnd: '999999999'
+  }).toString(), 'teamId=team-1&gameId=game-1');
+
+  assert.equal(buildLiveGameShareParams({
+    teamId: 'team-1',
+    gameId: 'game-1',
+    replay: 'true',
+    overlay: '1'
+  }).toString(), 'teamId=team-1&gameId=game-1&replay=true&overlay=true');
+
+  assert.equal(buildLiveGameShareParams({
+    teamId: 'team-1',
+    gameId: 'game-1',
+    overlay: 'yes'
   }).toString(), 'teamId=team-1&gameId=game-1');
 
   assert.equal(buildLiveGameShareParams({

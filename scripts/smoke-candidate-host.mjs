@@ -163,6 +163,11 @@ function htmlContainsSelector(html, selector) {
         const id = escapeRegExp(selector.slice(1));
         return new RegExp(`\\bid\\s*=\\s*["']${id}["']`, 'i').test(html);
     }
+    const attributePresence = selector.match(/^\[([A-Za-z_:][\w:.-]*)\]$/);
+    if (attributePresence) {
+        const attribute = escapeRegExp(attributePresence[1]);
+        return new RegExp(`<[^>]*\\s${attribute}(?:\\s|=|/?>)`, 'i').test(html);
+    }
     if (/^[A-Za-z][\w-]*$/.test(selector)) {
         return new RegExp(`<${escapeRegExp(selector)}\\b`, 'i').test(html);
     }

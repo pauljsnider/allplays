@@ -390,6 +390,12 @@ function buildAthleteProfileClipSaveState(clips: AthleteProfileClipDraftState[])
 export function PlayerDetail({ auth }: { auth: AuthState }) {
   const { teamId = '', playerId = '' } = useParams();
   const playerAuthUser = useMemo(() => mergePlayerAuthUser(auth.user, auth.profile), [auth.profile, auth.user]);
+  const playerStatsAuthKey = useMemo(() => JSON.stringify({
+    uid: playerAuthUser?.uid || '',
+    isAdmin: playerAuthUser?.isAdmin === true,
+    coachOf: playerAuthUser?.coachOf || [],
+    parentOf: playerAuthUser?.parentOf || []
+  }), [playerAuthUser]);
   const [data, setData] = useState<ParentPlayerDetailData | null>(null);
   const hasLoadedPlayerAccess = data?.child.teamId === teamId && data.child.playerId === playerId;
   const playerPremiumAccess = usePremiumFeatureAccess({
@@ -432,7 +438,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
       return null;
     }
 
-    const requestKey = `${nextTeamId}::${nextPlayerId}`;
+    const requestKey = `${playerStatsAuthKey}::${nextTeamId}::${nextPlayerId}`;
     statsDetailRequestKeyRef.current = requestKey;
     setStatsDetailState('loading');
     setStatsDetailError(null);
@@ -460,7 +466,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
       }
       return null;
     }
-  }, [playerAuthUser, statsDetailState]);
+  }, [playerAuthUser, playerStatsAuthKey, statsDetailState]);
 
   const loadVideoClips = async ({
     nextTeamId,
@@ -639,6 +645,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
   };
 
   useEffect(() => {
+    ++playerDetailRequestIdRef.current;
     athleteProfileRequestKeyRef.current = '';
     videoClipsRequestKeyRef.current = '';
     statsDetailRequestKeyRef.current = '';
@@ -651,9 +658,10 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
     setVideoClipsError(null);
     setStatsDetailState('idle');
     setStatsDetailError(null);
+    setData(null);
     refreshPlayer({ showLoading: true, reloadVideoClips: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [auth.user?.uid, teamId, playerId]);
+  }, [playerStatsAuthKey, teamId, playerId]);
 
   useEffect(() => {
     setActiveSection(getPlayerSectionFromSearch(searchParams));
@@ -1132,7 +1140,9 @@ function DiamondPlayerStatsNotice({ summary }: { summary: ParentPlayerStatsDetai
       role="status"
       aria-label="Diamond player statistics status"
     >
-      <div className="text-xs font-black uppercase tracking-[0.04em]">Diamond scorebook stats · Read only</div>
+      <div className="text-xs font-black uppercase tracking-[0.04em]">
+        Diamond scorebook stats · {summary.diamond.statVisibility === 'manager-internal' ? 'Manager internal' : 'Public'} · Read only
+      </div>
       <div className="mt-0.5 text-xs font-semibold">
         {summary.diamond.pending
           ? 'A projection is pending. Missing values stay unavailable instead of becoming zero.'
@@ -1141,6 +1151,9 @@ function DiamondPlayerStatsNotice({ summary }: { summary: ParentPlayerStatsDetai
       <div className="mt-1 text-[11px] font-bold opacity-75">
         Source revisions: {summary.diamond.sourceRevisions.length ? summary.diamond.sourceRevisions.join(', ') : 'unavailable'}
       </div>
+      {summary.diamond.requestedStatVisibility === 'manager-internal' && summary.diamond.statVisibility !== 'manager-internal' ? (
+        <div className="mt-1 text-[11px] font-bold">Internal stats are unavailable; showing the complete public projection. Refresh to retry.</div>
+      ) : null}
     </div>
   );
 }
@@ -3454,7 +3467,7 @@ function StatRow({ row }: { row: ParentPlayerStatRow }) {
           <div className="mt-0.5 truncate text-xs font-semibold text-gray-500">{formatEventDateLabel(row.event.date)}</div>
           {diamond ? (
             <div className="mt-0.5 text-[10px] font-bold text-sky-700">
-              Diamond stats rev {row.statPresentation?.sourceRevision ?? 'unavailable'}{row.statPresentation?.projection?.pending ? ' · projection pending' : ''}
+              {row.statVisibility === 'manager-internal' ? 'Manager-internal' : 'Public'} Diamond stats rev {row.statPresentation?.sourceRevision ?? 'unavailable'}{row.statPresentation?.projection?.pending ? ' · projection pending' : ''}
             </div>
           ) : null}
         </div>

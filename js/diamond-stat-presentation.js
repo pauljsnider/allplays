@@ -10,6 +10,80 @@ const COVERAGE_STATUS_SET = new Set(DIAMOND_COVERAGE_STATUSES);
 const MAX_STAT_KEYS = 256;
 const SAFE_STAT_KEY = /^[a-z0-9][a-z0-9_]{0,63}$/;
 const BLOCKED_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+const DIAMOND_MANAGER_STAT_VISIBILITY = 'manager-internal';
+const DIAMOND_UUID_V4_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const DIAMOND_SHA256_PATTERN = /^sha256:[0-9a-f]{64}$/;
+const SAFE_RESOURCE_ID = /^[^/]{1,128}$/u;
+const MAX_PUBLIC_PLAYER_DOCUMENTS = 50;
+const MAX_SOURCE_PLAY_IDS = 5000;
+const DIAMOND_PUBLIC_PLAYER_DOCUMENT_KEYS = new Set([
+    'schemaVersion',
+    'trackingEngine',
+    'projectionSchemaVersion',
+    'playerId',
+    'playerName',
+    'playerNumber',
+    'participated',
+    'participationStatus',
+    'participationSource',
+    'didNotPlay',
+    'sourceRevision',
+    'checkpointHash',
+    'coverage',
+    'complete',
+    'publicStatIds',
+    'stats',
+    'observedStats',
+    'derivedStats',
+    'observedDerivedStats',
+    'statCoverage',
+    'statSources',
+    'sourcePlayIds',
+    'unavailableDerivedStats',
+    'missingStatFamilies',
+    'teamId',
+    'diamondGameId',
+    'instanceId',
+    'diamondScorebookInstanceId',
+    'projectionGeneration',
+    'statConfigSnapshotHash',
+    'projectionHash'
+]);
+const DIAMOND_PUBLIC_TEAM_DOCUMENT_KEYS = new Set([
+    'trackingEngine',
+    'projectionSchemaVersion',
+    'sourceRevision',
+    'checkpointHash',
+    'coverage',
+    'publicStatIds',
+    'side',
+    'complete',
+    'stats',
+    'observedStats',
+    'statCoverage',
+    'teamId',
+    'diamondGameId',
+    'instanceId',
+    'diamondScorebookInstanceId',
+    'projectionGeneration',
+    'statConfigSnapshotHash',
+    'projectionHash'
+]);
+const DIAMOND_PUBLIC_STATS_PARTIAL_KEYS = new Set([
+    'schemaVersion',
+    'trackingEngine',
+    'status',
+    'complete'
+]);
+const DIAMOND_PUBLIC_STATS_COMPLETE_KEYS = new Set([
+    ...DIAMOND_PUBLIC_STATS_PARTIAL_KEYS,
+    'instanceId',
+    'sourceRevision',
+    'checkpointHash',
+    'statConfigSnapshotHash',
+    'projectionHash',
+    'publicTeamStats'
+]);
 
 const rawStat = (id, label, group, options = {}) => Object.freeze({
     id,
@@ -66,9 +140,9 @@ export const DIAMOND_PLAYER_STAT_CATALOG = Object.freeze([
     rawStat('fc', 'FC', 'Batting'),
     rawStat('gidp', 'GIDP', 'Batting', { rankingOrder: 'asc' }),
     derivedStat('avg', 'AVG', 'Batting Rates', 'H/AB', { topStat: true }),
-    derivedStat('obp', 'OBP', 'Batting Rates', '(H+BB+HBP)/(AB+BB+HBP+SF)', { topStat: true }),
+    derivedStat('obp', 'OBP', 'Batting Rates', '(H+BB+IBB+HBP)/(AB+BB+IBB+HBP+SF)', { topStat: true }),
     derivedStat('slg', 'SLG', 'Batting Rates', 'TB/AB', { topStat: true }),
-    derivedStat('ops', 'OPS', 'Batting Rates', '((H+BB+HBP)/(AB+BB+HBP+SF))+(TB/AB)', { topStat: true }),
+    derivedStat('ops', 'OPS', 'Batting Rates', '((H+BB+IBB+HBP)/(AB+BB+IBB+HBP+SF))+(TB/AB)', { topStat: true }),
     derivedStat('bb_rate', 'BB RATE', 'Batting Rates', '(BB+IBB)/PA'),
     derivedStat('strikeout_rate', 'K RATE', 'Batting Rates', 'SO/PA', { rankingOrder: 'asc' }),
     rawStat('sb', 'SB', 'Baserunning', { topStat: true }),
@@ -200,23 +274,25 @@ export function getPublicDiamondStatCatalog(resolvedConfig = null, scope = 'play
     const normalizedScope = scope === 'team' ? 'team' : 'player';
     const catalog = normalizedScope === 'team' ? DIAMOND_TEAM_STAT_CATALOG : DIAMOND_PLAYER_STAT_CATALOG;
     const configured = Array.isArray(resolvedConfig?.statDefinitions)
-        ? resolvedConfig.statDefinitions.filter((definition) => (
-            normalizedScope === 'team'
-                ? definition?.scope === 'team'
-                : definition?.scope !== 'team'
-        ))
+        ? resolvedConfig.statDefinitions.filter((definition) => definition?.scope === normalizedScope)
         : [];
     const configuredById = new Map(configured.map((definition) => [
         normalizeStatKey(definition?.id || definition?.acronym || definition?.label),
         definition
     ]).filter(([id]) => id));
-    const privateIds = new Set(configured
-        .filter((definition) => String(definition?.visibility || '').trim().toLowerCase() === 'private')
+    const explicitlyPublicIds = new Set(configured
+        .filter((definition) => String(definition?.visibility || '').trim().toLowerCase() === 'public')
         .map((definition) => normalizeStatKey(definition?.id || definition?.acronym || definition?.label))
         .filter(Boolean));
+    if (normalizedScope === 'team' && Array.isArray(resolvedConfig?.diamondPublicTeamStatIds)) {
+        resolvedConfig.diamondPublicTeamStatIds
+            .map(normalizeStatKey)
+            .filter(Boolean)
+            .forEach((id) => explicitlyPublicIds.add(id));
+    }
 
     return Object.freeze(catalog
-        .filter((definition) => !privateIds.has(definition.id))
+        .filter((definition) => explicitlyPublicIds.has(definition.id))
         .map((definition) => {
             const override = configuredById.get(definition.id);
             if (!override) return definition;
@@ -228,6 +304,509 @@ export function getPublicDiamondStatCatalog(resolvedConfig = null, scope = 'play
                 visibility: 'public'
             });
         }));
+}
+
+/**
+ * Manager reports intentionally use the fixed Diamond catalog rather than a
+ * mutable public allowlist. The private projection contains the full derived
+ * line; the visibility marker prevents callers and exports from silently
+ * presenting it as fan-safe data.
+ */
+export function getManagerDiamondStatCatalog(resolvedConfig = null, scope = 'player') {
+    const normalizedScope = scope === 'team' ? 'team' : 'player';
+    const catalog = normalizedScope === 'team' ? DIAMOND_TEAM_STAT_CATALOG : DIAMOND_PLAYER_STAT_CATALOG;
+    const configured = Array.isArray(resolvedConfig?.statDefinitions)
+        ? resolvedConfig.statDefinitions.filter((definition) => definition?.scope === normalizedScope)
+        : [];
+    const configuredById = new Map(configured.map((definition) => [
+        normalizeStatKey(definition?.id || definition?.acronym || definition?.label),
+        definition
+    ]).filter(([id]) => id));
+
+    return Object.freeze(catalog.map((definition) => {
+        const override = configuredById.get(definition.id);
+        return Object.freeze({
+            ...definition,
+            ...(override || {}),
+            id: definition.id,
+            scope: normalizedScope,
+            visibility: DIAMOND_MANAGER_STAT_VISIBILITY
+        });
+    }));
+}
+
+export function getDiamondProjectionIdentity(game) {
+    if (!isDiamondV2Game(game)) return null;
+    const status = String(game?.diamondProjectionStatus || '').trim().toLowerCase();
+    const instanceId = String(game?.diamondScorebookInstanceId || '').trim();
+    const sourceRevision = toRevision(game?.diamondProjectionRevision);
+    const checkpointHash = String(game?.diamondProjectionCheckpointHash || '').trim();
+    const statConfigSnapshotHash = String(game?.diamondStatConfigSnapshotHash || '').trim();
+    const projectionHash = String(game?.diamondProjectionHash || '').trim();
+    if (
+        !['current', 'complete'].includes(status)
+        || game?.diamondProjectionComplete !== true
+        || !DIAMOND_UUID_V4_PATTERN.test(instanceId)
+        || sourceRevision === null
+        || !DIAMOND_SHA256_PATTERN.test(checkpointHash)
+        || !DIAMOND_SHA256_PATTERN.test(statConfigSnapshotHash)
+        || !DIAMOND_SHA256_PATTERN.test(projectionHash)
+    ) return null;
+    return Object.freeze({ instanceId, sourceRevision, checkpointHash, statConfigSnapshotHash, projectionHash });
+}
+
+export function getDiamondPublicPlayerStatsCollectionPath({ teamId, gameId, game } = {}) {
+    const identity = getDiamondProjectionIdentity(game);
+    const normalizedTeamId = typeof teamId === 'string' ? teamId.trim() : '';
+    const normalizedGameId = typeof gameId === 'string' ? gameId.trim() : '';
+    if (
+        !identity
+        || normalizedTeamId !== teamId
+        || normalizedGameId !== gameId
+        || !SAFE_RESOURCE_ID.test(normalizedTeamId)
+        || !SAFE_RESOURCE_ID.test(normalizedGameId)
+    ) return null;
+    return `teams/${normalizedTeamId}/games/${normalizedGameId}/diamondStatGenerations/${identity.instanceId}/publicPlayerStats`;
+}
+
+function hasExactSanitizedStatMap(value) {
+    if (!isRecord(value) || Object.keys(value).length > MAX_STAT_KEYS) return false;
+    const sanitized = sanitizeStatMap(value);
+    return Object.keys(sanitized).length === Object.keys(value).length;
+}
+
+function isStrictStringArray(value, { maximum = MAX_STAT_KEYS, allowed = null } = {}) {
+    if (!Array.isArray(value) || value.length > maximum) return false;
+    const normalized = value.map((entry) => typeof entry === 'string' ? entry.trim() : '');
+    return normalized.every((entry, index) => (
+        Boolean(entry)
+        && entry === value[index]
+        && entry.length <= 128
+        && (!allowed || allowed.has(entry))
+        && normalized.indexOf(entry) === index
+        && (index === 0 || normalized[index - 1].localeCompare(entry) < 0)
+    ));
+}
+
+function isStrictPublicPlayerStatDocument(entry, identity, teamId, gameId) {
+    const data = entry?.data;
+    if (
+        !SAFE_RESOURCE_ID.test(String(entry?.id || ''))
+        || !isRecord(data)
+        || Object.keys(data).some((key) => !DIAMOND_PUBLIC_PLAYER_DOCUMENT_KEYS.has(key))
+        || data.schemaVersion !== 1
+        || data.trackingEngine !== DIAMOND_TRACKING_ENGINE
+        || data.projectionSchemaVersion !== 1
+        || data.complete !== true
+        || data.playerId !== entry.id
+        || data.teamId !== teamId
+        || data.diamondGameId !== gameId
+        || data.instanceId !== identity.instanceId
+        || data.diamondScorebookInstanceId !== identity.instanceId
+        || data.projectionGeneration !== identity.instanceId
+        || toRevision(data.sourceRevision) !== identity.sourceRevision
+        || data.checkpointHash !== identity.checkpointHash
+        || data.statConfigSnapshotHash !== identity.statConfigSnapshotHash
+        || data.projectionHash !== identity.projectionHash
+        || typeof data.playerName !== 'string'
+        || data.playerName.length > 160
+        || typeof data.playerNumber !== 'string'
+        || data.playerNumber.length > 32
+        || typeof data.participated !== 'boolean'
+        || data.participationSource !== DIAMOND_TRACKING_ENGINE
+        || !['appeared', 'did-not-appear'].includes(data.participationStatus)
+        || (data.participated && data.participationStatus !== 'appeared')
+        || (!data.participated && data.participationStatus !== 'did-not-appear')
+        || (data.participated && Object.prototype.hasOwnProperty.call(data, 'didNotPlay'))
+        || (!data.participated && data.didNotPlay !== true)
+    ) return false;
+
+    const catalogIds = new Set(DIAMOND_PLAYER_STAT_CATALOG.map(({ id }) => id));
+    if (!isStrictStringArray(data.publicStatIds, { allowed: catalogIds })) return false;
+    const publicIds = new Set(data.publicStatIds);
+    if (
+        !hasExactSanitizedStatMap(data.stats)
+        || !hasExactSanitizedStatMap(data.observedStats)
+        || !hasExactSanitizedStatMap(data.derivedStats)
+        || !hasExactSanitizedStatMap(data.observedDerivedStats)
+        || !isRecord(data.statCoverage)
+        || Object.keys(data.statCoverage).length !== publicIds.size
+        || Object.entries(data.statCoverage).some(([key, status]) => !publicIds.has(key) || !COVERAGE_STATUS_SET.has(status))
+        || [data.stats, data.observedStats, data.derivedStats, data.observedDerivedStats]
+            .some((map) => Object.keys(map).some((key) => !publicIds.has(key)))
+        || Object.keys(data.stats).some((key) => data.statCoverage[key] !== 'complete')
+        || Object.keys(data.derivedStats).some((key) => data.statCoverage[key] !== 'complete')
+        || Object.keys(data.observedStats).some((key) => data.statCoverage[key] !== 'partial')
+        || Object.keys(data.observedDerivedStats).some((key) => data.statCoverage[key] !== 'partial')
+        || !isRecord(data.coverage)
+        || Object.keys(data.coverage).length > 32
+        || Object.entries(data.coverage).some(([family, status]) => !normalizeStatKey(family) || !COVERAGE_STATUS_SET.has(status))
+        || !isRecord(data.statSources)
+        || Object.keys(data.statSources).length > publicIds.size
+        || Object.entries(data.statSources).some(([key, ids]) => !publicIds.has(key) || !isStrictStringArray(ids, { maximum: MAX_SOURCE_PLAY_IDS }))
+        || !isStrictStringArray(data.sourcePlayIds, { maximum: MAX_SOURCE_PLAY_IDS })
+        || !isStrictStringArray(data.unavailableDerivedStats, { allowed: DERIVED_STAT_IDS })
+        || !isStrictStringArray(data.missingStatFamilies, { maximum: 32 })
+    ) return false;
+    const expectedSourcePlayIds = [...new Set(Object.values(data.statSources).flat())].sort();
+    return expectedSourcePlayIds.length === data.sourcePlayIds.length
+        && expectedSourcePlayIds.every((eventId, index) => eventId === data.sourcePlayIds[index]);
+}
+
+/**
+ * Treats one public Diamond player-stat collection load as indivisible. The
+ * generation is encoded in the path and repeated in every document so a stale,
+ * malformed, or expanded result can never become an authoritative empty/zero.
+ */
+export function resolveDiamondPublicStatDocuments({
+    teamId,
+    gameId,
+    game,
+    documents = [],
+    loadStatus = 'complete'
+} = {}) {
+    const identity = getDiamondProjectionIdentity(game);
+    const normalizedTeamId = typeof teamId === 'string' ? teamId.trim() : '';
+    const normalizedGameId = typeof gameId === 'string' ? gameId.trim() : '';
+    const unavailable = (reason, status = 'partial') => Object.freeze({
+        requestedVisibility: 'public',
+        appliedVisibility: 'public',
+        status,
+        reason,
+        documents: Object.freeze([]),
+        absenceConfirmed: false,
+        identity
+    });
+    if (
+        !identity
+        || normalizedTeamId !== teamId
+        || normalizedGameId !== gameId
+        || !SAFE_RESOURCE_ID.test(normalizedTeamId)
+        || !SAFE_RESOURCE_ID.test(normalizedGameId)
+    ) return unavailable('authoritative-head-unavailable');
+    if (loadStatus !== 'complete') return unavailable('public-read-incomplete');
+    const normalized = normalizeStatDocuments(documents);
+    if (!Array.isArray(documents) || normalized.length !== documents.length) {
+        return unavailable('public-document-mismatch');
+    }
+    if (normalized.length > MAX_PUBLIC_PLAYER_DOCUMENTS) {
+        return unavailable('public-read-overflow', 'unavailable');
+    }
+    const seen = new Set();
+    for (const entry of normalized) {
+        if (seen.has(entry.id)) return unavailable('public-read-duplicate');
+        seen.add(entry.id);
+        if (!isStrictPublicPlayerStatDocument(entry, identity, normalizedTeamId, normalizedGameId)) {
+            return unavailable('public-document-mismatch');
+        }
+    }
+    return Object.freeze({
+        requestedVisibility: 'public',
+        appliedVisibility: 'public',
+        status: 'complete',
+        reason: null,
+        documents: Object.freeze(normalized.map((entry) => Object.freeze(entry))),
+        absenceConfirmed: normalized.length === 0,
+        identity
+    });
+}
+
+function isStrictTeamStatMap(value, allowedIds) {
+    if (!isRecord(value) || Object.keys(value).length > MAX_STAT_KEYS) return false;
+    return Object.entries(value).every(([rawKey, rawValue]) => {
+        const key = normalizeStatKey(rawKey);
+        return key === rawKey
+            && allowedIds.has(key)
+            && Number.isSafeInteger(rawValue)
+            && rawValue >= 0;
+    });
+}
+
+/**
+ * Validates the sanitized team-stat subset embedded in an authoritative game
+ * projection. The nested envelope is server-owned and generation-bound; any
+ * stale, malformed, or unexpectedly expanded document is rejected as a whole.
+ */
+export function resolveDiamondPublicTeamStatDocument({
+    game,
+    allowedStatIds = null
+} = {}) {
+    const identity = getDiamondProjectionIdentity(game);
+    const unavailable = (reason) => Object.freeze({
+        requestedVisibility: 'public',
+        appliedVisibility: 'public',
+        status: 'partial',
+        reason,
+        document: null,
+        identity
+    });
+    if (!identity) return unavailable('authoritative-head-unavailable');
+    const document = game?.diamondPublicTeamStats;
+    if (!isRecord(document)) return unavailable('public-team-document-missing');
+    if (Object.keys(document).some((key) => !DIAMOND_PUBLIC_TEAM_DOCUMENT_KEYS.has(key))) {
+        return unavailable('public-team-document-mismatch');
+    }
+    const catalogIds = new Set(DIAMOND_TEAM_STAT_CATALOG.map(({ id }) => id));
+    const publicStatIds = Array.isArray(document.publicStatIds)
+        ? document.publicStatIds.map(normalizeStatKey)
+        : [];
+    const canonicalPublicStatIds = [...new Set(publicStatIds)].sort();
+    const gameId = String(game?.id || game?.gameId || '').trim();
+    const teamId = String(game?.teamId || '').trim();
+    if (
+        document.trackingEngine !== DIAMOND_TRACKING_ENGINE
+        || document.complete !== true
+        || document.projectionSchemaVersion !== 1
+        || !['home', 'away'].includes(document.side)
+        || String(document.instanceId || '').trim() !== identity.instanceId
+        || String(document.diamondScorebookInstanceId || '').trim() !== identity.instanceId
+        || String(document.projectionGeneration || '').trim() !== identity.instanceId
+        || toRevision(document.sourceRevision) !== identity.sourceRevision
+        || String(document.checkpointHash || '').trim() !== identity.checkpointHash
+        || String(document.statConfigSnapshotHash || '').trim() !== identity.statConfigSnapshotHash
+        || String(document.projectionHash || '').trim() !== identity.projectionHash
+        || !String(document.teamId || '').trim()
+        || !String(document.diamondGameId || '').trim()
+        || (teamId && String(document.teamId || '').trim() !== teamId)
+        || (gameId && String(document.diamondGameId || '').trim() !== gameId)
+        || !Array.isArray(document.publicStatIds)
+        || document.publicStatIds.length > MAX_STAT_KEYS
+        || document.publicStatIds.some((value) => typeof value !== 'string')
+        || publicStatIds.some((id) => !id || !catalogIds.has(id))
+        || publicStatIds.length !== canonicalPublicStatIds.length
+        || publicStatIds.some((id, index) => id !== canonicalPublicStatIds[index])
+        || !isRecord(document.statCoverage)
+        || Object.keys(document.statCoverage).length !== publicStatIds.length
+        || publicStatIds.some((id) => !COVERAGE_STATUS_SET.has(document.statCoverage[id]))
+        || Object.keys(document.statCoverage).some((id) => !publicStatIds.includes(id))
+        || !isRecord(document.coverage)
+        || Object.keys(document.coverage).length > 32
+        || Object.entries(document.coverage).some(([family, status]) => !normalizeStatKey(family) || !COVERAGE_STATUS_SET.has(status))
+    ) return unavailable('public-team-document-mismatch');
+
+    const publicStatIdSet = new Set(publicStatIds);
+    const completeStatIds = new Set(publicStatIds.filter((id) => document.statCoverage[id] === 'complete'));
+    const partialStatIds = new Set(publicStatIds.filter((id) => document.statCoverage[id] === 'partial'));
+    if (
+        !isStrictTeamStatMap(document.stats, completeStatIds)
+        || !isStrictTeamStatMap(document.observedStats, partialStatIds)
+        || Object.keys(document.stats).some((id) => Object.hasOwn(document.observedStats, id))
+    ) return unavailable('public-team-document-mismatch');
+
+    const callerAllowedIds = allowedStatIds === null
+        ? publicStatIdSet
+        : new Set((Array.isArray(allowedStatIds) ? allowedStatIds : [])
+            .map(normalizeStatKey)
+            .filter((id) => id && catalogIds.has(id)));
+    const visibleIds = publicStatIds.filter((id) => callerAllowedIds.has(id));
+    const visibleIdSet = new Set(visibleIds);
+    const selectVisible = (value) => Object.freeze(Object.fromEntries(
+        Object.entries(value).filter(([id]) => visibleIdSet.has(id))
+    ));
+    return Object.freeze({
+        requestedVisibility: 'public',
+        appliedVisibility: 'public',
+        status: 'complete',
+        reason: null,
+        document: Object.freeze({
+            ...document,
+            publicStatIds: Object.freeze(visibleIds),
+            stats: selectVisible(document.stats),
+            observedStats: selectVisible(document.observedStats),
+            statCoverage: selectVisible(document.statCoverage)
+        }),
+        identity
+    });
+}
+
+/**
+ * Normalizes the stats sub-envelope returned by getPublicDiamondGame. A
+ * partial response deliberately carries no head or data, while a complete
+ * response must reproduce one exact current head in its sanitized team doc.
+ */
+export function resolveDiamondPublicStatsResponse(value) {
+    const unavailable = (reason, status = 'unavailable') => Object.freeze({
+        status,
+        reason,
+        complete: false,
+        identity: null,
+        publicTeamStats: null
+    });
+    if (!isRecord(value)) return unavailable('public-stats-response-missing', 'partial');
+    if (
+        value.schemaVersion !== 1
+        || value.trackingEngine !== DIAMOND_TRACKING_ENGINE
+        || !['complete', 'partial'].includes(value.status)
+        || value.complete !== (value.status === 'complete')
+    ) return unavailable('public-stats-response-mismatch');
+    const expectedKeys = value.status === 'complete'
+        ? DIAMOND_PUBLIC_STATS_COMPLETE_KEYS
+        : DIAMOND_PUBLIC_STATS_PARTIAL_KEYS;
+    if (
+        Object.keys(value).length !== expectedKeys.size
+        || Object.keys(value).some((key) => !expectedKeys.has(key))
+    ) return unavailable('public-stats-response-mismatch');
+    if (value.status === 'partial') {
+        return unavailable('public-stats-partial', 'partial');
+    }
+    const publicTeamStats = value.publicTeamStats;
+    if (!isRecord(publicTeamStats)) return unavailable('public-stats-response-mismatch');
+    const syntheticGame = {
+        id: publicTeamStats.diamondGameId,
+        teamId: publicTeamStats.teamId,
+        trackingEngine: DIAMOND_TRACKING_ENGINE,
+        diamondProjectionStatus: 'current',
+        diamondProjectionComplete: true,
+        diamondScorebookInstanceId: value.instanceId,
+        diamondProjectionRevision: value.sourceRevision,
+        diamondProjectionCheckpointHash: value.checkpointHash,
+        diamondStatConfigSnapshotHash: value.statConfigSnapshotHash,
+        diamondProjectionHash: value.projectionHash,
+        diamondPublicTeamStats: publicTeamStats
+    };
+    const resolution = resolveDiamondPublicTeamStatDocument({ game: syntheticGame });
+    if (resolution.status !== 'complete' || !resolution.document) {
+        return unavailable('public-stats-response-mismatch');
+    }
+    return Object.freeze({
+        status: 'complete',
+        reason: null,
+        complete: true,
+        identity: resolution.identity,
+        publicTeamStats: resolution.document
+    });
+}
+
+function normalizeStatDocuments(documents) {
+    if (!Array.isArray(documents)) return [];
+    return documents.flatMap((entry) => {
+        const id = String(entry?.id || '').trim();
+        const data = isRecord(entry?.data) ? entry.data : null;
+        return id && data ? [{ id, data }] : [];
+    });
+}
+
+function isFullManagerStatDocument(entry, identity) {
+    const data = entry?.data;
+    return Boolean(
+        isRecord(data)
+        && data.trackingEngine === DIAMOND_TRACKING_ENGINE
+        && data.authoritative === true
+        && data.complete === true
+        && data.projectionSchemaVersion === 1
+        && String(data.playerId || '').trim() === entry.id
+        && ['home', 'away'].includes(data.side)
+        && String(data.instanceId || '').trim() === identity.instanceId
+        && String(data.diamondScorebookInstanceId || '').trim() === identity.instanceId
+        && String(data.projectionGeneration || '').trim() === identity.instanceId
+        && toRevision(data.sourceRevision) === identity.sourceRevision
+        && String(data.checkpointHash || '').trim() === identity.checkpointHash
+        && String(data.statConfigSnapshotHash || '').trim() === identity.statConfigSnapshotHash
+        && String(data.projectionHash || '').trim() === identity.projectionHash
+        && isRecord(data.stats)
+        && isRecord(data.observedStats)
+        && isRecord(data.derivedStats)
+        && isRecord(data.observedDerivedStats)
+        && isRecord(data.statCoverage)
+        && isRecord(data.coverage)
+    );
+}
+
+export function resolveDiamondManagerTeamStatDocument({
+    game,
+    privateDocument = null,
+    loadStatus = 'complete'
+} = {}) {
+    const identity = getDiamondProjectionIdentity(game);
+    const unavailable = (reason, status = 'unavailable') => Object.freeze({
+        requestedVisibility: DIAMOND_MANAGER_STAT_VISIBILITY,
+        appliedVisibility: 'public',
+        status,
+        reason,
+        document: null,
+        identity
+    });
+    if (!identity) return unavailable('authoritative-head-unavailable');
+    if (loadStatus !== 'complete') return unavailable('private-read-incomplete', 'partial');
+    if (!isRecord(privateDocument)) return unavailable('private-read-empty', 'partial');
+    if (
+        privateDocument.trackingEngine !== DIAMOND_TRACKING_ENGINE
+        || privateDocument.complete !== true
+        || privateDocument.projectionSchemaVersion !== 1
+        || !['home', 'away'].includes(privateDocument.side)
+        || String(privateDocument.instanceId || '').trim() !== identity.instanceId
+        || String(privateDocument.diamondScorebookInstanceId || '').trim() !== identity.instanceId
+        || String(privateDocument.projectionGeneration || '').trim() !== identity.instanceId
+        || toRevision(privateDocument.sourceRevision) !== identity.sourceRevision
+        || String(privateDocument.checkpointHash || '').trim() !== identity.checkpointHash
+        || String(privateDocument.statConfigSnapshotHash || '').trim() !== identity.statConfigSnapshotHash
+        || String(privateDocument.projectionHash || '').trim() !== identity.projectionHash
+        || !isRecord(privateDocument.stats)
+        || !isRecord(privateDocument.observedStats)
+        || !isRecord(privateDocument.statCoverage)
+        || !isRecord(privateDocument.coverage)
+    ) return unavailable('private-document-mismatch', 'partial');
+    return Object.freeze({
+        requestedVisibility: DIAMOND_MANAGER_STAT_VISIBILITY,
+        appliedVisibility: DIAMOND_MANAGER_STAT_VISIBILITY,
+        status: 'complete',
+        reason: null,
+        document: privateDocument,
+        identity
+    });
+}
+
+/**
+ * Validates a private-player-stat collection as one indivisible generation.
+ * Callers must keep their public result when this returns anything except
+ * `complete`; a partial/empty/denied read is never evidence that private
+ * values are absent.
+ */
+export function resolveDiamondManagerStatDocuments({
+    game,
+    expectedPlayerIds = [],
+    privateDocuments = [],
+    loadStatus = 'complete'
+} = {}) {
+    const identity = getDiamondProjectionIdentity(game);
+    const expectedIds = [...new Set((Array.isArray(expectedPlayerIds) ? expectedPlayerIds : [])
+        .map((value) => String(value || '').trim())
+        .filter(Boolean))].sort();
+    const documents = normalizeStatDocuments(privateDocuments);
+    const unavailable = (reason, status = 'unavailable') => Object.freeze({
+        requestedVisibility: DIAMOND_MANAGER_STAT_VISIBILITY,
+        appliedVisibility: 'public',
+        status,
+        reason,
+        documents: Object.freeze([]),
+        identity
+    });
+
+    if (!identity) return unavailable('authoritative-head-unavailable');
+    if (loadStatus !== 'complete') return unavailable('private-read-incomplete', 'partial');
+    if (expectedIds.length === 0 || documents.length === 0) return unavailable('private-read-empty', 'partial');
+    const byId = new Map();
+    for (const entry of documents) {
+        if (byId.has(entry.id)) return unavailable('private-read-duplicate', 'partial');
+        byId.set(entry.id, entry);
+    }
+    if (
+        byId.size !== expectedIds.length
+        || expectedIds.some((playerId) => !byId.has(playerId))
+        || [...byId.keys()].some((playerId) => !expectedIds.includes(playerId))
+    ) return unavailable('private-read-partial', 'partial');
+    const accepted = expectedIds.map((playerId) => byId.get(playerId));
+    if (accepted.some((entry) => !isFullManagerStatDocument(entry, identity))) {
+        return unavailable('private-document-mismatch', 'partial');
+    }
+    return Object.freeze({
+        requestedVisibility: DIAMOND_MANAGER_STAT_VISIBILITY,
+        appliedVisibility: DIAMOND_MANAGER_STAT_VISIBILITY,
+        status: 'complete',
+        reason: null,
+        documents: Object.freeze(accepted.map((entry) => Object.freeze(entry))),
+        identity
+    });
 }
 
 export function resolveDiamondProjectionState(game, sourceRevisions = [], options = {}) {
@@ -436,7 +1015,12 @@ function deriveSeasonStats(stats, familyCoverage, eraBasis) {
     };
 
     setRatio('avg', 'batting', Number(stats.h || 0), Number(stats.ab || 0));
-    setRatio('obp', 'batting', Number(stats.h || 0) + Number(stats.bb || 0) + Number(stats.hbp || 0), Number(stats.ab || 0) + Number(stats.bb || 0) + Number(stats.hbp || 0) + Number(stats.sf || 0));
+    setRatio(
+        'obp',
+        'batting',
+        Number(stats.h || 0) + Number(stats.bb || 0) + Number(stats.ibb || 0) + Number(stats.hbp || 0),
+        Number(stats.ab || 0) + Number(stats.bb || 0) + Number(stats.ibb || 0) + Number(stats.hbp || 0) + Number(stats.sf || 0)
+    );
     setRatio('slg', 'batting', Number(stats.tb || 0), Number(stats.ab || 0));
     derivedCoverage.ops = familyCoverage.batting || 'not_collected';
     if (Object.prototype.hasOwnProperty.call(derived, 'obp') && Object.prototype.hasOwnProperty.call(derived, 'slg')) derived.ops = derived.obp + derived.slg;
@@ -584,6 +1168,88 @@ export function aggregateCoverageAwareSeasonStats({ legacyStatsByPlayerId = {}, 
             hasDiamond: Array.isArray(diamondGames) && diamondGames.length > 0,
             pending: projectionPending,
             sourceRevisions: Object.freeze([...new Set(sourceRevisions)].sort((left, right) => left - right))
+        })
+    });
+}
+
+/**
+ * Sums already validated team-stat documents across authoritative Diamond
+ * game heads. Missing or stale documents make every otherwise-complete season
+ * counter partial; they are never interpreted as a zero-value game.
+ */
+export function aggregateCoverageAwareTeamStats({ diamondGames = [], allowedStatIds = [] } = {}) {
+    const catalogIds = new Set(DIAMOND_TEAM_STAT_CATALOG.map(({ id }) => id));
+    const statIds = [...new Set((Array.isArray(allowedStatIds) ? allowedStatIds : [])
+        .map(normalizeStatKey)
+        .filter((id) => id && catalogIds.has(id)))].sort();
+    const entries = Array.isArray(diamondGames) ? diamondGames : [];
+    const totals = {};
+    const hasValueById = {};
+    const statusesById = Object.fromEntries(statIds.map((id) => [id, []]));
+    const sourceRevisions = [];
+    let projectionPending = false;
+
+    entries.forEach(({ game = {}, document = null }) => {
+        if (!isRecord(document)) {
+            projectionPending = true;
+            return;
+        }
+        const view = readCoverageAwareStatDocument(document, game);
+        projectionPending ||= view.projection.pending;
+        if (view.sourceRevision !== null) sourceRevisions.push(view.sourceRevision);
+        statIds.forEach((id) => {
+            const status = view.statCoverage[id] || 'not_collected';
+            statusesById[id].push(status);
+            if (!Object.hasOwn(view.values, id)) return;
+            const value = Number(view.values[id]);
+            if (!Number.isFinite(value)) return;
+            totals[id] = (Number(totals[id]) || 0) + value;
+            hasValueById[id] = true;
+        });
+    });
+
+    const statCoverage = {};
+    statIds.forEach((id) => {
+        const statuses = statusesById[id];
+        const allGamesAccountedFor = statuses.length === entries.length;
+        let status = allGamesAccountedFor && statuses.length > 0 && statuses.every((candidate) => candidate === 'complete')
+            ? 'complete'
+            : statuses.some((candidate) => candidate === 'partial') || hasValueById[id]
+                ? 'partial'
+                : 'not_collected';
+        if (projectionPending && status === 'complete') status = 'partial';
+        statCoverage[id] = status;
+    });
+    const observedStatKeys = statIds.filter((id) => statCoverage[id] === 'partial' && hasValueById[id]);
+    const unavailableStatKeys = statIds.filter((id) => !hasValueById[id]);
+    const presentation = Object.freeze({
+        isDiamond: true,
+        statCoverage: Object.freeze(statCoverage),
+        observedStatKeys: Object.freeze(observedStatKeys),
+        unavailableStatKeys: Object.freeze(unavailableStatKeys),
+        projectionPending,
+        sourceRevision: null,
+        projection: Object.freeze({
+            isDiamond: true,
+            status: projectionPending ? 'pending' : 'current',
+            pending: projectionPending,
+            authoritativeRevision: null,
+            sourceRevisions: Object.freeze([...new Set(sourceRevisions)].sort((left, right) => left - right))
+        })
+    });
+    const stats = Object.freeze(Object.fromEntries(
+        Object.entries(totals).filter(([id]) => hasValueById[id])
+    ));
+    return Object.freeze({
+        stats,
+        completeStats: Object.freeze(Object.fromEntries(
+            Object.entries(stats).filter(([id]) => statCoverage[id] === 'complete')
+        )),
+        presentation,
+        projection: Object.freeze({
+            hasDiamond: entries.length > 0,
+            pending: projectionPending,
+            sourceRevisions: presentation.projection.sourceRevisions
         })
     });
 }

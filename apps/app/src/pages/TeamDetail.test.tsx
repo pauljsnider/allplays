@@ -85,6 +85,7 @@ const premiumAccessMocks = vi.hoisted(() => ({
 
 const publicActionsMocks = vi.hoisted(() => ({
   copyPublicText: vi.fn(),
+  exportCsvFile: vi.fn(),
   openPublicUrl: vi.fn(),
   sharePublicUrl: vi.fn()
 }));
@@ -134,6 +135,7 @@ vi.mock('lucide-react', () => {
     Code2: Icon,
     Copy: Icon,
     DollarSign: Icon,
+    Download: Icon,
     Dumbbell: Icon,
     ExternalLink: Icon,
     FileSpreadsheet: Icon,
@@ -1804,7 +1806,7 @@ describe('TeamDetail', () => {
       </MemoryRouter>
     );
 
-    expect(await screen.findByText('Diamond scorebook stats · Read only')).toBeTruthy();
+    expect(await screen.findByText('Diamond scorebook stats · Public · Read only')).toBeTruthy();
     expect(screen.getByText('Observed')).toBeTruthy();
     expect(screen.getByRole('cell', { name: 'Not collected' })).toHaveTextContent('—');
     expect(screen.getByText('Source revisions: 14')).toBeTruthy();

@@ -11,8 +11,12 @@ const gameReportServiceMocks = vi.hoisted(() => ({
 const liveGameAnnouncerMocks = vi.hoisted(() => ({
   toggleEnabled: vi.fn()
 }));
+const diamondStatExportMocks = vi.hoisted(() => ({
+  exportDiamondGameReportStatsCsv: vi.fn()
+}));
 
 vi.mock('../../lib/gameReportService', () => gameReportServiceMocks);
+vi.mock('../../lib/diamondStatExport', () => diamondStatExportMocks);
 vi.mock('../../lib/liveGameAnnouncer', () => ({
   useLiveGameAnnouncer: () => ({
     supported: true,
@@ -49,14 +53,13 @@ function buildReport(summary: string, gameOverrides: Record<string, unknown> = {
     opponentStatKeys: [],
     teamInsights: [],
     playerInsightRows: [],
+    publishedAiRecap: null,
     highlightClips: [],
     statSheetPhotoUrl: null,
     teamStatKeys: [],
     teamStats: {},
     statKeys: ['pts'],
-    playerRows: [
-      { playerId: 'player-1', playerName: 'Avery Smith', number: '1', stats: { pts: 8 }, timeMs: 600000, didNotPlay: false }
-    ],
+    playerRows: [{ playerId: 'player-1', playerName: 'Avery Smith', number: '1', stats: { pts: 8 }, timeMs: 600000, didNotPlay: false }],
     statLabels: { pts: 'PTS' },
     hasPlayingTime: true,
     team: { id: 'team-1' }
@@ -64,6 +67,97 @@ function buildReport(summary: string, gameOverrides: Record<string, unknown> = {
 }
 
 describe('GameReportSections', () => {
+  it('offers the coverage-aware stats export only for Diamond reports', async () => {
+    diamondStatExportMocks.exportDiamondGameReportStatsCsv.mockResolvedValue('downloaded');
+    const diamondReport = {
+      ...buildReport('', { trackingEngine: 'diamond-v2' }),
+      diamond: {
+        isDiamond: true,
+        readOnly: true,
+        status: 'current',
+        pending: false,
+        authoritativeRevision: 12,
+        sourceRevisions: [12]
+      }
+    };
+    gameReportServiceMocks.loadGameReportSections.mockResolvedValueOnce(diamondReport);
+
+    const { rerender } = render(<GameReportSections event={buildEvent()} />);
+    const exportButton = await screen.findByRole('button', { name: 'Export public CSV' });
+    fireEvent.click(exportButton);
+
+    await waitFor(() => expect(diamondStatExportMocks.exportDiamondGameReportStatsCsv).toHaveBeenCalledWith(diamondReport));
+    expect(screen.getByText('Stats CSV downloaded.')).toBeTruthy();
+
+    gameReportServiceMocks.loadGameReportSections.mockResolvedValueOnce(buildReport('Legacy report.'));
+    rerender(<GameReportSections event={buildEvent({ id: 'game-2' })} />);
+    await waitFor(() => expect(screen.getByText('Legacy report.')).toBeTruthy());
+    expect(screen.queryByRole('button', { name: 'Export public CSV' })).toBeNull();
+  });
+
+  it('shows a published Diamond AI recap with play evidence and coverage disclosure', async () => {
+    gameReportServiceMocks.loadGameReportSections.mockResolvedValue({
+      ...buildReport('', { trackingEngine: 'diamond-v2', liveStatus: 'completed', status: 'completed' }),
+      diamond: {
+        isDiamond: true,
+        readOnly: true,
+        status: 'current',
+        pending: false,
+        authoritativeRevision: 12,
+        sourceRevisions: [12]
+      },
+      publishedAiRecap: {
+        current: true,
+        sourceRevision: 12,
+        publishedAt: '2026-09-05T20:00:00.000Z',
+        recap: { text: 'The Falcons won 4-3.', citations: [{ eventId: 'event-12', revision: 12 }] },
+        insights: [{ text: 'Avery recorded 2 hits.', citations: [{ eventId: 'event-8', revision: 8 }] }],
+        coverage: { batting: 'complete', fielding: 'partial', sensors: 'not_collected' },
+        dataQualityNotes: ['Fielding detail was partially captured.']
+      }
+    });
+
+    render(<GameReportSections event={buildEvent({ liveStatus: 'completed', status: 'completed' })} />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Insights' })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Insights' }));
+
+    expect(screen.getByText('Published AI recap')).toBeTruthy();
+    expect(screen.getByText('The Falcons won 4-3.')).toBeTruthy();
+    expect(screen.getByText('Avery recorded 2 hits.')).toBeTruthy();
+    expect(screen.getAllByLabelText('AI recap play evidence')).toHaveLength(2);
+    expect(screen.getByText(/fielding: partial/i)).toBeTruthy();
+  });
+
+  it('hides stale AI prose after a correction while preserving regeneration evidence', async () => {
+    gameReportServiceMocks.loadGameReportSections.mockResolvedValue({
+      ...buildReport('', { trackingEngine: 'diamond-v2', liveStatus: 'completed', status: 'completed' }),
+      diamond: {
+        isDiamond: true,
+        readOnly: true,
+        status: 'current',
+        pending: false,
+        authoritativeRevision: 13,
+        sourceRevisions: [13]
+      },
+      publishedAiRecap: {
+        current: false,
+        sourceRevision: 12,
+        publishedAt: '2026-09-05T20:00:00.000Z',
+        recap: { text: 'Outdated result.', citations: [{ eventId: 'event-12', revision: 12 }] },
+        insights: [],
+        coverage: {},
+        dataQualityNotes: []
+      }
+    });
+
+    render(<GameReportSections event={buildEvent({ liveStatus: 'completed', status: 'completed' })} />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Insights' })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Insights' }));
+
+    expect(screen.getByText('AI recap needs regeneration')).toBeTruthy();
+    expect(screen.queryByText('Outdated result.')).toBeNull();
+  });
+
   it('labels partial Diamond observations and renders not-collected values as em dashes', async () => {
     gameReportServiceMocks.loadGameReportSections.mockResolvedValue({
       ...buildReport('', { trackingEngine: 'diamond-v2' }),
@@ -78,26 +172,28 @@ describe('GameReportSections', () => {
       statKeys: ['h', 'sb', 'era', 'whip'],
       statLabels: { h: 'H', sb: 'SB', era: 'ERA', whip: 'WHIP' },
       statDefinitions: { era: { precision: 2 }, whip: { precision: 2 } },
-      playerRows: [{
-        playerId: 'player-1',
-        playerName: 'Avery Smith',
-        number: '1',
-        stats: { h: 0, sb: 2 },
-        timeMs: 0,
-        didNotPlay: false,
-        statPresentation: {
-          isDiamond: true,
-          statCoverage: { h: 'complete', sb: 'partial', era: 'not_collected', whip: 'not_collected' },
-          observedStatKeys: ['sb'],
-          unavailableStatKeys: ['era', 'whip']
+      playerRows: [
+        {
+          playerId: 'player-1',
+          playerName: 'Avery Smith',
+          number: '1',
+          stats: { h: 0, sb: 2 },
+          timeMs: 0,
+          didNotPlay: false,
+          statPresentation: {
+            isDiamond: true,
+            statCoverage: { h: 'complete', sb: 'partial', era: 'not_collected', whip: 'not_collected' },
+            observedStatKeys: ['sb'],
+            unavailableStatKeys: ['era', 'whip']
+          }
         }
-      }],
+      ],
       visiblePlayerRows: [],
       deferredPlayerRows: []
     });
 
     render(<GameReportSections event={buildEvent()} />);
-    await waitFor(() => expect(screen.getByText('Diamond scorebook · Read only')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Diamond scorebook · Public stats · Read only')).toBeTruthy());
     fireEvent.click(screen.getByRole('button', { name: 'Players' }));
 
     const player = screen.getByRole('link', { name: /Avery Smith/i });
@@ -123,9 +219,11 @@ describe('GameReportSections', () => {
   });
 
   it('renders plays before the secondary audio control and keeps the toggle behavior', async () => {
-    gameReportServiceMocks.loadGameReportSections.mockResolvedValue(buildReport('Live report.', {}, [
-      { id: 'event-1', text: 'Avery scores', period: 'Q1', clock: '7:42', timestamp: new Date(1717200000 * 1000) }
-    ]));
+    gameReportServiceMocks.loadGameReportSections.mockResolvedValue(
+      buildReport('Live report.', {}, [
+        { id: 'event-1', text: 'Avery scores', period: 'Q1', clock: '7:42', timestamp: new Date(1717200000 * 1000) }
+      ])
+    );
 
     render(<GameReportSections event={buildEvent()} />);
 
@@ -192,12 +290,10 @@ describe('GameReportSections', () => {
   });
 
   it('resets the panel when the event identity changes', async () => {
-    gameReportServiceMocks.loadGameReportSections
-      .mockResolvedValueOnce(buildReport('First report.'))
-      .mockResolvedValueOnce({
-        ...buildReport('Second report.'),
-        game: { id: 'game-2', liveStatus: 'completed', status: 'completed', homeScore: 55, awayScore: 44 }
-      });
+    gameReportServiceMocks.loadGameReportSections.mockResolvedValueOnce(buildReport('First report.')).mockResolvedValueOnce({
+      ...buildReport('Second report.'),
+      game: { id: 'game-2', liveStatus: 'completed', status: 'completed', homeScore: 55, awayScore: 44 }
+    });
 
     const { rerender } = render(<GameReportSections event={buildEvent()} />);
 
@@ -210,22 +306,30 @@ describe('GameReportSections', () => {
       expect(screen.getByRole('link', { name: /#1 Avery Smith/i })).toBeTruthy();
     });
 
-    rerender(<GameReportSections event={buildEvent({ id: 'game-2', homeScore: 55, awayScore: 44, liveStatus: 'completed', status: 'completed' })} />);
+    rerender(
+      <GameReportSections
+        event={buildEvent({ id: 'game-2', homeScore: 55, awayScore: 44, liveStatus: 'completed', status: 'completed' })}
+      />
+    );
 
     expect(screen.getByText('Loading report sections...')).toBeTruthy();
 
     await waitFor(() => {
       expect(gameReportServiceMocks.loadGameReportSections).toHaveBeenCalledTimes(2);
-      expect(gameReportServiceMocks.loadGameReportSections).toHaveBeenNthCalledWith(2, 'team-1', 'game-2');
+      expect(gameReportServiceMocks.loadGameReportSections).toHaveBeenNthCalledWith(2, 'team-1', 'game-2', {
+        statVisibility: 'public'
+      });
       expect(screen.getByText('Second report.')).toBeTruthy();
     });
     expect(screen.getByRole('button', { name: 'Summary' }).className).toContain('bg-primary-600');
   });
 
   it('polls live plays with the lightweight loader and merges them into the current report', async () => {
-    gameReportServiceMocks.loadGameReportSections.mockResolvedValue(buildReport('First report.', {}, [
-      { id: 'event-early', text: 'Opening tip', period: 'Q1', clock: '8:00', timestamp: new Date(1717200000 * 1000) }
-    ]));
+    gameReportServiceMocks.loadGameReportSections.mockResolvedValue(
+      buildReport('First report.', {}, [
+        { id: 'event-early', text: 'Opening tip', period: 'Q1', clock: '8:00', timestamp: new Date(1717200000 * 1000) }
+      ])
+    );
     gameReportServiceMocks.loadGameReportPlays.mockResolvedValue({
       game: { id: 'game-1', liveStatus: 'live', status: 'live', homeScore: 41, awayScore: 38 },
       playsFresh: true,
@@ -261,9 +365,11 @@ describe('GameReportSections', () => {
   });
 
   it('preserves the displayed plays when the optional event refresh is unavailable', async () => {
-    gameReportServiceMocks.loadGameReportSections.mockResolvedValue(buildReport('First report.', {}, [
-      { id: 'event-early', text: 'Opening tip', period: 'Q1', clock: '8:00', timestamp: new Date(1717200000 * 1000) }
-    ]));
+    gameReportServiceMocks.loadGameReportSections.mockResolvedValue(
+      buildReport('First report.', {}, [
+        { id: 'event-early', text: 'Opening tip', period: 'Q1', clock: '8:00', timestamp: new Date(1717200000 * 1000) }
+      ])
+    );
     gameReportServiceMocks.loadGameReportPlays.mockResolvedValue({
       game: { id: 'game-1', liveStatus: 'live', status: 'live', homeScore: 42, awayScore: 40 },
       plays: [],
@@ -290,13 +396,17 @@ describe('GameReportSections', () => {
 
   it('uses lightweight focus refreshes only when the Plays tab is active and live', async () => {
     gameReportServiceMocks.loadGameReportSections
-      .mockResolvedValueOnce(buildReport('First report.', {}, [
-        { id: 'event-early', text: 'Opening tip', period: 'Q1', clock: '8:00', timestamp: new Date(1717200000 * 1000) }
-      ]))
-      .mockResolvedValueOnce(buildReport('Completed report.', { liveStatus: 'completed', status: 'completed' }, [
-        { id: 'event-early', text: 'Opening tip', period: 'Q1', clock: '8:00', timestamp: new Date(1717200000 * 1000) },
-        { id: 'event-late', text: 'Late bucket', period: 'Q1', clock: '0:12', timestamp: new Date(1717200060 * 1000) }
-      ]));
+      .mockResolvedValueOnce(
+        buildReport('First report.', {}, [
+          { id: 'event-early', text: 'Opening tip', period: 'Q1', clock: '8:00', timestamp: new Date(1717200000 * 1000) }
+        ])
+      )
+      .mockResolvedValueOnce(
+        buildReport('Completed report.', { liveStatus: 'completed', status: 'completed' }, [
+          { id: 'event-early', text: 'Opening tip', period: 'Q1', clock: '8:00', timestamp: new Date(1717200000 * 1000) },
+          { id: 'event-late', text: 'Late bucket', period: 'Q1', clock: '0:12', timestamp: new Date(1717200060 * 1000) }
+        ])
+      );
     gameReportServiceMocks.loadGameReportPlays.mockResolvedValue({
       game: { id: 'game-1', liveStatus: 'live', status: 'live', homeScore: 41, awayScore: 38 },
       playsFresh: true,
@@ -344,13 +454,17 @@ describe('GameReportSections', () => {
 
   it('refreshes live status during lightweight play polling and stops polling after completion', async () => {
     gameReportServiceMocks.loadGameReportSections
-      .mockResolvedValueOnce(buildReport('Live report.', {}, [
-        { id: 'event-early', text: 'Opening tip', period: 'Q1', clock: '8:00', timestamp: new Date(1717200000 * 1000) }
-      ]))
-      .mockResolvedValueOnce(buildReport('Completed report.', { liveStatus: 'completed', status: 'completed', homeScore: 43, awayScore: 40 }, [
-        { id: 'event-early', text: 'Opening tip', period: 'Q1', clock: '8:00', timestamp: new Date(1717200000 * 1000) },
-        { id: 'event-final', text: 'Final horn', period: 'Q4', clock: '0:00', timestamp: new Date(1717200120 * 1000) }
-      ]));
+      .mockResolvedValueOnce(
+        buildReport('Live report.', {}, [
+          { id: 'event-early', text: 'Opening tip', period: 'Q1', clock: '8:00', timestamp: new Date(1717200000 * 1000) }
+        ])
+      )
+      .mockResolvedValueOnce(
+        buildReport('Completed report.', { liveStatus: 'completed', status: 'completed', homeScore: 43, awayScore: 40 }, [
+          { id: 'event-early', text: 'Opening tip', period: 'Q1', clock: '8:00', timestamp: new Date(1717200000 * 1000) },
+          { id: 'event-final', text: 'Final horn', period: 'Q4', clock: '0:00', timestamp: new Date(1717200120 * 1000) }
+        ])
+      );
     gameReportServiceMocks.loadGameReportPlays.mockResolvedValue({
       game: { id: 'game-1', liveStatus: 'live', status: 'completed', homeScore: 43, awayScore: 40 },
       playsFresh: true,

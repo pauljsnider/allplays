@@ -847,11 +847,11 @@
                         class="w-full px-4 py-3 bg-gray-100 text-gray-800 rounded-lg hover:bg-gray-200 transition font-semibold">
                         <span data-tracker-label-text>Photo Score Sheet</span>
                     </button>
-                    <button id="diamond-tracker-quick" data-tracker-label="Diamond — Quick capture"
+                    <button id="diamond-tracker-quick" hidden data-tracker-label="Diamond — Quick capture"
                         class="hidden w-full px-4 py-3 bg-gray-100 text-gray-800 rounded-lg hover:bg-gray-200 transition font-semibold">
                         <span data-tracker-label-text>Diamond — Quick capture</span>
                     </button>
-                    <button id="diamond-tracker-full" data-tracker-label="Diamond — Full capture"
+                    <button id="diamond-tracker-full" hidden data-tracker-label="Diamond — Full capture"
                         class="hidden w-full px-4 py-3 bg-gray-100 text-gray-800 rounded-lg hover:bg-gray-200 transition font-semibold">
                         <span data-tracker-label-text>Diamond — Full capture</span>
                     </button>
@@ -967,7 +967,7 @@
         import { getTeamAccessInfo } from './js/team-access.js?v=44338';
         import { resolvePreferredStatConfigId } from './js/live-game-state.js?v=43';
         import { getGoalSportProfile } from './js/live-sport-config.js?v=3';
-        import { cancelScheduledGame } from './js/edit-schedule-cancel-game.js?v=3';
+        import { cancelScheduledGame } from './js/edit-schedule-cancel-game.js?v=4';
         import { applyPracticeRecurrenceFields } from './js/edit-schedule-practice-payload.js?v=1';
         import { savePracticeForm } from './js/edit-schedule-practice-submit.js?v=3';
         import { buildBulkAiPracticePayload, createBulkAiImageController, normalizeBulkAiAssignments, normalizeBulkAiEventForAdd, normalizeBulkAiIsHome } from './js/edit-schedule-ai-import.js?v=2';
@@ -983,10 +983,13 @@
         import { buildRegistrationScheduleImportPreview, formatRegistrationImportResults, getRegistrationScheduleEvents, isExternallyLinkedRegistrationTeam, planRegistrationScheduleImport } from './js/edit-schedule-registration-import.js?v=4';
         import { getGameReplayLifecycle } from './js/game-replay-video.js?v=3';
         import { hasReplayVideoEvidence } from './js/schedule-watch-cta.js?v=3';
-        import { DIAMOND_ENGINE, buildDiamondTrackerUrl } from './js/diamond-scorebook-routing.js?v=1';
-        import { activateDiamondGameForLegacy, getDiamondGameAccess } from './js/diamond-scorebook-client.js?v=1';
+        import { DIAMOND_ENGINE, buildDiamondTrackerUrl } from './js/diamond-scorebook-routing.js?v=2';
+        import { activateDiamondGameForLegacy, cancelDiamondGameForLegacy, getDiamondGameAccess } from './js/diamond-scorebook-client.js?v=4';
+        import { isDiamondScorebookUiEnabled } from './js/launch-features.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
+
+        const diamondScorebookUiEnabled = isDiamondScorebookUiEnabled();
 
         let currentTeamId = null;
         let currentUser = null;
@@ -2390,22 +2393,25 @@
                         user: currentUser,
                         game,
                         cancelGame,
+                        cancelDiamondGame: cancelDiamondGameForLegacy,
                         postChatMessage,
                         counterpartTeamId: game.opponentTeamId || game.sharedScheduleOpponentTeamId || null,
                         counterpartOpponent: currentTeam?.name || null
                     });
                     if (result.cancelled) {
-                        try {
-                            await updateGame(currentTeamId, gameId, {
-                                scheduleNotifications: buildScheduleNotificationMetadata({
-                                    settings: getTeamScheduleNotificationSettings(),
-                                    action: 'cancelled',
-                                    sent: !result.notificationError,
-                                    userId: currentUser.uid
-                                })
-                            });
-                        } catch (error) {
-                            console.error('Game cancelled but notification metadata update failed:', error);
+                        if (!result.canonical) {
+                            try {
+                                await updateGame(currentTeamId, gameId, {
+                                    scheduleNotifications: buildScheduleNotificationMetadata({
+                                        settings: getTeamScheduleNotificationSettings(),
+                                        action: 'cancelled',
+                                        sent: !result.notificationError,
+                                        userId: currentUser.uid
+                                    })
+                                });
+                            } catch (error) {
+                                console.error('Game cancelled but notification metadata update failed:', error);
+                            }
                         }
                         try {
                             await loadSchedule();
@@ -2755,6 +2761,7 @@
         }
 
         function configureTrackerChoiceModal(isBasketball, supportsSimpleLive, diamondAvailable = false) {
+            diamondAvailable = diamondScorebookUiEnabled === true && diamondAvailable === true;
             const description = document.getElementById('tracker-choice-description');
             const recommendedAction = document.getElementById('tracker-recommended-action');
             const advancedActions = document.getElementById('tracker-advanced-actions');
@@ -2780,8 +2787,14 @@
             if (betaBtn) betaBtn.classList.toggle('hidden', !isBasketball);
             if (simpleBtn) simpleBtn.classList.toggle('hidden', !supportsSimpleLive);
             if (photoBtn) photoBtn.classList.toggle('hidden', !isBasketball);
-            if (diamondQuickBtn) diamondQuickBtn.classList.toggle('hidden', !diamondAvailable);
-            if (diamondFullBtn) diamondFullBtn.classList.toggle('hidden', !diamondAvailable);
+            if (diamondQuickBtn) {
+                diamondQuickBtn.hidden = !diamondAvailable;
+                diamondQuickBtn.classList.toggle('hidden', !diamondAvailable);
+            }
+            if (diamondFullBtn) {
+                diamondFullBtn.hidden = !diamondAvailable;
+                diamondFullBtn.classList.toggle('hidden', !diamondAvailable);
+            }
 
             const trackerButtons = [standardBtn, betaBtn, liveBtn, simpleBtn, photoBtn, diamondQuickBtn, diamondFullBtn].filter(Boolean);
             const recommendedBtn = diamondAvailable
@@ -2820,7 +2833,7 @@
             pendingTrackGameId = gameId;
             pendingTrackIsBasketball = !!isBasketball;
             pendingTrackSupportsSimpleLive = !!supportsSimpleLive;
-            pendingTrackDiamondAvailable = !!diamondAvailable;
+            pendingTrackDiamondAvailable = diamondScorebookUiEnabled === true && diamondAvailable === true;
             configureTrackerChoiceModal(pendingTrackIsBasketball, pendingTrackSupportsSimpleLive, pendingTrackDiamondAvailable);
             document.getElementById('basketball-tracker-modal')?.classList.remove('hidden');
         }
@@ -2858,7 +2871,7 @@
                 return;
             }
             let diamondAvailable = false;
-            if (isDiamondSport(game)) {
+            if (diamondScorebookUiEnabled === true && isDiamondSport(game)) {
                 try {
                     const access = await getDiamondGameAccess(currentTeamId, gameId);
                     diamondAvailable = access?.canActivate === true
@@ -5245,7 +5258,7 @@ PARSING RULES:
         // Basketball tracker choice modal handlers
         document.getElementById('basketball-tracker-cancel')?.addEventListener('click', closeBasketballTrackerModal);
         async function startPendingDiamondTracker(captureMode) {
-            if (!pendingTrackGameId || !pendingTrackDiamondAvailable) return;
+            if (diamondScorebookUiEnabled !== true || !pendingTrackGameId || !pendingTrackDiamondAvailable) return;
             const mode = captureMode === 'full' ? 'full' : 'quick';
             const confirmed = window.confirm(
                 `Start Diamond ${mode === 'full' ? 'Full' : 'Quick'} capture? `

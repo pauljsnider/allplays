@@ -1,5 +1,11 @@
 # Baseball and Softball Support Requirements
 
+> **Compatibility specification:** Diamond Scorebook v2 supersedes the
+> scorekeeping limitations below only for newly activated `diamond-v2` games.
+> Existing games, shared-schedule mirrors, and games outside the gated rollout
+> continue to use this passive tracker. See
+> `spec/diamond-scorebook-v2/README.md`.
+
 ## Introduction
 
 Add first-class baseball and softball support for newly created teams. The first release should feel native across team setup, stat templates, game tracking, live viewing, game planning, and practice planning while staying passive enough for a parent or coach to use from the sideline.
@@ -88,4 +94,3 @@ The feature intentionally avoids full pitch-by-pitch scoring. Users should be ab
 - Umpire/scorebook rule adjudication.
 - Advanced baseball analytics.
 - League-specific lineup legality enforcement.
-

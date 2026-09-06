@@ -16,7 +16,7 @@
       href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600;700&family=Roboto+Slab:wght@700;800;900&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="css/diamond-scorebook.css?v=1" />
+    <link rel="stylesheet" href="css/diamond-scorebook.css?v=2" />
   </head>
   <body class="diamond-viewer">
     <main class="diamond-shell">
@@ -24,6 +24,7 @@
         <a class="diamond-brand" href="/" aria-label="ALL PLAYS home"
           >ALL PLAYS · Diamond</a
         >
+        <span class="diamond-mode" data-diamond-mode-label>Live scorebook</span>
         <span
           class="diamond-connection"
           data-diamond-status
@@ -89,6 +90,52 @@
               <dt>Pitching</dt>
               <dd data-diamond-pitcher>—</dd>
             </dl>
+          </div>
+        </section>
+
+        <section
+          class="diamond-card diamond-media"
+          data-diamond-media
+          aria-labelledby="diamond-media-title"
+          hidden
+        >
+          <div class="diamond-card__heading">
+            <div>
+              <h2 id="diamond-media-title" data-diamond-media-title>
+                Game video
+              </h2>
+              <p>
+                Video and the scorebook use the same stable game link. Clip
+                links preserve their exact playback window.
+              </p>
+            </div>
+            <a
+              class="diamond-sign-in"
+              data-diamond-media-link
+              href="#"
+              target="_blank"
+              rel="noopener noreferrer"
+              >Open video</a
+            >
+          </div>
+          <div class="diamond-media__stage">
+            <iframe
+              data-diamond-media-frame
+              title="Game video"
+              allow="
+                accelerometer;
+                autoplay;
+                clipboard-write;
+                encrypted-media;
+                gyroscope;
+                picture-in-picture;
+                web-share;
+              "
+              referrerpolicy="strict-origin-when-cross-origin"
+              allowfullscreen
+              hidden
+            ></iframe>
+            <p data-diamond-media-fallback hidden></p>
           </div>
         </section>
 
@@ -209,11 +256,11 @@
             >Stats and plays reflect the scorekeeper’s captured coverage.</span
           >
           <a data-diamond-classic-link href="/live-game.html"
-            >Open classic video and clips</a
+            >Open classic game center</a
           >
         </footer>
       </div>
     </main>
-    <script type="module" src="js/diamond-live-game.js?v=1"></script>
+    <script type="module" src="js/diamond-live-game.js?v=5"></script>
   </body>
 </html>

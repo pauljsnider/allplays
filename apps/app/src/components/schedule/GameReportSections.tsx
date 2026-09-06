@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertCircle, CheckCircle2, RefreshCw } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AlertCircle, CheckCircle2, Download, RefreshCw } from 'lucide-react';
 import { loadGameReportPlays, loadGameReportSections, type GameReportData } from '../../lib/gameReportService';
+import { exportDiamondGameReportStatsCsv } from '../../lib/diamondStatExport';
 import type { ParentScheduleEvent } from '../../lib/scheduleLogic';
 import { GameReportSectionContent, getRecordedTeamStatKeys, type GameReportSectionId } from './GameReportSectionContent';
 
@@ -22,40 +23,67 @@ export function GameReportSections({ event }: { event: ParentScheduleEvent }) {
   const [report, setReport] = useState<GameReportData | null>(null);
   const [loadingReport, setLoadingReport] = useState(true);
   const [reportError, setReportError] = useState<string | null>(null);
+  const [exportingReport, setExportingReport] = useState(false);
+  const [exportMessage, setExportMessage] = useState('');
+  const reportRequestGeneration = useRef(0);
   const visibleReportSections = useMemo(() => getVisibleGameReportSections(report), [report]);
-  const currentReportStatuses = (report
-    ? [report.game?.liveStatus, report.game?.status]
-    : [event.liveStatus, event.status]
-  ).map((status) => String(status || '').trim().toLowerCase());
+  const currentReportStatuses = (report ? [report.game?.liveStatus, report.game?.status] : [event.liveStatus, event.status]).map((status) =>
+    String(status || '')
+      .trim()
+      .toLowerCase()
+  );
   const eventReportLoadStatus = normalizeGameReportLoadStatus(event.liveStatus || event.status);
-  const isLivePlaysRefreshEnabled = activeReportSection === 'plays'
-    && !currentReportStatuses.some((status) => completedReportStatuses.has(status))
-    && currentReportStatuses.some((status) => liveReportStatuses.has(status));
+  const isLivePlaysRefreshEnabled =
+    activeReportSection === 'plays' &&
+    !currentReportStatuses.some((status) => completedReportStatuses.has(status)) &&
+    currentReportStatuses.some((status) => liveReportStatuses.has(status));
 
-  const refreshReport = useCallback(async (showLoading = true) => {
-    if (showLoading) setLoadingReport(true);
-    setReportError(null);
-    try {
-      const loaded = await loadGameReportSections(event.teamId, event.id);
-      setReport(loaded);
-    } catch (error: any) {
-      setReportError(error?.message || 'Unable to load game report.');
-    } finally {
-      if (showLoading) setLoadingReport(false);
-    }
-  }, [event.id, event.teamId]);
+  const refreshReport = useCallback(
+    async (showLoading = true) => {
+      const requestGeneration = ++reportRequestGeneration.current;
+      const requestedStatVisibility = event.isTeamAdmin || event.isTeamStaff || event.canUpdateScore
+        ? 'manager-internal'
+        : 'public';
+      if (requestedStatVisibility === 'public') {
+        setReport((current) => current?.diamond?.statVisibility === 'manager-internal' ? null : current);
+        setExportMessage('');
+      }
+      if (showLoading) setLoadingReport(true);
+      setReportError(null);
+      try {
+        const loaded = await loadGameReportSections(event.teamId, event.id, {
+          statVisibility: requestedStatVisibility
+        });
+        if (requestGeneration !== reportRequestGeneration.current) return;
+        setReport(loaded);
+      } catch (error: any) {
+        if (requestGeneration !== reportRequestGeneration.current) return;
+        setReportError(error?.message || 'Unable to load game report.');
+      } finally {
+        if (showLoading && requestGeneration === reportRequestGeneration.current) setLoadingReport(false);
+      }
+    },
+    [event.canUpdateScore, event.id, event.isTeamAdmin, event.isTeamStaff, event.teamId]
+  );
 
   const refreshLivePlays = useCallback(async () => {
     setReportError(null);
     try {
       const refresh = await loadGameReportPlays(event.teamId, event.id);
-      setReport((currentReport) => currentReport ? {
-        ...currentReport,
-        game: { ...currentReport.game, ...refresh.game },
-        plays: refresh.playsFresh !== false ? refresh.plays : currentReport.plays
-      } : currentReport);
-      const refreshedStatuses = [refresh.game?.liveStatus, refresh.game?.status]
-        .map((status) => String(status || '').trim().toLowerCase());
+      setReport((currentReport) =>
+        currentReport
+          ? {
+              ...currentReport,
+              game: { ...currentReport.game, ...refresh.game },
+              plays: refresh.playsFresh !== false ? refresh.plays : currentReport.plays
+            }
+          : currentReport
+      );
+      const refreshedStatuses = [refresh.game?.liveStatus, refresh.game?.status].map((status) =>
+        String(status || '')
+          .trim()
+          .toLowerCase()
+      );
       if (refreshedStatuses.some((status) => completedReportStatuses.has(status))) {
         await refreshReport(false);
       }
@@ -67,8 +95,23 @@ export function GameReportSections({ event }: { event: ParentScheduleEvent }) {
   useEffect(() => {
     setReport(null);
     setActiveReportSection('summary');
+    setExportMessage('');
     void refreshReport();
   }, [event.id, event.teamId, eventReportLoadStatus, refreshReport]);
+
+  const exportDiamondReport = useCallback(async () => {
+    if (!report?.diamond?.isDiamond || exportingReport) return;
+    setExportingReport(true);
+    setExportMessage('');
+    try {
+      const result = await exportDiamondGameReportStatsCsv(report);
+      setExportMessage(result === 'shared' ? 'Stats CSV ready to share.' : 'Stats CSV downloaded.');
+    } catch (error: any) {
+      setExportMessage(error?.message || 'Unable to export stats CSV.');
+    } finally {
+      setExportingReport(false);
+    }
+  }, [exportingReport, report]);
 
   useEffect(() => {
     if (!isLivePlaysRefreshEnabled) return undefined;
@@ -100,8 +143,36 @@ export function GameReportSections({ event }: { event: ParentScheduleEvent }) {
             <h3 className="text-sm font-black text-gray-950">Report sections</h3>
             <div className="mt-0.5 text-xs font-semibold text-gray-500">Loaded from the same report data as game.html.</div>
           </div>
-          {loadingReport ? <RefreshCw className="mt-0.5 h-4 w-4 flex-none animate-spin text-primary-600" aria-hidden="true" /> : null}
+          <div className="flex flex-none items-center gap-2">
+            {report?.diamond?.isDiamond ? (
+              <button
+                type="button"
+                className="border-primary-200 bg-primary-50 text-primary-700 inline-flex min-h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-black disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={() => {
+                  void exportDiamondReport();
+                }}
+                disabled={exportingReport}
+              >
+                {exportingReport ? (
+                  <RefreshCw className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                ) : (
+                  <Download className="h-3.5 w-3.5" aria-hidden="true" />
+                )}
+                {exportingReport
+                  ? 'Preparing CSV'
+                  : report.diamond.statVisibility === 'manager-internal'
+                    ? 'Export internal CSV'
+                    : 'Export public CSV'}
+              </button>
+            ) : null}
+            {loadingReport ? <RefreshCw className="text-primary-600 mt-0.5 h-4 w-4 animate-spin" aria-hidden="true" /> : null}
+          </div>
         </div>
+        {exportMessage ? (
+          <div className="mt-2 text-xs font-semibold text-gray-600" role="status">
+            {exportMessage}
+          </div>
+        ) : null}
       </div>
 
       <div className="border-b border-gray-100 px-2 py-2">
@@ -113,7 +184,7 @@ export function GameReportSections({ event }: { event: ParentScheduleEvent }) {
                 key={section.id}
                 type="button"
                 className={`min-h-8 flex-none rounded-full px-3 text-xs font-black transition ${
-                  active ? 'bg-primary-600 text-white shadow-sm' : 'bg-gray-50 text-gray-600 hover:bg-primary-50 hover:text-primary-700'
+                  active ? 'bg-primary-600 text-white shadow-sm' : 'hover:bg-primary-50 hover:text-primary-700 bg-gray-50 text-gray-600'
                 }`}
                 onClick={() => setActiveReportSection(section.id)}
               >
@@ -126,7 +197,9 @@ export function GameReportSections({ event }: { event: ParentScheduleEvent }) {
 
       <div className="p-3 sm:p-4">
         {loadingReport ? (
-          <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">Loading report sections...</div>
+          <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">
+            Loading report sections...
+          </div>
         ) : reportError ? (
           <Status tone="error" message={reportError} />
         ) : report ? (
@@ -142,22 +215,24 @@ function hasOpponentReportData(report: GameReportData) {
 }
 
 function hasInsightReportData(report: GameReportData) {
-  return report.teamInsights.length > 0 || report.playerInsightRows.length > 0;
+  return Boolean(report.publishedAiRecap) || report.teamInsights.length > 0 || report.playerInsightRows.length > 0;
 }
 
 function hasMediaReportData(report: GameReportData) {
-  return (report.highlightClips?.length || 0) > 0
-    || Boolean(report.statSheetPhotoUrl)
-    || getRecordedTeamStatKeys(report).length > 0;
+  return (report.highlightClips?.length || 0) > 0 || Boolean(report.statSheetPhotoUrl) || getRecordedTeamStatKeys(report).length > 0;
 }
 
 function shouldShowPlayByPlaySection(report: GameReportData) {
-  const liveStatus = String(report.game?.liveStatus || report.game?.status || '').trim().toLowerCase();
+  const liveStatus = String(report.game?.liveStatus || report.game?.status || '')
+    .trim()
+    .toLowerCase();
   return report.plays.length > 0 || liveReportStatuses.has(liveStatus);
 }
 
 function normalizeGameReportLoadStatus(status: unknown) {
-  const normalized = String(status || '').trim().toLowerCase();
+  const normalized = String(status || '')
+    .trim()
+    .toLowerCase();
   if (liveReportStatuses.has(normalized)) return 'live';
   if (completedReportStatuses.has(normalized)) return 'completed';
   if (!normalized || normalized === 'scheduled') return 'scheduled';
@@ -181,8 +256,14 @@ function getVisibleGameReportSections(report: GameReportData | null) {
 function Status({ tone, message }: { tone: 'success' | 'error'; message: string }) {
   const isError = tone === 'error';
   return (
-    <div className={`flex items-start gap-2 rounded-xl border p-3 text-sm font-semibold ${isError ? 'border-rose-200 bg-rose-50 text-rose-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}>
-      {isError ? <AlertCircle className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" /> : <CheckCircle2 className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" />}
+    <div
+      className={`flex items-start gap-2 rounded-xl border p-3 text-sm font-semibold ${isError ? 'border-rose-200 bg-rose-50 text-rose-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}
+    >
+      {isError ? (
+        <AlertCircle className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" />
+      ) : (
+        <CheckCircle2 className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" />
+      )}
       {message}
     </div>
   );

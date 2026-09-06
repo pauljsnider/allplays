@@ -47,7 +47,9 @@ export function buildDiamondTeamSetup(sport, options = {}) {
         : getDefaultDiamondRulesProfile(sport);
     if (!profile) return null;
     return {
-        enabled: options.enabled !== false,
+        // Enrollment is an explicit product choice. Missing or malformed input
+        // must leave the existing tracker in place.
+        enabled: options.enabled === true,
         sport: profile.sport,
         rulesProfileId: profile.id,
         rulesProfileVersion: profile.version,

@@ -21,6 +21,7 @@ const successfulHtmlByPath = {
     '/account-deletion.html': '<!doctype html><title>Delete Account | ALL PLAYS</title><main><h1>Delete account</h1></main>',
     '/widget-scoreboard.html': '<!doctype html><title>ALL PLAYS Scoreboard Widget</title><main id="scoreboard-widget"></main>',
     '/live-game-overlay.html': '<!doctype html><title>Live Game Broadcast - ALL PLAYS</title><main id="broadcast-stage"><div id="score-bug"></div><iframe id="overlay-video"></iframe></main>',
+    '/live-game-diamond-v2.html': '<!doctype html><title>Diamond Live - ALL PLAYS</title><main data-diamond-loading></main>',
     '/compare.html': '<!doctype html><title>ALL PLAYS — Explore the platform</title><div id="header-container"></div><footer></footer>',
     '/about.html': '<!doctype html><title>ALL PLAYS — About</title><div id="header-container"></div><footer></footer>',
     '/app.html': '<!doctype html><title>ALL PLAYS — Use the web app</title><div id="header-container"></div><footer></footer>'
@@ -108,6 +109,7 @@ describe('candidate host public smoke', () => {
             `${candidateOrigin}/teams.html`,
             `${candidateOrigin}/widget-scoreboard.html`,
             `${candidateOrigin}/live-game-overlay.html?demo=1`,
+            `${candidateOrigin}/live-game-diamond-v2.html`,
             `${candidateOrigin}/privacy.html`,
             `${candidateOrigin}/terms.html`,
             `${candidateOrigin}/support.html`,
@@ -146,7 +148,7 @@ describe('candidate host public smoke', () => {
             }
         });
 
-        await expect(smokeCandidateHost(candidateOrigin, { fetchImpl })).resolves.toHaveLength(13);
+        await expect(smokeCandidateHost(candidateOrigin, { fetchImpl })).resolves.toHaveLength(14);
     });
 
     it('rejects an HSTS policy below the configured max-age', async () => {

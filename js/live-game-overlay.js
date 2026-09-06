@@ -36,6 +36,7 @@ import {
 import { buildGameWatchShareUrl } from './game-share-links.js?v=1';
 import { shareOrCopy } from './utils.js?v=443371';
 import { createPlayAnnouncer } from './live-game-announcer.js?v=1';
+import { DIAMOND_ENGINE, buildDiamondViewerUrl } from './diamond-scorebook-routing.js?v=2';
 
 const elements = {
     body: document.body,
@@ -2136,6 +2137,17 @@ async function startRealMode(params) {
         );
         const game = await database.getGame(teamId, gameId);
         if (!game) throw new Error('Game not found.');
+        if (game.trackingEngine === DIAMOND_ENGINE) {
+            window.location.replace(buildDiamondViewerUrl({
+                teamId,
+                gameId,
+                replay: isReplay,
+                overlay: true,
+                clipStart: params.clipStart,
+                clipEnd: params.clipEnd
+            }));
+            return;
+        }
 
         // A public game projection is sufficient to start the broadcast. Team
         // and roster reads are optional enrichment and can be slower for some

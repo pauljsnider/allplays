@@ -22,13 +22,17 @@ const gameReportStatsMocks = vi.hoisted(() => ({
 
 vi.mock('../../../../js/db.js', () => dbMocks);
 vi.mock('../../../../js/firebase.js', () => firebaseMocks);
+vi.mock('./adapters/legacyDiamondScorebookFirebase', () => ({
+  functions: {},
+  httpsCallable: vi.fn(() => vi.fn().mockRejectedValue(new Error('manager stats not configured')))
+}));
 vi.mock('../../../../js/game-report-stats.js', () => gameReportStatsMocks);
 vi.mock('../../../../js/live-game-video.js', () => ({
   buildHighlightShareUrl: vi.fn(() => ''),
   normalizeGameRecapHighlightClips: vi.fn(() => [])
 }));
 vi.mock('../../../../js/live-game-state.js', () => ({
-  resolveLiveStatConfig: vi.fn(() => ({}))
+  resolveLiveStatConfig: vi.fn(() => ({ diamondPublicTeamStatIds: ['r'] }))
 }));
 vi.mock('../../../../js/post-game-insights.js', () => ({
   generateGameInsights: vi.fn(() => ({ teamInsights: [], playerInsightsById: {}, emptyMessage: '' }))
@@ -37,7 +41,7 @@ vi.mock('../../../../js/post-game-stat-editor.js', () => ({
   resolvePostGameTeamStatFields: vi.fn(() => [])
 }));
 
-import { loadGameReportPlays, loadGameReportSections } from './gameReportService';
+import { loadGameReportPlays, loadGameReportSections, normalizePublishedDiamondAiRecap } from './gameReportService';
 
 describe('gameReportService', () => {
   beforeEach(() => {
@@ -66,6 +70,41 @@ describe('gameReportService', () => {
         });
       }
     });
+  });
+
+  it('accepts only bounded, cited, published Diamond AI artifacts', () => {
+    expect(normalizePublishedDiamondAiRecap({
+      schemaVersion: 1,
+      trackingEngine: 'diamond-v2',
+      published: true,
+      status: 'current',
+      stale: false,
+      sourceRevision: 12,
+      publishedAt: '2026-09-05T20:00:00.000Z',
+      recap: {
+        text: 'The Falcons won 4-3.',
+        citations: [{ eventId: 'event-12', revision: 12 }]
+      },
+      insights: [{
+        text: 'Avery recorded 2 hits.',
+        citations: [{ eventId: 'event-8', revision: 8 }]
+      }],
+      coverage: { batting: 'complete', fielding: 'partial', sensors: 'not_collected' },
+      dataQualityNotes: ['Fielding detail was partially captured.']
+    })).toMatchObject({
+      current: true,
+      sourceRevision: 12,
+      recap: { text: 'The Falcons won 4-3.' },
+      insights: [{ text: 'Avery recorded 2 hits.' }],
+      coverage: { batting: 'complete', fielding: 'partial', sensors: 'not_collected' }
+    });
+    expect(normalizePublishedDiamondAiRecap({
+      schemaVersion: 1,
+      trackingEngine: 'diamond-v2',
+      published: true,
+      sourceRevision: 12,
+      recap: { text: 'Uncited claim', citations: [] }
+    })).toBeNull();
   });
 
   it('keeps recorded players visible even when they have no explicit participation markers', async () => {
@@ -237,11 +276,41 @@ describe('gameReportService', () => {
   });
 
   it('preserves Diamond complete, observed, and unavailable evidence with source revisions', async () => {
+    const instanceId = '00000000-0000-4000-8000-000000000001';
+    const checkpointHash = `sha256:${'a'.repeat(64)}`;
+    const configHash = `sha256:${'b'.repeat(64)}`;
+    const projectionHash = `sha256:${'c'.repeat(64)}`;
     dbMocks.getGame.mockResolvedValue({
       id: 'game-1',
+      teamId: 'team-1',
       trackingEngine: 'diamond-v2',
       diamondProjectionStatus: 'current',
       diamondProjectionRevision: 7,
+      diamondProjectionComplete: true,
+      diamondScorebookInstanceId: instanceId,
+      diamondProjectionCheckpointHash: checkpointHash,
+      diamondStatConfigSnapshotHash: configHash,
+      diamondProjectionHash: projectionHash,
+      diamondPublicTeamStats: {
+        trackingEngine: 'diamond-v2',
+        projectionSchemaVersion: 1,
+        sourceRevision: 7,
+        checkpointHash,
+        coverage: { batting: 'complete' },
+        publicStatIds: ['r'],
+        side: 'home',
+        complete: true,
+        stats: { r: 3 },
+        observedStats: {},
+        statCoverage: { r: 'complete' },
+        teamId: 'team-1',
+        diamondGameId: 'game-1',
+        instanceId,
+        diamondScorebookInstanceId: instanceId,
+        projectionGeneration: instanceId,
+        statConfigSnapshotHash: configHash,
+        projectionHash
+      },
       opponentStats: {
         visitor: {
           name: 'Visiting Batter',
@@ -262,29 +331,40 @@ describe('gameReportService', () => {
       oppLabels: { h: 'H', sb: 'SB', era: 'ERA' },
       oppDefinitions: { h: { id: 'h' }, sb: { id: 'sb' }, era: { id: 'era', precision: 2 } }
     });
-    firebaseMocks.getDocs.mockImplementation(async (path: string) => {
-      const documents = path.endsWith('/teamStats')
-        ? [{
-            id: 'team',
-            data: () => ({
-              trackingEngine: 'diamond-v2',
-              sourceRevision: 7,
-              complete: true,
-              stats: { r: 3 },
-              observedStats: { h: 2 },
-              statCoverage: { r: 'complete', h: 'partial', e: 'not_collected' }
-            })
-          }]
-        : [{
+    firebaseMocks.getDocs.mockImplementation(async () => {
+      const documents = [{
             id: 'player-recorded',
             data: () => ({
+              schemaVersion: 1,
               trackingEngine: 'diamond-v2',
+              projectionSchemaVersion: 1,
+              playerId: 'player-recorded',
+              playerName: 'Recorded Player',
+              playerNumber: '3',
               sourceRevision: 7,
+              checkpointHash,
               complete: true,
-              stats: { h: 0, pitches: 81 },
+              publicStatIds: ['era', 'h', 'sb'],
+              stats: { h: 0 },
               observedStats: { sb: 2 },
-              statCoverage: { h: 'complete', pitches: 'complete', sb: 'partial', era: 'not_collected' },
-              participated: true
+              derivedStats: {},
+              observedDerivedStats: {},
+              statCoverage: { era: 'not_collected', h: 'complete', sb: 'partial' },
+              statSources: {},
+              sourcePlayIds: [],
+              unavailableDerivedStats: ['era'],
+              missingStatFamilies: [],
+              coverage: { batting: 'complete' },
+              participated: true,
+              participationStatus: 'appeared',
+              participationSource: 'diamond-v2',
+              teamId: 'team-1',
+              diamondGameId: 'game-1',
+              instanceId,
+              diamondScorebookInstanceId: instanceId,
+              projectionGeneration: instanceId,
+              statConfigSnapshotHash: configHash,
+              projectionHash
             })
           }];
       return {
@@ -306,7 +386,21 @@ describe('gameReportService', () => {
       }
     });
     expect(report.playerRows[0].stats).not.toHaveProperty('pitches');
-    expect(report.teamStats).toEqual({ r: 3, h: 2 });
+    expect(report.teamStats).toEqual({ r: 3 });
+    expect(report.teamStats).not.toHaveProperty('h');
+    expect(report.teamStatPresentation).toMatchObject({
+      statCoverage: { r: 'complete' },
+      sourceRevision: 7,
+      statVisibility: 'public'
+    });
+    expect(firebaseMocks.collection).toHaveBeenCalledWith(
+      firebaseMocks.db,
+      `teams/team-1/games/game-1/diamondStatGenerations/${instanceId}/publicPlayerStats`
+    );
+    expect(firebaseMocks.collection).not.toHaveBeenCalledWith(
+      firebaseMocks.db,
+      expect.stringContaining('/teamStats')
+    );
     expect(report.opponentRows[0]).toMatchObject({
       stats: { h: 0, sb: 1 },
       statPresentation: { sourceRevision: 7, observedStatKeys: ['sb'] }
@@ -317,7 +411,84 @@ describe('gameReportService', () => {
       status: 'current',
       pending: false,
       authoritativeRevision: 7,
-      sourceRevisions: [7]
+      sourceRevisions: [7],
+      requestedStatVisibility: 'public',
+      statVisibility: 'public',
+      privateStatsStatus: 'not-requested',
+      privateStatsReason: null
     });
+  });
+
+  it('fails closed instead of loading private team stats when the public team subset is malformed', async () => {
+    const instanceId = '00000000-0000-4000-8000-000000000001';
+    const checkpointHash = `sha256:${'a'.repeat(64)}`;
+    const configHash = `sha256:${'b'.repeat(64)}`;
+    const projectionHash = `sha256:${'c'.repeat(64)}`;
+    dbMocks.getGame.mockResolvedValue({
+      id: 'game-1',
+      teamId: 'team-1',
+      trackingEngine: 'diamond-v2',
+      diamondProjectionStatus: 'current',
+      diamondProjectionRevision: 7,
+      diamondProjectionComplete: true,
+      diamondScorebookInstanceId: instanceId,
+      diamondProjectionCheckpointHash: checkpointHash,
+      diamondStatConfigSnapshotHash: configHash,
+      diamondProjectionHash: projectionHash,
+      diamondPublicTeamStats: {
+        trackingEngine: 'diamond-v2', projectionSchemaVersion: 1, sourceRevision: 7,
+        checkpointHash, coverage: { batting: 'complete' }, publicStatIds: ['r'],
+        side: 'home', complete: true, stats: { r: 3, h: 99 }, observedStats: {},
+        statCoverage: { r: 'complete' }, teamId: 'team-1', diamondGameId: 'game-1',
+        instanceId, diamondScorebookInstanceId: instanceId, projectionGeneration: instanceId,
+        statConfigSnapshotHash: configHash, projectionHash
+      }
+    });
+    firebaseMocks.getDocs.mockResolvedValue({
+      forEach(callback: (docSnap: any) => void) {
+        callback({
+          id: 'player-recorded',
+          data: () => ({
+            schemaVersion: 1,
+            trackingEngine: 'diamond-v2',
+            projectionSchemaVersion: 1,
+            playerId: 'player-recorded',
+            playerName: 'Recorded Player',
+            playerNumber: '3',
+            sourceRevision: 7,
+            checkpointHash,
+            complete: true,
+            publicStatIds: ['h'],
+            stats: { h: 1 },
+            observedStats: {},
+            derivedStats: {},
+            observedDerivedStats: {},
+            statCoverage: { h: 'complete' },
+            statSources: {},
+            sourcePlayIds: [],
+            unavailableDerivedStats: [],
+            missingStatFamilies: [],
+            coverage: { batting: 'complete' },
+            participated: true,
+            participationStatus: 'appeared',
+            participationSource: 'diamond-v2',
+            teamId: 'team-1',
+            diamondGameId: 'game-1',
+            instanceId,
+            diamondScorebookInstanceId: instanceId,
+            projectionGeneration: instanceId,
+            statConfigSnapshotHash: configHash,
+            projectionHash
+          })
+        });
+      }
+    });
+
+    const report = await loadGameReportSections('team-1', 'game-1');
+
+    expect(report.teamStats).toEqual({});
+    expect(report.teamStatPresentation).toMatchObject({ isDiamond: true, projectionPending: true, statVisibility: 'public' });
+    expect(report.diamond).toMatchObject({ pending: true, statVisibility: 'public' });
+    expect(dbMocks.getTeamStatsForGame).not.toHaveBeenCalled();
   });
 });

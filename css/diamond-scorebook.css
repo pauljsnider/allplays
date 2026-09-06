@@ -40,6 +40,15 @@ body.diamond-viewer [hidden] {
   gap: 16px;
   margin-bottom: 18px;
 }
+.diamond-mode {
+  flex: 1;
+  color: rgba(241, 234, 216, 0.58);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-align: center;
+  text-transform: uppercase;
+}
 .diamond-brand {
   color: var(--diamond-lime);
   font-family: "Roboto Slab", Georgia, serif;
@@ -215,6 +224,27 @@ body.diamond-viewer [hidden] {
   margin: 0;
   color: rgba(241, 234, 216, 0.55);
   font-size: 0.8rem;
+}
+.diamond-media__stage {
+  display: grid;
+  min-height: 180px;
+  margin-top: 16px;
+  overflow: hidden;
+  place-items: center;
+  border: 1px solid var(--diamond-line);
+  border-radius: 16px;
+  background: #020805;
+}
+.diamond-media__stage iframe {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border: 0;
+}
+.diamond-media__stage p {
+  margin: 0;
+  padding: 32px;
+  color: rgba(241, 234, 216, 0.65);
+  text-align: center;
 }
 .diamond-sign-in {
   color: var(--diamond-sky);
@@ -485,6 +515,54 @@ body.diamond-viewer [hidden] {
   }
   .diamond-field {
     width: 112px;
+  }
+}
+
+body.diamond-viewer[data-view-mode="overlay"] {
+  background: #020805;
+}
+body.diamond-viewer[data-view-mode="overlay"] .diamond-shell {
+  width: min(1440px, 100%);
+  padding-bottom: 20px;
+}
+body.diamond-viewer[data-view-mode="overlay"] [data-diamond-content] {
+  display: grid;
+  grid-template-columns: minmax(0, 1.65fr) minmax(320px, 0.85fr);
+  gap: 18px;
+  align-items: start;
+}
+body.diamond-viewer[data-view-mode="overlay"] .diamond-media,
+body.diamond-viewer[data-view-mode="overlay"] .diamond-scoreboard {
+  grid-column: 1;
+}
+body.diamond-viewer[data-view-mode="overlay"] .diamond-card {
+  margin-top: 0;
+}
+body.diamond-viewer[data-view-mode="overlay"] .diamond-scoreboard {
+  margin-top: 0;
+}
+body.diamond-viewer[data-view-mode="overlay"] .diamond-engagements,
+body.diamond-viewer[data-view-mode="overlay"] .diamond-footer {
+  display: none;
+}
+body.diamond-viewer[data-view-mode="overlay"]
+  .diamond-card:not(.diamond-media) {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  max-height: calc(100vh - 100px);
+  overflow-y: auto;
+}
+
+@media (max-width: 900px) {
+  body.diamond-viewer[data-view-mode="overlay"] [data-diamond-content] {
+    display: block;
+  }
+  body.diamond-viewer[data-view-mode="overlay"] .diamond-card {
+    margin-top: 18px;
+  }
+  body.diamond-viewer[data-view-mode="overlay"]
+    .diamond-card:not(.diamond-media) {
+    max-height: none;
   }
 }
 

@@ -65,7 +65,8 @@ describe('app Firestore boundary initiative source contract', () => {
         expect(gameReportServiceSource).toContain("} from './firestore/types';");
         expect(gameReportServiceSource).toContain('const team = mapGameReportTeamRecord(rawTeam, teamId);');
         expect(gameReportServiceSource).toContain('const game = mapGameReportGameRecord(rawGame, gameId);');
-        expect(gameReportServiceSource).toContain('const data = mapGameReportAggregatedStatsRecord(playerId, docSnap.data());');
+        expect(gameReportServiceSource).toContain('documents.forEach(({ id, data: rawData }) => {');
+        expect(gameReportServiceSource).toContain('const data = mapGameReportAggregatedStatsRecord(playerId, rawData);');
         expect(gameReportServiceSource).toContain('const insightEvents = mapGameReportEventRecords(rawEvents)');
     });
 });

@@ -4200,6 +4200,7 @@ function createScheduleEvent(input: {
   countsTowardSeasonRecord?: boolean | null;
   tournament?: Record<string, any> | null;
   trackingEngine?: string | null;
+  diamondScorebookInstanceId?: unknown;
   diamondRevision?: unknown;
   statTrackerConfigId?: string | null;
   sourceType?: string | null;
@@ -4286,6 +4287,8 @@ function createScheduleEvent(input: {
     countsTowardSeasonRecord: input.countsTowardSeasonRecord ?? null,
     tournament: input.tournament && typeof input.tournament === 'object' ? input.tournament : null,
     trackingEngine: compactString(input.trackingEngine) || null,
+    diamondScorebookInstanceId:
+      compactString(input.diamondScorebookInstanceId) || null,
     diamondRevision: toNullableScore(input.diamondRevision),
     statTrackerConfigId: input.statTrackerConfigId || null,
     sourceType: input.sourceType || (input.isDbGame ? 'db' : 'calendar'),
@@ -4538,6 +4541,8 @@ async function buildTeamSchedule(
           countsTowardSeasonRecord: game.countsTowardSeasonRecord ?? null,
           tournament: game.tournament || null,
           trackingEngine: game.trackingEngine || null,
+          diamondScorebookInstanceId:
+            compactString(game.diamondScorebookInstanceId) || null,
           diamondRevision: game.diamondRevision ?? null,
           statTrackerConfigId: game.statTrackerConfigId || null,
           sourceType: game.sourceMetadata?.sourceType || game.source || 'db',
@@ -4836,6 +4841,8 @@ async function buildTargetedTeamScheduleEvent(
     countsTowardSeasonRecord: game.countsTowardSeasonRecord ?? null,
     tournament: game.tournament || null,
     trackingEngine: game.trackingEngine || null,
+    diamondScorebookInstanceId:
+      compactString(game.diamondScorebookInstanceId) || null,
     diamondRevision: game.diamondRevision ?? null,
     statTrackerConfigId: game.statTrackerConfigId || null,
     sourceType: game.sourceMetadata?.sourceType || game.source || 'db',
@@ -7522,44 +7529,56 @@ export async function cancelScheduledGameForApp(event: ParentScheduleEvent, user
   if (!user?.uid) {
     throw new Error('Sign in before cancelling the game.');
   }
-  if (!event.canUpdateScore) {
+  const isDiamondGame = compactString(event.trackingEngine) === 'diamond-v2';
+  if (isDiamondGame && !event.isTeamAdmin) {
+    throw new Error('Team owner or admin access is required to cancel a Diamond game.');
+  }
+  if (!isDiamondGame && !event.canUpdateScore) {
     throw new Error('Coach or admin access is required to cancel this game.');
   }
 
-  const payload: Record<string, unknown> = {
-    status: 'cancelled',
-    liveStatus: 'cancelled',
-    cancelledAt: new Date(),
-    cancelledBy: user.uid
-  };
-
-  try {
-    await withTimeout(Promise.resolve(updateGame(event.teamId, event.id, payload)), 'Game cancellation');
-  } catch (error) {
-    if (!isNativeRuntime()) throw error;
-    logScheduleWarning('Falling back to REST game cancellation.', 'game-cancel', error, { fallback: 'rest', teamId: event.teamId, gameId: event.id });
-    const sourceGame = await nativeGetDocument(`teams/${encodeURIComponent(event.teamId)}/games/${encodeURIComponent(event.id)}`);
-    if (!sourceGame) {
-      throw new Error('Scheduled game not found.');
-    }
-    const counterpartTeamId = compactString(sourceGame.sharedScheduleOpponentTeamId);
-    const counterpartGameId = compactString(sourceGame.sharedScheduleOpponentGameId);
-    const isSharedGame = Boolean(sourceGame.sharedScheduleId);
-    await nativePatchDocument(`teams/${encodeURIComponent(event.teamId)}/games/${encodeURIComponent(event.id)}`, payload);
-    if (isSharedGame && counterpartTeamId && counterpartGameId) {
-      try {
-        const counterpartPath = `teams/${encodeURIComponent(counterpartTeamId)}/games/${encodeURIComponent(counterpartGameId)}`;
-        const counterpartGame = await nativeGetDocument(counterpartPath);
-        if (!counterpartGame) throw new Error('Shared scheduled game counterpart not found.');
-        await nativePatchDocument(counterpartPath, payload);
-      } catch (counterpartError) {
-        logScheduleWarning('Unable to synchronize shared game cancellation.', 'game-cancel-counterpart', counterpartError, {
-          fallback: 'rest',
-          teamId: event.teamId,
-          gameId: event.id,
-          counterpartTeamId,
-          counterpartGameId
-        });
+  if (isDiamondGame) {
+    const { cancelDiamondGame } = await import('./diamondScorebookService');
+    await cancelDiamondGame({
+      teamId: event.teamId,
+      gameId: event.id,
+      reason: 'Cancelled from schedule management.'
+    });
+  } else {
+    const payload: Record<string, unknown> = {
+      status: 'cancelled',
+      liveStatus: 'cancelled',
+      cancelledAt: new Date(),
+      cancelledBy: user.uid
+    };
+    try {
+      await withTimeout(Promise.resolve(updateGame(event.teamId, event.id, payload)), 'Game cancellation');
+    } catch (error) {
+      if (!isNativeRuntime()) throw error;
+      logScheduleWarning('Falling back to REST game cancellation.', 'game-cancel', error, { fallback: 'rest', teamId: event.teamId, gameId: event.id });
+      const sourceGame = await nativeGetDocument(`teams/${encodeURIComponent(event.teamId)}/games/${encodeURIComponent(event.id)}`);
+      if (!sourceGame) {
+        throw new Error('Scheduled game not found.');
+      }
+      const counterpartTeamId = compactString(sourceGame.sharedScheduleOpponentTeamId);
+      const counterpartGameId = compactString(sourceGame.sharedScheduleOpponentGameId);
+      const isSharedGame = Boolean(sourceGame.sharedScheduleId);
+      await nativePatchDocument(`teams/${encodeURIComponent(event.teamId)}/games/${encodeURIComponent(event.id)}`, payload);
+      if (isSharedGame && counterpartTeamId && counterpartGameId) {
+        try {
+          const counterpartPath = `teams/${encodeURIComponent(counterpartTeamId)}/games/${encodeURIComponent(counterpartGameId)}`;
+          const counterpartGame = await nativeGetDocument(counterpartPath);
+          if (!counterpartGame) throw new Error('Shared scheduled game counterpart not found.');
+          await nativePatchDocument(counterpartPath, payload);
+        } catch (counterpartError) {
+          logScheduleWarning('Unable to synchronize shared game cancellation.', 'game-cancel-counterpart', counterpartError, {
+            fallback: 'rest',
+            teamId: event.teamId,
+            gameId: event.id,
+            counterpartTeamId,
+            counterpartGameId
+          });
+        }
       }
     }
   }
@@ -7567,7 +7586,7 @@ export async function cancelScheduledGameForApp(event: ParentScheduleEvent, user
   const notificationFailures: string[] = [];
   const senderName = user.displayName || user.email;
   const senderEmail = user.email;
-  const counterpartTeamId = compactString(event.sharedScheduleOpponentTeamId) || null;
+  const counterpartTeamId = isDiamondGame ? null : compactString(event.sharedScheduleOpponentTeamId) || null;
 
   try {
     await postChatMessage(event.teamId, {

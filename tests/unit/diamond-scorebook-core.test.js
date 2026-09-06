@@ -1,12 +1,15 @@
 import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
 import { hashDiamondValue as clientHashDiamondValue } from "../../apps/app/src/lib/diamondScorebook/canonical.ts";
+import { diamondRolloutBucket as clientDiamondRolloutBucket } from "../../js/diamond-scorebook-routing.js";
 
 const require = createRequire(import.meta.url);
 const {
   DIAMOND_COMMAND_TYPES,
   DIAMOND_ENGINE,
+  DIAMOND_ROLLOUT_PERCENTAGES,
   canonicalDiamondJson,
+  diamondRolloutBucket,
   hashDiamondCommand,
   parseDiamondPolicy,
   getDiamondPolicyDecision,
@@ -23,6 +26,7 @@ const {
   sanitizeDiamondPublicProjection,
   sanitizeDiamondPrivateProjection,
   sanitizeDiamondPublicEvent,
+  sanitizeDiamondPrivateEventSummary,
   buildDiamondEventPage,
   validateDiamondVoiceProposal,
   decideDiamondNotification,
@@ -32,14 +36,22 @@ const {
 
 const commandId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const secondCommandId = "bbbbbbbb-bbbb-4bbb-9bbb-bbbbbbbbbbbb";
+const instanceId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 
 function policy(overrides = {}) {
-  return {
+  const result = {
     mode: "enabled",
     revision: 1,
     teamIds: [],
     ...overrides,
   };
+  if (
+    result.mode === "enabled" &&
+    !Object.prototype.hasOwnProperty.call(overrides, "rolloutPercent")
+  ) {
+    result.rolloutPercent = 100;
+  }
+  return result;
 }
 
 function optIn(overrides = {}) {
@@ -82,6 +94,8 @@ function command(overrides = {}) {
     commandId,
     teamId: "team-1",
     gameId: "game-1",
+    appBuild: 2,
+    expectedInstanceId: instanceId,
     expectedRevision: 3,
     rulesProfileId: "youth-baseball",
     rulesProfileVersion: 1,
@@ -125,6 +139,7 @@ describe("Diamond policy and rollout boundary", () => {
       revision: 7,
       teamIds: ["team-1"],
       minimumAppBuild: 104,
+      rolloutPercent: null,
       activationEnabled: true,
       scoringEnabled: true,
     });
@@ -135,6 +150,30 @@ describe("Diamond policy and rollout boundary", () => {
     ["unreadable", policy(), { readStatus: "error" }, "policy-unreadable"],
     ["partial", policy(), { readStatus: "partial" }, "policy-unreadable"],
     ["unknown mode", policy({ mode: "gradual" }), {}, "policy-malformed"],
+    [
+      "enabled mode without rollout percentage",
+      policy({ rolloutPercent: undefined }),
+      {},
+      "policy-malformed",
+    ],
+    [
+      "unsupported rollout percentage",
+      policy({ rolloutPercent: 5 }),
+      {},
+      "policy-malformed",
+    ],
+    [
+      "string rollout percentage",
+      policy({ rolloutPercent: "10" }),
+      {},
+      "policy-malformed",
+    ],
+    [
+      "rollout percentage outside enabled mode",
+      policy({ mode: "pilot", rolloutPercent: 10 }),
+      {},
+      "policy-malformed",
+    ],
     [
       "missing revision",
       { mode: "enabled", teamIds: [] },
@@ -156,6 +195,18 @@ describe("Diamond policy and rollout boundary", () => {
     [
       "bad timestamp",
       policy({ updatedAt: "yesterday" }),
+      {},
+      "policy-malformed",
+    ],
+    [
+      "throwing timestamp adapter",
+      policy({
+        updatedAt: {
+          toMillis() {
+            throw new Error("unreadable timestamp");
+          },
+        },
+      }),
       {},
       "policy-malformed",
     ],
@@ -213,6 +264,16 @@ describe("Diamond policy and rollout boundary", () => {
       code: "minimum-app-build",
     });
     expect(
+      getDiamondPolicyDecision({ policy: parsed, teamId: "team-1" }),
+    ).toMatchObject({ allowed: false, code: "invalid-app-build" });
+    expect(
+      getDiamondPolicyDecision({
+        policy: parsed,
+        teamId: "team-1",
+        appBuild: "104",
+      }),
+    ).toMatchObject({ allowed: false, code: "invalid-app-build" });
+    expect(
       getDiamondPolicyDecision({
         policy: parseDiamondPolicy(policy({ mode: "disabled" })),
         teamId: "team-1",
@@ -221,6 +282,109 @@ describe("Diamond policy and rollout boundary", () => {
       allowed: false,
       code: "policy-disabled",
     });
+  });
+
+  it("uses stable game cohorts for the exact 1, 10, 50, and 100 percent rollout stages", () => {
+    expect(DIAMOND_ROLLOUT_PERCENTAGES).toEqual([1, 10, 50, 100]);
+    expect(diamondRolloutBucket("team-1", "game-60")).toBe(1);
+    expect(diamondRolloutBucket("team-1", "game-70")).toBe(10);
+    expect(diamondRolloutBucket("team-1", "game-13")).toBe(11);
+    expect(diamondRolloutBucket("team-1", "game-30")).toBe(50);
+    expect(diamondRolloutBucket("team-1", "game-84")).toBe(51);
+    expect(diamondRolloutBucket("team-1", "game-1")).toBe(98);
+    for (const gameId of [
+      "game-60",
+      "game-70",
+      "game-13",
+      "game-30",
+      "game-84",
+      "game-1",
+    ]) {
+      expect(clientDiamondRolloutBucket("team-1", gameId)).toBe(
+        diamondRolloutBucket("team-1", gameId),
+      );
+    }
+
+    for (const [rolloutPercent, allowedGameId, deniedGameId] of [
+      [1, "game-60", "game-70"],
+      [10, "game-70", "game-13"],
+      [50, "game-30", "game-84"],
+      [100, "game-1", null],
+    ]) {
+      const parsed = parseDiamondPolicy(policy({ rolloutPercent }));
+      expect(
+        getDiamondPolicyDecision({
+          policy: parsed,
+          teamId: "team-1",
+          gameId: allowedGameId,
+          appBuild: 2,
+          operation: "activate",
+        }),
+      ).toMatchObject({
+        allowed: true,
+        rolloutPercent,
+        rolloutBucket: diamondRolloutBucket("team-1", allowedGameId),
+      });
+      if (deniedGameId) {
+        expect(
+          getDiamondPolicyDecision({
+            policy: parsed,
+            teamId: "team-1",
+            gameId: deniedGameId,
+            appBuild: 2,
+            operation: "activate",
+          }),
+        ).toMatchObject({
+          allowed: false,
+          code: "game-not-in-rollout",
+          rolloutPercent,
+        });
+      }
+    }
+  });
+
+  it("requires a valid game identity for percentage activation, preserves scoring, and honors explicit allowlists", () => {
+    const onePercent = parseDiamondPolicy(
+      policy({ rolloutPercent: 1, teamIds: ["team-1"] }),
+    );
+    expect(
+      getDiamondPolicyDecision({
+        policy: onePercent,
+        teamId: "team-1",
+        gameId: "game-1",
+        appBuild: 2,
+        operation: "activate",
+      }),
+    ).toMatchObject({
+      allowed: true,
+      explicitlyAllowlisted: true,
+      rolloutBucket: 98,
+    });
+    expect(
+      getDiamondPolicyDecision({
+        policy: onePercent,
+        teamId: "team-2",
+        appBuild: 2,
+        operation: "activate",
+      }),
+    ).toMatchObject({ allowed: false, code: "invalid-game-id" });
+    expect(
+      getDiamondPolicyDecision({
+        policy: onePercent,
+        teamId: "team-2",
+        gameId: "bad/game",
+        appBuild: 2,
+        operation: "activate",
+      }),
+    ).toMatchObject({ allowed: false, code: "invalid-game-id" });
+    expect(
+      getDiamondPolicyDecision({
+        policy: onePercent,
+        teamId: "team-2",
+        appBuild: 2,
+        operation: "score",
+      }),
+    ).toMatchObject({ allowed: true, code: "policy-allows" });
   });
 });
 
@@ -298,6 +462,27 @@ describe("Diamond team, game, and engine ownership eligibility", () => {
       "wrong-case engine",
       { game: game({ trackingEngine: "Diamond-v2" }) },
       "unknown-tracking-engine",
+    ],
+    [
+      "shared schedule mirror",
+      {
+        game: game({
+          isSharedGame: true,
+          sharedScheduleId: "shared-schedule-1",
+          sharedScheduleOpponentTeamId: "team-2",
+          sharedScheduleOpponentGameId: "game-2",
+        }),
+      },
+      "shared-game-requires-canonical-scorebook",
+    ],
+    [
+      "canonical shared-game path",
+      {
+        game: game({
+          sharedGamePath: "organizations/org-1/sharedGames/game-1",
+        }),
+      },
+      "shared-game-requires-canonical-scorebook",
     ],
     [
       "legacy event",
@@ -439,6 +624,7 @@ describe("Diamond command validation, hashing, idempotency, and revisions", () =
       "private_note",
       "suspend",
       "resume",
+      "cancel",
       "rules_decision",
       "void_event",
       "supersede_event",
@@ -455,6 +641,15 @@ describe("Diamond command validation, hashing, idempotency, and revisions", () =
     expect(() =>
       normalizeDiamondCommand(command({ commandId: "not-random" })),
     ).toThrow(/UUID v4/i);
+    expect(() =>
+      normalizeDiamondCommand(command({ expectedInstanceId: "old-game" })),
+    ).toThrow(/expectedInstanceId/i);
+    expect(() => normalizeDiamondCommand(command({ appBuild: 0 }))).toThrow(
+      /appBuild/i,
+    );
+    expect(() =>
+      normalizeDiamondCommand(command({ appBuild: undefined })),
+    ).toThrow(/appBuild/i);
     expect(() =>
       normalizeDiamondCommand(command({ type: "home_run" })),
     ).toThrow(/unsupported/i);
@@ -473,6 +668,201 @@ describe("Diamond command validation, hashing, idempotency, and revisions", () =
         }),
       ),
     ).toThrow(/unsupported payload fields/i);
+  });
+
+  it("strictly validates nested play, scoring-credit, and fielding values", () => {
+    const plateAppearance = command({
+      type: "record_plate_appearance",
+      leaseId: secondCommandId.toUpperCase(),
+      payload: {
+        batterId: "batter-1",
+        pitcherId: "pitcher-1",
+        result: "home_run",
+        batterAdvance: {
+          to: "home",
+          cause: "batted_ball",
+          countsRun: true,
+          earned: true,
+          rbi: true,
+          responsiblePitcherId: "pitcher-1",
+        },
+        runnerAdvances: [
+          {
+            runnerId: "runner-1",
+            from: "third",
+            to: "home",
+            cause: "batted_ball",
+            countsRun: true,
+            earned: false,
+            rbi: true,
+            responsiblePitcherId: "pitcher-1",
+          },
+        ],
+        outsOnPlay: 0,
+        runsBattedIn: 2,
+        fielding: {
+          putoutBy: "fielder-1",
+          assists: ["fielder-2"],
+          errors: [{ playerId: "fielder-3", kind: "throwing" }],
+          doublePlay: false,
+          triplePlay: false,
+          battedBall: "fly",
+          location: "left-center",
+        },
+        omissions: ["sensors"],
+      },
+    });
+    expect(normalizeDiamondCommand(plateAppearance)).toMatchObject({
+      leaseId: secondCommandId,
+      payload: { runsBattedIn: 2 },
+    });
+
+    for (const [label, mutate] of [
+      [
+        "string run flag",
+        (payload) => (payload.batterAdvance.countsRun = "false"),
+      ],
+      [
+        "string earned flag",
+        (payload) => (payload.runnerAdvances[0].earned = "true"),
+      ],
+      ["string RBI flag", (payload) => (payload.runnerAdvances[0].rbi = 1)],
+      [
+        "invalid nested ID",
+        (payload) => (payload.runnerAdvances[0].runnerId = "bad/id"),
+      ],
+      [
+        "invalid destination",
+        (payload) => (payload.batterAdvance.to = "dugout"),
+      ],
+      [
+        "invalid cause",
+        (payload) => (payload.runnerAdvances[0].cause = "guess"),
+      ],
+      [
+        "unknown nested field",
+        (payload) => (payload.batterAdvance.actorUid = "spoofed"),
+      ],
+      [
+        "unknown error field",
+        (payload) => (payload.fielding.errors[0].charged = true),
+      ],
+      [
+        "string double-play flag",
+        (payload) => (payload.fielding.doublePlay = "false"),
+      ],
+      ["invalid omission", (payload) => (payload.omissions = ["velocity"])],
+      [
+        "duplicate omission",
+        (payload) => (payload.omissions = ["pitches", "pitches"]),
+      ],
+      [
+        "too many runner advances",
+        (payload) => {
+          payload.runnerAdvances = Array.from({ length: 4 }, (_, index) => ({
+            runnerId: `runner-${String(index)}`,
+            from: "first",
+            to: "second",
+            cause: "batted_ball",
+          }));
+        },
+      ],
+      [
+        "too many assists",
+        (payload) => {
+          payload.fielding.assists = ["f-1", "f-2", "f-3", "f-4", "f-5"];
+        },
+      ],
+    ]) {
+      const invalid = structuredClone(plateAppearance);
+      mutate(invalid.payload);
+      expect(() => normalizeDiamondCommand(invalid), label).toThrow();
+    }
+  });
+
+  it("bounds explicit RBI credit by counted runs and validates scoring judgments", () => {
+    const plateAppearancePayload = {
+      batterId: "batter-1",
+      pitcherId: "pitcher-1",
+      result: "single",
+      batterAdvance: { to: "first", cause: "batted_ball" },
+      runnerAdvances: [
+        {
+          runnerId: "runner-1",
+          from: "third",
+          to: "home",
+          cause: "batted_ball",
+          countsRun: false,
+        },
+      ],
+      outsOnPlay: 0,
+      runsBattedIn: 0,
+    };
+    expect(
+      normalizeDiamondCommand(
+        command({
+          type: "record_plate_appearance",
+          payload: plateAppearancePayload,
+        }),
+      ).payload.runsBattedIn,
+    ).toBe(0);
+
+    for (const runsBattedIn of [-1, 0.5, 1, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(() =>
+        normalizeDiamondCommand(
+          command({
+            type: "record_plate_appearance",
+            payload: { ...plateAppearancePayload, runsBattedIn },
+          }),
+        ),
+      ).toThrow(/runsBattedIn/i);
+    }
+
+    expect(
+      normalizeDiamondCommand(
+        command({
+          type: "record_scoring_judgment",
+          payload: {
+            playEventId: "play-1",
+            runnerId: "runner-1",
+            earned: false,
+            rbi: true,
+            responsiblePitcherId: "pitcher-1",
+            pitcherOfRecord: {
+              side: "home",
+              playerId: "pitcher-1",
+              decision: "win",
+            },
+          },
+        }),
+      ).payload,
+    ).toMatchObject({ earned: false, rbi: true });
+    expect(() =>
+      normalizeDiamondCommand(
+        command({
+          type: "record_scoring_judgment",
+          payload: { playEventId: "play-1", earned: "false" },
+        }),
+      ),
+    ).toThrow(/earned.*boolean/i);
+    expect(() =>
+      normalizeDiamondCommand(
+        command({
+          type: "record_scoring_judgment",
+          payload: {
+            playEventId: "play-1",
+            pitcherOfRecord: {
+              side: "home",
+              playerId: "pitcher-1",
+              decision: "hold",
+            },
+          },
+        }),
+      ),
+    ).toThrow(/decision.*supported/i);
+    expect(() =>
+      normalizeDiamondCommand(command({ leaseId: "not-a-lease-token" })),
+    ).toThrow(/leaseId.*UUID v4/i);
   });
 
   it("enforces payload shape, finite values, depth, array, string, and prototype boundaries", () => {
@@ -507,6 +897,24 @@ describe("Diamond command validation, hashing, idempotency, and revisions", () =
         command({ type: "finalize", payload: { confirmed: false } }),
       ),
     ).toThrow(/confirmation/i);
+    expect(
+      normalizeDiamondCommand(
+        command({
+          type: "cancel",
+          payload: { confirmed: true, reason: "Tournament cancelled play." },
+        }),
+      ).payload,
+    ).toEqual({ confirmed: true, reason: "Tournament cancelled play." });
+    for (const payload of [
+      { confirmed: false, reason: "Rain." },
+      { confirmed: true, reason: "   " },
+      { confirmed: true, reason: "x".repeat(301) },
+      { confirmed: true, reason: "Rain.", managerAuthorized: true },
+    ]) {
+      expect(() =>
+        normalizeDiamondCommand(command({ type: "cancel", payload })),
+      ).toThrow(/confirmation|cancellation reason|unsupported payload fields/i);
+    }
     expect(() =>
       normalizeDiamondCommand(
         command({
@@ -582,6 +990,16 @@ describe("Diamond command validation, hashing, idempotency, and revisions", () =
     );
     expect(
       hashDiamondCommand(command({ commandId: secondCommandId })),
+    ).not.toBe(hashDiamondCommand(command()));
+    expect(hashDiamondCommand(command({ appBuild: 3 }))).not.toBe(
+      hashDiamondCommand(command()),
+    );
+    expect(
+      hashDiamondCommand(
+        command({
+          expectedInstanceId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        }),
+      ),
     ).not.toBe(hashDiamondCommand(command()));
   });
 
@@ -718,6 +1136,17 @@ describe("Diamond lifecycle and scorer lease decisions", () => {
     expect(
       decideDiamondLifecycle({ lifecycle: "suspended", commandType: "resume" }),
     ).toMatchObject({ allowed: true });
+    for (const lifecycle of ["ready", "active", "suspended"]) {
+      expect(
+        decideDiamondLifecycle({ lifecycle, commandType: "cancel" }),
+      ).toMatchObject({ allowed: true, code: "lifecycle-allows" });
+    }
+    expect(
+      decideDiamondLifecycle({
+        lifecycle: "cancelled",
+        commandType: "private_note",
+      }),
+    ).toMatchObject({ allowed: false, code: "lifecycle-conflict" });
     expect(
       decideDiamondLifecycle({
         lifecycle: "final",
@@ -889,6 +1318,11 @@ describe("Diamond public/private projections and bounded event reads", () => {
             transcript: "private words",
           },
         ],
+        cancellation: {
+          reason: "Tournament cancelled play.",
+          decisionEventId: "event-7",
+          actorUid: "private-manager",
+        },
         lease: { leaseId: "private-lease", holderUid: "private-scorer" },
         notes: ["private"],
         aiPrompt: "private",
@@ -949,6 +1383,52 @@ describe("Diamond public/private projections and bounded event reads", () => {
       type: "record_plate_appearance",
       description: "Maya singled to left",
     });
+  });
+
+  it("exposes only the bounded correction summary from a private canonical event", () => {
+    const canonical = {
+      eventId: "event-7",
+      sequence: 7,
+      revision: 7,
+      type: "supersede_event",
+      payload: {
+        targetEventId: "event-5",
+        replacementType: "advance_runner",
+        replacementPayload: {
+          runnerId: "player-2",
+          from: "first",
+          to: "second",
+          cause: "stolen_base",
+        },
+      },
+      supersedesEventId: "event-5",
+      serverTimestampMs: 1_700_000_000_000,
+      actorUid: "scorer-private",
+      commandId,
+      commandHash: "sha256:private",
+      previousHash: "sha256:private",
+      hash: "sha256:private",
+      before: { lineups: { home: [{ playerId: "private-roster" }] } },
+      after: { notes: [{ text: "private note" }] },
+      audit: { ip: "private" },
+    };
+
+    expect(sanitizeDiamondPrivateEventSummary(canonical)).toEqual({
+      eventId: "event-7",
+      sequence: 7,
+      revision: 7,
+      type: "supersede_event",
+      payload: canonical.payload,
+      supersedesEventId: "event-5",
+      serverTimestampMs: 1_700_000_000_000,
+    });
+    expect(
+      buildDiamondEventPage({
+        events: [canonical],
+        sourceRevision: 7,
+        visibility: "private-summary",
+      }).items,
+    ).toEqual([sanitizeDiamondPrivateEventSummary(canonical)]);
   });
 
   it("accepts complete empty pages as authoritative absence", () => {
@@ -1191,6 +1671,14 @@ describe("Diamond voice, notification, rollback, and deletion boundaries", () =>
     expect(
       decideDiamondNotification({
         commandOutcome: "accepted",
+        eventType: "cancel",
+        revision: 9,
+        lastNotifiedRevision: 8,
+      }),
+    ).toEqual({ send: true, reason: "new-public-live-event", revision: 9 });
+    expect(
+      decideDiamondNotification({
+        commandOutcome: "accepted",
         eventType: "finalize",
         revision: 7,
         lastNotifiedRevision: 7,
@@ -1216,6 +1704,7 @@ describe("Diamond voice, notification, rollback, and deletion boundaries", () =>
         operation: "score",
         policy: enabled,
         teamId: "team-1",
+        appBuild: 2,
         game: diamondGame,
         rollbackStage: "activation-disabled",
       }),
@@ -1225,6 +1714,7 @@ describe("Diamond voice, notification, rollback, and deletion boundaries", () =>
         operation: "score",
         policy: enabled,
         teamId: "team-1",
+        appBuild: 2,
         game: diamondGame,
         rollbackStage: "commands-disabled",
       }),

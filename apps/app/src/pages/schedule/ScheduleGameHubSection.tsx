@@ -61,10 +61,20 @@ import type { PracticeTimelineBlock, PracticeTimelineDrillOption } from '../../l
 import type { TrackStatsheetReviewRow } from '../../lib/statsheetImportService';
 import type { AuthState } from '../../lib/types';
 import { isActiveGameForLive, type ReplayArchiveState, type YouTubeReplayVideo } from '../../lib/youtubeReplay';
+import { isDiamondScorebookUiEnabled } from '../../lib/launchFeatures';
 import { createLogger } from '../../lib/logger';
 import { useScheduleEventDetailContext } from './ScheduleEventDetailContext';
 
 const logger = createLogger('schedule-event-detail');
+const DIAMOND_INSTANCE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function getDiamondLiveEngagementContext(event: ParentScheduleEvent) {
+  if (event.trackingEngine !== 'diamond-v2') return null;
+  const instanceId = String(event.diamondScorebookInstanceId || '').trim().toLowerCase();
+  return DIAMOND_INSTANCE_ID_PATTERN.test(instanceId)
+    ? { trackingEngine: 'diamond-v2' as const, instanceId }
+    : null;
+}
 
 type LiveGameChatModule = typeof import('../../lib/liveGameChatService');
 type LiveGameReactionsModule = typeof import('../../lib/liveGameReactionsService');
@@ -144,7 +154,11 @@ export function setScheduleGameDayServiceImporterForTest(importer?: () => Promis
   scheduleGameDayServiceImporter = importer || (() => import('../../lib/scheduleGameDayService'));
 }
 
-export function shouldCheckDiamondActivation(event?: ParentScheduleEvent | null, canUpdateScore = false) {
+export function shouldCheckDiamondActivation(
+  event?: ParentScheduleEvent | null,
+  canUpdateScore = false,
+  diamondScorebookUiEnabled = isDiamondScorebookUiEnabled()
+) {
   const sport = String(event?.sport || '').trim().toLowerCase();
   const isDiamondSport = sport === 'baseball'
     || sport === 'softball'
@@ -152,6 +166,7 @@ export function shouldCheckDiamondActivation(event?: ParentScheduleEvent | null,
     || sport === 'fastpitch softball';
   return Boolean(
     event
+    && diamondScorebookUiEnabled === true
     && canUpdateScore
     && event.type === 'game'
     && event.isDbGame
@@ -517,16 +532,25 @@ function LiveGameReactionsPanel({ auth, event }: { auth: AuthState; event: Paren
     void loadLiveGameReactionsModule().then(setReactionsModule);
   }, []);
 
-  const canReact = reactionsModule ? reactionsModule.canUseLiveGameReactions(event, { now: new Date() }) : false;
+  const isDiamondGame = event.trackingEngine === 'diamond-v2';
+  const diamondContext = getDiamondLiveEngagementContext(event);
+  const canReact = reactionsModule
+    ? reactionsModule.canUseLiveGameReactions(event, { now: new Date() })
+      && (!isDiamondGame || Boolean(diamondContext && auth.user?.uid))
+    : false;
   const reactionNotice = reactionsModule ? reactionsModule.getLiveGameReactionNotice(event, { now: new Date() }) : null;
   const reactionOptions = reactionsModule ? reactionsModule.liveGameReactionOptions : [];
   const reactionsReady = Boolean(reactionsModule && reactionOptions.length);
 
   useEffect(() => {
     if (!reactionsModule || !event.isDbGame || !event.teamId || !event.id) return undefined;
+    if (isDiamondGame && !diamondContext) {
+      setSendStatus('The Diamond game generation is unavailable. Refresh before reacting.');
+      return undefined;
+    }
 
     const { subscribeToLiveGameReactions, liveGameReactionOptions: options } = reactionsModule;
-    const unsubscribe = subscribeToLiveGameReactions(event.teamId, event.id, (reaction) => {
+    const handleReaction = (reaction: LiveGameReaction) => {
       const normalizedType = options.some((option) => option.key === reaction.type)
         ? reaction.type
         : 'fire';
@@ -543,16 +567,38 @@ function LiveGameReactionsPanel({ auth, event }: { auth: AuthState; event: Paren
         timeoutIdsRef.current = timeoutIdsRef.current.filter((item) => item !== timeoutId);
       }, 2400);
       timeoutIdsRef.current.push(timeoutId);
-    }, (error: any) => {
+    };
+    const handleError = (error: any) => {
       setSendStatus(error?.message || 'Live reactions disconnected.');
-    });
+    };
+    const unsubscribe = diamondContext
+      ? subscribeToLiveGameReactions(
+          event.teamId,
+          event.id,
+          handleReaction,
+          handleError,
+          { diamond: diamondContext }
+        )
+      : subscribeToLiveGameReactions(
+          event.teamId,
+          event.id,
+          handleReaction,
+          handleError
+        );
 
     return () => {
       unsubscribe?.();
       timeoutIdsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
       timeoutIdsRef.current = [];
     };
-  }, [reactionsModule, event.id, event.isDbGame, event.teamId]);
+  }, [
+    reactionsModule,
+    event.id,
+    event.isDbGame,
+    event.teamId,
+    event.trackingEngine,
+    event.diamondScorebookInstanceId,
+  ]);
 
   const sendReaction = async (type: LiveGameReactionType) => {
     if (!reactionsModule || !canReact || !event.teamId || !event.id || !auth.user?.uid || sendingReactionKey === type) return;
@@ -561,7 +607,8 @@ function LiveGameReactionsPanel({ auth, event }: { auth: AuthState; event: Paren
     try {
       await reactionsModule.sendLiveGameReaction(event.teamId, event.id, {
         type,
-        user: auth.user
+        user: auth.user,
+        ...(diamondContext ? { diamond: diamondContext } : {}),
       });
     } catch (error: any) {
       setSendStatus(error?.message || 'Unable to send reaction.');
@@ -641,6 +688,7 @@ function LiveGameChatPanel({ auth, event }: { auth: AuthState; event: ParentSche
   const [anonymousDisplayName, setAnonymousDisplayName] = useState('');
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [removingMessageId, setRemovingMessageId] = useState('');
   const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
   const messagesScrollRef = useRef<HTMLDivElement | null>(null);
   const stickToLatestRef = useRef(true);
@@ -650,7 +698,12 @@ function LiveGameChatPanel({ auth, event }: { auth: AuthState; event: ParentSche
     void loadLiveGameChatModule().then(setChatModule);
   }, []);
 
-  const canChat = chatModule ? chatModule.canUseLiveGameChat(event, { now: new Date() }) : false;
+  const isDiamondGame = event.trackingEngine === 'diamond-v2';
+  const diamondContext = getDiamondLiveEngagementContext(event);
+  const canChat = chatModule
+    ? chatModule.canUseLiveGameChat(event, { now: new Date() })
+      && (!isDiamondGame || Boolean(diamondContext && auth.user?.uid))
+    : false;
   const chatNotice = chatModule ? chatModule.getLiveGameChatNotice(event, { now: new Date() }) : null;
   const canSend = canChat && Boolean(messageText.trim()) && !sending;
   const latestMessageId = messages[messages.length - 1]?.id || '';
@@ -694,20 +747,48 @@ function LiveGameChatPanel({ auth, event }: { auth: AuthState; event: ParentSche
     setStatus(null);
     stickToLatestRef.current = true;
     shouldFollowLatestRef.current = true;
-    const unsubscribe = chatModule.subscribeToLiveGameChat(event.teamId, event.id, (nextMessages) => {
+    if (isDiamondGame && !diamondContext) {
+      setStatus({ tone: 'error', message: 'The Diamond game generation is unavailable. Refresh before using chat.' });
+      setLoading(false);
+      return undefined;
+    }
+    const handleMessages = (nextMessages: LiveGameChatMessage[]) => {
       shouldFollowLatestRef.current = stickToLatestRef.current || isLiveGameChatNearBottom(messagesScrollRef.current);
       setMessages(sortLiveGameChatMessages(nextMessages));
       setLoading(false);
-    }, (subscribeError: any) => {
+    };
+    const handleError = (subscribeError: any) => {
       setStatus({ tone: 'error', message: subscribeError?.message || 'Unable to load live chat.' });
       setLoading(false);
-    });
+    };
+    const unsubscribe = diamondContext
+      ? chatModule.subscribeToLiveGameChat(
+          event.teamId,
+          event.id,
+          handleMessages,
+          handleError,
+          { diamond: diamondContext }
+        )
+      : chatModule.subscribeToLiveGameChat(
+          event.teamId,
+          event.id,
+          handleMessages,
+          handleError
+        );
 
     return () => {
       scrollScheduler.cancel();
       unsubscribe?.();
     };
-  }, [chatModule, event.id, event.isDbGame, event.teamId, scrollScheduler]);
+  }, [
+    chatModule,
+    event.id,
+    event.isDbGame,
+    event.teamId,
+    event.trackingEngine,
+    event.diamondScorebookInstanceId,
+    scrollScheduler,
+  ]);
 
   const sendMessage = async (submitEvent: FormEvent) => {
     submitEvent.preventDefault();
@@ -720,7 +801,8 @@ function LiveGameChatPanel({ auth, event }: { auth: AuthState; event: ParentSche
       await chatModule.sendLiveGameChatMessage(event.teamId, event.id, {
         text: messageText,
         user: auth.user || undefined,
-        anonymousDisplayName
+        anonymousDisplayName,
+        ...(diamondContext ? { diamond: diamondContext } : {}),
       });
       setMessageText('');
       setStatus({ tone: 'success', message: 'Message sent.' });
@@ -728,6 +810,31 @@ function LiveGameChatPanel({ auth, event }: { auth: AuthState; event: ParentSche
       setStatus({ tone: 'error', message: sendError?.message || 'Unable to send message.' });
     } finally {
       setSending(false);
+    }
+  };
+
+  const removeMessage = async (message: LiveGameChatMessage) => {
+    if (
+      !chatModule
+      || !diamondContext
+      || !event.isTeamAdmin
+      || !auth.user?.uid
+      || !message.id
+      || removingMessageId
+    ) return;
+    if (!window.confirm('Remove this message from the live game chat?')) return;
+    setRemovingMessageId(message.id);
+    setStatus(null);
+    try {
+      await chatModule.moderateLiveGameChatMessage(event.teamId, event.id, message.id, {
+        user: auth.user,
+        diamond: diamondContext,
+      });
+      setStatus({ tone: 'success', message: 'Message removed.' });
+    } catch (removeError: any) {
+      setStatus({ tone: 'error', message: removeError?.message || 'Unable to remove the message.' });
+    } finally {
+      setRemovingMessageId('');
     }
   };
 
@@ -763,6 +870,17 @@ function LiveGameChatPanel({ auth, event }: { auth: AuthState; event: ParentSche
                   <div className="text-[11px] font-semibold text-gray-500">{formatLiveGameChatTimestamp(message.createdAt)}</div>
                 </div>
                 <div className="mt-1 text-sm font-semibold leading-5 text-gray-700">{String(message.text || '').trim() || ' '}</div>
+                {isDiamondGame && event.isTeamAdmin ? (
+                  <button
+                    type="button"
+                    className="mt-2 min-h-8 rounded-lg px-2 text-xs font-black text-red-700 transition hover:bg-red-50 disabled:opacity-60"
+                    aria-label={`Remove live chat message from ${message.senderName || 'Fan'}`}
+                    disabled={Boolean(removingMessageId)}
+                    onClick={() => void removeMessage(message)}
+                  >
+                    {removingMessageId === message.id ? 'Removing…' : 'Remove'}
+                  </button>
+                ) : null}
               </article>
             )) : (
               <div className="text-sm font-semibold text-gray-500">No messages yet. Start the game-day chat.</div>
@@ -892,13 +1010,17 @@ function GameHubLiveClockBadge({ event }: { event: ParentScheduleEvent }) {
   );
 }
 
-function DiamondActivationCard({ event, canUpdateScore }: { event: ParentScheduleEvent; canUpdateScore: boolean }) {
+function DiamondActivationCard({ event, canUpdateScore, diamondScorebookUiEnabled }: {
+  event: ParentScheduleEvent;
+  canUpdateScore: boolean;
+  diamondScorebookUiEnabled: boolean;
+}) {
   const navigate = useNavigate();
   const [access, setAccess] = useState<Awaited<ReturnType<DiamondScorebookServiceModule['getDiamondAccess']>> | null>(null);
   const [captureMode, setCaptureMode] = useState<'quick' | 'full'>('quick');
   const [activating, setActivating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const shouldCheck = shouldCheckDiamondActivation(event, canUpdateScore);
+  const shouldCheck = shouldCheckDiamondActivation(event, canUpdateScore, diamondScorebookUiEnabled);
 
   useEffect(() => {
     let cancelled = false;
@@ -924,7 +1046,7 @@ function DiamondActivationCard({ event, canUpdateScore }: { event: ParentSchedul
   }
 
   const activate = async () => {
-    if (activating) return;
+    if (activating || !isDiamondScorebookUiEnabled()) return;
     const confirmed = window.confirm(
       `Use Diamond ${captureMode === 'full' ? 'Full' : 'Quick'} capture for this game? `
       + 'This permanently assigns this untracked game to the Diamond ledger; the legacy tracker will remain available for every other game.'
@@ -1000,6 +1122,7 @@ export function ScheduleGameHubSection({ auth, event, childEvents, requestedPane
   const showAdminPracticeTimeline = Boolean(isPractice && event.isTeamAdmin);
   const showNonAdminPracticePacketFirst = Boolean(isPractice && !event.isTeamAdmin);
   const canUpdateScore = shouldShowLiveScoreControls(event, auth.user);
+  const diamondScorebookUiEnabled = isDiamondScorebookUiEnabled();
   const isDiamondOwned = event.trackingEngine === 'diamond-v2';
   const hasUnknownTrackingEngine = Boolean(event.trackingEngine && !isDiamondOwned);
   const canUseLegacyScoring = canUpdateScore && !event.trackingEngine;
@@ -1210,7 +1333,11 @@ export function ScheduleGameHubSection({ auth, event, childEvents, requestedPane
 
             {canUseLegacyScoring ? <LiveGameClockPanel auth={auth} event={event} onLiveClockUpdated={onLiveClockUpdated} /> : null}
           </LiveGameClockTickerProvider>
-          <DiamondActivationCard event={event} canUpdateScore={canUpdateScore} />
+          <DiamondActivationCard
+            event={event}
+            canUpdateScore={canUpdateScore}
+            diamondScorebookUiEnabled={diamondScorebookUiEnabled}
+          />
           {isDiamondOwned && canUpdateScore ? (
             <Link to={diamondScorebookHref} className="primary-button mt-3 min-h-11 w-full justify-center px-4 text-sm" data-testid="diamond-scorebook-launch">
               <ClipboardCheck className="h-4 w-4" aria-hidden="true" />
@@ -1235,7 +1362,9 @@ export function ScheduleGameHubSection({ auth, event, childEvents, requestedPane
           ) : null}
           {canUseLegacyScoring && !event.statTrackerConfigId ? (
             <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-bold text-amber-800" role="status">
-              Assign a tracker config in Edit game before opening Standard or Diamond scoring.
+              {diamondScorebookUiEnabled
+                ? 'Assign a tracker config in Edit game before opening Standard or Diamond scoring.'
+                : 'Assign a tracker config in Edit game before opening Standard scoring.'}
             </div>
           ) : null}
           {canUseLegacyScoring ? (

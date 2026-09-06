@@ -92,10 +92,7 @@ describe('stat config presets', () => {
             columns: expectedColumns
         }));
         expect(fastpitch.statDefinitions).toEqual(baseball.statDefinitions.map((definition) => ({ ...definition })));
-
-        // The established generic Softball preset remains deliberately small;
-        // Diamond v2 uses the explicit Fastpitch contract above.
-        expect(softball.statDefinitions).toHaveLength(6);
+        expect(softball.statDefinitions).toEqual(baseball.statDefinitions.map((definition) => ({ ...definition })));
 
     });
 

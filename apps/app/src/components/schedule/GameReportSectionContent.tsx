@@ -41,6 +41,9 @@ function DiamondProjectionNotice({ report }: { report: GameReportData }) {
   const ledgerRevision = projection.authoritativeRevision === null
     ? 'Ledger revision unavailable'
     : `Ledger rev ${projection.authoritativeRevision}`;
+  const visibilityLabel = projection.statVisibility === 'manager-internal'
+    ? 'Manager internal stats'
+    : 'Public stats';
 
   return (
     <div
@@ -48,13 +51,18 @@ function DiamondProjectionNotice({ report }: { report: GameReportData }) {
       role="status"
       aria-label="Diamond scorebook report status"
     >
-      <div className="text-xs font-black uppercase tracking-[0.04em]">Diamond scorebook · Read only</div>
+      <div className="text-xs font-black uppercase tracking-[0.04em]">Diamond scorebook · {visibilityLabel} · Read only</div>
       <div className="mt-0.5 text-xs font-semibold">
         {projection.pending
           ? 'Stats projection is pending. Unavailable values remain an em dash instead of being counted as zero.'
           : 'Stats are derived from the authoritative play ledger. Corrections must be made in the scorebook.'}
       </div>
       <div className="mt-1 text-[11px] font-bold opacity-75">{ledgerRevision} · {revisions}</div>
+      {projection.requestedStatVisibility === 'manager-internal' && projection.statVisibility !== 'manager-internal' ? (
+        <div className="mt-1 text-[11px] font-bold">
+          Internal projection unavailable; showing the last complete public projection. Refresh to retry.
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -354,13 +362,14 @@ function ReportMediaSection({ report }: { report: GameReportData }) {
 }
 
 function ReportInsightsSection({ report }: { report: GameReportData }) {
-  const hasInsights = report.teamInsights.length || report.playerInsightRows.length;
+  const hasInsights = report.publishedAiRecap || report.teamInsights.length || report.playerInsightRows.length;
   if (!hasInsights) {
     return <EmptyReportState title="No insights yet" detail={report.emptyInsightsMessage || 'Insights populate after the game is finalized.'} />;
   }
 
   return (
     <div className="space-y-3">
+      {report.publishedAiRecap ? <PublishedDiamondAiRecap recap={report.publishedAiRecap} /> : null}
       {report.teamInsights.length ? (
         <div className="space-y-2">
           <div className="text-[11px] font-extrabold uppercase tracking-[0.04em] text-gray-500">Team insights</div>
@@ -380,6 +389,60 @@ function ReportInsightsSection({ report }: { report: GameReportData }) {
           ))}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function PublishedDiamondAiRecap({ recap }: { recap: NonNullable<GameReportData['publishedAiRecap']> }) {
+  if (!recap.current) {
+    return (
+      <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-amber-950" role="status">
+        <div className="text-xs font-black uppercase tracking-[0.04em]">AI recap needs regeneration</div>
+        <p className="mt-1 text-xs font-semibold leading-5">A scorebook correction changed revision {recap.sourceRevision}. The old recap is hidden until a manager publishes a new cited draft.</p>
+      </div>
+    );
+  }
+
+  const coverage = Object.entries(recap.coverage)
+    .map(([family, status]) => `${family}: ${status.replace('_', ' ')}`)
+    .join(' · ');
+  return (
+    <section className="rounded-xl border border-violet-200 bg-violet-50 p-3" aria-labelledby="published-diamond-ai-recap">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h4 id="published-diamond-ai-recap" className="text-sm font-black text-violet-950">Published AI recap</h4>
+        <span className="rounded-full bg-white px-2 py-1 text-[10px] font-black uppercase tracking-wide text-violet-700">Source rev {recap.sourceRevision}</span>
+      </div>
+      <ReportMarkdownText text={recap.recap.text} />
+      <AiEvidence citations={recap.recap.citations} />
+      {recap.insights.length ? (
+        <div className="mt-3 space-y-2">
+          {recap.insights.map((insight, index) => (
+            <div key={`${index}:${insight.text}`} className="rounded-lg border border-violet-100 bg-white p-3">
+              <div className="text-xs font-black uppercase tracking-wide text-violet-700">AI insight {index + 1}</div>
+              <ReportMarkdownText text={insight.text} compact />
+              <AiEvidence citations={insight.citations} />
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {coverage ? <p className="mt-3 text-[11px] font-semibold text-violet-800">Coverage · {coverage}</p> : null}
+      {recap.dataQualityNotes.length ? (
+        <ul className="mt-2 list-disc space-y-1 pl-5 text-[11px] font-semibold text-violet-800">
+          {recap.dataQualityNotes.map((note) => <li key={note}>{note}</li>)}
+        </ul>
+      ) : null}
+    </section>
+  );
+}
+
+function AiEvidence({ citations }: { citations: Array<{ eventId: string; revision: number }> }) {
+  return (
+    <div className="mt-2 flex flex-wrap gap-1" aria-label="AI recap play evidence">
+      {citations.map((citation) => (
+        <span key={`${citation.eventId}:${citation.revision}`} className="rounded-full border border-violet-200 bg-violet-100 px-2 py-0.5 text-[10px] font-black text-violet-800">
+          Play rev {citation.revision}
+        </span>
+      ))}
     </div>
   );
 }

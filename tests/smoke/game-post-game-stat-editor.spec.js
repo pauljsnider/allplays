@@ -1,82 +1,122 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from "@playwright/test";
+import { readFile } from "node:fs/promises";
 
-const STORE_KEY = '__gamePostGameStatEditorStore';
+const STORE_KEY = "__gamePostGameStatEditorStore";
 
 function createScenario() {
-    return {
-        team: {
-            id: 'team-1',
-            name: 'Comets',
-            ownerId: 'owner-1',
-            adminEmails: ['coach@example.com'],
-            sport: 'Basketball'
+  return {
+    team: {
+      id: "team-1",
+      name: "Comets",
+      ownerId: "owner-1",
+      adminEmails: ["coach@example.com"],
+      sport: "Basketball",
+    },
+    game: {
+      id: "game-1",
+      opponent: "Rockets",
+      date: "2026-04-03",
+      status: "completed",
+      liveStatus: "completed",
+      statTrackerConfigId: "cfg-1",
+      homeScore: 38,
+      awayScore: 32,
+      opponentStats: {},
+      summary: "Completed game.",
+    },
+    players: [
+      { id: "p1", name: "Ava Cole", number: "3" },
+      { id: "p2", name: "Mia Diaz", number: "5" },
+    ],
+    config: {
+      id: "cfg-1",
+      columns: ["PTS", "REB", "AST"],
+      statDefinitions: [
+        {
+          id: "pts",
+          label: "PTS",
+          scope: "player",
+          visibility: "public",
+          type: "base",
         },
-        game: {
-            id: 'game-1',
-            opponent: 'Rockets',
-            date: '2026-04-03',
-            status: 'completed',
-            liveStatus: 'completed',
-            statTrackerConfigId: 'cfg-1',
-            homeScore: 38,
-            awayScore: 32,
-            opponentStats: {},
-            summary: 'Completed game.'
+        {
+          id: "reb",
+          label: "REB",
+          scope: "player",
+          visibility: "public",
+          type: "base",
         },
-        players: [
-            { id: 'p1', name: 'Ava Cole', number: '3' },
-            { id: 'p2', name: 'Mia Diaz', number: '5' }
-        ],
-        config: {
-            id: 'cfg-1',
-            columns: ['PTS', 'REB', 'AST'],
-            statDefinitions: [
-                { id: 'pts', label: 'PTS', scope: 'player', visibility: 'public', type: 'base' },
-                { id: 'reb', label: 'REB', scope: 'player', visibility: 'public', type: 'base' },
-                { id: 'ast', label: 'AST', scope: 'player', visibility: 'public', type: 'base' },
-                { id: 'effort', label: 'EFFORT', scope: 'player', visibility: 'private', type: 'base' },
-                { id: 'turnovers', label: 'TURNOVERS', scope: 'team', visibility: 'public', type: 'base' }
-            ]
+        {
+          id: "ast",
+          label: "AST",
+          scope: "player",
+          visibility: "public",
+          type: "base",
         },
-        aggregatedStats: {
-            p1: {
-                playerName: 'Ava Cole',
-                playerNumber: '3',
-                stats: { pts: 10, reb: 4, ast: 2 },
-                timeMs: 540000,
-                didNotPlay: false,
-                participated: true
-            },
-            p2: {
-                playerName: 'Mia Diaz',
-                playerNumber: '5',
-                stats: { pts: 6, reb: 1, ast: 3 },
-                timeMs: 420000,
-                didNotPlay: false,
-                participated: true
-            }
+        {
+          id: "effort",
+          label: "EFFORT",
+          scope: "player",
+          visibility: "private",
+          type: "base",
         },
-        privatePlayerStats: {
-            p1: { stats: { effort: 7 } },
-            p2: { stats: { effort: 5 } }
+        {
+          id: "turnovers",
+          label: "TURNOVERS",
+          scope: "team",
+          visibility: "public",
+          type: "base",
         },
-        teamStats: { turnovers: 8 },
-        setCompletedGamePlayerStatsCalls: []
-    };
+      ],
+    },
+    aggregatedStats: {
+      p1: {
+        playerName: "Ava Cole",
+        playerNumber: "3",
+        stats: { pts: 10, reb: 4, ast: 2 },
+        timeMs: 540000,
+        didNotPlay: false,
+        participated: true,
+      },
+      p2: {
+        playerName: "Mia Diaz",
+        playerNumber: "5",
+        stats: { pts: 6, reb: 1, ast: 3 },
+        timeMs: 420000,
+        didNotPlay: false,
+        participated: true,
+      },
+    },
+    privatePlayerStats: {
+      p1: { stats: { effort: 7 } },
+      p2: { stats: { effort: 5 } },
+    },
+    teamStats: { turnovers: 8 },
+    setCompletedGamePlayerStatsCalls: [],
+  };
 }
 
-async function installMocks(page, scenario, { delayedAuth = false, accessLevel = 'full', directAccess = true } = {}) {
-    await page.addInitScript(({ storeKey, value }) => {
-        localStorage.setItem(storeKey, JSON.stringify(value));
-    }, { storeKey: STORE_KEY, value: scenario });
+async function installMocks(
+  page,
+  scenario,
+  { delayedAuth = false, accessLevel = "full", directAccess = true } = {},
+) {
+  await page.addInitScript(
+    ({ storeKey, value }) => {
+      localStorage.setItem(storeKey, JSON.stringify(value));
+    },
+    { storeKey: STORE_KEY, value: scenario },
+  );
 
-    await page.route('https://www.googletagmanager.com/**', (route) => route.fulfill({
-        status: 200,
-        contentType: 'application/javascript',
-        body: ''
-    }));
+  await page.route("https://www.googletagmanager.com/**", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/javascript",
+      body: "",
+    }),
+  );
 
-    const dbModule = `
+  const dbModule = `
         const STORE_KEY = ${JSON.stringify(STORE_KEY)};
 
         function loadStore() {
@@ -160,7 +200,7 @@ async function installMocks(page, scenario, { delayedAuth = false, accessLevel =
         }
     `;
 
-    const firebaseModule = `
+  const firebaseModule = `
         const STORE_KEY = ${JSON.stringify(STORE_KEY)};
         const DELETE_FIELD_SENTINEL = { __deleteField: true };
 
@@ -200,11 +240,11 @@ async function installMocks(page, scenario, { delayedAuth = false, accessLevel =
         function buildSnapshot(path) {
             const store = loadStore();
 
-            if (path.endsWith('/aggregatedStats')) {
+            if (path.endsWith('/aggregatedStats') || path.endsWith('/publicPlayerStats')) {
                 return createSnapshot(Object.entries(store.aggregatedStats || {}).map(([id, data]) => [
                     id,
                     data,
-                    collectionPath(store.team.id, store.game.id, 'aggregatedStats', id)
+                    path + '/' + id
                 ]));
             }
 
@@ -240,6 +280,11 @@ async function installMocks(page, scenario, { delayedAuth = false, accessLevel =
         }
 
         export const db = {};
+        export const functions = {};
+
+        export function httpsCallable() {
+            return async () => ({ data: { status: 'unavailable' } });
+        }
 
         export function doc(_db, ...segments) {
             return { path: segments.join('/') };
@@ -306,7 +351,7 @@ async function installMocks(page, scenario, { delayedAuth = false, accessLevel =
         }
     `;
 
-    const utilsModule = `
+  const utilsModule = `
         export function renderHeader(container) {
             if (container) container.innerHTML = '<div data-testid="header"></div>';
         }
@@ -344,7 +389,8 @@ async function installMocks(page, scenario, { delayedAuth = false, accessLevel =
         }
     `;
 
-    const authModule = delayedAuth ? `
+  const authModule = delayedAuth
+    ? `
         export function checkAuth(callback) {
             window.__GAME_AUTH_EVENTS__ = ['pending'];
             setTimeout(() => {
@@ -352,13 +398,14 @@ async function installMocks(page, scenario, { delayedAuth = false, accessLevel =
                 callback({ uid: 'coach-1', email: 'coach@example.com' });
             }, 4000);
         }
-    ` : `
+    `
+    : `
         export function checkAuth(callback) {
             callback({ uid: 'coach-1', email: 'coach@example.com' });
         }
     `;
 
-    const bannerModule = `
+  const bannerModule = `
         export function renderTeamAdminBanner(container) {
             if (container) container.innerHTML = '<div data-testid="team-banner"></div>';
         }
@@ -371,19 +418,19 @@ async function installMocks(page, scenario, { delayedAuth = false, accessLevel =
         }
     `;
 
-    const insightsModule = `
+  const insightsModule = `
         export async function generateGameInsights() {
             return { teamTakeaways: [], playerSignals: [] };
         }
     `;
 
-    const liveGameStateModule = `
+  const liveGameStateModule = `
         export function resolveLiveStatConfig({ configs = [], game = {} } = {}) {
             return configs.find((config) => config.id === game.statTrackerConfigId) || configs[0] || null;
         }
     `;
 
-    const liveGameVideoModule = `
+  const liveGameVideoModule = `
         export function buildHighlightShareUrl() {
             return '';
         }
@@ -424,447 +471,687 @@ async function installMocks(page, scenario, { delayedAuth = false, accessLevel =
         export function hasCompletedReplayLifecycle() { return true; }
     `;
 
-    await page.route(/\/js\/db\.js\?v=\d+$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: dbModule }));
-    await page.route(/\/js\/firebase\.js\?v=\d+$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: firebaseModule }));
-    await page.route(/\/js\/utils\.js\?v=\d+$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: utilsModule }));
-    await page.route(/\/js\/auth\.js\?v=\d+$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: authModule }));
-    await page.route(/\/js\/team-admin-banner\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: bannerModule }));
-    await page.route(/\/js\/post-game-insights\.js\?v=\d+$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: insightsModule }));
-    await page.route(/\/js\/live-game-state\.js\?v=\d+$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: liveGameStateModule }));
-    await page.route(/\/js\/live-game-video\.js\?v=\d+$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: liveGameVideoModule }));
+  await page.route(/\/js\/db\.js\?v=\d+$/, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/javascript",
+      body: dbModule,
+    }),
+  );
+  await page.route(/\/js\/firebase\.js\?v=\d+$/, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/javascript",
+      body: firebaseModule,
+    }),
+  );
+  await page.route(/\/js\/utils\.js\?v=\d+$/, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/javascript",
+      body: utilsModule,
+    }),
+  );
+  await page.route(/\/js\/auth\.js\?v=\d+$/, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/javascript",
+      body: authModule,
+    }),
+  );
+  await page.route(/\/js\/team-admin-banner\.js(?:\?v=\d+)?$/, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/javascript",
+      body: bannerModule,
+    }),
+  );
+  await page.route(/\/js\/post-game-insights\.js\?v=\d+$/, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/javascript",
+      body: insightsModule,
+    }),
+  );
+  await page.route(/\/js\/live-game-state\.js\?v=\d+$/, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/javascript",
+      body: liveGameStateModule,
+    }),
+  );
+  await page.route(/\/js\/live-game-video\.js\?v=\d+$/, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/javascript",
+      body: liveGameVideoModule,
+    }),
+  );
 }
 
 async function readStore(page) {
-    return page.evaluate((storeKey) => JSON.parse(localStorage.getItem(storeKey) || '{}'), STORE_KEY);
+  return page.evaluate(
+    (storeKey) => JSON.parse(localStorage.getItem(storeKey) || "{}"),
+    STORE_KEY,
+  );
 }
 
-test('Diamond report labels partial observations, leaves uncollected stats unavailable, and disables legacy edits', async ({ page, baseURL }) => {
-    const pageErrors = [];
-    page.on('pageerror', (error) => pageErrors.push(error.message));
-    const scenario = createScenario();
-    scenario.team.sport = 'Baseball';
-    scenario.game = {
-        ...scenario.game,
-        trackingEngine: 'diamond-v2',
-        diamondProjectionStatus: 'current',
-        diamondProjectionRevision: 8
-    };
-    scenario.config = {
-        id: 'cfg-1',
-        baseType: 'Baseball',
-        columns: ['H', 'SB', 'ERA'],
-        statDefinitions: [
-            { id: 'h', label: 'H', scope: 'player', visibility: 'public' },
-            { id: 'sb', label: 'SB', scope: 'player', visibility: 'public' },
-            { id: 'era', label: 'ERA', scope: 'player', visibility: 'public', precision: 2 }
-        ]
-    };
-    scenario.aggregatedStats = {
-        p1: {
-            trackingEngine: 'diamond-v2',
-            sourceRevision: 8,
-            complete: true,
-            participated: true,
-            playerName: 'Ava Cole',
-            playerNumber: '3',
-            stats: { h: 0 },
-            observedStats: { sb: 2 },
-            statCoverage: { h: 'complete', sb: 'partial', era: 'not_collected' },
-            coverage: { batting: 'complete', baserunning: 'partial', pitching: 'not_collected' }
-        }
-    };
-    scenario.teamStatsDocument = {
-        trackingEngine: 'diamond-v2',
-        sourceRevision: 8,
-        complete: true,
-        stats: { r: 3 },
-        statCoverage: { r: 'complete' },
-        coverage: { batting: 'complete' }
-    };
-    await installMocks(page, scenario);
+test("Diamond report labels partial observations, leaves uncollected stats unavailable, and disables legacy edits", async ({
+  page,
+  baseURL,
+}) => {
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  const scenario = createScenario();
+  scenario.team.sport = "Baseball";
+  const instanceId = "00000000-0000-4000-8000-000000000001";
+  const checkpointHash = `sha256:${"a".repeat(64)}`;
+  const configHash = `sha256:${"b".repeat(64)}`;
+  const projectionHash = `sha256:${"c".repeat(64)}`;
+  scenario.game = {
+    ...scenario.game,
+    teamId: "team-1",
+    trackingEngine: "diamond-v2",
+    diamondProjectionStatus: "current",
+    diamondProjectionRevision: 8,
+    diamondProjectionComplete: true,
+    diamondScorebookInstanceId: instanceId,
+    diamondProjectionCheckpointHash: checkpointHash,
+    diamondStatConfigSnapshotHash: configHash,
+    diamondProjectionHash: projectionHash,
+    diamondPublicTeamStats: {
+      trackingEngine: "diamond-v2",
+      projectionSchemaVersion: 1,
+      sourceRevision: 8,
+      checkpointHash,
+      coverage: { batting: "complete" },
+      publicStatIds: ["r"],
+      side: "home",
+      complete: true,
+      stats: { r: 3 },
+      observedStats: {},
+      statCoverage: { r: "complete" },
+      teamId: "team-1",
+      diamondGameId: "game-1",
+      instanceId,
+      diamondScorebookInstanceId: instanceId,
+      projectionGeneration: instanceId,
+      statConfigSnapshotHash: configHash,
+      projectionHash,
+    },
+  };
+  scenario.config = {
+    id: "cfg-1",
+    baseType: "Baseball",
+    columns: ["H", "SB", "ERA"],
+    statDefinitions: [
+      { id: "h", label: "H", scope: "player", visibility: "public" },
+      { id: "sb", label: "SB", scope: "player", visibility: "public" },
+      {
+        id: "era",
+        label: "ERA",
+        scope: "player",
+        visibility: "public",
+        precision: 2,
+      },
+      { id: "r", label: "R", scope: "team", visibility: "public" },
+      { id: "h", label: "TEAM H", scope: "team", visibility: "private" },
+    ],
+  };
+  scenario.aggregatedStats = {
+    p1: {
+      schemaVersion: 1,
+      trackingEngine: "diamond-v2",
+      projectionSchemaVersion: 1,
+      playerId: "p1",
+      sourceRevision: 8,
+      checkpointHash,
+      complete: true,
+      participated: true,
+      participationStatus: "appeared",
+      participationSource: "diamond-v2",
+      playerName: "Ava Cole",
+      playerNumber: "3",
+      publicStatIds: ["era", "h", "sb"],
+      stats: { h: 0 },
+      observedStats: { sb: 2 },
+      derivedStats: {},
+      observedDerivedStats: {},
+      statCoverage: { h: "complete", sb: "partial", era: "not_collected" },
+      statSources: {},
+      sourcePlayIds: [],
+      unavailableDerivedStats: ["era"],
+      missingStatFamilies: [],
+      coverage: {
+        batting: "complete",
+        baserunning: "partial",
+        pitching: "not_collected",
+      },
+      teamId: "team-1",
+      diamondGameId: "game-1",
+      instanceId,
+      diamondScorebookInstanceId: instanceId,
+      projectionGeneration: instanceId,
+      statConfigSnapshotHash: configHash,
+      projectionHash,
+    },
+  };
+  scenario.teamStatsDocument = {
+    trackingEngine: "diamond-v2",
+    sourceRevision: 8,
+    complete: true,
+    stats: { r: 3, h: 99 },
+    statCoverage: { r: "complete", h: "complete" },
+    coverage: { batting: "complete" },
+  };
+  await installMocks(page, scenario, { accessLevel: "member" });
 
-    await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
-    await expect.poll(() => pageErrors).toEqual([]);
+  await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, {
+    waitUntil: "domcontentloaded",
+  });
+  await expect.poll(() => pageErrors).toEqual([]);
 
-    await expect(page.getByText('Diamond scorebook · Read only')).toBeVisible();
-    const row = page.locator('#stats-body tr').filter({ hasText: 'Ava Cole' });
-    await expect(row).toHaveCount(1);
-    await expect(row.locator('td').nth(2)).toHaveText('0');
-    await expect(row.locator('td').nth(3)).toContainText('Observed');
-    await expect(row.locator('td').nth(4)).toHaveText('—');
-    await expect(page.locator('#edit-stats-btn')).toBeHidden();
-    expect(pageErrors).toEqual([]);
+  await expect(
+    page.getByText("Diamond scorebook · Public stats · Read only"),
+  ).toBeVisible();
+  const row = page.locator("#stats-body tr").filter({ hasText: "Ava Cole" });
+  await expect(row).toHaveCount(1);
+  await expect(row.locator("td").nth(2)).toHaveText("0");
+  await expect(row.locator("td").nth(3)).toContainText("Observed");
+  await expect(row.locator("td").nth(4)).toHaveText("—");
+  await expect(page.locator("#edit-stats-btn")).toBeHidden();
+  await expect(page.locator("#team-stats-body")).toContainText("R");
+  await expect(page.locator("#team-stats-body")).toContainText("3");
+  await expect(page.locator("#team-stats-body")).not.toContainText("TEAM H");
+  await expect(page.locator("#diamond-stats-export-btn")).toHaveText(
+    "Export public CSV",
+  );
+  const downloadPromise = page.waitForEvent("download");
+  await page.locator("#diamond-stats-export-btn").click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe(
+    "Comets-2026-04-03-diamond-stats-public.csv",
+  );
+  const downloadPath = await download.path();
+  expect(downloadPath).toBeTruthy();
+  const csv = await readFile(downloadPath, "utf8");
+  expect(csv).toContain('"source_revision"');
+  expect(csv).toContain('"h","h__coverage"');
+  expect(csv).toContain('"0","complete","2","partial","","not_collected"');
+  expect(csv).toContain('"team","public"');
+  expect(csv).not.toContain("99");
+  expect(pageErrors).toEqual([]);
 });
 
-test('completed-game stat editor saves corrections and DNP state through real controls', async ({ page, baseURL }) => {
-    const pageErrors = [];
-    page.on('pageerror', (error) => pageErrors.push(error.message));
-    await installMocks(page, createScenario());
+test("completed-game stat editor saves corrections and DNP state through real controls", async ({
+  page,
+  baseURL,
+}) => {
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await installMocks(page, createScenario());
 
-    await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
-    await expect.poll(() => pageErrors).toEqual([]);
+  await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, {
+    waitUntil: "domcontentloaded",
+  });
+  await expect.poll(() => pageErrors).toEqual([]);
 
-    await page.locator('#share-report-btn').click();
-    await expect.poll(() => page.evaluate(() => window.__GAME_SHARE_PAYLOADS__?.[0]?.url)).toBe(
-        'https://share.allplays.ai/report?teamId=team-1&gameId=game-1'
+  await page.locator("#share-report-btn").click();
+  await expect
+    .poll(() => page.evaluate(() => window.__GAME_SHARE_PAYLOADS__?.[0]?.url))
+    .toBe("https://share.allplays.ai/report?teamId=team-1&gameId=game-1");
+
+  const tableRows = page.locator("#stats-body tr");
+  await expect(tableRows).toHaveCount(2);
+  await expect(tableRows.first()).toContainText("Ava Cole");
+  await expect(tableRows.first()).toContainText("10");
+  await expect(tableRows.first()).not.toContainText("EFFORT");
+
+  await page.locator("#edit-stats-btn").click();
+  await expect(page.locator("#stats-editor-panel")).toBeVisible();
+  await expect(page.locator("#stats-editor-player-name")).toHaveText(
+    "Ava Cole",
+  );
+  await expect(page.locator('[data-stat-field="pts"]')).toHaveValue("10");
+  await expect(page.locator('[data-stat-field="effort"]')).toHaveValue("7");
+
+  await page.locator('[data-stat-field="pts"]').fill("14");
+  await page.locator('[data-stat-field="reb"]').fill("6");
+  await page.locator('[data-stat-field="effort"]').fill("9");
+  await page.locator("#stats-save-next-btn").click();
+
+  await expect(page.locator("#stats-editor-player-name")).toHaveText(
+    "Mia Diaz",
+  );
+  await expect(tableRows.first()).toContainText("14");
+  await expect(tableRows.first()).toContainText("6");
+  await expect(page.locator("#stats-header-row")).not.toContainText("EFFORT");
+
+  let store = await readStore(page);
+  expect(store.setCompletedGamePlayerStatsCalls).toHaveLength(1);
+  expect(store.setCompletedGamePlayerStatsCalls[0]).toMatchObject({
+    teamId: "team-1",
+    gameId: "game-1",
+    playerId: "p1",
+    payload: {
+      playerName: "Ava Cole",
+      playerNumber: "3",
+      stats: { pts: 14, reb: 6, ast: 2, effort: 9, fouls: 0 },
+      didNotPlay: false,
+      participated: true,
+      participationStatus: "appeared",
+      participationSource: "post-game-stat-editor",
+      timeMs: 540000,
+    },
+  });
+
+  await expect(page.locator('[data-stat-field="pts"]')).toHaveValue("6");
+  await expect(page.locator('[data-stat-field="effort"]')).toHaveValue("5");
+  await page.locator("#stats-dnp-toggle").check();
+  await expect(page.locator('[data-stat-field="pts"]')).toBeDisabled();
+  await expect(page.locator('[data-stat-field="pts"]')).toHaveValue("0");
+  await expect(page.locator('[data-stat-field="effort"]')).toBeDisabled();
+  await expect(page.locator('[data-stat-field="effort"]')).toHaveValue("0");
+
+  await page.locator("#stats-save-btn").click();
+
+  await expect(tableRows.nth(1)).toContainText("Mia Diaz");
+  await expect(tableRows.nth(1)).toContainText("DNP");
+  await expect(tableRows.nth(1).locator("td").nth(2)).toHaveText("—");
+  await expect(tableRows.nth(1).locator("td").nth(4)).toHaveText("—");
+  await expect(tableRows.nth(1).locator("td").nth(5)).toHaveText("—");
+
+  store = await readStore(page);
+  expect(store.setCompletedGamePlayerStatsCalls).toHaveLength(2);
+  expect(store.setCompletedGamePlayerStatsCalls[1]).toMatchObject({
+    teamId: "team-1",
+    gameId: "game-1",
+    playerId: "p2",
+    payload: {
+      playerName: "Mia Diaz",
+      playerNumber: "5",
+      stats: { pts: 0, reb: 0, ast: 0, effort: 0, fouls: 0 },
+      didNotPlay: true,
+      participated: false,
+      participationStatus: "did-not-appear",
+      participationSource: "",
+      timeMs: 0,
+    },
+  });
+  expect(pageErrors).toEqual([]);
+});
+
+test("late authentication refreshes manager controls and private edit data without duplicating report rows", async ({
+  page,
+  baseURL,
+}) => {
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await installMocks(page, createScenario(), { delayedAuth: true });
+
+  await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, {
+    waitUntil: "domcontentloaded",
+  });
+  await expect.poll(() => pageErrors).toEqual([]);
+
+  const publicRows = page.locator("#stats-body tr");
+  await expect(publicRows).toHaveCount(2, { timeout: 5000 });
+  await expect(publicRows.first()).toContainText("Ava Cole");
+  await expect(page.locator("#summary-admin")).toBeHidden();
+  await expect(page.locator("#stat-sheet-admin")).toBeHidden();
+  await expect(page.locator("#edit-stats-btn")).toBeHidden();
+  await expect(page.locator("#edit-team-stats-btn")).toBeHidden();
+  await expect(page.locator("#stats-header-row")).not.toContainText("EFFORT");
+
+  const publicShape = await page.evaluate(() => ({
+    playerHeaders: document.querySelectorAll("#stats-header-row th").length,
+    playerRows: document.querySelectorAll("#stats-body tr").length,
+    opponentHeaders: document.querySelectorAll("#opponent-stats-header-row th")
+      .length,
+    opponentRows: document.querySelectorAll("#opponent-stats-body tr").length,
+  }));
+
+  await expect(page.locator("#summary-admin")).toBeVisible({ timeout: 6000 });
+  await expect(page.locator("#stat-sheet-admin")).toBeVisible();
+  await expect(page.locator("#edit-stats-btn")).toBeVisible();
+  await expect(page.locator("#edit-team-stats-btn")).toBeVisible();
+  await expect
+    .poll(() => page.evaluate(() => window.__GAME_AUTH_EVENTS__))
+    .toEqual(["pending", "authenticated"]);
+
+  await page.locator("#edit-stats-btn").click();
+  await expect(page.locator("#stats-editor-panel")).toBeVisible();
+  await expect(page.locator('[data-stat-field="effort"]')).toHaveValue("7");
+  await expect(page.locator("#stats-header-row")).not.toContainText("EFFORT");
+
+  await expect
+    .poll(() =>
+      page.evaluate(() => ({
+        playerHeaders: document.querySelectorAll("#stats-header-row th").length,
+        playerRows: document.querySelectorAll("#stats-body tr").length,
+        opponentHeaders: document.querySelectorAll(
+          "#opponent-stats-header-row th",
+        ).length,
+        opponentRows: document.querySelectorAll("#opponent-stats-body tr")
+          .length,
+      })),
+    )
+    .toEqual(publicShape);
+  expect(pageErrors).toEqual([]);
+});
+
+test("completed-game manager links, replaces, and removes a YouTube replay", async ({
+  page,
+  baseURL,
+}) => {
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("dialog", async (dialog) => dialog.accept());
+  await page.setViewportSize({ width: 390, height: 844 });
+  const scenario = createScenario();
+  scenario.game.liveStatus = "scheduled";
+  scenario.game.recordedVideo = { url: "https://cdn.example/older-replay.mp4" };
+  scenario.game.replayVideoPublicUrl = "https://video.example/older-replay";
+  scenario.game.videoUrl = "https://youtu.be/PK1HyC37doc";
+  await installMocks(page, scenario);
+
+  await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, {
+    waitUntil: "domcontentloaded",
+  });
+  await expect.poll(() => pageErrors).toEqual([]);
+
+  const replayAdmin = page.locator("#replay-video-admin");
+  const replayAction = page.locator("#replay-report-action");
+  await expect(replayAdmin).toBeVisible();
+  await expect(page.locator("#replay-video-current")).toContainText(
+    "A non-YouTube replay is attached",
+  );
+  await expect(replayAction).toContainText("Replay Unavailable");
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+
+  await page
+    .locator("#replay-video-url")
+    .fill(
+      "https://www.youtube.com/embed/live_stream?channel=UCa9ghvbup6VQmnDOdqwYpqQ",
     );
+  await page.locator("#replay-video-save").click();
+  await expect(page.locator("#replay-video-status")).toContainText(
+    "Paste a valid YouTube video link",
+  );
 
-    const tableRows = page.locator('#stats-body tr');
-    await expect(tableRows).toHaveCount(2);
-    await expect(tableRows.first()).toContainText('Ava Cole');
-    await expect(tableRows.first()).toContainText('10');
-    await expect(tableRows.first()).not.toContainText('EFFORT');
+  await page
+    .locator("#replay-video-url")
+    .fill("https://www.youtube.com/watch?v=0IuY8Oryi1k&t=90");
+  await page.locator("#replay-video-title").fill("Vipers vs Captains replay");
+  await page.locator("#replay-video-save").click();
+  await expect(page.locator("#replay-video-status")).toContainText(
+    "Replay linked",
+  );
+  await expect(
+    replayAction.getByRole("link", { name: "Watch Replay" }),
+  ).toBeVisible();
 
-    await page.locator('#edit-stats-btn').click();
-    await expect(page.locator('#stats-editor-panel')).toBeVisible();
-    await expect(page.locator('#stats-editor-player-name')).toHaveText('Ava Cole');
-    await expect(page.locator('[data-stat-field="pts"]')).toHaveValue('10');
-    await expect(page.locator('[data-stat-field="effort"]')).toHaveValue('7');
+  let store = await readStore(page);
+  expect(store.game.replayVideo).toMatchObject({
+    provider: "youtube",
+    videoId: "0IuY8Oryi1k",
+    embedUrl: "https://www.youtube.com/embed/0IuY8Oryi1k",
+    publicUrl: "https://www.youtube.com/watch?v=0IuY8Oryi1k",
+    title: "Vipers vs Captains replay",
+    status: "ready",
+    linkedBy: "coach-1",
+  });
+  expect(store.game.recordedVideo).toBeUndefined();
+  expect(store.game.replayVideoPublicUrl).toBeUndefined();
+  expect(store.game.videoUrl).toBe("https://youtu.be/PK1HyC37doc");
 
-    await page.locator('[data-stat-field="pts"]').fill('14');
-    await page.locator('[data-stat-field="reb"]').fill('6');
-    await page.locator('[data-stat-field="effort"]').fill('9');
-    await page.locator('#stats-save-next-btn').click();
+  await page
+    .locator("#replay-video-url")
+    .fill("https://youtu.be/dQw4w9WgXcQ?si=replacement");
+  await page.locator("#replay-video-title").fill("Replacement replay");
+  await page.locator("#replay-video-save").click();
+  await expect(page.locator("#replay-video-status")).toContainText(
+    "Replay linked",
+  );
 
-    await expect(page.locator('#stats-editor-player-name')).toHaveText('Mia Diaz');
-    await expect(tableRows.first()).toContainText('14');
-    await expect(tableRows.first()).toContainText('6');
-    await expect(page.locator('#stats-header-row')).not.toContainText('EFFORT');
+  store = await readStore(page);
+  expect(store.game.replayVideo).toMatchObject({
+    provider: "youtube",
+    videoId: "dQw4w9WgXcQ",
+    publicUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    title: "Replacement replay",
+    status: "ready",
+  });
 
-    let store = await readStore(page);
-    expect(store.setCompletedGamePlayerStatsCalls).toHaveLength(1);
-    expect(store.setCompletedGamePlayerStatsCalls[0]).toMatchObject({
-        teamId: 'team-1',
-        gameId: 'game-1',
-        playerId: 'p1',
-        payload: {
-            playerName: 'Ava Cole',
-            playerNumber: '3',
-            stats: { pts: 14, reb: 6, ast: 2, effort: 9, fouls: 0 },
-            didNotPlay: false,
-            participated: true,
-            participationStatus: 'appeared',
-            participationSource: 'post-game-stat-editor',
-            timeMs: 540000
-        }
-    });
+  await page.locator("#replay-video-remove").click();
+  await expect(page.locator("#replay-video-status")).toContainText(
+    "Replay removed",
+  );
+  await expect(replayAction).toContainText("Replay Unavailable");
 
-    await expect(page.locator('[data-stat-field="pts"]')).toHaveValue('6');
-    await expect(page.locator('[data-stat-field="effort"]')).toHaveValue('5');
-    await page.locator('#stats-dnp-toggle').check();
-    await expect(page.locator('[data-stat-field="pts"]')).toBeDisabled();
-    await expect(page.locator('[data-stat-field="pts"]')).toHaveValue('0');
-    await expect(page.locator('[data-stat-field="effort"]')).toBeDisabled();
-    await expect(page.locator('[data-stat-field="effort"]')).toHaveValue('0');
+  store = await readStore(page);
+  expect(store.game.replayVideo).toBeNull();
+  expect(store.game.recordedVideo).toBeUndefined();
+  expect(store.game.replayVideoPublicUrl).toBeUndefined();
+  expect(store.game.videoUrl).toBe("https://youtu.be/PK1HyC37doc");
+  expect(store.game.replayVideoFallbackDisabled).toBe(true);
 
-    await page.locator('#stats-save-btn').click();
-
-    await expect(tableRows.nth(1)).toContainText('Mia Diaz');
-    await expect(tableRows.nth(1)).toContainText('DNP');
-    await expect(tableRows.nth(1).locator('td').nth(2)).toHaveText('—');
-    await expect(tableRows.nth(1).locator('td').nth(5)).toHaveText('—');
-    await expect(tableRows.nth(1).locator('td').nth(6)).toHaveText('—');
-
-    store = await readStore(page);
-    expect(store.setCompletedGamePlayerStatsCalls).toHaveLength(2);
-    expect(store.setCompletedGamePlayerStatsCalls[1]).toMatchObject({
-        teamId: 'team-1',
-        gameId: 'game-1',
-        playerId: 'p2',
-        payload: {
-            playerName: 'Mia Diaz',
-            playerNumber: '5',
-            stats: { pts: 0, reb: 0, ast: 0, effort: 0, fouls: 0 },
-            didNotPlay: true,
-            participated: false,
-            participationStatus: 'did-not-appear',
-            participationSource: '',
-            timeMs: 0
-        }
-    });
-    expect(pageErrors).toEqual([]);
+  // A second write without refreshing must use the retained videoUrl and
+  // tombstone in its CAS state, then clear only the tombstone on relink.
+  await page.locator("#replay-video-url").fill("https://youtu.be/PK1HyC37doc");
+  await page.locator("#replay-video-title").fill("Relinked replay");
+  await page.locator("#replay-video-save").click();
+  await expect(page.locator("#replay-video-status")).toContainText(
+    "Replay linked",
+  );
+  store = await readStore(page);
+  expect(store.game.replayVideo).toMatchObject({
+    videoId: "PK1HyC37doc",
+    title: "Relinked replay",
+    status: "ready",
+  });
+  expect(store.game.videoUrl).toBe("https://youtu.be/PK1HyC37doc");
+  expect(store.game.replayVideoFallbackDisabled).toBeUndefined();
+  expect(pageErrors).toEqual([]);
 });
 
-test('late authentication refreshes manager controls and private edit data without duplicating report rows', async ({ page, baseURL }) => {
-    const pageErrors = [];
-    page.on('pageerror', (error) => pageErrors.push(error.message));
-    await installMocks(page, createScenario(), { delayedAuth: true });
+test("completed statsheet game with only an attached clip does not advertise a full replay", async ({
+  page,
+  baseURL,
+}) => {
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  const scenario = createScenario();
+  scenario.game.liveStatus = "scheduled";
+  scenario.game.highlightClips = [
+    {
+      type: "score-linked",
+      title: "Putback clip",
+      mediaUrl: "https://cdn.example.com/putback.mp4",
+    },
+  ];
+  await installMocks(page, scenario);
 
-    await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
-    await expect.poll(() => pageErrors).toEqual([]);
+  await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, {
+    waitUntil: "domcontentloaded",
+  });
+  await expect.poll(() => pageErrors).toEqual([]);
 
-    const publicRows = page.locator('#stats-body tr');
-    await expect(publicRows).toHaveCount(2, { timeout: 5000 });
-    await expect(publicRows.first()).toContainText('Ava Cole');
-    await expect(page.locator('#summary-admin')).toBeHidden();
-    await expect(page.locator('#stat-sheet-admin')).toBeHidden();
-    await expect(page.locator('#edit-stats-btn')).toBeHidden();
-    await expect(page.locator('#edit-team-stats-btn')).toBeHidden();
-    await expect(page.locator('#stats-header-row')).not.toContainText('EFFORT');
-
-    const publicShape = await page.evaluate(() => ({
-        playerHeaders: document.querySelectorAll('#stats-header-row th').length,
-        playerRows: document.querySelectorAll('#stats-body tr').length,
-        opponentHeaders: document.querySelectorAll('#opponent-stats-header-row th').length,
-        opponentRows: document.querySelectorAll('#opponent-stats-body tr').length
-    }));
-
-    await expect(page.locator('#summary-admin')).toBeVisible({ timeout: 6000 });
-    await expect(page.locator('#stat-sheet-admin')).toBeVisible();
-    await expect(page.locator('#edit-stats-btn')).toBeVisible();
-    await expect(page.locator('#edit-team-stats-btn')).toBeVisible();
-    await expect.poll(() => page.evaluate(() => window.__GAME_AUTH_EVENTS__)).toEqual(['pending', 'authenticated']);
-
-    await page.locator('#edit-stats-btn').click();
-    await expect(page.locator('#stats-editor-panel')).toBeVisible();
-    await expect(page.locator('[data-stat-field="effort"]')).toHaveValue('7');
-    await expect(page.locator('#stats-header-row')).not.toContainText('EFFORT');
-
-    await expect.poll(() => page.evaluate(() => ({
-        playerHeaders: document.querySelectorAll('#stats-header-row th').length,
-        playerRows: document.querySelectorAll('#stats-body tr').length,
-        opponentHeaders: document.querySelectorAll('#opponent-stats-header-row th').length,
-        opponentRows: document.querySelectorAll('#opponent-stats-body tr').length
-    }))).toEqual(publicShape);
-    expect(pageErrors).toEqual([]);
+  const replayAction = page.locator("#replay-report-action");
+  await expect(
+    replayAction.getByRole("link", { name: "Watch Replay" }),
+  ).toHaveCount(0);
+  await expect(replayAction).toContainText("Replay Unavailable");
+  expect(pageErrors).toEqual([]);
 });
 
-test('completed-game manager links, replaces, and removes a YouTube replay', async ({ page, baseURL }) => {
-    const pageErrors = [];
-    page.on('pageerror', (error) => pageErrors.push(error.message));
-    page.on('dialog', async (dialog) => dialog.accept());
-    await page.setViewportSize({ width: 390, height: 844 });
-    const scenario = createScenario();
-    scenario.game.liveStatus = 'scheduled';
-    scenario.game.recordedVideo = { url: 'https://cdn.example/older-replay.mp4' };
-    scenario.game.replayVideoPublicUrl = 'https://video.example/older-replay';
-    scenario.game.videoUrl = 'https://youtu.be/PK1HyC37doc';
-    await installMocks(page, scenario);
+test("manager can remove an existing replay after a final game is corrected to non-final", async ({
+  page,
+  baseURL,
+}) => {
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("dialog", async (dialog) => dialog.accept());
+  const scenario = createScenario();
+  scenario.game.status = "scheduled";
+  scenario.game.liveStatus = "scheduled";
+  scenario.game.replayVideo = {
+    provider: "youtube",
+    videoId: "0IuY8Oryi1k",
+    embedUrl: "https://www.youtube.com/embed/0IuY8Oryi1k",
+    publicUrl: "https://www.youtube.com/watch?v=0IuY8Oryi1k",
+    title: "Correction cleanup replay",
+    status: "ready",
+    linkedBy: "coach-1",
+    linkedAt: "2026-09-01T12:00:00.000Z",
+  };
+  await installMocks(page, scenario);
 
-    await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
-    await expect.poll(() => pageErrors).toEqual([]);
+  await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, {
+    waitUntil: "domcontentloaded",
+  });
+  await expect.poll(() => pageErrors).toEqual([]);
 
-    const replayAdmin = page.locator('#replay-video-admin');
-    const replayAction = page.locator('#replay-report-action');
-    await expect(replayAdmin).toBeVisible();
-    await expect(page.locator('#replay-video-current')).toContainText('A non-YouTube replay is attached');
-    await expect(replayAction).toContainText('Replay Unavailable');
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await expect(page.locator("#replay-video-admin")).toBeVisible();
+  await expect(page.locator("#replay-video-link-fields")).toBeHidden();
+  await expect(page.locator("#replay-video-save")).toBeHidden();
+  await expect(page.locator("#replay-video-remove")).toBeVisible();
+  await expect(page.locator("#replay-video-help")).toContainText(
+    "no longer final",
+  );
 
-    await page.locator('#replay-video-url').fill('https://www.youtube.com/embed/live_stream?channel=UCa9ghvbup6VQmnDOdqwYpqQ');
-    await page.locator('#replay-video-save').click();
-    await expect(page.locator('#replay-video-status')).toContainText('Paste a valid YouTube video link');
+  await page.locator("#replay-video-remove").click();
+  await expect(page.locator("#replay-video-status")).toContainText(
+    "Replay removed",
+  );
+  await expect(page.locator("#replay-video-admin")).toBeVisible();
+  await expect(page.locator("#replay-video-status")).toBeVisible();
+  await expect(page.locator("#replay-video-heading")).toBeFocused();
 
-    await page.locator('#replay-video-url').fill('https://www.youtube.com/watch?v=0IuY8Oryi1k&t=90');
-    await page.locator('#replay-video-title').fill('Vipers vs Captains replay');
-    await page.locator('#replay-video-save').click();
-    await expect(page.locator('#replay-video-status')).toContainText('Replay linked');
-    await expect(replayAction.getByRole('link', { name: 'Watch Replay' })).toBeVisible();
-
-    let store = await readStore(page);
-    expect(store.game.replayVideo).toMatchObject({
-        provider: 'youtube',
-        videoId: '0IuY8Oryi1k',
-        embedUrl: 'https://www.youtube.com/embed/0IuY8Oryi1k',
-        publicUrl: 'https://www.youtube.com/watch?v=0IuY8Oryi1k',
-        title: 'Vipers vs Captains replay',
-        status: 'ready',
-        linkedBy: 'coach-1'
-    });
-    expect(store.game.recordedVideo).toBeUndefined();
-    expect(store.game.replayVideoPublicUrl).toBeUndefined();
-    expect(store.game.videoUrl).toBe('https://youtu.be/PK1HyC37doc');
-
-    await page.locator('#replay-video-url').fill('https://youtu.be/dQw4w9WgXcQ?si=replacement');
-    await page.locator('#replay-video-title').fill('Replacement replay');
-    await page.locator('#replay-video-save').click();
-    await expect(page.locator('#replay-video-status')).toContainText('Replay linked');
-
-    store = await readStore(page);
-    expect(store.game.replayVideo).toMatchObject({
-        provider: 'youtube',
-        videoId: 'dQw4w9WgXcQ',
-        publicUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-        title: 'Replacement replay',
-        status: 'ready'
-    });
-
-    await page.locator('#replay-video-remove').click();
-    await expect(page.locator('#replay-video-status')).toContainText('Replay removed');
-    await expect(replayAction).toContainText('Replay Unavailable');
-
-    store = await readStore(page);
-    expect(store.game.replayVideo).toBeNull();
-    expect(store.game.recordedVideo).toBeUndefined();
-    expect(store.game.replayVideoPublicUrl).toBeUndefined();
-    expect(store.game.videoUrl).toBe('https://youtu.be/PK1HyC37doc');
-    expect(store.game.replayVideoFallbackDisabled).toBe(true);
-
-    // A second write without refreshing must use the retained videoUrl and
-    // tombstone in its CAS state, then clear only the tombstone on relink.
-    await page.locator('#replay-video-url').fill('https://youtu.be/PK1HyC37doc');
-    await page.locator('#replay-video-title').fill('Relinked replay');
-    await page.locator('#replay-video-save').click();
-    await expect(page.locator('#replay-video-status')).toContainText('Replay linked');
-    store = await readStore(page);
-    expect(store.game.replayVideo).toMatchObject({
-        videoId: 'PK1HyC37doc',
-        title: 'Relinked replay',
-        status: 'ready'
-    });
-    expect(store.game.videoUrl).toBe('https://youtu.be/PK1HyC37doc');
-    expect(store.game.replayVideoFallbackDisabled).toBeUndefined();
-    expect(pageErrors).toEqual([]);
+  const store = await readStore(page);
+  expect(store.game.replayVideo).toBeNull();
+  expect(pageErrors).toEqual([]);
 });
 
-test('completed statsheet game with only an attached clip does not advertise a full replay', async ({ page, baseURL }) => {
-    const pageErrors = [];
-    page.on('pageerror', (error) => pageErrors.push(error.message));
-    const scenario = createScenario();
-    scenario.game.liveStatus = 'scheduled';
-    scenario.game.highlightClips = [{
-        type: 'score-linked',
-        title: 'Putback clip',
-        mediaUrl: 'https://cdn.example.com/putback.mp4'
-    }];
-    await installMocks(page, scenario);
+test("delegated full manager can remove a stale replay when direct team access is unavailable", async ({
+  page,
+  baseURL,
+}) => {
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("dialog", async (dialog) => dialog.accept());
+  const scenario = createScenario();
+  scenario.game.status = "scheduled";
+  scenario.game.liveStatus = "scheduled";
+  scenario.game.replayVideo = {
+    provider: "youtube",
+    videoId: "0IuY8Oryi1k",
+    embedUrl: "https://www.youtube.com/embed/0IuY8Oryi1k",
+    publicUrl: "https://www.youtube.com/watch?v=0IuY8Oryi1k",
+    status: "ready",
+    linkedBy: "coach-1",
+    linkedAt: "2026-09-01T12:00:00.000Z",
+  };
+  scenario.delegatedTeam = {
+    id: "team-1",
+    name: "Comets",
+    isDelegatedTeamContext: true,
+    delegatedAccess: { full: true },
+    teamPermissions: {
+      videography: { mode: "selected", memberIds: ["coach-1"] },
+    },
+  };
+  await installMocks(page, scenario, {
+    accessLevel: "videographer",
+    directAccess: false,
+  });
 
-    await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
-    await expect.poll(() => pageErrors).toEqual([]);
+  await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, {
+    waitUntil: "domcontentloaded",
+  });
+  await expect.poll(() => pageErrors).toEqual([]);
+  await expect(page.locator("#replay-video-remove")).toBeVisible();
 
-    const replayAction = page.locator('#replay-report-action');
-    await expect(replayAction.getByRole('link', { name: 'Watch Replay' })).toHaveCount(0);
-    await expect(replayAction).toContainText('Replay Unavailable');
-    expect(pageErrors).toEqual([]);
+  await page.locator("#replay-video-remove").click();
+  await expect(page.locator("#replay-video-status")).toContainText(
+    "Replay removed",
+  );
+
+  const store = await readStore(page);
+  expect(store.game.replayVideo).toBeNull();
+  expect(pageErrors).toEqual([]);
 });
 
-test('manager can remove an existing replay after a final game is corrected to non-final', async ({ page, baseURL }) => {
-    const pageErrors = [];
-    page.on('pageerror', (error) => pageErrors.push(error.message));
-    page.on('dialog', async (dialog) => dialog.accept());
-    const scenario = createScenario();
-    scenario.game.status = 'scheduled';
-    scenario.game.liveStatus = 'scheduled';
-    scenario.game.replayVideo = {
-        provider: 'youtube',
-        videoId: '0IuY8Oryi1k',
-        embedUrl: 'https://www.youtube.com/embed/0IuY8Oryi1k',
-        publicUrl: 'https://www.youtube.com/watch?v=0IuY8Oryi1k',
-        title: 'Correction cleanup replay',
-        status: 'ready',
-        linkedBy: 'coach-1',
-        linkedAt: '2026-09-01T12:00:00.000Z'
-    };
-    await installMocks(page, scenario);
+test("replay transaction rejects a game that became a shared-schedule mirror after load", async ({
+  page,
+  baseURL,
+}) => {
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await installMocks(page, createScenario());
 
-    await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
-    await expect.poll(() => pageErrors).toEqual([]);
+  await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, {
+    waitUntil: "domcontentloaded",
+  });
+  await expect.poll(() => pageErrors).toEqual([]);
+  await expect(page.locator("#replay-video-admin")).toBeVisible();
 
-    await expect(page.locator('#replay-video-admin')).toBeVisible();
-    await expect(page.locator('#replay-video-link-fields')).toBeHidden();
-    await expect(page.locator('#replay-video-save')).toBeHidden();
-    await expect(page.locator('#replay-video-remove')).toBeVisible();
-    await expect(page.locator('#replay-video-help')).toContainText('no longer final');
+  await page.evaluate((storeKey) => {
+    const store = JSON.parse(localStorage.getItem(storeKey) || "{}");
+    store.game.sharedScheduleId = "shared_team-1_game-1";
+    store.game.sharedScheduleOpponentTeamId = "team-2";
+    store.game.sharedScheduleOpponentGameId = "game-2";
+    localStorage.setItem(storeKey, JSON.stringify(store));
+  }, STORE_KEY);
 
-    await page.locator('#replay-video-remove').click();
-    await expect(page.locator('#replay-video-status')).toContainText('Replay removed');
-    await expect(page.locator('#replay-video-admin')).toBeVisible();
-    await expect(page.locator('#replay-video-status')).toBeVisible();
-    await expect(page.locator('#replay-video-heading')).toBeFocused();
+  await page.locator("#replay-video-url").fill("https://youtu.be/0IuY8Oryi1k");
+  await page.locator("#replay-video-save").click();
+  await expect(page.locator("#replay-video-status")).toContainText(
+    "now part of a shared schedule",
+  );
 
-    const store = await readStore(page);
-    expect(store.game.replayVideo).toBeNull();
-    expect(pageErrors).toEqual([]);
+  const store = await readStore(page);
+  expect(store.game.replayVideo).toBeUndefined();
+  expect(pageErrors).toEqual([]);
 });
 
-test('delegated full manager can remove a stale replay when direct team access is unavailable', async ({ page, baseURL }) => {
-    const pageErrors = [];
-    page.on('pageerror', (error) => pageErrors.push(error.message));
-    page.on('dialog', async (dialog) => dialog.accept());
-    const scenario = createScenario();
-    scenario.game.status = 'scheduled';
-    scenario.game.liveStatus = 'scheduled';
-    scenario.game.replayVideo = {
-        provider: 'youtube',
-        videoId: '0IuY8Oryi1k',
-        embedUrl: 'https://www.youtube.com/embed/0IuY8Oryi1k',
-        publicUrl: 'https://www.youtube.com/watch?v=0IuY8Oryi1k',
-        status: 'ready',
-        linkedBy: 'coach-1',
-        linkedAt: '2026-09-01T12:00:00.000Z'
-    };
-    scenario.delegatedTeam = {
-        id: 'team-1',
-        name: 'Comets',
-        isDelegatedTeamContext: true,
-        delegatedAccess: { full: true },
-        teamPermissions: {
-            videography: { mode: 'selected', memberIds: ['coach-1'] }
-        }
-    };
-    await installMocks(page, scenario, { accessLevel: 'videographer', directAccess: false });
+test("legacy replay controls fail closed for a retained videographer ID when the mode is disabled", async ({
+  page,
+  baseURL,
+}) => {
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  const scenario = createScenario();
+  scenario.team.teamPermissions = {
+    videography: { mode: "disabled", memberIds: ["coach-1"] },
+  };
+  await installMocks(page, scenario, { accessLevel: "videographer" });
 
-    await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
-    await expect.poll(() => pageErrors).toEqual([]);
-    await expect(page.locator('#replay-video-remove')).toBeVisible();
-
-    await page.locator('#replay-video-remove').click();
-    await expect(page.locator('#replay-video-status')).toContainText('Replay removed');
-
-    const store = await readStore(page);
-    expect(store.game.replayVideo).toBeNull();
-    expect(pageErrors).toEqual([]);
+  await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, {
+    waitUntil: "domcontentloaded",
+  });
+  await expect.poll(() => pageErrors).toEqual([]);
+  await expect(page.locator("#replay-video-admin")).toBeHidden();
 });
 
-test('replay transaction rejects a game that became a shared-schedule mirror after load', async ({ page, baseURL }) => {
-    const pageErrors = [];
-    page.on('pageerror', (error) => pageErrors.push(error.message));
-    await installMocks(page, createScenario());
+test("legacy replay controls do not offer a write for noncanonical uppercase lifecycle values", async ({
+  page,
+  baseURL,
+}) => {
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  const scenario = createScenario();
+  scenario.game.status = "FINAL";
+  scenario.game.liveStatus = "FINAL";
+  await installMocks(page, scenario);
 
-    await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
-    await expect.poll(() => pageErrors).toEqual([]);
-    await expect(page.locator('#replay-video-admin')).toBeVisible();
-
-    await page.evaluate((storeKey) => {
-        const store = JSON.parse(localStorage.getItem(storeKey) || '{}');
-        store.game.sharedScheduleId = 'shared_team-1_game-1';
-        store.game.sharedScheduleOpponentTeamId = 'team-2';
-        store.game.sharedScheduleOpponentGameId = 'game-2';
-        localStorage.setItem(storeKey, JSON.stringify(store));
-    }, STORE_KEY);
-
-    await page.locator('#replay-video-url').fill('https://youtu.be/0IuY8Oryi1k');
-    await page.locator('#replay-video-save').click();
-    await expect(page.locator('#replay-video-status')).toContainText('now part of a shared schedule');
-
-    const store = await readStore(page);
-    expect(store.game.replayVideo).toBeUndefined();
-    expect(pageErrors).toEqual([]);
-});
-
-test('legacy replay controls fail closed for a retained videographer ID when the mode is disabled', async ({ page, baseURL }) => {
-    const pageErrors = [];
-    page.on('pageerror', (error) => pageErrors.push(error.message));
-    const scenario = createScenario();
-    scenario.team.teamPermissions = {
-        videography: { mode: 'disabled', memberIds: ['coach-1'] }
-    };
-    await installMocks(page, scenario, { accessLevel: 'videographer' });
-
-    await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
-    await expect.poll(() => pageErrors).toEqual([]);
-    await expect(page.locator('#replay-video-admin')).toBeHidden();
-});
-
-test('legacy replay controls do not offer a write for noncanonical uppercase lifecycle values', async ({ page, baseURL }) => {
-    const pageErrors = [];
-    page.on('pageerror', (error) => pageErrors.push(error.message));
-    const scenario = createScenario();
-    scenario.game.status = 'FINAL';
-    scenario.game.liveStatus = 'FINAL';
-    await installMocks(page, scenario);
-
-    await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
-    await expect.poll(() => pageErrors).toEqual([]);
-    await expect(page.locator('#replay-video-admin')).toBeHidden();
+  await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, {
+    waitUntil: "domcontentloaded",
+  });
+  await expect.poll(() => pageErrors).toEqual([]);
+  await expect(page.locator("#replay-video-admin")).toBeHidden();
 });

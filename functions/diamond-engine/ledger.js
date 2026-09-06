@@ -20,6 +20,7 @@ const HISTORY_REQUIRED_COMMANDS = new Set([
     'supersede_event'
 ]);
 const ATTACHABLE_PLAY_TYPES = new Set(['record_plate_appearance', 'advance_runner']);
+const PITCHER_APPEARANCE_TYPES = new Set(['record_pitch', 'record_plate_appearance', 'advance_runner']);
 function deepFreeze(value) {
     if (value && typeof value === 'object' && !Object.isFrozen(value)) {
         Object.freeze(value);
@@ -38,6 +39,11 @@ function requireId(value, label) {
 }
 function commandHash(command) {
     return (0, canonical_1.hashDiamondValue)(command);
+}
+function validateTrustedCommandAuthorization(command, context) {
+    if (command.type === 'cancel' && context.managerAuthorized !== true) {
+        throw new contracts_1.DiamondDomainError('manager-authorization-required', 'Only a server-verified current team manager may cancel a Diamond game.');
+    }
 }
 function stateForHash(state) {
     return { ...state, checkpointHash: '' };
@@ -106,9 +112,7 @@ function attachmentTargetsVoidedPlay(event, voidedEventIds) {
 }
 function getEffectiveDiamondEvents(events) {
     const directives = getCorrectionDirectives(events);
-    const voidedEventIds = new Set([...directives.entries()]
-        .filter(([, directive]) => directive.kind === 'void')
-        .map(([eventId]) => eventId));
+    const voidedEventIds = new Set([...directives.entries()].filter(([, directive]) => directive.kind === 'void').map(([eventId]) => eventId));
     const effective = [];
     events.forEach((event) => {
         if (event.type === 'void_event' || event.type === 'supersede_event')
@@ -139,6 +143,187 @@ function getEffectiveDiamondEvents(events) {
     });
     return deepFreeze(effective);
 }
+function createParticipantReplayTracker() {
+    return {
+        plays: new Map(),
+        pitcherAppearances: { home: new Set(), away: new Set() }
+    };
+}
+function otherSide(side) {
+    return side === 'home' ? 'away' : 'home';
+}
+function scoringParticipants(event) {
+    const participants = new Set();
+    const scoringRunners = new Set();
+    if (event.type === 'record_plate_appearance') {
+        const payload = event.payload;
+        participants.add(payload.batterId);
+        if (payload.batterAdvance.to === 'home' && payload.batterAdvance.countsRun !== false)
+            scoringRunners.add(payload.batterId);
+        payload.runnerAdvances.forEach((advance) => {
+            participants.add(advance.runnerId);
+            if (advance.to === 'home' && advance.countsRun !== false)
+                scoringRunners.add(advance.runnerId);
+        });
+    }
+    else if (event.type === 'advance_runner') {
+        const payload = event.payload;
+        participants.add(payload.runnerId);
+        if (payload.to === 'home' && payload.countsRun !== false)
+            scoringRunners.add(payload.runnerId);
+    }
+    return { participants, scoringRunners };
+}
+function fieldingParticipantIds(fielding) {
+    return [
+        ...(fielding.putoutBy ? [fielding.putoutBy] : []),
+        ...(fielding.assists ?? []),
+        ...(fielding.errors ?? []).map((error) => error.playerId),
+        ...(fielding.passedBallBy ? [fielding.passedBallBy] : [])
+    ];
+}
+function knownPlayerIds(state, side) {
+    const lineup = state.lineups[side];
+    return new Set([
+        ...lineup.battingOrder.flatMap((slot) => [slot.starterPlayerId, slot.activePlayerId, ...slot.substitutions]),
+        ...Object.values(lineup.defense).filter((playerId) => Boolean(playerId)),
+        ...(lineup.dpFlex ? [lineup.dpFlex.dpPlayerId, lineup.dpFlex.flexPlayerId] : [])
+    ]);
+}
+function playerRoleIsUnambiguous(context, side, playerId) {
+    return context.knownPlayers[side].has(playerId) && !context.knownPlayers[otherSide(side)].has(playerId);
+}
+function pitcherRoleIsUnambiguous(context, side, playerId) {
+    return context.pitcherAppearances[side].has(playerId) && playerRoleIsUnambiguous(context, side, playerId);
+}
+function validateAttachmentAgainstHistoricalPlay(event, context) {
+    if (event.type === 'record_fielding') {
+        const fielding = event.payload.fielding;
+        const invalidFielder = fieldingParticipantIds(fielding).find((playerId) => !context.activeDefenders.has(playerId) || !playerRoleIsUnambiguous(context, context.defensiveSide, playerId));
+        if (invalidFielder) {
+            throw new contracts_1.DiamondDomainError('invalid-fielding-participant', `${invalidFielder} was not an active ${context.defensiveSide} defender when the cited play occurred.`);
+        }
+        if (fielding.passedBallBy && fielding.passedBallBy !== context.catcherId) {
+            throw new contracts_1.DiamondDomainError('invalid-fielding-participant', 'A passed-ball attachment must name the catcher recorded when the cited play occurred.');
+        }
+        return;
+    }
+    if (event.type !== 'record_scoring_judgment')
+        return;
+    const payload = event.payload;
+    const hasRunnerJudgment = payload.earned !== undefined || payload.rbi !== undefined || payload.responsiblePitcherId !== undefined;
+    if (payload.runnerId &&
+        (!context.participants.has(payload.runnerId) || !playerRoleIsUnambiguous(context, context.battingSide, payload.runnerId))) {
+        throw new contracts_1.DiamondDomainError('invalid-scoring-participant', `${payload.runnerId} was not an unambiguous ${context.battingSide} participant in the cited play.`);
+    }
+    if (hasRunnerJudgment) {
+        if (context.scoringRunners.size === 0) {
+            throw new contracts_1.DiamondDomainError('invalid-scoring-participant', 'The cited play has no counted run to receive this scoring judgment.');
+        }
+        if (payload.runnerId) {
+            if (!context.scoringRunners.has(payload.runnerId)) {
+                throw new contracts_1.DiamondDomainError('invalid-scoring-participant', 'Runner-level scoring credit must name a counted run on the cited play.');
+            }
+        }
+        else if (context.scoringRunners.size !== 1) {
+            throw new contracts_1.DiamondDomainError('ambiguous-scoring-participant', 'A multi-run play requires the exact scoring runner for earned-run, RBI, or pitcher-responsibility judgment.');
+        }
+    }
+    if (payload.responsiblePitcherId &&
+        !pitcherRoleIsUnambiguous(context, context.defensiveSide, payload.responsiblePitcherId)) {
+        throw new contracts_1.DiamondDomainError('responsible-pitcher-role-mismatch', `${payload.responsiblePitcherId} was not unambiguously recorded as a ${context.defensiveSide} pitcher by the cited play.`);
+    }
+    if (payload.pitcherOfRecord) {
+        const decision = payload.pitcherOfRecord;
+        if (!pitcherRoleIsUnambiguous(context, decision.side, decision.playerId)) {
+            throw new contracts_1.DiamondDomainError('pitcher-not-in-lineup', 'A pitcher decision must name a player unambiguously recorded as a pitcher for that side by the cited play.');
+        }
+    }
+}
+function observeEffectiveEventParticipants(state, event, tracker) {
+    if (PITCHER_APPEARANCE_TYPES.has(event.type)) {
+        const battingSide = (0, reducer_1.getBattingSide)(state);
+        const defensiveSide = otherSide(battingSide);
+        const pitcherId = state.lineups[defensiveSide].defense.P;
+        if (!pitcherId) {
+            throw new contracts_1.DiamondDomainError('missing-defensive-pitcher', 'The cited play has no authoritative defensive pitcher.');
+        }
+        tracker.pitcherAppearances[defensiveSide].add(pitcherId);
+    }
+    if (ATTACHABLE_PLAY_TYPES.has(event.type)) {
+        const battingSide = (0, reducer_1.getBattingSide)(state);
+        const defensiveSide = otherSide(battingSide);
+        const { participants, scoringRunners } = scoringParticipants(event);
+        const knownPlayers = {
+            home: knownPlayerIds(state, 'home'),
+            away: knownPlayerIds(state, 'away')
+        };
+        participants.forEach((playerId) => knownPlayers[battingSide].add(playerId));
+        const context = {
+            battingSide,
+            defensiveSide,
+            activeDefenders: new Set(Object.values(state.lineups[defensiveSide].defense).filter((playerId) => Boolean(playerId))),
+            catcherId: state.lineups[defensiveSide].defense.C ?? null,
+            participants,
+            scoringRunners,
+            knownPlayers,
+            pitcherAppearances: {
+                home: new Set(tracker.pitcherAppearances.home),
+                away: new Set(tracker.pitcherAppearances.away)
+            }
+        };
+        tracker.plays.set(event.eventId, context);
+        tracker.plays.set(event.sourceEventId, context);
+        return;
+    }
+    if (event.type === 'record_fielding' || event.type === 'record_scoring_judgment') {
+        const payload = event.payload;
+        const context = tracker.plays.get(payload.playEventId);
+        if (!context) {
+            throw new contracts_1.DiamondDomainError('unknown-play-target', 'Fielding and scoring judgments must cite an effective earlier play with complete replay context.');
+        }
+        validateAttachmentAgainstHistoricalPlay(event, context);
+    }
+}
+function replayCanonicalDiamondEvents(initialState, events) {
+    const directives = getCorrectionDirectives(events);
+    const voidedEventIds = new Set([...directives.entries()].filter(([, directive]) => directive.kind === 'void').map(([eventId]) => eventId));
+    let state = (0, reducer_1.cloneDiamondState)(initialState);
+    const effectiveEvents = [];
+    const participantTracker = createParticipantReplayTracker();
+    events.forEach((event) => {
+        const directive = directives.get(event.eventId);
+        if (event.type === 'void_event' || event.type === 'supersede_event') {
+            state = (0, reducer_1.reduceDiamondEvent)(state, asReducerAction(event.type, event.payload, event.eventId));
+        }
+        else if (directive?.kind === 'void' || attachmentTargetsVoidedPlay(event, voidedEventIds)) {
+            // Its canonical record remains immutable, but its state effect is removed.
+        }
+        else {
+            const effectiveEvent = directive?.kind === 'supersede' && directive.replacement
+                ? {
+                    eventId: directive.correctionEventId,
+                    sourceEventId: event.eventId,
+                    revision: event.revision,
+                    type: directive.replacement.type,
+                    payload: directive.replacement.payload,
+                    correctionEventId: directive.correctionEventId
+                }
+                : {
+                    eventId: event.eventId,
+                    sourceEventId: event.eventId,
+                    revision: event.revision,
+                    type: event.type,
+                    payload: event.payload
+                };
+            observeEffectiveEventParticipants(state, effectiveEvent, participantTracker);
+            state = (0, reducer_1.reduceDiamondEvent)(state, asReducerAction(effectiveEvent.type, effectiveEvent.payload, effectiveEvent.eventId));
+            effectiveEvents.push(effectiveEvent);
+        }
+        state = (0, reducer_1.setDiamondStateRevision)(state, event.revision, event.hash);
+    });
+    return { state, effectiveEvents, participantTracker };
+}
 function verifyEventChain(events) {
     let previousHash = '';
     events.forEach((event, index) => {
@@ -159,43 +344,13 @@ function verifyEventChain(events) {
 function replayDiamondEvents(initialState, events, options = {}) {
     if (options.verifyHashes !== false)
         verifyEventChain(events);
-    const directives = getCorrectionDirectives(events);
-    const voidedEventIds = new Set([...directives.entries()]
-        .filter(([, directive]) => directive.kind === 'void')
-        .map(([eventId]) => eventId));
-    let state = (0, reducer_1.cloneDiamondState)(initialState);
-    const effectiveEvents = [];
-    events.forEach((event) => {
-        const directive = directives.get(event.eventId);
-        if (event.type === 'void_event' || event.type === 'supersede_event') {
-            state = (0, reducer_1.reduceDiamondEvent)(state, asReducerAction(event.type, event.payload, event.eventId));
-        }
-        else if (directive?.kind === 'void' || attachmentTargetsVoidedPlay(event, voidedEventIds)) {
-            // Its canonical record remains immutable, but its state effect is removed.
-        }
-        else if (directive?.kind === 'supersede' && directive.replacement) {
-            state = (0, reducer_1.reduceDiamondEvent)(state, asReducerAction(directive.replacement.type, directive.replacement.payload, directive.correctionEventId));
-            effectiveEvents.push({
-                eventId: directive.correctionEventId,
-                sourceEventId: event.eventId,
-                revision: event.revision,
-                type: directive.replacement.type,
-                payload: directive.replacement.payload,
-                correctionEventId: directive.correctionEventId
-            });
-        }
-        else {
-            state = (0, reducer_1.reduceDiamondEvent)(state, asReducerAction(event.type, event.payload, event.eventId));
-            effectiveEvents.push({
-                eventId: event.eventId,
-                sourceEventId: event.eventId,
-                revision: event.revision,
-                type: event.type,
-                payload: event.payload
-            });
-        }
-        state = (0, reducer_1.setDiamondStateRevision)(state, event.revision, event.hash);
-    });
+    const replay = replayCanonicalDiamondEvents(initialState, events);
+    let { state } = replay;
+    const { effectiveEvents } = replay;
+    state = {
+        ...state,
+        coverage: (0, reducer_1.deriveDiamondCoverageFromEvents)(initialState, effectiveEvents)
+    };
     return deepFreeze({
         state,
         effectiveEvents,
@@ -243,6 +398,7 @@ function createDiamondCheckpoint(ledger) {
     });
 }
 function validateEnvelope(ledger, command, context) {
+    validateTrustedCommandAuthorization(command, context);
     if (command.schemaVersion !== contracts_1.DIAMOND_SCHEMA_VERSION) {
         throw new contracts_1.DiamondDomainError('unsupported-schema', 'Only Diamond command schema version 2 is supported.');
     }
@@ -268,7 +424,9 @@ function validateEnvelope(ledger, command, context) {
             throw new contracts_1.DiamondDomainError('scorer-mismatch', 'The activating actor must become the initial scorer.');
         }
     }
-    else if (ledger.state.currentScorerUid !== actorUid) {
+    else if (command.type !== 'cancel' &&
+        !(command.type === 'scorer_handoff' && context.scorerLeaseRecoveryAuthorized === true) &&
+        ledger.state.currentScorerUid !== actorUid) {
         throw new contracts_1.DiamondDomainError('scorer-lease-lost', 'Only the current scorer may submit this command.', true);
     }
     if (ledger.events.some((event) => event.eventId === context.eventId)) {
@@ -287,6 +445,7 @@ function validateCorrection(ledger, command) {
         'scorer_handoff',
         'suspend',
         'resume',
+        'cancel',
         'finalize',
         'reopen_for_correction',
         'void_event',
@@ -303,31 +462,25 @@ function validateCorrection(ledger, command) {
         throw new contracts_1.DiamondDomainError('already-corrected', 'The target event already has a correction.');
     }
 }
-function lineupContainsPlayer(state, side, playerId) {
-    const lineup = state.lineups[side];
-    return lineup.battingOrder.some((slot) => slot.starterPlayerId === playerId ||
-        slot.activePlayerId === playerId ||
-        slot.substitutions.includes(playerId)) || Object.values(lineup.defense).includes(playerId);
-}
 function validateAttachment(ledger, command) {
     if (command.type !== 'record_fielding' && command.type !== 'record_scoring_judgment')
         return;
-    const payload = command.payload;
-    const effectiveEvents = getEffectiveDiamondEvents(ledger.events);
-    const target = effectiveEvents.find((event) => event.eventId === payload.playEventId || event.sourceEventId === payload.playEventId);
-    if (!target || !ATTACHABLE_PLAY_TYPES.has(target.type)) {
-        throw new contracts_1.DiamondDomainError('unknown-play-target', 'Fielding and scoring judgments must cite an effective earlier play.');
-    }
+    const replay = replayCanonicalDiamondEvents(ledger.initialState, ledger.events);
+    const syntheticEvent = {
+        eventId: 'pending-attachment',
+        sourceEventId: 'pending-attachment',
+        revision: ledger.state.revision + 1,
+        type: command.type,
+        payload: command.payload
+    };
+    observeEffectiveEventParticipants(replay.state, syntheticEvent, replay.participantTracker);
     if (command.type !== 'record_scoring_judgment')
         return;
     const scoringPayload = command.payload;
     if (!scoringPayload.pitcherOfRecord)
         return;
     const decision = scoringPayload.pitcherOfRecord;
-    if (!lineupContainsPlayer(ledger.state, decision.side, decision.playerId)) {
-        throw new contracts_1.DiamondDomainError('pitcher-not-in-lineup', 'A pitcher decision must name a player recorded in that side’s lineup.');
-    }
-    const duplicateDecision = effectiveEvents.some((event) => {
+    const duplicateDecision = replay.effectiveEvents.some((event) => {
         if (event.type !== 'record_scoring_judgment')
             return false;
         const judgment = event.payload;
@@ -415,6 +568,7 @@ function validateReceipt(receipt) {
 function executeDiamondCommandFromCheckpoint(checkpoint, command, context, existingReceipt) {
     try {
         validateCheckpoint(checkpoint);
+        validateTrustedCommandAuthorization(command, context);
         const incomingHash = commandHash(command);
         if (existingReceipt) {
             validateReceipt(existingReceipt);
@@ -508,6 +662,7 @@ function executeDiamondCommandFromCheckpoint(checkpoint, command, context, exist
 }
 function executeDiamondCommand(ledger, command, context) {
     try {
+        validateTrustedCommandAuthorization(command, context);
         const incomingHash = commandHash(command);
         const existing = ledger.events.find((event) => event.commandId === command.commandId);
         if (existing) {
@@ -530,10 +685,12 @@ function executeDiamondCommand(ledger, command, context) {
             throw new contracts_1.DiamondDomainError('stale-revision', `Expected revision ${String(command.expectedRevision)}, current revision is ${String(ledger.state.revision)}.`, true);
         }
         validateCorrection(ledger, command);
-        validateAttachment(ledger, command);
         const sequence = ledger.events.length + 1;
         const before = ledger.state;
         let after = (0, reducer_1.reduceDiamondEvent)(before, asReducerAction(command.type, command.payload, context.eventId));
+        // The reducer performs strict runtime shape validation first, so malformed
+        // nested attachment payloads cannot reach history-aware membership checks.
+        validateAttachment(ledger, command);
         after = (0, reducer_1.setDiamondStateRevision)(after, sequence, '');
         const partialEvent = {
             schemaVersion: contracts_1.DIAMOND_SCHEMA_VERSION,
@@ -557,10 +714,16 @@ function executeDiamondCommand(ledger, command, context) {
             previousHash: ledger.events.length ? ledger.events[ledger.events.length - 1].hash : '',
             hash: ''
         };
+        const provisionalEvents = [...ledger.events, partialEvent];
         if (command.type === 'void_event' || command.type === 'supersede_event') {
-            const provisionalEvents = [...ledger.events, partialEvent];
             after = replayDiamondEvents(ledger.initialState, provisionalEvents, { verifyHashes: false }).state;
             after = (0, reducer_1.setDiamondStateRevision)(after, sequence, '');
+        }
+        else {
+            after = {
+                ...after,
+                coverage: (0, reducer_1.deriveDiamondCoverageFromEvents)(ledger.initialState, getEffectiveDiamondEvents(provisionalEvents))
+            };
         }
         let event = { ...partialEvent, after };
         const hash = hashEvent(event);

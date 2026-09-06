@@ -3,11 +3,19 @@ import { describe, expect, it } from 'vitest';
 import {
     DIAMOND_PLAYER_STAT_CATALOG,
     aggregateCoverageAwareSeasonStats,
+    aggregateCoverageAwareTeamStats,
     getCoverageAwareStatValue,
+    getDiamondPublicPlayerStatsCollectionPath,
+    getManagerDiamondStatCatalog,
     getPublicDiamondStatCatalog,
     readCoverageAwareOpponentStats,
     readCoverageAwareStatDocument,
-    resolveDiamondProjectionState
+    resolveDiamondManagerStatDocuments,
+    resolveDiamondManagerTeamStatDocument,
+    resolveDiamondProjectionState,
+    resolveDiamondPublicStatDocuments,
+    resolveDiamondPublicStatsResponse,
+    resolveDiamondPublicTeamStatDocument
 } from '../../js/diamond-stat-presentation.js';
 
 const game = {
@@ -17,6 +25,10 @@ const game = {
     rulesProfileId: 'baseball-youth',
     status: 'completed'
 };
+const managerInstanceId = '00000000-0000-4000-8000-000000000001';
+const managerCheckpointHash = `sha256:${'a'.repeat(64)}`;
+const managerConfigHash = `sha256:${'b'.repeat(64)}`;
+const managerProjectionHash = `sha256:${'c'.repeat(64)}`;
 
 describe('Diamond stat presentation', () => {
     it('catalogs the complete projected traditional raw and derived field set', () => {
@@ -32,6 +44,7 @@ describe('Diamond stat presentation', () => {
 
     it('removes configured manager-private fields from public player and team catalogs', () => {
         const config = {
+            diamondPublicTeamStatIds: ['r'],
             statDefinitions: [
                 { id: 'pitches', scope: 'player', visibility: 'private' },
                 { id: 'avg', label: 'Batting Average', scope: 'player', visibility: 'public', precision: 4 },
@@ -43,8 +56,347 @@ describe('Diamond stat presentation', () => {
 
         expect(playerCatalog.some(({ id }) => id === 'pitches')).toBe(false);
         expect(playerCatalog.find(({ id }) => id === 'avg')).toMatchObject({ label: 'Batting Average', precision: 4, visibility: 'public' });
+        expect(playerCatalog.some(({ id }) => id === 'h')).toBe(false);
         expect(teamCatalog.some(({ id }) => id === 'risp_hits')).toBe(false);
         expect(teamCatalog.some(({ id }) => id === 'r')).toBe(true);
+        const managerCatalog = getManagerDiamondStatCatalog(config, 'player');
+        expect(managerCatalog.find(({ id }) => id === 'pitches')).toMatchObject({ visibility: 'manager-internal' });
+        expect(managerCatalog.find(({ id }) => id === 'h')).toMatchObject({ visibility: 'manager-internal' });
+    });
+
+    it('accepts manager-private player stats only as one complete projection generation', () => {
+        const authoritativeGame = {
+            ...game,
+            diamondProjectionComplete: true,
+            diamondScorebookInstanceId: managerInstanceId,
+            diamondProjectionCheckpointHash: managerCheckpointHash,
+            diamondStatConfigSnapshotHash: managerConfigHash,
+            diamondProjectionHash: managerProjectionHash
+        };
+        const privateDocument = {
+            trackingEngine: 'diamond-v2',
+            authoritative: true,
+            complete: true,
+            projectionSchemaVersion: 1,
+            playerId: 'p1',
+            side: 'home',
+            instanceId: managerInstanceId,
+            diamondScorebookInstanceId: managerInstanceId,
+            projectionGeneration: managerInstanceId,
+            sourceRevision: 12,
+            checkpointHash: managerCheckpointHash,
+            statConfigSnapshotHash: managerConfigHash,
+            projectionHash: managerProjectionHash,
+            stats: { h: 1 },
+            observedStats: {},
+            derivedStats: { avg: 0.5 },
+            observedDerivedStats: {},
+            statCoverage: { h: 'complete', avg: 'complete' },
+            coverage: { batting: 'complete' }
+        };
+        expect(resolveDiamondManagerStatDocuments({
+            game: authoritativeGame,
+            expectedPlayerIds: ['p1'],
+            privateDocuments: [{ id: 'p1', data: privateDocument }]
+        })).toMatchObject({ status: 'complete', appliedVisibility: 'manager-internal' });
+
+        for (const mutation of [
+            { instanceId: 'old-instance' },
+            { sourceRevision: 11 },
+            { checkpointHash: 'old-checkpoint' },
+            { statConfigSnapshotHash: 'old-config' },
+            { projectionHash: `sha256:${'d'.repeat(64)}` },
+            { complete: false }
+        ]) {
+            expect(resolveDiamondManagerStatDocuments({
+                game: authoritativeGame,
+                expectedPlayerIds: ['p1'],
+                privateDocuments: [{ id: 'p1', data: { ...privateDocument, ...mutation } }]
+            })).toMatchObject({ status: 'partial', appliedVisibility: 'public', documents: [] });
+        }
+    });
+
+    it('never treats empty, denied, or partial manager loads as authoritative absence', () => {
+        const authoritativeGame = {
+            ...game,
+            diamondProjectionComplete: true,
+            diamondScorebookInstanceId: managerInstanceId,
+            diamondProjectionCheckpointHash: managerCheckpointHash,
+            diamondStatConfigSnapshotHash: managerConfigHash,
+            diamondProjectionHash: managerProjectionHash
+        };
+        expect(resolveDiamondManagerStatDocuments({
+            game: authoritativeGame,
+            expectedPlayerIds: ['p1'],
+            privateDocuments: []
+        })).toMatchObject({ status: 'partial', reason: 'private-read-empty', appliedVisibility: 'public' });
+        expect(resolveDiamondManagerStatDocuments({
+            game: authoritativeGame,
+            expectedPlayerIds: ['p1'],
+            privateDocuments: [{ id: 'p1', data: {} }],
+            loadStatus: 'unavailable'
+        })).toMatchObject({ status: 'partial', reason: 'private-read-incomplete', appliedVisibility: 'public' });
+        expect(resolveDiamondManagerStatDocuments({
+            game: authoritativeGame,
+            expectedPlayerIds: ['p1', 'p2'],
+            privateDocuments: [{ id: 'p1', data: {} }]
+        })).toMatchObject({ status: 'partial', reason: 'private-read-partial', appliedVisibility: 'public' });
+    });
+
+    it('accepts a manager team stat document only when its complete envelope matches the game head', () => {
+        const authoritativeGame = {
+            ...game,
+            diamondProjectionComplete: true,
+            diamondScorebookInstanceId: managerInstanceId,
+            diamondProjectionCheckpointHash: managerCheckpointHash,
+            diamondStatConfigSnapshotHash: managerConfigHash,
+            diamondProjectionHash: managerProjectionHash
+        };
+        const privateDocument = {
+            trackingEngine: 'diamond-v2',
+            complete: true,
+            projectionSchemaVersion: 1,
+            side: 'home',
+            instanceId: managerInstanceId,
+            diamondScorebookInstanceId: managerInstanceId,
+            projectionGeneration: managerInstanceId,
+            sourceRevision: 12,
+            checkpointHash: managerCheckpointHash,
+            statConfigSnapshotHash: managerConfigHash,
+            projectionHash: managerProjectionHash,
+            stats: { r: 4 },
+            observedStats: {},
+            statCoverage: { r: 'complete' },
+            coverage: { batting: 'complete' }
+        };
+        expect(resolveDiamondManagerTeamStatDocument({ game: authoritativeGame, privateDocument }))
+            .toMatchObject({ status: 'complete', appliedVisibility: 'manager-internal', document: privateDocument });
+        expect(resolveDiamondManagerTeamStatDocument({
+            game: authoritativeGame,
+            privateDocument: { ...privateDocument, statConfigSnapshotHash: 'stale' }
+        })).toMatchObject({ status: 'partial', appliedVisibility: 'public', document: null });
+        expect(resolveDiamondManagerTeamStatDocument({ game: authoritativeGame, loadStatus: 'unavailable' }))
+            .toMatchObject({ status: 'partial', appliedVisibility: 'public', document: null });
+    });
+
+    it('accepts only the pinned public team subset at the exact authoritative game head', () => {
+        const projectionHash = `sha256:${'c'.repeat(64)}`;
+        const authoritativeGame = {
+            ...game,
+            id: 'game-1',
+            teamId: 'team-1',
+            diamondProjectionComplete: true,
+            diamondScorebookInstanceId: managerInstanceId,
+            diamondProjectionCheckpointHash: managerCheckpointHash,
+            diamondStatConfigSnapshotHash: managerConfigHash,
+            diamondProjectionHash: projectionHash
+        };
+        const document = {
+            trackingEngine: 'diamond-v2',
+            complete: true,
+            projectionSchemaVersion: 1,
+            side: 'home',
+            teamId: 'team-1',
+            diamondGameId: 'game-1',
+            instanceId: managerInstanceId,
+            diamondScorebookInstanceId: managerInstanceId,
+            projectionGeneration: managerInstanceId,
+            sourceRevision: 12,
+            checkpointHash: managerCheckpointHash,
+            statConfigSnapshotHash: managerConfigHash,
+            projectionHash,
+            publicStatIds: ['r'],
+            stats: { r: 4 },
+            observedStats: {},
+            statCoverage: { r: 'complete' },
+            coverage: { batting: 'complete' }
+        };
+
+        const projectedGame = { ...authoritativeGame, diamondPublicTeamStats: document };
+        expect(resolveDiamondPublicTeamStatDocument({ game: projectedGame }))
+            .toMatchObject({ status: 'complete', appliedVisibility: 'public', document: { stats: { r: 4 } } });
+        expect(resolveDiamondPublicTeamStatDocument({ game: projectedGame, allowedStatIds: [] }))
+            .toMatchObject({ status: 'complete', document: { publicStatIds: [], stats: {}, statCoverage: {} } });
+
+        for (const mutation of [
+            { sourceRevision: 11 },
+            { checkpointHash: `sha256:${'d'.repeat(64)}` },
+            { projectionHash: `sha256:${'e'.repeat(64)}` },
+            { stats: { r: 4, h: 9 } },
+            { publicStatIds: ['r', 'h'] },
+            { privateNotes: 'must never escape' }
+        ]) {
+            expect(resolveDiamondPublicTeamStatDocument({
+                game: { ...authoritativeGame, diamondPublicTeamStats: { ...document, ...mutation } }
+            })).toMatchObject({ status: 'partial', document: null });
+        }
+    });
+
+    it('accepts the exact public callable stats envelope and keeps partial evidence data-free', () => {
+        const publicTeamStats = {
+            trackingEngine: 'diamond-v2',
+            complete: true,
+            projectionSchemaVersion: 1,
+            side: 'home',
+            teamId: 'team-1',
+            diamondGameId: 'game-1',
+            instanceId: managerInstanceId,
+            diamondScorebookInstanceId: managerInstanceId,
+            projectionGeneration: managerInstanceId,
+            sourceRevision: 12,
+            checkpointHash: managerCheckpointHash,
+            statConfigSnapshotHash: managerConfigHash,
+            projectionHash: managerProjectionHash,
+            publicStatIds: ['r'],
+            stats: { r: 4 },
+            observedStats: {},
+            statCoverage: { r: 'complete' },
+            coverage: { batting: 'complete' }
+        };
+        const complete = {
+            schemaVersion: 1,
+            trackingEngine: 'diamond-v2',
+            status: 'complete',
+            complete: true,
+            instanceId: managerInstanceId,
+            sourceRevision: 12,
+            checkpointHash: managerCheckpointHash,
+            statConfigSnapshotHash: managerConfigHash,
+            projectionHash: managerProjectionHash,
+            publicTeamStats
+        };
+        expect(resolveDiamondPublicStatsResponse(complete)).toMatchObject({
+            status: 'complete',
+            complete: true,
+            publicTeamStats: { stats: { r: 4 } }
+        });
+        expect(resolveDiamondPublicStatsResponse({
+            schemaVersion: 1,
+            trackingEngine: 'diamond-v2',
+            status: 'partial',
+            complete: false
+        })).toEqual({
+            status: 'partial',
+            reason: 'public-stats-partial',
+            complete: false,
+            identity: null,
+            publicTeamStats: null
+        });
+        for (const mutation of [
+            { privateTeamStats: { h: 99 } },
+            { projectionHash: `sha256:${'d'.repeat(64)}` },
+            { publicTeamStats: { ...publicTeamStats, stats: { r: 4, h: 99 } } }
+        ]) {
+            expect(resolveDiamondPublicStatsResponse({ ...complete, ...mutation }))
+                .toMatchObject({ status: 'unavailable', complete: false, publicTeamStats: null });
+        }
+    });
+
+    it('accepts public player stats only from the exact generation path and head', () => {
+        const authoritativeGame = {
+            ...game,
+            id: 'game-1',
+            teamId: 'team-1',
+            diamondProjectionComplete: true,
+            diamondScorebookInstanceId: managerInstanceId,
+            diamondProjectionCheckpointHash: managerCheckpointHash,
+            diamondStatConfigSnapshotHash: managerConfigHash,
+            diamondProjectionHash: managerProjectionHash
+        };
+        const publicDocument = {
+            schemaVersion: 1,
+            trackingEngine: 'diamond-v2',
+            projectionSchemaVersion: 1,
+            playerId: 'p1',
+            playerName: 'Riley',
+            playerNumber: '7',
+            participated: true,
+            participationStatus: 'appeared',
+            participationSource: 'diamond-v2',
+            complete: true,
+            publicStatIds: ['avg', 'h'],
+            stats: { h: 2 },
+            observedStats: {},
+            derivedStats: { avg: 0.5 },
+            observedDerivedStats: {},
+            statCoverage: { avg: 'complete', h: 'complete' },
+            statSources: { h: ['event-1'] },
+            sourcePlayIds: ['event-1'],
+            unavailableDerivedStats: [],
+            missingStatFamilies: [],
+            coverage: { batting: 'complete' },
+            teamId: 'team-1',
+            diamondGameId: 'game-1',
+            instanceId: managerInstanceId,
+            diamondScorebookInstanceId: managerInstanceId,
+            projectionGeneration: managerInstanceId,
+            sourceRevision: 12,
+            checkpointHash: managerCheckpointHash,
+            statConfigSnapshotHash: managerConfigHash,
+            projectionHash: managerProjectionHash
+        };
+
+        expect(getDiamondPublicPlayerStatsCollectionPath({
+            teamId: 'team-1',
+            gameId: 'game-1',
+            game: authoritativeGame
+        })).toBe(`teams/team-1/games/game-1/diamondStatGenerations/${managerInstanceId}/publicPlayerStats`);
+        expect(resolveDiamondPublicStatDocuments({
+            teamId: 'team-1',
+            gameId: 'game-1',
+            game: authoritativeGame,
+            documents: [{ id: 'p1', data: publicDocument }]
+        })).toMatchObject({ status: 'complete', absenceConfirmed: false });
+        expect(resolveDiamondPublicStatDocuments({
+            teamId: 'team-1',
+            gameId: 'game-1',
+            game: authoritativeGame,
+            documents: []
+        })).toMatchObject({ status: 'complete', absenceConfirmed: true });
+
+        for (const mutation of [
+            { instanceId: '00000000-0000-4000-8000-000000000002' },
+            { projectionHash: `sha256:${'d'.repeat(64)}` },
+            { statConfigSnapshotHash: `sha256:${'e'.repeat(64)}` },
+            { publicStatIds: ['h'] },
+            { privateNote: 'must not escape' }
+        ]) {
+            expect(resolveDiamondPublicStatDocuments({
+                teamId: 'team-1',
+                gameId: 'game-1',
+                game: authoritativeGame,
+                documents: [{ id: 'p1', data: { ...publicDocument, ...mutation } }]
+            })).toMatchObject({ status: 'partial', documents: [], absenceConfirmed: false });
+        }
+        expect(getDiamondPublicPlayerStatsCollectionPath({
+            teamId: 'team-1/other',
+            gameId: 'game-1',
+            game: authoritativeGame
+        })).toBeNull();
+    });
+
+    it('aggregates validated public team counters and downgrades an unresolved game to observed', () => {
+        const currentDocument = {
+            trackingEngine: 'diamond-v2',
+            sourceRevision: 12,
+            complete: true,
+            stats: { r: 3, h: 5 },
+            observedStats: {},
+            statCoverage: { r: 'complete', h: 'complete' },
+            coverage: { batting: 'complete' }
+        };
+        const result = aggregateCoverageAwareTeamStats({
+            allowedStatIds: ['r', 'h'],
+            diamondGames: [
+                { game, document: currentDocument },
+                { game: { ...game, id: 'game-2' }, document: null }
+            ]
+        });
+        expect(result.stats).toEqual({ r: 3, h: 5 });
+        expect(result.completeStats).toEqual({});
+        expect(result.presentation.statCoverage).toEqual({ h: 'partial', r: 'partial' });
+        expect(result.presentation.observedStatKeys).toEqual(['h', 'r']);
+        expect(result.projection.pending).toBe(true);
     });
 
     it('keeps complete, observed, and unavailable values distinct without turning omissions into zero', () => {
@@ -131,7 +483,7 @@ describe('Diamond stat presentation', () => {
                         trackingEngine: 'diamond-v2',
                         sourceRevision: 12,
                         complete: true,
-                        stats: { pa: 4, ab: 3, h: 1, bb: 1, ibb: 0, hbp: 0, sf: 0, tb: 2, ip_outs: 6, er: 1, p_bb: 1, p_ibb: 0, p_h: 2 },
+                        stats: { pa: 5, ab: 3, h: 1, bb: 1, ibb: 1, hbp: 0, sf: 0, tb: 2, ip_outs: 6, er: 1, p_bb: 1, p_ibb: 0, p_h: 2 },
                         observedStats: { sb: 2 },
                         statCoverage: {
                             pa: 'complete', ab: 'complete', h: 'complete', bb: 'complete', ibb: 'complete', hbp: 'complete', sf: 'complete', tb: 'complete',
@@ -144,7 +496,7 @@ describe('Diamond stat presentation', () => {
         });
 
         expect(result.statsByPlayerId.legacy).toEqual({ h: 3 });
-        expect(result.statsByPlayerId.p1).toMatchObject({ h: 1, sb: 2, avg: 1 / 3, innings_pitched: '2.0', era: 3, whip: 1.5 });
+        expect(result.statsByPlayerId.p1).toMatchObject({ h: 1, sb: 2, avg: 1 / 3, obp: 3 / 5, innings_pitched: '2.0', era: 3, whip: 1.5 });
         expect(result.completeStatsByPlayerId.p1).toMatchObject({ h: 1, avg: 1 / 3, era: 3 });
         expect(result.completeStatsByPlayerId.p1).not.toHaveProperty('sb');
         expect(result.presentationByPlayerId.p1.statCoverage).toMatchObject({ avg: 'complete', sb: 'partial', fpct: 'not_collected' });

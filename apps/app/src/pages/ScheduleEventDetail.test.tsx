@@ -132,6 +132,11 @@ vi.mock('../lib/scheduleGameDayService', () => ({
   getLineupPublishStatus: vi.fn((gamePlan: any) => gamePlan?.isPublished ? 'Published lineup is current.' : 'Lineup draft is not published.'),
   hasLineupDraft: vi.fn((gamePlan: any) => Boolean(gamePlan?.lineups && Object.keys(gamePlan.lineups).length))
 }));
+const diamondScorebookMocks = vi.hoisted(() => ({
+  activateDiamondGame: vi.fn(),
+  getDiamondAccess: vi.fn()
+}));
+vi.mock('../lib/diamondScorebookService', () => diamondScorebookMocks);
 const publicActionMocks = vi.hoisted(() => ({
   exportCalendarIcsFile: vi.fn(),
   openPublicUrl: vi.fn(),
@@ -171,6 +176,7 @@ vi.mock('../lib/liveGameAnnouncer', () => liveGameAnnouncerMocks);
 const liveGameChatServiceMocks = vi.hoisted(() => ({
   canUseLiveGameChat: vi.fn<(game: unknown, options?: unknown) => boolean>(() => true),
   getLiveGameChatNotice: vi.fn<(game: unknown, options?: unknown) => string | null>(() => null),
+  moderateLiveGameChatMessage: vi.fn<(teamId: string, gameId: string, messageId: string, input: unknown) => Promise<unknown>>(),
   sendLiveGameChatMessage: vi.fn<(teamId: string, gameId: string, input: unknown) => Promise<unknown>>(),
   subscribeToLiveGameChat: vi.fn<(
     teamId: string,
@@ -1654,6 +1660,17 @@ describe('ScheduleEventDetail nav visibility', () => {
 });
 
 describe('ScheduleEventDetail live score control visibility', () => {
+  beforeEach(() => {
+    delete window.__ALLPLAYS_CONFIG__;
+    diamondScorebookMocks.activateDiamondGame.mockReset();
+    diamondScorebookMocks.getDiamondAccess.mockReset();
+  });
+
+  afterEach(() => {
+    cleanup();
+    delete window.__ALLPLAYS_CONFIG__;
+  });
+
   it('only enables score controls for authenticated non-cancelled DB games with score permission', () => {
     const scoreCapableGame = buildEvent({ canUpdateScore: true });
 
@@ -1665,19 +1682,124 @@ describe('ScheduleEventDetail live score control visibility', () => {
     expect(shouldShowLiveScoreControls(scoreCapableGame, null)).toBe(false);
   });
 
-  it('checks Diamond activation only for unclaimed Baseball and Fastpitch games with score permission', () => {
+  it('checks Diamond activation only when its UI launch signal is explicitly enabled', () => {
     const baseball = buildEvent({ sport: 'Baseball', canUpdateScore: true, trackingEngine: null, statTrackerConfigId: 'baseball-default' });
     const fastpitch = buildEvent({ sport: 'Fastpitch', canUpdateScore: true, trackingEngine: null, statTrackerConfigId: 'fastpitch-default' });
 
-    expect(shouldCheckDiamondActivation(baseball, true)).toBe(true);
-    expect(shouldCheckDiamondActivation(fastpitch, true)).toBe(true);
-    expect(shouldCheckDiamondActivation({ ...baseball, sport: 'Softball' }, true)).toBe(true);
-    expect(shouldCheckDiamondActivation({ ...baseball, trackingEngine: 'diamond-v2' }, true)).toBe(false);
-    expect(shouldCheckDiamondActivation({ ...baseball, trackingEngine: 'future-engine' }, true)).toBe(false);
-    expect(shouldCheckDiamondActivation({ ...baseball, isDbGame: false }, true)).toBe(false);
-    expect(shouldCheckDiamondActivation({ ...baseball, sport: 'Soccer' }, true)).toBe(false);
-    expect(shouldCheckDiamondActivation({ ...baseball, statTrackerConfigId: null }, true)).toBe(false);
-    expect(shouldCheckDiamondActivation(baseball, false)).toBe(false);
+    expect(shouldCheckDiamondActivation(baseball, true)).toBe(false);
+    expect(shouldCheckDiamondActivation(baseball, true, false)).toBe(false);
+    expect(shouldCheckDiamondActivation(baseball, true, true)).toBe(true);
+    expect(shouldCheckDiamondActivation(fastpitch, true, true)).toBe(true);
+    expect(shouldCheckDiamondActivation({ ...baseball, sport: 'Softball' }, true, true)).toBe(true);
+    expect(shouldCheckDiamondActivation({ ...baseball, trackingEngine: 'diamond-v2' }, true, true)).toBe(false);
+    expect(shouldCheckDiamondActivation({ ...baseball, trackingEngine: 'future-engine' }, true, true)).toBe(false);
+    expect(shouldCheckDiamondActivation({ ...baseball, isDbGame: false }, true, true)).toBe(false);
+    expect(shouldCheckDiamondActivation({ ...baseball, sport: 'Soccer' }, true, true)).toBe(false);
+    expect(shouldCheckDiamondActivation({ ...baseball, statTrackerConfigId: null }, true, true)).toBe(false);
+    expect(shouldCheckDiamondActivation(baseball, false, true)).toBe(false);
+  });
+
+  it('keeps the Diamond activation card absent with missing or false runtime config', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        sport: 'Baseball',
+        canUpdateScore: true,
+        trackingEngine: null,
+        statTrackerConfigId: 'baseball-default'
+      })],
+      children: []
+    });
+    scheduleHubMocks.buildGameHubDestinations.mockReturnValue([]);
+
+    renderScheduleEventDetailWithLocation('/schedule/team-1/game-1?childId=player-1&section=game');
+    await screen.findByRole('heading', { name: 'Game hub' });
+
+    expect(screen.queryByTestId('diamond-activation-card')).toBeNull();
+    expect(screen.queryByText(/Diamond/i)).toBeNull();
+    expect(diamondScorebookMocks.getDiamondAccess).not.toHaveBeenCalled();
+
+    cleanup();
+    window.__ALLPLAYS_CONFIG__ = { diamondScorebookUiEnabled: false } as any;
+    renderScheduleEventDetailWithLocation('/schedule/team-1/game-1?childId=player-1&section=game');
+    await screen.findByRole('heading', { name: 'Game hub' });
+
+    expect(screen.queryByTestId('diamond-activation-card')).toBeNull();
+    expect(screen.queryByText(/Diamond/i)).toBeNull();
+    expect(diamondScorebookMocks.getDiamondAccess).not.toHaveBeenCalled();
+  });
+
+  it('shows Diamond activation only after both the UI key and server eligibility allow it', async () => {
+    window.__ALLPLAYS_CONFIG__ = { diamondScorebookUiEnabled: true } as any;
+    diamondScorebookMocks.getDiamondAccess.mockResolvedValue({
+      eligible: true,
+      canManage: true,
+      teamOptIn: true,
+      policyMode: 'pilot'
+    });
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        sport: 'Baseball',
+        canUpdateScore: true,
+        trackingEngine: null,
+        statTrackerConfigId: 'baseball-default'
+      })],
+      children: []
+    });
+    scheduleHubMocks.buildGameHubDestinations.mockReturnValue([]);
+
+    renderScheduleEventDetailWithLocation('/schedule/team-1/game-1?childId=player-1&section=game');
+
+    expect(await screen.findByTestId('diamond-activation-card')).toBeTruthy();
+    expect(diamondScorebookMocks.getDiamondAccess).toHaveBeenCalledWith('team-1', { gameId: 'game-1' });
+  });
+
+  it('keeps Diamond activation absent when the UI key is true but server eligibility denies it', async () => {
+    window.__ALLPLAYS_CONFIG__ = { diamondScorebookUiEnabled: true } as any;
+    diamondScorebookMocks.getDiamondAccess.mockResolvedValue({
+      eligible: false,
+      canManage: true,
+      teamOptIn: true,
+      policyMode: 'disabled'
+    });
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        sport: 'Baseball',
+        canUpdateScore: true,
+        trackingEngine: null,
+        statTrackerConfigId: 'baseball-default'
+      })],
+      children: []
+    });
+    scheduleHubMocks.buildGameHubDestinations.mockReturnValue([]);
+
+    renderScheduleEventDetailWithLocation('/schedule/team-1/game-1?childId=player-1&section=game');
+
+    await waitFor(() => {
+      expect(diamondScorebookMocks.getDiamondAccess).toHaveBeenCalledWith('team-1', { gameId: 'game-1' });
+    });
+    expect(screen.queryByTestId('diamond-activation-card')).toBeNull();
+    expect(screen.getByTestId('standard-tracker-launch')).toBeTruthy();
+  });
+
+  it('keeps recovery entry visible for a game already owned by Diamond while the UI key is off', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        sport: 'Baseball',
+        canUpdateScore: true,
+        trackingEngine: 'diamond-v2',
+        statTrackerConfigId: 'baseball-default'
+      })],
+      children: []
+    });
+    scheduleHubMocks.buildGameHubDestinations.mockReturnValue([]);
+
+    renderScheduleEventDetailWithLocation('/schedule/team-1/game-1?childId=player-1&section=game');
+
+    expect(await screen.findByTestId('diamond-scorebook-launch')).toHaveAttribute(
+      'href',
+      '/schedule/team-1/game-1/diamond-v2'
+    );
+    expect(diamondScorebookMocks.getDiamondAccess).not.toHaveBeenCalled();
   });
 });
 
@@ -2175,6 +2297,105 @@ describe('ScheduleEventDetail assignments', () => {
     });
   });
 
+  it('routes Diamond game-hub chat and reactions through exact-generation service contexts', async () => {
+    const instanceId = '00000000-0000-4000-8000-000000000001';
+    const messageId = `diamond-chat-${'a'.repeat(64)}`;
+    let diamondChatCallback: ((messages: Array<{ id: string; text?: string | null; senderName?: string | null }>) => void) | null = null;
+    liveGameChatServiceMocks.subscribeToLiveGameChat.mockImplementation((_teamId, _gameId, callback) => {
+      diamondChatCallback = callback;
+      return vi.fn();
+    });
+    liveGameChatServiceMocks.sendLiveGameChatMessage.mockResolvedValue({ id: 'diamond-chat' });
+    liveGameChatServiceMocks.moderateLiveGameChatMessage.mockResolvedValue({ removed: true });
+    liveGameReactionsServiceMocks.sendLiveGameReaction.mockResolvedValue({ id: 'diamond-reaction' });
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        liveStatus: 'live',
+        status: 'live',
+        trackingEngine: 'diamond-v2',
+        diamondScorebookInstanceId: instanceId,
+        isTeamAdmin: true
+      })],
+      children: []
+    });
+
+    renderScheduleEventDetail();
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0);
+    });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Live chat' })).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Live chat' }));
+
+    await waitFor(() => {
+      expect(liveGameChatServiceMocks.subscribeToLiveGameChat).toHaveBeenCalledWith(
+        'team-1',
+        'game-1',
+        expect.any(Function),
+        expect.any(Function),
+        { diamond: { trackingEngine: 'diamond-v2', instanceId } }
+      );
+    });
+    fireEvent.change(screen.getByLabelText('Live chat message'), {
+      target: { value: 'Diamond hello' }
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => {
+      expect(liveGameChatServiceMocks.sendLiveGameChatMessage).toHaveBeenCalledWith(
+        'team-1',
+        'game-1',
+        expect.objectContaining({
+          text: 'Diamond hello',
+          user: auth.user,
+          diamond: { trackingEngine: 'diamond-v2', instanceId }
+        })
+      );
+    });
+    act(() => {
+      diamondChatCallback?.([{ id: messageId, text: 'Remove me', senderName: 'Fan' }]);
+    });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove live chat message from Fan' }));
+    await waitFor(() => {
+      expect(liveGameChatServiceMocks.moderateLiveGameChatMessage).toHaveBeenCalledWith(
+        'team-1',
+        'game-1',
+        messageId,
+        {
+          user: auth.user,
+          diamond: { trackingEngine: 'diamond-v2', instanceId }
+        }
+      );
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Live reactions' })).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Live reactions' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Heart' })).toBeTruthy());
+    expect(liveGameReactionsServiceMocks.subscribeToLiveGameReactions).toHaveBeenCalledWith(
+      'team-1',
+      'game-1',
+      expect.any(Function),
+      expect.any(Function),
+      { diamond: { trackingEngine: 'diamond-v2', instanceId } }
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Heart' }));
+    await waitFor(() => {
+      expect(liveGameReactionsServiceMocks.sendLiveGameReaction).toHaveBeenCalledWith(
+        'team-1',
+        'game-1',
+        expect.objectContaining({
+          type: 'heart',
+          user: auth.user,
+          diamond: { trackingEngine: 'diamond-v2', instanceId }
+        })
+      );
+    });
+  });
+
   it('shows reaction loading placeholders before the deferred controls finish loading', async () => {
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
       events: [buildEvent({ liveStatus: 'live', status: 'live' })],
@@ -2537,7 +2758,8 @@ describe('ScheduleEventDetail assignments', () => {
 
     renderScheduleEventDetailWithRouteControls();
 
-    expect(await screen.findByText('Assign a tracker config in Edit game before opening Standard or Diamond scoring.')).toBeTruthy();
+    expect(await screen.findByText('Assign a tracker config in Edit game before opening Standard scoring.')).toBeTruthy();
+    expect(screen.queryByText(/Diamond/i)).toBeNull();
     expect(screen.queryByTestId('standard-tracker-launch')).toBeNull();
   });
 
@@ -3156,7 +3378,7 @@ describe('ScheduleEventDetail assignments', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Report sections' }));
     await waitFor(() => {
       expect(gameReportServiceMocks.loadGameReportSections).toHaveBeenCalledTimes(1);
-      expect(gameReportServiceMocks.loadGameReportSections).toHaveBeenCalledWith('team-1', 'game-1');
+      expect(gameReportServiceMocks.loadGameReportSections).toHaveBeenCalledWith('team-1', 'game-1', { statVisibility: 'manager-internal' });
       expect(screen.getByText('Loaded on demand.')).toBeTruthy();
     });
   });

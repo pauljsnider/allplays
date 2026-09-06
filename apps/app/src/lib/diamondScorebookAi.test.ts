@@ -4,6 +4,8 @@ import {
   DIAMOND_AI_MODEL,
   draftDiamondGameSummary,
   interpretDiamondTranscript,
+  normalizeDiamondAiDraftForPublication,
+  normalizeDiamondAiSourcePacket,
   type DiamondAiCommandContext,
   type DiamondAiDependencies,
   type DiamondAiModelRequest,
@@ -194,6 +196,26 @@ describe('interpretDiamondTranscript', () => {
     expect(result.message).toMatch(/unsupported scorebook command/i);
   });
 
+  it('rejects batting roles masquerading as defensive positions', async () => {
+    const model = jsonModel(
+      commandResponse({
+        type: 'substitute',
+        payloadJson: JSON.stringify({
+          side: 'home',
+          battingSlot: 1,
+          outgoingPlayerId: 'batter-1',
+          incomingPlayerId: 'runner-1',
+          defensivePosition: 'FLEX'
+        })
+      })
+    );
+
+    const result = await interpretDiamondTranscript('Make a defensive substitution.', commandContext(), model.dependencies);
+
+    expect(result).toMatchObject({ status: 'invalid-response', proposal: null, authoritative: false });
+    expect(result.message).toMatch(/defensive position/i);
+  });
+
   it('rejects unknown payload fields and embedded transcript/private data', async () => {
     const model = jsonModel(
       commandResponse({
@@ -319,6 +341,19 @@ describe('interpretDiamondTranscript', () => {
 });
 
 describe('draftDiamondGameSummary', () => {
+  it('normalizes a bounded server source packet and rejects private response data', () => {
+    expect(normalizeDiamondAiSourcePacket(sourcePacket())).toEqual({
+      ...sourcePacket(),
+      plays: sourcePacket().plays.map((play) => ({ ...play, voided: false }))
+    });
+    expect(() =>
+      normalizeDiamondAiSourcePacket({
+        ...sourcePacket(),
+        plays: [{ eventId: 'event-4', revision: 4, summary: 'Transcript: private scorer text.' }]
+      })
+    ).toThrow(/transcript|private-note/i);
+  });
+
   it('returns an unpublished revision-pinned draft with validated play and stat references', async () => {
     const model = jsonModel(recapResponse());
 
@@ -515,5 +550,43 @@ describe('draftDiamondGameSummary', () => {
     expect(malformedResult).toMatchObject({ status: 'invalid-response', draft: null, authoritative: false });
     expect(failedResult).toMatchObject({ status: 'unavailable', draft: null, authoritative: false });
     expect(failedResult.message).toMatch(/ordinary controls/i);
+  });
+
+  it('revalidates the exact confirmation-only draft at the publication boundary', () => {
+    const draft = {
+      schemaVersion: 1,
+      sourceRevision: 8,
+      coverage: sourcePacket().coverage,
+      recap: {
+        text: 'The team completed a 4-2 win after a key double.',
+        citations: [{ eventId: 'event-4', revision: 4 }],
+        statRefs: [{ statId: 'team-game', metric: 'R' }]
+      },
+      insights: [
+        {
+          text: 'The offense collected 7 hits.',
+          citations: [{ eventId: 'event-4', revision: 4 }],
+          statRefs: [{ statId: 'team-game', metric: 'H' }]
+        }
+      ],
+      dataQualityNotes: ['Partial data coverage: fielding, pitches.'],
+      draft: true,
+      published: false,
+      requiresPublicationConfirmation: true,
+      mutatesState: false
+    } as const;
+
+    expect(normalizeDiamondAiDraftForPublication(draft, 8)).toEqual(draft);
+    expect(() => normalizeDiamondAiDraftForPublication({ ...draft, sourceRevision: 9 }, 8)).toThrow(/source revision/i);
+    expect(() => normalizeDiamondAiDraftForPublication({ ...draft, published: true }, 8)).toThrow(/confirmation/i);
+    expect(() =>
+      normalizeDiamondAiDraftForPublication(
+        {
+          ...draft,
+          insights: [{ ...draft.insights[0], text: 'Transcript: private scorer text.' }]
+        },
+        8
+      )
+    ).toThrow(/transcript|private-note/i);
   });
 });

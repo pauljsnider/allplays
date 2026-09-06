@@ -11,6 +11,7 @@ const DIAMOND_POLICY_MODES = Object.freeze([
   "pilot",
   "enabled",
 ]);
+const DIAMOND_ROLLOUT_PERCENTAGES = Object.freeze([1, 10, 50, 100]);
 const DIAMOND_SPORTS = Object.freeze(["baseball", "fastpitch"]);
 const DIAMOND_COMMAND_TYPES = Object.freeze([
   "activate",
@@ -32,6 +33,7 @@ const DIAMOND_COMMAND_TYPES = Object.freeze([
   "private_note",
   "suspend",
   "resume",
+  "cancel",
   "rules_decision",
   "void_event",
   "supersede_event",
@@ -45,6 +47,7 @@ const POLICY_FIELDS = new Set([
   "mode",
   "revision",
   "teamIds",
+  "rolloutPercent",
   "minimumAppBuild",
   "updatedAt",
   "updatedBy",
@@ -55,6 +58,9 @@ const COMMAND_FIELDS = new Set([
   "commandId",
   "teamId",
   "gameId",
+  "appBuild",
+  "expectedInstanceId",
+  "leaseId",
   "expectedRevision",
   "rulesProfileId",
   "rulesProfileVersion",
@@ -139,6 +145,7 @@ const COMMAND_PAYLOAD_FIELDS = Object.freeze({
   private_note: new Set(["text", "attachedEventId", "visibility"]),
   suspend: new Set(["reason"]),
   resume: new Set(),
+  cancel: new Set(["confirmed", "reason"]),
   rules_decision: new Set(["code", "description", "affectedFamilies"]),
   void_event: new Set(["targetEventId", "reason"]),
   supersede_event: new Set(["targetEventId", "reason", "replacement"]),
@@ -189,6 +196,138 @@ const CORRECTION_COMMANDS = new Set([
   "supersede_event",
   "reopen_for_correction",
 ]);
+const CORRECTABLE_COMMANDS = new Set([
+  "set_lineup",
+  "set_defensive_alignment",
+  "set_dp_flex",
+  "record_pitch",
+  "record_plate_appearance",
+  "advance_runner",
+  "record_fielding",
+  "record_scoring_judgment",
+  "advance_half_inning",
+  "place_tiebreaker_runner",
+  "substitute",
+  "re_enter",
+  "add_courtesy_runner",
+  "private_note",
+  "rules_decision",
+]);
+const DIAMOND_SIDES = new Set(["home", "away"]);
+const DIAMOND_BASES = new Set(["first", "second", "third"]);
+const DIAMOND_DESTINATIONS = new Set([
+  "first",
+  "second",
+  "third",
+  "home",
+  "out",
+  "stay",
+]);
+const DIAMOND_DEFENSIVE_POSITIONS = new Set([
+  "P",
+  "C",
+  "1B",
+  "2B",
+  "3B",
+  "SS",
+  "LF",
+  "LCF",
+  "CF",
+  "RCF",
+  "RF",
+  "DP",
+  "FLEX",
+  "EH",
+  "EP",
+]);
+const DIAMOND_BATTING_ROLES = new Set([
+  "regular",
+  "dh",
+  "dp",
+  "flex",
+  "eh",
+  "ep",
+]);
+const DIAMOND_PITCH_RESULTS = new Set([
+  "ball",
+  "called_strike",
+  "swinging_strike",
+  "foul",
+  "foul_bunt",
+  "in_play",
+  "hit_by_pitch",
+  "catcher_interference",
+  "illegal_pitch",
+  "balk",
+  "pickoff_attempt",
+]);
+const DIAMOND_PLATE_APPEARANCE_RESULTS = new Set([
+  "single",
+  "double",
+  "triple",
+  "home_run",
+  "walk",
+  "intentional_walk",
+  "hit_by_pitch",
+  "strikeout",
+  "reached_on_error",
+  "fielders_choice",
+  "sacrifice_bunt",
+  "sacrifice_fly",
+  "interference",
+  "dropped_third_strike",
+  "ground_out",
+  "fly_out",
+  "line_out",
+  "double_play",
+  "triple_play",
+]);
+const DIAMOND_RUNNER_ADVANCE_CAUSES = new Set([
+  "batted_ball",
+  "walk",
+  "hit_by_pitch",
+  "stolen_base",
+  "caught_stealing",
+  "pickoff",
+  "wild_pitch",
+  "passed_ball",
+  "balk",
+  "illegal_pitch",
+  "defensive_indifference",
+  "error",
+  "obstruction",
+  "force_out",
+  "tag_out",
+  "appeal_out",
+  "courtesy_runner",
+  "tiebreaker",
+  "other",
+]);
+const DIAMOND_OUT_KINDS = new Set([
+  "force",
+  "tag",
+  "appeal",
+  "batter_runner",
+  "strikeout",
+  "catch",
+]);
+const DIAMOND_STAT_FAMILIES = new Set([
+  "batting",
+  "baserunning",
+  "pitching",
+  "fielding",
+  "situational",
+  "pitches",
+  "sensors",
+]);
+const DIAMOND_RULE_DECISION_CODES = new Set([
+  "coverage_adjustment",
+  "end_half_inning_run_limit",
+  "end_game_time_limit",
+  "end_game_weather",
+  "end_game_forfeit_home",
+  "end_game_forfeit_away",
+]);
 const VOICE_PROPOSAL_COMMANDS = new Set([
   "record_pitch",
   "record_plate_appearance",
@@ -208,6 +347,7 @@ const PUBLIC_NOTIFICATION_COMMANDS = new Set([
   "advance_half_inning",
   "suspend",
   "resume",
+  "cancel",
   "finalize",
 ]);
 const PUBLIC_PROJECTION_FIELDS = new Set([
@@ -292,6 +432,17 @@ const PUBLIC_EVENT_FIELDS = new Set([
   "createdAt",
   "serverTimestampMs",
 ]);
+const PRIVATE_EVENT_SUMMARY_FIELDS = new Set([
+  "eventId",
+  "sequence",
+  "revision",
+  "type",
+  "payload",
+  "voidsEventId",
+  "supersedesEventId",
+  "createdAt",
+  "serverTimestampMs",
+]);
 const NORMALIZED_POLICY = Symbol("normalizedDiamondPolicy");
 
 const LIFECYCLE_COMMANDS = Object.freeze({
@@ -304,6 +455,7 @@ const LIFECYCLE_COMMANDS = Object.freeze({
     "scorer_handoff",
     "private_note",
     "rules_decision",
+    "cancel",
   ]),
   active: new Set([
     "set_defensive_alignment",
@@ -321,6 +473,7 @@ const LIFECYCLE_COMMANDS = Object.freeze({
     "scorer_handoff",
     "private_note",
     "suspend",
+    "cancel",
     "rules_decision",
     "void_event",
     "supersede_event",
@@ -331,8 +484,9 @@ const LIFECYCLE_COMMANDS = Object.freeze({
     "private_note",
     "resume",
     "rules_decision",
+    "cancel",
   ]),
-  final: new Set(["private_note", "reopen_for_correction"]),
+  final: new Set(["scorer_handoff", "private_note", "reopen_for_correction"]),
   correction: new Set([
     "record_fielding",
     "record_scoring_judgment",
@@ -343,6 +497,7 @@ const LIFECYCLE_COMMANDS = Object.freeze({
     "supersede_event",
     "finalize",
   ]),
+  cancelled: new Set(),
 });
 
 class DiamondScorebookCoreError extends Error {
@@ -622,6 +777,200 @@ function normalizeDiamondPayload(payload) {
   return normalized;
 }
 
+function invalidCommandPayload(message) {
+  throw new DiamondScorebookCoreError("invalid-argument", message);
+}
+
+function requirePayloadFields(value, fields, label, requiredFields = fields) {
+  if (!isPlainObject(value))
+    invalidCommandPayload(`${label} must be an object.`);
+  const unexpected = Object.keys(value).filter((key) => !fields.has(key));
+  if (unexpected.length) {
+    invalidCommandPayload(`${label} contains unsupported fields.`);
+  }
+  for (const field of requiredFields) {
+    if (!own(value, field))
+      invalidCommandPayload(`${label}.${field} is required.`);
+  }
+}
+
+function requirePayloadEnum(value, allowed, label) {
+  if (typeof value !== "string" || !allowed.has(value)) {
+    invalidCommandPayload(`${label} is not supported.`);
+  }
+}
+
+function requirePayloadInteger(value, minimum, maximum, label) {
+  if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
+    invalidCommandPayload(
+      `${label} must be an integer between ${String(minimum)} and ${String(maximum)}.`,
+    );
+  }
+}
+
+function requirePayloadText(value, maximum, label) {
+  if (typeof value !== "string" || !value.trim() || value.length > maximum) {
+    invalidCommandPayload(
+      `${label} must contain between 1 and ${String(maximum)} characters.`,
+    );
+  }
+}
+
+function requireOptionalPayloadBoolean(value, key, label) {
+  if (own(value, key) && typeof value[key] !== "boolean") {
+    invalidCommandPayload(`${label}.${key} must be a boolean when provided.`);
+  }
+}
+
+function requireOptionalPayloadId(value, key, label) {
+  if (own(value, key)) normalizeDiamondId(value[key], `${label}.${key}`);
+}
+
+function requirePayloadArray(value, maximum, label) {
+  if (!Array.isArray(value) || value.length > maximum) {
+    invalidCommandPayload(
+      `${label} must be an array with at most ${String(maximum)} items.`,
+    );
+  }
+  return value;
+}
+
+function assertScoringCreditBoundary(value, label) {
+  requireOptionalPayloadBoolean(value, "countsRun", label);
+  requireOptionalPayloadBoolean(value, "earned", label);
+  requireOptionalPayloadBoolean(value, "rbi", label);
+  requireOptionalPayloadId(value, "responsiblePitcherId", label);
+}
+
+function assertFieldingBoundary(value, label) {
+  const fields = new Set([
+    "putoutBy",
+    "assists",
+    "errors",
+    "passedBallBy",
+    "doublePlay",
+    "triplePlay",
+    "battedBall",
+    "location",
+  ]);
+  requirePayloadFields(value, fields, label, []);
+  requireOptionalPayloadId(value, "putoutBy", label);
+  requireOptionalPayloadId(value, "passedBallBy", label);
+  requireOptionalPayloadBoolean(value, "doublePlay", label);
+  requireOptionalPayloadBoolean(value, "triplePlay", label);
+  if (own(value, "assists")) {
+    const assists = requirePayloadArray(value.assists, 4, `${label}.assists`);
+    assists.forEach((playerId, index) =>
+      normalizeDiamondId(playerId, `${label}.assists[${String(index)}]`),
+    );
+  }
+  if (own(value, "errors")) {
+    const errors = requirePayloadArray(value.errors, 4, `${label}.errors`);
+    errors.forEach((error, index) => {
+      const errorLabel = `${label}.errors[${String(index)}]`;
+      requirePayloadFields(error, new Set(["playerId", "kind"]), errorLabel, [
+        "playerId",
+      ]);
+      normalizeDiamondId(error.playerId, `${errorLabel}.playerId`);
+      if (own(error, "kind")) {
+        requirePayloadEnum(
+          error.kind,
+          new Set(["fielding", "throwing"]),
+          `${errorLabel}.kind`,
+        );
+      }
+    });
+  }
+  if (own(value, "battedBall")) {
+    requirePayloadEnum(
+      value.battedBall,
+      new Set(["ground", "line", "fly", "bunt", "unknown"]),
+      `${label}.battedBall`,
+    );
+  }
+  if (own(value, "location")) {
+    if (typeof value.location !== "string" || value.location.length > 80) {
+      invalidCommandPayload(
+        `${label}.location must be a string of at most 80 characters.`,
+      );
+    }
+  }
+}
+
+function assertOmissionsBoundary(value, label) {
+  const omissions = requirePayloadArray(value, 7, label);
+  omissions.forEach((family, index) =>
+    requirePayloadEnum(
+      family,
+      DIAMOND_STAT_FAMILIES,
+      `${label}[${String(index)}]`,
+    ),
+  );
+  if (new Set(omissions).size !== omissions.length) {
+    invalidCommandPayload(`${label} cannot contain duplicate stat families.`);
+  }
+}
+
+function assertBatterAdvanceBoundary(value, label) {
+  requirePayloadFields(
+    value,
+    new Set([
+      "to",
+      "cause",
+      "outKind",
+      "countsRun",
+      "earned",
+      "rbi",
+      "responsiblePitcherId",
+    ]),
+    label,
+    ["to"],
+  );
+  requirePayloadEnum(value.to, DIAMOND_DESTINATIONS, `${label}.to`);
+  if (own(value, "cause")) {
+    requirePayloadEnum(
+      value.cause,
+      DIAMOND_RUNNER_ADVANCE_CAUSES,
+      `${label}.cause`,
+    );
+  }
+  if (own(value, "outKind")) {
+    requirePayloadEnum(value.outKind, DIAMOND_OUT_KINDS, `${label}.outKind`);
+  }
+  assertScoringCreditBoundary(value, label);
+}
+
+function assertRunnerAdvanceBoundary(value, label) {
+  requirePayloadFields(
+    value,
+    new Set([
+      "runnerId",
+      "from",
+      "to",
+      "cause",
+      "outKind",
+      "countsRun",
+      "earned",
+      "rbi",
+      "responsiblePitcherId",
+    ]),
+    label,
+    ["runnerId", "from", "to", "cause"],
+  );
+  normalizeDiamondId(value.runnerId, `${label}.runnerId`);
+  requirePayloadEnum(value.from, DIAMOND_BASES, `${label}.from`);
+  requirePayloadEnum(value.to, DIAMOND_DESTINATIONS, `${label}.to`);
+  requirePayloadEnum(
+    value.cause,
+    DIAMOND_RUNNER_ADVANCE_CAUSES,
+    `${label}.cause`,
+  );
+  if (own(value, "outKind")) {
+    requirePayloadEnum(value.outKind, DIAMOND_OUT_KINDS, `${label}.outKind`);
+  }
+  assertScoringCreditBoundary(value, label);
+}
+
 function assertCommandPayloadBoundary(type, payload) {
   const allowedFields = COMMAND_PAYLOAD_FIELDS[type];
   if (
@@ -640,6 +989,7 @@ function assertCommandPayloadBoundary(type, payload) {
     );
   }
   if (type === "activate") {
+    requirePayloadFields(payload, allowedFields, "payload");
     normalizeDiamondId(payload.initialScorerUid, "payload.initialScorerUid");
     if (payload.captureMode !== "quick" && payload.captureMode !== "full") {
       throw new DiamondScorebookCoreError(
@@ -648,9 +998,264 @@ function assertCommandPayloadBoundary(type, payload) {
       );
     }
   }
-  if (type === "scorer_handoff")
+  if (type === "set_lineup") {
+    requirePayloadFields(payload, allowedFields, "payload");
+    requirePayloadEnum(payload.side, DIAMOND_SIDES, "payload.side");
+    const entries = requirePayloadArray(payload.entries, 25, "payload.entries");
+    if (!entries.length)
+      invalidCommandPayload("payload.entries cannot be empty.");
+    entries.forEach((entry, index) => {
+      const label = `payload.entries[${String(index)}]`;
+      requirePayloadFields(
+        entry,
+        new Set([
+          "slot",
+          "playerId",
+          "displayName",
+          "jerseyNumber",
+          "starter",
+          "battingRole",
+        ]),
+        label,
+        ["slot", "playerId"],
+      );
+      requirePayloadInteger(entry.slot, 1, 25, `${label}.slot`);
+      normalizeDiamondId(entry.playerId, `${label}.playerId`);
+      for (const [key, maximum] of [
+        ["displayName", 160],
+        ["jerseyNumber", 32],
+      ]) {
+        if (
+          own(entry, key) &&
+          (typeof entry[key] !== "string" || entry[key].length > maximum)
+        ) {
+          invalidCommandPayload(
+            `${label}.${key} must be a string of at most ${String(maximum)} characters.`,
+          );
+        }
+      }
+      requireOptionalPayloadBoolean(entry, "starter", label);
+      if (own(entry, "battingRole")) {
+        requirePayloadEnum(
+          entry.battingRole,
+          DIAMOND_BATTING_ROLES,
+          `${label}.battingRole`,
+        );
+      }
+    });
+  }
+  if (type === "set_defensive_alignment") {
+    requirePayloadFields(payload, allowedFields, "payload");
+    requirePayloadEnum(payload.side, DIAMOND_SIDES, "payload.side");
+    const assignments = requirePayloadArray(
+      payload.assignments,
+      25,
+      "payload.assignments",
+    );
+    assignments.forEach((assignment, index) => {
+      const label = `payload.assignments[${String(index)}]`;
+      requirePayloadFields(
+        assignment,
+        new Set(["playerId", "position"]),
+        label,
+      );
+      normalizeDiamondId(assignment.playerId, `${label}.playerId`);
+      requirePayloadEnum(
+        assignment.position,
+        DIAMOND_DEFENSIVE_POSITIONS,
+        `${label}.position`,
+      );
+    });
+  }
+  if (type === "set_dp_flex") {
+    requirePayloadFields(payload, allowedFields, "payload");
+    requirePayloadEnum(payload.side, DIAMOND_SIDES, "payload.side");
+    normalizeDiamondId(payload.dpPlayerId, "payload.dpPlayerId");
+    normalizeDiamondId(payload.flexPlayerId, "payload.flexPlayerId");
+    requirePayloadInteger(
+      payload.dpBattingSlot,
+      1,
+      25,
+      "payload.dpBattingSlot",
+    );
+    requirePayloadEnum(
+      payload.flexDefensivePosition,
+      DIAMOND_DEFENSIVE_POSITIONS,
+      "payload.flexDefensivePosition",
+    );
+  }
+  if (type === "record_pitch") {
+    requirePayloadFields(payload, allowedFields, "payload");
+    normalizeDiamondId(payload.pitcherId, "payload.pitcherId");
+    normalizeDiamondId(payload.batterId, "payload.batterId");
+    requirePayloadEnum(payload.result, DIAMOND_PITCH_RESULTS, "payload.result");
+  }
+  if (type === "record_plate_appearance") {
+    requirePayloadFields(payload, allowedFields, "payload", [
+      "batterId",
+      "pitcherId",
+      "result",
+      "batterAdvance",
+      "runnerAdvances",
+      "outsOnPlay",
+    ]);
+    normalizeDiamondId(payload.batterId, "payload.batterId");
+    normalizeDiamondId(payload.pitcherId, "payload.pitcherId");
+    requirePayloadEnum(
+      payload.result,
+      DIAMOND_PLATE_APPEARANCE_RESULTS,
+      "payload.result",
+    );
+    assertBatterAdvanceBoundary(payload.batterAdvance, "payload.batterAdvance");
+    const runnerAdvances = requirePayloadArray(
+      payload.runnerAdvances,
+      3,
+      "payload.runnerAdvances",
+    );
+    runnerAdvances.forEach((advance, index) =>
+      assertRunnerAdvanceBoundary(
+        advance,
+        `payload.runnerAdvances[${String(index)}]`,
+      ),
+    );
+    requirePayloadInteger(payload.outsOnPlay, 0, 3, "payload.outsOnPlay");
+    if (own(payload, "runsBattedIn")) {
+      const countedRuns = [payload.batterAdvance, ...runnerAdvances].filter(
+        (advance) => advance.to === "home" && advance.countsRun !== false,
+      ).length;
+      requirePayloadInteger(
+        payload.runsBattedIn,
+        0,
+        countedRuns,
+        "payload.runsBattedIn",
+      );
+    }
+    if (own(payload, "fielding")) {
+      assertFieldingBoundary(payload.fielding, "payload.fielding");
+    }
+    if (own(payload, "omissions")) {
+      assertOmissionsBoundary(payload.omissions, "payload.omissions");
+    }
+  }
+  if (type === "advance_runner") {
+    requirePayloadFields(payload, allowedFields, "payload", [
+      "runnerId",
+      "from",
+      "to",
+      "cause",
+    ]);
+    assertRunnerAdvanceBoundary(
+      Object.fromEntries(
+        Object.entries(payload).filter(([key]) =>
+          new Set([
+            "runnerId",
+            "from",
+            "to",
+            "cause",
+            "outKind",
+            "countsRun",
+            "earned",
+            "rbi",
+            "responsiblePitcherId",
+          ]).has(key),
+        ),
+      ),
+      "payload",
+    );
+    if (own(payload, "fielding")) {
+      assertFieldingBoundary(payload.fielding, "payload.fielding");
+    }
+    if (own(payload, "omissions")) {
+      assertOmissionsBoundary(payload.omissions, "payload.omissions");
+    }
+  }
+  if (type === "record_fielding") {
+    requirePayloadFields(payload, allowedFields, "payload");
+    normalizeDiamondId(payload.playEventId, "payload.playEventId");
+    assertFieldingBoundary(payload.fielding, "payload.fielding");
+  }
+  if (type === "record_scoring_judgment") {
+    requirePayloadFields(payload, allowedFields, "payload", ["playEventId"]);
+    normalizeDiamondId(payload.playEventId, "payload.playEventId");
+    requireOptionalPayloadId(payload, "runnerId", "payload");
+    requireOptionalPayloadId(payload, "responsiblePitcherId", "payload");
+    requireOptionalPayloadBoolean(payload, "earned", "payload");
+    requireOptionalPayloadBoolean(payload, "rbi", "payload");
+    if (own(payload, "pitcherOfRecord")) {
+      requirePayloadFields(
+        payload.pitcherOfRecord,
+        new Set(["side", "playerId", "decision"]),
+        "payload.pitcherOfRecord",
+      );
+      requirePayloadEnum(
+        payload.pitcherOfRecord.side,
+        DIAMOND_SIDES,
+        "payload.pitcherOfRecord.side",
+      );
+      normalizeDiamondId(
+        payload.pitcherOfRecord.playerId,
+        "payload.pitcherOfRecord.playerId",
+      );
+      requirePayloadEnum(
+        payload.pitcherOfRecord.decision,
+        new Set(["win", "loss", "save"]),
+        "payload.pitcherOfRecord.decision",
+      );
+    }
+  }
+  if (type === "place_tiebreaker_runner") {
+    requirePayloadFields(payload, allowedFields, "payload", [
+      "side",
+      "runnerId",
+      "base",
+    ]);
+    requirePayloadEnum(payload.side, DIAMOND_SIDES, "payload.side");
+    normalizeDiamondId(payload.runnerId, "payload.runnerId");
+    requirePayloadEnum(payload.base, DIAMOND_BASES, "payload.base");
+    requireOptionalPayloadId(payload, "chargedToPitcherId", "payload");
+  }
+  if (type === "substitute" || type === "re_enter") {
+    requirePayloadFields(
+      payload,
+      allowedFields,
+      "payload",
+      type === "substitute"
+        ? ["side", "battingSlot", "outgoingPlayerId", "incomingPlayerId"]
+        : ["side", "battingSlot", "starterPlayerId", "replacedPlayerId"],
+    );
+    requirePayloadEnum(payload.side, DIAMOND_SIDES, "payload.side");
+    requirePayloadInteger(payload.battingSlot, 1, 25, "payload.battingSlot");
+    for (const key of type === "substitute"
+      ? ["outgoingPlayerId", "incomingPlayerId"]
+      : ["starterPlayerId", "replacedPlayerId"]) {
+      normalizeDiamondId(payload[key], `payload.${key}`);
+    }
+    if (own(payload, "defensivePosition")) {
+      requirePayloadEnum(
+        payload.defensivePosition,
+        DIAMOND_DEFENSIVE_POSITIONS,
+        "payload.defensivePosition",
+      );
+    }
+  }
+  if (type === "add_courtesy_runner") {
+    requirePayloadFields(payload, allowedFields, "payload");
+    requirePayloadEnum(payload.side, DIAMOND_SIDES, "payload.side");
+    normalizeDiamondId(payload.forPlayerId, "payload.forPlayerId");
+    normalizeDiamondId(payload.runnerId, "payload.runnerId");
+    requirePayloadEnum(payload.base, DIAMOND_BASES, "payload.base");
+    requirePayloadEnum(
+      payload.forRole,
+      new Set(["pitcher", "catcher"]),
+      "payload.forRole",
+    );
+  }
+  if (type === "scorer_handoff") {
+    requirePayloadFields(payload, allowedFields, "payload");
     normalizeDiamondId(payload.toUid, "payload.toUid");
+  }
   if (type === "private_note") {
+    requirePayloadFields(payload, allowedFields, "payload", ["text"]);
     if (
       typeof payload.text !== "string" ||
       !payload.text.trim() ||
@@ -677,13 +1282,55 @@ function assertCommandPayloadBoundary(type, payload) {
       );
     }
   }
+  if (type === "suspend") {
+    requirePayloadFields(payload, allowedFields, "payload");
+    requirePayloadText(payload.reason, 300, "payload.reason");
+  }
+  if (type === "rules_decision") {
+    requirePayloadFields(payload, allowedFields, "payload", [
+      "code",
+      "description",
+    ]);
+    requirePayloadEnum(
+      payload.code,
+      DIAMOND_RULE_DECISION_CODES,
+      "payload.code",
+    );
+    requirePayloadText(payload.description, 500, "payload.description");
+    if (own(payload, "affectedFamilies")) {
+      assertOmissionsBoundary(
+        payload.affectedFamilies,
+        "payload.affectedFamilies",
+      );
+    }
+  }
   if (type === "finalize" && payload.confirmed !== true) {
     throw new DiamondScorebookCoreError(
       "confirmation-required",
       "Finalization requires explicit confirmation.",
     );
   }
+  if (type === "cancel") {
+    requirePayloadFields(payload, allowedFields, "payload");
+    if (payload.confirmed !== true) {
+      throw new DiamondScorebookCoreError(
+        "confirmation-required",
+        "Cancellation requires explicit confirmation.",
+      );
+    }
+    if (
+      typeof payload.reason !== "string" ||
+      !payload.reason.trim() ||
+      payload.reason.trim().length > 300
+    ) {
+      throw new DiamondScorebookCoreError(
+        "invalid-argument",
+        "A cancellation reason of at most 300 characters is required.",
+      );
+    }
+  }
   if (type === "void_event" || type === "supersede_event") {
+    requirePayloadFields(payload, allowedFields, "payload");
     normalizeDiamondId(payload.targetEventId, "payload.targetEventId");
     if (
       typeof payload.reason !== "string" ||
@@ -695,6 +1342,24 @@ function assertCommandPayloadBoundary(type, payload) {
         "A correction reason is required.",
       );
     }
+    if (type === "supersede_event") {
+      requirePayloadFields(
+        payload.replacement,
+        new Set(["type", "payload"]),
+        "payload.replacement",
+      );
+      if (!CORRECTABLE_COMMANDS.has(payload.replacement.type)) {
+        invalidCommandPayload("payload.replacement.type is not correctable.");
+      }
+      assertCommandPayloadBoundary(
+        payload.replacement.type,
+        payload.replacement.payload,
+      );
+    }
+  }
+  if (type === "reopen_for_correction") {
+    requirePayloadFields(payload, allowedFields, "payload");
+    requirePayloadText(payload.reason, 300, "payload.reason");
   }
   if (type === "start" || type === "resume" || type === "advance_half_inning") {
     if (Object.keys(payload).length !== 0) {
@@ -737,6 +1402,15 @@ function normalizeDiamondCommand(value) {
       "commandId must be a cryptographically random UUID v4.",
     );
   }
+  if (
+    typeof value.expectedInstanceId !== "string" ||
+    !UUID_V4_PATTERN.test(value.expectedInstanceId)
+  ) {
+    throw new DiamondScorebookCoreError(
+      "invalid-argument",
+      "expectedInstanceId must be the secure UUID v4 from the loaded Diamond scorebook.",
+    );
+  }
   if (!COMMAND_TYPE_SET.has(value.type)) {
     throw new DiamondScorebookCoreError(
       "invalid-argument",
@@ -745,11 +1419,27 @@ function normalizeDiamondCommand(value) {
   }
   const payload = normalizeDiamondPayload(value.payload);
   assertCommandPayloadBoundary(value.type, payload);
+  let leaseId = null;
+  if (own(value, "leaseId") && value.leaseId !== null) {
+    if (
+      typeof value.leaseId !== "string" ||
+      !UUID_V4_PATTERN.test(value.leaseId)
+    ) {
+      throw new DiamondScorebookCoreError(
+        "invalid-argument",
+        "leaseId must be the secure UUID v4 from the loaded scorer lease.",
+      );
+    }
+    leaseId = value.leaseId.toLowerCase();
+  }
   return {
     schemaVersion: DIAMOND_SCHEMA_VERSION,
     commandId: value.commandId.toLowerCase(),
     teamId: normalizeDiamondId(value.teamId, "teamId"),
     gameId: normalizeDiamondId(value.gameId, "gameId"),
+    appBuild: normalizePositiveInteger(value.appBuild, "appBuild"),
+    expectedInstanceId: value.expectedInstanceId.toLowerCase(),
+    ...(leaseId ? { leaseId } : {}),
     expectedRevision: normalizeNonnegativeInteger(
       value.expectedRevision,
       "expectedRevision",
@@ -775,6 +1465,7 @@ function disabledPolicy(reason) {
     mode: "disabled",
     revision: null,
     teamIds: Object.freeze([]),
+    rolloutPercent: null,
     minimumAppBuild: 0,
     reason,
     activationEnabled: false,
@@ -795,6 +1486,15 @@ function parseDiamondPolicy(value, { readStatus = "complete" } = {}) {
     value.revision < DIAMOND_POLICY_REVISION_MINIMUM ||
     !Array.isArray(value.teamIds) ||
     value.teamIds.length > MAX_POLICY_TEAM_IDS
+  ) {
+    return disabledPolicy("policy-malformed");
+  }
+  const hasRolloutPercent = own(value, "rolloutPercent");
+  if (
+    (value.mode === "enabled" &&
+      (!hasRolloutPercent ||
+        !DIAMOND_ROLLOUT_PERCENTAGES.includes(value.rolloutPercent))) ||
+    (value.mode !== "enabled" && hasRolloutPercent)
   ) {
     return disabledPolicy("policy-malformed");
   }
@@ -832,11 +1532,24 @@ function parseDiamondPolicy(value, { readStatus = "complete" } = {}) {
     mode: value.mode,
     revision: value.revision,
     teamIds: Object.freeze([...teamIds]),
+    rolloutPercent: value.mode === "enabled" ? value.rolloutPercent : null,
     minimumAppBuild: value.minimumAppBuild || 0,
     reason: value.mode === "disabled" ? "policy-disabled" : null,
     activationEnabled: value.mode !== "disabled",
     scoringEnabled: value.mode !== "disabled",
   });
+}
+
+function diamondRolloutBucket(teamId, gameId) {
+  const normalizedTeamId = normalizeDiamondId(teamId, "teamId");
+  const normalizedGameId = normalizeDiamondId(gameId, "gameId");
+  const input = `diamond-v2-rollout\u001f${normalizedTeamId}\u001f${normalizedGameId}`;
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return ((hash >>> 0) % 100) + 1;
 }
 
 function getParsedPolicy(policy) {
@@ -848,16 +1561,17 @@ function getParsedPolicy(policy) {
 function getDiamondPolicyDecision({
   policy,
   teamId,
+  gameId = null,
   appBuild = 0,
   operation = "activate",
 }) {
   const parsed = getParsedPolicy(policy);
   if (!parsed.valid)
     return deny(parsed.reason, "Diamond scorekeeping policy is unavailable.");
-  if (operation !== "activate" && operation !== "score") {
+  if (!["activate", "configure", "score"].includes(operation)) {
     return deny(
       "invalid-operation",
-      "Policy gates only activation and normal scoring.",
+      "Policy gates only configuration, activation, and normal scoring.",
     );
   }
   if (parsed.mode === "disabled")
@@ -868,7 +1582,7 @@ function getDiamondPolicyDecision({
   } catch (error) {
     return deny("invalid-team-id", error.message);
   }
-  if (!Number.isSafeInteger(appBuild) || appBuild < 0) {
+  if (!Number.isSafeInteger(appBuild) || appBuild < 1) {
     return deny("invalid-app-build", "The application build is invalid.");
   }
   if (appBuild < parsed.minimumAppBuild) {
@@ -885,6 +1599,29 @@ function getDiamondPolicyDecision({
       "team-not-in-rollout",
       "This team is not in the active Diamond rollout cohort.",
     );
+  }
+  if (parsed.mode === "enabled" && operation === "activate") {
+    let rolloutBucket;
+    try {
+      rolloutBucket = diamondRolloutBucket(normalizedTeamId, gameId);
+    } catch (error) {
+      return deny("invalid-game-id", error.message);
+    }
+    const explicitlyAllowlisted = parsed.teamIds.includes(normalizedTeamId);
+    if (!explicitlyAllowlisted && rolloutBucket > parsed.rolloutPercent) {
+      return deny(
+        "game-not-in-rollout",
+        "This game is not in the active Diamond rollout cohort.",
+        { rolloutBucket, rolloutPercent: parsed.rolloutPercent },
+      );
+    }
+    return allow("policy-allows", {
+      mode: parsed.mode,
+      policyRevision: parsed.revision,
+      rolloutBucket,
+      rolloutPercent: parsed.rolloutPercent,
+      explicitlyAllowlisted,
+    });
   }
   return allow("policy-allows", {
     mode: parsed.mode,
@@ -1163,6 +1900,7 @@ function evaluateDiamondActivationEligibility({
   const policyDecision = getDiamondPolicyDecision({
     policy,
     teamId: normalizedTeamId,
+    gameId: normalizedGameId,
     appBuild,
     operation: "activate",
   });
@@ -1193,6 +1931,31 @@ function evaluateDiamondActivationEligibility({
       captureMode: optIn.captureMode,
     });
   }
+  const sharedGameFields = [
+    "sharedGameId",
+    "sharedGamePath",
+    "_sharedGamePath",
+    "sharedScheduleId",
+    "sharedScheduleSourceTeamId",
+    "sharedScheduleOpponentTeamId",
+    "sharedScheduleOpponentGameId",
+  ];
+  const hasSharedGameMarker =
+    game.isSharedGame === true ||
+    sharedGameFields.some(
+      (field) =>
+        own(game, field) &&
+        game[field] !== null &&
+        game[field] !== undefined &&
+        game[field] !== "",
+    );
+  if (hasSharedGameMarker) {
+    return deny(
+      "shared-game-requires-canonical-scorebook",
+      "Shared games remain on the current tracker until one canonical Diamond scorebook can own both teams.",
+      { eligible: false },
+    );
+  }
   const ineligibleStatus = normalizeStatus(game.status);
   if (GAME_INELIGIBLE_STATUSES.has(ineligibleStatus)) {
     return deny(
@@ -1220,6 +1983,9 @@ function evaluateDiamondActivationEligibility({
     rulesProfileVersion: optIn.rulesProfileVersion,
     captureMode: optIn.captureMode,
     policyRevision: policyDecision.policyRevision,
+    rolloutBucket: policyDecision.rolloutBucket ?? null,
+    rolloutPercent: policyDecision.rolloutPercent ?? null,
+    explicitlyAllowlisted: policyDecision.explicitlyAllowlisted === true,
   });
 }
 
@@ -1383,8 +2149,12 @@ function decideDiamondLifecycle({ lifecycle, commandType }) {
 function timestampMillis(value) {
   if (Number.isSafeInteger(value) && value >= 0) return value;
   if (value && typeof value.toMillis === "function") {
-    const millis = value.toMillis();
-    return Number.isSafeInteger(millis) && millis >= 0 ? millis : null;
+    try {
+      const millis = value.toMillis();
+      return Number.isSafeInteger(millis) && millis >= 0 ? millis : null;
+    } catch {
+      return null;
+    }
   }
   if (value && Number.isSafeInteger(value.millis) && value.millis >= 0)
     return value.millis;
@@ -1684,6 +2454,18 @@ function sanitizeDiamondPublicEvent(value) {
   );
 }
 
+// Scorer correction/history views need the typed command payload, but not the
+// canonical event's before/after snapshots, actor, command receipt, or hashes.
+// Keep this projection deliberately narrower than the authorized state
+// sanitizer so a bounded history read cannot become a private-ledger export.
+function sanitizeDiamondPrivateEventSummary(value) {
+  return sanitizeAllowlistedObject(
+    value,
+    PRIVATE_EVENT_SUMMARY_FIELDS,
+    isPrivateProjectionSecret,
+  );
+}
+
 function normalizeCursor(value) {
   if (value === null || value === undefined || value === "") return null;
   if (
@@ -1735,7 +2517,9 @@ function buildDiamondEventPage({
   const sanitizer =
     visibility === "private"
       ? sanitizeDiamondPrivateProjection
-      : sanitizeDiamondPublicEvent;
+      : visibility === "private-summary"
+        ? sanitizeDiamondPrivateEventSummary
+        : sanitizeDiamondPublicEvent;
   const bounded = events.slice(0, limit).map(sanitizer);
   const pageHasMore = hasMore === true || events.length > limit;
   const readComplete = readStatus === "complete";
@@ -1942,6 +2726,7 @@ function decideDiamondOperation({
   operation,
   policy,
   teamId,
+  gameId = null,
   appBuild = 0,
   game,
   rollbackStage = "none",
@@ -1964,6 +2749,7 @@ function decideDiamondOperation({
     return getDiamondPolicyDecision({
       policy,
       teamId,
+      gameId,
       appBuild,
       operation: "activate",
     });
@@ -2107,6 +2893,7 @@ module.exports = {
   DIAMOND_SCHEMA_VERSION,
   DIAMOND_ENGINE,
   DIAMOND_POLICY_MODES,
+  DIAMOND_ROLLOUT_PERCENTAGES,
   DIAMOND_SPORTS,
   DIAMOND_COMMAND_TYPES,
   DiamondScorebookCoreError,
@@ -2118,6 +2905,7 @@ module.exports = {
   hashDiamondValue,
   hashDiamondCommand,
   parseDiamondPolicy,
+  diamondRolloutBucket,
   getDiamondPolicyDecision,
   parseDiamondTeamOptIn,
   findMeaningfulLegacyTrackingData,
@@ -2132,6 +2920,7 @@ module.exports = {
   sanitizeDiamondPublicProjection,
   sanitizeDiamondPrivateProjection,
   sanitizeDiamondPublicEvent,
+  sanitizeDiamondPrivateEventSummary,
   buildDiamondEventPage,
   validateDiamondVoiceProposal,
   decideDiamondNotification,

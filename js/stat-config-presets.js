@@ -1,5 +1,5 @@
 import { normalizeStatTrackerConfig } from './stat-leaderboards.js?v=4';
-import { DIAMOND_PLAYER_STAT_CATALOG } from './diamond-stat-presentation.js?v=1';
+import { DIAMOND_PLAYER_STAT_CATALOG, DIAMOND_TEAM_STAT_CATALOG } from './diamond-stat-presentation.js?v=6';
 
 const DIAMOND_STAT_COLUMNS = ['AB', 'H', 'R', 'RBI', 'BB', 'FP'];
 
@@ -16,6 +16,7 @@ function createDiamondSportConfig(sport, { fullCatalog = false } = {}) {
         name: `${sport} Standard`,
         baseType: sport,
         columns: [...DIAMOND_STAT_COLUMNS],
+        diamondPublicTeamStatIds: DIAMOND_TEAM_STAT_CATALOG.map((definition) => definition.id),
         statDefinitions: fullCatalog
             ? DIAMOND_PLAYER_STAT_CATALOG.map((definition) => ({ ...definition }))
             : coreDefinitions
@@ -82,8 +83,8 @@ const PRESET_DEFINITIONS = [
     {
         id: 'softball',
         label: 'Softball Standard',
-        description: 'At-bats, hits, runs, RBI, walks, and fielding plays.',
-        config: createDiamondSportConfig('Softball')
+        description: 'Traditional softball batting, baserunning, pitching, fielding, and rate statistics.',
+        config: createDiamondSportConfig('Softball', { fullCatalog: true })
     },
     {
         id: 'fastpitch',

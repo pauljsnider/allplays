@@ -1,5 +1,18 @@
+import { App as CapacitorApp } from '@capacitor/app';
 import { functions, httpsCallable } from './adapters/legacyParentTools';
-import { getDiamondRulesProfile } from './diamondScorebook';
+import {
+  getDiamondRulesProfile,
+  type DiamondDefensivePosition,
+  type DiamondFinalizationReason,
+  type DiamondGameEndDecision,
+  type DiamondHalfInningEnd
+} from './diamondScorebook';
+import {
+  normalizeDiamondAiDraftForPublication,
+  normalizeDiamondAiSourcePacket,
+  type DiamondAiGameDraft,
+  type DiamondAiSourcePacket
+} from './diamondScorebookAi';
 import { callNativeFirebaseFunction } from './nativeCallable';
 import { isNativeRuntime } from './nativeRuntime';
 
@@ -7,7 +20,7 @@ export type DiamondSport = 'baseball' | 'fastpitch';
 export type DiamondCaptureMode = 'quick' | 'full';
 export type DiamondHalf = 'top' | 'bottom';
 export type DiamondCoverageStatus = 'complete' | 'partial' | 'not_collected';
-export type DiamondLifecycle = 'configured' | 'ready' | 'active' | 'suspended' | 'final' | 'correction';
+export type DiamondLifecycle = 'configured' | 'ready' | 'active' | 'suspended' | 'final' | 'correction' | 'cancelled';
 
 export type DiamondCommandType =
   | 'activate'
@@ -33,7 +46,8 @@ export type DiamondCommandType =
   | 'void_event'
   | 'supersede_event'
   | 'reopen_for_correction'
-  | 'finalize';
+  | 'finalize'
+  | 'cancel';
 
 export type DiamondJsonValue = string | number | boolean | null | DiamondJsonValue[] | { [key: string]: DiamondJsonValue };
 export type DiamondJsonObject = { [key: string]: DiamondJsonValue };
@@ -45,16 +59,27 @@ export type DiamondPlayerRef = {
 };
 
 export type DiamondBaseState = {
-  first: DiamondPlayerRef | null;
-  second: DiamondPlayerRef | null;
-  third: DiamondPlayerRef | null;
+  first: DiamondRunnerRef | null;
+  second: DiamondRunnerRef | null;
+  third: DiamondRunnerRef | null;
+};
+
+export type DiamondRunnerRef = DiamondPlayerRef & {
+  responsiblePitcherId: string | null;
+  courtesyForPlayerId: string | null;
+  reachedOnEventId: string | null;
 };
 
 export type DiamondLineupEntry = DiamondPlayerRef & {
   slot: number;
   active?: boolean;
   battingRole?: string | null;
+  starterPlayerId?: string | null;
+  starterReentriesUsed?: number;
+  substitutions?: string[];
 };
+
+export type DiamondDefense = Partial<Record<DiamondDefensivePosition, DiamondPlayerRef>>;
 
 export type DiamondSide = 'home' | 'away';
 
@@ -85,6 +110,35 @@ export type DiamondRecentPlay = {
   inningLabel: string;
   createdAt?: string | null;
   voided?: boolean;
+  type?: DiamondCommandType | null;
+};
+
+export type DiamondPrivateEvent = {
+  eventId: string;
+  sequence: number;
+  revision: number;
+  type: DiamondCommandType;
+  payload: DiamondJsonObject;
+  createdAt: string | null;
+  voidsEventId: string | null;
+  supersedesEventId: string | null;
+};
+
+/**
+ * A verified contiguous slice of manager-private command summaries. A window
+ * can reach the authoritative head without containing the beginning of the
+ * ledger, so head and whole-history completeness are deliberately separate.
+ */
+export type DiamondPrivateHistoryWindow = {
+  sourceRevision: number;
+  oldestSequence: number | null;
+  newestSequence: number | null;
+  contiguous: true;
+  rangeComplete: true;
+  headComplete: boolean;
+  historyComplete: boolean;
+  hasOlder: boolean;
+  items: DiamondPrivateEvent[];
 };
 
 export type DiamondCompletenessEvidence = {
@@ -95,10 +149,14 @@ export type DiamondCompletenessEvidence = {
 };
 
 export type DiamondScorerLease = {
-  status: 'owned' | 'held-by-other' | 'available' | 'expired';
+  status: 'owned' | 'held-by-other' | 'available' | 'expired' | 'unavailable';
   canScore: boolean;
+  canAcquire: boolean;
+  canRecover: boolean;
   holderUid: string | null;
   holderName: string | null;
+  leaseId: string | null;
+  epoch: number | null;
   expiresAt: string | null;
   eligibleScorers: DiamondPlayerRef[];
 };
@@ -107,6 +165,7 @@ export type DiamondScorebookSnapshot = {
   schemaVersion: 2;
   teamId: string;
   gameId: string;
+  instanceId: string;
   revision: number;
   checkpointHash: string;
   authoritative: boolean;
@@ -131,11 +190,16 @@ export type DiamondScorebookSnapshot = {
   currentBatter: DiamondPlayerRef | null;
   currentPitcher: DiamondPlayerRef | null;
   lineups: Record<DiamondSide, DiamondLineupEntry[]>;
+  defense: Record<DiamondSide, DiamondDefense>;
+  nextBatterSlot: Record<DiamondSide, number>;
   battingLineup: DiamondLineupEntry[];
-  defensiveLineup: DiamondLineupEntry[];
+  defensiveLineup: DiamondPlayerRef[];
   availablePlayers: Record<DiamondSide, DiamondPlayerRef[]>;
   managedSide: DiamondSide | null;
   ruleCapabilities: DiamondRuleCapabilities;
+  halfInningEnd: DiamondHalfInningEnd | null;
+  gameEndDecision: DiamondGameEndDecision | null;
+  finalizationReason: DiamondFinalizationReason | null;
   recentPlays: DiamondRecentPlay[];
   lease: DiamondScorerLease;
   completeness: DiamondCompletenessEvidence;
@@ -147,6 +211,9 @@ export type DiamondCommandEnvelope = {
   commandId: string;
   teamId: string;
   gameId: string;
+  appBuild: number;
+  expectedInstanceId: string;
+  leaseId?: string;
   expectedRevision: number;
   rulesProfileId: string;
   rulesProfileVersion: number;
@@ -160,6 +227,14 @@ export type DiamondCommandOutcome = {
   eventId: string | null;
   snapshot: DiamondScorebookSnapshot | null;
   completeness: DiamondCompletenessEvidence;
+};
+
+export type DiamondScorerLeaseOutcome = {
+  outcome: 'accepted' | 'duplicate';
+  operation: 'acquire' | 'recover';
+  revision: number;
+  eventId: string | null;
+  snapshot: DiamondScorebookSnapshot;
 };
 
 export type DiamondVoiceProposal = {
@@ -185,10 +260,12 @@ export type DiamondAccess = {
 
 export type DiamondTeamConfiguration = {
   configured: boolean;
+  enabled: boolean;
   teamId: string;
   sport: DiamondSport;
   rulesProfileId: string;
   rulesProfileVersion: number;
+  captureMode: DiamondCaptureMode;
 };
 
 export type DiamondGameActivation = {
@@ -197,6 +274,22 @@ export type DiamondGameActivation = {
   gameId: string;
   trackingEngine: 'diamond-v2';
   snapshot: DiamondScorebookSnapshot | null;
+};
+
+export type DiamondRecapSource = {
+  current: true;
+  sourceRevision: number;
+  checkpointHash: string;
+  packet: DiamondAiSourcePacket;
+};
+
+export type DiamondAiPublicationEvidence = {
+  published: true;
+  current: true;
+  sourceRevision: number;
+  checkpointHash: string;
+  publicationId: string;
+  publishedAt: string;
 };
 
 export type DiamondScorebookErrorCode =
@@ -238,9 +331,30 @@ export type DiamondCallableTransport = {
   call: <T>(name: string, data: Record<string, unknown>) => Promise<T>;
 };
 
+export type DiamondAppBuildResolver = () => Promise<number>;
+
+export type DiamondAppBuildDependencies = {
+  isNative?: () => boolean;
+  getNativeInfo?: () => Promise<{ build?: unknown }>;
+  webBuild?: unknown;
+};
+
 export type DiamondQueuedCommand = {
   command: DiamondCommandEnvelope;
   queuedAt: string;
+  authenticatedUid: string;
+  scorerUid: string;
+  instanceId: string;
+  leaseId: string;
+};
+
+export type DiamondQueueIdentity = {
+  teamId: string;
+  gameId: string;
+  authenticatedUid: string;
+  scorerUid: string;
+  instanceId: string;
+  leaseId: string;
 };
 
 export type DiamondQueueReconciliation = {
@@ -277,7 +391,8 @@ const diamondCommandTypes = new Set<DiamondCommandType>([
   'void_event',
   'supersede_event',
   'reopen_for_correction',
-  'finalize'
+  'finalize',
+  'cancel'
 ]);
 const voiceProposalCommandTypes = new Set<DiamondCommandType>([
   'record_pitch',
@@ -292,10 +407,15 @@ const voiceProposalCommandTypes = new Set<DiamondCommandType>([
   'add_courtesy_runner'
 ]);
 
-const queueVersion = 1;
-const queuePrefix = 'allplays:diamond-scorebook:queue:v1';
+const queueVersion = 3;
+const queuePrefix = 'allplays:diamond-scorebook:queue:v3';
+const legacyQueuePrefixes = ['allplays:diamond-scorebook:queue:v1', 'allplays:diamond-scorebook:queue:v2'];
 const maxQueueCommands = 2000;
 const maxQueueBytes = 2_000_000;
+const maxPrivateEventPageBytes = 1_000_000;
+const defaultPrivateHistoryWindowEvents = 200;
+const maxPrivateHistoryWindowEvents = 200;
+const maxPrivateHistoryWindowBytes = 16_000_000;
 const retryableCallableCodes = new Set(['deadline-exceeded', 'internal', 'network-request-failed', 'unavailable', 'unknown']);
 
 function compactText(value: unknown) {
@@ -304,6 +424,28 @@ function compactText(value: unknown) {
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function requireResponseRecord(value: unknown, label: string): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype) {
+    throw new DiamondScorebookError('invalid-response', `The ${label} response was malformed.`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function requireExactResponseFields(value: Record<string, unknown>, allowed: ReadonlySet<string>, label: string) {
+  const unknown = Object.keys(value).find((key) => !allowed.has(key));
+  if (unknown) {
+    throw new DiamondScorebookError('invalid-response', `The ${label} response contained an unsupported field.`);
+  }
+}
+
+function serializedUtf8Bytes(value: unknown, label: string) {
+  try {
+    return new TextEncoder().encode(JSON.stringify(value)).byteLength;
+  } catch {
+    throw new DiamondScorebookError('invalid-response', `The ${label} response was not valid bounded JSON.`);
+  }
 }
 
 function requireResourceId(value: unknown, label: string) {
@@ -320,6 +462,117 @@ function requireRevision(value: unknown, label = 'Expected revision') {
     throw new DiamondScorebookError('invalid-input', `${label} must be a nonnegative integer.`);
   }
   return revision;
+}
+
+function requireAppBuild(value: unknown) {
+  const candidate = typeof value === 'string' && /^\d+$/.test(value.trim()) ? Number(value.trim()) : value;
+  if (!Number.isSafeInteger(candidate) || Number(candidate) < 1) {
+    throw new DiamondScorebookError(
+      'invalid-input',
+      'This app does not expose a valid build number. Diamond scoring remains read only until the app is updated or rebuilt.'
+    );
+  }
+  return Number(candidate);
+}
+
+/**
+ * Resolve a server-comparable build number without inventing a fallback.
+ * Native shells use the platform build; hosted web must inject an explicit
+ * VITE_ALLPLAYS_APP_BUILD at compile time. Tests can inject either source.
+ */
+export async function resolveDiamondAppBuild(dependencies: DiamondAppBuildDependencies = {}) {
+  const native = (dependencies.isNative || isNativeRuntime)();
+  if (!native) {
+    return requireAppBuild(dependencies.webBuild ?? import.meta.env.VITE_ALLPLAYS_APP_BUILD);
+  }
+  try {
+    const info = await (dependencies.getNativeInfo || (() => CapacitorApp.getInfo()))();
+    return requireAppBuild(info.build);
+  } catch (error) {
+    if (error instanceof DiamondScorebookError) throw error;
+    throw new DiamondScorebookError('unavailable', 'The native app build could not be verified. Diamond scoring remains read only.', {
+      cause: error
+    });
+  }
+}
+
+async function resolveRequestedAppBuild(value: unknown, resolver?: DiamondAppBuildResolver) {
+  if (value !== undefined) return requireAppBuild(value);
+  try {
+    return requireAppBuild(await (resolver || resolveDiamondAppBuild)());
+  } catch (error) {
+    if (error instanceof DiamondScorebookError) throw error;
+    throw new DiamondScorebookError('unavailable', 'The app build could not be verified. Diamond scoring remains read only.', {
+      cause: error
+    });
+  }
+}
+
+function requireCheckpointHash(value: unknown, code: 'invalid-input' | 'invalid-response' = 'invalid-response') {
+  const hash = compactText(value).toLowerCase();
+  if (!/^sha256:[0-9a-f]{64}$/.test(hash)) {
+    throw new DiamondScorebookError(
+      code,
+      code === 'invalid-input'
+        ? 'The Diamond AI request did not include a valid checkpoint hash.'
+        : 'The Diamond AI response did not include a valid checkpoint hash.'
+    );
+  }
+  return hash;
+}
+
+function requireSecureRequestId(value: unknown) {
+  const requestId = requireResourceId(value, 'Request ID');
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)) {
+    throw new DiamondScorebookError('invalid-input', 'Request ID must be a secure UUID.');
+  }
+  return requestId.toLowerCase();
+}
+
+function requireScorerLeaseId(value: unknown) {
+  const leaseId = requireResourceId(value, 'Scorer lease ID');
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(leaseId)) {
+    throw new DiamondScorebookError('invalid-input', 'Scorer lease ID must be a secure UUID.');
+  }
+  return leaseId.toLowerCase();
+}
+
+function requireDiamondInstanceId(value: unknown, code: 'invalid-input' | 'invalid-response') {
+  const instanceId = compactText(value);
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(instanceId)) {
+    throw new DiamondScorebookError(code, 'Diamond instance ID must be a secure UUID.');
+  }
+  return instanceId.toLowerCase();
+}
+
+function requireIsoTimestamp(value: unknown) {
+  const timestamp = compactText(value);
+  if (
+    !timestamp ||
+    timestamp.length > 64 ||
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/.test(timestamp) ||
+    !Number.isFinite(Date.parse(timestamp))
+  ) {
+    throw new DiamondScorebookError('invalid-response', 'The Diamond AI publication did not include a valid publication time.');
+  }
+  return timestamp;
+}
+
+function requirePublicationId(value: unknown) {
+  const publicationId = compactText(value);
+  if (!publicationId || publicationId.length > 128 || publicationId.includes('/')) {
+    throw new DiamondScorebookError('invalid-response', 'The Diamond AI publication did not include a safe publication ID.');
+  }
+  return publicationId;
+}
+
+function requireExactResponseKeys(source: Record<string, unknown>, keys: readonly string[], label: string) {
+  const expected = new Set(keys);
+  const unknown = Object.keys(source).find((key) => !expected.has(key));
+  const missing = keys.find((key) => !Object.prototype.hasOwnProperty.call(source, key));
+  if (unknown || missing) {
+    throw new DiamondScorebookError('invalid-response', `${label} did not match the expected response contract.`);
+  }
 }
 
 function requirePositiveVersion(value: unknown, label = 'Rules profile version') {
@@ -488,6 +741,9 @@ export function createDiamondCommand(
   input: {
     teamId: string;
     gameId: string;
+    appBuild: number;
+    expectedInstanceId: string;
+    leaseId?: string | null;
     expectedRevision: number;
     rulesProfileId: string;
     rulesProfileVersion: number;
@@ -504,6 +760,9 @@ export function createDiamondCommand(
     commandId: createSecureDiamondId(cryptoSource === undefined ? globalThis.crypto : cryptoSource),
     teamId: requireResourceId(input.teamId, 'Team ID'),
     gameId: requireResourceId(input.gameId, 'Game ID'),
+    appBuild: requireAppBuild(input.appBuild),
+    expectedInstanceId: requireDiamondInstanceId(input.expectedInstanceId, 'invalid-input'),
+    ...(input.leaseId ? { leaseId: requireScorerLeaseId(input.leaseId) } : {}),
     expectedRevision: requireRevision(input.expectedRevision),
     rulesProfileId: requireResourceId(input.rulesProfileId, 'Rules profile ID'),
     rulesProfileVersion: requirePositiveVersion(input.rulesProfileVersion),
@@ -541,12 +800,56 @@ function normalizeLineup(value: unknown): DiamondLineupEntry[] {
           ...player,
           slot: normalizeBoundedInteger(source.slot, 1, 99, index + 1),
           active: source.active !== false,
-          battingRole: compactText(source.battingRole) || null
+          battingRole: compactText(source.battingRole) || null,
+          starterPlayerId: compactText(source.starterPlayerId) || player.playerId,
+          starterReentriesUsed: normalizeBoundedInteger(source.starterReentriesUsed, 0, 99, 0),
+          substitutions: Array.isArray(source.substitutions) ? source.substitutions.map(compactText).filter(Boolean).slice(0, 100) : []
         }
       ];
     })
     .sort((a, b) => a.slot - b.slot)
     .slice(0, 25);
+}
+
+const diamondDefensivePositions: readonly DiamondDefensivePosition[] = [
+  'P',
+  'C',
+  '1B',
+  '2B',
+  '3B',
+  'SS',
+  'LF',
+  'LCF',
+  'CF',
+  'RCF',
+  'RF',
+  'DP',
+  'FLEX',
+  'EH',
+  'EP'
+];
+
+function normalizeDefense(value: unknown, playersById: ReadonlyMap<string, DiamondPlayerRef>): DiamondDefense {
+  const source = asRecord(value);
+  return diamondDefensivePositions.reduce<DiamondDefense>((result, position) => {
+    const player = normalizePlayer(source[position]);
+    if (!player) return result;
+    result[position] = playersById.get(player.playerId) || player;
+    return result;
+  }, {});
+}
+
+function normalizeRunner(value: unknown, playersById: ReadonlyMap<string, DiamondPlayerRef>): DiamondRunnerRef | null {
+  const source = asRecord(value);
+  const player = normalizePlayer(value);
+  if (!player) return null;
+  const enriched = playersById.get(player.playerId) || player;
+  return {
+    ...enriched,
+    responsiblePitcherId: compactText(source.chargedToPitcherId || source.responsiblePitcherId) || null,
+    courtesyForPlayerId: compactText(source.courtesyForPlayerId || source.courtesyFor) || null,
+    reachedOnEventId: compactText(source.reachedOnEventId) || null
+  };
 }
 
 function normalizePlayerList(value: unknown, fallback: DiamondPlayerRef[] = []): DiamondPlayerRef[] {
@@ -582,6 +885,62 @@ function normalizeCompleteness(value: unknown, revision: number): DiamondComplet
   };
 }
 
+function normalizeDecisionEventId(value: unknown, label: string) {
+  const eventId = compactText(value);
+  if (!eventId || eventId.length > 128 || eventId.includes('/')) {
+    throw new DiamondScorebookError('invalid-response', `The scorebook returned an invalid ${label} event ID.`);
+  }
+  return eventId;
+}
+
+function normalizeHalfInningEnd(value: unknown): DiamondHalfInningEnd | null {
+  if (value === null || value === undefined) return null;
+  const source = asRecord(value);
+  if (source.reason !== 'run-limit') {
+    throw new DiamondScorebookError('invalid-response', 'The scorebook returned an invalid half-inning ending decision.');
+  }
+  return {
+    reason: 'run-limit',
+    decisionEventId: normalizeDecisionEventId(source.decisionEventId, 'half-inning decision')
+  };
+}
+
+function normalizeGameEndDecision(value: unknown): DiamondGameEndDecision | null {
+  if (value === null || value === undefined) return null;
+  const source = asRecord(value);
+  const reason = source.reason;
+  if (reason !== 'time-limit' && reason !== 'weather' && reason !== 'forfeit') {
+    throw new DiamondScorebookError('invalid-response', 'The scorebook returned an invalid game-ending decision.');
+  }
+  if (source.awardedSide !== null && source.awardedSide !== 'home' && source.awardedSide !== 'away') {
+    throw new DiamondScorebookError('invalid-response', 'The scorebook returned an invalid game-ending award.');
+  }
+  const awardedSide = source.awardedSide;
+  if ((reason === 'forfeit') !== (awardedSide !== null)) {
+    throw new DiamondScorebookError('invalid-response', 'The scorebook returned an invalid game-ending award.');
+  }
+  return {
+    reason,
+    decisionEventId: normalizeDecisionEventId(source.decisionEventId, 'game-ending decision'),
+    awardedSide
+  };
+}
+
+function normalizeFinalizationReason(value: unknown): DiamondFinalizationReason | null {
+  if (value === null || value === undefined) return null;
+  const source = asRecord(value);
+  const kind = source.kind;
+  if (typeof kind !== 'string' || !['regulation', 'walkoff', 'run-ahead', 'time-limit', 'weather', 'forfeit'].includes(kind)) {
+    throw new DiamondScorebookError('invalid-response', 'The scorebook returned an invalid finalization reason.');
+  }
+  const requiresDecision = kind === 'time-limit' || kind === 'weather' || kind === 'forfeit';
+  const decisionEventId = source.decisionEventId == null ? null : normalizeDecisionEventId(source.decisionEventId, 'finalization decision');
+  if (requiresDecision !== (decisionEventId !== null)) {
+    throw new DiamondScorebookError('invalid-response', 'The scorebook returned invalid finalization evidence.');
+  }
+  return { kind: kind as DiamondFinalizationReason['kind'], decisionEventId };
+}
+
 function normalizeRecentPlays(value: unknown): DiamondRecentPlay[] {
   return (Array.isArray(value) ? value : [])
     .flatMap((entry) => {
@@ -607,22 +966,41 @@ function normalizeRecentPlays(value: unknown): DiamondRecentPlay[] {
 function normalizeLease(value: unknown, currentScorerUid: unknown): DiamondScorerLease {
   const source = asRecord(value);
   const holderUid = compactText(source.holderUid || source.scorerUid || currentScorerUid) || null;
-  const canScore = source.canScore === true || source.ownedByCaller === true;
+  const claimedCanScore = source.canScore === true || source.ownedByCaller === true;
   const rawStatus = compactText(source.status);
   const status: DiamondScorerLease['status'] =
-    rawStatus === 'owned' || rawStatus === 'held-by-other' || rawStatus === 'expired'
+    rawStatus === 'owned' ||
+    rawStatus === 'held-by-other' ||
+    rawStatus === 'available' ||
+    rawStatus === 'expired' ||
+    rawStatus === 'unavailable'
       ? rawStatus
-      : canScore
+      : claimedCanScore
         ? 'owned'
         : holderUid
           ? 'held-by-other'
           : 'available';
+  const rawLeaseId = compactText(source.leaseId);
+  if (rawLeaseId && !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(rawLeaseId)) {
+    throw new DiamondScorebookError('invalid-response', 'The scorebook returned an invalid scorer lease ID.');
+  }
+  const rawEpoch = source.epoch;
+  const epoch = Number.isSafeInteger(rawEpoch) && Number(rawEpoch) > 0 ? Number(rawEpoch) : null;
+  const rawExpiresAt = compactText(source.expiresAt);
+  if (rawExpiresAt && (!Number.isFinite(Date.parse(rawExpiresAt)) || rawExpiresAt.length > 64)) {
+    throw new DiamondScorebookError('invalid-response', 'The scorebook returned an invalid scorer lease expiry.');
+  }
+  const leaseId = rawLeaseId ? rawLeaseId.toLowerCase() : null;
   return {
     status,
-    canScore,
+    canScore: claimedCanScore && status === 'owned' && leaseId !== null,
+    canAcquire: source.canAcquire === true,
+    canRecover: source.canRecover === true,
     holderUid,
     holderName: compactText(source.holderName || source.scorerName) || null,
-    expiresAt: compactText(source.expiresAt) || null,
+    leaseId,
+    epoch,
+    expiresAt: rawExpiresAt || null,
     eligibleScorers: (Array.isArray(source.eligibleScorers) ? source.eligibleScorers : [])
       .map(normalizePlayer)
       .filter(Boolean) as DiamondPlayerRef[]
@@ -639,6 +1017,7 @@ export function normalizeDiamondSnapshot(value: unknown): DiamondScorebookSnapsh
   }
   const teamId = requireResourceId(root.teamId || state.teamId, 'Team ID');
   const gameId = requireResourceId(root.gameId || state.gameId, 'Game ID');
+  const instanceId = requireDiamondInstanceId(root.instanceId || state.instanceId, 'invalid-response');
   const inningSource = asRecord(state.inning);
   const countSource = asRecord(state.count || inningSource.count);
   const scoreSource = asRecord(state.score);
@@ -646,30 +1025,60 @@ export function normalizeDiamondSnapshot(value: unknown): DiamondScorebookSnapsh
   const lineupSource = asRecord(state.lineups || presentation.lineups);
   const half: DiamondHalf = inningSource.half === 'bottom' ? 'bottom' : 'top';
   const lifecycleSource = compactText(state.lifecycle);
-  const lifecycle: DiamondLifecycle = ['configured', 'ready', 'active', 'suspended', 'final', 'correction'].includes(lifecycleSource)
+  const lifecycle: DiamondLifecycle = ['configured', 'ready', 'active', 'suspended', 'final', 'correction', 'cancelled'].includes(
+    lifecycleSource
+  )
     ? (lifecycleSource as DiamondLifecycle)
     : 'configured';
   const captureMode: DiamondCaptureMode = state.captureMode === 'full' ? 'full' : 'quick';
   const battingSide = half === 'top' ? 'away' : 'home';
-  const homeLineup = normalizeLineup(lineupSource.home);
-  const awayLineup = normalizeLineup(lineupSource.away);
-  const battingLineup = normalizeLineup(presentation.battingLineup || lineupSource[battingSide] || state.battingLineup);
-  const defensiveLineup = normalizeLineup(presentation.defensiveLineup || lineupSource[battingSide === 'home' ? 'away' : 'home']);
-  const playersById = new Map([...homeLineup, ...awayLineup].map((player) => [player.playerId, player]));
-  const nextBatterSlot = normalizeBoundedInteger(asRecord(state.nextBatterSlot)[battingSide], 0, 98, 0);
-  const derivedBatter = battingLineup.length ? battingLineup[nextBatterSlot % battingLineup.length] || null : null;
-  const defensiveSide = battingSide === 'home' ? 'away' : 'home';
-  const defensiveLineupSource = asRecord(lineupSource[defensiveSide]);
-  const derivedPitcherId = compactText(asRecord(defensiveLineupSource.defense).P);
-  const enrichedBases = asRecord(presentation.bases || basesSource);
-  const lease = normalizeLease(root.lease || state.lease, state.currentScorerUid);
-  const rulesProfileId = requireResourceId(state.rulesProfileId || root.rulesProfileId, 'Rules profile ID');
-  const rulesProfileVersion = requirePositiveVersion(state.rulesProfileVersion || root.rulesProfileVersion);
+  const rawHomeLineup = normalizeLineup(lineupSource.home);
+  const rawAwayLineup = normalizeLineup(lineupSource.away);
   const candidatesSource = presentation.availablePlayers || presentation.rosterCandidates;
   const candidateSides = asRecord(candidatesSource);
   const flatCandidates = Array.isArray(candidatesSource) ? candidatesSource : [];
-  const homeCandidates = flatCandidates.filter((candidate) => asRecord(candidate).side === 'home');
-  const awayCandidates = flatCandidates.filter((candidate) => asRecord(candidate).side === 'away');
+  const homeCandidates = normalizePlayerList(
+    candidateSides.home || presentation.homePlayers || flatCandidates.filter((candidate) => asRecord(candidate).side === 'home'),
+    rawHomeLineup
+  );
+  const awayCandidates = normalizePlayerList(
+    candidateSides.away || presentation.awayPlayers || flatCandidates.filter((candidate) => asRecord(candidate).side === 'away'),
+    rawAwayLineup
+  );
+  const playersById = new Map(
+    [...rawHomeLineup, ...rawAwayLineup, ...homeCandidates, ...awayCandidates].map((player) => [player.playerId, player])
+  );
+  const enrichLineup = (entries: DiamondLineupEntry[]) =>
+    entries.map((entry) => ({ ...entry, ...(playersById.get(entry.playerId) || {}) }));
+  const homeLineup = enrichLineup(rawHomeLineup);
+  const awayLineup = enrichLineup(rawAwayLineup);
+  const nextBatterSlots = {
+    home: normalizeBoundedInteger(asRecord(state.nextBatterSlot).home, 0, 98, 0),
+    away: normalizeBoundedInteger(asRecord(state.nextBatterSlot).away, 0, 98, 0)
+  };
+  const battingLineup = enrichLineup(normalizeLineup(presentation.battingLineup || lineupSource[battingSide] || state.battingLineup));
+  const nextBatterSlot = nextBatterSlots[battingSide];
+  const derivedBatter = battingLineup.length ? battingLineup[nextBatterSlot % battingLineup.length] || null : null;
+  const defensiveSide = battingSide === 'home' ? 'away' : 'home';
+  const defensiveLineupSource = asRecord(lineupSource[defensiveSide]);
+  const defense = {
+    home: normalizeDefense(asRecord(lineupSource.home).defense, playersById),
+    away: normalizeDefense(asRecord(lineupSource.away).defense, playersById)
+  } satisfies Record<DiamondSide, DiamondDefense>;
+  const derivedPitcherId = defense[defensiveSide].P?.playerId || compactText(asRecord(defensiveLineupSource.defense).P);
+  const defensePlayers = Object.values(defense[defensiveSide]).filter(Boolean) as DiamondPlayerRef[];
+  const defensiveLineup = defensePlayers.filter(
+    (player, index, all) => all.findIndex((candidate) => candidate.playerId === player.playerId) === index
+  );
+  const presentedBases = asRecord(presentation.bases);
+  const normalizeBase = (name: 'first' | 'second' | 'third', number: '1' | '2' | '3') => {
+    const canonical = asRecord(basesSource[name] || basesSource[number]);
+    const presented = asRecord(presentedBases[name] || presentedBases[number]);
+    return normalizeRunner({ ...canonical, ...presented }, playersById);
+  };
+  const lease = normalizeLease(root.lease || state.lease, state.currentScorerUid);
+  const rulesProfileId = requireResourceId(state.rulesProfileId || root.rulesProfileId, 'Rules profile ID');
+  const rulesProfileVersion = requirePositiveVersion(state.rulesProfileVersion || root.rulesProfileVersion);
   const managedSideValue = compactText(presentation.managedSide || root.managedSide);
   const managedSide: DiamondSide | null = managedSideValue === 'home' || managedSideValue === 'away' ? managedSideValue : null;
   const capabilitiesSource = asRecord(presentation.rulesCapabilities || root.rulesCapabilities);
@@ -697,6 +1106,7 @@ export function normalizeDiamondSnapshot(value: unknown): DiamondScorebookSnapsh
     schemaVersion: 2,
     teamId,
     gameId,
+    instanceId,
     revision,
     checkpointHash: compactText(state.checkpointHash || root.checkpointHash),
     authoritative: root.authoritative !== false && completeness.authoritativeRevision === revision,
@@ -721,23 +1131,26 @@ export function normalizeDiamondSnapshot(value: unknown): DiamondScorebookSnapsh
       pitchesInPlateAppearance: normalizeBoundedInteger(inningSource.pitchesInPlateAppearance, 0, 999, 0)
     },
     bases: {
-      first: normalizePlayer(enrichedBases.first || enrichedBases['1']),
-      second: normalizePlayer(enrichedBases.second || enrichedBases['2']),
-      third: normalizePlayer(enrichedBases.third || enrichedBases['3'])
+      first: normalizeBase('first', '1'),
+      second: normalizeBase('second', '2'),
+      third: normalizeBase('third', '3')
     },
-    currentBatter: normalizePlayer(presentation.currentBatter || state.currentBatter) || derivedBatter,
-    currentPitcher:
-      normalizePlayer(presentation.currentPitcher || state.currentPitcher) ||
-      (derivedPitcherId ? playersById.get(derivedPitcherId) || normalizePlayer(derivedPitcherId) : null),
+    currentBatter: derivedBatter || normalizePlayer(state.currentBatter || presentation.currentBatter),
+    currentPitcher: derivedPitcherId ? playersById.get(derivedPitcherId) || normalizePlayer(derivedPitcherId) : null,
     lineups: { home: homeLineup, away: awayLineup },
+    defense,
+    nextBatterSlot: nextBatterSlots,
     battingLineup,
     defensiveLineup,
     availablePlayers: {
-      home: normalizePlayerList(candidateSides.home || presentation.homePlayers || homeCandidates, homeLineup),
-      away: normalizePlayerList(candidateSides.away || presentation.awayPlayers || awayCandidates, awayLineup)
+      home: homeCandidates,
+      away: awayCandidates
     },
     managedSide,
     ruleCapabilities,
+    halfInningEnd: normalizeHalfInningEnd(state.halfInningEnd),
+    gameEndDecision: normalizeGameEndDecision(state.gameEndDecision),
+    finalizationReason: normalizeFinalizationReason(state.finalizationReason),
     recentPlays: normalizeRecentPlays(root.recentPlays || presentation.recentPlays || state.recentPlays),
     lease,
     completeness,
@@ -776,6 +1189,9 @@ function normalizeCommandOutcome(value: unknown, command: DiamondCommandEnvelope
   }
   const snapshotValue = source.state || source.snapshot;
   const snapshot = snapshotValue ? normalizeDiamondSnapshot({ ...asRecord(snapshotValue), revision }) : null;
+  if (snapshot && snapshot.instanceId !== command.expectedInstanceId) {
+    throw new DiamondScorebookError('invalid-response', 'The scorebook returned a different Diamond game instance.');
+  }
   return {
     outcome: rawOutcome,
     revision,
@@ -785,15 +1201,11 @@ function normalizeCommandOutcome(value: unknown, command: DiamondCommandEnvelope
   };
 }
 
-export async function getDiamondState(
-  teamId: string,
-  gameId: string,
-  options: { visibility?: 'private' | 'public'; transport?: DiamondCallableTransport } = {}
-) {
+export async function getDiamondState(teamId: string, gameId: string, options: { transport?: DiamondCallableTransport } = {}) {
   const payload = {
     teamId: requireResourceId(teamId, 'Team ID'),
     gameId: requireResourceId(gameId, 'Game ID'),
-    visibility: options.visibility === 'public' ? 'public' : 'private'
+    visibility: 'private'
   };
   try {
     const result = await callWithRetry<unknown>(
@@ -805,6 +1217,483 @@ export async function getDiamondState(
     return normalizeDiamondSnapshot(result);
   } catch (error) {
     throw toDiamondError(error, 'Unable to load the diamond scorebook.');
+  }
+}
+
+type DiamondPrivateEventPage = {
+  sourceRevision: number;
+  items: DiamondPrivateEvent[];
+  nextCursor: string | null;
+  collectionComplete: boolean;
+  byteLength: number;
+};
+
+const privateEventPageFields = new Set([
+  'sourceRevision',
+  'items',
+  'nextCursor',
+  'complete',
+  'accessComplete',
+  'collectionComplete',
+  'responseByteCount',
+  'responseByteLimit'
+]);
+const privateEventSummaryFields = new Set([
+  'eventId',
+  'sequence',
+  'revision',
+  'type',
+  'payload',
+  'serverTimestampMs',
+  'createdAt',
+  'voidsEventId',
+  'supersedesEventId'
+]);
+
+function normalizePrivateEventLink(value: unknown, label: string) {
+  if (value === null || value === undefined || value === '') return null;
+  return normalizeDecisionEventId(value, label);
+}
+
+function normalizePrivateEventTimestamp(event: Record<string, unknown>) {
+  if (event.serverTimestampMs !== null && event.serverTimestampMs !== undefined) {
+    const timestamp = event.serverTimestampMs;
+    if (!Number.isSafeInteger(timestamp) || Number(timestamp) < 0 || Number(timestamp) > 8_640_000_000_000_000) {
+      throw new DiamondScorebookError('invalid-response', 'The private scorebook history contained an invalid timestamp.');
+    }
+    return new Date(Number(timestamp)).toISOString();
+  }
+  if (event.createdAt === null || event.createdAt === undefined || event.createdAt === '') return null;
+  const createdAt = compactText(event.createdAt);
+  if (createdAt.length > 64 || !Number.isFinite(Date.parse(createdAt))) {
+    throw new DiamondScorebookError('invalid-response', 'The private scorebook history contained an invalid timestamp.');
+  }
+  return new Date(createdAt).toISOString();
+}
+
+function normalizePrivateEventPage(value: unknown): DiamondPrivateEventPage {
+  const byteLength = serializedUtf8Bytes(value, 'private scorebook history');
+  if (byteLength > maxPrivateEventPageBytes) {
+    throw new DiamondScorebookError('unavailable', 'A private scorebook history page exceeded the safe scorer-view limit.', {
+      retryable: false
+    });
+  }
+  const source = requireResponseRecord(value, 'private scorebook history');
+  requireExactResponseFields(source, privateEventPageFields, 'private scorebook history');
+  if (
+    !Number.isSafeInteger(source.responseByteCount) ||
+    source.responseByteCount !== byteLength ||
+    source.responseByteLimit !== maxPrivateEventPageBytes ||
+    Number(source.responseByteCount) > Number(source.responseByteLimit)
+  ) {
+    throw new DiamondScorebookError('invalid-response', 'The private scorebook history returned invalid byte-bound evidence.');
+  }
+  const sourceRevision = normalizeOptionalRevision(source.sourceRevision);
+  if (sourceRevision === null || source.complete !== true || source.accessComplete !== true) {
+    throw new DiamondScorebookError(
+      'unavailable',
+      'The private scorebook history could not be read completely. Retry before using it for notes or corrections.',
+      { retryable: true, authoritativeRevision: sourceRevision }
+    );
+  }
+  const items = (Array.isArray(source.items) ? source.items : []).map((entry): DiamondPrivateEvent => {
+    const event = requireResponseRecord(entry, 'private scorebook event summary');
+    requireExactResponseFields(event, privateEventSummaryFields, 'private scorebook event summary');
+    const type = compactText(event.type) as DiamondCommandType;
+    if (!diamondCommandTypes.has(type)) {
+      throw new DiamondScorebookError('invalid-response', 'The private scorebook history contained an unsupported event type.');
+    }
+    const sequence = normalizeOptionalRevision(event.sequence);
+    const revision = normalizeOptionalRevision(event.revision);
+    if (sequence === null || sequence < 1 || revision === null || revision !== sequence) {
+      throw new DiamondScorebookError('invalid-response', 'The private scorebook history contained an invalid event sequence.');
+    }
+    let payload: DiamondJsonObject;
+    try {
+      payload = cloneJsonObject(event.payload || {});
+    } catch {
+      throw new DiamondScorebookError('invalid-response', 'The private scorebook history contained an invalid event payload.');
+    }
+    return {
+      eventId: normalizeDecisionEventId(event.eventId, 'private scorebook'),
+      sequence,
+      revision,
+      type,
+      payload,
+      createdAt: normalizePrivateEventTimestamp(event),
+      voidsEventId: normalizePrivateEventLink(event.voidsEventId, 'void target'),
+      supersedesEventId: normalizePrivateEventLink(event.supersedesEventId, 'superseded target')
+    };
+  });
+  for (let index = 1; index < items.length; index += 1) {
+    if (items[index]!.sequence !== items[index - 1]!.sequence + 1) {
+      throw new DiamondScorebookError('invalid-response', 'The private scorebook history page is not contiguous.');
+    }
+  }
+  const nextCursor = source.nextCursor == null ? null : compactText(source.nextCursor);
+  if (nextCursor !== null && (!/^\d+$/.test(nextCursor) || Number(nextCursor) !== items[items.length - 1]?.sequence)) {
+    throw new DiamondScorebookError('invalid-response', 'The private scorebook history returned an invalid continuation cursor.');
+  }
+  const collectionComplete = source.collectionComplete === true;
+  if (collectionComplete !== (nextCursor === null)) {
+    throw new DiamondScorebookError('invalid-response', 'The private scorebook history returned inconsistent completeness evidence.');
+  }
+  return { sourceRevision, items, nextCursor, collectionComplete, byteLength };
+}
+
+async function listDiamondPrivateEventPage(
+  input: { teamId: string; gameId: string; cursor?: string | null; limit?: number },
+  options: { transport?: DiamondCallableTransport } = {}
+): Promise<DiamondPrivateEventPage> {
+  const limit = normalizeBoundedInteger(input.limit, 1, 200, 200);
+  const cursor = input.cursor ? compactText(input.cursor) : null;
+  if (cursor && !/^\d+$/.test(cursor)) throw new DiamondScorebookError('invalid-input', 'The private event cursor is invalid.');
+  try {
+    const raw = await callWithRetry<unknown>(
+      options.transport || defaultTransport,
+      'listDiamondEvents',
+      {
+        teamId: requireResourceId(input.teamId, 'Team ID'),
+        gameId: requireResourceId(input.gameId, 'Game ID'),
+        visibility: 'private',
+        limit,
+        ...(cursor ? { cursor } : {})
+      },
+      'Unable to load private scorebook history.'
+    );
+    return normalizePrivateEventPage(raw);
+  } catch (error) {
+    throw toDiamondError(error, 'Unable to load private scorebook history.');
+  }
+}
+
+function requirePrivateHistoryWindowSize(value: unknown) {
+  if (value === undefined || value === null) return defaultPrivateHistoryWindowEvents;
+  const size = Number(value);
+  if (!Number.isSafeInteger(size) || size < 1 || size > maxPrivateHistoryWindowEvents) {
+    throw new DiamondScorebookError(
+      'invalid-input',
+      `Private history windows must contain between 1 and ${maxPrivateHistoryWindowEvents} events.`
+    );
+  }
+  return size;
+}
+
+function assertPrivateHistoryWindowEvidence(window: DiamondPrivateHistoryWindow, label: string) {
+  const expectedEmpty = window.sourceRevision === 0 && window.items.length === 0;
+  if (expectedEmpty) {
+    if (
+      window.oldestSequence !== null ||
+      window.newestSequence !== null ||
+      !window.headComplete ||
+      !window.historyComplete ||
+      window.hasOlder
+    ) {
+      throw new DiamondScorebookError('invalid-response', `${label} contained inconsistent empty-history evidence.`);
+    }
+    return;
+  }
+  const oldest = window.items[0]?.sequence ?? null;
+  const newest = window.items[window.items.length - 1]?.sequence ?? null;
+  if (
+    oldest === null ||
+    newest === null ||
+    window.oldestSequence !== oldest ||
+    window.newestSequence !== newest ||
+    window.contiguous !== true ||
+    window.rangeComplete !== true ||
+    window.headComplete !== (newest === window.sourceRevision) ||
+    window.historyComplete !== (oldest === 1 && newest === window.sourceRevision) ||
+    window.hasOlder !== oldest > 1
+  ) {
+    throw new DiamondScorebookError('invalid-response', `${label} contained inconsistent completeness evidence.`);
+  }
+  for (let index = 1; index < window.items.length; index += 1) {
+    if (window.items[index]!.sequence !== window.items[index - 1]!.sequence + 1) {
+      throw new DiamondScorebookError('invalid-response', `${label} was not contiguous.`);
+    }
+  }
+}
+
+/**
+ * Read one exact private-summary range without walking the ledger from event 1.
+ * The existing ascending cursor remains sufficient: choose the first sequence
+ * locally, then page forward only until the requested exclusive boundary.
+ */
+export async function getDiamondPrivateHistoryWindow(
+  input: {
+    teamId: string;
+    gameId: string;
+    expectedRevision: number;
+    beforeSequence?: number | null;
+    windowSize?: number;
+  },
+  options: { transport?: DiamondCallableTransport } = {}
+): Promise<DiamondPrivateHistoryWindow> {
+  const expectedRevision = requireRevision(input.expectedRevision);
+  const windowSize = requirePrivateHistoryWindowSize(input.windowSize);
+  let requestedEnd = expectedRevision;
+  if (input.beforeSequence !== undefined && input.beforeSequence !== null) {
+    const beforeSequence = Number(input.beforeSequence);
+    if (!Number.isSafeInteger(beforeSequence) || beforeSequence < 2 || beforeSequence > expectedRevision) {
+      throw new DiamondScorebookError('invalid-input', 'The older private-history boundary is invalid.');
+    }
+    requestedEnd = beforeSequence - 1;
+  }
+
+  if (expectedRevision === 0) {
+    const page = await listDiamondPrivateEventPage({ teamId: input.teamId, gameId: input.gameId, limit: 1 }, options);
+    if (page.sourceRevision !== 0 || page.items.length !== 0 || page.nextCursor !== null || !page.collectionComplete) {
+      throw new DiamondScorebookError('invalid-response', 'The empty private scorebook history returned inconsistent evidence.');
+    }
+    return {
+      sourceRevision: 0,
+      oldestSequence: null,
+      newestSequence: null,
+      contiguous: true,
+      rangeComplete: true,
+      headComplete: true,
+      historyComplete: true,
+      hasOlder: false,
+      items: []
+    };
+  }
+
+  const requestedStart = Math.max(1, requestedEnd - windowSize + 1);
+  const items: DiamondPrivateEvent[] = [];
+  let totalBytes = 0;
+  let afterSequence = requestedStart - 1;
+  while (afterSequence < requestedEnd) {
+    const remaining = requestedEnd - afterSequence;
+    const page = await listDiamondPrivateEventPage(
+      {
+        teamId: input.teamId,
+        gameId: input.gameId,
+        cursor: afterSequence > 0 ? String(afterSequence) : null,
+        limit: Math.min(maxPrivateHistoryWindowEvents, remaining)
+      },
+      options
+    );
+    if (page.sourceRevision !== expectedRevision) {
+      throw new DiamondScorebookError(
+        'stale-revision',
+        'The scorebook changed while private history was loading. Refresh before using notes or corrections.',
+        { authoritativeRevision: page.sourceRevision }
+      );
+    }
+    totalBytes += page.byteLength;
+    if (totalBytes > maxPrivateHistoryWindowBytes) {
+      throw new DiamondScorebookError('unavailable', 'This private-history window exceeds the safe scorer-view byte limit.', {
+        retryable: false,
+        authoritativeRevision: expectedRevision
+      });
+    }
+    if (!page.items.length || page.items[0]!.sequence !== afterSequence + 1) {
+      throw new DiamondScorebookError('invalid-response', 'The private scorebook history window is not contiguous.');
+    }
+    const lastSequence = page.items[page.items.length - 1]!.sequence;
+    if (lastSequence > requestedEnd) {
+      throw new DiamondScorebookError('invalid-response', 'The private scorebook history exceeded its requested boundary.');
+    }
+    items.push(...page.items);
+    afterSequence = lastSequence;
+
+    if (afterSequence < requestedEnd) {
+      if (page.collectionComplete || page.nextCursor !== String(afterSequence)) {
+        throw new DiamondScorebookError(
+          'invalid-response',
+          'The private scorebook history ended before the requested window was complete.'
+        );
+      }
+      continue;
+    }
+
+    const reachesHead = requestedEnd === expectedRevision;
+    if (
+      (reachesHead && (!page.collectionComplete || page.nextCursor !== null)) ||
+      (!reachesHead && (page.collectionComplete || page.nextCursor !== String(requestedEnd)))
+    ) {
+      throw new DiamondScorebookError('invalid-response', 'The private scorebook window returned inconsistent head evidence.');
+    }
+  }
+
+  if (items.length !== requestedEnd - requestedStart + 1) {
+    throw new DiamondScorebookError('invalid-response', 'The private scorebook history window is incomplete.');
+  }
+  const oldestSequence = items[0]!.sequence;
+  const newestSequence = items[items.length - 1]!.sequence;
+  const window: DiamondPrivateHistoryWindow = {
+    sourceRevision: expectedRevision,
+    oldestSequence,
+    newestSequence,
+    contiguous: true,
+    rangeComplete: true,
+    headComplete: newestSequence === expectedRevision,
+    historyComplete: oldestSequence === 1 && newestSequence === expectedRevision,
+    hasOlder: oldestSequence > 1,
+    items
+  };
+  assertPrivateHistoryWindowEvidence(window, 'The private scorebook history window');
+  return window;
+}
+
+/** Combine an older verified block with the currently loaded contiguous head. */
+export function mergeDiamondPrivateHistoryWindows(
+  current: DiamondPrivateHistoryWindow,
+  older: DiamondPrivateHistoryWindow
+): DiamondPrivateHistoryWindow {
+  assertPrivateHistoryWindowEvidence(current, 'The current private scorebook history window');
+  assertPrivateHistoryWindowEvidence(older, 'The older private scorebook history window');
+  if (current.sourceRevision !== older.sourceRevision || !current.headComplete || current.oldestSequence === null) {
+    throw new DiamondScorebookError('stale-revision', 'Private scorebook history windows do not share one authoritative head.', {
+      authoritativeRevision: older.sourceRevision
+    });
+  }
+  if (older.newestSequence === null || older.newestSequence + 1 !== current.oldestSequence) {
+    throw new DiamondScorebookError('invalid-response', 'Private scorebook history windows are not adjacent.');
+  }
+  const items = [...older.items, ...current.items];
+  const oldestSequence = older.oldestSequence;
+  const newestSequence = current.newestSequence;
+  const merged: DiamondPrivateHistoryWindow = {
+    sourceRevision: current.sourceRevision,
+    oldestSequence,
+    newestSequence,
+    contiguous: true,
+    rangeComplete: true,
+    headComplete: true,
+    historyComplete: oldestSequence === 1 && newestSequence === current.sourceRevision,
+    hasOlder: oldestSequence !== null && oldestSequence > 1,
+    items
+  };
+  assertPrivateHistoryWindowEvidence(merged, 'The combined private scorebook history window');
+  return merged;
+}
+
+function diamondAiStaleError(source: Record<string, unknown>, fallbackRevision: number) {
+  return new DiamondScorebookError(
+    'stale-revision',
+    'The game changed after this AI source was prepared. Generate a new draft from the current final scorebook.',
+    {
+      authoritativeRevision:
+        normalizeOptionalRevision(source.currentRevision ?? source.authoritativeRevision ?? source.sourceRevision) ?? fallbackRevision
+    }
+  );
+}
+
+export async function getDiamondRecapSource(
+  input: { teamId: string; gameId: string; sourceRevision: number },
+  options: { transport?: DiamondCallableTransport } = {}
+): Promise<DiamondRecapSource> {
+  const payload = {
+    teamId: requireResourceId(input.teamId, 'Team ID'),
+    gameId: requireResourceId(input.gameId, 'Game ID'),
+    sourceRevision: requireRevision(input.sourceRevision, 'Source revision')
+  };
+  try {
+    const raw = await callWithRetry<unknown>(
+      options.transport || defaultTransport,
+      'getDiamondRecapSource',
+      payload,
+      'Unable to load a source-cited Diamond recap packet.'
+    );
+    const source = asRecord(raw);
+    const returnedRevision = normalizeOptionalRevision(source.sourceRevision);
+    if (source.current === false || (returnedRevision !== null && returnedRevision !== payload.sourceRevision)) {
+      throw diamondAiStaleError(source, payload.sourceRevision);
+    }
+    requireExactResponseKeys(source, ['current', 'sourceRevision', 'checkpointHash', 'packet'], 'Diamond AI recap source');
+    if (source.current !== true || returnedRevision === null) {
+      throw new DiamondScorebookError('invalid-response', 'The server did not confirm a current Diamond AI recap source.');
+    }
+    const checkpointHash = requireCheckpointHash(source.checkpointHash);
+    let packet: DiamondAiSourcePacket;
+    try {
+      packet = normalizeDiamondAiSourcePacket(source.packet);
+    } catch (error) {
+      throw new DiamondScorebookError('invalid-response', 'The server returned an unsafe or malformed Diamond AI source packet.', {
+        cause: error
+      });
+    }
+    if (packet.sourceRevision !== payload.sourceRevision) {
+      throw diamondAiStaleError({ sourceRevision: packet.sourceRevision }, payload.sourceRevision);
+    }
+    return { current: true, sourceRevision: returnedRevision, checkpointHash, packet };
+  } catch (error) {
+    throw toDiamondError(error, 'Unable to load a source-cited Diamond recap packet.');
+  }
+}
+
+export async function publishDiamondAiDraft(
+  input: {
+    requestId: string;
+    teamId: string;
+    gameId: string;
+    sourceRevision: number;
+    checkpointHash: string;
+    draft: DiamondAiGameDraft;
+  },
+  options: { transport?: DiamondCallableTransport } = {}
+): Promise<DiamondAiPublicationEvidence> {
+  const sourceRevision = requireRevision(input.sourceRevision, 'Source revision');
+  let draft: DiamondAiGameDraft;
+  try {
+    draft = normalizeDiamondAiDraftForPublication(input.draft, sourceRevision);
+  } catch (error) {
+    throw new DiamondScorebookError('invalid-input', 'The AI draft is unsafe, malformed, or no longer revision-pinned.', {
+      cause: error
+    });
+  }
+  const payload = {
+    requestId: requireSecureRequestId(input.requestId),
+    teamId: requireResourceId(input.teamId, 'Team ID'),
+    gameId: requireResourceId(input.gameId, 'Game ID'),
+    sourceRevision,
+    checkpointHash: requireCheckpointHash(input.checkpointHash, 'invalid-input'),
+    draft
+  };
+  try {
+    const raw = await callWithRetry<unknown>(
+      options.transport || defaultTransport,
+      'publishDiamondAiDraft',
+      payload,
+      'Unable to confirm publication of the Diamond AI draft.'
+    );
+    const source = asRecord(raw);
+    const returnedRevision = normalizeOptionalRevision(source.sourceRevision);
+    if (
+      source.stale === true ||
+      source.status === 'stale' ||
+      source.current === false ||
+      (returnedRevision !== null && returnedRevision !== payload.sourceRevision)
+    ) {
+      throw diamondAiStaleError(source, payload.sourceRevision);
+    }
+    requireExactResponseKeys(
+      source,
+      ['published', 'current', 'sourceRevision', 'checkpointHash', 'publicationId', 'publishedAt'],
+      'Diamond AI publication'
+    );
+    if (source.current !== true || returnedRevision === null) {
+      throw new DiamondScorebookError('invalid-response', 'The server did not confirm a current Diamond AI publication.');
+    }
+    const checkpointHash = requireCheckpointHash(source.checkpointHash);
+    if (checkpointHash !== payload.checkpointHash) {
+      throw diamondAiStaleError(source, payload.sourceRevision);
+    }
+    if (source.published !== true) {
+      throw new DiamondScorebookError('invalid-response', 'The server did not confirm that the Diamond AI draft was published.');
+    }
+    return {
+      published: true,
+      current: true,
+      sourceRevision: returnedRevision,
+      checkpointHash,
+      publicationId: requirePublicationId(source.publicationId),
+      publishedAt: requireIsoTimestamp(source.publishedAt)
+    };
+  } catch (error) {
+    throw toDiamondError(error, 'Unable to confirm publication of the Diamond AI draft.');
   }
 }
 
@@ -827,6 +1716,85 @@ export async function submitDiamondCommand(
   }
 }
 
+export async function cancelDiamondGame(
+  input: {
+    teamId: string;
+    gameId: string;
+    reason: string;
+    appBuild?: number | string;
+  },
+  options: {
+    transport?: DiamondCallableTransport;
+    crypto?: SecureCrypto | null;
+    appBuildResolver?: DiamondAppBuildResolver;
+  } = {}
+): Promise<DiamondCommandOutcome> {
+  const reason = compactText(input.reason).replace(/\s+/g, ' ');
+  if (!reason || reason.length > 300) {
+    throw new DiamondScorebookError('invalid-input', 'A cancellation reason of at most 300 characters is required.');
+  }
+  const teamId = requireResourceId(input.teamId, 'Team ID');
+  const gameId = requireResourceId(input.gameId, 'Game ID');
+  const appBuild = await resolveRequestedAppBuild(input.appBuild, options.appBuildResolver);
+  const snapshot = await getDiamondState(teamId, gameId, { transport: options.transport });
+  if (!snapshot.authoritative) {
+    throw new DiamondScorebookError(
+      'unavailable',
+      'The current Diamond revision could not be verified. Refresh before cancelling this game.',
+      { retryable: true, authoritativeRevision: snapshot.revision }
+    );
+  }
+  if (snapshot.lifecycle === 'cancelled') {
+    return {
+      outcome: 'duplicate',
+      revision: snapshot.revision,
+      eventId: null,
+      snapshot,
+      completeness: snapshot.completeness
+    };
+  }
+  const command = createDiamondCommand(
+    {
+      teamId,
+      gameId,
+      appBuild,
+      expectedInstanceId: snapshot.instanceId,
+      expectedRevision: snapshot.revision,
+      rulesProfileId: snapshot.rulesProfileId,
+      rulesProfileVersion: snapshot.rulesProfileVersion,
+      type: 'cancel',
+      payload: { confirmed: true, reason }
+    },
+    options.crypto
+  );
+  try {
+    return await submitDiamondCommand(command, { transport: options.transport });
+  } catch (error) {
+    if (!(error instanceof DiamondScorebookError) || !error.retryable) throw error;
+    try {
+      const reconciled = await getDiamondState(teamId, gameId, { transport: options.transport });
+      if (
+        reconciled.authoritative &&
+        reconciled.instanceId === snapshot.instanceId &&
+        reconciled.lifecycle === 'cancelled' &&
+        reconciled.revision > snapshot.revision
+      ) {
+        return {
+          outcome: 'duplicate',
+          revision: reconciled.revision,
+          eventId: null,
+          snapshot: reconciled,
+          completeness: reconciled.completeness
+        };
+      }
+    } catch {
+      // Preserve the original ambiguous command result when reconciliation is
+      // unavailable or cannot prove that this exact game instance advanced.
+    }
+    throw error;
+  }
+}
+
 function normalizeCommand(value: unknown): DiamondCommandEnvelope {
   const source = asRecord(value);
   const type = compactText(source.type) as DiamondCommandType;
@@ -842,6 +1810,9 @@ function normalizeCommand(value: unknown): DiamondCommandEnvelope {
     commandId: commandId.toLowerCase(),
     teamId: requireResourceId(source.teamId, 'Team ID'),
     gameId: requireResourceId(source.gameId, 'Game ID'),
+    appBuild: requireAppBuild(source.appBuild),
+    expectedInstanceId: requireDiamondInstanceId(source.expectedInstanceId, 'invalid-input'),
+    ...(source.leaseId ? { leaseId: requireScorerLeaseId(source.leaseId) } : {}),
     expectedRevision: requireRevision(source.expectedRevision),
     rulesProfileId: requireResourceId(source.rulesProfileId, 'Rules profile ID'),
     rulesProfileVersion: requirePositiveVersion(source.rulesProfileVersion),
@@ -910,6 +1881,9 @@ export async function saveDiamondPrivateNote(
   input: {
     teamId: string;
     gameId: string;
+    appBuild: number;
+    expectedInstanceId: string;
+    leaseId?: string | null;
     expectedRevision: number;
     rulesProfileId: string;
     rulesProfileVersion: number;
@@ -927,6 +1901,9 @@ export async function saveDiamondPrivateNote(
     {
       teamId: input.teamId,
       gameId: input.gameId,
+      appBuild: input.appBuild,
+      expectedInstanceId: input.expectedInstanceId,
+      leaseId: input.leaseId,
       expectedRevision: input.expectedRevision,
       rulesProfileId: input.rulesProfileId,
       rulesProfileVersion: input.rulesProfileVersion,
@@ -945,6 +1922,9 @@ export async function requestDiamondScorerHandoff(
   input: {
     teamId: string;
     gameId: string;
+    appBuild: number;
+    expectedInstanceId: string;
+    leaseId?: string | null;
     expectedRevision: number;
     rulesProfileId: string;
     rulesProfileVersion: number;
@@ -956,6 +1936,9 @@ export async function requestDiamondScorerHandoff(
     {
       teamId: input.teamId,
       gameId: input.gameId,
+      appBuild: input.appBuild,
+      expectedInstanceId: input.expectedInstanceId,
+      leaseId: input.leaseId,
       expectedRevision: input.expectedRevision,
       rulesProfileId: input.rulesProfileId,
       rulesProfileVersion: input.rulesProfileVersion,
@@ -969,9 +1952,17 @@ export async function requestDiamondScorerHandoff(
 
 export async function getDiamondAccess(
   teamId: string,
-  options: { gameId?: string; transport?: DiamondCallableTransport } = {}
+  options: {
+    gameId?: string;
+    appBuild?: number | string;
+    appBuildResolver?: DiamondAppBuildResolver;
+    transport?: DiamondCallableTransport;
+  } = {}
 ): Promise<DiamondAccess> {
-  const payload: Record<string, unknown> = { teamId: requireResourceId(teamId, 'Team ID') };
+  const payload: Record<string, unknown> = {
+    teamId: requireResourceId(teamId, 'Team ID'),
+    appBuild: await resolveRequestedAppBuild(options.appBuild, options.appBuildResolver)
+  };
   if (options.gameId) payload.gameId = requireResourceId(options.gameId, 'Game ID');
   try {
     const raw = await callWithRetry<unknown>(
@@ -1003,20 +1994,31 @@ export async function configureDiamondTeam(
   teamId: string,
   sport: DiamondSport,
   rulesProfileId?: string | null,
-  options: { transport?: DiamondCallableTransport; crypto?: SecureCrypto | null } = {}
+  options: {
+    enabled?: boolean;
+    rulesProfileVersion?: number;
+    captureMode?: DiamondCaptureMode;
+    appBuild?: number | string;
+    appBuildResolver?: DiamondAppBuildResolver;
+    transport?: DiamondCallableTransport;
+    crypto?: SecureCrypto | null;
+  } = {}
 ): Promise<DiamondTeamConfiguration> {
   if (sport !== 'baseball' && sport !== 'fastpitch') {
     throw new DiamondScorebookError('invalid-input', 'Diamond scorebook setup supports Baseball or Fastpitch.');
   }
   const selectedRulesProfileId = rulesProfileId || `${sport}-youth`;
+  const captureMode: DiamondCaptureMode = options.captureMode === 'full' ? 'full' : 'quick';
   const payload = {
     requestId: createSecureDiamondId(options.crypto === undefined ? globalThis.crypto : options.crypto),
     teamId: requireResourceId(teamId, 'Team ID'),
-    enabled: true,
+    appBuild: await resolveRequestedAppBuild(options.appBuild, options.appBuildResolver),
+    // Omission must never enroll a team. Callers have to opt in explicitly.
+    enabled: options.enabled === true,
     sport,
     rulesProfileId: requireResourceId(selectedRulesProfileId, 'Rules profile ID'),
-    rulesProfileVersion: 1,
-    captureMode: 'quick'
+    rulesProfileVersion: requirePositiveVersion(options.rulesProfileVersion ?? 1),
+    captureMode
   };
   try {
     const raw = await callWithRetry<unknown>(
@@ -1027,12 +2029,30 @@ export async function configureDiamondTeam(
     );
     const source = asRecord(raw);
     if (source.configured !== true) throw new DiamondScorebookError('invalid-response', 'Team setup was not confirmed.');
+    if (typeof source.enabled !== 'boolean' || source.enabled !== payload.enabled) {
+      throw new DiamondScorebookError('invalid-response', 'Team setup did not confirm the requested Diamond activation state.');
+    }
+    const returnedTeamId = requireResourceId(source.teamId, 'Team ID');
+    const returnedRulesProfileId = requireResourceId(source.rulesProfileId, 'Rules profile ID');
+    const returnedRulesProfileVersion = requirePositiveVersion(source.rulesProfileVersion);
+    const returnedCaptureMode = source.captureMode === 'full' ? 'full' : source.captureMode === 'quick' ? 'quick' : null;
+    if (
+      returnedTeamId !== payload.teamId ||
+      source.sport !== sport ||
+      returnedRulesProfileId !== payload.rulesProfileId ||
+      returnedRulesProfileVersion !== payload.rulesProfileVersion ||
+      returnedCaptureMode !== payload.captureMode
+    ) {
+      throw new DiamondScorebookError('invalid-response', 'Team setup did not confirm the requested Diamond configuration.');
+    }
     return {
       configured: true,
-      teamId: requireResourceId(source.teamId || payload.teamId, 'Team ID'),
+      enabled: source.enabled,
+      teamId: returnedTeamId,
       sport,
-      rulesProfileId: requireResourceId(source.rulesProfileId, 'Rules profile ID'),
-      rulesProfileVersion: requirePositiveVersion(source.rulesProfileVersion)
+      rulesProfileId: returnedRulesProfileId,
+      rulesProfileVersion: returnedRulesProfileVersion,
+      captureMode: returnedCaptureMode
     };
   } catch (error) {
     throw toDiamondError(error, 'Unable to configure this team for diamond scoring.');
@@ -1044,13 +2064,19 @@ export async function activateDiamondGame(
     teamId: string;
     gameId: string;
     captureMode: DiamondCaptureMode;
+    appBuild?: number | string;
   },
-  options: { transport?: DiamondCallableTransport; crypto?: SecureCrypto | null } = {}
+  options: {
+    appBuildResolver?: DiamondAppBuildResolver;
+    transport?: DiamondCallableTransport;
+    crypto?: SecureCrypto | null;
+  } = {}
 ): Promise<DiamondGameActivation> {
   const payload = {
     requestId: createSecureDiamondId(options.crypto === undefined ? globalThis.crypto : options.crypto),
     teamId: requireResourceId(input.teamId, 'Team ID'),
     gameId: requireResourceId(input.gameId, 'Game ID'),
+    appBuild: await resolveRequestedAppBuild(input.appBuild, options.appBuildResolver),
     captureMode: input.captureMode === 'full' ? 'full' : 'quick'
   };
   try {
@@ -1077,8 +2103,137 @@ export async function activateDiamondGame(
   }
 }
 
-export function getDiamondQueueKey(teamId: string, gameId: string) {
-  return `${queuePrefix}:${encodeURIComponent(requireResourceId(teamId, 'Team ID'))}:${encodeURIComponent(requireResourceId(gameId, 'Game ID'))}`;
+export async function acquireDiamondScorerLease(
+  input: {
+    teamId: string;
+    gameId: string;
+    expectedInstanceId: string;
+    expectedRevision: number;
+    operation: 'acquire' | 'recover';
+    targetUid?: string | null;
+    appBuild?: number | string;
+  },
+  options: {
+    appBuildResolver?: DiamondAppBuildResolver;
+    transport?: DiamondCallableTransport;
+    crypto?: SecureCrypto | null;
+    maxAttempts?: number;
+  } = {}
+): Promise<DiamondScorerLeaseOutcome> {
+  if (input.operation !== 'acquire' && input.operation !== 'recover') {
+    throw new DiamondScorebookError('invalid-input', 'Choose acquire or recover for the scorer lease.');
+  }
+  const payload = {
+    requestId: createSecureDiamondId(options.crypto === undefined ? globalThis.crypto : options.crypto),
+    teamId: requireResourceId(input.teamId, 'Team ID'),
+    gameId: requireResourceId(input.gameId, 'Game ID'),
+    appBuild: await resolveRequestedAppBuild(input.appBuild, options.appBuildResolver),
+    expectedInstanceId: requireDiamondInstanceId(input.expectedInstanceId, 'invalid-input'),
+    expectedRevision: requireRevision(input.expectedRevision),
+    operation: input.operation,
+    ...(input.targetUid ? { targetUid: requireResourceId(input.targetUid, 'Scorekeeper ID') } : {})
+  };
+  try {
+    const raw = await callWithRetry<unknown>(
+      options.transport || defaultTransport,
+      'acquireDiamondScorerLease',
+      payload,
+      'Unable to confirm the scorer lease change.',
+      options.maxAttempts ?? 2
+    );
+    const source = asRecord(raw);
+    const outcome = compactText(source.outcome);
+    const operation = compactText(source.operation);
+    const revision = normalizeOptionalRevision(source.revision);
+    if (
+      (outcome !== 'accepted' && outcome !== 'duplicate') ||
+      operation !== payload.operation ||
+      revision === null ||
+      revision <= payload.expectedRevision
+    ) {
+      throw new DiamondScorebookError('invalid-response', 'The server did not confirm the scorer lease change.');
+    }
+    const snapshotValue = source.state || source.snapshot;
+    if (!snapshotValue) {
+      throw new DiamondScorebookError('invalid-response', 'The server omitted the authoritative scorer lease state.');
+    }
+    const snapshot = normalizeDiamondSnapshot({ ...asRecord(snapshotValue), revision });
+    if (snapshot.instanceId !== payload.expectedInstanceId) {
+      throw new DiamondScorebookError('invalid-response', 'The scorer lease response belongs to another game instance.');
+    }
+    const targetUid = payload.targetUid || snapshot.lease.holderUid;
+    if (outcome === 'accepted' && targetUid && snapshot.lease.holderUid !== targetUid) {
+      throw new DiamondScorebookError('invalid-response', 'The scorer lease response named a different holder.');
+    }
+    return {
+      outcome,
+      operation: payload.operation,
+      revision,
+      eventId: compactText(source.eventId) || null,
+      snapshot
+    };
+  } catch (error) {
+    throw toDiamondError(error, 'Unable to confirm the scorer lease change.');
+  }
+}
+
+function normalizeQueueIdentity(value: DiamondQueueIdentity): DiamondQueueIdentity {
+  const source = asRecord(value);
+  const identity = {
+    teamId: requireResourceId(source.teamId, 'Team ID'),
+    gameId: requireResourceId(source.gameId, 'Game ID'),
+    authenticatedUid: requireResourceId(source.authenticatedUid, 'Authenticated user ID'),
+    scorerUid: requireResourceId(source.scorerUid, 'Scorer ID'),
+    instanceId: requireDiamondInstanceId(source.instanceId, 'invalid-input'),
+    leaseId: requireScorerLeaseId(source.leaseId)
+  };
+  if (identity.authenticatedUid !== identity.scorerUid) {
+    throw new DiamondScorebookError(
+      'permission-denied',
+      'The offline queue is available only to the signed-in user who currently owns the scorebook.'
+    );
+  }
+  return identity;
+}
+
+function queueIdentitiesMatch(left: DiamondQueueIdentity, right: DiamondQueueIdentity) {
+  return (
+    left.teamId === right.teamId &&
+    left.gameId === right.gameId &&
+    left.authenticatedUid === right.authenticatedUid &&
+    left.scorerUid === right.scorerUid &&
+    left.instanceId === right.instanceId &&
+    left.leaseId === right.leaseId
+  );
+}
+
+function queuedCommandMatchesIdentity(item: DiamondQueuedCommand, identity: DiamondQueueIdentity) {
+  return (
+    item.command.teamId === identity.teamId &&
+    item.command.gameId === identity.gameId &&
+    item.command.expectedInstanceId === identity.instanceId &&
+    item.authenticatedUid === identity.authenticatedUid &&
+    item.scorerUid === identity.scorerUid &&
+    item.instanceId === identity.instanceId &&
+    item.leaseId === identity.leaseId &&
+    item.command.leaseId === identity.leaseId
+  );
+}
+
+export function getDiamondQueueKey(identityValue: DiamondQueueIdentity) {
+  const identity = normalizeQueueIdentity(identityValue);
+  const scope = [identity.teamId, identity.gameId, identity.instanceId, identity.authenticatedUid, identity.leaseId]
+    .map((part) => encodeURIComponent(part))
+    .join(':');
+  return `${queuePrefix}:${scope}`;
+}
+
+function getLegacyDiamondQueueKeys(identity: DiamondQueueIdentity) {
+  const legacyScope = `${encodeURIComponent(identity.teamId)}:${encodeURIComponent(identity.gameId)}`;
+  const v2Scope = [identity.teamId, identity.gameId, identity.instanceId, identity.authenticatedUid]
+    .map((part) => encodeURIComponent(part))
+    .join(':');
+  return [`${legacyQueuePrefixes[0]}:${legacyScope}`, `${legacyQueuePrefixes[1]}:${v2Scope}`];
 }
 
 function getDefaultStorage(): StorageLike | null {
@@ -1092,6 +2247,12 @@ function getDefaultStorage(): StorageLike | null {
 
 function containsSensitiveQueueFields(value: DiamondJsonValue, key = ''): boolean {
   if (/(audio|recording|transcript|private.?note)/i.test(key)) return true;
+  if (
+    typeof value === 'string' &&
+    /\b(?:raw[ _-]?(?:audio|transcript)|audio[ _-]?(?:data|recording)|private[ _-]?notes?|transcript)\b/i.test(value)
+  ) {
+    return true;
+  }
   if (Array.isArray(value)) return value.some((entry) => containsSensitiveQueueFields(entry));
   if (value && typeof value === 'object') {
     return Object.entries(value).some(([entryKey, entry]) => containsSensitiveQueueFields(entry, entryKey));
@@ -1100,46 +2261,83 @@ function containsSensitiveQueueFields(value: DiamondJsonValue, key = ''): boolea
 }
 
 export function readDiamondCommandQueue(
-  teamId: string,
-  gameId: string,
+  identityValue: DiamondQueueIdentity,
   storage: StorageLike | null = getDefaultStorage()
 ): DiamondQueuedCommand[] {
   if (!storage) return [];
-  const key = getDiamondQueueKey(teamId, gameId);
+  const identity = normalizeQueueIdentity(identityValue);
+  const key = getDiamondQueueKey(identity);
+  const discardUnsafeQueue = () => {
+    try {
+      storage.removeItem(key);
+    } catch {
+      // A queue that cannot be removed remains fail-closed because this read
+      // returns no commands and reconciliation therefore submits nothing.
+    }
+    return [];
+  };
   try {
+    // V1 had no user or scorebook-generation binding and V2 had no durable
+    // scorer-lease binding. Neither can be safely replayed into this lease.
+    getLegacyDiamondQueueKeys(identity).forEach((legacyKey) => storage.removeItem(legacyKey));
     const parsed = JSON.parse(storage.getItem(key) || 'null');
-    if (!parsed || parsed.version !== queueVersion || !Array.isArray(parsed.items)) return [];
-    return parsed.items
-      .flatMap((entry: unknown) => {
-        const source = asRecord(entry);
-        try {
-          const command = normalizeCommand(source.command);
-          if (
-            command.teamId !== teamId ||
-            command.gameId !== gameId ||
-            command.type === 'private_note' ||
-            containsSensitiveQueueFields(command.payload)
-          )
-            return [];
-          return [{ command, queuedAt: compactText(source.queuedAt) || new Date(0).toISOString() }];
-        } catch {
-          return [];
+    if (!parsed) return [];
+    if (parsed.version !== queueVersion || !Array.isArray(parsed.items)) return discardUnsafeQueue();
+    let storedIdentity: DiamondQueueIdentity;
+    try {
+      storedIdentity = normalizeQueueIdentity(asRecord(parsed.identity) as DiamondQueueIdentity);
+    } catch {
+      return discardUnsafeQueue();
+    }
+    if (!queueIdentitiesMatch(storedIdentity, identity) || parsed.items.length > maxQueueCommands) {
+      return discardUnsafeQueue();
+    }
+    const items: DiamondQueuedCommand[] = [];
+    for (const entry of parsed.items) {
+      const source = asRecord(entry);
+      try {
+        const command = normalizeCommand(source.command);
+        const queuedAt = compactText(source.queuedAt);
+        const itemIdentity = normalizeQueueIdentity({
+          teamId: command.teamId,
+          gameId: command.gameId,
+          authenticatedUid: source.authenticatedUid as string,
+          scorerUid: source.scorerUid as string,
+          instanceId: source.instanceId as string,
+          leaseId: source.leaseId as string
+        });
+        if (
+          !queueIdentitiesMatch(itemIdentity, identity) ||
+          command.expectedInstanceId !== identity.instanceId ||
+          command.leaseId !== identity.leaseId ||
+          command.type === 'private_note' ||
+          containsSensitiveQueueFields(command.payload) ||
+          !queuedAt ||
+          queuedAt.length > 64 ||
+          !Number.isFinite(Date.parse(queuedAt))
+        ) {
+          return discardUnsafeQueue();
         }
-      })
-      .slice(0, maxQueueCommands);
+        items.push({ command, queuedAt, ...itemIdentity });
+      } catch {
+        return discardUnsafeQueue();
+      }
+    }
+    return items;
   } catch {
     return [];
   }
 }
 
-function writeDiamondCommandQueue(teamId: string, gameId: string, items: DiamondQueuedCommand[], storage: StorageLike | null) {
+function writeDiamondCommandQueue(identityValue: DiamondQueueIdentity, items: DiamondQueuedCommand[], storage: StorageLike | null) {
   if (!storage) {
     throw new DiamondScorebookError(
       'storage-unavailable',
       'This device cannot safely retain an offline scoring queue. Reconnect before scoring.'
     );
   }
-  const key = getDiamondQueueKey(teamId, gameId);
+  const identity = normalizeQueueIdentity(identityValue);
+  const key = getDiamondQueueKey(identity);
   if (items.length === 0) {
     try {
       storage.removeItem(key);
@@ -1151,7 +2349,10 @@ function writeDiamondCommandQueue(teamId: string, gameId: string, items: Diamond
   if (items.length > maxQueueCommands) {
     throw new DiamondScorebookError('storage-unavailable', 'The offline scorebook queue is full. Reconnect before recording more plays.');
   }
-  const serialized = JSON.stringify({ version: queueVersion, items });
+  if (items.some((item) => !queuedCommandMatchesIdentity(item, identity))) {
+    throw new DiamondScorebookError('conflict', 'The offline queue contains commands from another user or game instance.');
+  }
+  const serialized = JSON.stringify({ version: queueVersion, identity, items });
   if (serialized.length > maxQueueBytes) {
     throw new DiamondScorebookError(
       'storage-unavailable',
@@ -1171,17 +2372,27 @@ function writeDiamondCommandQueue(teamId: string, gameId: string, items: Diamond
 
 export function enqueueDiamondCommand(
   commandValue: DiamondCommandEnvelope,
+  identityValue: DiamondQueueIdentity,
   storage: StorageLike | null = getDefaultStorage(),
   now: () => Date = () => new Date()
 ) {
   const command = normalizeCommand(commandValue);
+  const identity = normalizeQueueIdentity(identityValue);
+  if (
+    command.teamId !== identity.teamId ||
+    command.gameId !== identity.gameId ||
+    command.expectedInstanceId !== identity.instanceId ||
+    command.leaseId !== identity.leaseId
+  ) {
+    throw new DiamondScorebookError('conflict', 'This command belongs to a different game than the active offline queue.');
+  }
   if (command.type === 'private_note' || containsSensitiveQueueFields(command.payload)) {
     throw new DiamondScorebookError(
       'storage-unavailable',
       'Private notes and raw dictation are never stored in the offline scoring queue. Reconnect to save this note.'
     );
   }
-  const items = readDiamondCommandQueue(command.teamId, command.gameId, storage);
+  const items = readDiamondCommandQueue(identity, storage);
   const existing = items.find((entry) => entry.command.commandId === command.commandId);
   if (existing) {
     if (JSON.stringify(existing.command) !== JSON.stringify(command)) {
@@ -1189,21 +2400,36 @@ export function enqueueDiamondCommand(
     }
     return items;
   }
-  const next = [...items, { command, queuedAt: now().toISOString() }];
-  writeDiamondCommandQueue(command.teamId, command.gameId, next, storage);
+  const next = [...items, { command, queuedAt: now().toISOString(), ...identity }];
+  writeDiamondCommandQueue(identity, next, storage);
   return next;
 }
 
 export async function reconcileDiamondCommandQueue(
-  teamId: string,
-  gameId: string,
+  identityValue: DiamondQueueIdentity,
   options: { storage?: StorageLike | null; transport?: DiamondCallableTransport } = {}
 ): Promise<DiamondQueueReconciliation> {
+  const identity = normalizeQueueIdentity(identityValue);
   const storage = options.storage === undefined ? getDefaultStorage() : options.storage;
-  let remaining = readDiamondCommandQueue(teamId, gameId, storage);
+  let remaining = readDiamondCommandQueue(identity, storage);
   let accepted = 0;
   let duplicates = 0;
   let lastSnapshot: DiamondScorebookSnapshot | null = null;
+  if (remaining.length > 0) {
+    const current = await getDiamondState(identity.teamId, identity.gameId, { transport: options.transport });
+    if (
+      current.instanceId !== identity.instanceId ||
+      !current.lease.canScore ||
+      current.lease.holderUid !== identity.scorerUid ||
+      current.lease.leaseId !== identity.leaseId ||
+      identity.authenticatedUid !== identity.scorerUid
+    ) {
+      throw new DiamondScorebookError(
+        'conflict',
+        'Queued plays belong to another signed-in scorer or Diamond game instance and remain quarantined on this device.'
+      );
+    }
+  }
   while (remaining.length > 0) {
     const current = remaining[0]!;
     const result = await submitDiamondCommand(current.command, { transport: options.transport });
@@ -1211,16 +2437,35 @@ export async function reconcileDiamondCommandQueue(
     else accepted += 1;
     lastSnapshot = result.snapshot || lastSnapshot;
     remaining = remaining.slice(1);
-    writeDiamondCommandQueue(teamId, gameId, remaining, storage);
+    writeDiamondCommandQueue(identity, remaining, storage);
+    if (
+      remaining.length > 0 &&
+      result.snapshot &&
+      (result.snapshot.instanceId !== identity.instanceId ||
+        !result.snapshot.lease.canScore ||
+        result.snapshot.lease.holderUid !== identity.scorerUid ||
+        result.snapshot.lease.leaseId !== identity.leaseId)
+    ) {
+      throw new DiamondScorebookError(
+        'conflict',
+        'The scoring lease or Diamond game instance changed during reconciliation. Remaining commands were not submitted.'
+      );
+    }
   }
   return { accepted, duplicates, remaining, lastSnapshot };
 }
 
 export type DiamondScorebookClient = {
   load: typeof getDiamondState;
+  loadPrivateHistoryWindow: typeof getDiamondPrivateHistoryWindow;
+  resolveAppBuild: typeof resolveDiamondAppBuild;
+  getRecapSource: typeof getDiamondRecapSource;
+  publishAiDraft: typeof publishDiamondAiDraft;
   createSecureId: typeof createSecureDiamondId;
   createCommand: typeof createDiamondCommand;
+  acquireLease: typeof acquireDiamondScorerLease;
   submitCommand: typeof submitDiamondCommand;
+  cancelGame: typeof cancelDiamondGame;
   parseVoice: typeof parseDiamondVoice;
   savePrivateNote: typeof saveDiamondPrivateNote;
   requestHandoff: typeof requestDiamondScorerHandoff;
@@ -1231,9 +2476,15 @@ export type DiamondScorebookClient = {
 
 export const diamondScorebookClient: DiamondScorebookClient = {
   load: getDiamondState,
+  loadPrivateHistoryWindow: getDiamondPrivateHistoryWindow,
+  resolveAppBuild: resolveDiamondAppBuild,
+  getRecapSource: getDiamondRecapSource,
+  publishAiDraft: publishDiamondAiDraft,
   createSecureId: createSecureDiamondId,
   createCommand: createDiamondCommand,
+  acquireLease: acquireDiamondScorerLease,
   submitCommand: submitDiamondCommand,
+  cancelGame: cancelDiamondGame,
   parseVoice: parseDiamondVoice,
   savePrivateNote: saveDiamondPrivateNote,
   requestHandoff: requestDiamondScorerHandoff,

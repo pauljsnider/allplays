@@ -16,12 +16,17 @@ const nativeCallableMock = vi.hoisted(() => ({
   callNativeFirebaseFunction: vi.fn()
 }));
 
+const diamondScorebookMock = vi.hoisted(() => ({
+  cancelDiamondGame: vi.fn()
+}));
+
 vi.mock('@capacitor/core', () => ({
   Capacitor: capacitorCoreMock,
   CapacitorHttp: { post: capacitorCoreMock.httpPost }
 }));
 
 vi.mock('./nativeCallable', () => nativeCallableMock);
+vi.mock('./diamondScorebookService', () => diamondScorebookMock);
 
 const mocks = vi.hoisted(() => {
   const transactionSet = vi.fn();
@@ -7236,6 +7241,59 @@ describe('cancelScheduledGameForApp', () => {
   beforeEach(() => {
     (globalThis as any).window = { location: { protocol: 'https:' }, setTimeout, clearTimeout } as any;
     vi.clearAllMocks();
+    capacitorCoreMock.isNativePlatform.mockReturnValue(false);
+    diamondScorebookMock.cancelDiamondGame.mockResolvedValue({
+      outcome: 'accepted',
+      revision: 4,
+      eventId: 'event-4',
+      snapshot: null,
+      completeness: { status: 'partial', authoritativeRevision: 4, families: {}, omissions: [] }
+    });
+  });
+
+  it('uses the canonical Diamond command and never writes cancellation fields or falls back to REST', async () => {
+    capacitorCoreMock.isNativePlatform.mockReturnValue(true);
+
+    await cancelScheduledGameForApp(
+      {
+        ...event,
+        trackingEngine: 'diamond-v2',
+        isTeamAdmin: true,
+        sharedScheduleOpponentTeamId: 'team-2'
+      },
+      user
+    );
+
+    expect(diamondScorebookMock.cancelDiamondGame).toHaveBeenCalledWith({
+      teamId: 'team-1',
+      gameId: 'game-1',
+      reason: 'Cancelled from schedule management.'
+    });
+    expect(vi.mocked(updateGame)).not.toHaveBeenCalled();
+    expect(capacitorCoreMock.httpPost).not.toHaveBeenCalled();
+    expect(nativeCallableMock.callNativeFirebaseFunction).not.toHaveBeenCalled();
+    expect(vi.mocked(postChatMessage)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(postSharedGameCancellationNotification)).not.toHaveBeenCalled();
+  });
+
+  it('does not post cancellation chat when the canonical Diamond command is not confirmed', async () => {
+    diamondScorebookMock.cancelDiamondGame.mockRejectedValueOnce(new Error('The scorebook could not confirm this request.'));
+
+    await expect(
+      cancelScheduledGameForApp({ ...event, trackingEngine: 'diamond-v2', isTeamAdmin: true }, user)
+    ).rejects.toThrow('could not confirm');
+
+    expect(vi.mocked(updateGame)).not.toHaveBeenCalled();
+    expect(vi.mocked(postChatMessage)).not.toHaveBeenCalled();
+  });
+
+  it('requires manager access for Diamond cancellation even when the caller can keep score', async () => {
+    await expect(
+      cancelScheduledGameForApp({ ...event, trackingEngine: 'diamond-v2', isTeamAdmin: false }, user)
+    ).rejects.toThrow('Team owner or admin access');
+
+    expect(diamondScorebookMock.cancelDiamondGame).not.toHaveBeenCalled();
+    expect(vi.mocked(updateGame)).not.toHaveBeenCalled();
   });
 
   it('does not request a counterpart notice for a linked opponent without reciprocal shared-game metadata', async () => {

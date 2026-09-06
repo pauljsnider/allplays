@@ -218,7 +218,7 @@ const advanceCauses = new Set([
   'other'
 ]);
 const outKinds = new Set(['force', 'tag', 'appeal', 'batter_runner', 'strikeout', 'catch']);
-const defensivePositions = new Set(['P', 'C', '1B', '2B', '3B', 'SS', 'LF', 'LCF', 'CF', 'RCF', 'RF', 'DP', 'FLEX', 'EH', 'EP']);
+const defensivePositions = new Set(['P', 'C', '1B', '2B', '3B', 'SS', 'LF', 'LCF', 'CF', 'RCF', 'RF']);
 const playerIdKeys = new Set([
   'playerId',
   'batterId',
@@ -389,6 +389,97 @@ export async function draftDiamondGameSummary(
     const failure = classifyGenerationFailure(error);
     return draftFailure(failure.status === 'unavailable' ? 'unavailable' : 'invalid-response', failure.message);
   }
+}
+
+/**
+ * Revalidates the server projection before any of it reaches a model or UI.
+ * The returned value is a bounded JSON-only copy with private/actor data
+ * rejected rather than silently stripped.
+ */
+export function normalizeDiamondAiSourcePacket(value: unknown): DiamondAiSourcePacket {
+  return normalizeSourcePacket(value);
+}
+
+/**
+ * Revalidates the exact draft crossing the explicit publication boundary.
+ * Play/stat existence is checked while drafting against the source packet;
+ * this second boundary preserves the immutable shape, revision pin, and
+ * confirmation-only flags before the server performs its authoritative check.
+ */
+export function normalizeDiamondAiDraftForPublication(value: unknown, expectedSourceRevision: number): DiamondAiGameDraft {
+  const sourceRevision = requireInteger(expectedSourceRevision, 'Expected source revision', 0, Number.MAX_SAFE_INTEGER);
+  const source = asRecord(value);
+  requireExactKeys(
+    source,
+    [
+      'schemaVersion',
+      'sourceRevision',
+      'coverage',
+      'recap',
+      'insights',
+      'dataQualityNotes',
+      'draft',
+      'published',
+      'requiresPublicationConfirmation',
+      'mutatesState'
+    ],
+    'Diamond AI publication draft'
+  );
+  if (findSensitiveKey(source) || containsSensitiveContent(source)) {
+    throw new DiamondAiBoundaryError('Diamond AI publication draft contained transcript, audio, private-note, or actor data.');
+  }
+  if (containsMutationClaim(source)) {
+    throw new DiamondAiBoundaryError('Diamond AI publication draft claimed it changed official data.');
+  }
+  if (source.schemaVersion !== 1 || source.sourceRevision !== sourceRevision) {
+    throw new DiamondAiBoundaryError('Diamond AI publication draft was not pinned to the expected source revision.');
+  }
+  if (
+    source.draft !== true ||
+    source.published !== false ||
+    source.requiresPublicationConfirmation !== true ||
+    source.mutatesState !== false
+  ) {
+    throw new DiamondAiBoundaryError('Diamond AI publication draft did not preserve explicit publication confirmation.');
+  }
+
+  const coverageSource = asRecord(source.coverage);
+  requireExactKeys(coverageSource, coverageFamilies, 'Diamond AI publication coverage');
+  const coverage = coverageFamilies.reduce<Record<DiamondAiStatFamily, DiamondAiCoverage>>(
+    (result, family) => {
+      if (!coverageValues.has(coverageSource[family] as DiamondAiCoverage)) {
+        throw new DiamondAiBoundaryError(`Coverage for ${family} is invalid.`);
+      }
+      result[family] = coverageSource[family] as DiamondAiCoverage;
+      return result;
+    },
+    {} as Record<DiamondAiStatFamily, DiamondAiCoverage>
+  );
+  const recap = normalizePublicationDraftBlock(source.recap, sourceRevision, 'recap', 2_400);
+  if (!Array.isArray(source.insights) || source.insights.length > 10) {
+    throw new DiamondAiBoundaryError('Diamond AI publication draft included an invalid insights list.');
+  }
+  const insights = source.insights.map((insight, index) => {
+    const block = normalizePublicationDraftBlock(insight, sourceRevision, `insight ${index + 1}`, 800);
+    if (!block.statRefs.length) {
+      throw new DiamondAiBoundaryError(`Diamond AI publication insight ${index + 1} did not cite a statistic.`);
+    }
+    return block;
+  });
+  const dataQualityNotes = dedupeStrings(normalizeStringArray(source.dataQualityNotes, 'publication data quality notes', 20, 320));
+
+  return {
+    schemaVersion: 1,
+    sourceRevision,
+    coverage,
+    recap,
+    insights,
+    dataQualityNotes,
+    draft: true,
+    published: false,
+    requiresPublicationConfirmation: true,
+    mutatesState: false
+  };
 }
 
 type NormalizedCommandContext = {
@@ -728,6 +819,41 @@ function normalizeDraftBlock(value: unknown, packet: NormalizedSourcePacket, lab
   }
   const statRefs = normalizeStatReferences(source.statRefs, packet);
   validateNumericClaims(text, citations, statRefs, packet);
+  return { text, citations, statRefs };
+}
+
+function normalizePublicationDraftBlock(value: unknown, sourceRevision: number, label: string, maxTextLength: number): DiamondAiDraftBlock {
+  const source = asRecord(value);
+  requireExactKeys(source, ['text', 'citations', 'statRefs'], `Diamond AI publication ${label}`);
+  const text = requireBoundedText(source.text, `Diamond AI publication ${label}`, maxTextLength);
+  if (!Array.isArray(source.citations) || source.citations.length < 1 || source.citations.length > 30) {
+    throw new DiamondAiBoundaryError(`Diamond AI publication ${label} must cite between one and 30 plays.`);
+  }
+  const citationKeys = new Set<string>();
+  const citations = source.citations.map((citationValue) => {
+    const citation = asRecord(citationValue);
+    requireExactKeys(citation, ['eventId', 'revision'], 'Diamond AI publication play citation');
+    const eventId = requireResourceId(citation.eventId, 'Publication citation event ID');
+    const revision = requireInteger(citation.revision, 'Publication citation revision', 0, sourceRevision);
+    const key = `${eventId}:${revision}`;
+    if (citationKeys.has(key)) throw new DiamondAiBoundaryError('Diamond AI publication draft repeated a play citation.');
+    citationKeys.add(key);
+    return { eventId, revision };
+  });
+  if (!Array.isArray(source.statRefs) || source.statRefs.length > 50) {
+    throw new DiamondAiBoundaryError(`Diamond AI publication ${label} included invalid stat references.`);
+  }
+  const statKeys = new Set<string>();
+  const statRefs = source.statRefs.map((referenceValue) => {
+    const reference = asRecord(referenceValue);
+    requireExactKeys(reference, ['statId', 'metric'], 'Diamond AI publication stat reference');
+    const statId = requireResourceId(reference.statId, 'Publication stat source ID');
+    const metric = requireMetricKey(reference.metric, 'Publication stat metric');
+    const key = `${statId}:${metric}`;
+    if (statKeys.has(key)) throw new DiamondAiBoundaryError('Diamond AI publication draft repeated a stat reference.');
+    statKeys.add(key);
+    return { statId, metric };
+  });
   return { text, citations, statRefs };
 }
 

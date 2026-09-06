@@ -200,6 +200,7 @@ export type ParentScheduleEvent = {
   countsTowardSeasonRecord?: boolean | null;
   tournament?: Record<string, any> | null;
   trackingEngine?: string | null;
+  diamondScorebookInstanceId?: string | null;
   diamondRevision?: number | null;
   statTrackerConfigId?: string | null;
   sourceType?: ScheduleSourceType | string | null;

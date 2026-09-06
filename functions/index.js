@@ -386,6 +386,27 @@ const {
   createDelegatedTeamContextHandler,
   resolveDelegatedAccess
 } = require('./delegated-team-context-core.cjs');
+const { createDiamondScorebookHandlers } = require('./diamond-scorebook-handlers.cjs');
+const {
+  createDiamondLiveEngagementHandlers
+} = require('./diamond-live-engagement-handlers.cjs');
+const {
+  createDiamondScorebookProjectorHandlers
+} = require('./diamond-scorebook-projector-handlers.cjs');
+const {
+  loadDiamondClipTimings,
+  resolveDiamondSharedGame
+} = require('./diamond-scorebook-runtime.cjs');
+const {
+  createDiamondScorebookEffectHandlers
+} = require('./diamond-scorebook-effect-handlers.cjs');
+const {
+  createDiamondScorebookNotificationSender,
+  diamondNotificationProviderReceiptId
+} = require('./diamond-scorebook-notification-sender.cjs');
+const {
+  createDiamondScorebookAiHandlers
+} = require('./diamond-scorebook-ai-handlers.cjs');
 const {
   REPLAY_ARCHIVE_MIGRATION_CONTROL_PATH,
   buildReplayClipScrubUpdate,
@@ -519,6 +540,94 @@ const statConfigManagementHandlers = createStatConfigManagementHandlers({
   auth: admin.auth(),
   hasTeamAdminAccess,
   HttpsError: functions.https.HttpsError
+});
+const diamondScorebookHandlers = createDiamondScorebookHandlers({
+  firestore,
+  auth: {
+    getUser: (...args) => admin.auth().getUser(...args)
+  },
+  HttpsError: functions.https.HttpsError,
+  logger: functions.logger,
+  random: crypto,
+  resolveDelegatedAccess,
+  isPublicGame: canProjectPublicGame
+});
+const diamondLiveEngagementHandlers = createDiamondLiveEngagementHandlers({
+  firestore,
+  auth: {
+    getUser: (...args) => admin.auth().getUser(...args)
+  },
+  FieldValue: admin.firestore.FieldValue,
+  HttpsError: functions.https.HttpsError,
+  assertSensitiveWrite: assertSensitiveEmailVerified,
+  resolveDelegatedAccess,
+  isPublicGame: canProjectPublicGame,
+  logger: functions.logger
+});
+// Keep unrelated callable-loader tests and partial Firebase adapters from
+// eagerly requiring the projector's write-only batch surface. A real projector
+// invocation still fails before any work when the underlying SDK lacks it.
+const diamondProjectorFirestore = {
+  doc: (...args) => firestore.doc(...args),
+  collection: (...args) => firestore.collection(...args),
+  runTransaction: (...args) => firestore.runTransaction(...args),
+  batch: (...args) => {
+    if (typeof firestore.batch !== 'function') {
+      throw new TypeError('Firestore batch writes are unavailable for the Diamond projector.');
+    }
+    return firestore.batch(...args);
+  }
+};
+const diamondScorebookProjectorHandlers = createDiamondScorebookProjectorHandlers({
+  firestore: diamondProjectorFirestore,
+  logger: functions.logger,
+  random: crypto,
+  loadClipTimings: loadDiamondClipTimings,
+  resolveSharedGame: resolveDiamondSharedGame
+});
+function deliverDiamondScorebookNotification(request, delivery) {
+  if (
+    delivery?.instanceId !== request.instanceId ||
+    delivery?.idempotencyKey !== request.idempotencyKey ||
+    delivery?.providerRequestId !== diamondNotificationProviderReceiptId(request)
+  ) {
+    throw new TypeError('The Diamond notification delivery generation is inconsistent.');
+  }
+  return sendCategoryNotification({
+    teamId: request.teamId,
+    gameId: request.gameId,
+    eventId: request.sourceEventId,
+    category: request.category,
+    title: request.title,
+    body: request.body,
+    linkOverride: request.link,
+    dedupKey: request.dedupKey,
+    deliveryIdempotencyKey: delivery.providerRequestId,
+    suppressResourceTelemetry: true,
+    // The Diamond sender owns a durable renewable delivery receipt and stable
+    // provider request ID. Avoid the generic pre-delivery dedup record, which
+    // cannot reconcile an uncertain delivery response with a later retry.
+    dedupKeys: []
+  });
+}
+const diamondScorebookNotificationSender = createDiamondScorebookNotificationSender({
+  firestore,
+  logger: functions.logger,
+  deliverNotification: deliverDiamondScorebookNotification
+});
+const diamondScorebookEffectHandlers = createDiamondScorebookEffectHandlers({
+  firestore,
+  logger: functions.logger,
+  random: crypto,
+  sendNotification: diamondScorebookNotificationSender.sendDiamondNotification
+});
+const diamondScorebookAiHandlers = createDiamondScorebookAiHandlers({
+  firestore,
+  auth: {
+    getUser: (...args) => admin.auth().getUser(...args)
+  },
+  HttpsError: functions.https.HttpsError,
+  resolveDelegatedAccess
 });
 const saveAthleteProfileProjectionHandler = createAthleteProfileProjectionSaveHandler({
   firestore,
@@ -12435,7 +12544,14 @@ function dedupeNotificationTargets(targets) {
   });
 }
 
-async function getTargetsForCategory(teamId, category, actorUid = null, audienceContext = {}, additionalUsers = []) {
+async function getTargetsForCategory(
+  teamId,
+  category,
+  actorUid = null,
+  audienceContext = {},
+  additionalUsers = [],
+  telemetryOptions = {},
+) {
   if (!NOTIFICATION_CATEGORIES.includes(category)) return [];
 
   const targetSnap = await firestore.collection(`teams/${teamId}/notificationRecipients`)
@@ -12532,11 +12648,16 @@ async function getTargetsForCategory(teamId, category, actorUid = null, audience
       await backfillNotificationRecipientsForTeam(teamId, users, { skipLegacyCleanup: true });
     } catch (error) {
       const logger = typeof functions !== 'undefined' ? functions.logger : null;
-      logger?.warn?.('Failed to backfill notification recipient index after empty lookup', {
-        teamId,
-        category,
-        error: error?.message || String(error || 'Unknown error')
-      });
+      logger?.warn?.(
+        'Failed to backfill notification recipient index after empty lookup',
+        telemetryOptions.suppressResourceTelemetry === true
+          ? { category }
+          : {
+              teamId,
+              category,
+              error: error?.message || String(error || 'Unknown error')
+            },
+      );
     }
   }
 
@@ -12934,7 +13055,9 @@ async function writeNotificationInboxRecords({
   teamId,
   gameId = null,
   eventId = null,
-  conversationId = null
+  conversationId = null,
+  deliveryIdempotencyKey = null,
+  suppressResourceTelemetry = false,
 }) {
   const uniqueTargets = getUniqueNotificationInboxTargets(targets);
   if (!uniqueTargets.length) {
@@ -12949,7 +13072,7 @@ async function writeNotificationInboxRecords({
     async (target) => {
       try {
         const inboxRef = firestore.collection(`users/${target.uid}/notificationInbox`);
-        await inboxRef.add(buildNotificationInboxPayload({
+        const candidatePayload = buildNotificationInboxPayload({
           category,
           title,
           body,
@@ -12960,7 +13083,41 @@ async function writeNotificationInboxRecords({
           conversationId,
           createdAt,
           readAt
-        }));
+        });
+        if (deliveryIdempotencyKey) {
+          const itemRef = firestore.doc(
+            `users/${target.uid}/notificationInbox/${deliveryIdempotencyKey}`,
+          );
+          await firestore.runTransaction(async (transaction) => {
+            const existingSnapshot = await transaction.get(itemRef);
+            const existing = existingSnapshot.exists
+              ? existingSnapshot.data() || {}
+              : null;
+            if (
+              existing &&
+              (existing.category !== candidatePayload.category ||
+                existing.title !== candidatePayload.title ||
+                existing.body !== candidatePayload.body ||
+                existing.appRoute !== candidatePayload.appRoute ||
+                existing.teamId !== candidatePayload.teamId ||
+                existing.gameId !== candidatePayload.gameId ||
+                existing.eventId !== candidatePayload.eventId ||
+                existing.conversationId !== candidatePayload.conversationId)
+            ) {
+              throw new Error(
+                'The notification inbox idempotency key is already bound to another notification.',
+              );
+            }
+            transaction.set(itemRef, {
+              ...candidatePayload,
+              deliveryIdempotencyKey,
+              createdAt: existing?.createdAt ?? createdAt,
+              readAt: existing?.readAt ?? readAt,
+            });
+          });
+        } else {
+          await inboxRef.add(candidatePayload);
+        }
         return { status: 'fulfilled', value: await cleanupNotificationInbox(inboxRef) };
       } catch (reason) {
         return { status: 'rejected', reason };
@@ -12978,11 +13135,16 @@ async function writeNotificationInboxRecords({
       return;
     }
     failureCount += 1;
-    functions.logger.warn('Failed to write notification inbox record', {
-      category,
-      teamId,
-      error: result.reason?.message || String(result.reason || 'Unknown error')
-    });
+    functions.logger.warn(
+      'Failed to write notification inbox record',
+      suppressResourceTelemetry
+        ? { category }
+        : {
+            category,
+            teamId,
+            error: result.reason?.message || String(result.reason || 'Unknown error')
+          },
+    );
   });
 
   return { writeCount, cleanupCount, failureCount };
@@ -13004,7 +13166,8 @@ async function writeNotificationAuditRecord({
   conversationId = null,
   batchId = null,
   recipientId = null,
-  dedupGuardApplied = false
+  dedupGuardApplied = false,
+  suppressResourceTelemetry = false,
 }) {
   if (!teamId || !category) return;
 
@@ -13038,11 +13201,16 @@ async function writeNotificationAuditRecord({
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     });
   } catch (error) {
-    functions.logger.warn('Failed to write notification audit record', {
-      teamId,
-      category,
-      error: error?.message || String(error || 'Unknown error')
-    });
+    functions.logger.warn(
+      'Failed to write notification audit record',
+      suppressResourceTelemetry
+        ? { category }
+        : {
+            teamId,
+            category,
+            error: error?.message || String(error || 'Unknown error')
+          },
+    );
   }
 }
 
@@ -13177,6 +13345,18 @@ function mergeNotificationWebpushOptions(baseWebpush = {}, deliveryOptions = {})
   };
 }
 
+function normalizeNotificationDeliveryIdempotencyKey(value) {
+  if (value === null || value === undefined || value === '') return null;
+  if (
+    typeof value !== 'string' ||
+    value !== value.trim() ||
+    !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value)
+  ) {
+    throw new TypeError('deliveryIdempotencyKey must be an exact safe identifier of at most 128 characters.');
+  }
+  return value;
+}
+
 async function sendCategoryNotification({
   teamId,
   gameId = null,
@@ -13192,11 +13372,22 @@ async function sendCategoryNotification({
   dedupKeys = [],
   excludeUids = [],
   audienceContext = {},
-  timeSensitive = false
+  timeSensitive = false,
+  deliveryIdempotencyKey = null,
+  suppressResourceTelemetry = false,
 }) {
   if (!NOTIFICATION_CATEGORIES.includes(category)) return null;
+  const normalizedDeliveryIdempotencyKey =
+    normalizeNotificationDeliveryIdempotencyKey(deliveryIdempotencyKey);
 
-  const allTargets = await getTargetsForCategory(teamId, category, actorUid, audienceContext);
+  const allTargets = await getTargetsForCategory(
+    teamId,
+    category,
+    actorUid,
+    audienceContext,
+    [],
+    { suppressResourceTelemetry },
+  );
   const excludeSet = new Set(Array.isArray(excludeUids) ? excludeUids : []);
   const candidateTargets = excludeSet.size
     ? allTargets.filter((t) => !excludeSet.has(t.uid))
@@ -13222,12 +13413,17 @@ async function sendCategoryNotification({
   if (normalizedDedupKeys.length) {
     const canSend = await checkAndSetNotificationDedupKeys(teamId, category, gameId, normalizedDedupKeys);
     if (!canSend) {
-      functions.logger.info('Notification dedup: skipping duplicate send', {
-        teamId,
-        category,
-        gameId,
-        dedupKeys: normalizedDedupKeys
-      });
+      functions.logger.info(
+        'Notification dedup: skipping duplicate send',
+        suppressResourceTelemetry
+          ? { category }
+          : {
+              teamId,
+              category,
+              gameId,
+              dedupKeys: normalizedDedupKeys
+            },
+      );
       return null;
     }
   }
@@ -13236,16 +13432,33 @@ async function sendCategoryNotification({
   if (!ALWAYS_SEND_CATEGORIES.has(category) && !normalizedDedupKeys.length) {
     const canSend = await checkAndSetNotificationDedup(teamId, category, gameId, dedupKey);
     if (!canSend) {
-      functions.logger.info('Notification dedup: skipping duplicate send', { teamId, category, gameId, dedupKey });
+      functions.logger.info(
+        'Notification dedup: skipping duplicate send',
+        suppressResourceTelemetry
+          ? { category }
+          : { teamId, category, gameId, dedupKey },
+      );
       return null;
     }
   }
 
   const link = linkOverride || buildNotificationLink({ category, teamId, gameId, eventId: eventId || gameId, conversationId, childId });
   const appRoute = buildNotificationAppRoute({ category, teamId, gameId, eventId: eventId || gameId, conversationId, childId });
-  const deliveryOptions = typeof buildNotificationDeliveryOptions === 'function'
+  const baseDeliveryOptions = typeof buildNotificationDeliveryOptions === 'function'
     ? buildNotificationDeliveryOptions({ category, teamId, gameId, eventId: eventId || gameId, timeSensitive })
     : {};
+  const deliveryOptions = normalizedDeliveryIdempotencyKey
+    ? {
+        ...baseDeliveryOptions,
+        webpush: {
+          ...(baseDeliveryOptions.webpush || {}),
+          notification: {
+            ...(baseDeliveryOptions.webpush?.notification || {}),
+            tag: normalizedDeliveryIdempotencyKey
+          }
+        }
+      }
+    : baseDeliveryOptions;
   const mergeWebpushOptions = typeof mergeNotificationWebpushOptions === 'function'
     ? mergeNotificationWebpushOptions
     : (baseWebpush = {}, runtimeDeliveryOptions = {}) => {
@@ -13267,6 +13480,26 @@ async function sendCategoryNotification({
   const allResponses = [];
   let successCount = 0;
   let failureCount = 0;
+  let inboxResult = { writeCount: 0, cleanupCount: 0, failureCount: 0 };
+
+  if (normalizedDeliveryIdempotencyKey) {
+    inboxResult = await writeNotificationInboxRecords({
+      targets: inboxTargets,
+      category,
+      title,
+      body,
+      appRoute,
+      teamId,
+      gameId,
+      eventId: eventId || gameId,
+      conversationId,
+      deliveryIdempotencyKey: normalizedDeliveryIdempotencyKey,
+      suppressResourceTelemetry,
+    });
+    if (inboxResult.failureCount > 0) {
+      throw new Error('Notification inbox idempotency validation failed before push delivery.');
+    }
+  }
 
   for (let i = 0; i < pushTargets.length; i += maxMulticastTokens) {
     const targetChunk = pushTargets.slice(i, i + maxMulticastTokens);
@@ -13301,26 +13534,34 @@ async function sendCategoryNotification({
         success: false,
         error: new Error(`Push delivery failed for ${target.uid || 'unknown-user'}: ${error?.message || String(error || 'Unknown error')}`)
       })));
-      functions.logger.warn('Failed to send push notification chunk', {
-        teamId,
-        category,
-        targetCount: targetChunk.length,
-        error: error?.message || String(error || 'Unknown error')
-      });
+      functions.logger.warn(
+        'Failed to send push notification chunk',
+        suppressResourceTelemetry
+          ? { category, targetCount: targetChunk.length }
+          : {
+              teamId,
+              category,
+              targetCount: targetChunk.length,
+              error: error?.message || String(error || 'Unknown error')
+            },
+      );
     }
   }
 
-  const inboxResult = await writeNotificationInboxRecords({
-    targets: inboxTargets,
-    category,
-    title,
-    body,
-    appRoute,
-    teamId,
-    gameId,
-    eventId: eventId || gameId,
-    conversationId
-  });
+  if (!normalizedDeliveryIdempotencyKey) {
+    inboxResult = await writeNotificationInboxRecords({
+      targets: inboxTargets,
+      category,
+      title,
+      body,
+      appRoute,
+      teamId,
+      gameId,
+      eventId: eventId || gameId,
+      conversationId,
+      suppressResourceTelemetry,
+    });
+  }
 
   await writeNotificationAuditRecord({
     teamId,
@@ -13336,7 +13577,8 @@ async function sendCategoryNotification({
     gameId,
     eventId: eventId || gameId,
     conversationId,
-    dedupGuardApplied: !ALWAYS_SEND_CATEGORIES.has(category)
+    dedupGuardApplied: !ALWAYS_SEND_CATEGORIES.has(category),
+    suppressResourceTelemetry,
   });
 
   return {
@@ -13894,6 +14136,7 @@ exports._internal = {
   dispatchDueTeamMediaNotificationBatches,
   getTargetsForCategory,
   sendCategoryNotification,
+  deliverDiamondScorebookNotification,
   sendDirectTargetsNotification,
   sweepStaleNotificationDeviceTokens,
   sendRsvpReminderPushNotifications,
@@ -17191,11 +17434,20 @@ exports.notifyGameUpdated = retryableNotificationFunctions.firestore
     const category = detectGameNotificationCategory(before, after);
     if (!category) return null;
 
+    const isDiamondGame =
+      before.trackingEngine === 'diamond-v2' ||
+      after.trackingEngine === 'diamond-v2';
     const teamId = context.params.teamId;
     const gameId = context.params.gameId;
     const actorUid = after.updatedBy || null;
 
     if (category === 'liveScore') {
+      if (isDiamondGame) {
+        functions.logger.info('Notification routing: Diamond score updates use the revisioned effect outbox', {
+          category
+        });
+        return null;
+      }
       const liveScoreDedupKey = `score:${toNumericScore(before.homeScore)}:${toNumericScore(before.awayScore)}->${toNumericScore(after.homeScore)}:${toNumericScore(after.awayScore)}`;
       const liveScoreStateDedupKey = buildLiveScoreStateNotificationDedupKey(after);
       if (await hasRecentBigMomentLiveEventForScoreState(teamId, gameId, liveScoreStateDedupKey)) {
@@ -17218,6 +17470,17 @@ exports.notifyGameUpdated = retryableNotificationFunctions.firestore
         dedupKey: liveScoreDedupKey,
         dedupKeys: [liveScoreDedupKey, liveScoreStateDedupKey]
       });
+    }
+
+    if (isDiamondGame) {
+      const externallyMeaningfulScheduleChange = ['date', 'location', 'opponent', 'title']
+        .some((field) => valuesDiffer(before?.[field] ?? null, after?.[field] ?? null));
+      if (!externallyMeaningfulScheduleChange) {
+        functions.logger.info('Notification routing: Diamond lifecycle updates use the revisioned effect outbox', {
+          category
+        });
+        return null;
+      }
     }
 
     const payload = buildScheduleUpdateNotificationPayload(before, after);
@@ -20990,10 +21253,13 @@ exports.liveGameSharePreview = functions
         gameId,
         replay: req.query?.replay,
         clipStart: req.query?.clipStart,
-        clipEnd: req.query?.clipEnd
+        clipEnd: req.query?.clipEnd,
+        overlay: req.query?.overlay
       });
       const query = shareParams.toString();
-      const redirectUrl = `https://allplays.ai/live-game.html?${query}`;
+      const useDiamondViewer = game.trackingEngine === 'diamond-v2';
+      const viewerPath = useDiamondViewer ? 'live-game-diamond-v2.html' : 'live-game.html';
+      const redirectUrl = `https://allplays.ai/${viewerPath}?${query}`;
       const shareUrl = `${PUBLIC_SHARE_PREVIEW_ORIGIN}/watch?${query}`;
       const hasHighlightRange = shareParams.has('clipStart') && shareParams.has('clipEnd');
       const metadata = buildLiveGameShareMetadata({
@@ -21799,3 +22065,73 @@ exports.processAccountDeletionRequest = functions
       throw error;
     }
   });
+
+
+// Diamond Scorebook v2 remains dark unless the server policy and team opt-in
+// both permit a newly scheduled, untracked game. All canonical writes cross
+// these callables; Firestore rules deny direct client access to the ledger.
+const diamondCallableFunctions = functions.runWith({ timeoutSeconds: 120, memory: '512MB' });
+exports.configureDiamondTeam = diamondCallableFunctions.https.onCall(
+  diamondScorebookHandlers.configureDiamondTeam
+);
+exports.getDiamondAccess = diamondCallableFunctions.https.onCall(
+  diamondScorebookHandlers.getDiamondAccess
+);
+exports.getDiamondManagerStats = diamondCallableFunctions.https.onCall(
+  diamondScorebookHandlers.getDiamondManagerStats
+);
+exports.activateDiamondGame = diamondCallableFunctions.https.onCall(
+  diamondScorebookHandlers.activateDiamondGame
+);
+exports.acquireDiamondScorerLease = diamondCallableFunctions.https.onCall(
+  diamondScorebookHandlers.acquireDiamondScorerLease
+);
+exports.submitDiamondCommand = diamondCallableFunctions.https.onCall(
+  diamondScorebookHandlers.submitDiamondCommand
+);
+exports.getDiamondState = diamondCallableFunctions.https.onCall(
+  diamondScorebookHandlers.getDiamondState
+);
+exports.listDiamondEvents = diamondCallableFunctions.https.onCall(
+  diamondScorebookHandlers.listDiamondEvents
+);
+exports.getPublicDiamondGame = diamondCallableFunctions.https.onCall(async (data, context = {}) => {
+  assertOpportunityRateLimit(checkPublicOpportunityBrowseRateLimit, context, 'diamond-game');
+  return diamondScorebookHandlers.getPublicDiamondGame(data, context);
+});
+exports.postDiamondLiveChat = diamondCallableFunctions.https.onCall(
+  diamondLiveEngagementHandlers.postDiamondLiveChat
+);
+exports.postDiamondLiveReaction = diamondCallableFunctions.https.onCall(
+  diamondLiveEngagementHandlers.postDiamondLiveReaction
+);
+exports.moderateDiamondLiveChat = diamondCallableFunctions.https.onCall(
+  diamondLiveEngagementHandlers.moderateDiamondLiveChat
+);
+exports.parseDiamondVoice = diamondCallableFunctions.https.onCall(
+  diamondScorebookHandlers.parseDiamondVoice
+);
+exports.regenerateDiamondProjection = diamondCallableFunctions.https.onCall(
+  diamondScorebookHandlers.regenerateDiamondProjection
+);
+exports.getDiamondRecapSource = diamondCallableFunctions.https.onCall(
+  diamondScorebookAiHandlers.getDiamondRecapSource
+);
+exports.publishDiamondAiDraft = diamondCallableFunctions.https.onCall(
+  diamondScorebookAiHandlers.publishDiamondAiDraft
+);
+exports.cleanupDeletedDiamondGame = functions
+  .runWith({ timeoutSeconds: 540, memory: '1GB', failurePolicy: true })
+  .firestore
+  .document('teams/{teamId}/games/{gameId}')
+  .onDelete(diamondScorebookHandlers.cleanupDeletedDiamondGame);
+exports.projectDiamondScorebook = functions
+  .runWith({ timeoutSeconds: 540, memory: '1GB', failurePolicy: true })
+  .firestore
+  .document('teams/{teamId}/games/{gameId}/diamondScorebooks/v2')
+  .onWrite(diamondScorebookProjectorHandlers.onDiamondScorebookWrite);
+exports.processDiamondScorebookEffect = functions
+  .runWith({ timeoutSeconds: 120, memory: '512MB', failurePolicy: true })
+  .firestore
+  .document('teams/{teamId}/games/{gameId}/diamondScorebooks/v2/effects/{effectId}')
+  .onWrite(diamondScorebookEffectHandlers.onDiamondEffectWrite);

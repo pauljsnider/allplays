@@ -5,7 +5,9 @@ import {
   mergeDiamondEventPages,
   normalizeDiamondPublicEvent,
   normalizeDiamondPublicGame,
+  normalizeDiamondPublicMedia,
   normalizeDiamondPublicState,
+  normalizeDiamondViewerMode,
   reconcileDiamondEventWindow,
   reconcileDiamondPagination,
 } from "../../js/diamond-live-view-model.js";
@@ -56,6 +58,60 @@ describe("diamond live view model", () => {
         description: " Runner   scored ",
       }),
     ).toMatchObject({ revision: 2, description: "Runner scored" });
+  });
+
+  it("normalizes replay, overlay, and bounded clip links without accepting malformed ranges", () => {
+    expect(
+      normalizeDiamondViewerMode({
+        overlay: "1",
+        clipStart: "1200",
+        clipEnd: "5600",
+      }),
+    ).toEqual({
+      replay: true,
+      overlay: true,
+      clipStartMs: 1200,
+      clipEndMs: 5600,
+    });
+    expect(
+      normalizeDiamondViewerMode({
+        replay: "yes",
+        overlay: "yes",
+        clipStart: "5600",
+        clipEnd: "1200",
+      }),
+    ).toEqual({
+      replay: false,
+      overlay: false,
+      clipStartMs: null,
+      clipEndMs: null,
+    });
+  });
+
+  it("keeps only credential-free HTTPS public media", () => {
+    expect(
+      normalizeDiamondPublicMedia({
+        mode: "replay",
+        publicUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        durationMs: 42_000,
+      }),
+    ).toEqual({
+      mode: "replay",
+      publicUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+      durationMs: 42_000,
+    });
+    expect(
+      normalizeDiamondPublicMedia({
+        mode: "live",
+        publicUrl: "http://video.example.test/live",
+      }),
+    ).toBeNull();
+    expect(
+      normalizeDiamondPublicMedia({
+        mode: "replay",
+        publicUrl: "https://viewer:secret@video.example.test/replay",
+      }),
+    ).toBeNull();
   });
 
   it("deduplicates paginated events and orders newest first", () => {
@@ -193,7 +249,27 @@ describe("diamond live view model", () => {
     expect(html).toContain("data-diamond-classic-link");
     expect(html).toContain("data-diamond-chat-form");
     expect(html).toContain("data-diamond-reactions");
+    expect(html).toContain("data-diamond-media-frame");
+    expect(html).toContain("data-diamond-mode-label");
     expect(html).toContain('aria-label="Live game score"');
-    expect(html).toContain("js/diamond-live-game.js?v=1");
+    expect(html).toContain("js/diamond-live-game.js?v=5");
+
+    const script = readFileSync(
+      new URL("../../js/diamond-live-game.js", import.meta.url),
+      "utf8",
+    );
+    expect(script).toContain(
+      'import { isViewerChatEnabled } from "./live-game-chat.js?v=4";',
+    );
+    expect(script).toContain('"postDiamondLiveChat"');
+    expect(script).toContain('"postDiamondLiveReaction"');
+    expect(script).toContain("expectedInstanceId: state.instanceId");
+    expect(script).toContain('viewerMode: "live"');
+    expect(script).toContain("cryptoApi.randomUUID()");
+    expect(script).toContain("cryptoApi.getRandomValues(bytes)");
+    expect(script).toContain("state.pendingChatRequest");
+    expect(script).not.toContain("postLiveChatMessage(");
+    expect(script).not.toContain("sendReaction(");
+    expect(script).not.toContain("senderId: state.user.uid");
   });
 });

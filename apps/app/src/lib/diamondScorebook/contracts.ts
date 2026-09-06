@@ -1,5 +1,5 @@
 export const DIAMOND_SCHEMA_VERSION = 2 as const;
-export const DIAMOND_REDUCER_VERSION = 1 as const;
+export const DIAMOND_REDUCER_VERSION = 2 as const;
 export const DIAMOND_STAT_CATALOG_VERSION = 1 as const;
 
 export type DiamondSport = 'baseball' | 'fastpitch';
@@ -8,7 +8,7 @@ export type DiamondHalf = 'top' | 'bottom';
 export type DiamondBase = 'first' | 'second' | 'third';
 export type DiamondDestination = DiamondBase | 'home' | 'out' | 'stay';
 export type DiamondCaptureMode = 'quick' | 'full';
-export type DiamondLifecycle = 'configured' | 'ready' | 'active' | 'suspended' | 'final' | 'correction';
+export type DiamondLifecycle = 'configured' | 'ready' | 'active' | 'suspended' | 'final' | 'correction' | 'cancelled';
 
 export type DiamondCoverage = 'complete' | 'partial' | 'not_collected';
 export type DiamondStatFamily = 'batting' | 'baserunning' | 'pitching' | 'fielding' | 'situational' | 'pitches' | 'sensors';
@@ -18,7 +18,40 @@ export type DiamondCoverageMap = Readonly<Record<DiamondStatFamily, DiamondCover
 export type DiamondDefensivePosition =
   'P' | 'C' | '1B' | '2B' | '3B' | 'SS' | 'LF' | 'LCF' | 'CF' | 'RCF' | 'RF' | 'DP' | 'FLEX' | 'EH' | 'EP';
 
-export type DiamondBattingRole = 'regular' | 'dp' | 'flex' | 'eh' | 'ep';
+export type DiamondBattingRole = 'regular' | 'dh' | 'dp' | 'flex' | 'eh' | 'ep';
+
+export type DiamondRuleDecisionCode =
+  | 'coverage_adjustment'
+  | 'end_half_inning_run_limit'
+  | 'end_game_time_limit'
+  | 'end_game_weather'
+  | 'end_game_forfeit_home'
+  | 'end_game_forfeit_away';
+
+export type DiamondGameEndDecisionReason = 'time-limit' | 'weather' | 'forfeit';
+
+export type DiamondFinalizationKind = 'regulation' | 'walkoff' | 'run-ahead' | DiamondGameEndDecisionReason;
+
+export type DiamondHalfInningEnd = Readonly<{
+  reason: 'run-limit';
+  decisionEventId: string;
+}>;
+
+export type DiamondGameEndDecision = Readonly<{
+  reason: DiamondGameEndDecisionReason;
+  decisionEventId: string;
+  awardedSide: DiamondSide | null;
+}>;
+
+export type DiamondFinalizationReason = Readonly<{
+  kind: DiamondFinalizationKind;
+  decisionEventId: string | null;
+}>;
+
+export type DiamondCancellation = Readonly<{
+  reason: string;
+  decisionEventId: string;
+}>;
 
 export type DiamondLineupEntryInput = Readonly<{
   slot: number;
@@ -69,6 +102,8 @@ export type DiamondInningState = Readonly<{
   balls: number;
   strikes: number;
   pitchesInPlateAppearance: number;
+  /** Last pitch that was actually delivered to the batter; balks and pickoff attempts are excluded. */
+  lastPitchResult: DiamondPitchResult | null;
 }>;
 
 export type DiamondGameState = Readonly<{
@@ -91,6 +126,10 @@ export type DiamondGameState = Readonly<{
   nextBatterSlot: Readonly<Record<DiamondSide, number>>;
   coverage: DiamondCoverageMap;
   suspendedReason: string | null;
+  halfInningEnd: DiamondHalfInningEnd | null;
+  gameEndDecision: DiamondGameEndDecision | null;
+  finalizationReason: DiamondFinalizationReason | null;
+  cancellation: DiamondCancellation | null;
   finalConfirmedAtRevision: number | null;
   checkpointHash: string;
 }>;
@@ -270,11 +309,12 @@ export type DiamondCommandPayloadMap = {
   scorer_handoff: Readonly<{ toUid: string }>;
   suspend: Readonly<{ reason: string }>;
   resume: Readonly<Record<string, never>>;
+  cancel: Readonly<{ confirmed: true; reason: string }>;
   finalize: Readonly<{ confirmed: true }>;
   reopen_for_correction: Readonly<{ reason: string }>;
   private_note: Readonly<{ text: string; attachedEventId?: string; visibility?: 'staff-private' }>;
   rules_decision: Readonly<{
-    code: string;
+    code: DiamondRuleDecisionCode;
     description: string;
     affectedFamilies?: readonly DiamondStatFamily[];
   }>;
@@ -290,7 +330,16 @@ export type DiamondCommandType = keyof DiamondCommandPayloadMap;
 
 export type DiamondCorrectableCommandType = Exclude<
   DiamondCommandType,
-  'activate' | 'start' | 'scorer_handoff' | 'suspend' | 'resume' | 'finalize' | 'reopen_for_correction' | 'void_event' | 'supersede_event'
+  | 'activate'
+  | 'start'
+  | 'scorer_handoff'
+  | 'suspend'
+  | 'resume'
+  | 'cancel'
+  | 'finalize'
+  | 'reopen_for_correction'
+  | 'void_event'
+  | 'supersede_event'
 >;
 
 export type DiamondReplacement = {
@@ -381,6 +430,10 @@ export type DiamondCommandContext = Readonly<{
   actorUid: string;
   eventId: string;
   serverTimestampMs: number;
+  /** Server-derived authorization evidence. Never copy this value from command or client input. */
+  managerAuthorized?: boolean;
+  /** Server-derived evidence that a manager transaction is recovering an expired scorer lease. */
+  scorerLeaseRecoveryAuthorized?: boolean;
 }>;
 
 export type DiamondRulesProfile = Readonly<{
@@ -393,7 +446,12 @@ export type DiamondRulesProfile = Readonly<{
   timeLimitMinutes: number | null;
   inningRunLimit: number | null;
   runAheadRules: readonly Readonly<{ afterInning: number; runDifferential: number }>[];
-  tiebreaker: Readonly<{ enabled: boolean; startInning: number; runnerBase: DiamondBase }>;
+  tiebreaker: Readonly<{
+    enabled: boolean;
+    startInning: number;
+    runnerBase: DiamondBase;
+    runnerSelection: 'previous-batter';
+  }>;
   continuousBatting: boolean;
   freeSubstitution: boolean;
   starterReentryLimit: number;

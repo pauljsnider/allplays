@@ -207,6 +207,11 @@ function createEnvironment(initialState, overrides = {}) {
         'name',
         'description',
         'sport',
+        'diamond-team-setup',
+        'diamond-scorebook-enabled',
+        'diamond-team-setup-options',
+        'diamond-rules-profile',
+        'diamond-capture-mode',
         'teamColorPrimary',
         'teamColorSecondary',
         'notificationEmail',
@@ -305,6 +310,9 @@ function createEnvironment(initialState, overrides = {}) {
     elements.get('standingsPointLoss').value = '0';
     elements.get('isPublic').checked = true;
     elements.get('streamAccessMode').value = 'admins';
+    elements.get('diamond-team-setup').classList.add('hidden');
+    elements.get('diamond-team-setup-options').classList.add('hidden');
+    elements.get('diamond-capture-mode').value = 'quick';
     elements.get('photo-upload').files = [];
 
     const document = {
@@ -327,6 +335,7 @@ function createEnvironment(initialState, overrides = {}) {
     const window = {
         document,
         location,
+        __ALLPLAYS_CONFIG__: overrides.runtimeConfig,
         navigator: {
             clipboard: {
                 async writeText() {}
@@ -366,16 +375,24 @@ function extractEditTeamModule() {
             'const { validateProfilePhotoFile } = deps.profilePhotoPaths;'
         )
         .replace(
-            "import { getDefaultStatConfigForSport } from './js/stat-config-presets.js?v=5';",
+            "import { getDefaultStatConfigForSport } from './js/stat-config-presets.js?v=9';",
             'const { getDefaultStatConfigForSport } = deps.statConfigPresets;'
         )
         .replace(
-            "import { buildTeamSportConfigMigrationPlan } from './js/team-stat-config-migration.js?v=4';",
+            "import { buildTeamSportConfigMigrationPlan } from './js/team-stat-config-migration.js?v=8';",
             'const { buildTeamSportConfigMigrationPlan } = deps.teamStatConfigMigration;'
         )
         .replace(
-            "import { configureDiamondTeamForSport } from './js/diamond-scorebook-client.js?v=1';",
+            "import { configureDiamondTeamForSport } from './js/diamond-scorebook-client.js?v=4';",
             'const { configureDiamondTeamForSport } = deps.diamondScorebookClient;'
+        )
+        .replace(
+            "import { listDiamondRulesProfilesForSport } from './js/diamond-rules-profiles.js?v=2';",
+            'const { listDiamondRulesProfilesForSport } = deps.diamondRulesProfiles;'
+        )
+        .replace(
+            "import { isDiamondScorebookUiEnabled } from './js/launch-features.js?v=1';",
+            'const { isDiamondScorebookUiEnabled } = deps.launchFeatures;'
         )
         .replace(
             /import\s+\{\s*renderHeader,\s*renderFooter,\s*getUrlParams,\s*escapeHtml\s*\}\s+from\s+'\.\/js\/utils\.js\?v=\d+';/,
@@ -564,6 +581,26 @@ async function bootEditTeam(initialState, overrides = {}, dependencyOverrides = 
                 return { configured: false };
             }
         },
+        diamondRulesProfiles: {
+            listDiamondRulesProfilesForSport(sport) {
+                const normalized = String(sport || '').trim().toLowerCase();
+                if (normalized === 'baseball') {
+                    return [
+                        { id: 'baseball-youth', version: 1, sport: 'baseball', label: 'Baseball — configurable youth' },
+                        { id: 'baseball-nfhs', version: 1, sport: 'baseball', label: 'Baseball — NFHS style' }
+                    ];
+                }
+                if (normalized === 'softball' || normalized === 'fastpitch') {
+                    return [{ id: 'fastpitch-youth', version: 1, sport: 'fastpitch', label: 'Fastpitch — configurable youth' }];
+                }
+                return [];
+            }
+        },
+        launchFeatures: {
+            isDiamondScorebookUiEnabled() {
+                return env.window.__ALLPLAYS_CONFIG__?.diamondScorebookUiEnabled === true;
+            }
+        },
         teamAccess: await import('../../js/team-access.js'),
         rolloverAccess: await import('../../js/rollover-access.js'),
         rosterRolloverPreview: await import('../../js/roster-rollover-preview.js'),
@@ -616,6 +653,14 @@ async function bootEditTeam(initialState, overrides = {}, dependencyOverrides = 
         diamondScorebookClient: {
             ...baseDeps.diamondScorebookClient,
             ...(dependencyOverrides.diamondScorebookClient || {})
+        },
+        diamondRulesProfiles: {
+            ...baseDeps.diamondRulesProfiles,
+            ...(dependencyOverrides.diamondRulesProfiles || {})
+        },
+        launchFeatures: {
+            ...baseDeps.launchFeatures,
+            ...(dependencyOverrides.launchFeatures || {})
         },
         teamAccess: {
             ...baseDeps.teamAccess,
@@ -986,6 +1031,95 @@ describe('edit team admin access persistence', () => {
                 ownerEmail: 'owner@example.com'
             });
             expect(env.state.createCalls[0].teamData.registrationSource).toBeNull();
+        } finally {
+            env.cleanup();
+        }
+    });
+
+    it('keeps Diamond off by default and sends an explicit profile only after opt-in', async () => {
+        const initialState = {
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            createCalls: [],
+            updateCalls: []
+        };
+        const configurationCalls = [];
+        const env = await bootEditTeam(initialState, {
+            href: 'http://example.com/edit-team.html',
+            runtimeConfig: { diamondScorebookUiEnabled: true }
+        }, {
+            diamondScorebookClient: {
+                async configureDiamondTeamForSport(teamId, sport, options) {
+                    configurationCalls.push({ teamId, sport, options: deepClone(options) });
+                    return { configured: true, enabled: true, settings: options };
+                }
+            }
+        });
+        try {
+            expect(env.elements.get('diamond-scorebook-enabled').checked).toBe(false);
+            expect(env.elements.get('diamond-team-setup').classList.contains('hidden')).toBe(true);
+
+            env.elements.get('name').value = 'Diamond Sharks';
+            env.elements.get('sport').value = 'Baseball';
+            await env.elements.get('sport').dispatchEvent(new MockEvent('change'));
+            expect(env.elements.get('diamond-team-setup').classList.contains('hidden')).toBe(false);
+            expect(env.elements.get('diamond-rules-profile').value).toBe('baseball-youth@1');
+
+            env.elements.get('diamond-scorebook-enabled').checked = true;
+            await env.elements.get('diamond-scorebook-enabled').dispatchEvent(new MockEvent('change'));
+            env.elements.get('diamond-rules-profile').value = 'baseball-nfhs@1';
+            env.elements.get('diamond-capture-mode').value = 'full';
+            await env.elements.get('team-form').requestSubmit();
+
+            expect(configurationCalls).toEqual([{
+                teamId: 'team-created',
+                sport: 'Baseball',
+                options: {
+                    enabled: true,
+                    rulesProfileId: 'baseball-nfhs',
+                    rulesProfileVersion: 1,
+                    captureMode: 'full'
+                }
+            }]);
+        } finally {
+            env.cleanup();
+        }
+    });
+
+    it.each([
+        ['missing', undefined],
+        ['false', { diamondScorebookUiEnabled: false }]
+    ])('keeps Diamond setup unavailable with %s runtime config and preserves normal Baseball creation', async (_label, runtimeConfig) => {
+        const initialState = {
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            createCalls: [],
+            updateCalls: []
+        };
+        const configurationCalls = [];
+        const env = await bootEditTeam(initialState, {
+            href: 'http://example.com/edit-team.html',
+            runtimeConfig
+        }, {
+            diamondScorebookClient: {
+                async configureDiamondTeamForSport(...args) {
+                    configurationCalls.push(args);
+                    return { configured: true };
+                }
+            }
+        });
+        try {
+            env.elements.get('name').value = 'Classic Baseball';
+            env.elements.get('sport').value = 'Baseball';
+            await env.elements.get('sport').dispatchEvent(new MockEvent('change'));
+
+            expect(env.elements.get('diamond-team-setup').hidden).toBe(true);
+            expect(env.elements.get('diamond-team-setup').classList.contains('hidden')).toBe(true);
+
+            env.elements.get('diamond-scorebook-enabled').checked = true;
+            await env.elements.get('team-form').requestSubmit();
+
+            expect(configurationCalls).toEqual([]);
+            expect(env.state.createCalls).toHaveLength(1);
+            expect(env.state.createCalls[0].teamData.sport).toBe('Baseball');
         } finally {
             env.cleanup();
         }

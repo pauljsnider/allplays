@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Loader2 } from 'lucide-react';
+import { Download, Loader2 } from 'lucide-react';
 import { AvatarImage } from '../../components/AvatarImage';
 import { PremiumGate } from '../../components/PremiumGate';
 import type { PremiumAccessResult } from '../../lib/premiumAccessService';
 import type { TeamDetailAnalytics, TeamDetailAnalyticsSnapshot, TeamDetailModel, TeamDetailRosterStatisticsTable } from '../../lib/teamDetailService';
+import { exportDiamondTeamSeasonStatsCsv } from '../../lib/diamondStatExport';
 
 const EMPTY_TEAM_ANALYTICS: TeamDetailAnalytics = {
   seasonLabel: '',
@@ -85,7 +86,11 @@ export function InsightsTab({ model, loading, error, premiumAccess }: { model: T
       <PremiumGate access={premiumAccess} label="team leaderboards">
         <section className="app-card p-4">
           <div className="text-sm font-black text-gray-950">Leaderboards</div>
-          <div className="mt-0.5 text-xs font-semibold text-gray-500">Public top stats from completed tracked games.</div>
+          <div className="mt-0.5 text-xs font-semibold text-gray-500">
+            {model.leaderboards.some((leaderboard) => leaderboard.statVisibility === 'manager-internal')
+              ? 'Manager-internal top stats from complete Diamond projections.'
+              : 'Public top stats from completed tracked games.'}
+          </div>
           <div className="mt-3 grid gap-2 lg:grid-cols-2">
             {loading ? <InlineDeferredLoading copy="Loading leaderboards…" /> : null}
             {!loading && error ? <InlineDeferredError title="Leaderboards unavailable" message={error} /> : null}
@@ -93,6 +98,10 @@ export function InsightsTab({ model, loading, error, premiumAccess }: { model: T
               model.leaderboards.map((leaderboard) => (
                 <div key={leaderboard.id} className="rounded-xl border border-gray-200 bg-white p-3">
                   <div className="text-sm font-black text-gray-950">{leaderboard.label}</div>
+                  <div className="mt-0.5 text-[10px] font-bold uppercase tracking-wide text-gray-500">
+                    {leaderboard.statVisibility === 'manager-internal' ? 'Manager internal' : 'Public'}
+                    {leaderboard.qualificationLabel ? ` · ${leaderboard.qualificationLabel}` : ''}
+                  </div>
                   <div className="mt-3 space-y-2">
                     {leaderboard.leaders.map((leader) => (
                       <div key={`${leaderboard.id}-${leader.playerId}`} className="flex items-center gap-3 rounded-lg bg-gray-50 px-3 py-2">
@@ -317,9 +326,38 @@ function RosterStatisticsCard({ model, loading, error, selectedSeason }: { model
   const root = model.rosterStatistics;
   const table: TeamDetailRosterStatisticsTable | undefined = root?.seasons?.find((season) => season.seasonLabel === selectedSeason) || root?.seasons?.[0];
   const seasonUnavailable = root?.unavailableSeasons?.includes(selectedSeason) === true;
+  const [exporting, setExporting] = useState(false);
+  const [exportMessage, setExportMessage] = useState('');
+  async function exportSeasonStats() {
+    if (!table?.diamond?.hasDiamond || exporting) return;
+    setExporting(true);
+    setExportMessage('');
+    try {
+      await exportDiamondTeamSeasonStatsCsv(model.team.name, table);
+      setExportMessage(`${table.diamond.statVisibility === 'manager-internal' ? 'Manager-internal' : 'Public'} season CSV exported.`);
+    } catch (exportError) {
+      setExportMessage(exportError instanceof Error ? exportError.message : 'Unable to export season statistics.');
+    } finally {
+      setExporting(false);
+    }
+  }
   return <section className="app-card p-4" aria-labelledby="roster-statistics-heading">
-    <div id="roster-statistics-heading" className="text-sm font-black text-gray-950">Roster statistics</div>
-    <div className="mt-0.5 text-xs font-semibold text-gray-500">Season totals from completed tracked games.</div>
+    <div className="flex items-start justify-between gap-3">
+      <div>
+        <div id="roster-statistics-heading" className="text-sm font-black text-gray-950">Roster statistics</div>
+        <div className="mt-0.5 text-xs font-semibold text-gray-500">Season totals from completed tracked games.</div>
+      </div>
+      {table?.diamond?.hasDiamond ? <button
+        type="button"
+        className="border-primary-200 bg-primary-50 text-primary-700 inline-flex min-h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-black disabled:opacity-60"
+        onClick={() => { void exportSeasonStats(); }}
+        disabled={exporting}
+      >
+        <Download className="h-3.5 w-3.5" aria-hidden="true" />
+        {exporting ? 'Preparing CSV' : table.diamond.statVisibility === 'manager-internal' ? 'Export internal CSV' : 'Export public CSV'}
+      </button> : null}
+    </div>
+    {exportMessage ? <div className="mt-2 text-xs font-semibold text-gray-600" role="status">{exportMessage}</div> : null}
     <div className="mt-3">
       {loading ? <InlineDeferredLoading copy="Loading roster statistics…" /> : null}
       {!loading && error ? <InlineDeferredError title="Roster statistics unavailable" message={error} /> : null}
@@ -330,13 +368,38 @@ function RosterStatisticsCard({ model, loading, error, selectedSeason }: { model
           role="status"
           aria-label="Diamond roster statistics status"
         >
-          <div className="text-xs font-black uppercase tracking-[0.04em]">Diamond scorebook stats · Read only</div>
+          <div className="text-xs font-black uppercase tracking-[0.04em]">
+            Diamond scorebook stats · {table.diamond.statVisibility === 'manager-internal' ? 'Manager internal' : 'Public'} · Read only
+          </div>
           <div className="mt-0.5 text-xs font-semibold">
             {table.diamond.pending
               ? 'A projection is pending. Unavailable fields remain an em dash and are never counted as zero.'
               : 'Partial capture is labeled as observed; rankings use complete values only.'}
           </div>
           <div className="mt-1 text-[11px] font-bold opacity-75">Source revisions: {table.diamond.sourceRevisions.length ? table.diamond.sourceRevisions.join(', ') : 'unavailable'}</div>
+          {table.diamond.requestedStatVisibility === 'manager-internal' && table.diamond.statVisibility !== 'manager-internal' ? (
+            <div className="mt-1 text-[11px] font-bold">Internal stats are unavailable; showing the complete public projection. Refresh to retry.</div>
+          ) : null}
+        </div>
+      ) : null}
+      {!loading && !error && !seasonUnavailable && table?.teamStats?.columns.length ? (
+        <div className="mb-3 rounded-xl border border-gray-200 bg-white p-3" data-diamond-team-totals>
+          <div className="text-[10px] font-black uppercase tracking-wide text-gray-500">
+            Diamond team totals · {table.diamond?.statVisibility === 'manager-internal' ? 'Manager internal' : 'Public'}
+          </div>
+          <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-6">
+            {table.teamStats.columns.map((column) => {
+              const value = table.teamStats?.values[column.id];
+              const formattedValue = value?.formattedValue ?? '—';
+              return <div key={column.id} className="rounded-lg bg-gray-50 px-3 py-2">
+                <div className="text-[9px] font-black uppercase tracking-wide text-gray-500">{column.label}</div>
+                <div className="mt-0.5 text-sm font-black text-gray-900" aria-label={value?.observed ? `${formattedValue}, observed from partial tracking` : formattedValue === '—' ? 'Not collected' : formattedValue}>
+                  {formattedValue}
+                  {value?.observed ? <span className="ml-1 text-[8px] font-black uppercase tracking-wide text-amber-700">Observed</span> : null}
+                </div>
+              </div>;
+            })}
+          </div>
         </div>
       ) : null}
       {!loading && !error && !seasonUnavailable && table?.columns.length ? <div className="overflow-x-auto rounded-xl border border-gray-200">
@@ -346,7 +409,7 @@ function RosterStatisticsCard({ model, loading, error, selectedSeason }: { model
           return <td key={column.id} className="px-3 py-2 font-bold text-gray-700"><span className="inline-flex flex-col items-start" aria-label={value?.observed ? `${formattedValue}, observed from partial tracking` : formattedValue === '—' ? 'Not collected' : formattedValue}><span>{formattedValue}</span>{value?.observed ? <span className="text-[8px] font-black uppercase tracking-wide text-amber-700">Observed</span> : null}</span></td>;
         })}</tr>)}</tbody></table>
       </div> : null}
-      {!loading && !error && !seasonUnavailable && !table?.columns.length ? <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">Roster statistics appear after public player stats are configured.</div> : null}
+      {!loading && !error && !seasonUnavailable && !table?.columns.length ? <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">Roster statistics appear after visible player stats are configured.</div> : null}
     </div>
   </section>;
 }

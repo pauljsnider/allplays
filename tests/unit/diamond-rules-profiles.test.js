@@ -23,6 +23,7 @@ describe('Diamond rules profile contract', () => {
 
     it('builds a bounded server payload and defaults to Quick capture', () => {
         expect(buildDiamondTeamSetup('Fastpitch', {
+            enabled: true,
             rulesProfileId: 'fastpitch-nfhs',
             rulesProfileVersion: 1,
             captureMode: 'full'
@@ -33,7 +34,8 @@ describe('Diamond rules profile contract', () => {
             rulesProfileVersion: 1,
             captureMode: 'full'
         });
-        expect(buildDiamondTeamSetup('Baseball')).toMatchObject({ captureMode: 'quick' });
+        expect(buildDiamondTeamSetup('Baseball')).toMatchObject({ enabled: false, captureMode: 'quick' });
+        expect(buildDiamondTeamSetup('Baseball', { enabled: true })).toMatchObject({ enabled: true });
         expect(listDiamondRulesProfilesForSport('Softball')).toHaveLength(2);
     });
 });

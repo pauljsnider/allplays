@@ -93,7 +93,7 @@ describe('game report stat helpers', () => {
     });
   });
 
-  it('exposes every Diamond catalog column even when a stat was not collected', () => {
+  it('exposes configured public Diamond columns without restoring private catalog metrics', () => {
     const result = resolveReportStatColumns({
       trackingEngine: 'diamond-v2',
       statsMap: { p1: { ab: 3, h: 1 } },
@@ -106,9 +106,10 @@ describe('game report stat helpers', () => {
     });
 
     expect(result.statKeys.slice(0, 4)).toEqual(['ab', 'h', 'r', 'rbi']);
-    expect(result.statKeys).toEqual(expect.arrayContaining(['avg', 'era', 'whip', 'fpct']));
+    expect(result.statKeys).toEqual(expect.arrayContaining(['avg']));
+    expect(result.statKeys).not.toEqual(expect.arrayContaining(['era', 'whip', 'fpct']));
     expect(result.statLabels.avg).toBe('Batting average');
-    expect(result.statDefinitions.era).toMatchObject({ precision: 2, rankingOrder: 'asc' });
+    expect(result.statDefinitions.era).toBeUndefined();
   });
 
   it('does not re-add a configured private Diamond metric through the default catalog', () => {

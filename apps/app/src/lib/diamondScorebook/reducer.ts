@@ -5,17 +5,23 @@ import {
   DiamondDomainError,
   type DiamondBase,
   type DiamondBases,
+  type DiamondBattingRole,
   type DiamondCommandPayloadMap,
   type DiamondCommandType,
   type DiamondCoverage,
   type DiamondCoverageMap,
   type DiamondDefensivePosition,
   type DiamondDestination,
+  type DiamondEffectiveEvent,
+  type DiamondFieldingChain,
+  type DiamondFinalizationReason,
   type DiamondGameState,
   type DiamondLedgerConfig,
   type DiamondLineupSlot,
   type DiamondRunnerAdvance,
   type DiamondRunnerPlacement,
+  type DiamondRuleDecisionCode,
+  type DiamondRulesProfile,
   type DiamondSide,
   type DiamondStatFamily,
   type DiamondTeamLineup
@@ -39,23 +45,24 @@ const EMPTY_LINEUP: DiamondTeamLineup = Object.freeze({
 const BASES: readonly DiamondBase[] = ['first', 'second', 'third'];
 const COVERAGE_VALUES: readonly DiamondCoverage[] = ['complete', 'partial', 'not_collected'];
 const SIDES = ['home', 'away'] as const;
-const LIFECYCLES: readonly DiamondGameState['lifecycle'][] = ['configured', 'ready', 'active', 'suspended', 'final', 'correction'];
-const POSITIONS: readonly DiamondDefensivePosition[] = [
-  'P',
-  'C',
-  '1B',
-  '2B',
-  '3B',
-  'SS',
-  'LF',
-  'LCF',
-  'CF',
-  'RCF',
-  'RF',
-  'DP',
-  'FLEX',
-  'EH',
-  'EP'
+const LIFECYCLES: readonly DiamondGameState['lifecycle'][] = [
+  'configured',
+  'ready',
+  'active',
+  'suspended',
+  'final',
+  'correction',
+  'cancelled'
+];
+const FIELDING_POSITIONS: readonly DiamondDefensivePosition[] = ['P', 'C', '1B', '2B', '3B', 'SS', 'LF', 'LCF', 'CF', 'RCF', 'RF'];
+const BATTING_ROLES: readonly DiamondBattingRole[] = ['regular', 'dh', 'dp', 'flex', 'eh', 'ep'];
+const RULE_DECISION_CODES: readonly DiamondRuleDecisionCode[] = [
+  'coverage_adjustment',
+  'end_half_inning_run_limit',
+  'end_game_time_limit',
+  'end_game_weather',
+  'end_game_forfeit_home',
+  'end_game_forfeit_away'
 ];
 const PITCH_RESULTS: readonly DiamondCommandPayloadMap['record_pitch']['result'][] = [
   'ball',
@@ -121,6 +128,14 @@ const OUT_KINDS: readonly NonNullable<DiamondCommandPayloadMap['advance_runner']
   'strikeout',
   'catch'
 ];
+const SCORING_CREDIT_FIELDS = ['countsRun', 'earned', 'rbi', 'responsiblePitcherId'] as const;
+const BATTER_ADVANCE_FIELDS = new Set(['to', 'cause', 'outKind', ...SCORING_CREDIT_FIELDS]);
+const RUNNER_ADVANCE_FIELDS = new Set(['runnerId', 'from', 'to', 'cause', 'outKind', ...SCORING_CREDIT_FIELDS]);
+const STANDALONE_RUNNER_ADVANCE_FIELDS = new Set([...RUNNER_ADVANCE_FIELDS, 'fielding', 'omissions']);
+const FIELDING_FIELDS = new Set(['putoutBy', 'assists', 'errors', 'passedBallBy', 'doublePlay', 'triplePlay', 'battedBall', 'location']);
+const FIELDING_ATTACHMENT_FIELDS = new Set(['playEventId', 'fielding']);
+const SCORING_JUDGMENT_FIELDS = new Set(['playEventId', 'runnerId', 'earned', 'rbi', 'responsiblePitcherId', 'pitcherOfRecord']);
+const PITCHER_DECISION_FIELDS = new Set(['side', 'playerId', 'decision']);
 
 function cloneLineup(lineup: DiamondTeamLineup): DiamondTeamLineup {
   return {
@@ -149,7 +164,11 @@ function cloneState(state: DiamondGameState): DiamondGameState {
       away: cloneLineup(state.lineups.away)
     },
     nextBatterSlot: { ...state.nextBatterSlot },
-    coverage: { ...state.coverage }
+    coverage: { ...state.coverage },
+    halfInningEnd: state.halfInningEnd ? { ...state.halfInningEnd } : null,
+    gameEndDecision: state.gameEndDecision ? { ...state.gameEndDecision } : null,
+    finalizationReason: state.finalizationReason ? { ...state.finalizationReason } : null,
+    cancellation: state.cancellation ? { ...state.cancellation } : null
   };
 }
 
@@ -168,6 +187,45 @@ function requireId(value: unknown, label: string): string {
     throw new DiamondDomainError('invalid-id', `${label} must be nonempty, slash-free, and at most 128 characters.`);
   }
   return normalized;
+}
+
+function requireRecord(value: unknown, label: string): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new DiamondDomainError('invalid-object', `${label} must be an object.`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function requireOnlyFields(value: Record<string, unknown>, fields: ReadonlySet<string>, label: string) {
+  if (Object.keys(value).some((key) => !fields.has(key))) {
+    throw new DiamondDomainError('invalid-object', `${label} contains unsupported fields.`);
+  }
+}
+
+function requireOptionalBoolean(value: unknown, label: string) {
+  if (value !== undefined && typeof value !== 'boolean') {
+    throw new DiamondDomainError('invalid-boolean', `${label} must be a boolean when provided.`);
+  }
+}
+
+function validateScoringCredit(value: Record<string, unknown>, label: string) {
+  requireOptionalBoolean(value.countsRun, `${label}.countsRun`);
+  requireOptionalBoolean(value.earned, `${label}.earned`);
+  requireOptionalBoolean(value.rbi, `${label}.rbi`);
+  if (value.responsiblePitcherId !== undefined) {
+    requireId(value.responsiblePitcherId, `${label}.responsiblePitcherId`);
+  }
+}
+
+function validateOmissions(value: unknown) {
+  if (value === undefined) return;
+  if (!Array.isArray(value) || value.length > 7) {
+    throw new DiamondDomainError('invalid-stat-family', 'omissions must be a bounded stat-family array.');
+  }
+  const families = value.map((family) => requireMember(family, Object.keys(initialCoverage('full')) as DiamondStatFamily[], 'stat family'));
+  if (new Set(families).size !== families.length) {
+    throw new DiamondDomainError('invalid-stat-family', 'omissions cannot contain duplicate stat families.');
+  }
 }
 
 function requireText(value: unknown, label: string, maximum = 500): string {
@@ -197,18 +255,74 @@ function requireSide(value: unknown, label = 'side'): DiamondSide {
   return requireMember(value, SIDES, label);
 }
 
-function validateAdvanceShape(advance: {
-  runnerId: string;
-  from: DiamondBase;
-  to: DiamondDestination;
-  cause: DiamondCommandPayloadMap['advance_runner']['cause'];
-  outKind?: DiamondCommandPayloadMap['advance_runner']['outKind'];
-}) {
+export function isDiamondDeliveredPitch(result: DiamondCommandPayloadMap['record_pitch']['result']): boolean {
+  return result !== 'balk' && result !== 'pickoff_attempt';
+}
+
+function hasCompletePitchOutcomeEvidence(
+  state: DiamondGameState,
+  result: DiamondCommandPayloadMap['record_plate_appearance']['result']
+): boolean {
+  if (state.captureMode !== 'full') return true;
+  if (result === 'intentional_walk') return true;
+  if (result === 'walk') return state.inning.balls === 4;
+  if (result === 'strikeout' || result === 'dropped_third_strike') return state.inning.strikes === 3;
+  if (result === 'hit_by_pitch') return state.inning.lastPitchResult === 'hit_by_pitch';
+  if (result === 'interference') return state.inning.lastPitchResult === 'catcher_interference';
+  return state.inning.lastPitchResult === 'in_play';
+}
+
+function requireEventId(value: unknown, label: string): string {
+  return requireId(value, label);
+}
+
+function requireBattingRole(profile: DiamondRulesProfile, value: unknown, options: Readonly<{ initialLineup?: boolean }> = {}) {
+  const role = requireMember(value, BATTING_ROLES, 'batting role');
+  if (role === 'dh' && !profile.allowsDh) {
+    throw new DiamondDomainError('rule-not-enabled', 'The selected rules profile does not allow a designated hitter.');
+  }
+  if (role === 'eh' && !profile.allowsEh) {
+    throw new DiamondDomainError('rule-not-enabled', 'The selected rules profile does not allow an extra hitter.');
+  }
+  if (role === 'ep' && !profile.allowsEp) {
+    throw new DiamondDomainError('rule-not-enabled', 'The selected rules profile does not allow an extra player.');
+  }
+  if ((role === 'dp' || role === 'flex') && !profile.dpFlex.enabled) {
+    throw new DiamondDomainError('rule-not-enabled', 'The selected rules profile does not allow DP/FLEX.');
+  }
+  if (role === 'flex' && options.initialLineup) {
+    throw new DiamondDomainError(
+      'invalid-dp-flex',
+      'The starting FLEX is linked through set_dp_flex and does not occupy a separate batting slot.'
+    );
+  }
+  return role;
+}
+
+function validateBattingRoleCounts(entries: readonly Readonly<{ battingRole: DiamondBattingRole }>[]) {
+  const count = (role: DiamondBattingRole) => entries.filter((entry) => entry.battingRole === role).length;
+  if (count('dh') > 1) throw new DiamondDomainError('invalid-lineup-role', 'A lineup may contain at most one designated hitter.');
+  if (count('dp') > 1) throw new DiamondDomainError('invalid-dp-flex', 'A lineup may contain at most one DP batting slot.');
+}
+
+function validateBatterAdvanceShape(value: unknown) {
+  const advance = requireRecord(value, 'batterAdvance');
+  requireOnlyFields(advance, BATTER_ADVANCE_FIELDS, 'batterAdvance');
+  requireMember(advance.to, DESTINATIONS, 'batter destination');
+  if (advance.cause !== undefined) requireMember(advance.cause, ADVANCE_CAUSES, 'batter advance cause');
+  if (advance.outKind !== undefined) requireMember(advance.outKind, OUT_KINDS, 'batter out kind');
+  validateScoringCredit(advance, 'batterAdvance');
+}
+
+function validateAdvanceShape(value: unknown, options: Readonly<{ standalone?: boolean }> = {}) {
+  const advance = requireRecord(value, 'runner advance');
+  requireOnlyFields(advance, options.standalone ? STANDALONE_RUNNER_ADVANCE_FIELDS : RUNNER_ADVANCE_FIELDS, 'runner advance');
   requireId(advance.runnerId, 'runnerId');
   requireMember(advance.from, BASES, 'runner source');
   requireMember(advance.to, DESTINATIONS, 'runner destination');
   requireMember(advance.cause, ADVANCE_CAUSES, 'runner advance cause');
   if (advance.outKind !== undefined) requireMember(advance.outKind, OUT_KINDS, 'out kind');
+  validateScoringCredit(advance, 'runner advance');
   if (advance.to === 'out' && !advance.outKind) {
     throw new DiamondDomainError('missing-out-kind', 'A runner recorded out must include an out kind.');
   }
@@ -227,6 +341,97 @@ export function getBattingSide(state: DiamondGameState): DiamondSide {
 
 function getInningKey(state: DiamondGameState): string {
   return `${state.inning.half === 'top' ? 'T' : 'B'}${String(state.inning.number)}`;
+}
+
+function currentHalfRuns(state: DiamondGameState): number {
+  return state.inningRuns[getInningKey(state)] ?? 0;
+}
+
+function halfInningEnded(state: DiamondGameState): boolean {
+  return state.inning.outs === 3 || state.halfInningEnd !== null;
+}
+
+function pristineCurrentHalf(state: DiamondGameState): boolean {
+  return (
+    state.inning.outs === 0 &&
+    state.inning.balls === 0 &&
+    state.inning.strikes === 0 &&
+    state.inning.pitchesInPlateAppearance === 0 &&
+    currentHalfRuns(state) === 0 &&
+    BASES.every((base) => state.bases[base] === null)
+  );
+}
+
+function automaticEndingHasEqualOpportunity(state: DiamondGameState, minimumInning: number, leader: DiamondSide): boolean {
+  if (state.inning.number < minimumInning) return false;
+  if (leader === 'home') {
+    return state.inning.half === 'bottom' || halfInningEnded(state) || (state.inning.number > minimumInning && pristineCurrentHalf(state));
+  }
+  if (state.inning.half === 'bottom') return halfInningEnded(state);
+  return state.inning.number > minimumInning && pristineCurrentHalf(state);
+}
+
+function automaticDiamondFinalizationReason(state: DiamondGameState): DiamondFinalizationReason | null {
+  if (state.score.home === state.score.away) return null;
+  const leader: DiamondSide = state.score.home > state.score.away ? 'home' : 'away';
+  const differential = Math.abs(state.score.home - state.score.away);
+  const profile = requireDiamondRulesProfile(state.rulesProfileId, state.rulesProfileVersion);
+  const runAhead = profile.runAheadRules.some(
+    (rule) => differential >= rule.runDifferential && automaticEndingHasEqualOpportunity(state, rule.afterInning, leader)
+  );
+  if (runAhead) return { kind: 'run-ahead', decisionEventId: null };
+
+  if (leader === 'home' && state.inning.number >= profile.scheduledInnings && state.inning.half === 'bottom') {
+    return {
+      kind: currentHalfRuns(state) > 0 ? 'walkoff' : 'regulation',
+      decisionEventId: null
+    };
+  }
+  if (automaticEndingHasEqualOpportunity(state, profile.scheduledInnings, leader)) {
+    return { kind: 'regulation', decisionEventId: null };
+  }
+  return null;
+}
+
+export function getDiamondFinalizationReason(state: DiamondGameState): DiamondFinalizationReason | null {
+  if (state.gameEndDecision) {
+    return {
+      kind: state.gameEndDecision.reason,
+      decisionEventId: state.gameEndDecision.decisionEventId
+    };
+  }
+  return automaticDiamondFinalizationReason(state);
+}
+
+function requireOpenHalfForPlay(state: DiamondGameState, options: Readonly<{ allowPendingTiebreakerPlacement?: boolean }> = {}) {
+  if (state.gameEndDecision) {
+    throw new DiamondDomainError('game-end-decision-recorded', 'Finalize the recorded game-ending decision before adding another play.');
+  }
+  const ending = automaticDiamondFinalizationReason(state);
+  if (ending) {
+    throw new DiamondDomainError('game-ending-condition-met', `Finalize the ${ending.kind} result before adding another play.`);
+  }
+  if (state.halfInningEnd) {
+    throw new DiamondDomainError('half-inning-complete', 'Advance the half inning before adding another play.');
+  }
+  const profile = requireDiamondRulesProfile(state.rulesProfileId, state.rulesProfileVersion);
+  if (profile.inningRunLimit !== null && currentHalfRuns(state) >= profile.inningRunLimit) {
+    throw new DiamondDomainError(
+      'run-limit-decision-required',
+      'Record the scorer or umpire run-limit decision before adding another play.'
+    );
+  }
+  if (
+    !options.allowPendingTiebreakerPlacement &&
+    profile.tiebreaker.enabled &&
+    state.inning.number >= profile.tiebreaker.startInning &&
+    pristineCurrentHalf(state)
+  ) {
+    throw new DiamondDomainError(
+      'tiebreaker-runner-required',
+      'Place the configured previous-batter tiebreaker runner before recording the first play.'
+    );
+  }
 }
 
 function initialCoverage(mode: 'quick' | 'full'): DiamondCoverageMap {
@@ -273,7 +478,15 @@ export function createInitialDiamondState(config: DiamondLedgerConfig): DiamondG
     lifecycle: 'configured',
     revision: 0,
     currentScorerUid: null,
-    inning: { number: 1, half: 'top', outs: 0, balls: 0, strikes: 0, pitchesInPlateAppearance: 0 },
+    inning: {
+      number: 1,
+      half: 'top',
+      outs: 0,
+      balls: 0,
+      strikes: 0,
+      pitchesInPlateAppearance: 0,
+      lastPitchResult: null
+    },
     score: { home: 0, away: 0 },
     inningRuns: {},
     bases: { ...EMPTY_BASES },
@@ -281,6 +494,10 @@ export function createInitialDiamondState(config: DiamondLedgerConfig): DiamondG
     nextBatterSlot: { home: 0, away: 0 },
     coverage: initialCoverage(config.captureMode),
     suspendedReason: null,
+    halfInningEnd: null,
+    gameEndDecision: null,
+    finalizationReason: null,
+    cancellation: null,
     finalConfirmedAtRevision: null,
     checkpointHash: ''
   } satisfies DiamondGameState);
@@ -312,6 +529,142 @@ function markFieldingObserved(state: DiamondGameState): DiamondGameState {
   return { ...state, coverage: { ...state.coverage, fielding: 'partial' } };
 }
 
+function withPartialCoverage(coverage: DiamondCoverageMap, families: readonly DiamondStatFamily[] | undefined) {
+  const next = { ...coverage };
+  families?.forEach((family) => {
+    next[family] = 'partial';
+  });
+  return next;
+}
+
+function fieldingChainsForPlay(
+  event: DiamondEffectiveEvent,
+  attached: ReadonlyMap<string, readonly DiamondFieldingChain[]>,
+  inline?: DiamondFieldingChain
+) {
+  return [
+    ...(inline ? [inline] : []),
+    ...(attached.get(event.sourceEventId) ?? []),
+    ...(event.eventId === event.sourceEventId ? [] : (attached.get(event.eventId) ?? []))
+  ];
+}
+
+function judgmentsForPlay(
+  event: DiamondEffectiveEvent,
+  attached: ReadonlyMap<string, readonly DiamondCommandPayloadMap['record_scoring_judgment'][]>
+) {
+  return [
+    ...(attached.get(event.sourceEventId) ?? []),
+    ...(event.eventId === event.sourceEventId ? [] : (attached.get(event.eventId) ?? []))
+  ];
+}
+
+function latestRunnerJudgmentBoolean(
+  judgments: readonly DiamondCommandPayloadMap['record_scoring_judgment'][],
+  runnerId: string,
+  field: 'earned' | 'rbi'
+) {
+  for (let index = judgments.length - 1; index >= 0; index -= 1) {
+    const judgment = judgments[index];
+    if ((!judgment.runnerId || judgment.runnerId === runnerId) && typeof judgment[field] === 'boolean') {
+      return judgment[field];
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Coverage is evidence-derived from the effective ledger, so a later attachment
+ * can resolve one omitted judgment and voiding that attachment revokes it again.
+ */
+export function deriveDiamondCoverageFromEvents(
+  initialState: DiamondGameState,
+  events: readonly DiamondEffectiveEvent[]
+): DiamondCoverageMap {
+  let coverage: DiamondCoverageMap = { ...initialState.coverage };
+  const fieldingByPlay = new Map<string, DiamondFieldingChain[]>();
+  const judgmentsByPlay = new Map<string, DiamondCommandPayloadMap['record_scoring_judgment'][]>();
+
+  events.forEach((event) => {
+    if (event.type === 'record_fielding') {
+      const payload = event.payload as DiamondCommandPayloadMap['record_fielding'];
+      fieldingByPlay.set(payload.playEventId, [...(fieldingByPlay.get(payload.playEventId) ?? []), payload.fielding]);
+    }
+    if (event.type === 'record_scoring_judgment') {
+      const payload = event.payload as DiamondCommandPayloadMap['record_scoring_judgment'];
+      judgmentsByPlay.set(payload.playEventId, [...(judgmentsByPlay.get(payload.playEventId) ?? []), payload]);
+    }
+  });
+
+  let state = cloneState(initialState);
+  events.forEach((event) => {
+    const before = state;
+    if (event.type === 'record_pitch' && isDiamondDeliveredPitch((event.payload as DiamondCommandPayloadMap['record_pitch']).result)) {
+      if (coverage.pitches === 'not_collected') coverage = { ...coverage, pitches: 'partial' };
+    }
+    if (event.type === 'record_fielding' && coverage.fielding === 'not_collected') {
+      coverage = { ...coverage, fielding: 'partial' };
+    }
+    if (event.type === 'rules_decision') {
+      coverage = withPartialCoverage(coverage, (event.payload as DiamondCommandPayloadMap['rules_decision']).affectedFamilies);
+    }
+    if (event.type === 'record_plate_appearance') {
+      const payload = event.payload as DiamondCommandPayloadMap['record_plate_appearance'];
+      coverage = withPartialCoverage(coverage, payload.omissions);
+      if (payload.fielding && coverage.fielding === 'not_collected') coverage = { ...coverage, fielding: 'partial' };
+      const judgments = judgmentsForPlay(event, judgmentsByPlay);
+      const scoringAdvances = [{ runnerId: payload.batterId, ...payload.batterAdvance }, ...payload.runnerAdvances].filter(
+        (advance) => advance.to === 'home' && advance.countsRun !== false
+      );
+      if (
+        scoringAdvances.some((advance) => {
+          const judgment = latestRunnerJudgmentBoolean(judgments, advance.runnerId, 'earned');
+          return typeof (judgment ?? advance.earned) !== 'boolean';
+        })
+      ) {
+        coverage = { ...coverage, pitching: 'partial' };
+      }
+      if (
+        payload.runsBattedIn === undefined &&
+        scoringAdvances.some((advance) => {
+          const judgment = latestRunnerJudgmentBoolean(judgments, advance.runnerId, 'rbi');
+          return typeof (judgment ?? advance.rbi) !== 'boolean';
+        })
+      ) {
+        coverage = { ...coverage, batting: 'partial' };
+      }
+      if (initialState.captureMode === 'full' && !hasCompletePitchOutcomeEvidence(before, payload.result)) {
+        coverage = { ...coverage, pitches: 'partial' };
+      }
+      if (initialState.captureMode === 'full') {
+        const chains = fieldingChainsForPlay(event, fieldingByPlay, payload.fielding);
+        if (payload.outsOnPlay > 0 && !chains.some((chain) => Boolean(chain.putoutBy))) {
+          coverage = { ...coverage, fielding: 'partial' };
+        }
+        if (payload.result === 'reached_on_error' && !chains.some((chain) => Boolean(chain.errors?.length))) {
+          coverage = { ...coverage, fielding: 'partial' };
+        }
+      }
+    }
+    if (event.type === 'advance_runner') {
+      const payload = event.payload as DiamondCommandPayloadMap['advance_runner'];
+      coverage = withPartialCoverage(coverage, payload.omissions);
+      if (payload.fielding && coverage.fielding === 'not_collected') coverage = { ...coverage, fielding: 'partial' };
+      if (payload.to === 'home' && payload.countsRun !== false) {
+        const judgment = latestRunnerJudgmentBoolean(judgmentsForPlay(event, judgmentsByPlay), payload.runnerId, 'earned');
+        if (typeof (judgment ?? payload.earned) !== 'boolean') coverage = { ...coverage, pitching: 'partial' };
+      }
+      if (initialState.captureMode === 'full' && payload.to === 'out') {
+        const chains = fieldingChainsForPlay(event, fieldingByPlay, payload.fielding);
+        if (!chains.some((chain) => Boolean(chain.putoutBy))) coverage = { ...coverage, fielding: 'partial' };
+      }
+    }
+    state = reduceDiamondEvent(state, { type: event.type, payload: event.payload, eventId: event.eventId } as DiamondReducerAction);
+    state = setDiamondStateRevision(state, event.revision);
+  });
+  return deepFreeze(coverage);
+}
+
 function expectedBatter(state: DiamondGameState, side = getBattingSide(state)): DiamondLineupSlot {
   const order = state.lineups[side].battingOrder;
   if (!order.length) throw new DiamondDomainError('missing-lineup', `${side} batting lineup is empty.`);
@@ -326,26 +679,118 @@ function validateBatterAndPitcher(state: DiamondGameState, batterId: string, pit
     throw new DiamondDomainError('unexpected-batter', `${batter} is not the current batter.`);
   }
   const defensivePitcher = state.lineups[oppositeSide(side)].defense.P;
-  if (defensivePitcher && defensivePitcher !== pitcher) {
+  if (!defensivePitcher) {
+    throw new DiamondDomainError('missing-defensive-pitcher', 'Set the defensive pitcher before recording a pitch or plate appearance.');
+  }
+  if (defensivePitcher !== pitcher) {
     throw new DiamondDomainError('unexpected-pitcher', `${pitcher} is not the current defensive pitcher.`);
   }
   return side;
 }
 
-function validateFieldingIds(fielding: DiamondCommandPayloadMap['record_fielding']['fielding']) {
-  if (fielding.putoutBy) requireId(fielding.putoutBy, 'putoutBy');
-  if (fielding.passedBallBy) requireId(fielding.passedBallBy, 'passedBallBy');
+function validateFieldingIds(value: unknown) {
+  const fielding = requireRecord(value, 'fielding');
+  requireOnlyFields(fielding, FIELDING_FIELDS, 'fielding');
+  if (fielding.putoutBy !== undefined) requireId(fielding.putoutBy, 'putoutBy');
+  if (fielding.passedBallBy !== undefined) requireId(fielding.passedBallBy, 'passedBallBy');
+  requireOptionalBoolean(fielding.doublePlay, 'fielding.doublePlay');
+  requireOptionalBoolean(fielding.triplePlay, 'fielding.triplePlay');
+  if (fielding.doublePlay === true && fielding.triplePlay === true) {
+    throw new DiamondDomainError('invalid-fielding-chain', 'A fielding chain cannot be both a double play and a triple play.');
+  }
+  if (fielding.battedBall !== undefined) {
+    requireMember(fielding.battedBall, ['ground', 'line', 'fly', 'bunt', 'unknown'], 'batted ball');
+  }
+  if (fielding.assists !== undefined && !Array.isArray(fielding.assists)) {
+    throw new DiamondDomainError('invalid-fielding-chain', 'Fielding assists must be an array.');
+  }
   const assists = fielding.assists ?? [];
   if (assists.length > 4) throw new DiamondDomainError('invalid-fielding-chain', 'At most four assists may be recorded.');
   const assistIds = assists.map((id) => requireId(id, 'assist playerId'));
   if (new Set(assistIds).size !== assistIds.length) {
     throw new DiamondDomainError('invalid-fielding-chain', 'A fielder cannot receive duplicate assists on one play.');
   }
+  if (fielding.errors !== undefined && !Array.isArray(fielding.errors)) {
+    throw new DiamondDomainError('invalid-fielding-chain', 'Fielding errors must be an array.');
+  }
   const errors = fielding.errors ?? [];
   if (errors.length > 4) throw new DiamondDomainError('invalid-fielding-chain', 'At most four errors may be recorded.');
-  errors.forEach((error) => requireId(error.playerId, 'error playerId'));
-  if (fielding.location !== undefined && String(fielding.location).length > 80) {
-    throw new DiamondDomainError('invalid-fielding-chain', 'Batted-ball location must be at most 80 characters.');
+  errors.forEach((value, index) => {
+    const error = requireRecord(value, `fielding.errors[${String(index)}]`);
+    requireOnlyFields(error, new Set(['playerId', 'kind']), `fielding.errors[${String(index)}]`);
+    requireId(error.playerId, 'error playerId');
+    if (error.kind !== undefined) requireMember(error.kind, ['fielding', 'throwing'], 'error kind');
+  });
+  if (fielding.location !== undefined && (typeof fielding.location !== 'string' || fielding.location.length > 80)) {
+    throw new DiamondDomainError('invalid-fielding-chain', 'Batted-ball location must be a string of at most 80 characters.');
+  }
+}
+
+function knownPlayerIds(lineup: DiamondTeamLineup) {
+  return new Set([
+    ...lineup.battingOrder.flatMap((entry) => [entry.activePlayerId, entry.starterPlayerId, ...entry.substitutions]),
+    ...Object.values(lineup.defense).filter((playerId): playerId is string => Boolean(playerId)),
+    ...(lineup.dpFlex ? [lineup.dpFlex.dpPlayerId, lineup.dpFlex.flexPlayerId] : [])
+  ]);
+}
+
+function currentBattingParticipantIds(state: DiamondGameState) {
+  const battingIds = knownPlayerIds(state.lineups[getBattingSide(state)]);
+  BASES.forEach((base) => {
+    const placement = state.bases[base];
+    if (!placement) return;
+    battingIds.add(placement.runnerId);
+    if (placement.courtesyForPlayerId) battingIds.add(placement.courtesyForPlayerId);
+  });
+  return battingIds;
+}
+
+function validateInlineFieldingParticipants(state: DiamondGameState, value: DiamondFieldingChain) {
+  const fieldingSide = oppositeSide(getBattingSide(state));
+  const defense = state.lineups[fieldingSide].defense;
+  const activeDefenders = new Set(Object.values(defense).filter((playerId): playerId is string => Boolean(playerId)));
+  const battingParticipants = currentBattingParticipantIds(state);
+  const creditedIds = [
+    value.putoutBy,
+    ...(value.assists ?? []),
+    ...(value.errors ?? []).map((error) => error.playerId),
+    value.passedBallBy
+  ].filter((playerId): playerId is string => Boolean(playerId));
+  if (creditedIds.some((playerId) => !activeDefenders.has(playerId) || battingParticipants.has(playerId))) {
+    throw new DiamondDomainError(
+      'invalid-fielding-participant',
+      'Inline fielding credit must identify an unambiguous player in the active defense for this play.'
+    );
+  }
+  if (value.passedBallBy !== undefined && defense.C !== value.passedBallBy) {
+    throw new DiamondDomainError('invalid-fielding-participant', 'A passed ball must be charged to the active defensive catcher.');
+  }
+}
+
+function validateInlineResponsiblePitcher(
+  state: DiamondGameState,
+  suppliedPitcherId: string | undefined,
+  expectedPitcherId: string | null,
+  label: string
+) {
+  if (suppliedPitcherId === undefined) return;
+  if (!expectedPitcherId) {
+    throw new DiamondDomainError(
+      'pitcher-responsibility-unavailable',
+      `${label} cannot assign pitcher responsibility when the runner's canonical responsibility was not collected. Add a scoring judgment instead.`
+    );
+  }
+  if (suppliedPitcherId !== expectedPitcherId) {
+    throw new DiamondDomainError(
+      'unexpected-responsible-pitcher',
+      `${label} must retain the runner's canonical responsible pitcher (${expectedPitcherId}).`
+    );
+  }
+  if (currentBattingParticipantIds(state).has(suppliedPitcherId)) {
+    throw new DiamondDomainError(
+      'responsible-pitcher-role-mismatch',
+      `${label} must identify a pitcher unambiguously recorded for the defensive team.`
+    );
   }
 }
 
@@ -539,7 +984,7 @@ function reduceSubstitution(
   requireLifecycle(state, ['active'], reentry ? 're-enter' : 'substitute');
   const profile = requireDiamondRulesProfile(state.rulesProfileId, state.rulesProfileVersion);
   const side = requireSide(payload.side);
-  if (payload.defensivePosition) requireMember(payload.defensivePosition, POSITIONS, 'defensive position');
+  if (payload.defensivePosition) requireMember(payload.defensivePosition, FIELDING_POSITIONS, 'defensive position');
   const order = state.lineups[side].battingOrder.map((entry) => ({ ...entry, substitutions: [...entry.substitutions] }));
   const index = order.findIndex((entry) => entry.slot === payload.battingSlot);
   if (index < 0) throw new DiamondDomainError('unknown-lineup-slot', 'The batting slot does not exist.');
@@ -558,6 +1003,31 @@ function reduceSubstitution(
   if (order.some((entry, entryIndex) => entryIndex !== index && entry.activePlayerId === incomingPlayerId)) {
     throw new DiamondDomainError('duplicate-active-player', 'The incoming player is already active in the batting order.');
   }
+  const lineup = state.lineups[side];
+  const dpFlex = lineup.dpFlex;
+  if (dpFlex) {
+    const pair = new Set([dpFlex.dpPlayerId, dpFlex.flexPlayerId]);
+    const touchesPair = pair.has(outgoingPlayerId) || pair.has(incomingPlayerId);
+    if (touchesPair) {
+      if (
+        slot.slot !== dpFlex.dpBattingSlot ||
+        !pair.has(outgoingPlayerId) ||
+        !pair.has(incomingPlayerId) ||
+        outgoingPlayerId === incomingPlayerId
+      ) {
+        throw new DiamondDomainError(
+          'unsupported-dp-flex-substitution',
+          'This reducer supports only a direct DP/FLEX exchange in their linked batting slot.'
+        );
+      }
+      if (incomingPlayerId === dpFlex.flexPlayerId && !profile.dpFlex.flexMayBatForDpOnly) {
+        throw new DiamondDomainError('rule-not-enabled', 'This rules profile does not allow the FLEX to bat for the DP.');
+      }
+      if (payload.defensivePosition && payload.defensivePosition !== dpFlex.flexDefensivePosition) {
+        throw new DiamondDomainError('invalid-dp-flex', 'A DP/FLEX exchange may use only the configured FLEX defensive position.');
+      }
+    }
+  }
   if (reentry) {
     if (slot.starterPlayerId !== incomingPlayerId) {
       throw new DiamondDomainError('invalid-reentry', 'Only the starter assigned to this slot may re-enter.');
@@ -569,10 +1039,15 @@ function reduceSubstitution(
   order[index] = {
     ...slot,
     activePlayerId: incomingPlayerId,
+    battingRole:
+      dpFlex && slot.slot === dpFlex.dpBattingSlot && incomingPlayerId === dpFlex.flexPlayerId
+        ? 'flex'
+        : dpFlex && slot.slot === dpFlex.dpBattingSlot && incomingPlayerId === dpFlex.dpPlayerId
+          ? 'dp'
+          : slot.battingRole,
     starterReentriesUsed: slot.starterReentriesUsed + (reentry ? 1 : 0),
     substitutions: [...slot.substitutions, incomingPlayerId]
   };
-  const lineup = state.lineups[side];
   return {
     ...state,
     lineups: {
@@ -598,13 +1073,16 @@ export function validateDiamondState(state: DiamondGameState): DiamondGameState 
   requireMember(state.captureMode, ['quick', 'full'], 'state capture mode');
   requireId(state.teamId, 'state.teamId');
   requireId(state.gameId, 'state.gameId');
-  requireDiamondRulesProfile(state.rulesProfileId, state.rulesProfileVersion);
+  const profile = requireDiamondRulesProfile(state.rulesProfileId, state.rulesProfileVersion);
   requireInteger(state.revision, 'state.revision', 0, Number.MAX_SAFE_INTEGER);
   requireInteger(state.inning.number, 'inning number', 1, 999);
   requireInteger(state.inning.outs, 'outs', 0, 3);
   requireInteger(state.inning.balls, 'balls', 0, 4);
   requireInteger(state.inning.strikes, 'strikes', 0, 3);
   requireInteger(state.inning.pitchesInPlateAppearance, 'pitches in plate appearance', 0, Number.MAX_SAFE_INTEGER);
+  if (state.inning.lastPitchResult !== null) {
+    requireMember(state.inning.lastPitchResult, PITCH_RESULTS.filter(isDiamondDeliveredPitch), 'last delivered pitch result');
+  }
   requireInteger(state.score.home, 'home score', 0, Number.MAX_SAFE_INTEGER);
   requireInteger(state.score.away, 'away score', 0, Number.MAX_SAFE_INTEGER);
   const baseRunners = BASES.flatMap((base) => (state.bases[base] ? [state.bases[base]!.runnerId] : []));
@@ -622,14 +1100,58 @@ export function validateDiamondState(state: DiamondGameState): DiamondGameState 
       requireInteger(entry.slot, 'batting slot', 1, 25);
       requireId(entry.activePlayerId, 'activePlayerId');
       requireId(entry.starterPlayerId, 'starterPlayerId');
-      requireMember(entry.battingRole, ['regular', 'dp', 'flex', 'eh', 'ep'], 'batting role');
+      requireBattingRole(profile, entry.battingRole);
     });
+    validateBattingRoleCounts(order);
     const defensivePlayers = Object.entries(state.lineups[side].defense).map(([position, playerId]) => {
-      requireMember(position, POSITIONS, 'defensive position');
+      requireMember(position, FIELDING_POSITIONS, 'defensive position');
       return requireId(playerId, 'defensive playerId');
     });
     if (new Set(defensivePlayers).size !== defensivePlayers.length) {
       throw new DiamondDomainError('invalid-defense', `${side} defense contains a duplicate player.`);
+    }
+    const dpFlex = state.lineups[side].dpFlex;
+    if (!dpFlex) {
+      if (order.some((entry) => entry.battingRole === 'flex')) {
+        throw new DiamondDomainError('invalid-dp-flex', 'A FLEX batter requires an established DP/FLEX pairing.');
+      }
+      if (state.lifecycle !== 'configured' && state.lifecycle !== 'ready' && order.some((entry) => entry.battingRole === 'dp')) {
+        throw new DiamondDomainError('invalid-dp-flex', 'A started lineup with a DP must include an established DP/FLEX pairing.');
+      }
+      return;
+    }
+    if (!profile.dpFlex.enabled) {
+      throw new DiamondDomainError('rule-not-enabled', 'The selected rules profile does not allow DP/FLEX.');
+    }
+    const dpPlayerId = requireId(dpFlex.dpPlayerId, 'DP playerId');
+    const flexPlayerId = requireId(dpFlex.flexPlayerId, 'FLEX playerId');
+    if (dpPlayerId === flexPlayerId) throw new DiamondDomainError('invalid-dp-flex', 'DP and FLEX must be different players.');
+    requireInteger(dpFlex.dpBattingSlot, 'DP batting slot', 1, 25);
+    const flexPosition = requireMember(dpFlex.flexDefensivePosition, FIELDING_POSITIONS, 'FLEX defensive position');
+    const dpSlot = order.find((entry) => entry.slot === dpFlex.dpBattingSlot);
+    if (!dpSlot || dpSlot.starterPlayerId !== dpPlayerId) {
+      throw new DiamondDomainError('invalid-dp-flex', 'The configured DP must be the starter in the linked batting slot.');
+    }
+    if (dpSlot.activePlayerId !== dpPlayerId && dpSlot.activePlayerId !== flexPlayerId) {
+      throw new DiamondDomainError('invalid-dp-flex', 'Only the configured DP or FLEX may occupy the linked batting slot.');
+    }
+    const expectedRole: DiamondBattingRole = dpSlot.activePlayerId === flexPlayerId ? 'flex' : 'dp';
+    if (dpSlot.battingRole !== expectedRole) {
+      throw new DiamondDomainError('invalid-dp-flex', 'The linked batting role does not match the active DP/FLEX player.');
+    }
+    const pairAppearsElsewhere = order.some(
+      (entry) =>
+        entry.slot !== dpFlex.dpBattingSlot &&
+        [entry.activePlayerId, entry.starterPlayerId, ...entry.substitutions].some(
+          (playerId) => playerId === dpPlayerId || playerId === flexPlayerId
+        )
+    );
+    if (pairAppearsElsewhere) {
+      throw new DiamondDomainError('invalid-dp-flex', 'DP and FLEX may participate in only their linked batting slot.');
+    }
+    const flexPositionPlayer = state.lineups[side].defense[flexPosition];
+    if (flexPositionPlayer !== flexPlayerId && flexPositionPlayer !== dpPlayerId) {
+      throw new DiamondDomainError('invalid-dp-flex', 'The configured FLEX defensive position must contain the DP or FLEX.');
     }
   });
   Object.values(state.coverage).forEach((coverage) => {
@@ -639,6 +1161,56 @@ export function validateDiamondState(state: DiamondGameState): DiamondGameState 
   });
   if (state.lifecycle !== 'configured' && !state.currentScorerUid) {
     throw new DiamondDomainError('missing-scorer', 'An activated scorebook must have a current scorer.');
+  }
+  if (state.halfInningEnd) {
+    requireMember(state.halfInningEnd.reason, ['run-limit'], 'half-inning end reason');
+    requireEventId(state.halfInningEnd.decisionEventId, 'half-inning decisionEventId');
+    if (profile.inningRunLimit === null || currentHalfRuns(state) < profile.inningRunLimit) {
+      throw new DiamondDomainError('invalid-run-limit-decision', 'The current half inning has not reached its configured run limit.');
+    }
+  }
+  if (state.gameEndDecision) {
+    requireMember(state.gameEndDecision.reason, ['time-limit', 'weather', 'forfeit'], 'game-end decision reason');
+    requireEventId(state.gameEndDecision.decisionEventId, 'game-end decisionEventId');
+    if (state.gameEndDecision.reason === 'time-limit' && profile.timeLimitMinutes === null) {
+      throw new DiamondDomainError('invalid-game-end-decision', 'The pinned rules profile does not define a time limit.');
+    }
+    if (state.gameEndDecision.reason === 'forfeit') {
+      requireSide(state.gameEndDecision.awardedSide, 'forfeit awarded side');
+    } else if (state.gameEndDecision.awardedSide !== null) {
+      throw new DiamondDomainError('invalid-game-end-decision', 'Only a forfeit decision may name an awarded side.');
+    }
+  }
+  if (state.cancellation) {
+    requireText(state.cancellation.reason, 'cancellation reason', 300);
+    requireEventId(state.cancellation.decisionEventId, 'cancellation decisionEventId');
+  }
+  if (state.lifecycle === 'cancelled') {
+    if (!state.cancellation) throw new DiamondDomainError('invalid-cancellation', 'A cancelled game requires an audited cancellation.');
+    if (state.gameEndDecision || state.finalizationReason || state.finalConfirmedAtRevision !== null) {
+      throw new DiamondDomainError('invalid-cancellation', 'A cancelled game cannot also be finalized.');
+    }
+    if (state.suspendedReason !== null) {
+      throw new DiamondDomainError('invalid-cancellation', 'A cancelled game cannot retain a suspended-state reason.');
+    }
+  } else if (state.cancellation) {
+    throw new DiamondDomainError('invalid-cancellation', 'Cancellation evidence is valid only for a cancelled game.');
+  }
+  if (state.lifecycle === 'final') {
+    if (!state.finalizationReason || state.finalConfirmedAtRevision === null) {
+      throw new DiamondDomainError('invalid-finalization', 'A final game requires an audited finalization reason.');
+    }
+    requireInteger(state.finalConfirmedAtRevision, 'finalization revision', 1, Number.MAX_SAFE_INTEGER);
+    const eligible = getDiamondFinalizationReason({ ...state, finalizationReason: null });
+    if (
+      !eligible ||
+      eligible.kind !== state.finalizationReason.kind ||
+      eligible.decisionEventId !== state.finalizationReason.decisionEventId
+    ) {
+      throw new DiamondDomainError('invalid-finalization', 'The stored finalization reason is not supported by the game state.');
+    }
+  } else if (state.finalizationReason || state.finalConfirmedAtRevision !== null) {
+    throw new DiamondDomainError('invalid-finalization', 'Only a final game may retain a confirmed finalization reason.');
   }
   return state;
 }
@@ -666,6 +1238,10 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
     case 'set_lineup': {
       requireLifecycle(state, ['ready'], 'set lineup');
       const side = requireSide(action.payload.side);
+      const profile = requireDiamondRulesProfile(state.rulesProfileId, state.rulesProfileVersion);
+      if (state.lineups[side].dpFlex) {
+        throw new DiamondDomainError('dp-flex-already-configured', 'Set the batting lineup before configuring DP/FLEX.');
+      }
       if (!Array.isArray(action.payload.entries) || action.payload.entries.length < 1 || action.payload.entries.length > 25) {
         throw new DiamondDomainError('invalid-lineup', 'A lineup must contain between 1 and 25 batting entries.');
       }
@@ -681,11 +1257,12 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
           starterPlayerId: entry.playerId,
           displayName: entry.displayName?.trim() || undefined,
           jerseyNumber: entry.jerseyNumber?.trim() || undefined,
-          battingRole: requireMember(entry.battingRole ?? 'regular', ['regular', 'dp', 'flex', 'eh', 'ep'], 'batting role'),
+          battingRole: requireBattingRole(profile, entry.battingRole ?? 'regular', { initialLineup: true }),
           starterReentriesUsed: 0,
           substitutions: [] as string[]
         }))
         .sort((left, right) => left.slot - right.slot);
+      validateBattingRoleCounts(ordered);
       next = {
         ...next,
         lineups: {
@@ -703,13 +1280,28 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
         throw new DiamondDomainError('invalid-defense', 'A defensive alignment may contain at most ten assignments.');
       }
       const players = action.payload.assignments.map((assignment) => requireId(assignment.playerId, 'defender playerId'));
-      const positions = action.payload.assignments.map((assignment) => requireMember(assignment.position, POSITIONS, 'defensive position'));
+      const positions = action.payload.assignments.map((assignment) =>
+        requireMember(assignment.position, FIELDING_POSITIONS, 'defensive position')
+      );
       if (new Set(players).size !== players.length || new Set(positions).size !== positions.length) {
         throw new DiamondDomainError('invalid-defense', 'Defensive players and positions must be unique.');
       }
       const defense = Object.fromEntries(
         action.payload.assignments.map((assignment) => [assignment.position, assignment.playerId])
       ) as Partial<Record<DiamondDefensivePosition, string>>;
+      if (state.lifecycle === 'active') {
+        const priorPlayers = Object.values(state.lineups[side].defense).filter(Boolean).sort();
+        const nextPlayers = Object.values(defense).filter(Boolean).sort();
+        if (priorPlayers.length !== nextPlayers.length || priorPlayers.some((playerId, index) => playerId !== nextPlayers[index])) {
+          throw new DiamondDomainError(
+            'defensive-personnel-change-requires-substitution',
+            'Active defensive personnel changes require a substitution or re-entry command.'
+          );
+        }
+        if (!defense.P) {
+          throw new DiamondDomainError('missing-defensive-pitcher', 'An active defensive alignment must identify the pitcher.');
+        }
+      }
       next = {
         ...next,
         lineups: {
@@ -720,17 +1312,35 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
       break;
     }
     case 'set_dp_flex': {
-      requireLifecycle(state, ['ready', 'active'], 'set DP/FLEX');
+      requireLifecycle(state, ['ready'], 'set DP/FLEX');
       const profile = requireDiamondRulesProfile(state.rulesProfileId, state.rulesProfileVersion);
       if (!profile.dpFlex.enabled) throw new DiamondDomainError('rule-not-enabled', 'DP/FLEX is disabled by this profile.');
+      const side = requireSide(action.payload.side);
+      if (state.lineups[side].dpFlex) {
+        throw new DiamondDomainError('dp-flex-already-configured', 'DP/FLEX is already configured for this side.');
+      }
       const dpPlayerId = requireId(action.payload.dpPlayerId, 'dpPlayerId');
       const flexPlayerId = requireId(action.payload.flexPlayerId, 'flexPlayerId');
-      const side = requireSide(action.payload.side);
-      const flexDefensivePosition = requireMember(action.payload.flexDefensivePosition, POSITIONS, 'FLEX defensive position');
+      const flexDefensivePosition = requireMember(action.payload.flexDefensivePosition, FIELDING_POSITIONS, 'FLEX defensive position');
       if (dpPlayerId === flexPlayerId) throw new DiamondDomainError('invalid-dp-flex', 'DP and FLEX must be different players.');
       const slot = state.lineups[side].battingOrder.find((entry) => entry.slot === action.payload.dpBattingSlot);
-      if (!slot || slot.activePlayerId !== dpPlayerId) {
-        throw new DiamondDomainError('invalid-dp-flex', 'The DP must occupy the declared batting slot.');
+      if (!slot || slot.activePlayerId !== dpPlayerId || slot.starterPlayerId !== dpPlayerId || slot.battingRole !== 'dp') {
+        throw new DiamondDomainError('invalid-dp-flex', 'The declared batting slot must contain the starting player with the DP role.');
+      }
+      if (
+        state.lineups[side].battingOrder.some((entry) =>
+          [entry.activePlayerId, entry.starterPlayerId, ...entry.substitutions].includes(flexPlayerId)
+        )
+      ) {
+        throw new DiamondDomainError('invalid-dp-flex', 'The starting FLEX cannot also occupy a batting slot.');
+      }
+      const existingFlexPosition = Object.entries(state.lineups[side].defense).find(([, playerId]) => playerId === flexPlayerId)?.[0];
+      if (existingFlexPosition && existingFlexPosition !== flexDefensivePosition) {
+        throw new DiamondDomainError('invalid-dp-flex', 'The FLEX is already assigned to a different defensive position.');
+      }
+      const defensiveOccupant = state.lineups[side].defense[flexDefensivePosition];
+      if (defensiveOccupant && defensiveOccupant !== flexPlayerId) {
+        throw new DiamondDomainError('occupied-position', `${flexDefensivePosition} is already occupied.`);
       }
       next = {
         ...next,
@@ -758,11 +1368,20 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
       if (!state.lineups.home.battingOrder.length || !state.lineups.away.battingOrder.length) {
         throw new DiamondDomainError('missing-lineup', 'Both teams need a batting lineup before the game starts.');
       }
+      (['home', 'away'] as const).forEach((side) => {
+        if (!state.lineups[side].defense.P) {
+          throw new DiamondDomainError('missing-defensive-pitcher', `${side} must set a defensive pitcher before the game starts.`);
+        }
+        if (state.lineups[side].battingOrder.some((entry) => entry.battingRole === 'dp') && !state.lineups[side].dpFlex) {
+          throw new DiamondDomainError('missing-dp-flex', `${side} must configure its DP/FLEX pairing before the game starts.`);
+        }
+      });
       next = { ...next, lifecycle: 'active' };
       break;
     }
     case 'record_pitch': {
       requireLifecycle(state, ['active'], 'record pitch');
+      requireOpenHalfForPlay(state);
       if (state.inning.outs >= 3) throw new DiamondDomainError('half-inning-complete', 'Advance the half inning first.');
       validateBatterAndPitcher(state, action.payload.batterId, action.payload.pitcherId);
       requireMember(action.payload.result, PITCH_RESULTS, 'pitch result');
@@ -771,6 +1390,7 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
       }
       let balls = state.inning.balls;
       let strikes = state.inning.strikes;
+      const deliveredPitch = isDiamondDeliveredPitch(action.payload.result);
       if (action.payload.result === 'ball') balls += 1;
       if (action.payload.result === 'called_strike' || action.payload.result === 'swinging_strike') strikes += 1;
       if (action.payload.result === 'foul' && strikes < 2) strikes += 1;
@@ -779,36 +1399,47 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
         const profile = requireDiamondRulesProfile(state.rulesProfileId, state.rulesProfileVersion);
         if (profile.illegalPitchPolicy !== 'configurable') balls += 1;
       }
-      next = markPitchObserved({
+      next = {
         ...next,
         inning: {
           ...next.inning,
           balls: Math.min(balls, 4),
           strikes: Math.min(strikes, 3),
-          pitchesInPlateAppearance: state.inning.pitchesInPlateAppearance + 1
+          pitchesInPlateAppearance: state.inning.pitchesInPlateAppearance + (deliveredPitch ? 1 : 0),
+          lastPitchResult: deliveredPitch ? action.payload.result : state.inning.lastPitchResult
         }
-      });
+      };
+      if (deliveredPitch) next = markPitchObserved(next);
       break;
     }
     case 'record_plate_appearance': {
       requireLifecycle(state, ['active'], 'record plate appearance');
+      requireOpenHalfForPlay(state);
       if (state.inning.outs >= 3) throw new DiamondDomainError('half-inning-complete', 'Advance the half inning first.');
       const side = validateBatterAndPitcher(state, action.payload.batterId, action.payload.pitcherId);
       if (BASES.some((base) => state.bases[base]?.runnerId === action.payload.batterId)) {
         throw new DiamondDomainError('batter-on-base', 'The current batter is already recorded as a base runner.');
       }
+      validateBatterAdvanceShape(action.payload.batterAdvance);
       validateOutcomeDestination(state, action.payload.result, action.payload.batterAdvance.to);
       const batterOutKind = resolveBatterOutKind(
         action.payload.result,
         action.payload.batterAdvance.to,
         action.payload.batterAdvance.outKind
       );
-      if (action.payload.fielding) validateFieldingIds(action.payload.fielding);
+      if (action.payload.fielding) {
+        validateFieldingIds(action.payload.fielding);
+        validateInlineFieldingParticipants(state, action.payload.fielding);
+      }
       if (!Array.isArray(action.payload.runnerAdvances)) {
         throw new DiamondDomainError('invalid-runner-advances', 'runnerAdvances must be an array.');
       }
+      validateOmissions(action.payload.omissions);
       if (action.payload.runnerAdvances.length > 3) {
         throw new DiamondDomainError('too-many-runner-advances', 'A plate appearance may move at most three existing runners.');
+      }
+      if (action.payload.runsBattedIn !== undefined) {
+        requireInteger(action.payload.runsBattedIn, 'runsBattedIn', 0, 4);
       }
       const batterMove: Move = {
         runnerId: action.payload.batterId,
@@ -819,15 +1450,27 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
         courtesyForPlayerId: null,
         outKind: batterOutKind
       };
+      validateInlineResponsiblePitcher(
+        state,
+        action.payload.batterAdvance.responsiblePitcherId,
+        action.payload.pitcherId,
+        'The batter advance'
+      );
       const runnerMoves: Move[] = action.payload.runnerAdvances.map((advance: DiamondRunnerAdvance) => {
         validateAdvanceShape(advance);
         const placement = state.bases[requireMember(advance.from, BASES, 'runner source')];
+        validateInlineResponsiblePitcher(
+          state,
+          advance.responsiblePitcherId,
+          placement?.chargedToPitcherId ?? null,
+          `The advance for ${advance.runnerId}`
+        );
         return {
           runnerId: advance.runnerId,
           from: advance.from,
           to: advance.to,
           countsRun: advance.countsRun,
-          chargedToPitcherId: advance.responsiblePitcherId ?? placement?.chargedToPitcherId ?? action.payload.pitcherId,
+          chargedToPitcherId: placement ? (advance.responsiblePitcherId ?? placement.chargedToPitcherId) : action.payload.pitcherId,
           courtesyForPlayerId: placement?.courtesyForPlayerId ?? null,
           outKind: advance.outKind
         };
@@ -836,36 +1479,53 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
       const orderLength = state.lineups[side].battingOrder.length;
       next = {
         ...next,
-        inning: { ...next.inning, balls: 0, strikes: 0, pitchesInPlateAppearance: 0 },
+        inning: { ...next.inning, balls: 0, strikes: 0, pitchesInPlateAppearance: 0, lastPitchResult: null },
         nextBatterSlot: { ...next.nextBatterSlot, [side]: (state.nextBatterSlot[side] + 1) % orderLength }
       };
+      if (action.payload.fielding) next = markFieldingObserved(next);
       next = markPartial(next, action.payload.omissions);
       const scoringAdvances = [action.payload.batterAdvance, ...action.payload.runnerAdvances].filter(
         (advance) => advance.to === 'home' && advance.countsRun !== false
       );
+      if (action.payload.runsBattedIn !== undefined && action.payload.runsBattedIn > scoringAdvances.length) {
+        throw new DiamondDomainError('invalid-rbi', 'runsBattedIn cannot exceed the runners whose runs count on the play.');
+      }
       if (scoringAdvances.some((advance) => advance.earned === undefined)) {
         next = markPartial(next, ['pitching']);
       }
       if (action.payload.runsBattedIn === undefined && scoringAdvances.some((advance) => advance.rbi === undefined)) {
         next = markPartial(next, ['batting']);
       }
-      if (state.captureMode === 'full' && state.inning.pitchesInPlateAppearance === 0) {
+      if (state.captureMode === 'full' && !hasCompletePitchOutcomeEvidence(state, action.payload.result)) {
         next = markPartial(next, ['pitches']);
       }
-      if (state.captureMode === 'full' && !action.payload.fielding && action.payload.outsOnPlay > 0) {
+      const missingFullFielding = action.payload.outsOnPlay > 0 && !action.payload.fielding?.putoutBy;
+      const missingReachedOnErrorFielder = action.payload.result === 'reached_on_error' && !action.payload.fielding?.errors?.length;
+      if (state.captureMode === 'full' && (missingFullFielding || missingReachedOnErrorFielder)) {
         next = markPartial(next, ['fielding']);
       }
       break;
     }
     case 'advance_runner': {
       requireLifecycle(state, ['active'], 'advance runner');
-      validateAdvanceShape(action.payload);
+      requireOpenHalfForPlay(state);
+      validateAdvanceShape(action.payload, { standalone: true });
       const runnerId = requireId(action.payload.runnerId, 'runnerId');
       const placement = state.bases[action.payload.from];
       if (!placement || placement.runnerId !== runnerId) {
         throw new DiamondDomainError('runner-not-on-base', `${runnerId} is not on ${action.payload.from}.`);
       }
-      if (action.payload.fielding) validateFieldingIds(action.payload.fielding);
+      if (action.payload.fielding) {
+        validateFieldingIds(action.payload.fielding);
+        validateInlineFieldingParticipants(state, action.payload.fielding);
+      }
+      validateOmissions(action.payload.omissions);
+      validateInlineResponsiblePitcher(
+        state,
+        action.payload.responsiblePitcherId,
+        placement.chargedToPitcherId,
+        `The advance for ${runnerId}`
+      );
       next = applyMoves(
         state,
         getBattingSide(state),
@@ -883,14 +1543,20 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
         action.payload.to === 'out' ? 1 : 0,
         action.eventId ?? placement.reachedOnEventId
       );
+      if (action.payload.fielding) next = markFieldingObserved(next);
       next = markPartial(next, action.payload.omissions);
       if (action.payload.to === 'home' && action.payload.countsRun !== false && action.payload.earned === undefined) {
         next = markPartial(next, ['pitching']);
+      }
+      if (state.captureMode === 'full' && action.payload.to === 'out' && !action.payload.fielding?.putoutBy) {
+        next = markPartial(next, ['fielding']);
       }
       break;
     }
     case 'record_fielding': {
       requireLifecycle(state, ['active', 'correction'], 'record fielding');
+      const attachment = requireRecord(action.payload, 'fielding attachment');
+      requireOnlyFields(attachment, FIELDING_ATTACHMENT_FIELDS, 'fielding attachment');
       requireId(action.payload.playEventId, 'playEventId');
       validateFieldingIds(action.payload.fielding);
       next = markFieldingObserved(next);
@@ -898,19 +1564,32 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
     }
     case 'record_scoring_judgment': {
       requireLifecycle(state, ['active', 'correction'], 'record scoring judgment');
+      const judgment = requireRecord(action.payload, 'scoring judgment');
+      requireOnlyFields(judgment, SCORING_JUDGMENT_FIELDS, 'scoring judgment');
       requireId(action.payload.playEventId, 'playEventId');
-      if (action.payload.runnerId) requireId(action.payload.runnerId, 'runnerId');
-      if (action.payload.responsiblePitcherId) requireId(action.payload.responsiblePitcherId, 'responsiblePitcherId');
-      if (action.payload.pitcherOfRecord) {
-        requireSide(action.payload.pitcherOfRecord.side, 'pitcherOfRecord.side');
-        requireId(action.payload.pitcherOfRecord.playerId, 'pitcherOfRecord.playerId');
-        requireMember(action.payload.pitcherOfRecord.decision, ['win', 'loss', 'save'], 'pitcher decision');
+      requireOptionalBoolean(action.payload.earned, 'earned');
+      requireOptionalBoolean(action.payload.rbi, 'rbi');
+      if (action.payload.runnerId !== undefined) requireId(action.payload.runnerId, 'runnerId');
+      if (action.payload.responsiblePitcherId !== undefined) requireId(action.payload.responsiblePitcherId, 'responsiblePitcherId');
+      if (action.payload.pitcherOfRecord !== undefined) {
+        const decision = requireRecord(action.payload.pitcherOfRecord, 'pitcherOfRecord');
+        requireOnlyFields(decision, PITCHER_DECISION_FIELDS, 'pitcherOfRecord');
+        requireSide(decision.side, 'pitcherOfRecord.side');
+        requireId(decision.playerId, 'pitcherOfRecord.playerId');
+        requireMember(decision.decision, ['win', 'loss', 'save'], 'pitcher decision');
       }
       break;
     }
     case 'advance_half_inning': {
       requireLifecycle(state, ['active'], 'advance half inning');
-      if (state.inning.outs !== 3) {
+      if (state.gameEndDecision) {
+        throw new DiamondDomainError('game-end-decision-recorded', 'Finalize the recorded game-ending decision instead of advancing.');
+      }
+      const ending = automaticDiamondFinalizationReason(state);
+      if (ending) {
+        throw new DiamondDomainError('game-ending-condition-met', `Finalize the ${ending.kind} result instead of advancing.`);
+      }
+      if (state.inning.outs !== 3 && !state.halfInningEnd) {
         throw new DiamondDomainError('half-inning-not-complete', 'A half inning advances only after the third out.');
       }
       const top = state.inning.half === 'top';
@@ -922,14 +1601,17 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
           outs: 0,
           balls: 0,
           strikes: 0,
-          pitchesInPlateAppearance: 0
+          pitchesInPlateAppearance: 0,
+          lastPitchResult: null
         },
-        bases: { ...EMPTY_BASES }
+        bases: { ...EMPTY_BASES },
+        halfInningEnd: null
       };
       break;
     }
     case 'place_tiebreaker_runner': {
       requireLifecycle(state, ['active'], 'place tiebreaker runner');
+      requireOpenHalfForPlay(state, { allowPendingTiebreakerPlacement: true });
       const profile = requireDiamondRulesProfile(state.rulesProfileId, state.rulesProfileVersion);
       const side = requireSide(action.payload.side);
       const base = requireMember(action.payload.base, BASES, 'tiebreaker base');
@@ -939,19 +1621,41 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
       if (side !== getBattingSide(state) || base !== profile.tiebreaker.runnerBase) {
         throw new DiamondDomainError('invalid-tiebreaker-runner', 'The tiebreaker runner must use the configured batting side and base.');
       }
+      if (!pristineCurrentHalf(state)) {
+        throw new DiamondDomainError(
+          'invalid-tiebreaker-runner',
+          'The tiebreaker runner must be placed before the first play of the half inning.'
+        );
+      }
       if (state.bases[base]) {
         throw new DiamondDomainError('occupied-base', 'The configured tiebreaker base is already occupied.');
       }
       const runnerId = requireId(action.payload.runnerId, 'runnerId');
+      const order = state.lineups[side].battingOrder;
+      if (!order.length) throw new DiamondDomainError('missing-lineup', `${side} batting lineup is empty.`);
+      const previousBatterIndex = (state.nextBatterSlot[side] - 1 + order.length) % order.length;
+      const expectedRunnerId = order[previousBatterIndex].activePlayerId;
+      if (profile.tiebreaker.runnerSelection === 'previous-batter' && runnerId !== expectedRunnerId) {
+        throw new DiamondDomainError(
+          'invalid-tiebreaker-runner',
+          `The tiebreaker runner must be the previous scheduled batter (${expectedRunnerId}).`
+        );
+      }
+      const chargedToPitcherId =
+        action.payload.chargedToPitcherId === undefined ? undefined : requireId(action.payload.chargedToPitcherId, 'chargedToPitcherId');
+      validateInlineResponsiblePitcher(
+        state,
+        chargedToPitcherId,
+        state.lineups[oppositeSide(side)].defense.P ?? null,
+        'The tiebreaker runner'
+      );
       next = {
         ...next,
         bases: {
           ...next.bases,
           [base]: {
             runnerId,
-            chargedToPitcherId: action.payload.chargedToPitcherId
-              ? requireId(action.payload.chargedToPitcherId, 'chargedToPitcherId')
-              : null,
+            chargedToPitcherId: chargedToPitcherId ?? null,
             courtesyForPlayerId: null,
             reachedOnEventId: action.eventId ?? null
           }
@@ -1006,7 +1710,7 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
       break;
     }
     case 'scorer_handoff': {
-      requireLifecycle(state, ['ready', 'active', 'suspended', 'correction'], 'scorer handoff');
+      requireLifecycle(state, ['ready', 'active', 'suspended', 'final', 'correction'], 'scorer handoff');
       next = { ...next, currentScorerUid: requireId(action.payload.toUid, 'toUid') };
       break;
     }
@@ -1020,18 +1724,50 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
       next = { ...next, lifecycle: 'active', suspendedReason: null };
       break;
     }
+    case 'cancel': {
+      requireLifecycle(state, ['ready', 'active', 'suspended'], 'cancel');
+      if (action.payload.confirmed !== true) {
+        throw new DiamondDomainError('confirmation-required', 'Cancellation requires explicit confirmation.');
+      }
+      if (state.gameEndDecision || automaticDiamondFinalizationReason(state)) {
+        throw new DiamondDomainError('finalization-required', 'This game has an official ending condition and must be finalized instead.');
+      }
+      next = {
+        ...next,
+        lifecycle: 'cancelled',
+        suspendedReason: null,
+        cancellation: {
+          reason: requireText(action.payload.reason, 'cancellation reason', 300),
+          decisionEventId: requireEventId(action.eventId, 'cancellation eventId')
+        }
+      };
+      break;
+    }
     case 'finalize': {
-      requireLifecycle(state, ['active', 'correction'], 'finalize');
+      requireLifecycle(state, ['ready', 'active', 'suspended', 'correction'], 'finalize');
       if (action.payload.confirmed !== true) {
         throw new DiamondDomainError('confirmation-required', 'Finalization requires explicit confirmation.');
       }
-      next = { ...next, lifecycle: 'final', finalConfirmedAtRevision: state.revision + 1, suspendedReason: null };
+      const reason = getDiamondFinalizationReason(state);
+      if (!reason) {
+        throw new DiamondDomainError(
+          'finalization-not-eligible',
+          'Finalization requires regulation completion, a walkoff, a run-ahead result, or an explicit supported game-end decision.'
+        );
+      }
+      next = {
+        ...next,
+        lifecycle: 'final',
+        finalizationReason: reason,
+        finalConfirmedAtRevision: state.revision + 1,
+        suspendedReason: null
+      };
       break;
     }
     case 'reopen_for_correction': {
       requireLifecycle(state, ['final'], 'reopen for correction');
       requireText(action.payload.reason, 'reason', 300);
-      next = { ...next, lifecycle: 'correction', finalConfirmedAtRevision: null };
+      next = { ...next, lifecycle: 'correction', finalizationReason: null, finalConfirmedAtRevision: null };
       break;
     }
     case 'private_note': {
@@ -1045,8 +1781,66 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
     }
     case 'rules_decision': {
       requireLifecycle(state, ['ready', 'active', 'suspended', 'correction'], 'rules decision');
-      requireText(action.payload.code, 'decision code', 80);
+      const code = requireMember(action.payload.code, RULE_DECISION_CODES, 'rules decision code');
       requireText(action.payload.description, 'decision description', 500);
+      const decisionEventId = requireEventId(action.eventId, 'rules decision eventId');
+      if (code === 'coverage_adjustment') {
+        if (!action.payload.affectedFamilies?.length) {
+          throw new DiamondDomainError('invalid-coverage-adjustment', 'A coverage adjustment must name at least one stat family.');
+        }
+      } else if (code === 'end_half_inning_run_limit') {
+        requireLifecycle(state, ['active'], 'record a run-limit ending');
+        const profile = requireDiamondRulesProfile(state.rulesProfileId, state.rulesProfileVersion);
+        if (profile.inningRunLimit === null) {
+          throw new DiamondDomainError('rule-not-enabled', 'This rules profile does not define an inning run limit.');
+        }
+        if (state.halfInningEnd) {
+          throw new DiamondDomainError('half-inning-complete', 'The current half inning already has an ending decision.');
+        }
+        if (state.gameEndDecision || automaticDiamondFinalizationReason(state)) {
+          throw new DiamondDomainError(
+            'finalization-required',
+            'Finalize the game-ending condition instead of ending only the half inning.'
+          );
+        }
+        if (currentHalfRuns(state) < profile.inningRunLimit) {
+          throw new DiamondDomainError(
+            'run-limit-not-reached',
+            `The current half inning has not reached its ${String(profile.inningRunLimit)}-run limit.`
+          );
+        }
+        next = {
+          ...next,
+          halfInningEnd: { reason: 'run-limit', decisionEventId }
+        };
+      } else {
+        const isForfeit = code === 'end_game_forfeit_home' || code === 'end_game_forfeit_away';
+        const allowedLifecycles: readonly DiamondGameState['lifecycle'][] = isForfeit
+          ? ['ready', 'active', 'suspended', 'correction']
+          : ['active', 'suspended', 'correction'];
+        requireLifecycle(state, allowedLifecycles, 'record a game-ending decision');
+        if (state.gameEndDecision) {
+          throw new DiamondDomainError('game-end-decision-exists', 'A game-ending decision is already recorded.');
+        }
+        if (automaticDiamondFinalizationReason(state)) {
+          throw new DiamondDomainError('finalization-required', 'Finalize the existing automatic game-ending condition instead.');
+        }
+        const reason = code === 'end_game_time_limit' ? 'time-limit' : code === 'end_game_weather' ? 'weather' : 'forfeit';
+        if (reason === 'time-limit') {
+          const profile = requireDiamondRulesProfile(state.rulesProfileId, state.rulesProfileVersion);
+          if (profile.timeLimitMinutes === null) {
+            throw new DiamondDomainError('rule-not-enabled', 'This rules profile does not define a time limit.');
+          }
+        }
+        next = {
+          ...next,
+          gameEndDecision: {
+            reason,
+            decisionEventId,
+            awardedSide: code === 'end_game_forfeit_home' ? 'home' : code === 'end_game_forfeit_away' ? 'away' : null
+          }
+        };
+      }
       next = markPartial(next, action.payload.affectedFamilies);
       break;
     }

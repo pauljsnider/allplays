@@ -1,19 +1,41 @@
 import { functions, httpsCallable } from "./firebase.js?v=4433195";
 import {
-  postLiveChatMessage,
-  sendReaction,
   subscribeLiveChat,
   subscribeReactions,
-} from "./db.js?v=4433195";
+} from "./diamond-live-engagement-subscriptions.js?v=1";
 import { checkAuth } from "./auth.js?v=4433199";
+import { isViewerChatEnabled } from "./live-game-chat.js?v=4";
 import {
   formatDiamondInning,
   normalizeDiamondPublicGame,
+  normalizeDiamondViewerMode,
   reconcileDiamondEventWindow,
   reconcileDiamondPagination,
-} from "./diamond-live-view-model.js?v=1";
+} from "./diamond-live-view-model.js?v=2";
+import { normalizeYouTubeReplayUrl } from "./game-replay-video.js?v=3";
 
 const POLL_INTERVAL_MS = 5000;
+const MAX_POLL_INTERVAL_MS = 60_000;
+const CHAT_THROTTLE_MS = 1500;
+const REACTION_THROTTLE_MS = 1000;
+const UUID_V4_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const INTERACTION_LIFECYCLES = new Set([
+  "configured",
+  "ready",
+  "scheduled",
+  "active",
+  "suspended",
+  "live",
+  "in_progress",
+  "in-progress",
+  "final",
+  "correction",
+  "completed",
+  "cancelled",
+  "canceled",
+  "deleted",
+]);
 const state = {
   teamId: "",
   gameId: "",
@@ -23,9 +45,23 @@ const state = {
   complete: false,
   sourceRevision: 0,
   projectionToken: "",
+  instanceId: "",
+  replay: false,
+  overlay: false,
+  clipStartMs: null,
+  clipEndMs: null,
   pollTimer: null,
+  pollDelayMs: POLL_INTERVAL_MS,
   user: null,
   lastChatSentAt: 0,
+  lastReactionSentAt: 0,
+  pendingChatRequest: null,
+  pendingReactionRequests: new Map(),
+  engagementsInitialized: false,
+  authInitialized: false,
+  engagementError: "",
+  engagementActionMessage: "",
+  interactionLifecycleValid: false,
   unsubscribers: [],
 };
 
@@ -51,6 +87,12 @@ const elements = {
   empty: document.querySelector("[data-diamond-empty]"),
   loadMore: document.querySelector("[data-diamond-load-more]"),
   classicLink: document.querySelector("[data-diamond-classic-link]"),
+  modeLabel: document.querySelector("[data-diamond-mode-label]"),
+  media: document.querySelector("[data-diamond-media]"),
+  mediaTitle: document.querySelector("[data-diamond-media-title]"),
+  mediaFrame: document.querySelector("[data-diamond-media-frame]"),
+  mediaFallback: document.querySelector("[data-diamond-media-fallback]"),
+  mediaLink: document.querySelector("[data-diamond-media-link]"),
   chat: document.querySelector("[data-diamond-chat]"),
   chatEmpty: document.querySelector("[data-diamond-chat-empty]"),
   chatForm: document.querySelector("[data-diamond-chat-form]"),
@@ -68,11 +110,79 @@ function parseContext() {
   state.gameId = (params.get("gameId") || "").trim();
   if (!state.teamId || !state.gameId)
     throw new Error("This game link is incomplete.");
+  const mode = normalizeDiamondViewerMode({
+    replay: params.get("replay"),
+    overlay: params.get("overlay"),
+    clipStart: params.get("clipStart"),
+    clipEnd: params.get("clipEnd"),
+  });
+  Object.assign(state, mode);
+  document.body.dataset.viewMode = state.overlay
+    ? "overlay"
+    : state.replay
+      ? "replay"
+      : "live";
+  elements.modeLabel.textContent = state.overlay
+    ? state.replay
+      ? "Replay overlay"
+      : "Live overlay"
+    : state.replay
+      ? "Game replay"
+      : "Live scorebook";
+  document.title = `${elements.modeLabel.textContent} — ALL PLAYS Diamond`;
   const classicParams = new URLSearchParams(params);
   classicParams.set("classic", "1");
+  classicParams.delete("overlay");
   elements.classicLink.href = `/live-game.html?${classicParams.toString()}`;
   const returnPath = `${window.location.pathname}${window.location.search}`;
   elements.signIn.href = `/app/#/auth?next=${encodeURIComponent(returnPath)}`;
+}
+
+function renderMedia() {
+  const media = state.game?.media;
+  if (!media) {
+    elements.media.hidden = true;
+    elements.mediaFrame.hidden = true;
+    elements.mediaFrame.removeAttribute("src");
+    return;
+  }
+
+  const youtube = normalizeYouTubeReplayUrl(media.publicUrl);
+  const isClip = state.clipStartMs !== null && state.clipEndMs !== null;
+  elements.media.hidden = false;
+  elements.mediaTitle.textContent = isClip
+    ? "Game clip"
+    : media.mode === "replay"
+      ? "Replay video"
+      : "Live video";
+  elements.mediaLink.href = media.publicUrl;
+  elements.mediaLink.textContent = youtube
+    ? "Open on YouTube"
+    : "Open video in a new tab";
+
+  if (!youtube) {
+    elements.mediaFrame.hidden = true;
+    elements.mediaFrame.removeAttribute("src");
+    elements.mediaFallback.hidden = false;
+    elements.mediaFallback.textContent =
+      "This video provider opens in a separate tab.";
+    return;
+  }
+
+  const embedUrl = new URL(youtube.embedUrl);
+  embedUrl.searchParams.set("playsinline", "1");
+  embedUrl.searchParams.set("rel", "0");
+  if (state.clipStartMs !== null && state.clipEndMs !== null) {
+    embedUrl.searchParams.set(
+      "start",
+      String(Math.floor(state.clipStartMs / 1000)),
+    );
+    embedUrl.searchParams.set("end", String(Math.ceil(state.clipEndMs / 1000)));
+  }
+  elements.mediaFrame.src = embedUrl.toString();
+  elements.mediaFrame.title = elements.mediaTitle.textContent;
+  elements.mediaFrame.hidden = false;
+  elements.mediaFallback.hidden = true;
 }
 
 function setConnection(message, tone = "neutral") {
@@ -130,13 +240,16 @@ function renderPlays() {
 function render() {
   const game = state.game;
   const publicState = game.state;
+  const isCancelled = ["cancelled", "canceled"].includes(publicState.status);
   elements.homeName.textContent = game.teamName;
   elements.awayName.textContent = game.opponent;
   elements.homeScore.textContent = String(publicState.homeScore);
   elements.awayScore.textContent = String(publicState.awayScore);
-  elements.inning.textContent = publicState.isFinal
-    ? "Final"
-    : formatDiamondInning(publicState);
+  elements.inning.textContent = isCancelled
+    ? "Cancelled"
+    : publicState.isFinal
+      ? "Final"
+      : formatDiamondInning(publicState);
   elements.count.textContent = `${publicState.balls}–${publicState.strikes}`;
   elements.outs.textContent = `${publicState.outs} out${publicState.outs === 1 ? "" : "s"}`;
   elements.batter.textContent = publicState.batterName || "—";
@@ -145,6 +258,7 @@ function render() {
   renderBases(publicState);
   renderWarnings(game.warnings);
   renderPlays();
+  renderMedia();
   elements.loading.hidden = true;
   elements.error.hidden = true;
   elements.content.hidden = false;
@@ -155,32 +269,124 @@ function setEngagementStatus(message) {
   elements.engagementStatus.textContent = message;
 }
 
+function setEngagementActionMessage(message) {
+  state.engagementActionMessage = message;
+  setEngagementStatus(message);
+}
+
+function isCanonicalInteractionLifecycle(value) {
+  return (
+    typeof value === "string" &&
+    value === value.trim() &&
+    value === value.toLowerCase() &&
+    INTERACTION_LIFECYCLES.has(value)
+  );
+}
+
+function toClassicInteractionLifecycle(game) {
+  const lifecycle = String(game?.state?.status || "").toLowerCase();
+  const status =
+    {
+      configured: "scheduled",
+      ready: "scheduled",
+      scheduled: "scheduled",
+      active: "live",
+      suspended: "live",
+      live: "live",
+      in_progress: "in_progress",
+      "in-progress": "in-progress",
+      final: "final",
+      correction: "final",
+      completed: "completed",
+      cancelled: "cancelled",
+      canceled: "canceled",
+      deleted: "deleted",
+    }[lifecycle] || "invalid";
+  return {
+    type: "game",
+    date: game?.startsAt || null,
+    status,
+    liveStatus: status,
+    isCancelled: lifecycle === "cancelled" || lifecycle === "canceled",
+  };
+}
+
+function isEngagementWindowOpen() {
+  if (
+    !state.game ||
+    !state.interactionLifecycleValid ||
+    state.replay ||
+    state.overlay
+  )
+    return false;
+  return isViewerChatEnabled(toClassicInteractionLifecycle(state.game));
+}
+
+function hasAuthenticatedViewer() {
+  return Boolean(
+    state.user && typeof state.user.uid === "string" && state.user.uid.trim(),
+  );
+}
+
+function canWriteEngagement() {
+  return (
+    isEngagementWindowOpen() &&
+    hasAuthenticatedViewer() &&
+    UUID_V4_PATTERN.test(state.instanceId)
+  );
+}
+
+function engagementLockMessage() {
+  if (state.engagementError) return state.engagementError;
+  if (state.overlay)
+    return "Overlay mode is display-only. Open the game viewer to join chat.";
+  if (state.replay)
+    return "Replay mode is read-only. Messages from the game remain visible.";
+  const lifecycle = String(state.game?.state?.status || "").toLowerCase();
+  if (lifecycle === "cancelled" || lifecycle === "canceled")
+    return "This game was cancelled. Earlier messages remain visible.";
+  if (["final", "correction", "completed"].includes(lifecycle))
+    return "This completed game is available as a read-only replay.";
+  if (!state.game) return "Loading live chat availability…";
+  if (!UUID_V4_PATTERN.test(state.instanceId))
+    return "Live interaction security is unavailable. Refresh the game before posting.";
+  if (!state.interactionLifecycleValid)
+    return "Live chat is unavailable until the game status refreshes.";
+  if (!isEngagementWindowOpen())
+    return ["configured", "ready", "scheduled"].includes(lifecycle)
+      ? "Live chat opens on game day."
+      : "Live chat is unavailable for this game.";
+  if (!hasAuthenticatedViewer())
+    return "Sign in to post. Public game messages remain visible here.";
+  if (state.engagementActionMessage) return state.engagementActionMessage;
+  return "";
+}
+
 function renderEngagementAvailability() {
-  const canWrite = Boolean(state.user) && state.game?.state?.isFinal !== true;
+  const canWrite = canWriteEngagement();
+  const engagementOpen = isEngagementWindowOpen();
   elements.chatInput.disabled = !canWrite;
   elements.chatSubmit.disabled = !canWrite;
-  elements.signIn.hidden = Boolean(state.user);
+  elements.signIn.hidden = !engagementOpen || hasAuthenticatedViewer();
   elements.chatInput.placeholder = canWrite
     ? "Send a message…"
-    : state.game?.state?.isFinal
-      ? "Chat is read-only after the final out"
-      : "Sign in to join live chat";
+    : state.overlay
+      ? "Chat is unavailable in overlay mode"
+      : state.replay
+        ? "Chat is read-only in replay mode"
+        : ["cancelled", "canceled"].includes(state.game?.state?.status)
+          ? "Chat is read-only for a cancelled game"
+          : state.game?.state?.isFinal
+            ? "Chat is read-only after the game"
+            : engagementOpen
+              ? "Sign in to join live chat"
+              : "Chat opens on game day";
   elements.reactions
     .querySelectorAll("[data-diamond-reaction]")
     .forEach((button) => {
       button.disabled = !canWrite;
     });
-  if (!state.user && !state.game?.state?.isFinal) {
-    setEngagementStatus(
-      "Sign in to post. Public game messages remain visible here.",
-    );
-  } else if (state.game?.state?.isFinal) {
-    setEngagementStatus(
-      "This completed game is available as a read-only replay.",
-    );
-  } else {
-    setEngagementStatus("");
-  }
+  setEngagementStatus(engagementLockMessage());
 }
 
 function renderChat(messages) {
@@ -231,64 +437,185 @@ function showReaction(reaction) {
   window.setTimeout(() => bubble.remove(), 2000);
 }
 
-function initializeEngagements() {
+function reportEngagementError(message) {
+  state.engagementError = message;
+  renderEngagementAvailability();
+}
+
+function secureRequestId() {
+  const cryptoApi = globalThis.crypto;
+  if (typeof cryptoApi?.randomUUID === "function") {
+    const value = cryptoApi.randomUUID();
+    if (UUID_V4_PATTERN.test(value)) return value.toLowerCase();
+  }
+  if (typeof cryptoApi?.getRandomValues === "function") {
+    const bytes = new Uint8Array(16);
+    cryptoApi.getRandomValues(bytes);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = [...bytes]
+      .map((value) => value.toString(16).padStart(2, "0"))
+      .join("");
+    const value = [
+      hex.slice(0, 8),
+      hex.slice(8, 12),
+      hex.slice(12, 16),
+      hex.slice(16, 20),
+      hex.slice(20),
+    ].join("-");
+    if (UUID_V4_PATTERN.test(value)) return value;
+  }
+  throw new Error("Secure request identity is unavailable.");
+}
+
+function engagementRequestBase(requestId) {
+  return {
+    schemaVersion: 1,
+    requestId,
+    teamId: state.teamId,
+    gameId: state.gameId,
+    expectedInstanceId: state.instanceId,
+    viewerMode: "live",
+  };
+}
+
+function getPendingChatRequest(text) {
+  const pending = state.pendingChatRequest;
+  if (
+    pending?.text === text &&
+    pending.request?.expectedInstanceId === state.instanceId
+  ) {
+    return pending;
+  }
+  const next = {
+    text,
+    request: { ...engagementRequestBase(secureRequestId()), text },
+  };
+  state.pendingChatRequest = next;
+  return next;
+}
+
+function getPendingReactionRequest(type) {
+  const pending = state.pendingReactionRequests.get(type);
+  if (pending?.expectedInstanceId === state.instanceId) return pending;
+  const next = { ...engagementRequestBase(secureRequestId()), type };
+  state.pendingReactionRequests.set(type, next);
+  return next;
+}
+
+async function submitDiamondEngagement(functionName, request, resultField) {
+  const callable = httpsCallable(functions, functionName);
+  const result = await callable(request);
+  const response =
+    result?.data && typeof result.data === "object" ? result.data : {};
+  if (
+    response.outcome !== "accepted" ||
+    response.requestId !== request.requestId ||
+    response.instanceId !== request.expectedInstanceId ||
+    typeof response[resultField] !== "string" ||
+    !response[resultField]
+  ) {
+    throw new Error("The server did not confirm the live interaction.");
+  }
+  return response;
+}
+
+function isEngagementRateLimit(error) {
+  return String(error?.code || "").includes("resource-exhausted");
+}
+
+function initializeEngagementSubscriptions() {
+  if (state.engagementsInitialized || !state.game || state.overlay) return;
+  state.engagementsInitialized = true;
   try {
-    state.unsubscribers.push(
-      subscribeLiveChat(
-        state.teamId,
-        state.gameId,
-        { limit: 100 },
-        (messages) => renderChat(Array.isArray(messages) ? messages : []),
-        () =>
-          setEngagementStatus(
-            "Live chat is temporarily unavailable. The scorebook will keep refreshing.",
-          ),
-      ),
-    );
-    state.unsubscribers.push(
-      subscribeReactions(state.teamId, state.gameId, showReaction, () =>
-        setEngagementStatus(
-          "Live reactions are temporarily unavailable. The scorebook will keep refreshing.",
+    const unsubscribe = subscribeLiveChat(
+      state.teamId,
+      state.gameId,
+      { limit: 100, instanceId: state.instanceId },
+      (messages) => renderChat(Array.isArray(messages) ? messages : []),
+      () =>
+        reportEngagementError(
+          "Live chat is temporarily unavailable. The scorebook will keep refreshing.",
         ),
-      ),
     );
+    if (typeof unsubscribe === "function")
+      state.unsubscribers.push(unsubscribe);
   } catch {
-    setEngagementStatus(
+    reportEngagementError(
       "Live chat is temporarily unavailable. The scorebook will keep refreshing.",
     );
   }
 
-  const unsubscribeAuth = checkAuth((user) => {
-    state.user = user || null;
-    renderEngagementAvailability();
-  });
-  if (typeof unsubscribeAuth === "function")
-    state.unsubscribers.push(unsubscribeAuth);
+  try {
+    const unsubscribe = subscribeReactions(
+      state.teamId,
+      state.gameId,
+      { instanceId: state.instanceId },
+      showReaction,
+      () =>
+        reportEngagementError(
+          "Live reactions are temporarily unavailable. The scorebook will keep refreshing.",
+        ),
+    );
+    if (typeof unsubscribe === "function")
+      state.unsubscribers.push(unsubscribe);
+  } catch {
+    reportEngagementError(
+      "Live reactions are temporarily unavailable. The scorebook will keep refreshing.",
+    );
+  }
+}
+
+function initializeEngagementAuth() {
+  if (state.authInitialized || !isEngagementWindowOpen()) return;
+  state.authInitialized = true;
+  try {
+    const unsubscribe = checkAuth((user) => {
+      state.user = user || null;
+      renderEngagementAvailability();
+    });
+    if (typeof unsubscribe === "function")
+      state.unsubscribers.push(unsubscribe);
+  } catch {
+    state.authInitialized = false;
+    reportEngagementError(
+      "Sign-in status is temporarily unavailable. Public game messages remain visible.",
+    );
+  }
 }
 
 elements.chatForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (!state.user || state.game?.state?.isFinal) return;
+  if (!canWriteEngagement()) return;
   const message = elements.chatInput.value.replace(/\s+/g, " ").trim();
   if (!message) return;
-  if (Date.now() - state.lastChatSentAt < 1500) {
-    setEngagementStatus("Please wait a moment before sending another message.");
+  if (Date.now() - state.lastChatSentAt < CHAT_THROTTLE_MS) {
+    setEngagementActionMessage(
+      "Please wait a moment before sending another message.",
+    );
     return;
   }
   state.lastChatSentAt = Date.now();
   elements.chatSubmit.disabled = true;
+  let pending;
   try {
-    await postLiveChatMessage(state.teamId, state.gameId, {
-      text: message.slice(0, 2000),
-      senderId: state.user.uid,
-      senderName: String(state.user.displayName || "Fan").slice(0, 80),
-      isAnonymous: false,
-    });
+    pending = getPendingChatRequest(message.slice(0, 2000));
+    await submitDiamondEngagement(
+      "postDiamondLiveChat",
+      pending.request,
+      "messageId",
+    );
+    if (
+      state.pendingChatRequest?.request.requestId === pending.request.requestId
+    )
+      state.pendingChatRequest = null;
     elements.chatInput.value = "";
-    setEngagementStatus("");
-  } catch {
-    setEngagementStatus(
-      "Message not sent. Check your connection and try again.",
+    setEngagementActionMessage("");
+  } catch (error) {
+    setEngagementActionMessage(
+      isEngagementRateLimit(error)
+        ? "Please wait a moment before sending another message."
+        : "Message not confirmed. Check your connection and retry without changing it.",
     );
   } finally {
     renderEngagementAvailability();
@@ -297,21 +624,37 @@ elements.chatForm.addEventListener("submit", async (event) => {
 
 elements.reactions.addEventListener("click", async (event) => {
   const button = event.target.closest("[data-diamond-reaction]");
-  if (!button || !state.user || state.game?.state?.isFinal) return;
+  if (!button || !canWriteEngagement()) return;
   const type = button.dataset.diamondReaction;
   if (!reactionEmoji(type)) return;
+  if (Date.now() - state.lastReactionSentAt < REACTION_THROTTLE_MS) {
+    setEngagementActionMessage(
+      "Please wait a moment before sending another reaction.",
+    );
+    return;
+  }
+  state.lastReactionSentAt = Date.now();
   button.disabled = true;
   try {
-    await sendReaction(state.teamId, state.gameId, {
-      type,
-      senderId: state.user.uid,
-    });
-  } catch {
-    setEngagementStatus(
-      "Reaction not sent. Check your connection and try again.",
+    const request = getPendingReactionRequest(type);
+    await submitDiamondEngagement(
+      "postDiamondLiveReaction",
+      request,
+      "reactionId",
+    );
+    if (
+      state.pendingReactionRequests.get(type)?.requestId === request.requestId
+    )
+      state.pendingReactionRequests.delete(type);
+    setEngagementActionMessage("");
+  } catch (error) {
+    setEngagementActionMessage(
+      isEngagementRateLimit(error)
+        ? "Please wait a moment before sending another reaction."
+        : "Reaction not confirmed. Check your connection and try again.",
     );
   } finally {
-    window.setTimeout(renderEngagementAvailability, 1000);
+    window.setTimeout(renderEngagementAvailability, REACTION_THROTTLE_MS);
   }
 });
 
@@ -321,6 +664,17 @@ function describeError(error) {
   if (code.includes("resource-exhausted"))
     return "Too many refreshes. Please wait a moment.";
   return "The detailed scorebook is temporarily unavailable. The classic scoreboard may still be available.";
+}
+
+function isRetryableError(error) {
+  const code = String(error?.code || "");
+  return (
+    !code ||
+    code.includes("unavailable") ||
+    code.includes("deadline-exceeded") ||
+    code.includes("internal") ||
+    code.includes("resource-exhausted")
+  );
 }
 
 async function loadGame({ cursor = null, append = false, quiet = false } = {}) {
@@ -337,6 +691,27 @@ async function loadGame({ cursor = null, append = false, quiet = false } = {}) {
     });
     const payload =
       result?.data && typeof result.data === "object" ? result.data : {};
+    const responseInstanceId =
+      typeof payload.instanceId === "string" &&
+      payload.instanceId === payload.instanceId.toLowerCase() &&
+      UUID_V4_PATTERN.test(payload.instanceId)
+        ? payload.instanceId
+        : "";
+    if (!responseInstanceId) {
+      throw Object.assign(new Error("Diamond generation is unavailable."), {
+        code: "unavailable",
+      });
+    }
+    if (state.instanceId && state.instanceId !== responseInstanceId) {
+      state.pendingChatRequest = null;
+      state.pendingReactionRequests.clear();
+      throw Object.assign(new Error("Diamond generation changed."), {
+        code: "failed-precondition",
+      });
+    }
+    const interactionLifecycleValid = isCanonicalInteractionLifecycle(
+      payload?.game?.state?.status,
+    );
     const game = normalizeDiamondPublicGame(payload.game);
     if (game.trackingEngine !== "diamond-v2")
       throw Object.assign(new Error("Not a Diamond game."), {
@@ -387,19 +762,29 @@ async function loadGame({ cursor = null, append = false, quiet = false } = {}) {
       hasLoadedGame: Boolean(state.game),
     });
     state.game = game;
+    state.instanceId = responseInstanceId;
+    state.interactionLifecycleValid = interactionLifecycleValid;
     state.events = reconciled.events;
     state.sourceRevision = reconciled.sourceRevision;
     state.projectionToken = reconciled.projectionToken;
     state.nextCursor = pagination.nextCursor;
     state.complete = pagination.complete;
+    state.pollDelayMs = POLL_INTERVAL_MS;
     render();
+    initializeEngagementSubscriptions();
+    initializeEngagementAuth();
+    const isCancelled = ["cancelled", "canceled"].includes(game.state.status);
     setConnection(
-      game.state.isFinal
-        ? "Final scorebook"
-        : "Live · automatically refreshing",
+      state.replay
+        ? "Revision-pinned replay"
+        : isCancelled
+          ? "Game cancelled"
+          : game.state.isFinal
+            ? "Final scorebook"
+            : "Live · automatically refreshing",
       "success",
     );
-    if (!game.state.isFinal) schedulePoll();
+    if (!game.state.isFinal && !state.replay) schedulePoll();
   } catch (error) {
     setConnection("Connection interrupted", "warning");
     if (!state.game) {
@@ -408,14 +793,25 @@ async function loadGame({ cursor = null, append = false, quiet = false } = {}) {
       elements.error.textContent = describeError(error);
       elements.error.hidden = false;
     }
+    if (!state.replay && isRetryableError(error))
+      schedulePoll({ failed: true });
   }
 }
 
-function schedulePoll() {
+function schedulePoll({ failed = false } = {}) {
   window.clearTimeout(state.pollTimer);
+  if (state.replay) return;
+  if (failed) {
+    state.pollDelayMs = Math.min(
+      MAX_POLL_INTERVAL_MS,
+      Math.max(POLL_INTERVAL_MS, state.pollDelayMs * 2),
+    );
+  } else {
+    state.pollDelayMs = POLL_INTERVAL_MS;
+  }
   state.pollTimer = window.setTimeout(
     () => loadGame({ quiet: true }),
-    POLL_INTERVAL_MS,
+    state.pollDelayMs,
   );
 }
 
@@ -424,16 +820,21 @@ elements.loadMore.addEventListener("click", () => {
     void loadGame({ cursor: state.nextCursor, append: true });
 });
 
-window.addEventListener("beforeunload", () => {
+function cleanupSubscriptions() {
   window.clearTimeout(state.pollTimer);
   state.unsubscribers.forEach((unsubscribe) => {
     if (typeof unsubscribe === "function") unsubscribe();
   });
+  state.unsubscribers = [];
+}
+
+window.addEventListener("beforeunload", cleanupSubscriptions);
+window.addEventListener("pagehide", (event) => {
+  if (!event.persisted) cleanupSubscriptions();
 });
 
 try {
   parseContext();
-  initializeEngagements();
   void loadGame();
 } catch (error) {
   elements.loading.hidden = true;
