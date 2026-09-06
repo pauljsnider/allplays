@@ -37,7 +37,12 @@
       <div class="diamond-loading" data-diamond-loading>
         Loading the scorebook…
       </div>
-      <div class="diamond-error" data-diamond-error role="alert" hidden></div>
+      <div class="diamond-error" data-diamond-error role="alert" hidden>
+        <div data-diamond-error-message></div>
+        <button class="diamond-action" type="button" data-diamond-retry hidden>
+          Retry scorebook
+        </button>
+      </div>
 
       <div data-diamond-content hidden>
         <section class="diamond-scoreboard" aria-label="Live game score">
@@ -261,6 +266,6 @@
         </footer>
       </div>
     </main>
-    <script type="module" src="js/diamond-live-game.js?v=5"></script>
+    <script type="module" src="js/diamond-live-game.js?v=8"></script>
   </body>
 </html>

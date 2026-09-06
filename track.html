@@ -286,6 +286,7 @@
         import { getApp } from './js/vendor/firebase-app.js';
         import { getDefaultLivePeriod, getSportPeriodLabels } from './js/live-sport-config.js?v=1';
         import { DIAMOND_ENGINE, buildDiamondTrackerUrl } from './js/diamond-scorebook-routing.js?v=2';
+        import { isLegacyTrackingEngine } from './js/tracking-engine.js?v=1';
         // Note: firebase-ai will be lazy-loaded when AI summary is requested
 
         renderFooter(document.getElementById('footer-container'));
@@ -366,7 +367,7 @@
                     window.location.replace(buildDiamondTrackerUrl(teamId, gameId));
                     return;
                 }
-                if (game.trackingEngine) {
+                if (!isLegacyTrackingEngine(game.trackingEngine)) {
                     alert('This game uses a newer scoring engine that this tracker cannot edit.');
                     window.location.href = `edit-schedule.html#teamId=${encodeURIComponent(teamId)}`;
                     return;

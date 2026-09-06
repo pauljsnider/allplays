@@ -463,6 +463,7 @@
         import { buildGameReportShareUrl } from './js/game-share-links.js?v=1';
         import { normalizePublishedDiamondAiArtifact } from './js/diamond-ai-presentation.js?v=1';
         import { GAME_REPLAY_ARCHIVE_FIELDS, GAME_REPLAY_CLEAR_FIELDS, buildYouTubeReplayVideo, fingerprintGameReplayArchiveState, getGameReplayArchiveState, getGameReplayLifecycle, hasGameReplayArchiveEvidence, normalizeYouTubeReplayUrl } from './js/game-replay-video.js?v=3';
+        import { loadCompleteDiamondReportEvents } from './js/diamond-report-events.js?v=1';
 
         let currentUser = null;
         let canManageStatSheet = false;
@@ -2608,17 +2609,40 @@ Write the match report now:`;
                     statVisibility
                 });
 
-                // Fetch and render game log (events)
-                const eventsQuery = query(collection(db, `teams/${teamId}/games/${gameId}/events`), orderBy('timestamp', 'asc'));
-                const eventsSnapshot = await getDocs(eventsQuery);
+                // Fetch and render game log (events). Diamond's raw ledger is
+                // server-only; reports consume a complete sanitized replay.
+                let events = [];
+                let eventsLoadStatus = 'complete';
+                try {
+                    if (diamondGame) {
+                        const diamondReplay = await loadCompleteDiamondReportEvents({
+                            teamId,
+                            gameId,
+                            game,
+                            requestedVisibility: canViewDiamondPrivateStats ? 'manager-internal' : 'public',
+                            invoke: async (name, payload) => {
+                                const response = await httpsCallable(functions, name)(payload);
+                                return response?.data;
+                            }
+                        });
+                        events = [...diamondReplay.events];
+                    } else {
+                        const eventsQuery = query(collection(db, `teams/${teamId}/games/${gameId}/events`), orderBy('timestamp', 'asc'));
+                        const eventsSnapshot = await getDocs(eventsQuery);
+                        events = eventsSnapshot.docs.map(doc => {
+                            const data = doc.data();
+                            return {
+                                ...data,
+                                clock: data.clock || data.gameTime || ''
+                            };
+                        });
+                    }
+                } catch (error) {
+                    if (!diamondGame) throw error;
+                    console.warn('Diamond play-by-play unavailable for game report:', error);
+                    eventsLoadStatus = 'unavailable';
+                }
                 if (!isCurrentGameLoad(generation, expectedUid)) return;
-                const events = eventsSnapshot.docs.map(doc => {
-                    const data = doc.data();
-                    return {
-                        ...data,
-                        clock: data.clock || data.gameTime || ''
-                    };
-                });
 
                 renderInsightsSection(
                     generateGameInsights({
@@ -2658,6 +2682,16 @@ Write the match report now:`;
                                     </div>
                                 `;
                     }).join('')}
+                        </div>
+                    `;
+                } else if (diamondGame && eventsLoadStatus !== 'complete') {
+                    document.getElementById('game-log').innerHTML = `
+                        <div class="flex flex-col items-center justify-center h-full text-center py-12">
+                            <svg class="w-16 h-16 text-amber-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M5.07 19h13.86c1.54 0 2.5-1.67 1.73-3L13.73 4c-.77-1.33-2.69-1.33-3.46 0L3.34 16c-.77 1.33.19 3 1.73 3z"></path>
+                            </svg>
+                            <p class="text-gray-700 font-medium">Diamond play-by-play could not be refreshed completely.</p>
+                            <p class="text-gray-500 text-sm mt-1">Refresh this report to retry.</p>
                         </div>
                     `;
                 } else {

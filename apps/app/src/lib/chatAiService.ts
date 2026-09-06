@@ -1,28 +1,17 @@
-import {
-  getAI,
-  getApp,
-  getGenerativeModel,
-  GoogleAIBackend
-} from './adapters/legacyChatAi';
-import {
-  getAggregatedStatsForGames,
-  getGameEvents,
-  getGames,
-  getPlayers,
-  postChatMessage
-} from './adapters/legacyChatService';
+import { getAI, getApp, getGenerativeModel, GoogleAIBackend } from './adapters/legacyChatAi';
+import { getAggregatedStatsForGames, getGameEvents, getGames, getPlayers, postChatMessage } from './adapters/legacyChatService';
 import type { ChatConversation } from './chatService';
-import {
-  buildChatAudienceMetadata,
-  type ChatTargetType
-} from './chatLogic';
+import { buildChatAudienceMetadata, type ChatTargetType } from './chatLogic';
 import { sendAuthorizedDirectMessage } from './friendMessageService';
+import { loadGameReportPlays, loadGameReportSections, type GameReportData, type GameReportPlaysRefresh } from './gameReportService';
 import type { AuthUser } from './types';
 
 const aiStatsGamesLimit = 10;
 const aiGamesContextLimit = 20;
 const aiEventsGamesLimit = 3;
 const aiEventsPerGameLimit = 25;
+const aiDiamondPlayersPerGameLimit = 25;
+const aiDiamondStatsPerPlayerLimit = 40;
 const CHAT_AI_RESET_EVENT = 'allplays-chat-ai-reset';
 
 let aiModelCache: any = null;
@@ -59,11 +48,15 @@ function isCompletedGame(game: any) {
 }
 
 function shouldFetchStats(question: string) {
-  return /(stats|scorer|score|points|rebounds|assists|goals|saves|leader|leading|top|better|improv|improve|development|progress|player\s*#?\s*\d+)/i.test(question);
+  return /(stats|scorer|score|points|rebounds|assists|goals|saves|leader|leading|top|better|improv|improve|development|progress|player\s*#?\s*\d+)/i.test(
+    question
+  );
 }
 
 function shouldFetchEvents(question: string) {
-  return /(play\s*by\s*play|play-by-play|timeline|game\s*log|event\s*log|events|possessions|highlights|what happened|sequence)/i.test(question);
+  return /(play\s*by\s*play|play-by-play|timeline|game\s*log|event\s*log|events|possessions|highlights|what happened|sequence)/i.test(
+    question
+  );
 }
 
 function serializeGame(game: any) {
@@ -80,6 +73,90 @@ function serializeGame(game: any) {
   };
 }
 
+function isDiamondGame(game: any) {
+  return (
+    String(game?.trackingEngine || '')
+      .trim()
+      .toLowerCase() === 'diamond-v2'
+  );
+}
+
+function isCompletePublicDiamondReport(report: GameReportData, gameId: string) {
+  return Boolean(
+    report?.game?.id === gameId &&
+    report?.diamond?.isDiamond &&
+    report.diamond.status === 'current' &&
+    report.diamond.pending === false &&
+    report.diamond.requestedStatVisibility === 'public' &&
+    report.diamond.statVisibility === 'public' &&
+    report.diamond.requestedReplayVisibility === 'public' &&
+    report.diamond.replayVisibility === 'public' &&
+    report.diamond.replaySource === 'public-sanitized' &&
+    report.diamond.privateStatsStatus === 'not-requested'
+  );
+}
+
+function isCompletePublicDiamondReplay(refresh: GameReportPlaysRefresh, gameId: string) {
+  return Boolean(
+    refresh?.game?.id === gameId &&
+    isDiamondGame(refresh.game) &&
+    refresh.playsFresh === true &&
+    refresh.replay?.requestedVisibility === 'public' &&
+    refresh.replay.visibility === 'public' &&
+    refresh.replay.source === 'public-sanitized'
+  );
+}
+
+async function retryCompletePublicDiamondLoad<T>(loader: () => Promise<T>, isComplete: (value: T) => boolean) {
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const value = await loader();
+      if (isComplete(value)) return value;
+      lastError = new Error('Diamond public evidence was incomplete.');
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  void lastError;
+  throw new Error('Diamond game evidence is temporarily unavailable. Try again.');
+}
+
+function serializePublicDiamondStats(report: GameReportData) {
+  const visibleRows = Array.isArray(report.visiblePlayerRows) ? report.visiblePlayerRows : [];
+  const rows = visibleRows.slice(0, aiDiamondPlayersPerGameLimit).map((row) => {
+    const coverage = row.statPresentation?.statCoverage || {};
+    const entries = Object.entries(row.stats || {})
+      .filter(([key]) => coverage[key] === 'complete')
+      .slice(0, aiDiamondStatsPerPlayerLimit);
+    return {
+      id: row.playerId,
+      name: row.playerName,
+      number: row.number || null,
+      stats: Object.fromEntries(entries),
+      evidence: {
+        completeStatKeys: entries.map(([key]) => key),
+        omittedOrIncompleteStatKeys: Object.entries(coverage)
+          .filter(([, status]) => status !== 'complete')
+          .map(([key]) => key)
+          .slice(0, aiDiamondStatsPerPlayerLimit),
+        statKeysTruncated:
+          Object.keys(row.stats || {}).length > aiDiamondStatsPerPlayerLimit || Object.keys(coverage).length > aiDiamondStatsPerPlayerLimit
+      }
+    };
+  });
+  return {
+    game: serializeGame(report.game),
+    players: rows,
+    evidence: {
+      visibility: 'public',
+      complete: true,
+      playerListTruncated: visibleRows.length > aiDiamondPlayersPerGameLimit,
+      absenceConfirmed: visibleRows.length === 0
+    }
+  };
+}
+
 function findMatchedPlayer(question: string, players: any[]) {
   const match = question.match(/player\s*#?\s*(\d{1,3})/i);
   if (!match) return null;
@@ -87,17 +164,17 @@ function findMatchedPlayer(question: string, players: any[]) {
   return players.find((player) => String(player.number ?? '') === target) || null;
 }
 
-async function buildAiContext(teamId: string, team: Record<string, any>, question: string, { fetchStats, fetchEvents }: { fetchStats: boolean; fetchEvents: boolean }) {
-  const [players, games] = await Promise.all([
-    getPlayers(teamId, { includeInactive: true }),
-    getGames(teamId)
-  ]);
+async function buildAiContext(
+  teamId: string,
+  team: Record<string, any>,
+  question: string,
+  { fetchStats, fetchEvents }: { fetchStats: boolean; fetchEvents: boolean }
+) {
+  const [players, games] = await Promise.all([getPlayers(teamId, { includeInactive: true }), getGames(teamId)]);
   const playersById = new Map((players || []).map((player: any) => [player.id, player]));
   const now = new Date();
   const cutoff = new Date(now.getTime() - 3 * 60 * 60 * 1000);
-  const gamesWithDates = (games || [])
-    .map((game: any) => ({ ...game, _date: toDate(game.date) }))
-    .filter((game: any) => game._date);
+  const gamesWithDates = (games || []).map((game: any) => ({ ...game, _date: toDate(game.date) })).filter((game: any) => game._date);
 
   const upcomingGames = gamesWithDates
     .filter((game: any) => game._date >= cutoff)
@@ -111,13 +188,43 @@ async function buildAiContext(teamId: string, team: Record<string, any>, questio
     .slice(0, aiGamesContextLimit)
     .map(serializeGame);
 
+  const publicDiamondReportLoads = new Map<string, Promise<GameReportData>>();
+  const loadPublicDiamondReport = (game: any) => {
+    const gameId = String(game?.id || '').trim();
+    if (!publicDiamondReportLoads.has(gameId)) {
+      publicDiamondReportLoads.set(
+        gameId,
+        retryCompletePublicDiamondLoad(
+          () => loadGameReportSections(teamId, gameId, { statVisibility: 'public' }),
+          (report) => isCompletePublicDiamondReport(report, gameId)
+        )
+      );
+    }
+    return publicDiamondReportLoads.get(gameId)!;
+  };
+
   let statsSummary = null;
   if (fetchStats) {
     const completedGames = gamesWithDates
       .filter(isCompletedGame)
       .sort((a: any, b: any) => b._date.getTime() - a._date.getTime())
       .slice(0, aiStatsGamesLimit);
-    const totals = await getAggregatedStatsForGames(teamId, completedGames.map((game: any) => game.id));
+    const diamondGames = completedGames.filter(isDiamondGame);
+    const legacyGames = completedGames.filter((game: any) => !isDiamondGame(game));
+    const totals = diamondGames.length
+      ? legacyGames.length
+        ? await getAggregatedStatsForGames(
+            teamId,
+            legacyGames.map((game: any) => game.id)
+          )
+        : {}
+      : await getAggregatedStatsForGames(
+          teamId,
+          completedGames.map((game: any) => game.id)
+        );
+    const publicDiamondGames = diamondGames.length
+      ? await Promise.all(diamondGames.map(async (game: any) => serializePublicDiamondStats(await loadPublicDiamondReport(game))))
+      : [];
     statsSummary = {
       gamesUsed: completedGames.map(serializeGame),
       totalsByPlayer: Object.entries(totals || {}).map(([playerId, stats]) => ({
@@ -125,7 +232,22 @@ async function buildAiContext(teamId: string, team: Record<string, any>, questio
         name: (playersById.get(playerId) as any)?.name || 'Unknown',
         number: (playersById.get(playerId) as any)?.number || null,
         stats
-      }))
+      })),
+      ...(diamondGames.length
+        ? {
+            publicDiamondGames,
+            evidence: {
+              visibility: 'public',
+              complete: true,
+              legacyGameCount: legacyGames.length,
+              diamondGameCount: diamondGames.length,
+              absenceConfirmed:
+                Object.keys(totals || {}).length === 0 && publicDiamondGames.every((entry) => entry.evidence.absenceConfirmed),
+              instructions:
+                'Do not combine legacy totals with Diamond per-game values unless the arithmetic and every required stat are complete. Do not claim a team-wide leader when any player list or stat key is truncated or incomplete.'
+            }
+          }
+        : {})
     };
   }
 
@@ -135,29 +257,65 @@ async function buildAiContext(teamId: string, team: Record<string, any>, questio
       .filter(isCompletedGame)
       .sort((a: any, b: any) => b._date.getTime() - a._date.getTime())
       .slice(0, aiEventsGamesLimit);
-    const eventsByGame = await Promise.all(recentCompleted.map(async (game: any) => {
-      const events = await getGameEvents(teamId, game.id, { limit: aiEventsPerGameLimit });
-      return {
-        game: serializeGame(game),
-        events: (events || []).slice().reverse().map((event: any) => {
-          const player = event.playerId ? playersById.get(event.playerId) as any : null;
+    const eventsByGame = await Promise.all(
+      recentCompleted.map(async (game: any) => {
+        if (isDiamondGame(game)) {
+          const gameId = String(game?.id || '').trim();
+          const replay = await retryCompletePublicDiamondLoad(
+            () => loadGameReportPlays(teamId, gameId, { statVisibility: 'public' }),
+            (refresh) => isCompletePublicDiamondReplay(refresh, gameId)
+          );
+          const plays = replay.plays.slice(-aiEventsPerGameLimit);
           return {
-            id: event.id,
-            timestamp: event.timestamp ?? null,
-            period: event.period ?? null,
-            gameTime: event.gameTime ?? null,
-            text: event.text || null,
-            type: event.type || null,
-            playerId: event.playerId || null,
-            playerName: player?.name || null,
-            playerNumber: player?.number ?? null,
-            statKey: event.statKey || null,
-            value: event.value ?? null,
-            isOpponent: event.isOpponent === true
+            game: serializeGame(game),
+            events: plays.map((play) => ({
+              id: play.id,
+              timestamp: play.timestamp,
+              period: play.period || null,
+              gameTime: play.clock || null,
+              text: play.text || null,
+              type: null,
+              playerId: null,
+              playerName: null,
+              playerNumber: null,
+              statKey: null,
+              value: null,
+              isOpponent: null
+            })),
+            evidence: {
+              visibility: 'public',
+              complete: true,
+              truncated: replay.plays.length > aiEventsPerGameLimit,
+              absenceConfirmed: replay.plays.length === 0
+            }
           };
-        })
-      };
-    }));
+        }
+        const events = await getGameEvents(teamId, game.id, { limit: aiEventsPerGameLimit });
+        return {
+          game: serializeGame(game),
+          events: (events || [])
+            .slice()
+            .reverse()
+            .map((event: any) => {
+              const player = event.playerId ? (playersById.get(event.playerId) as any) : null;
+              return {
+                id: event.id,
+                timestamp: event.timestamp ?? null,
+                period: event.period ?? null,
+                gameTime: event.gameTime ?? null,
+                text: event.text || null,
+                type: event.type || null,
+                playerId: event.playerId || null,
+                playerName: player?.name || null,
+                playerNumber: player?.number ?? null,
+                statKey: event.statKey || null,
+                value: event.value ?? null,
+                isOpponent: event.isOpponent === true
+              };
+            })
+        };
+      })
+    );
     eventsSummary = {
       gamesUsed: recentCompleted.map(serializeGame),
       eventsByGame
@@ -176,11 +334,13 @@ async function buildAiContext(teamId: string, team: Record<string, any>, questio
       name: player.name || null,
       number: player.number || null
     })),
-    matchedPlayer: matchedPlayer ? {
-      id: matchedPlayer.id,
-      name: matchedPlayer.name || null,
-      number: matchedPlayer.number ?? null
-    } : null,
+    matchedPlayer: matchedPlayer
+      ? {
+          id: matchedPlayer.id,
+          name: matchedPlayer.name || null,
+          number: matchedPlayer.number ?? null
+        }
+      : null,
     gamesUpcoming: upcomingGames,
     gamesRecent: recentGames,
     stats: statsSummary,
@@ -218,9 +378,18 @@ export async function sendAllPlaysChatAnswer({
   const fetchStats = shouldFetchStats(question);
   const fetchEvents = shouldFetchEvents(question);
   const context = await buildAiContext(teamId, team, question, { fetchStats, fetchEvents });
-  const prompt = `You are ALL PLAYS, a sports management expert for youth teams.\n` +
+  const hasDiamondEvidence = Boolean(
+    context.stats?.evidence?.diamondGameCount ||
+    context.playByPlay?.eventsByGame?.some((entry: any) => entry?.evidence?.visibility === 'public')
+  );
+  const prompt =
+    `You are ALL PLAYS, a sports management expert for youth teams.\n` +
     `You are speaking to coaches, admins, and parents.\n` +
     `Use ONLY the provided DATA to answer. If the data is insufficient, say so.\n` +
+    (hasDiamondEvidence
+      ? `Honor every evidence object: incomplete or truncated data cannot prove absence, totals, rankings, leaders, or a complete game sequence.\n` +
+        `Diamond evidence is public-only because answers may be posted to family or group conversations; never infer manager-private details.\n`
+      : '') +
     `Respond in a clear, readable format with short paragraphs or bullet points.\n` +
     `Limit to at most 6 bullets total. Use *bold* only for short labels.\n\n` +
     `QUESTION:\n${question}\n\nDATA (JSON):\n${JSON.stringify(context)}\n`;

@@ -20,12 +20,24 @@ const gameReportStatsMocks = vi.hoisted(() => ({
   resolveOpponentReportStatColumns: vi.fn(() => ({ oppKeys: [] as string[], oppLabels: {} as Record<string, string>, oppDefinitions: {} as Record<string, Record<string, unknown>> }))
 }));
 
+const diamondFirebaseMocks = vi.hoisted(() => ({
+  functions: {},
+  getPublicDiamondGame: vi.fn(),
+  getDiamondManagerStats: vi.fn(),
+  httpsCallable: vi.fn()
+}));
+const diamondScorebookMocks = vi.hoisted(() => ({
+  getDiamondPrivateHistoryWindow: vi.fn(),
+  getDiamondState: vi.fn()
+}));
+
 vi.mock('../../../../js/db.js', () => dbMocks);
 vi.mock('../../../../js/firebase.js', () => firebaseMocks);
 vi.mock('./adapters/legacyDiamondScorebookFirebase', () => ({
-  functions: {},
-  httpsCallable: vi.fn(() => vi.fn().mockRejectedValue(new Error('manager stats not configured')))
+  functions: diamondFirebaseMocks.functions,
+  httpsCallable: diamondFirebaseMocks.httpsCallable
 }));
+vi.mock('./diamondScorebookService', () => diamondScorebookMocks);
 vi.mock('../../../../js/game-report-stats.js', () => gameReportStatsMocks);
 vi.mock('../../../../js/live-game-video.js', () => ({
   buildHighlightShareUrl: vi.fn(() => ''),
@@ -70,6 +82,38 @@ describe('gameReportService', () => {
         });
       }
     });
+    diamondFirebaseMocks.getPublicDiamondGame.mockResolvedValue({
+      data: {
+        instanceId: '00000000-0000-4000-8000-000000000001',
+        sourceRevision: 7,
+        projectionToken: `current:7:sha256:${'c'.repeat(64)}`,
+        events: [],
+        nextCursor: null,
+        complete: true,
+        truncated: false
+      }
+    });
+    diamondFirebaseMocks.getDiamondManagerStats.mockRejectedValue(new Error('manager stats not configured'));
+    diamondScorebookMocks.getDiamondState.mockResolvedValue({
+      instanceId: '00000000-0000-4000-8000-000000000001',
+      revision: 7
+    });
+    diamondScorebookMocks.getDiamondPrivateHistoryWindow.mockResolvedValue({
+      sourceRevision: 7,
+      oldestSequence: 1,
+      newestSequence: 7,
+      contiguous: true,
+      rangeComplete: true,
+      headComplete: true,
+      historyComplete: true,
+      hasOlder: false,
+      items: []
+    });
+    diamondFirebaseMocks.httpsCallable.mockImplementation((_functions: unknown, name: string) => (
+      name === 'getPublicDiamondGame'
+        ? diamondFirebaseMocks.getPublicDiamondGame
+        : diamondFirebaseMocks.getDiamondManagerStats
+    ));
   });
 
   it('accepts only bounded, cited, published Diamond AI artifacts', () => {
@@ -374,6 +418,48 @@ describe('gameReportService', () => {
         }
       };
     });
+    dbMocks.getGameEvents.mockRejectedValue(new Error('Diamond event collection is private'));
+    diamondFirebaseMocks.getPublicDiamondGame
+      .mockResolvedValueOnce({
+        data: {
+          instanceId,
+          sourceRevision: 7,
+          projectionToken: `current:7:${projectionHash}`,
+          events: [
+            {
+              id: 'event-7',
+              revision: 7,
+              inning: 1,
+              half: 'bottom',
+              description: 'Recorded Player doubled',
+              createdAt: '2026-09-05T20:07:00.000Z'
+            }
+          ],
+          nextCursor: 'cursor-1',
+          complete: false,
+          truncated: true
+        }
+      })
+      .mockResolvedValueOnce({
+        data: {
+          instanceId,
+          sourceRevision: 7,
+          projectionToken: `current:7:${projectionHash}`,
+          events: [
+            {
+              id: 'event-1',
+              revision: 1,
+              inning: 1,
+              half: 'top',
+              description: 'Scorebook ready',
+              createdAt: '2026-09-05T20:01:00.000Z'
+            }
+          ],
+          nextCursor: null,
+          complete: true,
+          truncated: false
+        }
+      });
 
     const report = await loadGameReportSections('team-1', 'game-1');
 
@@ -414,9 +500,313 @@ describe('gameReportService', () => {
       sourceRevisions: [7],
       requestedStatVisibility: 'public',
       statVisibility: 'public',
+      requestedReplayVisibility: 'public',
+      replayVisibility: 'public',
+      replaySource: 'public-sanitized',
       privateStatsStatus: 'not-requested',
       privateStatsReason: null
     });
+    expect(dbMocks.getGameEvents).not.toHaveBeenCalled();
+    expect(diamondFirebaseMocks.httpsCallable).toHaveBeenCalledWith(
+      diamondFirebaseMocks.functions,
+      'getPublicDiamondGame'
+    );
+    expect(diamondFirebaseMocks.getPublicDiamondGame).toHaveBeenNthCalledWith(1, {
+      teamId: 'team-1',
+      gameId: 'game-1',
+      limit: 200,
+      cursor: null
+    });
+    expect(diamondFirebaseMocks.getPublicDiamondGame).toHaveBeenNthCalledWith(2, {
+      teamId: 'team-1',
+      gameId: 'game-1',
+      limit: 200,
+      cursor: 'cursor-1'
+    });
+    expect(report.plays).toEqual([
+      expect.objectContaining({ id: 'event-1', text: 'Scorebook ready', period: 'Top 1' }),
+      expect.objectContaining({ id: 'event-7', text: 'Recorded Player doubled', period: 'Bottom 1' })
+    ]);
+  });
+
+  it('rejects incomplete Diamond replay pages instead of reporting authoritative zero plays', async () => {
+    const instanceId = '00000000-0000-4000-8000-000000000001';
+    const checkpointHash = `sha256:${'a'.repeat(64)}`;
+    const configHash = `sha256:${'b'.repeat(64)}`;
+    const projectionHash = `sha256:${'c'.repeat(64)}`;
+    dbMocks.getGame.mockResolvedValue({
+      id: 'game-1',
+      teamId: 'team-1',
+      trackingEngine: 'diamond-v2',
+      diamondProjectionStatus: 'current',
+      diamondProjectionRevision: 7,
+      diamondProjectionComplete: true,
+      diamondScorebookInstanceId: instanceId,
+      diamondProjectionCheckpointHash: checkpointHash,
+      diamondStatConfigSnapshotHash: configHash,
+      diamondProjectionHash: projectionHash,
+      diamondPublicTeamStats: {
+        trackingEngine: 'diamond-v2',
+        projectionSchemaVersion: 1,
+        sourceRevision: 7,
+        checkpointHash,
+        coverage: {},
+        publicStatIds: [],
+        side: 'home',
+        complete: true,
+        stats: {},
+        observedStats: {},
+        statCoverage: {},
+        teamId: 'team-1',
+        diamondGameId: 'game-1',
+        instanceId,
+        diamondScorebookInstanceId: instanceId,
+        projectionGeneration: instanceId,
+        statConfigSnapshotHash: configHash,
+        projectionHash
+      }
+    });
+    firebaseMocks.getDocs.mockResolvedValue({
+      forEach() {}
+    });
+    diamondFirebaseMocks.getPublicDiamondGame.mockResolvedValue({
+      data: {
+        instanceId,
+        sourceRevision: 7,
+        projectionToken: `current:7:${projectionHash}`,
+        events: [],
+        nextCursor: null,
+        complete: false,
+        truncated: true
+      }
+    });
+
+    await expect(loadGameReportSections('team-1', 'game-1')).rejects.toThrow(
+      'Diamond public replay is incomplete'
+    );
+    expect(dbMocks.getGameEvents).not.toHaveBeenCalled();
+  });
+
+  it('falls back to bounded manager-authorized event summaries for a private Diamond report', async () => {
+    const instanceId = '00000000-0000-4000-8000-000000000001';
+    const checkpointHash = `sha256:${'a'.repeat(64)}`;
+    const configHash = `sha256:${'b'.repeat(64)}`;
+    const projectionHash = `sha256:${'c'.repeat(64)}`;
+    dbMocks.getGame.mockResolvedValue({
+      id: 'game-1',
+      teamId: 'team-1',
+      visibility: 'private',
+      trackingEngine: 'diamond-v2',
+      diamondProjectionStatus: 'current',
+      diamondProjectionRevision: 201,
+      diamondProjectionComplete: true,
+      diamondScorebookInstanceId: instanceId,
+      diamondProjectionCheckpointHash: checkpointHash,
+      diamondStatConfigSnapshotHash: configHash,
+      diamondProjectionHash: projectionHash,
+      diamondPublicTeamStats: {
+        trackingEngine: 'diamond-v2', projectionSchemaVersion: 1, sourceRevision: 201,
+        checkpointHash, coverage: {}, publicStatIds: [], side: 'home', complete: true,
+        stats: {}, observedStats: {}, statCoverage: {}, teamId: 'team-1',
+        diamondGameId: 'game-1', instanceId, diamondScorebookInstanceId: instanceId,
+        projectionGeneration: instanceId, statConfigSnapshotHash: configHash, projectionHash
+      }
+    });
+    firebaseMocks.getDocs.mockResolvedValue({ forEach() {} });
+    diamondFirebaseMocks.getPublicDiamondGame.mockRejectedValue(
+      Object.assign(new Error('Private game is not public.'), { code: 'functions/not-found' })
+    );
+    diamondScorebookMocks.getDiamondState.mockResolvedValue({ instanceId, revision: 201 });
+    diamondScorebookMocks.getDiamondPrivateHistoryWindow
+      .mockResolvedValueOnce({
+        sourceRevision: 201,
+        oldestSequence: 2,
+        newestSequence: 201,
+        contiguous: true,
+        rangeComplete: true,
+        headComplete: true,
+        historyComplete: false,
+        hasOlder: true,
+        items: Array.from({ length: 200 }, (_, index) => {
+          const revision = index + 2;
+          return {
+            eventId: `event-${revision}`,
+            sequence: revision,
+            revision,
+            type: revision === 201 ? 'record_plate_appearance' : 'record_pitch',
+            payload: revision === 201 ? { result: 'single', batterId: 'private-player-id' } : { result: 'ball' },
+            createdAt: new Date(Date.UTC(2026, 8, 5, 20, 0, revision)).toISOString(),
+            voidsEventId: null,
+            supersedesEventId: null
+          };
+        })
+      })
+      .mockResolvedValueOnce({
+        sourceRevision: 201,
+        oldestSequence: 1,
+        newestSequence: 1,
+        contiguous: true,
+        rangeComplete: true,
+        headComplete: false,
+        historyComplete: false,
+        hasOlder: false,
+        items: [{
+          eventId: 'event-1', sequence: 1, revision: 1, type: 'activate', payload: {},
+          createdAt: '2026-09-05T20:00:01.000Z', voidsEventId: null, supersedesEventId: null
+        }]
+      });
+
+    const report = await loadGameReportSections('team-1', 'game-1', { statVisibility: 'manager-internal' });
+
+    expect(report.plays).toEqual([
+      expect.objectContaining({ id: 'event-1', text: 'Scorebook ready', period: 'Revision 1' }),
+      ...Array.from({ length: 199 }, () => expect.any(Object)),
+      expect.objectContaining({ id: 'event-201', text: 'Plate appearance: single', period: 'Revision 201' })
+    ]);
+    expect(report.plays[200]?.text).not.toContain('private-player-id');
+    expect(report.diamond).toMatchObject({
+      requestedReplayVisibility: 'manager-internal',
+      replayVisibility: 'manager-internal',
+      replaySource: 'manager-private-sanitized'
+    });
+    expect(diamondScorebookMocks.getDiamondPrivateHistoryWindow).toHaveBeenNthCalledWith(1, {
+      teamId: 'team-1',
+      gameId: 'game-1',
+      expectedRevision: 201,
+      beforeSequence: null,
+      windowSize: 200
+    });
+    expect(diamondScorebookMocks.getDiamondPrivateHistoryWindow).toHaveBeenNthCalledWith(2, {
+      teamId: 'team-1',
+      gameId: 'game-1',
+      expectedRevision: 201,
+      beforeSequence: 2,
+      windowSize: 200
+    });
+    expect(diamondScorebookMocks.getDiamondState).toHaveBeenCalledTimes(2);
+    expect(dbMocks.getGameEvents).not.toHaveBeenCalled();
+  });
+
+  it('applies canonical correction semantics, removes dependent voided attachments and private notes, and keeps revision order', async () => {
+    const instanceId = '00000000-0000-4000-8000-000000000001';
+    const checkpointHash = `sha256:${'a'.repeat(64)}`;
+    const configHash = `sha256:${'b'.repeat(64)}`;
+    const projectionHash = `sha256:${'c'.repeat(64)}`;
+    dbMocks.getGame.mockResolvedValue({
+      id: 'game-1', teamId: 'team-1', visibility: 'private', trackingEngine: 'diamond-v2',
+      diamondProjectionStatus: 'current', diamondProjectionRevision: 9, diamondProjectionComplete: true,
+      diamondScorebookInstanceId: instanceId, diamondProjectionCheckpointHash: checkpointHash,
+      diamondStatConfigSnapshotHash: configHash, diamondProjectionHash: projectionHash,
+      diamondPublicTeamStats: {
+        trackingEngine: 'diamond-v2', projectionSchemaVersion: 1, sourceRevision: 9,
+        checkpointHash, coverage: {}, publicStatIds: [], side: 'home', complete: true,
+        stats: {}, observedStats: {}, statCoverage: {}, teamId: 'team-1',
+        diamondGameId: 'game-1', instanceId, diamondScorebookInstanceId: instanceId,
+        projectionGeneration: instanceId, statConfigSnapshotHash: configHash, projectionHash
+      }
+    });
+    firebaseMocks.getDocs.mockResolvedValue({ forEach() {} });
+    diamondFirebaseMocks.getPublicDiamondGame.mockRejectedValue(
+      Object.assign(new Error('Private game is not public.'), { code: 'functions/not-found' })
+    );
+    diamondScorebookMocks.getDiamondState.mockResolvedValue({ instanceId, revision: 9 });
+    diamondScorebookMocks.getDiamondPrivateHistoryWindow.mockResolvedValue({
+      sourceRevision: 9,
+      oldestSequence: 1,
+      newestSequence: 9,
+      contiguous: true,
+      rangeComplete: true,
+      headComplete: true,
+      historyComplete: true,
+      hasOlder: false,
+      items: [
+        { eventId: 'event-1', sequence: 1, revision: 1, type: 'activate', payload: {}, createdAt: '2026-09-05T20:09:00.000Z', voidsEventId: null, supersedesEventId: null },
+        { eventId: 'event-2', sequence: 2, revision: 2, type: 'start', payload: {}, createdAt: '2026-09-05T20:08:00.000Z', voidsEventId: null, supersedesEventId: null },
+        { eventId: 'event-3', sequence: 3, revision: 3, type: 'record_plate_appearance', payload: { result: 'single' }, createdAt: '2026-09-05T20:07:00.000Z', voidsEventId: null, supersedesEventId: null },
+        { eventId: 'event-4', sequence: 4, revision: 4, type: 'record_fielding', payload: { playEventId: 'event-3' }, createdAt: '2026-09-05T20:06:00.000Z', voidsEventId: null, supersedesEventId: null },
+        { eventId: 'event-5', sequence: 5, revision: 5, type: 'private_note', payload: { note: 'manager only' }, createdAt: '2026-09-05T20:05:00.000Z', voidsEventId: null, supersedesEventId: null },
+        { eventId: 'event-6', sequence: 6, revision: 6, type: 'void_event', payload: { targetEventId: 'event-3', reason: 'correction' }, createdAt: '2026-09-05T20:04:00.000Z', voidsEventId: 'event-3', supersedesEventId: null },
+        { eventId: 'event-7', sequence: 7, revision: 7, type: 'record_plate_appearance', payload: { result: 'double' }, createdAt: '2026-09-05T20:03:00.000Z', voidsEventId: null, supersedesEventId: null },
+        { eventId: 'event-8', sequence: 8, revision: 8, type: 'record_scoring_judgment', payload: { playEventId: 'event-7' }, createdAt: '2026-09-05T20:02:00.000Z', voidsEventId: null, supersedesEventId: null },
+        {
+          eventId: 'event-9', sequence: 9, revision: 9, type: 'supersede_event',
+          payload: {
+            targetEventId: 'event-7', reason: 'correction',
+            replacement: { type: 'record_plate_appearance', payload: { result: 'triple' } }
+          },
+          createdAt: '2026-09-05T20:01:00.000Z', voidsEventId: null, supersedesEventId: 'event-7'
+        }
+      ]
+    });
+
+    const report = await loadGameReportSections('team-1', 'game-1', { statVisibility: 'manager-internal' });
+
+    expect(report.plays.map((play) => ({ id: play.id, text: play.text, period: play.period }))).toEqual([
+      { id: 'event-1', text: 'Scorebook ready', period: 'Revision 1' },
+      { id: 'event-2', text: 'Game started', period: 'Revision 2' },
+      { id: 'event-9', text: 'Plate appearance: triple', period: 'Revision 7' },
+      { id: 'event-8', text: 'Official scoring updated', period: 'Revision 8' }
+    ]);
+    expect(report.plays.map((play) => play.id)).not.toEqual(expect.arrayContaining(['event-3', 'event-4', 'event-5', 'event-6', 'event-7']));
+  });
+
+  it('returns retryable replay evidence while preserving game status when a Diamond lightweight replay is incomplete', async () => {
+    const instanceId = '00000000-0000-4000-8000-000000000001';
+    dbMocks.getGame.mockResolvedValue({
+      id: 'game-1', teamId: 'team-1', trackingEngine: 'diamond-v2', liveStatus: 'live', status: 'live',
+      diamondProjectionRevision: 7, diamondScorebookInstanceId: instanceId
+    });
+    diamondFirebaseMocks.getPublicDiamondGame.mockResolvedValue({
+      data: {
+        instanceId, sourceRevision: 7, projectionToken: `current:7:sha256:${'c'.repeat(64)}`,
+        events: [], nextCursor: null, complete: false, truncated: true
+      }
+    });
+
+    const refresh = await loadGameReportPlays('team-1', 'game-1');
+
+    expect(refresh).toEqual({
+      game: expect.objectContaining({ id: 'game-1', liveStatus: 'live', status: 'live' }),
+      plays: [],
+      playsFresh: false,
+      replayError: 'Diamond play-by-play could not be refreshed completely. Retry the report.'
+    });
+  });
+
+  it('does not grant an anonymous private-event fallback when the public Diamond game is hidden', async () => {
+    const instanceId = '00000000-0000-4000-8000-000000000001';
+    const checkpointHash = `sha256:${'a'.repeat(64)}`;
+    const configHash = `sha256:${'b'.repeat(64)}`;
+    const projectionHash = `sha256:${'c'.repeat(64)}`;
+    dbMocks.getGame.mockResolvedValue({
+      id: 'game-1',
+      teamId: 'team-1',
+      visibility: 'private',
+      trackingEngine: 'diamond-v2',
+      diamondProjectionStatus: 'current',
+      diamondProjectionRevision: 7,
+      diamondProjectionComplete: true,
+      diamondScorebookInstanceId: instanceId,
+      diamondProjectionCheckpointHash: checkpointHash,
+      diamondStatConfigSnapshotHash: configHash,
+      diamondProjectionHash: projectionHash,
+      diamondPublicTeamStats: {
+        trackingEngine: 'diamond-v2', projectionSchemaVersion: 1, sourceRevision: 7,
+        checkpointHash, coverage: {}, publicStatIds: [], side: 'home', complete: true,
+        stats: {}, observedStats: {}, statCoverage: {}, teamId: 'team-1',
+        diamondGameId: 'game-1', instanceId, diamondScorebookInstanceId: instanceId,
+        projectionGeneration: instanceId, statConfigSnapshotHash: configHash, projectionHash
+      }
+    });
+    firebaseMocks.getDocs.mockResolvedValue({ forEach() {} });
+    diamondFirebaseMocks.getPublicDiamondGame.mockRejectedValue(
+      Object.assign(new Error('Private game is not public.'), { code: 'functions/not-found' })
+    );
+
+    await expect(loadGameReportSections('team-1', 'game-1')).rejects.toThrow('Private game is not public.');
+    expect(diamondScorebookMocks.getDiamondState).not.toHaveBeenCalled();
+    expect(diamondScorebookMocks.getDiamondPrivateHistoryWindow).not.toHaveBeenCalled();
+    expect(dbMocks.getGameEvents).not.toHaveBeenCalled();
   });
 
   it('fails closed instead of loading private team stats when the public team subset is malformed', async () => {

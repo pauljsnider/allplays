@@ -23,4 +23,11 @@ describe('player public page load performance', () => {
         expect(source).toContain("console.warn('Player events unavailable for game:', gameId, error);");
         expect(source).toContain('playerGameStats: null,');
     });
+
+    it('does not turn an unavailable Diamond stat head into authoritative empty play evidence', () => {
+        expect(source).toContain("eventsLoadStatus: diamondGame && statsLoadStatus !== 'complete' ? 'unavailable' : 'complete'");
+        expect(source).toContain("if (diamondGame && eventsLoadStatus !== 'complete') eventsLoadIncomplete = true;");
+        expect(source).toContain('Diamond play-by-play could not be refreshed completely.');
+        expect(source).toContain('No events recorded for this player');
+    });
 });

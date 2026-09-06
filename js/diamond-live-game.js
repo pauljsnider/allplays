@@ -11,7 +11,8 @@ import {
   normalizeDiamondViewerMode,
   reconcileDiamondEventWindow,
   reconcileDiamondPagination,
-} from "./diamond-live-view-model.js?v=2";
+  resolveDiamondLiveMediaEmbed,
+} from "./diamond-live-view-model.js?v=4";
 import { normalizeYouTubeReplayUrl } from "./game-replay-video.js?v=3";
 
 const POLL_INTERVAL_MS = 5000;
@@ -62,12 +63,18 @@ const state = {
   engagementError: "",
   engagementActionMessage: "",
   interactionLifecycleValid: false,
+  generationChangePending: false,
   unsubscribers: [],
+  engagementUnsubscribers: [],
+  engagementRetryTimer: null,
+  engagementSubscriptionAttempt: 0,
 };
 
 const elements = {
   loading: document.querySelector("[data-diamond-loading]"),
   error: document.querySelector("[data-diamond-error]"),
+  errorMessage: document.querySelector("[data-diamond-error-message]"),
+  retry: document.querySelector("[data-diamond-retry]"),
   content: document.querySelector("[data-diamond-content]"),
   status: document.querySelector("[data-diamond-status]"),
   homeName: document.querySelector("[data-diamond-home-name]"),
@@ -148,6 +155,12 @@ function renderMedia() {
   }
 
   const youtube = normalizeYouTubeReplayUrl(media.publicUrl);
+  const liveEmbed =
+    !youtube && !state.replay
+      ? resolveDiamondLiveMediaEmbed(media, {
+          parentHostname: window.location.hostname,
+        })
+      : null;
   const isClip = state.clipStartMs !== null && state.clipEndMs !== null;
   elements.media.hidden = false;
   elements.mediaTitle.textContent = isClip
@@ -155,12 +168,15 @@ function renderMedia() {
     : media.mode === "replay"
       ? "Replay video"
       : "Live video";
-  elements.mediaLink.href = media.publicUrl;
-  elements.mediaLink.textContent = youtube
-    ? "Open on YouTube"
-    : "Open video in a new tab";
+  elements.mediaLink.href = liveEmbed?.publicUrl || media.publicUrl;
+  elements.mediaLink.textContent =
+    youtube || liveEmbed?.provider === "youtube-live"
+      ? "Open on YouTube"
+      : liveEmbed?.provider === "twitch"
+        ? "Open on Twitch"
+        : "Open video in a new tab";
 
-  if (!youtube) {
+  if (!youtube && !liveEmbed) {
     elements.mediaFrame.hidden = true;
     elements.mediaFrame.removeAttribute("src");
     elements.mediaFallback.hidden = false;
@@ -169,17 +185,22 @@ function renderMedia() {
     return;
   }
 
-  const embedUrl = new URL(youtube.embedUrl);
-  embedUrl.searchParams.set("playsinline", "1");
-  embedUrl.searchParams.set("rel", "0");
-  if (state.clipStartMs !== null && state.clipEndMs !== null) {
+  const embedUrl = new URL(youtube?.embedUrl || liveEmbed.embedUrl);
+  if (youtube) {
+    embedUrl.searchParams.set("playsinline", "1");
+    embedUrl.searchParams.set("rel", "0");
+  }
+  if (youtube && state.clipStartMs !== null && state.clipEndMs !== null) {
     embedUrl.searchParams.set(
       "start",
       String(Math.floor(state.clipStartMs / 1000)),
     );
     embedUrl.searchParams.set("end", String(Math.ceil(state.clipEndMs / 1000)));
   }
-  elements.mediaFrame.src = embedUrl.toString();
+  const nextFrameUrl = embedUrl.toString();
+  if (elements.mediaFrame.getAttribute("src") !== nextFrameUrl) {
+    elements.mediaFrame.src = nextFrameUrl;
+  }
   elements.mediaFrame.title = elements.mediaTitle.textContent;
   elements.mediaFrame.hidden = false;
   elements.mediaFallback.hidden = true;
@@ -192,12 +213,17 @@ function setConnection(message, tone = "neutral") {
 
 function renderBases(publicState) {
   [
-    ["first", elements.firstBase],
-    ["second", elements.secondBase],
-    ["third", elements.thirdBase],
-  ].forEach(([base, element]) =>
-    element.classList.toggle("is-occupied", publicState.bases[base]),
-  );
+    ["first", "First", elements.firstBase],
+    ["second", "Second", elements.secondBase],
+    ["third", "Third", elements.thirdBase],
+  ].forEach(([base, label, element]) => {
+    const occupied = Boolean(publicState.bases[base]);
+    element.classList.toggle("is-occupied", occupied);
+    element.setAttribute(
+      "aria-label",
+      `${label} base ${occupied ? "occupied" : "empty"}`,
+    );
+  });
 }
 
 function renderWarnings(warnings) {
@@ -261,6 +287,7 @@ function render() {
   renderMedia();
   elements.loading.hidden = true;
   elements.error.hidden = true;
+  elements.retry.disabled = false;
   elements.content.hidden = false;
   renderEngagementAvailability();
 }
@@ -332,6 +359,7 @@ function canWriteEngagement() {
   return (
     isEngagementWindowOpen() &&
     hasAuthenticatedViewer() &&
+    !state.engagementError &&
     UUID_V4_PATTERN.test(state.instanceId)
   );
 }
@@ -390,21 +418,40 @@ function renderEngagementAvailability() {
 }
 
 function renderChat(messages) {
-  elements.chat
-    .querySelectorAll(".diamond-chat-message")
-    .forEach((element) => element.remove());
-  const fragment = document.createDocumentFragment();
-  [...messages].reverse().forEach((message) => {
-    const row = document.createElement("article");
-    row.className = "diamond-chat-message";
-    const sender = document.createElement("strong");
-    sender.textContent = String(message?.senderName || "Fan").slice(0, 80);
-    const text = document.createElement("p");
-    text.textContent = String(message?.text || "").slice(0, 2000);
-    row.append(sender, text);
-    fragment.append(row);
+  const existingRows = new Map(
+    [...elements.chat.querySelectorAll(".diamond-chat-message")].map((row) => [
+      row.dataset.messageKey,
+      row,
+    ]),
+  );
+  const desiredRows = [...messages].reverse().map((message, index) => {
+    const id = String(message?.id || "").slice(0, 128);
+    const key = id ? `id:${id}` : `position:${String(index)}`;
+    let row = existingRows.get(key);
+    if (!row) {
+      row = document.createElement("article");
+      row.className = "diamond-chat-message";
+      row.dataset.messageKey = key;
+      row.append(document.createElement("strong"), document.createElement("p"));
+    }
+    row.querySelector("strong").textContent = String(
+      message?.senderName || "Fan",
+    ).slice(0, 80);
+    row.querySelector("p").textContent = String(message?.text || "").slice(
+      0,
+      2000,
+    );
+    existingRows.delete(key);
+    return row;
   });
-  elements.chat.prepend(fragment);
+  existingRows.forEach((row) => row.remove());
+  desiredRows.forEach((row, index) => {
+    const current = elements.chat.querySelectorAll(".diamond-chat-message")[
+      index
+    ];
+    if (current !== row)
+      elements.chat.insertBefore(row, current || elements.chatEmpty);
+  });
   elements.chatEmpty.hidden = messages.length > 0;
   elements.chat.scrollTop = elements.chat.scrollHeight;
 }
@@ -524,26 +571,71 @@ function isEngagementRateLimit(error) {
   return String(error?.code || "").includes("resource-exhausted");
 }
 
+function stopEngagementSubscriptions({ clearRetry = true } = {}) {
+  state.engagementSubscriptionAttempt += 1;
+  state.engagementUnsubscribers.forEach((unsubscribe) => {
+    if (typeof unsubscribe === "function") unsubscribe();
+  });
+  state.engagementUnsubscribers = [];
+  state.engagementsInitialized = false;
+  if (clearRetry) {
+    window.clearTimeout(state.engagementRetryTimer);
+    state.engagementRetryTimer = null;
+  }
+}
+
+function recoverEngagementSubscriptions(attempt, message) {
+  if (
+    attempt !== state.engagementSubscriptionAttempt ||
+    !state.game ||
+    state.overlay
+  )
+    return;
+  reportEngagementError(message);
+  stopEngagementSubscriptions({ clearRetry: false });
+  if (state.engagementRetryTimer !== null) return;
+  const expectedInstanceId = state.instanceId;
+  state.engagementRetryTimer = window.setTimeout(() => {
+    state.engagementRetryTimer = null;
+    if (state.game && state.instanceId === expectedInstanceId) {
+      initializeEngagementSubscriptions();
+    }
+  }, POLL_INTERVAL_MS);
+}
+
 function initializeEngagementSubscriptions() {
   if (state.engagementsInitialized || !state.game || state.overlay) return;
+  window.clearTimeout(state.engagementRetryTimer);
+  state.engagementRetryTimer = null;
   state.engagementsInitialized = true;
+  const attempt = ++state.engagementSubscriptionAttempt;
   try {
     const unsubscribe = subscribeLiveChat(
       state.teamId,
       state.gameId,
       { limit: 100, instanceId: state.instanceId },
-      (messages) => renderChat(Array.isArray(messages) ? messages : []),
+      (messages) => {
+        if (attempt === state.engagementSubscriptionAttempt)
+          renderChat(Array.isArray(messages) ? messages : []);
+      },
       () =>
-        reportEngagementError(
+        recoverEngagementSubscriptions(
+          attempt,
           "Live chat is temporarily unavailable. The scorebook will keep refreshing.",
         ),
     );
+    if (attempt !== state.engagementSubscriptionAttempt) {
+      if (typeof unsubscribe === "function") unsubscribe();
+      return;
+    }
     if (typeof unsubscribe === "function")
-      state.unsubscribers.push(unsubscribe);
+      state.engagementUnsubscribers.push(unsubscribe);
   } catch {
-    reportEngagementError(
+    recoverEngagementSubscriptions(
+      attempt,
       "Live chat is temporarily unavailable. The scorebook will keep refreshing.",
     );
+    return;
   }
 
   try {
@@ -551,19 +643,37 @@ function initializeEngagementSubscriptions() {
       state.teamId,
       state.gameId,
       { instanceId: state.instanceId },
-      showReaction,
+      (reaction) => {
+        if (attempt === state.engagementSubscriptionAttempt)
+          showReaction(reaction);
+      },
       () =>
-        reportEngagementError(
+        recoverEngagementSubscriptions(
+          attempt,
           "Live reactions are temporarily unavailable. The scorebook will keep refreshing.",
         ),
     );
+    if (attempt !== state.engagementSubscriptionAttempt) {
+      if (typeof unsubscribe === "function") unsubscribe();
+      return;
+    }
     if (typeof unsubscribe === "function")
-      state.unsubscribers.push(unsubscribe);
+      state.engagementUnsubscribers.push(unsubscribe);
   } catch {
-    reportEngagementError(
+    recoverEngagementSubscriptions(
+      attempt,
       "Live reactions are temporarily unavailable. The scorebook will keep refreshing.",
     );
+    return;
   }
+  if (
+    /^Live (chat|reactions) is temporarily unavailable\./.test(
+      state.engagementError,
+    )
+  ) {
+    state.engagementError = "";
+  }
+  renderEngagementAvailability();
 }
 
 function initializeEngagementAuth() {
@@ -572,12 +682,20 @@ function initializeEngagementAuth() {
   try {
     const unsubscribe = checkAuth((user) => {
       state.user = user || null;
+      if (
+        state.engagementError.startsWith(
+          "Sign-in status is temporarily unavailable.",
+        )
+      ) {
+        state.engagementError = "";
+      }
       renderEngagementAvailability();
     });
     if (typeof unsubscribe === "function")
       state.unsubscribers.push(unsubscribe);
   } catch {
     state.authInitialized = false;
+    state.user = null;
     reportEngagementError(
       "Sign-in status is temporarily unavailable. Public game messages remain visible.",
     );
@@ -659,11 +777,35 @@ elements.reactions.addEventListener("click", async (event) => {
 });
 
 function describeError(error) {
+  if (error?.reason === "diamond-generation-changed")
+    return "This game was restarted. Retry to load the new scorebook.";
   const code = String(error?.code || "");
   if (code.includes("not-found")) return "This Diamond game is not available.";
   if (code.includes("resource-exhausted"))
     return "Too many refreshes. Please wait a moment.";
   return "The detailed scorebook is temporarily unavailable. The classic scoreboard may still be available.";
+}
+
+function resetGenerationState() {
+  cleanupSubscriptions();
+  state.game = null;
+  state.events = [];
+  state.nextCursor = null;
+  state.complete = false;
+  state.sourceRevision = 0;
+  state.projectionToken = "";
+  state.instanceId = "";
+  state.user = null;
+  state.lastChatSentAt = 0;
+  state.lastReactionSentAt = 0;
+  state.pendingChatRequest = null;
+  state.pendingReactionRequests.clear();
+  state.engagementsInitialized = false;
+  state.authInitialized = false;
+  state.engagementError = "";
+  state.engagementActionMessage = "";
+  state.interactionLifecycleValid = false;
+  state.generationChangePending = false;
 }
 
 function isRetryableError(error) {
@@ -675,6 +817,15 @@ function isRetryableError(error) {
     code.includes("internal") ||
     code.includes("resource-exhausted")
   );
+}
+
+function showLoadError(error, { allowRetry = isRetryableError(error) } = {}) {
+  elements.loading.hidden = true;
+  elements.content.hidden = true;
+  elements.errorMessage.textContent = describeError(error);
+  elements.retry.hidden = !allowRetry;
+  elements.retry.disabled = false;
+  elements.error.hidden = false;
 }
 
 async function loadGame({ cursor = null, append = false, quiet = false } = {}) {
@@ -707,6 +858,7 @@ async function loadGame({ cursor = null, append = false, quiet = false } = {}) {
       state.pendingReactionRequests.clear();
       throw Object.assign(new Error("Diamond generation changed."), {
         code: "failed-precondition",
+        reason: "diamond-generation-changed",
       });
     }
     const interactionLifecycleValid = isCanonicalInteractionLifecycle(
@@ -764,6 +916,7 @@ async function loadGame({ cursor = null, append = false, quiet = false } = {}) {
     state.game = game;
     state.instanceId = responseInstanceId;
     state.interactionLifecycleValid = interactionLifecycleValid;
+    state.generationChangePending = false;
     state.events = reconciled.events;
     state.sourceRevision = reconciled.sourceRevision;
     state.projectionToken = reconciled.projectionToken;
@@ -786,12 +939,17 @@ async function loadGame({ cursor = null, append = false, quiet = false } = {}) {
     );
     if (!game.state.isFinal && !state.replay) schedulePoll();
   } catch (error) {
+    if (error?.reason === "diamond-generation-changed") {
+      state.generationChangePending = true;
+      state.interactionLifecycleValid = false;
+      cleanupSubscriptions();
+      setConnection("Game restarted", "warning");
+      showLoadError(error, { allowRetry: true });
+      return;
+    }
     setConnection("Connection interrupted", "warning");
     if (!state.game) {
-      elements.loading.hidden = true;
-      elements.content.hidden = true;
-      elements.error.textContent = describeError(error);
-      elements.error.hidden = false;
+      showLoadError(error);
     }
     if (!state.replay && isRetryableError(error))
       schedulePoll({ failed: true });
@@ -820,8 +978,19 @@ elements.loadMore.addEventListener("click", () => {
     void loadGame({ cursor: state.nextCursor, append: true });
 });
 
+elements.retry.addEventListener("click", () => {
+  if (state.generationChangePending) resetGenerationState();
+  elements.retry.disabled = true;
+  elements.error.hidden = true;
+  elements.loading.hidden = false;
+  void loadGame().finally(() => {
+    elements.retry.disabled = false;
+  });
+});
+
 function cleanupSubscriptions() {
   window.clearTimeout(state.pollTimer);
+  stopEngagementSubscriptions();
   state.unsubscribers.forEach((unsubscribe) => {
     if (typeof unsubscribe === "function") unsubscribe();
   });
@@ -837,7 +1006,5 @@ try {
   parseContext();
   void loadGame();
 } catch (error) {
-  elements.loading.hidden = true;
-  elements.error.textContent = describeError(error);
-  elements.error.hidden = false;
+  showLoadError(error, { allowRetry: false });
 }

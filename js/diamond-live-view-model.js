@@ -7,6 +7,17 @@ const TERMINAL_STATES = new Set([
   "deleted",
 ]);
 const MAX_CLIP_MS = 24 * 60 * 60 * 1000;
+const YOUTUBE_LIVE_CHANNEL_PATTERN = /^UC[A-Za-z0-9_-]{22}$/;
+const TWITCH_CHANNEL_PATTERN = /^[A-Za-z0-9_]{1,25}$/;
+const YOUTUBE_LIVE_EMBED_HOSTS = new Set(["youtube.com", "www.youtube.com"]);
+const TWITCH_CHANNEL_HOSTS = new Set(["twitch.tv", "www.twitch.tv"]);
+const YOUTUBE_LIVE_QUERY_KEYS = new Set([
+  "channel",
+  "autoplay",
+  "mute",
+  "playsinline",
+  "rel",
+]);
 
 function compactText(value, maxLength = 256) {
   if (typeof value !== "string" && typeof value !== "number") return "";
@@ -39,6 +50,24 @@ function normalizeHttpsUrl(value) {
   } catch {
     return "";
   }
+}
+
+function normalizeTwitchParentHostname(value) {
+  if (typeof value !== "string") return "";
+  const hostname = value.trim().toLowerCase();
+  if (!hostname || hostname.length > 253) return "";
+  const labels = hostname.split(".");
+  if (
+    labels.some(
+      (label) =>
+        !label ||
+        label.length > 63 ||
+        !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(label),
+    )
+  ) {
+    return "";
+  }
+  return hostname;
 }
 
 function normalizeClipMs(value) {
@@ -80,6 +109,75 @@ export function normalizeDiamondPublicMedia(value = {}) {
   };
 }
 
+/**
+ * Resolve only the two provider URL shapes that are safe to load as a live
+ * iframe. Other credential-free HTTPS media remains available as an external
+ * link, but is never promoted to executable embedded content here.
+ */
+export function resolveDiamondLiveMediaEmbed(
+  value = {},
+  { parentHostname = "" } = {},
+) {
+  const media = normalizeDiamondPublicMedia(value);
+  if (!media || media.mode !== "live") return null;
+
+  const source = new URL(media.publicUrl);
+  const host = source.hostname.toLowerCase();
+  if (
+    YOUTUBE_LIVE_EMBED_HOSTS.has(host) &&
+    /^\/embed\/live_stream\/?$/.test(source.pathname) &&
+    !source.hash &&
+    [...source.searchParams.keys()].every((key) =>
+      YOUTUBE_LIVE_QUERY_KEYS.has(key),
+    )
+  ) {
+    const channelIds = source.searchParams.getAll("channel");
+    if (
+      channelIds.length !== 1 ||
+      !YOUTUBE_LIVE_CHANNEL_PATTERN.test(channelIds[0])
+    ) {
+      return null;
+    }
+    const channelId = channelIds[0];
+    const embedUrl = new URL("https://www.youtube.com/embed/live_stream");
+    embedUrl.searchParams.set("channel", channelId);
+    embedUrl.searchParams.set("autoplay", "1");
+    embedUrl.searchParams.set("mute", "1");
+    embedUrl.searchParams.set("playsinline", "1");
+    embedUrl.searchParams.set("rel", "0");
+    return {
+      provider: "youtube-live",
+      embedUrl: embedUrl.toString(),
+      publicUrl: `https://www.youtube.com/channel/${channelId}`,
+    };
+  }
+
+  if (TWITCH_CHANNEL_HOSTS.has(host) && !source.search && !source.hash) {
+    const channelMatch = source.pathname.match(/^\/([A-Za-z0-9_]{1,25})\/?$/);
+    const parent = normalizeTwitchParentHostname(parentHostname);
+    if (
+      !channelMatch ||
+      !TWITCH_CHANNEL_PATTERN.test(channelMatch[1]) ||
+      !parent
+    ) {
+      return null;
+    }
+    const channel = channelMatch[1];
+    const embedUrl = new URL("https://player.twitch.tv/");
+    embedUrl.searchParams.set("channel", channel);
+    embedUrl.searchParams.set("parent", parent);
+    embedUrl.searchParams.set("autoplay", "true");
+    embedUrl.searchParams.set("muted", "true");
+    return {
+      provider: "twitch",
+      embedUrl: embedUrl.toString(),
+      publicUrl: `https://www.twitch.tv/${channel}`,
+    };
+  }
+
+  return null;
+}
+
 export function normalizeDiamondPublicState(value = {}) {
   const state =
     value && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -98,9 +196,11 @@ export function normalizeDiamondPublicState(value = {}) {
     awayScore: boundedInteger(state.awayScore, 0, 999, 0),
     inning: boundedInteger(state.inning, 1, 99, 1),
     half,
-    balls: boundedInteger(state.balls, 0, 3, 0),
-    strikes: boundedInteger(state.strikes, 0, 2, 0),
-    outs: boundedInteger(state.outs, 0, 2, 0),
+    // The canonical scorer intentionally holds terminal pitch/out evidence until
+    // the separate plate-appearance or half-inning command is recorded.
+    balls: boundedInteger(state.balls, 0, 4, 0),
+    strikes: boundedInteger(state.strikes, 0, 3, 0),
+    outs: boundedInteger(state.outs, 0, 3, 0),
     bases: {
       first: bases.first === true,
       second: bases.second === true,

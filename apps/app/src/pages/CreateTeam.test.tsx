@@ -7,9 +7,15 @@ import { CreateTeam } from './CreateTeam';
 import type { AuthState } from '../lib/types';
 
 const teamCreationMocks = vi.hoisted(() => ({
+  configureCreatedTeamDiamondForApp: vi.fn(),
   createTeamForApp: vi.fn(),
   getCreateTeamDiamondProfileOptions: vi.fn(),
-  getCreateTeamSportOptions: vi.fn(() => ['Basketball', 'Soccer', 'Baseball'])
+  getCreateTeamSportOptions: vi.fn(({ includeDiamondSports = false } = {}) => [
+    'Basketball',
+    'Soccer',
+    'Baseball',
+    ...(includeDiamondSports ? ['Fastpitch'] : [])
+  ])
 }));
 
 vi.mock('../lib/teamCreationService', () => teamCreationMocks);
@@ -70,6 +76,7 @@ describe('CreateTeam', () => {
       diamondScorebookConfigured: false,
       diamondScorebookError: null
     });
+    teamCreationMocks.configureCreatedTeamDiamondForApp.mockResolvedValue(undefined);
     teamCreationMocks.getCreateTeamDiamondProfileOptions.mockImplementation((sport: string) =>
       sport === 'Baseball'
         ? [
@@ -78,7 +85,12 @@ describe('CreateTeam', () => {
           ]
         : []
     );
-    teamCreationMocks.getCreateTeamSportOptions.mockReturnValue(['Basketball', 'Soccer', 'Baseball']);
+    teamCreationMocks.getCreateTeamSportOptions.mockImplementation(({ includeDiamondSports = false } = {}) => [
+      'Basketball',
+      'Soccer',
+      'Baseball',
+      ...(includeDiamondSports ? ['Fastpitch'] : [])
+    ]);
   });
 
   afterEach(() => {
@@ -180,6 +192,7 @@ describe('CreateTeam', () => {
 
     fireEvent.change(screen.getByLabelText('Sport'), { target: { value: 'Baseball' } });
     expect(screen.queryByRole('group', { name: 'Diamond Scorebook v2' })).toBeNull();
+    expect(screen.queryByRole('option', { name: 'Fastpitch' })).toBeNull();
     expect(teamCreationMocks.getCreateTeamDiamondProfileOptions).not.toHaveBeenCalled();
 
     cleanup();
@@ -188,6 +201,8 @@ describe('CreateTeam', () => {
     fireEvent.change(screen.getByLabelText('Sport'), { target: { value: 'Baseball' } });
 
     expect(screen.queryByRole('group', { name: 'Diamond Scorebook v2' })).toBeNull();
+    expect(screen.queryByRole('option', { name: 'Fastpitch' })).toBeNull();
+    expect(teamCreationMocks.getCreateTeamSportOptions).toHaveBeenCalledWith({ includeDiamondSports: false });
 
     fireEvent.change(screen.getByPlaceholderText('Team name'), { target: { value: 'Classic Baseball' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create team' }));
@@ -208,6 +223,8 @@ describe('CreateTeam', () => {
 
     const fieldset = screen.getByRole('group', { name: 'Diamond Scorebook v2' });
     expect(fieldset).toBeTruthy();
+    expect(screen.getByRole('option', { name: 'Fastpitch' })).toBeTruthy();
+    expect(teamCreationMocks.getCreateTeamSportOptions).toHaveBeenCalledWith({ includeDiamondSports: true });
     expect(screen.getByRole('checkbox', { name: 'Enable for new games' })).not.toBeChecked();
     expect(screen.queryByLabelText('Diamond rules profile')).toBeNull();
   });
@@ -235,5 +252,53 @@ describe('CreateTeam', () => {
         captureMode: 'full'
       }
     }));
+  });
+
+  it('retries a failed Diamond setup against the same created team until it succeeds', async () => {
+    window.__ALLPLAYS_CONFIG__ = { diamondScorebookUiEnabled: true } as any;
+    teamCreationMocks.createTeamForApp.mockResolvedValueOnce({
+      teamId: 'team-new',
+      defaultStatConfigCreated: false,
+      defaultStatConfigError: 'stat config unavailable',
+      diamondScorebookConfigured: false,
+      diamondScorebookError: 'temporary policy read failure'
+    });
+    teamCreationMocks.configureCreatedTeamDiamondForApp
+      .mockRejectedValueOnce(new Error('still unavailable'))
+      .mockResolvedValueOnce(undefined);
+    renderCreateTeam();
+
+    fireEvent.change(screen.getByPlaceholderText('Team name'), { target: { value: 'Diamond Club' } });
+    fireEvent.change(screen.getByLabelText('Sport'), { target: { value: 'Baseball' } });
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Enable for new games' }));
+    fireEvent.change(screen.getByLabelText('Diamond rules profile'), { target: { value: 'baseball-nfhs' } });
+    fireEvent.change(screen.getByLabelText('Diamond capture mode'), { target: { value: 'full' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create team' }));
+
+    expect(await screen.findByText(/temporary policy read failure/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry Diamond setup' }));
+
+    expect(await screen.findByText(/still unavailable/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry Diamond setup' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry Diamond setup' }));
+
+    expect(await screen.findByText('Diamond Scorebook v2 is enabled for this team.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry Diamond setup' })).not.toBeInTheDocument();
+    expect(screen.getByText(/default stat config could not be added: stat config unavailable/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Open team' })).toBeEnabled();
+    expect(teamCreationMocks.createTeamForApp).toHaveBeenCalledTimes(1);
+    expect(teamCreationMocks.configureCreatedTeamDiamondForApp).toHaveBeenCalledTimes(2);
+    expect(teamCreationMocks.configureCreatedTeamDiamondForApp).toHaveBeenNthCalledWith(1, 'team-new', 'Baseball', {
+      enabled: true,
+      rulesProfileId: 'baseball-nfhs',
+      rulesProfileVersion: 1,
+      captureMode: 'full'
+    });
+    expect(teamCreationMocks.configureCreatedTeamDiamondForApp).toHaveBeenNthCalledWith(2, 'team-new', 'Baseball', {
+      enabled: true,
+      rulesProfileId: 'baseball-nfhs',
+      rulesProfileVersion: 1,
+      captureMode: 'full'
+    });
   });
 });

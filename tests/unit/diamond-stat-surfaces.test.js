@@ -23,6 +23,27 @@ describe('legacy Diamond stat surface contracts', () => {
         }
     });
 
+    it('loads report play evidence through bounded Diamond callables while retaining legacy event reads', () => {
+        const gameSource = readRootFile('game.html');
+        const playerSource = readRootFile('player.html');
+        const helperSource = readRootFile('js/diamond-report-events.js');
+
+        for (const source of [gameSource, playerSource]) {
+            expect(source).toContain("from './js/diamond-report-events.js?v=1'");
+            expect(source).toContain('loadCompleteDiamondReportEvents({');
+            expect(source).toContain('if (diamondGame) {');
+            expect(source).toContain('} else {');
+            expect(source).toContain('collection(db, `teams/${teamId}/games/${gameId}/events`)');
+        }
+        expect(gameSource.match(/teams\/\$\{teamId\}\/games\/\$\{gameId\}\/events/g)).toHaveLength(1);
+        expect(playerSource.match(/teams\/\$\{teamId\}\/games\/\$\{gameId\}\/events/g)).toHaveLength(1);
+        expect(playerSource).toContain('sourcePlayIds: diamondGame ? [...statData.sourcePlayIds] : null');
+        expect(helperSource).toMatch(/await invoke\(["']getPublicDiamondGame["']/);
+        expect(helperSource).toMatch(/await invoke\(["']listDiamondEvents["']/);
+        expect(helperSource).not.toContain('collection(db');
+        expect(helperSource).not.toContain('/events`');
+    });
+
     it('keeps Diamond reports read only and never ranks unavailable values as zero', () => {
         const gameSource = readRootFile('game.html');
         const playerSource = readRootFile('player.html');

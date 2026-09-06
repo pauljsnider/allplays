@@ -3258,6 +3258,125 @@ describe('private AI service', () => {
         expect(playerMocks.loadParentPlayerVideoClips).toHaveBeenCalledWith(authUser, 'team-1', 'player-1');
     });
 
+    it('serializes partial Diamond totals with explicit lower-bound, coverage, and absence evidence', async () => {
+        playerMocks.loadParentPlayerStatTotals.mockResolvedValueOnce({
+            teamId: 'team-1',
+            playerId: 'player-1',
+            gameCount: 2,
+            gameIds: ['diamond-1', 'diamond-2'],
+            totals: { h: 1 },
+            statPresentation: {
+                isDiamond: true,
+                statCoverage: { h: 'partial' },
+                observedStatKeys: ['h'],
+                unavailableStatKeys: ['rbi'],
+                projectionPending: true
+            },
+            diamond: {
+                hasDiamond: true,
+                pending: true,
+                sourceRevisions: [8],
+                requestedStatVisibility: 'public',
+                statVisibility: 'public',
+                privateStatsStatus: 'not-requested',
+                publicStatsStatus: 'partial',
+                absenceConfirmed: false
+            }
+        });
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await runPrivateAiTool(authUser, { name: 'get_player_development', args: { playerName: 'ave' } });
+
+        expect(result).toMatchObject({
+            ok: true,
+            data: {
+                seasonStatTotals: {
+                    available: true,
+                    gameCount: 2,
+                    totals: { h: 1 },
+                    diamondEvidence: {
+                        complete: false,
+                        pending: true,
+                        publicStatsStatus: 'partial',
+                        absenceConfirmed: false,
+                        coverage: {
+                            statCoverage: { h: 'partial' },
+                            observedStatKeys: ['h'],
+                            unavailableStatKeys: ['rbi'],
+                            projectionPending: true
+                        }
+                    }
+                }
+            }
+        });
+        expect(result.data.coachingPrompt).toContain('Partial values are lower bounds');
+        expect(result.data.coachingPrompt).toContain('Never describe partial, pending, or unavailable Diamond totals as complete or as zero');
+    });
+
+    it('suppresses legacy recent-row totals when a Diamond season total load is unavailable', async () => {
+        playerMocks.loadParentPlayerDetailWithAthleteProfile.mockResolvedValueOnce({
+            child: { playerId: 'player-1', playerName: 'Avery', teamId: 'team-1', teamName: 'Bears' },
+            player: { id: 'player-1', name: 'Avery' },
+            team: { id: 'team-1', name: 'Bears', sport: 'Baseball' },
+            statRows: [{
+                event: futureEvent({ id: 'diamond-1', trackingEngine: 'diamond-v2' }),
+                stats: { h: 1 },
+                statPresentation: {
+                    isDiamond: true,
+                    projectionPending: true,
+                    statCoverage: { h: 'partial' },
+                    observedStatKeys: ['h'],
+                    unavailableStatKeys: []
+                }
+            }]
+        });
+        playerMocks.loadParentPlayerStatTotals.mockRejectedValueOnce(new Error('Diamond statistics are temporarily unavailable. Refresh to retry.'));
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await runPrivateAiTool(authUser, { name: 'get_player_development', args: { playerName: 'ave' } });
+
+        expect(result).toMatchObject({
+            ok: true,
+            data: {
+                seasonStatTotals: {
+                    available: false,
+                    gameCount: null,
+                    totals: null,
+                    diamondEvidence: {
+                        complete: false,
+                        pending: true,
+                        publicStatsStatus: 'unavailable',
+                        absenceConfirmed: false
+                    }
+                }
+            }
+        });
+        expect(result.data.seasonStatTotals.totals).not.toEqual({ h: 1 });
+    });
+
+    it('instructs the answer model not to turn incomplete Diamond evidence into complete or zero claims', async () => {
+        playerMocks.loadParentPlayerStatTotals.mockResolvedValueOnce({
+            teamId: 'team-1', playerId: 'player-1', gameCount: 2, gameIds: ['diamond-1', 'diamond-2'],
+            totals: { h: 1 },
+            statPresentation: { isDiamond: true, statCoverage: { h: 'partial' }, observedStatKeys: ['h'], unavailableStatKeys: [], projectionPending: true },
+            diamond: { hasDiamond: true, pending: true, sourceRevisions: [8], publicStatsStatus: 'partial', privateStatsStatus: 'not-requested', absenceConfirmed: false }
+        });
+        aiMocks.model.generateContent
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                toolCalls: [{ name: 'get_player_development', args: { playerName: 'ave' } }]
+            })))
+            .mockResolvedValueOnce(modelText(JSON.stringify({ answer: 'The known totals are incomplete.' })));
+        const { generatePrivateAiAnswer } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        await generatePrivateAiAnswer(authUser, 'How is Avery developing?');
+
+        const answerPrompt = String(aiMocks.model.generateContent.mock.calls[1][0]);
+        expect(answerPrompt).toContain('partial or pending totals are lower bounds');
+        expect(answerPrompt).toContain('Never turn a missing seasonStatTotals result into totals from recent partial rows');
+        expect(answerPrompt).toContain('"publicStatsStatus":"partial"');
+        expect(answerPrompt).toContain('"absenceConfirmed":false');
+    });
+
     it('opts all-range AI schedule lookups into full history loads', async () => {
         const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
 

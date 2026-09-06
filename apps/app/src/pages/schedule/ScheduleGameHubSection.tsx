@@ -63,6 +63,7 @@ import type { AuthState } from '../../lib/types';
 import { isActiveGameForLive, type ReplayArchiveState, type YouTubeReplayVideo } from '../../lib/youtubeReplay';
 import { isDiamondScorebookUiEnabled } from '../../lib/launchFeatures';
 import { createLogger } from '../../lib/logger';
+import { isLegacyTrackingEngine } from '../../lib/trackingEngine';
 import { useScheduleEventDetailContext } from './ScheduleEventDetailContext';
 
 const logger = createLogger('schedule-event-detail');
@@ -171,7 +172,7 @@ export function shouldCheckDiamondActivation(
     && event.type === 'game'
     && event.isDbGame
     && !event.isCancelled
-    && !event.trackingEngine
+    && isLegacyTrackingEngine(event.trackingEngine)
     && Boolean(event.statTrackerConfigId)
     && isDiamondSport
   );
@@ -1094,7 +1095,7 @@ function DiamondActivationCard({ event, canUpdateScore, diamondScorebookUiEnable
   );
 }
 
-export function ScheduleGameHubSection({ auth, event, childEvents, requestedPanel, onPanelChange, onScoreUpdated, onLiveClockUpdated, onWrapupCompleted, onStatsheetImported, onGameCancelled, onPracticeOccurrenceCancelled, onGamePlanPublished, onReplayVideoUpdated }: {
+export function ScheduleGameHubSection({ auth, event, childEvents, requestedPanel, onPanelChange, onScoreUpdated, onLiveClockUpdated, onWrapupCompleted, onStatsheetImported, onGameCancelled, onPracticeOccurrenceCancelled, onGamePlanPublished, onReplayVideoUpdated, onEventRefresh }: {
   auth: AuthState;
   event: ParentScheduleEvent;
   childEvents: ParentScheduleEvent[];
@@ -1108,6 +1109,7 @@ export function ScheduleGameHubSection({ auth, event, childEvents, requestedPane
   onPracticeOccurrenceCancelled: () => void;
   onGamePlanPublished: (gamePlan: Record<string, any>) => void;
   onReplayVideoUpdated: (replayVideo: YouTubeReplayVideo | null, replayState: ReplayArchiveState) => void;
+  onEventRefresh: () => Promise<void> | void;
 }) {
   const { isDesktopWeb } = useShellLayout();
   const [shareStatus, setShareStatus] = useState<string | null>(null);
@@ -1124,15 +1126,16 @@ export function ScheduleGameHubSection({ auth, event, childEvents, requestedPane
   const canUpdateScore = shouldShowLiveScoreControls(event, auth.user);
   const diamondScorebookUiEnabled = isDiamondScorebookUiEnabled();
   const isDiamondOwned = event.trackingEngine === 'diamond-v2';
-  const hasUnknownTrackingEngine = Boolean(event.trackingEngine && !isDiamondOwned);
-  const canUseLegacyScoring = canUpdateScore && !event.trackingEngine;
+  const isLegacyOwned = isLegacyTrackingEngine(event.trackingEngine);
+  const hasUnknownTrackingEngine = !isDiamondOwned && !isLegacyOwned;
+  const canUseLegacyScoring = canUpdateScore && isLegacyOwned;
   const canLaunchStandardTracker = canUseLegacyScoring && Boolean(event.statTrackerConfigId);
   const hasBasketballGameTools = supportsBasketballGameTools(event);
   const canWrapup = canUseLegacyScoring;
   const canCancelGame = Boolean(!isPractice && event.isDbGame && !event.isCancelled && event.canUpdateScore && auth.user);
   const isRecurringPracticeOccurrence = Boolean(isPractice && event.id.includes('__'));
   const canCancelPracticeOccurrence = Boolean(isRecurringPracticeOccurrence && event.isDbGame && !event.isCancelled && event.isTeamAdmin && auth.user);
-  const canPublishLineup = Boolean(!isPractice && event.isDbGame && event.isTeamStaff && !event.trackingEngine);
+  const canPublishLineup = Boolean(!isPractice && event.isDbGame && event.isTeamStaff && isLegacyOwned);
   const notifiesCounterpartTeam = Boolean(event.sharedScheduleOpponentTeamId);
   const hubDestinations = isPractice ? buildPracticeHubDestinations(event) : buildGameHubDestinations(event);
   const standardTrackerHref = `/schedule/${encodeURIComponent(event.teamId)}/${encodeURIComponent(event.id)}/track`;
@@ -1536,7 +1539,7 @@ export function ScheduleGameHubSection({ auth, event, childEvents, requestedPane
           onToggle={() => togglePanel('report')}
         >
           <Suspense fallback={<div className="mt-3 rounded-2xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-500">Loading report sections...</div>}>
-            <DeferredGameReportSections event={event} />
+            <DeferredGameReportSections event={event} onRefreshEvent={onEventRefresh} />
           </Suspense>
         </LazyGameHubPanel>
       ) : null}

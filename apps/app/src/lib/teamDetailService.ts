@@ -81,7 +81,12 @@ import {
   resolveDiamondPublicTeamStatDocument,
   type CoverageAwareStatPresentation
 } from './adapters/legacyDiamondStatPresentation';
-import { loadDiamondManagerStats } from './diamondManagerStatsService';
+import {
+  DIAMOND_MANAGER_STATS_MAX_GAMES,
+  DIAMOND_MANAGER_STATS_MAX_PLAYERS,
+  loadDiamondManagerStats,
+  type DiamondManagerStatsReadResult
+} from './diamondManagerStatsService';
 import { buildPublicTeamGamesIcsUrl as buildPublicTeamGamesIcsUrlFromRuntime } from './calendarFeedUrls';
 import { getPrimaryAppCheckHeaders } from './adapters/legacyFirebaseAppCheck';
 import { isRetryableReadTransportError, raceFirstSuccessfulRead } from './adapters/legacyHedgedRead';
@@ -99,6 +104,10 @@ const primaryDataTimeoutMs = 5000;
 const restReadHedgeDelayMs = 750;
 const optionalCalendarTimeoutMs = 1500;
 const logger = createLogger('team-detail-service');
+const diamondPublicStatReadConcurrency = 8;
+const seasonStatsReadConcurrency = 2;
+
+type DiamondPublicStatsStatus = 'not-requested' | 'complete' | 'partial' | 'unavailable';
 
 export type TeamDetailPlayer = {
   id: string;
@@ -305,6 +314,8 @@ export type TeamDetailRosterStatisticsTable = {
     requestedStatVisibility?: 'public' | 'manager-internal';
     statVisibility?: 'public' | 'manager-internal';
     privateStatsStatus?: 'not-requested' | 'complete' | 'partial' | 'unavailable';
+    privateStatsReason?: string | null;
+    publicStatsStatus?: DiamondPublicStatsStatus;
   };
 };
 
@@ -2077,8 +2088,176 @@ type CoverageAwareSeasonStats = {
     requestedStatVisibility?: 'public' | 'manager-internal';
     statVisibility?: 'public' | 'manager-internal';
     privateStatsStatus?: 'not-requested' | 'complete' | 'partial' | 'unavailable';
+    privateStatsReason?: string | null;
+    publicStatsStatus?: DiamondPublicStatsStatus;
   };
 };
+
+function emptyDiamondManagerStatsResult(
+  status: 'partial' | 'unavailable',
+  reason: string
+): DiamondManagerStatsReadResult {
+  return {
+    status,
+    reason,
+    documentsByGameId: new Map(),
+    teamDocumentsByGameId: new Map()
+  };
+}
+
+function stableRecordFingerprint(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? String(value);
+  if (Array.isArray(value)) return `[${value.map(stableRecordFingerprint).join(',')}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableRecordFingerprint(record[key])}`).join(',')}}`;
+}
+
+async function loadChunkedTeamDiamondManagerStats({
+  teamId,
+  games,
+  playerIds
+}: {
+  teamId: string;
+  games: Record<string, any>[];
+  playerIds: string[];
+}): Promise<DiamondManagerStatsReadResult> {
+  const gameIds = games.map((game) => cleanString(game?.id || game?.gameId));
+  const normalizedPlayerIds = [...new Set(playerIds.map(cleanString).filter(Boolean))].sort();
+  if (
+    !games.length
+    || gameIds.some((gameId) => !gameId)
+    || new Set(gameIds).size !== gameIds.length
+    || !normalizedPlayerIds.length
+  ) {
+    return emptyDiamondManagerStatsResult('partial', 'invalid-or-duplicate-season-request');
+  }
+
+  const mutableDocumentsByGameId = new Map<string, Array<{ id: string; data: Record<string, unknown> }>>();
+  const teamDocumentsByGameId = new Map<string, Record<string, unknown>>();
+  const teamDocumentFingerprintByGameId = new Map<string, string | null>();
+  let chunkNumber = 0;
+  for (let gameOffset = 0; gameOffset < games.length; gameOffset += DIAMOND_MANAGER_STATS_MAX_GAMES) {
+    const gameChunk = games.slice(gameOffset, gameOffset + DIAMOND_MANAGER_STATS_MAX_GAMES);
+    for (let playerOffset = 0; playerOffset < normalizedPlayerIds.length; playerOffset += DIAMOND_MANAGER_STATS_MAX_PLAYERS) {
+      const playerChunk = normalizedPlayerIds.slice(playerOffset, playerOffset + DIAMOND_MANAGER_STATS_MAX_PLAYERS);
+      chunkNumber += 1;
+      const chunkResult = await loadDiamondManagerStats({ teamId, games: gameChunk, playerIds: playerChunk });
+      if (chunkResult.status !== 'complete') {
+        return emptyDiamondManagerStatsResult(
+          chunkResult.status,
+          `manager-season-chunk-${String(chunkNumber)}:${chunkResult.reason || 'incomplete'}`
+        );
+      }
+
+      for (const [gameId, documents] of chunkResult.documentsByGameId) {
+        const mergedDocuments = mutableDocumentsByGameId.get(gameId) || [];
+        const seenPlayerIds = new Set(mergedDocuments.map(({ id }) => id));
+        if (documents.some(({ id }) => seenPlayerIds.has(id))) {
+          return emptyDiamondManagerStatsResult('partial', 'duplicate-manager-player-result');
+        }
+        mergedDocuments.push(...documents);
+        mutableDocumentsByGameId.set(gameId, mergedDocuments);
+      }
+
+      for (const game of gameChunk) {
+        const gameId = cleanString(game?.id || game?.gameId);
+        const teamDocument = chunkResult.teamDocumentsByGameId.get(gameId) || null;
+        const fingerprint = teamDocument ? stableRecordFingerprint(teamDocument) : null;
+        if (teamDocumentFingerprintByGameId.has(gameId) && teamDocumentFingerprintByGameId.get(gameId) !== fingerprint) {
+          return emptyDiamondManagerStatsResult('partial', 'incoherent-manager-team-result');
+        }
+        teamDocumentFingerprintByGameId.set(gameId, fingerprint);
+        if (teamDocument) teamDocumentsByGameId.set(gameId, teamDocument);
+      }
+    }
+  }
+
+  return {
+    status: 'complete',
+    reason: null,
+    documentsByGameId: new Map([...mutableDocumentsByGameId.entries()].map(([gameId, documents]) => [
+      gameId,
+      Object.freeze(documents.sort((left, right) => left.id.localeCompare(right.id)))
+    ])),
+    teamDocumentsByGameId
+  };
+}
+
+async function mapInTeamStatsReadBatches<T, R>(
+  values: readonly T[],
+  batchSize: number,
+  mapper: (value: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = [];
+  for (let offset = 0; offset < values.length; offset += batchSize) {
+    const batch = values.slice(offset, offset + batchSize);
+    results.push(...await Promise.all(batch.map((value, index) => mapper(value, offset + index))));
+  }
+  return results;
+}
+
+function summarizeDiamondPublicStatsStatus(
+  statuses: ReadonlyArray<'complete' | 'partial' | 'unavailable'>
+): Exclude<DiamondPublicStatsStatus, 'not-requested'> {
+  if (statuses.length && statuses.every((status) => status === 'complete')) return 'complete';
+  if (!statuses.length || statuses.every((status) => status === 'unavailable')) return 'unavailable';
+  return 'partial';
+}
+
+type TeamDiamondPublicStatRead = {
+  game: Record<string, any>;
+  documents: ReadonlyArray<{ id: string; data: Record<string, unknown> }>;
+  status: 'complete' | 'partial' | 'unavailable';
+  absenceConfirmed: boolean;
+};
+
+async function loadTeamDiamondPublicStatBatchOnce(
+  teamId: string,
+  diamondGames: readonly Record<string, any>[]
+): Promise<TeamDiamondPublicStatRead[]> {
+  return mapInTeamStatsReadBatches(
+    diamondGames,
+    diamondPublicStatReadConcurrency,
+    async (game) => {
+      const gameId = cleanString(game?.id || game?.gameId);
+      const collectionPath = getDiamondPublicPlayerStatsCollectionPath({ teamId, gameId, game });
+      if (!collectionPath) {
+        return { game, documents: [], status: 'partial' as const, absenceConfirmed: false };
+      }
+      try {
+        const snapshot = await getDocs(collection(db, collectionPath));
+        const documents: Array<{ id: string; data: Record<string, unknown> }> = [];
+        snapshot.forEach((docSnap: any) => {
+          const id = cleanString(docSnap.id);
+          if (id) documents.push({ id, data: docSnap.data() || {} });
+        });
+        const resolution = resolveDiamondPublicStatDocuments({ teamId, gameId, game, documents });
+        return {
+          game,
+          documents: resolution.status === 'complete' ? [...resolution.documents] : [],
+          status: resolution.status,
+          absenceConfirmed: resolution.status === 'complete' && resolution.absenceConfirmed
+        };
+      } catch {
+        return { game, documents: [], status: 'unavailable' as const, absenceConfirmed: false };
+      }
+    }
+  );
+}
+
+function isEmptyIncompleteTeamDiamondBatch(reads: readonly TeamDiamondPublicStatRead[]) {
+  return reads.every(({ documents }) => documents.length === 0)
+    && reads.some(({ status }) => status !== 'complete');
+}
+
+async function loadTeamDiamondPublicStatBatch(
+  teamId: string,
+  diamondGames: readonly Record<string, any>[]
+): Promise<TeamDiamondPublicStatRead[]> {
+  const firstAttempt = await loadTeamDiamondPublicStatBatchOnce(teamId, diamondGames);
+  if (!isEmptyIncompleteTeamDiamondBatch(firstAttempt)) return firstAttempt;
+  return loadTeamDiamondPublicStatBatchOnce(teamId, diamondGames);
+}
 
 async function loadCoverageAwareSeasonStats(
   teamId: string,
@@ -2119,7 +2298,7 @@ async function loadCoverageAwareSeasonStats(
 
   let managerBatch = null;
   if (requestManagerStats && diamondGames.length) {
-    managerBatch = await loadDiamondManagerStats({ teamId, games: diamondGames, playerIds });
+    managerBatch = await loadChunkedTeamDiamondManagerStats({ teamId, games: diamondGames, playerIds });
   }
   if (managerBatch?.status === 'complete') {
     const selectedDiamondDocuments = diamondGames.map((game) => ({
@@ -2150,35 +2329,35 @@ async function loadCoverageAwareSeasonStats(
         sourceRevisions: [...new Set([...aggregate.projection.sourceRevisions, ...teamAggregate.projection.sourceRevisions])].sort((a, b) => a - b),
         requestedStatVisibility: 'manager-internal',
         statVisibility: 'manager-internal',
-        privateStatsStatus: 'complete'
+        privateStatsStatus: 'complete',
+        privateStatsReason: null,
+        publicStatsStatus: 'not-requested'
       }
     };
   }
 
-  const publicDiamondDocuments = await Promise.all(diamondGames.map(async (game) => {
-    const gameId = cleanString(game?.id || game?.gameId);
-    const collectionPath = getDiamondPublicPlayerStatsCollectionPath({ teamId, gameId, game });
-    if (!collectionPath) throw new Error('The Diamond public stat head is unavailable.');
-    const snapshot = await getDocs(collection(db, collectionPath));
-    const documents: Array<{ id: string; data: Record<string, unknown> }> = [];
-    snapshot.forEach((docSnap: any) => {
-      const id = cleanString(docSnap.id);
-      if (id) documents.push({ id, data: docSnap.data() || {} });
-    });
-    const resolution = resolveDiamondPublicStatDocuments({ teamId, gameId, game, documents });
-    if (resolution.status !== 'complete') {
-      throw new Error('The Diamond public stat projection is incomplete.');
-    }
-    return { game, documents: [...resolution.documents] };
-  }));
-  const aggregate = aggregateCoverageAwareSeasonStats({ legacyStatsByPlayerId, diamondGames: publicDiamondDocuments });
+  const publicDiamondDocuments = await loadTeamDiamondPublicStatBatch(teamId, diamondGames);
+  if (isEmptyIncompleteTeamDiamondBatch(publicDiamondDocuments)) {
+    throw new Error('Diamond season statistics are temporarily unavailable. Refresh to retry.');
+  }
+  const aggregate = aggregateCoverageAwareSeasonStats({
+    legacyStatsByPlayerId,
+    diamondGames: publicDiamondDocuments.filter(({ documents, status, absenceConfirmed }) => (
+      documents.length > 0 || !(status === 'complete' && absenceConfirmed)
+    ))
+  });
+  const publicTeamDocuments = diamondGames.map((game) => {
+    const resolution = resolveDiamondPublicTeamStatDocument({ game, allowedStatIds: publicTeamStatIds });
+    return { game, document: resolution.status === 'complete' ? resolution.document : null, status: resolution.status };
+  });
   const teamAggregate = aggregateCoverageAwareTeamStats({
     allowedStatIds: publicTeamStatIds,
-    diamondGames: diamondGames.map((game) => {
-      const resolution = resolveDiamondPublicTeamStatDocument({ game, allowedStatIds: publicTeamStatIds });
-      return { game, document: resolution.status === 'complete' ? resolution.document : null };
-    })
+    diamondGames: publicTeamDocuments
   });
+  const publicStatsStatus = summarizeDiamondPublicStatsStatus([
+    ...publicDiamondDocuments.map(({ status }) => status),
+    ...publicTeamDocuments.map(({ status }) => status)
+  ]);
   return {
     ...aggregate,
     teamStats: teamAggregate.stats,
@@ -2186,7 +2365,8 @@ async function loadCoverageAwareSeasonStats(
     teamPresentation: { ...teamAggregate.presentation, statVisibility: 'public' },
     projection: {
       ...aggregate.projection,
-      pending: aggregate.projection.pending || teamAggregate.projection.pending,
+      hasDiamond: true,
+      pending: aggregate.projection.pending || teamAggregate.projection.pending || publicStatsStatus !== 'complete',
       sourceRevisions: [...new Set([...aggregate.projection.sourceRevisions, ...teamAggregate.projection.sourceRevisions])].sort((a, b) => a - b),
       requestedStatVisibility: requestManagerStats ? 'manager-internal' : 'public',
       statVisibility: 'public',
@@ -2194,7 +2374,9 @@ async function loadCoverageAwareSeasonStats(
         ? 'not-requested'
         : managerBatch?.status === 'unavailable'
             ? 'unavailable'
-            : 'partial'
+            : 'partial',
+      privateStatsReason: requestManagerStats ? managerBatch?.reason || 'private-read-incomplete' : null,
+      publicStatsStatus
     }
   };
 }
@@ -2440,7 +2622,10 @@ export function loadTeamDetailInsights(teamId: string, user: AuthUser | null): P
     });
 
     const seasonEntries = Array.from(completedGamesBySeason.entries());
-    const seasonStatsResultsPromise = Promise.all(seasonEntries.map(async ([label, seasonGames]) => {
+    const seasonStatsResultsPromise = mapInTeamStatsReadBatches(
+      seasonEntries,
+      seasonStatsReadConcurrency,
+      async ([label, seasonGames]) => {
       try {
         const snapshot = seasonGames.length
           ? await loadCoverageAwareSeasonStats(normalizedTeamId, seasonGames, {
@@ -2481,13 +2666,15 @@ export function loadTeamDetailInsights(teamId: string, user: AuthUser | null): P
               sourceRevisions: [],
               requestedStatVisibility: requestManagerStats ? 'manager-internal' as const : 'public' as const,
               statVisibility: 'public' as const,
-              privateStatsStatus: requestManagerStats ? 'unavailable' as const : 'not-requested' as const
+              privateStatsStatus: requestManagerStats ? 'unavailable' as const : 'not-requested' as const,
+              privateStatsReason: requestManagerStats ? 'season-stats-load-failed' : null,
+              publicStatsStatus: 'unavailable' as const
             }
           },
           unavailable: true
         };
       }
-    }));
+    });
     const leaderboardStatsPromise = seasonEntries.length === 1
       ? seasonStatsResultsPromise.then(([result]) => result?.snapshot.projection.hasDiamond
           ? { statsByPlayerId: result.snapshot.completeStatsByPlayerId, diamond: true, statVisibility: result.snapshot.projection.statVisibility || 'public' }
@@ -2555,7 +2742,11 @@ export function loadTeamDetailInsights(teamId: string, user: AuthUser | null): P
     const containsPrivateRequest = value.rosterStatistics.seasons.some((season: TeamDetailRosterStatisticsTable) => (
       season.diamond?.requestedStatVisibility === 'manager-internal'
     ));
-    if (containsPrivateRequest && teamDetailInsightsCache.get(cacheKey) === request) {
+    const containsIncompletePublicRead = value.rosterStatistics.unavailableSeasons.length > 0
+      || value.rosterStatistics.seasons.some((season: TeamDetailRosterStatisticsTable) => (
+        ['partial', 'unavailable'].includes(String(season.diamond?.publicStatsStatus || ''))
+      ));
+    if ((containsPrivateRequest || containsIncompletePublicRead) && teamDetailInsightsCache.get(cacheKey) === request) {
       teamDetailInsightsCache.delete(cacheKey);
     }
   }).catch(() => undefined);

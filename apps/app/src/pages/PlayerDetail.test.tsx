@@ -624,6 +624,33 @@ describe('PlayerDetail athlete profile season selection', () => {
     expect(await screen.findByText('PTS · 2')).toBeTruthy();
   });
 
+  it('shows retry evidence instead of a no-events claim when Diamond replay stays incomplete', async () => {
+    playerServiceMocks.loadParentPlayerStatsDetail.mockResolvedValue({
+      summary: {
+        gamesPlayed: 1,
+        gamesWithTime: 0,
+        totalTimeMs: 0,
+        totals: { h: 1 },
+        averages: { h: 1 },
+        topStats: [],
+        trends: [],
+        gameLimit: 20,
+        hasMoreGames: false
+      },
+      statRows: [],
+      gameEventRows: [],
+      gameEventsLoadStatus: 'unavailable'
+    });
+
+    renderPlayerDetail();
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Reports' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Game Events' }));
+
+    expect(await screen.findByText(/Diamond player events could not be loaded completely/)).toBeTruthy();
+    expect(screen.queryByText('No game events recorded yet.')).toBeNull();
+  });
+
   it('renders Diamond partial observations and not-collected season stats without zero filling', async () => {
     const gameEvent = {
       eventKey: 'team-current-game-1-player-current',
@@ -665,7 +692,15 @@ describe('PlayerDetail athlete profile season selection', () => {
           { id: 'era', label: 'ERA', precision: 2 }
         ],
         statPresentation,
-        diamond: { hasDiamond: true, pending: true, sourceRevisions: [14] }
+        diamond: {
+          hasDiamond: true,
+          pending: true,
+          sourceRevisions: [14],
+          requestedStatVisibility: 'manager-internal',
+          statVisibility: 'public',
+          privateStatsStatus: 'unavailable',
+          publicStatsStatus: 'partial'
+        }
       },
       statRows: [{ event: gameEvent, stats: { h: 0, sb: 2 }, completeStats: { h: 0 }, statPresentation, participated: true }],
       gameEventRows: []
@@ -676,6 +711,8 @@ describe('PlayerDetail athlete profile season selection', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Reports' }));
 
     expect(await screen.findByText('Diamond scorebook stats · Public · Read only')).toBeTruthy();
+    expect(screen.getByText('Internal stats are unavailable. Public projection status: Partial. Refresh to retry.')).toBeTruthy();
+    expect(screen.queryByText(/showing the complete public projection/i)).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Season Averages' }));
     expect((await screen.findAllByText('Observed')).length).toBeGreaterThan(0);
     expect(screen.getByLabelText('Not collected')).toHaveTextContent('—');
@@ -771,6 +808,43 @@ describe('PlayerDetail athlete profile season selection', () => {
     await waitFor(() => {
       expect(playerServiceMocks.loadParentPlayerStatsDetail).toHaveBeenCalledTimes(2);
     });
+  });
+
+  it('preserves prior complete stats while showing a retryable refresh error', async () => {
+    playerServiceMocks.loadParentPlayerStatsDetail
+      .mockResolvedValueOnce({
+        summary: {
+          gamesPlayed: 1,
+          gamesWithTime: 0,
+          totalTimeMs: 0,
+          totals: { pts: 8 },
+          averages: { pts: 8 },
+          topStats: [],
+          trends: [],
+          gameLimit: 20,
+          hasMoreGames: false
+        },
+        statRows: [],
+        gameEventRows: []
+      })
+      .mockRejectedValueOnce(new Error('Diamond statistics are temporarily unavailable. Refresh to retry.'));
+
+    renderPlayerDetail();
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Reports' }));
+    expect(await screen.findByText('PTS/G')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh player' }));
+
+    expect(await screen.findByText('Diamond statistics are temporarily unavailable. Refresh to retry.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Retry stats' })).toBeTruthy();
+    expect(screen.getByText('PTS/G')).toBeTruthy();
+    expect(playerServiceMocks.loadParentPlayerStatsDetail).toHaveBeenLastCalledWith(
+      auth.user,
+      'team-current',
+      'player-current',
+      { force: true }
+    );
   });
 
   it('does not preload clips when navigating to another player after clips were opened', async () => {

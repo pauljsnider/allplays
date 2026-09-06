@@ -10,6 +10,7 @@ import {
   normalizeDiamondViewerMode,
   reconcileDiamondEventWindow,
   reconcileDiamondPagination,
+  resolveDiamondLiveMediaEmbed,
 } from "../../js/diamond-live-view-model.js";
 
 describe("diamond live view model", () => {
@@ -38,6 +39,15 @@ describe("diamond live view model", () => {
       true,
     );
     expect(formatDiamondInning({ inning: 7, half: "bottom" })).toBe("Bottom 7");
+  });
+
+  it("preserves canonical terminal counts until the next ledger transition", () => {
+    expect(
+      normalizeDiamondPublicState({ balls: 4, strikes: 3, outs: 3 }),
+    ).toEqual(expect.objectContaining({ balls: 4, strikes: 3, outs: 3 }));
+    expect(
+      normalizeDiamondPublicState({ balls: 5, strikes: 4, outs: 4 }),
+    ).toEqual(expect.objectContaining({ balls: 0, strikes: 0, outs: 0 }));
   });
 
   it("sanitizes game warnings and event descriptions", () => {
@@ -111,6 +121,129 @@ describe("diamond live view model", () => {
         mode: "replay",
         publicUrl: "https://viewer:secret@video.example.test/replay",
       }),
+    ).toBeNull();
+  });
+
+  it("preserves sanitized YouTube embeds and Twitch links from live media fallbacks", () => {
+    expect(
+      normalizeDiamondPublicMedia({
+        mode: "live",
+        publicUrl: "https://www.youtube.com/embed/abcdefghijk",
+      }),
+    ).toEqual({
+      mode: "live",
+      publicUrl: "https://www.youtube.com/embed/abcdefghijk",
+      durationMs: 0,
+    });
+    expect(
+      normalizeDiamondPublicMedia({
+        mode: "live",
+        publicUrl: "https://www.twitch.tv/allplays_live",
+      }),
+    ).toEqual({
+      mode: "live",
+      publicUrl: "https://www.twitch.tv/allplays_live",
+      durationMs: 0,
+    });
+  });
+
+  it("resolves only canonical YouTube live-channel embeds for inline playback", () => {
+    expect(
+      resolveDiamondLiveMediaEmbed({
+        mode: "live",
+        publicUrl:
+          "https://www.youtube.com/embed/live_stream?channel=UCa9ghvbup6VQmnDOdqwYpqQ&autoplay=0&mute=0",
+      }),
+    ).toEqual({
+      provider: "youtube-live",
+      embedUrl:
+        "https://www.youtube.com/embed/live_stream?channel=UCa9ghvbup6VQmnDOdqwYpqQ&autoplay=1&mute=1&playsinline=1&rel=0",
+      publicUrl: "https://www.youtube.com/channel/UCa9ghvbup6VQmnDOdqwYpqQ",
+    });
+    expect(
+      resolveDiamondLiveMediaEmbed({
+        mode: "live",
+        publicUrl:
+          "https://www.youtube.com/embed/live_stream?channel=bad-channel",
+      }),
+    ).toBeNull();
+    expect(
+      resolveDiamondLiveMediaEmbed({
+        mode: "live",
+        publicUrl:
+          "https://www.youtube.com/embed/live_stream?channel=UCa9ghvbup6VQmnDOdqwYpqQ&origin=https%3A%2F%2Fevil.example",
+      }),
+    ).toBeNull();
+  });
+
+  it("builds Twitch embeds with only a validated runtime parent hostname", () => {
+    const resolved = resolveDiamondLiveMediaEmbed(
+      {
+        mode: "live",
+        publicUrl: "https://www.twitch.tv/allplays_live",
+      },
+      { parentHostname: "127.0.0.1" },
+    );
+    expect(resolved).toMatchObject({
+      provider: "twitch",
+      publicUrl: "https://www.twitch.tv/allplays_live",
+    });
+    const embedUrl = new URL(resolved.embedUrl);
+    expect(embedUrl.origin).toBe("https://player.twitch.tv");
+    expect(Object.fromEntries(embedUrl.searchParams)).toEqual({
+      channel: "allplays_live",
+      parent: "127.0.0.1",
+      autoplay: "true",
+      muted: "true",
+    });
+    expect(
+      resolveDiamondLiveMediaEmbed(
+        {
+          mode: "live",
+          publicUrl: "https://www.twitch.tv/allplays_live",
+        },
+        { parentHostname: "allplays.ai/path" },
+      ),
+    ).toBeNull();
+    expect(
+      resolveDiamondLiveMediaEmbed(
+        {
+          mode: "live",
+          publicUrl: "https://www.twitch.tv/videos/1234",
+        },
+        { parentHostname: "allplays.ai" },
+      ),
+    ).toBeNull();
+  });
+
+  it("does not inline replay media, exact video URLs, or generic HTTPS media", () => {
+    expect(
+      resolveDiamondLiveMediaEmbed(
+        {
+          mode: "replay",
+          publicUrl:
+            "https://www.youtube.com/embed/live_stream?channel=UCa9ghvbup6VQmnDOdqwYpqQ",
+        },
+        { parentHostname: "allplays.ai" },
+      ),
+    ).toBeNull();
+    expect(
+      resolveDiamondLiveMediaEmbed(
+        {
+          mode: "live",
+          publicUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        },
+        { parentHostname: "allplays.ai" },
+      ),
+    ).toBeNull();
+    expect(
+      resolveDiamondLiveMediaEmbed(
+        {
+          mode: "live",
+          publicUrl: "https://video.example.test/live/game-1",
+        },
+        { parentHostname: "allplays.ai" },
+      ),
     ).toBeNull();
   });
 
@@ -252,12 +385,13 @@ describe("diamond live view model", () => {
     expect(html).toContain("data-diamond-media-frame");
     expect(html).toContain("data-diamond-mode-label");
     expect(html).toContain('aria-label="Live game score"');
-    expect(html).toContain("js/diamond-live-game.js?v=5");
+    expect(html).toContain("js/diamond-live-game.js?v=8");
 
     const script = readFileSync(
       new URL("../../js/diamond-live-game.js", import.meta.url),
       "utf8",
     );
+    expect(script).toContain("diamond-live-view-model.js?v=4");
     expect(script).toContain(
       'import { isViewerChatEnabled } from "./live-game-chat.js?v=4";',
     );

@@ -1743,12 +1743,21 @@ describe('TeamDetail', () => {
       teamAnalytics,
       rosterStatistics: {
         seasonLabel: '2026',
-        availableSeasons: ['2026'],
+        availableSeasons: ['2026', '2025'],
         unavailableSeasons: ['2026'],
         seasons: [{
-          seasonLabel: '2026',
+          seasonLabel: '2025',
           columns: [{ id: 'pts', label: 'PTS' }],
-          rows: [{ playerId: 'player-1', playerName: 'Pat Star', playerNumber: '9', values: { pts: { value: 0, formattedValue: '0' } } }]
+          rows: [{ playerId: 'player-1', playerName: 'Pat Star', playerNumber: '9', values: { pts: { value: 99, formattedValue: '99' } } }],
+          diamond: {
+            hasDiamond: true,
+            pending: false,
+            sourceRevisions: [10],
+            requestedStatVisibility: 'manager-internal',
+            statVisibility: 'manager-internal',
+            privateStatsStatus: 'complete',
+            publicStatsStatus: 'complete'
+          }
         }]
       }
     });
@@ -1762,7 +1771,8 @@ describe('TeamDetail', () => {
     );
 
     expect(await screen.findByText('Statistics for the 2026 season could not be loaded.')).toBeTruthy();
-    expect(screen.queryByRole('cell', { name: '0' })).toBeNull();
+    expect(screen.queryByRole('cell', { name: '99' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Export internal CSV' })).toBeNull();
   });
 
   it('renders Diamond partial roster values as observed and not-collected values as em dashes', async () => {
@@ -1793,7 +1803,15 @@ describe('TeamDetail', () => {
               era: { value: null, formattedValue: '—', available: false, observed: false, status: 'not_collected' }
             }
           }],
-          diamond: { hasDiamond: true, pending: true, sourceRevisions: [14] }
+          diamond: {
+            hasDiamond: true,
+            pending: true,
+            sourceRevisions: [14],
+            requestedStatVisibility: 'manager-internal',
+            statVisibility: 'public',
+            privateStatsStatus: 'unavailable',
+            publicStatsStatus: 'unavailable'
+          }
         }]
       }
     });
@@ -1807,6 +1825,8 @@ describe('TeamDetail', () => {
     );
 
     expect(await screen.findByText('Diamond scorebook stats · Public · Read only')).toBeTruthy();
+    expect(screen.getByText('Internal stats are unavailable. Public projection status: Unavailable. Refresh to retry.')).toBeTruthy();
+    expect(screen.queryByText(/showing the complete public projection/i)).toBeNull();
     expect(screen.getByText('Observed')).toBeTruthy();
     expect(screen.getByRole('cell', { name: 'Not collected' })).toHaveTextContent('—');
     expect(screen.getByText('Source revisions: 14')).toBeTruthy();

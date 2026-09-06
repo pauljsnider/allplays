@@ -115,7 +115,7 @@ const profileServiceMocks = vi.hoisted(() => ({
 vi.mock('./profileService', () => profileServiceMocks);
 const appDataCacheMocks = vi.hoisted(() => ({
   clearAppDataCache: vi.fn(),
-  loadCachedAppData: vi.fn((_key, loader) => loader())
+  loadCachedAppData: vi.fn((_key, loader, _options?: any) => loader())
 }));
 
 vi.mock('./appDataCache', () => appDataCacheMocks);
@@ -128,12 +128,24 @@ const nativeStorageMocks = vi.hoisted(() => ({
 const nativeFirestoreMutationMocks = vi.hoisted(() => ({
   commitNativeFirestoreWrites: vi.fn()
 }));
+const diamondManagerStatsMocks = vi.hoisted(() => ({
+  loadDiamondManagerStats: vi.fn()
+}));
+const gameReportMocks = vi.hoisted(() => ({
+  loadGameReportPlays: vi.fn()
+}));
 
 vi.mock('./nativeRuntime', () => ({
   isNativeRuntime: () => nativeRuntimeState.isNative
 }));
 vi.mock('./nativeStorageUpload', () => nativeStorageMocks);
 vi.mock('./nativeFirestoreMutation', () => nativeFirestoreMutationMocks);
+vi.mock('./diamondManagerStatsService', () => ({
+  DIAMOND_MANAGER_STATS_MAX_GAMES: 40,
+  DIAMOND_MANAGER_STATS_MAX_PLAYERS: 25,
+  loadDiamondManagerStats: diamondManagerStatsMocks.loadDiamondManagerStats
+}));
+vi.mock('./gameReportService', () => gameReportMocks);
 
 import {
   loadParentPlayerAthleteProfile,
@@ -183,6 +195,12 @@ describe('Diamond player season absence evidence', () => {
 
 beforeEach(() => {
   nativeRuntimeState.isNative = false;
+  diamondManagerStatsMocks.loadDiamondManagerStats.mockResolvedValue({
+    status: 'unavailable',
+    reason: 'private-read-unavailable',
+    documentsByGameId: new Map(),
+    teamDocumentsByGameId: new Map()
+  });
 });
 
 describe('saveParentAthleteProfileDraft', () => {
@@ -1279,6 +1297,62 @@ describe('savePlayerCustomRosterFieldValues', () => {
 });
 
 
+function buildDiamondPlayerGame(id: string, revision = 8) {
+  return {
+    id,
+    teamId: 'team-1',
+    status: 'completed',
+    date: `2026-03-${String(revision).padStart(2, '0')}T18:00:00Z`,
+    trackingEngine: 'diamond-v2',
+    diamondProjectionStatus: 'current',
+    diamondProjectionComplete: true,
+    diamondProjectionRevision: revision,
+    diamondScorebookInstanceId: `00000000-0000-4000-8000-${String(revision).padStart(12, '0')}`,
+    diamondProjectionCheckpointHash: `sha256:${'a'.repeat(64)}`,
+    diamondStatConfigSnapshotHash: `sha256:${'b'.repeat(64)}`,
+    diamondProjectionHash: `sha256:${'c'.repeat(64)}`,
+    rulesProfileId: 'baseball-youth@1'
+  };
+}
+
+function buildDiamondPlayerPublicStat(game: ReturnType<typeof buildDiamondPlayerGame>, {
+  hits = 1,
+  sourcePlayIds = [] as string[]
+} = {}) {
+  return {
+    schemaVersion: 1,
+    trackingEngine: 'diamond-v2',
+    projectionSchemaVersion: 1,
+    playerId: 'player-1',
+    playerName: 'Sam Player',
+    playerNumber: '',
+    sourceRevision: game.diamondProjectionRevision,
+    checkpointHash: game.diamondProjectionCheckpointHash,
+    complete: true,
+    participated: true,
+    participationStatus: 'appeared',
+    participationSource: 'diamond-v2',
+    publicStatIds: ['h'],
+    stats: { h: hits },
+    observedStats: {},
+    derivedStats: {},
+    observedDerivedStats: {},
+    statCoverage: { h: 'complete' },
+    statSources: sourcePlayIds.length ? { h: sourcePlayIds } : {},
+    sourcePlayIds,
+    unavailableDerivedStats: [],
+    missingStatFamilies: [],
+    coverage: { batting: 'complete' },
+    teamId: 'team-1',
+    diamondGameId: game.id,
+    instanceId: game.diamondScorebookInstanceId,
+    diamondScorebookInstanceId: game.diamondScorebookInstanceId,
+    projectionGeneration: game.diamondScorebookInstanceId,
+    statConfigSnapshotHash: game.diamondStatConfigSnapshotHash,
+    projectionHash: game.diamondProjectionHash
+  };
+}
+
 describe('loadParentPlayerDetail custom roster fields', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -1320,6 +1394,11 @@ describe('loadParentPlayerDetail custom roster fields', () => {
     legacyPlayerDbMocks.getAggregatedStatsDocumentForPlayer.mockResolvedValue({});
     legacyPlayerDbMocks.getConfigs.mockResolvedValue([]);
     legacyPlayerDbMocks.getGameEvents.mockResolvedValue([]);
+    gameReportMocks.loadGameReportPlays.mockResolvedValue({
+      game: {},
+      plays: [],
+      playsFresh: true
+    });
     legacyPlayerDbMocks.listCertificatesForPlayer.mockResolvedValue([]);
     legacyPlayerDbMocks.getPublicTrackingItems.mockResolvedValue([]);
     legacyPlayerDbMocks.getPlayerTrackingStatuses.mockResolvedValue([]);
@@ -1746,7 +1825,345 @@ describe('loadParentPlayerDetail custom roster fields', () => {
     }));
   });
 
-  it('aggregates the complete 40-game season while limiting only visible game history', async () => {
+  it('recovers a partial-empty Diamond first load with exactly one bounded retry', async () => {
+    const game = buildDiamondPlayerGame('diamond-game-1');
+    legacyPlayerDbMocks.getGames.mockResolvedValue([game]);
+    legacyPlayerDbMocks.getDiamondPublicPlayerStatDocument
+      .mockRejectedValueOnce(new Error('temporary rules propagation'))
+      .mockResolvedValueOnce(buildDiamondPlayerPublicStat(game, { hits: 2 }));
+
+    const detail = await loadParentPlayerStatsDetail({
+      uid: 'parent-1',
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
+    } as any, 'team-1', 'player-1');
+
+    expect(legacyPlayerDbMocks.getDiamondPublicPlayerStatDocument).toHaveBeenCalledTimes(2);
+    expect(detail.summary).toMatchObject({
+      totals: { h: 2 },
+      diamond: { pending: false, publicStatsStatus: 'complete', absenceConfirmed: false }
+    });
+  });
+
+  it('rejects repeated partial-empty Diamond season totals so AI callers cannot infer zero', async () => {
+    const game = buildDiamondPlayerGame('diamond-game-1');
+    legacyPlayerDbMocks.getGames.mockResolvedValue([game]);
+    legacyPlayerDbMocks.getDiamondPublicPlayerStatDocument.mockRejectedValue(new Error('rules denied'));
+
+    await expect(loadParentPlayerStatTotals({
+      uid: 'parent-1',
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
+    } as any, 'team-1', 'player-1')).rejects.toThrow(
+      'Diamond statistics are temporarily unavailable. Refresh to retry.'
+    );
+
+    expect(legacyPlayerDbMocks.getDiamondPublicPlayerStatDocument).toHaveBeenCalledTimes(2);
+  });
+
+  it('carries partial nonempty Diamond totals as lower-bound evidence for AI consumers', async () => {
+    const game1 = buildDiamondPlayerGame('diamond-game-1', 8);
+    const game2 = buildDiamondPlayerGame('diamond-game-2', 9);
+    legacyPlayerDbMocks.getGames.mockResolvedValue([game1, game2]);
+    legacyPlayerDbMocks.getDiamondPublicPlayerStatDocument.mockImplementation(async (path: string) => {
+      if (path.includes('/diamond-game-2/')) throw new Error('temporary partial read');
+      return buildDiamondPlayerPublicStat(game1, { hits: 1 });
+    });
+
+    const totals = await loadParentPlayerStatTotals({
+      uid: 'parent-1',
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
+    } as any, 'team-1', 'player-1');
+
+    expect(legacyPlayerDbMocks.getDiamondPublicPlayerStatDocument).toHaveBeenCalledTimes(2);
+    expect(totals).toMatchObject({
+      totals: { h: 1 },
+      diamond: {
+        hasDiamond: true,
+        pending: true,
+        publicStatsStatus: 'partial',
+        absenceConfirmed: false
+      }
+    });
+  });
+
+  it('accepts a complete-empty Diamond projection without retrying or inventing pending stats', async () => {
+    const game = buildDiamondPlayerGame('diamond-game-1');
+    legacyPlayerDbMocks.getGames.mockResolvedValue([game]);
+    legacyPlayerDbMocks.getDiamondPublicPlayerStatDocument.mockResolvedValue({});
+
+    const detail = await loadParentPlayerStatsDetail({
+      uid: 'parent-1',
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
+    } as any, 'team-1', 'player-1');
+
+    expect(legacyPlayerDbMocks.getDiamondPublicPlayerStatDocument).toHaveBeenCalledTimes(1);
+    expect(detail.summary).toMatchObject({
+      gamesPlayed: 0,
+      totals: {},
+      statPresentation: { projectionPending: false },
+      diamond: { hasDiamond: true, pending: false, publicStatsStatus: 'complete', absenceConfirmed: true }
+    });
+    expect(detail.gameEventsLoadStatus).toBe('complete');
+  });
+
+  it('keeps a partial nonempty result visible and uncached so a later ordinary load expands it', async () => {
+    const game1 = buildDiamondPlayerGame('diamond-game-1', 8);
+    const game2 = buildDiamondPlayerGame('diamond-game-2', 9);
+    const game2Attempts = { count: 0 };
+    legacyPlayerDbMocks.getGames.mockResolvedValue([game1, game2]);
+    legacyPlayerDbMocks.getDiamondPublicPlayerStatDocument.mockImplementation(async (path: string) => {
+      if (path.includes('/diamond-game-2/')) {
+        game2Attempts.count += 1;
+        if (game2Attempts.count === 1) throw new Error('temporary partial read');
+        return buildDiamondPlayerPublicStat(game2, { hits: 1 });
+      }
+      return buildDiamondPlayerPublicStat(game1, { hits: 1 });
+    });
+
+    const user = {
+      uid: 'parent-1',
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
+    } as any;
+    const partial = await loadParentPlayerStatsDetail(user, 'team-1', 'player-1');
+    const cacheCalls = appDataCacheMocks.loadCachedAppData.mock.calls;
+    const firstCacheOptions = cacheCalls[cacheCalls.length - 1]?.[2];
+
+    expect(partial.summary).toMatchObject({
+      totals: { h: 1 },
+      diamond: { pending: true, publicStatsStatus: 'partial' }
+    });
+    expect(firstCacheOptions?.shouldCache(partial)).toBe(false);
+
+    const expanded = await loadParentPlayerStatsDetail(user, 'team-1', 'player-1');
+    expect(expanded.summary).toMatchObject({
+      totals: { h: 2 },
+      diamond: { pending: false, publicStatsStatus: 'complete' }
+    });
+    expect(game2Attempts.count).toBe(2);
+  });
+
+  it('loads Diamond player events only through sanitized replay and validated source play ids', async () => {
+    const game = buildDiamondPlayerGame('diamond-game-1');
+    legacyPlayerDbMocks.getGames.mockResolvedValue([game]);
+    legacyPlayerDbMocks.getDiamondPublicPlayerStatDocument.mockResolvedValue(
+      buildDiamondPlayerPublicStat(game, { hits: 1, sourcePlayIds: ['play-1'] })
+    );
+    gameReportMocks.loadGameReportPlays.mockResolvedValue({
+      game,
+      plays: [
+        { id: 'other-play', text: 'Other player scored', period: 'Top 1', clock: '', timestamp: new Date('2026-03-08T18:01:00Z') },
+        { id: 'play-1', text: 'Sam Player singled', period: 'Bottom 1', clock: '', timestamp: new Date('2026-03-08T18:02:00Z') }
+      ],
+      playsFresh: true,
+      replay: { requestedVisibility: 'public', visibility: 'public', source: 'public-sanitized' }
+    });
+
+    const detail = await loadParentPlayerStatsDetail({
+      uid: 'parent-1',
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
+    } as any, 'team-1', 'player-1');
+
+    expect(legacyPlayerDbMocks.getGameEvents).not.toHaveBeenCalled();
+    expect(gameReportMocks.loadGameReportPlays).toHaveBeenCalledWith('team-1', 'diamond-game-1', { statVisibility: 'public' });
+    expect(detail.gameEventsLoadStatus).toBe('complete');
+    expect(detail.gameEventRows[0]?.events).toEqual([
+      expect.objectContaining({ id: 'play-1', description: 'Sam Player singled' })
+    ]);
+  });
+
+  it('retries incomplete Diamond replay once and never converts rule denial to authoritative no events', async () => {
+    const game = buildDiamondPlayerGame('diamond-game-1');
+    legacyPlayerDbMocks.getGames.mockResolvedValue([game]);
+    legacyPlayerDbMocks.getDiamondPublicPlayerStatDocument.mockResolvedValue(
+      buildDiamondPlayerPublicStat(game, { hits: 1, sourcePlayIds: ['play-1'] })
+    );
+    gameReportMocks.loadGameReportPlays.mockResolvedValue({
+      game,
+      plays: [],
+      playsFresh: false,
+      replayError: 'Diamond play-by-play could not be refreshed completely. Retry the report.'
+    });
+
+    const detail = await loadParentPlayerStatsDetail({
+      uid: 'parent-1',
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
+    } as any, 'team-1', 'player-1');
+
+    expect(gameReportMocks.loadGameReportPlays).toHaveBeenCalledTimes(2);
+    expect(legacyPlayerDbMocks.getGameEvents).not.toHaveBeenCalled();
+    expect(detail.gameEventRows).toEqual([]);
+    expect(detail.gameEventsLoadStatus).toBe('unavailable');
+    const cacheCalls = appDataCacheMocks.loadCachedAppData.mock.calls;
+    expect(cacheCalls[cacheCalls.length - 1]?.[2]?.shouldCache(detail)).toBe(false);
+  });
+
+  it('preserves the legacy direct game-event read path unchanged', async () => {
+    const game = { id: 'legacy-game-1', status: 'completed', date: '2026-03-01T18:00:00Z', opponent: 'Owls' };
+    legacyPlayerDbMocks.getGames.mockResolvedValue([game]);
+    legacyPlayerDbMocks.getAggregatedStatsDocumentForPlayer.mockResolvedValue({ stats: { pts: 2 } });
+    legacyPlayerDbMocks.getGameEvents.mockResolvedValue([{
+      id: 'legacy-event-1',
+      playerId: 'player-1',
+      statKey: 'pts',
+      value: 2,
+      description: 'Made basket',
+      timestamp: '2026-03-01T18:02:00Z'
+    }]);
+
+    const detail = await loadParentPlayerStatsDetail({
+      uid: 'parent-1',
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
+    } as any, 'team-1', 'player-1');
+
+    expect(legacyPlayerDbMocks.getGameEvents).toHaveBeenCalledWith('team-1', 'legacy-game-1', { limit: 100 });
+    expect(gameReportMocks.loadGameReportPlays).not.toHaveBeenCalled();
+    expect(detail.gameEventsLoadStatus).toBe('not-requested');
+    expect(detail.gameEventRows[0]?.events[0]).toEqual(expect.objectContaining({ id: 'legacy-event-1' }));
+  });
+
+  it('loads a complete 41-game Diamond manager season in bounded coherent chunks', async () => {
+    const checkpointHash = `sha256:${'a'.repeat(64)}`;
+    const configHash = `sha256:${'b'.repeat(64)}`;
+    const projectionHash = `sha256:${'c'.repeat(64)}`;
+    const games = Array.from({ length: 41 }, (_, index) => {
+      const instanceId = `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`;
+      return {
+        id: `diamond-game-${String(index + 1).padStart(2, '0')}`,
+        teamId: 'team-1',
+        status: 'completed',
+        date: new Date(Date.UTC(2026, 0, index + 1, 18)).toISOString(),
+        trackingEngine: 'diamond-v2',
+        diamondProjectionStatus: 'current',
+        diamondProjectionComplete: true,
+        diamondProjectionRevision: index + 1,
+        diamondScorebookInstanceId: instanceId,
+        diamondProjectionCheckpointHash: checkpointHash,
+        diamondStatConfigSnapshotHash: configHash,
+        diamondProjectionHash: projectionHash,
+        rulesProfileId: 'baseball-youth@1'
+      };
+    });
+    const config = {
+      id: 'baseball',
+      baseType: 'Baseball',
+      statDefinitions: [{ id: 'h', label: 'Hits', scope: 'player', visibility: 'public' }]
+    };
+    legacyPlayerDbMocks.getGames.mockResolvedValue(games);
+    legacyPlayerDbMocks.getConfigs.mockResolvedValue([config]);
+    legacyPlayerProfileMocks.selectAnalyticsConfig.mockReturnValue(config as any);
+    diamondManagerStatsMocks.loadDiamondManagerStats.mockImplementation(async ({ games: requestedGames, playerIds }: any) => ({
+      status: 'complete',
+      reason: null,
+      documentsByGameId: new Map(requestedGames.map((game: any) => [game.id, playerIds.map((requestedPlayerId: string) => ({
+        id: requestedPlayerId,
+        data: {
+          trackingEngine: 'diamond-v2',
+          authoritative: true,
+          complete: true,
+          projectionSchemaVersion: 1,
+          playerId: requestedPlayerId,
+          side: 'home',
+          instanceId: game.diamondScorebookInstanceId,
+          diamondScorebookInstanceId: game.diamondScorebookInstanceId,
+          projectionGeneration: game.diamondScorebookInstanceId,
+          sourceRevision: game.diamondProjectionRevision,
+          checkpointHash,
+          statConfigSnapshotHash: configHash,
+          projectionHash,
+          stats: { h: 1 },
+          observedStats: {},
+          derivedStats: {},
+          observedDerivedStats: {},
+          statCoverage: { h: 'complete' },
+          coverage: { batting: 'complete' },
+          participated: true
+        }
+      }))])),
+      teamDocumentsByGameId: new Map()
+    }));
+
+    const detail = await loadParentPlayerStatsDetail({
+      uid: 'coach-1',
+      email: 'coach@example.com',
+      parentOf: []
+    } as any, 'team-1', 'player-1');
+
+    expect(diamondManagerStatsMocks.loadDiamondManagerStats).toHaveBeenCalledTimes(2);
+    expect(diamondManagerStatsMocks.loadDiamondManagerStats.mock.calls.map(([request]) => request.games.length)).toEqual([40, 1]);
+    expect(diamondManagerStatsMocks.loadDiamondManagerStats.mock.calls.every(([request]) => request.playerIds.length === 1)).toBe(true);
+    expect(legacyPlayerDbMocks.getDiamondPublicPlayerStatDocument).not.toHaveBeenCalled();
+    expect(detail.statRows).toHaveLength(20);
+    expect(detail.summary).toMatchObject({
+      gamesPlayed: 41,
+      totals: { h: 41 },
+      hasMoreGames: true,
+      diamond: {
+        pending: false,
+        requestedStatVisibility: 'manager-internal',
+        statVisibility: 'manager-internal',
+        privateStatsStatus: 'complete',
+        privateStatsReason: null,
+        publicStatsStatus: 'not-requested'
+      }
+    });
+  });
+
+  it('rejects a repeated partial-empty public fallback after one bounded retry', async () => {
+    const checkpointHash = `sha256:${'d'.repeat(64)}`;
+    const configHash = `sha256:${'e'.repeat(64)}`;
+    const projectionHash = `sha256:${'f'.repeat(64)}`;
+    const games = Array.from({ length: 41 }, (_, index) => ({
+      id: `diamond-game-${String(index + 1).padStart(2, '0')}`,
+      teamId: 'team-1',
+      status: 'completed',
+      date: new Date(Date.UTC(2026, 0, index + 1, 18)).toISOString(),
+      trackingEngine: 'diamond-v2',
+      diamondProjectionStatus: 'current',
+      diamondProjectionComplete: true,
+      diamondProjectionRevision: index + 1,
+      diamondScorebookInstanceId: `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+      diamondProjectionCheckpointHash: checkpointHash,
+      diamondStatConfigSnapshotHash: configHash,
+      diamondProjectionHash: projectionHash,
+      rulesProfileId: 'baseball-youth@1'
+    }));
+    legacyPlayerDbMocks.getGames.mockResolvedValue(games);
+    diamondManagerStatsMocks.loadDiamondManagerStats
+      .mockResolvedValueOnce({
+        status: 'complete',
+        reason: null,
+        documentsByGameId: new Map(),
+        teamDocumentsByGameId: new Map()
+      })
+      .mockResolvedValueOnce({
+        status: 'unavailable',
+        reason: 'private-read-unavailable',
+        documentsByGameId: new Map(),
+        teamDocumentsByGameId: new Map()
+      });
+    let activePublicReads = 0;
+    let maxActivePublicReads = 0;
+    legacyPlayerDbMocks.getDiamondPublicPlayerStatDocument.mockImplementation(async () => {
+      activePublicReads += 1;
+      maxActivePublicReads = Math.max(maxActivePublicReads, activePublicReads);
+      await Promise.resolve();
+      activePublicReads -= 1;
+      throw new Error('public read unavailable');
+    });
+
+    await expect(loadParentPlayerStatsDetail({
+      uid: 'coach-1',
+      email: 'coach@example.com',
+      parentOf: []
+    } as any, 'team-1', 'player-1')).rejects.toThrow(
+      'Diamond statistics are temporarily unavailable. Refresh to retry.'
+    );
+
+    expect(diamondManagerStatsMocks.loadDiamondManagerStats.mock.calls.map(([request]) => request.games.length)).toEqual([40, 1]);
+    expect(legacyPlayerDbMocks.getDiamondPublicPlayerStatDocument).toHaveBeenCalledTimes(82);
+    expect(maxActivePublicReads).toBeLessThanOrEqual(8);
+  });
+
+  it('preserves the bounded 20-game legacy stats read and summary path when Diamond is absent', async () => {
     const games = Array.from({ length: 40 }, (_, index) => ({
       id: `game-${String(index + 1)}`,
       status: 'completed',
@@ -1765,13 +2182,13 @@ describe('loadParentPlayerDetail custom roster fields', () => {
       parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
     } as any, 'team-1', 'player-1');
 
-    expect(legacyPlayerDbMocks.getAggregatedStatsDocumentForPlayer).toHaveBeenCalledTimes(40);
+    expect(legacyPlayerDbMocks.getAggregatedStatsDocumentForPlayer).toHaveBeenCalledTimes(20);
     expect(detail.statRows).toHaveLength(20);
     expect(detail.summary).toMatchObject({
-      gamesPlayed: 40,
-      gamesWithTime: 40,
-      totalTimeMs: 2_400_000,
-      totals: { pts: 40 },
+      gamesPlayed: 20,
+      gamesWithTime: 20,
+      totalTimeMs: 1_200_000,
+      totals: { pts: 20 },
       averages: { pts: 1 },
       gameLimit: 20,
       hasMoreGames: true

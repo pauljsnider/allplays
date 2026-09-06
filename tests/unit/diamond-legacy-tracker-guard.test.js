@@ -14,12 +14,13 @@ describe("legacy tracker Diamond ownership guard", () => {
       const assignment = source.indexOf("currentGame = game;", engineGuard);
 
       expect(source).toContain("from './js/diamond-scorebook-routing.js?v=2'");
+      expect(source).toContain("import { isLegacyTrackingEngine } from './js/tracking-engine.js?v=1';");
       expect(engineGuard).toBeGreaterThan(-1);
       expect(source.slice(engineGuard, assignment)).toContain(
         "window.location.replace(buildDiamondTrackerUrl(teamId, gameId))",
       );
       expect(source.slice(engineGuard, assignment)).toContain(
-        "if (game.trackingEngine)",
+        "if (!isLegacyTrackingEngine(game.trackingEngine))",
       );
       expect(assignment).toBeGreaterThan(engineGuard);
     });
@@ -30,6 +31,8 @@ describe("legacy tracker Diamond ownership guard", () => {
     const gameDay = readRepo("game-day.html");
 
     expect(schedule).toContain("if (game.trackingEngine === DIAMOND_ENGINE)");
+    expect(schedule).toContain("import { isLegacyTrackingEngine } from './js/tracking-engine.js?v=1';");
+    expect(schedule).toContain("if (!isLegacyTrackingEngine(game.trackingEngine))");
     expect(schedule).toContain(
       "window.location.href = buildDiamondTrackerUrl(currentTeamId, gameId)",
     );
@@ -45,6 +48,8 @@ describe("legacy tracker Diamond ownership guard", () => {
     expect(gameDay).toContain(
       "if (state.game?.trackingEngine === DIAMOND_ENGINE)",
     );
+    expect(gameDay).toContain("import { isLegacyTrackingEngine } from './js/tracking-engine.js?v=1';");
+    expect(gameDay).toContain("if (!isLegacyTrackingEngine(game.trackingEngine))");
     expect(gameDay).toContain(
       "return buildDiamondTrackerUrl(state.teamId, state.gameId)",
     );

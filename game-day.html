@@ -523,6 +523,7 @@
         import { buildGameDayBroadcastSetupUrl, resolveGameDayBroadcastStatus } from './js/game-day-broadcast.js?v=5';
         import { createGameDayRsvpController } from './js/game-day-rsvp-controls.js?v=3';
         import { DIAMOND_ENGINE, buildDiamondTrackerUrl, buildDiamondViewerUrl } from './js/diamond-scorebook-routing.js?v=2';
+        import { isLegacyTrackingEngine } from './js/tracking-engine.js?v=1';
         import {
             buildOnFieldMap as buildLiveOnFieldMap,
             syncGameDayLiveState,
@@ -1068,7 +1069,7 @@
                     renderLimitedScorekeepingAccess(accessInfo);
                     return;
                 }
-                if (game.trackingEngine) {
+                if (!isLegacyTrackingEngine(game.trackingEngine)) {
                     showError('This game uses a newer scoring engine. Update ALL PLAYS before editing it.');
                     return;
                 }

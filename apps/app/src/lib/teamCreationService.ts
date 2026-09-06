@@ -1,6 +1,7 @@
 import {
   createConfig,
   createTeam,
+  getDefaultDiamondStatConfigForSport,
   getDefaultStatConfigForSport,
   getStatConfigPresetOptions
 } from './adapters/legacyTeamCreation';
@@ -43,13 +44,14 @@ export type CreateTeamDiamondProfileOption = {
   sport: DiamondSport;
 };
 
-const fallbackSportOptions = ['Basketball', 'Soccer', 'Baseball', 'Softball', 'Fastpitch', 'Football', 'Volleyball'];
+const fallbackSportOptions = ['Basketball', 'Soccer', 'Baseball', 'Softball', 'Football', 'Volleyball'];
 
-export function getCreateTeamSportOptions() {
+export function getCreateTeamSportOptions({ includeDiamondSports = false } = {}) {
   const presetSports = getStatConfigPresetOptions()
     .map((option) => cleanString((option as { baseType?: unknown })?.baseType))
     .filter((sport) => sport && sport.toLowerCase() !== 'custom');
-  const options = presetSports.length ? presetSports : fallbackSportOptions;
+  const options = [...(presetSports.length ? presetSports : fallbackSportOptions)];
+  if (includeDiamondSports) options.push('Fastpitch');
   return [...new Set(options)];
 }
 
@@ -64,6 +66,31 @@ export function getCreateTeamDiamondProfileOptions(sport: unknown): CreateTeamDi
       label: profile.name,
       sport: profile.sport
     }));
+}
+
+export async function configureCreatedTeamDiamondForApp(teamIdValue: unknown, sportValue: unknown, diamondOptions: CreateTeamDiamondSetup) {
+  const teamId = cleanString(teamIdValue);
+  if (!teamId) throw new Error('Team is required to enable Diamond Scorebook v2.');
+
+  const sport = cleanString(sportValue);
+  const diamondSport = getDiamondSport(sport);
+  if (!diamondSport || diamondOptions?.enabled !== true) {
+    throw new Error('Choose a supported Diamond sport and enable Diamond Scorebook v2.');
+  }
+
+  const availableProfiles = getCreateTeamDiamondProfileOptions(sport);
+  const requestedProfile = availableProfiles.find(
+    (profile) =>
+      profile.id === cleanString(diamondOptions.rulesProfileId) && profile.version === Number(diamondOptions.rulesProfileVersion ?? 1)
+  );
+  const selectedProfile = requestedProfile || availableProfiles.find((profile) => profile.id === `${diamondSport}-youth`);
+  if (!selectedProfile) throw new Error('No supported Diamond rules profile is available for this sport.');
+
+  await configureDiamondTeam(teamId, diamondSport, selectedProfile.id, {
+    enabled: true,
+    rulesProfileVersion: selectedProfile.version,
+    captureMode: diamondOptions.captureMode === 'full' ? 'full' : 'quick'
+  });
 }
 
 export async function createTeamForApp(user: AuthUser | null, input: CreateTeamForAppInput): Promise<CreateTeamForAppResult> {
@@ -96,8 +123,11 @@ export async function createTeamForApp(user: AuthUser | null, input: CreateTeamF
 
   let defaultStatConfigCreated = false;
   let defaultStatConfigError: string | null = null;
+  const diamondSport = getDiamondSport(sport);
+  const diamondOptions = input.diamondScorebook;
+  const diamondSetupRequested = Boolean(diamondSport && diamondOptions?.enabled === true);
   try {
-    const defaultStatConfig = getDefaultStatConfigForSport(sport);
+    const defaultStatConfig = diamondSetupRequested ? getDefaultDiamondStatConfigForSport(sport) : getDefaultStatConfigForSport(sport);
     if (defaultStatConfig) {
       await createConfig(teamId, defaultStatConfig);
       defaultStatConfigCreated = true;
@@ -108,21 +138,9 @@ export async function createTeamForApp(user: AuthUser | null, input: CreateTeamF
 
   let diamondScorebookConfigured = false;
   let diamondScorebookError: string | null = null;
-  const diamondSport = getDiamondSport(sport);
-  if (diamondSport && input.diamondScorebook?.enabled === true) {
-    const availableProfiles = getCreateTeamDiamondProfileOptions(sport);
-    const requestedProfile = availableProfiles.find((profile) =>
-      profile.id === cleanString(input.diamondScorebook?.rulesProfileId) &&
-      profile.version === Number(input.diamondScorebook?.rulesProfileVersion ?? 1)
-    );
-    const selectedProfile = requestedProfile || availableProfiles.find((profile) => profile.id === `${diamondSport}-youth`);
+  if (diamondSport && diamondSetupRequested && diamondOptions) {
     try {
-      if (!selectedProfile) throw new Error('No supported Diamond rules profile is available for this sport.');
-      await configureDiamondTeam(teamId, diamondSport, selectedProfile.id, {
-        enabled: true,
-        rulesProfileVersion: selectedProfile.version,
-        captureMode: input.diamondScorebook.captureMode === 'full' ? 'full' : 'quick'
-      });
+      await configureCreatedTeamDiamondForApp(teamId, sport, diamondOptions);
       diamondScorebookConfigured = true;
     } catch (error: any) {
       diamondScorebookError = error?.message || 'Unable to enable Diamond Scorebook v2.';

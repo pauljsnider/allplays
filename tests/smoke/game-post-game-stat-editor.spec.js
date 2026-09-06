@@ -273,6 +273,11 @@ async function installMocks(
             }
 
             if (path.endsWith('/events')) {
+                store.eventReadPaths = [...(store.eventReadPaths || []), path];
+                saveStore(store);
+                if (store.game?.trackingEngine === 'diamond-v2') {
+                    throw new Error('Diamond reports must not read the legacy event collection.');
+                }
                 return createSnapshot([]);
             }
 
@@ -282,8 +287,16 @@ async function installMocks(
         export const db = {};
         export const functions = {};
 
-        export function httpsCallable() {
-            return async () => ({ data: { status: 'unavailable' } });
+        export function httpsCallable(_functions, name) {
+            return async (payload) => {
+                const store = loadStore();
+                store.callableCalls = [...(store.callableCalls || []), { name, payload: clone(payload) }];
+                saveStore(store);
+                if (name === 'getPublicDiamondGame' && store.diamondReplay) {
+                    return { data: clone(store.diamondReplay) };
+                }
+                return { data: { status: 'unavailable' } };
+            };
         }
 
         export function doc(_db, ...segments) {
@@ -644,6 +657,27 @@ test("Diamond report labels partial observations, leaves uncollected stats unava
     statCoverage: { r: "complete", h: "complete" },
     coverage: { batting: "complete" },
   };
+  scenario.diamondReplay = {
+    instanceId,
+    game: { trackingEngine: "diamond-v2" },
+    events: [{
+      id: "event-8",
+      revision: 8,
+      inning: 6,
+      half: "bottom",
+      description: "Plate appearance: walk off single",
+      createdAt: "2026-04-03T21:08:00.000Z",
+      isCorrection: false,
+      isScoringPlay: true,
+      score: { home: 3, away: 2 },
+    }],
+    nextCursor: null,
+    complete: true,
+    truncated: false,
+    sourceRevision: 8,
+    projectionToken: `current:8:${projectionHash}`,
+    diamondStats: { status: "complete" },
+  };
   await installMocks(page, scenario, { accessLevel: "member" });
 
   await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, {
@@ -663,6 +697,14 @@ test("Diamond report labels partial observations, leaves uncollected stats unava
   await expect(page.locator("#team-stats-body")).toContainText("R");
   await expect(page.locator("#team-stats-body")).toContainText("3");
   await expect(page.locator("#team-stats-body")).not.toContainText("TEAM H");
+  await expect(page.locator("#game-log")).toContainText("Plate appearance: walk off single");
+  await expect(page.locator("#game-log")).toContainText("Bottom 6");
+  const replayStore = await readStore(page);
+  expect(replayStore.eventReadPaths || []).toEqual([]);
+  expect(replayStore.callableCalls).toContainEqual({
+    name: "getPublicDiamondGame",
+    payload: { teamId: "team-1", gameId: "game-1", cursor: null, limit: 200 },
+  });
   await expect(page.locator("#diamond-stats-export-btn")).toHaveText(
     "Export public CSV",
   );
@@ -695,6 +737,9 @@ test("completed-game stat editor saves corrections and DNP state through real co
     waitUntil: "domcontentloaded",
   });
   await expect.poll(() => pageErrors).toEqual([]);
+  await expect.poll(async () => (await readStore(page)).eventReadPaths || []).toEqual([
+    "teams/team-1/games/game-1/events",
+  ]);
 
   await page.locator("#share-report-btn").click();
   await expect

@@ -998,6 +998,27 @@ function gameProjectionPatch(state, projectionStatus = "pending") {
   };
 }
 
+function getPublicDiamondTeamLiveMediaUrl(team, publicGameApi) {
+  const twitchChannel =
+    typeof team?.twitchChannel === "string" ? team.twitchChannel.trim() : "";
+  if (/^[A-Za-z0-9_]{1,25}$/.test(twitchChannel)) {
+    return `https://www.twitch.tv/${twitchChannel}`;
+  }
+
+  for (const candidate of [team?.streamEmbedUrl, team?.youtubeEmbedUrl]) {
+    const publicUrl = normalizePublicHttpsUrl(
+      publicGameApi.publicHttpUrl(candidate),
+    );
+    if (publicUrl) return publicUrl;
+  }
+
+  const youtubeVideoId =
+    typeof team?.youtubeVideoId === "string" ? team.youtubeVideoId.trim() : "";
+  return /^[A-Za-z0-9_-]{11}$/.test(youtubeVideoId)
+    ? `https://www.youtube.com/watch?v=${youtubeVideoId}`
+    : null;
+}
+
 function buildPublicDiamondMedia({ team, game, projection, publicGameApi }) {
   const lifecycle = compactText(
     projection?.lifecycle || projection?.status,
@@ -1008,9 +1029,9 @@ function buildPublicDiamondMedia({ team, game, projection, publicGameApi }) {
   let publicUrl = null;
   let mode = null;
   if (isLive) {
-    publicUrl = normalizePublicHttpsUrl(
-      publicGameApi.publicHttpUrl(game?.videoUrl),
-    );
+    publicUrl =
+      normalizePublicHttpsUrl(publicGameApi.publicHttpUrl(game?.videoUrl)) ||
+      getPublicDiamondTeamLiveMediaUrl(team, publicGameApi);
     mode = publicUrl ? "live" : null;
   } else if (
     isReplay &&
@@ -5043,6 +5064,16 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     }
     const teamId = normalizeId(match[1], "teamId");
     const gameId = normalizeId(match[2], "gameId");
+    const deletedGameDecision = core.decideDiamondDeletionCleanup({
+      deletedGame,
+    });
+    if (deletedGameDecision.action === "ignore") {
+      return {
+        cleaned: deletedGameDecision.complete === true,
+        retained: false,
+        reason: deletedGameDecision.code,
+      };
+    }
     const resourcePaths = paths(teamId, gameId);
     const sharedGameResolution = getCleanupSharedGamePath(deletedGame);
     if (!sharedGameResolution.valid) {

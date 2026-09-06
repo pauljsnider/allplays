@@ -3802,6 +3802,144 @@ describe("Diamond scorebook handler factory", () => {
     assert.equal(insecure.game.media, null);
   });
 
+  it("falls back to sanitized team live media while preserving the per-game URL", async () => {
+    const harness = createHarness();
+    await activate(harness);
+    const resourcePaths = paths("team-1", "game-1");
+    const publicState = harness.firestore.read(resourcePaths.publicState);
+    const game = harness.firestore.read(resourcePaths.game);
+    const team = harness.firestore.read(resourcePaths.team);
+    harness.firestore.seed(resourcePaths.publicState, {
+      ...publicState,
+      lifecycle: "active",
+    });
+
+    harness.firestore.seed(resourcePaths.team, {
+      ...team,
+      twitchChannel: "allplays_live",
+      streamEmbedUrl: "https://www.youtube.com/embed/abcdefghijk",
+      youtubeVideoId: "lmnopqrstuv",
+    });
+    harness.firestore.seed(resourcePaths.game, {
+      ...game,
+      videoUrl: "https://video.example.test/game-specific",
+    });
+    const gameSpecific = await harness.handlers.getPublicDiamondGame({
+      teamId: "team-1",
+      gameId: "game-1",
+    });
+    assert.equal(
+      gameSpecific.game.media.publicUrl,
+      "https://video.example.test/game-specific",
+    );
+
+    harness.firestore.seed(resourcePaths.game, game);
+    const twitch = await harness.handlers.getPublicDiamondGame({
+      teamId: "team-1",
+      gameId: "game-1",
+    });
+    assert.deepEqual(twitch.game.media, {
+      mode: "live",
+      publicUrl: "https://www.twitch.tv/allplays_live",
+      durationMs: 0,
+    });
+
+    harness.firestore.seed(resourcePaths.team, {
+      ...team,
+      twitchChannel: "unsafe/channel",
+      streamEmbedUrl: "http://video.example.test/insecure",
+      youtubeEmbedUrl: "https://www.youtube.com/embed/abcdefghijk",
+      youtubeVideoId: "lmnopqrstuv",
+    });
+    const youtubeEmbed = await harness.handlers.getPublicDiamondGame({
+      teamId: "team-1",
+      gameId: "game-1",
+    });
+    assert.equal(
+      youtubeEmbed.game.media.publicUrl,
+      "https://www.youtube.com/embed/abcdefghijk",
+    );
+
+    harness.firestore.seed(resourcePaths.team, {
+      ...team,
+      streamEmbedUrl: "http://video.example.test/insecure",
+      youtubeEmbedUrl: "javascript:alert(1)",
+      youtubeVideoId: "lmnopqrstuv",
+    });
+    const youtubeVideoId = await harness.handlers.getPublicDiamondGame({
+      teamId: "team-1",
+      gameId: "game-1",
+    });
+    assert.equal(
+      youtubeVideoId.game.media.publicUrl,
+      "https://www.youtube.com/watch?v=lmnopqrstuv",
+    );
+
+    harness.firestore.seed(resourcePaths.team, {
+      ...team,
+      twitchChannel: "unsafe/channel",
+      streamEmbedUrl: "http://video.example.test/insecure",
+      youtubeEmbedUrl: "https://viewer:secret@video.example.test/embed",
+      youtubeVideoId: "not-a-video-id",
+    });
+    const unsafe = await harness.handlers.getPublicDiamondGame({
+      teamId: "team-1",
+      gameId: "game-1",
+    });
+    assert.equal(unsafe.game.media, null);
+  });
+
+  it("ignores no-engine and recognized legacy deletions without Firestore reads", async () => {
+    for (const trackingEngine of [
+      undefined,
+      "legacy",
+      "legacy-v1",
+      "classic",
+      "standard",
+    ]) {
+      const harness = createHarness();
+      const resourcePaths = paths("team-1", "game-1");
+      const deletedGame = harness.firestore.read(resourcePaths.game);
+      if (trackingEngine !== undefined) {
+        deletedGame.trackingEngine = trackingEngine;
+      }
+      const snapshot = new FakeDocumentSnapshot(
+        harness.firestore.doc(resourcePaths.game),
+        deletedGame,
+      );
+      harness.firestore.delete(resourcePaths.game);
+      const documentsBeforeCleanup = [...harness.firestore.documents.entries()];
+      let documentReadCount = 0;
+      let queryReadCount = 0;
+      const originalDocumentSnapshot =
+        harness.firestore._documentSnapshot.bind(harness.firestore);
+      const originalQuerySnapshot =
+        harness.firestore._querySnapshot.bind(harness.firestore);
+      harness.firestore._documentSnapshot = (reference) => {
+        documentReadCount += 1;
+        return originalDocumentSnapshot(reference);
+      };
+      harness.firestore._querySnapshot = (query) => {
+        queryReadCount += 1;
+        return originalQuerySnapshot(query);
+      };
+
+      const result = await harness.handlers.cleanupDeletedDiamondGame(snapshot);
+
+      assert.deepEqual(result, {
+        cleaned: true,
+        retained: false,
+        reason: "not-a-diamond-game",
+      });
+      assert.equal(documentReadCount, 0);
+      assert.equal(queryReadCount, 0);
+      assert.deepEqual(
+        [...harness.firestore.documents.entries()],
+        documentsBeforeCleanup,
+      );
+    }
+  });
+
   it("deletes only descendants that match the deleted game generation and records a durable cleanup lock", async () => {
     const harness = createHarness();
     await activate(harness);

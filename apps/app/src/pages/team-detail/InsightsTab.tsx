@@ -324,12 +324,21 @@ function TeamPerformanceCard({ model, loading, error, selectedSeason, availableS
 
 function RosterStatisticsCard({ model, loading, error, selectedSeason }: { model: TeamDetailModel; loading: boolean; error: string; selectedSeason: string }) {
   const root = model.rosterStatistics;
-  const table: TeamDetailRosterStatisticsTable | undefined = root?.seasons?.find((season) => season.seasonLabel === selectedSeason) || root?.seasons?.[0];
   const seasonUnavailable = root?.unavailableSeasons?.includes(selectedSeason) === true;
+  const table: TeamDetailRosterStatisticsTable | undefined = seasonUnavailable
+    ? undefined
+    : root?.seasons?.find((season) => season.seasonLabel === selectedSeason);
+  const publicProjectionStatus = table?.diamond?.publicStatsStatus === 'complete'
+    ? 'Complete'
+    : table?.diamond?.publicStatsStatus === 'partial'
+      ? 'Partial'
+      : table?.diamond?.publicStatsStatus === 'unavailable'
+        ? 'Unavailable'
+        : 'Unknown';
   const [exporting, setExporting] = useState(false);
   const [exportMessage, setExportMessage] = useState('');
   async function exportSeasonStats() {
-    if (!table?.diamond?.hasDiamond || exporting) return;
+    if (seasonUnavailable || !table?.diamond?.hasDiamond || exporting) return;
     setExporting(true);
     setExportMessage('');
     try {
@@ -347,7 +356,7 @@ function RosterStatisticsCard({ model, loading, error, selectedSeason }: { model
         <div id="roster-statistics-heading" className="text-sm font-black text-gray-950">Roster statistics</div>
         <div className="mt-0.5 text-xs font-semibold text-gray-500">Season totals from completed tracked games.</div>
       </div>
-      {table?.diamond?.hasDiamond ? <button
+      {!seasonUnavailable && table?.diamond?.hasDiamond ? <button
         type="button"
         className="border-primary-200 bg-primary-50 text-primary-700 inline-flex min-h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-black disabled:opacity-60"
         onClick={() => { void exportSeasonStats(); }}
@@ -378,7 +387,7 @@ function RosterStatisticsCard({ model, loading, error, selectedSeason }: { model
           </div>
           <div className="mt-1 text-[11px] font-bold opacity-75">Source revisions: {table.diamond.sourceRevisions.length ? table.diamond.sourceRevisions.join(', ') : 'unavailable'}</div>
           {table.diamond.requestedStatVisibility === 'manager-internal' && table.diamond.statVisibility !== 'manager-internal' ? (
-            <div className="mt-1 text-[11px] font-bold">Internal stats are unavailable; showing the complete public projection. Refresh to retry.</div>
+            <div className="mt-1 text-[11px] font-bold">Internal stats are unavailable. Public projection status: {publicProjectionStatus}. Refresh to retry.</div>
           ) : null}
         </div>
       ) : null}

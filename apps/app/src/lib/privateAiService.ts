@@ -5511,6 +5511,7 @@ function buildPlannerPrompt({
     `Example: {"toolCalls":[{"name":"list_schedule","args":{"range":"upcoming","type":"game","teamName":"Bears","limit":8}}]}.\n` +
     `For last/previous game questions, call get_last_game. For game-specific questions, do not answer with practices as substitutes.\n` +
     `Never claim that no matching schedule event exists unless the tool result says absenceConfirmed is true. If schedule coverage is partial, say the complete schedule could not be verified.\n` +
+    `For Diamond player statistics, honor diamondEvidence exactly: partial or pending totals are lower bounds, unavailable values are unknown, zero may be claimed only when complete is true, and absence may be claimed only when absenceConfirmed is true. Never turn a missing seasonStatTotals result into totals from recent partial rows.\n` +
     `For writes, call the write tool with normalized args. The app will stage it and require user confirmation before execution.\n` +
     `Imperative requests that ask to add, invite, create, update, remove, cancel, or send something are write requests, not help questions. Call the matching write tool instead of get_help.\n` +
     `Resolve relative dates such as "Saturday" against CURRENT DATE/TIME CONTEXT, choosing the next future occurrence unless the user says otherwise. Use that time zone when the user does not supply one.\n` +
@@ -5591,6 +5592,7 @@ function buildFinalAnswerPrompt({
     `For schedule confirmations, restate the team, game or practice, date and time, time zone, opponent or title, and location when those details are present. Never answer with only a confirmation instruction.\n` +
     `When the user asks for a game, answer from game records only; if only practices are available, say no matching game was found.\n` +
     `Never claim that no matching schedule event exists unless the schedule result says absenceConfirmed is true. If coverage is incomplete, say the complete schedule could not be verified.\n` +
+    `For Diamond player statistics, honor diamondEvidence exactly: partial or pending totals are lower bounds, unavailable values are unknown, zero may be claimed only when complete is true, and absence may be claimed only when absenceConfirmed is true. Never turn a missing seasonStatTotals result into totals from recent partial rows.\n` +
     `Answer concisely. Include dates, times, team names, and player names when relevant.\n` +
     `Return strict JSON only: {"answer":"..."}.\n\n` +
     `USER:\n${JSON.stringify(summarizeSignedInUser(user, roleCapabilities))}\n\n` +
@@ -6143,6 +6145,59 @@ function summarizeTeamDetail(detail: any) {
 }
 
 function summarizePlayerDevelopment(detail: any) {
+  const statRows = Array.isArray(detail.statRows) ? detail.statRows : [];
+  const hasDiamondRows = statRows.some((row: any) => (
+    row?.statPresentation?.isDiamond === true
+    || String(row?.event?.trackingEngine || '').trim().toLowerCase() === 'diamond-v2'
+  ));
+  const seasonTotals = detail.seasonStatTotals;
+  const seasonDiamond = seasonTotals?.diamond;
+  const hasDiamondSeason = seasonDiamond?.hasDiamond === true || hasDiamondRows;
+  const seasonStatTotals = seasonTotals ? {
+    gameCount: seasonTotals.gameCount,
+    totals: seasonTotals.totals || {},
+    ...(seasonDiamond?.hasDiamond ? {
+      available: true,
+      diamondEvidence: {
+        complete: seasonDiamond.pending !== true
+          && !['partial', 'unavailable'].includes(compactText(seasonDiamond.publicStatsStatus))
+          && !['partial', 'unavailable'].includes(compactText(seasonDiamond.privateStatsStatus)),
+        pending: seasonDiamond.pending === true,
+        publicStatsStatus: compactText(seasonDiamond.publicStatsStatus) || 'unknown',
+        privateStatsStatus: compactText(seasonDiamond.privateStatsStatus) || 'unknown',
+        requestedStatVisibility: compactText(seasonDiamond.requestedStatVisibility) || 'public',
+        statVisibility: compactText(seasonDiamond.statVisibility) || 'public',
+        sourceRevisions: Array.isArray(seasonDiamond.sourceRevisions) ? seasonDiamond.sourceRevisions : [],
+        absenceConfirmed: seasonDiamond.absenceConfirmed === true,
+        coverage: {
+          statCoverage: seasonTotals.statPresentation?.statCoverage || {},
+          observedStatKeys: seasonTotals.statPresentation?.observedStatKeys || [],
+          unavailableStatKeys: seasonTotals.statPresentation?.unavailableStatKeys || [],
+          projectionPending: seasonTotals.statPresentation?.projectionPending === true
+        }
+      }
+    } : {})
+  } : hasDiamondSeason ? {
+    available: false,
+    gameCount: null,
+    totals: null,
+    diamondEvidence: {
+      complete: false,
+      pending: true,
+      publicStatsStatus: 'unavailable',
+      privateStatsStatus: 'unknown',
+      requestedStatVisibility: 'public',
+      statVisibility: 'public',
+      sourceRevisions: [],
+      absenceConfirmed: false,
+      coverage: {
+        statCoverage: {},
+        observedStatKeys: [],
+        unavailableStatKeys: [],
+        projectionPending: true
+      }
+    }
+  } : summarizeStatRowsTotals(statRows);
   return {
     player: {
       id: detail.player?.id || detail.child?.playerId,
@@ -6155,14 +6210,20 @@ function summarizePlayerDevelopment(detail: any) {
     },
     nextEvent: detail.nextEvent ? summarizeScheduleEvent(detail.nextEvent) : null,
     actionCounts: detail.actionCounts,
-    recentGames: (detail.statRows || []).slice(0, 6).map((row: any) => ({
+    recentGames: statRows.slice(0, 6).map((row: any) => ({
       event: summarizeScheduleEvent(row.event),
-      stats: row.stats || {}
+      stats: row.stats || {},
+      ...(row?.statPresentation?.isDiamond === true ? {
+        diamondEvidence: {
+          complete: row.statPresentation.projectionPending !== true,
+          pending: row.statPresentation.projectionPending === true,
+          statCoverage: row.statPresentation.statCoverage || {},
+          observedStatKeys: row.statPresentation.observedStatKeys || [],
+          unavailableStatKeys: row.statPresentation.unavailableStatKeys || []
+        }
+      } : {})
     })),
-    seasonStatTotals: detail.seasonStatTotals ? {
-      gameCount: detail.seasonStatTotals.gameCount,
-      totals: detail.seasonStatTotals.totals || {}
-    } : summarizeStatRowsTotals(detail.statRows || []),
+    seasonStatTotals,
     trackingSummary: (detail.trackingSummary || []).slice(0, 12),
     incentives: detail.incentives ? {
       activeRules: (detail.incentives.currentRules || []).slice(0, 8),
@@ -6182,7 +6243,7 @@ function summarizePlayerDevelopment(detail: any) {
     } : null,
     certificates: (detail.certificates || []).slice(0, 5),
     clips: (detail.clips || []).slice(0, 8),
-    coachingPrompt: 'Use recent stats, tracking, incentives, upcoming schedule, and profile gaps to suggest practical next steps for the player. Avoid medical advice.'
+    coachingPrompt: 'Use recent stats only within their Diamond completeness evidence. Partial values are lower bounds, unavailable values are unknown, zero may be claimed only from complete evidence, and absence is confirmed only when absenceConfirmed is true. Never describe partial, pending, or unavailable Diamond totals as complete or as zero. Use tracking, incentives, upcoming schedule, and profile gaps to suggest practical next steps. Avoid medical advice.'
   };
 }
 

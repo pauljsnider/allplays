@@ -1,5 +1,9 @@
 const functions = require('firebase-functions');
 const admin = require('firebase-admin');
+const adminFirestore = require('firebase-admin/firestore');
+const FirestoreFieldPath = admin.firestore.FieldPath || adminFirestore.FieldPath;
+const FirestoreFieldValue = admin.firestore.FieldValue || adminFirestore.FieldValue;
+const FirestoreTimestamp = admin.firestore.Timestamp || adminFirestore.Timestamp;
 const Stripe = require('stripe');
 const { Resend } = require('resend');
 const crypto = require('node:crypto');
@@ -557,7 +561,7 @@ const diamondLiveEngagementHandlers = createDiamondLiveEngagementHandlers({
   auth: {
     getUser: (...args) => admin.auth().getUser(...args)
   },
-  FieldValue: admin.firestore.FieldValue,
+  FieldValue: FirestoreFieldValue,
   HttpsError: functions.https.HttpsError,
   assertSensitiveWrite: assertSensitiveEmailVerified,
   resolveDelegatedAccess,
@@ -632,14 +636,14 @@ const diamondScorebookAiHandlers = createDiamondScorebookAiHandlers({
 const saveAthleteProfileProjectionHandler = createAthleteProfileProjectionSaveHandler({
   firestore,
   auth: admin.auth(),
-  FieldValue: admin.firestore.FieldValue,
+  FieldValue: FirestoreFieldValue,
   HttpsError: functions.https.HttpsError,
   assertSensitiveWrite: assertSensitiveEmailVerified
 });
 const mutateStructuredMediaIdentityHandler = createStructuredMediaWriteHandler({
   firestore,
   auth: admin.auth(),
-  FieldValue: admin.firestore.FieldValue,
+  FieldValue: FirestoreFieldValue,
   HttpsError: functions.https.HttpsError,
   hasTeamAdminAccess,
   assertSensitiveWrite: assertSensitiveEmailVerified
@@ -3921,7 +3925,7 @@ function getResendAuthEmailDelivery() {
   if (!apiKey) throw new Error('RESEND_API_KEY is not configured.');
   resendAuthEmailDelivery = createResendAuthEmailDelivery({
     firestore,
-    FieldValue: admin.firestore.FieldValue,
+    FieldValue: FirestoreFieldValue,
     logger: functions.logger,
     resend: new Resend(apiKey),
     webhookSecret: String(process.env.RESEND_WEBHOOK_SECRET || '').trim(),
@@ -3932,8 +3936,8 @@ function getResendAuthEmailDelivery() {
 
 const authEmailDeliveryStore = createAuthEmailDeliveryStore({
   firestore,
-  Timestamp: admin.firestore.Timestamp,
-  FieldValue: admin.firestore.FieldValue,
+  Timestamp: FirestoreTimestamp,
+  FieldValue: FirestoreFieldValue,
   logger: functions.logger,
   cooldownMs: AUTH_EMAIL_COOLDOWN_MS,
   buildRateLimitId: buildAuthEmailRateLimitId,
@@ -4166,7 +4170,7 @@ exports.queueInviteEmail = functions.https.onCall(async (data, context) => {
 
 const autoAcceptParentInviteHandler = createAutoAcceptParentInviteHandler({
   firestore,
-  Timestamp: admin.firestore.Timestamp,
+  Timestamp: FirestoreTimestamp,
   HttpsError: functions.https.HttpsError,
   normalizeFirestoreId,
   validateCode: validateAutoAcceptParentInviteCode
@@ -4230,7 +4234,7 @@ exports.sweepIneligiblePublicUserProfiles = functions
     const publicProfileEligibilitySweepHandler = createPublicProfileEligibilitySweepHandler({
       firestore,
       auth: admin.auth(),
-      documentIdField: admin.firestore.FieldPath.documentId(),
+      documentIdField: FirestoreFieldPath.documentId(),
       isAuthUserNotFound: publicUserProfileProjection.isPublicProfileAuthUserNotFound,
       reconcileAuthIdentity: async (userId, authIdentity) => {
         const authIdentitySnap = await firestore.doc(`publicProfileAuthIdentities/${userId}`).get();
@@ -4277,7 +4281,7 @@ exports.sweepIneligiblePublicUserProfiles = functions
             userId,
             currentStaffTeamIds: [],
             buildMembershipId: publicUserProfileProjection.buildPublicProfileStaffMembershipId,
-            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+            updatedAt: FirestoreFieldValue.serverTimestamp()
           });
           await firestore.doc(`publicProfileAuthIdentities/${userId}`).delete();
         }
@@ -4320,7 +4324,7 @@ function compactPublicProfileString(value) {
 function buildTrustedPublicUserProfileProjectionPayload(userData = {}, options = {}) {
   return {
     ...publicUserProfileProjection.buildPublicUserProfileProjection(userData, options),
-    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    updatedAt: FirestoreFieldValue.serverTimestamp()
   };
 }
 
@@ -4356,7 +4360,7 @@ async function loadPublicProfileStaffTeamIdsForIdentity(userId, email = '') {
     firestore.collection('teams').where('ownerId', '==', normalizedUserId).get(),
     loadCaseInsensitivePublicProfileStaffTeamIds(firestore, {
       email,
-      documentIdField: admin.firestore.FieldPath.documentId()
+      documentIdField: FirestoreFieldPath.documentId()
     })
   ]);
   return uniqueNonEmptyStrings([
@@ -4402,7 +4406,7 @@ async function removePublicProfileAuthorizationForIneligibleAuth(userId, authIde
     userId: normalizedUserId,
     currentStaffTeamIds: [],
     buildMembershipId: publicUserProfileProjection.buildPublicProfileStaffMembershipId,
-    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    updatedAt: FirestoreFieldValue.serverTimestamp()
   });
   await authIdentityRef.delete();
   await publicProfileRef.delete();
@@ -4461,7 +4465,7 @@ async function reconcileRoutinePublicProfileAuthIdentity(
   if (currentEmail) {
     await authIdentityRef.set({
       email: currentEmail,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      updatedAt: FirestoreFieldValue.serverTimestamp()
     });
   } else {
     await authIdentityRef.delete();
@@ -4494,7 +4498,7 @@ async function syncPublicUserProfileProjectionForUser(userId, options = {}) {
       userId: normalizedUserId,
       currentStaffTeamIds: [],
       buildMembershipId: publicUserProfileProjection.buildPublicProfileStaffMembershipId,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      updatedAt: FirestoreFieldValue.serverTimestamp()
     });
     await authIdentityRef.delete();
     await publicProfileRef.delete();
@@ -4555,7 +4559,7 @@ async function syncPublicUserProfileProjectionForUser(userId, options = {}) {
   if (options.updateAuthIdentityIndex === true) {
     batch.set(authIdentityRef, {
       email: String(authIdentity.email || '').trim().toLowerCase(),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      updatedAt: FirestoreFieldValue.serverTimestamp()
     });
   }
   await batch.commit();
@@ -4581,7 +4585,7 @@ async function reconcilePublicProfileStaffMembershipsForAuthUser(
     firestore.collection('teams').where('ownerId', '==', normalizedUserId).get(),
     loadCaseInsensitivePublicProfileStaffTeamIds(firestore, {
       email: rawEmail,
-      documentIdField: admin.firestore.FieldPath.documentId()
+      documentIdField: FirestoreFieldPath.documentId()
     })
   ]);
   (ownedTeamSnap.docs || [])
@@ -4600,7 +4604,7 @@ async function reconcilePublicProfileStaffMembershipsForAuthUser(
     userId: normalizedUserId,
     currentStaffTeamIds: authoritativeTeamIds,
     buildMembershipId: publicUserProfileProjection.buildPublicProfileStaffMembershipId,
-    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    updatedAt: FirestoreFieldValue.serverTimestamp()
   });
   return uniqueNonEmptyStrings([
     ...publicUserProfileProjection.derivePublicProfileTeamIds(userData),
@@ -4622,7 +4626,7 @@ async function syncPublicUserProfilesForTeamChange(teamId, beforeTeam, afterTeam
     teamId,
     currentStaffUserIds: afterUserIds,
     buildMembershipId: publicUserProfileProjection.buildPublicProfileStaffMembershipId,
-    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    updatedAt: FirestoreFieldValue.serverTimestamp()
   });
   const candidateUserIds = new Set([
     ...beforeUserIds,
@@ -10872,7 +10876,7 @@ async function syncNotificationRecipientForTeamUser(teamId, uid, options = {}) {
     roles,
     categories: normalizeNotificationTargetCategories(preferences),
     tokens,
-    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    updatedAt: FirestoreFieldValue.serverTimestamp()
   }, { merge: true });
   return { uid: normalizedUid, teamId, roles, tokenCount: tokens.length };
 }
@@ -11090,12 +11094,12 @@ exports.syncTeamOwnerAccessOnCreate = functions
   .document('teams/{teamId}')
   .onCreate(createTeamOwnerAccessSyncHandler({
     firestore,
-    fieldValue: admin.firestore.FieldValue
+    fieldValue: FirestoreFieldValue
   }));
 
 const legacyTeamOwnerAuthSyncHandler = createLegacyTeamOwnerAuthSyncHandler({
   firestore,
-  fieldValue: admin.firestore.FieldValue
+  fieldValue: FirestoreFieldValue
 });
 
 exports.syncLegacyTeamOwnershipOnAuthCreate = functions
@@ -11111,7 +11115,7 @@ exports.reconcileLegacyTeamOwnership = functions
   .onRun(createLegacyTeamOwnerReconciliationHandler({
     firestore,
     auth: admin.auth(),
-    documentIdField: () => admin.firestore.FieldPath.documentId(),
+    documentIdField: () => FirestoreFieldPath.documentId(),
     checkpointRef: firestore.doc('systemJobs/legacyTeamOwnerReconciliation'),
     syncAuthUser: legacyTeamOwnerAuthSyncHandler
   }));

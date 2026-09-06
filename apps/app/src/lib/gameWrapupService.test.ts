@@ -16,6 +16,10 @@ const aiMocks = vi.hoisted(() => {
   };
 });
 
+const gameReportMocks = vi.hoisted(() => ({
+  loadGameReportPlays: vi.fn()
+}));
+
 vi.mock('../../../../js/db.js', () => dbMocks);
 vi.mock('../../../../js/vendor/firebase-app.js', () => ({
   getApp: vi.fn(() => ({}))
@@ -28,6 +32,7 @@ vi.mock('../../../../js/vendor/firebase-ai.js', () => ({
 vi.mock('../../../../js/live-game-state.js', () => ({
   resolveLiveStatConfig: vi.fn(({ team, game }) => ({ sport: game?.sport || team?.sport || 'Basketball' }))
 }));
+vi.mock('./gameReportService', () => gameReportMocks);
 
 import { buildFinishGamePayload, buildGameSummaryPrompt, buildPracticeFeedPrompt } from '../../../../js/game-day-wrapup.js';
 import {
@@ -53,6 +58,7 @@ describe('gameWrapupService', () => {
       { playerName: 'Ava', stat: '3PT Made', timestamp: new Date('2026-06-10T18:00:00Z') },
       { playerName: 'Blair', type: 'Steal', timestamp: new Date('2026-06-10T18:01:00Z') }
     ]);
+    gameReportMocks.loadGameReportPlays.mockReset();
   });
 
   it('matches the legacy finish payload shape', () => {
@@ -156,5 +162,164 @@ describe('gameWrapupService', () => {
       urgency: 'high'
     });
     expect(result.practiceFeedItems[0].addedAt).toMatch(/T/);
+    expect(dbMocks.getGameEvents).toHaveBeenCalledWith('team-1', 'game-1', { limit: 100 });
+    expect(gameReportMocks.loadGameReportPlays).not.toHaveBeenCalled();
+  });
+
+  it('retries one incomplete Diamond replay and uses only its sanitized play descriptions', async () => {
+    const diamondGame = {
+      id: 'game-1',
+      opponent: 'Tigers',
+      coachingNotes: [],
+      sport: 'Baseball',
+      trackingEngine: 'diamond-v2',
+      diamondScorebookInstanceId: '11111111-1111-4111-8111-111111111111',
+      diamondProjectionRevision: 7
+    };
+    dbMocks.getGame.mockResolvedValue(diamondGame);
+    gameReportMocks.loadGameReportPlays
+      .mockResolvedValueOnce({
+        game: diamondGame,
+        plays: [],
+        playsFresh: false,
+        replayError: 'Retry the report.'
+      })
+      .mockResolvedValueOnce({
+        game: diamondGame,
+        plays: [{
+          id: 'play-7',
+          text: 'Plate appearance: single',
+          period: 'Bottom 4',
+          clock: '',
+          timestamp: new Date('2026-06-10T18:01:00Z')
+        }],
+        playsFresh: true,
+        replay: {
+          requestedVisibility: 'manager-internal',
+          visibility: 'public',
+          source: 'public-sanitized'
+        }
+      });
+    aiMocks.generateContent
+      .mockResolvedValueOnce({ response: { text: () => '{"practiceFeedItems":[]}' } })
+      .mockResolvedValueOnce({ response: { text: () => 'Falcons rallied late.' } });
+
+    await generateGameWrapupArtifactsForApp({
+      teamId: 'team-1',
+      gameId: 'game-1',
+      score: { home: 5, away: 3 },
+      notes: ''
+    });
+
+    expect(gameReportMocks.loadGameReportPlays).toHaveBeenCalledTimes(2);
+    expect(gameReportMocks.loadGameReportPlays).toHaveBeenNthCalledWith(1, 'team-1', 'game-1', {
+      statVisibility: 'manager-internal'
+    });
+    expect(dbMocks.getGameEvents).not.toHaveBeenCalled();
+    expect(aiMocks.generateContent.mock.calls[0]?.[0]).toContain('Key events: Plate appearance: single');
+  });
+
+  it('does not call the model when a Diamond replay remains incomplete after one retry', async () => {
+    const diamondGame = {
+      id: 'game-1',
+      sport: 'Baseball',
+      trackingEngine: 'diamond-v2',
+      diamondScorebookInstanceId: '11111111-1111-4111-8111-111111111111',
+      diamondProjectionRevision: 7
+    };
+    dbMocks.getGame.mockResolvedValue(diamondGame);
+    gameReportMocks.loadGameReportPlays.mockResolvedValue({
+      game: diamondGame,
+      plays: [],
+      playsFresh: false,
+      replayError: 'Retry the report.'
+    });
+
+    await expect(generateGameWrapupArtifactsForApp({
+      teamId: 'team-1',
+      gameId: 'game-1',
+      score: { home: 5, away: 3 },
+      notes: ''
+    })).rejects.toThrow('Diamond play-by-play could not be loaded completely. Try wrap-up again.');
+
+    expect(gameReportMocks.loadGameReportPlays).toHaveBeenCalledTimes(2);
+    expect(dbMocks.getGameEvents).not.toHaveBeenCalled();
+    expect(aiMocks.getGenerativeModel).not.toHaveBeenCalled();
+    expect(aiMocks.generateContent).not.toHaveBeenCalled();
+  });
+
+  it('does not accept a complete replay from a replaced Diamond scorebook instance', async () => {
+    const diamondGame = {
+      id: 'game-1',
+      sport: 'Baseball',
+      trackingEngine: 'diamond-v2',
+      diamondScorebookInstanceId: '11111111-1111-4111-8111-111111111111',
+      diamondProjectionRevision: 7
+    };
+    dbMocks.getGame.mockResolvedValue(diamondGame);
+    gameReportMocks.loadGameReportPlays.mockResolvedValue({
+      game: {
+        ...diamondGame,
+        diamondScorebookInstanceId: '22222222-2222-4222-8222-222222222222'
+      },
+      plays: [{
+        id: 'stale-play-7',
+        text: 'Plate appearance: home run',
+        period: 'Bottom 4',
+        clock: '',
+        timestamp: new Date('2026-06-10T18:01:00Z')
+      }],
+      playsFresh: true,
+      replay: {
+        requestedVisibility: 'manager-internal',
+        visibility: 'public',
+        source: 'public-sanitized'
+      }
+    });
+
+    await expect(generateGameWrapupArtifactsForApp({
+      teamId: 'team-1',
+      gameId: 'game-1',
+      score: { home: 5, away: 3 },
+      notes: ''
+    })).rejects.toThrow('Diamond play-by-play could not be loaded completely. Try wrap-up again.');
+
+    expect(gameReportMocks.loadGameReportPlays).toHaveBeenCalledTimes(2);
+    expect(aiMocks.getGenerativeModel).not.toHaveBeenCalled();
+    expect(aiMocks.generateContent).not.toHaveBeenCalled();
+  });
+
+  it('allows a complete empty Diamond replay as authoritative absence', async () => {
+    const diamondGame = {
+      id: 'game-1',
+      sport: 'Baseball',
+      trackingEngine: 'diamond-v2',
+      diamondScorebookInstanceId: '11111111-1111-4111-8111-111111111111',
+      diamondProjectionRevision: 1
+    };
+    dbMocks.getGame.mockResolvedValue(diamondGame);
+    gameReportMocks.loadGameReportPlays.mockResolvedValue({
+      game: diamondGame,
+      plays: [],
+      playsFresh: true,
+      replay: {
+        requestedVisibility: 'manager-internal',
+        visibility: 'manager-internal',
+        source: 'manager-private-sanitized'
+      }
+    });
+    aiMocks.generateContent
+      .mockResolvedValueOnce({ response: { text: () => '{"practiceFeedItems":[]}' } })
+      .mockResolvedValueOnce({ response: { text: () => 'A complete summary.' } });
+
+    await generateGameWrapupArtifactsForApp({
+      teamId: 'team-1',
+      gameId: 'game-1',
+      score: { home: 0, away: 0 },
+      notes: ''
+    });
+
+    expect(gameReportMocks.loadGameReportPlays).toHaveBeenCalledTimes(1);
+    expect(aiMocks.generateContent.mock.calls[0]?.[0]).toContain('Key events: None');
   });
 });

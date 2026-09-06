@@ -1031,6 +1031,21 @@ export function getDefaultLivePeriod() {
 }
 `;
 
+const LIVE_GAME_DIAMOND_ENGAGEMENT_STUB = `
+export async function getLiveChatHistory() { return []; }
+export async function getLiveReactions() { return []; }
+export async function postDiamondLiveChat() { return { outcome: 'accepted' }; }
+export async function postDiamondLiveReaction() { return { outcome: 'accepted' }; }
+export function subscribeLiveChat(_teamId, _gameId, _options, onMessages) {
+    if (typeof onMessages === 'function') onMessages([]);
+    return () => {};
+}
+export function subscribeReactions(_teamId, _gameId, _options, onReactions) {
+    if (typeof onReactions === 'function') onReactions([]);
+    return () => {};
+}
+`;
+
 async function routeCommonPageStubs(page) {
     await page.route(/\/js\/telemetry\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: '' }));
     await page.route(/\/js\/auth\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: AUTH_STUB }));
@@ -1060,6 +1075,7 @@ async function routeLiveGameStubs(page) {
     await page.route(/\/js\/team-entitlements\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: LIVE_GAME_ENTITLEMENTS_STUB }));
     await page.route(/\/js\/live-game-state\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: LIVE_GAME_STATE_STUB }));
     await page.route(/\/js\/live-sport-config\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: LIVE_GAME_SPORT_CONFIG_STUB }));
+    await page.route(/\/js\/diamond-live-engagement-subscriptions\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: LIVE_GAME_DIAMOND_ENGAGEMENT_STUB }));
     await page.route('**/js/vendor/firebase-app.js', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_APP_STUB }));
     await page.route('**/js/vendor/firebase-ai.js', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_AI_STUB }));
     await page.route('https://cdn.example.test/replay.mp4', (route) => route.fulfill({ status: 200, contentType: 'video/mp4', body: '' }));

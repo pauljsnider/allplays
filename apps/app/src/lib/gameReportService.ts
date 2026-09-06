@@ -49,6 +49,14 @@ import {
   type CoverageAwareStatPresentation
 } from './adapters/legacyDiamondStatPresentation';
 import { loadDiamondManagerStats } from './diamondManagerStatsService';
+import { functions, httpsCallable } from './adapters/legacyDiamondScorebookFirebase';
+import {
+  getDiamondPrivateHistoryWindow,
+  getDiamondState,
+  type DiamondPrivateEvent
+} from './diamondScorebookService';
+import { getEffectiveDiamondEvents } from './diamondScorebook/ledger';
+import type { DiamondEffectiveEvent, DiamondEvent } from './diamondScorebook/contracts';
 
 export type GameReportInsight = {
   title: string;
@@ -91,6 +99,14 @@ export type GameReportPlaysRefresh = {
   game: GameReportGameFirestoreRecord;
   plays: GameReportPlay[];
   playsFresh: boolean;
+  replay?: GameReportReplayProvenance;
+  replayError?: string;
+};
+
+export type GameReportReplayProvenance = {
+  requestedVisibility: 'public' | 'manager-internal';
+  visibility: 'public' | 'manager-internal';
+  source: 'public-sanitized' | 'manager-private-sanitized';
 };
 
 export type GameReportHighlightClip = {
@@ -152,6 +168,9 @@ export type GameReportData = {
     sourceRevisions: readonly number[];
     requestedStatVisibility: 'public' | 'manager-internal';
     statVisibility: 'public' | 'manager-internal';
+    requestedReplayVisibility: 'public' | 'manager-internal';
+    replayVisibility: 'public' | 'manager-internal';
+    replaySource: 'public-sanitized' | 'manager-private-sanitized';
     privateStatsStatus: 'not-requested' | 'complete' | 'partial' | 'unavailable';
     privateStatsReason?: string | null;
   };
@@ -186,6 +205,11 @@ type AggregatedStatsResult = {
 export type GameReportLoadOptions = {
   statVisibility?: 'public' | 'manager-internal';
 };
+
+const diamondPublicEventPageSize = 200;
+const diamondPublicEventPageLimit = 100;
+const diamondManagerEventWindowSize = 200;
+const diamondManagerEventWindowLimit = 100;
 
 function toNumber(value: unknown) {
   const parsed = Number(value);
@@ -478,20 +502,307 @@ function normalizePlay(entry: GameReportEventFirestoreRecord): GameReportPlay {
   };
 }
 
-export async function loadGameReportPlays(teamId: string, gameId: string): Promise<GameReportPlaysRefresh> {
+function mapDiamondPublicEvent(value: unknown, sourceRevision: number): GameReportEventFirestoreRecord {
+  const event = asRecord(value);
+  const id = String(event.id || '').trim();
+  const revision = Number(event.revision);
+  const inning = Number(event.inning);
+  const half = String(event.half || '').trim().toLowerCase();
+  const description = String(event.description || '').trim();
+  const createdAt = String(event.createdAt || '').trim();
+  if (
+    !id ||
+    id.length > 128 ||
+    id.includes('/') ||
+    !Number.isSafeInteger(revision) ||
+    revision < 1 ||
+    revision > sourceRevision ||
+    !Number.isSafeInteger(inning) ||
+    inning < 1 ||
+    inning > 99 ||
+    !['top', 'bottom'].includes(half) ||
+    !description ||
+    description.length > 500 ||
+    (createdAt && !normalizeDate(createdAt))
+  ) {
+    throw new Error('The Diamond public replay contains malformed play evidence.');
+  }
+  return {
+    id,
+    text: description,
+    period: `${half === 'bottom' ? 'Bottom' : 'Top'} ${inning}`,
+    clock: '',
+    timestamp: createdAt || null,
+    revision
+  };
+}
+
+async function loadCompleteDiamondPublicEvents(
+  teamId: string,
+  gameId: string,
+  game: GameReportGameFirestoreRecord
+): Promise<GameReportEventFirestoreRecord[]> {
+  const callable = httpsCallable(functions, 'getPublicDiamondGame');
+  const expectedInstanceId = String(game.diamondScorebookInstanceId || '').trim();
+  const expectedSourceRevision = Number(game.diamondProjectionRevision);
+  if (!expectedInstanceId || !Number.isSafeInteger(expectedSourceRevision) || expectedSourceRevision < 1) {
+    throw new Error('The Diamond public replay identity is unavailable.');
+  }
+
+  const events: GameReportEventFirestoreRecord[] = [];
+  const eventIds = new Set<string>();
+  let cursor: string | null = null;
+  let projectionToken = '';
+  for (let pageNumber = 0; pageNumber < diamondPublicEventPageLimit; pageNumber += 1) {
+    const response = await callable({
+      teamId,
+      gameId,
+      limit: diamondPublicEventPageSize,
+      cursor
+    });
+    const page = asRecord(response?.data);
+    const instanceId = String(page.instanceId || '').trim();
+    const sourceRevision = Number(page.sourceRevision);
+    const nextCursor = page.nextCursor == null ? null : String(page.nextCursor || '').trim();
+    const nextProjectionToken = String(page.projectionToken || '').trim();
+    const pageEvents = Array.isArray(page.events) ? page.events : null;
+    if (
+      instanceId !== expectedInstanceId ||
+      sourceRevision !== expectedSourceRevision ||
+      !nextProjectionToken ||
+      (projectionToken && nextProjectionToken !== projectionToken) ||
+      !pageEvents ||
+      (page.complete === true && (page.truncated === true || nextCursor)) ||
+      (page.complete !== true && (page.truncated !== true || !nextCursor))
+    ) {
+      throw new Error('The Diamond public replay is incomplete or changed while loading.');
+    }
+    projectionToken = nextProjectionToken;
+    pageEvents.forEach((value) => {
+      const event = mapDiamondPublicEvent(value, sourceRevision);
+      if (eventIds.has(event.id)) {
+        throw new Error('The Diamond public replay contains duplicate play evidence.');
+      }
+      eventIds.add(event.id);
+      events.push(event);
+    });
+    if (page.complete === true) {
+      return events.sort((left, right) => Number(left.revision) - Number(right.revision));
+    }
+    cursor = nextCursor;
+  }
+  throw new Error('The Diamond public replay exceeds the supported report limit.');
+}
+
+function isNotFoundCallableError(error: unknown) {
+  const code = String(asRecord(error).code || '').trim().toLowerCase();
+  return code === 'not-found' || code.endsWith('/not-found');
+}
+
+function describeDiamondManagerEvent(event: Pick<DiamondEffectiveEvent, 'type' | 'payload'>) {
+  const payload = asRecord(event.payload);
+  const result = String(payload.result || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '')
+    .replace(/_/g, ' ')
+    .slice(0, 80);
+  const side = payload.side === 'away' ? 'Away' : payload.side === 'home' ? 'Home' : '';
+  const labels: Partial<Record<DiamondPrivateEvent['type'], string>> = {
+    activate: 'Scorebook ready',
+    set_lineup: `${side || 'Team'} lineup set`,
+    set_defensive_alignment: `${side || 'Team'} defense set`,
+    set_dp_flex: `${side || 'Team'} DP/FLEX set`,
+    start: 'Game started',
+    record_pitch: result ? `Pitch: ${result}` : 'Pitch recorded',
+    record_plate_appearance: result ? `Plate appearance: ${result}` : 'Plate appearance recorded',
+    advance_runner: 'Runner advance recorded',
+    record_fielding: 'Fielding details recorded',
+    record_scoring_judgment: 'Official scoring updated',
+    advance_half_inning: 'Half inning advanced',
+    place_tiebreaker_runner: 'Tiebreaker runner placed',
+    substitute: 'Substitution recorded',
+    re_enter: 'Re-entry recorded',
+    add_courtesy_runner: 'Courtesy runner recorded',
+    scorer_handoff: 'Official scorer changed',
+    suspend: 'Game suspended',
+    resume: 'Game resumed',
+    cancel: 'Game cancelled',
+    finalize: 'Game final',
+    reopen_for_correction: 'Scorebook reopened for correction',
+    rules_decision: 'Rules decision recorded',
+    void_event: 'Scoring correction recorded',
+    supersede_event: 'Scoring correction replaced a prior play'
+  };
+  return labels[event.type] || 'Game update';
+}
+
+function mapDiamondManagerEvent(
+  event: DiamondEffectiveEvent,
+  createdAt: string | null,
+  sourceRevision: number
+): GameReportEventFirestoreRecord {
+  if (event.revision > sourceRevision) {
+    throw new Error('The Diamond manager replay contains invalid play evidence.');
+  }
+  return {
+    id: event.eventId,
+    text: describeDiamondManagerEvent(event),
+    period: `Revision ${String(event.revision)}`,
+    clock: '',
+    timestamp: createdAt,
+    revision: event.revision
+  };
+}
+
+function resolveEffectiveDiamondManagerEvents(events: readonly DiamondPrivateEvent[]) {
+  const orderedEvents = [...events].sort((left, right) => left.revision - right.revision);
+  try {
+    return getEffectiveDiamondEvents(orderedEvents as unknown as readonly DiamondEvent[]);
+  } catch {
+    throw new Error('The Diamond manager replay contains invalid correction evidence.');
+  }
+}
+
+async function loadCompleteDiamondManagerEvents(
+  teamId: string,
+  gameId: string,
+  game: GameReportGameFirestoreRecord
+): Promise<GameReportEventFirestoreRecord[]> {
+  const expectedInstanceId = String(game.diamondScorebookInstanceId || '').trim();
+  const expectedSourceRevision = Number(game.diamondProjectionRevision ?? game.diamondRevision);
+  if (!expectedInstanceId || !Number.isSafeInteger(expectedSourceRevision) || expectedSourceRevision < 1) {
+    throw new Error('The Diamond manager replay identity is unavailable.');
+  }
+
+  const openingState = await getDiamondState(teamId, gameId);
+  if (openingState.instanceId !== expectedInstanceId || openingState.revision !== expectedSourceRevision) {
+    throw new Error('The Diamond manager replay changed before loading.');
+  }
+
+  const events: DiamondPrivateEvent[] = [];
+  const eventIds = new Set<string>();
+  let beforeSequence: number | null = null;
+  let expectedWindowEnd = expectedSourceRevision;
+  for (let windowNumber = 0; windowNumber < diamondManagerEventWindowLimit; windowNumber += 1) {
+    const window = await getDiamondPrivateHistoryWindow({
+      teamId,
+      gameId,
+      expectedRevision: expectedSourceRevision,
+      beforeSequence,
+      windowSize: diamondManagerEventWindowSize
+    });
+    if (
+      window.sourceRevision !== expectedSourceRevision ||
+      window.newestSequence !== expectedWindowEnd ||
+      (beforeSequence === null && !window.headComplete)
+    ) {
+      throw new Error('The Diamond manager replay is incomplete or changed while loading.');
+    }
+    window.items.forEach((value) => {
+      if (value.revision > expectedSourceRevision) {
+        throw new Error('The Diamond manager replay contains invalid play evidence.');
+      }
+      if (eventIds.has(value.eventId)) {
+        throw new Error('The Diamond manager replay contains duplicate play evidence.');
+      }
+      eventIds.add(value.eventId);
+      events.push(value);
+    });
+    if (!window.hasOlder) {
+      if (window.oldestSequence !== 1) {
+        throw new Error('The Diamond manager replay is incomplete or changed while loading.');
+      }
+      const closingState = await getDiamondState(teamId, gameId);
+      if (closingState.instanceId !== expectedInstanceId || closingState.revision !== expectedSourceRevision) {
+        throw new Error('The Diamond manager replay changed while loading.');
+      }
+      const createdAtByEventId = new Map(events.map((event) => [event.eventId, event.createdAt]));
+      return resolveEffectiveDiamondManagerEvents(events)
+        .filter((event) => event.type !== 'private_note')
+        .map((event) => mapDiamondManagerEvent(
+          event,
+          createdAtByEventId.get(event.eventId) ?? createdAtByEventId.get(event.sourceEventId) ?? null,
+          expectedSourceRevision
+        ));
+    }
+    if (window.oldestSequence === null || window.oldestSequence < 2) {
+      throw new Error('The Diamond manager replay is incomplete or changed while loading.');
+    }
+    expectedWindowEnd = window.oldestSequence - 1;
+    beforeSequence = window.oldestSequence;
+  }
+  throw new Error('The Diamond manager replay exceeds the supported report limit.');
+}
+
+async function loadCompleteDiamondReportEvents(
+  teamId: string,
+  gameId: string,
+  game: GameReportGameFirestoreRecord,
+  requestedVisibility: 'public' | 'manager-internal'
+): Promise<{ events: GameReportEventFirestoreRecord[]; replay: GameReportReplayProvenance }> {
+  try {
+    return {
+      events: await loadCompleteDiamondPublicEvents(teamId, gameId, game),
+      replay: {
+        requestedVisibility,
+        visibility: 'public',
+        source: 'public-sanitized'
+      }
+    };
+  } catch (error) {
+    if (requestedVisibility !== 'manager-internal' || !isNotFoundCallableError(error)) throw error;
+    return {
+      events: await loadCompleteDiamondManagerEvents(teamId, gameId, game),
+      replay: {
+        requestedVisibility,
+        visibility: 'manager-internal',
+        source: 'manager-private-sanitized'
+      }
+    };
+  }
+}
+
+export async function loadGameReportPlays(
+  teamId: string,
+  gameId: string,
+  options: GameReportLoadOptions = {}
+): Promise<GameReportPlaysRefresh> {
   if (!teamId || !gameId) {
     throw new Error('Team and game are required.');
   }
 
-  const [rawGame, eventsRefresh] = await Promise.all([
-    getGame(teamId, gameId),
-    getGameEvents(teamId, gameId, { limit: 100 })
-      .then((rawEvents) => ({ rawEvents, playsFresh: true }))
-      .catch(() => ({ rawEvents: [], playsFresh: false }))
-  ]);
+  const rawGame = await getGame(teamId, gameId);
+  const game = mapGameReportGameRecord(rawGame, gameId);
+  const requestedStatVisibility = options.statVisibility === 'manager-internal' ? 'manager-internal' : 'public';
+  const diamondGame = isDiamondV2Game(game);
+  if (diamondGame) {
+    try {
+      const result = await loadCompleteDiamondReportEvents(teamId, gameId, game, requestedStatVisibility);
+      return {
+        game,
+        plays: [...result.events]
+          .sort((left, right) => Number(left.revision) - Number(right.revision))
+          .map(normalizePlay),
+        playsFresh: true,
+        replay: result.replay
+      };
+    } catch {
+      return {
+        game,
+        plays: [],
+        playsFresh: false,
+        replayError: 'Diamond play-by-play could not be refreshed completely. Retry the report.'
+      };
+    }
+  }
+
+  const eventsRefresh = await getGameEvents(teamId, gameId, { limit: 100 })
+    .then((rawEvents) => ({ rawEvents: mapGameReportEventRecords(rawEvents), playsFresh: true }))
+    .catch(() => ({ rawEvents: [], playsFresh: false }));
   return {
-    game: mapGameReportGameRecord(rawGame, gameId),
-    plays: mapGameReportEventRecords(eventsRefresh.rawEvents)
+    game,
+    plays: eventsRefresh.rawEvents
       .sort((a, b) => (normalizeDate(a.timestamp)?.getTime() || 0) - (normalizeDate(b.timestamp)?.getTime() || 0))
       .map(normalizePlay),
     playsFresh: eventsRefresh.playsFresh
@@ -580,13 +891,20 @@ export async function loadGameReportSections(
 
   const diamondGame = isDiamondV2Game(game);
   const requestedStatVisibility = options.statVisibility === 'manager-internal' ? 'manager-internal' : 'public';
-  const [configs, publicAggregateResult, rawEvents] = await Promise.all([
+  const [configs, publicAggregateResult, eventLoad] = await Promise.all([
     getConfigs(teamId).catch(() => []),
     diamondGame
       ? loadAggregatedStats(teamId, gameId, game)
       : loadAggregatedStats(teamId, gameId, game).catch(emptyAggregatedStatsResult),
-    getGameEvents(teamId, gameId, { limit: 100 }).catch(() => [])
+    diamondGame
+      ? loadCompleteDiamondReportEvents(teamId, gameId, game, requestedStatVisibility)
+      : getGameEvents(teamId, gameId, { limit: 100 })
+        .then((rawEvents) => ({ events: mapGameReportEventRecords(rawEvents), replay: null }))
+        .catch(() => ({ events: [] as GameReportEventFirestoreRecord[], replay: null }))
   ]);
+  if (diamondGame && !eventLoad.replay) {
+    throw new Error('The Diamond replay provenance is unavailable.');
+  }
   const managerLoad = diamondGame && requestedStatVisibility === 'manager-internal'
     ? await loadManagerPrivateStats(teamId, gameId, game, publicAggregateResult)
     : null;
@@ -655,8 +973,11 @@ export async function loadGameReportSections(
     String(field.fieldName || '').trim(),
     String(field.label || field.fieldName || '').trim()
   ]));
-  const insightEvents = mapGameReportEventRecords(rawEvents)
-    .sort((a, b) => (normalizeDate(a.timestamp)?.getTime() || 0) - (normalizeDate(b.timestamp)?.getTime() || 0));
+  const insightEvents = [...eventLoad.events].sort(
+    diamondGame
+      ? (left, right) => Number(left.revision) - Number(right.revision)
+      : (left, right) => (normalizeDate(left.timestamp)?.getTime() || 0) - (normalizeDate(right.timestamp)?.getTime() || 0)
+  );
   const plays = insightEvents.map(normalizePlay);
   const insightStatsMap = diamondGame ? publicCompleteStatsMap : statsMap;
   const insights = generateGameInsights({
@@ -750,6 +1071,9 @@ export async function loadGameReportSections(
         sourceRevisions: projection.sourceRevisions,
         requestedStatVisibility,
         statVisibility: appliedStatVisibility,
+        requestedReplayVisibility: eventLoad.replay!.requestedVisibility,
+        replayVisibility: eventLoad.replay!.visibility,
+        replaySource: eventLoad.replay!.source,
         privateStatsStatus: managerLoad?.resolution.status || 'not-requested',
         privateStatsReason: managerLoad?.resolution.reason || null
       }

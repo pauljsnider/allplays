@@ -1001,7 +1001,11 @@ export function DiamondScorebook({
       if (showLoading) setLoading(true);
       try {
         const next = await client.load(teamId, gameId);
+        const previousInstanceId = snapshotRef.current?.instanceId || null;
         setSnapshot(next);
+        if (!previousInstanceId || previousInstanceId !== next.instanceId) {
+          setControlMode(next.captureMode);
+        }
         const nextQueueIdentity = getQueueIdentity(next, auth.user.uid);
         setQueueCount(nextQueueIdentity ? client.readQueue(nextQueueIdentity).length : 0);
         setNotice(null);
@@ -4129,14 +4133,19 @@ function AdvancedScoringPanel({
         {(activeRunner && canChooseDestination(activeRunner.base, runnerDestination) ? runnerDestination : '') === 'home' ? (
           <div className="mt-2 grid gap-2 sm:grid-cols-3">
             <label className="flex min-h-11 items-center gap-2 rounded-xl border border-gray-200 px-3 text-xs font-black text-gray-700">
-              <input type="checkbox" checked={runnerCountsRun} onChange={(event) => setRunnerCountsRun(event.target.checked)} />
+              <input
+                type="checkbox"
+                checked={runnerCountsRun}
+                disabled={disabled}
+                onChange={(event) => setRunnerCountsRun(event.target.checked)}
+              />
               Run counts
             </label>
             <label className="flex min-h-11 items-center gap-2 rounded-xl border border-gray-200 px-3 text-xs font-black text-gray-700">
               <input
                 type="checkbox"
                 checked={runnerRbi}
-                disabled={!runnerCountsRun}
+                disabled={disabled || !runnerCountsRun}
                 onChange={(event) => setRunnerRbi(event.target.checked)}
               />
               Credit RBI
@@ -4146,6 +4155,7 @@ function AdvancedScoringPanel({
               <select
                 className="mt-1 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-bold"
                 value={runnerEarned}
+                disabled={disabled}
                 onChange={(event) => setRunnerEarned(event.target.value as typeof runnerEarned)}
               >
                 <option value="">Not entered</option>
@@ -4521,13 +4531,32 @@ function AdvancedScoringPanel({
         </select>
         {structuredType === 'record_fielding' ? (
           <div className="mt-2 grid gap-2 sm:grid-cols-2">
-            <FielderSelect label="Putout" value={fieldingPutout} players={allKnownPlayers} onChange={setFieldingPutout} />
-            <FielderSelect label="First assist" value={fieldingAssistOne} players={allKnownPlayers} onChange={setFieldingAssistOne} />
-            <FielderSelect label="Second assist" value={fieldingAssistTwo} players={allKnownPlayers} onChange={setFieldingAssistTwo} />
+            <FielderSelect
+              label="Putout"
+              value={fieldingPutout}
+              players={allKnownPlayers}
+              disabled={disabled}
+              onChange={setFieldingPutout}
+            />
+            <FielderSelect
+              label="First assist"
+              value={fieldingAssistOne}
+              players={allKnownPlayers}
+              disabled={disabled}
+              onChange={setFieldingAssistOne}
+            />
+            <FielderSelect
+              label="Second assist"
+              value={fieldingAssistTwo}
+              players={allKnownPlayers}
+              disabled={disabled}
+              onChange={setFieldingAssistTwo}
+            />
             <FielderSelect
               label="Error charged to"
               value={fieldingErrorPlayer}
               players={allKnownPlayers}
+              disabled={disabled}
               onChange={setFieldingErrorPlayer}
             />
             {fieldingErrorPlayer ? (
@@ -4536,6 +4565,7 @@ function AdvancedScoringPanel({
                 <select
                   className="mt-1 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-bold"
                   value={fieldingErrorKind}
+                  disabled={disabled}
                   onChange={(event) => setFieldingErrorKind(event.target.value as typeof fieldingErrorKind)}
                 >
                   <option value="fielding">Fielding</option>
@@ -4547,6 +4577,7 @@ function AdvancedScoringPanel({
               label="Passed ball charged to"
               value={fieldingPassedBall}
               players={allKnownPlayers}
+              disabled={disabled}
               onChange={setFieldingPassedBall}
             />
             <label className="text-xs font-black text-gray-700">
@@ -4554,6 +4585,7 @@ function AdvancedScoringPanel({
               <select
                 className="mt-1 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-bold"
                 value={fieldingBattedBall}
+                disabled={disabled}
                 onChange={(event) => setFieldingBattedBall(event.target.value as typeof fieldingBattedBall)}
               >
                 <option value="unknown">Not entered</option>
@@ -4569,6 +4601,7 @@ function AdvancedScoringPanel({
                 className="mt-1 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-semibold"
                 value={fieldingLocation}
                 maxLength={80}
+                disabled={disabled}
                 onChange={(event) => setFieldingLocation(event.target.value)}
               />
             </label>
@@ -4576,7 +4609,7 @@ function AdvancedScoringPanel({
               <input
                 type="checkbox"
                 checked={fieldingDoublePlay}
-                disabled={fieldingTriplePlay}
+                disabled={disabled || fieldingTriplePlay}
                 onChange={(event) => setFieldingDoublePlay(event.target.checked)}
               />{' '}
               Double play
@@ -4585,7 +4618,7 @@ function AdvancedScoringPanel({
               <input
                 type="checkbox"
                 checked={fieldingTriplePlay}
-                disabled={fieldingDoublePlay}
+                disabled={disabled || fieldingDoublePlay}
                 onChange={(event) => setFieldingTriplePlay(event.target.checked)}
               />{' '}
               Triple play
@@ -4598,6 +4631,7 @@ function AdvancedScoringPanel({
               <select
                 className="mt-1 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-bold"
                 value={judgmentRunnerId}
+                disabled={disabled}
                 onChange={(event) => setJudgmentRunnerId(event.target.value)}
               >
                 <option value="">Play-level judgment</option>
@@ -4613,6 +4647,7 @@ function AdvancedScoringPanel({
               <select
                 className="mt-1 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-bold"
                 value={judgmentEarned}
+                disabled={disabled}
                 onChange={(event) => setJudgmentEarned(event.target.value as typeof judgmentEarned)}
               >
                 <option value="">Not entered</option>
@@ -4625,6 +4660,7 @@ function AdvancedScoringPanel({
               <select
                 className="mt-1 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-bold"
                 value={judgmentRbi}
+                disabled={disabled}
                 onChange={(event) => setJudgmentRbi(event.target.value as typeof judgmentRbi)}
               >
                 <option value="">Not entered</option>
@@ -4636,6 +4672,7 @@ function AdvancedScoringPanel({
               label="Responsible pitcher"
               value={judgmentPitcherId}
               players={allKnownPlayers}
+              disabled={disabled}
               onChange={setJudgmentPitcherId}
             />
             <label className="text-xs font-black text-gray-700">
@@ -4643,6 +4680,7 @@ function AdvancedScoringPanel({
               <select
                 className="mt-1 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-bold"
                 value={pitcherDecision}
+                disabled={disabled}
                 onChange={(event) => setPitcherDecision(event.target.value as typeof pitcherDecision)}
               >
                 <option value="">None</option>
@@ -4658,6 +4696,7 @@ function AdvancedScoringPanel({
                   <select
                     className="mt-1 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-bold"
                     value={pitcherDecisionSide}
+                    disabled={disabled}
                     onChange={(event) => {
                       setPitcherDecisionSide(event.target.value as DiamondSide);
                       setPitcherDecisionPlayerId('');
@@ -4672,6 +4711,7 @@ function AdvancedScoringPanel({
                   <select
                     className="mt-1 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-bold"
                     value={pitcherDecisionPlayerId}
+                    disabled={disabled}
                     onChange={(event) => setPitcherDecisionPlayerId(event.target.value)}
                   >
                     <option value="">Choose pitcher</option>
@@ -5182,11 +5222,13 @@ function FielderSelect({
   label,
   value,
   players,
+  disabled = false,
   onChange
 }: {
   label: string;
   value: string;
   players: DiamondPlayerRef[];
+  disabled?: boolean;
   onChange: (value: string) => void;
 }) {
   return (
@@ -5195,6 +5237,7 @@ function FielderSelect({
       <select
         className="mt-1 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-bold"
         value={value}
+        disabled={disabled}
         onChange={(event) => onChange(event.target.value)}
       >
         <option value="">Not entered</option>

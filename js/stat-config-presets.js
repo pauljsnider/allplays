@@ -12,15 +12,18 @@ function createDiamondSportConfig(sport, { fullCatalog = false } = {}) {
         { label: 'BB', acronym: 'BB', group: 'Plate Discipline', topStat: true },
         { label: 'FP', acronym: 'FP', group: 'Fielding', topStat: true }
     ];
-    return {
+    const config = {
         name: `${sport} Standard`,
         baseType: sport,
         columns: [...DIAMOND_STAT_COLUMNS],
-        diamondPublicTeamStatIds: DIAMOND_TEAM_STAT_CATALOG.map((definition) => definition.id),
         statDefinitions: fullCatalog
             ? DIAMOND_PLAYER_STAT_CATALOG.map((definition) => ({ ...definition }))
             : coreDefinitions
     };
+    if (fullCatalog) {
+        config.diamondPublicTeamStatIds = DIAMOND_TEAM_STAT_CATALOG.map((definition) => definition.id);
+    }
+    return config;
 }
 
 const PRESET_DEFINITIONS = [
@@ -77,20 +80,14 @@ const PRESET_DEFINITIONS = [
     {
         id: 'baseball',
         label: 'Baseball Standard',
-        description: 'Traditional batting, baserunning, pitching, fielding, and rate statistics.',
-        config: createDiamondSportConfig('Baseball', { fullCatalog: true })
+        description: 'At-bats, hits, runs, RBI, walks, and fielding plays.',
+        config: createDiamondSportConfig('Baseball')
     },
     {
         id: 'softball',
         label: 'Softball Standard',
-        description: 'Traditional softball batting, baserunning, pitching, fielding, and rate statistics.',
-        config: createDiamondSportConfig('Softball', { fullCatalog: true })
-    },
-    {
-        id: 'fastpitch',
-        label: 'Fastpitch Standard',
-        description: 'Traditional fastpitch batting, baserunning, pitching, fielding, and rate statistics.',
-        config: createDiamondSportConfig('Fastpitch', { fullCatalog: true })
+        description: 'At-bats, hits, runs, RBI, walks, and fielding plays.',
+        config: createDiamondSportConfig('Softball')
     },
     {
         id: 'football',
@@ -184,6 +181,20 @@ export function getDefaultStatConfigForSport(sport = '') {
     const normalizedSport = String(sport || '').trim().toLowerCase();
     const preset = PRESET_DEFINITIONS.find((entry) => String(entry.config.baseType || '').trim().toLowerCase() === normalizedSport);
     return preset ? normalizeStatTrackerConfig(cloneConfig(preset.config)) : null;
+}
+
+export function getDefaultDiamondStatConfigForSport(sport = '') {
+    const normalizedSport = String(sport || '').trim().toLowerCase();
+    const canonicalSport = normalizedSport === 'baseball'
+        ? 'Baseball'
+        : normalizedSport === 'softball'
+            ? 'Softball'
+            : normalizedSport === 'fastpitch' || normalizedSport === 'fastpitch softball'
+                ? 'Fastpitch'
+                : '';
+    return canonicalSport
+        ? normalizeStatTrackerConfig(createDiamondSportConfig(canonicalSport, { fullCatalog: true }))
+        : null;
 }
 
 export function serializeAdvancedStatDefinitions(config = {}) {

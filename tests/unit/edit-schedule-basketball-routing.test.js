@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { getGameReplayLifecycle } from '../../js/game-replay-video.js';
 import { hasReplayVideoEvidence } from '../../js/schedule-watch-cta.js';
+import { isLegacyTrackingEngine } from '../../js/tracking-engine.js';
 import { JSDOM } from 'jsdom';
 
 function readEditSchedule() {
@@ -103,7 +104,7 @@ function buildTrackChoiceDomHarness({
     const fakeWindow = { location: { href: '' } };
 
     const createHarness = new Function('deps', `
-        const { document, window, alert, allConfigs, currentTeam, currentTeamId, diamondScorebookUiEnabled, getGoalSportProfile, DIAMOND_ENGINE, buildDiamondTrackerUrl, getDiamondGameAccess } = deps;
+        const { document, window, alert, allConfigs, currentTeam, currentTeamId, diamondScorebookUiEnabled, getGoalSportProfile, DIAMOND_ENGINE, buildDiamondTrackerUrl, isLegacyTrackingEngine, getDiamondGameAccess } = deps;
         ${helpersMatch[0]}
         gamesCache = deps.gamesCache;
         ${handlersMatch[0]}
@@ -136,6 +137,7 @@ function buildTrackChoiceDomHarness({
         getGoalSportProfile: goalSportProfileStub,
         DIAMOND_ENGINE: 'diamond-v2',
         buildDiamondTrackerUrl: (teamId, gameId) => `/app/#/schedule/${encodeURIComponent(teamId)}/${encodeURIComponent(gameId)}/diamond-v2`,
+        isLegacyTrackingEngine,
         getDiamondGameAccess: vi.fn(async () => diamondAccess)
     });
 }
@@ -303,6 +305,46 @@ describe('edit schedule basketball tracker routing', () => {
         expect(harness.getTrackerParentId('basketball-tracker-live')).toBe('tracker-advanced-actions');
         harness.click('basketball-tracker-standard');
         expect(harness.getHref()).toBe('track.html#teamId=team-123&gameId=game-generic');
+    });
+
+    it.each([
+        ['Soccer', 'legacy', 'soccer-config'],
+        ['Basketball', 'standard', 'basketball-config'],
+        ['Baseball', 'legacy-v1', 'baseball-config'],
+        ['Baseball', 'classic', 'baseball-config']
+    ])('keeps the %s %s tracker workflow available while Diamond is dark', async (sport, trackingEngine, configId) => {
+        const harness = buildTrackChoiceDomHarness({
+            allConfigs: [{ id: configId, baseType: sport }],
+            currentTeam: { sport },
+            gamesCache: {
+                'game-legacy': { id: 'game-legacy', sport, trackingEngine, statTrackerConfigId: configId }
+            },
+            diamondScorebookUiEnabled: false
+        });
+
+        await harness.handleTrackClick('game-legacy');
+
+        expect(harness.alert).not.toHaveBeenCalled();
+        expect(harness.isHidden('basketball-tracker-modal')).toBe(false);
+        expect(harness.getDiamondGameAccess).not.toHaveBeenCalled();
+        expect(harness.getHref()).toBe('');
+    });
+
+    it('fails an unknown tracking engine closed before opening a legacy tracker', async () => {
+        const harness = buildTrackChoiceDomHarness({
+            allConfigs: [{ id: 'soccer-config', baseType: 'Soccer' }],
+            currentTeam: { sport: 'Soccer' },
+            gamesCache: {
+                'game-future': { id: 'game-future', sport: 'Soccer', trackingEngine: 'future-engine', statTrackerConfigId: 'soccer-config' }
+            },
+            diamondScorebookUiEnabled: false
+        });
+
+        await harness.handleTrackClick('game-future');
+
+        expect(harness.alert).toHaveBeenCalledWith('This game uses a newer scoring engine that this page cannot edit.');
+        expect(harness.isHidden('basketball-tracker-modal')).toBe(true);
+        expect(harness.getDiamondGameAccess).not.toHaveBeenCalled();
     });
 
     it.each([

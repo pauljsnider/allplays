@@ -207,6 +207,7 @@ function createEnvironment(initialState, overrides = {}) {
         'name',
         'description',
         'sport',
+        'diamond-fastpitch-sport-option',
         'diamond-team-setup',
         'diamond-scorebook-enabled',
         'diamond-team-setup-options',
@@ -375,11 +376,11 @@ function extractEditTeamModule() {
             'const { validateProfilePhotoFile } = deps.profilePhotoPaths;'
         )
         .replace(
-            "import { getDefaultStatConfigForSport } from './js/stat-config-presets.js?v=9';",
-            'const { getDefaultStatConfigForSport } = deps.statConfigPresets;'
+            "import { getDefaultDiamondStatConfigForSport, getDefaultStatConfigForSport } from './js/stat-config-presets.js?v=10';",
+            'const { getDefaultDiamondStatConfigForSport, getDefaultStatConfigForSport } = deps.statConfigPresets;'
         )
         .replace(
-            "import { buildTeamSportConfigMigrationPlan } from './js/team-stat-config-migration.js?v=8';",
+            "import { buildTeamSportConfigMigrationPlan } from './js/team-stat-config-migration.js?v=9';",
             'const { buildTeamSportConfigMigrationPlan } = deps.teamStatConfigMigration;'
         )
         .replace(
@@ -562,6 +563,9 @@ async function bootEditTeam(initialState, overrides = {}, dependencyOverrides = 
             }
         },
         statConfigPresets: {
+            getDefaultDiamondStatConfigForSport() {
+                return null;
+            },
             getDefaultStatConfigForSport() {
                 return null;
             }
@@ -1120,6 +1124,72 @@ describe('edit team admin access persistence', () => {
             expect(configurationCalls).toEqual([]);
             expect(env.state.createCalls).toHaveLength(1);
             expect(env.state.createCalls[0].teamData.sport).toBe('Baseball');
+        } finally {
+            env.cleanup();
+        }
+    });
+
+    it('retries Diamond enrollment on the existing team after a transient setup failure', async () => {
+        const initialState = {
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            team: {
+                id: 'team-1',
+                ownerId: 'owner-1',
+                name: 'Existing Sharks',
+                sport: 'Baseball',
+                standingsConfig: { enabled: false, rankingMode: 'points', tiebreakers: [] },
+                isPublic: true,
+                adminEmails: []
+            },
+            createCalls: [],
+            updateCalls: []
+        };
+        const configurationCalls = [];
+        let attempt = 0;
+        const env = await bootEditTeam(initialState, {
+            href: 'http://example.com/edit-team.html?teamId=team-1&created=1',
+            runtimeConfig: { diamondScorebookUiEnabled: true }
+        }, {
+            diamondScorebookClient: {
+                async configureDiamondTeamForSport(...args) {
+                    configurationCalls.push(deepClone(args));
+                    attempt += 1;
+                    if (attempt === 1) throw new Error('temporary setup failure');
+                    return { configured: true, enabled: true };
+                }
+            }
+        });
+        try {
+            expect(env.elements.get('diamond-team-setup').hidden).toBe(false);
+            env.elements.get('diamond-scorebook-enabled').checked = true;
+            await env.elements.get('diamond-scorebook-enabled').dispatchEvent(new MockEvent('change'));
+            env.elements.get('diamond-rules-profile').value = 'baseball-nfhs@1';
+            env.elements.get('diamond-capture-mode').value = 'full';
+
+            await env.elements.get('team-form').requestSubmit();
+
+            expect(env.alerts.at(-1)).toContain('Retry from this page; no second team will be created.');
+            expect(env.window.location.href).toContain('teamId=team-1');
+            expect(env.elements.get('diamond-team-setup').hidden).toBe(false);
+
+            await env.elements.get('team-form').requestSubmit();
+
+            expect(env.state.createCalls).toEqual([]);
+            expect(configurationCalls).toEqual([
+                ['team-1', 'Baseball', {
+                    enabled: true,
+                    rulesProfileId: 'baseball-nfhs',
+                    rulesProfileVersion: 1,
+                    captureMode: 'full'
+                }],
+                ['team-1', 'Baseball', {
+                    enabled: true,
+                    rulesProfileId: 'baseball-nfhs',
+                    rulesProfileVersion: 1,
+                    captureMode: 'full'
+                }]
+            ]);
+            expect(env.window.location.href).toBe('http://example.com/dashboard.html');
         } finally {
             env.cleanup();
         }

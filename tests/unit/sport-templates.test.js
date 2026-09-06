@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { getSportStatTemplate, getSportTemplateOptions } from '../../js/sport-templates.js';
 
 describe('sport stat templates', () => {
-    it('includes baseball and softball templates with passive fielding play', () => {
+    it('keeps the classic baseball and softball templates unchanged', () => {
         expect(getSportStatTemplate('Baseball')).toMatchObject({
             name: 'Baseball Standard',
             baseType: 'Baseball',
@@ -13,11 +13,7 @@ describe('sport stat templates', () => {
             baseType: 'Softball',
             columns: ['AB', 'H', 'R', 'RBI', 'BB', 'FP']
         });
-        expect(getSportStatTemplate('fastpitch')).toMatchObject({
-            name: 'Fastpitch Standard',
-            baseType: 'Fastpitch',
-            columns: ['AB', 'H', 'R', 'RBI', 'BB', 'FP']
-        });
+        expect(getSportStatTemplate('fastpitch')).toBeNull();
     });
 
     it('keeps existing basketball and soccer templates available', () => {
@@ -25,8 +21,7 @@ describe('sport stat templates', () => {
             'Basketball',
             'Soccer',
             'Baseball',
-            'Softball',
-            'Fastpitch'
+            'Softball'
         ]);
     });
 });

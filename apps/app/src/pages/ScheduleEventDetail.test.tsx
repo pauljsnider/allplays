@@ -1781,12 +1781,17 @@ describe('ScheduleEventDetail live score control visibility', () => {
     expect(screen.getByTestId('standard-tracker-launch')).toBeTruthy();
   });
 
-  it('keeps recovery entry visible for a game already owned by Diamond while the UI key is off', async () => {
+  it('routes a completed Diamond-owned game away from activation and legacy scoring controls', async () => {
+    window.__ALLPLAYS_CONFIG__ = { diamondScorebookUiEnabled: true } as any;
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
       events: [buildEvent({
         sport: 'Baseball',
         canUpdateScore: true,
+        status: 'completed',
+        liveStatus: 'completed',
         trackingEngine: 'diamond-v2',
+        diamondScorebookInstanceId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        diamondRevision: 7,
         statTrackerConfigId: 'baseball-default'
       })],
       children: []
@@ -1799,6 +1804,36 @@ describe('ScheduleEventDetail live score control visibility', () => {
       'href',
       '/schedule/team-1/game-1/diamond-v2'
     );
+    expect(screen.queryByTestId('diamond-activation-card')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Start Diamond scorebook' })).toBeNull();
+    expect(screen.queryByTestId('standard-tracker-launch')).toBeNull();
+    expect(screen.queryByTestId('live-score-editor')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Home score up' })).toBeNull();
+    expect(diamondScorebookMocks.getDiamondAccess).not.toHaveBeenCalled();
+  });
+
+  it('keeps recovery entry visible for a game already owned by Diamond while the UI key is off', async () => {
+    window.__ALLPLAYS_CONFIG__ = { diamondScorebookUiEnabled: false } as any;
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        sport: 'Baseball',
+        canUpdateScore: true,
+        trackingEngine: 'diamond-v2',
+        diamondScorebookInstanceId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        diamondRevision: 7,
+        statTrackerConfigId: 'baseball-default'
+      })],
+      children: []
+    });
+    scheduleHubMocks.buildGameHubDestinations.mockReturnValue([]);
+
+    renderScheduleEventDetailWithLocation('/schedule/team-1/game-1?childId=player-1&section=game');
+
+    expect(await screen.findByTestId('diamond-scorebook-launch')).toHaveAttribute(
+      'href',
+      '/schedule/team-1/game-1/diamond-v2'
+    );
+    expect(screen.queryByTestId('diamond-activation-card')).toBeNull();
     expect(diamondScorebookMocks.getDiamondAccess).not.toHaveBeenCalled();
   });
 });

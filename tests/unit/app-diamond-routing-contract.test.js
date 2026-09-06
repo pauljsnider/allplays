@@ -21,12 +21,14 @@ describe('app Diamond routing compatibility contract', () => {
         expect(service).toContain('trackingEngine: game.trackingEngine || null');
     });
 
-    it('fails the legacy app tracker closed for every explicit engine', () => {
+    it('keeps recognized legacy engines editable while failing unknown engines closed', () => {
         const source = readRepo('apps/app/src/pages/StandardTracker.tsx');
         const hub = readRepo('apps/app/src/pages/schedule/ScheduleGameHubSection.tsx');
 
-        expect(source).toContain('&& !loadedEvent.trackingEngine');
-        expect(hub).toContain('const canUseLegacyScoring = canUpdateScore && !event.trackingEngine');
+        expect(source).toContain('&& isLegacyTrackingEngine(loadedEvent.trackingEngine)');
+        expect(hub).toContain('const isLegacyOwned = isLegacyTrackingEngine(event.trackingEngine)');
+        expect(hub).toContain('const hasUnknownTrackingEngine = !isDiamondOwned && !isLegacyOwned');
+        expect(hub).toContain('const canUseLegacyScoring = canUpdateScore && isLegacyOwned');
         expect(hub).toContain('data-testid="diamond-scorebook-launch"');
         expect(hub).toContain('data-testid="diamond-activation-card"');
         expect(hub).toContain("service.getDiamondAccess(event.teamId, { gameId: event.id })");

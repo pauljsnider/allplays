@@ -984,6 +984,7 @@
         import { getGameReplayLifecycle } from './js/game-replay-video.js?v=3';
         import { hasReplayVideoEvidence } from './js/schedule-watch-cta.js?v=3';
         import { DIAMOND_ENGINE, buildDiamondTrackerUrl } from './js/diamond-scorebook-routing.js?v=2';
+        import { isLegacyTrackingEngine } from './js/tracking-engine.js?v=1';
         import { activateDiamondGameForLegacy, cancelDiamondGameForLegacy, getDiamondGameAccess } from './js/diamond-scorebook-client.js?v=4';
         import { isDiamondScorebookUiEnabled } from './js/launch-features.js?v=1';
 
@@ -2866,7 +2867,7 @@
                 window.location.href = buildDiamondTrackerUrl(currentTeamId, gameId);
                 return;
             }
-            if (game.trackingEngine) {
+            if (!isLegacyTrackingEngine(game.trackingEngine)) {
                 alert('This game uses a newer scoring engine that this page cannot edit.');
                 return;
             }

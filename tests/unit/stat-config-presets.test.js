@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+    getDefaultDiamondStatConfigForSport,
     getDefaultStatConfigForSport,
     getStatConfigPresetById,
     getStatConfigPresetOptions,
@@ -18,7 +19,6 @@ describe('stat config presets', () => {
             'soccer',
             'baseball',
             'softball',
-            'fastpitch',
             'football',
             'volleyball'
         ]));
@@ -50,12 +50,11 @@ describe('stat config presets', () => {
         expect(preset.statDefinitions).toEqual([]);
     });
 
-    it('matches the advertised diamond sport stat templates', () => {
+    it('preserves the compact classic Baseball and Softball defaults', () => {
         const expectedColumns = ['AB', 'H', 'R', 'RBI', 'BB', 'FP'];
 
         const baseball = getDefaultStatConfigForSport('Baseball');
         const softball = getDefaultStatConfigForSport('softball');
-        const fastpitch = getDefaultStatConfigForSport('fastpitch');
 
         expect(baseball).toEqual(expect.objectContaining({
             name: 'Baseball Standard',
@@ -67,15 +66,8 @@ describe('stat config presets', () => {
                 expect.objectContaining({ id: 'fp', label: 'FP', group: 'Fielding', type: 'base', format: 'number', precision: 0, topStat: true })
             ])
         }));
-        expect(baseball.statDefinitions).toEqual(expect.arrayContaining([
-            expect.objectContaining({ id: 'pa', group: 'Batting', type: 'base' }),
-            expect.objectContaining({ id: 'avg', group: 'Batting Rates', type: 'derived', precision: 3 }),
-            expect.objectContaining({ id: 'sb', group: 'Baserunning', type: 'base' }),
-            expect.objectContaining({ id: 'ip_outs', group: 'Pitching', type: 'base' }),
-            expect.objectContaining({ id: 'era', group: 'Pitching Rates', type: 'derived', precision: 2, rankingOrder: 'asc' }),
-            expect.objectContaining({ id: 'fpct', group: 'Fielding Rates', type: 'derived', precision: 3 })
-        ]));
-        expect(baseball.statDefinitions.length).toBeGreaterThan(60);
+        expect(baseball.statDefinitions).toHaveLength(6);
+        expect(baseball).not.toHaveProperty('diamondPublicTeamStatIds');
         expect(softball).toEqual(expect.objectContaining({
             name: 'Softball Standard',
             baseType: 'Softball',
@@ -86,13 +78,31 @@ describe('stat config presets', () => {
                 expect.objectContaining({ id: 'fp', label: 'FP', group: 'Fielding', type: 'base', format: 'number', precision: 0, topStat: true })
             ])
         }));
-        expect(fastpitch).toEqual(expect.objectContaining({
-            name: 'Fastpitch Standard',
-            baseType: 'Fastpitch',
-            columns: expectedColumns
-        }));
-        expect(fastpitch.statDefinitions).toEqual(baseball.statDefinitions.map((definition) => ({ ...definition })));
         expect(softball.statDefinitions).toEqual(baseball.statDefinitions.map((definition) => ({ ...definition })));
+        expect(softball).not.toHaveProperty('diamondPublicTeamStatIds');
+        expect(getDefaultStatConfigForSport('fastpitch')).toBeNull();
+    });
+
+    it('builds the expanded stat catalog only for explicit Diamond setup', () => {
+        const baseball = getDefaultDiamondStatConfigForSport('Baseball');
+        const softball = getDefaultDiamondStatConfigForSport('softball');
+        const fastpitch = getDefaultDiamondStatConfigForSport('fastpitch');
+
+        for (const config of [baseball, softball, fastpitch]) {
+            expect(config.statDefinitions).toEqual(expect.arrayContaining([
+                expect.objectContaining({ id: 'pa', group: 'Batting', type: 'base' }),
+                expect.objectContaining({ id: 'avg', group: 'Batting Rates', type: 'derived', precision: 3 }),
+                expect.objectContaining({ id: 'sb', group: 'Baserunning', type: 'base' }),
+                expect.objectContaining({ id: 'ip_outs', group: 'Pitching', type: 'base' }),
+                expect.objectContaining({ id: 'era', group: 'Pitching Rates', type: 'derived', precision: 2, rankingOrder: 'asc' }),
+                expect.objectContaining({ id: 'fpct', group: 'Fielding Rates', type: 'derived', precision: 3 })
+            ]));
+            expect(config.statDefinitions.length).toBeGreaterThan(60);
+            expect(config.diamondPublicTeamStatIds.length).toBeGreaterThan(5);
+        }
+        expect(baseball).toMatchObject({ name: 'Baseball Standard', baseType: 'Baseball' });
+        expect(softball).toMatchObject({ name: 'Softball Standard', baseType: 'Softball' });
+        expect(fastpitch).toMatchObject({ name: 'Fastpitch Standard', baseType: 'Fastpitch' });
 
     });
 

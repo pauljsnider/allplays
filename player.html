@@ -269,6 +269,7 @@
         import { DIAMOND_PLAYER_STAT_CATALOG, aggregateCoverageAwareSeasonStats, getCoverageAwareStatValue, getDiamondPublicPlayerStatsCollectionPath, getManagerDiamondStatCatalog, getPublicDiamondStatCatalog, isDiamondV2Game, readCoverageAwareStatDocument, resolveDiamondManagerStatDocuments, resolveDiamondPublicStatDocuments } from './js/diamond-stat-presentation.js?v=6';
         import { loadDiamondManagerStats } from './js/diamond-manager-stats.js?v=3';
         import { buildDiamondStatsCsv, downloadDiamondStatsCsv, getDiamondStatsExportFilename } from './js/diamond-stat-export.js?v=6';
+        import { loadCompleteDiamondReportEvents } from './js/diamond-report-events.js?v=1';
 
         let currentUser = null;
         let currentPlayer = null; // Store for modal access
@@ -607,7 +608,8 @@
                                 stats: playerStats,
                                 completeStats: completeStatsByPlayerId[id],
                                 statPresentation: statPresentationByPlayerId[id] || null,
-                                timeMs: typeof statData.timeMs === 'number' ? statData.timeMs : 0
+                                timeMs: typeof statData.timeMs === 'number' ? statData.timeMs : 0,
+                                sourcePlayIds: diamondGame ? [...statData.sourcePlayIds] : null
                             };
                         }
                     });
@@ -627,27 +629,49 @@
                         statPresentationByPlayerId,
                         statsLoadStatus,
                         playerGameStats: null,
-                        events: []
+                        events: [],
+                        eventsLoadStatus: diamondGame && statsLoadStatus !== 'complete' ? 'unavailable' : 'complete'
                     };
                 }
 
-                const eventsQuery = query(
-                    collection(db, `teams/${teamId}/games/${gameId}/events`),
-                    orderBy('timestamp', 'asc')
-                );
                 let events = [];
+                let eventsLoadStatus = 'complete';
                 try {
-                    const eventsSnapshot = await getDocs(eventsQuery);
-                    events = eventsSnapshot.docs
-                        .map((docSnap) => docSnap.data())
-                        .filter((event) => event.playerId === playerId || (event.text && event.text.includes(playerName)))
-                        .map((event) => ({
+                    if (diamondGame) {
+                        const diamondReplay = await loadCompleteDiamondReportEvents({
+                            teamId,
+                            gameId,
+                            game,
+                            requestedVisibility: requestManagerStats ? 'manager-internal' : 'public',
+                            sourcePlayIds: selectedPlayerStats.sourcePlayIds,
+                            invoke: async (name, payload) => {
+                                const response = await httpsCallable(functions, name)(payload);
+                                return response?.data;
+                            }
+                        });
+                        events = diamondReplay.events.map((event) => ({
                             ...event,
                             gameId,
                             opponent: game.opponent || 'Opponent'
                         }));
+                    } else {
+                        const eventsQuery = query(
+                            collection(db, `teams/${teamId}/games/${gameId}/events`),
+                            orderBy('timestamp', 'asc')
+                        );
+                        const eventsSnapshot = await getDocs(eventsQuery);
+                        events = eventsSnapshot.docs
+                            .map((docSnap) => docSnap.data())
+                            .filter((event) => event.playerId === playerId || (event.text && event.text.includes(playerName)))
+                            .map((event) => ({
+                                ...event,
+                                gameId,
+                                opponent: game.opponent || 'Opponent'
+                            }));
+                    }
                 } catch (error) {
                     console.warn('Player events unavailable for game:', gameId, error);
+                    eventsLoadStatus = 'unavailable';
                 }
 
                 return {
@@ -668,7 +692,8 @@
                         statPresentation: selectedPlayerStats.statPresentation,
                         timeMs: selectedPlayerStats.timeMs
                     },
-                    events
+                    events,
+                    eventsLoadStatus
                 };
             }));
 
@@ -818,6 +843,7 @@
                 const legacySeasonStatsByPlayerId = {};
                 const diamondGames = [];
                 const allEvents = [];
+                let eventsLoadIncomplete = false;
                 let totalTimeMs = 0;
                 let gamesWithTime = 0;
                 const managerStatLoad = await loadPlayerGameData(teamId, games, playerId, player.name, {
@@ -832,7 +858,7 @@
                     currentDiamondPlayerStatCatalog = diamondStatCatalog;
                 }
 
-                gameLoadResults.forEach(({ game, diamondGame, statDocuments, playerGameStats, statsByPlayerId, events }) => {
+                gameLoadResults.forEach(({ game, diamondGame, statDocuments, playerGameStats, statsByPlayerId, events, eventsLoadStatus }) => {
                     if (diamondGame) {
                         diamondGames.push({ game, documents: statDocuments });
                     }
@@ -861,6 +887,7 @@
                     }
 
                     allEvents.push(...events);
+                    if (diamondGame && eventsLoadStatus !== 'complete') eventsLoadIncomplete = true;
                 });
 
                 if (diamondGames.length > 0) {
@@ -1476,7 +1503,13 @@
                         eventsByGame[event.gameId].events.push(event);
                     });
 
-                    playerEventsDiv.innerHTML = Object.entries(eventsByGame).map(([gameId, data]) => `
+                    playerEventsDiv.innerHTML = `
+                        ${eventsLoadIncomplete ? `
+                            <div class="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                                Some Diamond play-by-play could not be refreshed completely. Refresh this page to retry.
+                            </div>
+                        ` : ''}
+                        ${Object.entries(eventsByGame).map(([gameId, data]) => `
                         <div class="mb-6 bg-white rounded-xl border border-gray-200 overflow-hidden hover:shadow-md transition">
                             <div class="bg-gradient-to-r from-gray-50 to-white px-6 py-4 border-b border-gray-200">
                                 <div class="flex justify-between items-center">
@@ -1508,7 +1541,17 @@
                     }).join('')}
                             </div>
                         </div>
-                    `).join('');
+                    `).join('')}`;
+                } else if (eventsLoadIncomplete) {
+                    playerEventsDiv.innerHTML = `
+                        <div class="text-center py-12 bg-amber-50 rounded-xl border border-amber-200">
+                            <svg class="w-16 h-16 text-amber-400 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M5.07 19h13.86c1.54 0 2.5-1.67 1.73-3L13.73 4c-.77-1.33-2.69-1.33-3.46 0L3.34 16c-.77 1.33.19 3 1.73 3z"></path>
+                            </svg>
+                            <p class="text-amber-900 font-medium">Diamond play-by-play could not be refreshed completely.</p>
+                            <p class="text-amber-800 text-sm mt-1">Refresh this page to retry.</p>
+                        </div>
+                    `;
                 } else {
                     playerEventsDiv.innerHTML = `
                         <div class="text-center py-12 bg-white rounded-xl border border-gray-200">

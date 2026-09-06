@@ -33,6 +33,16 @@ describe("Diamond Scorebook Functions wiring", () => {
   });
 
   it("routes Diamond-only live engagement through the verified server writer", () => {
+    expect(source).toContain("require('firebase-admin/firestore')");
+    expect(source).toContain(
+      "admin.firestore.FieldPath || adminFirestore.FieldPath",
+    );
+    expect(source).toContain(
+      "admin.firestore.FieldValue || adminFirestore.FieldValue",
+    );
+    expect(source).toContain(
+      "admin.firestore.Timestamp || adminFirestore.Timestamp",
+    );
     expect(source).toContain(
       "require('./diamond-live-engagement-handlers.cjs')",
     );
@@ -41,6 +51,10 @@ describe("Diamond Scorebook Functions wiring", () => {
     );
     expect(source).toContain(
       "assertSensitiveWrite: assertSensitiveEmailVerified",
+    );
+    expect(source).toContain("FieldValue: FirestoreFieldValue");
+    expect(source).not.toMatch(
+      /(?:FieldValue|fieldValue): admin\.firestore\.FieldValue/,
     );
     for (const name of [
       "postDiamondLiveChat",

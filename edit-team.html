@@ -104,7 +104,7 @@
                         <option value="Soccer">Soccer — GOALS/SHOTS/PASSES/BLOCKS/HUSTLE template</option>
                         <option value="Baseball">Baseball — AB/H/R/RBI/BB/FP template</option>
                         <option value="Softball">Softball — AB/H/R/RBI/BB/FP template</option>
-                        <option value="Fastpitch">Fastpitch — AB/H/R/RBI/BB/FP template</option>
+                        <option id="diamond-fastpitch-sport-option" value="Fastpitch" data-diamond-only hidden>Fastpitch — AB/H/R/RBI/BB/FP template</option>
                     </select>
                     <p class="text-xs text-gray-500 mt-1">Only sports with built-in stat tracker templates are listed.
                     </p>
@@ -611,8 +611,8 @@
     <script type="module">
         import { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, getPlayerPrivateProfile, copySelectedPlayersForTeamRollover, uploadTeamPhoto, deleteLegacyImageUpload, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail, getTeamAccessCodes, getConfigs, getGames, updateGame, getRegistrationSources, syncRegistrationProvider } from './js/db.js?v=4433195';
         import { validateProfilePhotoFile } from './js/profile-photo-paths.js?v=3';
-        import { getDefaultStatConfigForSport } from './js/stat-config-presets.js?v=9';
-        import { buildTeamSportConfigMigrationPlan } from './js/team-stat-config-migration.js?v=8';
+        import { getDefaultDiamondStatConfigForSport, getDefaultStatConfigForSport } from './js/stat-config-presets.js?v=10';
+        import { buildTeamSportConfigMigrationPlan } from './js/team-stat-config-migration.js?v=9';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=443371';
         import { checkAuth, sendInviteEmail } from './js/auth.js?v=4433199';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js?v=443347';
@@ -629,6 +629,7 @@
         renderFooter(document.getElementById('footer-container'));
 
         const diamondScorebookUiEnabled = isDiamondScorebookUiEnabled();
+        document.getElementById('diamond-fastpitch-sport-option').hidden = !diamondScorebookUiEnabled;
 
         const initialUrlParams = getUrlParams();
         const { teamId: initialTeamId } = initialUrlParams;
@@ -677,6 +678,7 @@
         let currentRegistrationSource = null;
         let currentTeamPassConfig = {};
         let currentTeamSport = '';
+        let currentTeamDiamondScorebookEnabled = false;
         let lastRenderedRolloverSourceTeamId = null;
         let isInitPending = true;
         let selectedRegistrationTeam = null;
@@ -692,10 +694,12 @@
             const profiles = diamondScorebookUiEnabled
                 ? listDiamondRulesProfilesForSport(document.getElementById('sport').value)
                 : [];
-            const availableForCreation = diamondScorebookUiEnabled === true && !initialTeamId && profiles.length > 0;
-            section.hidden = !availableForCreation;
-            section.classList.toggle('hidden', !availableForCreation);
-            if (!availableForCreation) {
+            const availableForSetup = diamondScorebookUiEnabled === true
+                && !currentTeamDiamondScorebookEnabled
+                && profiles.length > 0;
+            section.hidden = !availableForSetup;
+            section.classList.toggle('hidden', !availableForSetup);
+            if (!availableForSetup) {
                 enabled.checked = false;
                 options.hidden = true;
                 options.classList.add('hidden');
@@ -1182,7 +1186,10 @@
             document.getElementById('registrationLastSyncStatus').value = 'Not synced';
             renderRegistrationConnectionStatus({});
             if (record.sport) {
-                document.getElementById('sport').value = record.sport;
+                const importedSport = String(record.sport || '').trim();
+                document.getElementById('sport').value = !diamondScorebookUiEnabled && importedSport.toLowerCase() === 'fastpitch'
+                    ? ''
+                    : importedSport;
                 syncDiamondTeamSetup({ resetProfile: true });
             }
             const details = [record.organizationName, record.season, record.division].filter(Boolean).join(' • ');
@@ -1607,8 +1614,14 @@
 
                 document.getElementById('name').value = team.name || '';
                 document.getElementById('description').value = team.description || '';
-                document.getElementById('sport').value = team.sport || '';
-                currentTeamSport = team.sport || '';
+                const teamSport = String(team.sport || '').trim();
+                if (teamSport.toLowerCase() === 'fastpitch') {
+                    document.getElementById('diamond-fastpitch-sport-option').hidden = false;
+                }
+                document.getElementById('sport').value = teamSport;
+                currentTeamSport = teamSport;
+                currentTeamDiamondScorebookEnabled = team.diamondScorebook?.enabled === true;
+                syncDiamondTeamSetup({ resetProfile: true });
                 document.getElementById('teamColorPrimary').value = getTeamColorValue(team, 'primary', '#5ec9c5');
                 document.getElementById('teamColorSecondary').value = getTeamColorValue(team, 'secondary', '#d32f3a');
                 document.getElementById('notificationEmail').value = team.notificationEmail || '';
@@ -2176,6 +2189,8 @@
                         };
                     })())
                 };
+                const diamondSetupRequested = diamondScorebookUiEnabled === true
+                    && document.getElementById('diamond-scorebook-enabled').checked;
 
                 if (!currentTeamId) {
                     teamData.ownerId = currentUser.uid;
@@ -2234,6 +2249,28 @@
                     }
                     currentTeamSport = teamData.sport;
                     loadedAdminEmails = [...normalizedAdminEmails];
+                    if (diamondSetupRequested && !currentTeamDiamondScorebookEnabled) {
+                        const [rulesProfileId, rawRulesProfileVersion] = document.getElementById('diamond-rules-profile').value.split('@');
+                        try {
+                            const diamondSetup = await configureDiamondTeamForSport(currentTeamId, teamData.sport, {
+                                enabled: true,
+                                rulesProfileId,
+                                rulesProfileVersion: Number(rawRulesProfileVersion),
+                                captureMode: document.getElementById('diamond-capture-mode').value
+                            });
+                            if (!diamondSetup.configured || !diamondSetup.enabled) {
+                                throw new Error('The server did not confirm Diamond enrollment.');
+                            }
+                            currentTeamDiamondScorebookEnabled = true;
+                            syncDiamondTeamSetup();
+                        } catch (diamondSetupError) {
+                            console.warn('Team saved without optional Diamond scorebook setup:', diamondSetupError);
+                            alert(`Team saved, but Diamond Scorebook v2 could not be enabled. Retry from this page; no second team will be created.\n\nError: ${diamondSetupError.message}`);
+                            btn.disabled = false;
+                            btn.textContent = 'Save Team';
+                            return;
+                        }
+                    }
                 } else {
                     const newTeamId = await createTeam(teamData);
                     currentTeamId = newTeamId;
@@ -2291,7 +2328,9 @@
                     }
 
                     // Auto-create standard config based on sport
-                    const defaultStatConfig = getDefaultStatConfigForSport(teamData.sport);
+                    const defaultStatConfig = diamondSetupRequested
+                        ? getDefaultDiamondStatConfigForSport(teamData.sport)
+                        : getDefaultStatConfigForSport(teamData.sport);
                     if (defaultStatConfig) {
                         try {
                             const configId = await addConfig(newTeamId, defaultStatConfig);
@@ -2307,7 +2346,7 @@
                     // Diamond is an explicit team opt-in. The callable may be
                     // unavailable while rollout is dark; that never rolls back
                     // the team or its classic stat tracker.
-                    if (diamondScorebookUiEnabled === true && document.getElementById('diamond-scorebook-enabled').checked) {
+                    if (diamondSetupRequested) {
                         const [rulesProfileId, rawRulesProfileVersion] = document.getElementById('diamond-rules-profile').value.split('@');
                         try {
                             const diamondSetup = await configureDiamondTeamForSport(newTeamId, teamData.sport, {

@@ -105,6 +105,9 @@ const nativeFirestoreMutationMocks = vi.hoisted(() => ({
 const nativeCallableMocks = vi.hoisted(() => ({
   callNativeFirebaseFunction: vi.fn()
 }));
+const diamondManagerStatsMocks = vi.hoisted(() => ({
+  loadDiamondManagerStats: vi.fn()
+}));
 
 const seasonRecordMocks = vi.hoisted(() => ({
   calculateSeasonRecord: vi.fn(() => ({ wins: 0, losses: 0, ties: 0 })),
@@ -181,6 +184,11 @@ vi.mock('./nativeCallable', () => nativeCallableMocks);
 vi.mock('./nativeRestLogging', () => ({ sanitizeErrorForLogging: vi.fn((error) => error) }));
 vi.mock('./profileService', () => ({ loadProfileDocument: vi.fn(async () => ({})) }));
 vi.mock('./scheduleService', () => scheduleServiceMocks);
+vi.mock('./diamondManagerStatsService', () => ({
+  DIAMOND_MANAGER_STATS_MAX_GAMES: 40,
+  DIAMOND_MANAGER_STATS_MAX_PLAYERS: 25,
+  loadDiamondManagerStats: diamondManagerStatsMocks.loadDiamondManagerStats
+}));
 
 import {
   __resetTeamDetailBaseSnapshotCacheForTests,
@@ -320,6 +328,12 @@ beforeEach(() => {
   vi.mocked(hasFullTeamAccess).mockImplementation(() => true);
   vi.mocked(selectAnalyticsConfig).mockReturnValue(null);
   vi.mocked(buildPlayerLeaderboardSnapshot).mockReturnValue({ topStats: [] } as any);
+  diamondManagerStatsMocks.loadDiamondManagerStats.mockResolvedValue({
+    status: 'unavailable',
+    reason: 'private-read-unavailable',
+    documentsByGameId: new Map(),
+    teamDocumentsByGameId: new Map()
+  });
   seasonRecordMocks.listSeasonLabels.mockReturnValue([]);
   dbMocks.getPlayersWithPrivateRosterContacts.mockImplementation((_teamId: string, options: any = {}) => (
     Array.isArray(options.players) ? options.players : dbMocks.getPlayers(_teamId, options)
@@ -879,6 +893,93 @@ describe('addRosterPlayerForApp browser photo scope', () => {
   });
 });
 
+function buildTeamDiamondGame(id: string, revision = 8) {
+  const instanceId = `00000000-0000-4000-8000-${String(revision).padStart(12, '0')}`;
+  const checkpointHash = `sha256:${'a'.repeat(64)}`;
+  const configHash = `sha256:${'b'.repeat(64)}`;
+  const projectionHash = `sha256:${'c'.repeat(64)}`;
+  return {
+    id,
+    teamId: 'team-1',
+    status: 'completed',
+    seasonLabel: '2026',
+    date: `2026-03-${String(revision).padStart(2, '0')}`,
+    trackingEngine: 'diamond-v2',
+    diamondProjectionStatus: 'current',
+    diamondProjectionRevision: revision,
+    diamondProjectionComplete: true,
+    diamondScorebookInstanceId: instanceId,
+    diamondProjectionCheckpointHash: checkpointHash,
+    diamondStatConfigSnapshotHash: configHash,
+    diamondProjectionHash: projectionHash,
+    diamondPublicTeamStats: {
+      trackingEngine: 'diamond-v2',
+      projectionSchemaVersion: 1,
+      sourceRevision: revision,
+      checkpointHash,
+      coverage: { batting: 'complete' },
+      publicStatIds: ['r'],
+      side: 'home',
+      complete: true,
+      stats: { r: 1 },
+      observedStats: {},
+      statCoverage: { r: 'complete' },
+      teamId: 'team-1',
+      diamondGameId: id,
+      instanceId,
+      diamondScorebookInstanceId: instanceId,
+      projectionGeneration: instanceId,
+      statConfigSnapshotHash: configHash,
+      projectionHash
+    },
+    rulesProfileId: 'baseball-youth@1',
+    homeScore: 1,
+    awayScore: 0
+  };
+}
+
+function buildTeamDiamondPlayerDoc(game: ReturnType<typeof buildTeamDiamondGame>, playerId = 'player-1') {
+  return {
+    id: playerId,
+    data: () => ({
+      schemaVersion: 1,
+      trackingEngine: 'diamond-v2',
+      projectionSchemaVersion: 1,
+      playerId,
+      playerName: 'Pat Star',
+      playerNumber: '9',
+      sourceRevision: game.diamondProjectionRevision,
+      checkpointHash: game.diamondProjectionCheckpointHash,
+      complete: true,
+      publicStatIds: ['h'],
+      stats: { h: 1 },
+      observedStats: {},
+      derivedStats: {},
+      observedDerivedStats: {},
+      statCoverage: { h: 'complete' },
+      statSources: {},
+      sourcePlayIds: [],
+      unavailableDerivedStats: [],
+      missingStatFamilies: [],
+      coverage: { batting: 'complete' },
+      participated: true,
+      participationStatus: 'appeared',
+      participationSource: 'diamond-v2',
+      teamId: 'team-1',
+      diamondGameId: game.id,
+      instanceId: game.diamondScorebookInstanceId,
+      diamondScorebookInstanceId: game.diamondScorebookInstanceId,
+      projectionGeneration: game.diamondScorebookInstanceId,
+      statConfigSnapshotHash: game.diamondStatConfigSnapshotHash,
+      projectionHash: game.diamondProjectionHash
+    })
+  };
+}
+
+function teamSnapshot(...docs: ReturnType<typeof buildTeamDiamondPlayerDoc>[]) {
+  return { forEach(callback: (docSnap: any) => void) { docs.forEach(callback); } };
+}
+
 describe('team detail bootstrap loading', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -1316,6 +1417,114 @@ describe('team detail bootstrap loading', () => {
     expect(dbMocks.getAggregatedStatsForGames).toHaveBeenCalledWith('team-1', ['old-game']);
   });
 
+  it('retries one partial-empty Diamond public season load and recovers on the second bounded attempt', async () => {
+    const game = buildTeamDiamondGame('diamond-game-1');
+    const config = { id: 'baseball', baseType: 'Baseball', statDefinitions: [
+      { id: 'h', label: 'Hits', scope: 'player', visibility: 'public' },
+      { id: 'r', label: 'Runs', scope: 'team', visibility: 'public' }
+    ] };
+    seasonRecordMocks.listSeasonLabels.mockReturnValue(['2026']);
+    dbMocks.getTeam.mockResolvedValue({ id: 'team-1', sport: 'Baseball' });
+    dbMocks.getGames.mockResolvedValue([game]);
+    dbMocks.getConfigs.mockResolvedValue([config]);
+    vi.mocked(selectAnalyticsConfig).mockReturnValue(config as any);
+    firebaseMocks.collection.mockImplementation((_db: unknown, path: string) => path);
+    firebaseMocks.getDocs
+      .mockRejectedValueOnce(new Error('temporary rules propagation'))
+      .mockResolvedValueOnce(teamSnapshot(buildTeamDiamondPlayerDoc(game)));
+
+    const insights = await loadTeamDetailInsights('team-1', { uid: 'parent-1' } as any);
+    const season = insights.rosterStatistics.seasons[0];
+
+    expect(firebaseMocks.getDocs).toHaveBeenCalledTimes(2);
+    expect(insights.rosterStatistics.unavailableSeasons).toEqual([]);
+    expect(season.rows[0].values.h).toMatchObject({ value: 1, status: 'complete' });
+    expect(season.diamond).toMatchObject({ pending: false, publicStatsStatus: 'complete' });
+  });
+
+  it('marks a repeatedly partial-empty Diamond season unavailable after one retry', async () => {
+    const game = buildTeamDiamondGame('diamond-game-1');
+    const config = { id: 'baseball', baseType: 'Baseball', statDefinitions: [
+      { id: 'h', label: 'Hits', scope: 'player', visibility: 'public' },
+      { id: 'r', label: 'Runs', scope: 'team', visibility: 'public' }
+    ] };
+    seasonRecordMocks.listSeasonLabels.mockReturnValue(['2026']);
+    dbMocks.getTeam.mockResolvedValue({ id: 'team-1', sport: 'Baseball' });
+    dbMocks.getGames.mockResolvedValue([game]);
+    dbMocks.getConfigs.mockResolvedValue([config]);
+    vi.mocked(selectAnalyticsConfig).mockReturnValue(config as any);
+    firebaseMocks.collection.mockImplementation((_db: unknown, path: string) => path);
+    firebaseMocks.getDocs.mockRejectedValue(new Error('rules denied'));
+
+    const insights = await loadTeamDetailInsights('team-1', { uid: 'parent-1' } as any);
+
+    expect(firebaseMocks.getDocs).toHaveBeenCalledTimes(2);
+    expect(insights.rosterStatistics.unavailableSeasons).toEqual(['2026']);
+    expect(insights.rosterStatistics.seasons[0].rows).toEqual([]);
+
+    firebaseMocks.getDocs.mockResolvedValue(teamSnapshot(buildTeamDiamondPlayerDoc(game)));
+    const recovered = await loadTeamDetailInsights('team-1', { uid: 'parent-1' } as any);
+    expect(firebaseMocks.getDocs).toHaveBeenCalledTimes(3);
+    expect(recovered.rosterStatistics.unavailableSeasons).toEqual([]);
+    expect(recovered.rosterStatistics.seasons[0].rows[0].values.h.value).toBe(1);
+  });
+
+  it('treats a complete-empty Diamond player collection as authoritative without retrying', async () => {
+    const game = buildTeamDiamondGame('diamond-game-1');
+    const config = { id: 'baseball', baseType: 'Baseball', statDefinitions: [
+      { id: 'h', label: 'Hits', scope: 'player', visibility: 'public' },
+      { id: 'r', label: 'Runs', scope: 'team', visibility: 'public' }
+    ] };
+    seasonRecordMocks.listSeasonLabels.mockReturnValue(['2026']);
+    dbMocks.getTeam.mockResolvedValue({ id: 'team-1', sport: 'Baseball' });
+    dbMocks.getGames.mockResolvedValue([game]);
+    dbMocks.getConfigs.mockResolvedValue([config]);
+    vi.mocked(selectAnalyticsConfig).mockReturnValue(config as any);
+    firebaseMocks.collection.mockImplementation((_db: unknown, path: string) => path);
+    firebaseMocks.getDocs.mockResolvedValue(teamSnapshot());
+
+    const insights = await loadTeamDetailInsights('team-1', { uid: 'parent-1' } as any);
+    const season = insights.rosterStatistics.seasons[0];
+
+    expect(firebaseMocks.getDocs).toHaveBeenCalledTimes(1);
+    expect(insights.rosterStatistics.unavailableSeasons).toEqual([]);
+    expect(season.diamond).toMatchObject({ hasDiamond: true, pending: false, publicStatsStatus: 'complete' });
+    expect(season.rows[0].values.h).toMatchObject({ value: null, status: 'not_collected' });
+  });
+
+  it('does not cache a partial nonempty Diamond season and expands it on a later ordinary load', async () => {
+    const game1 = buildTeamDiamondGame('diamond-game-1', 8);
+    const game2 = buildTeamDiamondGame('diamond-game-2', 9);
+    const config = { id: 'baseball', baseType: 'Baseball', statDefinitions: [
+      { id: 'h', label: 'Hits', scope: 'player', visibility: 'public' },
+      { id: 'r', label: 'Runs', scope: 'team', visibility: 'public' }
+    ] };
+    seasonRecordMocks.listSeasonLabels.mockReturnValue(['2026']);
+    dbMocks.getTeam.mockResolvedValue({ id: 'team-1', sport: 'Baseball' });
+    dbMocks.getGames.mockResolvedValue([game1, game2]);
+    dbMocks.getConfigs.mockResolvedValue([config]);
+    vi.mocked(selectAnalyticsConfig).mockReturnValue(config as any);
+    firebaseMocks.collection.mockImplementation((_db: unknown, path: string) => path);
+    let game2Reads = 0;
+    firebaseMocks.getDocs.mockImplementation(async (path: string) => {
+      if (path.includes('/diamond-game-2/')) {
+        game2Reads += 1;
+        if (game2Reads === 1) throw new Error('temporary partial read');
+        return teamSnapshot(buildTeamDiamondPlayerDoc(game2));
+      }
+      return teamSnapshot(buildTeamDiamondPlayerDoc(game1));
+    });
+
+    const first = await loadTeamDetailInsights('team-1', { uid: 'parent-1' } as any);
+    expect(first.rosterStatistics.seasons[0].diamond).toMatchObject({ pending: true, publicStatsStatus: 'partial' });
+    expect(first.rosterStatistics.seasons[0].rows[0].values.h.value).toBe(1);
+
+    const expanded = await loadTeamDetailInsights('team-1', { uid: 'parent-1' } as any);
+    expect(expanded.rosterStatistics.seasons[0].diamond).toMatchObject({ pending: false, publicStatsStatus: 'complete' });
+    expect(expanded.rosterStatistics.seasons[0].rows[0].values.h.value).toBe(2);
+    expect(game2Reads).toBe(2);
+  });
+
   it('omits configured private Diamond stats and never ranks an unavailable player as zero', async () => {
     __resetTeamDetailBaseSnapshotCacheForTests();
     seasonRecordMocks.listSeasonLabels.mockReturnValue(['2026']);
@@ -1476,6 +1685,119 @@ describe('team detail bootstrap loading', () => {
     expect(buildPlayerLeaderboardSnapshot).toHaveBeenCalledWith(expect.objectContaining({
       players: [{ id: 'player-1', name: 'Pat Star', number: '9' }]
     }));
+  });
+
+  it('loads 26-player manager statistics in bounded coherent player chunks', async () => {
+    __resetTeamDetailBaseSnapshotCacheForTests();
+    seasonRecordMocks.listSeasonLabels.mockReturnValue(['2026']);
+    dbMocks.getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1', sport: 'Baseball' });
+    const players = Array.from({ length: 26 }, (_, index) => ({
+      id: `player-${String(index + 1).padStart(2, '0')}`,
+      name: `Player ${String(index + 1)}`,
+      number: String(index + 1),
+      active: true
+    }));
+    dbMocks.getPlayers.mockResolvedValue(players);
+    const instanceId = '00000000-0000-4000-8000-000000000001';
+    const checkpointHash = `sha256:${'a'.repeat(64)}`;
+    const configHash = `sha256:${'b'.repeat(64)}`;
+    const projectionHash = `sha256:${'c'.repeat(64)}`;
+    const game = {
+      id: 'game-1',
+      teamId: 'team-1',
+      status: 'completed',
+      seasonLabel: '2026',
+      date: '2026-03-01',
+      trackingEngine: 'diamond-v2',
+      diamondProjectionStatus: 'current',
+      diamondProjectionRevision: 8,
+      diamondProjectionComplete: true,
+      diamondScorebookInstanceId: instanceId,
+      diamondProjectionCheckpointHash: checkpointHash,
+      diamondStatConfigSnapshotHash: configHash,
+      diamondProjectionHash: projectionHash,
+      rulesProfileId: 'baseball-youth@1',
+      homeScore: 3,
+      awayScore: 1
+    };
+    dbMocks.getGames.mockResolvedValue([game]);
+    const config = {
+      id: 'baseball',
+      baseType: 'Baseball',
+      statDefinitions: [
+        { id: 'h', label: 'Hits', scope: 'player', visibility: 'public' },
+        { id: 'r', label: 'Runs', scope: 'team', visibility: 'public' }
+      ]
+    };
+    dbMocks.getConfigs.mockResolvedValue([config]);
+    vi.mocked(selectAnalyticsConfig).mockReturnValue(config as any);
+    const teamDocument = {
+      trackingEngine: 'diamond-v2',
+      complete: true,
+      projectionSchemaVersion: 1,
+      side: 'home',
+      instanceId,
+      diamondScorebookInstanceId: instanceId,
+      projectionGeneration: instanceId,
+      sourceRevision: 8,
+      checkpointHash,
+      statConfigSnapshotHash: configHash,
+      projectionHash,
+      stats: { r: 3 },
+      observedStats: {},
+      statCoverage: { r: 'complete' },
+      coverage: { batting: 'complete' },
+      inningLines: {}
+    };
+    diamondManagerStatsMocks.loadDiamondManagerStats.mockImplementation(async ({ games: requestedGames, playerIds }: any) => ({
+      status: 'complete',
+      reason: null,
+      documentsByGameId: new Map(requestedGames.map((requestedGame: any) => [requestedGame.id, playerIds.map((playerId: string) => ({
+        id: playerId,
+        data: {
+          trackingEngine: 'diamond-v2',
+          authoritative: true,
+          complete: true,
+          projectionSchemaVersion: 1,
+          playerId,
+          side: 'home',
+          instanceId,
+          diamondScorebookInstanceId: instanceId,
+          projectionGeneration: instanceId,
+          sourceRevision: 8,
+          checkpointHash,
+          statConfigSnapshotHash: configHash,
+          projectionHash,
+          stats: { h: 1 },
+          observedStats: {},
+          derivedStats: {},
+          observedDerivedStats: {},
+          statCoverage: { h: 'complete' },
+          coverage: { batting: 'complete' },
+          participated: true
+        }
+      }))])),
+      teamDocumentsByGameId: new Map(requestedGames.map((requestedGame: any) => [requestedGame.id, teamDocument]))
+    }));
+
+    const insights = await loadTeamDetailInsights('team-1', { uid: 'owner-1' } as any);
+    const season = insights.rosterStatistics.seasons[0];
+
+    expect(diamondManagerStatsMocks.loadDiamondManagerStats).toHaveBeenCalledTimes(2);
+    expect(diamondManagerStatsMocks.loadDiamondManagerStats.mock.calls.map(([request]) => request.games.length)).toEqual([1, 1]);
+    expect(diamondManagerStatsMocks.loadDiamondManagerStats.mock.calls.map(([request]) => request.playerIds.length)).toEqual([25, 1]);
+    expect(firebaseMocks.getDocs).not.toHaveBeenCalled();
+    expect(season.rows).toHaveLength(26);
+    expect(season.rows.every((row) => row.values.h.value === 1)).toBe(true);
+    expect(season.teamStats?.values.r.value).toBe(3);
+    expect(season.diamond).toMatchObject({
+      pending: false,
+      requestedStatVisibility: 'manager-internal',
+      statVisibility: 'manager-internal',
+      privateStatsStatus: 'complete',
+      privateStatsReason: null,
+      publicStatsStatus: 'not-requested'
+    });
   });
 
   it('marks only the season whose roster aggregation fails as unavailable', async () => {

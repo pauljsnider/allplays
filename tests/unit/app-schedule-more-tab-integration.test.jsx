@@ -842,7 +842,9 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         });
         expect(reportMocks.loadGameReportSections).toHaveBeenCalledTimes(1);
         expect(reportMocks.loadGameReportPlays).toHaveBeenCalledTimes(1);
-        expect(reportMocks.loadGameReportPlays).toHaveBeenCalledWith('team-1', 'game-1');
+        expect(reportMocks.loadGameReportPlays).toHaveBeenCalledWith('team-1', 'game-1', {
+            statVisibility: 'public'
+        });
         await waitForText(container, 'Second bucket');
 
         await act(async () => {

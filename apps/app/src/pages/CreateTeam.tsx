@@ -2,17 +2,28 @@ import { useMemo, useRef, useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, CheckCircle2, Loader2, Save, Shield, Users } from 'lucide-react';
 import {
+  configureCreatedTeamDiamondForApp,
   createTeamForApp,
   getCreateTeamDiamondProfileOptions,
-  getCreateTeamSportOptions
+  getCreateTeamSportOptions,
+  type CreateTeamDiamondSetup
 } from '../lib/teamCreationService';
 import { isDiamondScorebookUiEnabled } from '../lib/launchFeatures';
 import type { AuthState } from '../lib/types';
 
+type DiamondSetupRetry = {
+  teamId: string;
+  sport: string;
+  setup: CreateTeamDiamondSetup;
+};
+
 export function CreateTeam({ auth }: { auth: AuthState }) {
   const navigate = useNavigate();
   const diamondScorebookUiEnabled = isDiamondScorebookUiEnabled();
-  const sportOptions = useMemo(() => getCreateTeamSportOptions(), []);
+  const sportOptions = useMemo(
+    () => getCreateTeamSportOptions({ includeDiamondSports: diamondScorebookUiEnabled }),
+    [diamondScorebookUiEnabled]
+  );
   const [form, setForm] = useState({
     name: '',
     sport: sportOptions[0] || 'Basketball',
@@ -30,14 +41,25 @@ export function CreateTeam({ auth }: { auth: AuthState }) {
   const [nameError, setNameError] = useState('');
   const [sportError, setSportError] = useState('');
   const [saveError, setSaveError] = useState('');
-  const [statConfigWarning, setStatConfigWarning] = useState('');
+  const [defaultStatConfigWarning, setDefaultStatConfigWarning] = useState('');
+  const [diamondSetupWarning, setDiamondSetupWarning] = useState('');
+  const [diamondSetupSuccess, setDiamondSetupSuccess] = useState('');
+  const [diamondSetupRetry, setDiamondSetupRetry] = useState<DiamondSetupRetry | null>(null);
+  const [diamondRetrying, setDiamondRetrying] = useState(false);
   const [createdTeamId, setCreatedTeamId] = useState('');
   const submissionInFlightRef = useRef(false);
+  const diamondRetryInFlightRef = useRef(false);
   const completedTeamIdRef = useRef('');
   const createdTeamPath = createdTeamId ? `/teams/${encodeURIComponent(createdTeamId)}` : '';
+  const creationWarnings = [
+    defaultStatConfigWarning ? `the default stat config could not be added: ${defaultStatConfigWarning}` : '',
+    diamondSetupWarning ? `Diamond Scorebook v2 could not be enabled: ${diamondSetupWarning}` : ''
+  ].filter(Boolean);
+  const creationWarning = creationWarnings.length ? `Team created, but ${creationWarnings.join(' Also, ')}.` : '';
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (diamondRetryInFlightRef.current) return;
     if (completedTeamIdRef.current) {
       navigate(`/teams/${encodeURIComponent(completedTeamIdRef.current)}`, { replace: true });
       return;
@@ -49,7 +71,10 @@ export function CreateTeam({ auth }: { auth: AuthState }) {
     setNameError('');
     setSportError('');
     setSaveError('');
-    setStatConfigWarning('');
+    setDefaultStatConfigWarning('');
+    setDiamondSetupWarning('');
+    setDiamondSetupSuccess('');
+    setDiamondSetupRetry(null);
     setCreatedTeamId('');
 
     const trimmedName = form.name.trim();
@@ -67,32 +92,32 @@ export function CreateTeam({ auth }: { auth: AuthState }) {
     submissionInFlightRef.current = true;
     setSaving(true);
     try {
+      const diamondSetup: CreateTeamDiamondSetup | undefined = diamondScorebookUiEnabled
+        ? {
+            enabled: form.diamondEnabled,
+            rulesProfileId: form.diamondRulesProfileId || diamondProfiles[0]?.id,
+            rulesProfileVersion:
+              diamondProfiles.find((profile) => profile.id === form.diamondRulesProfileId)?.version || diamondProfiles[0]?.version,
+            captureMode: form.diamondCaptureMode
+          }
+        : undefined;
       const result = await createTeamForApp(auth.user, {
         name: trimmedName,
         sport: trimmedSport,
         zip: form.zip,
         isPublic: form.isPublic,
-        ...(diamondScorebookUiEnabled ? {
-          diamondScorebook: {
-            enabled: form.diamondEnabled,
-            rulesProfileId: form.diamondRulesProfileId || diamondProfiles[0]?.id,
-            rulesProfileVersion: diamondProfiles.find((profile) => profile.id === form.diamondRulesProfileId)?.version || diamondProfiles[0]?.version,
-            captureMode: form.diamondCaptureMode
-          }
-        } : {})
+        ...(diamondSetup ? { diamondScorebook: diamondSetup } : {})
       });
       completedTeamIdRef.current = result.teamId;
-      const warnings = [
-        result.defaultStatConfigError
-          ? `the default stat config could not be added: ${result.defaultStatConfigError}`
-          : '',
-        diamondScorebookUiEnabled && result.diamondScorebookError
-          ? `Diamond Scorebook v2 could not be enabled: ${result.diamondScorebookError}`
-          : ''
-      ].filter(Boolean);
-      if (warnings.length) {
+      const defaultConfigError = result.defaultStatConfigError || '';
+      const diamondError = diamondScorebookUiEnabled ? result.diamondScorebookError || '' : '';
+      if (defaultConfigError || diamondError) {
         setCreatedTeamId(result.teamId);
-        setStatConfigWarning(`Team created, but ${warnings.join(' Also, ')}.`);
+        setDefaultStatConfigWarning(defaultConfigError);
+        setDiamondSetupWarning(diamondError);
+        setDiamondSetupRetry(
+          diamondError && diamondSetup?.enabled === true ? { teamId: result.teamId, sport: trimmedSport, setup: { ...diamondSetup } } : null
+        );
         return;
       }
       navigate(`/teams/${encodeURIComponent(result.teamId)}`, { replace: true });
@@ -108,6 +133,24 @@ export function CreateTeam({ auth }: { auth: AuthState }) {
     } finally {
       submissionInFlightRef.current = false;
       setSaving(false);
+    }
+  }
+
+  async function retryDiamondSetup() {
+    if (!diamondSetupRetry || diamondRetryInFlightRef.current) return;
+    diamondRetryInFlightRef.current = true;
+    setDiamondRetrying(true);
+    setDiamondSetupSuccess('');
+    try {
+      await configureCreatedTeamDiamondForApp(diamondSetupRetry.teamId, diamondSetupRetry.sport, diamondSetupRetry.setup);
+      setDiamondSetupWarning('');
+      setDiamondSetupRetry(null);
+      setDiamondSetupSuccess('Diamond Scorebook v2 is enabled for this team.');
+    } catch (failure: any) {
+      setDiamondSetupWarning(failure?.message || 'Unable to enable Diamond Scorebook v2.');
+    } finally {
+      diamondRetryInFlightRef.current = false;
+      setDiamondRetrying(false);
     }
   }
 
@@ -271,14 +314,38 @@ export function CreateTeam({ auth }: { auth: AuthState }) {
           </label>
 
           {saveError ? <div className="rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700">{saveError}</div> : null}
-          {statConfigWarning ? (
-            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">
-              <div>{statConfigWarning}</div>
-              {createdTeamPath ? <Link to={createdTeamPath} className="mt-2 inline-flex font-black text-amber-950">Open team</Link> : null}
+          {creationWarning ? (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800" role="alert">
+              <div>{creationWarning}</div>
+              <div className="mt-2 flex flex-wrap items-center gap-3">
+                {diamondSetupRetry ? (
+                  <button
+                    type="button"
+                    className="inline-flex min-h-11 items-center rounded-xl border border-amber-300 bg-white px-3 text-xs font-black text-amber-950 disabled:cursor-not-allowed disabled:opacity-60"
+                    disabled={diamondRetrying}
+                    onClick={() => void retryDiamondSetup()}
+                  >
+                    {diamondRetrying ? 'Retrying Diamond setup…' : 'Retry Diamond setup'}
+                  </button>
+                ) : null}
+                {createdTeamPath ? (
+                  <Link to={createdTeamPath} className="inline-flex min-h-11 items-center font-black text-amber-950">
+                    Open team
+                  </Link>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+          {diamondSetupSuccess ? (
+            <div
+              className="rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-800"
+              role="status"
+            >
+              {diamondSetupSuccess}
             </div>
           ) : null}
 
-          <button type="submit" className="primary-button w-full justify-center" disabled={saving} aria-disabled={saving}>
+          <button type="submit" className="primary-button w-full justify-center" disabled={saving || diamondRetrying} aria-disabled={saving || diamondRetrying}>
             {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : createdTeamPath ? <CheckCircle2 className="h-4 w-4" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}
             {createdTeamPath ? 'Open team' : 'Create team'}
           </button>

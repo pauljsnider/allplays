@@ -662,6 +662,20 @@ describe('DiamondScorebook', () => {
     expect(screen.getByText(/never converted to zero/i)).toBeInTheDocument();
   });
 
+  it('opens an asynchronously loaded Full-capture game with pitch controls selected', async () => {
+    const snapshot = buildSnapshot({ captureMode: 'full' });
+    const fixture = createClient(snapshot);
+    render(
+      <MemoryRouter>
+        <DiamondScorebook auth={auth} teamId="team-1" gameId="game-1" client={fixture.client} />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('group', { name: 'Pitch' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'full' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.queryByText(/Quick controls cannot satisfy this game/i)).not.toBeInTheDocument();
+  });
+
   it('acquires an available scorebook through the revision-bound server lease API', async () => {
     const snapshot = buildSnapshot({
       lease: {
@@ -1811,6 +1825,16 @@ describe('DiamondScorebook', () => {
     expect(screen.getByText('Coach Lee has the active scoring lease.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Single' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Private note' })).toBeDisabled();
+
+    const advancedPanel = screen.getByText('Full-mode advanced plays').closest('details');
+    expect(advancedPanel).not.toBeNull();
+    const historyButton = within(advancedPanel as HTMLElement).getByRole('button', { name: 'Load exact play targets' });
+    expect(historyButton).toBeEnabled();
+    const mutationControls = Array.from(
+      (advancedPanel as HTMLElement).querySelectorAll<HTMLButtonElement | HTMLInputElement | HTMLSelectElement>('button, input, select')
+    ).filter((control) => control !== historyButton);
+    expect(mutationControls.length).toBeGreaterThan(10);
+    mutationControls.forEach((control) => expect(control).toBeDisabled());
   });
 
   it('starts a ready game explicitly while ordinary play controls stay locked', async () => {

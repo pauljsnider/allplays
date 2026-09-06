@@ -13,6 +13,7 @@ import {
   resolveLiveStatConfig,
   resolveSummaryRecipient
 } from './adapters/legacyGameWrapup';
+import { loadGameReportPlays, type GameReportPlay } from './gameReportService';
 
 export type GameWrapupScore = {
   home: number;
@@ -162,6 +163,67 @@ function normalizePracticeFeedItems(value: unknown) {
   })).filter((item: PracticeFeedItem) => item.weakness || item.evidence || item.drillCategory);
 }
 
+function isDiamondGame(game: Record<string, unknown> | null | undefined) {
+  return game?.trackingEngine === 'diamond-v2';
+}
+
+function hasMatchingDiamondReplayIdentity(
+  expectedGame: Record<string, unknown>,
+  replayGame: Record<string, unknown>,
+  gameId: string
+) {
+  const expectedInstanceId = String(expectedGame.diamondScorebookInstanceId || '').trim();
+  const replayInstanceId = String(replayGame.diamondScorebookInstanceId || '').trim();
+  const expectedRevision = Number(expectedGame.diamondProjectionRevision ?? expectedGame.diamondRevision);
+  const replayRevision = Number(replayGame.diamondProjectionRevision ?? replayGame.diamondRevision);
+  return Boolean(
+    expectedInstanceId &&
+    replayInstanceId === expectedInstanceId &&
+    Number.isSafeInteger(expectedRevision) &&
+    expectedRevision >= 1 &&
+    replayRevision === expectedRevision &&
+    replayGame.trackingEngine === 'diamond-v2' &&
+    String(replayGame.id || '') === gameId
+  );
+}
+
+function mapDiamondWrapupEvent(play: GameReportPlay) {
+  return {
+    id: play.id,
+    text: play.text,
+    // The shared wrap-up prompt summarizes legacy `stat`/`type` fields. Feed it
+    // only the report-safe description, never the private ledger payload.
+    stat: play.text,
+    period: play.period,
+    gameTime: play.clock,
+    clock: play.clock,
+    timestamp: play.timestamp
+  };
+}
+
+async function loadCompleteDiamondWrapupEvents(
+  teamId: string,
+  gameId: string,
+  expectedGame: Record<string, unknown>
+) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const replay = await loadGameReportPlays(teamId, gameId, { statVisibility: 'manager-internal' });
+      if (
+        replay.playsFresh === true &&
+        replay.replay?.requestedVisibility === 'manager-internal' &&
+        hasMatchingDiamondReplayIdentity(expectedGame, replay.game as Record<string, unknown>, gameId)
+      ) {
+        return replay.plays.map(mapDiamondWrapupEvent);
+      }
+    } catch {
+      // Retry the complete bounded replay once. A second failure remains
+      // unavailable and must not be converted into an authoritative empty log.
+    }
+  }
+  throw new Error('Diamond play-by-play could not be loaded completely. Try wrap-up again.');
+}
+
 export async function generateGameWrapupArtifactsForApp({
   teamId,
   gameId,
@@ -177,16 +239,19 @@ export async function generateGameWrapupArtifactsForApp({
     throw new Error('A scheduled game is required before running wrap-up AI.');
   }
 
-  const [team, game, configs, rawEvents] = await Promise.all([
+  const [team, game, configs] = await Promise.all([
     getTeam(teamId, { includeInactive: true }).catch(() => null),
     getGame(teamId, gameId),
-    getConfigs(teamId).catch(() => []),
-    getGameEvents(teamId, gameId, { limit: 100 }).catch(() => [])
+    getConfigs(teamId).catch(() => [])
   ]);
 
   if (!game) {
     throw new Error('Game not found.');
   }
+
+  const rawEvents = isDiamondGame(game)
+    ? await loadCompleteDiamondWrapupEvents(teamId, gameId, game)
+    : await getGameEvents(teamId, gameId, { limit: 100 }).catch(() => []);
 
   const resolvedConfig = resolveLiveStatConfig({
     configs,

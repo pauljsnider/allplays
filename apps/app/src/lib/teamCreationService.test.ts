@@ -9,6 +9,7 @@ import {
 const legacyMocks = vi.hoisted(() => ({
   createTeam: vi.fn(),
   createConfig: vi.fn(),
+  getDefaultDiamondStatConfigForSport: vi.fn(),
   getDefaultStatConfigForSport: vi.fn(),
   getStatConfigPresetOptions: vi.fn()
 }));
@@ -19,7 +20,7 @@ const diamondMocks = vi.hoisted(() => ({
 vi.mock('./adapters/legacyTeamCreation', () => legacyMocks);
 vi.mock('./diamondScorebookService', () => diamondMocks);
 
-import { createTeamForApp, getCreateTeamSportOptions } from './teamCreationService';
+import { configureCreatedTeamDiamondForApp, createTeamForApp, getCreateTeamSportOptions } from './teamCreationService';
 
 const user = {
   uid: 'coach-1',
@@ -32,6 +33,11 @@ beforeEach(() => {
   clearAppDataCache();
   legacyMocks.createTeam.mockResolvedValue('team-new');
   legacyMocks.createConfig.mockResolvedValue('config-new');
+  legacyMocks.getDefaultDiamondStatConfigForSport.mockReturnValue({
+    name: 'Diamond Standard',
+    baseType: 'Baseball',
+    statDefinitions: [{ id: 'pa' }]
+  });
   legacyMocks.getDefaultStatConfigForSport.mockReturnValue({ name: 'Soccer Standard', baseType: 'Soccer' });
   legacyMocks.getStatConfigPresetOptions.mockReturnValue([
     { baseType: 'Custom' },
@@ -135,6 +141,8 @@ describe('createTeamForApp', () => {
       rulesProfileVersion: 1,
       captureMode: 'full'
     });
+    expect(legacyMocks.getDefaultDiamondStatConfigForSport).toHaveBeenCalledWith(sport);
+    expect(legacyMocks.createConfig).toHaveBeenCalledWith('team-new', expect.objectContaining({ name: 'Diamond Standard' }));
     expect(result).toMatchObject({ diamondScorebookConfigured: true, diamondScorebookError: null });
   });
 
@@ -160,6 +168,7 @@ describe('createTeamForApp', () => {
     await createTeamForApp(user, { name: 'Soccer team', sport: 'Soccer' });
 
     expect(diamondMocks.configureDiamondTeam).not.toHaveBeenCalled();
+    expect(legacyMocks.getDefaultDiamondStatConfigForSport).not.toHaveBeenCalled();
   });
 
   it('returns the created team id when preset resolution fails after the team write', async () => {
@@ -225,6 +234,40 @@ describe('createTeamForApp', () => {
   });
 });
 
+describe('configureCreatedTeamDiamondForApp', () => {
+  it('retries the exact Diamond setup against the existing team without creating another team', async () => {
+    await configureCreatedTeamDiamondForApp(' team-existing ', 'Baseball', {
+      enabled: true,
+      rulesProfileId: 'baseball-nfhs',
+      rulesProfileVersion: 1,
+      captureMode: 'full'
+    });
+
+    expect(diamondMocks.configureDiamondTeam).toHaveBeenCalledWith('team-existing', 'baseball', 'baseball-nfhs', {
+      enabled: true,
+      rulesProfileVersion: 1,
+      captureMode: 'full'
+    });
+    expect(legacyMocks.createTeam).not.toHaveBeenCalled();
+    expect(legacyMocks.createConfig).not.toHaveBeenCalled();
+  });
+
+  it('keeps a repeated configuration failure available to the caller', async () => {
+    diamondMocks.configureDiamondTeam.mockRejectedValueOnce(new Error('still unavailable'));
+
+    await expect(
+      configureCreatedTeamDiamondForApp('team-existing', 'Fastpitch', {
+        enabled: true,
+        rulesProfileId: 'fastpitch-youth',
+        rulesProfileVersion: 1,
+        captureMode: 'quick'
+      })
+    ).rejects.toThrow('still unavailable');
+
+    expect(legacyMocks.createTeam).not.toHaveBeenCalled();
+  });
+});
+
 describe('getCreateTeamSportOptions', () => {
   it('derives unique sports from default stat config presets', () => {
     expect(getCreateTeamSportOptions()).toEqual(['Basketball', 'Soccer']);
@@ -238,9 +281,23 @@ describe('getCreateTeamSportOptions', () => {
       'Soccer',
       'Baseball',
       'Softball',
-      'Fastpitch',
       'Football',
       'Volleyball'
     ]);
+  });
+
+  it('adds Fastpitch only when the Diamond creation UI is explicitly enabled', () => {
+    legacyMocks.getStatConfigPresetOptions.mockReturnValueOnce([]);
+
+    expect(getCreateTeamSportOptions({ includeDiamondSports: true })).toEqual([
+      'Basketball',
+      'Soccer',
+      'Baseball',
+      'Softball',
+      'Football',
+      'Volleyball',
+      'Fastpitch'
+    ]);
+    expect(getCreateTeamSportOptions()).not.toContain('Fastpitch');
   });
 });

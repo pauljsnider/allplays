@@ -443,7 +443,9 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
     setStatsDetailState('loading');
     setStatsDetailError(null);
     try {
-      const statsDetail = await loadParentPlayerStatsDetail(playerAuthUser, nextTeamId, nextPlayerId);
+      const statsDetail = force
+        ? await loadParentPlayerStatsDetail(playerAuthUser, nextTeamId, nextPlayerId, { force: true })
+        : await loadParentPlayerStatsDetail(playerAuthUser, nextTeamId, nextPlayerId);
       if (statsDetailRequestKeyRef.current !== requestKey) {
         return null;
       }
@@ -597,15 +599,19 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
         athleteProfile: preserveAthleteProfile && current
           ? current.athleteProfile
           : nextData.athleteProfile,
-        statsDetail: reloadStatsDetail ? null : nextData.statsDetail
+        statsDetail: reloadStatsDetail && current ? current.statsDetail : nextData.statsDetail
       }));
       setAthleteProfileLoaded(nextAthleteProfileLoaded || preserveAthleteProfile);
       setAthleteProfileError(null);
       setVideoClipsError(null);
       if (reloadStatsDetail) {
         statsDetailRequestKeyRef.current = '';
-        setStatsDetailState('idle');
         setStatsDetailError(null);
+        await loadStatsDetail({
+          nextTeamId: nextData.child.teamId,
+          nextPlayerId: nextData.child.playerId,
+          force: true
+        });
       }
       if (reloadVideoClips) {
         await loadVideoClips({
@@ -977,7 +983,7 @@ function ReportsSection({
 
         <div className="mt-3">
           {statsDetailState === 'loading' && !statsDetail ? <StatsDetailLoadingNotice /> : null}
-          {statsDetailError && !statsDetail ? <StatsDetailErrorNotice error={statsDetailError} onRetry={onRetryStatsDetail} /> : null}
+          {statsDetailError ? <StatsDetailErrorNotice error={statsDetailError} onRetry={onRetryStatsDetail} /> : null}
           {activePanel === 'overview' ? <StatsOverviewPanel statsDetail={statsDetail} rows={reportRows} loading={statsDetailState === 'loading'} premiumAccess={premiumAccess} /> : null}
           {activePanel === 'games' ? <GameStatsPanel rows={reportRows} hasMore={statsDetail?.summary.hasMoreGames} gameLimit={statsDetail?.summary.gameLimit} premiumAccess={premiumAccess} /> : null}
           {activePanel === 'season' ? <SeasonAveragesPanel rows={reportRows} statsDetail={statsDetail} /> : null}
@@ -1134,6 +1140,13 @@ function StatsOverviewPanel({
 
 function DiamondPlayerStatsNotice({ summary }: { summary: ParentPlayerStatsDetailData['summary'] }) {
   if (!summary.diamond?.hasDiamond) return null;
+  const publicProjectionStatus = summary.diamond.publicStatsStatus === 'complete'
+    ? 'Complete'
+    : summary.diamond.publicStatsStatus === 'partial'
+      ? 'Partial'
+      : summary.diamond.publicStatsStatus === 'unavailable'
+        ? 'Unavailable'
+        : 'Unknown';
   return (
     <div
       className={`rounded-xl border p-3 ${summary.diamond.pending ? 'border-amber-200 bg-amber-50 text-amber-950' : 'border-sky-200 bg-sky-50 text-sky-950'}`}
@@ -1152,7 +1165,7 @@ function DiamondPlayerStatsNotice({ summary }: { summary: ParentPlayerStatsDetai
         Source revisions: {summary.diamond.sourceRevisions.length ? summary.diamond.sourceRevisions.join(', ') : 'unavailable'}
       </div>
       {summary.diamond.requestedStatVisibility === 'manager-internal' && summary.diamond.statVisibility !== 'manager-internal' ? (
-        <div className="mt-1 text-[11px] font-bold">Internal stats are unavailable; showing the complete public projection. Refresh to retry.</div>
+        <div className="mt-1 text-[11px] font-bold">Internal stats are unavailable. Public projection status: {publicProjectionStatus}. Refresh to retry.</div>
       ) : null}
     </div>
   );
@@ -1488,9 +1501,17 @@ function SeasonComparisonChart({
 
 function GameEventsPanel({ statsDetail, fallbackEvents, loading }: { statsDetail: ParentPlayerStatsDetailData | null; fallbackEvents: ParentScheduleEvent[]; loading: boolean }) {
   const gameEventRows = statsDetail?.gameEventRows || [];
+  const diamondEventsIncomplete = statsDetail?.gameEventsLoadStatus === 'partial'
+    || statsDetail?.gameEventsLoadStatus === 'unavailable';
+  const retryNotice = diamondEventsIncomplete ? (
+    <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm font-bold text-amber-950" role="status">
+      Diamond player events could not be loaded completely. Refresh to retry; missing plays are not being reported as no events.
+    </div>
+  ) : null;
   if (gameEventRows.length) {
     return (
       <div className="space-y-3">
+        {retryNotice}
         <GameEventTimelineChart rows={gameEventRows} />
         {gameEventRows.map((row) => (
           <div key={row.gameId} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
@@ -1517,6 +1538,7 @@ function GameEventsPanel({ statsDetail, fallbackEvents, loading }: { statsDetail
   if (loading) {
     return <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-500">Loading player events...</div>;
   }
+  if (retryNotice) return retryNotice;
   const gameEvents = fallbackEvents.filter((event) => event.type === 'game').slice().sort((a, b) => b.date.getTime() - a.date.getTime());
   return (
     <div className="space-y-2">
