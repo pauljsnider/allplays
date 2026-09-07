@@ -38,6 +38,18 @@ describe('Resend-backed authentication email client', () => {
         expect(callableMocks.queueEmailVerification).toHaveBeenCalledWith({ idToken: 'native-id-token' });
     });
 
+    it('passes an allowlisted verification continuation separately from the native token', async () => {
+        callableMocks.queueEmailVerification.mockResolvedValue({ data: { queued: true } });
+        const viewerRoute = '/live-game-diamond-v2.html?teamId=team%2Fone&gameId=game+one&replay=true';
+
+        await queueCurrentUserVerificationEmail('native-id-token', viewerRoute);
+
+        expect(callableMocks.queueEmailVerification).toHaveBeenCalledWith({
+            idToken: 'native-id-token',
+            next: viewerRoute
+        });
+    });
+
     it('normalizes invite codes for server-side ownership validation', async () => {
         callableMocks.queueInviteSignInEmail.mockResolvedValue({ data: { queued: true, existingUser: true } });
 

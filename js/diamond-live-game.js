@@ -1,9 +1,13 @@
-import { functions, httpsCallable } from "./firebase.js?v=4433195";
+import {
+  auth,
+  functions,
+  httpsCallable,
+  onAuthStateChanged,
+} from "./firebase.js?v=4433195";
 import {
   subscribeLiveChat,
   subscribeReactions,
 } from "./diamond-live-engagement-subscriptions.js?v=1";
-import { checkAuth } from "./auth.js?v=4433200";
 import { isViewerChatEnabled } from "./live-game-chat.js?v=4";
 import {
   formatDiamondInning,
@@ -17,6 +21,8 @@ import { normalizeYouTubeReplayUrl } from "./game-replay-video.js?v=3";
 
 const POLL_INTERVAL_MS = 5000;
 const MAX_POLL_INTERVAL_MS = 60_000;
+const AUTH_RESTORE_TIMEOUT_MS = 2000;
+const VIEWER_REVALIDATION_INTERVAL_MS = 60_000;
 const CHAT_THROTTLE_MS = 1500;
 const REACTION_THROTTLE_MS = 1000;
 const UUID_V4_PATTERN =
@@ -52,7 +58,11 @@ const state = {
   clipStartMs: null,
   clipEndMs: null,
   pollTimer: null,
+  revalidationTimer: null,
   pollDelayMs: POLL_INTERVAL_MS,
+  viewerEpoch: 0,
+  validatedAuthUid: "",
+  authObserved: false,
   user: null,
   lastChatSentAt: 0,
   lastReactionSentAt: 0,
@@ -74,6 +84,7 @@ const elements = {
   loading: document.querySelector("[data-diamond-loading]"),
   error: document.querySelector("[data-diamond-error]"),
   errorMessage: document.querySelector("[data-diamond-error-message]"),
+  errorSignIn: document.querySelector("[data-diamond-error-sign-in]"),
   retry: document.querySelector("[data-diamond-retry]"),
   content: document.querySelector("[data-diamond-content]"),
   status: document.querySelector("[data-diamond-status]"),
@@ -142,7 +153,9 @@ function parseContext() {
   classicParams.delete("overlay");
   elements.classicLink.href = `/live-game.html?${classicParams.toString()}`;
   const returnPath = `${window.location.pathname}${window.location.search}`;
-  elements.signIn.href = `/app/#/auth?next=${encodeURIComponent(returnPath)}`;
+  const authHref = `/app/#/auth?next=${encodeURIComponent(returnPath)}`;
+  elements.signIn.href = authHref;
+  elements.errorSignIn.href = `${authHref}&switch=1`;
 }
 
 function renderMedia() {
@@ -287,6 +300,7 @@ function render() {
   renderMedia();
   elements.loading.hidden = true;
   elements.error.hidden = true;
+  elements.errorSignIn.hidden = true;
   elements.retry.disabled = false;
   elements.content.hidden = false;
   renderEngagementAvailability();
@@ -676,12 +690,28 @@ function initializeEngagementSubscriptions() {
   renderEngagementAvailability();
 }
 
-function initializeEngagementAuth() {
-  if (state.authInitialized || !isEngagementWindowOpen()) return;
+function viewerAuthUid(user) {
+  return typeof user?.uid === "string" ? user.uid.trim() : "";
+}
+
+function initializeViewerAuth() {
+  if (state.authInitialized || !state.game) return;
   state.authInitialized = true;
+  const subscriptionEpoch = state.viewerEpoch;
   try {
-    const unsubscribe = checkAuth((user) => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (subscriptionEpoch !== state.viewerEpoch) return;
+      const nextUid = viewerAuthUid(user);
+      const authChanged = state.authObserved
+        ? viewerAuthUid(state.user) !== nextUid
+        : state.validatedAuthUid !== nextUid;
+      state.authObserved = true;
       state.user = user || null;
+      if (authChanged && state.game) {
+        prepareViewerRevalidation();
+        void loadGame();
+        return;
+      }
       if (
         state.engagementError.startsWith(
           "Sign-in status is temporarily unavailable.",
@@ -691,13 +721,18 @@ function initializeEngagementAuth() {
       }
       renderEngagementAvailability();
     });
-    if (typeof unsubscribe === "function")
+    if (typeof unsubscribe === "function") {
+      if (subscriptionEpoch !== state.viewerEpoch) {
+        unsubscribe();
+        return;
+      }
       state.unsubscribers.push(unsubscribe);
+    }
   } catch {
     state.authInitialized = false;
     state.user = null;
     reportEngagementError(
-      "Sign-in status is temporarily unavailable. Public game messages remain visible.",
+      "Sign-in status is temporarily unavailable. Viewer access will be rechecked.",
     );
   }
 }
@@ -776,17 +811,75 @@ elements.reactions.addEventListener("click", async (event) => {
   }
 });
 
+function normalizedErrorCode(error) {
+  return String(error?.code || "").trim().toLowerCase();
+}
+
+function isNotFoundError(error) {
+  const code = normalizedErrorCode(error);
+  return code === "not-found" || code.endsWith("/not-found");
+}
+
+function isTerminalViewerAccessError(error) {
+  const code = normalizedErrorCode(error);
+  return ["not-found", "permission-denied", "unauthenticated"].some(
+    (suffix) => code === suffix || code.endsWith(`/${suffix}`),
+  );
+}
+
 function describeError(error) {
   if (error?.reason === "diamond-generation-changed")
     return "This game was restarted. Retry to load the new scorebook.";
-  const code = String(error?.code || "");
-  if (code.includes("not-found")) return "This Diamond game is not available.";
+  const code = normalizedErrorCode(error);
+  if (isTerminalViewerAccessError(error))
+    return "This Diamond game is not available.";
   if (code.includes("resource-exhausted"))
     return "Too many refreshes. Please wait a moment.";
   return "The detailed scorebook is temporarily unavailable. The classic scoreboard may still be available.";
 }
 
+function clearRenderedViewerState() {
+  elements.content.hidden = true;
+  elements.content.removeAttribute("data-completeness");
+  elements.homeName.textContent = "Home";
+  elements.awayName.textContent = "Opponent";
+  elements.homeScore.textContent = "0";
+  elements.awayScore.textContent = "0";
+  elements.inning.textContent = "Top 1";
+  elements.count.textContent = "0–0";
+  elements.outs.textContent = "0 outs";
+  elements.batter.textContent = "—";
+  elements.pitcher.textContent = "—";
+  renderBases({ bases: { first: false, second: false, third: false } });
+  renderWarnings([]);
+  elements.plays.replaceChildren();
+  elements.empty.hidden = false;
+  elements.loadMore.hidden = true;
+  elements.media.hidden = true;
+  elements.mediaTitle.textContent = "Game video";
+  elements.mediaFrame.hidden = true;
+  elements.mediaFrame.removeAttribute("src");
+  elements.mediaFrame.title = "Game video";
+  elements.mediaFallback.hidden = true;
+  elements.mediaFallback.textContent = "";
+  elements.mediaLink.removeAttribute("href");
+  elements.mediaLink.textContent = "Open video";
+  renderChat([]);
+  elements.chatInput.value = "";
+  elements.chatInput.disabled = true;
+  elements.chatSubmit.disabled = true;
+  elements.signIn.hidden = true;
+  elements.engagementStatus.textContent = "";
+  elements.reactions
+    .querySelectorAll("[data-diamond-reaction]")
+    .forEach((button) => {
+      button.disabled = true;
+    });
+  elements.reactionOverlay.replaceChildren();
+}
+
 function resetGenerationState() {
+  state.viewerEpoch += 1;
   cleanupSubscriptions();
   state.game = null;
   state.events = [];
@@ -796,6 +889,9 @@ function resetGenerationState() {
   state.projectionToken = "";
   state.instanceId = "";
   state.user = null;
+  state.validatedAuthUid = "";
+  state.authObserved = false;
+  state.pollDelayMs = POLL_INTERVAL_MS;
   state.lastChatSentAt = 0;
   state.lastReactionSentAt = 0;
   state.pendingChatRequest = null;
@@ -806,6 +902,7 @@ function resetGenerationState() {
   state.engagementActionMessage = "";
   state.interactionLifecycleValid = false;
   state.generationChangePending = false;
+  clearRenderedViewerState();
 }
 
 function isRetryableError(error) {
@@ -819,27 +916,90 @@ function isRetryableError(error) {
   );
 }
 
+async function waitForViewerAuthRestoration() {
+  if (auth?.currentUser) return true;
+  if (typeof auth?.authStateReady !== "function") return false;
+  let timeoutId = null;
+  const timeout = new Promise((resolve) => {
+    timeoutId = window.setTimeout(() => resolve(false), AUTH_RESTORE_TIMEOUT_MS);
+  });
+  try {
+    const restored = await Promise.race([
+      Promise.resolve()
+        .then(() => auth.authStateReady())
+        .then(
+          () => true,
+          () => false,
+        ),
+      timeout,
+    ]);
+    return restored === true && Boolean(auth.currentUser);
+  } finally {
+    if (timeoutId !== null) window.clearTimeout(timeoutId);
+  }
+}
+
+async function requestViewerGame(request, { allowAuthRecovery = false } = {}) {
+  const callable = httpsCallable(functions, "getPublicDiamondGame");
+  const initialAuthUid = viewerAuthUid(auth?.currentUser);
+  try {
+    return {
+      result: await callable(request),
+      requestAuthUid: initialAuthUid,
+    };
+  } catch (error) {
+    if (
+      !allowAuthRecovery ||
+      initialAuthUid ||
+      !isNotFoundError(error) ||
+      !(await waitForViewerAuthRestoration())
+    ) {
+      throw error;
+    }
+    const restoredAuthUid = viewerAuthUid(auth?.currentUser);
+    if (!restoredAuthUid) throw error;
+    return {
+      result: await callable(request),
+      requestAuthUid: restoredAuthUid,
+    };
+  }
+}
+
 function showLoadError(error, { allowRetry = isRetryableError(error) } = {}) {
   elements.loading.hidden = true;
   elements.content.hidden = true;
   elements.errorMessage.textContent = describeError(error);
+  elements.errorSignIn.hidden = !isTerminalViewerAccessError(error);
   elements.retry.hidden = !allowRetry;
   elements.retry.disabled = false;
   elements.error.hidden = false;
 }
 
 async function loadGame({ cursor = null, append = false, quiet = false } = {}) {
+  const viewerEpoch = state.viewerEpoch;
+  window.clearTimeout(state.pollTimer);
+  state.pollTimer = null;
+  window.clearTimeout(state.revalidationTimer);
+  state.revalidationTimer = null;
   const requestedSourceRevision = state.sourceRevision;
   const requestedProjectionToken = state.projectionToken;
   if (!quiet) setConnection("Updating…");
   try {
-    const callable = httpsCallable(functions, "getPublicDiamondGame");
-    const result = await callable({
-      teamId: state.teamId,
-      gameId: state.gameId,
-      cursor,
-      limit: 50,
-    });
+    const { result, requestAuthUid } = await requestViewerGame(
+      {
+        teamId: state.teamId,
+        gameId: state.gameId,
+        cursor,
+        limit: 50,
+      },
+      { allowAuthRecovery: !append && !cursor && !state.game },
+    );
+    if (viewerEpoch !== state.viewerEpoch) return;
+    if (requestAuthUid !== viewerAuthUid(auth?.currentUser)) {
+      prepareViewerRevalidation();
+      void loadGame();
+      return;
+    }
     const payload =
       result?.data && typeof result.data === "object" ? result.data : {};
     const responseInstanceId =
@@ -877,7 +1037,13 @@ async function loadGame({ cursor = null, append = false, quiet = false } = {}) {
         ? payload.projectionToken.slice(0, 256)
         : "";
     if (responseRevision < state.sourceRevision) {
-      if (!state.game?.state?.isFinal) schedulePoll();
+      if (state.game) {
+        if (state.replay || state.game.state.isFinal) {
+          scheduleViewerRevalidation();
+        } else {
+          schedulePoll();
+        }
+      }
       return;
     }
     if (
@@ -923,9 +1089,11 @@ async function loadGame({ cursor = null, append = false, quiet = false } = {}) {
     state.nextCursor = pagination.nextCursor;
     state.complete = pagination.complete;
     state.pollDelayMs = POLL_INTERVAL_MS;
+    state.validatedAuthUid = requestAuthUid;
+    initializeViewerAuth();
+    if (viewerEpoch !== state.viewerEpoch) return;
     render();
     initializeEngagementSubscriptions();
-    initializeEngagementAuth();
     const isCancelled = ["cancelled", "canceled"].includes(game.state.status);
     setConnection(
       state.replay
@@ -937,8 +1105,13 @@ async function loadGame({ cursor = null, append = false, quiet = false } = {}) {
             : "Live · automatically refreshing",
       "success",
     );
-    if (!game.state.isFinal && !state.replay) schedulePoll();
+    if (!game.state.isFinal && !state.replay) {
+      schedulePoll();
+    } else {
+      scheduleViewerRevalidation();
+    }
   } catch (error) {
+    if (viewerEpoch !== state.viewerEpoch) return;
     if (error?.reason === "diamond-generation-changed") {
       state.generationChangePending = true;
       state.interactionLifecycleValid = false;
@@ -947,16 +1120,29 @@ async function loadGame({ cursor = null, append = false, quiet = false } = {}) {
       showLoadError(error, { allowRetry: true });
       return;
     }
+    if (isTerminalViewerAccessError(error)) {
+      resetGenerationState();
+      setConnection("Game unavailable", "warning");
+      showLoadError(error, { allowRetry: false });
+      return;
+    }
     setConnection("Connection interrupted", "warning");
     if (!state.game) {
       showLoadError(error);
     }
-    if (!state.replay && isRetryableError(error))
-      schedulePoll({ failed: true });
+    if (state.game && isRetryableError(error)) {
+      if (!state.replay && !state.game.state.isFinal) {
+        schedulePoll({ failed: true });
+      } else {
+        scheduleViewerRevalidation();
+      }
+    }
   }
 }
 
 function schedulePoll({ failed = false } = {}) {
+  window.clearTimeout(state.revalidationTimer);
+  state.revalidationTimer = null;
   window.clearTimeout(state.pollTimer);
   if (state.replay) return;
   if (failed) {
@@ -971,6 +1157,29 @@ function schedulePoll({ failed = false } = {}) {
     () => loadGame({ quiet: true }),
     state.pollDelayMs,
   );
+}
+
+function scheduleViewerRevalidation() {
+  window.clearTimeout(state.pollTimer);
+  state.pollTimer = null;
+  window.clearTimeout(state.revalidationTimer);
+  if (!state.game) {
+    state.revalidationTimer = null;
+    return;
+  }
+  state.revalidationTimer = window.setTimeout(() => {
+    state.revalidationTimer = null;
+    void loadGame({ quiet: true });
+  }, VIEWER_REVALIDATION_INTERVAL_MS);
+}
+
+function prepareViewerRevalidation() {
+  resetGenerationState();
+  elements.error.hidden = true;
+  elements.errorSignIn.hidden = true;
+  elements.retry.hidden = true;
+  elements.loading.hidden = false;
+  setConnection("Reconnecting…");
 }
 
 elements.loadMore.addEventListener("click", () => {
@@ -990,6 +1199,9 @@ elements.retry.addEventListener("click", () => {
 
 function cleanupSubscriptions() {
   window.clearTimeout(state.pollTimer);
+  state.pollTimer = null;
+  window.clearTimeout(state.revalidationTimer);
+  state.revalidationTimer = null;
   stopEngagementSubscriptions();
   state.unsubscribers.forEach((unsubscribe) => {
     if (typeof unsubscribe === "function") unsubscribe();
@@ -999,7 +1211,16 @@ function cleanupSubscriptions() {
 
 window.addEventListener("beforeunload", cleanupSubscriptions);
 window.addEventListener("pagehide", (event) => {
-  if (!event.persisted) cleanupSubscriptions();
+  if (event.persisted) {
+    prepareViewerRevalidation();
+    return;
+  }
+  cleanupSubscriptions();
+});
+window.addEventListener("pageshow", (event) => {
+  if (!event.persisted) return;
+  prepareViewerRevalidation();
+  void loadGame();
 });
 
 try {

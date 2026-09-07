@@ -1,6 +1,38 @@
 import { expect, test } from "@playwright/test";
 
 const FIREBASE_STUB = `
+export const auth = {
+    get currentUser() {
+        if (Object.prototype.hasOwnProperty.call(window, '__DIAMOND_AUTH_CURRENT_USER__')) {
+            return window.__DIAMOND_AUTH_CURRENT_USER__ || null;
+        }
+        return { uid: 'viewer-1', displayName: 'Alex Viewer' };
+    },
+    async authStateReady() {
+        window.__DIAMOND_AUTH_RESTORE_WAITS__ = (window.__DIAMOND_AUTH_RESTORE_WAITS__ || 0) + 1;
+        if (window.__DIAMOND_AUTH_RESTORE_HANGS__ === true) {
+            await new Promise(() => {});
+        }
+        if (window.__DIAMOND_AUTH_RESTORE_FAILS__ === true) {
+            throw new Error('Auth restoration failed');
+        }
+        if (window.__DIAMOND_RESTORE_AUTH_USER__ === true) {
+            window.__DIAMOND_AUTH_CURRENT_USER__ = { uid: 'viewer-1' };
+        }
+    }
+};
+export function onAuthStateChanged(_auth, callback) {
+    window.__DIAMOND_AUTH_SUBSCRIPTIONS__ = (window.__DIAMOND_AUTH_SUBSCRIPTIONS__ || 0) + 1;
+    window.__DIAMOND_AUTH_CALLBACK__ = (user) => {
+        window.__DIAMOND_AUTH_CURRENT_USER__ = user || null;
+        callback(user || null);
+    };
+    callback(auth.currentUser);
+    return () => {
+        window.__DIAMOND_AUTH_UNSUBSCRIPTIONS__ = (window.__DIAMOND_AUTH_UNSUBSCRIPTIONS__ || 0) + 1;
+        window.__DIAMOND_AUTH_UNSUBSCRIBED__ = true;
+    };
+}
 export const functions = {};
 export function httpsCallable(_functions, name) {
     if (name === 'postDiamondLiveChat') {
@@ -34,11 +66,19 @@ export function httpsCallable(_functions, name) {
     if (name !== 'getPublicDiamondGame') throw new Error('Unexpected callable: ' + name);
     return async (request) => {
         window.__DIAMOND_PUBLIC_READS__ = (window.__DIAMOND_PUBLIC_READS__ || 0) + 1;
-        if (window.__DIAMOND_FAIL_PUBLIC_READ_ONCE__ === true && window.__DIAMOND_PUBLIC_READS__ === 1) {
-            throw Object.assign(new Error('Temporary public read failure'), { code: 'functions/unavailable' });
-        }
         if (window.__DIAMOND_DELAY_PUBLIC_READ__ === true) {
             await new Promise((resolve) => { window.__DIAMOND_RELEASE_PUBLIC_READ__ = resolve; });
+        }
+        if (window.__DIAMOND_PUBLIC_ERROR_CODE__) {
+            throw Object.assign(new Error('Viewer access is unavailable'), {
+                code: window.__DIAMOND_PUBLIC_ERROR_CODE__
+            });
+        }
+        if (window.__DIAMOND_REQUIRE_AUTH_RESTORE__ === true && !auth.currentUser) {
+            throw Object.assign(new Error('Private game is not public'), { code: 'functions/not-found' });
+        }
+        if (window.__DIAMOND_FAIL_PUBLIC_READ_ONCE__ === true && window.__DIAMOND_PUBLIC_READS__ === 1) {
+            throw Object.assign(new Error('Temporary public read failure'), { code: 'functions/unavailable' });
         }
         const terminal = window.__DIAMOND_TERMINAL__ === true;
         const instanceId = window.__DIAMOND_INSTANCE_ID__ === undefined
@@ -148,14 +188,6 @@ export function subscribeReactions(teamId, gameId, options, onData, onError) {
 }
 `;
 
-const AUTH_STUB = `
-export function checkAuth(callback) {
-    window.__DIAMOND_AUTH_SUBSCRIPTIONS__ = (window.__DIAMOND_AUTH_SUBSCRIPTIONS__ || 0) + 1;
-    callback({ uid: 'viewer-1', displayName: 'Alex Viewer' });
-    return () => { window.__DIAMOND_AUTH_UNSUBSCRIBED__ = true; };
-}
-`;
-
 async function stubDiamondViewerModules(page) {
   await page.route(/\/js\/firebase\.js(?:\?.*)?$/, (route) =>
     route.fulfill({
@@ -172,13 +204,6 @@ async function stubDiamondViewerModules(page) {
         contentType: "application/javascript",
         body: DB_STUB,
       }),
-  );
-  await page.route(/\/js\/auth\.js(?:\?.*)?$/, (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: "application/javascript",
-      body: AUTH_STUB,
-    }),
   );
 }
 
@@ -202,6 +227,12 @@ test("Diamond viewer renders revision-pinned replay and shares classic chat and 
   await expect(page.locator("[data-diamond-home-name]")).toHaveText(
     "Home Hawks",
   );
+  expect(
+    await page.evaluate(() => ({
+      reads: window.__DIAMOND_PUBLIC_READS__,
+      authRestoreWaits: window.__DIAMOND_AUTH_RESTORE_WAITS__ || 0,
+    })),
+  ).toEqual({ reads: 1, authRestoreWaits: 0 });
   await expect(page.locator("[data-diamond-away-name]")).toHaveText(
     "Away Aces",
   );
@@ -335,6 +366,499 @@ test("Diamond viewer renders revision-pinned replay and shares classic chat and 
   ).toEqual({ auth: true, chat: true, reactions: true });
   expect(pageErrors).toEqual([]);
 });
+
+test("a persisted authorized viewer retries a hidden game only after Auth restoration", async ({
+  page,
+  baseURL,
+}) => {
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await page.addInitScript(() => {
+    window.__DIAMOND_AUTH_CURRENT_USER__ = null;
+    window.__DIAMOND_REQUIRE_AUTH_RESTORE__ = true;
+    window.__DIAMOND_RESTORE_AUTH_USER__ = true;
+  });
+  await stubDiamondViewerModules(page);
+
+  await page.goto(
+    `${baseURL}/live-game-diamond-v2.html?teamId=private-team&gameId=private-game`,
+    { waitUntil: "domcontentloaded" },
+  );
+
+  expect(pageErrors).toEqual([]);
+  await expect(page.locator("[data-diamond-content]")).toBeVisible();
+  await expect(page.locator("[data-diamond-home-name]")).toHaveText(
+    "Home Hawks",
+  );
+  expect(
+    await page.evaluate(() => ({
+      reads: window.__DIAMOND_PUBLIC_READS__,
+      authRestoreWaits: window.__DIAMOND_AUTH_RESTORE_WAITS__,
+      restoredUid: window.__DIAMOND_AUTH_CURRENT_USER__?.uid,
+    })),
+  ).toEqual({ reads: 2, authRestoreWaits: 1, restoredUid: "viewer-1" });
+});
+
+test("a stalled Auth restoration stays bounded and never retries a hidden game", async ({
+  page,
+  baseURL,
+}) => {
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await page.addInitScript(() => {
+    window.__DIAMOND_AUTH_CURRENT_USER__ = null;
+    window.__DIAMOND_REQUIRE_AUTH_RESTORE__ = true;
+    window.__DIAMOND_AUTH_RESTORE_HANGS__ = true;
+  });
+  await stubDiamondViewerModules(page);
+
+  await page.goto(
+    `${baseURL}/live-game-diamond-v2.html?teamId=private-team&gameId=private-game`,
+    { waitUntil: "domcontentloaded" },
+  );
+
+  expect(pageErrors).toEqual([]);
+  await expect(page.locator("[data-diamond-error-message]")).toHaveText(
+    "This Diamond game is not available.",
+    { timeout: 4000 },
+  );
+  await expect(page.locator("[data-diamond-content]")).toBeHidden();
+  await expect(page.locator("[data-diamond-retry]")).toBeHidden();
+  expect(
+    await page.evaluate(() => ({
+      reads: window.__DIAMOND_PUBLIC_READS__,
+      authRestoreWaits: window.__DIAMOND_AUTH_RESTORE_WAITS__,
+      currentUser: window.__DIAMOND_AUTH_CURRENT_USER__ || null,
+    })),
+  ).toEqual({ reads: 1, authRestoreWaits: 1, currentUser: null });
+});
+
+test("a signed-out hidden-game link offers one generic account action with the exact return path", async ({
+  page,
+  baseURL,
+}) => {
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await page.addInitScript(() => {
+    window.__DIAMOND_AUTH_CURRENT_USER__ = null;
+    window.__DIAMOND_REQUIRE_AUTH_RESTORE__ = true;
+  });
+  await stubDiamondViewerModules(page);
+  const returnPath =
+    "/live-game-diamond-v2.html?teamId=private-team&gameId=private-game&replay=1";
+
+  await page.goto(`${baseURL}${returnPath}`, {
+    waitUntil: "domcontentloaded",
+  });
+
+  expect(pageErrors).toEqual([]);
+  await expect(page.locator("[data-diamond-error-message]")).toHaveText(
+    "This Diamond game is not available.",
+  );
+  await expect(page.locator("[data-diamond-content]")).toBeHidden();
+  await expect(page.locator("[data-diamond-retry]")).toBeHidden();
+  const accountAction = page.locator("[data-diamond-error-sign-in]");
+  await expect(accountAction).toBeVisible();
+  await expect(accountAction).toHaveText("Sign in or switch account");
+  await expect(accountAction).toHaveAttribute(
+    "href",
+    `/app/#/auth?next=${encodeURIComponent(returnPath)}&switch=1`,
+  );
+  expect(
+    await page.evaluate(() => ({
+      reads: window.__DIAMOND_PUBLIC_READS__,
+      authRestoreWaits: window.__DIAMOND_AUTH_RESTORE_WAITS__,
+    })),
+  ).toEqual({ reads: 1, authRestoreWaits: 1 });
+  await page.route(/\/app\/$/, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "text/html",
+      body: "<!doctype html><title>Auth route</title>",
+    }),
+  );
+  await accountAction.click();
+  await expect(page).toHaveURL(
+    `${baseURL}/app/#/auth?next=${encodeURIComponent(returnPath)}&switch=1`,
+  );
+});
+
+test("an already-authenticated not-found response is never retried", async ({
+  page,
+  baseURL,
+}) => {
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await page.addInitScript(() => {
+    window.__DIAMOND_AUTH_CURRENT_USER__ = {
+      uid: "viewer-1",
+      displayName: "Alex Viewer",
+    };
+    window.__DIAMOND_PUBLIC_ERROR_CODE__ = "functions/not-found";
+  });
+  await stubDiamondViewerModules(page);
+
+  await page.goto(
+    `${baseURL}/live-game-diamond-v2.html?teamId=missing-team&gameId=missing-game`,
+    { waitUntil: "domcontentloaded" },
+  );
+
+  expect(pageErrors).toEqual([]);
+  await expect(page.locator("[data-diamond-error-message]")).toHaveText(
+    "This Diamond game is not available.",
+  );
+  await expect(page.locator("[data-diamond-error-sign-in]")).toBeVisible();
+  await expect(page.locator("[data-diamond-error-sign-in]")).toHaveAttribute(
+    "href",
+    `/app/#/auth?next=${encodeURIComponent("/live-game-diamond-v2.html?teamId=missing-team&gameId=missing-game")}&switch=1`,
+  );
+  expect(
+    await page.evaluate(() => ({
+      reads: window.__DIAMOND_PUBLIC_READS__,
+      authRestoreWaits: window.__DIAMOND_AUTH_RESTORE_WAITS__ || 0,
+    })),
+  ).toEqual({ reads: 1, authRestoreWaits: 0 });
+});
+
+test("an Auth account switch discards an in-flight viewer response before rendering", async ({
+  page,
+  baseURL,
+}) => {
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await page.addInitScript(() => {
+    window.__DIAMOND_AUTH_CURRENT_USER__ = {
+      uid: "viewer-a",
+      displayName: "Viewer A",
+    };
+    window.__DIAMOND_DELAY_PUBLIC_READ__ = true;
+  });
+  await stubDiamondViewerModules(page);
+
+  await page.goto(
+    `${baseURL}/live-game-diamond-v2.html?teamId=private-team&gameId=private-game`,
+    { waitUntil: "domcontentloaded" },
+  );
+
+  expect(pageErrors).toEqual([]);
+  await expect.poll(() =>
+    page.evaluate(() => window.__DIAMOND_PUBLIC_READS__),
+  ).toBe(1);
+  await expect(page.locator("[data-diamond-content]")).toBeHidden();
+  await page.evaluate(() => {
+    window.__DIAMOND_AUTH_CURRENT_USER__ = {
+      uid: "viewer-b",
+      displayName: "Viewer B",
+    };
+    window.__DIAMOND_DELAY_PUBLIC_READ__ = false;
+    window.__DIAMOND_RELEASE_PUBLIC_READ__?.();
+  });
+
+  await expect(page.locator("[data-diamond-content]")).toBeVisible();
+  expect(pageErrors).toEqual([]);
+  expect(
+    await page.evaluate(() => ({
+      reads: window.__DIAMOND_PUBLIC_READS__,
+      authSubscriptions: window.__DIAMOND_AUTH_SUBSCRIPTIONS__,
+    })),
+  ).toEqual({ reads: 2, authSubscriptions: 1 });
+});
+
+for (const terminalCode of [
+  "functions/not-found",
+  "functions/permission-denied",
+  "functions/unauthenticated",
+]) {
+  test(`a loaded viewer clears every private surface on ${terminalCode}`, async ({
+    page,
+    baseURL,
+  }) => {
+    const pageErrors = [];
+    page.on("pageerror", (error) => pageErrors.push(error.message));
+    await page.addInitScript(() => {
+      window.__DIAMOND_MEDIA__ = true;
+    });
+    await stubDiamondViewerModules(page);
+    const returnPath =
+      "/live-game-diamond-v2.html?teamId=private-team&gameId=private-game";
+
+    await page.goto(`${baseURL}${returnPath}`, {
+      waitUntil: "domcontentloaded",
+    });
+
+    expect(pageErrors).toEqual([]);
+    await expect(page.locator("[data-diamond-content]")).toBeVisible();
+    await expect(page.locator("[data-diamond-home-name]")).toHaveText(
+      "Home Hawks",
+    );
+    await expect(page.locator(".diamond-chat-message")).toHaveCount(2);
+    await expect(page.locator("[data-diamond-media-frame]")).toHaveAttribute(
+      "src",
+      /youtube\.com\/embed/,
+    );
+    await page.evaluate((code) => {
+      window.__DIAMOND_REACTION_CALLBACK__?.({
+        id: "private-reaction",
+        type: "heart",
+      });
+      window.__DIAMOND_PUBLIC_ERROR_CODE__ = code;
+    }, terminalCode);
+    await page.locator("[data-diamond-load-more]").click();
+
+    expect(pageErrors).toEqual([]);
+    await expect(page.locator("[data-diamond-error-message]")).toHaveText(
+      "This Diamond game is not available.",
+    );
+    await expect(page.locator("[data-diamond-content]")).toBeHidden();
+    await expect(page.locator("[data-diamond-home-name]")).toHaveText("Home");
+    await expect(page.locator("[data-diamond-away-name]")).toHaveText(
+      "Opponent",
+    );
+    await expect(page.locator("[data-diamond-plays] > li")).toHaveCount(0);
+    await expect(page.locator(".diamond-chat-message")).toHaveCount(0);
+    await expect(page.locator("[data-diamond-media-frame]")).not.toHaveAttribute(
+      "src",
+      /.+/,
+    );
+    await expect(page.locator(".diamond-reaction-float")).toHaveCount(0);
+    await expect(page.locator("[data-diamond-retry]")).toBeHidden();
+    await expect(page.locator("[data-diamond-error-sign-in]")).toBeVisible();
+    await expect(page.locator("[data-diamond-error-sign-in]")).toHaveAttribute(
+      "href",
+      `/app/#/auth?next=${encodeURIComponent(returnPath)}&switch=1`,
+    );
+    expect(
+      await page.evaluate(() => ({
+        reads: window.__DIAMOND_PUBLIC_READS__,
+        auth: window.__DIAMOND_AUTH_UNSUBSCRIBED__,
+        chat: window.__DIAMOND_CHAT_UNSUBSCRIBED__,
+        reactions: window.__DIAMOND_REACTIONS_UNSUBSCRIBED__,
+      })),
+    ).toEqual({ reads: 2, auth: true, chat: true, reactions: true });
+  });
+}
+
+test("a persisted BFCache page clears data and revalidates before rendering again", async ({
+  page,
+  baseURL,
+}) => {
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await page.addInitScript(() => {
+    window.__DIAMOND_MEDIA__ = true;
+  });
+  await stubDiamondViewerModules(page);
+
+  await page.goto(
+    `${baseURL}/live-game-diamond-v2.html?teamId=private-team&gameId=private-game`,
+    { waitUntil: "domcontentloaded" },
+  );
+
+  expect(pageErrors).toEqual([]);
+  await expect(page.locator("[data-diamond-content]")).toBeVisible();
+  await expect(page.locator(".diamond-chat-message")).toHaveCount(2);
+  await page.evaluate(() => {
+    window.__DIAMOND_REACTION_CALLBACK__?.({
+      id: "cached-private-reaction",
+      type: "heart",
+    });
+    window.__DIAMOND_DELAY_PUBLIC_READ__ = true;
+    window.dispatchEvent(new PageTransitionEvent("pagehide", { persisted: true }));
+    window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true }));
+  });
+
+  await expect.poll(() =>
+    page.evaluate(() => window.__DIAMOND_PUBLIC_READS__),
+  ).toBe(2);
+  expect(pageErrors).toEqual([]);
+  await expect(page.locator("[data-diamond-content]")).toBeHidden();
+  await expect(page.locator("[data-diamond-loading]")).toBeVisible();
+  await expect(page.locator("[data-diamond-home-name]")).toHaveText("Home");
+  await expect(page.locator("[data-diamond-plays] > li")).toHaveCount(0);
+  await expect(page.locator(".diamond-chat-message")).toHaveCount(0);
+  await expect(page.locator("[data-diamond-media-frame]")).not.toHaveAttribute(
+    "src",
+    /.+/,
+  );
+  await expect(page.locator(".diamond-reaction-float")).toHaveCount(0);
+  expect(
+    await page.evaluate(() => ({
+      auth: window.__DIAMOND_AUTH_UNSUBSCRIBED__,
+      chat: window.__DIAMOND_CHAT_UNSUBSCRIBED__,
+      reactions: window.__DIAMOND_REACTIONS_UNSUBSCRIBED__,
+    })),
+  ).toEqual({ auth: true, chat: true, reactions: true });
+
+  await page.evaluate(() => {
+    window.__DIAMOND_DELAY_PUBLIC_READ__ = false;
+    window.__DIAMOND_RELEASE_PUBLIC_READ__?.();
+  });
+  await expect(page.locator("[data-diamond-content]")).toBeVisible();
+  await expect(page.locator("[data-diamond-home-name]")).toHaveText(
+    "Home Hawks",
+  );
+  expect(pageErrors).toEqual([]);
+});
+
+for (const authChangeCase of [
+  { label: "replay", query: "&replay=1", terminal: false },
+  { label: "final", query: "", terminal: true },
+]) {
+  test(`${authChangeCase.label} viewers hide immediately and revalidate after sign-out`, async ({
+    page,
+    baseURL,
+  }) => {
+    const pageErrors = [];
+    page.on("pageerror", (error) => pageErrors.push(error.message));
+    await page.addInitScript(({ terminal }) => {
+      window.__DIAMOND_TERMINAL__ = terminal;
+    }, authChangeCase);
+    await stubDiamondViewerModules(page);
+
+    await page.goto(
+      `${baseURL}/live-game-diamond-v2.html?teamId=private-team&gameId=private-game${authChangeCase.query}`,
+      { waitUntil: "domcontentloaded" },
+    );
+
+    expect(pageErrors).toEqual([]);
+    await expect(page.locator("[data-diamond-content]")).toBeVisible();
+    await page.evaluate(() => {
+      window.__DIAMOND_DELAY_PUBLIC_READ__ = true;
+      window.__DIAMOND_PUBLIC_ERROR_CODE__ = "functions/not-found";
+      window.__DIAMOND_AUTH_CALLBACK__?.(null);
+    });
+
+    await expect.poll(() =>
+      page.evaluate(() => window.__DIAMOND_PUBLIC_READS__),
+    ).toBe(2);
+    expect(pageErrors).toEqual([]);
+    await expect(page.locator("[data-diamond-content]")).toBeHidden();
+    await expect(page.locator("[data-diamond-loading]")).toBeVisible();
+    await expect(page.locator("[data-diamond-home-name]")).toHaveText("Home");
+    await expect(page.locator(".diamond-chat-message")).toHaveCount(0);
+
+    await page.evaluate(() => {
+      window.__DIAMOND_DELAY_PUBLIC_READ__ = false;
+      window.__DIAMOND_RELEASE_PUBLIC_READ__?.();
+    });
+    await expect(page.locator("[data-diamond-error-message]")).toHaveText(
+      "This Diamond game is not available.",
+    );
+    await expect(page.locator("[data-diamond-error-sign-in]")).toBeVisible();
+    await expect(page.locator("[data-diamond-retry]")).toBeHidden();
+    expect(pageErrors).toEqual([]);
+  });
+}
+
+test("a replay periodically reauthorizes and clears revoked access", async ({
+  page,
+  baseURL,
+}) => {
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await page.clock.install({
+    time: new Date("2026-09-06T18:00:00.000Z"),
+  });
+  await stubDiamondViewerModules(page);
+
+  await page.goto(
+    `${baseURL}/live-game-diamond-v2.html?teamId=private-team&gameId=private-game&replay=1`,
+    { waitUntil: "domcontentloaded" },
+  );
+
+  expect(pageErrors).toEqual([]);
+  await expect(page.locator("[data-diamond-content]")).toBeVisible();
+  await page.evaluate(() => {
+    window.__DIAMOND_PUBLIC_ERROR_CODE__ = "functions/not-found";
+  });
+  await page.clock.fastForward(60_000);
+
+  await expect(page.locator("[data-diamond-error-message]")).toHaveText(
+    "This Diamond game is not available.",
+  );
+  expect(pageErrors).toEqual([]);
+  await expect(page.locator("[data-diamond-content]")).toBeHidden();
+  await expect(page.locator("[data-diamond-home-name]")).toHaveText("Home");
+  await expect(page.locator("[data-diamond-error-sign-in]")).toBeVisible();
+  expect(
+    await page.evaluate(() => ({
+      reads: window.__DIAMOND_PUBLIC_READS__,
+      authRestoreWaits: window.__DIAMOND_AUTH_RESTORE_WAITS__ || 0,
+    })),
+  ).toEqual({ reads: 2, authRestoreWaits: 0 });
+});
+
+for (const anonymousRevocationCase of [
+  { label: "replay", query: "&replay=1", terminal: false },
+  { label: "final", query: "", terminal: true },
+]) {
+  test(`an anonymous public ${anonymousRevocationCase.label} revalidates and clears revoked content`, async ({
+    page,
+    baseURL,
+  }) => {
+    const pageErrors = [];
+    page.on("pageerror", (error) => pageErrors.push(error.message));
+    await page.clock.install({
+      time: new Date("2026-09-06T18:00:00.000Z"),
+    });
+    await page.addInitScript(({ terminal }) => {
+      window.__DIAMOND_AUTH_CURRENT_USER__ = null;
+      window.__DIAMOND_TERMINAL__ = terminal;
+      window.__DIAMOND_MEDIA__ = true;
+    }, anonymousRevocationCase);
+    await stubDiamondViewerModules(page);
+
+    await page.goto(
+      `${baseURL}/live-game-diamond-v2.html?teamId=public-team&gameId=public-game${anonymousRevocationCase.query}`,
+      { waitUntil: "domcontentloaded" },
+    );
+
+    expect(pageErrors).toEqual([]);
+    await expect(page.locator("[data-diamond-content]")).toBeVisible();
+    await expect(page.locator("[data-diamond-home-name]")).toHaveText(
+      "Home Hawks",
+    );
+    await expect(page.locator(".diamond-chat-message")).toHaveCount(2);
+    await expect(page.locator("[data-diamond-media-frame]")).toHaveAttribute(
+      "src",
+      /youtube\.com\/embed/,
+    );
+    await page.evaluate(() => {
+      window.__DIAMOND_PUBLIC_ERROR_CODE__ = "functions/not-found";
+    });
+    await page.clock.fastForward(60_000);
+
+    expect(pageErrors).toEqual([]);
+    await expect(page.locator("[data-diamond-error-message]")).toHaveText(
+      "This Diamond game is not available.",
+    );
+    await expect(page.locator("[data-diamond-content]")).toBeHidden();
+    await expect(page.locator("[data-diamond-home-name]")).toHaveText("Home");
+    await expect(page.locator("[data-diamond-plays] > li")).toHaveCount(0);
+    await expect(page.locator(".diamond-chat-message")).toHaveCount(0);
+    await expect(page.locator("[data-diamond-media-frame]")).not.toHaveAttribute(
+      "src",
+      /.+/,
+    );
+    await expect(page.locator("[data-diamond-retry]")).toBeHidden();
+    await expect(page.locator("[data-diamond-error-sign-in]")).toBeVisible();
+    expect(
+      await page.evaluate(() => ({
+        reads: window.__DIAMOND_PUBLIC_READS__,
+        authRestoreWaits: window.__DIAMOND_AUTH_RESTORE_WAITS__ || 0,
+        auth: window.__DIAMOND_AUTH_UNSUBSCRIBED__,
+        chat: window.__DIAMOND_CHAT_UNSUBSCRIBED__,
+        reactions: window.__DIAMOND_REACTIONS_UNSUBSCRIBED__,
+      })),
+    ).toEqual({
+      reads: 2,
+      authRestoreWaits: 0,
+      auth: true,
+      chat: true,
+      reactions: true,
+    });
+  });
+}
 
 test("engagement writes stay fail-closed until the authoritative Diamond game loads", async ({
   page,
@@ -657,7 +1181,7 @@ test("configured games reuse classic game-day timing while retaining shared hist
   );
   expect(
     await page.evaluate(() => window.__DIAMOND_AUTH_SUBSCRIPTIONS__ || 0),
-  ).toBe(0);
+  ).toBe(1);
 });
 
 test("malformed projected lifecycle data fails engagement writes closed", async ({
@@ -684,7 +1208,7 @@ test("malformed projected lifecycle data fails engagement writes closed", async 
   );
   expect(
     await page.evaluate(() => window.__DIAMOND_AUTH_SUBSCRIPTIONS__ || 0),
-  ).toBe(0);
+  ).toBe(1);
 });
 
 test("cancelled games show shared history without exposing engagement writes", async ({
@@ -1003,6 +1527,6 @@ test("stable replay clip and overlay parameters stay in the Diamond viewer and n
       chat: window.__DIAMOND_CHAT_SUBSCRIPTIONS__ || 0,
       reactions: window.__DIAMOND_REACTION_SUBSCRIPTIONS__ || 0,
     })),
-  ).toEqual({ auth: 0, chat: 0, reactions: 0 });
+  ).toEqual({ auth: 1, chat: 0, reactions: 0 });
   expect(pageErrors).toEqual([]);
 });

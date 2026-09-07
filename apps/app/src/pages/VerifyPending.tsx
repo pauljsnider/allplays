@@ -1,23 +1,27 @@
 import { useState } from 'react';
 import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { CheckCircle2, LogOut, Mail, Send } from 'lucide-react';
-import { AuthFrame } from '../components/AuthFrame';
+import { AuthFrame, DocumentAuthLink } from '../components/AuthFrame';
 import { getRouteForUser, readPendingInvite, reloadCurrentUser, resendVerificationEmail } from '../lib/authService';
 import type { AuthState } from '../lib/types';
-import { getSafeAuthNextRoute } from '../lib/authNextRoute';
+import { completeAuthNavigation, getDocumentAuthNextRoute, getSafeAuthNextRoute } from '../lib/authNextRoute';
+import { isNativeRuntime } from '../lib/nativeRuntime';
+import { openPublicUrl } from '../lib/publicActions';
 
 export function VerifyPending({ auth }: { auth: AuthState }) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const nextRoute = getSafeAuthNextRoute(searchParams.get('next'));
   const fallbackRoute = nextRoute || getRouteForUser(auth.user);
+  const documentFallbackRoute = getDocumentAuthNextRoute(fallbackRoute);
+  const signedOutRoute = nextRoute ? `/auth?next=${encodeURIComponent(nextRoute)}` : '/auth';
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [showSecondaryOptions, setShowSecondaryOptions] = useState(false);
 
   if (!auth.loading && !auth.user) {
-    return <Navigate to="/auth" replace />;
+    return <Navigate to={signedOutRoute} replace />;
   }
 
   const checkVerificationAndContinue = async () => {
@@ -32,7 +36,10 @@ export function VerifyPending({ auth }: { auth: AuthState }) {
         const pendingInviteRoute = pendingInvite.code
           ? `/accept-invite?code=${encodeURIComponent(pendingInvite.code)}&type=${encodeURIComponent(pendingInvite.type)}`
           : '';
-        navigate(nextRoute || pendingInviteRoute || getRouteForUser(refreshedUser), { replace: true });
+        await completeAuthNavigation(nextRoute || pendingInviteRoute || getRouteForUser(refreshedUser), navigate, {
+          nativeRuntime: isNativeRuntime(),
+          openHostedAuth: openPublicUrl
+        });
         return;
       }
       setShowSecondaryOptions(true);
@@ -50,7 +57,7 @@ export function VerifyPending({ auth }: { auth: AuthState }) {
     setError('');
     setMessage('');
     try {
-      await resendVerificationEmail();
+      await resendVerificationEmail(documentFallbackRoute);
       setMessage('Verification email queued. Check your inbox and spam folder shortly.');
     } catch (resendError: any) {
       setError(resendError?.message || 'Unable to resend verification email.');
@@ -60,7 +67,7 @@ export function VerifyPending({ auth }: { auth: AuthState }) {
   };
 
   return (
-    <AuthFrame eyebrow="Verify" backTo={fallbackRoute} backLabel="Back">
+    <AuthFrame eyebrow="Verify" brandTo={signedOutRoute} backTo={fallbackRoute} backLabel="Back">
       <div className="text-center">
         <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-primary-50 text-primary-700">
           {auth.user?.emailVerified ? <CheckCircle2 className="h-8 w-8" aria-hidden="true" /> : <Mail className="h-8 w-8" aria-hidden="true" />}
@@ -100,9 +107,15 @@ export function VerifyPending({ auth }: { auth: AuthState }) {
             </button>
             {showSecondaryOptions ? (
               <div className="mt-3 grid gap-2">
-                <Link to={fallbackRoute} className="secondary-button justify-center">
-                  Continue without verifying
-                </Link>
+                {documentFallbackRoute ? (
+                  <DocumentAuthLink route={documentFallbackRoute} className="secondary-button justify-center">
+                    Continue without verifying
+                  </DocumentAuthLink>
+                ) : (
+                  <Link to={fallbackRoute} className="secondary-button justify-center">
+                    Continue without verifying
+                  </Link>
+                )}
                 <button type="button" className="ghost-button justify-center" onClick={resend} disabled={busy}>
                   <Send className="h-4 w-4" aria-hidden="true" />
                   Resend verification email

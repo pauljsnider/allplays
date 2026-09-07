@@ -16,8 +16,10 @@ export function queuePasswordResetEmail(email) {
     });
 }
 
-export function queueCurrentUserVerificationEmail(idToken = '') {
+export function queueCurrentUserVerificationEmail(idToken = '', verificationNextRoute = '') {
     const payload = String(idToken || '').trim() ? { idToken: String(idToken).trim() } : {};
+    const next = String(verificationNextRoute || '').trim();
+    if (next) payload.next = next;
     return callAuthEmailFunction('queueEmailVerification', payload);
 }
 

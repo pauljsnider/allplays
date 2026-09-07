@@ -256,7 +256,8 @@ const {
   getAuthEmailActionSettings,
   getInviteContinueUrl,
   isValidAuthEmail,
-  normalizeAuthEmail
+  normalizeAuthEmail,
+  normalizeVerificationNextRoute
 } = require('./auth-email-core.cjs');
 const { createAuthEmailCallableHandlers } = require('./auth-email-callables.cjs');
 const { createAuthEmailDeliveryStore } = require('./auth-email-delivery-store.cjs');
@@ -4040,6 +4041,7 @@ const authEmailCallableHandlers = createAuthEmailCallableHandlers({
   enqueuePasswordResetRequest,
   getActionSettings: getAuthEmailActionSettings,
   canonicalizeActionUrl: buildCanonicalAuthActionUrl,
+  normalizeVerificationNextRoute,
   getInviteContinueUrl,
   findOwnedInviteCode,
   allowedInviteTypes: EMAIL_LINK_INVITE_TYPES,

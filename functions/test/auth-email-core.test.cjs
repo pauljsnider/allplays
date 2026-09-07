@@ -58,12 +58,37 @@ test('uses the ALL PLAYS action handler and rejects off-origin invite continuati
     () => getAuthEmailActionSettings(AUTH_EMAIL_TYPES.SIGN_IN, 'https://evil.example/steal'),
     /ALL PLAYS origin/
   );
+  assert.deepEqual(
+    getAuthEmailActionSettings(
+      AUTH_EMAIL_TYPES.VERIFICATION,
+      '/live-game-diamond-v2.html?teamId=team%2Fone&gameId=game+one&replay=true'
+    ),
+    {
+      url: 'https://allplays.ai/app/#/verify-pending?next=%2Flive-game-diamond-v2.html%3FteamId%3Dteam%252Fone%26gameId%3Dgame%2Bone%26replay%3Dtrue',
+      handleCodeInApp: false
+    }
+  );
+  assert.deepEqual(
+    getAuthEmailActionSettings(AUTH_EMAIL_TYPES.VERIFICATION, 'https://evil.example/viewer'),
+    getAuthEmailActionSettings(AUTH_EMAIL_TYPES.VERIFICATION)
+  );
 });
 
 test('builds invite continuation URLs for each supported passwordless flow', () => {
   assert.equal(
     getInviteContinueUrl('ABCD1234', 'admin_invite'),
     'https://allplays.ai/app/#/accept-invite?code=ABCD1234&type=admin'
+  );
+
+  const viewerContinueUrl = encodeURIComponent(
+    'https://allplays.ai/app/#/verify-pending?next=%2Flive-game-diamond-v2.html%3FteamId%3Dteam%252Fone%26gameId%3Dgame%2Bone%26replay%3Dtrue'
+  );
+  assert.equal(
+    buildCanonicalAuthActionUrl(
+      `https://game-flow-c6311.firebaseapp.com/__/auth/action?mode=verifyEmail&oobCode=viewer-verify-code&apiKey=public-key&continueUrl=${viewerContinueUrl}`,
+      AUTH_EMAIL_TYPES.VERIFICATION
+    ),
+    'https://allplays.ai/app/#/reset-password?mode=verifyEmail&oobCode=viewer-verify-code&apiKey=public-key&next=%2Flive-game-diamond-v2.html%3FteamId%3Dteam%252Fone%26gameId%3Dgame%2Bone%26replay%3Dtrue'
   );
   assert.equal(
     getInviteContinueUrl('HOME1234', 'household_invite'),

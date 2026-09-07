@@ -355,11 +355,31 @@ function normalizeSharedGameSnapshot(docSnap) {
     };
 }
 
+const GAME_INVENTORY_CACHE_ONLY_ERROR_CODE = 'allplays/game-inventory-cache-only';
+
+function buildGameInventoryCacheOnlyError() {
+    const error = new Error('Game inventory was loaded only from the local cache.');
+    error.code = GAME_INVENTORY_CACHE_ONLY_ERROR_CODE;
+    return error;
+}
+
+function isGameInventoryCacheOnlyError(error) {
+    return error?.code === GAME_INVENTORY_CACHE_ONLY_ERROR_CODE;
+}
+
+function requireServerGameSnapshot(snapshot, required) {
+    if (required && snapshot?.metadata?.fromCache === true) {
+        throw buildGameInventoryCacheOnlyError();
+    }
+    return snapshot;
+}
+
 async function getSharedGamesForTeam(teamId, options = {}) {
     const sharedGamesRef = collectionGroup(db, 'sharedGames');
     const startDate = options?.startDate ?? null;
     const endDate = options?.endDate ?? null;
     const requireComplete = options?.requireComplete === true;
+    const requireServerSnapshots = options?.requireServerSnapshots === true;
     const dateConstraints = [];
     if (startDate instanceof Date) dateConstraints.push(where('date', '>=', Timestamp.fromDate(startDate)));
     if (endDate instanceof Date) dateConstraints.push(where('date', '<=', Timestamp.fromDate(endDate)));
@@ -383,6 +403,11 @@ async function getSharedGamesForTeam(teamId, options = {}) {
     if (requireComplete) {
         const failedQuery = snapshots.find((result) => result.status === 'rejected');
         if (failedQuery) throw failedQuery.reason;
+    }
+    if (requireServerSnapshots && snapshots.some((result) => (
+        result.status === 'fulfilled' && result.value?.metadata?.fromCache === true
+    ))) {
+        throw buildGameInventoryCacheOnlyError();
     }
     const sharedGamesByPath = new Map();
 
@@ -794,7 +819,7 @@ export async function uploadStatSheetPhoto(teamId, gameId, file, options = {}) {
         : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=443372'; // Import resolveZip
+import { resolveZip } from './utils.js?v=443373'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -4237,9 +4262,12 @@ async function getPublicGameProjection(teamId, gameId) {
     }
 }
 
-async function getRecurringPracticeMastersForDateRange(gamesRef, startDate, endDate) {
+async function getRecurringPracticeMastersForDateRange(gamesRef, startDate, endDate, options = {}) {
     if (!startDate && !endDate) return [];
-    const snapshot = await getDocs(query(gamesRef, where("isSeriesMaster", "==", true)));
+    const snapshot = requireServerGameSnapshot(
+        await getDocs(query(gamesRef, where("isSeriesMaster", "==", true))),
+        options?.requireServerSnapshot === true
+    );
     return snapshot.docs
         .map(doc => ({ id: doc.id, ...doc.data() }))
         .filter(game => recurringPracticeMasterMayOverlapDateRange(game, startDate, endDate));
@@ -4253,6 +4281,7 @@ async function getRecurringPracticeMastersForDateRange(gamesRef, startDate, endD
 export async function getGames(teamId, options = {}) {
     const startDate = options?.startDate ?? null;
     const endDate = options?.endDate ?? null;
+    const requireCompleteSharedGames = options?.requireCompleteSharedGames === true;
     const tournamentGroups = normalizeTournamentStandingsGroups(options);
     const hasTournamentGroup = tournamentGroups.length > 0;
     const gamesRef = getTeamGameCollectionRef(teamId);
@@ -4264,13 +4293,16 @@ export async function getGames(teamId, options = {}) {
         if (hasTournamentGroup) {
             const groupGames = await Promise.all(tournamentGroups.map(async (tournamentGroup) => {
                 if (tournamentGroup.poolName) {
-                    const snapshot = await getDocs(query(gamesRef, where("tournament.poolName", "==", tournamentGroup.poolName)));
+                    const snapshot = requireServerGameSnapshot(
+                        await getDocs(query(gamesRef, where("tournament.poolName", "==", tournamentGroup.poolName))),
+                        requireCompleteSharedGames
+                    );
                     return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 }
-                const snapshots = await Promise.all([
+                const snapshots = (await Promise.all([
                     getDocs(query(gamesRef, where("tournament.divisionName", "==", tournamentGroup.divisionName))),
                     getDocs(query(gamesRef, where("tournament.division", "==", tournamentGroup.divisionName)))
-                ]);
+                ])).map((snapshot) => requireServerGameSnapshot(snapshot, requireCompleteSharedGames));
                 return mergeGamesById(
                     snapshots[0].docs.map(doc => ({ id: doc.id, ...doc.data() })),
                     snapshots[1].docs.map(doc => ({ id: doc.id, ...doc.data() }))
@@ -4278,10 +4310,14 @@ export async function getGames(teamId, options = {}) {
             }));
             teamGames = groupGames.reduce((merged, games) => mergeGamesById(merged, games), []);
         } else {
-            const snapshot = await getDocs(query(gamesRef, ...rangeConstraints, orderBy("date")));
+            const snapshot = requireServerGameSnapshot(
+                await getDocs(query(gamesRef, ...rangeConstraints, orderBy("date"))),
+                requireCompleteSharedGames
+            );
             teamGames = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         }
     } catch (error) {
+        if (requireCompleteSharedGames && isGameInventoryCacheOnlyError(error)) throw error;
         if (isPermissionDeniedError(error)) {
             return getPublicGamesProjection(teamId, options);
         }
@@ -4290,25 +4326,36 @@ export async function getGames(teamId, options = {}) {
         if (hasTournamentGroup) throw error;
         // Fallback when indexes are still building or unavailable: read the
         // collection and apply the range client-side so results stay correct.
-        const snapshot = await getDocs(gamesRef);
+        const snapshot = requireServerGameSnapshot(
+            await getDocs(gamesRef),
+            requireCompleteSharedGames
+        );
         teamGames = snapshot.docs
             .map(doc => ({ id: doc.id, ...doc.data() }))
             .filter(game => isGameWithinDateRange(game, startDate, endDate));
     }
     if (!hasTournamentGroup && (startDate || endDate)) {
         try {
-            const recurringMasters = await getRecurringPracticeMastersForDateRange(gamesRef, startDate, endDate);
+            const recurringMasters = await getRecurringPracticeMastersForDateRange(gamesRef, startDate, endDate, {
+                requireServerSnapshot: requireCompleteSharedGames
+            });
             teamGames = mergeGamesById(teamGames, recurringMasters);
         } catch (error) {
+            if (requireCompleteSharedGames && isGameInventoryCacheOnlyError(error)) throw error;
             console.warn('[getGames] Failed to load recurring practice masters for team', teamId, error);
         }
     }
 
     let sharedGames = [];
     try {
-        sharedGames = await getSharedGamesForTeam(teamId, { startDate, endDate, requireComplete: hasTournamentGroup });
+        sharedGames = await getSharedGamesForTeam(teamId, {
+            startDate,
+            endDate,
+            requireComplete: hasTournamentGroup || requireCompleteSharedGames,
+            requireServerSnapshots: requireCompleteSharedGames
+        });
     } catch (error) {
-        if (hasTournamentGroup) throw error;
+        if (hasTournamentGroup || requireCompleteSharedGames) throw error;
         console.warn('[getGames] Failed to load shared games for team', teamId, error);
     }
 

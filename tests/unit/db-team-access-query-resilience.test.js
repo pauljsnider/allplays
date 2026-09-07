@@ -78,6 +78,13 @@ function createTeamDoc(id, data) {
   };
 }
 
+function createSharedGameDoc(id, data) {
+  return {
+    ...createTeamDoc(id, data),
+    ref: { path: `leagues/league-1/sharedGames/${id}` }
+  };
+}
+
 function getWhereConstraint(queryValue) {
   return queryValue.constraints.find((constraint) => constraint?.field);
 }
@@ -92,7 +99,7 @@ const {
   getGameDayTeamContext,
   getTeams,
   getUserTeamsWithAccess
-} = await import('../../js/db.js?v=4433196');
+} = await import('../../js/db.js?v=4433197');
 
 describe('team access query resilience', () => {
   beforeEach(() => {
@@ -356,6 +363,132 @@ describe('game access query resilience', () => {
       uid: 'official-1',
       email: 'official@example.com'
     };
+  });
+
+  it('preserves ordinary local game reads when one shared-game query is incomplete', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    firebaseMocks.getDocs.mockImplementation(async (queryValue) => {
+      const constraint = getWhereConstraint(queryValue);
+      if (constraint?.field === 'homeTeamId') throw new Error('Shared home query unavailable.');
+      if (constraint?.field === 'awayTeamId') return { docs: [], metadata: { fromCache: true } };
+      return {
+        docs: [createTeamDoc('local-game', { opponent: 'Falcons', date: new Date('2026-08-01T18:00:00Z') })],
+        metadata: { fromCache: true }
+      };
+    });
+
+    await expect(getGames('team-1')).resolves.toEqual([
+      expect.objectContaining({ id: 'local-game', opponent: 'Falcons' })
+    ]);
+    expect(warnSpy).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  it('rejects a completeness-required read when the local game snapshot is cached and empty', async () => {
+    firebaseMocks.getDocs.mockResolvedValue({ docs: [], metadata: { fromCache: true } });
+
+    await expect(getGames('team-1', { requireCompleteSharedGames: true })).rejects.toMatchObject({
+      code: 'allplays/game-inventory-cache-only',
+      message: 'Game inventory was loaded only from the local cache.'
+    });
+    expect(firebaseMocks.getDocs).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects cached nonempty local games before a later server read expands the inventory', async () => {
+    let localReadCount = 0;
+    firebaseMocks.getDocs.mockImplementation(async (queryValue) => {
+      const constraint = getWhereConstraint(queryValue);
+      if (constraint?.field === 'homeTeamId' || constraint?.field === 'awayTeamId') {
+        return { docs: [], metadata: { fromCache: false } };
+      }
+      localReadCount += 1;
+      if (localReadCount === 1) {
+        return {
+          docs: [createTeamDoc('cached-game', { opponent: 'Falcons', date: new Date('2026-08-01T18:00:00Z') })],
+          metadata: { fromCache: true }
+        };
+      }
+      return {
+        docs: [
+          createTeamDoc('cached-game', { opponent: 'Falcons', date: new Date('2026-08-01T18:00:00Z') }),
+          createTeamDoc('server-game', { opponent: 'Owls', date: new Date('2026-08-02T18:00:00Z') })
+        ],
+        metadata: { fromCache: false }
+      };
+    });
+
+    await expect(getGames('team-1', { requireCompleteSharedGames: true })).rejects.toMatchObject({
+      code: 'allplays/game-inventory-cache-only'
+    });
+    await expect(getGames('team-1', { requireCompleteSharedGames: true })).resolves.toEqual([
+      expect.objectContaining({ id: 'cached-game' }),
+      expect.objectContaining({ id: 'server-game' })
+    ]);
+  });
+
+  it('rejects a completeness-required read when an empty shared-game snapshot is cached', async () => {
+    firebaseMocks.getDocs.mockImplementation(async (queryValue) => {
+      const constraint = getWhereConstraint(queryValue);
+      if (constraint?.field === 'homeTeamId') return { docs: [], metadata: { fromCache: true } };
+      return { docs: [], metadata: { fromCache: false } };
+    });
+
+    await expect(getGames('team-1', { requireCompleteSharedGames: true })).rejects.toMatchObject({
+      code: 'allplays/game-inventory-cache-only'
+    });
+  });
+
+  it('rejects cached nonempty shared games before a later server read expands the inventory', async () => {
+    let homeSharedReadCount = 0;
+    firebaseMocks.getDocs.mockImplementation(async (queryValue) => {
+      const constraint = getWhereConstraint(queryValue);
+      if (constraint?.field === 'homeTeamId') {
+        homeSharedReadCount += 1;
+        const sharedGames = [
+          createSharedGameDoc('shared-1', {
+            homeTeamId: 'team-1',
+            awayTeamId: 'team-2',
+            awayTeamName: 'Falcons',
+            date: new Date('2026-08-02T18:00:00Z')
+          })
+        ];
+        if (homeSharedReadCount > 1) {
+          sharedGames.push(createSharedGameDoc('shared-2', {
+            homeTeamId: 'team-1',
+            awayTeamId: 'team-3',
+            awayTeamName: 'Owls',
+            date: new Date('2026-08-03T18:00:00Z')
+          }));
+        }
+        return {
+          docs: sharedGames,
+          metadata: { fromCache: homeSharedReadCount === 1 }
+        };
+      }
+      if (constraint?.field === 'awayTeamId') return { docs: [], metadata: { fromCache: false } };
+      return { docs: [], metadata: { fromCache: false } };
+    });
+
+    await expect(getGames('team-1', { requireCompleteSharedGames: true })).rejects.toMatchObject({
+      code: 'allplays/game-inventory-cache-only'
+    });
+    await expect(getGames('team-1', { requireCompleteSharedGames: true })).resolves.toEqual([
+      expect.objectContaining({ sharedGameId: 'shared-1', opponent: 'Falcons' }),
+      expect.objectContaining({ sharedGameId: 'shared-2', opponent: 'Owls' })
+    ]);
+  });
+
+  it('fails a completeness-required game read when any shared-game query is incomplete', async () => {
+    firebaseMocks.getDocs.mockImplementation(async (queryValue) => {
+      const constraint = getWhereConstraint(queryValue);
+      if (constraint?.field === 'homeTeamId') throw new Error('Shared home query unavailable.');
+      if (constraint?.field === 'awayTeamId') return { docs: [] };
+      return { docs: [createTeamDoc('local-game', { opponent: 'Falcons', date: new Date('2026-08-01T18:00:00Z') })] };
+    });
+
+    await expect(getGames('team-1', { requireCompleteSharedGames: true })).rejects.toThrow(
+      'Shared home query unavailable.'
+    );
   });
 
   it('falls back to a sanitized public schedule projection when canonical reads are denied', async () => {

@@ -1523,6 +1523,36 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     }
   }
 
+  function hasOfficialViewerAccess(game, caller) {
+    if (
+      Array.isArray(game?.officiatingAuthorizedUserIds) &&
+      game.officiatingAuthorizedUserIds.includes(caller.uid)
+    ) {
+      return true;
+    }
+    if (
+      !caller.email ||
+      !Array.isArray(game?.officiatingAuthorizedEmails)
+    ) {
+      return false;
+    }
+    return game.officiatingAuthorizedEmails
+      .filter((value) => typeof value === "string")
+      .map((value) => value.trim().toLowerCase())
+      .includes(caller.email);
+  }
+
+  function hasAuthorizedViewerAccess(access, game, caller) {
+    return hasOfficialViewerAccess(game, caller) || [
+      access?.full,
+      access?.parent,
+      access?.scorekeeping,
+      access?.videography,
+      access?.streaming,
+      access?.media,
+    ].some((value) => value === true);
+  }
+
   function rosterCandidate(document) {
     const data = snapshotData(document);
     const playerId =
@@ -4072,7 +4102,74 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     }
   }
 
-  async function loadPublicState(teamId, gameId) {
+  function buildSanitizedViewerState({ team, game, projection, scope }) {
+    const instanceId = game.diamondScorebookInstanceId;
+    if (
+      typeof instanceId !== "string" ||
+      instanceId !== instanceId.toLowerCase() ||
+      !UUID_V4_PATTERN.test(instanceId) ||
+      projection.instanceId !== instanceId
+    ) {
+      throw makeError(
+        "unavailable",
+        "The public Diamond projection is stale. Try again.",
+      );
+    }
+    return {
+      team,
+      game,
+      projection: core.sanitizeDiamondPublicProjection(projection),
+      rawProjection: projection,
+      viewerScope: scope,
+    };
+  }
+
+  async function loadAuthorizedViewerState(teamId, gameId, context) {
+    const caller = await loadEnabledAuthUser(context);
+    const resourcePaths = paths(teamId, gameId);
+    try {
+      return await firestore.runTransaction(async (transaction) => {
+        const [loaded, projectionSnapshot] = await Promise.all([
+          loadAccessDocuments(transaction, teamId, gameId, caller),
+          transaction.get(firestore.doc(resourcePaths.publicState)),
+        ]);
+        const projection = snapshotData(projectionSnapshot);
+        if (
+          !projection ||
+          loaded.game?.trackingEngine !== DIAMOND_ENGINE ||
+          canProjectPublic(loaded.team, loaded.game) ||
+          !hasAuthorizedViewerAccess(loaded.access, loaded.game, caller)
+        ) {
+          throw makeError("not-found", "Public Diamond game not found.");
+        }
+        requireAllowed(
+          core.decideDiamondOperation({
+            operation: "read",
+            teamId,
+            game: loaded.game,
+            policy: null,
+          }),
+          "This game is not owned by Diamond v2.",
+        );
+        return buildSanitizedViewerState({
+          team: loaded.team,
+          game: loaded.game,
+          projection,
+          scope: "authorized",
+        });
+      });
+    } catch (error) {
+      if (error instanceof HttpsError || error instanceof DiamondHandlerError) {
+        throw error;
+      }
+      throw makeError(
+        "unavailable",
+        "Private Diamond viewer access could not be verified completely. Try again.",
+      );
+    }
+  }
+
+  async function loadPublicState(teamId, gameId, context = null) {
     const resourcePaths = paths(teamId, gameId);
     let snapshots;
     try {
@@ -4100,29 +4197,122 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     ) {
       throw makeError("not-found", "Public Diamond game not found.");
     }
-    if (!canProjectPublic(team, game))
-      throw makeError("not-found", "Public Diamond game not found.");
-    const instanceId = game.diamondScorebookInstanceId;
-    if (
-      typeof instanceId !== "string" ||
-      instanceId !== instanceId.toLowerCase() ||
-      !UUID_V4_PATTERN.test(instanceId) ||
-      projection.instanceId !== instanceId
-    ) {
-      throw makeError(
-        "unavailable",
-        "The public Diamond projection is stale. Try again.",
-      );
+    if (!canProjectPublic(team, game)) {
+      const uid = context?.auth?.uid;
+      if (typeof uid !== "string" || !uid) {
+        throw makeError("not-found", "Public Diamond game not found.");
+      }
+      return loadAuthorizedViewerState(teamId, gameId, context);
     }
-    return {
+    return buildSanitizedViewerState({
       team,
       game,
-      projection: core.sanitizeDiamondPublicProjection(projection),
-      rawProjection: projection,
-    };
+      projection,
+      scope: "public",
+    });
   }
 
-  async function reauthorizePublicGamePage({ teamId, gameId, loaded, page }) {
+  function viewerPageMatches({ team, game, projection, loaded, page }) {
+    const expectedProjection = loaded.rawProjection;
+    const sourceRevision = Number(
+      projection?.sourceRevision ?? projection?.revision,
+    );
+    const expectedSourceRevision = Number(
+      expectedProjection.sourceRevision ?? expectedProjection.revision,
+    );
+    return (
+      team &&
+      game &&
+      projection &&
+      game.trackingEngine === DIAMOND_ENGINE &&
+      game.diamondScorebookInstanceId ===
+        loaded.game.diamondScorebookInstanceId &&
+      projection.instanceId === loaded.game.diamondScorebookInstanceId &&
+      sourceRevision === expectedSourceRevision &&
+      sourceRevision === page.sourceRevision &&
+      projection.checkpointHash === expectedProjection.checkpointHash &&
+      projection.projectionHash === expectedProjection.projectionHash &&
+      projection.projectionStatus === expectedProjection.projectionStatus &&
+      game.diamondProjectionRevision ===
+        loaded.game.diamondProjectionRevision &&
+      game.diamondProjectionCheckpointHash ===
+        loaded.game.diamondProjectionCheckpointHash &&
+      game.diamondProjectionHash === loaded.game.diamondProjectionHash &&
+      game.diamondProjectionStatus === loaded.game.diamondProjectionStatus &&
+      game.diamondProjectionComplete === loaded.game.diamondProjectionComplete
+    );
+  }
+
+  async function reauthorizeAuthorizedViewerGamePage({
+    teamId,
+    gameId,
+    context,
+    loaded,
+    page,
+  }) {
+    const caller = await loadEnabledAuthUser(context);
+    const resourcePaths = paths(teamId, gameId);
+    try {
+      return await firestore.runTransaction(async (transaction) => {
+        const [fresh, projectionSnapshot] = await Promise.all([
+          loadAccessDocuments(transaction, teamId, gameId, caller),
+          transaction.get(firestore.doc(resourcePaths.publicState)),
+        ]);
+        const projection = snapshotData(projectionSnapshot);
+        if (!hasAuthorizedViewerAccess(fresh.access, fresh.game, caller)) {
+          throw makeError("not-found", "Public Diamond game not found.");
+        }
+        if (
+          canProjectPublic(fresh.team, fresh.game) ||
+          !viewerPageMatches({
+            team: fresh.team,
+            game: fresh.game,
+            projection,
+            loaded,
+            page,
+          })
+        ) {
+          throw makeError(
+            "unavailable",
+            "The private Diamond game changed while it was loading. Try again.",
+          );
+        }
+        return {
+          team: fresh.team,
+          game: fresh.game,
+          projection: core.sanitizeDiamondPublicProjection(projection),
+        };
+      });
+    } catch (error) {
+      if (error instanceof HttpsError || error instanceof DiamondHandlerError) {
+        throw error;
+      }
+      throw makeError(
+        "unavailable",
+        "Private Diamond viewer access could not be reverified. Try again.",
+      );
+    }
+  }
+
+  async function reauthorizePublicGamePage({
+    teamId,
+    gameId,
+    loaded,
+    page,
+    context = null,
+  }) {
+    if (loaded.viewerScope === "authorized") {
+      return reauthorizeAuthorizedViewerGamePage({
+        teamId,
+        gameId,
+        context,
+        loaded,
+        page,
+      });
+    }
+    if (loaded.viewerScope !== "public") {
+      throw makeError("not-found", "Public Diamond game not found.");
+    }
     const resourcePaths = paths(teamId, gameId);
     let snapshots;
     try {
@@ -4142,35 +4332,10 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     const team = snapshotData(snapshots[0]);
     const game = snapshotData(snapshots[1]);
     const projection = snapshotData(snapshots[2]);
-    const expectedProjection = loaded.rawProjection;
-    const sourceRevision = Number(
-      projection?.sourceRevision ?? projection?.revision,
-    );
-    const expectedSourceRevision = Number(
-      expectedProjection.sourceRevision ?? expectedProjection.revision,
-    );
-    if (
-      !team ||
-      !game ||
-      !projection ||
-      game.trackingEngine !== DIAMOND_ENGINE ||
-      !canProjectPublic(team, game) ||
-      game.diamondScorebookInstanceId !==
-        loaded.game.diamondScorebookInstanceId ||
-      projection.instanceId !== loaded.game.diamondScorebookInstanceId ||
-      sourceRevision !== expectedSourceRevision ||
-      sourceRevision !== page.sourceRevision ||
-      projection.checkpointHash !== expectedProjection.checkpointHash ||
-      projection.projectionHash !== expectedProjection.projectionHash ||
-      projection.projectionStatus !== expectedProjection.projectionStatus ||
-      game.diamondProjectionRevision !==
-        loaded.game.diamondProjectionRevision ||
-      game.diamondProjectionCheckpointHash !==
-        loaded.game.diamondProjectionCheckpointHash ||
-      game.diamondProjectionHash !== loaded.game.diamondProjectionHash ||
-      game.diamondProjectionStatus !== loaded.game.diamondProjectionStatus ||
-      game.diamondProjectionComplete !== loaded.game.diamondProjectionComplete
-    ) {
+    if (!canProjectPublic(team, game)) {
+      throw makeError("not-found", "Public Diamond game not found.");
+    }
+    if (!viewerPageMatches({ team, game, projection, loaded, page })) {
       throw makeError(
         "unavailable",
         "The public Diamond game changed while it was loading. Try again.",
@@ -4700,7 +4865,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     });
   }
 
-  async function getPublicDiamondGame(data = {}) {
+  async function getPublicDiamondGame(data = {}, context = {}) {
     requireExactFields(
       data,
       new Set(["teamId", "gameId", "limit", "cursor"]),
@@ -4711,7 +4876,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     const gameId = normalizeId(data.gameId, "gameId");
     const limit = normalizePageLimit(data.limit, makeError);
     const cursor = normalizePublicReplayCursor(data.cursor, makeError);
-    const loaded = await loadPublicState(teamId, gameId);
+    const loaded = await loadPublicState(teamId, gameId, context);
     const page = await readEventPage({
       teamId,
       gameId,
@@ -4751,6 +4916,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       gameId,
       loaded,
       page,
+      context,
     });
     return {
       instanceId: fresh.game.diamondScorebookInstanceId,

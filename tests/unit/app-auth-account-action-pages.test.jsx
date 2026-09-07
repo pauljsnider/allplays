@@ -16,6 +16,14 @@ const authServiceMocks = vi.hoisted(() => ({
 
 vi.mock('../../apps/app/src/lib/authService.ts', () => authServiceMocks);
 
+const nativeRuntimeMocks = vi.hoisted(() => ({ native: false }));
+const publicActionMocks = vi.hoisted(() => ({ openPublicUrl: vi.fn(async () => undefined) }));
+
+vi.mock('../../apps/app/src/lib/nativeRuntime.ts', () => ({
+    isNativeRuntime: () => nativeRuntimeMocks.native
+}));
+vi.mock('../../apps/app/src/lib/publicActions.ts', () => publicActionMocks);
+
 import { ResetPassword } from '../../apps/app/src/pages/ResetPassword.tsx';
 import { VerifyPending } from '../../apps/app/src/pages/VerifyPending.tsx';
 
@@ -113,6 +121,8 @@ async function submitForm(form) {
 
 beforeEach(() => {
     vi.clearAllMocks();
+    nativeRuntimeMocks.native = false;
+    publicActionMocks.openPublicUrl.mockResolvedValue(undefined);
     authServiceMocks.applyEmailActionCode.mockResolvedValue(undefined);
     authServiceMocks.confirmReset.mockResolvedValue(undefined);
     authServiceMocks.getRouteForUser.mockReturnValue('/home');
@@ -159,6 +169,43 @@ describe('ResetPassword account actions', () => {
         await waitForText(container, 'Email verified. You can continue to ALL PLAYS.');
         expect(container.querySelector('a[href="/verify-pending"]')).toBeTruthy();
         expect(container.querySelector('a[href="//evil.example"]')).toBeNull();
+        expect(container.querySelector('a.mb-5')?.getAttribute('href')).toBe('/auth');
+    });
+
+    it('returns a verified email action to the exact static Diamond viewer document', async () => {
+        const viewerRoute = '/live-game-diamond-v2.html?teamId=team%2Fone&gameId=game+one&replay=true';
+        const { container } = await renderWithRoutes(
+            `/reset-password?mode=verifyEmail&oobCode=verify-code&next=${encodeURIComponent(viewerRoute)}`,
+            React.createElement(ResetPassword)
+        );
+
+        await waitForText(container, 'Email verified. You can continue to ALL PLAYS.');
+        const continueLink = Array.from(container.querySelectorAll('a'))
+            .find((link) => link.textContent === 'Continue after verification');
+        expect(continueLink?.getAttribute('href')).toBe(viewerRoute);
+    });
+
+    it('uses hosted web auth for native static-viewer action exits and preserves next on Back', async () => {
+        nativeRuntimeMocks.native = true;
+        const viewerRoute = '/live-game-diamond-v2.html?teamId=team%2Fone&gameId=game+one&replay=true';
+        const { container } = await renderWithRoutes(
+            `/reset-password?mode=verifyEmail&oobCode=verify-code&next=${encodeURIComponent(viewerRoute)}`,
+            React.createElement(ResetPassword)
+        );
+
+        await waitForText(container, 'Email verified. You can continue to ALL PLAYS.');
+        const backLink = Array.from(container.querySelectorAll('a'))
+            .find((link) => link.textContent.includes('Back to sign in'));
+        expect(backLink?.getAttribute('href')).toBe(`/auth?next=${encodeURIComponent(viewerRoute)}`);
+        const brandLink = container.querySelector('a.mb-5');
+        expect(brandLink?.getAttribute('href')).toBe(`/auth?next=${encodeURIComponent(viewerRoute)}`);
+
+        await act(async () => {
+            buttonByText(container, 'Continue after verification').click();
+        });
+        expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith(
+            'https://allplays.ai/app/#/auth?next=%2Flive-game-diamond-v2.html%3FteamId%3Dteam%252Fone%26gameId%3Dgame%2Bone%26replay%3Dtrue'
+        );
     });
 
     it('verifies reset codes, validates local password input, and confirms the reset', async () => {

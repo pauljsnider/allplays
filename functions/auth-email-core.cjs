@@ -4,6 +4,8 @@ const crypto = require('node:crypto');
 const { buildAcceptInviteAppUrl, buildAppUrl } = require('./app-links-core.cjs');
 
 const ALLPLAYS_ORIGIN = 'https://allplays.ai';
+const AUTH_ROUTE_ORIGIN = 'https://allplays.local';
+const VERIFICATION_DOCUMENT_NEXT_PATHNAME = '/live-game-diamond-v2.html';
 const AUTH_EMAIL_TYPES = Object.freeze({
   VERIFICATION: 'verification',
   PASSWORD_RESET: 'password_reset',
@@ -31,6 +33,23 @@ function normalizeHeaderText(value) {
   return String(value || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 160);
 }
 
+// Verification email continuations are intentionally narrower than ordinary
+// app routes. A Firebase action link can be opened on another device, so only
+// the public, read-only Diamond viewer document may survive that handoff.
+function normalizeVerificationNextRoute(value) {
+  const route = String(value || '').trim();
+  if (!route || route.length > 500 || !route.startsWith('/') || route.startsWith('//') || route.includes('\\')) {
+    return '';
+  }
+  try {
+    const url = new URL(route, AUTH_ROUTE_ORIGIN);
+    if (url.origin !== AUTH_ROUTE_ORIGIN || url.pathname !== VERIFICATION_DOCUMENT_NEXT_PATHNAME) return '';
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return '';
+  }
+}
+
 function getAuthEmailActionSettings(type, continueUrl = '', origin = ALLPLAYS_ORIGIN) {
   const normalizedOrigin = String(origin || ALLPLAYS_ORIGIN).replace(/\/$/, '');
   if (type === AUTH_EMAIL_TYPES.SIGN_IN) {
@@ -41,8 +60,9 @@ function getAuthEmailActionSettings(type, continueUrl = '', origin = ALLPLAYS_OR
     return { url: url.toString(), handleCodeInApp: true };
   }
   if (type === AUTH_EMAIL_TYPES.VERIFICATION) {
+    const verificationNextRoute = normalizeVerificationNextRoute(continueUrl);
     return {
-      url: buildAppUrl('/verify-pending', {}, normalizedOrigin),
+      url: buildAppUrl('/verify-pending', verificationNextRoute ? { next: verificationNextRoute } : {}, normalizedOrigin),
       handleCodeInApp: false
     };
   }
@@ -114,6 +134,19 @@ function readInviteContextFromContinueUrl(continueUrl, origin) {
   }
 }
 
+function readVerificationNextRouteFromContinueUrl(continueUrl, origin) {
+  if (!continueUrl) return '';
+  try {
+    const url = new URL(continueUrl);
+    if (url.origin !== new URL(origin).origin || !/^\/app\/?$/.test(url.pathname)) return '';
+    const [route, query = ''] = url.hash.replace(/^#/, '').split('?', 2);
+    if (route !== '/verify-pending') return '';
+    return normalizeVerificationNextRoute(new URLSearchParams(query).get('next'));
+  } catch {
+    return '';
+  }
+}
+
 function buildCanonicalAuthActionUrl(actionUrl, type, origin = ALLPLAYS_ORIGIN) {
   const action = readGeneratedFirebaseAction(actionUrl);
   const expectedModes = {
@@ -138,9 +171,12 @@ function buildCanonicalAuthActionUrl(actionUrl, type, origin = ALLPLAYS_ORIGIN) 
       ...actionParams
     }, origin);
   }
+  const verificationNextRoute = type === AUTH_EMAIL_TYPES.VERIFICATION
+    ? readVerificationNextRouteFromContinueUrl(action.continueUrl, origin)
+    : '';
   return buildAppUrl('/reset-password', {
     ...actionParams,
-    next: type === AUTH_EMAIL_TYPES.VERIFICATION ? '/verify-pending' : ''
+    next: verificationNextRoute || (type === AUTH_EMAIL_TYPES.VERIFICATION ? '/verify-pending' : '')
   }, origin);
 }
 
@@ -255,5 +291,6 @@ module.exports = {
   getAuthEmailActionSettings,
   getInviteContinueUrl,
   isValidAuthEmail,
-  normalizeAuthEmail
+  normalizeAuthEmail,
+  normalizeVerificationNextRoute
 };

@@ -24,7 +24,7 @@ async function waitForAuthRoute(page, readyLocator) {
     }).toPass({ timeout: 30000 });
 }
 
-async function mockAppModules(page, { user = null, emailLink = false, friendInviteReplay = false } = {}) {
+async function mockAppModules(page, { user = null, signInUser = null, emailLink = false, friendInviteReplay = false } = {}) {
     let friendInviteRedemptionAttempts = 0;
     if (friendInviteReplay) {
         await page.exposeFunction('mockFriendInviteRedemption', () => {
@@ -35,13 +35,15 @@ async function mockAppModules(page, { user = null, emailLink = false, friendInvi
         });
     }
 
-    await page.addInitScript(({ mockUser, mockEmailLink, mockFriendInviteReplay }) => {
+    await page.addInitScript(({ mockUser, mockSignInUser, mockEmailLink, mockFriendInviteReplay }) => {
         window.__mockAuthState = {
             user: mockUser,
             profile: mockUser ? { fullName: mockUser.displayName || 'Pat Parent' } : null
         };
         window.__mockEmailLink = mockEmailLink;
+        window.__mockSignInUser = mockSignInUser;
         window.__mockFriendInviteReplay = mockFriendInviteReplay;
+        window.__mockGoogleRedirectSettled = false;
         window.__appAuthCalls = {
             signInWithEmail: [],
             signUpWithEmail: [],
@@ -85,6 +87,7 @@ async function mockAppModules(page, { user = null, emailLink = false, friendInvi
         window.__mockNotificationPreferenceResponses ??= [];
     }, {
         mockUser: user,
+        mockSignInUser: signInUser,
         mockEmailLink: emailLink,
         mockFriendInviteReplay: friendInviteReplay
     });
@@ -168,6 +171,7 @@ async function mockAppModules(page, { user = null, emailLink = false, friendInvi
                 }
 
                 export async function completeGoogleRedirect() {
+                    window.__mockGoogleRedirectSettled = true;
                     return null;
                 }
 
@@ -214,7 +218,15 @@ async function mockAppModules(page, { user = null, emailLink = false, friendInvi
 
                 export async function signInWithEmail(email, password) {
                     window.__appAuthCalls.signInWithEmail.push({ email, password });
-                    return { user: mockUser() };
+                    window.sessionStorage.setItem('mock-last-sign-in-email', email);
+                    const user = window.__mockSignInUser || mockUser();
+                    if (window.__mockSignInUser) {
+                        window.__mockAuthState = {
+                            user,
+                            profile: { fullName: user.displayName || '' }
+                        };
+                    }
+                    return { user };
                 }
 
                 export async function signUpWithEmail(email, password, activationCode) {
@@ -707,6 +719,131 @@ test('signed-out manual invite code redirects through auth with the code preserv
 
     await expect(page).toHaveURL(/#\/auth\?code=ZXCV1234&type=parent&mode=login/);
     expect(await page.evaluate(() => window.localStorage.getItem('allplays-app-pending-invite-code'))).toBe('ZXCV1234');
+});
+
+test('Diamond viewer sign-in returns to the static viewer with its exact context', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    await mockAppModules(page);
+
+    const viewerRoute = '/live-game-diamond-v2.html?teamId=team%2Fone&gameId=game+one&replay=true&clipStart=1200&clipEnd=5600';
+    const viewerUrl = new URL(viewerRoute, new URL('/', appBaseUrl || baseURL)).toString();
+    await page.route(/\/live-game-diamond-v2\.html(?:\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'text/html',
+            body: '<!doctype html><html><body><h1>Returned Diamond viewer</h1></body></html>'
+        });
+    });
+
+    await page.goto(appUrl(baseURL, `/auth?next=${encodeURIComponent(viewerRoute)}`), { waitUntil: 'domcontentloaded' });
+    await waitForAuthRoute(page, page.getByRole('heading', { name: 'Sign in' }));
+    expect(pageErrors).toEqual([]);
+
+    await page.getByLabel('Email').fill('viewer@example.com');
+    await page.getByLabel('Password', { exact: true }).fill('password123');
+    await page.getByRole('button', { name: 'Sign in' }).last().click();
+
+    await expect(page).toHaveURL(viewerUrl);
+    await expect(page.getByRole('heading', { name: 'Returned Diamond viewer' })).toBeVisible();
+    const landed = new URL(page.url());
+    expect(landed.pathname).toBe('/live-game-diamond-v2.html');
+    expect(landed.searchParams.get('teamId')).toBe('team/one');
+    expect(landed.searchParams.get('gameId')).toBe('game one');
+    expect(landed.searchParams.get('replay')).toBe('true');
+    expect(landed.searchParams.get('clipStart')).toBe('1200');
+    expect(landed.searchParams.get('clipEnd')).toBe('5600');
+    expect(landed.hash).toBe('');
+    expect(pageErrors).toEqual([]);
+});
+
+test('an unauthorized signed-in Diamond viewer can switch accounts and return to the exact game', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    const wrongUser = {
+        uid: 'wrong-viewer',
+        email: 'wrong@example.com',
+        displayName: 'Wrong Viewer',
+        roles: ['parent']
+    };
+    const rightUser = {
+        uid: 'right-viewer',
+        email: 'right@example.com',
+        displayName: 'Right Viewer',
+        roles: ['parent']
+    };
+    await mockAppModules(page, { user: wrongUser, signInUser: rightUser });
+
+    await page.route(/\/js\/firebase\.js(?:\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                export const auth = {
+                    currentUser: { uid: 'wrong-viewer', displayName: 'Wrong Viewer' },
+                    async authStateReady() {}
+                };
+                export const db = {};
+                export const functions = {};
+                export const collection = () => ({});
+                export const getDocs = async () => ({ docs: [] });
+                export const limit = (...args) => args;
+                export const onSnapshot = () => () => {};
+                export const orderBy = (...args) => args;
+                export const query = (...args) => args;
+                export function onAuthStateChanged(_auth, callback) {
+                    callback(auth.currentUser);
+                    return () => {};
+                }
+                export function httpsCallable() {
+                    return async () => {
+                        throw Object.assign(new Error('Viewer access is unavailable'), {
+                            code: 'functions/permission-denied'
+                        });
+                    };
+                }
+            `
+        });
+    });
+
+    const viewerRoute = '/live-game-diamond-v2.html?teamId=private-team&gameId=private-game&replay=1';
+    const switchRoute = `/auth?next=${encodeURIComponent(viewerRoute)}&switch=1`;
+    const appOrigin = new URL('/', appBaseUrl || baseURL).toString();
+    await page.route(new URL('/app/', baseURL).toString(), async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'text/html',
+            body: `<script>window.location.replace(${JSON.stringify(appOrigin)} + window.location.hash);</script>`
+        });
+    });
+    await page.route(new URL(viewerRoute, appOrigin).toString(), async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'text/html',
+            body: '<!doctype html><html><body><h1>Authorized Diamond viewer</h1></body></html>'
+        });
+    });
+
+    await page.goto(new URL(viewerRoute, baseURL).toString(), { waitUntil: 'domcontentloaded' });
+    const accountAction = page.locator('[data-diamond-error-sign-in]');
+    await expect(accountAction).toBeVisible();
+    await expect(accountAction).toHaveAttribute('href', `/app/#${switchRoute}`);
+    await accountAction.click();
+
+    await waitForAuthRoute(page, page.getByRole('heading', { name: 'Sign in' }));
+    await expect(page).toHaveURL(appUrl(baseURL, switchRoute));
+    await expect(page.getByLabel('Email')).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.__mockGoogleRedirectSettled)).toBe(true);
+    await expect(page).toHaveURL(appUrl(baseURL, switchRoute));
+
+    await page.getByLabel('Email').fill('right@example.com');
+    await page.getByLabel('Password', { exact: true }).fill('password123');
+    await page.getByRole('button', { name: 'Sign in' }).last().click();
+
+    await expect(page).toHaveURL(new URL(viewerRoute, appOrigin).toString());
+    await expect(page.getByRole('heading', { name: 'Authorized Diamond viewer' })).toBeVisible();
+    expect(await page.evaluate(() => window.sessionStorage.getItem('mock-last-sign-in-email'))).toBe('right@example.com');
+    expect(pageErrors).toEqual([]);
 });
 
 test('signed-in invite and account action routes process existing site flows', async ({ page, baseURL }) => {

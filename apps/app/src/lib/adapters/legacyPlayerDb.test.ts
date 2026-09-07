@@ -5,8 +5,11 @@ const firebaseMocks = vi.hoisted(() => ({
     functions: { name: 'functions' },
     httpsCallable: vi.fn()
 }));
+const legacyDbMocks = vi.hoisted(() => ({
+    getGames: vi.fn()
+}));
 
-vi.mock('@legacy/db.js', () => ({}));
+vi.mock('@legacy/db.js', () => legacyDbMocks);
 vi.mock('@legacy/roster-profile-fields.js', () => ({
     collectRosterParentContacts: vi.fn()
 }));
@@ -15,7 +18,23 @@ vi.mock('@legacy/firebase.js', () => ({
     httpsCallable: firebaseMocks.httpsCallable
 }));
 
-import { inviteCoParentToAthlete } from './legacyPlayerDb';
+import { getGames, inviteCoParentToAthlete } from './legacyPlayerDb';
+
+describe('legacyPlayerDb game reads', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('forwards the complete-shared-game requirement to the legacy reader', async () => {
+        legacyDbMocks.getGames.mockResolvedValue([]);
+
+        await expect(getGames('team-1', { requireCompleteSharedGames: true })).resolves.toEqual([]);
+
+        expect(legacyDbMocks.getGames).toHaveBeenCalledWith('team-1', {
+            requireCompleteSharedGames: true
+        });
+    });
+});
 
 describe('legacyPlayerDb co-parent invitations', () => {
     beforeEach(() => {

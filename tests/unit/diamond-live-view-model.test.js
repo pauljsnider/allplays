@@ -384,14 +384,36 @@ describe("diamond live view model", () => {
     expect(html).toContain("data-diamond-reactions");
     expect(html).toContain("data-diamond-media-frame");
     expect(html).toContain("data-diamond-mode-label");
+    expect(html).toContain("data-diamond-error-sign-in");
     expect(html).toContain('aria-label="Live game score"');
-    expect(html).toContain("js/diamond-live-game.js?v=9");
+    expect(html).toContain("js/diamond-live-game.js?v=10");
 
     const script = readFileSync(
       new URL("../../js/diamond-live-game.js", import.meta.url),
       "utf8",
     );
     expect(script).toContain("diamond-live-view-model.js?v=4");
+    expect(script).toContain("onAuthStateChanged");
+    expect(script).not.toContain('from "./auth.js');
+    expect(script).toContain("AUTH_RESTORE_TIMEOUT_MS = 2000");
+    expect(script).toContain("VIEWER_REVALIDATION_INTERVAL_MS = 60_000");
+    expect(script).toContain("Promise.race([");
+    expect(script).toContain(
+      "allowAuthRecovery: !append && !cursor && !state.game",
+    );
+    expect(script).toContain("initialAuthUid ||");
+    expect(script).toContain(
+      "requestAuthUid !== viewerAuthUid(auth?.currentUser)",
+    );
+    expect(script).toContain("state.viewerEpoch += 1");
+    expect(script).toContain('window.addEventListener("pageshow"');
+    expect(script).toContain(
+      "const returnPath = `${window.location.pathname}${window.location.search}`;",
+    );
+    expect(script).toContain(
+      "`/app/#/auth?next=${encodeURIComponent(returnPath)}`",
+    );
+    expect(script).toContain('elements.errorSignIn.href = `${authHref}&switch=1`');
     expect(script).toContain(
       'import { isViewerChatEnabled } from "./live-game-chat.js?v=4";',
     );

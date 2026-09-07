@@ -631,6 +631,20 @@ describe('resendVerificationEmail', () => {
     expect(reload).toHaveBeenCalled();
     expect(legacyAuthEmailMocks.queueCurrentUserVerificationEmail).toHaveBeenCalledWith();
   });
+
+  it('preserves only the static Diamond viewer next when resending verification', async () => {
+    const reload = vi.fn().mockResolvedValue(undefined);
+    const viewerRoute = '/live-game-diamond-v2.html?teamId=team%2Fone&gameId=game+one&replay=true';
+    authState.currentUser = { reload, email: 'coach@allplays.ai' } as any;
+    legacyAuthEmailMocks.queueCurrentUserVerificationEmail.mockResolvedValue({ queued: true });
+
+    await resendVerificationEmail(viewerRoute);
+
+    expect(legacyAuthEmailMocks.queueCurrentUserVerificationEmail).toHaveBeenCalledWith('', viewerRoute);
+    legacyAuthEmailMocks.queueCurrentUserVerificationEmail.mockClear();
+    await resendVerificationEmail('https://evil.example/viewer');
+    expect(legacyAuthEmailMocks.queueCurrentUserVerificationEmail).toHaveBeenCalledWith();
+  });
 });
 
 describe('sendResetEmail', () => {
@@ -1085,6 +1099,34 @@ describe('signUpWithEmail', () => {
     expect(nativeAuthenticationMocks.reload).toHaveBeenCalledTimes(1);
     expect(legacyAuthEmailMocks.queueCurrentUserVerificationEmail).toHaveBeenCalledWith('native-signup-id-token');
     expect(nativeAuthenticationMocks.sendEmailVerification).not.toHaveBeenCalled();
+  });
+
+  it('passes only the allowlisted Diamond viewer route into the verification-email handoff', async () => {
+    const viewerRoute = '/live-game-diamond-v2.html?teamId=team%2Fone&gameId=game+one&replay=true';
+    nativeAuthenticationMocks.getIdToken.mockResolvedValue({ token: 'native-signup-id-token' });
+    nativeAuthenticationMocks.getCurrentUser.mockResolvedValue({
+      user: { uid: 'new-user', email: 'player@example.com' }
+    });
+    legacySignupFlowMocks.executeEmailPasswordSignup.mockImplementation(async (options: any) => {
+      window.localStorage.setItem(
+        'allplays-native-auth-session',
+        JSON.stringify({
+          uid: 'new-user',
+          email: 'player@example.com',
+          emailVerified: false,
+          provider: 'native-plugin'
+        })
+      );
+      await options.dependencies.sendVerificationEmail();
+      return { user: options.auth.currentUser };
+    });
+
+    await signUpWithEmail('player@example.com', 'secret1', '85NSBZ7K', viewerRoute);
+
+    expect(legacyAuthEmailMocks.queueCurrentUserVerificationEmail).toHaveBeenCalledWith(
+      'native-signup-id-token',
+      viewerRoute
+    );
   });
 
   it('stops invalid signup emails before loading Firebase signup work', async () => {

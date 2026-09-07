@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent, KeyboardEvent, ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Eye, EyeOff, KeyRound, LogIn, Mail, ShieldCheck } from 'lucide-react';
@@ -19,8 +19,9 @@ import {
   signUpWithEmail
 } from '../lib/authService';
 import type { AuthState } from '../lib/types';
-import { getSafeAuthNextRoute } from '../lib/authNextRoute';
+import { completeAuthNavigation, getDocumentAuthNextRoute, getSafeAuthNextRoute } from '../lib/authNextRoute';
 import { isNativeRuntime } from '../lib/nativeRuntime';
+import { openPublicUrl } from '../lib/publicActions';
 import { Capacitor } from '@capacitor/core';
 
 type AuthMode = 'login' | 'signup';
@@ -34,6 +35,8 @@ export function AuthPage({ auth }: { auth: AuthState }) {
   const inviteType = (searchParams.get('type') || 'parent').trim().toLowerCase();
   const requestedMode = searchParams.get('mode');
   const requestedNextRoute = getSafeAuthNextRoute(searchParams.get('next'));
+  const requestedDocumentRoute = getDocumentAuthNextRoute(requestedNextRoute);
+  const accountSwitchRequested = searchParams.get('switch') === '1' && Boolean(requestedDocumentRoute);
   const initialMode: AuthMode = requestedMode === 'login'
     ? 'login'
     : requestedMode === 'signup' || inviteCode
@@ -51,9 +54,13 @@ export function AuthPage({ auth }: { auth: AuthState }) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [redirectSettlementVersion, setRedirectSettlementVersion] = useState(0);
   const loginTabRef = useRef<HTMLButtonElement>(null);
   const signupTabRef = useRef<HTMLButtonElement>(null);
   const authPageActiveRef = useRef(true);
+  const authRef = useRef(auth);
+  const redirectCheckSettledRef = useRef(false);
+  const nativeDocumentHandoffStartedRef = useRef(false);
 
   const signupBlockedByTerms = mode === 'signup' && !agreedToTerms;
   const title = mode === 'signup' ? 'Create your account' : 'Sign in';
@@ -67,6 +74,16 @@ export function AuthPage({ auth }: { auth: AuthState }) {
     }
     return requestedNextRoute || getRouteForUser(auth.user);
   }, [auth.user, inviteCode, inviteType, requestedNextRoute]);
+  const postAuthRouteRef = useRef(postAuthRoute);
+  authRef.current = auth;
+  postAuthRouteRef.current = postAuthRoute;
+
+  const completePostAuthNavigation = useCallback((route: string, reloadApp = false) => completeAuthNavigation(route, navigate, {
+    accountSwitchRequested,
+    nativeRuntime: isNativeRuntime(),
+    openHostedAuth: openPublicUrl,
+    reloadApp
+  }), [accountSwitchRequested, navigate]);
 
   useEffect(() => {
     authPageActiveRef.current = true;
@@ -76,38 +93,82 @@ export function AuthPage({ auth }: { auth: AuthState }) {
   }, []);
 
   useEffect(() => {
+    if (
+      !redirectCheckSettledRef.current
+      || !requestedDocumentRoute
+      || !isNativeRuntime()
+      || nativeDocumentHandoffStartedRef.current
+    ) {
+      return;
+    }
+
+    nativeDocumentHandoffStartedRef.current = true;
+    void completePostAuthNavigation(requestedDocumentRoute).catch((handoffError: any) => {
+      if (authPageActiveRef.current && isBrowserAuthRouteActive()) {
+        setError(describeAuthError(handoffError));
+      }
+    });
+  }, [completePostAuthNavigation, redirectSettlementVersion, requestedDocumentRoute]);
+
+  useEffect(() => {
     // Auth hydration can finish after the browser has already moved away from
     // this route. An effect queued by the old AuthPage render must not replace
     // that newer deep link with the signed-in default route.
-    if (!auth.loading && auth.user && !inviteCode && isBrowserAuthRouteActive()) {
-      navigate(postAuthRoute, { replace: true });
+    if (
+      redirectCheckSettledRef.current
+      && !auth.loading
+      && auth.user
+      && !inviteCode
+      && !accountSwitchRequested
+      && isBrowserAuthRouteActive()
+      && !(requestedDocumentRoute && isNativeRuntime() && nativeDocumentHandoffStartedRef.current)
+    ) {
+      void completePostAuthNavigation(postAuthRoute).catch((navigationError: any) => {
+        if (authPageActiveRef.current && isBrowserAuthRouteActive()) {
+          setError(describeAuthError(navigationError));
+        }
+      });
     }
-  }, [auth.loading, auth.user, inviteCode, navigate, postAuthRoute]);
+  }, [accountSwitchRequested, auth.loading, auth.user, completePostAuthNavigation, inviteCode, postAuthRoute, redirectSettlementVersion, requestedDocumentRoute]);
 
   useEffect(() => {
     let cancelled = false;
+    let redirectCompletionSucceeded = false;
 
     async function finishRedirect() {
       try {
         const result = await completeGoogleRedirect();
-        if (!result || cancelled) {
+        if (cancelled) {
           return;
         }
-        await auth.refresh();
+        if (!result) {
+          redirectCompletionSucceeded = true;
+          return;
+        }
+        await authRef.current.refresh();
         const redirectRoute = result.wasNewUser
           ? requestedNextRoute
             ? `/verify-pending?next=${encodeURIComponent(requestedNextRoute)}`
             : '/verify-pending'
           : inviteCode || requestedNextRoute
-            ? postAuthRoute
+            ? postAuthRouteRef.current
             : '/home';
         if (cancelled || !authPageActiveRef.current || !isBrowserAuthRouteActive()) {
           return;
         }
-        navigate(redirectRoute, { replace: true });
+        await completePostAuthNavigation(redirectRoute);
+        redirectCompletionSucceeded = true;
       } catch (redirectError: any) {
         if (!cancelled) {
           setError(describeAuthError(redirectError));
+        }
+      } finally {
+        // Do not turn a failed redirect completion into a restored-session
+        // fallback. Firebase can have a hydrated user while the redirect still
+        // fails later during activation or invite provisioning.
+        if (!cancelled && redirectCompletionSucceeded) {
+          redirectCheckSettledRef.current = true;
+          setRedirectSettlementVersion((version) => version + 1);
         }
       }
     }
@@ -116,7 +177,7 @@ export function AuthPage({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [auth, inviteCode, navigate, postAuthRoute, requestedNextRoute]);
+  }, [completePostAuthNavigation, inviteCode, requestedNextRoute]);
 
   const clearStatus = () => {
     setError('');
@@ -170,12 +231,18 @@ export function AuthPage({ auth }: { auth: AuthState }) {
           throw new Error('Passwords do not match.');
         }
 
-        await signUpWithEmail(normalizedEmail, password, code);
+        if (requestedDocumentRoute) {
+          await signUpWithEmail(normalizedEmail, password, code, requestedDocumentRoute);
+        } else {
+          await signUpWithEmail(normalizedEmail, password, code);
+        }
         await auth.refresh();
         if (!authPageActiveRef.current || !isBrowserAuthRouteActive()) {
           return;
         }
-        navigate(requestedNextRoute ? `/verify-pending?next=${encodeURIComponent(requestedNextRoute)}` : '/verify-pending', { replace: true });
+        await completePostAuthNavigation(
+          requestedNextRoute ? `/verify-pending?next=${encodeURIComponent(requestedNextRoute)}` : '/verify-pending',
+        );
         return;
       }
 
@@ -185,21 +252,11 @@ export function AuthPage({ auth }: { auth: AuthState }) {
       }
       const hydrated = inviteCode ? null : await hydrateFirebaseUser(credential.user).catch(() => null);
       const postLoginRoute = inviteCode || requestedNextRoute ? postAuthRoute : getRouteForUser(hydrated?.user || auth.user);
-      if (credential.nativeRest) {
-        await auth.refresh();
-        if (!authPageActiveRef.current || !isBrowserAuthRouteActive()) {
-          return;
-        }
-        window.location.hash = `#${postLoginRoute}`;
-        window.location.reload();
-        return;
-      }
-
       await auth.refresh();
       if (!authPageActiveRef.current || !isBrowserAuthRouteActive()) {
         return;
       }
-      navigate(postLoginRoute, { replace: true });
+      await completePostAuthNavigation(postLoginRoute, credential.nativeRest === true);
     } catch (submitError: any) {
       setError(describeAuthError(submitError));
     } finally {
@@ -231,21 +288,11 @@ export function AuthPage({ auth }: { auth: AuthState }) {
           : inviteCode
             ? postAuthRoute
             : requestedNextRoute || getRouteForUser(hydrated?.user || auth.user);
-        if (result.nativeRest) {
-          await auth.refresh();
-          if (!authPageActiveRef.current || !isBrowserAuthRouteActive()) {
-            return;
-          }
-          window.location.hash = `#${postGoogleRoute}`;
-          window.location.reload();
-          return;
-        }
-
         await auth.refresh();
         if (!authPageActiveRef.current || !isBrowserAuthRouteActive()) {
           return;
         }
-        navigate(postGoogleRoute, { replace: true });
+        await completePostAuthNavigation(postGoogleRoute, result.nativeRest === true);
       }
     } catch (googleError: any) {
       setError(describeAuthError(googleError));
@@ -282,8 +329,7 @@ export function AuthPage({ auth }: { auth: AuthState }) {
         if (!authPageActiveRef.current || !isBrowserAuthRouteActive()) {
           return;
         }
-        window.location.hash = `#${destination}`;
-        window.location.reload();
+        await completePostAuthNavigation(destination, true);
       }
     } catch (appleError: any) {
       setError(describeAuthError(appleError));

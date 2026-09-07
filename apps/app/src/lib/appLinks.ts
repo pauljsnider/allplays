@@ -1,5 +1,9 @@
 const defaultPublicOrigin = 'https://allplays.ai';
 
+export function getCanonicalPublicOrigin() {
+  return defaultPublicOrigin;
+}
+
 export const firebaseActionParameterNames = [
   'mode',
   'oobCode',

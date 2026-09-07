@@ -98,8 +98,11 @@ export async function getPlayers(teamId: string, options?: { includeInactive?: b
     return await Promise.resolve(legacyGetPlayers(teamId, options));
 }
 
-export async function getGames(teamId: string): Promise<LegacyGameRecord[]> {
-    return await Promise.resolve(legacyGetGames(teamId));
+export async function getGames(
+    teamId: string,
+    options?: { requireCompleteSharedGames?: boolean }
+): Promise<LegacyGameRecord[]> {
+    return await Promise.resolve(options ? legacyGetGames(teamId, options) : legacyGetGames(teamId));
 }
 
 export async function getConfigs(teamId: string): Promise<Record<string, any>[]> {

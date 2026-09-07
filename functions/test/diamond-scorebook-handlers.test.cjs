@@ -428,6 +428,9 @@ function createHarness(overrides = {}) {
     random: () => makeUuid(randomIndex++),
     logger: { info() {}, warn() {}, error() {} },
     resolveDelegatedAccess({ uid, user, team }) {
+      if (overrides.viewerAccessByUid?.[uid]) {
+        return clone(overrides.viewerAccessByUid[uid]);
+      }
       const full = user?.isAdmin === true || team?.ownerId === uid;
       const selectedScorers =
         team?.teamPermissions?.scorekeeping?.mode === "selected"
@@ -438,7 +441,14 @@ function createHarness(overrides = {}) {
         selectedScorers.includes(uid) ||
         (Array.isArray(team?.scorekeeperIds) &&
           team.scorekeeperIds.includes(uid));
-      return { full, scorekeeping, parent: false };
+      return {
+        full,
+        scorekeeping,
+        parent: false,
+        videography: false,
+        streaming: false,
+        media: false,
+      };
     },
     isPublicGame(team, game) {
       return team?.isPublic === true && game?.visibility === "public";
@@ -3511,6 +3521,36 @@ describe("Diamond scorebook handler factory", () => {
       (error) => error.code === "failed-precondition",
     );
 
+    harness.firestore.seed(resourcePaths.game, {
+      ...harness.firestore.read(resourcePaths.game),
+      visibility: "private",
+      shareable: false,
+    });
+    const privateNewest = await harness.handlers.getPublicDiamondGame(
+      { teamId: "team-1", gameId: "game-1", limit: 4 },
+      harness.managerContext,
+    );
+    assert.deepEqual(
+      privateNewest.events.map((event) => event.id),
+      newest.events.map((event) => event.id),
+    );
+    assert.equal(privateNewest.projectionToken, newest.projectionToken);
+    const privateRemainder = await harness.handlers.getPublicDiamondGame(
+      {
+        teamId: "team-1",
+        gameId: "game-1",
+        limit: 200,
+        cursor: privateNewest.nextCursor,
+      },
+      harness.managerContext,
+    );
+    assert.equal(privateRemainder.events.length, 99);
+    assert.equal(privateRemainder.complete, true);
+    harness.firestore.seed(resourcePaths.game, {
+      ...harness.firestore.read(resourcePaths.game),
+      visibility: "public",
+    });
+
     const malformedPage = harness.firestore.read(
       resourcePaths.publicReplayPage("page-000002"),
     );
@@ -3563,6 +3603,255 @@ describe("Diamond scorebook handler factory", () => {
     );
   });
 
+  it("serves the same sanitized viewer envelope to every current private-game viewer role", async () => {
+    const viewerAccessByUid = {
+      "parent-1": { parent: true },
+      "scorekeeper-2": { scorekeeping: true },
+      "videographer-1": { videography: true },
+      "streamer-1": { streaming: true },
+      "media-1": { media: true },
+      "official-uid-1": {},
+      "official-email-1": {},
+    };
+    const authUsers = Object.fromEntries(
+      Object.keys(viewerAccessByUid).map((uid) => [
+        uid,
+        {
+          uid,
+          disabled: false,
+          email: `${uid}@example.test`,
+          emailVerified: true,
+        },
+      ]),
+    );
+    const documents = Object.fromEntries(
+      Object.keys(viewerAccessByUid).map((uid) => [
+        `users/${uid}`,
+        { displayName: uid, privateProfileNote: "profile-secret" },
+      ]),
+    );
+    const harness = createHarness({
+      authUsers,
+      documents,
+      viewerAccessByUid,
+    });
+    await activate(harness);
+    const resourcePaths = paths("team-1", "game-1");
+    harness.firestore.seed(resourcePaths.team, {
+      ...harness.firestore.read(resourcePaths.team),
+      isPublic: false,
+      ownerEmail: "private-owner@example.test",
+      adminEmails: ["private-admin@example.test"],
+    });
+    harness.firestore.seed(resourcePaths.game, {
+      ...harness.firestore.read(resourcePaths.game),
+      visibility: "private",
+      shareable: false,
+      privateCoachNotes: "game-secret",
+      officiatingAuthorizedUserIds: ["official-uid-1"],
+      officiatingAuthorizedEmails: ["official-email-1@example.test"],
+    });
+    harness.firestore.seed(resourcePaths.publicState, {
+      ...harness.firestore.read(resourcePaths.publicState),
+      actorUid: "private-actor",
+      commandHash: `sha256:${"f".repeat(64)}`,
+      availablePlayers: [{ medicalInfo: "projection-secret" }],
+    });
+    for (const [path, value] of harness.firestore.documents.entries()) {
+      if (path.startsWith(`${resourcePaths.publicEvents}/`)) {
+        harness.firestore.seed(path, {
+          ...value,
+          actorUid: "private-event-actor",
+          privateNote: "event-secret",
+        });
+      }
+    }
+
+    const contexts = [
+      harness.managerContext,
+      ...Object.keys(viewerAccessByUid).map((uid) => ({ auth: { uid } })),
+    ];
+    for (const viewerContext of contexts) {
+      const result = await harness.handlers.getPublicDiamondGame(
+        { teamId: "team-1", gameId: "game-1", limit: 50 },
+        viewerContext,
+      );
+      assert.equal(result.game.trackingEngine, DIAMOND_ENGINE);
+      assert.equal(
+        result.instanceId,
+        harness.firestore.read(resourcePaths.game).diamondScorebookInstanceId,
+      );
+      assert.doesNotMatch(
+        JSON.stringify(result),
+        /private-owner|private-admin|profile-secret|game-secret|projection-secret|event-secret|private-actor|commandHash|availablePlayers/,
+      );
+    }
+
+    const finalReadPaths = new Set(
+      harness.firestore.transactionReadBatches.at(-1),
+    );
+    assert.deepEqual(
+      finalReadPaths,
+      new Set([
+        resourcePaths.team,
+        resourcePaths.user("official-email-1"),
+        resourcePaths.game,
+        resourcePaths.rsvp("official-email-1"),
+        resourcePaths.publicState,
+      ]),
+    );
+  });
+
+  it("keeps anonymous and unrelated callers outside a private Diamond viewer", async () => {
+    const harness = createHarness({
+      authUsers: {
+        "unrelated-1": {
+          uid: "unrelated-1",
+          disabled: false,
+          email: "unrelated@example.test",
+          emailVerified: true,
+        },
+        "unverified-official-email": {
+          uid: "unverified-official-email",
+          disabled: false,
+          email: "official@example.test",
+          emailVerified: false,
+        },
+      },
+      documents: {
+        "users/unrelated-1": { isAdmin: false },
+        "users/unverified-official-email": { isAdmin: false },
+      },
+      viewerAccessByUid: {
+        "unrelated-1": {
+          full: false,
+          parent: false,
+          scorekeeping: false,
+          videography: false,
+          streaming: false,
+          media: false,
+        },
+        "unverified-official-email": {
+          full: false,
+          parent: false,
+          scorekeeping: false,
+          videography: false,
+          streaming: false,
+          media: false,
+        },
+      },
+    });
+    await activate(harness);
+    const resourcePaths = paths("team-1", "game-1");
+    harness.firestore.seed(resourcePaths.game, {
+      ...harness.firestore.read(resourcePaths.game),
+      visibility: "private",
+      shareable: false,
+      officiatingAuthorizedEmails: ["official@example.test"],
+    });
+
+    for (const viewerContext of [
+      undefined,
+      {
+        auth: {
+          uid: "unrelated-1",
+          token: { email: "official@example.test", email_verified: true },
+        },
+      },
+      { auth: { uid: "unverified-official-email" } },
+    ]) {
+      await assert.rejects(
+        harness.handlers.getPublicDiamondGame(
+          { teamId: "team-1", gameId: "game-1" },
+          viewerContext,
+        ),
+        (error) => error.code === "not-found",
+      );
+    }
+  });
+
+  it("returns no private viewer payload after access, visibility, or exact head changes", async () => {
+    const mutations = [
+      (harness, resourcePaths) => {
+        harness.firestore.seed(resourcePaths.team, {
+          ...harness.firestore.read(resourcePaths.team),
+          ownerId: "replacement-manager",
+        });
+      },
+      (harness, resourcePaths) => {
+        harness.firestore.seed(resourcePaths.game, {
+          ...harness.firestore.read(resourcePaths.game),
+          visibility: "public",
+        });
+      },
+      (harness, resourcePaths) => {
+        harness.firestore.seed(resourcePaths.game, {
+          ...harness.firestore.read(resourcePaths.game),
+          diamondProjectionRevision:
+            harness.firestore.read(resourcePaths.game)
+              .diamondProjectionRevision + 1,
+        });
+      },
+      (harness, resourcePaths) => {
+        harness.firestore.seed(resourcePaths.game, {
+          ...harness.firestore.read(resourcePaths.game),
+          diamondScorebookInstanceId: makeUuid(998),
+        });
+      },
+    ];
+
+    for (const mutate of mutations) {
+      const harness = createHarness();
+      await activate(harness);
+      const resourcePaths = paths("team-1", "game-1");
+      harness.firestore.seed(resourcePaths.game, {
+        ...harness.firestore.read(resourcePaths.game),
+        visibility: "private",
+        shareable: false,
+      });
+      harness.firestore.queryHook = (query) => {
+        if (query.path !== resourcePaths.publicEvents) return;
+        harness.firestore.queryHook = null;
+        mutate(harness, resourcePaths);
+      };
+
+      await assert.rejects(
+        harness.handlers.getPublicDiamondGame(
+          { teamId: "team-1", gameId: "game-1", limit: 50 },
+          harness.managerContext,
+        ),
+        (error) => ["not-found", "unavailable"].includes(error.code),
+      );
+    }
+  });
+
+  it("rechecks the enabled Auth principal after private replay assembly", async () => {
+    const harness = createHarness();
+    await activate(harness);
+    const resourcePaths = paths("team-1", "game-1");
+    harness.firestore.seed(resourcePaths.game, {
+      ...harness.firestore.read(resourcePaths.game),
+      visibility: "private",
+      shareable: false,
+    });
+    harness.firestore.queryHook = (query) => {
+      if (query.path !== resourcePaths.publicEvents) return;
+      harness.firestore.queryHook = null;
+      harness.authUsers.set("manager-1", {
+        ...harness.authUsers.get("manager-1"),
+        disabled: true,
+      });
+    };
+
+    await assert.rejects(
+      harness.handlers.getPublicDiamondGame(
+        { teamId: "team-1", gameId: "game-1", limit: 50 },
+        harness.managerContext,
+      ),
+      (error) => error.code === "permission-denied",
+    );
+  });
+
   it("returns only an exact sanitized public team-stat envelope and fails malformed subsets closed", async () => {
     const harness = createHarness();
     await activate(harness);
@@ -3611,29 +3900,47 @@ describe("Diamond scorebook handler factory", () => {
   });
 
   it("reauthorizes visibility and generation after public replay assembly", async () => {
-    for (const mutate of [
-      (harness, resourcePaths) => {
-        harness.firestore.seed(resourcePaths.game, {
-          ...harness.firestore.read(resourcePaths.game),
-          visibility: "private",
-          isPublic: false,
-          shareable: false,
-        });
+    for (const { mutate, expectedCode, expectedMessage } of [
+      {
+        expectedCode: "not-found",
+        expectedMessage: "Public Diamond game not found.",
+        mutate(harness, resourcePaths) {
+          harness.firestore.seed(resourcePaths.game, {
+            ...harness.firestore.read(resourcePaths.game),
+            visibility: "private",
+            isPublic: false,
+            shareable: false,
+          });
+        },
       },
-      (harness, resourcePaths) => {
-        harness.firestore.seed(resourcePaths.game, {
-          ...harness.firestore.read(resourcePaths.game),
-          diamondScorebookInstanceId: makeUuid(997),
-        });
+      {
+        expectedCode: "unavailable",
+        expectedMessage:
+          "The public Diamond game changed while it was loading. Try again.",
+        mutate(harness, resourcePaths) {
+          harness.firestore.seed(resourcePaths.game, {
+            ...harness.firestore.read(resourcePaths.game),
+            diamondScorebookInstanceId: makeUuid(997),
+          });
+        },
       },
-      (harness, resourcePaths) => {
-        harness.firestore.delete(resourcePaths.game);
+      {
+        expectedCode: "not-found",
+        expectedMessage: "Public Diamond game not found.",
+        mutate(harness, resourcePaths) {
+          harness.firestore.delete(resourcePaths.game);
+        },
       },
-      (harness, resourcePaths) => {
-        harness.firestore.seed(resourcePaths.game, {
-          ...harness.firestore.read(resourcePaths.game),
-          diamondProjectionComplete: false,
-        });
+      {
+        expectedCode: "unavailable",
+        expectedMessage:
+          "The public Diamond game changed while it was loading. Try again.",
+        mutate(harness, resourcePaths) {
+          harness.firestore.seed(resourcePaths.game, {
+            ...harness.firestore.read(resourcePaths.game),
+            diamondProjectionComplete: false,
+          });
+        },
       },
     ]) {
       const harness = createHarness();
@@ -3655,7 +3962,8 @@ describe("Diamond scorebook handler factory", () => {
           teamId: "team-1",
           gameId: "game-1",
         }),
-        (error) => error.code === "unavailable",
+        (error) =>
+          error.code === expectedCode && error.message === expectedMessage,
       );
       assert.equal(publicReadTransactions, 2);
     }
