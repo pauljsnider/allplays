@@ -210,6 +210,7 @@ const diamondPublicEventPageSize = 200;
 const diamondPublicEventPageLimit = 100;
 const diamondManagerEventWindowSize = 200;
 const diamondManagerEventWindowLimit = 100;
+const diamondStatConfigUnavailableMessage = 'Diamond statistic definitions are temporarily unavailable. Retry the report.';
 
 function toNumber(value: unknown) {
   const parsed = Number(value);
@@ -233,6 +234,43 @@ function normalizeDate(value: any): Date | null {
 
 function asRecord(value: unknown): Record<string, any> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {};
+}
+
+async function loadReportStatConfig(
+  teamId: string,
+  game: GameReportGameFirestoreRecord,
+  team: GameReportTeamFirestoreRecord
+): Promise<Record<string, any> | null> {
+  if (!isDiamondV2Game(game)) {
+    const configs = await getConfigs(teamId).catch(() => []);
+    const safeConfigs = Array.isArray(configs) ? configs : [];
+    const resolvedConfig = resolveLiveStatConfig({ configs: safeConfigs, game, team });
+    return resolvedConfig && typeof resolvedConfig === 'object' && !Array.isArray(resolvedConfig)
+      ? resolvedConfig
+      : null;
+  }
+
+  const requiredConfigId = String(game.statTrackerConfigId || '').trim();
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const configs = await getConfigs(teamId);
+      if (!Array.isArray(configs)) continue;
+      const exactConfig = requiredConfigId
+        ? configs.find((config) => String(config?.id || '').trim() === requiredConfigId)
+        : null;
+      if (requiredConfigId && !exactConfig) continue;
+      const resolutionConfigs = exactConfig ? [exactConfig] : configs;
+      const resolvedConfig = resolveLiveStatConfig({ configs: resolutionConfigs, game, team });
+      if (resolvedConfig && typeof resolvedConfig === 'object' && !Array.isArray(resolvedConfig)) {
+        if (requiredConfigId && String(resolvedConfig.id || '').trim() !== requiredConfigId) continue;
+        return resolvedConfig;
+      }
+    } catch {
+      // A Diamond config read is completeness evidence. Retry once before
+      // failing closed instead of converting an unreadable catalog to empty.
+    }
+  }
+  throw new Error(diamondStatConfigUnavailableMessage);
 }
 
 function normalizePublishedAiBlock(value: unknown): GameReportAiBlock | null {
@@ -891,8 +929,8 @@ export async function loadGameReportSections(
 
   const diamondGame = isDiamondV2Game(game);
   const requestedStatVisibility = options.statVisibility === 'manager-internal' ? 'manager-internal' : 'public';
-  const [configs, publicAggregateResult, eventLoad] = await Promise.all([
-    getConfigs(teamId).catch(() => []),
+  const [resolvedConfig, publicAggregateResult, eventLoad] = await Promise.all([
+    loadReportStatConfig(teamId, game, team),
     diamondGame
       ? loadAggregatedStats(teamId, gameId, game)
       : loadAggregatedStats(teamId, gameId, game).catch(emptyAggregatedStatsResult),
@@ -910,11 +948,6 @@ export async function loadGameReportSections(
     : null;
   const aggregateResult = managerLoad?.result || publicAggregateResult;
   const appliedStatVisibility = managerLoad?.resolution.status === 'complete' ? 'manager-internal' : 'public';
-  const resolvedConfig = resolveLiveStatConfig({
-    configs,
-    game,
-    team
-  });
   const publicTeamStatIds = getPublicDiamondStatCatalog(resolvedConfig, 'team')
     .map((definition) => String(definition.id || '').trim())
     .filter(Boolean);

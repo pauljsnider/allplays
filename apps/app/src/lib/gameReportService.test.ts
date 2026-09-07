@@ -20,6 +20,10 @@ const gameReportStatsMocks = vi.hoisted(() => ({
   resolveOpponentReportStatColumns: vi.fn(() => ({ oppKeys: [] as string[], oppLabels: {} as Record<string, string>, oppDefinitions: {} as Record<string, Record<string, unknown>> }))
 }));
 
+const liveGameStateMocks = vi.hoisted(() => ({
+  resolveLiveStatConfig: vi.fn((_input?: any) => ({ diamondPublicTeamStatIds: ['r'] }))
+}));
+
 const diamondFirebaseMocks = vi.hoisted(() => ({
   functions: {},
   getPublicDiamondGame: vi.fn(),
@@ -43,9 +47,7 @@ vi.mock('../../../../js/live-game-video.js', () => ({
   buildHighlightShareUrl: vi.fn(() => ''),
   normalizeGameRecapHighlightClips: vi.fn(() => [])
 }));
-vi.mock('../../../../js/live-game-state.js', () => ({
-  resolveLiveStatConfig: vi.fn(() => ({ diamondPublicTeamStatIds: ['r'] }))
-}));
+vi.mock('../../../../js/live-game-state.js', () => liveGameStateMocks);
 vi.mock('../../../../js/post-game-insights.js', () => ({
   generateGameInsights: vi.fn(() => ({ teamInsights: [], playerInsightsById: {}, emptyMessage: '' }))
 }));
@@ -55,9 +57,112 @@ vi.mock('../../../../js/post-game-stat-editor.js', () => ({
 
 import { loadGameReportPlays, loadGameReportSections, normalizePublishedDiamondAiRecap } from './gameReportService';
 
+function configureCurrentDiamondReportFixture({
+  configId = 'diamond-config',
+  playerPublicStatIds = ['h'],
+  playerStats = { h: 2 },
+  teamPublicStatIds = ['r'],
+  teamStats = { r: 1 }
+}: {
+  configId?: string;
+  playerPublicStatIds?: string[];
+  playerStats?: Record<string, number>;
+  teamPublicStatIds?: string[];
+  teamStats?: Record<string, number>;
+} = {}) {
+  const instanceId = '00000000-0000-4000-8000-000000000001';
+  const checkpointHash = `sha256:${'a'.repeat(64)}`;
+  const configHash = `sha256:${'b'.repeat(64)}`;
+  const projectionHash = `sha256:${'c'.repeat(64)}`;
+  dbMocks.getGame.mockResolvedValue({
+    id: 'game-1',
+    teamId: 'team-1',
+    sport: 'baseball',
+    trackingEngine: 'diamond-v2',
+    statTrackerConfigId: configId,
+    diamondProjectionStatus: 'current',
+    diamondProjectionRevision: 7,
+    diamondProjectionComplete: true,
+    diamondScorebookInstanceId: instanceId,
+    diamondProjectionCheckpointHash: checkpointHash,
+    diamondStatConfigSnapshotHash: configHash,
+    diamondProjectionHash: projectionHash,
+    diamondPublicTeamStats: {
+      trackingEngine: 'diamond-v2',
+      projectionSchemaVersion: 1,
+      sourceRevision: 7,
+      checkpointHash,
+      coverage: { batting: 'complete' },
+      publicStatIds: teamPublicStatIds,
+      side: 'home',
+      complete: true,
+      stats: teamStats,
+      observedStats: {},
+      statCoverage: Object.fromEntries(teamPublicStatIds.map((id) => [id, 'complete'])),
+      teamId: 'team-1',
+      diamondGameId: 'game-1',
+      instanceId,
+      diamondScorebookInstanceId: instanceId,
+      projectionGeneration: instanceId,
+      statConfigSnapshotHash: configHash,
+      projectionHash
+    }
+  });
+  firebaseMocks.getDocs.mockResolvedValue({
+    forEach(callback: (docSnap: any) => void) {
+      callback({
+        id: 'player-recorded',
+        data: () => ({
+          schemaVersion: 1,
+          trackingEngine: 'diamond-v2',
+          projectionSchemaVersion: 1,
+          playerId: 'player-recorded',
+          playerName: 'Recorded Player',
+          playerNumber: '3',
+          sourceRevision: 7,
+          checkpointHash,
+          complete: true,
+          publicStatIds: playerPublicStatIds,
+          stats: playerStats,
+          observedStats: {},
+          derivedStats: {},
+          observedDerivedStats: {},
+          statCoverage: Object.fromEntries(playerPublicStatIds.map((id) => [id, 'complete'])),
+          statSources: {},
+          sourcePlayIds: [],
+          unavailableDerivedStats: [],
+          missingStatFamilies: [],
+          coverage: { batting: 'complete' },
+          participated: true,
+          participationStatus: 'appeared',
+          participationSource: 'diamond-v2',
+          teamId: 'team-1',
+          diamondGameId: 'game-1',
+          instanceId,
+          diamondScorebookInstanceId: instanceId,
+          projectionGeneration: instanceId,
+          statConfigSnapshotHash: configHash,
+          projectionHash
+        })
+      });
+    }
+  });
+}
+
+function buildPublicDiamondConfig() {
+  return {
+    id: 'diamond-config',
+    baseType: 'baseball',
+    columns: ['H'],
+    diamondPublicTeamStatIds: ['r'],
+    statDefinitions: [{ id: 'h', label: 'H', scope: 'player', visibility: 'public' }]
+  };
+}
+
 describe('gameReportService', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    liveGameStateMocks.resolveLiveStatConfig.mockImplementation(() => ({ diamondPublicTeamStatIds: ['r'] }));
     dbMocks.getTeam.mockResolvedValue({ id: 'team-1', name: 'Falcons' });
     dbMocks.getGame.mockResolvedValue({ id: 'game-1', summary: 'Final' });
     dbMocks.getPlayers.mockResolvedValue([
@@ -151,11 +256,132 @@ describe('gameReportService', () => {
     })).toBeNull();
   });
 
-  it('keeps recorded players visible even when they have no explicit participation markers', async () => {
+  it('accepts a complete empty config catalog for a legacy report and keeps recorded players visible', async () => {
     const report = await loadGameReportSections('team-1', 'game-1');
 
+    expect(dbMocks.getConfigs).toHaveBeenCalledTimes(1);
     expect(report.visiblePlayerRows.map((player) => player.playerId)).toEqual(['player-recorded']);
     expect(report.deferredPlayerRows.map((player) => player.playerId)).toEqual(['player-deferred']);
+  });
+
+  it('retries one transient Diamond config failure and keeps the resolved public stats', async () => {
+    configureCurrentDiamondReportFixture();
+    const config = buildPublicDiamondConfig();
+    dbMocks.getConfigs
+      .mockRejectedValueOnce(new Error('temporary config read failure'))
+      .mockResolvedValueOnce([config]);
+    liveGameStateMocks.resolveLiveStatConfig.mockImplementationOnce(({ configs }: { configs: any[] }) => configs[0] || null);
+    gameReportStatsMocks.resolveReportStatColumns.mockReturnValueOnce({
+      statKeys: ['h'],
+      statLabels: { h: 'H' },
+      statDefinitions: { h: { id: 'h', label: 'H', scope: 'player', visibility: 'public' } }
+    });
+
+    const report = await loadGameReportSections('team-1', 'game-1');
+
+    expect(dbMocks.getConfigs).toHaveBeenCalledTimes(2);
+    expect(report.statKeys).toEqual(['h']);
+    expect(report.playerRows[0].stats).toEqual({ h: 2 });
+    expect(report.teamStatKeys).toEqual(['r']);
+    expect(report.teamStats).toEqual({ r: 1 });
+  });
+
+  it('retries an initially empty Diamond config read and resolves the exact config before rendering stats', async () => {
+    configureCurrentDiamondReportFixture();
+    const config = buildPublicDiamondConfig();
+    dbMocks.getConfigs
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([config]);
+    liveGameStateMocks.resolveLiveStatConfig.mockImplementationOnce(({ configs }: { configs: any[] }) => configs[0] || null);
+    gameReportStatsMocks.resolveReportStatColumns.mockReturnValueOnce({
+      statKeys: ['h'],
+      statLabels: { h: 'H' },
+      statDefinitions: { h: { id: 'h', label: 'H', scope: 'player', visibility: 'public' } }
+    });
+
+    const report = await loadGameReportSections('team-1', 'game-1');
+
+    expect(dbMocks.getConfigs).toHaveBeenCalledTimes(2);
+    expect(report.playerRows[0].stats).toEqual({ h: 2 });
+    expect(report.teamStats).toEqual({ r: 1 });
+  });
+
+  it('rejects a Diamond report after two failed config reads instead of returning empty stats', async () => {
+    configureCurrentDiamondReportFixture();
+    dbMocks.getConfigs.mockRejectedValue(new Error('config read unavailable'));
+
+    await expect(loadGameReportSections('team-1', 'game-1')).rejects.toThrow(
+      'Diamond statistic definitions are temporarily unavailable. Retry the report.'
+    );
+    expect(dbMocks.getConfigs).toHaveBeenCalledTimes(2);
+    expect(liveGameStateMocks.resolveLiveStatConfig).not.toHaveBeenCalled();
+  });
+
+  it('requires the exact referenced Diamond config instead of using another same-sport config', async () => {
+    configureCurrentDiamondReportFixture();
+    dbMocks.getConfigs.mockResolvedValue([{
+      id: 'different-baseball-config',
+      baseType: 'baseball',
+      columns: ['H'],
+      diamondPublicTeamStatIds: ['r']
+    }]);
+
+    await expect(loadGameReportSections('team-1', 'game-1')).rejects.toThrow(
+      'Diamond statistic definitions are temporarily unavailable. Retry the report.'
+    );
+    expect(dbMocks.getConfigs).toHaveBeenCalledTimes(2);
+    expect(liveGameStateMocks.resolveLiveStatConfig).not.toHaveBeenCalled();
+  });
+
+  it('does not cache an unresolved empty Diamond config read as authoritative absence', async () => {
+    configureCurrentDiamondReportFixture();
+    const config = buildPublicDiamondConfig();
+    dbMocks.getConfigs
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([config]);
+    liveGameStateMocks.resolveLiveStatConfig.mockImplementationOnce(({ configs }: { configs: any[] }) => configs[0] || null);
+    gameReportStatsMocks.resolveReportStatColumns.mockReturnValueOnce({
+      statKeys: ['h'],
+      statLabels: { h: 'H' },
+      statDefinitions: { h: { id: 'h', label: 'H', scope: 'player', visibility: 'public' } }
+    });
+
+    await expect(loadGameReportSections('team-1', 'game-1')).rejects.toThrow(
+      'Diamond statistic definitions are temporarily unavailable. Retry the report.'
+    );
+    const recoveredReport = await loadGameReportSections('team-1', 'game-1');
+
+    expect(recoveredReport.diamond).toMatchObject({ isDiamond: true });
+    expect(recoveredReport.playerRows[0].stats).toEqual({ h: 2 });
+    expect(recoveredReport.teamStats).toEqual({ r: 1 });
+    expect(dbMocks.getConfigs).toHaveBeenCalledTimes(3);
+  });
+
+  it('accepts a resolved Diamond config whose complete public allowlist is intentionally empty', async () => {
+    configureCurrentDiamondReportFixture({
+      playerPublicStatIds: [],
+      playerStats: {},
+      teamPublicStatIds: [],
+      teamStats: {}
+    });
+    const config = {
+      id: 'diamond-config',
+      baseType: 'baseball',
+      columns: ['H'],
+      statDefinitions: [{ id: 'h', label: 'H', scope: 'player', visibility: 'manager-internal' }]
+    };
+    dbMocks.getConfigs.mockResolvedValue([config]);
+    liveGameStateMocks.resolveLiveStatConfig.mockImplementationOnce(({ configs }: { configs: any[] }) => configs[0] || null);
+
+    const report = await loadGameReportSections('team-1', 'game-1');
+
+    expect(dbMocks.getConfigs).toHaveBeenCalledTimes(1);
+    expect(report.statKeys).toEqual([]);
+    expect(report.playerRows[0].stats).toEqual({});
+    expect(report.teamStatKeys).toEqual([]);
+    expect(report.teamStats).toEqual({});
+    expect(report.diamond).toMatchObject({ isDiamond: true, pending: false });
   });
 
   it('normalizes malformed and partial Firestore stats payloads at the mapper boundary', async () => {
