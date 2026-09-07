@@ -4,10 +4,15 @@ import {
     DIAMOND_PLAYER_STAT_CATALOG,
     aggregateCoverageAwareSeasonStats,
     aggregateCoverageAwareTeamStats,
+    buildDiamondStatConfigSnapshotHash,
+    currentDiamondStatConfigMatchesActivation,
+    getActivationPinnedDiamondStatCatalog,
     getCoverageAwareStatValue,
     getDiamondPublicPlayerStatsCollectionPath,
+    hasMixedActivationPinnedDiamondStatIds,
     getManagerDiamondStatCatalog,
     getPublicDiamondStatCatalog,
+    prepareDiamondStatDocumentForSeason,
     readCoverageAwareOpponentStats,
     readCoverageAwareStatDocument,
     resolveDiamondManagerStatDocuments,
@@ -15,7 +20,8 @@ import {
     resolveDiamondProjectionState,
     resolveDiamondPublicStatDocuments,
     resolveDiamondPublicStatsResponse,
-    resolveDiamondPublicTeamStatDocument
+    resolveDiamondPublicTeamStatDocument,
+    resolveDiamondStatConfigsForGames
 } from '../../js/diamond-stat-presentation.js';
 
 const game = {
@@ -30,7 +36,344 @@ const managerCheckpointHash = `sha256:${'a'.repeat(64)}`;
 const managerConfigHash = `sha256:${'b'.repeat(64)}`;
 const managerProjectionHash = `sha256:${'c'.repeat(64)}`;
 
+function activateDiamondGame(config, overrides = {}) {
+    const teamId = overrides.teamId || 'team-1';
+    const configId = config.id;
+    return {
+        trackingEngine: 'diamond-v2',
+        statTrackerConfigId: configId,
+        diamondStatConfigSnapshotHash: buildDiamondStatConfigSnapshotHash({ teamId, configId, config }),
+        ...overrides
+    };
+}
+
 describe('Diamond stat presentation', () => {
+    it('matches the server schema-v2 snapshot hash while ignoring presentation-only fields', () => {
+        const config = {
+            id: 'diamond-config',
+            diamondPublicTeamStatIds: ['r'],
+            statDefinitions: [
+                { id: 'r', label: 'Runs', scope: 'team', visibility: 'public' },
+                { id: 'hr', label: 'Home runs', scope: 'player', visibility: 'private' },
+                { id: 'h', label: 'Hits', scope: 'player', visibility: 'public' }
+            ]
+        };
+        const expectedHash = 'sha256:132b6e5c9787a4de6384899cc3d2ac2b78e1c20c41847634122016db7caca340';
+        const activatedGame = {
+            trackingEngine: 'diamond-v2',
+            statTrackerConfigId: config.id,
+            diamondStatConfigSnapshotHash: expectedHash
+        };
+
+        expect(buildDiamondStatConfigSnapshotHash({
+            teamId: 'team-1',
+            configId: config.id,
+            config
+        })).toBe(expectedHash);
+        expect(currentDiamondStatConfigMatchesActivation({ teamId: 'team-1', game: activatedGame, config })).toBe(true);
+
+        const presentationEdit = {
+            ...config,
+            statDefinitions: config.statDefinitions.map((definition) => definition.id === 'h'
+                ? {
+                    ...definition,
+                    label: 'Base Hits',
+                    acronym: 'BH',
+                    group: 'Contact',
+                    precision: 2,
+                    rankingOrder: 'asc',
+                    topStat: true,
+                    formula: 'UNTRUSTED_FORMULA',
+                    type: 'currency'
+                }
+                : definition)
+        };
+        expect(buildDiamondStatConfigSnapshotHash({
+            teamId: 'team-1',
+            configId: config.id,
+            config: presentationEdit
+        })).toBe(expectedHash);
+        expect(currentDiamondStatConfigMatchesActivation({
+            teamId: 'team-1',
+            game: activatedGame,
+            config: presentationEdit
+        })).toBe(true);
+
+        const resolution = resolveDiamondStatConfigsForGames({
+            teamId: 'team-1',
+            games: [activatedGame],
+            configs: [presentationEdit]
+        });
+        const catalog = getActivationPinnedDiamondStatCatalog({ resolution, game: activatedGame, scope: 'player' });
+        expect(catalog).toEqual([expect.objectContaining({
+                id: 'h',
+                label: 'Base Hits',
+                acronym: 'BH',
+                group: 'Contact',
+                precision: 2,
+                rankingOrder: 'asc',
+                topStat: true,
+                scope: 'player',
+                visibility: 'public'
+            })]);
+        expect(catalog[0]).not.toHaveProperty('formula');
+        expect(catalog[0]).not.toHaveProperty('type');
+    });
+
+    it('rejects visibility, scope, and public-team allowlist edits after activation', () => {
+        const config = {
+            id: 'diamond-config',
+            diamondPublicTeamStatIds: ['r'],
+            statDefinitions: [
+                { id: 'h', scope: 'player', visibility: 'public' },
+                { id: 'r', scope: 'team', visibility: 'private' }
+            ]
+        };
+        const activatedGame = activateDiamondGame(config);
+
+        for (const changedConfig of [
+            {
+                ...config,
+                statDefinitions: [{ id: 'h', scope: 'player', visibility: 'private' }, config.statDefinitions[1]]
+            },
+            {
+                ...config,
+                statDefinitions: [{ id: 'h', scope: 'team', visibility: 'public' }, config.statDefinitions[1]]
+            },
+            { ...config, diamondPublicTeamStatIds: [] }
+        ]) {
+            expect(currentDiamondStatConfigMatchesActivation({
+                teamId: 'team-1',
+                game: activatedGame,
+                config: changedConfig
+            })).toBe(false);
+            expect(resolveDiamondStatConfigsForGames({
+                teamId: 'team-1',
+                games: [activatedGame],
+                configs: [changedConfig]
+            })).toBeNull();
+        }
+    });
+
+    it('fails closed for malformed resource IDs, unsafe stat IDs, and duplicate config evidence', () => {
+        const config = {
+            id: 'diamond-config',
+            diamondPublicTeamStatIds: [],
+            statDefinitions: [{ id: 'h', scope: 'player', visibility: 'public' }]
+        };
+        const activatedGame = activateDiamondGame(config);
+
+        expect(buildDiamondStatConfigSnapshotHash({ teamId: ' team-1', configId: config.id, config })).toBeNull();
+        expect(buildDiamondStatConfigSnapshotHash({ teamId: 'team-1', configId: 'bad/config', config })).toBeNull();
+        expect(buildDiamondStatConfigSnapshotHash({
+            teamId: 'team-1',
+            configId: config.id,
+            config: { ...config, statDefinitions: [{ id: 'H', scope: 'player', visibility: 'public' }] }
+        })).toBeNull();
+        expect(buildDiamondStatConfigSnapshotHash({
+            teamId: 'team-1',
+            configId: config.id,
+            config: {
+                ...config,
+                statDefinitions: [
+                    { id: 'h', scope: 'player', visibility: 'public' },
+                    { id: 'h', scope: 'team', visibility: 'private' }
+                ]
+            }
+        })).toBeNull();
+        expect(buildDiamondStatConfigSnapshotHash({
+            teamId: 'team-1',
+            configId: config.id,
+            config: { ...config, diamondPublicTeamStatIds: ['r', 'r'] }
+        })).toBeNull();
+        expect(resolveDiamondStatConfigsForGames({
+            teamId: 'team-1',
+            games: [activatedGame],
+            configs: [config, { ...config }]
+        })).toBeNull();
+    });
+
+    it('unions mixed activation-matched catalogs in config-id order and falls back on presentation conflicts', () => {
+        const alphaConfig = {
+            id: 'alpha-config',
+            diamondPublicTeamStatIds: ['r'],
+            statDefinitions: [
+                { id: 'h', label: 'Alpha Hits', acronym: 'HIT', scope: 'player', visibility: 'public' },
+                { id: 'avg', label: 'Average', scope: 'player', visibility: 'private' },
+                { id: 'r', label: 'Runs Scored', scope: 'team', visibility: 'private' }
+            ]
+        };
+        const betaConfig = {
+            id: 'beta-config',
+            diamondPublicTeamStatIds: [],
+            statDefinitions: [
+                { id: 'h', label: 'Beta Hits', acronym: 'HIT', scope: 'player', visibility: 'public' },
+                { id: 'hr', label: 'Moonshots', acronym: 'MOON', scope: 'player', visibility: 'public', topStat: false },
+                { id: 'e', label: 'Team Errors', scope: 'team', visibility: 'public' }
+            ]
+        };
+        const alphaGame = activateDiamondGame(alphaConfig);
+        const betaGame = activateDiamondGame(betaConfig);
+        const resolution = resolveDiamondStatConfigsForGames({
+            teamId: 'team-1',
+            games: [betaGame, alphaGame],
+            configs: [betaConfig, alphaConfig]
+        });
+
+        expect(resolution).not.toBeNull();
+        expect(resolution.configIds).toEqual(['alpha-config', 'beta-config']);
+        expect(resolution.entries.map(({ configId }) => configId)).toEqual(['alpha-config', 'beta-config']);
+
+        const playerCatalog = getActivationPinnedDiamondStatCatalog({ resolution, scope: 'player' });
+        expect(playerCatalog.map(({ id }) => id)).toEqual(['h', 'hr']);
+        expect(playerCatalog.find(({ id }) => id === 'h')).toMatchObject({ label: 'H', acronym: 'HIT' });
+        expect(playerCatalog.find(({ id }) => id === 'hr')).toMatchObject({ label: 'Moonshots', acronym: 'MOON', topStat: false });
+        expect(getActivationPinnedDiamondStatCatalog({ resolution, game: alphaGame, scope: 'player' }))
+            .toEqual([expect.objectContaining({ id: 'h', label: 'Alpha Hits' })]);
+        expect(getActivationPinnedDiamondStatCatalog({ resolution, scope: 'team' }).map(({ id }) => id))
+            .toEqual(['r', 'e']);
+
+        const managerCatalog = getActivationPinnedDiamondStatCatalog({
+            resolution,
+            scope: 'player',
+            visibility: 'manager-internal'
+        });
+        expect(managerCatalog.map(({ id }) => id)).toEqual(DIAMOND_PLAYER_STAT_CATALOG.map(({ id }) => id));
+        expect(managerCatalog.find(({ id }) => id === 'h')).toMatchObject({ label: 'H', visibility: 'manager-internal' });
+        expect(managerCatalog.find(({ id }) => id === 'hr')).toMatchObject({ label: 'Moonshots', visibility: 'manager-internal' });
+    });
+
+    it('filters each game to its pinned IDs and marks union-only season fields not collected', () => {
+        const prepared = prepareDiamondStatDocumentForSeason({
+            publicStatIds: ['h', 'hr', 'avg'],
+            stats: { h: 2, hr: 1, avg: 0.5 },
+            observedStats: { h: 2, hr: 1 },
+            derivedStats: { avg: 0.5 },
+            observedDerivedStats: { avg: 0.4 },
+            statCoverage: { h: 'complete', hr: 'complete', avg: 'partial' },
+            statSources: { h: 'projected', hr: 'projected', avg: 'derived' },
+            unavailableDerivedStats: ['avg', 'ops'],
+            coverage: { batting: 'complete' },
+            missingStatFamilies: ['pitching']
+        }, ['h'], {
+            aggregateStatIds: ['h', 'hr'],
+            clearFamilyCoverage: true
+        });
+
+        expect(prepared).toMatchObject({
+            publicStatIds: ['h'],
+            stats: { h: 2 },
+            observedStats: { h: 2 },
+            derivedStats: {},
+            observedDerivedStats: {},
+            statCoverage: { h: 'complete', hr: 'not_collected' },
+            statSources: { h: 'projected' },
+            unavailableDerivedStats: [],
+            coverage: {},
+            missingStatFamilies: []
+        });
+        expect(prepared.stats).not.toHaveProperty('hr');
+        expect(prepared.stats).not.toHaveProperty('avg');
+    });
+
+    it('keeps same-visibility two-game rates complete but downgrades mixed activation evidence', () => {
+        const publicConfig = {
+            id: 'config-a',
+            statDefinitions: [
+                { id: 'ab', scope: 'player', visibility: 'public' },
+                { id: 'h', scope: 'player', visibility: 'public' },
+                { id: 'avg', scope: 'player', visibility: 'public' }
+            ]
+        };
+        const privateHitConfig = {
+            id: 'config-b',
+            statDefinitions: [
+                { id: 'ab', scope: 'player', visibility: 'public' },
+                { id: 'h', scope: 'player', visibility: 'private' },
+                { id: 'avg', scope: 'player', visibility: 'private' }
+            ]
+        };
+        const gameA1 = activateDiamondGame(publicConfig, { ...game, id: 'game-a1' });
+        const gameA2 = activateDiamondGame(publicConfig, { ...game, id: 'game-a2' });
+        const gameB = activateDiamondGame(privateHitConfig, { ...game, id: 'game-b' });
+        const documentFor = (h, ab) => ({
+            trackingEngine: 'diamond-v2',
+            sourceRevision: 12,
+            complete: true,
+            stats: { h, ab },
+            observedStats: {},
+            derivedStats: { avg: h / ab },
+            observedDerivedStats: {},
+            statCoverage: { h: 'complete', ab: 'complete', avg: 'complete' },
+            coverage: { batting: 'complete' }
+        });
+
+        const sameResolution = resolveDiamondStatConfigsForGames({
+            teamId: 'team-1',
+            games: [gameA1, gameA2],
+            configs: [publicConfig]
+        });
+        expect(hasMixedActivationPinnedDiamondStatIds({
+            resolution: sameResolution,
+            games: [gameA1, gameA2]
+        })).toBe(false);
+        const sameAllowedIds = getActivationPinnedDiamondStatCatalog({
+            resolution: sameResolution,
+            scope: 'player'
+        }).map(({ id }) => id);
+        const sameSeason = aggregateCoverageAwareSeasonStats({
+            diamondGames: [
+                { game: gameA1, documents: [{ id: 'p1', data: prepareDiamondStatDocumentForSeason(documentFor(1, 2), sameAllowedIds) }] },
+                { game: gameA2, documents: [{ id: 'p1', data: prepareDiamondStatDocumentForSeason(documentFor(2, 4), sameAllowedIds) }] }
+            ]
+        });
+        expect(sameSeason.completeStatsByPlayerId.p1.avg).toBe(0.5);
+        expect(sameSeason.presentationByPlayerId.p1.statCoverage.avg).toBe('complete');
+
+        const mixedResolution = resolveDiamondStatConfigsForGames({
+            teamId: 'team-1',
+            games: [gameA1, gameB],
+            configs: [publicConfig, privateHitConfig]
+        });
+        const mixed = hasMixedActivationPinnedDiamondStatIds({
+            resolution: mixedResolution,
+            games: [gameA1, gameB]
+        });
+        expect(mixed).toBe(true);
+        const mixedUnionIds = getActivationPinnedDiamondStatCatalog({
+            resolution: mixedResolution,
+            scope: 'player'
+        }).map(({ id }) => id);
+        const mixedSeason = aggregateCoverageAwareSeasonStats({
+            diamondGames: [
+                {
+                    game: gameA1,
+                    documents: [{
+                        id: 'p1',
+                        data: prepareDiamondStatDocumentForSeason(documentFor(1, 2), ['ab', 'avg', 'h'], {
+                            aggregateStatIds: mixedUnionIds,
+                            clearFamilyCoverage: mixed
+                        })
+                    }]
+                },
+                {
+                    game: gameB,
+                    documents: [{
+                        id: 'p1',
+                        data: prepareDiamondStatDocumentForSeason(documentFor(2, 4), ['ab'], {
+                            aggregateStatIds: mixedUnionIds,
+                            clearFamilyCoverage: mixed
+                        })
+                    }]
+                }
+            ]
+        });
+        expect(mixedSeason.statsByPlayerId.p1.h).toBe(1);
+        expect(mixedSeason.presentationByPlayerId.p1.statCoverage.h).toBe('partial');
+        expect(mixedSeason.completeStatsByPlayerId.p1).not.toHaveProperty('h');
+        expect(mixedSeason.completeStatsByPlayerId.p1).not.toHaveProperty('avg');
+    });
+
     it('catalogs the complete projected traditional raw and derived field set', () => {
         const ids = DIAMOND_PLAYER_STAT_CATALOG.map(({ id }) => id);
         expect(ids).toEqual(expect.arrayContaining([

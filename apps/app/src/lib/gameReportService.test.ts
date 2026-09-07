@@ -21,7 +21,7 @@ const gameReportStatsMocks = vi.hoisted(() => ({
 }));
 
 const liveGameStateMocks = vi.hoisted(() => ({
-  resolveLiveStatConfig: vi.fn((_input?: any) => ({ diamondPublicTeamStatIds: ['r'] }))
+  resolveLiveStatConfig: vi.fn((input?: any) => input?.configs?.[0] || ({ diamondPublicTeamStatIds: ['r'] }))
 }));
 
 const diamondFirebaseMocks = vi.hoisted(() => ({
@@ -34,6 +34,10 @@ const diamondScorebookMocks = vi.hoisted(() => ({
   getDiamondPrivateHistoryWindow: vi.fn(),
   getDiamondState: vi.fn()
 }));
+const diamondStatConfigSnapshotMocks = vi.hoisted(() => ({
+  buildActivationPinnedDiamondPresentationConfig: vi.fn((config: any) => config),
+  currentDiamondStatConfigMatchesActivation: vi.fn((_input?: any) => true)
+}));
 
 vi.mock('../../../../js/db.js', () => dbMocks);
 vi.mock('../../../../js/firebase.js', () => firebaseMocks);
@@ -42,6 +46,7 @@ vi.mock('./adapters/legacyDiamondScorebookFirebase', () => ({
   httpsCallable: diamondFirebaseMocks.httpsCallable
 }));
 vi.mock('./diamondScorebookService', () => diamondScorebookMocks);
+vi.mock('./diamondStatConfigSnapshot', () => diamondStatConfigSnapshotMocks);
 vi.mock('../../../../js/game-report-stats.js', () => gameReportStatsMocks);
 vi.mock('../../../../js/live-game-video.js', () => ({
   buildHighlightShareUrl: vi.fn(() => ''),
@@ -162,7 +167,9 @@ function buildPublicDiamondConfig() {
 describe('gameReportService', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    liveGameStateMocks.resolveLiveStatConfig.mockImplementation(() => ({ diamondPublicTeamStatIds: ['r'] }));
+    diamondStatConfigSnapshotMocks.buildActivationPinnedDiamondPresentationConfig.mockImplementation((config: any) => config);
+    diamondStatConfigSnapshotMocks.currentDiamondStatConfigMatchesActivation.mockReturnValue(true);
+    liveGameStateMocks.resolveLiveStatConfig.mockImplementation((input?: any) => input?.configs?.[0] || ({ diamondPublicTeamStatIds: ['r'] }));
     dbMocks.getTeam.mockResolvedValue({ id: 'team-1', name: 'Falcons' });
     dbMocks.getGame.mockResolvedValue({ id: 'game-1', summary: 'Final' });
     dbMocks.getPlayers.mockResolvedValue([
@@ -330,6 +337,32 @@ describe('gameReportService', () => {
       'Diamond statistic definitions are temporarily unavailable. Retry the report.'
     );
     expect(dbMocks.getConfigs).toHaveBeenCalledTimes(2);
+    expect(liveGameStateMocks.resolveLiveStatConfig).not.toHaveBeenCalled();
+  });
+
+  it('rejects a same-ID Diamond config whose activation-pinned snapshot hash no longer matches', async () => {
+    configureCurrentDiamondReportFixture();
+    const mutatedConfig = {
+      ...buildPublicDiamondConfig(),
+      statDefinitions: [{ id: 'h', label: 'H', scope: 'player', visibility: 'private' }]
+    };
+    dbMocks.getConfigs.mockResolvedValue([mutatedConfig]);
+    diamondStatConfigSnapshotMocks.currentDiamondStatConfigMatchesActivation.mockReturnValue(false);
+
+    await expect(loadGameReportSections('team-1', 'game-1')).rejects.toThrow(
+      'Diamond statistic definitions are temporarily unavailable. Retry the report.'
+    );
+
+    expect(dbMocks.getConfigs).toHaveBeenCalledTimes(2);
+    expect(diamondStatConfigSnapshotMocks.currentDiamondStatConfigMatchesActivation).toHaveBeenCalledTimes(2);
+    expect(diamondStatConfigSnapshotMocks.currentDiamondStatConfigMatchesActivation).toHaveBeenLastCalledWith({
+      teamId: 'team-1',
+      game: expect.objectContaining({
+        statTrackerConfigId: 'diamond-config',
+        diamondStatConfigSnapshotHash: `sha256:${'b'.repeat(64)}`
+      }),
+      config: mutatedConfig
+    });
     expect(liveGameStateMocks.resolveLiveStatConfig).not.toHaveBeenCalled();
   });
 
@@ -550,9 +583,11 @@ describe('gameReportService', () => {
     const checkpointHash = `sha256:${'a'.repeat(64)}`;
     const configHash = `sha256:${'b'.repeat(64)}`;
     const projectionHash = `sha256:${'c'.repeat(64)}`;
+    dbMocks.getConfigs.mockResolvedValue([buildPublicDiamondConfig()]);
     dbMocks.getGame.mockResolvedValue({
       id: 'game-1',
       teamId: 'team-1',
+      statTrackerConfigId: 'diamond-config',
       trackingEngine: 'diamond-v2',
       diamondProjectionStatus: 'current',
       diamondProjectionRevision: 7,
@@ -760,9 +795,11 @@ describe('gameReportService', () => {
     const checkpointHash = `sha256:${'a'.repeat(64)}`;
     const configHash = `sha256:${'b'.repeat(64)}`;
     const projectionHash = `sha256:${'c'.repeat(64)}`;
+    dbMocks.getConfigs.mockResolvedValue([buildPublicDiamondConfig()]);
     dbMocks.getGame.mockResolvedValue({
       id: 'game-1',
       teamId: 'team-1',
+      statTrackerConfigId: 'diamond-config',
       trackingEngine: 'diamond-v2',
       diamondProjectionStatus: 'current',
       diamondProjectionRevision: 7,
@@ -818,9 +855,11 @@ describe('gameReportService', () => {
     const checkpointHash = `sha256:${'a'.repeat(64)}`;
     const configHash = `sha256:${'b'.repeat(64)}`;
     const projectionHash = `sha256:${'c'.repeat(64)}`;
+    dbMocks.getConfigs.mockResolvedValue([buildPublicDiamondConfig()]);
     dbMocks.getGame.mockResolvedValue({
       id: 'game-1',
       teamId: 'team-1',
+      statTrackerConfigId: 'diamond-config',
       visibility: 'private',
       trackingEngine: 'diamond-v2',
       diamondProjectionStatus: 'current',
@@ -918,8 +957,9 @@ describe('gameReportService', () => {
     const checkpointHash = `sha256:${'a'.repeat(64)}`;
     const configHash = `sha256:${'b'.repeat(64)}`;
     const projectionHash = `sha256:${'c'.repeat(64)}`;
+    dbMocks.getConfigs.mockResolvedValue([buildPublicDiamondConfig()]);
     dbMocks.getGame.mockResolvedValue({
-      id: 'game-1', teamId: 'team-1', visibility: 'private', trackingEngine: 'diamond-v2',
+      id: 'game-1', teamId: 'team-1', statTrackerConfigId: 'diamond-config', visibility: 'private', trackingEngine: 'diamond-v2',
       diamondProjectionStatus: 'current', diamondProjectionRevision: 9, diamondProjectionComplete: true,
       diamondScorebookInstanceId: instanceId, diamondProjectionCheckpointHash: checkpointHash,
       diamondStatConfigSnapshotHash: configHash, diamondProjectionHash: projectionHash,
@@ -1004,9 +1044,11 @@ describe('gameReportService', () => {
     const checkpointHash = `sha256:${'a'.repeat(64)}`;
     const configHash = `sha256:${'b'.repeat(64)}`;
     const projectionHash = `sha256:${'c'.repeat(64)}`;
+    dbMocks.getConfigs.mockResolvedValue([buildPublicDiamondConfig()]);
     dbMocks.getGame.mockResolvedValue({
       id: 'game-1',
       teamId: 'team-1',
+      statTrackerConfigId: 'diamond-config',
       visibility: 'private',
       trackingEngine: 'diamond-v2',
       diamondProjectionStatus: 'current',
@@ -1040,9 +1082,11 @@ describe('gameReportService', () => {
     const checkpointHash = `sha256:${'a'.repeat(64)}`;
     const configHash = `sha256:${'b'.repeat(64)}`;
     const projectionHash = `sha256:${'c'.repeat(64)}`;
+    dbMocks.getConfigs.mockResolvedValue([buildPublicDiamondConfig()]);
     dbMocks.getGame.mockResolvedValue({
       id: 'game-1',
       teamId: 'team-1',
+      statTrackerConfigId: 'diamond-config',
       trackingEngine: 'diamond-v2',
       diamondProjectionStatus: 'current',
       diamondProjectionRevision: 7,

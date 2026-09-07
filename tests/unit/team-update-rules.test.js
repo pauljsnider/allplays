@@ -7,15 +7,26 @@ const rules = readFileSync(resolve(process.cwd(), 'firestore.rules'), 'utf8');
 describe('team update Firestore rules', () => {
     it('keeps owner-controlled privilege fields immutable on team updates', () => {
         expect(rules).toContain('function keepsOwnerControlledTeamPrivilegeFieldsImmutable()');
-        expect(rules).toContain("request.resource.data.get('ownerId', '') == resource.data.get('ownerId', '')");
-        expect(rules).toContain("request.resource.data.get('isAdmin', false) == resource.data.get('isAdmin', false)");
-        expect(rules).toContain("request.resource.data.get('isPlatformAdmin', false) == resource.data.get('isPlatformAdmin', false)");
+        expect(rules).toContain('function keepsTeamFieldImmutable(k, v)');
+        expect(rules).toContain("keepsTeamFieldImmutable('ownerId', '')");
+        expect(rules).toContain("keepsTeamFieldImmutable('isAdmin', false)");
+        expect(rules).toContain("keepsTeamFieldImmutable('isPlatformAdmin', false)");
+    });
+
+    it('preserves the server-owned Diamond sport invariant across every client team update', () => {
+        expect(rules).toContain('function effectiveTeamSportForDiamond(data)');
+        expect(rules).toContain('function keepsDiamondTeamSportConsistent()');
+        expect(rules).toContain("settings.get('enabled', false) != true");
+        expect(rules).toContain('nextSport == effectiveTeamSportForDiamond(resource.data)');
+        expect(rules).toContain("settings.get('sport', '') in ['baseball', 'fastpitch']");
+        expect(rules).toContain("'^ *(softball|fastpitch([ _-]+softball)?) *$'");
+        expect(rules).toContain('keepsDiamondTeamSportConsistent() &&');
     });
 
     it('requires ordinary team admins to preserve the exact adminEmails grant set', () => {
-        expect(rules).toContain("request.resource.data.get('ownerEmail', '') == resource.data.get('ownerEmail', '')");
-        expect(rules).toContain("request.resource.data.get('ownerEmailLower', '') == resource.data.get('ownerEmailLower', '')");
-        expect(rules).toContain("request.resource.data.get('adminEmails', []) == resource.data.get('adminEmails', [])");
+        expect(rules).toContain("keepsTeamFieldImmutable('ownerEmail', '')");
+        expect(rules).toContain("keepsTeamFieldImmutable('ownerEmailLower', '')");
+        expect(rules).toContain("keepsTeamFieldImmutable('adminEmails', [])");
         expect(rules).not.toContain('function keepsCurrentAdminInNormalizedAdminEmailList()');
         expect(rules).not.toContain('nextAdminEmails.size() <= existingAdminEmails.size()');
         expect(rules).toContain('(isTeamOwnerOrAdmin(teamId) && keepsTeamPrivilegeFieldsImmutable())');

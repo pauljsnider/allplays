@@ -376,11 +376,11 @@ function extractEditTeamModule() {
             'const { validateProfilePhotoFile } = deps.profilePhotoPaths;'
         )
         .replace(
-            "import { getDefaultDiamondStatConfigForSport, getDefaultStatConfigForSport } from './js/stat-config-presets.js?v=10';",
+            "import { getDefaultDiamondStatConfigForSport, getDefaultStatConfigForSport } from './js/stat-config-presets.js?v=11';",
             'const { getDefaultDiamondStatConfigForSport, getDefaultStatConfigForSport } = deps.statConfigPresets;'
         )
         .replace(
-            "import { buildTeamSportConfigMigrationPlan } from './js/team-stat-config-migration.js?v=9';",
+            "import { buildTeamSportConfigMigrationPlan } from './js/team-stat-config-migration.js?v=10';",
             'const { buildTeamSportConfigMigrationPlan } = deps.teamStatConfigMigration;'
         )
         .replace(
@@ -1599,6 +1599,184 @@ describe('edit team admin access persistence', () => {
             expect(initialState.updateCalls).toEqual([]);
             expect(initialState.team.sport).toBe('Basketball');
             expect(env.alerts.at(-1)).toContain('game migration failed');
+        } finally {
+            env.cleanup();
+        }
+    });
+
+    it('blocks a third sport on a mismatched dark-rollout Diamond team before any upload, migration, configuration, or team write', async () => {
+        const operations = [];
+        const initialState = {
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            team: {
+                id: 'team-1',
+                ownerId: 'owner-1',
+                name: 'Diamond Sharks',
+                description: 'Travel team',
+                sport: 'Soccer',
+                diamondScorebook: {
+                    enabled: true,
+                    sport: 'baseball',
+                    rulesProfileId: 'baseball-youth',
+                    rulesProfileVersion: 1,
+                    captureMode: 'quick'
+                },
+                standingsConfig: { enabled: false, rankingMode: 'points', tiebreakers: [] },
+                isPublic: true,
+                adminEmails: []
+            },
+            updateCalls: []
+        };
+
+        const env = await bootEditTeam(initialState, {
+            href: 'http://example.com/edit-team.html?teamId=team-1'
+        }, {
+            db: {
+                async uploadTeamPhoto() {
+                    operations.push('uploadTeamPhoto');
+                    return { url: 'https://example.test/new.jpg', path: 'profile-photos/teams/team-1/team/new.jpg' };
+                },
+                async getConfigs() {
+                    operations.push('getConfigs');
+                    return [];
+                },
+                async getGames() {
+                    operations.push('getGames');
+                    return [];
+                },
+                async addConfig() {
+                    operations.push('addConfig');
+                    return 'config-1';
+                },
+                async updateGame() {
+                    operations.push('updateGame');
+                },
+                async updateTeam() {
+                    operations.push('updateTeam');
+                }
+            },
+            diamondScorebookClient: {
+                async configureDiamondTeamForSport() {
+                    operations.push('configureDiamondTeamForSport');
+                    return { configured: true, enabled: true };
+                }
+            }
+        });
+        try {
+            operations.length = 0;
+            env.elements.get('sport').value = 'Basketball';
+            env.elements.get('photo-upload').files = [{ name: 'new.jpg', type: 'image/jpeg', size: 123 }];
+
+            await env.elements.get('team-form').requestSubmit();
+
+            expect(operations).toEqual([]);
+            expect(env.state.updateCalls).toEqual([]);
+            expect(env.alerts.at(-1)).toContain('Diamond Scorebook v2 is enrolled for baseball');
+            expect(env.alerts.at(-1)).toContain('no changes were written');
+            expect(env.elements.get('save-btn').disabled).toBe(false);
+            expect(env.elements.get('save-btn').textContent).toBe('Save Team');
+            expect(env.window.location.href).toBe('http://example.com/edit-team.html?teamId=team-1');
+        } finally {
+            env.cleanup();
+        }
+    });
+
+    it('repairs an existing Diamond sport mismatch back to the stored enrollment sport while rollout UI is dark', async () => {
+        const initialState = {
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            team: {
+                id: 'team-1',
+                ownerId: 'owner-1',
+                name: 'Diamond Sharks',
+                description: 'Travel team',
+                sport: 'Soccer',
+                diamondScorebook: {
+                    enabled: true,
+                    sport: 'baseball',
+                    rulesProfileId: 'baseball-youth',
+                    rulesProfileVersion: 1,
+                    captureMode: 'quick'
+                },
+                standingsConfig: { enabled: false, rankingMode: 'points', tiebreakers: [] },
+                isPublic: true,
+                adminEmails: []
+            },
+            updateCalls: []
+        };
+
+        const env = await bootEditTeam(initialState, {
+            href: 'http://example.com/edit-team.html?teamId=team-1'
+        });
+        try {
+            env.elements.get('sport').value = 'Baseball';
+
+            await env.elements.get('team-form').requestSubmit();
+
+            expect(env.state.updateCalls).toHaveLength(1);
+            expect(env.state.updateCalls[0].teamData.sport).toBe('Baseball');
+            expect(env.alerts.some((message) => message.includes('no changes were written'))).toBe(false);
+            expect(env.window.location.href).toBe('http://example.com/dashboard.html');
+        } finally {
+            env.cleanup();
+        }
+    });
+
+    it('still saves unrelated edits when an enrolled Diamond team keeps its sport', async () => {
+        const initialState = {
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            team: {
+                id: 'team-1',
+                ownerId: 'owner-1',
+                name: 'Diamond Sharks',
+                description: 'Travel team',
+                sport: 'Baseball',
+                diamondScorebook: { enabled: true, sport: 'baseball' },
+                standingsConfig: { enabled: false, rankingMode: 'points', tiebreakers: [] },
+                isPublic: true,
+                adminEmails: []
+            },
+            updateCalls: []
+        };
+
+        const env = await bootEditTeam(initialState);
+        try {
+            env.elements.get('name').value = 'Diamond Sharks Updated';
+
+            await env.elements.get('team-form').requestSubmit();
+
+            expect(env.state.updateCalls).toHaveLength(1);
+            expect(env.state.updateCalls[0].teamData).toMatchObject({
+                name: 'Diamond Sharks Updated',
+                sport: 'Baseball'
+            });
+        } finally {
+            env.cleanup();
+        }
+    });
+
+    it('preserves classic team sport changes when Diamond is not enrolled', async () => {
+        const initialState = {
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            team: {
+                id: 'team-1',
+                ownerId: 'owner-1',
+                name: 'Classic Sharks',
+                sport: 'Basketball',
+                standingsConfig: { enabled: false, rankingMode: 'points', tiebreakers: [] },
+                isPublic: true,
+                adminEmails: []
+            },
+            updateCalls: []
+        };
+
+        const env = await bootEditTeam(initialState);
+        try {
+            env.elements.get('sport').value = 'Soccer';
+
+            await env.elements.get('team-form').requestSubmit();
+
+            expect(env.state.updateCalls).toHaveLength(1);
+            expect(env.state.updateCalls[0].teamData.sport).toBe('Soccer');
         } finally {
             env.cleanup();
         }

@@ -202,7 +202,14 @@ export type ParentScheduleEvent = {
   trackingEngine?: string | null;
   diamondScorebookInstanceId?: string | null;
   diamondRevision?: number | null;
+  diamondProjectionStatus?: string | null;
+  diamondProjectionComplete?: boolean;
+  diamondProjectionRevision?: number | null;
+  diamondProjectionCheckpointHash?: string | null;
   statTrackerConfigId?: string | null;
+  diamondStatConfigSnapshotHash?: string | null;
+  diamondProjectionHash?: string | null;
+  isPublicProjection?: boolean;
   sourceType?: ScheduleSourceType | string | null;
   sourceLabel?: string | null;
   isImported?: boolean;

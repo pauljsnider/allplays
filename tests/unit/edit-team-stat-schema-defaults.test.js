@@ -10,7 +10,7 @@ describe('edit team stat schema defaults', () => {
     it('uses the shared preset catalog when seeding a new team config', () => {
         const source = readEditTeamSource();
 
-        expect(source).toContain("from './js/stat-config-presets.js?v=10'");
+        expect(source).toContain("from './js/stat-config-presets.js?v=11'");
         expect(source).toContain('const defaultStatConfig = diamondSetupRequested');
         expect(source).toContain('? getDefaultDiamondStatConfigForSport(teamData.sport)');
         expect(source).toContain(': getDefaultStatConfigForSport(teamData.sport);');
@@ -20,7 +20,7 @@ describe('edit team stat schema defaults', () => {
     it('migrates stat config selection when an existing team changes sports', () => {
         const source = readEditTeamSource();
 
-        expect(source).toContain("from './js/team-stat-config-migration.js?v=9'");
+        expect(source).toContain("from './js/team-stat-config-migration.js?v=10'");
         expect(source).toContain('const [existingConfigs, existingGames] = await Promise.all([');
         expect(source).toContain('getConfigs(currentTeamId),');
         expect(source).toContain('getGames(currentTeamId)');

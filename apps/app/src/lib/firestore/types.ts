@@ -161,7 +161,14 @@ export type ScheduleEventFirestoreRecord = {
     trackingEngine?: string | null;
     diamondScorebookInstanceId?: string | null;
     diamondRevision?: number | null;
+    diamondProjectionStatus?: string | null;
+    diamondProjectionComplete?: boolean;
+    diamondProjectionRevision?: number | null;
+    diamondProjectionCheckpointHash?: string | null;
     statTrackerConfigId?: string | null;
+    diamondStatConfigSnapshotHash?: string | null;
+    diamondProjectionHash?: string | null;
+    isPublicProjection?: boolean;
     source?: string | null;
     sourceMetadata?: (Record<string, unknown> & { sourceType?: string | null }) | null;
     visibility?: string | null;

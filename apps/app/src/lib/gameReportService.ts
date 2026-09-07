@@ -57,6 +57,10 @@ import {
 } from './diamondScorebookService';
 import { getEffectiveDiamondEvents } from './diamondScorebook/ledger';
 import type { DiamondEffectiveEvent, DiamondEvent } from './diamondScorebook/contracts';
+import {
+  buildActivationPinnedDiamondPresentationConfig,
+  currentDiamondStatConfigMatchesActivation
+} from './diamondStatConfigSnapshot';
 
 export type GameReportInsight = {
   title: string;
@@ -255,11 +259,15 @@ async function loadReportStatConfig(
     try {
       const configs = await getConfigs(teamId);
       if (!Array.isArray(configs)) continue;
-      const exactConfig = requiredConfigId
-        ? configs.find((config) => String(config?.id || '').trim() === requiredConfigId)
-        : null;
+      const matchingConfigs = requiredConfigId
+        ? configs.filter((config) => String(config?.id || '').trim() === requiredConfigId)
+        : [];
+      const exactConfig = matchingConfigs.length === 1 ? matchingConfigs[0] : null;
       if (requiredConfigId && !exactConfig) continue;
-      const resolutionConfigs = exactConfig ? [exactConfig] : configs;
+      if (!exactConfig || !currentDiamondStatConfigMatchesActivation({ teamId, game, config: exactConfig })) continue;
+      const pinnedConfig = buildActivationPinnedDiamondPresentationConfig(exactConfig);
+      if (!pinnedConfig) continue;
+      const resolutionConfigs = [pinnedConfig];
       const resolvedConfig = resolveLiveStatConfig({ configs: resolutionConfigs, game, team });
       if (resolvedConfig && typeof resolvedConfig === 'object' && !Array.isArray(resolvedConfig)) {
         if (requiredConfigId && String(resolvedConfig.id || '').trim() !== requiredConfigId) continue;

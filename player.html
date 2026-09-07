@@ -266,9 +266,9 @@
         import { hasFullTeamAccess } from './js/team-access.js?v=44338';
         import { getVisibleRosterFieldValues } from './js/roster-field-privacy.js';
         import { readAccountPremiumEntitlement, renderPremiumGateState } from './js/premium-entitlements.js?v=8';
-        import { DIAMOND_PLAYER_STAT_CATALOG, aggregateCoverageAwareSeasonStats, getCoverageAwareStatValue, getDiamondPublicPlayerStatsCollectionPath, getManagerDiamondStatCatalog, getPublicDiamondStatCatalog, isDiamondV2Game, readCoverageAwareStatDocument, resolveDiamondManagerStatDocuments, resolveDiamondPublicStatDocuments } from './js/diamond-stat-presentation.js?v=6';
-        import { loadDiamondManagerStats } from './js/diamond-manager-stats.js?v=3';
-        import { buildDiamondStatsCsv, downloadDiamondStatsCsv, getDiamondStatsExportFilename } from './js/diamond-stat-export.js?v=6';
+        import { DIAMOND_PLAYER_STAT_CATALOG, aggregateCoverageAwareSeasonStats, getActivationPinnedDiamondStatCatalog, getCoverageAwareStatValue, getDiamondPublicPlayerStatsCollectionPath, hasMixedActivationPinnedDiamondStatIds, isDiamondV2Game, prepareDiamondStatDocumentForSeason, readCoverageAwareStatDocument, resolveDiamondManagerStatDocuments, resolveDiamondPublicStatDocuments, resolveDiamondStatConfigsForGames } from './js/diamond-stat-presentation.js?v=7';
+        import { loadDiamondManagerStats } from './js/diamond-manager-stats.js?v=4';
+        import { buildDiamondStatsCsv, downloadDiamondStatsCsv, getDiamondStatsExportFilename } from './js/diamond-stat-export.js?v=7';
         import { loadCompleteDiamondReportEvents } from './js/diamond-report-events.js?v=1';
 
         let currentUser = null;
@@ -402,6 +402,23 @@
                 groupsById.get(groupId).stats.push(stat);
             });
             return { config, topStats, groups: [...groupsById.values()] };
+        }
+
+        function buildDiamondConfigUnavailableError() {
+            const error = new Error('Diamond statistic definitions are temporarily unavailable.');
+            error.code = 'allplays/diamond-stat-config-unavailable';
+            return error;
+        }
+
+        async function loadRawDiamondStatConfigs(teamId) {
+            const snapshot = await getDocs(query(
+                collection(db, `teams/${teamId}/statTrackerConfigs`),
+                orderBy('name')
+            ));
+            return {
+                configs: snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() })),
+                fromCache: snapshot?.metadata?.fromCache === true
+            };
         }
 
         function insightToneClasses(tone) {
@@ -765,15 +782,55 @@
 
             try {
                 currentTeamId = teamId; // Store global
-                const [team, players, games, configs] = await Promise.all([
+                const [team, players, games] = await Promise.all([
                     getTeam(teamId),
                     getPlayers(teamId, { includeInactive: true }),
-                    getGames(teamId),
-                    getConfigs(teamId)
+                    getGames(teamId)
                 ]);
                 if (!isCurrentLoad()) return;
-                const resolvedDiamondConfig = selectAnalyticsConfig(configs, team?.sport || team?.baseType || '');
-                let diamondStatCatalog = getPublicDiamondStatCatalog(resolvedDiamondConfig, 'player');
+                const scheduledDiamondGames = games.filter((game) => (
+                    isDiamondV2Game(game)
+                    && getDiamondPublicPlayerStatsCollectionPath({ teamId, gameId: game.id, game })
+                ));
+                const initialConfigLoad = await (scheduledDiamondGames.length > 0
+                    ? loadRawDiamondStatConfigs(teamId).then(({ configs }) => ({ configs, error: null }))
+                    : getConfigs(teamId).then((configs) => ({ configs, error: null })))
+                    .catch((error) => ({ configs: null, error }));
+                if (!isCurrentLoad()) return;
+                let configs = initialConfigLoad.configs;
+                let diamondConfigResolution = configs
+                    ? resolveDiamondStatConfigsForGames({ teamId, games: scheduledDiamondGames, configs })
+                    : null;
+                if (scheduledDiamondGames.length > 0 && !diamondConfigResolution) {
+                    try {
+                        const rawConfigLoad = await loadRawDiamondStatConfigs(teamId);
+                        configs = rawConfigLoad.configs;
+                        diamondConfigResolution = resolveDiamondStatConfigsForGames({
+                            teamId,
+                            games: scheduledDiamondGames,
+                            configs
+                        });
+                        if (!diamondConfigResolution) {
+                            console.warn('Diamond stat config retry did not match every activation snapshot.', {
+                                fromCache: rawConfigLoad.fromCache
+                            });
+                        }
+                    } catch (error) {
+                        console.warn('Diamond stat config retry failed:', error);
+                    }
+                }
+                if (scheduledDiamondGames.length > 0 && !diamondConfigResolution) {
+                    throw buildDiamondConfigUnavailableError();
+                }
+                if (!configs) throw initialConfigLoad.error;
+                const legacyAnalyticsConfig = selectAnalyticsConfig(configs, team?.sport || team?.baseType || '');
+                let diamondStatCatalog = scheduledDiamondGames.length > 0
+                    ? getActivationPinnedDiamondStatCatalog({
+                        resolution: diamondConfigResolution,
+                        scope: 'player',
+                        visibility: 'public'
+                    })
+                    : [];
                 currentDiamondPlayerStatCatalog = diamondStatCatalog;
                 rosterFieldDefinitions = normalizeRosterFieldDefinitions(await getRosterFieldDefinitions(teamId, team));
                 if (!isCurrentLoad()) return;
@@ -853,12 +910,72 @@
                 const gameLoadResults = managerStatLoad.results;
                 const statVisibility = managerStatLoad.statVisibility;
                 const privateStatsStatus = managerStatLoad.privateStatsStatus;
-                if (statVisibility === 'manager-internal') {
-                    diamondStatCatalog = getManagerDiamondStatCatalog(resolvedDiamondConfig, 'player');
+                if (scheduledDiamondGames.length > 0 && statVisibility === 'manager-internal') {
+                    diamondStatCatalog = getActivationPinnedDiamondStatCatalog({
+                        resolution: diamondConfigResolution,
+                        scope: 'player',
+                        visibility: 'manager-internal'
+                    });
                     currentDiamondPlayerStatCatalog = diamondStatCatalog;
                 }
 
-                gameLoadResults.forEach(({ game, diamondGame, statDocuments, playerGameStats, statsByPlayerId, events, eventsLoadStatus }) => {
+                const aggregateDiamondStatIds = diamondStatCatalog.map(({ id }) => id);
+                const hasMixedDiamondPlayerVisibility = hasMixedActivationPinnedDiamondStatIds({
+                    resolution: diamondConfigResolution,
+                    games: scheduledDiamondGames,
+                    scope: 'player',
+                    visibility: 'public'
+                });
+                if (hasMixedDiamondPlayerVisibility === null) throw buildDiamondConfigUnavailableError();
+                const preparedGameLoadResults = gameLoadResults.map((result) => {
+                    if (!result.diamondGame) return result;
+                    if (!getDiamondPublicPlayerStatsCollectionPath({ teamId, gameId: result.gameId, game: result.game })) {
+                        return result;
+                    }
+                    const gameCatalog = getActivationPinnedDiamondStatCatalog({
+                        resolution: diamondConfigResolution,
+                        game: result.game,
+                        scope: 'player',
+                        visibility: statVisibility
+                    });
+                    if (!gameCatalog) throw buildDiamondConfigUnavailableError();
+                    const allowedStatIds = gameCatalog.map(({ id }) => id);
+                    const preparedDocuments = result.statDocuments.map(({ id, data }) => ({
+                        id,
+                        data: prepareDiamondStatDocumentForSeason(data, allowedStatIds, {
+                            aggregateStatIds: aggregateDiamondStatIds,
+                            clearFamilyCoverage: statVisibility === 'public' && hasMixedDiamondPlayerVisibility
+                        })
+                    }));
+                    const statsByPlayerId = {};
+                    const completeStatsByPlayerId = {};
+                    const statPresentationByPlayerId = {};
+                    preparedDocuments.forEach(({ id, data }) => {
+                        const presentation = {
+                            ...readCoverageAwareStatDocument(data, result.game),
+                            statVisibility
+                        };
+                        statsByPlayerId[id] = presentation.values;
+                        completeStatsByPlayerId[id] = presentation.completeValues;
+                        statPresentationByPlayerId[id] = presentation;
+                    });
+                    const selectedDocument = preparedDocuments.find(({ id }) => id === playerId)?.data || null;
+                    return {
+                        ...result,
+                        statDocuments: preparedDocuments,
+                        statsByPlayerId,
+                        completeStatsByPlayerId,
+                        statPresentationByPlayerId,
+                        playerGameStats: result.playerGameStats && selectedDocument ? {
+                            ...result.playerGameStats,
+                            stats: statsByPlayerId[playerId] || {},
+                            completeStats: completeStatsByPlayerId[playerId] || {},
+                            statPresentation: statPresentationByPlayerId[playerId] || null
+                        } : null
+                    };
+                });
+
+                preparedGameLoadResults.forEach(({ game, diamondGame, statDocuments, playerGameStats, statsByPlayerId, events, eventsLoadStatus }) => {
                     if (diamondGame) {
                         diamondGames.push({ game, documents: statDocuments });
                     }
@@ -1084,7 +1201,7 @@
 
                 if (gameId && selectedGame) {
                     const selectedStats = perGameStats.find((entry) => entry.gameId === selectedGameId) || null;
-                    const selectedGameLoad = gameLoadResults.find((entry) => entry.gameId === selectedGameId);
+                    const selectedGameLoad = preparedGameLoadResults.find((entry) => entry.gameId === selectedGameId);
                     const gameTeamStats = selectedGameLoad?.diamondGame
                         ? (selectedGameLoad.completeStatsByPlayerId || {})
                         : (selectedGameLoad?.statsByPlayerId || {});
@@ -1108,20 +1225,27 @@
 
                 const gameStatsForDisplay = [...perGameStats];
                 if (requestedGame && selectedGame && selectedGameId && !gameStatsForDisplay.some((entry) => entry.gameId === selectedGameId)) {
-                    const selectedStatsByPlayerId = gameLoadResults.find((entry) => entry.gameId === selectedGameId)?.statsByPlayerId || {};
-                    const selectedPresentationByPlayerId = gameLoadResults.find((entry) => entry.gameId === selectedGameId)?.statPresentationByPlayerId || {};
+                    const selectedStatsByPlayerId = preparedGameLoadResults.find((entry) => entry.gameId === selectedGameId)?.statsByPlayerId || {};
+                    const selectedPresentationByPlayerId = preparedGameLoadResults.find((entry) => entry.gameId === selectedGameId)?.statPresentationByPlayerId || {};
                     gameStatsForDisplay.push({
                         gameId: selectedGameId,
                         date: selectedGame.date?.toDate ? selectedGame.date.toDate() : new Date(selectedGame.date),
                         opponent: selectedGame.opponent || 'Opponent',
                         stats: selectedStatsByPlayerId[playerId] || {},
-                        completeStats: gameLoadResults.find((entry) => entry.gameId === selectedGameId)?.completeStatsByPlayerId?.[playerId] || selectedStatsByPlayerId[playerId] || {},
+                        completeStats: preparedGameLoadResults.find((entry) => entry.gameId === selectedGameId)?.completeStatsByPlayerId?.[playerId] || selectedStatsByPlayerId[playerId] || {},
                         statPresentation: selectedPresentationByPlayerId[playerId] || null,
                         timeMs: 0
                     });
                 }
 
-                const analyticsConfig = resolvedDiamondConfig;
+                const analyticsConfig = hasDiamondStats
+                    ? {
+                        id: `diamond-activation-${diamondConfigResolution.configIds.join('-')}`,
+                        name: 'Diamond scorebook',
+                        columns: diamondStatCatalog.map(({ id }) => id),
+                        statDefinitions: diamondStatCatalog
+                    }
+                    : legacyAnalyticsConfig;
                 const leaderboardSnapshot = analyticsConfig
                     ? (hasDiamondStats
                         ? buildCompleteDiamondLeaderboardSnapshot({
@@ -1566,7 +1690,11 @@
             } catch (error) {
                 if (!isCurrentLoad()) return;
                 console.error('Error loading player details:', error);
-                document.querySelector('main').innerHTML = '<div class="text-center py-12 text-red-500">Error loading player details</div>';
+                const needsConfigRetry = error?.code === 'allplays/diamond-stat-config-unavailable';
+                document.querySelector('main').innerHTML = needsConfigRetry
+                    ? '<div class="text-center py-12 text-red-500"><p>Diamond statistic definitions could not be verified.</p><button id="retry-diamond-config" type="button" aria-label="Retry loading Diamond statistic definitions" class="mt-4 min-h-11 rounded-lg bg-primary-600 px-4 py-2 font-semibold text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2">Retry</button></div>'
+                    : '<div class="text-center py-12 text-red-500">Error loading player details</div>';
+                document.getElementById('retry-diamond-config')?.addEventListener('click', () => window.location.reload());
             } finally {
                 if (isCurrentLoad()) updateEditButton();
             }

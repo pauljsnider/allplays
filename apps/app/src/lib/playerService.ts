@@ -41,6 +41,7 @@ import {
 } from './diamondManagerStatsService';
 import {
   aggregateCoverageAwareSeasonStats,
+  getDiamondCatalogDefinition,
   getDiamondPublicPlayerStatsCollectionPath,
   getDiamondProjectionIdentity,
   getManagerDiamondStatCatalog,
@@ -99,6 +100,10 @@ import { createLogger } from './logger';
 import { isNativeRuntime } from './nativeRuntime';
 import { loadProfileDocument } from './profileService';
 import { loadGameReportPlays, type GameReportPlay } from './gameReportService';
+import {
+  buildActivationPinnedDiamondPresentationConfig,
+  currentDiamondStatConfigMatchesActivation
+} from './diamondStatConfigSnapshot';
 import type { AuthUser } from './types';
 
 export type { PlayerVideoClip };
@@ -121,6 +126,10 @@ type PlayerStatConfigResolution = {
   configsById: ReadonlyMap<string, Record<string, any>>;
   fallbackConfig: Record<string, any> | null;
 };
+
+function isNoncanonicalDiamondStatEvidence(game: Record<string, any>) {
+  return game?.isPublicProjection === true || game?.isSharedGame === true;
+}
 
 async function loadRequiredPlayerRead<T>(
   loader: () => Promise<T>,
@@ -166,22 +175,38 @@ async function loadPlayerStatConfigsOnce(teamId: string): Promise<PlayerStatConf
 
 function buildPlayerStatConfigResolution(
   read: PlayerStatConfigRead,
+  teamId: string,
   sport: string,
   diamondGames: ReadonlyArray<Record<string, any>>
 ): PlayerStatConfigResolution | null {
   if (read.status !== 'complete') return null;
+  if (!diamondGames.length) {
+    const fallbackConfig = selectAnalyticsConfig(read.configs, sport);
+    return fallbackConfig ? {
+      configs: [fallbackConfig],
+      configsById: new Map(),
+      fallbackConfig
+    } : null;
+  }
   const gameConfigIds = diamondGames.map((game) => String(game?.statTrackerConfigId || '').trim());
   const requiredConfigIds = [...new Set(gameConfigIds.filter(Boolean))];
   if (requiredConfigIds.length && gameConfigIds.some((configId) => !configId)) return null;
   if (requiredConfigIds.length) {
     const configsById = new Map<string, Record<string, any>>();
-    for (const configId of requiredConfigIds.sort()) {
-      const requiredConfig = read.configs.find((config) => (
+    for (const configId of requiredConfigIds.sort((left, right) => left < right ? -1 : left > right ? 1 : 0)) {
+      const matchingConfigs = read.configs.filter((config) => (
         String((config as Record<string, unknown> | null)?.id || '').trim() === configId
       ));
-      const normalizedConfig = requiredConfig ? selectAnalyticsConfig([requiredConfig], sport) : null;
-      if (!normalizedConfig) return null;
-      configsById.set(configId, normalizedConfig);
+      const requiredConfig = matchingConfigs.length === 1 ? matchingConfigs[0] : null;
+      const referencedGames = diamondGames.filter((game) => String(game?.statTrackerConfigId || '').trim() === configId);
+      if (!requiredConfig || referencedGames.some((game) => !currentDiamondStatConfigMatchesActivation({
+        teamId,
+        game,
+        config: requiredConfig
+      }))) return null;
+      const pinnedConfig = buildActivationPinnedDiamondPresentationConfig(requiredConfig);
+      if (!pinnedConfig) return null;
+      configsById.set(configId, pinnedConfig);
     }
     return {
       configs: [...configsById.values()],
@@ -192,10 +217,20 @@ function buildPlayerStatConfigResolution(
   // Legacy Diamond rows may predate the required per-game config identity.
   // Only an all-missing set may use the established team-sport fallback.
   const fallbackConfig = selectAnalyticsConfig(read.configs, sport);
-  return fallbackConfig ? {
-    configs: [fallbackConfig],
+  const fallbackConfigId = String(fallbackConfig?.id || '').trim();
+  const rawFallbackConfigs = read.configs.filter((config) => (
+    String((config as Record<string, unknown> | null)?.id || '').trim() === fallbackConfigId
+  ));
+  if (!fallbackConfig || rawFallbackConfigs.length !== 1 || diamondGames.some((game) => !currentDiamondStatConfigMatchesActivation({
+    teamId,
+    game: { ...game, statTrackerConfigId: fallbackConfigId },
+    config: rawFallbackConfigs[0]
+  }))) return null;
+  const pinnedFallbackConfig = buildActivationPinnedDiamondPresentationConfig(rawFallbackConfigs[0]);
+  return pinnedFallbackConfig ? {
+    configs: [pinnedFallbackConfig],
     configsById: new Map(),
-    fallbackConfig
+    fallbackConfig: pinnedFallbackConfig
   } : null;
 }
 
@@ -210,14 +245,18 @@ async function resolvePlayerStatConfigs({
   sport: string;
   diamondGames: ReadonlyArray<Record<string, any>>;
 }) {
-  const initialResolution = buildPlayerStatConfigResolution(initialRead, sport, diamondGames);
+  const configRequiredDiamondGames = diamondGames.filter((game) => !isNoncanonicalDiamondStatEvidence(game));
+  if (diamondGames.length && !configRequiredDiamondGames.length) {
+    return { configs: [], configsById: new Map<string, Record<string, any>>(), fallbackConfig: null };
+  }
+  const initialResolution = buildPlayerStatConfigResolution(initialRead, teamId, sport, configRequiredDiamondGames);
   if (!diamondGames.length) {
     return initialResolution || { configs: [], configsById: new Map(), fallbackConfig: null };
   }
   if (initialResolution) return initialResolution;
 
   const retryRead = await loadPlayerStatConfigsOnce(teamId);
-  const retryResolution = buildPlayerStatConfigResolution(retryRead, sport, diamondGames);
+  const retryResolution = buildPlayerStatConfigResolution(retryRead, teamId, sport, configRequiredDiamondGames);
   if (!retryResolution) throw new Error(diamondStatConfigUnavailableMessage);
   return retryResolution;
 }
@@ -234,17 +273,39 @@ function mergeDiamondStatDefinitions(
   resolution: PlayerStatConfigResolution,
   visibility: 'public' | 'manager-internal'
 ) {
-  const byId = new Map<string, Record<string, any>>();
+  const byId = new Map<string, Record<string, any>[]>();
   resolution.configs.forEach((config) => {
     const definitions = visibility === 'manager-internal'
       ? getManagerDiamondStatCatalog(config, 'player')
       : getPublicDiamondStatCatalog(config, 'player');
     definitions.forEach((definition) => {
       const id = String(definition?.id || '').trim();
-      if (id && !byId.has(id)) byId.set(id, definition);
+      if (!id) return;
+      const matchingDefinitions = byId.get(id) || [];
+      matchingDefinitions.push(definition);
+      byId.set(id, matchingDefinitions);
     });
   });
-  return [...byId.values()].sort((left, right) => String(left.id).localeCompare(String(right.id)));
+  const presentationFields = ['label', 'acronym', 'group', 'format', 'precision', 'rankingOrder', 'topStat'] as const;
+  return [...byId.entries()]
+    .sort(([leftId], [rightId]) => leftId < rightId ? -1 : leftId > rightId ? 1 : 0)
+    .flatMap(([id, definitions]) => {
+      const fixedDefinition = getDiamondCatalogDefinition(id, 'player');
+      if (!fixedDefinition) return [];
+      const sharedPresentation = Object.fromEntries(presentationFields.flatMap((field) => {
+        const values = definitions.map((definition) => definition?.[field]);
+        return values.length && values.every((value) => Object.is(value, values[0]))
+          ? [[field, values[0]]]
+          : [];
+      }));
+      return [{
+        ...fixedDefinition,
+        ...sharedPresentation,
+        id,
+        scope: 'player',
+        visibility
+      }];
+    });
 }
 
 function getDiamondStatIdsForGame(
@@ -257,6 +318,17 @@ function getDiamondStatIdsForGame(
     ? getManagerDiamondStatCatalog(config, 'player')
     : getPublicDiamondStatCatalog(config, 'player');
   return new Set(definitions.map((definition) => String(definition.id || '')));
+}
+
+function haveDifferentDiamondStatIdSets(
+  resolution: PlayerStatConfigResolution,
+  games: ReadonlyArray<Record<string, any>>,
+  visibility: 'public' | 'manager-internal'
+) {
+  const signatures = games
+    .filter((game) => !isNoncanonicalDiamondStatEvidence(game))
+    .map((game) => [...getDiamondStatIdsForGame(resolution, game, visibility)].sort().join('\u0000'));
+  return new Set(signatures).size > 1;
 }
 
 export type ParentPlayerStatRow = {
@@ -501,6 +573,9 @@ async function loadPlayerDiamondPublicStatRead(
   playerId: string,
   game: Record<string, any>
 ): Promise<PlayerDiamondPublicStatRead> {
+  if (isNoncanonicalDiamondStatEvidence(game)) {
+    return { game, data: {}, publicLoadStatus: 'partial', absenceConfirmed: false };
+  }
   const gameId = String(game?.id || game?.gameId || '').trim();
   const collectionPath = gameId
     ? getDiamondPublicPlayerStatsCollectionPath({ teamId, gameId, game })
@@ -525,7 +600,10 @@ async function loadPlayerDiamondPublicStatRead(
 
 function isEmptyIncompletePlayerDiamondBatch(reads: readonly PlayerDiamondPublicStatRead[]) {
   return reads.every(({ data }) => Object.keys(data).length === 0)
-    && reads.some(({ publicLoadStatus }) => publicLoadStatus !== 'complete');
+    && reads.some(({ game, publicLoadStatus, absenceConfirmed }) => (
+      !isNoncanonicalDiamondStatEvidence(game)
+      && (publicLoadStatus !== 'complete' || absenceConfirmed !== true)
+    ));
 }
 
 async function loadPlayerDiamondPublicStatBatch(
@@ -805,10 +883,13 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
     sport: String(team?.sport || team?.baseType || ''),
     diamondGames: requestedManagerGames
   });
-  const managerBatch = access.isTeamStaff && requestedManagerGames.length
+  const canonicalManagerGames = requestedManagerGames.filter((game) => !isNoncanonicalDiamondStatEvidence(game));
+  const managerBatch = access.isTeamStaff
+    && requestedManagerGames.length
+    && canonicalManagerGames.length === requestedManagerGames.length
     ? await loadChunkedPlayerDiamondManagerStats({
         teamId: resolvedTeamId,
-        games: requestedManagerGames,
+        games: canonicalManagerGames,
         playerId: resolvedPlayerId
       })
     : null;
@@ -1006,13 +1087,19 @@ async function loadParentPlayerStatsDetailUncached(user: AuthUser, teamId: strin
   // contains a Diamond game. Diamond seasons need every completed game so their
   // coverage-aware season projection is not silently truncated.
   const seasonGames = completedDiamondGames.length ? completedGames : limitedGames;
-  const managerBatch = access.isTeamStaff && completedDiamondGames.length
-    ? await loadChunkedPlayerDiamondManagerStats({ teamId, games: completedDiamondGames, playerId })
+  const canonicalCompletedDiamondGames = completedDiamondGames.filter((game) => !isNoncanonicalDiamondStatEvidence(game));
+  const managerBatch = access.isTeamStaff
+    && completedDiamondGames.length
+    && canonicalCompletedDiamondGames.length === completedDiamondGames.length
+    ? await loadChunkedPlayerDiamondManagerStats({ teamId, games: canonicalCompletedDiamondGames, playerId })
     : null;
   const publicDiamondReads = managerBatch?.status === 'complete'
     ? []
     : await loadPlayerDiamondPublicStatBatch(teamId, playerId, completedDiamondGames);
-  if (isEmptyIncompletePlayerDiamondBatch(publicDiamondReads)) {
+  if (
+    completedDiamondGames.some((game) => !isNoncanonicalDiamondStatEvidence(game))
+    && isEmptyIncompletePlayerDiamondBatch(publicDiamondReads)
+  ) {
     throw new Error('Diamond statistics are temporarily unavailable. Refresh to retry.');
   }
   const publicDiamondReadsByGameId = new Map(publicDiamondReads.map((read) => [
@@ -1064,7 +1151,11 @@ async function loadParentPlayerStatsDetailUncached(user: AuthUser, teamId: strin
   const appliedDiamondStatDefinitions = managerStatsComplete ? managerDiamondStatDefinitions : publicDiamondStatDefinitions;
   const appliedDiamondStatIds = managerStatsComplete ? managerDiamondStatIds : publicDiamondStatIds;
   const appliedDiamondVisibility = managerStatsComplete ? 'manager-internal' : 'public';
-  const clearMultiGamePublicFamilyCoverage = !managerStatsComplete && completedDiamondGames.length > 1;
+  const clearMultiGamePublicFamilyCoverage = !managerStatsComplete && haveDifferentDiamondStatIdSets(
+    statConfigResolution,
+    completedDiamondGames,
+    'public'
+  );
   const incompleteManagerStatus: ParentPlayerStatRow['privateStatsStatus'] = access.isTeamStaff && completedDiamondGames.length
     ? (managerBatch?.status === 'unavailable' ? 'unavailable' : 'partial')
     : 'not-requested';
@@ -1355,10 +1446,11 @@ export async function loadParentPlayerStatTotals(user: AuthUser | null, teamId: 
     };
   }
 
-  const managerBatch = access.isTeamStaff
+  const canonicalDiamondGames = diamondGames.filter((game: any) => !isNoncanonicalDiamondStatEvidence(game));
+  const managerBatch = access.isTeamStaff && canonicalDiamondGames.length === diamondGames.length
     ? await loadChunkedPlayerDiamondManagerStats({
         teamId: requestedTeamId,
-        games: diamondGames,
+        games: canonicalDiamondGames,
         playerId: requestedPlayerId
       })
     : null;
@@ -1370,7 +1462,10 @@ export async function loadParentPlayerStatTotals(user: AuthUser | null, teamId: 
         absenceConfirmed: false
       }))
     : await loadPlayerDiamondPublicStatBatch(requestedTeamId, requestedPlayerId, diamondGames);
-  if (isEmptyIncompletePlayerDiamondBatch(publicDiamondDocuments)) {
+  if (
+    diamondGames.some((game) => !isNoncanonicalDiamondStatEvidence(game))
+    && isEmptyIncompletePlayerDiamondBatch(publicDiamondDocuments)
+  ) {
     throw new Error('Diamond statistics are temporarily unavailable. Refresh to retry.');
   }
   const managerStatsComplete = Boolean(
@@ -1390,7 +1485,11 @@ export async function loadParentPlayerStatTotals(user: AuthUser | null, teamId: 
   );
   const appliedStatIds = managerStatsComplete ? managerDiamondStatIds : publicDiamondStatIds;
   const appliedStatVisibility = managerStatsComplete ? 'manager-internal' : 'public';
-  const clearMultiGamePublicFamilyCoverage = !managerStatsComplete && diamondGames.length > 1;
+  const clearMultiGamePublicFamilyCoverage = !managerStatsComplete && haveDifferentDiamondStatIdSets(
+    statConfigResolution,
+    diamondGames,
+    'public'
+  );
   const privateStatsStatus = access.isTeamStaff
     ? (managerStatsComplete ? 'complete' : managerBatch?.status === 'unavailable' ? 'unavailable' : 'partial')
     : 'not-requested';
@@ -1502,10 +1601,20 @@ function buildStatsEventFromGame(game: Record<string, any>, teamId: string, team
     homeScore: typeof game?.homeScore === 'number' ? game.homeScore : null,
     awayScore: typeof game?.awayScore === 'number' ? game.awayScore : null,
     trackingEngine: game?.trackingEngine || null,
+    diamondScorebookInstanceId: game?.diamondScorebookInstanceId || null,
     diamondRevision: Number.isSafeInteger(Number(game?.diamondProjectionRevision ?? game?.diamondRevision))
       ? Number(game?.diamondProjectionRevision ?? game?.diamondRevision)
       : null,
+    diamondProjectionStatus: game?.diamondProjectionStatus || null,
+    diamondProjectionComplete: game?.diamondProjectionComplete === true,
+    diamondProjectionRevision: Number.isSafeInteger(Number(game?.diamondProjectionRevision))
+      ? Number(game?.diamondProjectionRevision)
+      : null,
+    diamondProjectionCheckpointHash: game?.diamondProjectionCheckpointHash || null,
     statTrackerConfigId: game?.statTrackerConfigId || null,
+    diamondStatConfigSnapshotHash: game?.diamondStatConfigSnapshotHash || null,
+    diamondProjectionHash: game?.diamondProjectionHash || null,
+    isPublicProjection: game?.isPublicProjection === true,
     assignments: [],
     openAssignmentCount: 0
   } as ParentScheduleEvent;

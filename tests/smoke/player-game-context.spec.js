@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { buildDiamondStatConfigSnapshotHash } from '../../js/diamond-stat-presentation.js';
 
 const STORE_KEY = '__playerGameContextStore';
 
@@ -136,9 +137,19 @@ function createDiamondMixedScenario() {
     const scenario = createScenario();
     const instanceId = '00000000-0000-4000-8000-000000000001';
     const checkpointHash = `sha256:${'a'.repeat(64)}`;
-    const configHash = `sha256:${'b'.repeat(64)}`;
     const projectionHash = `sha256:${'c'.repeat(64)}`;
     scenario.team.sport = 'Baseball';
+    scenario.configs[0] = {
+        id: 'cfg-1',
+        baseType: 'Baseball',
+        columns: ['H'],
+        statDefinitions: [{ id: 'h', label: 'H', scope: 'player', visibility: 'public', type: 'base' }]
+    };
+    const configHash = buildDiamondStatConfigSnapshotHash({
+        teamId: scenario.team.id,
+        configId: scenario.configs[0].id,
+        config: scenario.configs[0]
+    });
     scenario.games[0] = {
         ...scenario.games[0],
         teamId: 'team-1',
@@ -150,12 +161,6 @@ function createDiamondMixedScenario() {
         diamondProjectionCheckpointHash: checkpointHash,
         diamondStatConfigSnapshotHash: configHash,
         diamondProjectionHash: projectionHash
-    };
-    scenario.configs[0] = {
-        id: 'cfg-1',
-        baseType: 'Baseball',
-        columns: ['H'],
-        statDefinitions: [{ id: 'h', label: 'H', scope: 'player', visibility: 'public', type: 'base' }]
     };
     scenario.aggregatedStatsByGame['older-game'].p1 = {
         schemaVersion: 1,
@@ -216,6 +221,87 @@ function createDiamondMixedScenario() {
     return scenario;
 }
 
+function createMixedDiamondConfigScenario() {
+    const scenario = createDiamondMixedScenario();
+    const instanceId = '00000000-0000-4000-8000-000000000002';
+    const checkpointHash = `sha256:${'d'.repeat(64)}`;
+    const projectionHash = `sha256:${'e'.repeat(64)}`;
+    const config = {
+        id: 'cfg-2',
+        baseType: 'Baseball',
+        columns: ['HR'],
+        statDefinitions: [
+            { id: 'h', label: 'H', scope: 'player', visibility: 'private', type: 'base' },
+            { id: 'hr', label: 'HR', scope: 'player', visibility: 'public', type: 'base' }
+        ]
+    };
+    const configHash = buildDiamondStatConfigSnapshotHash({
+        teamId: scenario.team.id,
+        configId: config.id,
+        config
+    });
+    scenario.configs.push(config);
+    scenario.games[1] = {
+        ...scenario.games[1],
+        teamId: 'team-1',
+        statTrackerConfigId: config.id,
+        trackingEngine: 'diamond-v2',
+        diamondProjectionStatus: 'current',
+        diamondProjectionRevision: 9,
+        diamondProjectionComplete: true,
+        diamondScorebookInstanceId: instanceId,
+        diamondProjectionCheckpointHash: checkpointHash,
+        diamondStatConfigSnapshotHash: configHash,
+        diamondProjectionHash: projectionHash
+    };
+    scenario.aggregatedStatsByGame['newer-game'] = {
+        p1: {
+            schemaVersion: 1,
+            trackingEngine: 'diamond-v2',
+            projectionSchemaVersion: 1,
+            playerId: 'p1',
+            sourceRevision: 9,
+            checkpointHash,
+            complete: true,
+            participated: true,
+            participationStatus: 'appeared',
+            participationSource: 'diamond-v2',
+            playerName: 'Ava Cole',
+            playerNumber: '3',
+            publicStatIds: ['hr'],
+            stats: { hr: 1 },
+            observedStats: {},
+            derivedStats: {},
+            observedDerivedStats: {},
+            statCoverage: { hr: 'complete' },
+            statSources: {},
+            sourcePlayIds: [],
+            unavailableDerivedStats: [],
+            missingStatFamilies: [],
+            coverage: { batting: 'complete' },
+            teamId: 'team-1',
+            diamondGameId: 'newer-game',
+            instanceId,
+            diamondScorebookInstanceId: instanceId,
+            projectionGeneration: instanceId,
+            statConfigSnapshotHash: configHash,
+            projectionHash
+        }
+    };
+    scenario.diamondReplays['newer-game'] = {
+        instanceId,
+        game: { trackingEngine: 'diamond-v2' },
+        events: [],
+        nextCursor: null,
+        complete: true,
+        truncated: false,
+        sourceRevision: 9,
+        projectionToken: `current:9:${projectionHash}`,
+        diamondStats: { status: 'complete' }
+    };
+    return scenario;
+}
+
 async function installMocks(page, scenario, { playerShareStatus = 200, fullAccess = true, accessLevel = 'full' } = {}) {
     await page.addInitScript(({ storeKey, value }) => {
         localStorage.setItem(storeKey, JSON.stringify(value));
@@ -232,6 +318,10 @@ async function installMocks(page, scenario, { playerShareStatus = 200, fullAcces
 
         function loadStore() {
             return JSON.parse(localStorage.getItem(STORE_KEY) || '{}');
+        }
+
+        function saveStore(store) {
+            localStorage.setItem(STORE_KEY, JSON.stringify(store));
         }
 
         function clone(value) {
@@ -251,7 +341,10 @@ async function installMocks(page, scenario, { playerShareStatus = 200, fullAcces
         }
 
         export async function getConfigs() {
-            return clone(loadStore().configs || []);
+            const store = loadStore();
+            store.configReadCount = (store.configReadCount || 0) + 1;
+            saveStore(store);
+            return clone(store.normalizedConfigs || store.configs || []);
         }
 
         export async function getRosterFieldDefinitions() {
@@ -328,6 +421,16 @@ async function installMocks(page, scenario, { playerShareStatus = 200, fullAcces
         function buildSnapshot(path) {
             const store = loadStore();
             const gameId = extractGameId(path);
+
+            if (path.endsWith('/statTrackerConfigs')) {
+                store.configReadCount = (store.configReadCount || 0) + 1;
+                saveStore(store);
+                return createSnapshot((store.rawConfigs || store.configs || []).map((config) => [
+                    config.id,
+                    config,
+                    path + '/' + config.id
+                ]));
+            }
 
             if (path.endsWith('/publicPlayerStats') && store.denyDiamondStatRead === true) {
                 store.diamondStatReadPaths = [...(store.diamondStatReadPaths || []), path];
@@ -502,6 +605,82 @@ test('mixed Diamond player report uses sanitized replay while legacy games keep 
         name: 'getPublicDiamondGame',
         payload: { teamId: 'team-1', gameId: 'older-game', cursor: null, limit: 200 }
     });
+    expect(pageErrors).toEqual([]);
+});
+
+test('mixed Diamond configs keep each game bound to its own public stat IDs', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    const scenario = createMixedDiamondConfigScenario();
+    await installMocks(page, scenario, { fullAccess: false, accessLevel: 'member' });
+
+    await page.goto(`${baseURL}/player.html#teamId=team-1&gameId=older-game&playerId=p1`, { waitUntil: 'domcontentloaded' });
+
+    const olderGameCard = page.locator('#game-stats .group', { hasText: 'vs. Owls' });
+    const newerGameCard = page.locator('#game-stats .group', { hasText: 'vs. Rockets' });
+    await expect(olderGameCard.getByText('H', { exact: true }).locator('..')).toContainText('1');
+    await expect(olderGameCard.getByText('HR', { exact: true }).locator('..')).toContainText('—');
+    await expect(newerGameCard.getByText('H', { exact: true }).locator('..')).toContainText('—');
+    await expect(newerGameCard.getByText('HR', { exact: true }).locator('..')).toContainText('1');
+    await expect(page.locator('#season-stats')).toContainText('Observed');
+    const store = await page.evaluate((storeKey) => JSON.parse(localStorage.getItem(storeKey) || '{}'), STORE_KEY);
+    expect(store.eventReadPaths || []).toEqual([]);
+    expect(pageErrors).toEqual([]);
+});
+
+test('Diamond player season validates the exact raw config instead of a normalized view', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    const scenario = createDiamondMixedScenario();
+    scenario.rawConfigs = structuredClone(scenario.configs);
+    scenario.normalizedConfigs = scenario.configs.map((config) => ({
+        ...config,
+        statDefinitions: [
+            ...config.statDefinitions,
+            { id: 'ghost', label: 'Ghost', scope: 'player', visibility: 'public', type: 'base' }
+        ]
+    }));
+    await installMocks(page, scenario, { fullAccess: false, accessLevel: 'member' });
+
+    await page.goto(`${baseURL}/player.html#teamId=team-1&gameId=older-game&playerId=p1`, { waitUntil: 'domcontentloaded' });
+
+    await expect(page.locator('#player-header')).toContainText('Ava Cole');
+    await expect(page.locator('main')).not.toContainText('Diamond statistic definitions could not be verified.');
+    await expect.poll(async () => {
+        const store = await page.evaluate((storeKey) => JSON.parse(localStorage.getItem(storeKey) || '{}'), STORE_KEY);
+        return store.configReadCount;
+    }).toBe(1);
+    expect(pageErrors).toEqual([]);
+});
+
+test('Diamond player season retries an unresolved config and offers a working accessible retry', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    let pageLoads = 0;
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    page.on('request', (request) => {
+        if (new URL(request.url()).pathname.endsWith('/player.html')) pageLoads += 1;
+    });
+    const scenario = createDiamondMixedScenario();
+    scenario.configs = [];
+    await installMocks(page, scenario, { fullAccess: false, accessLevel: 'member' });
+
+    await page.goto(`${baseURL}/player.html#teamId=team-1&gameId=older-game&playerId=p1`, { waitUntil: 'domcontentloaded' });
+
+    const retry = page.getByRole('button', {
+        name: 'Retry loading Diamond statistic definitions'
+    });
+    await expect(retry).toBeVisible();
+    await expect(page.getByText('Diamond statistic definitions could not be verified.')).toBeVisible();
+    await expect.poll(async () => {
+        const store = await page.evaluate((storeKey) => JSON.parse(localStorage.getItem(storeKey) || '{}'), STORE_KEY);
+        return store.configReadCount;
+    }).toBe(2);
+    const box = await retry.boundingBox();
+    expect(box?.height).toBeGreaterThanOrEqual(44);
+
+    await retry.click();
+    await expect.poll(() => pageLoads).toBeGreaterThanOrEqual(2);
+    await expect(retry).toBeVisible();
     expect(pageErrors).toEqual([]);
 });
 

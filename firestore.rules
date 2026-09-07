@@ -439,8 +439,8 @@ service cloud.firestore {
               isGlobalAdmin());
     }
 
-    function hasNoClientCalendarCredentialFields(data) {
-      return !data.keys().hasAny([
+    function clientCalendarCredentialFields() {
+      return [
         'privateCalendarFeedUrl',
         'calendarSubscriptionUrl',
         'calendarFeedUrl',
@@ -449,36 +449,58 @@ service cloud.firestore {
         'privateCalendarToken',
         'calendarFeedToken',
         'teamCalendarToken'
-      ]) &&
-      !data.keys().hasAny(['diamondScorebook']);
+      ];
+    }
+
+    function hasNoClientCalendarCredentialFields(data) {
+      return !data.keys().hasAny(clientCalendarCredentialFields()) &&
+             !('diamondScorebook' in data);
     }
 
     function keepsCalendarCredentialFieldsImmutable() {
-      return !request.resource.data.diff(resource.data).affectedKeys().hasAny([
-        'privateCalendarFeedUrl',
-        'calendarSubscriptionUrl',
-        'calendarFeedUrl',
-        'teamCalendarFeedUrl',
-        'calendarSubscriptionToken',
-        'privateCalendarToken',
-        'calendarFeedToken',
-        'teamCalendarToken'
-      ]);
+      return !request.resource.data.diff(resource.data).affectedKeys()
+        .hasAny(clientCalendarCredentialFields());
+    }
+
+    function effectiveTeamSportForDiamond(data) {
+      let sport = data.get('sport', null);
+      let sportType = data.get('sportType', null);
+      return sport in [null, '']
+        ? (sportType in [null, ''] ? data.get('activity', null) : sportType)
+        : sport;
+    }
+
+    function keepsDiamondTeamSportConsistent() {
+      let settings = resource.data.get('diamondScorebook', null);
+      let nextSport = effectiveTeamSportForDiamond(request.resource.data);
+      return !(settings is map) ||
+             settings.get('enabled', false) != true ||
+             nextSport == effectiveTeamSportForDiamond(resource.data) ||
+             (nextSport is string &&
+              settings.get('sport', '') in ['baseball', 'fastpitch'] &&
+              nextSport.lower().matches(settings.get('sport', '') == 'baseball'
+                ? '^ *baseball *$'
+                : '^ *(softball|fastpitch([ _-]+softball)?) *$'));
+    }
+
+    function keepsTeamFieldImmutable(k, v) {
+      return request.resource.data.get(k, v) == resource.data.get(k, v);
     }
 
     function keepsOwnerControlledTeamPrivilegeFieldsImmutable() {
-      return request.resource.data.get('ownerId', '') == resource.data.get('ownerId', '') &&
-             request.resource.data.get('isAdmin', false) == resource.data.get('isAdmin', false) &&
-             request.resource.data.get('isPlatformAdmin', false) == resource.data.get('isPlatformAdmin', false) &&
-             request.resource.data.get('diamondScorebook', null) == resource.data.get('diamondScorebook', null) &&
+      return keepsTeamFieldImmutable('ownerId', '') &&
+             keepsTeamFieldImmutable('isAdmin', false) &&
+             keepsTeamFieldImmutable('isPlatformAdmin', false) &&
+             keepsTeamFieldImmutable('diamondScorebook', null) &&
+             keepsDiamondTeamSportConsistent() &&
              keepsCalendarCredentialFieldsImmutable();
     }
 
     function keepsTeamPrivilegeFieldsImmutable() {
       return keepsOwnerControlledTeamPrivilegeFieldsImmutable() &&
-             request.resource.data.get('ownerEmail', '') == resource.data.get('ownerEmail', '') &&
-             request.resource.data.get('ownerEmailLower', '') == resource.data.get('ownerEmailLower', '') &&
-             request.resource.data.get('adminEmails', []) == resource.data.get('adminEmails', []);
+             keepsTeamFieldImmutable('ownerEmail', '') &&
+             keepsTeamFieldImmutable('ownerEmailLower', '') &&
+             keepsTeamFieldImmutable('adminEmails', []);
     }
 
     function isSafeDocumentId(documentId) {
@@ -1452,8 +1474,8 @@ service cloud.firestore {
       return !data.keys().hasAny(privateFields);
     }
 
-    function hasNoServerOwnedTeamFeeCheckoutFields(data) {
-      return !data.keys().hasAny([
+    function serverOwnedTeamFeeCheckoutFields() {
+      return [
                'checkoutUrl',
                'checkoutURL',
                'paymentLink',
@@ -1474,32 +1496,16 @@ service cloud.firestore {
                'stripeCheckoutSessionId',
                'checkoutSessionId',
                'lastPaidStripeCheckoutSessionId'
-             ]);
+             ];
+    }
+
+    function hasNoServerOwnedTeamFeeCheckoutFields(data) {
+      return !data.keys().hasAny(serverOwnedTeamFeeCheckoutFields());
     }
 
     function hasNoChangedServerOwnedTeamFeeCheckoutFields() {
-      return !request.resource.data.diff(resource.data).affectedKeys().hasAny([
-               'checkoutUrl',
-               'checkoutURL',
-               'paymentLink',
-               'paymentLinkUrl',
-               'paymentUrl',
-               'checkoutStatus',
-               'checkoutAttemptToken',
-               'checkoutAmountCents',
-               'checkoutCreatedAt',
-               'checkoutCreationReservationId',
-               'checkoutCreationStartedAt',
-               'checkoutCreationPayerUid',
-               'checkoutCreationAmountCents',
-               'checkoutCreationRequest',
-               'paymentProvider',
-               'stripePaymentStatus',
-               'stripePaymentAmountCents',
-               'stripeCheckoutSessionId',
-               'checkoutSessionId',
-               'lastPaidStripeCheckoutSessionId'
-             ]);
+      return !request.resource.data.diff(resource.data).affectedKeys()
+        .hasAny(serverOwnedTeamFeeCheckoutFields());
     }
 
     function hasNoServerOwnedRegistrationCheckoutFields(data) {

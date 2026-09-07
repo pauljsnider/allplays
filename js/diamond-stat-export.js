@@ -2,7 +2,7 @@ import {
   DIAMOND_COVERAGE_STATUSES,
   DIAMOND_TRACKING_ENGINE,
   getCoverageAwareStatValue,
-} from "./diamond-stat-presentation.js?v=6";
+} from "./diamond-stat-presentation.js?v=7";
 
 export const DIAMOND_STATS_EXPORT_MAX_ROWS = 2000;
 export const DIAMOND_STATS_EXPORT_MAX_DEFINITIONS = 256;

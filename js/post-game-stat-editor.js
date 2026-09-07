@@ -1,4 +1,4 @@
-import { buildConfiguredStatFields } from './game-report-stats.js?v=7';
+import { buildConfiguredStatFields } from './game-report-stats.js?v=8';
 import { normalizeStatTrackerConfig } from './stat-leaderboards.js?v=4';
 
 const DEFAULT_POST_GAME_STAT_FIELDS = [

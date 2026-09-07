@@ -1,7 +1,7 @@
 import {
   DIAMOND_TRACKING_ENGINE,
   getPublicDiamondStatCatalog
-} from './diamond-stat-presentation.js?v=6';
+} from './diamond-stat-presentation.js?v=7';
 
 export function buildConfiguredStatFields(columns = [], statsObjects = []) {
   const actualFields = new Set();

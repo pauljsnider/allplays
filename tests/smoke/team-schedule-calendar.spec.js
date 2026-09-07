@@ -38,12 +38,21 @@ function parseCalendarMonthLabel(label) {
     return new Date(Date.UTC(Number(yearText), monthIndex, 1));
 }
 
-function buildDbStub({ team, games, trackedUids, publicCalendarEvents = [] }) {
+function buildDbStub({
+    team,
+    games,
+    trackedUids,
+    publicCalendarEvents = [],
+    configs = [],
+    configReadMode = 'success'
+}) {
     return `
 const team = ${JSON.stringify(team)};
 const games = ${JSON.stringify(games)};
 const trackedUids = ${JSON.stringify(trackedUids)};
 const publicCalendarEvents = ${JSON.stringify(publicCalendarEvents)};
+const configs = ${JSON.stringify(configs)};
+const configReadMode = ${JSON.stringify(configReadMode)};
 
 function clone(value) {
     return JSON.parse(JSON.stringify(value));
@@ -70,7 +79,11 @@ export async function getPublicTeamCalendarEvents() {
 }
 
 export async function getConfigs() {
-    return [];
+    window.__getConfigsCalls = (window.__getConfigsCalls || 0) + 1;
+    if (configReadMode === 'reject') {
+        throw new Error('classic config unavailable');
+    }
+    return clone(configs);
 }
 
 export async function getTrackedCalendarEventUids() {
@@ -263,6 +276,26 @@ export function selectAnalyticsConfig() {
 }
 `;
 
+const ANALYTICS_STAT_STUB = `
+export async function aggregateSeasonStatsByPlayerId({ games = [], seasonLabel = '', loadGameStats } = {}) {
+    for (const game of games) {
+        const gameYear = String(new Date(game.date).getUTCFullYear());
+        if (!seasonLabel || seasonLabel === gameYear) {
+            await loadGameStats(game);
+        }
+    }
+    return {};
+}
+
+export function buildPlayerLeaderboardSnapshot() {
+    return null;
+}
+
+export function selectAnalyticsConfig() {
+    return null;
+}
+`;
+
 const SEASON_RECORD_STUB = `
 function toDate(value) {
     return value?.toDate ? value.toDate() : new Date(value);
@@ -305,19 +338,26 @@ export function httpsCallable(_functions, name) {
     };
 }
 
-export function collection() {
-    return {};
+export function collection(_db, path) {
+    return { path };
 }
 
-export function query() {
-    return {};
+export function query(ref) {
+    return ref;
 }
 
 export function where() {
     return {};
 }
 
-export async function getDocs() {
+export function orderBy() {
+    return null;
+}
+
+export async function getDocs(ref) {
+    if (String(ref?.path || '').endsWith('/statTrackerConfigs')) {
+        window.__getConfigsCalls = (window.__getConfigsCalls || 0) + 1;
+    }
     return {
         empty: true,
         docs: [],
@@ -411,7 +451,12 @@ async function mockTeamPageModules(page, scenario) {
     await page.route('https://cdn.tailwindcss.com/**', (route) => route.fulfill({
         status: 200,
         contentType: 'application/javascript',
-        body: 'window.tailwind = window.tailwind || { config: {} };'
+        body: `
+window.tailwind = window.tailwind || { config: {} };
+const smokeStyles = document.createElement('style');
+smokeStyles.textContent = '.min-h-11 { min-height: 2.75rem; }';
+document.head.appendChild(smokeStyles);
+`
     }));
     await page.route('**/js/db.js?v=*', (route) => route.fulfill({
         status: 200,
@@ -436,7 +481,7 @@ async function mockTeamPageModules(page, scenario) {
     await page.route(/\/js\/stat-leaderboards\.js(?:\?v=\d+)?$/, (route) => route.fulfill({
         status: 200,
         contentType: 'application/javascript',
-        body: STAT_STUB
+        body: scenario.enableAnalyticsLoad ? ANALYTICS_STAT_STUB : STAT_STUB
     }));
     await page.route('**/js/season-record.js', (route) => route.fulfill({
         status: 200,
@@ -446,7 +491,9 @@ async function mockTeamPageModules(page, scenario) {
     await page.route('**/js/auth.js?v=*', (route) => route.fulfill({
         status: 200,
         contentType: 'application/javascript',
-        body: AUTH_STUB
+        body: scenario.authenticatedManager
+            ? 'export function checkAuth(callback) { callback({ uid: "manager-1", email: "manager@example.test" }); }'
+            : AUTH_STUB
     }));
     await page.route(/\/js\/firebase\.js(?:\?.*)?$/, (route) => route.fulfill({
         status: 200,
@@ -456,7 +503,9 @@ async function mockTeamPageModules(page, scenario) {
     await page.route('**/js/team-admin-banner.js*', (route) => route.fulfill({
         status: 200,
         contentType: 'application/javascript',
-        body: TEAM_ADMIN_BANNER_STUB
+        body: scenario.authenticatedManager
+            ? 'export function renderTeamAdminBanner() {} export function getTeamAccessInfo() { return { hasAccess: true, accessLevel: "full" }; }'
+            : TEAM_ADMIN_BANNER_STUB
     }));
     await page.route('**/js/tournament-standings.js?v=4', (route) => route.fulfill({
         status: 200,
@@ -486,7 +535,9 @@ async function mockTeamPageModules(page, scenario) {
     await page.route('**/js/premium-entitlements.js*', (route) => route.fulfill({
         status: 200,
         contentType: 'application/javascript',
-        body: 'export async function readTeamPremiumEntitlement() { return null; } export function renderPremiumGateState() {}'
+        body: scenario.enableAnalyticsLoad
+            ? 'export async function readTeamPremiumEntitlement() { return { state: "active" }; } export function renderPremiumGateState() { return false; }'
+            : 'export async function readTeamPremiumEntitlement() { return null; } export function renderPremiumGateState() {}'
     }));
     await page.route('**/js/team-pass.js?v=*', (route) => route.fulfill({
         status: 200,
@@ -504,6 +555,96 @@ async function mockTeamPageModules(page, scenario) {
         body: TEAM_STAFF_PERMISSIONS_STUB
     }));
 }
+
+test('team Diamond config mismatch retries twice per load and exposes a reload-safe retry action', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    await page.addInitScript(() => {
+        const nextLoad = Number(window.sessionStorage.getItem('team-config-document-loads') || 0) + 1;
+        window.sessionStorage.setItem('team-config-document-loads', String(nextLoad));
+    });
+    const completedDate = addDays(new Date(), -2, 18);
+    const scenario = {
+        team: { name: 'Diamond Team', sport: 'Baseball' },
+        games: [{
+            id: 'diamond-game-1',
+            date: makeIso(completedDate),
+            type: 'game',
+            status: 'completed',
+            homeScore: 4,
+            awayScore: 2,
+            trackingEngine: 'diamond-v2',
+            statTrackerConfigId: 'diamond-config',
+            diamondStatConfigSnapshotHash: `sha256:${'a'.repeat(64)}`
+        }],
+        configs: [{
+            id: 'diamond-config',
+            diamondPublicTeamStatIds: [],
+            statDefinitions: [{ id: 'h', scope: 'player', visibility: 'public' }]
+        }],
+        trackedUids: [],
+        calendarEvents: [],
+        enableAnalyticsLoad: true,
+        authenticatedManager: true
+    };
+
+    await mockTeamPageModules(page, scenario);
+    await page.goto(buildUrl(baseURL, '/team.html#teamId=team-a'), { waitUntil: 'domcontentloaded' });
+
+    const alert = page.getByRole('alert');
+    const retryButton = page.getByRole('button', { name: 'Retry loading Diamond statistic definitions' });
+    await expect(alert).toContainText('Diamond statistic definitions could not be verified.');
+    await expect(retryButton).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.__getConfigsCalls)).toBe(2);
+    const target = await retryButton.boundingBox();
+    expect(target).not.toBeNull();
+    expect(target.width).toBeGreaterThanOrEqual(44);
+    expect(target.height).toBeGreaterThanOrEqual(44);
+    expect(pageErrors).toEqual([]);
+
+    await retryButton.click();
+    await expect.poll(() => page.evaluate(() => Number(window.sessionStorage.getItem('team-config-document-loads')))).toBe(2);
+    await expect(page.getByRole('alert')).toContainText('Diamond statistic definitions could not be verified.');
+    await expect(page.getByRole('button', { name: 'Retry loading Diamond statistic definitions' })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.__getConfigsCalls)).toBe(2);
+    expect(await page.evaluate(() => performance.getEntriesByType('navigation')[0]?.type)).toBe('reload');
+    expect(pageErrors).toEqual([]);
+});
+
+test('team classic config read rejection reaches the generic error path without a Diamond retry', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    const consoleErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    page.on('console', (message) => {
+        if (message.type() === 'error') consoleErrors.push(message.text());
+    });
+    const scenario = {
+        team: { name: 'Classic Team', sport: 'Soccer' },
+        games: [{
+            id: 'classic-game-1',
+            date: makeIso(addDays(new Date(), -2, 18)),
+            type: 'game',
+            status: 'completed',
+            homeScore: 2,
+            awayScore: 1,
+            trackingEngine: 'standard'
+        }],
+        configReadMode: 'reject',
+        trackedUids: [],
+        calendarEvents: [],
+        enableAnalyticsLoad: true
+    };
+
+    await mockTeamPageModules(page, scenario);
+    await page.goto(buildUrl(baseURL, '/team.html#teamId=team-a'), { waitUntil: 'domcontentloaded' });
+
+    await expect(page.locator('#team-header')).toContainText('Classic Team');
+    await expect.poll(() => page.evaluate(() => window.__getConfigsCalls)).toBe(1);
+    await expect.poll(() => consoleErrors.some((message) => message.includes('classic config unavailable'))).toBe(true);
+    await expect(page.locator('[data-retry-diamond-config]')).toHaveCount(0);
+    await expect(page.locator('#configured-team-leaderboards-section')).toHaveText('');
+    expect(pageErrors).toEqual([]);
+});
 
 async function gotoCalendarMonth(page, fromDate, targetDate) {
     void fromDate;

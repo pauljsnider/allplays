@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { readFile } from "node:fs/promises";
+import { buildDiamondStatConfigSnapshotHash } from "../../js/diamond-stat-presentation.js";
 
 const STORE_KEY = "__gamePostGameStatEditorStore";
 
@@ -265,6 +266,8 @@ async function installMocks(
             }
 
             if (path.endsWith('/statTrackerConfigs')) {
+                store.configReadCount = (store.configReadCount || 0) + 1;
+                saveStore(store);
                 return createSnapshot(store.config ? [[
                     store.config.id,
                     store.config,
@@ -557,9 +560,31 @@ test("Diamond report labels partial observations, leaves uncollected stats unava
   page.on("pageerror", (error) => pageErrors.push(error.message));
   const scenario = createScenario();
   scenario.team.sport = "Baseball";
+  scenario.config = {
+    id: "cfg-1",
+    baseType: "Baseball",
+    columns: ["H", "SB", "ERA"],
+    statDefinitions: [
+      { id: "h", label: "H", scope: "player", visibility: "public" },
+      { id: "sb", label: "SB", scope: "player", visibility: "public" },
+      {
+        id: "era",
+        label: "ERA",
+        scope: "player",
+        visibility: "public",
+        precision: 2,
+      },
+      { id: "r", label: "R", scope: "team", visibility: "public" },
+      { id: "lob", label: "TEAM H", scope: "team", visibility: "private" },
+    ],
+  };
   const instanceId = "00000000-0000-4000-8000-000000000001";
   const checkpointHash = `sha256:${"a".repeat(64)}`;
-  const configHash = `sha256:${"b".repeat(64)}`;
+  const configHash = buildDiamondStatConfigSnapshotHash({
+    teamId: scenario.team.id,
+    configId: scenario.config.id,
+    config: scenario.config,
+  });
   const projectionHash = `sha256:${"c".repeat(64)}`;
   scenario.game = {
     ...scenario.game,
@@ -592,24 +617,6 @@ test("Diamond report labels partial observations, leaves uncollected stats unava
       statConfigSnapshotHash: configHash,
       projectionHash,
     },
-  };
-  scenario.config = {
-    id: "cfg-1",
-    baseType: "Baseball",
-    columns: ["H", "SB", "ERA"],
-    statDefinitions: [
-      { id: "h", label: "H", scope: "player", visibility: "public" },
-      { id: "sb", label: "SB", scope: "player", visibility: "public" },
-      {
-        id: "era",
-        label: "ERA",
-        scope: "player",
-        visibility: "public",
-        precision: 2,
-      },
-      { id: "r", label: "R", scope: "team", visibility: "public" },
-      { id: "h", label: "TEAM H", scope: "team", visibility: "private" },
-    ],
   };
   scenario.aggregatedStats = {
     p1: {
@@ -722,6 +729,53 @@ test("Diamond report labels partial observations, leaves uncollected stats unava
   expect(csv).toContain('"0","complete","2","partial","","not_collected"');
   expect(csv).toContain('"team","public"');
   expect(csv).not.toContain("99");
+  expect(pageErrors).toEqual([]);
+});
+
+test("Diamond report retries an unresolved config and offers a working accessible retry", async ({
+  page,
+  baseURL,
+}) => {
+  const pageErrors = [];
+  let pageLoads = 0;
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname.endsWith("/game.html")) pageLoads += 1;
+  });
+  const scenario = createScenario();
+  const instanceId = "00000000-0000-4000-8000-000000000001";
+  scenario.team.sport = "Baseball";
+  scenario.config = null;
+  scenario.aggregatedStats = {};
+  scenario.game = {
+    ...scenario.game,
+    teamId: "team-1",
+    trackingEngine: "diamond-v2",
+    diamondProjectionStatus: "current",
+    diamondProjectionRevision: 8,
+    diamondProjectionComplete: true,
+    diamondScorebookInstanceId: instanceId,
+    diamondProjectionCheckpointHash: `sha256:${"a".repeat(64)}`,
+    diamondStatConfigSnapshotHash: `sha256:${"b".repeat(64)}`,
+    diamondProjectionHash: `sha256:${"c".repeat(64)}`,
+  };
+  await installMocks(page, scenario, { accessLevel: "member" });
+
+  await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, {
+    waitUntil: "domcontentloaded",
+  });
+  const retry = page.getByRole("button", {
+    name: "Retry loading Diamond statistic definitions",
+  });
+  await expect(retry).toBeVisible();
+  await expect(page.getByText("Diamond statistic definitions could not be verified.")).toBeVisible();
+  await expect.poll(async () => (await readStore(page)).configReadCount).toBe(2);
+  const box = await retry.boundingBox();
+  expect(box?.height).toBeGreaterThanOrEqual(44);
+
+  await retry.click();
+  await expect.poll(() => pageLoads).toBeGreaterThanOrEqual(2);
+  await expect(retry).toBeVisible();
   expect(pageErrors).toEqual([]);
 });
 

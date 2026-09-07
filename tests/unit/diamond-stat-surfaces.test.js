@@ -6,7 +6,7 @@ const readRootFile = (fileName) => readFileSync(new URL(`../../${fileName}`, imp
 describe('legacy Diamond stat surface contracts', () => {
     it('loads one versioned coverage helper on every legacy report surface', () => {
         for (const fileName of ['game.html', 'player.html', 'team.html']) {
-            expect(readRootFile(fileName)).toContain("from './js/diamond-stat-presentation.js?v=6'");
+            expect(readRootFile(fileName)).toContain("from './js/diamond-stat-presentation.js?v=7'");
         }
     });
 
@@ -52,12 +52,13 @@ describe('legacy Diamond stat surface contracts', () => {
         expect(gameSource).toContain('const diamondGame = isDiamondV2Game(game);');
         expect(gameSource).toContain('if (diamondGame) {');
         expect(gameSource).toContain('canEditStats = false;');
-        expect(gameSource).toContain("getManagerDiamondStatCatalog(resolvedConfig, 'team')");
+        expect(gameSource).toContain('getActivationPinnedDiamondStatCatalog({');
         expect(gameSource).toContain('resolveDiamondPublicTeamStatDocument');
         expect(gameSource).toContain("statVisibility === 'manager-internal'");
         expect(gameSource).toContain('if (canEditStats && !diamondGame)');
         expect(gameSource).toContain('loadDiamondManagerStats');
-        expect(playerSource).toContain("getPublicDiamondStatCatalog(resolvedDiamondConfig, 'player')");
+        expect(playerSource).toContain('resolveDiamondStatConfigsForGames({');
+        expect(playerSource).toContain('prepareDiamondStatDocumentForSeason(data, allowedStatIds');
         expect(playerSource).toContain('loadDiamondManagerStats');
         expect(playerSource).toContain('completeStatsByPlayerId');
         expect(teamSource).toContain('Object.prototype.hasOwnProperty.call(stats, definition.id)');
@@ -65,6 +66,43 @@ describe('legacy Diamond stat surface contracts', () => {
         expect(teamSource).toContain('aggregateCoverageAwareTeamStats');
         expect(teamSource).toContain('loadDiamondManagerStats');
         expect(teamSource).toContain("recordType: 'season_team'");
+    });
+
+    it('requires activation-matched configs, retries bounded failures, and exposes an accessible retry action', () => {
+        const gameSource = readRootFile('game.html');
+        const playerSource = readRootFile('player.html');
+        const teamSource = readRootFile('team.html');
+
+        for (const source of [gameSource, playerSource, teamSource]) {
+            expect(source).toContain('resolveDiamondStatConfigsForGames({');
+            expect(source).toContain('allplays/diamond-stat-config-unavailable');
+            expect(source).toContain('Diamond statistic definitions could not be verified.');
+            expect(source).toContain('aria-label="Retry loading Diamond statistic definitions"');
+            expect(source).toContain('min-h-11');
+            expect(source).toContain('window.location.reload()');
+            expect(source).not.toContain('getPublicDiamondStatCatalog(');
+            expect(source).not.toContain('getManagerDiamondStatCatalog(');
+        }
+        expect(gameSource).toContain('const configAttempts = diamondGame ? 2 : 1;');
+        for (const source of [playerSource, teamSource]) {
+            expect(source).toContain('loadRawDiamondStatConfigs(teamId)');
+            expect(source).toContain('snapshot?.metadata?.fromCache === true');
+        }
+        expect(teamSource).toContain('if (configLoadError) throw configLoadError;');
+        expect(teamSource).toContain('configLoadError = null;');
+    });
+
+    it('keeps season aggregation per-game pinned across mixed configs', () => {
+        const playerSource = readRootFile('player.html');
+        const teamSource = readRootFile('team.html');
+
+        for (const source of [playerSource, teamSource]) {
+            expect(source).toContain('hasMixedActivationPinnedDiamondStatIds({');
+            expect(source).toContain('clearFamilyCoverage: statVisibility === \'public\' && hasMixedDiamondPlayerVisibility');
+        }
+        expect(playerSource).toContain('aggregateStatIds: aggregateDiamondStatIds');
+        expect(teamSource).toContain('aggregateStatIds: aggregatePlayerStatIds');
+        expect(teamSource).toContain('allowedStatIds: perGameTeamDefinitions.map(({ id }) => id)');
     });
 
     it('renders unavailable Diamond values as an em dash and labels partial observations', () => {
@@ -83,7 +121,7 @@ describe('legacy Diamond stat surface contracts', () => {
         const teamSource = readRootFile('team.html');
 
         for (const source of [gameSource, playerSource, teamSource]) {
-            expect(source).toContain("from './js/diamond-stat-export.js?v=6'");
+            expect(source).toContain("from './js/diamond-stat-export.js?v=7'");
             expect(source).toContain('buildDiamondStatsCsv');
             expect(source).toContain('downloadDiamondStatsCsv');
         }

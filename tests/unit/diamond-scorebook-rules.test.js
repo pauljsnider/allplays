@@ -75,6 +75,38 @@ describe("Diamond Scorebook v2 Firestore boundary", () => {
             adminEmails: [],
             isPublic: true,
           });
+          const diamondSettings = {
+            enabled: true,
+            sport: "baseball",
+            rulesProfileId: "baseball-youth",
+            rulesProfileVersion: 1,
+            captureMode: "quick",
+          };
+          await setDoc(doc(db, "teams/enrolled-team"), {
+            ownerId: "owner-a",
+            name: "Enrolled",
+            sport: "Baseball",
+            diamondScorebook: diamondSettings,
+            adminEmails: [],
+          });
+          await setDoc(doc(db, "teams/mismatched-team"), {
+            ownerId: "owner-a",
+            name: "Needs repair",
+            sport: "Soccer",
+            diamondScorebook: diamondSettings,
+            adminEmails: [],
+          });
+          await setDoc(doc(db, "teams/fastpitch-team"), {
+            ownerId: "owner-a",
+            name: "Fastpitch",
+            sport: "Softball",
+            diamondScorebook: {
+              ...diamondSettings,
+              sport: "fastpitch",
+              rulesProfileId: "fastpitch-youth",
+            },
+            adminEmails: [],
+          });
           await setDoc(doc(db, "teams/team-a/games/diamond-game"), {
             type: "game",
             status: "live",
@@ -527,6 +559,34 @@ describe("Diamond Scorebook v2 Firestore boundary", () => {
             },
           }),
         );
+      });
+
+      it("prevents stale or direct sport changes from invalidating an enrolled Diamond team", async () => {
+        const db = testEnv.authenticatedContext("owner-a").firestore();
+        const enrolledTeam = doc(db, "teams/enrolled-team");
+        const mismatchedTeam = doc(db, "teams/mismatched-team");
+        const fastpitchTeam = doc(db, "teams/fastpitch-team");
+
+        await assertSucceeds(updateDoc(enrolledTeam, { name: "Enrolled renamed" }));
+        await assertSucceeds(updateDoc(enrolledTeam, { sport: "baseball" }));
+        await assertFails(updateDoc(enrolledTeam, { sport: "Soccer" }));
+        await assertFails(updateDoc(enrolledTeam, {
+          sport: "",
+          sportType: "Soccer",
+          activity: "Soccer",
+        }));
+        await assertFails(updateDoc(enrolledTeam, {
+          sport: "",
+          sportType: "",
+          activity: "Soccer",
+        }));
+
+        await assertSucceeds(updateDoc(mismatchedTeam, { name: "Repair pending" }));
+        await assertFails(updateDoc(mismatchedTeam, { sport: "Basketball" }));
+        await assertSucceeds(updateDoc(mismatchedTeam, { sport: "Baseball" }));
+
+        await assertSucceeds(updateDoc(fastpitchTeam, { sport: "Fastpitch-Softball" }));
+        await assertFails(updateDoc(fastpitchTeam, { sport: "Baseball" }));
       });
 
       it("keeps canonical, private-note, audit, and public projection documents behind callables", async () => {

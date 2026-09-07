@@ -1324,7 +1324,9 @@ async function nativeQuerySharedTournamentScheduleDocuments(
       const projected = decoded
         ? projectSharedGameForTeam({ ...decoded, _sharedGamePath: documentPath }, teamId)
         : null;
-      const game = projected ? mapScheduleEventRecord(projected, compactString(projected.id)) : null;
+      const game = projected
+        ? mapScheduleEventRecord({ ...projected, isPublicProjection: false }, compactString(projected.id))
+        : null;
       if (!game || !groups.some((group) => matchesTournamentScheduleGroup(game, group))) return;
       const gameId = compactString(game.id || game.gameId);
       if (gameId && !gamesById.has(gameId)) gamesById.set(gameId, game);
@@ -3804,7 +3806,7 @@ async function loadGameById(teamId: string, gameId: string, sharedGamePath = '')
           _sharedGamePath: normalizedSharedGamePath
         }, teamId);
         if (!projected) return null;
-        return preserveRouteIdentity(mapScheduleEventRecord(projected, gameId));
+        return preserveRouteIdentity(mapScheduleEventRecord({ ...projected, isPublicProjection: false }, gameId));
       }
     );
   }
@@ -4202,7 +4204,14 @@ function createScheduleEvent(input: {
   trackingEngine?: string | null;
   diamondScorebookInstanceId?: unknown;
   diamondRevision?: unknown;
+  diamondProjectionStatus?: string | null;
+  diamondProjectionComplete?: boolean;
+  diamondProjectionRevision?: unknown;
+  diamondProjectionCheckpointHash?: string | null;
   statTrackerConfigId?: string | null;
+  diamondStatConfigSnapshotHash?: string | null;
+  diamondProjectionHash?: string | null;
+  isPublicProjection?: boolean;
   sourceType?: string | null;
   sourceLabel?: string | null;
   isImported?: boolean;
@@ -4290,7 +4299,16 @@ function createScheduleEvent(input: {
     diamondScorebookInstanceId:
       compactString(input.diamondScorebookInstanceId) || null,
     diamondRevision: toNullableScore(input.diamondRevision),
+    diamondProjectionStatus: compactString(input.diamondProjectionStatus) || null,
+    diamondProjectionComplete: input.diamondProjectionComplete === true,
+    diamondProjectionRevision: toNullableScore(input.diamondProjectionRevision),
+    diamondProjectionCheckpointHash:
+      compactString(input.diamondProjectionCheckpointHash) || null,
     statTrackerConfigId: input.statTrackerConfigId || null,
+    diamondStatConfigSnapshotHash:
+      compactString(input.diamondStatConfigSnapshotHash) || null,
+    diamondProjectionHash: compactString(input.diamondProjectionHash) || null,
+    isPublicProjection: input.isPublicProjection === true,
     sourceType: input.sourceType || (input.isDbGame ? 'db' : 'calendar'),
     sourceLabel: input.sourceLabel || (input.isDbGame ? 'ALL PLAYS schedule' : 'Team calendar'),
     isImported: input.isImported === true || !input.isDbGame,
@@ -4464,7 +4482,17 @@ async function buildTeamSchedule(
             competitionType: game.competitionType || null,
             countsTowardSeasonRecord: game.countsTowardSeasonRecord ?? null,
             tournament: game.tournament || null,
+            trackingEngine: game.trackingEngine || null,
+            diamondScorebookInstanceId: game.diamondScorebookInstanceId || null,
+            diamondRevision: game.diamondRevision ?? null,
+            diamondProjectionStatus: game.diamondProjectionStatus || null,
+            diamondProjectionComplete: game.diamondProjectionComplete === true,
+            diamondProjectionRevision: game.diamondProjectionRevision ?? null,
+            diamondProjectionCheckpointHash: game.diamondProjectionCheckpointHash || null,
             statTrackerConfigId: game.statTrackerConfigId || null,
+            diamondStatConfigSnapshotHash: game.diamondStatConfigSnapshotHash || null,
+            diamondProjectionHash: game.diamondProjectionHash || null,
+            isPublicProjection: game.isPublicProjection === true,
             sourceType: game.sourceMetadata?.sourceType || game.source || 'db',
             sourceLabel: getScheduleSourceLabel(game),
             isImported: Boolean(game.sourceMetadata || game.source === 'calendar' || game.source === 'registration'),
@@ -4544,7 +4572,14 @@ async function buildTeamSchedule(
           diamondScorebookInstanceId:
             compactString(game.diamondScorebookInstanceId) || null,
           diamondRevision: game.diamondRevision ?? null,
+          diamondProjectionStatus: game.diamondProjectionStatus || null,
+          diamondProjectionComplete: game.diamondProjectionComplete === true,
+          diamondProjectionRevision: game.diamondProjectionRevision ?? null,
+          diamondProjectionCheckpointHash: game.diamondProjectionCheckpointHash || null,
           statTrackerConfigId: game.statTrackerConfigId || null,
+          diamondStatConfigSnapshotHash: game.diamondStatConfigSnapshotHash || null,
+          diamondProjectionHash: game.diamondProjectionHash || null,
+          isPublicProjection: game.isPublicProjection === true,
           sourceType: game.sourceMetadata?.sourceType || game.source || 'db',
           sourceLabel: getScheduleSourceLabel(game),
           isImported: Boolean(game.sourceMetadata || game.source === 'calendar' || game.source === 'registration'),
@@ -4768,7 +4803,17 @@ async function buildTargetedTeamScheduleEvent(
       competitionType: game.competitionType || null,
       countsTowardSeasonRecord: game.countsTowardSeasonRecord ?? null,
       tournament: game.tournament || null,
+      trackingEngine: game.trackingEngine || null,
+      diamondScorebookInstanceId: game.diamondScorebookInstanceId || null,
+      diamondRevision: game.diamondRevision ?? null,
+      diamondProjectionStatus: game.diamondProjectionStatus || null,
+      diamondProjectionComplete: game.diamondProjectionComplete === true,
+      diamondProjectionRevision: game.diamondProjectionRevision ?? null,
+      diamondProjectionCheckpointHash: game.diamondProjectionCheckpointHash || null,
       statTrackerConfigId: game.statTrackerConfigId || null,
+      diamondStatConfigSnapshotHash: game.diamondStatConfigSnapshotHash || null,
+      diamondProjectionHash: game.diamondProjectionHash || null,
+      isPublicProjection: game.isPublicProjection === true,
       sourceType: game.sourceMetadata?.sourceType || game.source || 'db',
       sourceLabel: getScheduleSourceLabel(game),
       isImported: Boolean(game.sourceMetadata || game.source === 'calendar' || game.source === 'registration'),
@@ -4844,7 +4889,14 @@ async function buildTargetedTeamScheduleEvent(
     diamondScorebookInstanceId:
       compactString(game.diamondScorebookInstanceId) || null,
     diamondRevision: game.diamondRevision ?? null,
+    diamondProjectionStatus: game.diamondProjectionStatus || null,
+    diamondProjectionComplete: game.diamondProjectionComplete === true,
+    diamondProjectionRevision: game.diamondProjectionRevision ?? null,
+    diamondProjectionCheckpointHash: game.diamondProjectionCheckpointHash || null,
     statTrackerConfigId: game.statTrackerConfigId || null,
+    diamondStatConfigSnapshotHash: game.diamondStatConfigSnapshotHash || null,
+    diamondProjectionHash: game.diamondProjectionHash || null,
+    isPublicProjection: game.isPublicProjection === true,
     sourceType: game.sourceMetadata?.sourceType || game.source || 'db',
     sourceLabel: getScheduleSourceLabel(game),
     isImported: Boolean(game.sourceMetadata || game.source === 'calendar' || game.source === 'registration'),

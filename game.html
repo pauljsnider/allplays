@@ -454,11 +454,11 @@
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=443349';
         import { resolveLiveStatConfig } from './js/live-game-state.js?v=45';
         import { splitPlayerStatsByVisibility } from './js/stat-leaderboards.js?v=4';
-        import { formatGameReportEventTimestamp, resolveReportStatColumns, resolveOpponentReportStatColumns } from './js/game-report-stats.js?v=7';
-        import { normalizeStatKey, resolvePostGameStatFields, resolvePostGameTeamStatFields, resolvePostGameEditorDidNotPlay, buildCompletedGamePlayerStatsPayload, buildCompletedGameTeamStatsPayload, getPostGameEditorNextIndex } from './js/post-game-stat-editor.js?v=10';
-        import { getCoverageAwareStatValue, getDiamondPublicPlayerStatsCollectionPath, getManagerDiamondStatCatalog, getPublicDiamondStatCatalog, isDiamondV2Game, readCoverageAwareOpponentStats, readCoverageAwareStatDocument, resolveDiamondManagerStatDocuments, resolveDiamondManagerTeamStatDocument, resolveDiamondProjectionState, resolveDiamondPublicStatDocuments, resolveDiamondPublicTeamStatDocument } from './js/diamond-stat-presentation.js?v=6';
-        import { loadDiamondManagerStats } from './js/diamond-manager-stats.js?v=3';
-        import { buildDiamondStatsCsv, downloadDiamondStatsCsv, getDiamondStatsExportFilename } from './js/diamond-stat-export.js?v=6';
+        import { formatGameReportEventTimestamp, resolveReportStatColumns, resolveOpponentReportStatColumns } from './js/game-report-stats.js?v=8';
+        import { normalizeStatKey, resolvePostGameStatFields, resolvePostGameTeamStatFields, resolvePostGameEditorDidNotPlay, buildCompletedGamePlayerStatsPayload, buildCompletedGameTeamStatsPayload, getPostGameEditorNextIndex } from './js/post-game-stat-editor.js?v=11';
+        import { getActivationPinnedDiamondStatCatalog, getCoverageAwareStatValue, getDiamondPublicPlayerStatsCollectionPath, isDiamondV2Game, readCoverageAwareOpponentStats, readCoverageAwareStatDocument, resolveDiamondManagerStatDocuments, resolveDiamondManagerTeamStatDocument, resolveDiamondProjectionState, resolveDiamondPublicStatDocuments, resolveDiamondPublicTeamStatDocument, resolveDiamondStatConfigsForGames } from './js/diamond-stat-presentation.js?v=7';
+        import { loadDiamondManagerStats } from './js/diamond-manager-stats.js?v=4';
+        import { buildDiamondStatsCsv, downloadDiamondStatsCsv, getDiamondStatsExportFilename } from './js/diamond-stat-export.js?v=7';
         import { buildHighlightShareUrl, normalizeGameRecapHighlightClips, resolveReplayVideoOptions } from './js/live-game-video.js?v=443319';
         import { buildGameReportShareUrl } from './js/game-share-links.js?v=1';
         import { normalizePublishedDiamondAiArtifact } from './js/diamond-ai-presentation.js?v=1';
@@ -1423,6 +1423,23 @@ Write the match report now:`;
             ]));
         }
 
+        function buildDiamondReportColumns(definitions = []) {
+            return {
+                statKeys: definitions.map(({ id }) => id),
+                statLabels: Object.fromEntries(definitions.map((definition) => [
+                    definition.id,
+                    definition.label || definition.acronym || definition.id.toUpperCase()
+                ])),
+                statDefinitions: Object.fromEntries(definitions.map((definition) => [definition.id, definition]))
+            };
+        }
+
+        function buildDiamondConfigUnavailableError() {
+            const error = new Error('Diamond statistic definitions are temporarily unavailable.');
+            error.code = 'allplays/diamond-stat-config-unavailable';
+            return error;
+        }
+
         function renderCoverageAwareStat({ presentation = null, stats = {}, key, definition = {}, didNotPlay = false, legacyMissingAsZero = false } = {}) {
             if (didNotPlay) return '&mdash;';
             if (presentation?.isDiamond !== true) {
@@ -2208,21 +2225,42 @@ Write the match report now:`;
                     });
                 }
 
-                // Fetch the config used for this game
+                // Fetch the config used for this game. A Diamond config is
+                // usable only when its canonical visibility material matches
+                // the activation hash; retry once before surfacing unavailable.
                 let resolvedConfig = null;
-
-                try {
-                    const configDoc = await getDocs(query(collection(db, `teams/${teamId}/statTrackerConfigs`)));
-                    const configs = configDoc.docs.map(d => ({ id: d.id, ...d.data() }));
-                    resolvedConfig = resolveLiveStatConfig({
-                        configs,
-                        game,
-                        team: resolvedTeam
-                    });
-                } catch (err) {
-                    console.error('Error fetching config:', err);
+                let diamondConfigResolution = null;
+                const configAttempts = diamondGame ? 2 : 1;
+                for (let attempt = 0; attempt < configAttempts; attempt += 1) {
+                    try {
+                        const configDoc = await getDocs(query(collection(db, `teams/${teamId}/statTrackerConfigs`)));
+                        const configs = configDoc.docs.map(d => ({ id: d.id, ...d.data() }));
+                        if (diamondGame) {
+                            diamondConfigResolution = resolveDiamondStatConfigsForGames({
+                                teamId,
+                                games: [game],
+                                configs
+                            });
+                            if (diamondConfigResolution) {
+                                resolvedConfig = diamondConfigResolution.entries[0]?.config || null;
+                                break;
+                            }
+                            console.warn('Diamond stat config does not match its activation snapshot.', {
+                                attempt: attempt + 1,
+                                fromCache: configDoc?.metadata?.fromCache === true
+                            });
+                        } else {
+                            resolvedConfig = resolveLiveStatConfig({ configs, game, team: resolvedTeam });
+                            break;
+                        }
+                    } catch (err) {
+                        console.error('Error fetching config:', err);
+                    }
                 }
                 if (!isCurrentGameLoad(generation, expectedUid)) return;
+                if (diamondGame && !diamondConfigResolution) {
+                    throw buildDiamondConfigUnavailableError();
+                }
 
                 if (diamondGame && canViewDiamondPrivateStats) {
                     try {
@@ -2279,7 +2317,12 @@ Write the match report now:`;
                     }
                 }
                 if (diamondGame && statVisibility === 'public') {
-                    const publicTeamDefinitions = getPublicDiamondStatCatalog(resolvedConfig, 'team');
+                    const publicTeamDefinitions = getActivationPinnedDiamondStatCatalog({
+                        resolution: diamondConfigResolution,
+                        game,
+                        scope: 'team',
+                        visibility: 'public'
+                    });
                     const teamResolution = resolveDiamondPublicTeamStatDocument({
                         game,
                         allowedStatIds: publicTeamDefinitions.map(({ id }) => id)
@@ -2327,15 +2370,13 @@ Write the match report now:`;
                     }
                 }
 
-                const reportColumns = diamondGame && statVisibility === 'manager-internal'
-                    ? (() => {
-                        const definitions = getManagerDiamondStatCatalog(resolvedConfig, 'player');
-                        return {
-                            statKeys: definitions.map(({ id }) => id),
-                            statLabels: Object.fromEntries(definitions.map((definition) => [definition.id, definition.label || definition.id])),
-                            statDefinitions: Object.fromEntries(definitions.map((definition) => [definition.id, definition]))
-                        };
-                    })()
+                const reportColumns = diamondGame
+                    ? buildDiamondReportColumns(getActivationPinnedDiamondStatCatalog({
+                        resolution: diamondConfigResolution,
+                        game,
+                        scope: 'player',
+                        visibility: statVisibility
+                    }))
                     : resolveReportStatColumns({ statsMap, resolvedConfig, trackingEngine: game.trackingEngine });
                 const { statKeys, statLabels, statDefinitions = {} } = reportColumns;
                 const publicCompleteStatsMap = diamondGame
@@ -2387,9 +2428,12 @@ Write the match report now:`;
                 renderStatsTable();
 
                 const teamStatFields = diamondGame
-                    ? (statVisibility === 'manager-internal'
-                        ? getManagerDiamondStatCatalog(resolvedConfig, 'team')
-                        : getPublicDiamondStatCatalog(resolvedConfig, 'team'))
+                    ? getActivationPinnedDiamondStatCatalog({
+                        resolution: diamondConfigResolution,
+                        game,
+                        scope: 'team',
+                        visibility: statVisibility
+                    })
                         .map((definition) => ({ ...definition, fieldName: definition.id }))
                     : resolvePostGameTeamStatFields({ resolvedConfig, teamStats });
                 function rerenderTeamStats() {
@@ -2526,11 +2570,22 @@ Write the match report now:`;
                     const opponentHeaderRow = document.getElementById('opponent-stats-header-row');
                     const opponentTbody = document.getElementById('opponent-stats-body');
 
-                    const { oppKeys, oppLabels, oppDefinitions = {} } = resolveOpponentReportStatColumns({
-                        opponentStats: game.opponentStats,
-                        resolvedConfig,
-                        trackingEngine: game.trackingEngine
-                    });
+                    const opponentColumns = diamondGame
+                        ? buildDiamondReportColumns(getActivationPinnedDiamondStatCatalog({
+                            resolution: diamondConfigResolution,
+                            game,
+                            scope: 'player',
+                            visibility: 'public'
+                        }))
+                        : resolveOpponentReportStatColumns({
+                            opponentStats: game.opponentStats,
+                            resolvedConfig,
+                            trackingEngine: game.trackingEngine
+                        });
+                    const { statKeys: diamondOpponentKeys, statLabels: diamondOpponentLabels, statDefinitions: diamondOpponentDefinitions } = opponentColumns;
+                    const oppKeys = diamondGame ? diamondOpponentKeys : opponentColumns.oppKeys;
+                    const oppLabels = diamondGame ? diamondOpponentLabels : opponentColumns.oppLabels;
+                    const oppDefinitions = diamondGame ? diamondOpponentDefinitions : (opponentColumns.oppDefinitions || {});
                     opponentKeysForExport = oppKeys;
                     opponentLabelsForExport = oppLabels;
                     opponentDefinitionsForExport = oppDefinitions;
@@ -2712,11 +2767,18 @@ Write the match report now:`;
                 const main = document.querySelector('main');
                 if (main) {
                     const needsAuth = error?.code === 'permission-denied';
+                    const needsConfigRetry = error?.code === 'allplays/diamond-stat-config-unavailable';
                     main.innerHTML = `
                         <div class="text-center py-12 text-red-500">
-                            ${needsAuth ? 'Please sign in to view this game.' : 'Error loading game.'}
+                            <p>${needsAuth
+                                ? 'Please sign in to view this game.'
+                                : needsConfigRetry
+                                    ? 'Diamond statistic definitions could not be verified.'
+                                    : 'Error loading game.'}</p>
+                            ${needsConfigRetry ? '<button id="retry-diamond-config" type="button" aria-label="Retry loading Diamond statistic definitions" class="mt-4 min-h-11 rounded-lg bg-primary-600 px-4 py-2 font-semibold text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2">Retry</button>' : ''}
                         </div>
                     `;
+                    document.getElementById('retry-diamond-config')?.addEventListener('click', () => window.location.reload());
                 }
             }
             })();

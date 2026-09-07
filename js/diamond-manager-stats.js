@@ -1,7 +1,7 @@
 import {
     getDiamondProjectionIdentity,
     isDiamondV2Game
-} from './diamond-stat-presentation.js?v=6';
+} from './diamond-stat-presentation.js?v=7';
 
 export const DIAMOND_MANAGER_STATS_MAX_GAMES = 40;
 export const DIAMOND_MANAGER_STATS_MAX_PLAYERS = 25;

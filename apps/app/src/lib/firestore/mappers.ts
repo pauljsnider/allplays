@@ -497,7 +497,14 @@ export function mapScheduleEventRecord(value: unknown, fallbackId = ''): Schedul
         trackingEngine: asTrimmedString(decoded.trackingEngine),
         diamondScorebookInstanceId: asTrimmedString(decoded.diamondScorebookInstanceId),
         diamondRevision: asOptionalNumber(decoded.diamondRevision),
+        diamondProjectionStatus: asTrimmedString(decoded.diamondProjectionStatus),
+        diamondProjectionComplete: decoded.diamondProjectionComplete === true,
+        diamondProjectionRevision: asOptionalNumber(decoded.diamondProjectionRevision),
+        diamondProjectionCheckpointHash: asTrimmedString(decoded.diamondProjectionCheckpointHash),
         statTrackerConfigId: asTrimmedString(decoded.statTrackerConfigId),
+        diamondStatConfigSnapshotHash: asTrimmedString(decoded.diamondStatConfigSnapshotHash),
+        diamondProjectionHash: asTrimmedString(decoded.diamondProjectionHash),
+        isPublicProjection: decoded.isPublicProjection === true,
         source: asTrimmedString(decoded.source),
         sourceMetadata: asScheduleSourceMetadata(decoded.sourceMetadata),
         visibility: asTrimmedString(decoded.visibility),
@@ -529,7 +536,13 @@ export function mapScheduleEventDocument(document: FirestoreDocument | null | un
     const decoded = mapFirestoreDocument(document);
     const mapped = decoded ? mapScheduleEventRecord(decoded, decoded.id) : null;
     return mapped
-        ? { ...mapped, rawReplayState: decodeReplayArchiveState(document?.fields || {}) }
+        ? {
+            ...mapped,
+            rawReplayState: decodeReplayArchiveState(document?.fields || {}),
+            // Direct Firestore documents are canonical. A stored field cannot
+            // opt an authoritative game into projection-only handling.
+            isPublicProjection: false
+        }
         : null;
 }
 

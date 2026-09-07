@@ -11,7 +11,7 @@ describe('player public page load performance', () => {
     });
 
     it('reuses the initial game stats snapshot for selected-game insights', () => {
-        expect(source).toContain('const selectedGameLoad = gameLoadResults.find((entry) => entry.gameId === selectedGameId);');
+        expect(source).toContain('const selectedGameLoad = preparedGameLoadResults.find((entry) => entry.gameId === selectedGameId);');
         expect(source).toContain('const gameTeamStats = selectedGameLoad?.diamondGame');
         expect(source).toContain('? (selectedGameLoad.completeStatsByPlayerId || {})');
         expect(source).toContain(': (selectedGameLoad?.statsByPlayerId || {});');

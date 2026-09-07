@@ -611,8 +611,8 @@
     <script type="module">
         import { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, getPlayerPrivateProfile, copySelectedPlayersForTeamRollover, uploadTeamPhoto, deleteLegacyImageUpload, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail, getTeamAccessCodes, getConfigs, getGames, updateGame, getRegistrationSources, syncRegistrationProvider } from './js/db.js?v=4433197';
         import { validateProfilePhotoFile } from './js/profile-photo-paths.js?v=3';
-        import { getDefaultDiamondStatConfigForSport, getDefaultStatConfigForSport } from './js/stat-config-presets.js?v=10';
-        import { buildTeamSportConfigMigrationPlan } from './js/team-stat-config-migration.js?v=9';
+        import { getDefaultDiamondStatConfigForSport, getDefaultStatConfigForSport } from './js/stat-config-presets.js?v=11';
+        import { buildTeamSportConfigMigrationPlan } from './js/team-stat-config-migration.js?v=10';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=443373';
         import { checkAuth, sendInviteEmail } from './js/auth.js?v=4433201';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js?v=443349';
@@ -679,6 +679,7 @@
         let currentTeamPassConfig = {};
         let currentTeamSport = '';
         let currentTeamDiamondScorebookEnabled = false;
+        let currentTeamDiamondScorebookSport = '';
         let lastRenderedRolloverSourceTeamId = null;
         let isInitPending = true;
         let selectedRegistrationTeam = null;
@@ -1621,6 +1622,7 @@
                 document.getElementById('sport').value = teamSport;
                 currentTeamSport = teamSport;
                 currentTeamDiamondScorebookEnabled = team.diamondScorebook?.enabled === true;
+                currentTeamDiamondScorebookSport = String(team.diamondScorebook?.sport || '').trim();
                 syncDiamondTeamSetup({ resetProfile: true });
                 document.getElementById('teamColorPrimary').value = getTeamColorValue(team, 'primary', '#5ec9c5');
                 document.getElementById('teamColorSecondary').value = getTeamColorValue(team, 'secondary', '#d32f3a');
@@ -2059,6 +2061,27 @@
                     return;
                 }
 
+                const requestedTeamSport = String(document.getElementById('sport').value || '').trim();
+                const normalizedRequestedTeamSport = normalizeDiamondCompatibleTeamSport(requestedTeamSport);
+                const normalizedCurrentTeamSport = normalizeDiamondCompatibleTeamSport(currentTeamSport);
+                const normalizedEnrolledDiamondSport = normalizeDiamondCompatibleTeamSport(currentTeamDiamondScorebookSport);
+                const repairsEnrolledDiamondSport = Boolean(
+                    normalizedEnrolledDiamondSport
+                    && normalizedRequestedTeamSport === normalizedEnrolledDiamondSport
+                );
+                if (
+                    currentTeamId
+                    && currentTeamDiamondScorebookEnabled
+                    && normalizedRequestedTeamSport !== normalizedCurrentTeamSport
+                    && !repairsEnrolledDiamondSport
+                ) {
+                    const enrolledSportLabel = currentTeamDiamondScorebookSport || currentTeamSport || 'its enrolled sport';
+                    alert(`Diamond Scorebook v2 is enrolled for ${enrolledSportLabel}. Keep or restore that sport before saving; no changes were written.`);
+                    btn.disabled = false;
+                    btn.textContent = 'Save Team';
+                    return;
+                }
+
                 const fileInput = document.getElementById('photo-upload');
                 const pendingTeamPhotoFile = fileInput.files.length > 0 ? fileInput.files[0] : null;
                 if (pendingTeamPhotoFile) {
@@ -2135,7 +2158,7 @@
                 const teamData = {
                     name: document.getElementById('name').value,
                     description: document.getElementById('description').value,
-                    sport: document.getElementById('sport').value,
+                    sport: requestedTeamSport,
                     notificationEmail: document.getElementById('notificationEmail').value,
                     leagueUrl: document.getElementById('leagueUrl').value.trim(),
                     bracketUrl: document.getElementById('bracketUrl').value.trim(),
@@ -2262,6 +2285,7 @@
                                 throw new Error('The server did not confirm Diamond enrollment.');
                             }
                             currentTeamDiamondScorebookEnabled = true;
+                            currentTeamDiamondScorebookSport = teamData.sport;
                             syncDiamondTeamSetup();
                         } catch (diamondSetupError) {
                             console.warn('Team saved without optional Diamond scorebook setup:', diamondSetupError);
@@ -2422,6 +2446,11 @@
                 btn.textContent = 'Save Team';
             }
         });
+
+        function normalizeDiamondCompatibleTeamSport(value) {
+            const sport = String(value || '').trim().toLowerCase();
+            return ['softball', 'fastpitch', 'fastpitch softball'].includes(sport) ? 'fastpitch' : sport;
+        }
 
         function isDefinitiveFirestoreWriteFailure(error) {
             const code = String(error?.code || '').trim().toLowerCase().split('/').pop();

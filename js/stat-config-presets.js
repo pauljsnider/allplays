@@ -1,5 +1,5 @@
 import { normalizeStatTrackerConfig } from './stat-leaderboards.js?v=4';
-import { DIAMOND_PLAYER_STAT_CATALOG, DIAMOND_TEAM_STAT_CATALOG } from './diamond-stat-presentation.js?v=6';
+import { DIAMOND_PLAYER_STAT_CATALOG, DIAMOND_TEAM_STAT_CATALOG } from './diamond-stat-presentation.js?v=7';
 
 const DIAMOND_STAT_COLUMNS = ['AB', 'H', 'R', 'RBI', 'BB', 'FP'];
 
