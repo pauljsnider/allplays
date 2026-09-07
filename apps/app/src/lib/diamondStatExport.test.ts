@@ -138,4 +138,35 @@ describe('Diamond app report CSV export', () => {
     await expect(exportDiamondTeamSeasonStatsCsv('Falcons / 12U', table)).resolves.toBe('downloaded');
     expect(publicActionMocks.exportCsvFile).toHaveBeenCalledWith(artifact.filename, artifact.csv);
   });
+
+  it('keeps projected-only participant IDs out of season CSV while preserving canonical roster IDs', () => {
+    const table = {
+      seasonLabel: '2026',
+      columns: [{ id: 'h', label: 'H' }],
+      rows: [{
+        playerId: 'player-1',
+        playerName: 'Avery Smith',
+        playerNumber: '7',
+        values: { h: { value: 2, formattedValue: '2', available: true, status: 'complete' } }
+      }, {
+        playerId: 'manual:private-source-id',
+        playerName: 'Recorded player',
+        playerNumber: '-',
+        canOpenProfile: false,
+        values: { h: { value: 1, formattedValue: '1', available: true, status: 'complete' } }
+      }],
+      diamond: {
+        hasDiamond: true,
+        pending: false,
+        sourceRevisions: [8],
+        statVisibility: 'public'
+      }
+    } as any;
+
+    const artifact = buildDiamondTeamSeasonStatsCsv('Falcons', table);
+
+    expect(artifact.csv).toContain('"season_player","public","player-1","Avery Smith","7"');
+    expect(artifact.csv).toContain('"season_player","public","","Recorded player","\'-"');
+    expect(artifact.csv).not.toContain('manual:private-source-id');
+  });
 });

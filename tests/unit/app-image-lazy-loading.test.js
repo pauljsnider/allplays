@@ -84,11 +84,25 @@ describe('app image lazy loading', () => {
         expectEagerAsyncImages(readRepo('live-game.html'), 'home-team-photo');
         expectEagerAsyncImages(readRepo('live-game.html'), 'away-team-photo');
         expectEagerAsyncImages(readRepo('login.html'), 'google.svg');
-        expectEagerAsyncImages(readRepo('player.html'), 'player.photoUrl');
+        expectEagerAsyncImages(readRepo('player.html'), 'alt="${escapeHtml(player.name)}"');
         expectEagerAsyncImages(readRepo('team-chat.html'), 'escapeHtml(photoUrl)');
         expectEagerAsyncImages(readRepo('team.html'), 'escapeHtml(team.photoUrl)');
         expectEagerAsyncImages(read('src/pages/PrivateAiChat.tsx'), './logo_small.png', 2);
         expectEagerAsyncImages(read('src/pages/PublicTeamDetail.tsx'), 'team.photoUrl');
+    });
+
+    it('keeps the player edit-modal preview lazy while the profile hero stays eager', () => {
+        const source = readRepo('player.html');
+        const playerPhotoTags = imageTagsContaining(source, 'player.photoUrl');
+        const heroTags = playerPhotoTags.filter((tag) => tag.includes('alt="${escapeHtml(player.name)}"'));
+        const editPreviewTags = playerPhotoTags.filter((tag) => !tag.includes('alt="${escapeHtml(player.name)}"'));
+
+        expect(heroTags).toHaveLength(1);
+        expect(heroTags[0]).toContain('decoding="async"');
+        expect(heroTags[0]).not.toContain('loading="lazy"');
+        expect(editPreviewTags).toHaveLength(1);
+        expect(editPreviewTags[0]).toContain('loading="lazy"');
+        expect(editPreviewTags[0]).toContain('decoding="async"');
     });
 
     it('eager-loads only the first card image in legacy team lists', () => {

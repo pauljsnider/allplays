@@ -97,10 +97,220 @@ function createScenario() {
   };
 }
 
+function createManagerDiamondScenario() {
+  const scenario = createScenario();
+  scenario.team.sport = "Baseball";
+  scenario.config = {
+    id: "cfg-1",
+    baseType: "Baseball",
+    columns: ["H"],
+    statDefinitions: [
+      { id: "h", label: "Hits", scope: "player", visibility: "public" },
+      { id: "pitches", label: "Pitch count", scope: "player", visibility: "private" },
+      { id: "r", label: "Runs", scope: "team", visibility: "public" },
+      { id: "lob", label: "Left on base", scope: "team", visibility: "private" },
+    ],
+  };
+  const instanceId = "00000000-0000-4000-8000-000000000001";
+  const checkpointHash = `sha256:${"a".repeat(64)}`;
+  const configHash = buildDiamondStatConfigSnapshotHash({
+    teamId: scenario.team.id,
+    configId: scenario.config.id,
+    config: scenario.config,
+  });
+  const projectionHash = `sha256:${"c".repeat(64)}`;
+  scenario.game = {
+    ...scenario.game,
+    teamId: scenario.team.id,
+    trackingEngine: "diamond-v2",
+    diamondProjectionStatus: "current",
+    diamondProjectionRevision: 8,
+    diamondProjectionComplete: true,
+    diamondScorebookInstanceId: instanceId,
+    diamondProjectionCheckpointHash: checkpointHash,
+    diamondStatConfigSnapshotHash: configHash,
+    diamondProjectionHash: projectionHash,
+    diamondPublicTeamStats: {
+      trackingEngine: "diamond-v2",
+      projectionSchemaVersion: 1,
+      sourceRevision: 8,
+      checkpointHash,
+      coverage: { batting: "complete" },
+      publicStatIds: ["r"],
+      side: "home",
+      complete: true,
+      stats: { r: 4 },
+      observedStats: {},
+      statCoverage: { r: "complete" },
+      teamId: scenario.team.id,
+      diamondGameId: scenario.game.id,
+      instanceId,
+      diamondScorebookInstanceId: instanceId,
+      projectionGeneration: instanceId,
+      statConfigSnapshotHash: configHash,
+      projectionHash,
+    },
+  };
+  const commonPlayer = {
+    trackingEngine: "diamond-v2",
+    projectionSchemaVersion: 1,
+    playerId: "p1",
+    playerName: "Ava At Game Time",
+    playerNumber: "3",
+    participated: true,
+    participationStatus: "appeared",
+    participationSource: "diamond-v2",
+    sourceRevision: 8,
+    checkpointHash,
+    complete: true,
+    coverage: { batting: "complete" },
+    teamId: scenario.team.id,
+    diamondGameId: scenario.game.id,
+    instanceId,
+    diamondScorebookInstanceId: instanceId,
+    projectionGeneration: instanceId,
+    statConfigSnapshotHash: configHash,
+    projectionHash,
+  };
+  scenario.aggregatedStats = {
+    p1: {
+      schemaVersion: 1,
+      ...commonPlayer,
+      publicStatIds: ["h"],
+      stats: { h: 2 },
+      observedStats: {},
+      derivedStats: {},
+      observedDerivedStats: {},
+      statCoverage: { h: "complete" },
+      statSources: {},
+      sourcePlayIds: [],
+      unavailableDerivedStats: [],
+      missingStatFamilies: [],
+    },
+    "manual-private-source-id": {
+      schemaVersion: 1,
+      ...commonPlayer,
+      playerId: "manual-private-source-id",
+      playerName: "Guest Public Identity",
+      playerNumber: "18",
+      publicStatIds: ["h"],
+      stats: { h: 1 },
+      observedStats: {},
+      derivedStats: {},
+      observedDerivedStats: {},
+      statCoverage: { h: "complete" },
+      statSources: {},
+      sourcePlayIds: [],
+      unavailableDerivedStats: [],
+      missingStatFamilies: [],
+    },
+  };
+  const privatePlayer = {
+    ...commonPlayer,
+    side: "home",
+    authoritative: true,
+    stats: { h: 2, pitches: 73 },
+    observedStats: {},
+    derivedStats: {},
+    observedDerivedStats: {},
+    statCoverage: { h: "complete", pitches: "complete" },
+    unavailableDerivedStats: [],
+    missingStatFamilies: [],
+    statSources: {},
+    sourcePlayIds: [],
+  };
+  const privateTeam = {
+    trackingEngine: "diamond-v2",
+    teamId: scenario.team.id,
+    diamondGameId: scenario.game.id,
+    side: "home",
+    complete: true,
+    projectionSchemaVersion: 1,
+    instanceId,
+    diamondScorebookInstanceId: instanceId,
+    projectionGeneration: instanceId,
+    sourceRevision: 8,
+    checkpointHash,
+    statConfigSnapshotHash: configHash,
+    projectionHash,
+    stats: { r: 4, lob: 5 },
+    observedStats: {},
+    statCoverage: { r: "complete", lob: "complete" },
+    coverage: { batting: "complete" },
+    inningLines: { home: [1, 0, 3], away: [0, 1, 0] },
+  };
+  scenario.managerStatsResponse = {
+    schemaVersion: 1,
+    trackingEngine: "diamond-v2",
+    visibility: "manager-internal",
+    status: "complete",
+    complete: true,
+    truncated: false,
+    requestedGameCount: 1,
+    requestedPlayerCount: 2,
+    expectedDocumentCount: 2,
+    documentCount: 2,
+    missingDocumentCount: 0,
+    absenceConfirmed: false,
+    documents: [
+      {
+        gameId: scenario.game.id,
+        playerId: "p1",
+        data: { ...privatePlayer, timeMs: 540_000 },
+      },
+      {
+        gameId: scenario.game.id,
+        playerId: "manual-private-source-id",
+        data: {
+          ...privatePlayer,
+          playerId: "manual-private-source-id",
+          playerName: "Guest Private Identity",
+          playerNumber: "18",
+          stats: { h: 1, pitches: 41 },
+          timeMs: 300_000,
+        },
+      },
+    ],
+    expectedTeamDocumentCount: 1,
+    teamDocumentCount: 1,
+    missingTeamDocumentCount: 0,
+    teamDocuments: [{ gameId: scenario.game.id, data: privateTeam }],
+    responseByteLimit: 7_000_000,
+    responseByteCount: 2_048,
+  };
+  scenario.diamondReplay = {
+    instanceId,
+    game: { trackingEngine: "diamond-v2" },
+    events: [{
+      id: "event-8",
+      revision: 8,
+      inning: 4,
+      half: "top",
+      description: "Authorized replay event",
+      createdAt: "2026-04-03T20:00:00.000Z",
+      isCorrection: false,
+      isScoringPlay: false,
+      score: { home: 4, away: 1 },
+    }],
+    nextCursor: null,
+    complete: true,
+    truncated: false,
+    sourceRevision: 8,
+    projectionToken: `current:8:${projectionHash}`,
+    diamondStats: { status: "complete" },
+  };
+  return scenario;
+}
+
 async function installMocks(
   page,
   scenario,
-  { delayedAuth = false, accessLevel = "full", directAccess = true } = {},
+  {
+    delayedAuth = false,
+    controllableAuth = false,
+    accessLevel = "full",
+    directAccess = true,
+  } = {},
 ) {
   await page.addInitScript(
     ({ storeKey, value }) => {
@@ -132,7 +342,19 @@ async function installMocks(
             return JSON.parse(JSON.stringify(value));
         }
 
+        function currentActorUid() {
+            return String(window.__GAME_TEST_AUTH_UID__ || '');
+        }
+
+        function gateDataLoad() {
+            const store = loadStore();
+            if (store.holdDataLoads === true) return new Promise(() => {});
+            if (store.failDataLoads === true) throw new Error('replacement load failed');
+            return null;
+        }
+
         export async function getTeam() {
+            await gateDataLoad();
             const team = clone(loadStore().team);
             if (!${JSON.stringify(directAccess)}) team.__denyTestAccess = true;
             return team;
@@ -144,7 +366,19 @@ async function installMocks(
         }
 
         export async function getGame() {
-            const game = clone(loadStore().game);
+            await gateDataLoad();
+            const store = loadStore();
+            store.getGameCalls = [...(store.getGameCalls || []), {
+                actorUid: currentActorUid(),
+                failed: store.failNextGameRead === true
+            }];
+            if (store.failNextGameRead === true) {
+                store.failNextGameRead = false;
+                saveStore(store);
+                throw new Error('authoritative game read unavailable');
+            }
+            saveStore(store);
+            const game = clone(store.game);
             const linkedAt = game?.replayVideo?.linkedAt;
             if (typeof linkedAt === 'string' && !Number.isNaN(Date.parse(linkedAt))) {
                 const millis = Date.parse(linkedAt);
@@ -160,6 +394,7 @@ async function installMocks(
         }
 
         export async function getPlayers() {
+            await gateDataLoad();
             return clone(loadStore().players || []);
         }
 
@@ -173,15 +408,63 @@ async function installMocks(
 
         export async function updateGame(_teamId, _gameId, patch) {
             const store = loadStore();
-            store.game = { ...(store.game || {}), ...clone(patch) };
+            store.updateGameCalls = [...(store.updateGameCalls || []), {
+                actorUid: currentActorUid(),
+                patch: clone(patch)
+            }];
+            const mode = String(store.nextUpdateGameMode || '');
+            delete store.nextUpdateGameMode;
+            const commitsBeforeResponse = mode === 'commit-then-reject'
+                || mode === 'hold-commit-then-reject';
+            if (!mode || commitsBeforeResponse) {
+                store.game = { ...(store.game || {}), ...clone(patch) };
+            }
+            if (mode === 'reject-unknown') {
+                store.failNextGameRead = true;
+            }
             saveStore(store);
+            if (mode === 'hold-commit-then-reject' || mode === 'hold-reject') {
+                return new Promise((_resolve, reject) => {
+                    window.__GAME_RELEASE_UPDATE_GAME__ = () => reject(new Error('update response unavailable'));
+                });
+            }
+            if (mode === 'commit-then-reject' || mode === 'reject' || mode === 'reject-unknown') {
+                throw new Error('update response unavailable');
+            }
+            if (mode === 'return-false') return false;
         }
 
         export async function uploadStatSheetPhoto() {
-            return '';
+            const store = loadStore();
+            const sequence = (store.statSheetUploadCalls || []).length + 1;
+            const upload = {
+                url: 'https://cdn.example.com/stat-sheet-' + sequence + '.png',
+                path: 'teams/team-1/games/game-1/stat-sheet-' + sequence + '.png',
+                storage: { name: 'mock-storage' }
+            };
+            store.statSheetUploadCalls = [...(store.statSheetUploadCalls || []), {
+                actorUid: currentActorUid(),
+                path: upload.path
+            }];
+            const shouldHold = store.holdNextStatSheetUpload === true;
+            store.holdNextStatSheetUpload = false;
+            saveStore(store);
+            if (shouldHold) {
+                return new Promise((resolve) => {
+                    window.__GAME_RELEASE_STAT_SHEET_UPLOAD__ = () => resolve(upload);
+                });
+            }
+            return upload;
         }
 
-        export async function deleteUploadedMediaObjects() {}
+        export async function deleteUploadedMediaObjects(targets) {
+            const store = loadStore();
+            store.deletedUploadCalls = [...(store.deletedUploadCalls || []), {
+                actorUid: currentActorUid(),
+                paths: (targets || []).map((target) => target?.path || '')
+            }];
+            saveStore(store);
+        }
 
         export async function getTeamStatsForGame() {
             return clone(loadStore().teamStats || {});
@@ -189,6 +472,10 @@ async function installMocks(
 
         export async function setCompletedGameTeamStats(_teamId, _gameId, payload) {
             const store = loadStore();
+            store.setCompletedGameTeamStatsCalls = [...(store.setCompletedGameTeamStatsCalls || []), {
+                actorUid: currentActorUid(),
+                payload: clone(payload)
+            }];
             store.teamStats = clone(payload.stats || {});
             saveStore(store);
         }
@@ -196,7 +483,13 @@ async function installMocks(
         export async function setCompletedGamePlayerStats(teamId, gameId, playerId, payload) {
             const store = loadStore();
             store.setCompletedGamePlayerStatsCalls = store.setCompletedGamePlayerStatsCalls || [];
-            store.setCompletedGamePlayerStatsCalls.push({ teamId, gameId, playerId, payload: clone(payload) });
+            store.setCompletedGamePlayerStatsCalls.push({
+                actorUid: currentActorUid(),
+                teamId,
+                gameId,
+                playerId,
+                payload: clone(payload)
+            });
             saveStore(store);
         }
     `;
@@ -298,6 +591,9 @@ async function installMocks(
                 if (name === 'getPublicDiamondGame' && store.diamondReplay) {
                     return { data: clone(store.diamondReplay) };
                 }
+                if (name === 'getDiamondManagerStats' && store.managerStatsResponse) {
+                    return { data: clone(store.managerStatsResponse) };
+                }
                 return { data: { status: 'unavailable' } };
             };
         }
@@ -323,10 +619,32 @@ async function installMocks(
         }
 
         export async function getDocs(ref) {
+            const store = loadStore();
+            if (ref.path.endsWith('/privatePlayerStats')) {
+                const snapshot = buildSnapshot(ref.path);
+                const shouldHold = store.holdNextPrivatePlayerStatsRead === true;
+                store.holdNextPrivatePlayerStatsRead = false;
+                store.privatePlayerStatsReadCalls = [...(store.privatePlayerStatsReadCalls || []), {
+                    actorUid: String(window.__GAME_TEST_AUTH_UID__ || ''),
+                    held: shouldHold
+                }];
+                saveStore(store);
+                if (shouldHold) {
+                    return new Promise((resolve) => {
+                        window.__GAME_RELEASE_PRIVATE_PLAYER_STATS_READ__ = () => resolve(snapshot);
+                    });
+                }
+                return snapshot;
+            }
             return buildSnapshot(ref.path);
         }
 
         export async function runTransaction(_db, callback) {
+            const startingStore = loadStore();
+            startingStore.runTransactionCalls = [...(startingStore.runTransactionCalls || []), {
+                actorUid: String(window.__GAME_TEST_AUTH_UID__ || '')
+            }];
+            saveStore(startingStore);
             const transaction = {
                 async get() {
                     const game = clone(loadStore().game);
@@ -352,6 +670,9 @@ async function installMocks(
                 },
                 update(_ref, patch) {
                     const store = loadStore();
+                    store.replayTransactionUpdateCalls = [...(store.replayTransactionUpdateCalls || []), {
+                        actorUid: String(window.__GAME_TEST_AUTH_UID__ || '')
+                    }];
                     store.game = { ...(store.game || {}) };
                     Object.entries(patch).forEach(([key, value]) => {
                         if (value?.__deleteField === true) {
@@ -405,7 +726,17 @@ async function installMocks(
         }
     `;
 
-  const authModule = delayedAuth
+  const authModule = controllableAuth
+    ? `
+        export function checkAuth(callback) {
+            window.__GAME_AUTH_CALLBACK__ = (user) => {
+                window.__GAME_TEST_AUTH_UID__ = user?.uid || '';
+                callback(user);
+            };
+            window.__GAME_AUTH_CALLBACK__({ uid: 'coach-1', email: 'coach@example.com' });
+        }
+    `
+    : delayedAuth
     ? `
         export function checkAuth(callback) {
             window.__GAME_AUTH_EVENTS__ = ['pending'];
@@ -435,8 +766,13 @@ async function installMocks(
     `;
 
   const insightsModule = `
-        export async function generateGameInsights() {
-            return { teamTakeaways: [], playerSignals: [] };
+        export function generateGameInsights({ players = [], timeMap = {} } = {}) {
+            return {
+                teamInsights: [{ title: 'Manager insight', body: 'Authorized report insight', tone: 'neutral' }],
+                playerInsightsById: Object.fromEntries(players
+                    .map((player) => [player.id, [{ title: 'Workload', body: player.name + ' recorded time.', tone: 'neutral' }]])),
+                emptyMessage: ''
+            };
         }
     `;
 
@@ -552,6 +888,104 @@ async function readStore(page) {
   );
 }
 
+async function triggerAuthChangeAndCapture(page, { nextUser = null, loadMode }) {
+  return page.evaluate(
+    ({ storeKey, replacementUser, replacementLoadMode }) => {
+      const store = JSON.parse(localStorage.getItem(storeKey) || "{}");
+      delete store.holdDataLoads;
+      delete store.failDataLoads;
+      if (replacementLoadMode === "hold") store.holdDataLoads = true;
+      if (replacementLoadMode === "fail") store.failDataLoads = true;
+      localStorage.setItem(storeKey, JSON.stringify(store));
+
+      window.__GAME_AUTH_CALLBACK__(replacementUser);
+
+      const text = (id) => document.getElementById(id)?.textContent || "";
+      const value = (id) => document.getElementById(id)?.value || "";
+      const hidden = (id) => document.getElementById(id)?.classList.contains("hidden") === true;
+      const exportButton = document.getElementById("diamond-stats-export-btn");
+      const snapshot = {
+        exportHidden: hidden("diamond-stats-export-btn"),
+        exportHandlerCleared: exportButton?.onclick === null,
+        exportText: text("diamond-stats-export-btn").trim(),
+        teamNav: text("team-nav-banner"),
+        playerHeaders: text("stats-header-row"),
+        playerStats: text("stats-body"),
+        teamStats: text("team-stats-body"),
+        teamInsights: text("team-insights-body"),
+        playerInsights: text("player-insights-body"),
+        publishedRecap: text("published-diamond-ai-recap"),
+        gameLog: text("game-log"),
+        playingTimeMeta: text("playing-time-meta"),
+        playingTimeBody: text("playing-time-body"),
+        insightsHidden: hidden("insights-section"),
+        playingTimeHidden: hidden("playing-time-insights"),
+        teamStatsHidden: hidden("team-stats-section"),
+        diamondNoticePresent: Boolean(document.getElementById("diamond-report-status")),
+        summaryAdminHidden: hidden("summary-admin"),
+        summaryEditorHidden: hidden("summary-editor"),
+        summaryStatus: text("summary-edit-status"),
+        summaryDraft: value("summary-textarea"),
+        statsEditorStatus: text("stats-editor-status"),
+        statsEditorName: text("stats-editor-player-name"),
+        statsEditorMeta: text("stats-editor-player-meta"),
+        statsEditorFields: text("stats-editor-fields"),
+        teamStatsEditorStatus: text("team-stats-editor-status"),
+        teamStatsEditorFields: text("team-stats-editor-fields"),
+        replayAdminHidden: hidden("replay-video-admin"),
+        replayCurrent: text("replay-video-current"),
+        replayStatus: text("replay-video-status"),
+        replayUrl: value("replay-video-url"),
+        replayTitle: value("replay-video-title"),
+      };
+      exportButton?.click();
+      return snapshot;
+    },
+    {
+      storeKey: STORE_KEY,
+      replacementUser: nextUser,
+      replacementLoadMode: loadMode,
+    },
+  );
+}
+
+function expectAuthorizationDependentReportCleared(snapshot) {
+  expect(snapshot).toMatchObject({
+    exportHidden: true,
+    exportHandlerCleared: true,
+    exportText: "Export stats CSV",
+    teamNav: "",
+    playerHeaders: "",
+    playerStats: "",
+    teamStats: "",
+    teamInsights: "",
+    playerInsights: "",
+    publishedRecap: "",
+    gameLog: "",
+    playingTimeMeta: "",
+    playingTimeBody: "",
+    insightsHidden: true,
+    playingTimeHidden: true,
+    teamStatsHidden: true,
+    diamondNoticePresent: false,
+    summaryAdminHidden: true,
+    summaryEditorHidden: true,
+    summaryStatus: "",
+    summaryDraft: "",
+    statsEditorStatus: "",
+    statsEditorName: "",
+    statsEditorMeta: "",
+    statsEditorFields: "",
+    teamStatsEditorStatus: "",
+    teamStatsEditorFields: "",
+    replayAdminHidden: true,
+    replayCurrent: "",
+    replayStatus: "",
+    replayUrl: "",
+    replayTitle: "",
+  });
+}
+
 test("Diamond report labels partial observations, leaves uncollected stats unavailable, and disables legacy edits", async ({
   page,
   baseURL,
@@ -630,7 +1064,7 @@ test("Diamond report labels partial observations, leaves uncollected stats unava
       participated: true,
       participationStatus: "appeared",
       participationSource: "diamond-v2",
-      playerName: "Ava Cole",
+      playerName: "Ava Game-Time",
       playerNumber: "3",
       publicStatIds: ["era", "h", "sb"],
       stats: { h: 0 },
@@ -655,7 +1089,44 @@ test("Diamond report labels partial observations, leaves uncollected stats unava
       statConfigSnapshotHash: configHash,
       projectionHash,
     },
+    "manual-private-source-id": {
+      schemaVersion: 1,
+      trackingEngine: "diamond-v2",
+      projectionSchemaVersion: 1,
+      playerId: "manual-private-source-id",
+      sourceRevision: 8,
+      checkpointHash,
+      complete: true,
+      participated: true,
+      participationStatus: "appeared",
+      participationSource: "diamond-v2",
+      playerName: "Guest Slugger",
+      playerNumber: "18",
+      publicStatIds: ["era", "h", "sb"],
+      stats: { h: 1 },
+      observedStats: {},
+      derivedStats: {},
+      observedDerivedStats: {},
+      statCoverage: { h: "complete", sb: "not_collected", era: "not_collected" },
+      statSources: {},
+      sourcePlayIds: [],
+      unavailableDerivedStats: ["era"],
+      missingStatFamilies: [],
+      coverage: {
+        batting: "complete",
+        baserunning: "not_collected",
+        pitching: "not_collected",
+      },
+      teamId: "team-1",
+      diamondGameId: "game-1",
+      instanceId,
+      diamondScorebookInstanceId: instanceId,
+      projectionGeneration: instanceId,
+      statConfigSnapshotHash: configHash,
+      projectionHash,
+    },
   };
+  scenario.players[0].photoUrl = "https://cdn.example.com/roster-p1.jpg";
   scenario.teamStatsDocument = {
     trackingEngine: "diamond-v2",
     sourceRevision: 8,
@@ -695,11 +1166,23 @@ test("Diamond report labels partial observations, leaves uncollected stats unava
   await expect(
     page.getByText("Diamond scorebook · Public stats · Read only"),
   ).toBeVisible();
-  const row = page.locator("#stats-body tr").filter({ hasText: "Ava Cole" });
+  const row = page.locator("#stats-body tr").filter({ hasText: "Ava Game-Time" });
   await expect(row).toHaveCount(1);
+  await expect(row.locator('img[src="https://cdn.example.com/roster-p1.jpg"]')).toHaveCount(1);
   await expect(row.locator("td").nth(2)).toHaveText("0");
   await expect(row.locator("td").nth(3)).toContainText("Observed");
   await expect(row.locator("td").nth(4)).toHaveText("—");
+  const manualRow = page.locator("#stats-body tr").filter({ hasText: "Guest Slugger" });
+  await expect(manualRow).toHaveCount(1);
+  await expect(manualRow.getByRole("link")).toHaveCount(0);
+  await expect(manualRow.locator("img")).toHaveCount(0);
+  await expect(page.locator("#player-insights-body")).toContainText("Guest Slugger");
+  const manualInsight = page
+    .locator("#player-insights-body > div")
+    .filter({ hasText: "Guest Slugger" });
+  await expect(manualInsight).toHaveCount(1);
+  await expect(manualInsight.getByRole("link")).toHaveCount(0);
+  await expect(page.locator("#stats-body")).not.toContainText("manual-private-source-id");
   await expect(page.locator("#edit-stats-btn")).toBeHidden();
   await expect(page.locator("#team-stats-body")).toContainText("R");
   await expect(page.locator("#team-stats-body")).toContainText("3");
@@ -728,6 +1211,8 @@ test("Diamond report labels partial observations, leaves uncollected stats unava
   expect(csv).toContain('"h","h__coverage"');
   expect(csv).toContain('"0","complete","2","partial","","not_collected"');
   expect(csv).toContain('"team","public"');
+  expect(csv).toContain("Guest Slugger");
+  expect(csv).not.toContain("manual-private-source-id");
   expect(csv).not.toContain("99");
   expect(pageErrors).toEqual([]);
 });
@@ -937,6 +1422,652 @@ test("late authentication refreshes manager controls and private edit data witho
     )
     .toEqual(publicShape);
   expect(pageErrors).toEqual([]);
+});
+
+test("sign-out synchronously removes the complete manager report while its public replacement is held", async ({
+  page,
+  baseURL,
+}) => {
+  const pageErrors = [];
+  let downloadCount = 0;
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("download", () => {
+    downloadCount += 1;
+  });
+  await installMocks(page, createManagerDiamondScenario(), {
+    controllableAuth: true,
+    accessLevel: "full",
+  });
+
+  await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, {
+    waitUntil: "domcontentloaded",
+  });
+  await expect(page.locator("#diamond-report-status")).toContainText(
+    "Manager-internal stats",
+  );
+  await expect(page.locator("#stats-header-row")).toContainText("Pitch count");
+  const manualRow = page
+    .locator("#stats-body tr")
+    .filter({ hasText: "Guest Public Identity" });
+  await expect(manualRow).toHaveCount(1);
+  await expect(manualRow.getByRole("link")).toHaveCount(0);
+  await expect(page.locator("#team-stats-body")).toContainText("Left on base");
+  await expect(page.locator("#player-insights-body")).toContainText(
+    "Guest Public Identity",
+  );
+  await expect(page.locator("#playing-time-insights")).toBeVisible();
+  await expect(page.locator("#playing-time-body")).toContainText(
+    "Guest Public Identity",
+  );
+  await expect(page.locator("#game-log")).toContainText(
+    "Authorized replay event",
+  );
+  await expect(page.locator("#diamond-stats-export-btn")).toHaveText(
+    "Export internal CSV",
+  );
+  await expect(page.locator("main")).not.toContainText(
+    "manual-private-source-id",
+  );
+
+  await page.evaluate(() => {
+    document.getElementById("summary-editor")?.classList.remove("hidden");
+    document.getElementById("stats-editor-panel")?.classList.remove("hidden");
+    document.getElementById("team-stats-editor-panel")?.classList.remove("hidden");
+    document.getElementById("summary-textarea").value = "Prior manager draft";
+    document.getElementById("summary-edit-status").textContent = "Private summary status";
+    document.getElementById("published-diamond-ai-recap").textContent = "Private generated recap";
+    document.getElementById("stats-editor-status").textContent = "Private player edit status";
+    document.getElementById("stats-editor-player-name").textContent = "Private edited player";
+    document.getElementById("stats-editor-player-meta").textContent = "Private player meta";
+    document.getElementById("stats-editor-fields").textContent = "Private player fields";
+    document.getElementById("team-stats-editor-status").textContent = "Private team edit status";
+    document.getElementById("team-stats-editor-fields").textContent = "Private team fields";
+    document.getElementById("replay-video-status").textContent = "Private replay status";
+  });
+
+  const snapshot = await triggerAuthChangeAndCapture(page, {
+    nextUser: null,
+    loadMode: "hold",
+  });
+  expectAuthorizationDependentReportCleared(snapshot);
+  await page.waitForTimeout(150);
+  expect(downloadCount).toBe(0);
+  expect(pageErrors).toEqual([]);
+});
+
+test("a failed replacement load cannot restore the previous UID's manager report", async ({
+  page,
+  baseURL,
+}) => {
+  const pageErrors = [];
+  let downloadCount = 0;
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("download", () => {
+    downloadCount += 1;
+  });
+  await installMocks(page, createManagerDiamondScenario(), {
+    controllableAuth: true,
+    accessLevel: "full",
+  });
+
+  await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, {
+    waitUntil: "domcontentloaded",
+  });
+  await expect(page.locator("#diamond-report-status")).toContainText(
+    "Manager-internal stats",
+  );
+  await expect(page.locator("#stats-body")).toContainText(
+    "Guest Public Identity",
+  );
+  await page.evaluate(() => {
+    document.getElementById("summary-editor")?.classList.remove("hidden");
+    document.getElementById("summary-textarea").value = "Prior UID draft";
+    document.getElementById("summary-edit-status").textContent = "Prior UID status";
+  });
+
+  const snapshot = await triggerAuthChangeAndCapture(page, {
+    nextUser: { uid: "coach-2", email: "second@example.com" },
+    loadMode: "fail",
+  });
+  expectAuthorizationDependentReportCleared(snapshot);
+  await expect(page.getByText("Error loading game.")).toBeVisible();
+  await expect(page.locator("main")).not.toContainText("Manager-internal stats");
+  await expect(page.locator("main")).not.toContainText("Guest Public Identity");
+  await expect(page.locator("main")).not.toContainText("Authorized replay event");
+  await page.waitForTimeout(150);
+  expect(downloadCount).toBe(0);
+  expect(pageErrors).toEqual([]);
+});
+
+test("a held legacy private-stat read cannot overwrite the replacement manager report", async ({
+  page,
+  baseURL,
+}) => {
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  const scenario = createScenario();
+  scenario.holdNextPrivatePlayerStatsRead = true;
+  await installMocks(page, scenario, {
+    controllableAuth: true,
+    accessLevel: "full",
+  });
+
+  await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, {
+    waitUntil: "domcontentloaded",
+  });
+  await expect
+    .poll(
+      async () =>
+        (await readStore(page)).privatePlayerStatsReadCalls?.length || 0,
+    )
+    .toBe(1);
+  expect((await readStore(page)).privatePlayerStatsReadCalls[0]).toEqual({
+    actorUid: "coach-1",
+    held: true,
+  });
+
+  await page.evaluate((storeKey) => {
+    const store = JSON.parse(localStorage.getItem(storeKey) || "{}");
+    store.players[0].name = "Ava Replacement";
+    store.aggregatedStats.p1.playerName = "Ava Replacement";
+    store.aggregatedStats.p1.stats.pts = 21;
+    store.privatePlayerStats.p1.stats.effort = 27;
+    localStorage.setItem(storeKey, JSON.stringify(store));
+    window.__GAME_AUTH_CALLBACK__({
+      uid: "coach-2",
+      email: "second@example.com",
+    });
+  }, STORE_KEY);
+
+  await expect
+    .poll(
+      async () =>
+        (await readStore(page)).privatePlayerStatsReadCalls?.length || 0,
+    )
+    .toBe(2);
+  await expect(page.locator("#stats-body")).toContainText("Ava Replacement");
+  await expect(page.locator("#stats-body tr").first()).toContainText("21");
+  await expect(page.locator("#player-insights-body")).toContainText(
+    "Ava Replacement",
+  );
+  await page.locator("#edit-stats-btn").click();
+  await expect(page.locator("#stats-editor-panel")).toBeVisible();
+  await expect(page.locator('[data-stat-field="effort"]')).toHaveValue("27");
+
+  await page.evaluate(() => window.__GAME_RELEASE_PRIVATE_PLAYER_STATS_READ__());
+  await page.waitForTimeout(100);
+
+  await expect(page.locator("#stats-body")).toContainText("Ava Replacement");
+  await expect(page.locator("#stats-body")).not.toContainText("Ava Cole");
+  await expect(page.locator("#stats-body tr").first()).toContainText("21");
+  await expect(page.locator("#player-insights-body")).toContainText(
+    "Ava Replacement",
+  );
+  await expect(page.locator("#player-insights-body")).not.toContainText(
+    "Ava Cole",
+  );
+  await expect(page.locator("#stats-editor-panel")).toBeVisible();
+  await expect(page.locator('[data-stat-field="effort"]')).toHaveValue("27");
+  expect((await readStore(page)).eventReadPaths).toHaveLength(1);
+  expect(pageErrors).toEqual([]);
+});
+
+test("a held legacy private-stat read cannot repopulate report state after sign-out", async ({
+  page,
+  baseURL,
+}) => {
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  const scenario = createScenario();
+  scenario.holdNextPrivatePlayerStatsRead = true;
+  await installMocks(page, scenario, {
+    controllableAuth: true,
+    accessLevel: "full",
+  });
+
+  await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, {
+    waitUntil: "domcontentloaded",
+  });
+  await expect
+    .poll(
+      async () =>
+        (await readStore(page)).privatePlayerStatsReadCalls?.length || 0,
+    )
+    .toBe(1);
+
+  const snapshot = await triggerAuthChangeAndCapture(page, {
+    nextUser: null,
+    loadMode: "hold",
+  });
+  expectAuthorizationDependentReportCleared(snapshot);
+
+  await page.evaluate(() => window.__GAME_RELEASE_PRIVATE_PLAYER_STATS_READ__());
+  await page.waitForTimeout(100);
+
+  await expect(page.locator("#stats-body")).toBeEmpty();
+  await expect(page.locator("#team-stats-body")).toBeEmpty();
+  await expect(page.locator("#player-insights-body")).toBeEmpty();
+  await expect(page.locator("#team-insights-body")).toBeEmpty();
+  await expect(page.locator("#stats-editor-fields")).toBeEmpty();
+  await expect(page.locator("#stats-editor-panel")).toBeHidden();
+  expect((await readStore(page)).eventReadPaths || []).toEqual([]);
+  expect(pageErrors).toEqual([]);
+});
+
+test("a UID swap aborts stale manager listeners and in-flight upload continuation before binding the new manager", async ({
+  page,
+  baseURL,
+}) => {
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  const scenario = createScenario();
+  scenario.holdNextStatSheetUpload = true;
+  await installMocks(page, scenario, {
+    controllableAuth: true,
+    accessLevel: "full",
+  });
+
+  await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, {
+    waitUntil: "domcontentloaded",
+  });
+  await expect(page.locator("#stat-sheet-admin")).toBeVisible();
+  await page.locator("#stat-sheet-file-input").setInputFiles({
+    name: "manager-a-sheet.png",
+    mimeType: "image/png",
+    buffer: Buffer.from("manager-a"),
+  });
+  await expect(page.locator("#stat-sheet-upload-preview")).toBeVisible();
+  await page.locator("#stat-sheet-save").click();
+  await expect
+    .poll(async () => (await readStore(page)).statSheetUploadCalls?.length || 0)
+    .toBe(1);
+  expect((await readStore(page)).statSheetUploadCalls[0]).toMatchObject({
+    actorUid: "coach-1",
+  });
+
+  await page.evaluate(() => {
+    window.__GAME_AUTH_CALLBACK__({
+      uid: "coach-2",
+      email: "second@example.com",
+    });
+  });
+  await expect
+    .poll(async () => (await readStore(page)).eventReadPaths?.length || 0)
+    .toBe(2);
+  await expect(page.locator("#stats-body tr")).toHaveCount(2);
+  await expect(page.locator("#stat-sheet-admin")).toBeVisible();
+
+  await page.evaluate(() => window.__GAME_RELEASE_STAT_SHEET_UPLOAD__());
+  await expect
+    .poll(async () => {
+      const store = await readStore(page);
+      const staleWrites = (store.updateGameCalls || []).filter((call) =>
+        Object.hasOwn(call.patch || {}, "statSheetPhotoUrl"),
+      ).length;
+      return staleWrites + (store.deletedUploadCalls?.length || 0);
+    })
+    .toBe(1);
+  let store = await readStore(page);
+  expect(
+    (store.updateGameCalls || []).filter((call) =>
+      Object.hasOwn(call.patch || {}, "statSheetPhotoUrl"),
+    ),
+  ).toEqual([]);
+  expect(store.deletedUploadCalls).toEqual([
+    {
+      actorUid: "coach-2",
+      paths: ["teams/team-1/games/game-1/stat-sheet-1.png"],
+    },
+  ]);
+  expect(store.game.statSheetPhotoUrl).toBeUndefined();
+  await expect(page.locator("#stat-sheet-img")).toBeHidden();
+  await expect(page.locator("#stat-sheet-link")).not.toHaveAttribute("href");
+  await expect(page.locator("#stat-sheet-status")).not.toHaveText("Saved.");
+
+  await page.locator("#stat-sheet-file-input").setInputFiles({
+    name: "manager-b-sheet.png",
+    mimeType: "image/png",
+    buffer: Buffer.from("manager-b"),
+  });
+  await page.locator("#stat-sheet-save").click();
+  await expect
+    .poll(async () => (await readStore(page)).statSheetUploadCalls?.length || 0)
+    .toBe(2);
+  store = await readStore(page);
+  expect(store.statSheetUploadCalls.map(({ actorUid }) => actorUid)).toEqual([
+    "coach-1",
+    "coach-2",
+  ]);
+  expect(
+    store.updateGameCalls.filter((call) =>
+      Object.hasOwn(call.patch || {}, "statSheetPhotoUrl"),
+    ),
+  ).toHaveLength(1);
+  expect(store.updateGameCalls.at(-1)).toMatchObject({ actorUid: "coach-2" });
+
+  await page.locator("#edit-stats-btn").click();
+  await page.locator('[data-stat-field="pts"]').fill("12");
+  await page.locator("#stats-save-btn").click();
+  await expect
+    .poll(
+      async () =>
+        (await readStore(page)).setCompletedGamePlayerStatsCalls?.length || 0,
+    )
+    .toBe(1);
+
+  await page.locator("#edit-team-stats-btn").click();
+  await page.locator('[data-team-stat-field="turnovers"]').fill("9");
+  await page.locator("#team-stats-save-btn").click();
+  await expect
+    .poll(
+      async () =>
+        (await readStore(page)).setCompletedGameTeamStatsCalls?.length || 0,
+    )
+    .toBe(1);
+
+  await page
+    .locator("#replay-video-url")
+    .fill("https://www.youtube.com/watch?v=0IuY8Oryi1k");
+  await page.locator("#replay-video-title").fill("Manager B replay");
+  await page.locator("#replay-video-save").click();
+  await expect
+    .poll(async () => (await readStore(page)).runTransactionCalls?.length || 0)
+    .toBe(1);
+  await expect(page.locator("#replay-video-status")).toContainText(
+    "Replay linked",
+  );
+
+  store = await readStore(page);
+  expect(store.setCompletedGamePlayerStatsCalls[0].actorUid).toBe("coach-2");
+  expect(store.setCompletedGameTeamStatsCalls[0].actorUid).toBe("coach-2");
+  expect(store.runTransactionCalls[0].actorUid).toBe("coach-2");
+  expect(pageErrors).toEqual([]);
+});
+
+test("a committed stat-sheet update survives a lost response without deleting its upload", async ({
+  page,
+  baseURL,
+}) => {
+  const scenario = createScenario();
+  scenario.nextUpdateGameMode = "commit-then-reject";
+  await installMocks(page, scenario, { controllableAuth: true });
+
+  await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, {
+    waitUntil: "domcontentloaded",
+  });
+  await expect(page.locator("#stat-sheet-admin")).toBeVisible();
+  await page.locator("#stat-sheet-file-input").setInputFiles({
+    name: "committed-sheet.png",
+    mimeType: "image/png",
+    buffer: Buffer.from("committed"),
+  });
+  await page.locator("#stat-sheet-save").click();
+
+  await expect(page.locator("#stat-sheet-status")).toHaveText("Saved.");
+  await expect(page.locator("#stat-sheet-img")).toHaveAttribute(
+    "src",
+    "https://cdn.example.com/stat-sheet-1.png",
+  );
+  const store = await readStore(page);
+  expect(store.game.statSheetPhotoUrl).toBe(
+    "https://cdn.example.com/stat-sheet-1.png",
+  );
+  expect(store.getGameCalls).toHaveLength(2);
+  expect(store.deletedUploadCalls || []).toEqual([]);
+});
+
+test("a definitively rejected stat-sheet update deletes only the new upload", async ({
+  page,
+  baseURL,
+}) => {
+  const scenario = createScenario();
+  scenario.nextUpdateGameMode = "reject";
+  await installMocks(page, scenario, { controllableAuth: true });
+
+  await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, {
+    waitUntil: "domcontentloaded",
+  });
+  await page.locator("#stat-sheet-file-input").setInputFiles({
+    name: "rejected-sheet.png",
+    mimeType: "image/png",
+    buffer: Buffer.from("rejected"),
+  });
+  await page.locator("#stat-sheet-save").click();
+
+  await expect
+    .poll(async () => (await readStore(page)).deletedUploadCalls?.length || 0)
+    .toBe(1);
+  const store = await readStore(page);
+  expect(store.game.statSheetPhotoUrl).toBeUndefined();
+  expect(store.getGameCalls).toHaveLength(2);
+  expect(store.deletedUploadCalls).toEqual([
+    {
+      actorUid: "coach-1",
+      paths: ["teams/team-1/games/game-1/stat-sheet-1.png"],
+    },
+  ]);
+  await expect(page.locator("#stat-sheet-img")).toBeHidden();
+  await expect(page.locator("#stat-sheet-status")).toContainText("Error:");
+});
+
+test("a false stat-sheet persistence result is reconciled as a failed write", async ({
+  page,
+  baseURL,
+}) => {
+  const scenario = createScenario();
+  scenario.nextUpdateGameMode = "return-false";
+  await installMocks(page, scenario, { controllableAuth: true });
+
+  await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, {
+    waitUntil: "domcontentloaded",
+  });
+  await page.locator("#stat-sheet-file-input").setInputFiles({
+    name: "false-result-sheet.png",
+    mimeType: "image/png",
+    buffer: Buffer.from("false-result"),
+  });
+  await page.locator("#stat-sheet-save").click();
+
+  await expect
+    .poll(async () => (await readStore(page)).deletedUploadCalls?.length || 0)
+    .toBe(1);
+  const store = await readStore(page);
+  expect(store.game.statSheetPhotoUrl).toBeUndefined();
+  expect(store.getGameCalls).toHaveLength(2);
+  expect(store.deletedUploadCalls[0].paths).toEqual([
+    "teams/team-1/games/game-1/stat-sheet-1.png",
+  ]);
+  await expect(page.locator("#stat-sheet-status")).toContainText(
+    "could not be saved",
+  );
+});
+
+test("an unavailable stat-sheet reconciliation retains the upload and reports uncertainty", async ({
+  page,
+  baseURL,
+}) => {
+  const scenario = createScenario();
+  scenario.nextUpdateGameMode = "reject-unknown";
+  await installMocks(page, scenario, { controllableAuth: true });
+
+  await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, {
+    waitUntil: "domcontentloaded",
+  });
+  await page.locator("#stat-sheet-file-input").setInputFiles({
+    name: "unknown-sheet.png",
+    mimeType: "image/png",
+    buffer: Buffer.from("unknown"),
+  });
+  await page.locator("#stat-sheet-save").click();
+
+  await expect(page.locator("#stat-sheet-status")).toContainText(
+    "Could not confirm whether the stat sheet was saved",
+  );
+  const store = await readStore(page);
+  expect(store.game.statSheetPhotoUrl).toBeUndefined();
+  expect(store.getGameCalls).toEqual([
+    { actorUid: "coach-1", failed: false },
+    { actorUid: "coach-1", failed: true },
+  ]);
+  expect(store.deletedUploadCalls || []).toEqual([]);
+  await expect(page.locator("#stat-sheet-img")).toBeHidden();
+});
+
+test("an auth transition preserves a committed stat-sheet upload after its response is lost", async ({
+  page,
+  baseURL,
+}) => {
+  const scenario = createScenario();
+  scenario.nextUpdateGameMode = "hold-commit-then-reject";
+  await installMocks(page, scenario, {
+    controllableAuth: true,
+    accessLevel: "full",
+  });
+
+  await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, {
+    waitUntil: "domcontentloaded",
+  });
+  await page.locator("#stat-sheet-file-input").setInputFiles({
+    name: "transition-committed.png",
+    mimeType: "image/png",
+    buffer: Buffer.from("transition-committed"),
+  });
+  await page.locator("#stat-sheet-save").click();
+  await expect
+    .poll(async () => (await readStore(page)).updateGameCalls?.length || 0)
+    .toBe(1);
+
+  await page.evaluate(() => {
+    window.__GAME_AUTH_CALLBACK__({
+      uid: "coach-2",
+      email: "second@example.com",
+    });
+  });
+  await expect(page.locator("#stat-sheet-img")).toHaveAttribute(
+    "src",
+    "https://cdn.example.com/stat-sheet-1.png",
+  );
+  await page.evaluate(() => window.__GAME_RELEASE_UPDATE_GAME__());
+  await page.waitForTimeout(100);
+
+  const store = await readStore(page);
+  expect(store.game.statSheetPhotoUrl).toBe(
+    "https://cdn.example.com/stat-sheet-1.png",
+  );
+  expect(store.getGameCalls).toHaveLength(3);
+  expect(store.getGameCalls.at(-1).actorUid).toBe("coach-2");
+  expect(store.deletedUploadCalls || []).toEqual([]);
+  await expect(page.locator("#stat-sheet-img")).toHaveAttribute(
+    "src",
+    "https://cdn.example.com/stat-sheet-1.png",
+  );
+});
+
+test("an auth transition cleans a definitively uncommitted stat-sheet upload without stale UI", async ({
+  page,
+  baseURL,
+}) => {
+  const scenario = createScenario();
+  scenario.nextUpdateGameMode = "hold-reject";
+  await installMocks(page, scenario, {
+    controllableAuth: true,
+    accessLevel: "full",
+  });
+
+  await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, {
+    waitUntil: "domcontentloaded",
+  });
+  await page.locator("#stat-sheet-file-input").setInputFiles({
+    name: "transition-rejected.png",
+    mimeType: "image/png",
+    buffer: Buffer.from("transition-rejected"),
+  });
+  await page.locator("#stat-sheet-save").click();
+  await expect
+    .poll(async () => (await readStore(page)).updateGameCalls?.length || 0)
+    .toBe(1);
+
+  await page.evaluate(() => window.__GAME_AUTH_CALLBACK__(null));
+  await expect(page.locator("#stat-sheet-admin")).toBeHidden();
+  await expect
+    .poll(async () => (await readStore(page)).getGameCalls?.length || 0)
+    .toBe(2);
+  await page.evaluate(() => window.__GAME_RELEASE_UPDATE_GAME__());
+  await expect
+    .poll(async () => (await readStore(page)).deletedUploadCalls?.length || 0)
+    .toBe(1);
+
+  const store = await readStore(page);
+  expect(store.game.statSheetPhotoUrl).toBeUndefined();
+  expect(store.getGameCalls).toHaveLength(3);
+  expect(store.getGameCalls.at(-1).actorUid).toBe("");
+  expect(store.deletedUploadCalls).toEqual([
+    {
+      actorUid: "",
+      paths: ["teams/team-1/games/game-1/stat-sheet-1.png"],
+    },
+  ]);
+  await expect(page.locator("#stat-sheet-admin")).toBeHidden();
+  await expect(page.locator("#stat-sheet-img")).toBeHidden();
+  await expect(page.locator("#stat-sheet-status")).toBeEmpty();
+});
+
+test("a committed stat-sheet removal is reflected after its response is lost", async ({
+  page,
+  baseURL,
+}) => {
+  const scenario = createScenario();
+  scenario.game.statSheetPhotoUrl = "https://cdn.example.com/original-sheet.png";
+  scenario.nextUpdateGameMode = "commit-then-reject";
+  await installMocks(page, scenario, { controllableAuth: true });
+  page.on("dialog", (dialog) => dialog.accept());
+
+  await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, {
+    waitUntil: "domcontentloaded",
+  });
+  await expect(page.locator("#stat-sheet-img")).toBeVisible();
+  await page.locator("#stat-sheet-remove").click();
+
+  await expect(page.locator("#stat-sheet-status")).toHaveText("Removed.");
+  await expect(page.locator("#stat-sheet-img")).toBeHidden();
+  await expect(page.locator("#stat-sheet-link")).not.toHaveAttribute("href");
+  const store = await readStore(page);
+  expect(store.game.statSheetPhotoUrl).toBeNull();
+  expect(store.getGameCalls).toHaveLength(2);
+  expect(store.deletedUploadCalls || []).toEqual([]);
+});
+
+test("an unknown stat-sheet removal retains the current presentation and reports uncertainty", async ({
+  page,
+  baseURL,
+}) => {
+  const scenario = createScenario();
+  scenario.game.statSheetPhotoUrl = "https://cdn.example.com/original-sheet.png";
+  scenario.nextUpdateGameMode = "reject-unknown";
+  await installMocks(page, scenario, { controllableAuth: true });
+  page.on("dialog", (dialog) => dialog.accept());
+
+  await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, {
+    waitUntil: "domcontentloaded",
+  });
+  await page.locator("#stat-sheet-remove").click();
+
+  await expect(page.locator("#stat-sheet-status")).toContainText(
+    "Could not confirm whether the stat sheet was removed",
+  );
+  await expect(page.locator("#stat-sheet-img")).toHaveAttribute(
+    "src",
+    "https://cdn.example.com/original-sheet.png",
+  );
+  const store = await readStore(page);
+  expect(store.game.statSheetPhotoUrl).toBe(
+    "https://cdn.example.com/original-sheet.png",
+  );
+  expect(store.getGameCalls.at(-1)).toEqual({
+    actorUid: "coach-1",
+    failed: true,
+  });
+  expect(store.deletedUploadCalls || []).toEqual([]);
 });
 
 test("completed-game manager links, replaces, and removes a YouTube replay", async ({

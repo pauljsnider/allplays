@@ -1832,6 +1832,85 @@ describe('TeamDetail', () => {
     expect(screen.getByText('Source revisions: 14')).toBeTruthy();
   });
 
+  it('links canonical Insights participants but never links or exposes projected-only IDs', async () => {
+    const teamAnalytics = {
+      ...model.teamAnalytics,
+      seasonLabel: '2026',
+      availableSeasons: ['2026'],
+      seasons: []
+    };
+    teamDetailServiceMocks.loadTeamDetailInsights.mockResolvedValue({
+      leaderboards: [{
+        id: 'h',
+        label: 'Hits',
+        leaders: [{
+          playerId: 'player-1',
+          playerName: 'Canonical Player',
+          playerNumber: '7',
+          photoUrl: null,
+          rank: 1,
+          formattedValue: '2'
+        }, {
+          playerId: 'manual:private-source-id',
+          playerName: 'Manual Guest',
+          playerNumber: '44',
+          photoUrl: null,
+          canOpenProfile: false,
+          rank: 2,
+          formattedValue: '1'
+        }]
+      }],
+      trackingSummaries: [],
+      teamAnalytics,
+      rosterStatistics: {
+        seasonLabel: '2026',
+        availableSeasons: ['2026'],
+        unavailableSeasons: [],
+        seasons: [{
+          seasonLabel: '2026',
+          columns: [{ id: 'h', label: 'H' }],
+          rows: [{
+            playerId: 'player-1',
+            playerName: 'Canonical Player',
+            playerNumber: '7',
+            values: { h: { value: 2, formattedValue: '2' } }
+          }, {
+            playerId: 'manual:private-source-id',
+            playerName: 'Manual Guest',
+            playerNumber: '44',
+            canOpenProfile: false,
+            values: { h: { value: 1, formattedValue: '1' } }
+          }],
+          diamond: {
+            hasDiamond: true,
+            pending: false,
+            sourceRevisions: [8],
+            requestedStatVisibility: 'public',
+            statVisibility: 'public',
+            privateStatsStatus: 'not-requested',
+            publicStatsStatus: 'complete'
+          }
+        }]
+      }
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1?tab=insights']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(screen.getAllByRole('link', { name: 'Open Canonical Player profile' })).toHaveLength(2));
+    const canonicalLinks = screen.getAllByRole('link', { name: 'Open Canonical Player profile' });
+    canonicalLinks.forEach((link) => expect(link).toHaveAttribute('href', '/players/team-1/player-1'));
+    expect(screen.queryByRole('link', { name: 'Open Manual Guest profile' })).toBeNull();
+    expect(document.querySelector('a[href*="manual"]')).toBeNull();
+    expect(document.body).not.toHaveTextContent('manual:private-source-id');
+    expect(screen.getAllByText('#44 Manual Guest')).toHaveLength(2);
+  });
+
   it('renders an explicit team performance empty state in Insights', async () => {
     render(
       <MemoryRouter initialEntries={['/teams/team-1?tab=insights']}>

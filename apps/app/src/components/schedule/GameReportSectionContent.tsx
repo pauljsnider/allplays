@@ -167,36 +167,43 @@ function PlayerPerformanceRow({ player, statKeys, statLabels, statDefinitions, h
   teamId: string;
   gameId: string;
 }) {
-  return (
-    <a href={getPublicPlayerHref(teamId, gameId, player.playerId)} className="block rounded-xl border border-gray-200 bg-white p-3 transition hover:border-primary-200 hover:bg-primary-50">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-3">
-          <div className="flex h-10 w-10 flex-none items-center justify-center overflow-hidden rounded-full bg-gray-100 text-sm font-black text-gray-500">
-            {player.photoUrl ? <AvatarImage src={player.photoUrl} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" fallback={player.playerName.slice(0, 1)} /> : player.playerName.slice(0, 1)}
-          </div>
-          <div className="min-w-0">
-            <div className="truncate text-sm font-black text-gray-950">#{player.number} {player.playerName}</div>
-            <div className="mt-0.5 flex items-center gap-2 text-xs font-semibold text-gray-500">
-              {player.didNotPlay ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black uppercase text-amber-800">DNP</span> : null}
-              {hasPlayingTime && !player.didNotPlay ? <span>{formatDuration(player.timeMs)} min</span> : null}
-            </div>
-          </div>
+  const content = (
+    <div className="flex items-center justify-between gap-3">
+      <div className="flex min-w-0 items-center gap-3">
+        <div className="flex h-10 w-10 flex-none items-center justify-center overflow-hidden rounded-full bg-gray-100 text-sm font-black text-gray-500">
+          {player.photoUrl ? <AvatarImage src={player.photoUrl} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" fallback={player.playerName.slice(0, 1)} /> : player.playerName.slice(0, 1)}
         </div>
-        <div className="flex flex-none flex-wrap justify-end gap-1.5">
-          {statKeys.map((key) => (
-            <span key={key} className="min-w-11 rounded-lg bg-gray-50 px-2 py-1 text-center">
-              <span className="block text-[10px] font-black uppercase text-gray-400">{statLabels[key] || key.toUpperCase()}</span>
-              <CoverageAwareStatValue
-                presentation={player.statPresentation}
-                stats={player.stats}
-                statKey={key}
-                definition={statDefinitions?.[key]}
-                didNotPlay={player.didNotPlay}
-              />
-            </span>
-          ))}
+        <div className="min-w-0">
+          <div className="truncate text-sm font-black text-gray-950">#{player.number} {player.playerName}</div>
+          <div className="mt-0.5 flex items-center gap-2 text-xs font-semibold text-gray-500">
+            {player.didNotPlay ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black uppercase text-amber-800">DNP</span> : null}
+            {hasPlayingTime && !player.didNotPlay ? <span>{formatDuration(player.timeMs)} min</span> : null}
+          </div>
         </div>
       </div>
+      <div className="flex flex-none flex-wrap justify-end gap-1.5">
+        {statKeys.map((key) => (
+          <span key={key} className="min-w-11 rounded-lg bg-gray-50 px-2 py-1 text-center">
+            <span className="block text-[10px] font-black uppercase text-gray-400">{statLabels[key] || key.toUpperCase()}</span>
+            <CoverageAwareStatValue
+              presentation={player.statPresentation}
+              stats={player.stats}
+              statKey={key}
+              definition={statDefinitions?.[key]}
+              didNotPlay={player.didNotPlay}
+            />
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+
+  const rowClassName = 'block rounded-xl border border-gray-200 bg-white p-3';
+  if (player.canOpenProfile === false) return <div className={rowClassName}>{content}</div>;
+
+  return (
+    <a href={getPublicPlayerHref(teamId, gameId, player.playerId)} className={`${rowClassName} transition hover:border-primary-200 hover:bg-primary-50`}>
+      {content}
     </a>
   );
 }

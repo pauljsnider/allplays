@@ -267,7 +267,7 @@
         import { getVisibleRosterFieldValues } from './js/roster-field-privacy.js';
         import { readAccountPremiumEntitlement, renderPremiumGateState } from './js/premium-entitlements.js?v=8';
         import { DIAMOND_PLAYER_STAT_CATALOG, aggregateCoverageAwareSeasonStats, getActivationPinnedDiamondStatCatalog, getCoverageAwareStatValue, getDiamondPublicPlayerStatsCollectionPath, hasMixedActivationPinnedDiamondStatIds, isDiamondV2Game, prepareDiamondStatDocumentForSeason, readCoverageAwareStatDocument, resolveDiamondManagerStatDocuments, resolveDiamondPublicStatDocuments, resolveDiamondStatConfigsForGames } from './js/diamond-stat-presentation.js?v=7';
-        import { loadDiamondManagerStats } from './js/diamond-manager-stats.js?v=4';
+        import { buildDiamondReportPlayers, loadCompleteDiamondManagerStats } from './js/diamond-manager-stats.js?v=5';
         import { buildDiamondStatsCsv, downloadDiamondStatsCsv, getDiamondStatsExportFilename } from './js/diamond-stat-export.js?v=7';
         import { loadCompleteDiamondReportEvents } from './js/diamond-report-events.js?v=1';
 
@@ -279,21 +279,118 @@
         let privateProfileLoadFailed = false;
         let rosterFieldDefinitions = [];
         let currentCanEditRosterProfile = false;
+        let currentCanEditPlayerProfile = false;
         let currentDiamondPlayerStatCatalog = DIAMOND_PLAYER_STAT_CATALOG;
         let playerLoadGeneration = 0;
+        let playerEditModalGeneration = 0;
         let privateFieldsDirty = {
             emergencyContact: false,
             medicalInfo: false
         };
 
+        function clearPlayerEditForm() {
+            const form = document.getElementById('edit-player-form');
+            if (form) form.reset();
+            ['edit-ec-name', 'edit-ec-phone', 'edit-medical-info', 'edit-photo-input'].forEach((id) => {
+                const field = document.getElementById(id);
+                if (field) field.value = '';
+            });
+            const preview = document.getElementById('edit-photo-preview');
+            if (preview) preview.innerHTML = '';
+            const rosterFields = document.getElementById('edit-roster-profile-fields');
+            if (rosterFields) {
+                rosterFields.innerHTML = '';
+                rosterFields.classList.add('hidden');
+            }
+            const saveButton = document.getElementById('save-player-btn');
+            if (saveButton) {
+                saveButton.disabled = true;
+                saveButton.textContent = 'Save Changes';
+            }
+            privateFieldsDirty = {
+                emergencyContact: false,
+                medicalInfo: false
+            };
+        }
+
+        function closePlayerEditModal({ invalidateRequest = true } = {}) {
+            if (invalidateRequest) playerEditModalGeneration += 1;
+            document.getElementById('edit-player-modal')?.classList.add('hidden');
+            clearPlayerEditForm();
+        }
+
+        function clearPlayerAuthScopedState() {
+            playerEditModalGeneration += 1;
+            currentPlayer = null;
+            currentPrivateProfile = null;
+            currentTeamId = null;
+            currentTeam = null;
+            privateProfileLoadFailed = false;
+            rosterFieldDefinitions = [];
+            currentCanEditRosterProfile = false;
+            currentCanEditPlayerProfile = false;
+            currentDiamondPlayerStatCatalog = DIAMOND_PLAYER_STAT_CATALOG;
+
+            const editButton = document.getElementById('open-edit-modal');
+            if (editButton) editButton.onclick = null;
+            document.getElementById('edit-btn-container')?.classList.add('hidden');
+
+            const exportButton = document.getElementById('diamond-player-stats-export-btn');
+            if (exportButton) {
+                exportButton.classList.add('hidden');
+                exportButton.onclick = null;
+            }
+
+            document.getElementById('diamond-player-stats-status')?.remove();
+            [
+                'team-nav-banner',
+                'player-header',
+                'season-overview',
+                'advanced-stats',
+                'game-stats',
+                'season-stats',
+                'player-events',
+                'content-clips',
+                'player-game-insights-body'
+            ].forEach((id) => {
+                const container = document.getElementById(id);
+                if (container) container.innerHTML = '';
+            });
+            document.getElementById('player-game-insights-section')?.classList.add('hidden');
+            const backLinkContainer = document.getElementById('back-link-container');
+            if (backLinkContainer) backLinkContainer.classList.remove('hidden');
+            const backLink = document.getElementById('back-link');
+            if (backLink) backLink.href = '#';
+            closePlayerEditModal({ invalidateRequest: false });
+        }
+
+        function capturePlayerAuthContext({ modalGeneration = playerEditModalGeneration } = {}) {
+            return Object.freeze({
+                uid: currentUser?.uid || '',
+                loadGeneration: playerLoadGeneration,
+                modalGeneration,
+                teamId: currentTeamId || '',
+                playerId: currentPlayer?.id || ''
+            });
+        }
+
+        function isPlayerAuthContextCurrent(context, { requireModal = false, requireEdit = false } = {}) {
+            return Boolean(
+                context
+                && context.uid
+                && context.uid === (currentUser?.uid || '')
+                && context.loadGeneration === playerLoadGeneration
+                && context.teamId === (currentTeamId || '')
+                && context.playerId === (currentPlayer?.id || '')
+                && (!requireModal || context.modalGeneration === playerEditModalGeneration)
+                && (!requireEdit || currentCanEditPlayerProfile)
+            );
+        }
+
         checkAuth((user) => {
             const generation = ++playerLoadGeneration;
+            clearPlayerAuthScopedState();
             currentUser = user;
-            document.getElementById('diamond-player-stats-export-btn')?.classList.add('hidden');
-            const gameStats = document.getElementById('game-stats');
-            const seasonStats = document.getElementById('season-stats');
-            if (gameStats) gameStats.innerHTML = '';
-            if (seasonStats) seasonStats.innerHTML = '';
             renderHeader(document.getElementById('header-container'), user);
             loadPlayerDetails({ generation, expectedUid: user?.uid || '' });
         });
@@ -583,7 +680,10 @@
         }
 
 
-        async function loadPlayerGameData(teamId, games, playerId, playerName, { requestManagerStats = false } = {}) {
+        async function loadPlayerGameData(teamId, games, playerId, playerName, {
+            requestManagerStats = false,
+            profilePlayerId = ''
+        } = {}) {
             const results = await Promise.all(games.map(async (game) => {
                 const gameId = game.id;
                 const diamondGame = isDiamondV2Game(game);
@@ -592,6 +692,7 @@
                 const statPresentationByPlayerId = {};
                 const statDocuments = [];
                 let selectedPlayerStats = null;
+                let selectedPublicIdentity = null;
                 let statsLoadStatus = 'complete';
 
                 try {
@@ -620,13 +721,26 @@
                             statDocuments.push({ id, data: statData });
                         }
 
+                        if (id === playerId && diamondGame) {
+                            const recordedPlayer = buildDiamondReportPlayers({
+                                    documents: [{ id, data: statData }]
+                                }).find((candidate) => candidate.id === id);
+                            selectedPublicIdentity = {
+                                playerId: profilePlayerId === id ? id : '',
+                                playerName: recordedPlayer?.name || 'Recorded player',
+                                playerNumber: recordedPlayer?.number || '-',
+                                canOpenProfile: profilePlayerId === id
+                            };
+                        }
+
                         if (id === playerId && hasPlayerProfileParticipation(statData)) {
                             selectedPlayerStats = {
                                 stats: playerStats,
                                 completeStats: completeStatsByPlayerId[id],
                                 statPresentation: statPresentationByPlayerId[id] || null,
                                 timeMs: typeof statData.timeMs === 'number' ? statData.timeMs : 0,
-                                sourcePlayIds: diamondGame ? [...statData.sourcePlayIds] : null
+                                sourcePlayIds: diamondGame ? [...statData.sourcePlayIds] : null,
+                                recordedIdentity: selectedPublicIdentity
                             };
                         }
                     });
@@ -645,6 +759,7 @@
                         completeStatsByPlayerId,
                         statPresentationByPlayerId,
                         statsLoadStatus,
+                        publicRecordedIdentity: selectedPublicIdentity,
                         playerGameStats: null,
                         events: [],
                         eventsLoadStatus: diamondGame && statsLoadStatus !== 'complete' ? 'unavailable' : 'complete'
@@ -700,6 +815,7 @@
                     completeStatsByPlayerId,
                     statPresentationByPlayerId,
                     statsLoadStatus,
+                    publicRecordedIdentity: selectedPublicIdentity,
                     playerGameStats: {
                         gameId,
                         date: game.date.toDate ? game.date.toDate() : new Date(game.date),
@@ -707,7 +823,8 @@
                         stats: selectedPlayerStats.stats,
                         completeStats: selectedPlayerStats.completeStats,
                         statPresentation: selectedPlayerStats.statPresentation,
-                        timeMs: selectedPlayerStats.timeMs
+                        timeMs: selectedPlayerStats.timeMs,
+                        recordedIdentity: selectedPlayerStats.recordedIdentity
                     },
                     events,
                     eventsLoadStatus
@@ -727,7 +844,7 @@
             if (gamesWithPlayerDocument.length === 0) {
                 return { results, statVisibility: 'public', privateStatsStatus: 'complete' };
             }
-            const managerBatch = await loadDiamondManagerStats({
+            const managerBatch = await loadCompleteDiamondManagerStats({
                 teamId,
                 games: gamesWithPlayerDocument.map(({ game }) => game),
                 playerIds: [playerId],
@@ -766,7 +883,8 @@
                     stats: presentation.values,
                     completeStats: presentation.completeValues,
                     statPresentation: presentation,
-                    timeMs: typeof data.timeMs === 'number' ? data.timeMs : 0
+                    timeMs: typeof data.timeMs === 'number' ? data.timeMs : 0,
+                    recordedIdentity: result.publicRecordedIdentity
                 } : null;
             });
             return { results, statVisibility: 'manager-internal', privateStatsStatus: 'complete' };
@@ -781,7 +899,6 @@
             }
 
             try {
-                currentTeamId = teamId; // Store global
                 const [team, players, games] = await Promise.all([
                     getTeam(teamId),
                     getPlayers(teamId, { includeInactive: true }),
@@ -831,15 +948,19 @@
                         visibility: 'public'
                     })
                     : [];
-                currentDiamondPlayerStatCatalog = diamondStatCatalog;
-                rosterFieldDefinitions = normalizeRosterFieldDefinitions(await getRosterFieldDefinitions(teamId, team));
+                const loadedRosterFieldDefinitions = normalizeRosterFieldDefinitions(
+                    await getRosterFieldDefinitions(teamId, team)
+                );
                 if (!isCurrentLoad()) return;
+                currentDiamondPlayerStatCatalog = diamondStatCatalog;
+                rosterFieldDefinitions = loadedRosterFieldDefinitions;
 
                 const player = players.find(p => p.id === playerId);
                 if (!player) {
                     document.querySelector('main').innerHTML = '<div class="text-center py-12 text-red-500">Player not found</div>';
                     return;
                 }
+                currentTeamId = teamId;
                 currentTeam = team;
                 currentPlayer = player; // Store global
 
@@ -856,9 +977,11 @@
                             if (profile.coachOf) currentUser.coachOf = profile.coachOf;
                         }
                     } catch (e) {
+                        if (!isCurrentLoad()) return;
                         console.error('Error loading user profile for banner:', e);
                     }
 
+                    if (!isCurrentLoad()) return;
                     const accessInfo = getTeamAccessInfo(currentUser, { ...team, id: teamId });
                     canViewManagerStats = accessInfo.accessLevel === 'full';
                     if (accessInfo.hasAccess) {
@@ -869,9 +992,11 @@
                             if (!isCurrentLoad()) return;
                             unreadCount = counts[teamId] || 0;
                         } catch (e) {
+                            if (!isCurrentLoad()) return;
                             console.error('Error fetching unread counts:', e);
                         }
 
+                        if (!isCurrentLoad()) return;
                         renderTeamAdminBanner(
                             document.getElementById('team-nav-banner'),
                             {
@@ -904,7 +1029,8 @@
                 let totalTimeMs = 0;
                 let gamesWithTime = 0;
                 const managerStatLoad = await loadPlayerGameData(teamId, games, playerId, player.name, {
-                    requestManagerStats: canViewManagerStats
+                    requestManagerStats: canViewManagerStats,
+                    profilePlayerId: player.id
                 });
                 if (!isCurrentLoad()) return;
                 const gameLoadResults = managerStatLoad.results;
@@ -1099,9 +1225,9 @@
                             const diamondGameRows = perGameStats.flatMap((entry) => entry.statPresentation?.isDiamond ? [{
                                 recordType: 'game_player',
                                 identity: {
-                                    playerId,
-                                    playerName: player.name,
-                                    playerNumber: player.number,
+                                    playerId: entry.recordedIdentity?.canOpenProfile ? entry.recordedIdentity.playerId : '',
+                                    playerName: entry.recordedIdentity?.playerName || 'Recorded player',
+                                    playerNumber: entry.recordedIdentity?.playerNumber || '-',
                                     gameId: entry.gameId,
                                     gameDate: entry.date instanceof Date && !Number.isNaN(entry.date.getTime()) ? entry.date.toISOString().slice(0, 10) : '',
                                     opponent: entry.opponent
@@ -1500,6 +1626,11 @@
                                 <div>
                                     <div class="text-sm text-gray-500 font-semibold mb-1">${g.date.toLocaleDateString()}</div>
                                     <div class="text-lg font-bold text-gray-900">vs. ${escapeHtml(g.opponent)}</div>
+                                    ${g.recordedIdentity ? `
+                                        <div data-recorded-player-identity class="mt-1 text-xs font-semibold text-gray-500">
+                                            ${g.recordedIdentity.playerNumber && g.recordedIdentity.playerNumber !== '-' ? `#${escapeHtml(g.recordedIdentity.playerNumber)} ` : ''}${escapeHtml(g.recordedIdentity.playerName || 'Recorded player')}
+                                        </div>
+                                    ` : ''}
                                 </div>
                                 <div class="flex items-center gap-2">
                                     ${(g.timeMs || 0) > 0 ? `<span class="text-xs px-3 py-1 rounded-full bg-gray-100 text-gray-700 font-semibold border border-gray-200">⏱ ${formatMMSS(g.timeMs)}</span>` : ''}
@@ -1716,6 +1847,12 @@
         }
 
         function updateEditButton() {
+            currentCanEditRosterProfile = false;
+            currentCanEditPlayerProfile = false;
+            const btnContainer = document.getElementById('edit-btn-container');
+            const editButton = document.getElementById('open-edit-modal');
+            if (btnContainer) btnContainer.classList.add('hidden');
+            if (editButton) editButton.onclick = null;
             if (!currentUser || !currentPlayer) return;
 
             // Check if parent via player.parents array (legacy)
@@ -1729,50 +1866,54 @@
             const hasFullAccess = hasFullTeamAccess(currentUser, currentTeam);
             currentCanEditRosterProfile = hasFullAccess;
             const canEdit = hasFullAccess || isParent;
+            currentCanEditPlayerProfile = canEdit;
 
-            if (canEdit) {
-                const btnContainer = document.getElementById('edit-btn-container');
-                if (btnContainer) {
-                    btnContainer.classList.remove('hidden');
-                    document.getElementById('open-edit-modal').onclick = openEditModal;
-                }
+            if (canEdit && btnContainer && editButton) {
+                btnContainer.classList.remove('hidden');
+                editButton.onclick = openEditModal;
             }
         }
 
         async function openEditModal() {
-             if (!currentPlayer) return;
-             document.getElementById('edit-player-modal').classList.remove('hidden');
-             privateProfileLoadFailed = false;
-             privateFieldsDirty = {
-                 emergencyContact: false,
-                 medicalInfo: false
-             };
+            if (!currentUser || !currentPlayer || !currentCanEditPlayerProfile) return;
+            const modalGeneration = ++playerEditModalGeneration;
+            const context = capturePlayerAuthContext({ modalGeneration });
+            if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) return;
 
-             // Load sensitive fields from the private profile doc.
-             // If denied or missing, treat as empty.
-             try {
-                 currentPrivateProfile = await getPlayerPrivateProfile(currentTeamId, currentPlayer.id);
-             } catch (e) {
-                 console.warn('Failed to load private player profile:', e);
-                 currentPrivateProfile = null;
-                 privateProfileLoadFailed = true;
-             }
+            clearPlayerEditForm();
+            document.getElementById('edit-player-modal')?.classList.remove('hidden');
+            privateProfileLoadFailed = false;
+            const player = currentPlayer;
+            const canEditRosterProfile = currentCanEditRosterProfile;
+            const fields = rosterFieldDefinitions;
+            let privateProfile = null;
 
-             renderRosterProfileFields(
-                 document.getElementById('edit-roster-profile-fields'),
-                 currentCanEditRosterProfile ? rosterFieldDefinitions : [],
-                 getRosterProfileValues(currentPlayer)
-             );
-             document.getElementById('edit-ec-name').value = currentPrivateProfile?.emergencyContact?.name || '';
-             document.getElementById('edit-ec-phone').value = currentPrivateProfile?.emergencyContact?.phone || '';
-             document.getElementById('edit-medical-info').value = currentPrivateProfile?.medicalInfo || '';
-             
-             const preview = document.getElementById('edit-photo-preview');
-             if (currentPlayer.photoUrl) {
-                 preview.innerHTML = `<img loading="lazy" decoding="async" src="${escapeHtml(currentPlayer.photoUrl)}" class="w-full h-full object-cover">`;
-             } else {
-                 preview.innerHTML = '';
-             }
+            try {
+                if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) return;
+                privateProfile = await getPlayerPrivateProfile(context.teamId, context.playerId);
+                if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) return;
+            } catch (error) {
+                if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) return;
+                console.warn('Failed to load private player profile:', error);
+                privateProfileLoadFailed = true;
+            }
+
+            currentPrivateProfile = privateProfile;
+            renderRosterProfileFields(
+                document.getElementById('edit-roster-profile-fields'),
+                canEditRosterProfile ? fields : [],
+                getRosterProfileValues(player)
+            );
+            document.getElementById('edit-ec-name').value = privateProfile?.emergencyContact?.name || '';
+            document.getElementById('edit-ec-phone').value = privateProfile?.emergencyContact?.phone || '';
+            document.getElementById('edit-medical-info').value = privateProfile?.medicalInfo || '';
+
+            const preview = document.getElementById('edit-photo-preview');
+            preview.innerHTML = player.photoUrl
+                ? `<img loading="lazy" decoding="async" src="${escapeHtml(player.photoUrl)}" class="w-full h-full object-cover">`
+                : '';
+            const saveButton = document.getElementById('save-player-btn');
+            if (saveButton) saveButton.disabled = false;
         }
 
         function buildPlayerProfileUpdatePayload({
@@ -1830,91 +1971,114 @@
             ]).has(code);
         }
 
-        async function getPlayerPhotoPersistenceState(expectedPhotoPath) {
+        async function getPlayerPhotoPersistenceState(expectedPhotoPath, context) {
+            if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) return 'stale';
             try {
-                const privateProfile = await getPlayerPrivateProfile(currentTeamId, currentPlayer?.id);
+                const privateProfile = await getPlayerPrivateProfile(context.teamId, context.playerId);
+                if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) return 'stale';
                 return String(privateProfile?.photoPath || '').trim() === String(expectedPhotoPath || '').trim()
                     ? 'committed'
                     : 'not-committed';
             } catch (_) {
+                if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) return 'stale';
                 return 'unknown';
             }
         }
 
-        document.getElementById('close-edit-modal').addEventListener('click', () => {
-            document.getElementById('edit-player-modal').classList.add('hidden');
+        document.getElementById('close-edit-modal').addEventListener('click', (event) => {
+            event.preventDefault();
+            closePlayerEditModal();
         });
 
         document.getElementById('edit-ec-name').addEventListener('input', () => {
+            if (!currentCanEditPlayerProfile || document.getElementById('edit-player-modal')?.classList.contains('hidden')) return;
             privateFieldsDirty.emergencyContact = true;
         });
 
         document.getElementById('edit-ec-phone').addEventListener('input', () => {
+            if (!currentCanEditPlayerProfile || document.getElementById('edit-player-modal')?.classList.contains('hidden')) return;
             privateFieldsDirty.emergencyContact = true;
         });
 
         document.getElementById('edit-medical-info').addEventListener('input', () => {
+            if (!currentCanEditPlayerProfile || document.getElementById('edit-player-modal')?.classList.contains('hidden')) return;
             privateFieldsDirty.medicalInfo = true;
         });
 
         document.getElementById('edit-photo-input').addEventListener('change', (e) => {
             const file = e.target.files[0];
-            if (file) {
-                const reader = new FileReader();
-                reader.onload = (e) => {
-                    document.getElementById('edit-photo-preview').innerHTML = `<img loading="lazy" decoding="async" src="${e.target.result}" class="w-full h-full object-cover">`;
-                };
-                reader.readAsDataURL(file);
-            }
+            const context = capturePlayerAuthContext();
+            if (!file || !isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) return;
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) return;
+                document.getElementById('edit-photo-preview').innerHTML = `<img loading="lazy" decoding="async" src="${event.target.result}" class="w-full h-full object-cover">`;
+            };
+            reader.readAsDataURL(file);
         });
 
         document.getElementById('edit-player-form').addEventListener('submit', async (e) => {
             e.preventDefault();
+            const context = capturePlayerAuthContext();
+            if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) return;
             const btn = document.getElementById('save-player-btn');
             btn.disabled = true;
             btn.textContent = 'Saving...';
             let newlyUploadedPlayerPhotoPath = '';
             let playerPhotoPersisted = false;
-            const previousPhotoPath = String(currentPrivateProfile?.photoPath || currentPlayer?.photoPath || '').trim();
+            const player = currentPlayer;
+            const loadedPrivateProfile = currentPrivateProfile;
+            const profileLoadFailed = privateProfileLoadFailed;
+            const dirtyPrivateFields = { ...privateFieldsDirty };
+            const editableRosterFields = currentCanEditRosterProfile ? [...rosterFieldDefinitions] : [];
+            const previousPhotoPath = String(loadedPrivateProfile?.photoPath || player?.photoPath || '').trim();
 
             try {
                 const photoFile = document.getElementById('edit-photo-input').files[0];
-                if (photoFile && privateProfileLoadFailed) {
+                if (photoFile && profileLoadFailed) {
                     throw new Error('The existing player photo state could not be loaded. Refresh before replacing the photo.');
                 }
                 let photoUrl;
                 let photoPath;
-                const editableRosterFields = currentCanEditRosterProfile ? rosterFieldDefinitions : [];
                 const profileValues = collectRosterProfileValues(document.getElementById('edit-roster-profile-fields'), editableRosterFields);
                 const validationErrors = validateRosterProfileValues(editableRosterFields, profileValues);
+                const emergencyContactNameValue = document.getElementById('edit-ec-name').value;
+                const emergencyContactPhoneValue = document.getElementById('edit-ec-phone').value;
+                const medicalInfoValue = document.getElementById('edit-medical-info').value;
 
                 if (validationErrors.length) {
+                    if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) return;
                     alert(validationErrors.join('\n'));
-                    btn.disabled = false;
-                    btn.textContent = 'Save Changes';
                     return;
                 }
 
                 if (photoFile) {
+                    if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) return;
                     const uploadedPhoto = await uploadPlayerPhoto(photoFile, {
                         returnUpload: true,
-                        teamId: currentTeamId,
-                        playerId: currentPlayer.id
+                        teamId: context.teamId,
+                        playerId: context.playerId
                     });
-                    photoUrl = uploadedPhoto.url;
-                    newlyUploadedPlayerPhotoPath = uploadedPhoto.path;
+                    newlyUploadedPlayerPhotoPath = String(uploadedPhoto?.path || '').trim();
+                    if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) {
+                        if (newlyUploadedPlayerPhotoPath) {
+                            await deleteLegacyImageUpload(newlyUploadedPlayerPhotoPath).catch(() => undefined);
+                        }
+                        return;
+                    }
+                    photoUrl = uploadedPhoto?.url;
                     photoPath = newlyUploadedPlayerPhotoPath || null;
                 }
 
                 const data = buildPlayerProfileUpdatePayload({
-                    emergencyContactName: document.getElementById('edit-ec-name').value,
-                    emergencyContactPhone: document.getElementById('edit-ec-phone').value,
-                    medicalInfo: document.getElementById('edit-medical-info').value,
+                    emergencyContactName: emergencyContactNameValue,
+                    emergencyContactPhone: emergencyContactPhoneValue,
+                    medicalInfo: medicalInfoValue,
                     photoUrl,
                     photoPath,
-                    profile: editableRosterFields.length ? { ...(currentPlayer.profile || {}), customFields: profileValues } : null,
-                    privateProfileLoadFailed,
-                    privateFieldsDirty
+                    profile: editableRosterFields.length ? { ...(player.profile || {}), customFields: profileValues } : null,
+                    privateProfileLoadFailed: profileLoadFailed,
+                    privateFieldsDirty: dirtyPrivateFields
                 });
                 const { emergencyContact, medicalInfo, ...publicData } = data;
                 const privateData = {};
@@ -1926,12 +2090,21 @@
                 }
 
                 try {
-                    await updatePlayerProfile(currentTeamId, currentPlayer.id, publicData);
+                    if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) return;
+                    await updatePlayerProfile(context.teamId, context.playerId, publicData);
                     playerPhotoPersisted = Boolean(newlyUploadedPlayerPhotoPath);
+                    if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) return;
                 } catch (error) {
+                    if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) {
+                        if (newlyUploadedPlayerPhotoPath && isDefinitiveFirestoreWriteFailure(error)) {
+                            await deleteLegacyImageUpload(newlyUploadedPlayerPhotoPath).catch(() => undefined);
+                        }
+                        return;
+                    }
                     const persistenceState = newlyUploadedPlayerPhotoPath && !isDefinitiveFirestoreWriteFailure(error)
-                        ? await getPlayerPhotoPersistenceState(newlyUploadedPlayerPhotoPath)
+                        ? await getPlayerPhotoPersistenceState(newlyUploadedPlayerPhotoPath, context)
                         : 'not-committed';
+                    if (persistenceState === 'stale') return;
                     if (persistenceState === 'committed') {
                         playerPhotoPersisted = true;
                     } else {
@@ -1942,25 +2115,37 @@
                     }
                 }
                 if (newlyUploadedPlayerPhotoPath && previousPhotoPath && previousPhotoPath !== newlyUploadedPlayerPhotoPath) {
+                    if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) return;
                     await deleteLegacyImageUpload(previousPhotoPath).catch(() => undefined);
+                    if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) return;
                 }
                 if (playerPhotoPersisted) {
+                    if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) return;
                     document.getElementById('edit-photo-input').value = '';
                 }
                 if (Object.keys(privateData).length > 0) {
-                    await updatePlayerPrivateProfile(currentTeamId, currentPlayer.id, privateData);
+                    if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) return;
+                    await updatePlayerPrivateProfile(context.teamId, context.playerId, privateData);
+                    if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) return;
                 }
-                
+
+                if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) return;
                 alert('Profile updated!');
                 location.reload();
             } catch (err) {
+                if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) return;
                 if (newlyUploadedPlayerPhotoPath && !playerPhotoPersisted) {
+                    if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) return;
                     await deleteLegacyImageUpload(newlyUploadedPlayerPhotoPath).catch(() => undefined);
+                    if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) return;
                 }
                 console.error(err);
                 alert('Error updating profile: ' + err.message);
-                btn.disabled = false;
-                btn.textContent = 'Save Changes';
+            } finally {
+                if (isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) {
+                    btn.disabled = false;
+                    btn.textContent = 'Save Changes';
+                }
             }
         });
     </script>

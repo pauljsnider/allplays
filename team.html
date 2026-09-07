@@ -347,8 +347,8 @@
         import { getDefaultSchedulePrintOptions, printSchedule, promptSchedulePrintOptions } from './js/schedule-print.js?v=2';
         import { getGameReplayLifecycle } from './js/game-replay-video.js?v=3';
         import { hasReplayVideoEvidence } from './js/schedule-watch-cta.js?v=3';
-        import { aggregateCoverageAwareSeasonStats, aggregateCoverageAwareTeamStats, getActivationPinnedDiamondStatCatalog, getCoverageAwareStatValue, getDiamondPublicPlayerStatsCollectionPath, hasMixedActivationPinnedDiamondStatIds, isDiamondV2Game, prepareDiamondStatDocumentForSeason, resolveDiamondManagerTeamStatDocument, resolveDiamondPublicStatDocuments, resolveDiamondPublicTeamStatDocument, resolveDiamondStatConfigsForGames } from './js/diamond-stat-presentation.js?v=7';
-        import { loadDiamondManagerStats } from './js/diamond-manager-stats.js?v=4';
+        import { aggregateCoverageAwareSeasonStats, aggregateCoverageAwareTeamStats, getActivationPinnedDiamondStatCatalog, getCoverageAwareStatValue, getDiamondPublicPlayerStatsCollectionPath, hasMixedActivationPinnedDiamondStatIds, isDiamondV2Game, prepareDiamondStatDocumentForSeason, resolveDiamondManagerStatDocuments, resolveDiamondManagerTeamStatDocument, resolveDiamondPublicStatDocuments, resolveDiamondPublicTeamStatDocument, resolveDiamondStatConfigsForGames } from './js/diamond-stat-presentation.js?v=7';
+        import { buildDiamondReportPlayers, loadCompleteDiamondManagerStats } from './js/diamond-manager-stats.js?v=5';
         import { buildDiamondStatsCsv, downloadDiamondStatsCsv, getDiamondStatsExportFilename } from './js/diamond-stat-export.js?v=7';
 
         renderFooter(document.getElementById('footer-container'));
@@ -375,6 +375,7 @@
         let currentTeam = null;
         let currentTeamId = null;
         let preparedPrivateCalendarFeedUrl = '';
+        let preparedPrivateCalendarContext = null;
         let syncCalendarPreparationId = 0;
         let currentTeamAccessInfo = { hasAccess: false, accessLevel: null };
         let currentPlayers = [];
@@ -393,6 +394,147 @@
         let scheduleCalendarYear = new Date().getFullYear();
         let seasonFilterLabel = String(new Date().getFullYear());
 
+        function hasTeamManagerAccess(user = currentUser, accessInfo = currentTeamAccessInfo) {
+            return Boolean(user && (
+                user.isAdmin
+                || accessInfo?.accessLevel === 'full'
+                || accessInfo?.accessLevel === 'owner'
+                || accessInfo?.accessLevel === 'admin'
+            ));
+        }
+
+        function captureTeamAuthContext() {
+            return Object.freeze({
+                generation: teamLoadGeneration,
+                uid: currentUser?.uid || '',
+                teamId: currentTeamId || '',
+                user: currentUser ? Object.freeze({ ...currentUser }) : null,
+                accessInfo: Object.freeze({
+                    hasAccess: currentTeamAccessInfo?.hasAccess === true,
+                    accessLevel: currentTeamAccessInfo?.accessLevel || null
+                })
+            });
+        }
+
+        function isTeamAuthContextCurrent(context, { requireAccess = false, requireManager = false } = {}) {
+            if (!context
+                || context.generation !== teamLoadGeneration
+                || context.uid !== (currentUser?.uid || '')
+                || context.teamId !== (currentTeamId || '')) return false;
+            if (requireAccess && (!context.uid || !context.accessInfo.hasAccess || !currentTeamAccessInfo?.hasAccess)) return false;
+            if (requireManager && (
+                !hasTeamManagerAccess(context.user, context.accessInfo)
+                || !hasTeamManagerAccess(currentUser, currentTeamAccessInfo)
+            )) return false;
+            return true;
+        }
+
+        function isButtonFromTeamContext(button, context) {
+            if (!button || !context) return false;
+            const renderedGeneration = Number(button.dataset?.teamGeneration);
+            const renderedTeamId = String(button.dataset?.teamId || context.teamId).trim();
+            return Number.isSafeInteger(renderedGeneration)
+                && renderedGeneration === context.generation
+                && renderedTeamId === context.teamId;
+        }
+
+        function setTeamPageControlsEnabled(enabled, { canSync = false } = {}) {
+            [
+                'download-ics',
+                'print-schedule',
+                'print-schedule-options',
+                'schedule-view-list',
+                'schedule-view-calendar',
+                'schedule-calendar-prev',
+                'schedule-calendar-next',
+                'schedule-filter-all-upcoming',
+                'schedule-filter-upcoming-games',
+                'schedule-filter-upcoming-practices',
+                'schedule-filter-availability',
+                'schedule-filter-recent-results',
+                'schedule-filter-past-events'
+            ].forEach((id) => {
+                const control = document.getElementById(id);
+                if (control) control.disabled = !enabled;
+            });
+            const showPracticesControl = document.getElementById('show-practices');
+            if (showPracticesControl) showPracticesControl.disabled = !enabled;
+            const syncButton = document.getElementById('sync-calendar');
+            if (syncButton) {
+                syncButton.disabled = !(enabled && canSync);
+                syncButton.classList.toggle('hidden', !(enabled && canSync));
+            }
+            const publicFeedButton = document.getElementById('public-games-feed');
+            if (publicFeedButton) {
+                publicFeedButton.disabled = !enabled;
+                if (!enabled) publicFeedButton.hidden = true;
+            }
+        }
+
+        function resetTeamAuthBoundState() {
+            currentUser = null;
+            currentTeamAccessInfo = { hasAccess: false, accessLevel: null };
+            currentTeam = null;
+            currentTeamId = null;
+            currentPlayers = [];
+            currentTeamMemberUsers = [];
+            teamGames = [];
+            gamesById = {};
+            allScheduleEvents = [];
+            adSpaceSponsors = [];
+            latestGameId = null;
+            nextGameCountdown = null;
+            showPractices = false;
+            playingTimeExpanded = false;
+            scheduleViewFilter = 'all-upcoming';
+            scheduleViewMode = 'list';
+            if (countdownIntervalId) clearInterval(countdownIntervalId);
+            countdownIntervalId = null;
+            closeSyncCalendarModal();
+            closeScheduleDayModal({ clearContent: true });
+            document.getElementById('sponsor-promo-modal')?.remove();
+
+            const showPracticesControl = document.getElementById('show-practices');
+            if (showPracticesControl) showPracticesControl.checked = false;
+            setTeamPageControlsEnabled(false);
+            [
+                'team-nav-banner',
+                'team-header',
+                'team-pass-container',
+                'scoreboard-widget-tools',
+                'season-overview',
+                'team-scorekeeper-section',
+                'availability-settings-section',
+                'team-staff-permissions-section',
+                'tournament-standings-content',
+                'local-attractions-content',
+                'playing-time-insights-meta',
+                'playing-time-insights-body',
+                'team-advanced-stats',
+                'schedule-list',
+                'schedule-calendar-grid',
+                'roster-list',
+                'player-tracking-section'
+            ].forEach((id) => {
+                const container = document.getElementById(id);
+                if (container) container.innerHTML = '';
+            });
+            [
+                'scoreboard-widget-tools',
+                'team-scorekeeper-section',
+                'availability-settings-section',
+                'team-staff-permissions-section',
+                'tournament-standings-section',
+                'local-attractions-section',
+                'playing-time-insights',
+                'player-tracking-section',
+                'schedule-calendar-nav',
+                'schedule-calendar-grid'
+            ].forEach((id) => document.getElementById(id)?.classList.add('hidden'));
+            if (playingTimeContent) playingTimeContent.style.maxHeight = '0px';
+            if (playingTimeChevron) playingTimeChevron.style.transform = 'rotate(-90deg)';
+        }
+
         window.setScheduleFilter = setScheduleFilter;
         window.setScheduleView = setScheduleView;
         window.navScheduleMonth = navScheduleMonth;
@@ -406,10 +548,10 @@
 
         function canManageTeamAvailability() {
             return !!currentUser && (
-                currentUser?.isAdmin ||
-                currentTeamAccessInfo?.accessLevel === 'full' ||
-                currentTeamAccessInfo?.accessLevel === 'owner' ||
-                currentTeamAccessInfo?.accessLevel === 'admin'
+                currentUser?.isAdmin
+                || currentTeamAccessInfo?.accessLevel === 'full'
+                || currentTeamAccessInfo?.accessLevel === 'owner'
+                || currentTeamAccessInfo?.accessLevel === 'admin'
             );
         }
 
@@ -578,10 +720,10 @@
                                             <div class="text-xs text-gray-500">${escapeHtml(dutyText)}</div>
                                         </div>
                                         <div class="flex flex-wrap gap-2 shrink-0">
-                                            <button type="button" data-member-user-id="${escapeAttr(target.userId)}" data-granted="${scorekeeperGranted ? 'true' : 'false'}" onclick="toggleScorekeeperGrant(this)" class="px-3 py-1.5 text-sm font-semibold rounded-lg border transition ${scorekeeperGranted ? 'border-red-200 text-red-700 bg-red-50 hover:bg-red-100' : 'border-primary-200 text-primary-700 bg-primary-50 hover:bg-primary-100'}">
+                                            <button type="button" data-team-generation="${teamLoadGeneration}" data-team-id="${escapeAttr(currentTeamId)}" data-member-user-id="${escapeAttr(target.userId)}" data-granted="${scorekeeperGranted ? 'true' : 'false'}" onclick="toggleScorekeeperGrant(this)" class="px-3 py-1.5 text-sm font-semibold rounded-lg border transition ${scorekeeperGranted ? 'border-red-200 text-red-700 bg-red-50 hover:bg-red-100' : 'border-primary-200 text-primary-700 bg-primary-50 hover:bg-primary-100'}">
                                                 ${scorekeeperGranted ? 'Revoke scorekeeper' : 'Grant scorekeeper'}
                                             </button>
-                                            <button type="button" data-member-user-id="${escapeAttr(target.userId)}" data-granted="${streamScoreGranted ? 'true' : 'false'}" onclick="toggleStreamScoreGrant(this)" class="px-3 py-1.5 text-sm font-semibold rounded-lg border transition ${streamScoreGranted ? 'border-red-200 text-red-700 bg-red-50 hover:bg-red-100' : 'border-emerald-200 text-emerald-700 bg-emerald-50 hover:bg-emerald-100'}">
+                                            <button type="button" data-team-generation="${teamLoadGeneration}" data-team-id="${escapeAttr(currentTeamId)}" data-member-user-id="${escapeAttr(target.userId)}" data-granted="${streamScoreGranted ? 'true' : 'false'}" onclick="toggleStreamScoreGrant(this)" class="px-3 py-1.5 text-sm font-semibold rounded-lg border transition ${streamScoreGranted ? 'border-red-200 text-red-700 bg-red-50 hover:bg-red-100' : 'border-emerald-200 text-emerald-700 bg-emerald-50 hover:bg-emerald-100'}">
                                                 ${streamScoreGranted ? 'Revoke Stream & Score' : 'Assign Stream & Score'}
                                             </button>
                                         </div>
@@ -596,29 +738,38 @@
         }
 
         async function toggleScorekeeperGrant(button) {
-            if (!button || button.disabled || !currentTeamId) return;
+            const context = captureTeamAuthContext();
+            if (
+                !button
+                || button.disabled
+                || !isButtonFromTeamContext(button, context)
+                || !isTeamAuthContextCurrent(context, { requireManager: true })
+            ) return;
             const memberUserId = String(button.dataset.memberUserId || '').trim();
             if (!memberUserId) return;
             const wasGranted = button.dataset.granted === 'true';
+            const team = currentTeam;
             const status = document.getElementById('team-scorekeeper-status');
             try {
                 button.disabled = true;
                 if (status) status.textContent = wasGranted ? 'Revoking scorekeeper access...' : 'Granting scorekeeper access...';
+                if (!isTeamAuthContextCurrent(context, { requireManager: true })) return;
                 if (wasGranted) {
-                    await revokeScorekeeperAccess(currentTeamId, memberUserId);
+                    await revokeScorekeeperAccess(context.teamId, memberUserId);
                 } else {
-                    await grantScorekeeperAccess(currentTeamId, memberUserId);
+                    await grantScorekeeperAccess(context.teamId, memberUserId);
                 }
-                const nextIds = getSelectedScorekeeperIds(currentTeam);
+                if (!isTeamAuthContextCurrent(context, { requireManager: true })) return;
+                const nextIds = getSelectedScorekeeperIds(team);
                 if (wasGranted) {
                     nextIds.delete(memberUserId);
                 } else {
                     nextIds.add(memberUserId);
                 }
                 currentTeam = {
-                    ...currentTeam,
+                    ...team,
                     teamPermissions: {
-                        ...(currentTeam?.teamPermissions || {}),
+                        ...(team?.teamPermissions || {}),
                         scorekeeping: {
                             mode: 'selected',
                             memberIds: Array.from(nextIds)
@@ -629,27 +780,37 @@
                 const nextStatus = document.getElementById('team-scorekeeper-status');
                 if (nextStatus) nextStatus.textContent = wasGranted ? 'Scorekeeper access revoked.' : 'Scorekeeper access granted.';
             } catch (err) {
+                if (!isTeamAuthContextCurrent(context, { requireManager: true })) return;
                 button.disabled = false;
                 if (status) status.textContent = `Unable to update scorekeeper access: ${err?.message || err}`;
             }
         }
 
         async function toggleStreamScoreGrant(button) {
-            if (!button || button.disabled || !currentTeamId) return;
+            const context = captureTeamAuthContext();
+            if (
+                !button
+                || button.disabled
+                || !isButtonFromTeamContext(button, context)
+                || !isTeamAuthContextCurrent(context, { requireManager: true })
+            ) return;
             const memberUserId = String(button.dataset.memberUserId || '').trim();
             if (!memberUserId) return;
             const wasGranted = button.dataset.granted === 'true';
+            const team = currentTeam;
             const status = document.getElementById('team-scorekeeper-status');
             try {
                 button.disabled = true;
                 if (status) status.textContent = wasGranted ? 'Revoking Stream & Score duty...' : 'Assigning Stream & Score duty...';
+                if (!isTeamAuthContextCurrent(context, { requireManager: true })) return;
                 if (wasGranted) {
-                    await revokeStreamScoreAccess(currentTeamId, memberUserId);
+                    await revokeStreamScoreAccess(context.teamId, memberUserId);
                 } else {
-                    await grantStreamScoreAccess(currentTeamId, memberUserId);
+                    await grantStreamScoreAccess(context.teamId, memberUserId);
                 }
-                const nextScorekeeperIds = getSelectedScorekeeperIds(currentTeam);
-                const nextStreamingIds = getSelectedPermissionIds(currentTeam, 'streaming');
+                if (!isTeamAuthContextCurrent(context, { requireManager: true })) return;
+                const nextScorekeeperIds = getSelectedScorekeeperIds(team);
+                const nextStreamingIds = getSelectedPermissionIds(team, 'streaming');
                 if (wasGranted) {
                     nextScorekeeperIds.delete(memberUserId);
                     nextStreamingIds.delete(memberUserId);
@@ -658,9 +819,9 @@
                     nextStreamingIds.add(memberUserId);
                 }
                 currentTeam = {
-                    ...currentTeam,
+                    ...team,
                     teamPermissions: {
-                        ...(currentTeam?.teamPermissions || {}),
+                        ...(team?.teamPermissions || {}),
                         scorekeeping: {
                             mode: 'selected',
                             memberIds: Array.from(nextScorekeeperIds)
@@ -675,6 +836,7 @@
                 const nextStatus = document.getElementById('team-scorekeeper-status');
                 if (nextStatus) nextStatus.textContent = wasGranted ? 'Stream & Score duty revoked.' : 'Stream & Score duty assigned.';
             } catch (err) {
+                if (!isTeamAuthContextCurrent(context, { requireManager: true })) return;
                 button.disabled = false;
                 if (status) status.textContent = `Unable to update Stream & Score duty: ${err?.message || err}`;
             }
@@ -719,7 +881,7 @@
                                 </select>
                             </label>
                             <div class="flex items-end">
-                                <button onclick="saveAvailabilityPreferences()" class="w-full bg-primary-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-primary-700 transition">Save</button>
+                                <button data-team-generation="${teamLoadGeneration}" data-team-id="${escapeAttr(currentTeamId)}" onclick="saveAvailabilityPreferences(this)" class="w-full bg-primary-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-primary-700 transition">Save</button>
                             </div>
                         </div>
                     </div>
@@ -754,19 +916,27 @@
             }
         }
 
-        async function saveAvailabilityPreferences() {
-            if (!currentTeamId) return;
+        async function saveAvailabilityPreferences(button) {
+            const context = captureTeamAuthContext();
+            if (
+                !isButtonFromTeamContext(button, context)
+                || !isTeamAuthContextCurrent(context, { requireManager: true })
+            ) return;
             const status = document.getElementById('availability-settings-status');
             const cutoffMinutesBeforeStart = Number(document.getElementById('availability-cutoff-minutes')?.value || 0);
             const noteVisibility = document.getElementById('availability-note-visibility')?.value || 'admins';
+            const team = currentTeam;
             try {
                 if (status) status.textContent = 'Saving availability settings...';
-                const availabilityPreferences = await saveTeamAvailabilityPreferences(currentTeamId, { cutoffMinutesBeforeStart, noteVisibility });
-                currentTeam = { ...currentTeam, availabilityPreferences };
+                if (!isTeamAuthContextCurrent(context, { requireManager: true })) return;
+                const availabilityPreferences = await saveTeamAvailabilityPreferences(context.teamId, { cutoffMinutesBeforeStart, noteVisibility });
+                if (!isTeamAuthContextCurrent(context, { requireManager: true })) return;
+                currentTeam = { ...team, availabilityPreferences };
                 renderAvailabilitySettings(currentTeam);
                 const nextStatus = document.getElementById('availability-settings-status');
                 if (nextStatus) nextStatus.textContent = 'Saved.';
             } catch (err) {
+                if (!isTeamAuthContextCurrent(context, { requireManager: true })) return;
                 if (status) status.textContent = `Unable to save: ${err?.message || err}`;
             }
         }
@@ -787,10 +957,10 @@
             return `${summary.going || 0} going · ${summary.maybe || 0} maybe · ${summary.notGoing || 0} not going · ${summary.notResponded || 0} no response`;
         }
 
-        function getLinkedPlayerIdsForCurrentTeam() {
-            const links = Array.isArray(currentUser?.parentOf) ? currentUser.parentOf : [];
+        function getLinkedPlayerIdsForCurrentTeam(user = currentUser, teamId = currentTeamId) {
+            const links = Array.isArray(user?.parentOf) ? user.parentOf : [];
             return Array.from(new Set(links
-                .filter((link) => link?.teamId === currentTeamId && typeof link?.playerId === 'string' && link.playerId.trim())
+                .filter((link) => link?.teamId === teamId && typeof link?.playerId === 'string' && link.playerId.trim())
                 .map((link) => link.playerId.trim())));
         }
 
@@ -815,11 +985,11 @@
                         <div class="text-[11px] text-gray-500">${summary}</div>
                     </div>
                     <div class="flex gap-2">
-                        <button ${locked ? 'disabled aria-disabled="true"' : ''} data-team-id="${escapeAttr(currentTeamId)}" data-game-id="${escapeAttr(game.gameId || game.id)}" onclick="submitTeamAvailabilityFromButton(this, 'going')" class="rsvp-btn rsvp-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${locked ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed' : (game.myRsvp === 'going' ? 'bg-green-600 text-white border-green-600' : 'bg-white text-green-700 border-green-300 hover:bg-green-50')}">Going</button>
-                        <button ${locked ? 'disabled aria-disabled="true"' : ''} data-team-id="${escapeAttr(currentTeamId)}" data-game-id="${escapeAttr(game.gameId || game.id)}" onclick="submitTeamAvailabilityFromButton(this, 'maybe')" class="rsvp-btn rsvp-maybe flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${locked ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed' : (game.myRsvp === 'maybe' ? 'bg-yellow-500 text-white border-yellow-500' : 'bg-white text-yellow-700 border-yellow-300 hover:bg-yellow-50')}">Maybe</button>
-                        <button ${locked ? 'disabled aria-disabled="true"' : ''} data-team-id="${escapeAttr(currentTeamId)}" data-game-id="${escapeAttr(game.gameId || game.id)}" onclick="submitTeamAvailabilityFromButton(this, 'not_going')" class="rsvp-btn rsvp-not-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${locked ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed' : (game.myRsvp === 'not_going' ? 'bg-red-500 text-white border-red-500' : 'bg-white text-red-700 border-red-300 hover:bg-red-50')}">Not Going</button>
+                        <button ${locked ? 'disabled aria-disabled="true"' : ''} data-team-generation="${teamLoadGeneration}" data-team-id="${escapeAttr(currentTeamId)}" data-game-id="${escapeAttr(game.gameId || game.id)}" onclick="submitTeamAvailabilityFromButton(this, 'going')" class="rsvp-btn rsvp-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${locked ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed' : (game.myRsvp === 'going' ? 'bg-green-600 text-white border-green-600' : 'bg-white text-green-700 border-green-300 hover:bg-green-50')}">Going</button>
+                        <button ${locked ? 'disabled aria-disabled="true"' : ''} data-team-generation="${teamLoadGeneration}" data-team-id="${escapeAttr(currentTeamId)}" data-game-id="${escapeAttr(game.gameId || game.id)}" onclick="submitTeamAvailabilityFromButton(this, 'maybe')" class="rsvp-btn rsvp-maybe flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${locked ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed' : (game.myRsvp === 'maybe' ? 'bg-yellow-500 text-white border-yellow-500' : 'bg-white text-yellow-700 border-yellow-300 hover:bg-yellow-50')}">Maybe</button>
+                        <button ${locked ? 'disabled aria-disabled="true"' : ''} data-team-generation="${teamLoadGeneration}" data-team-id="${escapeAttr(currentTeamId)}" data-game-id="${escapeAttr(game.gameId || game.id)}" onclick="submitTeamAvailabilityFromButton(this, 'not_going')" class="rsvp-btn rsvp-not-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${locked ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed' : (game.myRsvp === 'not_going' ? 'bg-red-500 text-white border-red-500' : 'bg-white text-red-700 border-red-300 hover:bg-red-50')}">Not Going</button>
                     </div>
-                    ${canRemind ? `<button type="button" data-team-id="${escapeAttr(currentTeamId)}" data-game-id="${escapeAttr(game.gameId || game.id)}" onclick="sendAvailabilityReminderFromButton(this)" class="mt-2 w-full px-3 py-1.5 text-xs font-semibold rounded-lg border border-primary-200 text-primary-700 bg-primary-50 hover:bg-primary-100 transition">Send reminder to ${reminderCount} no-response ${reminderCount === 1 ? 'recipient' : 'recipients'}</button>` : ''}
+                    ${canRemind ? `<button type="button" data-team-generation="${teamLoadGeneration}" data-team-id="${escapeAttr(currentTeamId)}" data-game-id="${escapeAttr(game.gameId || game.id)}" onclick="sendAvailabilityReminderFromButton(this)" class="mt-2 w-full px-3 py-1.5 text-xs font-semibold rounded-lg border border-primary-200 text-primary-700 bg-primary-50 hover:bg-primary-100 transition">Send reminder to ${reminderCount} no-response ${reminderCount === 1 ? 'recipient' : 'recipients'}</button>` : ''}
                     ${lockCopy ? `<div class="mt-1 text-xs font-semibold text-amber-700">${escapeHtml(lockCopy)}</div>` : ''}
                     <div data-team-availability-status class="mt-1 text-xs text-gray-500"></div>
                 </div>
@@ -827,53 +997,72 @@
         }
 
         async function submitTeamAvailabilityFromButton(btn, response) {
-            if (btn?.disabled) return;
-            const teamId = btn?.dataset?.teamId || currentTeamId;
+            const context = captureTeamAuthContext();
+            if (
+                btn?.disabled
+                || !isButtonFromTeamContext(btn, context)
+                || !isTeamAuthContextCurrent(context, { requireAccess: true })
+            ) return;
+            const teamId = btn?.dataset?.teamId || context.teamId;
             const gameId = btn?.dataset?.gameId || '';
-            if (!teamId || !gameId || !currentUser) return;
+            if (!teamId || !gameId || !context.user) return;
             const container = btn.closest('[data-team-availability-container]');
             const status = container?.querySelector('[data-team-availability-status]');
             try {
                 if (status) status.textContent = 'Saving...';
-                const summary = await submitRsvp(teamId, gameId, currentUser.uid, {
-                    displayName: currentUser.displayName || currentUser.email || 'Team member',
-                    playerIds: getLinkedPlayerIdsForCurrentTeam(),
+                if (!isTeamAuthContextCurrent(context, { requireAccess: true })) return;
+                const summary = await submitRsvp(teamId, gameId, context.user.uid, {
+                    displayName: context.user.displayName || context.user.email || 'Team member',
+                    playerIds: getLinkedPlayerIdsForCurrentTeam(context.user, context.teamId),
                     response
                 });
+                if (!isTeamAuthContextCurrent(context, { requireAccess: true })) return;
                 allScheduleEvents = (allScheduleEvents || []).map((event) => {
                     if (event.type !== 'db' || (event.gameId || event.id) !== gameId) return event;
                     return { ...event, myRsvp: response, rsvpSummary: summary || event.rsvpSummary };
                 });
                 renderScheduleFromControls();
             } catch (err) {
+                if (!isTeamAuthContextCurrent(context, { requireAccess: true })) return;
                 if (status) status.textContent = err?.message || 'Unable to save availability.';
             }
         }
 
         async function sendAvailabilityReminderFromButton(btn) {
-            if (btn?.disabled || !canSendAvailabilityReminders()) return;
-            const teamId = btn?.dataset?.teamId || currentTeamId;
+            const context = captureTeamAuthContext();
+            if (
+                btn?.disabled
+                || !isButtonFromTeamContext(btn, context)
+                || !isTeamAuthContextCurrent(context, { requireManager: true })
+            ) return;
+            const teamId = btn?.dataset?.teamId || context.teamId;
             const gameId = btn?.dataset?.gameId || '';
             const event = (allScheduleEvents || []).find((item) => item.type === 'db' && (item.gameId || item.id) === gameId);
-            if (!teamId || !gameId || !event || !currentUser) return;
+            const players = [...currentPlayers];
+            if (!teamId || !gameId || !event || !context.user) return;
             const container = btn.closest('[data-team-availability-container]');
             const status = container?.querySelector('[data-team-availability-status]');
 
             try {
                 btn.disabled = true;
                 if (status) status.textContent = 'Checking non-responders...';
+                if (!isTeamAuthContextCurrent(context, { requireManager: true })) return;
                 const rsvps = await getRsvps(teamId, gameId);
-                const recipients = buildAvailabilityReminderRecipients(currentPlayers, rsvps);
+                if (!isTeamAuthContextCurrent(context, { requireManager: true })) return;
+                const recipients = buildAvailabilityReminderRecipients(players, rsvps);
                 if (recipients.playerIds.length === 0) {
                     if (status) status.textContent = 'Everyone has responded. No reminder sent.';
                     return;
                 }
+                if (!isTeamAuthContextCurrent(context, { requireManager: true })) return;
                 const confirmed = window.confirm(`Send an availability reminder for this event to ${recipients.recipientCount} no-response ${recipients.recipientCount === 1 ? 'recipient' : 'recipients'} covering ${recipients.playerCount} roster ${recipients.playerCount === 1 ? 'member' : 'members'}?`);
+                if (!isTeamAuthContextCurrent(context, { requireManager: true })) return;
                 if (!confirmed) {
                     if (status) status.textContent = 'Reminder cancelled.';
                     return;
                 }
                 if (status) status.textContent = 'Sending reminder...';
+                if (!isTeamAuthContextCurrent(context, { requireManager: true })) return;
                 await postChatMessage(teamId, {
                     text: buildRsvpReminderMessage({
                         eventType: event.isPractice ? 'practice' : 'game',
@@ -881,10 +1070,10 @@
                         dateLabel: formatDate(event.date),
                         missingCount: recipients.playerCount
                     }),
-                    senderId: currentUser.uid,
-                    senderName: currentUser.displayName || currentUser.email || 'Coach',
-                    senderEmail: currentUser.email || null,
-                    senderPhotoUrl: currentUser.photoURL || null,
+                    senderId: context.user.uid,
+                    senderName: context.user.displayName || context.user.email || 'Coach',
+                    senderEmail: context.user.email || null,
+                    senderPhotoUrl: context.user.photoURL || null,
                     ai: false,
                     aiMeta: {
                         type: 'availability-reminder',
@@ -894,15 +1083,17 @@
                         recipientParentEmails: recipients.parentEmails,
                         playerCount: recipients.playerCount,
                         recipientCount: recipients.recipientCount,
-                        sentBy: currentUser.uid,
+                        sentBy: context.user.uid,
                         sentAt: new Date().toISOString()
                     }
                 });
+                if (!isTeamAuthContextCurrent(context, { requireManager: true })) return;
                 if (status) status.textContent = `Reminder sent to ${recipients.recipientCount} no-response ${recipients.recipientCount === 1 ? 'recipient' : 'recipients'}.`;
             } catch (err) {
+                if (!isTeamAuthContextCurrent(context, { requireManager: true })) return;
                 if (status) status.textContent = err?.message || 'Unable to send reminder.';
             } finally {
-                btn.disabled = false;
+                if (isTeamAuthContextCurrent(context, { requireManager: true })) btn.disabled = false;
             }
         }
 
@@ -1487,6 +1678,23 @@
             });
         }
 
+        function renderConfiguredLeaderboardPlayer(entry, teamId) {
+            const content = `
+                <div class="flex items-center gap-3">
+                    <span class="inline-flex h-7 w-7 items-center justify-center rounded-full bg-primary-100 text-primary-700 text-xs font-bold">#${entry.rank}</span>
+                    <div>
+                        <div class="text-sm font-semibold text-gray-900">${escapeHtml(entry.playerName)}</div>
+                        <div class="text-xs text-gray-500">No. ${escapeHtml(entry.playerNumber)}</div>
+                    </div>
+                </div>
+                <div class="text-sm font-bold text-gray-900">${escapeHtml(entry.formattedValue)}</div>
+            `;
+            const classes = 'flex items-center justify-between gap-3 rounded-lg bg-white/80 border border-white px-3 py-2';
+            if (entry.canOpenProfile === false) return `<div class="${classes}">${content}</div>`;
+            const href = `player.html#teamId=${encodeURIComponent(teamId)}&playerId=${encodeURIComponent(entry.playerId)}`;
+            return `<a href="${href}" class="${classes} hover:border-primary-200 transition">${content}</a>`;
+        }
+
         function renderConfiguredTeamLeaderboards(snapshot, teamId) {
             const diamondProjection = snapshot?.diamondProjection;
             if (!snapshot?.topStats?.length && !diamondProjection?.hasDiamond) return '';
@@ -1559,18 +1767,7 @@
                                                 </div>
                                             </div>
                                             <div class="mt-4 space-y-2">
-                                                ${stat.leaders.slice(0, 3).map((entry) => `
-                                                    <a href="player.html#teamId=${encodeURIComponent(teamId)}&playerId=${encodeURIComponent(entry.playerId)}" class="flex items-center justify-between gap-3 rounded-lg bg-white/80 border border-white px-3 py-2 hover:border-primary-200 transition">
-                                                        <div class="flex items-center gap-3">
-                                                            <span class="inline-flex h-7 w-7 items-center justify-center rounded-full bg-primary-100 text-primary-700 text-xs font-bold">#${entry.rank}</span>
-                                                            <div>
-                                                                <div class="text-sm font-semibold text-gray-900">${escapeHtml(entry.playerName)}</div>
-                                                                <div class="text-xs text-gray-500">No. ${escapeHtml(entry.playerNumber)}</div>
-                                                            </div>
-                                                        </div>
-                                                        <div class="text-sm font-bold text-gray-900">${escapeHtml(entry.formattedValue)}</div>
-                                                    </a>
-                                                `).join('')}
+                                                ${stat.leaders.slice(0, 3).map((entry) => renderConfiguredLeaderboardPlayer(entry, teamId)).join('')}
                                             </div>
                                         </div>
                                     `).join('')}
@@ -1625,13 +1822,14 @@
             return null;
         }
 
-        async function renderPlayingTimeInsights(teamId, team, players, games) {
+        async function renderPlayingTimeInsights(teamId, team, players, games, isCurrentLoad = () => true) {
             const section = document.getElementById('playing-time-insights');
             const meta = document.getElementById('playing-time-insights-meta');
             const body = document.getElementById('playing-time-insights-body');
             if (!section || !meta || !body) return;
 
             const result = await findLatestGameWithPlayingTime(teamId, games);
+            if (!isCurrentLoad()) return;
             if (!result) {
                 section.classList.add('hidden');
                 return;
@@ -1778,9 +1976,8 @@
         checkAuth((user) => {
             // Allow viewing without login - user can be null
             const generation = ++teamLoadGeneration;
+            resetTeamAuthBoundState();
             currentUser = user;
-            const advancedStats = document.getElementById('team-advanced-stats');
-            if (advancedStats) advancedStats.innerHTML = '';
             renderHeader(document.getElementById('header-container'), user);
             loadTeam({ generation, expectedUid: user?.uid || '' });
         });
@@ -1792,8 +1989,6 @@
                 window.location.href = 'index.html';
                 return;
             }
-
-            currentTeamId = teamId;
 
             try {
                 const [team, players, dbGames] = await Promise.all([
@@ -1808,6 +2003,7 @@
                     : getConfigs(teamId).then((configs) => ({ configs, error: null })))
                     .catch((error) => ({ configs: null, error }));
                 if (!isCurrentLoad()) return;
+                currentTeamId = teamId;
                 const aggregatedStatDocumentsByGameId = new Map();
                 async function loadAggregatedStatDocumentsForGame(game) {
                     const gameId = game?.id || game?.gameId;
@@ -1847,8 +2043,9 @@
                 let configLoadError = initialConfigLoad.error;
                 let analyticsConfig = selectAnalyticsConfig(configs, team?.sport || '');
                 async function buildLeaderboardSnapshotForSeason(selectedSeason) {
+                    const leaderboardContext = captureTeamAuthContext();
                     const diamondGames = [];
-                    const requestManagerStats = currentTeamAccessInfo.accessLevel === 'full';
+                    const requestManagerStats = isTeamAuthContextCurrent(leaderboardContext, { requireManager: true });
                     const legacyStatsByPlayerId = await aggregateSeasonStatsByPlayerId({
                         games: dbGames,
                         seasonLabel: selectedSeason,
@@ -1856,7 +2053,8 @@
                             if (!isDiamondV2Game(game)) return loadAggregatedStatsForGame(game);
                             diamondGames.push({
                                 game,
-                                documents: requestManagerStats ? [] : await loadAggregatedStatDocumentsForGame(game)
+                                documents: [],
+                                publicDocuments: []
                             });
                             return {};
                         }
@@ -1898,28 +2096,54 @@
                     }
                     if (!diamondConfigResolution) throw buildDiamondConfigUnavailableError();
 
+                    await Promise.all(diamondGames.map(async (entry) => {
+                        const publicDocuments = await loadAggregatedStatDocumentsForGame(entry.game);
+                        entry.documents = publicDocuments;
+                        entry.publicDocuments = publicDocuments;
+                    }));
+
+                    const reportPlayers = buildDiamondReportPlayers({
+                        rosterPlayers: players,
+                        documentGroups: diamondGames.map(({ game, publicDocuments }) => ({
+                            game,
+                            documents: publicDocuments
+                        }))
+                    });
+
                     let statVisibility = 'public';
                     let privateStatsStatus = 'not-requested';
                     let managerBatch = null;
                     if (requestManagerStats) {
-                        managerBatch = await loadDiamondManagerStats({
+                        if (!isTeamAuthContextCurrent(leaderboardContext, { requireManager: true })) return null;
+                        managerBatch = await loadCompleteDiamondManagerStats({
                             teamId,
                             games: diamondGames.map(({ game }) => game),
-                            playerIds: players.map(({ id }) => id),
+                            playerIds: reportPlayers.map(({ id }) => id),
                             invoke: httpsCallable(functions, 'getDiamondManagerStats')
                         });
-                        if (managerBatch.status === 'complete') {
-                            diamondGames.forEach((entry) => {
-                                const gameId = entry.game?.id || entry.game?.gameId;
-                                entry.documents = [...(managerBatch.documentsByGameId.get(gameId) || [])];
+                        if (!isTeamAuthContextCurrent(leaderboardContext, { requireManager: true })) return null;
+                        const managerResolutions = diamondGames.map((entry) => {
+                            const gameId = entry.game?.id || entry.game?.gameId;
+                            return resolveDiamondManagerStatDocuments({
+                                game: entry.game,
+                                expectedPlayerIds: entry.publicDocuments.map(({ id }) => id),
+                                privateDocuments: [...(managerBatch.documentsByGameId.get(gameId) || [])],
+                                loadStatus: managerBatch.status
+                            });
+                        });
+                        const managerStatsComplete = managerBatch.status === 'complete'
+                            && managerResolutions.every(({ status }) => status === 'complete');
+                        if (managerStatsComplete) {
+                            diamondGames.forEach((entry, index) => {
+                                entry.documents = [...managerResolutions[index].documents];
                             });
                             statVisibility = 'manager-internal';
                             privateStatsStatus = 'complete';
                         } else {
-                            privateStatsStatus = managerBatch.status;
-                            await Promise.all(diamondGames.map(async (entry) => {
-                                entry.documents = await loadAggregatedStatDocumentsForGame(entry.game);
-                            }));
+                            privateStatsStatus = managerBatch.status === 'unavailable' ? 'unavailable' : 'partial';
+                            diamondGames.forEach((entry) => {
+                                entry.documents = entry.publicDocuments;
+                            });
                         }
                     }
 
@@ -2008,9 +2232,10 @@
                         statDefinitions: visibleDefinitions
                     };
                     const topDefinitions = visibleDefinitions.filter((definition) => definition.topStat);
+                    const reportPlayersById = new Map(reportPlayers.map((player) => [player.id, player]));
                     const topStats = topDefinitions.flatMap((definition) => {
                         const qualification = getDiamondLeaderboardQualification(definition, diamondGames.length);
-                        const eligiblePlayers = players.filter((player) => {
+                        const eligiblePlayers = reportPlayers.filter((player) => {
                             const stats = completeStatsByPlayerId[player.id] || {};
                             return Object.prototype.hasOwnProperty.call(stats, definition.id) && qualification.qualifies(stats);
                         });
@@ -2019,7 +2244,18 @@
                             config: { ...diamondAnalyticsConfig, statDefinitions: [definition] },
                             players: eligiblePlayers,
                             seasonStatsByPlayerId: completeStatsByPlayerId
-                        }).topStats.map((stat) => ({ ...stat, qualificationLabel: qualification.label }));
+                        }).topStats.map((stat) => {
+                            const decorateLeader = (leader) => leader ? {
+                                ...leader,
+                                canOpenProfile: reportPlayersById.get(leader.playerId)?.canOpenProfile === true
+                            } : null;
+                            return {
+                                ...stat,
+                                leader: decorateLeader(stat.leader),
+                                leaders: stat.leaders.map(decorateLeader),
+                                qualificationLabel: qualification.label
+                            };
+                        });
                     });
                     const groupsById = new Map();
                     topStats.forEach((stat) => {
@@ -2068,10 +2304,10 @@
                                     ...coverageAwareTeam.presentation,
                                     statVisibility
                                 }
-                            }, ...players.map((player) => ({
+                            }, ...reportPlayers.map((player) => ({
                                 recordType: 'season_player',
                                 identity: {
-                                    playerId: player.id,
+                                    playerId: player.canOpenProfile ? player.id : undefined,
                                     playerName: player.name,
                                     playerNumber: player.number
                                 },
@@ -2129,6 +2365,7 @@
                             if (profile.mediaUploadTeamIds) currentUser.mediaUploadTeamIds = profile.mediaUploadTeamIds;
                         }
                     } catch (e) {
+                        if (!isCurrentLoad()) return;
                         console.error('Error loading user profile for banner:', e);
                     }
 
@@ -2142,9 +2379,11 @@
                             if (!isCurrentLoad()) return;
                             unreadCount = counts[teamId] || 0;
                         } catch (e) {
+                            if (!isCurrentLoad()) return;
                             console.error('Error fetching unread counts:', e);
                         }
 
+                        if (!isCurrentLoad()) return;
                         renderTeamAdminBanner(
                             document.getElementById('team-nav-banner'),
                             {
@@ -2157,12 +2396,15 @@
                             }
                         );
                     }
+                } else {
+                    currentTeamAccessInfo = { hasAccess: false, accessLevel: null };
                 }
 
                 const pendingAdminInvites = canManageTeamAvailability() ? await loadPendingAdminInvites(teamId) : [];
                 if (!isCurrentLoad()) return;
-                currentTeamMemberUsers = await loadScorekeeperGrantUsers(teamId);
+                const teamMemberUsers = await loadScorekeeperGrantUsers(teamId);
                 if (!isCurrentLoad()) return;
+                currentTeamMemberUsers = teamMemberUsers;
                 renderScorekeeperGrantControls(team, players);
                 renderAvailabilitySettings(team);
                 renderStaffPermissionsSection(team, pendingAdminInvites);
@@ -2171,6 +2413,7 @@
                     team: { ...team, id: teamId }
                 });
                 renderScoreboardWidgetTools();
+                setTeamPageControlsEnabled(true, { canSync: currentTeamAccessInfo.hasAccess === true });
 
                 const seasonLabels = listSeasonLabels(dbGames);
                 if (!seasonLabels.length) {
@@ -2247,6 +2490,7 @@
                     adSpaceSponsors = await getAdSpaceSponsors(teamId);
                     if (!isCurrentLoad()) return;
                 } catch (error) {
+                    if (!isCurrentLoad()) return;
                     console.error('Error loading sponsor ad placements:', error);
                     adSpaceSponsors = [];
                 }
@@ -2254,8 +2498,8 @@
                 updatePublicGamesFeedButton(team, dbGames);
 
                 // Fetch calendar events and render schedule
-                await renderSchedule(team, dbGames);
-                if (!isCurrentLoad()) return;
+                const scheduleRendered = await renderSchedule(team, dbGames, captureTeamAuthContext());
+                if (!scheduleRendered || !isCurrentLoad()) return;
 
                 // After schedule is rendered, update season overview with next game info
                 const nextGame = getNextGame(allScheduleEvents);
@@ -2349,9 +2593,11 @@
                     if (!isCurrentLoad()) return;
                     renderLocalAttractionsSection(localAttractions);
                 } catch (error) {
+                    if (!isCurrentLoad()) return;
                     console.error('Error loading local attractions:', error);
                     renderLocalAttractionsSection([], error);
                 }
+                if (!isCurrentLoad()) return;
                 maybeShowSponsorPromo(teamId, adSpaceSponsors);
 
                 // Start countdown updates
@@ -2360,7 +2606,7 @@
                     ensureCountdownTimer();
                 }
 
-                await renderPlayingTimeInsights(teamId, team, players, dbGames);
+                await renderPlayingTimeInsights(teamId, team, players, dbGames, isCurrentLoad);
                 if (!isCurrentLoad()) return;
 
                 // Render Team Advanced Stats
@@ -2535,7 +2781,7 @@
                 updateConfiguredTeamLeaderboardSection(leaderboardSnapshot, teamId);
                 }
 
-                await renderPlayerTrackingSection(teamId, players);
+                await renderPlayerTrackingSection(teamId, players, captureTeamAuthContext());
                 if (!isCurrentLoad()) return;
 
                 // Render Roster
@@ -2593,21 +2839,21 @@
             }
         }
 
-        function getPlayerTrackingVisiblePlayerIds(players) {
-            if (!currentUser || !currentTeamId) return [];
+        function getPlayerTrackingVisiblePlayerIds(players, { user = currentUser, teamId = currentTeamId } = {}) {
+            if (!user || !teamId) return [];
             const ids = new Set();
-            (Array.isArray(currentUser.parentOf) ? currentUser.parentOf : [])
-                .filter((link) => link?.teamId === currentTeamId && link?.playerId)
+            (Array.isArray(user.parentOf) ? user.parentOf : [])
+                .filter((link) => link?.teamId === teamId && link?.playerId)
                 .forEach((link) => ids.add(String(link.playerId).trim()));
-            (Array.isArray(currentUser.playerKeys) ? currentUser.playerKeys : [])
+            (Array.isArray(user.playerKeys) ? user.playerKeys : [])
                 .map((key) => String(key || '').split('::'))
-                .filter(([teamId, playerId]) => teamId === currentTeamId && playerId)
+                .filter(([keyTeamId, playerId]) => keyTeamId === teamId && playerId)
                 .forEach(([, playerId]) => ids.add(playerId.trim()));
-            (Array.isArray(currentUser.playerOf) ? currentUser.playerOf : [])
-                .filter((link) => link?.teamId === currentTeamId && link?.playerId)
+            (Array.isArray(user.playerOf) ? user.playerOf : [])
+                .filter((link) => link?.teamId === teamId && link?.playerId)
                 .forEach((link) => ids.add(String(link.playerId).trim()));
             (Array.isArray(players) ? players : [])
-                .filter((player) => player?.id && [player.userId, player.authUid, player.accountUserId].includes(currentUser.uid))
+                .filter((player) => player?.id && [player.userId, player.authUid, player.accountUserId].includes(user.uid))
                 .forEach((player) => ids.add(player.id));
             return Array.from(ids).filter(Boolean);
         }
@@ -2620,20 +2866,25 @@
             return `<span class="inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${classes}">${label}</span>`;
         }
 
-        async function renderPlayerTrackingSection(teamId, players) {
+        async function renderPlayerTrackingSection(teamId, players, context) {
             const section = document.getElementById('player-tracking-section');
             if (!section) return;
             section.classList.add('hidden');
             section.innerHTML = '';
 
-            const visiblePlayerIds = getPlayerTrackingVisiblePlayerIds(players);
-            if (!currentUser || visiblePlayerIds.length === 0) return;
+            if (!isTeamAuthContextCurrent(context)) return;
+            const visiblePlayerIds = getPlayerTrackingVisiblePlayerIds(players, {
+                user: context.user,
+                teamId: context.teamId
+            });
+            if (!context.user || visiblePlayerIds.length === 0) return;
 
             try {
                 const [items, statuses] = await Promise.all([
                     getPublicTrackingItems(teamId),
                     getPlayerTrackingStatuses(teamId, visiblePlayerIds)
                 ]);
+                if (!isTeamAuthContextCurrent(context)) return;
                 const summaries = getVisiblePlayerTrackingSummary({ items, statuses, playerIds: visiblePlayerIds })
                     .filter((summary) => summary.items.length > 0);
                 if (summaries.length === 0) return;
@@ -2671,6 +2922,7 @@
                     </div>
                 `;
             } catch (error) {
+                if (!isTeamAuthContextCurrent(context)) return;
                 console.error('Error loading player tracking summary:', error);
             }
         }
@@ -2687,8 +2939,21 @@
         }
 
         async function getAllEvents(team, dbGames) {
+            const context = arguments[2] || Object.freeze({
+                teamId: currentTeamId,
+                user: currentUser,
+                accessInfo: currentTeamAccessInfo
+            });
+            const isContextCurrent = () => (
+                typeof isTeamAuthContextCurrent !== 'function'
+                || isTeamAuthContextCurrent(context)
+            );
+            if (!isContextCurrent()) return null;
             let allEvents = [];
             const scheduleEntries = [];
+            const teamId = context.teamId;
+            const user = context.user;
+            const accessInfo = context.accessInfo;
 
             for (const game of (dbGames || [])) {
                 const id = game.id || game.gameId;
@@ -2718,11 +2983,13 @@
                 });
             }
 
-            const trackedUids = await getTrackedCalendarEventUids(currentTeamId);
+            const trackedUids = await getTrackedCalendarEventUids(teamId);
+            if (!isContextCurrent()) return null;
 
             const publicCalendarEvents = team.hasCalendarSources && !team.calendarUrls?.length
-                ? await getPublicTeamCalendarEvents(currentTeamId)
+                ? await getPublicTeamCalendarEvents(teamId)
                 : [];
+            if (!isContextCurrent()) return null;
             const calendarSources = team.calendarUrls?.length
                 ? team.calendarUrls.map((calendarUrl) => ({ calendarUrl }))
                 : [{ calendarEvents: publicCalendarEvents }];
@@ -2731,6 +2998,7 @@
                 try {
                     const calendarEvents = calendarSource.calendarEvents ||
                         await fetchAndParseCalendar(calendarUrl);
+                    if (!isContextCurrent()) return null;
 
                     calendarEvents.forEach(event => {
                         if (isTrackedCalendarEvent(event, trackedUids)) return;
@@ -2762,29 +3030,34 @@
                         });
                     });
                 } catch (error) {
+                    if (!isContextCurrent()) return null;
                     console.warn('Calendar import unavailable:', calendarUrl || 'public projection', error);
                 }
             }
 
             const availabilityPreferences = normalizeAvailabilityPreferences(team?.availabilityPreferences);
-            const isTeamAdmin = canManageTeamAvailability();
-            const linkedPlayerIds = Array.from(new Set((Array.isArray(currentUser?.parentOf) ? currentUser.parentOf : [])
-                .filter((link) => link?.teamId === currentTeamId && typeof link?.playerId === 'string' && link.playerId.trim())
+            const isTeamAdmin = typeof hasTeamManagerAccess === 'function'
+                ? hasTeamManagerAccess(user, accessInfo)
+                : canManageTeamAvailability();
+            const linkedPlayerIds = Array.from(new Set((Array.isArray(user?.parentOf) ? user.parentOf : [])
+                .filter((link) => link?.teamId === teamId && typeof link?.playerId === 'string' && link.playerId.trim())
                 .map((link) => link.playerId.trim())));
-            const canReadRsvps = !!currentUser && !!currentTeamId && (
-                currentUser?.isAdmin ||
-                currentTeamAccessInfo?.accessLevel === 'full' ||
-                currentTeamAccessInfo?.accessLevel === 'parent' ||
-                (Array.isArray(currentUser?.parentTeamIds) && currentUser.parentTeamIds.includes(currentTeamId)) ||
+            const canReadRsvps = !!user && !!teamId && (
+                user?.isAdmin ||
+                accessInfo?.accessLevel === 'full' ||
+                accessInfo?.accessLevel === 'parent' ||
+                (Array.isArray(user?.parentTeamIds) && user.parentTeamIds.includes(teamId)) ||
                 linkedPlayerIds.length > 0
             );
-            const canSeeTeamNotes = canReadRsvps && (isTeamAdmin || (availabilityPreferences.noteVisibility === 'team' && currentTeamAccessInfo?.hasAccess));
+            const canSeeTeamNotes = canReadRsvps && (isTeamAdmin || (availabilityPreferences.noteVisibility === 'team' && accessInfo?.hasAccess));
             const dbGameIds = scheduleEntries.map((entry) => entry.id).filter(Boolean);
             let rsvpSummaries = new Map();
             if (canReadRsvps && isTeamAdmin) {
                 try {
-                    rsvpSummaries = typeof getRsvpSummaries === 'function' ? await getRsvpSummaries(currentTeamId, dbGameIds) : new Map();
+                    rsvpSummaries = typeof getRsvpSummaries === 'function' ? await getRsvpSummaries(teamId, dbGameIds) : new Map();
+                    if (!isContextCurrent()) return null;
                 } catch (_) {
+                    if (!isContextCurrent()) return null;
                     rsvpSummaries = new Map();
                 }
             }
@@ -2806,17 +3079,21 @@
                 if (canSeeTeamNotes) {
                     try {
                         const readableRsvps = isTeamAdmin
-                            ? await getRsvps(currentTeamId, id)
-                            : await getMyRsvps(currentTeamId, id, currentUser.uid, linkedPlayerIds);
+                            ? await getRsvps(teamId, id)
+                            : await getMyRsvps(teamId, id, user.uid, linkedPlayerIds);
+                        if (!isContextCurrent()) return null;
                         availabilityNotes = buildAvailabilityNoteRows(readableRsvps, availabilityPreferences, isTeamAdmin);
                     } catch (_) {
+                        if (!isContextCurrent()) return null;
                         availabilityNotes = [];
                     }
                 }
-                if (currentUser?.uid && canReadRsvps) {
+                if (user?.uid && canReadRsvps) {
                     try {
-                        myRsvp = typeof getMyRsvp === 'function' ? (await getMyRsvp(currentTeamId, id, currentUser.uid, linkedPlayerIds))?.response || null : null;
+                        myRsvp = typeof getMyRsvp === 'function' ? (await getMyRsvp(teamId, id, user.uid, linkedPlayerIds))?.response || null : null;
+                        if (!isContextCurrent()) return null;
                     } catch (_) {
+                        if (!isContextCurrent()) return null;
                         myRsvp = null;
                     }
                 }
@@ -2850,12 +3127,17 @@
             }
 
             allEvents.sort((a, b) => a.date - b.date);
+            if (!isContextCurrent()) return null;
             return allEvents;
         }
 
         async function renderSchedule(team, dbGames) {
-            allScheduleEvents = await getAllEvents(team, dbGames);
+            const context = arguments[2];
+            const events = await getAllEvents(team, dbGames, context);
+            if (!events || !isTeamAuthContextCurrent(context)) return false;
+            allScheduleEvents = events;
             setScheduleFilter('all-upcoming');
+            return true;
         }
 
         function getFilteredScheduleEvents() {
@@ -3052,6 +3334,8 @@
         }
 
         function openScheduleDayModal(year, month, day) {
+            const context = captureTeamAuthContext();
+            if (!currentTeam || !isTeamAuthContextCurrent(context)) return;
             const titleEl = document.getElementById('schedule-day-modal-title');
             const contentEl = document.getElementById('schedule-day-modal-content');
             const modalEl = document.getElementById('schedule-day-modal');
@@ -3068,8 +3352,14 @@
             modalEl.classList.remove('hidden');
         }
 
-        function closeScheduleDayModal() {
+        function closeScheduleDayModal({ clearContent = false } = {}) {
             document.getElementById('schedule-day-modal')?.classList.add('hidden');
+            if (clearContent) {
+                const title = document.getElementById('schedule-day-modal-title');
+                const content = document.getElementById('schedule-day-modal-content');
+                if (title) title.textContent = '';
+                if (content) content.innerHTML = '';
+            }
         }
 
         function setScheduleView(mode) {
@@ -3309,8 +3599,8 @@
             return `${date.getUTCFullYear()}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}T${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}${pad(date.getUTCSeconds())}Z`;
         }
 
-        function getPrivateCalendarFeedUrl(token) {
-            if (!token || !currentTeamId) return '';
+        function getPrivateCalendarFeedUrl(token, teamId) {
+            if (!token || !teamId) return '';
 
             const configuredUrl = window.__ALLPLAYS_CONFIG__?.teamCalendarFeedFunctionUrl || window.ALLPLAYS_TEAM_CALENDAR_FEED_URL;
             const fallbackUrl = window.__ALLPLAYS_CONFIG__?.calendarFetchFunctionUrl || window.ALLPLAYS_CALENDAR_FUNCTION_URL;
@@ -3320,18 +3610,20 @@
                     ? fallbackUrl.replace('fetchCalendarIcs', 'teamCalendarFeed')
                     : 'https://us-central1-game-flow-c6311.cloudfunctions.net/teamCalendarFeed');
             const separator = baseUrl.includes('?') ? '&' : '?';
-            return `${baseUrl}${separator}teamId=${encodeURIComponent(currentTeamId)}&token=${encodeURIComponent(token)}`;
+            return `${baseUrl}${separator}teamId=${encodeURIComponent(teamId)}&token=${encodeURIComponent(token)}`;
         }
 
-        async function resolvePrivateCalendarFeedUrl() {
-            if (!currentTeamId) return '';
+        async function resolvePrivateCalendarFeedUrl(context) {
+            if (!isTeamAuthContextCurrent(context, { requireAccess: true })) return '';
 
             try {
                 const getPrivateTeamCalendarFeedToken = httpsCallable(functions, 'getPrivateTeamCalendarFeedToken');
-                const result = await getPrivateTeamCalendarFeedToken({ teamId: currentTeamId });
+                if (!isTeamAuthContextCurrent(context, { requireAccess: true })) return '';
+                const result = await getPrivateTeamCalendarFeedToken({ teamId: context.teamId });
+                if (!isTeamAuthContextCurrent(context, { requireAccess: true })) return '';
                 const token = typeof result?.data?.token === 'string' ? result.data.token.trim() : '';
                 if (!token) return '';
-                return getPrivateCalendarFeedUrl(token);
+                return getPrivateCalendarFeedUrl(token, context.teamId);
             } catch {
                 return '';
             }
@@ -3360,14 +3652,18 @@
         }
 
         async function openSyncCalendarModal() {
+            const context = captureTeamAuthContext();
+            if (!isTeamAuthContextCurrent(context, { requireAccess: true })) return;
             const preparationId = ++syncCalendarPreparationId;
             preparedPrivateCalendarFeedUrl = '';
+            preparedPrivateCalendarContext = null;
             setSyncCalendarActionsEnabled(false);
             document.getElementById('sync-calendar-modal')?.classList.remove('hidden');
             setSyncCalendarFeedback('Preparing your private calendar link…');
-            const feedUrl = await resolvePrivateCalendarFeedUrl();
-            if (preparationId !== syncCalendarPreparationId) return;
+            const feedUrl = await resolvePrivateCalendarFeedUrl(context);
+            if (preparationId !== syncCalendarPreparationId || !isTeamAuthContextCurrent(context, { requireAccess: true })) return;
             preparedPrivateCalendarFeedUrl = feedUrl;
+            preparedPrivateCalendarContext = feedUrl ? context : null;
             setSyncCalendarActionsEnabled(Boolean(feedUrl));
             setSyncCalendarFeedback(feedUrl ? 'Choose where to subscribe, or copy the private link.' : 'Calendar subscription link is not available yet.', feedUrl ? 'neutral' : 'error');
         }
@@ -3375,11 +3671,14 @@
         function closeSyncCalendarModal() {
             syncCalendarPreparationId += 1;
             preparedPrivateCalendarFeedUrl = '';
+            preparedPrivateCalendarContext = null;
             setSyncCalendarActionsEnabled(false);
             document.getElementById('sync-calendar-modal')?.classList.add('hidden');
+            setSyncCalendarFeedback('');
         }
 
-        async function copyPrivateCalendarFeedUrl(feedUrl) {
+        async function copyPrivateCalendarFeedUrl(feedUrl, context) {
+            if (!isTeamAuthContextCurrent(context, { requireAccess: true })) return;
             if (!feedUrl) {
                 setSyncCalendarFeedback('Calendar subscription link is not available yet.', 'error');
                 return;
@@ -3399,9 +3698,11 @@
                     document.body.removeChild(input);
                     if (!copied) throw new Error('Copy command failed');
                 }
+                if (!isTeamAuthContextCurrent(context, { requireAccess: true })) return;
                 setSyncCalendarFeedback('Subscription link copied.', 'success');
                 showToast('Calendar link copied!');
             } catch (error) {
+                if (!isTeamAuthContextCurrent(context, { requireAccess: true })) return;
                 console.error('Failed to copy calendar feed URL:', error);
                 setSyncCalendarFeedback('Could not copy the link. Select Copy Link again or try manually.', 'error');
                 showToast('Failed to copy calendar link.');
@@ -3548,6 +3849,8 @@
         document.getElementById('sync-calendar-backdrop')?.addEventListener('click', closeSyncCalendarModal);
         document.getElementById('sync-calendar-apple')?.addEventListener('click', () => {
             const feedUrl = preparedPrivateCalendarFeedUrl;
+            const context = preparedPrivateCalendarContext;
+            if (!isTeamAuthContextCurrent(context, { requireAccess: true })) return;
             if (!feedUrl) {
                 setSyncCalendarFeedback('Calendar subscription link is not available yet.', 'error');
                 return;
@@ -3557,6 +3860,8 @@
         });
         document.getElementById('sync-calendar-google')?.addEventListener('click', () => {
             const feedUrl = preparedPrivateCalendarFeedUrl;
+            const context = preparedPrivateCalendarContext;
+            if (!isTeamAuthContextCurrent(context, { requireAccess: true })) return;
             if (!feedUrl) {
                 setSyncCalendarFeedback('Calendar subscription link is not available yet.', 'error');
                 return;
@@ -3565,7 +3870,7 @@
             setSyncCalendarFeedback('Opening Google Calendar subscription.', 'success');
         });
         document.getElementById('sync-calendar-copy')?.addEventListener('click', async () => {
-            await copyPrivateCalendarFeedUrl(preparedPrivateCalendarFeedUrl);
+            await copyPrivateCalendarFeedUrl(preparedPrivateCalendarFeedUrl, preparedPrivateCalendarContext);
         });
         document.getElementById('public-games-feed')?.addEventListener('click', () => {
             const url = getPublicGamesFeedUrl();

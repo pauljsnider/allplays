@@ -3,10 +3,24 @@ import { describe, expect, it } from 'vitest';
 
 const readRootFile = (fileName) => readFileSync(new URL(`../../${fileName}`, import.meta.url), 'utf8');
 
+function loadConfiguredLeaderboardPlayerRenderer() {
+    const source = readRootFile('team.html');
+    const start = source.indexOf('function renderConfiguredLeaderboardPlayer(entry, teamId) {');
+    const end = source.indexOf('\n\n        function renderConfiguredTeamLeaderboards(', start);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    const functionSource = source.slice(start, end);
+    return new Function('escapeHtml', `
+        ${functionSource}
+        return renderConfiguredLeaderboardPlayer;
+    `)((value) => String(value ?? ''));
+}
+
 describe('legacy Diamond stat surface contracts', () => {
     it('loads one versioned coverage helper on every legacy report surface', () => {
         for (const fileName of ['game.html', 'player.html', 'team.html']) {
             expect(readRootFile(fileName)).toContain("from './js/diamond-stat-presentation.js?v=7'");
+            expect(readRootFile(fileName)).toContain("from './js/diamond-manager-stats.js?v=5'");
         }
     });
 
@@ -56,15 +70,15 @@ describe('legacy Diamond stat surface contracts', () => {
         expect(gameSource).toContain('resolveDiamondPublicTeamStatDocument');
         expect(gameSource).toContain("statVisibility === 'manager-internal'");
         expect(gameSource).toContain('if (canEditStats && !diamondGame)');
-        expect(gameSource).toContain('loadDiamondManagerStats');
+        expect(gameSource).toContain('loadCompleteDiamondManagerStats');
         expect(playerSource).toContain('resolveDiamondStatConfigsForGames({');
         expect(playerSource).toContain('prepareDiamondStatDocumentForSeason(data, allowedStatIds');
-        expect(playerSource).toContain('loadDiamondManagerStats');
+        expect(playerSource).toContain('loadCompleteDiamondManagerStats');
         expect(playerSource).toContain('completeStatsByPlayerId');
         expect(teamSource).toContain('Object.prototype.hasOwnProperty.call(stats, definition.id)');
         expect(teamSource).toContain('Missing or partially captured stats are not treated as zero.');
         expect(teamSource).toContain('aggregateCoverageAwareTeamStats');
-        expect(teamSource).toContain('loadDiamondManagerStats');
+        expect(teamSource).toContain('loadCompleteDiamondManagerStats');
         expect(teamSource).toContain("recordType: 'season_team'");
     });
 
@@ -133,5 +147,42 @@ describe('legacy Diamond stat surface contracts', () => {
         expect(playerSource).toContain("recordType: 'season_player'");
         expect(teamSource).toContain('data-diamond-season-export');
         expect(teamSource).toContain('...(coverageAwareSeason.presentationByPlayerId[player.id] || {');
+    });
+
+    it('keeps validated projected-only team players in stats without exposing profile routes or raw ids', () => {
+        const teamSource = readRootFile('team.html');
+
+        expect(teamSource).toContain('const reportPlayers = buildDiamondReportPlayers({');
+        expect(teamSource).toContain('documentGroups: diamondGames.map(({ game, publicDocuments }) => ({');
+        expect(teamSource).toContain('rosterPlayers: players');
+        expect(teamSource).toContain('players: eligiblePlayers');
+        expect(teamSource).toContain('player.canOpenProfile ? player.id : undefined');
+        expect(teamSource).toContain('entry.canOpenProfile');
+        expect(teamSource).toContain('resolveDiamondManagerStatDocuments({');
+        expect(teamSource).toContain('entry.documents = entry.publicDocuments;');
+    });
+
+    it('links classic leaderboard entries while explicit projected-only entries stay plain', () => {
+        const render = loadConfiguredLeaderboardPlayerRenderer();
+        const classic = render({
+            rank: 1,
+            playerId: 'classic-player',
+            playerName: 'Classic Player',
+            playerNumber: '9',
+            formattedValue: '3'
+        }, 'team-1');
+        const projectedOnly = render({
+            rank: 1,
+            playerId: 'manual:private-id',
+            playerName: 'Recorded Guest',
+            playerNumber: '7',
+            formattedValue: '4',
+            canOpenProfile: false
+        }, 'team-1');
+
+        expect(classic).toContain('<a href="player.html#teamId=team-1&playerId=classic-player"');
+        expect(projectedOnly).toContain('<div class="flex items-center justify-between');
+        expect(projectedOnly).not.toContain('<a href=');
+        expect(projectedOnly).not.toContain('manual:private-id');
     });
 });

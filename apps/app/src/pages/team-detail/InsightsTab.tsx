@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Download, Loader2 } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { AvatarImage } from '../../components/AvatarImage';
 import { PremiumGate } from '../../components/PremiumGate';
 import type { PremiumAccessResult } from '../../lib/premiumAccessService';
@@ -108,10 +109,14 @@ export function InsightsTab({ model, loading, error, premiumAccess }: { model: T
                         <div className="w-6 text-xs font-black text-gray-500">#{leader.rank}</div>
                         <PlayerPhoto name={leader.playerName} photoUrl={leader.photoUrl} small />
                         <div className="min-w-0 flex-1">
-                          <div className="truncate text-xs font-black text-gray-950">
-                            {leader.playerNumber ? `#${leader.playerNumber} ` : ''}
-                            {leader.playerName}
-                          </div>
+                          <PlayerProfileName
+                            teamId={model.team.id}
+                            playerId={leader.playerId}
+                            playerName={leader.playerName}
+                            playerNumber={leader.playerNumber}
+                            canOpenProfile={leader.canOpenProfile}
+                            className="block truncate text-xs font-black text-gray-950"
+                          />
                         </div>
                         <div className="text-primary-700 text-sm font-black">{leader.formattedValue}</div>
                       </div>
@@ -412,7 +417,7 @@ function RosterStatisticsCard({ model, loading, error, selectedSeason }: { model
         </div>
       ) : null}
       {!loading && !error && !seasonUnavailable && table?.columns.length ? <div className="overflow-x-auto rounded-xl border border-gray-200">
-        <table className="min-w-max w-full text-left text-xs"><thead className="bg-gray-50 text-[10px] font-black uppercase tracking-wide text-gray-500"><tr><th className="sticky left-0 bg-gray-50 px-3 py-2">Player</th>{table.columns.map((column) => <th key={column.id} className="whitespace-nowrap px-3 py-2">{column.label}</th>)}</tr></thead><tbody>{table.rows.map((row) => <tr key={row.playerId} className="border-t border-gray-100"><th className="sticky left-0 bg-white px-3 py-2 font-black text-gray-900">{row.playerNumber ? `#${row.playerNumber} ` : ''}{row.playerName}</th>{table.columns.map((column) => {
+        <table className="min-w-max w-full text-left text-xs"><thead className="bg-gray-50 text-[10px] font-black uppercase tracking-wide text-gray-500"><tr><th className="sticky left-0 bg-gray-50 px-3 py-2">Player</th>{table.columns.map((column) => <th key={column.id} className="whitespace-nowrap px-3 py-2">{column.label}</th>)}</tr></thead><tbody>{table.rows.map((row) => <tr key={row.playerId} className="border-t border-gray-100"><th className="sticky left-0 bg-white px-3 py-2 font-black text-gray-900"><PlayerProfileName teamId={model.team.id} playerId={row.playerId} playerName={row.playerName} playerNumber={row.playerNumber} canOpenProfile={row.canOpenProfile} /></th>{table.columns.map((column) => {
           const value = row.values[column.id];
           const formattedValue = table.diamond?.hasDiamond ? (value?.formattedValue ?? '—') : (value?.formattedValue || '0');
           return <td key={column.id} className="px-3 py-2 font-bold text-gray-700"><span className="inline-flex flex-col items-start" aria-label={value?.observed ? `${formattedValue}, observed from partial tracking` : formattedValue === '—' ? 'Not collected' : formattedValue}><span>{formattedValue}</span>{value?.observed ? <span className="text-[8px] font-black uppercase tracking-wide text-amber-700">Observed</span> : null}</span></td>;
@@ -561,6 +566,34 @@ function PlayerPhoto({ name, photoUrl, small = false }: { name: string; photoUrl
     <span className={`${sizeClass} flex flex-none items-center justify-center rounded-full bg-gray-900 font-black text-white`}>
       {getInitials(name)}
     </span>
+  );
+}
+
+function PlayerProfileName({
+  teamId,
+  playerId,
+  playerName,
+  playerNumber,
+  canOpenProfile,
+  className = ''
+}: {
+  teamId: string;
+  playerId: string;
+  playerName: string;
+  playerNumber: string;
+  canOpenProfile?: boolean;
+  className?: string;
+}) {
+  const label = `${playerNumber ? `#${playerNumber} ` : ''}${playerName}`;
+  if (canOpenProfile === false) return <span className={className}>{label}</span>;
+  return (
+    <Link
+      to={`/players/${encodeURIComponent(teamId)}/${encodeURIComponent(playerId)}`}
+      className={`${className} transition hover:text-primary-700`}
+      aria-label={`Open ${playerName} profile`}
+    >
+      {label}
+    </Link>
   );
 }
 

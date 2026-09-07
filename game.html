@@ -457,7 +457,7 @@
         import { formatGameReportEventTimestamp, resolveReportStatColumns, resolveOpponentReportStatColumns } from './js/game-report-stats.js?v=8';
         import { normalizeStatKey, resolvePostGameStatFields, resolvePostGameTeamStatFields, resolvePostGameEditorDidNotPlay, buildCompletedGamePlayerStatsPayload, buildCompletedGameTeamStatsPayload, getPostGameEditorNextIndex } from './js/post-game-stat-editor.js?v=11';
         import { getActivationPinnedDiamondStatCatalog, getCoverageAwareStatValue, getDiamondPublicPlayerStatsCollectionPath, isDiamondV2Game, readCoverageAwareOpponentStats, readCoverageAwareStatDocument, resolveDiamondManagerStatDocuments, resolveDiamondManagerTeamStatDocument, resolveDiamondProjectionState, resolveDiamondPublicStatDocuments, resolveDiamondPublicTeamStatDocument, resolveDiamondStatConfigsForGames } from './js/diamond-stat-presentation.js?v=7';
-        import { loadDiamondManagerStats } from './js/diamond-manager-stats.js?v=4';
+        import { buildDiamondReportPlayers, loadCompleteDiamondManagerStats } from './js/diamond-manager-stats.js?v=5';
         import { buildDiamondStatsCsv, downloadDiamondStatsCsv, getDiamondStatsExportFilename } from './js/diamond-stat-export.js?v=7';
         import { buildHighlightShareUrl, normalizeGameRecapHighlightClips, resolveReplayVideoOptions } from './js/live-game-video.js?v=443319';
         import { buildGameReportShareUrl } from './js/game-share-links.js?v=1';
@@ -477,19 +477,110 @@
         let gameLoadedForAuthenticatedUser = false;
         let gameLoadPromise = null;
         let gameLoadGeneration = 0;
+        let authBoundActionController = new AbortController();
 
         function isCurrentGameLoad(generation, uid) {
             return generation === gameLoadGeneration && (currentUser?.uid || '') === uid;
         }
 
+        function renewAuthBoundActionLifecycle() {
+            authBoundActionController.abort();
+            authBoundActionController = new AbortController();
+        }
+
+        function captureAuthBoundActionContext() {
+            return Object.freeze({
+                generation: gameLoadGeneration,
+                uid: currentUser?.uid || '',
+                signal: authBoundActionController.signal
+            });
+        }
+
+        function isAuthBoundActionCurrent(context) {
+            return Boolean(
+                context
+                && !context.signal.aborted
+                && context.uid
+                && isCurrentGameLoad(context.generation, context.uid)
+            );
+        }
+
+        function addAuthBoundEventListener(target, type, listener, context) {
+            if (!target || !context || context.signal.aborted) return;
+            target.addEventListener(type, listener, { signal: context.signal });
+        }
+
         function clearManagerGameReportOnAuthChange() {
+            canManageStatSheet = false;
+            canEditSummary = false;
+            canEditStats = false;
             canViewDiamondPrivateStats = false;
-            document.getElementById('diamond-stats-export-btn')?.classList.add('hidden');
-            const statsBody = document.getElementById('stats-body');
-            const teamStatsBody = document.getElementById('team-stats-body');
-            if (statsBody) statsBody.innerHTML = '';
-            if (teamStatsBody) teamStatsBody.innerHTML = '';
+            canManageReplayVideo = false;
+            canRemoveReplayVideoOutsideFinal = false;
+
+            const exportButton = document.getElementById('diamond-stats-export-btn');
+            if (exportButton) {
+                exportButton.classList.add('hidden');
+                exportButton.onclick = null;
+                exportButton.textContent = 'Export stats CSV';
+            }
+
+            ['team-nav-banner', 'stats-header-row', 'stats-body', 'team-stats-body', 'team-insights-body',
+                'player-insights-body', 'published-diamond-ai-recap', 'game-log',
+                'playing-time-meta', 'playing-time-body', 'stats-editor-status',
+                'stats-editor-player-name', 'stats-editor-player-meta', 'stats-editor-fields',
+                'team-stats-editor-status', 'team-stats-editor-fields', 'stat-sheet-status',
+                'replay-video-current', 'replay-video-status'].forEach((id) => {
+                const element = document.getElementById(id);
+                if (element) element.innerHTML = '';
+            });
+            document.getElementById('insights-section')?.classList.add('hidden');
+            document.getElementById('playing-time-insights')?.classList.add('hidden');
+            const playingTimeContent = document.getElementById('playing-time-content');
+            if (playingTimeContent) playingTimeContent.style.maxHeight = '0px';
             document.getElementById('team-stats-section')?.classList.add('hidden');
+            document.getElementById('diamond-report-status')?.remove();
+
+            ['summary-admin', 'summary-editor', 'stats-editor-admin', 'stats-editor-panel',
+                'team-stats-editor-admin', 'team-stats-editor-panel', 'stat-sheet-admin',
+                'replay-video-admin', 'edit-stats-btn', 'edit-team-stats-btn'].forEach((id) => {
+                document.getElementById(id)?.classList.add('hidden');
+            });
+            const summaryStatus = document.getElementById('summary-edit-status');
+            if (summaryStatus) summaryStatus.textContent = '';
+            const summaryTextarea = document.getElementById('summary-textarea');
+            if (summaryTextarea) {
+                summaryTextarea.value = '';
+                summaryTextarea.defaultValue = '';
+                summaryTextarea.textContent = '';
+            }
+            ['replay-video-url', 'replay-video-title'].forEach((id) => {
+                const input = document.getElementById(id);
+                if (input) input.value = '';
+            });
+            const statSheetFileInput = document.getElementById('stat-sheet-file-input');
+            if (statSheetFileInput) statSheetFileInput.value = '';
+            document.getElementById('stat-sheet-upload-preview')?.classList.add('hidden');
+            document.getElementById('stat-sheet-upload-img')?.removeAttribute('src');
+            const replayForm = document.getElementById('replay-video-form');
+            if (replayForm) replayForm.setAttribute('aria-busy', 'false');
+            ['summary-save-btn', 'summary-generate-btn', 'stat-sheet-upload-btn', 'stat-sheet-save',
+                'stat-sheet-cancel', 'stat-sheet-remove', 'replay-video-url', 'replay-video-title',
+                'replay-video-save', 'replay-video-remove', 'edit-stats-btn', 'stats-prev-btn',
+                'stats-next-btn', 'stats-dnp-toggle', 'stats-save-btn', 'stats-save-prev-btn',
+                'stats-save-next-btn', 'stats-cancel-btn', 'edit-team-stats-btn',
+                'team-stats-save-btn', 'team-stats-cancel-btn'].forEach((id) => {
+                const control = document.getElementById(id);
+                if (control) control.disabled = false;
+            });
+
+            // Drop every closure that was authorized for the prior UID. The next
+            // completed load binds fresh handlers to these equivalent controls.
+            ['summary-edit-status', 'summary-textarea', 'summary-edit-btn', 'summary-save-btn',
+                'summary-cancel-btn', 'summary-generate-btn'].forEach((id) => {
+                const control = document.getElementById(id);
+                if (control?.parentNode) control.replaceWith(control.cloneNode(true));
+            });
         }
 
         const authTimeout = setTimeout(() => {
@@ -508,6 +599,7 @@
             const shouldRefreshPermissions = identityChanged || (gameLoaded && !gameLoadedForAuthenticatedUser && !!user);
             if (identityChanged) {
                 gameLoadGeneration += 1;
+                renewAuthBoundActionLifecycle();
                 gameLoaded = false;
                 gameLoadedForAuthenticatedUser = false;
                 gameLoadPromise = null;
@@ -649,6 +741,7 @@
         }
 
         function setupReplayVideoControls({ teamId, gameId, game, team }) {
+            const actionContext = captureAuthBoundActionContext();
             const section = document.getElementById('replay-video-admin');
             const form = document.getElementById('replay-video-form');
             const heading = document.getElementById('replay-video-heading');
@@ -732,11 +825,14 @@
             }
 
             async function persistReplayVideo(nextReplayVideo) {
+                if (!isAuthBoundActionCurrent(actionContext)) return false;
                 const expectedFingerprint = fingerprintGameReplayArchiveState(game);
+                let transactionPrepared = false;
                 try {
                     await runTransaction(db, async (transaction) => {
                         const gameRef = doc(db, 'teams', teamId, 'games', gameId);
                         const snapshot = await transaction.get(gameRef);
+                        if (!isAuthBoundActionCurrent(actionContext)) return;
                         if (!snapshot.exists()) {
                             const error = new Error('This game is no longer available.');
                             error.code = 'replay-game-missing';
@@ -770,8 +866,10 @@
                         });
                         replayUpdate.replayVideoFallbackDisabled = nextReplayVideo ? deleteField() : true;
                         transaction.update(gameRef, replayUpdate);
+                        transactionPrepared = true;
                     });
                 } catch (error) {
+                    if (!isAuthBoundActionCurrent(actionContext)) return false;
                     if (error?.code === 'replay-conflict') {
                         applyGameReplayArchiveState(game, error.latestReplayArchiveState);
                         renderCurrentReplay();
@@ -785,13 +883,14 @@
                     }
                     throw error;
                 }
-                return true;
+                return transactionPrepared && isAuthBoundActionCurrent(actionContext);
             }
 
             renderCurrentReplay();
 
-            form.addEventListener('submit', async (event) => {
+            addAuthBoundEventListener(form, 'submit', async (event) => {
                 event.preventDefault();
+                if (!isAuthBoundActionCurrent(actionContext)) return;
                 const rawUrl = urlInput.value.trim();
                 if (rawUrl.length > 2048) {
                     setReplayVideoStatus(status, 'Use a YouTube link shorter than 2,048 characters.', { error: true });
@@ -813,7 +912,7 @@
 
                 const replayVideo = buildYouTubeReplayVideo(rawUrl, {
                     title: replayTitle,
-                    linkedBy: currentUser.uid,
+                    linkedBy: actionContext.uid,
                     linkedAt: new Date()
                 });
                 if (!replayVideo) {
@@ -826,12 +925,13 @@
                 if (replacesOtherProvider && !window.confirm('Replace the existing non-YouTube replay with this YouTube video?')) {
                     return;
                 }
+                if (!isAuthBoundActionCurrent(actionContext)) return;
 
                 setBusy(true);
                 setReplayVideoStatus(status, 'Saving replay…');
                 try {
                     const saved = await persistReplayVideo(replayVideo);
-                    if (!saved) return;
+                    if (!saved || !isAuthBoundActionCurrent(actionContext)) return;
                     applyGameReplayArchiveState(game, {
                         replayVideo,
                         ...(Object.hasOwn(game, 'videoUrl') ? { videoUrl: game.videoUrl } : {})
@@ -840,22 +940,25 @@
                     updateReplayReportAction({ teamId, gameId, game, team });
                     setReplayVideoStatus(status, 'Replay linked. The Watch Replay button now opens this video.');
                 } catch (error) {
+                    if (!isAuthBoundActionCurrent(actionContext)) return;
                     console.error('Error linking YouTube replay:', error);
                     setReplayVideoStatus(status, 'Could not confirm whether the replay was saved. Refresh this report and check the linked replay before trying again.', { error: true });
                 } finally {
-                    setBusy(false);
+                    if (isAuthBoundActionCurrent(actionContext)) setBusy(false);
                 }
-            });
+            }, actionContext);
 
-            removeButton.addEventListener('click', async () => {
+            addAuthBoundEventListener(removeButton, 'click', async () => {
+                if (!isAuthBoundActionCurrent(actionContext)) return;
                 if (!canRemoveCurrentReplay()) return;
                 if (!window.confirm('Remove the replay from this game? The source video will remain with its provider.')) return;
+                if (!isAuthBoundActionCurrent(actionContext)) return;
 
                 setBusy(true);
                 setReplayVideoStatus(status, 'Removing replay…');
                 try {
                     const removed = await persistReplayVideo(null);
-                    if (!removed) return;
+                    if (!removed || !isAuthBoundActionCurrent(actionContext)) return;
                     applyGameReplayArchiveState(game, {
                         replayVideo: null,
                         replayVideoFallbackDisabled: true,
@@ -866,12 +969,13 @@
                     setReplayVideoStatus(status, 'Replay removed from this game. The source video was not deleted.');
                     if (!canLinkReplayVideo) heading.focus();
                 } catch (error) {
+                    if (!isAuthBoundActionCurrent(actionContext)) return;
                     console.error('Error removing YouTube replay:', error);
                     setReplayVideoStatus(status, 'Could not confirm whether the replay was removed. Refresh this report and check the linked replay before trying again.', { error: true });
                 } finally {
-                    setBusy(false);
+                    if (isAuthBoundActionCurrent(actionContext)) setBusy(false);
                 }
-            });
+            }, actionContext);
         }
 
         function insightToneClasses(tone) {
@@ -1033,14 +1137,17 @@
 
             playerBody.innerHTML = playerEntries.map(([playerId, insights]) => {
                 const player = playerLookup.get(playerId) || {};
+                const playerHeading = player.canOpenProfile === false
+                    ? `<span class="text-base font-bold text-gray-900">${escapeHtml(player.name || 'Recorded player')}</span>`
+                    : `<a href="player.html#teamId=${teamId}&gameId=${gameId}&playerId=${playerId}"
+                           class="text-base font-bold text-primary-700 hover:text-primary-800 hover:underline">
+                            ${escapeHtml(player.name || 'Player')}
+                       </a>`;
                 return `
                     <div class="rounded-xl border border-gray-200 p-4 bg-gray-50">
                         <div class="flex items-center justify-between gap-3 mb-3">
                             <div class="min-w-0">
-                                <a href="player.html#teamId=${teamId}&gameId=${gameId}&playerId=${playerId}"
-                                   class="text-base font-bold text-primary-700 hover:text-primary-800 hover:underline">
-                                    ${escapeHtml(player.name || 'Player')}
-                                </a>
+                                ${playerHeading}
                                 <div class="text-xs font-semibold uppercase tracking-wider text-gray-400">
                                     #${escapeHtml(player.number || '-')}
                                 </div>
@@ -1098,6 +1205,7 @@
         });
 
         function setupStatSheetControls(teamId, gameId, game) {
+            const actionContext = captureAuthBoundActionContext();
             const section = document.getElementById('stat-sheet-section');
             const link = document.getElementById('stat-sheet-link');
             const img = document.getElementById('stat-sheet-img');
@@ -1109,6 +1217,7 @@
             const previewImg = document.getElementById('stat-sheet-upload-img');
             const saveBtn = document.getElementById('stat-sheet-save');
             const cancelBtn = document.getElementById('stat-sheet-cancel');
+            const removeBtn = document.getElementById('stat-sheet-remove');
             const status = document.getElementById('stat-sheet-status');
 
             if (!section || !link || !img || !empty || !admin) return;
@@ -1135,7 +1244,58 @@
 
             admin.classList.remove('hidden');
 
-            uploadBtn?.addEventListener('click', () => {
+            const normalizeStatSheetPhotoUrl = (value) => {
+                if (value === undefined || value === null || value === '') return null;
+                return typeof value === 'string' ? value : undefined;
+            };
+
+            async function readAuthoritativeStatSheetPhotoState(expectedUrl, previousUrl) {
+                try {
+                    const authoritativeGame = await getGame(teamId, gameId);
+                    if (!authoritativeGame || typeof authoritativeGame !== 'object') {
+                        return { state: 'unknown', game: null };
+                    }
+                    const authoritativeUrl = normalizeStatSheetPhotoUrl(authoritativeGame.statSheetPhotoUrl);
+                    if (authoritativeUrl === undefined) {
+                        return { state: 'unknown', game: authoritativeGame };
+                    }
+                    if (authoritativeUrl === expectedUrl) {
+                        return { state: 'committed', game: authoritativeGame };
+                    }
+                    if (authoritativeUrl === previousUrl) {
+                        return { state: 'not-committed', game: authoritativeGame };
+                    }
+                    return { state: 'unknown', game: authoritativeGame };
+                } catch (_error) {
+                    return { state: 'unknown', game: null };
+                }
+            }
+
+            function renderStatSheetPhoto(nextUrl, message) {
+                game.statSheetPhotoUrl = nextUrl;
+                if (nextUrl) {
+                    section.classList.remove('hidden');
+                    img.src = nextUrl;
+                    img.classList.remove('hidden');
+                    link.href = nextUrl;
+                    empty.classList.add('hidden');
+                    uploadBtn.classList.add('hidden');
+                    removeBtn?.classList.remove('hidden');
+                } else {
+                    img.classList.add('hidden');
+                    img.removeAttribute('src');
+                    link.removeAttribute('href');
+                    empty.classList.remove('hidden');
+                    uploadBtn.classList.remove('hidden');
+                    removeBtn?.classList.add('hidden');
+                }
+                preview.classList.add('hidden');
+                fileInput.value = '';
+                status.textContent = message;
+            }
+
+            addAuthBoundEventListener(uploadBtn, 'click', () => {
+                if (!isAuthBoundActionCurrent(actionContext)) return;
                 if (status) status.textContent = '';
                 if (!fileInput) {
                     if (status) status.textContent = 'Upload input unavailable. Please refresh.';
@@ -1146,26 +1306,30 @@
                 } else {
                     fileInput.click();
                 }
-            });
+            }, actionContext);
 
-            fileInput?.addEventListener('change', () => {
+            addAuthBoundEventListener(fileInput, 'change', () => {
+                if (!isAuthBoundActionCurrent(actionContext)) return;
                 const file = fileInput.files?.[0];
                 if (!file) return;
                 const reader = new FileReader();
                 reader.onload = (event) => {
+                    if (!isAuthBoundActionCurrent(actionContext)) return;
                     previewImg.src = event.target.result;
                     preview.classList.remove('hidden');
                 };
                 reader.readAsDataURL(file);
-            });
+            }, actionContext);
 
-            cancelBtn?.addEventListener('click', () => {
+            addAuthBoundEventListener(cancelBtn, 'click', () => {
+                if (!isAuthBoundActionCurrent(actionContext)) return;
                 fileInput.value = '';
                 preview.classList.add('hidden');
                 status.textContent = '';
-            });
+            }, actionContext);
 
-            saveBtn?.addEventListener('click', async () => {
+            addAuthBoundEventListener(saveBtn, 'click', async () => {
+                if (!isAuthBoundActionCurrent(actionContext)) return;
                 const file = fileInput.files?.[0];
                 if (!file) {
                     status.textContent = 'Choose an image first.';
@@ -1175,38 +1339,65 @@
                 uploadBtn.disabled = true;
                 status.textContent = 'Uploading...';
                 let newlyUploadedStatSheet = null;
+                let uploadedUrl = null;
                 let statSheetPersisted = false;
+                let updateAttempted = false;
+                let persistenceState = 'not-attempted';
+                const previousUrl = normalizeStatSheetPhotoUrl(game.statSheetPhotoUrl);
                 try {
+                    if (!isAuthBoundActionCurrent(actionContext)) return;
                     const upload = await uploadStatSheetPhoto(teamId, gameId, file, { returnUpload: true });
-                    const url = typeof upload === 'string' ? upload : upload.url;
-                    newlyUploadedStatSheet = typeof upload === 'string'
-                        ? null
-                        : { path: upload.path, storage: upload.storage };
-                    await updateGame(teamId, gameId, { statSheetPhotoUrl: url });
+                    if (!upload || typeof upload.url !== 'string' || !upload.url || typeof upload.path !== 'string' || !upload.path) {
+                        throw new Error('Stat sheet upload did not return a complete storage reference.');
+                    }
+                    const url = upload.url;
+                    uploadedUrl = url;
+                    newlyUploadedStatSheet = { path: upload.path, storage: upload.storage };
+                    if (!isAuthBoundActionCurrent(actionContext)) {
+                        await deleteUploadedMediaObjects([newlyUploadedStatSheet]).catch(() => undefined);
+                        return;
+                    }
+                    updateAttempted = true;
+                    const updateResult = await updateGame(teamId, gameId, { statSheetPhotoUrl: url });
+                    if (updateResult === false) {
+                        throw new Error('The stat sheet reference could not be saved.');
+                    }
                     statSheetPersisted = true;
-                    game.statSheetPhotoUrl = url;
-                    img.src = url;
-                    img.classList.remove('hidden');
-                    link.href = url;
-                    empty.classList.add('hidden');
-                    preview.classList.add('hidden');
-                    fileInput.value = '';
-                    uploadBtn.classList.add('hidden');
-                    removeBtn?.classList.remove('hidden');
-                    status.textContent = 'Saved.';
+                    if (!isAuthBoundActionCurrent(actionContext)) return;
+                    renderStatSheetPhoto(url, 'Saved.');
                 } catch (error) {
                     if (newlyUploadedStatSheet && !statSheetPersisted) {
-                        await deleteUploadedMediaObjects([newlyUploadedStatSheet]).catch(() => undefined);
+                        if (updateAttempted) {
+                            const reconciliation = await readAuthoritativeStatSheetPhotoState(
+                                uploadedUrl,
+                                previousUrl
+                            );
+                            persistenceState = reconciliation.state;
+                            statSheetPersisted = persistenceState === 'committed';
+                        } else {
+                            persistenceState = 'not-committed';
+                        }
+                        if (persistenceState === 'not-committed') {
+                            await deleteUploadedMediaObjects([newlyUploadedStatSheet]).catch(() => undefined);
+                        }
+                    }
+                    if (!isAuthBoundActionCurrent(actionContext)) return;
+                    if (statSheetPersisted) {
+                        renderStatSheetPhoto(uploadedUrl, 'Saved.');
+                        return;
                     }
                     console.error('Stat sheet upload failed:', error);
-                    status.textContent = `Error: ${error.message}`;
+                    status.textContent = persistenceState === 'unknown'
+                        ? 'Could not confirm whether the stat sheet was saved. The uploaded image was retained. Refresh this report before trying again.'
+                        : `Error: ${error.message}`;
                 } finally {
-                    saveBtn.disabled = false;
-                    uploadBtn.disabled = false;
+                    if (isAuthBoundActionCurrent(actionContext)) {
+                        saveBtn.disabled = false;
+                        uploadBtn.disabled = false;
+                    }
                 }
-            });
+            }, actionContext);
 
-            const removeBtn = document.getElementById('stat-sheet-remove');
             if (game.statSheetPhotoUrl) {
                 uploadBtn.classList.add('hidden');
                 if (removeBtn) removeBtn.classList.remove('hidden');
@@ -1215,34 +1406,47 @@
                 if (removeBtn) removeBtn.classList.add('hidden');
             }
 
-            removeBtn?.addEventListener('click', async () => {
+            addAuthBoundEventListener(removeBtn, 'click', async () => {
+                if (!isAuthBoundActionCurrent(actionContext)) return;
                 if (!game.statSheetPhotoUrl) return;
                 const confirmRemove = confirm('Remove the stat sheet image from this game?');
                 if (!confirmRemove) return;
+                if (!isAuthBoundActionCurrent(actionContext)) return;
                 removeBtn.disabled = true;
                 status.textContent = 'Removing...';
+                const previousUrl = normalizeStatSheetPhotoUrl(game.statSheetPhotoUrl);
+                let removalState = 'not-attempted';
                 try {
-                    await updateGame(teamId, gameId, { statSheetPhotoUrl: null });
-                    game.statSheetPhotoUrl = null;
-                    img.classList.add('hidden');
-                    link.removeAttribute('href');
-                    empty.classList.remove('hidden');
-                    preview.classList.add('hidden');
-                    fileInput.value = '';
-                    status.textContent = 'Removed.';
-                    uploadBtn.classList.remove('hidden');
-                    removeBtn.classList.add('hidden');
+                    const updateResult = await updateGame(teamId, gameId, { statSheetPhotoUrl: null });
+                    if (updateResult === false) {
+                        throw new Error('The stat sheet reference could not be removed.');
+                    }
+                    removalState = 'committed';
+                    if (!isAuthBoundActionCurrent(actionContext)) return;
+                    renderStatSheetPhoto(null, 'Removed.');
                 } catch (error) {
+                    const reconciliation = await readAuthoritativeStatSheetPhotoState(null, previousUrl);
+                    removalState = reconciliation.state;
+                    if (!isAuthBoundActionCurrent(actionContext)) return;
+                    if (removalState === 'committed') {
+                        renderStatSheetPhoto(null, 'Removed.');
+                        return;
+                    }
                     console.error('Stat sheet remove failed:', error);
-                    status.textContent = `Error: ${error.message}`;
+                    status.textContent = removalState === 'unknown'
+                        ? 'Could not confirm whether the stat sheet was removed. Refresh this report before trying again.'
+                        : `Error: ${error.message}`;
                 } finally {
-                    removeBtn.disabled = false;
-                    uploadBtn.disabled = false; // Re-enable upload button after removal
+                    if (isAuthBoundActionCurrent(actionContext)) {
+                        removeBtn.disabled = false;
+                        uploadBtn.disabled = false; // Re-enable upload button after removal
+                    }
                 }
-            });
+            }, actionContext);
         }
 
         async function setupSummaryControls(teamId, gameId, game, team, players, statsMap, statKeys, statLabels) {
+            const actionContext = captureAuthBoundActionContext();
             const admin = document.getElementById('summary-admin');
             const editBtn = document.getElementById('summary-edit-btn');
             const status = document.getElementById('summary-edit-status');
@@ -1268,6 +1472,7 @@
             let isSavingSummary = false;
 
             const openEditor = (auto = false) => {
+                if (!isAuthBoundActionCurrent(actionContext)) return;
                 editor.classList.remove('hidden');
                 editBtn.classList.add('hidden');
                 summaryDiv.classList.add('hidden');
@@ -1278,6 +1483,7 @@
             };
 
             const closeEditor = () => {
+                if (!isAuthBoundActionCurrent(actionContext)) return;
                 editor.classList.add('hidden');
                 editBtn.classList.remove('hidden');
                 summaryDiv.classList.remove('hidden');
@@ -1286,16 +1492,18 @@
                 status.textContent = '';
             };
 
-            editBtn.addEventListener('click', () => {
+            addAuthBoundEventListener(editBtn, 'click', () => {
+                if (!isAuthBoundActionCurrent(actionContext)) return;
                 textarea.value = game.summary || '';
                 openEditor(false);
-            });
+            }, actionContext);
 
             if (!game.summary) {
                 openEditor(true);
             }
 
-            generateBtn.addEventListener('click', async () => {
+            addAuthBoundEventListener(generateBtn, 'click', async () => {
+                if (!isAuthBoundActionCurrent(actionContext)) return;
                 generateBtn.disabled = true;
                 status.textContent = 'Generating AI summary…';
 
@@ -1344,19 +1552,23 @@ Write the match report now:`;
                     const firebaseApp = getApp();
                     const ai = getAI(firebaseApp, { backend: new GoogleAIBackend() });
                     const model = getGenerativeModel(ai, { model: "gemini-2.5-flash" });
+                    if (!isAuthBoundActionCurrent(actionContext)) return;
                     const result = await model.generateContent(prompt);
+                    if (!isAuthBoundActionCurrent(actionContext)) return;
                     generatedSummary = result.response.text();
                     textarea.value = generatedSummary;
                     status.textContent = 'Summary added to text area. You can edit it before saving.';
                 } catch (error) {
+                    if (!isAuthBoundActionCurrent(actionContext)) return;
                     console.error('AI summary error:', error);
                     status.textContent = `Error: ${error.message}`;
                 } finally {
-                    generateBtn.disabled = false;
+                    if (isAuthBoundActionCurrent(actionContext)) generateBtn.disabled = false;
                 }
-            });
+            }, actionContext);
 
-            saveBtn.addEventListener('click', async () => {
+            addAuthBoundEventListener(saveBtn, 'click', async () => {
+                if (!isAuthBoundActionCurrent(actionContext)) return;
                 if (isSavingSummary) {
                     return;
                 }
@@ -1372,23 +1584,27 @@ Write the match report now:`;
                 status.textContent = 'Saving summary…';
                 try {
                     const finalSummary = summaryText || generatedSummary;
+                    if (!isAuthBoundActionCurrent(actionContext)) return;
                     await updateGame(teamId, gameId, { summary: finalSummary });
+                    if (!isAuthBoundActionCurrent(actionContext)) return;
                     game.summary = finalSummary;
                     summaryDiv.innerHTML = `<div class="prose prose-gray max-w-none">${escapeHtml(finalSummary).replace(/\n/g, '<br>')}</div>`;
                     setTimeout(() => {
+                        if (!isAuthBoundActionCurrent(actionContext)) return;
                         summaryDiv.style.maxHeight = summaryDiv.scrollHeight + 'px';
                     }, 100);
                     isSavingSummary = false;
                     closeEditor();
                 } catch (error) {
+                    if (!isAuthBoundActionCurrent(actionContext)) return;
                     console.error('Error saving summary:', error);
                     status.textContent = `Error: ${error.message}`;
                     isSavingSummary = false;
                     saveBtn.disabled = false;
                 }
-            });
+            }, actionContext);
 
-            cancelBtn.addEventListener('click', closeEditor);
+            addAuthBoundEventListener(cancelBtn, 'click', closeEditor, actionContext);
         }
 
         function resolveGameReportScoreView(game = {}) {
@@ -1515,7 +1731,7 @@ Write the match report now:`;
                             recordType: didNotPlayMap[player.id] === true ? 'player_dnp' : 'player',
                             identity: {
                                 ...commonIdentity,
-                                playerId: player.id,
+                                ...(player.canOpenProfile === false ? {} : { playerId: player.id }),
                                 playerName: player.name,
                                 playerNumber: player.number,
                                 participationStatus: didNotPlayMap[player.id] === true ? 'did_not_play' : 'played_or_unknown'
@@ -1571,24 +1787,30 @@ Write the match report now:`;
                 const minutesCell = hasPlayingTime ? `
                     <td class="px-4 py-4 text-center font-mono text-gray-700 font-semibold">${didNotPlay ? '&mdash;' : formatMMSS(pTime)}</td>
                 ` : '';
+                const playerContent = `
+                    <span class="inline-flex h-10 w-10 rounded-full bg-gray-100 overflow-hidden border border-gray-200">
+                        ${p.photoUrl ? `<img loading="lazy" decoding="async" src="${escapeHtml(p.photoUrl)}" alt="${escapeHtml(p.name)}" class="w-full h-full object-cover">` : `
+                            <svg class="w-full h-full text-gray-400 p-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5.121 17.804A9 9 0 1119 12.999M15 21v-2a3 3 0 00-3-3H6a3 3 0 00-3 3v2"></path>
+                            </svg>
+                        `}
+                    </span>
+                    <span class="flex items-center gap-2">
+                        <span>${escapeHtml(p.name)}</span>
+                        ${didNotPlay ? '<span class="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">DNP</span>' : ''}
+                    </span>
+                `;
+                const playerCell = p.canOpenProfile === false
+                    ? `<div class="flex items-center gap-3 text-gray-900">${playerContent}</div>`
+                    : `<a href="player.html#teamId=${teamId}&gameId=${gameId}&playerId=${p.id}"
+                           class="flex items-center gap-3 text-primary-600 hover:text-primary-700 hover:underline transition">
+                            ${playerContent}
+                       </a>`;
                 return `
                     <tr class="bg-white hover:bg-gray-50 transition">
                         <td class="px-4 py-4 font-mono text-gray-500 font-semibold">${escapeHtml(p.number || '-')}</td>
                         <td class="px-4 py-4 font-medium">
-                            <a href="player.html#teamId=${teamId}&gameId=${gameId}&playerId=${p.id}"
-                               class="flex items-center gap-3 text-primary-600 hover:text-primary-700 hover:underline transition">
-                                <span class="inline-flex h-10 w-10 rounded-full bg-gray-100 overflow-hidden border border-gray-200">
-                                    ${p.photoUrl ? `<img loading="lazy" decoding="async" src="${escapeHtml(p.photoUrl)}" alt="${escapeHtml(p.name)}" class="w-full h-full object-cover">` : `
-                                        <svg class="w-full h-full text-gray-400 p-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5.121 17.804A9 9 0 1119 12.999M15 21v-2a3 3 0 00-3-3H6a3 3 0 00-3 3v2"></path>
-                                        </svg>
-                                    `}
-                                </span>
-                                <span class="flex items-center gap-2">
-                                    <span>${escapeHtml(p.name)}</span>
-                                    ${didNotPlay ? '<span class="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">DNP</span>' : ''}
-                                </span>
-                            </a>
+                            ${playerCell}
                         </td>
                         ${statCells}
                         ${minutesCell}
@@ -1630,6 +1852,7 @@ Write the match report now:`;
             teamStatFields,
             rerenderTeamStats
         }) {
+            const actionContext = captureAuthBoundActionContext();
             const editBtn = document.getElementById('edit-team-stats-btn');
             const admin = document.getElementById('team-stats-editor-admin');
             const panel = document.getElementById('team-stats-editor-panel');
@@ -1648,6 +1871,7 @@ Write the match report now:`;
             }
 
             function renderEditor() {
+                if (!isAuthBoundActionCurrent(actionContext)) return;
                 fieldsEl.innerHTML = teamStatFields.map((field) => {
                     const key = normalizeStatKey(field.fieldName);
                     const value = teamStats[key] || 0;
@@ -1668,6 +1892,7 @@ Write the match report now:`;
             }
 
             function openEditor() {
+                if (!isAuthBoundActionCurrent(actionContext)) return;
                 admin.classList.remove('hidden');
                 panel.classList.remove('hidden');
                 status.textContent = '';
@@ -1675,11 +1900,13 @@ Write the match report now:`;
             }
 
             function closeEditor() {
+                if (!isAuthBoundActionCurrent(actionContext)) return;
                 panel.classList.add('hidden');
                 status.textContent = '';
             }
 
             async function saveTeamStats() {
+                if (!isAuthBoundActionCurrent(actionContext)) return;
                 const values = {};
                 fieldsEl.querySelectorAll('[data-team-stat-field]').forEach((input) => {
                     values[input.dataset.teamStatField] = input.value;
@@ -1696,18 +1923,23 @@ Write the match report now:`;
                 status.textContent = 'Saving team stats…';
 
                 try {
+                    if (!isAuthBoundActionCurrent(actionContext)) return;
                     await setCompletedGameTeamStats(teamId, gameId, payload);
+                    if (!isAuthBoundActionCurrent(actionContext)) return;
                     Object.keys(teamStats).forEach((key) => delete teamStats[key]);
                     Object.assign(teamStats, payload.stats || {});
                     rerenderTeamStats();
                     closeEditor();
                 } catch (error) {
+                    if (!isAuthBoundActionCurrent(actionContext)) return;
                     console.error('Error saving team stats:', error);
                     status.textContent = `Error: ${error.message}`;
                 } finally {
-                    [saveBtn, cancelBtn, editBtn].forEach((button) => {
-                        if (button) button.disabled = false;
-                    });
+                    if (isAuthBoundActionCurrent(actionContext)) {
+                        [saveBtn, cancelBtn, editBtn].forEach((button) => {
+                            if (button) button.disabled = false;
+                        });
+                    }
                 }
             }
 
@@ -1715,9 +1947,9 @@ Write the match report now:`;
             admin.classList.remove('hidden');
             panel.classList.add('hidden');
 
-            editBtn.addEventListener('click', openEditor);
-            cancelBtn.addEventListener('click', closeEditor);
-            saveBtn.addEventListener('click', saveTeamStats);
+            addAuthBoundEventListener(editBtn, 'click', openEditor, actionContext);
+            addAuthBoundEventListener(cancelBtn, 'click', closeEditor, actionContext);
+            addAuthBoundEventListener(saveBtn, 'click', saveTeamStats, actionContext);
         }
 
         function setupPostGameStatEditor({
@@ -1732,6 +1964,7 @@ Write the match report now:`;
             resolvedConfig,
             rerenderTable
         }) {
+            const actionContext = captureAuthBoundActionContext();
             const editBtn = document.getElementById('edit-stats-btn');
             const admin = document.getElementById('stats-editor-admin');
             const panel = document.getElementById('stats-editor-panel');
@@ -1763,6 +1996,7 @@ Write the match report now:`;
             let currentIndex = 0;
 
             function renderEditor() {
+                if (!isAuthBoundActionCurrent(actionContext)) return;
                 const player = players[currentIndex];
                 if (!player) return;
                 const playerStats = statsMap[player.id] || {};
@@ -1799,6 +2033,7 @@ Write the match report now:`;
             }
 
             function openEditor() {
+                if (!isAuthBoundActionCurrent(actionContext)) return;
                 Object.keys(pendingDidNotPlayMap).forEach((playerId) => {
                     delete pendingDidNotPlayMap[playerId];
                 });
@@ -1809,11 +2044,13 @@ Write the match report now:`;
             }
 
             function closeEditor() {
+                if (!isAuthBoundActionCurrent(actionContext)) return;
                 panel.classList.add('hidden');
                 status.textContent = '';
             }
 
             async function saveCurrent(direction = null) {
+                if (!isAuthBoundActionCurrent(actionContext)) return;
                 const player = players[currentIndex];
                 if (!player) return;
 
@@ -1837,10 +2074,12 @@ Write the match report now:`;
                 status.textContent = 'Saving stats…';
 
                 try {
+                    if (!isAuthBoundActionCurrent(actionContext)) return;
                     await setCompletedGamePlayerStats(teamId, gameId, player.id, {
                         ...payload,
                         statTrackerConfig: resolvedConfig
                     });
+                    if (!isAuthBoundActionCurrent(actionContext)) return;
                     const { publicStats } = splitPlayerStatsByVisibility(resolvedConfig || {}, payload.stats || {});
                     tableStatsMap[player.id] = publicStats;
                     statsMap[player.id] = { ...(payload.stats || {}) };
@@ -1857,12 +2096,15 @@ Write the match report now:`;
                         closeEditor();
                     }
                 } catch (error) {
+                    if (!isAuthBoundActionCurrent(actionContext)) return;
                     console.error('Error saving post-game stats:', error);
                     status.textContent = `Error: ${error.message}`;
                 } finally {
-                    buttons.forEach((button) => {
-                        if (button) button.disabled = false;
-                    });
+                    if (isAuthBoundActionCurrent(actionContext)) {
+                        buttons.forEach((button) => {
+                            if (button) button.disabled = false;
+                        });
+                    }
                 }
             }
 
@@ -1870,31 +2112,35 @@ Write the match report now:`;
             admin.classList.remove('hidden');
             panel.classList.add('hidden');
 
-            editBtn.addEventListener('click', openEditor);
-            cancelBtn?.addEventListener('click', closeEditor);
-            prevBtn?.addEventListener('click', () => {
+            addAuthBoundEventListener(editBtn, 'click', openEditor, actionContext);
+            addAuthBoundEventListener(cancelBtn, 'click', closeEditor, actionContext);
+            addAuthBoundEventListener(prevBtn, 'click', () => {
+                if (!isAuthBoundActionCurrent(actionContext)) return;
                 currentIndex = getPostGameEditorNextIndex(currentIndex, 'previous', players.length);
                 renderEditor();
-            });
-            nextBtn?.addEventListener('click', () => {
+            }, actionContext);
+            addAuthBoundEventListener(nextBtn, 'click', () => {
+                if (!isAuthBoundActionCurrent(actionContext)) return;
                 currentIndex = getPostGameEditorNextIndex(currentIndex, 'next', players.length);
                 renderEditor();
-            });
-            dnpToggle.addEventListener('change', () => {
+            }, actionContext);
+            addAuthBoundEventListener(dnpToggle, 'change', () => {
+                if (!isAuthBoundActionCurrent(actionContext)) return;
                 const player = players[currentIndex];
                 if (player) {
                     pendingDidNotPlayMap[player.id] = dnpToggle.checked;
                 }
                 renderEditor();
-            });
-            saveBtn?.addEventListener('click', () => saveCurrent(null));
-            savePrevBtn?.addEventListener('click', () => saveCurrent('previous'));
-            saveNextBtn?.addEventListener('click', () => saveCurrent('next'));
+            }, actionContext);
+            addAuthBoundEventListener(saveBtn, 'click', () => saveCurrent(null), actionContext);
+            addAuthBoundEventListener(savePrevBtn, 'click', () => saveCurrent('previous'), actionContext);
+            addAuthBoundEventListener(saveNextBtn, 'click', () => saveCurrent('next'), actionContext);
         }
 
         async function loadGame({ forceAuthenticatedReload = false, generation = gameLoadGeneration, expectedUid = currentUser?.uid || '' } = {}) {
             if (gameLoadPromise) {
                 await gameLoadPromise;
+                if (!isCurrentGameLoad(generation, expectedUid)) return;
                 if (forceAuthenticatedReload && !gameLoadedForAuthenticatedUser) {
                     return loadGame({ forceAuthenticatedReload: true, generation, expectedUid });
                 }
@@ -1968,6 +2214,7 @@ Write the match report now:`;
                     } catch (e) {
                         console.error('Error loading user profile for banner:', e);
                     }
+                    if (!isCurrentGameLoad(generation, expectedUid)) return;
 
                     let accessTeam = team;
                     let accessInfo = accessTeam
@@ -1994,6 +2241,7 @@ Write the match report now:`;
                                 console.warn('Unable to load delegated game-report access:', error);
                             }
                         }
+                        if (!isCurrentGameLoad(generation, expectedUid)) return;
                     }
                     if (accessInfo.hasAccess) {
                         canManageStatSheet = accessInfo.accessLevel === 'full';
@@ -2012,6 +2260,7 @@ Write the match report now:`;
                         } catch (e) {
                             console.error('Error fetching unread counts:', e);
                         }
+                        if (!isCurrentGameLoad(generation, expectedUid)) return;
 
                         renderTeamAdminBanner(
                             document.getElementById('team-nav-banner'),
@@ -2166,6 +2415,7 @@ Write the match report now:`;
                     throw new Error('The Diamond public stat head is unavailable.');
                 }
                 const statsSnapshot = await getDocs(collection(db, publicPlayerStatsPath));
+                if (!isCurrentGameLoad(generation, expectedUid)) return;
                 const statsMap = {};
                 const completeStatsMap = {};
                 const statPresentationMap = {};
@@ -2234,6 +2484,7 @@ Write the match report now:`;
                 for (let attempt = 0; attempt < configAttempts; attempt += 1) {
                     try {
                         const configDoc = await getDocs(query(collection(db, `teams/${teamId}/statTrackerConfigs`)));
+                        if (!isCurrentGameLoad(generation, expectedUid)) return;
                         const configs = configDoc.docs.map(d => ({ id: d.id, ...d.data() }));
                         if (diamondGame) {
                             diamondConfigResolution = resolveDiamondStatConfigsForGames({
@@ -2264,7 +2515,7 @@ Write the match report now:`;
 
                 if (diamondGame && canViewDiamondPrivateStats) {
                     try {
-                        const managerBatch = await loadDiamondManagerStats({
+                        const managerBatch = await loadCompleteDiamondManagerStats({
                             teamId,
                             games: [{ ...game, id: gameId }],
                             playerIds: publicStatDocuments.map(({ id }) => id),
@@ -2300,6 +2551,7 @@ Write the match report now:`;
                         privateStatsStatus = 'unavailable';
                     }
                 }
+                if (!isCurrentGameLoad(generation, expectedUid)) return;
 
                 if (diamondGame && statVisibility === 'manager-internal') {
                     const teamResolution = resolveDiamondManagerTeamStatDocument({
@@ -2358,6 +2610,7 @@ Write the match report now:`;
                 if (canEditStats && !diamondGame) {
                     try {
                         const privateStatsSnapshot = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/privatePlayerStats`));
+                        if (!isCurrentGameLoad(generation, expectedUid)) return;
                         privateStatsSnapshot.forEach(doc => {
                             const data = doc.data() || {};
                             editorStatsMap[doc.id] = {
@@ -2369,6 +2622,7 @@ Write the match report now:`;
                         console.error('Error fetching private player stats:', err);
                     }
                 }
+                if (!isCurrentGameLoad(generation, expectedUid)) return;
 
                 const reportColumns = diamondGame
                     ? buildDiamondReportColumns(getActivationPinnedDiamondStatCatalog({
@@ -2382,9 +2636,14 @@ Write the match report now:`;
                 const publicCompleteStatsMap = diamondGame
                     ? filterStatsMapToKeys(completeStatsMap, statKeys)
                     : completeStatsMap;
+                // Keep display identity invariant across auth changes. Manager
+                // documents may enrich values, but never replace public identity.
+                const reportPlayers = diamondGame
+                    ? buildDiamondReportPlayers({ rosterPlayers: players, documents: publicStatDocuments })
+                    : players;
 
                 // Setup summary controls
-                setupSummaryControls(teamId, gameId, game, resolvedTeam, players, diamondGame ? publicCompleteStatsMap : statsMap, statKeys, statLabels);
+                setupSummaryControls(teamId, gameId, game, resolvedTeam, reportPlayers, diamondGame ? publicCompleteStatsMap : statsMap, statKeys, statLabels);
                 const headerRow = document.getElementById('stats-header-row');
                 const computeHasPlayingTime = () => Object.values(timeMap).some((t) => t > 0);
                 function renderStatsTable() {
@@ -2414,7 +2673,7 @@ Write the match report now:`;
                     renderPlayerStatsTable({
                         teamId,
                         gameId,
-                        players,
+                        players: reportPlayers,
                         statsMap,
                         statPresentationMap,
                         statDefinitions: tableStatDefinitions,
@@ -2453,7 +2712,7 @@ Write the match report now:`;
                     teamId,
                     gameId,
                     game,
-                    players,
+                    players: reportPlayers,
                     statsMap: editorStatsMap,
                     tableStatsMap: statsMap,
                     didNotPlayMap,
@@ -2470,12 +2729,13 @@ Write the match report now:`;
                     // Set initial collapsed state
                     playingTimeChevron.style.transform = 'rotate(-90deg)';
 
-                    const roster = players.map(p => ({
+                    const roster = reportPlayers.map(p => ({
                         id: p.id,
                         name: p.name || '',
                         number: p.number || '-',
                         timeMs: timeMap[p.id] || 0,
-                        photoUrl: p.photoUrl
+                        photoUrl: p.photoUrl,
+                        canOpenProfile: p.canOpenProfile !== false
                     }));
 
                     const maxTime = Math.max(...roster.map(p => p.timeMs), 1);
@@ -2512,9 +2772,7 @@ Write the match report now:`;
                                 <div class="space-y-3">
                                     ${sorted.map(p => {
                                         const pct = Math.round((p.timeMs / maxTime) * 100);
-                                        const href = `player.html#teamId=${teamId}&gameId=${gameId}&playerId=${p.id}`;
-                                        return `
-                                            <a href="${href}" class="block group/item">
+                                        const playerBody = `
                                                 <div class="flex items-center justify-between gap-3 mb-1.5">
                                                     <div class="flex items-center gap-3 min-w-0 flex-1">
                                                         <span class="inline-flex h-8 w-8 rounded-full bg-gray-100 overflow-hidden border border-gray-200 flex-shrink-0">
@@ -2533,8 +2791,10 @@ Write the match report now:`;
                                                 <div class="w-full h-3 bg-gray-200 rounded-full overflow-hidden">
                                                     <div class="h-full rounded-full bg-gradient-to-r from-primary-500 to-primary-700 transition-all" style="width:${pct}%"></div>
                                                 </div>
-                                            </a>
                                         `;
+                                        return p.canOpenProfile
+                                            ? `<a href="player.html#teamId=${teamId}&gameId=${gameId}&playerId=${p.id}" class="block group/item">${playerBody}</a>`
+                                            : `<div class="block">${playerBody}</div>`;
                                     }).join('')}
                                 </div>
                             </div>
@@ -2645,7 +2905,7 @@ Write the match report now:`;
                 setupDiamondStatsExport({
                     game,
                     team: resolvedTeam,
-                    players,
+                    players: reportPlayers,
                     statsMap,
                     statPresentationMap,
                     didNotPlayMap,
@@ -2680,10 +2940,12 @@ Write the match report now:`;
                                 return response?.data;
                             }
                         });
+                        if (!isCurrentGameLoad(generation, expectedUid)) return;
                         events = [...diamondReplay.events];
                     } else {
                         const eventsQuery = query(collection(db, `teams/${teamId}/games/${gameId}/events`), orderBy('timestamp', 'asc'));
                         const eventsSnapshot = await getDocs(eventsQuery);
+                        if (!isCurrentGameLoad(generation, expectedUid)) return;
                         events = eventsSnapshot.docs.map(doc => {
                             const data = doc.data();
                             return {
@@ -2703,12 +2965,12 @@ Write the match report now:`;
                     generateGameInsights({
                         team,
                         game,
-                        players,
+                        players: reportPlayers,
                         statsMap: diamondGame ? publicCompleteStatsMap : statsMap,
                         timeMap,
                         events
                     }),
-                    players,
+                    reportPlayers,
                     teamId,
                     gameId,
                     game

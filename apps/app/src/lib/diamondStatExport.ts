@@ -82,7 +82,7 @@ export function buildDiamondGameReportStatsCsv(report: GameReportData) {
               recordType: player.didNotPlay ? 'player_dnp' : 'player',
               identity: {
                 ...commonIdentity,
-                playerId: player.playerId,
+                playerId: player.canOpenProfile === false ? '' : player.playerId,
                 playerName: player.playerName,
                 playerNumber: player.number,
                 participationStatus: player.participationStatus
@@ -192,7 +192,7 @@ export function buildDiamondTeamSeasonStatsCsv(
     ...table.rows.map((row) => ({
       recordType: 'season_player',
       identity: {
-        playerId: row.playerId,
+        playerId: row.canOpenProfile === false ? '' : row.playerId,
         playerName: row.playerName,
         playerNumber: row.playerNumber
       },

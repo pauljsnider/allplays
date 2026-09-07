@@ -1507,6 +1507,480 @@ describe("Diamond scorebook authoritative projector", () => {
     );
   });
 
+  it("rejects a participant team's colliding local ID when a legacy shared game has only a bare source game ID", async () => {
+    const game = createGame();
+    const firestore = new FakeFirestore();
+    const sharedPath = "organizations/org-1/sharedGames/shared-collision";
+    const harness = createHarness({
+      firestore,
+      handlers: {
+        resolveSharedGame: async () => ({
+          path: sharedPath,
+          data: firestore.read(sharedPath),
+        }),
+      },
+    });
+    const { paths } = seedGame(firestore, game, {
+      isHome: false,
+      game: { sharedGamePath: sharedPath },
+    });
+    const legacySharedGame = {
+      id: "shared-collision",
+      homeTeamId: "source-team",
+      awayTeamId: "team-1",
+      teamIds: ["source-team", "team-1"],
+      sourceGameId: "game-1",
+      status: "scheduled",
+      homeScore: 4,
+      awayScore: 2,
+    };
+    firestore.seed(sharedPath, legacySharedGame);
+
+    await assert.rejects(
+      harness.handlers.projectDiamondGame({
+        teamId: "team-1",
+        gameId: "game-1",
+      }),
+      (error) => error?.code === "invalid-shared-game",
+    );
+
+    assert.deepEqual(firestore.read(sharedPath), legacySharedGame);
+    assert.equal(
+      firestore.read(paths.scorebook).diamondProjectionMarker,
+      undefined,
+    );
+  });
+
+  it("continues an exact server-owned Diamond shared-game claim that predates team-scoped legacy bindings", async () => {
+    const game = createGame();
+    const firestore = new FakeFirestore();
+    const sharedPath = "organizations/org-1/sharedGames/claimed-legacy";
+    const harness = createHarness({
+      firestore,
+      handlers: {
+        resolveSharedGame: async () => ({
+          path: sharedPath,
+          data: firestore.read(sharedPath),
+        }),
+      },
+    });
+    seedGame(firestore, game, {
+      game: { sharedGamePath: sharedPath },
+    });
+    firestore.seed(sharedPath, {
+      id: "claimed-legacy",
+      homeTeamId: "team-1",
+      awayTeamId: "opponent-1",
+      teamIds: ["team-1", "opponent-1"],
+      sourceGameId: "game-1",
+      status: "scheduled",
+      trackingEngine: DIAMOND_ENGINE,
+      diamondSourceTeamId: "team-1",
+      diamondSourceGameId: "game-1",
+      diamondScorebookInstanceId: "instance-1",
+    });
+
+    const result = await harness.handlers.projectDiamondGame({
+      teamId: "team-1",
+      gameId: "game-1",
+    });
+
+    assert.equal(result.projected, true);
+    assert.equal(firestore.read(sharedPath).trackingEngine, DIAMOND_ENGINE);
+    assert.equal(firestore.read(sharedPath).diamondSourceTeamId, "team-1");
+    assert.equal(firestore.read(sharedPath).diamondSourceGameId, "game-1");
+  });
+
+  for (const { label, claimFields } of [
+    {
+      label: "the Diamond engine marker without either owner field",
+      claimFields: { trackingEngine: DIAMOND_ENGINE },
+    },
+    {
+      label: "the Diamond engine marker with only the owner team",
+      claimFields: {
+        trackingEngine: DIAMOND_ENGINE,
+        diamondSourceTeamId: "team-1",
+      },
+    },
+    {
+      label: "the Diamond engine marker with only the owner game",
+      claimFields: {
+        trackingEngine: DIAMOND_ENGINE,
+        diamondSourceGameId: "game-1",
+      },
+    },
+    {
+      label: "a different Diamond owner team",
+      claimFields: {
+        trackingEngine: DIAMOND_ENGINE,
+        diamondSourceTeamId: "opponent-1",
+        diamondSourceGameId: "game-1",
+      },
+    },
+    {
+      label: "a different Diamond owner game",
+      claimFields: {
+        trackingEngine: DIAMOND_ENGINE,
+        diamondSourceTeamId: "team-1",
+        diamondSourceGameId: "other-game",
+      },
+    },
+    {
+      label: "an exact-looking owner pair without a Diamond engine marker",
+      claimFields: {
+        diamondSourceTeamId: "team-1",
+        diamondSourceGameId: "game-1",
+      },
+    },
+    {
+      label: "an exact-looking owner pair with a different engine marker",
+      claimFields: {
+        trackingEngine: "legacy-v1",
+        diamondSourceTeamId: "team-1",
+        diamondSourceGameId: "game-1",
+      },
+    },
+  ]) {
+    it(`rejects ${label} despite simultaneous valid legacy bindings`, async () => {
+      const game = createGame();
+      const firestore = new FakeFirestore();
+      const sharedPath =
+        "organizations/org-1/sharedGames/conflicting-diamond-claim";
+      const harness = createHarness({
+        firestore,
+        handlers: {
+          resolveSharedGame: async () => ({
+            path: sharedPath,
+            data: firestore.read(sharedPath),
+          }),
+        },
+      });
+      seedGame(firestore, game, {
+        game: { sharedGamePath: sharedPath },
+      });
+      const sharedGame = {
+        id: "conflicting-diamond-claim",
+        homeTeamId: "team-1",
+        awayTeamId: "opponent-1",
+        teamIds: ["team-1", "opponent-1"],
+        teamGameIds: { "team-1": "game-1" },
+        homeGameId: "game-1",
+        status: "scheduled",
+        ...claimFields,
+      };
+      firestore.seed(sharedPath, sharedGame);
+
+      await assert.rejects(
+        harness.handlers.projectDiamondGame({
+          teamId: "team-1",
+          gameId: "game-1",
+        }),
+        (error) =>
+          error?.code === "shared-game-owner-conflict" && !error.retryable,
+      );
+
+      assert.deepEqual(firestore.read(sharedPath), sharedGame);
+    });
+  }
+
+  for (const {
+    label,
+    isHome = true,
+    sharedFields,
+  } of [
+    {
+      label: "a team game ID map",
+      sharedFields: { teamGameIds: { "team-1": "game-1" } },
+    },
+    {
+      label: "the home side's game ID",
+      sharedFields: { homeGameId: "game-1" },
+    },
+    {
+      label: "the away side's game ID",
+      isHome: false,
+      sharedFields: { awayGameId: "game-1" },
+    },
+    {
+      label: "an explicit source team and source game pair",
+      sharedFields: {
+        sourceTeamId: "team-1",
+        sourceGameId: "game-1",
+      },
+    },
+  ]) {
+    it(`accepts a shared game bound through ${label}`, async () => {
+      const game = createGame();
+      const firestore = new FakeFirestore();
+      const sharedPath = `organizations/org-1/sharedGames/${isHome ? "home" : "away"}-${sharedFields.sourceTeamId ? "source" : "binding"}`;
+      const harness = createHarness({
+        firestore,
+        handlers: {
+          resolveSharedGame: async () => ({
+            path: sharedPath,
+            data: firestore.read(sharedPath),
+          }),
+        },
+      });
+      seedGame(firestore, game, {
+        isHome,
+        game: { sharedGamePath: sharedPath },
+      });
+      firestore.seed(sharedPath, {
+        id: sharedPath.split("/").at(-1),
+        homeTeamId: isHome ? "team-1" : "opponent-1",
+        awayTeamId: isHome ? "opponent-1" : "team-1",
+        teamIds: ["team-1", "opponent-1"],
+        status: "scheduled",
+        ...sharedFields,
+      });
+
+      const result = await harness.handlers.projectDiamondGame({
+        teamId: "team-1",
+        gameId: "game-1",
+      });
+
+      assert.equal(result.projected, true);
+      assert.equal(firestore.read(sharedPath).trackingEngine, DIAMOND_ENGINE);
+      assert.equal(firestore.read(sharedPath).diamondSourceTeamId, "team-1");
+      assert.equal(firestore.read(sharedPath).diamondSourceGameId, "game-1");
+    });
+  }
+
+  for (const { label, sharedFields } of [
+    {
+      label: "no team-scoped game binding",
+      sharedFields: {},
+    },
+    {
+      label: "a source team without a source game",
+      sharedFields: { sourceTeamId: "team-1" },
+    },
+    {
+      label: "a matching game attributed to the other source team",
+      sharedFields: {
+        sourceTeamId: "opponent-1",
+        sourceGameId: "game-1",
+      },
+    },
+    {
+      label: "a matching source team paired with another game",
+      sharedFields: {
+        sourceTeamId: "team-1",
+        sourceGameId: "other-game",
+      },
+    },
+    {
+      label: "the matching game ID on the opposite side",
+      sharedFields: { awayGameId: "game-1" },
+    },
+  ]) {
+    it(`rejects ambiguous shared-game metadata with ${label}`, async () => {
+      const game = createGame();
+      const firestore = new FakeFirestore();
+      const sharedPath = "tournaments/tournament-1/sharedGames/ambiguous";
+      const harness = createHarness({
+        firestore,
+        handlers: {
+          resolveSharedGame: async () => ({
+            path: sharedPath,
+            data: firestore.read(sharedPath),
+          }),
+        },
+      });
+      seedGame(firestore, game, {
+        game: { sharedGamePath: sharedPath },
+      });
+      const sharedGame = {
+        id: "ambiguous",
+        homeTeamId: "team-1",
+        awayTeamId: "opponent-1",
+        teamIds: ["team-1", "opponent-1"],
+        status: "scheduled",
+        ...sharedFields,
+      };
+      firestore.seed(sharedPath, sharedGame);
+
+      await assert.rejects(
+        harness.handlers.projectDiamondGame({
+          teamId: "team-1",
+          gameId: "game-1",
+        }),
+        (error) => error?.code === "invalid-shared-game",
+      );
+
+      assert.deepEqual(firestore.read(sharedPath), sharedGame);
+    });
+  }
+
+  it("accepts an exact server-owned Diamond claim introduced before final shared-game CAS", async () => {
+    const game = createGame();
+    const firestore = new FakeFirestore();
+    const sharedPath = "organizations/org-1/sharedGames/claimed-before-cas";
+    const harness = createHarness({
+      firestore,
+      handlers: {
+        resolveSharedGame: async () => ({
+          path: sharedPath,
+          data: firestore.read(sharedPath),
+        }),
+        hooks: {
+          async beforeFinalize() {
+            const shared = firestore.read(sharedPath);
+            delete shared.teamGameIds;
+            shared.sourceGameId = "game-1";
+            shared.trackingEngine = DIAMOND_ENGINE;
+            shared.diamondSourceTeamId = "team-1";
+            shared.diamondSourceGameId = "game-1";
+            firestore.seed(sharedPath, shared);
+          },
+        },
+      },
+    });
+    seedGame(firestore, game, {
+      game: { sharedGamePath: sharedPath },
+    });
+    firestore.seed(sharedPath, {
+      id: "claimed-before-cas",
+      homeTeamId: "team-1",
+      awayTeamId: "opponent-1",
+      teamIds: ["team-1", "opponent-1"],
+      teamGameIds: { "team-1": "game-1" },
+      status: "scheduled",
+    });
+
+    const result = await harness.handlers.projectDiamondGame({
+      teamId: "team-1",
+      gameId: "game-1",
+    });
+
+    assert.equal(result.projected, true);
+    assert.equal(firestore.read(sharedPath).trackingEngine, DIAMOND_ENGINE);
+    assert.equal(firestore.read(sharedPath).diamondSourceTeamId, "team-1");
+    assert.equal(firestore.read(sharedPath).diamondSourceGameId, "game-1");
+  });
+
+  for (const { label, claimFields } of [
+    {
+      label: "partial",
+      claimFields: {
+        trackingEngine: DIAMOND_ENGINE,
+        diamondSourceTeamId: "team-1",
+      },
+    },
+    {
+      label: "mismatched",
+      claimFields: {
+        trackingEngine: DIAMOND_ENGINE,
+        diamondSourceTeamId: "team-1",
+        diamondSourceGameId: "other-game",
+      },
+    },
+  ]) {
+    it(`rejects a ${label} Diamond claim introduced before final CAS even when legacy bindings remain valid`, async () => {
+      const game = createGame();
+      const firestore = new FakeFirestore();
+      const sharedPath = `organizations/org-1/sharedGames/${label}-before-cas`;
+      const harness = createHarness({
+        firestore,
+        handlers: {
+          resolveSharedGame: async () => ({
+            path: sharedPath,
+            data: firestore.read(sharedPath),
+          }),
+          hooks: {
+            async beforeFinalize() {
+              firestore.seed(sharedPath, {
+                ...firestore.read(sharedPath),
+                ...claimFields,
+              });
+            },
+          },
+        },
+      });
+      seedGame(firestore, game, {
+        game: { sharedGamePath: sharedPath },
+      });
+      firestore.seed(sharedPath, {
+        id: `${label}-before-cas`,
+        homeTeamId: "team-1",
+        awayTeamId: "opponent-1",
+        teamIds: ["team-1", "opponent-1"],
+        teamGameIds: { "team-1": "game-1" },
+        homeGameId: "game-1",
+        status: "scheduled",
+      });
+
+      await assert.rejects(
+        harness.handlers.projectDiamondGame({
+          teamId: "team-1",
+          gameId: "game-1",
+        }),
+        (error) =>
+          error?.code === "shared-game-cas-failed" && error.retryable,
+      );
+
+      assert.deepEqual(firestore.read(sharedPath), {
+        id: `${label}-before-cas`,
+        homeTeamId: "team-1",
+        awayTeamId: "opponent-1",
+        teamIds: ["team-1", "opponent-1"],
+        teamGameIds: { "team-1": "game-1" },
+        homeGameId: "game-1",
+        status: "scheduled",
+        ...claimFields,
+      });
+    });
+  }
+
+  it("revalidates the team-scoped shared-game binding at the final transaction boundary", async () => {
+    const game = createGame();
+    const firestore = new FakeFirestore();
+    const sharedPath = "organizations/org-1/sharedGames/shared-race";
+    const harness = createHarness({
+      firestore,
+      handlers: {
+        resolveSharedGame: async () => ({
+          path: sharedPath,
+          data: firestore.read(sharedPath),
+        }),
+        hooks: {
+          async beforeFinalize() {
+            const shared = firestore.read(sharedPath);
+            delete shared.teamGameIds;
+            shared.sourceGameId = "game-1";
+            firestore.seed(sharedPath, shared);
+          },
+        },
+      },
+    });
+    seedGame(firestore, game, {
+      game: { sharedGamePath: sharedPath },
+    });
+    firestore.seed(sharedPath, {
+      id: "shared-race",
+      homeTeamId: "team-1",
+      awayTeamId: "opponent-1",
+      teamIds: ["team-1", "opponent-1"],
+      teamGameIds: { "team-1": "game-1" },
+      status: "scheduled",
+    });
+
+    await assert.rejects(
+      harness.handlers.projectDiamondGame({
+        teamId: "team-1",
+        gameId: "game-1",
+      }),
+      (error) => error?.code === "shared-game-cas-failed" && error.retryable,
+    );
+
+    const shared = firestore.read(sharedPath);
+    assert.equal(shared.sourceGameId, "game-1");
+    assert.equal(shared.trackingEngine, undefined);
+    assert.equal(shared.diamondSourceTeamId, undefined);
+  });
+
   it("keeps notes, transcripts, actors, audit data, and private roster fields out of every public projection", async () => {
     const sentinel = "MEDICAL-PRIVATE-TRANSCRIPT-ALPHA";
     const game = createGame({ captureMode: "full" });

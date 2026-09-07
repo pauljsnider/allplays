@@ -316,6 +316,49 @@ function buildPlayerDirectory(root, rosterDocuments) {
   return Object.fromEntries(Object.entries(directory));
 }
 
+function hasExactDiamondSharedGameClaim(shared, teamId, gameId) {
+  return Boolean(
+    isPlainObject(shared) &&
+      shared.trackingEngine === DIAMOND_ENGINE &&
+      own(shared, "diamondSourceTeamId") &&
+      shared.diamondSourceTeamId === teamId &&
+      own(shared, "diamondSourceGameId") &&
+      shared.diamondSourceGameId === gameId,
+  );
+}
+
+function hasDiamondSharedGameClaimMarkers(shared) {
+  return Boolean(
+    isPlainObject(shared) &&
+      (shared.trackingEngine === DIAMOND_ENGINE ||
+        own(shared, "diamondSourceTeamId") ||
+        own(shared, "diamondSourceGameId")),
+  );
+}
+
+function hasConflictingDiamondSharedGameClaim(shared, teamId, gameId) {
+  return (
+    hasDiamondSharedGameClaimMarkers(shared) &&
+    !hasExactDiamondSharedGameClaim(shared, teamId, gameId)
+  );
+}
+
+function hasTeamScopedSharedGameBinding(shared, teamId, gameId) {
+  if (!isPlainObject(shared)) return false;
+  if (hasExactDiamondSharedGameClaim(shared, teamId, gameId)) return true;
+  if (hasDiamondSharedGameClaimMarkers(shared)) return false;
+  const mappedGameId =
+    isPlainObject(shared.teamGameIds) && own(shared.teamGameIds, teamId)
+      ? shared.teamGameIds[teamId]
+      : null;
+  return Boolean(
+    mappedGameId === gameId ||
+      (shared.homeTeamId === teamId && shared.homeGameId === gameId) ||
+      (shared.awayTeamId === teamId && shared.awayGameId === gameId) ||
+      (shared.sourceTeamId === teamId && shared.sourceGameId === gameId),
+  );
+}
+
 function normalizeSharedResolution(result, firestore, teamId, gameId) {
   if (result === null || result === undefined) return null;
   const data =
@@ -354,24 +397,14 @@ function normalizeSharedResolution(result, firestore, teamId, gameId) {
       { retryable: false },
     );
   }
-  if (
-    (data.diamondSourceTeamId && data.diamondSourceTeamId !== teamId) ||
-    (data.diamondSourceGameId && data.diamondSourceGameId !== gameId) ||
-    (data.trackingEngine === DIAMOND_ENGINE && !data.diamondSourceTeamId)
-  ) {
+  if (hasConflictingDiamondSharedGameClaim(data, teamId, gameId)) {
     throw new DiamondProjectorError(
       "shared-game-owner-conflict",
       "Another scorebook owns the shared-game Diamond projection.",
       { retryable: false },
     );
   }
-  const bindings = [
-    data.teamGameIds?.[teamId],
-    data.homeTeamId === teamId ? data.homeGameId : null,
-    data.awayTeamId === teamId ? data.awayGameId : null,
-    data.sourceGameId,
-  ].filter(Boolean);
-  if (!bindings.includes(gameId)) {
+  if (!hasTeamScopedSharedGameBinding(data, teamId, gameId)) {
     throw new DiamondProjectorError(
       "invalid-shared-game",
       "The shared game is not authoritatively bound to this exact source game.",
@@ -1597,20 +1630,7 @@ function createDiamondScorebookProjectorHandlers(dependencies = {}) {
       ].filter(Boolean),
     );
     if (!teamIds.has(teamId)) return false;
-    if (
-      (shared.diamondSourceTeamId && shared.diamondSourceTeamId !== teamId) ||
-      (shared.diamondSourceGameId && shared.diamondSourceGameId !== gameId) ||
-      (shared.trackingEngine === DIAMOND_ENGINE && !shared.diamondSourceTeamId)
-    ) {
-      return false;
-    }
-    const bindings = [
-      shared.teamGameIds?.[teamId],
-      shared.homeTeamId === teamId ? shared.homeGameId : null,
-      shared.awayTeamId === teamId ? shared.awayGameId : null,
-      shared.sourceGameId,
-    ].filter(Boolean);
-    return bindings.includes(gameId);
+    return hasTeamScopedSharedGameBinding(shared, teamId, gameId);
   }
 
   async function finalizeProjection(

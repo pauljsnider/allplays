@@ -5,7 +5,7 @@ const source = readFileSync(new URL('../../player.html', import.meta.url), 'utf8
 
 describe('player public page load performance', () => {
     it('loads per-game stats in parallel instead of awaiting each game sequentially', () => {
-        expect(source).toContain('async function loadPlayerGameData(teamId, games, playerId, playerName, { requestManagerStats = false } = {}) {');
+        expect(source).toMatch(/async function loadPlayerGameData\(teamId, games, playerId, playerName, \{\s*requestManagerStats = false,\s*profilePlayerId = ''\s*\} = \{\}\) \{/);
         expect(source).toContain('const results = await Promise.all(games.map(async (game) => {');
         expect(source).not.toContain('for (const game of games) {');
     });

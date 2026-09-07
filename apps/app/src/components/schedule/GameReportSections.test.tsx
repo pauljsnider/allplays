@@ -59,7 +59,7 @@ function buildReport(summary: string, gameOverrides: Record<string, unknown> = {
     teamStatKeys: [],
     teamStats: {},
     statKeys: ['pts'],
-    playerRows: [{ playerId: 'player-1', playerName: 'Avery Smith', number: '1', stats: { pts: 8 }, timeMs: 600000, didNotPlay: false }],
+    playerRows: [{ playerId: 'player-1', playerName: 'Avery Smith', number: '1', canOpenProfile: true, stats: { pts: 8 }, timeMs: 600000, didNotPlay: false }],
     statLabels: { pts: 'PTS' },
     hasPlayingTime: true,
     team: { id: 'team-1' }
@@ -214,6 +214,7 @@ describe('GameReportSections', () => {
           playerId: 'player-1',
           playerName: 'Avery Smith',
           number: '1',
+          canOpenProfile: true,
           stats: { h: 0, sb: 2 },
           timeMs: 0,
           didNotPlay: false,
@@ -240,6 +241,79 @@ describe('GameReportSections', () => {
     expect(within(player).getByLabelText('0')).toBeTruthy();
     expect(screen.getByText(/projection is pending/i)).toBeTruthy();
     expect(screen.getByText('Ledger rev 9 · Stats rev 8')).toBeTruthy();
+  });
+
+  it('keeps roster players linkable without exposing synthetic recorded-player IDs in profile links', async () => {
+    const playerRows = [
+      {
+        playerId: 'player-1',
+        playerName: 'Avery Smith',
+        number: '1',
+        stats: { pts: 8 },
+        timeMs: 600000,
+        didNotPlay: false
+      },
+      {
+        playerId: 'manual:guest-1',
+        playerName: 'Guest Batter',
+        number: '18',
+        canOpenProfile: false,
+        stats: { pts: 3 },
+        timeMs: 0,
+        didNotPlay: false
+      }
+    ];
+    gameReportServiceMocks.loadGameReportSections.mockResolvedValue({
+      ...buildDiamondReport(''),
+      playerRows,
+      visiblePlayerRows: playerRows,
+      deferredPlayerRows: [],
+      diamond: {
+        isDiamond: true,
+        readOnly: true,
+        status: 'current',
+        pending: false,
+        authoritativeRevision: 12,
+        sourceRevisions: [12]
+      }
+    });
+
+    render(<GameReportSections event={buildDiamondEvent()} />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Players' })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Players' }));
+
+    expect(screen.getByRole('link', { name: /Avery Smith/i })).toHaveAttribute(
+      'href',
+      expect.stringContaining('playerId=player-1')
+    );
+    expect(screen.queryByRole('link', { name: /Guest Batter/i })).toBeNull();
+    expect(screen.getByText(/Guest Batter/i).closest('a')).toBeNull();
+    expect(screen.getAllByRole('link').some((link) => String(link.getAttribute('href')).includes('manual'))).toBe(false);
+  });
+
+  it('labels an incomplete manager stat scope as a retryable whole-public fallback', async () => {
+    gameReportServiceMocks.loadGameReportSections.mockResolvedValue({
+      ...buildDiamondReport('Public fallback report.'),
+      diamond: {
+        isDiamond: true,
+        readOnly: true,
+        status: 'current',
+        pending: false,
+        authoritativeRevision: 12,
+        sourceRevisions: [12],
+        requestedStatVisibility: 'manager-internal',
+        statVisibility: 'public',
+        privateStatsStatus: 'partial',
+        privateStatsReason: 'manager-report-chunk-1:private-read-empty'
+      }
+    });
+
+    render(<GameReportSections event={buildDiamondEvent({ isTeamAdmin: true })} />);
+
+    expect(await screen.findByText('Diamond scorebook · Public stats · Read only')).toBeTruthy();
+    expect(screen.getByText('Internal projection unavailable; showing the last complete public projection. Refresh to retry.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Export public CSV' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Export internal CSV' })).toBeNull();
   });
 
   it('keeps the empty play state primary and hides audio controls until a play exists', async () => {

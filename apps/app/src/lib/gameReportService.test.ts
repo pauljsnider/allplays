@@ -38,6 +38,9 @@ const diamondStatConfigSnapshotMocks = vi.hoisted(() => ({
   buildActivationPinnedDiamondPresentationConfig: vi.fn((config: any) => config),
   currentDiamondStatConfigMatchesActivation: vi.fn((_input?: any) => true)
 }));
+const diamondManagerStatsMocks = vi.hoisted(() => ({
+  loadDiamondManagerStats: vi.fn()
+}));
 
 vi.mock('../../../../js/db.js', () => dbMocks);
 vi.mock('../../../../js/firebase.js', () => firebaseMocks);
@@ -47,6 +50,10 @@ vi.mock('./adapters/legacyDiamondScorebookFirebase', () => ({
 }));
 vi.mock('./diamondScorebookService', () => diamondScorebookMocks);
 vi.mock('./diamondStatConfigSnapshot', () => diamondStatConfigSnapshotMocks);
+vi.mock('./diamondManagerStatsService', () => ({
+  DIAMOND_MANAGER_STATS_MAX_PLAYERS: 25,
+  loadDiamondManagerStats: diamondManagerStatsMocks.loadDiamondManagerStats
+}));
 vi.mock('../../../../js/game-report-stats.js', () => gameReportStatsMocks);
 vi.mock('../../../../js/live-game-video.js', () => ({
   buildHighlightShareUrl: vi.fn(() => ''),
@@ -61,19 +68,32 @@ vi.mock('../../../../js/post-game-stat-editor.js', () => ({
 }));
 
 import { loadGameReportPlays, loadGameReportSections, normalizePublishedDiamondAiRecap } from './gameReportService';
+import { buildDiamondGameReportStatsCsv } from './diamondStatExport';
 
 function configureCurrentDiamondReportFixture({
   configId = 'diamond-config',
   playerPublicStatIds = ['h'],
   playerStats = { h: 2 },
   teamPublicStatIds = ['r'],
-  teamStats = { r: 1 }
+  teamStats = { r: 1 },
+  projectedPlayers = [{
+    id: 'player-recorded',
+    playerName: 'Recorded Player',
+    playerNumber: '3',
+    stats: playerStats
+  }]
 }: {
   configId?: string;
   playerPublicStatIds?: string[];
   playerStats?: Record<string, number>;
   teamPublicStatIds?: string[];
   teamStats?: Record<string, number>;
+  projectedPlayers?: Array<{
+    id: string;
+    playerName?: string;
+    playerNumber?: string;
+    stats?: Record<string, number>;
+  }>;
 } = {}) {
   const instanceId = '00000000-0000-4000-8000-000000000001';
   const checkpointHash = `sha256:${'a'.repeat(64)}`;
@@ -115,20 +135,20 @@ function configureCurrentDiamondReportFixture({
   });
   firebaseMocks.getDocs.mockResolvedValue({
     forEach(callback: (docSnap: any) => void) {
-      callback({
-        id: 'player-recorded',
+      projectedPlayers.forEach((player) => callback({
+        id: player.id,
         data: () => ({
           schemaVersion: 1,
           trackingEngine: 'diamond-v2',
           projectionSchemaVersion: 1,
-          playerId: 'player-recorded',
-          playerName: 'Recorded Player',
-          playerNumber: '3',
+          playerId: player.id,
+          playerName: player.playerName || '',
+          playerNumber: player.playerNumber || '',
           sourceRevision: 7,
           checkpointHash,
           complete: true,
           publicStatIds: playerPublicStatIds,
-          stats: playerStats,
+          stats: player.stats || {},
           observedStats: {},
           derivedStats: {},
           observedDerivedStats: {},
@@ -149,9 +169,105 @@ function configureCurrentDiamondReportFixture({
           statConfigSnapshotHash: configHash,
           projectionHash
         })
-      });
+      }));
     }
   });
+  return { instanceId, checkpointHash, configHash, projectionHash };
+}
+
+function buildManagerPlayerDocument({
+  playerId,
+  instanceId,
+  checkpointHash,
+  configHash,
+  projectionHash,
+  stats = { h: 1, pitches: 12 }
+}: {
+  playerId: string;
+  instanceId: string;
+  checkpointHash: string;
+  configHash: string;
+  projectionHash: string;
+  stats?: Record<string, number>;
+}) {
+  return {
+    trackingEngine: 'diamond-v2',
+    authoritative: true,
+    complete: true,
+    projectionSchemaVersion: 1,
+    playerId,
+    playerName: `Recorded ${playerId}`,
+    playerNumber: '',
+    side: 'home',
+    instanceId,
+    diamondScorebookInstanceId: instanceId,
+    projectionGeneration: instanceId,
+    sourceRevision: 7,
+    checkpointHash,
+    statConfigSnapshotHash: configHash,
+    projectionHash,
+    stats,
+    observedStats: {},
+    derivedStats: {},
+    observedDerivedStats: {},
+    statCoverage: Object.fromEntries(Object.keys(stats).map((id) => [id, 'complete'])),
+    coverage: { batting: 'complete' },
+    participated: true,
+    participationStatus: 'appeared',
+    participationSource: 'diamond-v2'
+  };
+}
+
+function buildManagerTeamDocument({
+  instanceId,
+  checkpointHash,
+  configHash,
+  projectionHash
+}: {
+  instanceId: string;
+  checkpointHash: string;
+  configHash: string;
+  projectionHash: string;
+}) {
+  return {
+    trackingEngine: 'diamond-v2',
+    complete: true,
+    projectionSchemaVersion: 1,
+    side: 'home',
+    instanceId,
+    diamondScorebookInstanceId: instanceId,
+    projectionGeneration: instanceId,
+    sourceRevision: 7,
+    checkpointHash,
+    statConfigSnapshotHash: configHash,
+    projectionHash,
+    stats: { r: 1 },
+    observedStats: {},
+    statCoverage: { r: 'complete' },
+    coverage: { batting: 'complete' },
+    inningLines: {}
+  };
+}
+
+function buildCompleteManagerStatsResult(
+  playerIds: string[],
+  identity: ReturnType<typeof configureCurrentDiamondReportFixture>
+) {
+  return {
+    status: 'complete' as const,
+    reason: null,
+    documentsByGameId: new Map([[
+      'game-1',
+      playerIds.map((playerId) => ({
+        id: playerId,
+        data: buildManagerPlayerDocument({ playerId, ...identity })
+      }))
+    ]]),
+    teamDocumentsByGameId: new Map([[
+      'game-1',
+      buildManagerTeamDocument(identity)
+    ]])
+  };
 }
 
 function buildPublicDiamondConfig() {
@@ -206,6 +322,12 @@ describe('gameReportService', () => {
       }
     });
     diamondFirebaseMocks.getDiamondManagerStats.mockRejectedValue(new Error('manager stats not configured'));
+    diamondManagerStatsMocks.loadDiamondManagerStats.mockResolvedValue({
+      status: 'unavailable',
+      reason: 'private-read-unavailable',
+      documentsByGameId: new Map(),
+      teamDocumentsByGameId: new Map()
+    });
     diamondScorebookMocks.getDiamondState.mockResolvedValue({
       instanceId: '00000000-0000-4000-8000-000000000001',
       revision: 7
@@ -415,6 +537,353 @@ describe('gameReportService', () => {
     expect(report.teamStatKeys).toEqual([]);
     expect(report.teamStats).toEqual({});
     expect(report.diamond).toMatchObject({ isDiamond: true, pending: false });
+  });
+
+  it('keeps activation-recorded identities and synthesizes projected players missing from the current roster and CSV', async () => {
+    dbMocks.getPlayers.mockResolvedValue([{
+      id: 'player-recorded',
+      name: 'Current Renamed Player',
+      number: '99',
+      photoUrl: 'https://images.example.test/current-player.png'
+    }]);
+    configureCurrentDiamondReportFixture({
+      projectedPlayers: [
+        { id: 'manual:z', playerName: 'Guest Batter', playerNumber: '18', stats: { h: 3 } },
+        { id: 'player-recorded', playerName: ' Game\u0000 Day\u202e\n Player ', playerNumber: ' 3\t', stats: { h: 2 } },
+        { id: 'manual:a', playerName: '', playerNumber: '', stats: { h: 1 } }
+      ]
+    });
+    dbMocks.getConfigs.mockResolvedValue([buildPublicDiamondConfig()]);
+    gameReportStatsMocks.resolveReportStatColumns.mockReturnValue({
+      statKeys: ['h'],
+      statLabels: { h: 'H' },
+      statDefinitions: { h: { id: 'h', label: 'H', scope: 'player', visibility: 'public' } }
+    });
+
+    const report = await loadGameReportSections('team-1', 'game-1');
+
+    expect(report.playerRows.map((player) => player.playerId)).toEqual([
+      'player-recorded',
+      'manual:a',
+      'manual:z'
+    ]);
+    expect(report.playerRows[0]).toMatchObject({
+      playerName: 'Game Day Player',
+      number: '3',
+      photoUrl: 'https://images.example.test/current-player.png',
+      canOpenProfile: true,
+      stats: { h: 2 }
+    });
+    expect(report.playerRows[1]).toMatchObject({
+      playerName: 'Recorded player',
+      number: '-',
+      photoUrl: undefined,
+      canOpenProfile: false,
+      stats: { h: 1 },
+      participated: true,
+      participationSource: 'diamond-v2'
+    });
+    expect(report.playerRows[2]).toMatchObject({
+      playerName: 'Guest Batter',
+      number: '18',
+      photoUrl: undefined,
+      canOpenProfile: false,
+      stats: { h: 3 }
+    });
+    expect(report.visiblePlayerRows).toEqual(report.playerRows);
+    expect(report.deferredPlayerRows).toEqual([]);
+
+    const { csv } = buildDiamondGameReportStatsCsv(report);
+    expect(csv).toContain('"","Guest Batter","18"');
+    expect(csv).toContain('"","Recorded player","\'-"');
+    expect(csv).toContain('"player-recorded","Game Day Player","3"');
+    expect(csv).not.toContain('manual:');
+    expect(csv).not.toContain('Current Renamed Player');
+  });
+
+  it.each([
+    { playerCount: 26, expectedChunkSizes: [25, 1] },
+    { playerCount: 50, expectedChunkSizes: [25, 25] }
+  ])('loads $playerCount complete manager player documents in bounded chunks', async ({ playerCount, expectedChunkSizes }) => {
+    const playerIds = Array.from({ length: playerCount }, (_, index) => `player-${String(index + 1).padStart(2, '0')}`);
+    dbMocks.getPlayers.mockResolvedValue(playerIds.map((id, index) => ({ id, name: `Current Player ${String(index + 1)}`, number: String(index + 1) })));
+    const identity = configureCurrentDiamondReportFixture({
+      projectedPlayers: playerIds.map((id, index) => ({
+        id,
+        playerName: `Recorded Player ${String(index + 1)}`,
+        playerNumber: String(index + 1),
+        stats: { h: index + 1 }
+      }))
+    });
+    dbMocks.getConfigs.mockResolvedValue([buildPublicDiamondConfig()]);
+    diamondManagerStatsMocks.loadDiamondManagerStats.mockImplementation(async ({ playerIds: requestedPlayerIds }: { playerIds: string[] }) => (
+      buildCompleteManagerStatsResult(requestedPlayerIds, identity)
+    ));
+
+    const report = await loadGameReportSections('team-1', 'game-1', { statVisibility: 'manager-internal' });
+
+    expect(diamondManagerStatsMocks.loadDiamondManagerStats).toHaveBeenCalledTimes(expectedChunkSizes.length);
+    expect(diamondManagerStatsMocks.loadDiamondManagerStats.mock.calls.map(([request]) => request.playerIds.length)).toEqual(expectedChunkSizes);
+    expect(diamondManagerStatsMocks.loadDiamondManagerStats.mock.calls.flatMap(([request]) => request.playerIds)).toEqual(playerIds);
+    expect(report.playerRows).toHaveLength(playerCount);
+    expect(report.playerRows.every((player) => player.stats.pitches === 12)).toBe(true);
+    expect(report.diamond).toMatchObject({
+      requestedStatVisibility: 'manager-internal',
+      statVisibility: 'manager-internal',
+      privateStatsStatus: 'complete',
+      privateStatsReason: null
+    });
+  });
+
+  it('requires every manager chunk to carry the same complete team document before applying private player stats', async () => {
+    const playerIds = Array.from({ length: 26 }, (_, index) => `player-${String(index + 1).padStart(2, '0')}`);
+    dbMocks.getPlayers.mockResolvedValue(playerIds.map((id) => ({ id, name: id })));
+    const identity = configureCurrentDiamondReportFixture({
+      projectedPlayers: playerIds.map((id, index) => ({ id, playerName: id, stats: { h: index + 1 } }))
+    });
+    dbMocks.getConfigs.mockResolvedValue([buildPublicDiamondConfig()]);
+    gameReportStatsMocks.resolveReportStatColumns.mockReturnValue({
+      statKeys: ['h'],
+      statLabels: { h: 'H' },
+      statDefinitions: { h: { id: 'h', label: 'H', scope: 'player', visibility: 'public' } }
+    });
+    diamondManagerStatsMocks.loadDiamondManagerStats.mockImplementation(async ({ playerIds: requestedPlayerIds }: { playerIds: string[] }) => {
+      const result = buildCompleteManagerStatsResult(requestedPlayerIds, identity);
+      return requestedPlayerIds.length === 1
+        ? { ...result, teamDocumentsByGameId: new Map() }
+        : result;
+    });
+
+    const report = await loadGameReportSections('team-1', 'game-1', { statVisibility: 'manager-internal' });
+
+    expect(diamondManagerStatsMocks.loadDiamondManagerStats.mock.calls.map(([request]) => request.playerIds.length)).toEqual([25, 1, 25, 1]);
+    expect(report.playerRows.every((player) => !Object.prototype.hasOwnProperty.call(player.stats, 'pitches'))).toBe(true);
+    expect(report.statKeys).toEqual(['h']);
+    expect(report.teamStats).toEqual({ r: 1 });
+    expect(report.teamStatPresentation).toMatchObject({ statVisibility: 'public' });
+    expect(report.diamond).toMatchObject({
+      requestedStatVisibility: 'manager-internal',
+      statVisibility: 'public',
+      privateStatsStatus: 'partial',
+      privateStatsReason: 'manager-report-chunk-2:private-read-empty'
+    });
+  });
+
+  it('retries the whole manager scope and recovers when a missing team document is transient', async () => {
+    dbMocks.getPlayers.mockResolvedValue([{ id: 'player-recorded', name: 'Current Player' }]);
+    const identity = configureCurrentDiamondReportFixture();
+    dbMocks.getConfigs.mockResolvedValue([buildPublicDiamondConfig()]);
+    let callNumber = 0;
+    diamondManagerStatsMocks.loadDiamondManagerStats.mockImplementation(async ({ playerIds: requestedPlayerIds }: { playerIds: string[] }) => {
+      callNumber += 1;
+      const result = buildCompleteManagerStatsResult(requestedPlayerIds, identity);
+      if (callNumber === 1) return { ...result, teamDocumentsByGameId: new Map() };
+      return {
+        ...result,
+        teamDocumentsByGameId: new Map([[
+          'game-1',
+          { ...buildManagerTeamDocument(identity), stats: { r: 9 } }
+        ]])
+      };
+    });
+
+    const report = await loadGameReportSections('team-1', 'game-1', { statVisibility: 'manager-internal' });
+
+    expect(diamondManagerStatsMocks.loadDiamondManagerStats).toHaveBeenCalledTimes(2);
+    expect(report.playerRows[0].stats).toMatchObject({ pitches: 12 });
+    expect(report.teamStats).toEqual({ r: 9 });
+    expect(report.diamond).toMatchObject({
+      statVisibility: 'manager-internal',
+      privateStatsStatus: 'complete',
+      privateStatsReason: null
+    });
+  });
+
+  it.each([
+    {
+      mode: 'missing',
+      expectedReason: 'manager-report-chunk-1:private-read-empty',
+      teamDocument: null
+    },
+    {
+      mode: 'incomplete',
+      expectedReason: 'manager-report-chunk-1:private-document-mismatch',
+      teamDocument: { complete: false }
+    }
+  ])('keeps the whole public report after repeated $mode manager team documents', async ({ expectedReason, teamDocument }) => {
+    dbMocks.getPlayers.mockResolvedValue([{ id: 'player-recorded', name: 'Current Player' }]);
+    const identity = configureCurrentDiamondReportFixture();
+    dbMocks.getConfigs.mockResolvedValue([buildPublicDiamondConfig()]);
+    gameReportStatsMocks.resolveReportStatColumns.mockReturnValue({
+      statKeys: ['h'],
+      statLabels: { h: 'H' },
+      statDefinitions: { h: { id: 'h', label: 'H', scope: 'player', visibility: 'public' } }
+    });
+    diamondManagerStatsMocks.loadDiamondManagerStats.mockImplementation(async ({ playerIds: requestedPlayerIds }: { playerIds: string[] }) => {
+      const result = buildCompleteManagerStatsResult(requestedPlayerIds, identity);
+      return {
+        ...result,
+        teamDocumentsByGameId: teamDocument
+          ? new Map([['game-1', { ...buildManagerTeamDocument(identity), ...teamDocument }]])
+          : new Map()
+      };
+    });
+
+    const report = await loadGameReportSections('team-1', 'game-1', { statVisibility: 'manager-internal' });
+
+    expect(diamondManagerStatsMocks.loadDiamondManagerStats).toHaveBeenCalledTimes(2);
+    expect(report.playerRows[0].stats).toEqual({ h: 2 });
+    expect(report.statKeys).toEqual(['h']);
+    expect(report.teamStats).toEqual({ r: 1 });
+    expect(report.teamStatPresentation).toMatchObject({ statVisibility: 'public' });
+    expect(report.diamond).toMatchObject({
+      requestedStatVisibility: 'manager-internal',
+      statVisibility: 'public',
+      privateStatsStatus: 'partial',
+      privateStatsReason: expectedReason
+    });
+  });
+
+  it('keeps the existing 50-document public projection bound authoritative before manager chunking', async () => {
+    const playerIds = Array.from({ length: 51 }, (_, index) => `player-${String(index + 1).padStart(2, '0')}`);
+    dbMocks.getPlayers.mockResolvedValue(playerIds.map((id) => ({ id, name: id })));
+    configureCurrentDiamondReportFixture({
+      projectedPlayers: playerIds.map((id) => ({ id, playerName: id, stats: { h: 1 } }))
+    });
+    dbMocks.getConfigs.mockResolvedValue([buildPublicDiamondConfig()]);
+
+    await expect(loadGameReportSections('team-1', 'game-1', { statVisibility: 'manager-internal' })).rejects.toThrow(
+      'The Diamond public stat projection is incomplete.'
+    );
+    expect(diamondManagerStatsMocks.loadDiamondManagerStats).not.toHaveBeenCalled();
+  });
+
+  it('retries the whole manager player set once after an incomplete chunk and then merges only complete results', async () => {
+    const playerIds = Array.from({ length: 26 }, (_, index) => `player-${String(index + 1).padStart(2, '0')}`);
+    dbMocks.getPlayers.mockResolvedValue(playerIds.map((id) => ({ id, name: id })));
+    const identity = configureCurrentDiamondReportFixture({
+      projectedPlayers: playerIds.map((id) => ({ id, playerName: id, stats: { h: 1 } }))
+    });
+    dbMocks.getConfigs.mockResolvedValue([buildPublicDiamondConfig()]);
+    let callNumber = 0;
+    diamondManagerStatsMocks.loadDiamondManagerStats.mockImplementation(async ({ playerIds: requestedPlayerIds }: { playerIds: string[] }) => {
+      callNumber += 1;
+      if (callNumber === 2) {
+        return { status: 'partial', reason: 'transient-second-chunk', documentsByGameId: new Map(), teamDocumentsByGameId: new Map() };
+      }
+      return buildCompleteManagerStatsResult(requestedPlayerIds, identity);
+    });
+
+    const report = await loadGameReportSections('team-1', 'game-1', { statVisibility: 'manager-internal' });
+
+    expect(diamondManagerStatsMocks.loadDiamondManagerStats.mock.calls.map(([request]) => request.playerIds.length)).toEqual([25, 1, 25, 1]);
+    expect(report.playerRows.every((player) => player.stats.pitches === 12)).toBe(true);
+    expect(report.diamond).toMatchObject({ statVisibility: 'manager-internal', privateStatsStatus: 'complete' });
+  });
+
+  it('does not mix private chunks or cache a partial result after two incomplete manager reads', async () => {
+    const playerIds = Array.from({ length: 26 }, (_, index) => `player-${String(index + 1).padStart(2, '0')}`);
+    dbMocks.getPlayers.mockResolvedValue(playerIds.map((id) => ({ id, name: id })));
+    const identity = configureCurrentDiamondReportFixture({
+      projectedPlayers: playerIds.map((id) => ({ id, playerName: id, stats: { h: 1 } }))
+    });
+    dbMocks.getConfigs.mockResolvedValue([buildPublicDiamondConfig()]);
+    let callNumber = 0;
+    diamondManagerStatsMocks.loadDiamondManagerStats.mockImplementation(async ({ playerIds: requestedPlayerIds }: { playerIds: string[] }) => {
+      callNumber += 1;
+      return callNumber % 2 === 1
+        ? buildCompleteManagerStatsResult(requestedPlayerIds, identity)
+        : { status: 'partial', reason: 'second-chunk-incomplete', documentsByGameId: new Map(), teamDocumentsByGameId: new Map() };
+    });
+
+    const first = await loadGameReportSections('team-1', 'game-1', { statVisibility: 'manager-internal' });
+    const second = await loadGameReportSections('team-1', 'game-1', { statVisibility: 'manager-internal' });
+
+    expect(diamondManagerStatsMocks.loadDiamondManagerStats.mock.calls.map(([request]) => request.playerIds.length)).toEqual([
+      25, 1, 25, 1,
+      25, 1, 25, 1
+    ]);
+    [first, second].forEach((report) => {
+      expect(report.playerRows.every((player) => player.stats.h === 1)).toBe(true);
+      expect(report.playerRows.every((player) => !Object.prototype.hasOwnProperty.call(player.stats, 'pitches'))).toBe(true);
+      expect(report.diamond).toMatchObject({
+        requestedStatVisibility: 'manager-internal',
+        statVisibility: 'public',
+        privateStatsStatus: 'partial'
+      });
+    });
+  });
+
+  it('retries and falls back as one public unit when complete chunk envelopes omit a requested player', async () => {
+    const playerIds = Array.from({ length: 26 }, (_, index) => `player-${String(index + 1).padStart(2, '0')}`);
+    dbMocks.getPlayers.mockResolvedValue(playerIds.map((id) => ({ id, name: id })));
+    const identity = configureCurrentDiamondReportFixture({
+      projectedPlayers: playerIds.map((id) => ({ id, playerName: id, stats: { h: 1 } }))
+    });
+    dbMocks.getConfigs.mockResolvedValue([buildPublicDiamondConfig()]);
+    diamondManagerStatsMocks.loadDiamondManagerStats.mockImplementation(async ({ playerIds: requestedPlayerIds }: { playerIds: string[] }) => (
+      requestedPlayerIds.length === 1
+        ? {
+            status: 'complete',
+            reason: null,
+            documentsByGameId: new Map(),
+            teamDocumentsByGameId: new Map([['game-1', buildManagerTeamDocument(identity)]])
+          }
+        : buildCompleteManagerStatsResult(requestedPlayerIds, identity)
+    ));
+
+    const report = await loadGameReportSections('team-1', 'game-1', { statVisibility: 'manager-internal' });
+
+    expect(diamondManagerStatsMocks.loadDiamondManagerStats.mock.calls.map(([request]) => request.playerIds.length)).toEqual([25, 1, 25, 1]);
+    expect(report.playerRows.every((player) => !Object.prototype.hasOwnProperty.call(player.stats, 'pitches'))).toBe(true);
+    expect(report.diamond).toMatchObject({
+      requestedStatVisibility: 'manager-internal',
+      statVisibility: 'public',
+      privateStatsStatus: 'partial',
+      privateStatsReason: 'private-read-partial'
+    });
+  });
+
+  it.each([
+    { mode: 'duplicate-player', expectedReason: 'manager-report-duplicate-player-result' },
+    { mode: 'incoherent-team', expectedReason: 'manager-report-incoherent-team-result' }
+  ])('rejects $mode evidence across otherwise complete manager chunks', async ({ mode, expectedReason }) => {
+    const playerIds = Array.from({ length: 26 }, (_, index) => `player-${String(index + 1).padStart(2, '0')}`);
+    dbMocks.getPlayers.mockResolvedValue(playerIds.map((id) => ({ id, name: id })));
+    const identity = configureCurrentDiamondReportFixture({
+      projectedPlayers: playerIds.map((id) => ({ id, playerName: id, stats: { h: 1 } }))
+    });
+    dbMocks.getConfigs.mockResolvedValue([buildPublicDiamondConfig()]);
+    diamondManagerStatsMocks.loadDiamondManagerStats.mockImplementation(async ({ playerIds: requestedPlayerIds }: { playerIds: string[] }) => {
+      const result = buildCompleteManagerStatsResult(requestedPlayerIds, identity);
+      if (requestedPlayerIds.length !== 1) return result;
+      if (mode === 'duplicate-player') {
+        return {
+          ...result,
+          documentsByGameId: new Map([[
+            'game-1',
+            [{ id: 'player-01', data: buildManagerPlayerDocument({ playerId: 'player-01', ...identity }) }]
+          ]])
+        };
+      }
+      return {
+        ...result,
+        teamDocumentsByGameId: new Map([[
+          'game-1',
+          { ...buildManagerTeamDocument(identity), stats: { r: 2 } }
+        ]])
+      };
+    });
+
+    const report = await loadGameReportSections('team-1', 'game-1', { statVisibility: 'manager-internal' });
+
+    expect(diamondManagerStatsMocks.loadDiamondManagerStats.mock.calls.map(([request]) => request.playerIds.length)).toEqual([25, 1, 25, 1]);
+    expect(report.playerRows.every((player) => !Object.prototype.hasOwnProperty.call(player.stats, 'pitches'))).toBe(true);
+    expect(report.diamond).toMatchObject({
+      statVisibility: 'public',
+      privateStatsStatus: 'partial',
+      privateStatsReason: expectedReason
+    });
   });
 
   it('normalizes malformed and partial Firestore stats payloads at the mapper boundary', async () => {

@@ -60,6 +60,6 @@ describe('game auth reload', () => {
         expect(source).toContain("sport: game.sport || 'Basketball'");
         expect(source).toContain('if (currentUser) {');
         expect(source).toContain('await getDelegatedTeamContext(teamId, gameId, { includeInactive: true })');
-        expect(source).toContain('setupSummaryControls(teamId, gameId, game, resolvedTeam, players, diamondGame ? publicCompleteStatsMap : statsMap, statKeys, statLabels);');
+        expect(source).toContain('setupSummaryControls(teamId, gameId, game, resolvedTeam, reportPlayers, diamondGame ? publicCompleteStatsMap : statsMap, statKeys, statLabels);');
     });
 });
