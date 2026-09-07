@@ -55,13 +55,19 @@ describe("diamond live view model", () => {
       teamName: "  Home   Team ",
       opponent: "Visitors",
       trackingEngine: "diamond-v2",
+      interactionWindowOpen: true,
       warnings: [" Partial   capture "],
       state: { completeness: "partial" },
     });
     expect(game).toMatchObject({
       teamName: "Home Team",
+      interactionWindowOpen: true,
       warnings: ["Partial capture"],
     });
+    expect(
+      normalizeDiamondPublicGame({ interactionWindowOpen: "true" })
+        .interactionWindowOpen,
+    ).toBe(false);
     expect(
       normalizeDiamondPublicEvent({
         revision: 2,
@@ -386,13 +392,13 @@ describe("diamond live view model", () => {
     expect(html).toContain("data-diamond-mode-label");
     expect(html).toContain("data-diamond-error-sign-in");
     expect(html).toContain('aria-label="Live game score"');
-    expect(html).toContain("js/diamond-live-game.js?v=10");
+    expect(html).toContain("js/diamond-live-game.js?v=11");
 
     const script = readFileSync(
       new URL("../../js/diamond-live-game.js", import.meta.url),
       "utf8",
     );
-    expect(script).toContain("diamond-live-view-model.js?v=4");
+    expect(script).toContain("diamond-live-view-model.js?v=5");
     expect(script).toContain("onAuthStateChanged");
     expect(script).not.toContain('from "./auth.js');
     expect(script).toContain("AUTH_RESTORE_TIMEOUT_MS = 2000");
@@ -414,9 +420,8 @@ describe("diamond live view model", () => {
       "`/app/#/auth?next=${encodeURIComponent(returnPath)}`",
     );
     expect(script).toContain('elements.errorSignIn.href = `${authHref}&switch=1`');
-    expect(script).toContain(
-      'import { isViewerChatEnabled } from "./live-game-chat.js?v=4";',
-    );
+    expect(script).toContain("state.game.interactionWindowOpen === true");
+    expect(script).not.toContain("isViewerChatEnabled");
     expect(script).toContain('"postDiamondLiveChat"');
     expect(script).toContain('"postDiamondLiveReaction"');
     expect(script).toContain("expectedInstanceId: state.instanceId");

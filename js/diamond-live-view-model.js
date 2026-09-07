@@ -225,6 +225,7 @@ export function normalizeDiamondPublicGame(value = {}) {
     teamName: compactText(game.teamName, 120) || "Home",
     opponent: compactText(game.opponent, 120) || "Opponent",
     startsAt: compactText(game.startsAt, 80),
+    interactionWindowOpen: game.interactionWindowOpen === true,
     location: compactText(game.location, 160),
     trackingEngine: compactText(game.trackingEngine, 64),
     state: normalizeDiamondPublicState(game.state),

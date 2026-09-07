@@ -237,12 +237,48 @@ function getDiamondLifecycle(root) {
   return lifecycle;
 }
 
+function isDiamondInteractionWindowOpen({
+  team,
+  game,
+  root,
+  lifecycle: lifecycleValue,
+  nowMillis,
+} = {}) {
+  const gameType = compactText(game?.type || "game", 32).toLowerCase();
+  const lifecycle =
+    lifecycleValue === undefined
+      ? getDiamondLifecycle(root)
+      : compactText(lifecycleValue, 32).toLowerCase();
+  if (
+    gameType !== "game" ||
+    hasTerminalGameStatus(game) ||
+    TERMINAL_DIAMOND_LIFECYCLES.has(lifecycle)
+  ) {
+    return false;
+  }
+  if (LIVE_DIAMOND_LIFECYCLES.has(lifecycle)) return true;
+  return (
+    SCHEDULED_DIAMOND_LIFECYCLES.has(lifecycle) &&
+    isGameDay(game, team, nowMillis)
+  );
+}
+
 function assertOpenInteractionWindow(
   { team, game, root, nowMillis },
   makeError,
 ) {
   const gameType = compactText(game?.type || "game", 32).toLowerCase();
   const lifecycle = getDiamondLifecycle(root);
+  if (
+    isDiamondInteractionWindowOpen({
+      team,
+      game,
+      lifecycle,
+      nowMillis,
+    })
+  ) {
+    return;
+  }
   if (
     gameType !== "game" ||
     hasTerminalGameStatus(game) ||
@@ -253,13 +289,6 @@ function assertOpenInteractionWindow(
       "Live interactions are closed for this game.",
       { reason: "interaction-window-closed" },
     );
-  }
-  if (LIVE_DIAMOND_LIFECYCLES.has(lifecycle)) return;
-  if (
-    SCHEDULED_DIAMOND_LIFECYCLES.has(lifecycle) &&
-    isGameDay(game, team, nowMillis)
-  ) {
-    return;
   }
   throw makeError(
     "failed-precondition",
@@ -1232,6 +1261,7 @@ module.exports = {
   calendarDateKey,
   createDiamondLiveEngagementHandlers,
   engagementPaths,
+  isDiamondInteractionWindowOpen,
   isGameDay,
   moderationPaths,
 };

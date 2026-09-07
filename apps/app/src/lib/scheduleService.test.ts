@@ -2143,7 +2143,9 @@ describe('parent game route resolution', () => {
     vi.mocked(getGame).mockImplementation(async (teamId: string, gameId: string) => (
       teamId === 'team-bravo' && gameId === reversibleGameId
         ? { id: gameId, type: 'game', date: new Date('2026-06-25T18:00:00.000Z') }
-        : null
+        : teamId === 'team-bravo' && gameId === 'source-game-1'
+          ? { id: gameId, type: 'game', title: 'Colliding local game', date: new Date('2026-06-26T18:00:00.000Z') }
+          : null
     ));
     vi.mocked(getMyRsvps).mockResolvedValue([]);
 
@@ -2155,6 +2157,40 @@ describe('parent game route resolution', () => {
     expect(result.events).toHaveLength(1);
     expect(result.events[0].id).toBe(opaqueGameId);
     expect(getMyRsvps).toHaveBeenCalledWith('team-bravo', reversibleGameId, 'parent-1', ['child-2']);
+  });
+
+  it('opens a shared notification route through the recipient team without source-team access', async () => {
+    const sharedGamePath = 'organizations/org-1/sharedGames/shared-1';
+    const reversibleGameId = `shared_${encodeURIComponent(sharedGamePath)}`;
+    vi.mocked(loadProfileDocument).mockResolvedValue({
+      parentOf: [
+        { teamId: 'team-bravo', playerId: 'child-2', playerName: 'Blake' }
+      ]
+    } as any);
+    vi.mocked(getStaffTeams).mockResolvedValue({ teams: [], isPartial: false });
+    vi.mocked(getTeam).mockImplementation(async (teamId: string) => (
+      teamId === 'team-bravo'
+        ? { id: 'team-bravo', name: 'Bravo', active: true }
+        : null
+    ) as any);
+    vi.mocked(getGame).mockImplementation(async (teamId: string, gameId: string) => (
+      teamId === 'team-bravo' && gameId === reversibleGameId
+        ? { id: gameId, type: 'game', date: new Date('2026-06-25T18:00:00.000Z') }
+        : null
+    ));
+    vi.mocked(getMyRsvps).mockResolvedValue([]);
+
+    const result = await loadParentScheduleEventDetail(
+      routeUser,
+      { teamId: 'team-bravo', eventId: reversibleGameId, sharedGamePath }
+    );
+
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0]).toMatchObject({ id: reversibleGameId, teamId: 'team-bravo' });
+    expect(getGame).toHaveBeenCalledTimes(1);
+    expect(getGame).toHaveBeenCalledWith('team-bravo', reversibleGameId);
+    expect(getGame).not.toHaveBeenCalledWith('team-bravo', 'source-game-1');
+    expect(getGame).not.toHaveBeenCalledWith('team-alpha', expect.anything());
   });
 });
 

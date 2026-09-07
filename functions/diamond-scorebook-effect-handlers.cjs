@@ -9,6 +9,12 @@ const DEFAULT_EFFECT_RETRY_DELAY_MILLIS = 30 * 1000;
 const MAX_HIGHLIGHT_CLIPS = 24;
 const MAX_CLIP_DURATION_MS = 60_000;
 const LIVE_VIEWER_ORIGIN = "https://share.allplays.ai";
+const NOTIFICATION_AUDIENCE_PLAN_SCHEMA_VERSION = 1;
+const SHARED_GAME_PATH_FIELDS = [
+  "diamondSharedGamePath",
+  "sharedGamePath",
+  "_sharedGamePath",
+];
 const UUID_V4_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/;
@@ -59,6 +65,8 @@ const PROCESSOR_EFFECT_FIELDS = new Set([
   "terminalResultHash",
   "completedAt",
   "updatedAt",
+  "notificationAudiencePlan",
+  "notificationAudiencePlanHash",
 ]);
 
 class DiamondEffectError extends Error {
@@ -75,6 +83,10 @@ function isPlainObject(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const prototype = Object.getPrototypeOf(value);
   return prototype === Object.prototype || prototype === null;
+}
+
+function own(value, field) {
+  return Object.prototype.hasOwnProperty.call(value, field);
 }
 
 function snapshotData(snapshot) {
@@ -664,6 +676,30 @@ function validateEffectDocument(
     dedupKey,
   };
   effect.payload = validateEffectPayload(effect, core);
+  const hasNotificationAudiencePlan = own(raw, "notificationAudiencePlan");
+  const hasNotificationAudiencePlanHash = own(
+    raw,
+    "notificationAudiencePlanHash",
+  );
+  if (
+    hasNotificationAudiencePlan !== hasNotificationAudiencePlanHash ||
+    (effect.kind !== "notification" && hasNotificationAudiencePlan)
+  ) {
+    throw new DiamondEffectError(
+      "invalid-effect",
+      "The Diamond effect has an incomplete or unsupported notification audience plan.",
+    );
+  }
+  if (hasNotificationAudiencePlan) {
+    effect.notificationAudiencePlan = validateStoredNotificationAudiencePlan(
+      raw.notificationAudiencePlan,
+      raw.notificationAudiencePlanHash,
+      effect,
+      { teamId, gameId },
+      core,
+    );
+    effect.notificationAudiencePlanHash = raw.notificationAudiencePlanHash;
+  }
   if (TERMINAL_STATUSES.has(effect.status)) {
     const expectedOutcome =
       effect.status === "completed"
@@ -897,6 +933,338 @@ function buildViewerLink(teamId, gameId) {
   return url.toString();
 }
 
+function notificationAudienceUnavailable(reason) {
+  return new DiamondEffectError(
+    "notification-audience-unavailable",
+    "The authoritative Diamond notification audiences are incomplete or changed.",
+    { retryable: true, details: { reason } },
+  );
+}
+
+function normalizeCanonicalSharedGamePath(value) {
+  const path = exactString(value, 512);
+  if (!path) return "";
+  const segments = path.split("/");
+  return segments.length === 4 &&
+    ["organizations", "tournaments"].includes(segments[0]) &&
+    segments[2] === "sharedGames" &&
+    segments.every(
+      (segment) =>
+        segment && segment !== "." && segment !== ".." && segment.length <= 128,
+    )
+    ? path
+    : "";
+}
+
+function sharedGamePathFromGame(game) {
+  if (!isPlainObject(game)) {
+    throw notificationAudienceUnavailable("source-game-missing");
+  }
+  const candidates = SHARED_GAME_PATH_FIELDS.filter(
+    (field) =>
+      own(game, field) &&
+      game[field] !== null &&
+      game[field] !== undefined &&
+      game[field] !== "",
+  ).map((field) => normalizeCanonicalSharedGamePath(game[field]));
+  if (!candidates.length) return null;
+  const paths = [...new Set(candidates)];
+  if (paths.length !== 1 || !paths[0]) {
+    throw notificationAudienceUnavailable("shared-game-path-invalid");
+  }
+  return paths[0];
+}
+
+function safeSharedGameId(core, value) {
+  try {
+    return core.normalizeDiamondId(value, "sharedGameBindingId");
+  } catch {
+    return "";
+  }
+}
+
+function sortNotificationAudiences(audiences) {
+  return [...audiences].sort((left, right) => {
+    if (left.teamId < right.teamId) return -1;
+    if (left.teamId > right.teamId) return 1;
+    if (left.gameId < right.gameId) return -1;
+    if (left.gameId > right.gameId) return 1;
+    return 0;
+  });
+}
+
+function buildNotificationAudience(
+  core,
+  effect,
+  teamId,
+  gameId,
+  viewerTeamId = teamId,
+  viewerGameId = gameId,
+) {
+  const idempotencyKey = expectedEffectIdentity(
+    "notification",
+    effect.sourceRevision,
+    teamId,
+    gameId,
+    effect.instanceId,
+  ).dedupKey;
+  return {
+    teamId,
+    gameId,
+    ...(viewerTeamId !== teamId || viewerGameId !== gameId
+      ? { viewerTeamId, viewerGameId }
+      : {}),
+    idempotencyKey,
+    viewerLink: buildViewerLink(viewerTeamId, viewerGameId),
+  };
+}
+
+function buildDirectNotificationAudiencePlan(core, effect, location) {
+  return {
+    schemaVersion: NOTIFICATION_AUDIENCE_PLAN_SCHEMA_VERSION,
+    mode: "direct",
+    sourceTeamId: location.teamId,
+    sourceGameId: location.gameId,
+    instanceId: effect.instanceId,
+    audiences: [
+      buildNotificationAudience(
+        core,
+        effect,
+        location.teamId,
+        location.gameId,
+      ),
+    ],
+  };
+}
+
+function requireSharedAudienceId(core, value, reason) {
+  const normalized = safeSharedGameId(core, value);
+  if (!normalized) throw notificationAudienceUnavailable(reason);
+  return normalized;
+}
+
+function buildSharedNotificationAudiencePlan({
+  core,
+  effect,
+  location,
+  fence,
+  sharedGamePath,
+  shared,
+}) {
+  if (!isPlainObject(shared)) {
+    throw notificationAudienceUnavailable("shared-game-missing");
+  }
+  const homeTeamId = requireSharedAudienceId(
+    core,
+    shared.homeTeamId,
+    "home-team-invalid",
+  );
+  const awayTeamId = requireSharedAudienceId(
+    core,
+    shared.awayTeamId,
+    "away-team-invalid",
+  );
+  if (
+    homeTeamId === awayTeamId ||
+    ![homeTeamId, awayTeamId].includes(location.teamId)
+  ) {
+    throw notificationAudienceUnavailable("shared-team-sides-mismatch");
+  }
+  if (
+    shared.trackingEngine !== DIAMOND_ENGINE ||
+    shared.diamondSourceTeamId !== location.teamId ||
+    shared.diamondSourceGameId !== location.gameId ||
+    shared.diamondScorebookInstanceId !== effect.instanceId ||
+    shared.diamondProjectionRevision !== fence.marker.sourceRevision ||
+    shared.diamondProjectionCheckpointHash !== fence.marker.checkpointHash ||
+    shared.diamondProjectionHash !== fence.marker.projectionHash ||
+    shared.diamondProjectionStatus !== "current"
+  ) {
+    throw notificationAudienceUnavailable("shared-diamond-claim-mismatch");
+  }
+
+  const authoritativeTeams = new Set([homeTeamId, awayTeamId]);
+  if (own(shared, "teamIds")) {
+    if (!Array.isArray(shared.teamIds) || shared.teamIds.length !== 2) {
+      throw notificationAudienceUnavailable("shared-team-list-invalid");
+    }
+    const normalizedTeamIds = shared.teamIds.map((value) =>
+      safeSharedGameId(core, value),
+    );
+    if (
+      normalizedTeamIds.some((value) => !value) ||
+      new Set(normalizedTeamIds).size !== 2 ||
+      normalizedTeamIds.some((value) => !authoritativeTeams.has(value))
+    ) {
+      throw notificationAudienceUnavailable("shared-team-list-mismatch");
+    }
+  }
+
+  // Canonical organization/tournament games are team-facing through a
+  // synthetic shared-path ID; they do not promise a target-team local game
+  // document. Keep recipient/idempotency scope on each authoritative team,
+  // while every notification opens the one source Diamond ledger that the
+  // exact server-owned shared claim proves is publicly resolvable.
+  const audiences = sortNotificationAudiences(
+    [homeTeamId, awayTeamId].map((teamId) =>
+      buildNotificationAudience(
+        core,
+        effect,
+        teamId,
+        location.gameId,
+        location.teamId,
+        location.gameId,
+      ),
+    ),
+  );
+
+  return {
+    schemaVersion: NOTIFICATION_AUDIENCE_PLAN_SCHEMA_VERSION,
+    mode: "shared",
+    sourceTeamId: location.teamId,
+    sourceGameId: location.gameId,
+    instanceId: effect.instanceId,
+    sharedGamePath,
+    audiences,
+  };
+}
+
+function validateStoredNotificationAudiencePlan(
+  rawPlan,
+  rawHash,
+  effect,
+  location,
+  core,
+) {
+  if (!isPlainObject(rawPlan) || !SHA256_PATTERN.test(rawHash || "")) {
+    throw new DiamondEffectError(
+      "invalid-effect",
+      "The stored Diamond notification audience plan is malformed.",
+    );
+  }
+  const mode = rawPlan.mode;
+  assertAllowedFields(
+    rawPlan,
+    new Set([
+      "schemaVersion",
+      "mode",
+      "sourceTeamId",
+      "sourceGameId",
+      "instanceId",
+      ...(mode === "shared" ? ["sharedGamePath"] : []),
+      "audiences",
+    ]),
+    "notification audience plan",
+  );
+  if (
+    rawPlan.schemaVersion !== NOTIFICATION_AUDIENCE_PLAN_SCHEMA_VERSION ||
+    !["direct", "shared"].includes(mode) ||
+    rawPlan.sourceTeamId !== location.teamId ||
+    rawPlan.sourceGameId !== location.gameId ||
+    rawPlan.instanceId !== effect.instanceId ||
+    !Array.isArray(rawPlan.audiences) ||
+    rawPlan.audiences.length !== (mode === "shared" ? 2 : 1)
+  ) {
+    throw new DiamondEffectError(
+      "invalid-effect",
+      "The stored Diamond notification audience plan does not match its effect.",
+    );
+  }
+  const sharedGamePath =
+    mode === "shared"
+      ? normalizeCanonicalSharedGamePath(rawPlan.sharedGamePath)
+      : null;
+  if (mode === "shared" && !sharedGamePath) {
+    throw new DiamondEffectError(
+      "invalid-effect",
+      "The stored Diamond notification audience path is malformed.",
+    );
+  }
+  const audiences = rawPlan.audiences.map((rawAudience) => {
+    if (!isPlainObject(rawAudience)) {
+      throw new DiamondEffectError(
+        "invalid-effect",
+        "A stored Diamond notification audience is malformed.",
+      );
+    }
+    assertAllowedFields(
+      rawAudience,
+      new Set([
+        "teamId",
+        "gameId",
+        "viewerTeamId",
+        "viewerGameId",
+        "idempotencyKey",
+        "viewerLink",
+      ]),
+      "notification audience",
+    );
+    const teamId = requireId(core, rawAudience.teamId, "audienceTeamId");
+    const gameId = requireId(core, rawAudience.gameId, "audienceGameId");
+    const expected = buildNotificationAudience(
+      core,
+      effect,
+      teamId,
+      gameId,
+      mode === "shared" ? location.teamId : teamId,
+      mode === "shared" ? location.gameId : gameId,
+    );
+    if (
+      gameId !== location.gameId ||
+      rawAudience.viewerTeamId !== expected.viewerTeamId ||
+      rawAudience.viewerGameId !== expected.viewerGameId ||
+      rawAudience.idempotencyKey !== expected.idempotencyKey ||
+      rawAudience.viewerLink !== expected.viewerLink
+    ) {
+      throw new DiamondEffectError(
+        "invalid-effect",
+        "A stored Diamond notification audience identity is not canonical.",
+      );
+    }
+    return expected;
+  });
+  const sorted = sortNotificationAudiences(audiences);
+  if (
+    new Set(sorted.map(({ teamId }) => teamId)).size !== sorted.length ||
+    sorted.some(
+      (audience, index) =>
+        audience.teamId !== audiences[index].teamId ||
+        audience.gameId !== audiences[index].gameId,
+    ) ||
+    !sorted.some(
+      ({ teamId, gameId }) =>
+        teamId === location.teamId && gameId === location.gameId,
+    ) ||
+    (mode === "direct" &&
+      (sorted[0].teamId !== location.teamId ||
+        sorted[0].gameId !== location.gameId))
+  ) {
+    throw new DiamondEffectError(
+      "invalid-effect",
+      "The stored Diamond notification audiences are duplicated or misbound.",
+    );
+  }
+  const normalized = {
+    schemaVersion: NOTIFICATION_AUDIENCE_PLAN_SCHEMA_VERSION,
+    mode,
+    sourceTeamId: location.teamId,
+    sourceGameId: location.gameId,
+    instanceId: effect.instanceId,
+    ...(sharedGamePath ? { sharedGamePath } : {}),
+    audiences: sorted,
+  };
+  if (
+    core.hashDiamondValue(normalized) !== rawHash ||
+    core.hashDiamondValue(rawPlan) !== rawHash
+  ) {
+    throw new DiamondEffectError(
+      "invalid-effect",
+      "The stored Diamond notification audience plan failed integrity validation.",
+    );
+  }
+  return normalized;
+}
+
 function normalizeNotificationProviderResult(value, dedupKey, instanceId) {
   if (
     !isPlainObject(value) ||
@@ -932,6 +1300,36 @@ function normalizeNotificationProviderResult(value, dedupKey, instanceId) {
   return {
     providerOutcome: value.outcome,
     ...(providerReceiptId ? { providerReceiptId } : {}),
+  };
+}
+
+function aggregateNotificationProviderResults(results) {
+  if (results.length === 1) return results[0].providerResult;
+  const outcomes = results.map(
+    ({ providerResult }) => providerResult.providerOutcome,
+  );
+  const providerOutcome = outcomes.includes("delivery-uncertain")
+    ? "delivery-uncertain"
+    : outcomes.includes("partial")
+      ? "partial"
+      : outcomes.every((outcome) => outcome === "no-recipients")
+        ? "no-recipients"
+        : outcomes.every((outcome) => outcome === "deduplicated")
+          ? "deduplicated"
+          : outcomes.includes("no-recipients")
+            ? "partial"
+            : "sent";
+  return {
+    providerOutcome,
+    notificationAudiences: results.map(({ audience, providerResult }) => ({
+      teamId: audience.teamId,
+      gameId: audience.gameId,
+      idempotencyKey: audience.idempotencyKey,
+      providerOutcome: providerResult.providerOutcome,
+      ...(providerResult.providerReceiptId
+        ? { providerReceiptId: providerResult.providerReceiptId }
+        : {}),
+    })),
   };
 }
 
@@ -1116,10 +1514,13 @@ function createDiamondScorebookEffectHandlers(dependencies = {}) {
           firestore.doc(paths.run),
         ],
       );
+      const root = snapshotData(rootSnapshot);
+      const game = snapshotData(gameSnapshot);
+      const run = snapshotData(runSnapshot);
       const fence = validateProjectionFence({
-        root: snapshotData(rootSnapshot),
-        game: snapshotData(gameSnapshot),
-        run: snapshotData(runSnapshot),
+        root,
+        game,
+        run,
         effect,
         teamId: location.teamId,
         gameId: location.gameId,
@@ -1142,6 +1543,44 @@ function createDiamondScorebookEffectHandlers(dependencies = {}) {
           reason: fence.reason,
           retryable: true,
         };
+      }
+      let notificationAudiencePlan = null;
+      let notificationAudiencePlanHash = null;
+      if (effect.kind === "notification") {
+        const sharedGamePath = sharedGamePathFromGame(game);
+        if (sharedGamePath) {
+          let sharedSnapshot;
+          try {
+            sharedSnapshot = await transaction.get(
+              firestore.doc(sharedGamePath),
+            );
+          } catch {
+            throw notificationAudienceUnavailable("shared-game-read-failed");
+          }
+          notificationAudiencePlan = buildSharedNotificationAudiencePlan({
+            core,
+            effect,
+            location,
+            fence,
+            sharedGamePath,
+            shared: snapshotData(sharedSnapshot),
+          });
+        } else {
+          notificationAudiencePlan = buildDirectNotificationAudiencePlan(
+            core,
+            effect,
+            location,
+          );
+        }
+        notificationAudiencePlanHash = core.hashDiamondValue(
+          notificationAudiencePlan,
+        );
+        if (
+          effect.notificationAudiencePlanHash &&
+          effect.notificationAudiencePlanHash !== notificationAudiencePlanHash
+        ) {
+          throw notificationAudienceUnavailable("pinned-plan-changed");
+        }
       }
       const nowMs = getNowMs();
       if (
@@ -1197,10 +1636,22 @@ function createDiamondScorebookEffectHandlers(dependencies = {}) {
         nextAttemptAtMs: null,
         terminal: false,
         updatedAt: timestampIso(nowMs),
+        ...(notificationAudiencePlan
+          ? {
+              notificationAudiencePlan,
+              notificationAudiencePlanHash,
+            }
+          : {}),
       });
       return {
         acquired: true,
-        effect,
+        effect: notificationAudiencePlan
+          ? {
+              ...effect,
+              notificationAudiencePlan,
+              notificationAudiencePlanHash,
+            }
+          : effect,
         lease,
         location,
         fence,
@@ -1333,6 +1784,81 @@ function createDiamondScorebookEffectHandlers(dependencies = {}) {
     }
   }
 
+  async function verifyNotificationAudiencePlan(prepared) {
+    const pinnedPlan = prepared.effect.notificationAudiencePlan;
+    if (!pinnedPlan) {
+      throw notificationAudienceUnavailable("audience-plan-missing");
+    }
+    let currentPlan;
+    try {
+      currentPlan = await firestore.runTransaction(async (transaction) => {
+        const paths = effectPaths(
+          prepared.location.teamId,
+          prepared.location.gameId,
+          prepared.location.effectDocumentId,
+          prepared.effect.projectionKey,
+        );
+        const [rootSnapshot, gameSnapshot, runSnapshot] =
+          await transactionGetAll(transaction, [
+            firestore.doc(paths.scorebook),
+            firestore.doc(paths.game),
+            firestore.doc(paths.run),
+          ]);
+        const root = snapshotData(rootSnapshot);
+        const game = snapshotData(gameSnapshot);
+        const currentFence = validateProjectionFence({
+          root,
+          game,
+          run: snapshotData(runSnapshot),
+          effect: prepared.effect,
+          teamId: prepared.location.teamId,
+          gameId: prepared.location.gameId,
+        });
+        if (currentFence.state !== "current") {
+          throw notificationAudienceUnavailable(
+            `projection-fence-${currentFence.reason}`,
+          );
+        }
+        const sharedGamePath = sharedGamePathFromGame(game);
+        if (pinnedPlan.mode === "direct") {
+          if (sharedGamePath) {
+            throw notificationAudienceUnavailable(
+              "direct-game-became-shared",
+            );
+          }
+          return buildDirectNotificationAudiencePlan(
+            core,
+            prepared.effect,
+            prepared.location,
+          );
+        }
+        if (sharedGamePath !== pinnedPlan.sharedGamePath) {
+          throw notificationAudienceUnavailable("shared-game-path-changed");
+        }
+        const sharedSnapshot = await transaction.get(
+          firestore.doc(sharedGamePath),
+        );
+        return buildSharedNotificationAudiencePlan({
+          core,
+          effect: prepared.effect,
+          location: prepared.location,
+          fence: currentFence,
+          sharedGamePath,
+          shared: snapshotData(sharedSnapshot),
+        });
+      });
+    } catch (error) {
+      if (error instanceof DiamondEffectError) throw error;
+      throw notificationAudienceUnavailable("shared-game-read-failed");
+    }
+    if (
+      core.hashDiamondValue(currentPlan) !==
+      prepared.effect.notificationAudiencePlanHash
+    ) {
+      throw notificationAudienceUnavailable("pinned-plan-changed");
+    }
+  }
+
   async function processNotification(prepared) {
     if (typeof sendNotification !== "function") {
       throw new DiamondEffectError(
@@ -1341,42 +1867,63 @@ function createDiamondScorebookEffectHandlers(dependencies = {}) {
         { retryable: true },
       );
     }
-    const { effect, location } = prepared;
-    const request = {
-      teamId: location.teamId,
-      gameId: location.gameId,
-      instanceId: effect.instanceId,
-      sourceRevision: effect.sourceRevision,
-      sourceEventId: effect.payload.sourceEventId,
-      title: effect.payload.title,
-      body: effect.payload.body,
-      category: "liveScore",
-      liveViewerLink: buildViewerLink(location.teamId, location.gameId),
-      link: buildViewerLink(location.teamId, location.gameId),
-      dedupKey: effect.dedupKey,
-      idempotencyKey: effect.dedupKey,
-    };
-    if (typeof hooks.beforeNotification === "function") {
-      await hooks.beforeNotification({ request, prepared, firestore });
+    const { effect } = prepared;
+    const audiences = effect.notificationAudiencePlan?.audiences;
+    if (!Array.isArray(audiences) || !audiences.length) {
+      throw notificationAudienceUnavailable("audience-plan-missing");
     }
-    let rawResult;
-    try {
-      rawResult = await sendNotification(request);
-    } catch (error) {
-      throw new DiamondEffectError(
-        "notification-send-failed",
-        "Diamond notification delivery stopped before a terminal sender result and will retry behind its durable dispatch boundary.",
-        {
-          retryable: true,
-          details: { causeCode: error?.code || "provider-failed" },
-        },
-      );
+    const results = [];
+    for (const audience of audiences) {
+      const request = {
+        teamId: audience.teamId,
+        gameId: audience.gameId,
+        instanceId: effect.instanceId,
+        sourceRevision: effect.sourceRevision,
+        sourceEventId: effect.payload.sourceEventId,
+        title: effect.payload.title,
+        body: effect.payload.body,
+        category: "liveScore",
+        liveViewerLink: audience.viewerLink,
+        link: audience.viewerLink,
+        dedupKey: audience.idempotencyKey,
+        idempotencyKey: audience.idempotencyKey,
+        ...(audience.viewerTeamId
+          ? {
+              viewerTeamId: audience.viewerTeamId,
+              viewerGameId: audience.viewerGameId,
+            }
+          : {}),
+        ...(audience.viewerTeamId
+          ? { sharedGamePath: effect.notificationAudiencePlan.sharedGamePath }
+          : {}),
+      };
+      if (typeof hooks.beforeNotification === "function") {
+        await hooks.beforeNotification({ request, prepared, firestore });
+      }
+      await verifyNotificationAudiencePlan(prepared);
+      let rawResult;
+      try {
+        rawResult = await sendNotification(request);
+      } catch (error) {
+        throw new DiamondEffectError(
+          "notification-send-failed",
+          "Diamond notification delivery stopped before a terminal sender result and will retry behind its durable dispatch boundary.",
+          {
+            retryable: true,
+            details: { causeCode: error?.code || "provider-failed" },
+          },
+        );
+      }
+      results.push({
+        audience,
+        providerResult: normalizeNotificationProviderResult(
+          rawResult,
+          audience.idempotencyKey,
+          effect.instanceId,
+        ),
+      });
     }
-    const providerResult = normalizeNotificationProviderResult(
-      rawResult,
-      effect.dedupKey,
-      effect.instanceId,
-    );
+    const providerResult = aggregateNotificationProviderResults(results);
     if (typeof hooks.beforeNotificationFinalize === "function") {
       await hooks.beforeNotificationFinalize({
         providerResult,

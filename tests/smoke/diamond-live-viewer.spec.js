@@ -88,6 +88,11 @@ export function httpsCallable(_functions, name) {
             teamName: 'Home Hawks',
             opponent: 'Away Aces',
             startsAt: window.__DIAMOND_STARTS_AT__ || new Date().toISOString(),
+            ...(window.__DIAMOND_OMIT_INTERACTION_WINDOW__ === true ? {} : {
+                interactionWindowOpen: window.__DIAMOND_INTERACTION_WINDOW_OPEN__ === undefined
+                    ? !terminal
+                    : window.__DIAMOND_INTERACTION_WINDOW_OPEN__
+            }),
             trackingEngine: window.__DIAMOND_ENGINE__ || 'diamond-v2',
             media: window.__DIAMOND_MEDIA_OVERRIDE__ || (
                 window.__DIAMOND_MEDIA__ === true ? {
@@ -1156,13 +1161,14 @@ test("a non-Diamond game never starts shared collection or auth listeners", asyn
   ).toEqual({ auth: 0, chat: 0, reactions: 0 });
 });
 
-test("configured games reuse classic game-day timing while retaining shared history", async ({
+test("configured games use the server-authoritative interaction window instead of the browser date", async ({
   page,
   baseURL,
 }) => {
   await page.addInitScript(() => {
     window.__DIAMOND_STATUS__ = "configured";
     window.__DIAMOND_STARTS_AT__ = "2099-06-03T18:00:00.000Z";
+    window.__DIAMOND_INTERACTION_WINDOW_OPEN__ = true;
   });
   await stubDiamondViewerModules(page);
 
@@ -1174,14 +1180,40 @@ test("configured games reuse classic game-day timing while retaining shared hist
   await expect(page.locator("[data-diamond-chat]")).toContainText(
     "Great play!",
   );
+  await expect(page.locator("[data-diamond-chat-input]")).toBeEnabled();
+  await expect(page.locator('[data-diamond-reaction="heart"]')).toBeEnabled();
+  await page.locator("[data-diamond-chat-input]").fill("Same game day");
+  await page.locator("[data-diamond-chat-submit]").click();
+  await expect
+    .poll(() => page.evaluate(() => window.__DIAMOND_POSTED_CHAT__?.text))
+    .toBe("Same game day");
+  expect(
+    await page.evaluate(() => window.__DIAMOND_AUTH_SUBSCRIPTIONS__ || 0),
+  ).toBe(1);
+});
+
+test("configured games fail interactions closed when the server window decision is missing or malformed", async ({
+  page,
+  baseURL,
+}) => {
+  await page.addInitScript(() => {
+    window.__DIAMOND_STATUS__ = "configured";
+    window.__DIAMOND_STARTS_AT__ = new Date().toISOString();
+    window.__DIAMOND_OMIT_INTERACTION_WINDOW__ = true;
+  });
+  await stubDiamondViewerModules(page);
+
+  await page.goto(
+    `${baseURL}/live-game-diamond-v2.html?teamId=team-1&gameId=game-1`,
+    { waitUntil: "domcontentloaded" },
+  );
+
   await expect(page.locator("[data-diamond-chat-input]")).toBeDisabled();
   await expect(page.locator('[data-diamond-reaction="heart"]')).toBeDisabled();
   await expect(page.locator("[data-diamond-engagement-status]")).toHaveText(
     "Live chat opens on game day.",
   );
-  expect(
-    await page.evaluate(() => window.__DIAMOND_AUTH_SUBSCRIPTIONS__ || 0),
-  ).toBe(1);
+  expect(await page.evaluate(() => window.__DIAMOND_POSTED_CHAT__)).toBeUndefined();
 });
 
 test("malformed projected lifecycle data fails engagement writes closed", async ({

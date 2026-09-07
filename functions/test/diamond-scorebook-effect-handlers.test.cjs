@@ -374,6 +374,62 @@ function requestFor(fixture) {
   };
 }
 
+function seedCanonicalSharedGame(
+  firestore,
+  fixture,
+  {
+    path = "organizations/org-1/sharedGames/shared-1",
+    sourceSide = "home",
+    mapping = "none",
+    shared = {},
+  } = {},
+) {
+  const sourceIsHome = sourceSide === "home";
+  const homeTeamId = sourceIsHome ? "team-1" : "team-2";
+  const awayTeamId = sourceIsHome ? "team-2" : "team-1";
+  const homeGameId = sourceIsHome ? "game-1" : "game-2";
+  const awayGameId = sourceIsHome ? "game-2" : "game-1";
+  const localMappings =
+    mapping === "sideFields"
+      ? { homeGameId, awayGameId }
+      : mapping === "teamGameIds"
+        ? {
+            teamGameIds: {
+              [homeTeamId]: homeGameId,
+              [awayTeamId]: awayGameId,
+            },
+          }
+        : {};
+  firestore.seed(path, {
+    homeTeamId,
+    awayTeamId,
+    teamIds: [homeTeamId, awayTeamId],
+    ...localMappings,
+    trackingEngine: DIAMOND_ENGINE,
+    diamondSourceTeamId: "team-1",
+    diamondSourceGameId: "game-1",
+    diamondScorebookInstanceId: fixture.instanceId,
+    diamondProjectionRevision: fixture.runRevision,
+    diamondProjectionCheckpointHash: fixture.checkpointHash,
+    diamondProjectionHash: `sha256:${"b".repeat(64)}`,
+    diamondProjectionStatus: "current",
+    ...shared,
+  });
+  return path;
+}
+
+function makeCancellationNotification(fixture) {
+  fixture.effect.payload = {
+    ...fixture.effect.payload,
+    title: "Game cancelled",
+    body: "This game has been cancelled.",
+  };
+  const unhashed = { ...fixture.effect };
+  delete unhashed.payloadHash;
+  fixture.effect.payloadHash = core.hashDiamondValue(unhashed);
+  return fixture;
+}
+
 describe("Diamond scorebook effect processor", () => {
   it("sends a sanitized notification once and makes duplicate triggers terminal", async () => {
     const fixture = createEffect();
@@ -421,11 +477,458 @@ describe("Diamond scorebook effect processor", () => {
       JSON.stringify(calls[0]),
       /actor|transcript|note|currentScorer|medical/i,
     );
+    const stored = harness.firestore.read(fixture.paths.effect);
+    assert.equal(stored.terminalResult.providerReceiptId, "provider-1");
+    assert.equal(stored.notificationAudiencePlan.mode, "direct");
     assert.equal(
-      harness.firestore.read(fixture.paths.effect).terminalResult
-        .providerReceiptId,
-      "provider-1",
+      stored.notificationAudiencePlanHash,
+      core.hashDiamondValue(stored.notificationAudiencePlan),
     );
+  });
+
+  for (const {
+    label,
+    path,
+    sourceSide,
+    mapping,
+    makeFixture = () => createEffect(),
+  } of [
+    {
+      label: "scoring from the home team on a canonical mapping-free shared game",
+      path: "organizations/org-1/sharedGames/shared-score",
+      sourceSide: "home",
+      mapping: "none",
+    },
+    {
+      label: "cancellation from the away team through side-local game fields",
+      path: "tournaments/tournament-1/sharedGames/shared-cancel",
+      sourceSide: "away",
+      mapping: "sideFields",
+      makeFixture: () => makeCancellationNotification(createEffect()),
+    },
+  ]) {
+    it(`fans out ${label} with a source-valid viewer and audience-specific provider identities`, async () => {
+      const fixture = makeFixture();
+      const calls = [];
+      const harness = createHarness({
+        sendNotification: async (request) => {
+          calls.push(clone(request));
+          return {
+            outcome: "sent",
+            instanceId: request.instanceId,
+            idempotencyKey: request.idempotencyKey,
+            providerReceiptId: `receipt-${request.teamId}`,
+          };
+        },
+      });
+      seedEffect(harness.firestore, fixture, {
+        game: { diamondSharedGamePath: path },
+      });
+      seedCanonicalSharedGame(harness.firestore, fixture, {
+        path,
+        sourceSide,
+        mapping,
+      });
+
+      const result = await harness.handlers.processDiamondEffect(
+        requestFor(fixture),
+      );
+
+      assert.equal(result.processed, true);
+      assert.equal(calls.length, 2);
+      assert.deepEqual(
+        calls.map(({ teamId, gameId }) => ({ teamId, gameId })),
+        [
+          { teamId: "team-1", gameId: "game-1" },
+          { teamId: "team-2", gameId: "game-1" },
+        ],
+      );
+      assert.deepEqual(
+        calls.map(({ viewerTeamId, viewerGameId }) => ({
+          viewerTeamId,
+          viewerGameId,
+        })),
+        [
+          { viewerTeamId: undefined, viewerGameId: undefined },
+          { viewerTeamId: "team-1", viewerGameId: "game-1" },
+        ],
+      );
+      for (const request of calls) {
+        const expectedKey = `${DIAMOND_ENGINE}:${request.teamId}:${request.gameId}:instance:${fixture.instanceId}:notification:r0000000008`;
+        const viewerTeamId = request.viewerTeamId || request.teamId;
+        const viewerGameId = request.viewerGameId || request.gameId;
+        const expectedLink = `https://share.allplays.ai/watch?teamId=${viewerTeamId}&gameId=${viewerGameId}`;
+        assert.equal(request.idempotencyKey, expectedKey);
+        assert.equal(request.dedupKey, expectedKey);
+        assert.equal(request.liveViewerLink, expectedLink);
+        assert.equal(request.link, expectedLink);
+        assert.equal(
+          request.sharedGamePath,
+          request.viewerTeamId ? path : undefined,
+        );
+      }
+      assert.notEqual(calls[0].idempotencyKey, calls[1].idempotencyKey);
+      assert.deepEqual(
+        result.terminalResult.notificationAudiences.map(
+          ({ teamId, gameId, idempotencyKey, providerReceiptId }) => ({
+            teamId,
+            gameId,
+            idempotencyKey,
+            providerReceiptId,
+          }),
+        ),
+        [
+          {
+            teamId: "team-1",
+            gameId: "game-1",
+            idempotencyKey: `${DIAMOND_ENGINE}:team-1:game-1:instance:${fixture.instanceId}:notification:r0000000008`,
+            providerReceiptId: "receipt-team-1",
+          },
+          {
+            teamId: "team-2",
+            gameId: "game-1",
+            idempotencyKey: `${DIAMOND_ENGINE}:team-2:game-1:instance:${fixture.instanceId}:notification:r0000000008`,
+            providerReceiptId: "receipt-team-2",
+          },
+        ],
+      );
+    });
+  }
+
+  for (const { label, mutateGame, mutateShared } of [
+    {
+      label: "missing shared document",
+      mutateShared: (_shared, firestore, path) => {
+        firestore.documents.delete(path);
+      },
+    },
+    {
+      label: "malformed second shared path",
+      mutateGame: (game) => {
+        game.sharedGamePath = "users/attacker/sharedGames/shared-1";
+      },
+    },
+    {
+      label: "mismatched Diamond owner claim",
+      mutateShared: (shared) => {
+        shared.diamondSourceTeamId = "team-2";
+      },
+    },
+    {
+      label: "malformed home-team binding",
+      mutateShared: (shared) => {
+        shared.homeTeamId = "team/attacker";
+      },
+    },
+    {
+      label: "source team missing from the two sides",
+      mutateShared: (shared) => {
+        shared.homeTeamId = "team-3";
+        shared.teamIds = ["team-3", "team-2"];
+      },
+    },
+    {
+      label: "duplicate home and away team",
+      mutateShared: (shared) => {
+        shared.awayTeamId = "team-1";
+        shared.teamIds = ["team-1"];
+      },
+    },
+    {
+      label: "unexpected third team binding",
+      mutateShared: (shared) => {
+        shared.teamIds.push("team-3");
+      },
+    },
+  ]) {
+    it(`fails closed without recipients for ${label}`, async () => {
+      const fixture = createEffect();
+      let calls = 0;
+      const path = "organizations/org-1/sharedGames/shared-invalid";
+      const harness = createHarness({
+        sendNotification: async () => {
+          calls += 1;
+          throw new Error("must not send");
+        },
+      });
+      seedEffect(harness.firestore, fixture, {
+        game: { diamondSharedGamePath: path },
+      });
+      seedCanonicalSharedGame(harness.firestore, fixture, { path });
+      if (mutateGame) {
+        const game = harness.firestore.read(fixture.paths.game);
+        mutateGame(game);
+        harness.firestore.seed(fixture.paths.game, game);
+      }
+      if (mutateShared) {
+        const shared = harness.firestore.read(path);
+        mutateShared(shared, harness.firestore, path);
+        if (shared && harness.firestore.read(path)) {
+          harness.firestore.seed(path, shared);
+        }
+      }
+
+      await assert.rejects(
+        harness.handlers.processDiamondEffect(requestFor(fixture)),
+        (error) =>
+          error.code === "notification-audience-unavailable" &&
+          error.retryable,
+      );
+      assert.equal(calls, 0);
+      const stored = harness.firestore.read(fixture.paths.effect);
+      assert.equal(stored.status, "pending");
+      assert.equal(stored.notificationAudiencePlan, undefined);
+    });
+  }
+
+  it("retries an incomplete shared fanout with the same per-audience identities", async () => {
+    const fixture = createEffect();
+    const path = "organizations/org-1/sharedGames/shared-retry";
+    const calls = [];
+    const delivered = new Map();
+    let failOpponentOnce = true;
+    const harness = createHarness({
+      sendNotification: async (request) => {
+        calls.push(request.idempotencyKey);
+        if (request.teamId === "team-2" && failOpponentOnce) {
+          failOpponentOnce = false;
+          throw new Error("Provider offline");
+        }
+        if (delivered.has(request.idempotencyKey)) {
+          return {
+            outcome: "deduplicated",
+            instanceId: request.instanceId,
+            idempotencyKey: request.idempotencyKey,
+            providerReceiptId: delivered.get(request.idempotencyKey),
+          };
+        }
+        const receipt = `receipt-${request.teamId}`;
+        delivered.set(request.idempotencyKey, receipt);
+        return {
+          outcome: "sent",
+          instanceId: request.instanceId,
+          idempotencyKey: request.idempotencyKey,
+          providerReceiptId: receipt,
+        };
+      },
+    });
+    seedEffect(harness.firestore, fixture, {
+      game: { diamondSharedGamePath: path },
+    });
+    seedCanonicalSharedGame(harness.firestore, fixture, { path });
+
+    await assert.rejects(
+      harness.handlers.processDiamondEffect(requestFor(fixture)),
+      (error) => error.code === "notification-send-failed" && error.retryable,
+    );
+    assert.equal(harness.firestore.read(fixture.paths.effect).status, "pending");
+    harness.setNow(1_760_000_001_001);
+    const retried = await harness.handlers.processDiamondEffect(
+      requestFor(fixture),
+    );
+
+    const sourceKey = `${DIAMOND_ENGINE}:team-1:game-1:instance:${fixture.instanceId}:notification:r0000000008`;
+    const opponentKey = `${DIAMOND_ENGINE}:team-2:game-1:instance:${fixture.instanceId}:notification:r0000000008`;
+    assert.deepEqual(calls, [sourceKey, opponentKey, sourceKey, opponentKey]);
+    assert.equal(retried.processed, true);
+    assert.deepEqual(
+      retried.terminalResult.notificationAudiences.map(
+        ({ idempotencyKey, providerOutcome }) => ({
+          idempotencyKey,
+          providerOutcome,
+        }),
+      ),
+      [
+        { idempotencyKey: sourceKey, providerOutcome: "deduplicated" },
+        { idempotencyKey: opponentKey, providerOutcome: "sent" },
+      ],
+    );
+  });
+
+  it("revalidates the pinned shared binding before each audience and stops a cross-team race", async () => {
+    const fixture = createEffect();
+    const path = "organizations/org-1/sharedGames/shared-race";
+    const calls = [];
+    const harness = createHarness({
+      sendNotification: async (request) => {
+        calls.push(request.teamId);
+        return {
+          outcome: "sent",
+          instanceId: request.instanceId,
+          idempotencyKey: request.idempotencyKey,
+          providerReceiptId: `receipt-${request.teamId}`,
+        };
+      },
+      hooks: {
+        beforeNotification: async ({ request, firestore }) => {
+          if (request.teamId !== "team-2") return;
+          const shared = firestore.read(path);
+          shared.awayTeamId = "team-3";
+          shared.teamIds = ["team-1", "team-3"];
+          firestore.seed(path, shared);
+        },
+      },
+    });
+    seedEffect(harness.firestore, fixture, {
+      game: { diamondSharedGamePath: path },
+    });
+    seedCanonicalSharedGame(harness.firestore, fixture, { path });
+
+    await assert.rejects(
+      harness.handlers.processDiamondEffect(requestFor(fixture)),
+      (error) =>
+        error.code === "notification-audience-unavailable" && error.retryable,
+    );
+
+    assert.deepEqual(calls, ["team-1"]);
+    const stored = harness.firestore.read(fixture.paths.effect);
+    assert.equal(stored.status, "pending");
+    assert.equal(stored.notificationAudiencePlan.mode, "shared");
+    assert.deepEqual(
+      stored.notificationAudiencePlan.audiences.map(({ teamId }) => teamId),
+      ["team-1", "team-2"],
+    );
+  });
+
+  it("revalidates a shared binding after prepare and before the first audience", async () => {
+    const fixture = createEffect();
+    const path = "organizations/org-1/sharedGames/shared-before-first";
+    let calls = 0;
+    const harness = createHarness({
+      sendNotification: async () => {
+        calls += 1;
+        throw new Error("must not send");
+      },
+      hooks: {
+        beforeNotification: async ({ firestore }) => {
+          const shared = firestore.read(path);
+          shared.diamondProjectionHash = `sha256:${"d".repeat(64)}`;
+          firestore.seed(path, shared);
+        },
+      },
+    });
+    seedEffect(harness.firestore, fixture, {
+      game: { diamondSharedGamePath: path },
+    });
+    seedCanonicalSharedGame(harness.firestore, fixture, { path });
+
+    await assert.rejects(
+      harness.handlers.processDiamondEffect(requestFor(fixture)),
+      (error) =>
+        error.code === "notification-audience-unavailable" && error.retryable,
+    );
+
+    assert.equal(calls, 0);
+    assert.equal(
+      harness.firestore.read(fixture.paths.effect).status,
+      "pending",
+    );
+  });
+
+  it("fails closed when a direct game becomes shared after its plan is pinned but before send", async () => {
+    const fixture = createEffect();
+    const path = "organizations/org-1/sharedGames/shared-after-prepare";
+    let calls = 0;
+    const harness = createHarness({
+      sendNotification: async () => {
+        calls += 1;
+        throw new Error("must not send");
+      },
+      hooks: {
+        beforeNotification: async ({ firestore }) => {
+          const game = firestore.read(fixture.paths.game);
+          game.diamondSharedGamePath = path;
+          firestore.seed(fixture.paths.game, game);
+        },
+      },
+    });
+    seedEffect(harness.firestore, fixture);
+    seedCanonicalSharedGame(harness.firestore, fixture, { path });
+
+    await assert.rejects(
+      harness.handlers.processDiamondEffect(requestFor(fixture)),
+      (error) =>
+        error.code === "notification-audience-unavailable" && error.retryable,
+    );
+
+    assert.equal(calls, 0);
+    const stored = harness.firestore.read(fixture.paths.effect);
+    assert.equal(stored.status, "pending");
+    assert.equal(stored.notificationAudiencePlan.mode, "direct");
+  });
+
+  it("fails closed when the authoritative projection head advances after a direct plan is pinned", async () => {
+    const fixture = createEffect();
+    let calls = 0;
+    const harness = createHarness({
+      sendNotification: async () => {
+        calls += 1;
+        throw new Error("must not send");
+      },
+      hooks: {
+        beforeNotification: async ({ firestore }) => {
+          const root = firestore.read(fixture.paths.scorebook);
+          root.checkpoint.sequence = 11;
+          root.diamondProjectionMarker.sourceRevision = 11;
+          firestore.seed(fixture.paths.scorebook, root);
+          const game = firestore.read(fixture.paths.game);
+          game.diamondProjectionRevision = 11;
+          firestore.seed(fixture.paths.game, game);
+        },
+      },
+    });
+    seedEffect(harness.firestore, fixture);
+
+    await assert.rejects(
+      harness.handlers.processDiamondEffect(requestFor(fixture)),
+      (error) =>
+        error.code === "notification-audience-unavailable" && error.retryable,
+    );
+
+    assert.equal(calls, 0);
+    assert.equal(harness.firestore.read(fixture.paths.effect).status, "pending");
+  });
+
+  it("terminalizes hash-tampered pinned shared viewer fields without dispatch", async () => {
+    const fixture = createEffect();
+    const path = "organizations/org-1/sharedGames/shared-plan-tamper";
+    let calls = 0;
+    const harness = createHarness({
+      sendNotification: async () => {
+        calls += 1;
+        throw new Error("must not send");
+      },
+      hooks: {
+        beforeNotification: async () => {
+          throw new Error("pause after plan pin");
+        },
+      },
+    });
+    seedEffect(harness.firestore, fixture, {
+      game: { diamondSharedGamePath: path },
+    });
+    seedCanonicalSharedGame(harness.firestore, fixture, { path });
+
+    await assert.rejects(
+      harness.handlers.processDiamondEffect(requestFor(fixture)),
+      (error) => error.code === "effect-processing-failed" && error.retryable,
+    );
+    const tampered = harness.firestore.read(fixture.paths.effect);
+    tampered.notificationAudiencePlan.audiences.find(
+      ({ teamId }) => teamId === "team-2",
+    ).viewerTeamId = "team-2";
+    harness.firestore.seed(fixture.paths.effect, tampered);
+    harness.setNow(1_760_000_001_001);
+
+    const result = await harness.handlers.processDiamondEffect(
+      requestFor(fixture),
+    );
+
+    assert.equal(result.processed, false);
+    assert.equal(result.status, "invalid");
+    assert.equal(result.reason, "invalid-effect");
+    assert.equal(calls, 0);
+    assert.equal(harness.firestore.read(fixture.paths.effect).terminal, true);
   });
 
   it("rejects an all-failed provider result but preserves partial delivery evidence", async () => {
@@ -609,7 +1112,7 @@ describe("Diamond scorebook effect processor", () => {
       },
     });
     seedEffect(harness.firestore, fixture);
-    harness.firestore.failAfterApplyTransactions.add(2);
+    harness.firestore.failAfterApplyTransactions.add(3);
 
     const result = await harness.handlers.processDiamondEffect(
       requestFor(fixture),

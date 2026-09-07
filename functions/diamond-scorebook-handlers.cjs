@@ -1,6 +1,9 @@
 "use strict";
 
 const nodeCrypto = require("node:crypto");
+const {
+  isDiamondInteractionWindowOpen,
+} = require("./diamond-live-engagement-handlers.cjs");
 
 const DEFAULT_EVENT_PAGE_SIZE = 100;
 const MAX_EVENT_PAGE_SIZE = 200;
@@ -1058,7 +1061,13 @@ function buildPublicDiamondMedia({ team, game, projection, publicGameApi }) {
   };
 }
 
-function buildLegacyViewerGame({ team, game, projection, publicGameApi }) {
+function buildLegacyViewerGame({
+  team,
+  game,
+  projection,
+  publicGameApi,
+  interactionWindowOpen = false,
+}) {
   const startsAtValue =
     game?.startsAt || game?.startTime || game?.date || game?.gameDate || "";
   const startsAt =
@@ -1079,6 +1088,7 @@ function buildLegacyViewerGame({ team, game, projection, publicGameApi }) {
       compactText(game?.opponentName || game?.opponent, 160) ||
       "Opponent",
     startsAt,
+    interactionWindowOpen: interactionWindowOpen === true,
     location: compactText(game?.location || game?.venue || game?.address, 160),
     trackingEngine: DIAMOND_ENGINE,
     media: buildPublicDiamondMedia({
@@ -4918,6 +4928,28 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       page,
       context,
     });
+    let interactionWindowOpen = false;
+    try {
+      const gameLifecycle = fresh.game.diamondLifecycle;
+      const projectionLifecycle = fresh.projection.lifecycle;
+      if (
+        typeof gameLifecycle === "string" &&
+        gameLifecycle === gameLifecycle.trim() &&
+        gameLifecycle === gameLifecycle.toLowerCase() &&
+        gameLifecycle === projectionLifecycle
+      ) {
+        interactionWindowOpen = isDiamondInteractionWindowOpen({
+          team: fresh.team,
+          game: fresh.game,
+          lifecycle: gameLifecycle,
+          nowMillis: normalizeNow(clock, makeError),
+        });
+      }
+    } catch {
+      // The public score stays readable when server time is unavailable, but
+      // interactive controls remain closed until a later authoritative read.
+      interactionWindowOpen = false;
+    }
     return {
       instanceId: fresh.game.diamondScorebookInstanceId,
       game: buildLegacyViewerGame({
@@ -4925,6 +4957,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
         game: fresh.game,
         projection: fresh.projection,
         publicGameApi,
+        interactionWindowOpen,
       }),
       events,
       nextCursor: page.nextCursor,

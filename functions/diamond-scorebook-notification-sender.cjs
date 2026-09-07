@@ -36,6 +36,9 @@ const REQUEST_FIELDS = new Set([
   "category",
   "liveViewerLink",
   "link",
+  "viewerTeamId",
+  "viewerGameId",
+  "sharedGamePath",
   "dedupKey",
   "idempotencyKey",
 ]);
@@ -90,6 +93,29 @@ function expectedViewerLink(teamId, gameId) {
   return url.toString();
 }
 
+function normalizeCanonicalSharedGamePath(value) {
+  const path = exactText(value, 512, "sharedGamePath");
+  const segments = path.split("/");
+  if (
+    segments.length !== 4 ||
+    !["organizations", "tournaments"].includes(segments[0]) ||
+    segments[2] !== "sharedGames" ||
+    segments.some(
+      (segment) =>
+        !segment ||
+        segment === "." ||
+        segment === ".." ||
+        segment.length > 128,
+    )
+  ) {
+    throw new DiamondNotificationSenderError(
+      "invalid-notification-request",
+      "The Diamond notification shared-game path is not canonical.",
+    );
+  }
+  return path;
+}
+
 function normalizeRequest(core, request) {
   if (!isPlainObject(request)) {
     throw new DiamondNotificationSenderError(
@@ -109,6 +135,39 @@ function normalizeRequest(core, request) {
   }
   const teamId = requireId(core, request.teamId, "teamId");
   const gameId = requireId(core, request.gameId, "gameId");
+  const hasViewerTeamId = Object.prototype.hasOwnProperty.call(
+    request,
+    "viewerTeamId",
+  );
+  const hasViewerGameId = Object.prototype.hasOwnProperty.call(
+    request,
+    "viewerGameId",
+  );
+  const hasSharedGamePath = Object.prototype.hasOwnProperty.call(
+    request,
+    "sharedGamePath",
+  );
+  if (hasViewerTeamId !== hasViewerGameId) {
+    throw new DiamondNotificationSenderError(
+      "invalid-notification-request",
+      "The Diamond notification viewer identity must be complete.",
+    );
+  }
+  const viewerTeamId = hasViewerTeamId
+    ? requireId(core, request.viewerTeamId, "viewerTeamId")
+    : teamId;
+  const viewerGameId = hasViewerGameId
+    ? requireId(core, request.viewerGameId, "viewerGameId")
+    : gameId;
+  if (hasViewerTeamId !== hasSharedGamePath) {
+    throw new DiamondNotificationSenderError(
+      "invalid-notification-request",
+      "A cross-team Diamond viewer and authoritative shared-game path must be provided together.",
+    );
+  }
+  const sharedGamePath = hasSharedGamePath
+    ? normalizeCanonicalSharedGamePath(request.sharedGamePath)
+    : null;
   const instanceId = requireId(core, request.instanceId, "instanceId");
   const sourceEventId = requireId(core, request.sourceEventId, "sourceEventId");
   if (
@@ -136,7 +195,7 @@ function normalizeRequest(core, request) {
       "The Diamond notification idempotency key is not canonical.",
     );
   }
-  const link = expectedViewerLink(teamId, gameId);
+  const link = expectedViewerLink(viewerTeamId, viewerGameId);
   if (request.link !== link || request.liveViewerLink !== link) {
     throw new DiamondNotificationSenderError(
       "invalid-notification-request",
@@ -154,6 +213,8 @@ function normalizeRequest(core, request) {
     category: "liveScore",
     liveViewerLink: link,
     link,
+    ...(hasViewerTeamId ? { viewerTeamId, viewerGameId } : {}),
+    ...(sharedGamePath ? { sharedGamePath } : {}),
     dedupKey: expectedKey,
     idempotencyKey: expectedKey,
   };

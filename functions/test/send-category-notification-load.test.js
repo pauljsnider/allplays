@@ -255,6 +255,79 @@ describe('sendCategoryNotification load coverage', () => {
         }
     });
 
+    it('selects a shared-game audience by team while routing inbox and FCM data to the canonical Diamond source', async () => {
+        const instanceId = '00000000-0000-4000-8000-000000000101';
+        const audienceTeamId = 'team-2';
+        const sourceTeamId = 'team-1';
+        const sourceGameId = 'game-1';
+        const sharedGamePath = 'organizations/org-1/sharedGames/shared-1';
+        const idempotencyKey = `diamond-v2:${audienceTeamId}:${sourceGameId}:instance:${instanceId}:notification:r0000000008`;
+        const link = `https://share.allplays.ai/watch?teamId=${sourceTeamId}&gameId=${sourceGameId}`;
+        const sharedRouteGameId = `shared_${encodeURIComponent(sharedGamePath)}`;
+        const appRoute = `/schedule/${audienceTeamId}/${encodeURIComponent(sharedRouteGameId)}?section=game&sharedGamePath=${encodeURIComponent(sharedGamePath)}`;
+        const request = {
+            teamId: audienceTeamId,
+            gameId: sourceGameId,
+            viewerTeamId: sourceTeamId,
+            viewerGameId: sourceGameId,
+            sharedGamePath,
+            instanceId,
+            sourceRevision: 8,
+            sourceEventId: 'event-8',
+            category: 'liveScore',
+            title: 'Game update',
+            body: 'Away Player homered · Score 0–1',
+            liveViewerLink: link,
+            link,
+            dedupKey: idempotencyKey,
+            idempotencyKey
+        };
+        const providerId = diamondNotificationProviderReceiptId(request);
+        const { internals, env, cleanup } = loadNotificationInternals({
+            teamId: audienceTeamId,
+            teamDoc: {
+                ownerId: 'shared-coach',
+                adminEmails: []
+            },
+            indexedTargets: [
+                {
+                    uid: 'shared-coach',
+                    deviceId: 'shared-device',
+                    token: 'shared-token',
+                    categories: { liveScore: true }
+                }
+            ]
+        });
+
+        try {
+            const result = await internals.deliverDiamondScorebookNotification(
+                request,
+                {
+                    instanceId,
+                    idempotencyKey,
+                    providerRequestId: providerId
+                },
+                { beforeProviderDispatch: async () => {} }
+            );
+
+            assert.equal(result.successCount, 1);
+            const inbox = env.getStoredDoc(
+                `users/shared-coach/notificationInbox/${providerId}`
+            );
+            assert.equal(inbox.teamId, audienceTeamId);
+            assert.equal(inbox.gameId, sharedRouteGameId);
+            assert.equal(inbox.appRoute, appRoute);
+            assert.equal(env.messagingCalls.length, 1);
+            assert.equal(env.messagingCalls[0].data.teamId, audienceTeamId);
+            assert.equal(env.messagingCalls[0].data.gameId, sharedRouteGameId);
+            assert.equal(env.messagingCalls[0].data.appRoute, appRoute);
+            assert.equal(env.messagingCalls[0].webLink, link);
+            assert.equal(env.auditWrites[0].value.teamId, audienceTeamId);
+        } finally {
+            cleanup();
+        }
+    });
+
     it('surfaces an ambiguous FCM response after the durable boundary and never bypasses that fence', async () => {
         const instanceId = '00000000-0000-4000-8000-000000000101';
         const { internals, env, cleanup } = loadNotificationInternals({

@@ -8,6 +8,7 @@ const {
   RATE_POLICIES,
   createDiamondLiveEngagementHandlers,
   engagementPaths,
+  isDiamondInteractionWindowOpen,
   isGameDay,
   moderationPaths,
 } = require("../diamond-live-engagement-handlers.cjs");
@@ -364,6 +365,84 @@ describe("Diamond live engagement handler factory", () => {
       isGameDay({ date: "2026-09-05T18:00:00.000Z" }, {}, NOW),
       false,
     );
+  });
+
+  it("decides configured and ready interaction windows in the authoritative IANA timezone", () => {
+    const cases = [
+      {
+        label: "ahead of UTC",
+        lifecycle: "configured",
+        game: {
+          date: "2026-09-05T10:30:00.000Z",
+          timeZone: "Pacific/Kiritimati",
+        },
+        nowMillis: Date.parse("2026-09-06T09:30:00.000Z"),
+      },
+      {
+        label: "behind UTC across the fall DST boundary",
+        lifecycle: "ready",
+        game: {
+          date: "2026-11-01T07:30:00.000Z",
+          timeZone: "America/Los_Angeles",
+        },
+        nowMillis: Date.parse("2026-11-02T07:30:00.000Z"),
+      },
+      {
+        label: "across the spring DST boundary",
+        lifecycle: "configured",
+        game: {
+          date: "2026-03-08T05:30:00.000Z",
+          timeZone: "America/New_York",
+        },
+        nowMillis: Date.parse("2026-03-09T03:30:00.000Z"),
+      },
+    ];
+    for (const testCase of cases) {
+      assert.equal(
+        isDiamondInteractionWindowOpen({
+          team: {},
+          game: { type: "game", ...testCase.game },
+          lifecycle: testCase.lifecycle,
+          nowMillis: testCase.nowMillis,
+        }),
+        true,
+        testCase.label,
+      );
+    }
+  });
+
+  it("fails the shared interaction decision closed for terminal, invalid-timezone, and off-day games", () => {
+    const sameDayGame = {
+      type: "game",
+      date: "2026-09-05T18:00:00.000Z",
+      timeZone: "America/Chicago",
+    };
+    for (const testCase of [
+      { lifecycle: "final", game: sameDayGame },
+      {
+        lifecycle: "configured",
+        game: { ...sameDayGame, timeZone: "not/a-zone" },
+      },
+      {
+        lifecycle: "ready",
+        game: { ...sameDayGame, timeZone: "" },
+        team: { timeZone: "" },
+      },
+      {
+        lifecycle: "configured",
+        game: { ...sameDayGame, date: "2026-09-06T18:00:00.000Z" },
+      },
+    ]) {
+      assert.equal(
+        isDiamondInteractionWindowOpen({
+          team: testCase.team || {},
+          game: testCase.game,
+          lifecycle: testCase.lifecycle,
+          nowMillis: NOW,
+        }),
+        false,
+      );
+    }
   });
 });
 

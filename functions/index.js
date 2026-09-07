@@ -590,6 +590,40 @@ const diamondScorebookProjectorHandlers = createDiamondScorebookProjectorHandler
   loadClipTimings: loadDiamondClipTimings,
   resolveSharedGame: resolveDiamondSharedGame
 });
+function buildDiamondSharedGameNotificationAppRoute(request) {
+  const sharedGamePath = request?.sharedGamePath;
+  if (sharedGamePath === null || sharedGamePath === undefined || sharedGamePath === '') {
+    return null;
+  }
+  if (
+    typeof sharedGamePath !== 'string' ||
+    sharedGamePath !== sharedGamePath.trim() ||
+    sharedGamePath.length > 512 ||
+    /[\u0000-\u001f\u007f]/.test(sharedGamePath)
+  ) {
+    throw new TypeError('The Diamond notification shared-game path is invalid.');
+  }
+  const segments = sharedGamePath.split('/');
+  if (
+    segments.length !== 4 ||
+    !['organizations', 'tournaments'].includes(segments[0]) ||
+    segments[2] !== 'sharedGames' ||
+    segments.some((segment) => !segment || segment === '.' || segment === '..' || segment.length > 128)
+  ) {
+    throw new TypeError('The Diamond notification shared-game path is invalid.');
+  }
+  const teamId = normalizeFirestoreId(request.teamId, 'teamId');
+  normalizeFirestoreId(request.gameId, 'gameId');
+  const gameId = `shared_${encodeURIComponent(sharedGamePath)}`;
+  const query = new URLSearchParams();
+  query.set('section', 'game');
+  query.set('sharedGamePath', sharedGamePath);
+  return {
+    teamId,
+    gameId,
+    appRoute: `/schedule/${encodeURIComponent(teamId)}/${encodeURIComponent(gameId)}?${query.toString()}`
+  };
+}
 function deliverDiamondScorebookNotification(request, delivery, hooks = {}) {
   if (
     delivery?.instanceId !== request.instanceId ||
@@ -601,6 +635,7 @@ function deliverDiamondScorebookNotification(request, delivery, hooks = {}) {
   if (typeof hooks.beforeProviderDispatch !== 'function') {
     throw new TypeError('The Diamond notification provider-dispatch boundary is required.');
   }
+  const sharedRoute = buildDiamondSharedGameNotificationAppRoute(request);
   return sendCategoryNotification({
     teamId: request.teamId,
     gameId: request.gameId,
@@ -609,6 +644,11 @@ function deliverDiamondScorebookNotification(request, delivery, hooks = {}) {
     title: request.title,
     body: request.body,
     linkOverride: request.link,
+    appRouteOverride: sharedRoute?.appRoute || null,
+    navigationTeamId: sharedRoute?.teamId || null,
+    navigationGameId: sharedRoute?.gameId || null,
+    viewerTeamId: request.viewerTeamId || null,
+    viewerGameId: request.viewerGameId || null,
     dedupKey: request.dedupKey,
     deliveryIdempotencyKey: delivery.providerRequestId,
     beforeProviderDispatch: hooks.beforeProviderDispatch,
@@ -13366,9 +13406,28 @@ function normalizeNotificationDeliveryIdempotencyKey(value) {
   return value;
 }
 
+function normalizeNotificationAppRouteOverride(value) {
+  if (value === null || value === undefined || value === '') return null;
+  if (
+    typeof value !== 'string' ||
+    value !== value.trim() ||
+    value.length > 8192 ||
+    !value.startsWith('/') ||
+    value.startsWith('//') ||
+    /[\u0000-\u001f\u007f]/.test(value)
+  ) {
+    throw new TypeError('appRouteOverride must be an exact internal application route.');
+  }
+  return value;
+}
+
 async function sendCategoryNotification({
   teamId,
   gameId = null,
+  viewerTeamId = null,
+  viewerGameId = null,
+  navigationTeamId = null,
+  navigationGameId = null,
   eventId = null,
   conversationId = null,
   childId = null,
@@ -13377,6 +13436,7 @@ async function sendCategoryNotification({
   body,
   actorUid = null,
   linkOverride = null,
+  appRouteOverride = null,
   dedupKey = null,
   dedupKeys = [],
   excludeUids = [],
@@ -13387,6 +13447,30 @@ async function sendCategoryNotification({
   suppressResourceTelemetry = false,
 }) {
   if (!NOTIFICATION_CATEGORIES.includes(category)) return null;
+  const hasViewerTeamId = viewerTeamId !== null && viewerTeamId !== undefined;
+  const hasViewerGameId = viewerGameId !== null && viewerGameId !== undefined;
+  if (hasViewerTeamId !== hasViewerGameId) {
+    throw new TypeError('Notification viewerTeamId and viewerGameId must be provided together.');
+  }
+  const viewerRouteTeamId = hasViewerTeamId
+    ? normalizeFirestoreId(viewerTeamId, 'viewerTeamId')
+    : teamId;
+  const viewerRouteGameId = hasViewerGameId
+    ? normalizeFirestoreId(viewerGameId, 'viewerGameId')
+    : gameId;
+  const hasNavigationTeamId = navigationTeamId !== null && navigationTeamId !== undefined;
+  const hasNavigationGameId = navigationGameId !== null && navigationGameId !== undefined;
+  if (hasNavigationTeamId !== hasNavigationGameId) {
+    throw new TypeError('Notification navigationTeamId and navigationGameId must be provided together.');
+  }
+  const notificationRouteTeamId = hasNavigationTeamId
+    ? normalizeFirestoreId(navigationTeamId, 'navigationTeamId')
+    : teamId;
+  const notificationRouteGameId = hasNavigationGameId
+    ? normalizeFirestoreId(navigationGameId, 'navigationGameId')
+    : gameId;
+  const normalizedAppRouteOverride =
+    normalizeNotificationAppRouteOverride(appRouteOverride);
   const normalizedDeliveryIdempotencyKey =
     normalizeNotificationDeliveryIdempotencyKey(deliveryIdempotencyKey);
 
@@ -13452,10 +13536,10 @@ async function sendCategoryNotification({
     }
   }
 
-  const link = linkOverride || buildNotificationLink({ category, teamId, gameId, eventId: eventId || gameId, conversationId, childId });
-  const appRoute = buildNotificationAppRoute({ category, teamId, gameId, eventId: eventId || gameId, conversationId, childId });
+  const link = linkOverride || buildNotificationLink({ category, teamId: viewerRouteTeamId, gameId: viewerRouteGameId, eventId: eventId || viewerRouteGameId, conversationId, childId });
+  const appRoute = normalizedAppRouteOverride || buildNotificationAppRoute({ category, teamId: notificationRouteTeamId, gameId: notificationRouteGameId, eventId: eventId || notificationRouteGameId, conversationId, childId });
   const baseDeliveryOptions = typeof buildNotificationDeliveryOptions === 'function'
-    ? buildNotificationDeliveryOptions({ category, teamId, gameId, eventId: eventId || gameId, timeSensitive })
+    ? buildNotificationDeliveryOptions({ category, teamId: notificationRouteTeamId, gameId: notificationRouteGameId, eventId: eventId || notificationRouteGameId, timeSensitive })
     : {};
   const deliveryOptions = normalizedDeliveryIdempotencyKey
     ? {
@@ -13500,9 +13584,9 @@ async function sendCategoryNotification({
       title,
       body,
       appRoute,
-      teamId,
-      gameId,
-      eventId: eventId || gameId,
+      teamId: notificationRouteTeamId,
+      gameId: notificationRouteGameId,
+      eventId: eventId || notificationRouteGameId,
       conversationId,
       deliveryIdempotencyKey: normalizedDeliveryIdempotencyKey,
       suppressResourceTelemetry,
@@ -13523,9 +13607,9 @@ async function sendCategoryNotification({
         tokens: targetChunk.map((target) => target.token),
         notification: { title, body },
         data: {
-          teamId: String(teamId),
-          gameId: String(gameId || ''),
-          eventId: String(eventId || gameId || ''),
+          teamId: String(notificationRouteTeamId),
+          gameId: String(notificationRouteGameId || ''),
+          eventId: String(eventId || notificationRouteGameId || ''),
           conversationId: String(conversationId || ''),
           childId: String(childId || ''),
           rsvpId: String(childId || ''),
@@ -13574,9 +13658,9 @@ async function sendCategoryNotification({
       title,
       body,
       appRoute,
-      teamId,
-      gameId,
-      eventId: eventId || gameId,
+      teamId: notificationRouteTeamId,
+      gameId: notificationRouteGameId,
+      eventId: eventId || notificationRouteGameId,
       conversationId,
       suppressResourceTelemetry,
     });

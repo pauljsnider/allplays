@@ -8,7 +8,6 @@ import {
   subscribeLiveChat,
   subscribeReactions,
 } from "./diamond-live-engagement-subscriptions.js?v=1";
-import { isViewerChatEnabled } from "./live-game-chat.js?v=4";
 import {
   formatDiamondInning,
   normalizeDiamondPublicGame,
@@ -16,7 +15,7 @@ import {
   reconcileDiamondEventWindow,
   reconcileDiamondPagination,
   resolveDiamondLiveMediaEmbed,
-} from "./diamond-live-view-model.js?v=4";
+} from "./diamond-live-view-model.js?v=5";
 import { normalizeYouTubeReplayUrl } from "./game-replay-video.js?v=3";
 
 const POLL_INTERVAL_MS = 5000;
@@ -324,34 +323,6 @@ function isCanonicalInteractionLifecycle(value) {
   );
 }
 
-function toClassicInteractionLifecycle(game) {
-  const lifecycle = String(game?.state?.status || "").toLowerCase();
-  const status =
-    {
-      configured: "scheduled",
-      ready: "scheduled",
-      scheduled: "scheduled",
-      active: "live",
-      suspended: "live",
-      live: "live",
-      in_progress: "in_progress",
-      "in-progress": "in-progress",
-      final: "final",
-      correction: "final",
-      completed: "completed",
-      cancelled: "cancelled",
-      canceled: "canceled",
-      deleted: "deleted",
-    }[lifecycle] || "invalid";
-  return {
-    type: "game",
-    date: game?.startsAt || null,
-    status,
-    liveStatus: status,
-    isCancelled: lifecycle === "cancelled" || lifecycle === "canceled",
-  };
-}
-
 function isEngagementWindowOpen() {
   if (
     !state.game ||
@@ -360,7 +331,20 @@ function isEngagementWindowOpen() {
     state.overlay
   )
     return false;
-  return isViewerChatEnabled(toClassicInteractionLifecycle(state.game));
+  const lifecycle = String(state.game.state.status || "").toLowerCase();
+  if (
+    [
+      "final",
+      "correction",
+      "completed",
+      "cancelled",
+      "canceled",
+      "deleted",
+    ].includes(lifecycle)
+  ) {
+    return false;
+  }
+  return state.game.interactionWindowOpen === true;
 }
 
 function hasAuthenticatedViewer() {

@@ -238,6 +238,120 @@ describe("Diamond scorebook notification sender", () => {
     );
   });
 
+  it("keeps shared-game team audiences in distinct durable identities and independently deduplicates retries", async () => {
+    const setup = harness();
+    const home = request({ teamId: "team-1", gameId: "game-1" });
+    const away = request({
+      teamId: "team-2",
+      gameId: "game-1",
+      viewerTeamId: "team-1",
+      viewerGameId: "game-1",
+      sharedGamePath: "organizations/org-1/sharedGames/shared-1",
+      liveViewerLink: expectedViewerLink("team-1", "game-1"),
+      link: expectedViewerLink("team-1", "game-1"),
+    });
+
+    const homeResult = await setup.sender.sendDiamondNotification(home);
+    const awayResult = await setup.sender.sendDiamondNotification(away);
+    const homeRetry = await setup.sender.sendDiamondNotification(home);
+    const awayRetry = await setup.sender.sendDiamondNotification(away);
+
+    const homePath = receiptPath(
+      home.teamId,
+      home.gameId,
+      home.instanceId,
+      home.idempotencyKey,
+    );
+    const awayPath = receiptPath(
+      away.teamId,
+      away.gameId,
+      away.instanceId,
+      away.idempotencyKey,
+    );
+    assert.notEqual(home.idempotencyKey, away.idempotencyKey);
+    assert.notEqual(homePath, awayPath);
+    assert.notEqual(homeResult.providerReceiptId, awayResult.providerReceiptId);
+    assert.equal(homeRetry.outcome, "deduplicated");
+    assert.equal(awayRetry.outcome, "deduplicated");
+    assert.equal(setup.calls.length, 2);
+    assert.equal(setup.firestore.read(homePath).status, "completed");
+    assert.equal(setup.firestore.read(awayPath).status, "completed");
+    assert.equal(setup.calls[1].viewerTeamId, "team-1");
+    assert.equal(setup.calls[1].viewerGameId, "game-1");
+    assert.equal(setup.calls[0].sharedGamePath, undefined);
+    assert.deepEqual(
+      setup.calls.map(({ teamId, gameId, link }) => ({
+        teamId,
+        gameId,
+        link,
+      })),
+      [
+        {
+          teamId: "team-1",
+          gameId: "game-1",
+          link: expectedViewerLink("team-1", "game-1"),
+        },
+        {
+          teamId: "team-2",
+          gameId: "game-1",
+          link: expectedViewerLink("team-1", "game-1"),
+        },
+      ],
+    );
+  });
+
+  it("reuses a pre-fanout source receipt while an incomplete shared counterpart retries", async () => {
+    let failCounterpartOnce = true;
+    const setup = harness({
+      deliverNotification: async (value, _metadata, hooks) => {
+        setup.calls.push(clone(value));
+        if (value.teamId === "team-2" && failCounterpartOnce) {
+          failCounterpartOnce = false;
+          throw new Error("Counterpart provider unavailable before dispatch");
+        }
+        await hooks.beforeProviderDispatch();
+        return deliveryResult();
+      },
+    });
+    const source = request();
+    const counterpart = request({
+      teamId: "team-2",
+      viewerTeamId: "team-1",
+      viewerGameId: "game-1",
+      sharedGamePath: "organizations/org-1/sharedGames/shared-1",
+      liveViewerLink: expectedViewerLink("team-1", "game-1"),
+      link: expectedViewerLink("team-1", "game-1"),
+    });
+
+    assert.equal(
+      (await setup.sender.sendDiamondNotification(source)).outcome,
+      "sent",
+    );
+    assert.equal(
+      (await setup.sender.sendDiamondNotification(source)).outcome,
+      "deduplicated",
+    );
+    await assert.rejects(
+      setup.sender.sendDiamondNotification(counterpart),
+      (error) =>
+        error.code === "notification-delivery-failed-before-provider" &&
+        error.retryable,
+    );
+    setup.setNow(1_760_000_006_000);
+    assert.equal(
+      (await setup.sender.sendDiamondNotification(counterpart)).outcome,
+      "sent",
+    );
+    assert.equal(
+      (await setup.sender.sendDiamondNotification(counterpart)).outcome,
+      "deduplicated",
+    );
+
+    assert.equal(setup.calls.filter(({ teamId }) => teamId === "team-1").length, 1);
+    assert.equal(setup.calls.filter(({ teamId }) => teamId === "team-2").length, 2);
+    assert.equal(setup.calls[0].sharedGamePath, undefined);
+  });
+
   it("serializes competing invocations with an active delivery lease", async () => {
     let releaseFirst;
     let enteredFirst;
@@ -614,6 +728,26 @@ describe("Diamond scorebook notification sender", () => {
       { ...request(), instanceId: undefined },
       request({ instanceId: "wrong/generation" }),
       request({ actorUid: "private-user" }),
+      request({ viewerTeamId: "team-1" }),
+      request({ sharedGamePath: "users/attacker/sharedGames/shared-1" }),
+      request({
+        sharedGamePath: "organizations/org-1/sharedGames/shared-1",
+      }),
+      request({
+        teamId: "team-2",
+        viewerTeamId: "team-1",
+        viewerGameId: "game-1",
+        liveViewerLink: expectedViewerLink("team-1", "game-1"),
+        link: expectedViewerLink("team-1", "game-1"),
+      }),
+      request({
+        teamId: "team-2",
+        viewerTeamId: "team-1",
+        viewerGameId: "game-1",
+        sharedGamePath: "users/attacker/sharedGames/shared-1",
+        liveViewerLink: expectedViewerLink("team-1", "game-1"),
+        link: expectedViewerLink("team-1", "game-1"),
+      }),
     ]) {
       await assert.rejects(
         setup.sender.sendDiamondNotification(invalid),

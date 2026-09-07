@@ -3603,6 +3603,63 @@ describe("Diamond scorebook handler factory", () => {
     );
   });
 
+  it("returns the server-authoritative Diamond interaction window for every viewer page", async () => {
+    const nowMillis = Date.parse("2026-11-02T07:30:00.000Z");
+    const harness = createHarness({ clock: () => nowMillis });
+    harness.firestore.seed("teams/team-1", {
+      ...harness.firestore.read("teams/team-1"),
+      timeZone: "America/Los_Angeles",
+    });
+    harness.firestore.seed("teams/team-1/games/game-1", {
+      ...harness.firestore.read("teams/team-1/games/game-1"),
+      date: "2026-11-01T07:30:00.000Z",
+    });
+    await activate(harness);
+
+    const sameGameDay = await harness.handlers.getPublicDiamondGame({
+      teamId: "team-1",
+      gameId: "game-1",
+      limit: 50,
+    });
+    assert.equal(sameGameDay.game.interactionWindowOpen, true);
+
+    const resourcePaths = paths("team-1", "game-1");
+    harness.firestore.seed(resourcePaths.team, {
+      ...harness.firestore.read(resourcePaths.team),
+      timeZone: "not/a-zone",
+    });
+    const invalidZone = await harness.handlers.getPublicDiamondGame({
+      teamId: "team-1",
+      gameId: "game-1",
+      limit: 50,
+    });
+    assert.equal(invalidZone.game.interactionWindowOpen, false);
+
+    harness.firestore.seed(resourcePaths.publicState, {
+      ...harness.firestore.read(resourcePaths.publicState),
+      lifecycle: "final",
+    });
+    const inconsistentLifecycle = await harness.handlers.getPublicDiamondGame({
+      teamId: "team-1",
+      gameId: "game-1",
+      limit: 50,
+    });
+    assert.equal(inconsistentLifecycle.game.interactionWindowOpen, false);
+
+    harness.firestore.seed(resourcePaths.game, {
+      ...harness.firestore.read(resourcePaths.game),
+      diamondLifecycle: "final",
+      status: "completed",
+      liveStatus: "completed",
+    });
+    const final = await harness.handlers.getPublicDiamondGame({
+      teamId: "team-1",
+      gameId: "game-1",
+      limit: 50,
+    });
+    assert.equal(final.game.interactionWindowOpen, false);
+  });
+
   it("serves the same sanitized viewer envelope to every current private-game viewer role", async () => {
     const viewerAccessByUid = {
       "parent-1": { parent: true },
