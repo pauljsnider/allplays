@@ -215,6 +215,7 @@ const diamondPublicEventPageLimit = 100;
 const diamondManagerEventWindowSize = 200;
 const diamondManagerEventWindowLimit = 100;
 const diamondStatConfigUnavailableMessage = 'Diamond statistic definitions are temporarily unavailable. Retry the report.';
+const diamondPublicReplayTokenPattern = /^(current|bootstrap):(0|[1-9][0-9]{0,7}):(sha256:[0-9a-f]{64})$/;
 
 function toNumber(value: unknown) {
   const parsed = Number(value);
@@ -583,6 +584,28 @@ function mapDiamondPublicEvent(value: unknown, sourceRevision: number): GameRepo
   };
 }
 
+function assertCurrentDiamondPublicReplayToken(
+  projectionToken: string,
+  sourceRevision: number,
+  game: GameReportGameFirestoreRecord
+) {
+  const match = diamondPublicReplayTokenPattern.exec(projectionToken);
+  if (!match || Number(match[2]) !== sourceRevision) {
+    throw new Error('The Diamond public replay is incomplete or changed while loading.');
+  }
+  if (match[1] !== 'current') {
+    throw new Error('The Diamond public replay is not projection-current. Retry the report.');
+  }
+  const projectionHash = String(game.diamondProjectionHash || '').trim();
+  if (
+    String(game.diamondProjectionStatus || '').trim().toLowerCase() !== 'current' ||
+    game.diamondProjectionComplete !== true ||
+    projectionHash !== match[3]
+  ) {
+    throw new Error('The Diamond public replay is incomplete or changed while loading.');
+  }
+}
+
 async function loadCompleteDiamondPublicEvents(
   teamId: string,
   gameId: string,
@@ -623,6 +646,7 @@ async function loadCompleteDiamondPublicEvents(
     ) {
       throw new Error('The Diamond public replay is incomplete or changed while loading.');
     }
+    assertCurrentDiamondPublicReplayToken(nextProjectionToken, sourceRevision, game);
     projectionToken = nextProjectionToken;
     pageEvents.forEach((value) => {
       const event = mapDiamondPublicEvent(value, sourceRevision);

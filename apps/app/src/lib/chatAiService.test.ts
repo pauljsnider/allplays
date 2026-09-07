@@ -262,6 +262,38 @@ describe('sendAllPlaysChatAnswer', () => {
     expect(chatMocks.postChatMessage).toHaveBeenCalledTimes(1);
   });
 
+  it('does not send pending correction events to the model when a Diamond replay stays non-fresh', async () => {
+    chatMocks.getGames.mockResolvedValue([buildCompletedGame('diamond-1', 'diamond-v2')]);
+    gameReportMocks.loadGameReportPlays.mockResolvedValue({
+      ...buildPublicDiamondReplay('diamond-1'),
+      playsFresh: false,
+      plays: [
+        { id: 'event-original', text: 'Original single', period: 'Top 1', clock: '', timestamp: new Date() },
+        { id: 'event-void', text: 'Scoring correction recorded', period: 'Top 1', clock: '', timestamp: new Date() },
+        { id: 'event-supersede', text: 'Scoring correction replaced a prior play', period: 'Top 1', clock: '', timestamp: new Date() }
+      ],
+      replayError: 'Diamond play-by-play could not be refreshed completely. Retry the report.'
+    });
+    const { sendAllPlaysChatAnswer } = await import('./chatAiService');
+
+    await expect(
+      sendAllPlaysChatAnswer({
+        teamId: 'team-1',
+        team: { id: 'team-1', name: 'Bears' },
+        user,
+        question: 'What happened in the game log?',
+        selectedConversation: null,
+        selectedConversationId: 'team',
+        selectedRecipientTarget: 'full_team',
+        selectedRecipientIds: []
+      })
+    ).rejects.toThrow('temporarily unavailable');
+
+    expect(gameReportMocks.loadGameReportPlays).toHaveBeenCalledTimes(2);
+    expect(aiMocks.generateContent).not.toHaveBeenCalled();
+    expect(chatMocks.postChatMessage).not.toHaveBeenCalled();
+  });
+
   it('does not call the model or post when Diamond evidence stays incomplete', async () => {
     chatMocks.getGames.mockResolvedValue([buildCompletedGame('diamond-1', 'diamond-v2')]);
     gameReportMocks.loadGameReportSections.mockResolvedValue(

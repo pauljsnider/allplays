@@ -1039,6 +1039,129 @@ describe('gameReportService', () => {
     });
   });
 
+  it('does not expose a correction-unsafe bootstrap replay as fresh while the Diamond projection is pending', async () => {
+    const instanceId = '00000000-0000-4000-8000-000000000001';
+    const checkpointHash = `sha256:${'a'.repeat(64)}`;
+    dbMocks.getGame.mockResolvedValue({
+      id: 'game-1',
+      teamId: 'team-1',
+      trackingEngine: 'diamond-v2',
+      liveStatus: 'completed',
+      status: 'completed',
+      diamondProjectionStatus: 'pending',
+      diamondProjectionRevision: 9,
+      diamondProjectionComplete: false,
+      diamondScorebookInstanceId: instanceId
+    });
+    diamondFirebaseMocks.getPublicDiamondGame.mockResolvedValue({
+      data: {
+        instanceId,
+        sourceRevision: 9,
+        projectionToken: `bootstrap:9:${checkpointHash}`,
+        events: [
+          {
+            id: 'event-original', revision: 3, inning: 1, half: 'top',
+            description: 'Original single', createdAt: '2026-09-05T20:03:00.000Z'
+          },
+          {
+            id: 'event-void', revision: 6, inning: 1, half: 'top',
+            description: 'Scoring correction recorded', createdAt: '2026-09-05T20:06:00.000Z'
+          },
+          {
+            id: 'event-supersede', revision: 9, inning: 1, half: 'top',
+            description: 'Scoring correction replaced a prior play', createdAt: '2026-09-05T20:09:00.000Z'
+          }
+        ],
+        nextCursor: null,
+        complete: true,
+        truncated: false
+      }
+    });
+
+    const refresh = await loadGameReportPlays('team-1', 'game-1');
+
+    expect(refresh).toEqual({
+      game: expect.objectContaining({
+        id: 'game-1',
+        diamondProjectionStatus: 'pending',
+        diamondProjectionRevision: 9
+      }),
+      plays: [],
+      playsFresh: false,
+      replayError: 'Diamond play-by-play could not be refreshed completely. Retry the report.'
+    });
+    expect(diamondFirebaseMocks.getPublicDiamondGame).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a projection-pinned current public replay fresh', async () => {
+    const instanceId = '00000000-0000-4000-8000-000000000001';
+    const projectionHash = `sha256:${'c'.repeat(64)}`;
+    dbMocks.getGame.mockResolvedValue({
+      id: 'game-1',
+      teamId: 'team-1',
+      trackingEngine: 'diamond-v2',
+      liveStatus: 'completed',
+      status: 'completed',
+      diamondProjectionStatus: 'current',
+      diamondProjectionRevision: 9,
+      diamondProjectionComplete: true,
+      diamondProjectionHash: projectionHash,
+      diamondScorebookInstanceId: instanceId
+    });
+    diamondFirebaseMocks.getPublicDiamondGame.mockResolvedValue({
+      data: {
+        instanceId,
+        sourceRevision: 9,
+        projectionToken: `current:9:${projectionHash}`,
+        events: [{
+          id: 'event-replacement', revision: 9, inning: 1, half: 'top',
+          description: 'Corrected triple', createdAt: '2026-09-05T20:09:00.000Z'
+        }],
+        nextCursor: null,
+        complete: true,
+        truncated: false
+      }
+    });
+
+    const refresh = await loadGameReportPlays('team-1', 'game-1');
+
+    expect(refresh).toEqual({
+      game: expect.objectContaining({ id: 'game-1', diamondProjectionStatus: 'current' }),
+      plays: [expect.objectContaining({ id: 'event-replacement', text: 'Corrected triple' })],
+      playsFresh: true,
+      replay: {
+        requestedVisibility: 'public',
+        visibility: 'public',
+        source: 'public-sanitized'
+      }
+    });
+  });
+
+  it('rejects a transport-complete bootstrap replay from a full Diamond report', async () => {
+    configureCurrentDiamondReportFixture();
+    dbMocks.getConfigs.mockResolvedValue([buildPublicDiamondConfig()]);
+    const checkpointHash = `sha256:${'a'.repeat(64)}`;
+    const instanceId = '00000000-0000-4000-8000-000000000001';
+    diamondFirebaseMocks.getPublicDiamondGame.mockResolvedValue({
+      data: {
+        instanceId,
+        sourceRevision: 7,
+        projectionToken: `bootstrap:7:${checkpointHash}`,
+        events: [{
+          id: 'event-original', revision: 3, inning: 1, half: 'top',
+          description: 'Original single', createdAt: '2026-09-05T20:03:00.000Z'
+        }],
+        nextCursor: null,
+        complete: true,
+        truncated: false
+      }
+    });
+
+    await expect(loadGameReportSections('team-1', 'game-1')).rejects.toThrow(
+      'Diamond public replay is not projection-current'
+    );
+  });
+
   it('does not grant an anonymous private-event fallback when the public Diamond game is hidden', async () => {
     const instanceId = '00000000-0000-4000-8000-000000000001';
     const checkpointHash = `sha256:${'a'.repeat(64)}`;
