@@ -124,16 +124,14 @@ function isOpenDefensiveEntry(state, side) {
         !runLimitReached &&
         (0, reducer_1.getDiamondFinalizationReason)(state) === null);
 }
-function addMergedFielding(fieldings, side, eventId, ensure, credit, options = {}) {
-    const putouts = new Set();
+function addMergedFielding(fieldings, actualOutCount, side, eventId, ensure, credit, options = {}) {
+    const putouts = (0, reducer_1.deriveDiamondPutoutCredits)(fieldings, actualOutCount);
     const assists = new Set();
     const passedBalls = new Set();
     const errorMultiplicity = new Map();
     let doublePlay = false;
     let triplePlay = false;
     fieldings.forEach((fielding) => {
-        if (fielding.putoutBy)
-            putouts.add(fielding.putoutBy);
         (fielding.assists ?? []).forEach((playerId) => assists.add(playerId));
         const chainErrors = new Map();
         (fielding.errors ?? []).forEach(({ playerId, kind }) => {
@@ -155,7 +153,7 @@ function addMergedFielding(fieldings, side, eventId, ensure, credit, options = {
         doublePlay || (doublePlay = fielding.doublePlay === true);
         triplePlay || (triplePlay = fielding.triplePlay === true);
     });
-    putouts.forEach((playerId) => credit(ensure(playerId, side), 'fielding', 'PO', 1, eventId));
+    putouts.forEach((count, playerId) => credit(ensure(playerId, side), 'fielding', 'PO', count, eventId));
     assists.forEach((playerId) => credit(ensure(playerId, side), 'fielding', 'A', 1, eventId));
     let errorCredits = 0;
     errorMultiplicity.forEach(({ maxChainTotal, maxFielding, maxThrowing }, playerId) => {
@@ -168,7 +166,7 @@ function addMergedFielding(fieldings, side, eventId, ensure, credit, options = {
     if (options.creditPassedBall !== false) {
         passedBalls.forEach((playerId) => credit(ensure(playerId, side), 'fielding', 'PB', 1, eventId));
     }
-    const participants = new Set([...putouts, ...assists]);
+    const participants = new Set([...putouts.keys(), ...assists]);
     if (doublePlay)
         participants.forEach((playerId) => credit(ensure(playerId, side), 'fielding', 'DP', 1, eventId));
     if (triplePlay)
@@ -534,7 +532,7 @@ function projectDiamondStats(ledger) {
                     teams[battingSide].twoOutRuns += runsOnPlay;
                 const defenders = new Set(Object.values(before.lineups[pitchingSide].defense).filter(Boolean));
                 defenders.forEach((playerId) => credit(ensure(playerId, pitchingSide), 'fielding', 'defensiveOuts', payload.outsOnPlay, eventId));
-                const fieldingResult = addMergedFielding([...(payload.fielding ? [payload.fielding] : []), ...attachmentsForPlay(attachments.fielding, event)], pitchingSide, eventId, ensure, credit);
+                const fieldingResult = addMergedFielding([...(payload.fielding ? [payload.fielding] : []), ...attachmentsForPlay(attachments.fielding, event)], payload.outsOnPlay, pitchingSide, eventId, ensure, credit);
                 teams[pitchingSide].E += fieldingResult.errorCredits;
                 physicalCauseCluster = null;
                 break;
@@ -616,7 +614,7 @@ function projectDiamondStats(ledger) {
                     if (physicalCauseCluster)
                         physicalCauseCluster.pitchingCreditRecorded = true;
                 }
-                const fieldingResult = addMergedFielding([...(payload.fielding ? [payload.fielding] : []), ...attachmentsForPlay(attachments.fielding, event)], pitchingSide, eventId, ensure, credit, { creditPassedBall: !physicalCauseCluster?.passedBallCreditRecorded });
+                const fieldingResult = addMergedFielding([...(payload.fielding ? [payload.fielding] : []), ...attachmentsForPlay(attachments.fielding, event)], payload.to === 'out' ? 1 : 0, pitchingSide, eventId, ensure, credit, { creditPassedBall: !physicalCauseCluster?.passedBallCreditRecorded });
                 if (fieldingResult.passedBallObserved && physicalCauseCluster)
                     physicalCauseCluster.passedBallCreditRecorded = true;
                 teams[pitchingSide].E += fieldingResult.errorCredits;

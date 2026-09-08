@@ -318,7 +318,7 @@ function buildGoldenGame() {
   });
 
   recordPitch(game, 'away-2', 'home-1');
-  game.submit('record_plate_appearance', {
+  const doublePlay = game.submit('record_plate_appearance', {
     batterId: 'away-2',
     pitcherId: 'home-1',
     result: 'double_play',
@@ -339,6 +339,10 @@ function buildGoldenGame() {
       doublePlay: true,
       battedBall: 'ground'
     }
+  });
+  game.submit('record_fielding', {
+    playEventId: doublePlay.event!.eventId,
+    fielding: { putoutBy: 'home-3' }
   });
 
   game.submit('advance_half_inning', {});

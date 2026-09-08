@@ -5,7 +5,8 @@ import {
   type DiamondDefensivePosition,
   type DiamondFinalizationReason,
   type DiamondGameEndDecision,
-  type DiamondHalfInningEnd
+  type DiamondHalfInningEnd,
+  type DiamondPitchResult
 } from './diamondScorebook';
 import {
   normalizeDiamondAiDraftForPublication,
@@ -19,6 +20,7 @@ import { isNativeRuntime } from './nativeRuntime';
 export type DiamondSport = 'baseball' | 'fastpitch';
 export type DiamondCaptureMode = 'quick' | 'full';
 export type DiamondHalf = 'top' | 'bottom';
+export type DiamondLastPitchResult = Exclude<DiamondPitchResult, 'balk' | 'pickoff_attempt'>;
 export type DiamondCoverageStatus = 'complete' | 'partial' | 'not_collected';
 export type DiamondLifecycle = 'configured' | 'ready' | 'active' | 'suspended' | 'final' | 'correction' | 'cancelled';
 
@@ -178,6 +180,8 @@ export type DiamondScorebookSnapshot = {
   homeName: string;
   awayName: string;
   score: { home: number; away: number };
+  currentHalfRuns: number | null;
+  lastPitchResult: DiamondLastPitchResult | null;
   inning: {
     number: number;
     half: DiamondHalf;
@@ -596,6 +600,38 @@ function normalizeNonnegative(value: unknown, fallback = 0) {
 function normalizeBoundedInteger(value: unknown, minimum: number, maximum: number, fallback: number) {
   const number = Number(value);
   return Number.isInteger(number) && number >= minimum && number <= maximum ? number : fallback;
+}
+
+const diamondLastPitchResults = new Set<DiamondLastPitchResult>([
+  'ball',
+  'called_strike',
+  'swinging_strike',
+  'foul',
+  'foul_bunt',
+  'in_play',
+  'hit_by_pitch',
+  'catcher_interference',
+  'illegal_pitch'
+]);
+
+function normalizeCurrentHalfRuns(value: unknown, inningKey: string): number | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype) return null;
+  const source = value as Record<string, unknown>;
+  if (!Object.prototype.hasOwnProperty.call(source, inningKey)) return 0;
+  const runs = source[inningKey];
+  return Number.isSafeInteger(runs) && Number(runs) >= 0 ? Number(runs) : null;
+}
+
+function normalizeLastPitchResult(value: Record<string, unknown>): DiamondLastPitchResult | null {
+  if (!Object.prototype.hasOwnProperty.call(value, 'lastPitchResult')) {
+    throw new DiamondScorebookError('invalid-response', 'The scorebook did not include its authoritative last delivered pitch result.');
+  }
+  const result = value.lastPitchResult;
+  if (result === null) return null;
+  if (typeof result === 'string' && diamondLastPitchResults.has(result as DiamondLastPitchResult)) {
+    return result as DiamondLastPitchResult;
+  }
+  throw new DiamondScorebookError('invalid-response', 'The scorebook returned an invalid last delivered pitch result.');
 }
 
 function cloneJsonValue(value: unknown, depth = 0): DiamondJsonValue {
@@ -1023,7 +1059,14 @@ export function normalizeDiamondSnapshot(value: unknown): DiamondScorebookSnapsh
   const scoreSource = asRecord(state.score);
   const basesSource = asRecord(state.bases);
   const lineupSource = asRecord(state.lineups || presentation.lineups);
+  const hasExactHalf = inningSource.half === 'top' || inningSource.half === 'bottom';
   const half: DiamondHalf = inningSource.half === 'bottom' ? 'bottom' : 'top';
+  const hasExactInningNumber =
+    Number.isSafeInteger(inningSource.number) && Number(inningSource.number) >= 1 && Number(inningSource.number) <= 99;
+  const inningNumber = normalizeBoundedInteger(inningSource.number, 1, 99, 1);
+  const inningKey = `${half === 'top' ? 'T' : 'B'}${String(inningNumber)}`;
+  const currentHalfRuns = hasExactHalf && hasExactInningNumber ? normalizeCurrentHalfRuns(state.inningRuns, inningKey) : null;
+  const lastPitchResult = normalizeLastPitchResult(inningSource);
   const lifecycleSource = compactText(state.lifecycle);
   const lifecycle: DiamondLifecycle = ['configured', 'ready', 'active', 'suspended', 'final', 'correction', 'cancelled'].includes(
     lifecycleSource
@@ -1122,8 +1165,10 @@ export function normalizeDiamondSnapshot(value: unknown): DiamondScorebookSnapsh
       home: normalizeNonnegative(scoreSource.home ?? scoreSource.homeScore ?? state.homeScore),
       away: normalizeNonnegative(scoreSource.away ?? scoreSource.awayScore ?? state.awayScore)
     },
+    currentHalfRuns,
+    lastPitchResult,
     inning: {
-      number: normalizeBoundedInteger(inningSource.number, 1, 99, 1),
+      number: inningNumber,
       half,
       outs: normalizeBoundedInteger(inningSource.outs, 0, 3, 0),
       balls: normalizeBoundedInteger(inningSource.balls ?? countSource.balls, 0, 4, 0),

@@ -11,6 +11,7 @@ import {
   getDiamondPrivateHistoryWindow,
   getDiamondQueueKey,
   getDiamondRecapSource,
+  getDiamondState,
   mergeDiamondPrivateHistoryWindows,
   normalizeDiamondSnapshot,
   parseDiamondVoice,
@@ -56,7 +57,16 @@ function buildRawSnapshot(revision = 3) {
       checkpointHash: `sha256:revision-${revision}`,
       currentScorerUid: 'coach-1',
       score: { home: 2, away: 1 },
-      inning: { number: 4, half: 'bottom', outs: 1, balls: 2, strikes: 1 },
+      inningRuns: { B4: 0 },
+      inning: {
+        number: 4,
+        half: 'bottom',
+        outs: 1,
+        balls: 2,
+        strikes: 1,
+        pitchesInPlateAppearance: 4,
+        lastPitchResult: 'called_strike'
+      },
       bases: {
         first: {
           runnerId: 'runner-1',
@@ -384,6 +394,8 @@ describe('diamondScorebookService', () => {
       authoritative: true,
       lifecycle: 'active',
       score: { home: 2, away: 1 },
+      currentHalfRuns: 0,
+      lastPitchResult: 'called_strike',
       inning: { number: 4, half: 'bottom', outs: 1, balls: 2, strikes: 1 },
       currentBatter: { playerId: 'batter-1', name: 'Avery Carter', number: '12' },
       currentPitcher: { playerId: 'pitcher-1', name: 'Morgan Diaz', number: '7' },
@@ -403,6 +415,159 @@ describe('diamondScorebookService', () => {
     expect(snapshot.availablePlayers.home.map((player) => player.name)).toEqual(['Taylor Gray', 'Avery Carter', 'Jordan Lee']);
     expect(snapshot.defensiveLineup.map((player) => player.name)).toEqual(['Morgan Diaz']);
     expect(snapshot.recentPlays[0]?.eventId).toBe('event-3');
+  });
+
+  it('loads the exact authoritative current-half run total from the canonical inning key', async () => {
+    const raw = buildRawSnapshot(9);
+    const response = {
+      ...raw,
+      state: {
+        ...raw.state,
+        inning: {
+          number: 8,
+          half: 'top',
+          outs: 0,
+          balls: 0,
+          strikes: 0,
+          pitchesInPlateAppearance: 0,
+          lastPitchResult: null
+        },
+        inningRuns: { B7: 3, T8: 1 }
+      }
+    };
+    const call = vi.fn().mockResolvedValue(response);
+
+    await expect(
+      getDiamondState('team-1', 'game-1', { transport: { call } as unknown as DiamondCallableTransport })
+    ).resolves.toMatchObject({ revision: 9, inning: { number: 8, half: 'top' }, currentHalfRuns: 1 });
+    expect(call).toHaveBeenCalledWith('getDiamondState', {
+      teamId: 'team-1',
+      gameId: 'game-1',
+      visibility: 'private'
+    });
+  });
+
+  it('treats a valid sparse inning-runs map as a pristine zero-run current half', () => {
+    const raw = buildRawSnapshot();
+
+    expect(
+      normalizeDiamondSnapshot({
+        ...raw,
+        state: {
+          ...raw.state,
+          inning: {
+            number: 8,
+            half: 'top',
+            outs: 0,
+            balls: 0,
+            strikes: 0,
+            pitchesInPlateAppearance: 0,
+            lastPitchResult: null
+          },
+          inningRuns: { B7: 3 }
+        }
+      }).currentHalfRuns
+    ).toBe(0);
+  });
+
+  it.each([
+    { inning: { number: '8', half: 'top' }, label: 'a coerced inning number' },
+    { inning: { number: 8, half: 'upper' }, label: 'an unsupported half' }
+  ])('keeps current-half run evidence unknown for $label', ({ inning, label: _label }) => {
+    const raw = buildRawSnapshot();
+
+    expect(
+      normalizeDiamondSnapshot({
+        ...raw,
+        state: {
+          ...raw.state,
+          inning: { ...raw.state.inning, ...inning },
+          inningRuns: { T8: 0 }
+        }
+      }).currentHalfRuns
+    ).toBeNull();
+  });
+
+  it.each([
+    {
+      label: 'missing inning totals',
+      inningRuns: undefined
+    },
+    {
+      label: 'a non-object inning total map',
+      inningRuns: 'not-a-map'
+    },
+    {
+      label: 'an array inning total map',
+      inningRuns: [0]
+    },
+    {
+      label: 'a string-coerced current-half total',
+      inningRuns: { B4: '0' }
+    },
+    {
+      label: 'a negative current-half total',
+      inningRuns: { B4: -1 }
+    }
+  ])('keeps current-half run evidence unknown for $label', ({ inningRuns }) => {
+    const raw = buildRawSnapshot();
+    const { inningRuns: _existingInningRuns, ...stateWithoutInningRuns } = raw.state;
+
+    expect(
+      normalizeDiamondSnapshot({
+        ...raw,
+        state: {
+          ...stateWithoutInningRuns,
+          ...(inningRuns === undefined ? {} : { inningRuns })
+        }
+      }).currentHalfRuns
+    ).toBeNull();
+  });
+
+  it.each(['in_play', 'hit_by_pitch', 'catcher_interference'] as const)(
+    'preserves the terminal delivered pitch result %s from the authoritative inning state',
+    (lastPitchResult) => {
+      const raw = buildRawSnapshot();
+      raw.state.inning.lastPitchResult = lastPitchResult;
+
+      expect(normalizeDiamondSnapshot(raw).lastPitchResult).toBe(lastPitchResult);
+    }
+  );
+
+  it.each(['ball', 'called_strike', 'swinging_strike', 'foul', 'foul_bunt', 'illegal_pitch', null] as const)(
+    'preserves the nonterminal delivered pitch result %s',
+    (lastPitchResult) => {
+      const raw = buildRawSnapshot();
+
+      expect(
+        normalizeDiamondSnapshot({
+          ...raw,
+          state: { ...raw.state, inning: { ...raw.state.inning, lastPitchResult } }
+        }).lastPitchResult
+      ).toBe(lastPitchResult);
+    }
+  );
+
+  it.each([
+    { label: 'missing', lastPitchResult: undefined },
+    { label: 'unsupported', lastPitchResult: 'pickoff_attempt' },
+    { label: 'wrong-type', lastPitchResult: 1 }
+  ])('rejects a $label authoritative last-pitch result instead of re-enabling pitch entry', ({ lastPitchResult }) => {
+    const raw = buildRawSnapshot();
+    const { lastPitchResult: _existingLastPitchResult, ...inningWithoutLastPitchResult } = raw.state.inning;
+
+    expect(() =>
+      normalizeDiamondSnapshot({
+        ...raw,
+        state: {
+          ...raw.state,
+          inning: {
+            ...inningWithoutLastPitchResult,
+            ...(lastPitchResult === undefined ? {} : { lastPitchResult })
+          }
+        }
+      })
+    ).toThrow(/last delivered pitch result/i);
   });
 
   it('derives the official pitcher only from canonical defense and ignores stale presentation identity', () => {

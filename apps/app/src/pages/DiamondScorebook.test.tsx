@@ -83,6 +83,8 @@ function buildSnapshot(overrides: Partial<DiamondScorebookSnapshot> = {}): Diamo
     homeName: 'Bears',
     awayName: 'Wolves',
     score: { home: 3, away: 2 },
+    currentHalfRuns: 0,
+    lastPitchResult: null,
     inning: {
       number: 4,
       half: 'bottom',
@@ -447,6 +449,40 @@ function createClient(initialSnapshot = buildSnapshot()) {
       };
     }
     if (command.type === 'start') loadedSnapshot = { ...loadedSnapshot, lifecycle: 'active' };
+    if (command.type === 'record_plate_appearance') {
+      loadedSnapshot = {
+        ...loadedSnapshot,
+        lastPitchResult: null,
+        inning: {
+          ...loadedSnapshot.inning,
+          balls: 0,
+          strikes: 0,
+          pitchesInPlateAppearance: 0
+        }
+      };
+    }
+    if (command.type === 'place_tiebreaker_runner') {
+      const base = command.payload.base as 'first' | 'second' | 'third';
+      const runnerId = command.payload.runnerId as string;
+      const side = command.payload.side as 'home' | 'away';
+      const runner = [...loadedSnapshot.availablePlayers[side], ...loadedSnapshot.lineups[side]].find(
+        (player) => player.playerId === runnerId
+      );
+      loadedSnapshot = {
+        ...loadedSnapshot,
+        bases: {
+          ...loadedSnapshot.bases,
+          [base]: {
+            playerId: runnerId,
+            name: runner?.name || runnerId,
+            number: runner?.number || null,
+            responsiblePitcherId: command.payload.chargedToPitcherId as string,
+            courtesyForPlayerId: null,
+            reachedOnEventId: `event-${command.expectedRevision + 1}`
+          }
+        }
+      };
+    }
     if (command.type === 'suspend') loadedSnapshot = { ...loadedSnapshot, lifecycle: 'suspended' };
     if (command.type === 'rules_decision') {
       const code = command.payload.code;
@@ -835,6 +871,113 @@ describe('DiamondScorebook', () => {
         third: null
       }
     });
+  });
+
+  it.each([
+    { lastPitchResult: 'in_play' as const, outcome: 'Single' },
+    { lastPitchResult: 'hit_by_pitch' as const, outcome: 'Hit by pitch' },
+    { lastPitchResult: 'catcher_interference' as const, outcome: 'Interference' }
+  ])(
+    'blocks every further pitch after terminal $lastPitchResult while keeping $outcome resolution available',
+    ({ lastPitchResult, outcome }) => {
+      const snapshot = buildSnapshot({ lastPitchResult });
+
+      renderScorebook(snapshot, createClient(snapshot));
+
+      const pitchControls = screen.getByRole('group', { name: 'Pitch' });
+      within(pitchControls)
+        .getAllByRole('button')
+        .forEach((button) => expect(button).toBeDisabled());
+      expect(screen.getByRole('button', { name: outcome })).toBeEnabled();
+    }
+  );
+
+  it.each(['ball', 'called_strike', 'swinging_strike', 'foul', 'foul_bunt', 'illegal_pitch', null] as const)(
+    'keeps pitch entry available after nonterminal last pitch %s',
+    (lastPitchResult) => {
+      const snapshot = buildSnapshot({ lastPitchResult });
+
+      renderScorebook(snapshot, createClient(snapshot));
+
+      const pitchControls = screen.getByRole('group', { name: 'Pitch' });
+      within(pitchControls)
+        .getAllByRole('button')
+        .forEach((button) => expect(button).toBeEnabled());
+    }
+  );
+
+  it.each([
+    { label: 'ball four', lastPitchResult: 'ball' as const, balls: 4, strikes: 1 },
+    { label: 'illegal-pitch ball four', lastPitchResult: 'illegal_pitch' as const, balls: 4, strikes: 1 },
+    { label: 'called strike three', lastPitchResult: 'called_strike' as const, balls: 2, strikes: 3 },
+    { label: 'swinging strike three', lastPitchResult: 'swinging_strike' as const, balls: 2, strikes: 3 },
+    { label: 'foul-bunt strike three', lastPitchResult: 'foul_bunt' as const, balls: 2, strikes: 3 }
+  ])(
+    'blocks further pitch entry after $label while keeping plate-appearance resolution available',
+    ({ lastPitchResult, balls, strikes }) => {
+      const snapshot = buildSnapshot({
+        lastPitchResult,
+        inning: { ...buildSnapshot().inning, balls, strikes }
+      });
+
+      renderScorebook(snapshot, createClient(snapshot));
+
+      within(screen.getByRole('group', { name: 'Pitch' }))
+        .getAllByRole('button')
+        .forEach((button) => expect(button).toBeDisabled());
+      expect(screen.getByRole('button', { name: strikes === 3 ? 'Strikeout' : 'Walk' })).toBeEnabled();
+    }
+  );
+
+  it.each([
+    { label: 'two-strike foul', lastPitchResult: 'foul' as const, balls: 2, strikes: 2 },
+    { label: 'subterminal illegal pitch', lastPitchResult: 'illegal_pitch' as const, balls: 3, strikes: 1 },
+    { label: 'balk-preserved delivered state', lastPitchResult: 'called_strike' as const, balls: 2, strikes: 1 },
+    { label: 'pickoff-preserved delivered state', lastPitchResult: 'called_strike' as const, balls: 2, strikes: 1 }
+  ])('keeps pitch entry available for $label', ({ lastPitchResult, balls, strikes }) => {
+    const snapshot = buildSnapshot({
+      lastPitchResult,
+      inning: { ...buildSnapshot().inning, balls, strikes }
+    });
+
+    renderScorebook(snapshot, createClient(snapshot));
+
+    within(screen.getByRole('group', { name: 'Pitch' }))
+      .getAllByRole('button')
+      .forEach((button) => expect(button).toBeEnabled());
+  });
+
+  it('applies terminal-pitch locking after an authoritative reload while leaving plate-appearance resolution enabled', async () => {
+    const snapshot = buildSnapshot({ lastPitchResult: 'called_strike' });
+    const fixture = createClient(snapshot);
+    (fixture.client.load as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      buildSnapshot({
+        revision: 8,
+        checkpointHash: checkpointForRevision(8),
+        lastPitchResult: 'in_play',
+        completeness: { ...snapshot.completeness, authoritativeRevision: 8 }
+      })
+    );
+    renderScorebook(snapshot, fixture);
+
+    expect(within(screen.getByRole('group', { name: 'Pitch' })).getByRole('button', { name: 'Ball' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh authoritative scorebook' }));
+
+    await screen.findByText('Live · revision 8');
+    expect(within(screen.getByRole('group', { name: 'Pitch' })).getByRole('button', { name: 'Ball' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Single' })).toBeEnabled();
+  });
+
+  it('re-enables pitch entry only after a terminal in-play pitch is resolved by an accepted plate appearance', async () => {
+    const snapshot = buildSnapshot({ lastPitchResult: 'in_play' });
+    const fixture = createClient(snapshot);
+    renderScorebook(snapshot, fixture);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Single' }));
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Review Single' })).getByRole('button', { name: 'Confirm play' }));
+
+    await waitFor(() => expect(fixture.submitCommand).toHaveBeenCalledTimes(1));
+    expect(within(screen.getByRole('group', { name: 'Pitch' })).getByRole('button', { name: 'Ball' })).toBeEnabled();
   });
 
   it.each(['Home run', 'Triple'])('does not let a reviewed %s leave an occupied runner short of home', (outcome) => {
@@ -2555,6 +2698,38 @@ describe('DiamondScorebook', () => {
     );
   });
 
+  it('rejects a fallback voice pitch while a terminal pitch awaits plate-appearance resolution', async () => {
+    const snapshot = buildSnapshot({ lastPitchResult: 'in_play' });
+    const fixture = createClient(snapshot);
+    (fixture.client.parseVoice as ReturnType<typeof vi.fn>).mockResolvedValue({
+      schemaVersion: 1,
+      type: 'record_pitch',
+      payload: {
+        batterId: 'batter-1',
+        pitcherId: 'pitcher-1',
+        result: 'called_strike'
+      },
+      confidence: 0.9,
+      unresolvedFields: [],
+      requiresConfirmation: true,
+      mutatesState: false
+    });
+    const generateContent = vi.fn(async () => {
+      throw new Error('model unavailable');
+    });
+    renderScorebook(snapshot, fixture, { generateContent });
+
+    fireEvent.click(screen.getByRole('button', { name: /Dictate play/ }));
+    fireEvent.change(screen.getByLabelText('Editable transcript'), { target: { value: 'Called strike.' } });
+    fireEvent.click(screen.getByRole('button', { name: /Interpret play/ }));
+
+    const review = await screen.findByRole('dialog', { name: /Review record pitch/i });
+    expect(within(review).getByRole('alert')).toHaveTextContent(/resolve the pending plate appearance/i);
+    expect(within(review).getByRole('button', { name: 'Confirm action' })).toBeDisabled();
+    expect(fixture.createCommand).not.toHaveBeenCalled();
+    expect(fixture.submitCommand).not.toHaveBeenCalled();
+  });
+
   it('rejects an AI proposal when the authoritative scorebook advances during interpretation', async () => {
     const fixture = createClient();
     let resolveGeneration: (value: unknown) => void = () => {};
@@ -2960,6 +3135,8 @@ describe('DiamondScorebook', () => {
     expect(screen.getByText(/Riley Chen .* previous scheduled batter/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Confirm tiebreaker runner' }));
     await waitFor(() => expect(fixture.submitCommand).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.queryByText('Tiebreaker runner required')).not.toBeInTheDocument());
+    expect(screen.getByRole('button', { name: 'Single' })).toBeEnabled();
     expect(fixture.createCommand).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'place_tiebreaker_runner',
@@ -2993,6 +3170,195 @@ describe('DiamondScorebook', () => {
       courtesyForPlayerId: null,
       reachedOnEventId: 'ui-tiebreaker'
     });
+  });
+
+  it('does not re-prompt tiebreaker placement after the automatic runner scores on a zero-out bases-clearing play', () => {
+    const snapshot = buildSnapshot({
+      inning: { number: 7, half: 'top', outs: 0, balls: 0, strikes: 0, pitchesInPlateAppearance: 0 },
+      bases: { first: null, second: null, third: null },
+      score: { home: 3, away: 3 },
+      currentHalfRuns: 1,
+      currentPitcher: { playerId: 'batter-1', name: 'Avery Carter', number: '12' },
+      lineups: {
+        home: buildSnapshot().lineups.home,
+        away: [
+          { playerId: 'pitcher-1', name: 'Morgan Diaz', number: '7', slot: 1 },
+          { playerId: 'fielder-2', name: 'Riley Chen', number: '2', slot: 2 }
+        ]
+      },
+      nextBatterSlot: { home: 0, away: 1 },
+      recentPlays: [
+        {
+          eventId: 'event-8',
+          revision: 8,
+          label: 'Morgan doubled; Riley scored',
+          inningLabel: 'Top 7',
+          type: 'record_plate_appearance',
+          voided: false
+        }
+      ]
+    });
+
+    renderScorebook(snapshot, createClient(snapshot));
+
+    expect(screen.queryByText('Tiebreaker runner required')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Single' })).toBeEnabled();
+  });
+
+  it('does not claim a pristine tiebreaker half when the authoritative run evidence is unknown', () => {
+    const snapshot = buildSnapshot({
+      inning: { number: 7, half: 'top', outs: 0, balls: 0, strikes: 0, pitchesInPlateAppearance: 0 },
+      bases: { first: null, second: null, third: null },
+      currentHalfRuns: null,
+      currentPitcher: { playerId: 'batter-1', name: 'Avery Carter', number: '12' }
+    });
+
+    renderScorebook(snapshot, createClient(snapshot));
+
+    expect(screen.queryByText('Tiebreaker runner required')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Confirm tiebreaker runner' })).not.toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent(/current-half run evidence is unavailable/i);
+    expect(screen.getByRole('button', { name: 'Single' })).toBeDisabled();
+    within(screen.getByRole('group', { name: 'Pitch' }))
+      .getAllByRole('button')
+      .forEach((button) => expect(button).toBeDisabled());
+  });
+
+  it('does not prompt from a non-authoritative tiebreaker snapshot', () => {
+    const snapshot = buildSnapshot({
+      authoritative: false,
+      inning: { number: 7, half: 'top', outs: 0, balls: 0, strikes: 0, pitchesInPlateAppearance: 0 },
+      bases: { first: null, second: null, third: null },
+      currentHalfRuns: 0,
+      currentPitcher: { playerId: 'batter-1', name: 'Avery Carter', number: '12' }
+    });
+
+    renderScorebook(snapshot, createClient(snapshot));
+
+    expect(screen.queryByText('Tiebreaker runner required')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Single' })).toBeDisabled();
+  });
+
+  it('does not prompt once any pitch has begun the tiebreaker half even when the count is reset', () => {
+    const snapshot = buildSnapshot({
+      inning: { number: 7, half: 'top', outs: 0, balls: 0, strikes: 0, pitchesInPlateAppearance: 1 },
+      bases: { first: null, second: null, third: null },
+      currentHalfRuns: 0,
+      lastPitchResult: 'foul',
+      currentPitcher: { playerId: 'batter-1', name: 'Avery Carter', number: '12' }
+    });
+
+    renderScorebook(snapshot, createClient(snapshot));
+
+    expect(screen.queryByText('Tiebreaker runner required')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Single' })).toBeEnabled();
+  });
+
+  it('removes a stale initial tiebreaker prompt after authoritative reload proves the half already has a run', async () => {
+    const initial = buildSnapshot({
+      inning: { number: 7, half: 'top', outs: 0, balls: 0, strikes: 0, pitchesInPlateAppearance: 0 },
+      bases: { first: null, second: null, third: null },
+      currentHalfRuns: 0,
+      currentPitcher: { playerId: 'batter-1', name: 'Avery Carter', number: '12' }
+    });
+    const fixture = createClient(initial);
+    (fixture.client.load as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      buildSnapshot({
+        ...initial,
+        revision: 8,
+        checkpointHash: checkpointForRevision(8),
+        currentHalfRuns: 1,
+        completeness: { ...initial.completeness, authoritativeRevision: 8 }
+      })
+    );
+    renderScorebook(initial, fixture);
+
+    expect(screen.getByText('Tiebreaker runner required')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh authoritative scorebook' }));
+
+    await screen.findByText('Live · revision 8');
+    expect(screen.queryByText('Tiebreaker runner required')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Single' })).toBeEnabled();
+  });
+
+  it('queues exactly one offline tiebreaker placement and locks scoring until reconciliation', async () => {
+    const snapshot = buildSnapshot({
+      inning: { number: 7, half: 'top', outs: 0, balls: 0, strikes: 0, pitchesInPlateAppearance: 0 },
+      bases: { first: null, second: null, third: null },
+      currentHalfRuns: 0,
+      currentPitcher: { playerId: 'batter-1', name: 'Avery Carter', number: '12' },
+      lineups: {
+        home: buildSnapshot().lineups.home,
+        away: [
+          { playerId: 'pitcher-1', name: 'Morgan Diaz', number: '7', slot: 1 },
+          { playerId: 'fielder-2', name: 'Riley Chen', number: '2', slot: 2 }
+        ]
+      },
+      nextBatterSlot: { home: 0, away: 0 }
+    });
+    const fixture = createClient(snapshot);
+    const reconciled = buildSnapshot({
+      ...snapshot,
+      revision: 8,
+      checkpointHash: checkpointForRevision(8),
+      bases: {
+        first: null,
+        second: {
+          playerId: 'fielder-2',
+          name: 'Riley Chen',
+          number: '2',
+          responsiblePitcherId: 'batter-1',
+          courtesyForPlayerId: null,
+          reachedOnEventId: 'event-8'
+        },
+        third: null
+      },
+      completeness: { ...snapshot.completeness, authoritativeRevision: 8 }
+    });
+    (fixture.client.reconcileQueue as ReturnType<typeof vi.fn>).mockResolvedValue({
+      accepted: 1,
+      duplicates: 0,
+      remaining: [],
+      lastSnapshot: reconciled
+    });
+    (fixture.client.load as ReturnType<typeof vi.fn>).mockResolvedValue(reconciled);
+    renderScorebook(snapshot, fixture);
+    fireEvent(window, new Event('offline'));
+    await screen.findByText('Offline · 0 queued');
+
+    const confirm = screen.getByRole('button', { name: 'Confirm tiebreaker runner' });
+    fireEvent.click(confirm);
+    fireEvent.click(confirm);
+
+    await waitFor(() => expect(fixture.client.enqueue).toHaveBeenCalledTimes(1));
+    expect(fixture.createCommand).toHaveBeenCalledTimes(1);
+    expect(fixture.submitCommand).not.toHaveBeenCalled();
+    expect(screen.getByText('Offline · 1 queued')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Confirm tiebreaker runner' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Single' })).toBeDisabled();
+
+    fireEvent(window, new Event('online'));
+
+    await waitFor(() => expect(fixture.client.reconcileQueue).toHaveBeenCalledTimes(1));
+    expect(await screen.findByLabelText('Second base: #2 Riley Chen')).toBeInTheDocument();
+    expect(screen.queryByText('Tiebreaker runner required')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Single' })).toBeEnabled();
+  });
+
+  it('does not infer a new tiebreaker placement while the game is open for correction', () => {
+    const snapshot = buildSnapshot({
+      lifecycle: 'correction',
+      inning: { number: 7, half: 'top', outs: 0, balls: 0, strikes: 0, pitchesInPlateAppearance: 0 },
+      bases: { first: null, second: null, third: null },
+      currentHalfRuns: 0,
+      currentPitcher: { playerId: 'batter-1', name: 'Avery Carter', number: '12' }
+    });
+
+    renderScorebook(snapshot, createClient(snapshot));
+
+    expect(screen.queryByText('Tiebreaker runner required')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Single' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Review final score' })).toBeEnabled();
   });
 
   it('fails the tiebreaker placement closed when the authoritative current pitcher is missing', () => {

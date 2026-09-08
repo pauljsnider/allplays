@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   DIAMOND_SCHEMA_VERSION,
+  createDiamondCheckpoint,
   createDiamondLedger,
   deriveDiamondPlayerStats,
   executeDiamondCommand,
+  executeDiamondCommandFromCheckpoint,
   formatDiamondRate,
   formatInningsPitched,
   getBattingSide,
@@ -687,6 +689,107 @@ describe('Baseball golden games', () => {
     });
     expect(droppedThirdOut.ledger.state.inning.outs).toBe(1);
     expect(replayDiamondLedger(droppedThirdOut.ledger).state).toEqual(droppedThirdOut.ledger.state);
+  });
+
+  it('blocks every further pitch after a terminal pitch result until the plate appearance is resolved', () => {
+    const terminalResults = ['in_play', 'hit_by_pitch', 'catcher_interference'] as const;
+    const followupResults: readonly DiamondCommandPayloadMap['record_pitch']['result'][] = [
+      'ball',
+      'called_strike',
+      'swinging_strike',
+      'foul',
+      'foul_bunt',
+      'in_play',
+      'hit_by_pitch',
+      'catcher_interference',
+      'illegal_pitch',
+      'balk',
+      'pickoff_attempt'
+    ];
+
+    for (const terminalResult of terminalResults) {
+      const game = createHarness('baseball-nfhs', 'full');
+      configureGame(game);
+      const matchup = currentMatchup(game);
+      game.submit('record_pitch', { ...matchup, result: terminalResult });
+      const terminalRevision = game.ledger.state.revision;
+
+      for (const result of followupResults) {
+        expectRejected(
+          game.submit('record_pitch', { ...matchup, result }, { accept: false }),
+          'plate-appearance-pending',
+          terminalRevision
+        );
+        expect(game.ledger.state.inning.lastPitchResult).toBe(terminalResult);
+      }
+
+      if (terminalResult === 'in_play') {
+        game.submit('record_plate_appearance', {
+          ...matchup,
+          result: 'single',
+          batterAdvance: { to: 'first' },
+          runnerAdvances: [],
+          outsOnPlay: 0
+        });
+      } else if (terminalResult === 'hit_by_pitch') {
+        game.submit('record_plate_appearance', {
+          ...matchup,
+          result: 'hit_by_pitch',
+          batterAdvance: { to: 'first', cause: 'hit_by_pitch' },
+          runnerAdvances: [],
+          outsOnPlay: 0
+        });
+      } else {
+        game.submit('record_plate_appearance', {
+          ...matchup,
+          result: 'interference',
+          batterAdvance: { to: 'first' },
+          runnerAdvances: [],
+          outsOnPlay: 0
+        });
+      }
+
+      expect(game.ledger.state.inning.lastPitchResult).toBeNull();
+      const nextMatchup = currentMatchup(game);
+      game.submit('record_pitch', { ...nextMatchup, result: 'ball' });
+      expect(projectDiamondStats(game.ledger).players['home-1'].raw.pitching.pitches).toBe(2);
+      expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
+    }
+
+    const corrected = createHarness('baseball-nfhs', 'full');
+    configureGame(corrected);
+    const matchup = currentMatchup(corrected);
+    const terminal = corrected.submit('record_pitch', { ...matchup, result: 'in_play' });
+    corrected.submit('supersede_event', {
+      targetEventId: terminal.event!.eventId,
+      reason: 'Correct the terminal pitch result before recording the next pitch.',
+      replacement: { type: 'record_pitch', payload: { ...matchup, result: 'ball' } }
+    });
+    corrected.submit('record_pitch', { ...matchup, result: 'called_strike' });
+    expect(corrected.ledger.state.inning).toMatchObject({ balls: 1, strikes: 1, lastPitchResult: 'called_strike' });
+    expect(projectDiamondStats(corrected.ledger).players['home-1'].raw.pitching.pitches).toBe(2);
+    expect(replayDiamondLedger(corrected.ledger).state).toEqual(corrected.ledger.state);
+
+    for (const terminalResult of terminalResults) {
+      const invalidCorrection = createHarness('baseball-nfhs', 'full');
+      configureGame(invalidCorrection);
+      const correctionMatchup = currentMatchup(invalidCorrection);
+      const firstPitch = invalidCorrection.submit('record_pitch', { ...correctionMatchup, result: 'ball' });
+      invalidCorrection.submit('record_pitch', { ...correctionMatchup, result: 'called_strike' });
+      const beforeCorrection = invalidCorrection.ledger;
+      const rejected = invalidCorrection.submit(
+        'supersede_event',
+        {
+          targetEventId: firstPitch.event!.eventId,
+          reason: `Do not introduce ${terminalResult} before an already-recorded later pitch.`,
+          replacement: { type: 'record_pitch', payload: { ...correctionMatchup, result: terminalResult } }
+        },
+        { accept: false }
+      );
+      expectRejected(rejected, 'plate-appearance-pending', beforeCorrection.state.revision);
+      expect(invalidCorrection.ledger).toBe(beforeCorrection);
+      expect(replayDiamondLedger(invalidCorrection.ledger).state).toEqual(invalidCorrection.ledger.state);
+    }
   });
 
   it('rejects same-base and backward runner moves in standalone, plate-appearance, and correction replay paths', () => {
@@ -2011,6 +2114,366 @@ describe('Scoring decisions and correction reconciliation', () => {
       fielding: { passedBallBy: 'home-2' }
     });
     expect(projectDiamondStats(sharedPitch.ledger).players['home-2'].raw.fielding.PB).toBe(1);
+  });
+
+  it('preserves one-fielder putout multiplicity on unassisted multi-out plays without counting duplicate evidence', () => {
+    for (const outsOnPlay of [2, 3] as const) {
+      const game = createHarness('baseball-nfhs', 'full');
+      configureGame(game);
+      placeRunnerOnBase(game, 'first');
+      if (outsOnPlay === 3) {
+        game.submit('record_plate_appearance', {
+          batterId: 'away-2',
+          pitcherId: 'home-1',
+          result: 'single',
+          batterAdvance: { to: 'first' },
+          runnerAdvances: [{ runnerId: 'away-1', from: 'first', to: 'second', cause: 'batted_ball' }],
+          outsOnPlay: 0
+        });
+      }
+      recordPitch(game, 'in_play');
+      const matchup = currentMatchup(game);
+      const play = game.submit('record_plate_appearance', {
+        ...matchup,
+        result: outsOnPlay === 2 ? 'double_play' : 'triple_play',
+        batterAdvance: { to: 'out', outKind: 'batter_runner' },
+        runnerAdvances:
+          outsOnPlay === 2
+            ? [{ runnerId: 'away-1', from: 'first', to: 'out', cause: 'appeal_out', outKind: 'appeal' }]
+            : [
+                { runnerId: 'away-1', from: 'second', to: 'out', cause: 'appeal_out', outKind: 'appeal' },
+                { runnerId: 'away-2', from: 'first', to: 'out', cause: 'appeal_out', outKind: 'appeal' }
+              ],
+        outsOnPlay,
+        fielding: {
+          putoutBy: 'home-3',
+          ...(outsOnPlay === 2 ? { doublePlay: true } : { triplePlay: true })
+        }
+      });
+      const duplicate = game.submit('record_fielding', {
+        playEventId: play.event!.eventId,
+        fielding: {
+          putoutBy: 'home-3',
+          ...(outsOnPlay === 2 ? { doublePlay: true } : { triplePlay: true })
+        }
+      });
+      const extra = game.submit('record_fielding', {
+        playEventId: play.event!.eventId,
+        fielding: {
+          putoutBy: 'home-3',
+          ...(outsOnPlay === 2 ? { doublePlay: true } : { triplePlay: true })
+        }
+      });
+
+      let projected = projectDiamondStats(game.ledger);
+      expect(projected.players['home-3'].raw.fielding).toMatchObject({
+        PO: outsOnPlay,
+        [outsOnPlay === 2 ? 'DP' : 'TP']: 1
+      });
+      expect(projected.coverage.fielding).toBe('complete');
+      game.submit('void_event', {
+        targetEventId: duplicate.event!.eventId,
+        reason: 'Remove duplicate fielding evidence without changing the canonical unassisted outs.'
+      });
+      projected = projectDiamondStats(game.ledger);
+      expect(projected.players['home-3'].raw.fielding).toMatchObject({
+        PO: outsOnPlay,
+        [outsOnPlay === 2 ? 'DP' : 'TP']: 1
+      });
+      game.submit('void_event', {
+        targetEventId: extra.event!.eventId,
+        reason: 'Leave only the inline unassisted fielding chain as canonical out evidence.'
+      });
+      projected = projectDiamondStats(game.ledger);
+      expect(projected.players['home-3'].raw.fielding).toMatchObject({
+        PO: outsOnPlay,
+        [outsOnPlay === 2 ? 'DP' : 'TP']: 1
+      });
+      expect(projected.coverage.fielding).toBe('complete');
+      expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
+    }
+
+    const assistedIncomplete = createHarness('baseball-nfhs', 'full');
+    configureGame(assistedIncomplete);
+    placeRunnerOnBase(assistedIncomplete, 'first');
+    recordPitch(assistedIncomplete, 'in_play');
+    assistedIncomplete.submit('record_plate_appearance', {
+      batterId: 'away-2',
+      pitcherId: 'home-1',
+      result: 'double_play',
+      batterAdvance: { to: 'out', outKind: 'batter_runner' },
+      runnerAdvances: [{ runnerId: 'away-1', from: 'first', to: 'out', cause: 'force_out', outKind: 'force' }],
+      outsOnPlay: 2,
+      fielding: { putoutBy: 'home-2', assists: ['home-3'], doublePlay: true }
+    });
+    const assistedStats = projectDiamondStats(assistedIncomplete.ledger);
+    expect(assistedStats.players['home-2'].raw.fielding.PO).toBe(1);
+    expect(assistedStats.coverage.fielding).toBe('partial');
+
+    const twoOfThreeIncomplete = createHarness('baseball-nfhs', 'full');
+    configureGame(twoOfThreeIncomplete);
+    placeRunnerOnBase(twoOfThreeIncomplete, 'first');
+    twoOfThreeIncomplete.submit('record_plate_appearance', {
+      batterId: 'away-2',
+      pitcherId: 'home-1',
+      result: 'single',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [{ runnerId: 'away-1', from: 'first', to: 'second', cause: 'batted_ball' }],
+      outsOnPlay: 0
+    });
+    recordPitch(twoOfThreeIncomplete, 'in_play');
+    const partialTriple = twoOfThreeIncomplete.submit('record_plate_appearance', {
+      batterId: 'away-3',
+      pitcherId: 'home-1',
+      result: 'triple_play',
+      batterAdvance: { to: 'out', outKind: 'batter_runner' },
+      runnerAdvances: [
+        { runnerId: 'away-1', from: 'second', to: 'out', cause: 'force_out', outKind: 'force' },
+        { runnerId: 'away-2', from: 'first', to: 'out', cause: 'force_out', outKind: 'force' }
+      ],
+      outsOnPlay: 3,
+      fielding: { putoutBy: 'home-2', triplePlay: true }
+    });
+    twoOfThreeIncomplete.submit('record_fielding', {
+      playEventId: partialTriple.event!.eventId,
+      fielding: { putoutBy: 'home-3', triplePlay: true }
+    });
+    const partialTripleStats = projectDiamondStats(twoOfThreeIncomplete.ledger);
+    expect(partialTripleStats.players['home-2'].raw.fielding.PO).toBe(1);
+    expect(partialTripleStats.players['home-3'].raw.fielding.PO).toBe(1);
+    expect(partialTripleStats.coverage.fielding).toBe('partial');
+
+    const overcreditedOneOut = createHarness('baseball-nfhs', 'quick');
+    configureGame(overcreditedOneOut);
+    recordPitch(overcreditedOneOut, 'in_play');
+    const oneOutMatchup = currentMatchup(overcreditedOneOut);
+    const oneOutPlay = overcreditedOneOut.submit('record_plate_appearance', {
+      ...oneOutMatchup,
+      result: 'ground_out',
+      batterAdvance: { to: 'out', outKind: 'batter_runner' },
+      runnerAdvances: [],
+      outsOnPlay: 1,
+      fielding: { putoutBy: 'home-2' }
+    });
+    expectRejected(
+      overcreditedOneOut.submit(
+        'record_fielding',
+        { playEventId: oneOutPlay.event!.eventId, fielding: { putoutBy: 'home-3' } },
+        { accept: false }
+      ),
+      'fielding-outs-mismatch',
+      overcreditedOneOut.ledger.state.revision
+    );
+    expect(projectDiamondStats(overcreditedOneOut.ledger).players['home-2'].raw.fielding.PO).toBe(1);
+
+    const overcreditedCorrection = createHarness('baseball-nfhs', 'quick');
+    configureGame(overcreditedCorrection);
+    recordPitch(overcreditedCorrection, 'in_play');
+    const correctionMatchup = currentMatchup(overcreditedCorrection);
+    const correctionSource = overcreditedCorrection.submit('record_plate_appearance', {
+      ...correctionMatchup,
+      result: 'ground_out',
+      batterAdvance: { to: 'out', outKind: 'batter_runner' },
+      runnerAdvances: [],
+      outsOnPlay: 1
+    });
+    overcreditedCorrection.submit('record_fielding', {
+      playEventId: correctionSource.event!.eventId,
+      fielding: { putoutBy: 'home-2' }
+    });
+    expectRejected(
+      overcreditedCorrection.submit(
+        'supersede_event',
+        {
+          targetEventId: correctionSource.event!.eventId,
+          reason: 'A correction cannot introduce a second putout identity for one canonical out.',
+          replacement: {
+            type: 'record_plate_appearance',
+            payload: {
+              ...correctionMatchup,
+              result: 'ground_out',
+              batterAdvance: { to: 'out', outKind: 'batter_runner' },
+              runnerAdvances: [],
+              outsOnPlay: 1,
+              fielding: { putoutBy: 'home-3' }
+            }
+          }
+        },
+        { accept: false }
+      ),
+      'fielding-outs-mismatch',
+      overcreditedCorrection.ledger.state.revision
+    );
+    expect(replayDiamondLedger(overcreditedCorrection.ledger).state).toEqual(overcreditedCorrection.ledger.state);
+
+    const boundedMultiOut = createHarness('baseball-nfhs', 'full');
+    configureGame(boundedMultiOut);
+    placeRunnerOnBase(boundedMultiOut, 'first');
+    recordPitch(boundedMultiOut, 'in_play');
+    const doubleMatchup = currentMatchup(boundedMultiOut);
+    const doublePlay = boundedMultiOut.submit('record_plate_appearance', {
+      ...doubleMatchup,
+      result: 'double_play',
+      batterAdvance: { to: 'out', outKind: 'batter_runner' },
+      runnerAdvances: [{ runnerId: 'away-1', from: 'first', to: 'out', cause: 'force_out', outKind: 'force' }],
+      outsOnPlay: 2,
+      fielding: { putoutBy: 'home-2', doublePlay: true }
+    });
+    boundedMultiOut.submit('record_fielding', {
+      playEventId: doublePlay.event!.eventId,
+      fielding: { putoutBy: 'home-3' }
+    });
+    expectRejected(
+      boundedMultiOut.submit(
+        'record_fielding',
+        { playEventId: doublePlay.event!.eventId, fielding: { putoutBy: 'home-1' } },
+        { accept: false }
+      ),
+      'fielding-outs-mismatch',
+      boundedMultiOut.ledger.state.revision
+    );
+    const boundedStats = projectDiamondStats(boundedMultiOut.ledger);
+    expect(boundedStats.players['home-2'].raw.fielding.PO + boundedStats.players['home-3'].raw.fielding.PO).toBe(2);
+    expect(boundedStats.coverage.fielding).toBe('complete');
+
+    const noOut = createHarness('baseball-nfhs', 'quick');
+    configureGame(noOut);
+    const noOutMatchup = currentMatchup(noOut);
+    const inlinePutout = noOut.submit(
+      'record_plate_appearance',
+      {
+        ...noOutMatchup,
+        result: 'single',
+        batterAdvance: { to: 'first' },
+        runnerAdvances: [],
+        outsOnPlay: 0,
+        fielding: { putoutBy: 'home-2' }
+      },
+      { accept: false }
+    );
+    expectRejected(inlinePutout, 'fielding-outs-mismatch', noOut.ledger.state.revision);
+    const noOutPlay = noOut.submit('record_plate_appearance', {
+      ...noOutMatchup,
+      result: 'single',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    expectRejected(
+      noOut.submit(
+        'advance_runner',
+        {
+          runnerId: noOutMatchup.batterId,
+          from: 'first',
+          to: 'second',
+          cause: 'stolen_base',
+          fielding: { putoutBy: 'home-2' }
+        },
+        { accept: false }
+      ),
+      'fielding-outs-mismatch',
+      noOut.ledger.state.revision
+    );
+    const noOutAdvance = noOut.submit('advance_runner', {
+      runnerId: noOutMatchup.batterId,
+      from: 'first',
+      to: 'second',
+      cause: 'stolen_base'
+    });
+    expectRejected(
+      noOut.submit('record_fielding', { playEventId: noOutAdvance.event!.eventId, fielding: { putoutBy: 'home-2' } }, { accept: false }),
+      'fielding-outs-mismatch',
+      noOut.ledger.state.revision
+    );
+    expectRejected(
+      noOut.submit('record_fielding', { playEventId: noOutPlay.event!.eventId, fielding: { putoutBy: 'home-2' } }, { accept: false }),
+      'fielding-outs-mismatch',
+      noOut.ledger.state.revision
+    );
+    expectRejected(
+      noOut.submit(
+        'supersede_event',
+        {
+          targetEventId: noOutPlay.event!.eventId,
+          reason: 'A correction cannot add a putout to a play with no actual out.',
+          replacement: {
+            type: 'record_plate_appearance',
+            payload: {
+              ...noOutMatchup,
+              result: 'single',
+              batterAdvance: { to: 'first' },
+              runnerAdvances: [],
+              outsOnPlay: 0,
+              fielding: { putoutBy: 'home-2' }
+            }
+          }
+        },
+        { accept: false }
+      ),
+      'fielding-outs-mismatch',
+      noOut.ledger.state.revision
+    );
+    noOut.submit('record_fielding', {
+      playEventId: noOutPlay.event!.eventId,
+      fielding: { assists: ['home-1'], errors: [{ playerId: 'home-2', kind: 'fielding' }] }
+    });
+    const noOutStats = projectDiamondStats(noOut.ledger);
+    expect(noOutStats.players['home-2'].raw.fielding).toMatchObject({ PO: 0, E: 1 });
+    expect(noOutStats.players['home-1'].raw.fielding.A).toBe(1);
+  });
+
+  it('keeps bounded checkpoint fielding completeness byte-identical to full replay', () => {
+    const matrix = [
+      { captureMode: 'full', assists: [] as string[], expectedCoverage: 'complete' },
+      { captureMode: 'full', assists: ['home-3'], expectedCoverage: 'partial' },
+      { captureMode: 'quick', assists: [] as string[], expectedCoverage: 'partial' },
+      { captureMode: 'quick', assists: ['home-3'], expectedCoverage: 'partial' }
+    ] as const;
+
+    matrix.forEach(({ captureMode, assists, expectedCoverage }, index) => {
+      const game = createHarness('baseball-nfhs', captureMode);
+      configureGame(game);
+      recordPitch(game, 'in_play');
+      const reachMatchup = currentMatchup(game);
+      game.submit('record_plate_appearance', {
+        ...reachMatchup,
+        result: 'single',
+        batterAdvance: { to: 'first' },
+        runnerAdvances: [],
+        outsOnPlay: 0
+      });
+      recordPitch(game, 'in_play');
+      const doubleMatchup = currentMatchup(game);
+      const command = game.command('record_plate_appearance', {
+        ...doubleMatchup,
+        result: 'double_play',
+        batterAdvance: { to: 'out', outKind: 'batter_runner' },
+        runnerAdvances: [{ runnerId: reachMatchup.batterId, from: 'first', to: 'out', cause: 'force_out', outKind: 'force' }],
+        outsOnPlay: 2,
+        fielding: { putoutBy: 'home-2', ...(assists.length ? { assists } : {}), doublePlay: true }
+      });
+      const context = {
+        actorUid: INITIAL_SCORER,
+        eventId: `checkpoint-double-play-${captureMode}-${String(index)}`,
+        serverTimestampMs: 1_900_000_100_000 + index
+      } as const;
+      const checkpoint = createDiamondCheckpoint(game.ledger);
+      const full = executeDiamondCommand(game.ledger, command, context);
+      const bounded = executeDiamondCommandFromCheckpoint(checkpoint, command, context);
+
+      expect(full.result, full.result.rejection?.message).toMatchObject({ outcome: 'accepted' });
+      expect(bounded.result, bounded.result.rejection?.message).toMatchObject({ outcome: 'accepted' });
+      expect(full.ledger.state.coverage.fielding).toBe(expectedCoverage);
+      expect(bounded.checkpoint.state.coverage.fielding).toBe(expectedCoverage);
+      expect(bounded.checkpoint.sequence).toBe(checkpoint.sequence + 1);
+      expect(bounded.checkpoint.previousHash).toBe(bounded.event?.hash);
+      expect(bounded.event).toEqual(full.event);
+      expect(replayDiamondLedger(full.ledger).state).toEqual(full.ledger.state);
+
+      const duplicate = executeDiamondCommandFromCheckpoint(checkpoint, command, context, bounded.receipt);
+      expect(duplicate.result).toMatchObject({ outcome: 'duplicate', revision: full.ledger.state.revision });
+      expect(duplicate.event).toEqual(full.event);
+    });
   });
 
   it('exposes pitcher decisions only for the coherent effective official result', () => {

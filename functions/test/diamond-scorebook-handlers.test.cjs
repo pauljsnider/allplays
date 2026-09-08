@@ -2980,7 +2980,7 @@ describe("Diamond scorebook handler factory", () => {
       type: "record_fielding",
       payload: {
         playEventId: play.eventId,
-        fielding: { putoutBy: "away-1" },
+        fielding: { assists: ["away-1"] },
       },
     });
     assert.equal(wrongFielder.outcome, "rejected");
@@ -3740,10 +3740,7 @@ describe("Diamond scorebook handler factory", () => {
         result.instanceId,
         harness.firestore.read(resourcePaths.game).diamondScorebookInstanceId,
       );
-      assert.equal(
-        result.game.location,
-        "Field 4",
-      );
+      assert.equal(result.game.location, "Field 4");
       assert.doesNotMatch(
         JSON.stringify(result),
         /Arrival Time|Assignments|Parent Name/,
@@ -4397,10 +4394,12 @@ describe("Diamond scorebook handler factory", () => {
       const documentsBeforeCleanup = [...harness.firestore.documents.entries()];
       let documentReadCount = 0;
       let queryReadCount = 0;
-      const originalDocumentSnapshot =
-        harness.firestore._documentSnapshot.bind(harness.firestore);
-      const originalQuerySnapshot =
-        harness.firestore._querySnapshot.bind(harness.firestore);
+      const originalDocumentSnapshot = harness.firestore._documentSnapshot.bind(
+        harness.firestore,
+      );
+      const originalQuerySnapshot = harness.firestore._querySnapshot.bind(
+        harness.firestore,
+      );
       harness.firestore._documentSnapshot = (reference) => {
         documentReadCount += 1;
         return originalDocumentSnapshot(reference);

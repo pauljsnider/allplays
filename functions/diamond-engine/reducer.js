@@ -1,9 +1,12 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.isDiamondDeliveredPitch = isDiamondDeliveredPitch;
+exports.isDiamondTerminalPitchResult = isDiamondTerminalPitchResult;
 exports.getBattingSide = getBattingSide;
 exports.getDiamondFinalizationReason = getDiamondFinalizationReason;
 exports.createInitialDiamondState = createInitialDiamondState;
+exports.validateDiamondMergedFieldingOutCredit = validateDiamondMergedFieldingOutCredit;
+exports.deriveDiamondPutoutCredits = deriveDiamondPutoutCredits;
 exports.deriveDiamondCoverageFromEventStates = deriveDiamondCoverageFromEventStates;
 exports.deriveDiamondCoverageFromEvents = deriveDiamondCoverageFromEvents;
 exports.validateDiamondFieldingOutCredit = validateDiamondFieldingOutCredit;
@@ -54,6 +57,11 @@ const PITCH_RESULTS = [
     'illegal_pitch',
     'balk',
     'pickoff_attempt'
+];
+const TERMINAL_PITCH_RESULTS = [
+    'in_play',
+    'hit_by_pitch',
+    'catcher_interference'
 ];
 const PLATE_APPEARANCE_RESULTS = [
     'single',
@@ -224,6 +232,9 @@ function requireSide(value, label = 'side') {
 }
 function isDiamondDeliveredPitch(result) {
     return result !== 'balk' && result !== 'pickoff_attempt';
+}
+function isDiamondTerminalPitchResult(result) {
+    return result !== null && TERMINAL_PITCH_RESULTS.includes(result);
 }
 function hasCompletePitchOutcomeEvidence(state, result) {
     if (state.captureMode !== 'full')
@@ -501,6 +512,26 @@ function fieldingChainsForPlay(event, attached, inline) {
         ...(event.eventId === event.sourceEventId ? [] : (attached.get(event.eventId) ?? []))
     ];
 }
+function validateDiamondMergedFieldingOutCredit(fieldings, actualOutCount) {
+    const putoutPlayers = new Set(fieldings.flatMap((fielding) => (fielding.putoutBy ? [fielding.putoutBy] : [])));
+    if (putoutPlayers.size > actualOutCount) {
+        throw new contracts_1.DiamondDomainError('fielding-outs-mismatch', `Putout fielding evidence names ${String(putoutPlayers.size)} fielders for ${String(actualOutCount)} actual outs.`);
+    }
+}
+function deriveDiamondPutoutCredits(fieldings, actualOutCount) {
+    validateDiamondMergedFieldingOutCredit(fieldings, actualOutCount);
+    const putoutPlayers = new Set(fieldings.flatMap((fielding) => (fielding.putoutBy ? [fielding.putoutBy] : [])));
+    const assistPlayers = new Set(fieldings.flatMap((fielding) => fielding.assists ?? []));
+    const credits = new Map(Array.from(putoutPlayers, (playerId) => [playerId, 1]));
+    if (actualOutCount > 1 && putoutPlayers.size === 1 && assistPlayers.size === 0) {
+        credits.set(putoutPlayers.values().next().value, actualOutCount);
+    }
+    return credits;
+}
+function hasCompletePutoutEvidence(fieldings, actualOutCount) {
+    const creditedOuts = Array.from(deriveDiamondPutoutCredits(fieldings, actualOutCount).values()).reduce((total, count) => total + count, 0);
+    return creditedOuts === actualOutCount;
+}
 function judgmentsForPlay(event, attached) {
     return [
         ...(attached.get(event.sourceEventId) ?? []),
@@ -546,6 +577,8 @@ function deriveDiamondCoverageFromEventStates(initialState, eventStates) {
             coverage = withPartialCoverage(coverage, payload.omissions);
             if (payload.fielding && coverage.fielding === 'not_collected')
                 coverage = { ...coverage, fielding: 'partial' };
+            const fieldingChains = fieldingChainsForPlay(event, fieldingByPlay, payload.fielding);
+            validateDiamondMergedFieldingOutCredit(fieldingChains, payload.outsOnPlay);
             const judgments = judgmentsForPlay(event, judgmentsByPlay);
             const scoringAdvances = [{ runnerId: payload.batterId, ...payload.batterAdvance }, ...payload.runnerAdvances].filter((advance) => advance.to === 'home' && advance.countsRun !== false);
             if (scoringAdvances.some((advance) => {
@@ -565,11 +598,10 @@ function deriveDiamondCoverageFromEventStates(initialState, eventStates) {
                 coverage = { ...coverage, pitches: 'partial' };
             }
             if (initialState.captureMode === 'full') {
-                const chains = fieldingChainsForPlay(event, fieldingByPlay, payload.fielding);
-                if (payload.outsOnPlay > 0 && !chains.some((chain) => Boolean(chain.putoutBy))) {
+                if (payload.outsOnPlay > 0 && !hasCompletePutoutEvidence(fieldingChains, payload.outsOnPlay)) {
                     coverage = { ...coverage, fielding: 'partial' };
                 }
-                if (payload.result === 'reached_on_error' && !chains.some((chain) => Boolean(chain.errors?.length))) {
+                if (payload.result === 'reached_on_error' && !fieldingChains.some((chain) => Boolean(chain.errors?.length))) {
                     coverage = { ...coverage, fielding: 'partial' };
                 }
             }
@@ -579,14 +611,15 @@ function deriveDiamondCoverageFromEventStates(initialState, eventStates) {
             coverage = withPartialCoverage(coverage, payload.omissions);
             if (payload.fielding && coverage.fielding === 'not_collected')
                 coverage = { ...coverage, fielding: 'partial' };
+            const fieldingChains = fieldingChainsForPlay(event, fieldingByPlay, payload.fielding);
+            validateDiamondMergedFieldingOutCredit(fieldingChains, payload.to === 'out' ? 1 : 0);
             if (payload.to === 'home' && payload.countsRun !== false) {
                 const judgment = latestRunnerJudgmentBoolean(judgmentsForPlay(event, judgmentsByPlay), payload.runnerId, 'earned');
                 if (typeof (judgment ?? payload.earned) !== 'boolean')
                     coverage = { ...coverage, pitching: 'partial' };
             }
             if (initialState.captureMode === 'full' && payload.to === 'out') {
-                const chains = fieldingChainsForPlay(event, fieldingByPlay, payload.fielding);
-                if (!chains.some((chain) => Boolean(chain.putoutBy)))
+                if (!hasCompletePutoutEvidence(fieldingChains, 1))
                     coverage = { ...coverage, fielding: 'partial' };
             }
         }
@@ -1330,7 +1363,7 @@ function reduceDiamondEvent(state, action) {
                 throw new contracts_1.DiamondDomainError('half-inning-complete', 'Advance the half inning first.');
             validateBatterAndPitcher(state, action.payload.batterId, action.payload.pitcherId);
             requireMember(action.payload.result, PITCH_RESULTS, 'pitch result');
-            if (state.inning.balls >= 4 || state.inning.strikes >= 3) {
+            if (state.inning.balls >= 4 || state.inning.strikes >= 3 || isDiamondTerminalPitchResult(state.inning.lastPitchResult)) {
                 throw new contracts_1.DiamondDomainError('plate-appearance-pending', 'Resolve the plate appearance before recording another pitch.');
             }
             let balls = state.inning.balls;
@@ -1416,7 +1449,9 @@ function reduceDiamondEvent(state, action) {
             const moves = [batterMove, ...runnerMoves];
             validateCompleteExtraBaseHitRunnerResolution(state, action.payload.result, runnerMoves);
             validateNamedMultiOutResult(state, action.payload.result, moves, action.payload.outsOnPlay);
-            validateDiamondFieldingOutCredit(action.payload.fielding, moves.filter((move) => move.to === 'out').length);
+            const actualOutCount = moves.filter((move) => move.to === 'out').length;
+            validateDiamondFieldingOutCredit(action.payload.fielding, actualOutCount);
+            validateDiamondMergedFieldingOutCredit(action.payload.fielding ? [action.payload.fielding] : [], actualOutCount);
             next = applyMoves(state, side, moves, action.payload.outsOnPlay, action.eventId ?? null);
             const orderLength = state.lineups[side].battingOrder.length;
             next = {
@@ -1440,7 +1475,8 @@ function reduceDiamondEvent(state, action) {
             if (state.captureMode === 'full' && !hasCompletePitchOutcomeEvidence(state, action.payload.result)) {
                 next = markPartial(next, ['pitches']);
             }
-            const missingFullFielding = action.payload.outsOnPlay > 0 && !action.payload.fielding?.putoutBy;
+            const missingFullFielding = action.payload.outsOnPlay > 0 &&
+                !hasCompletePutoutEvidence(action.payload.fielding ? [action.payload.fielding] : [], action.payload.outsOnPlay);
             const missingReachedOnErrorFielder = action.payload.result === 'reached_on_error' && !action.payload.fielding?.errors?.length;
             if (state.captureMode === 'full' && (missingFullFielding || missingReachedOnErrorFielder)) {
                 next = markPartial(next, ['fielding']);
@@ -1460,6 +1496,7 @@ function reduceDiamondEvent(state, action) {
                 validateFieldingIds(action.payload.fielding);
                 validateInlineFieldingParticipants(state, action.payload.fielding);
                 validateDiamondFieldingOutCredit(action.payload.fielding, action.payload.to === 'out' ? 1 : 0);
+                validateDiamondMergedFieldingOutCredit([action.payload.fielding], action.payload.to === 'out' ? 1 : 0);
             }
             validateOmissions(action.payload.omissions);
             validateInlineResponsiblePitcher(state, action.payload.responsiblePitcherId, placement.chargedToPitcherId, `The advance for ${runnerId}`);
@@ -1480,7 +1517,9 @@ function reduceDiamondEvent(state, action) {
             if (action.payload.to === 'home' && action.payload.countsRun !== false && action.payload.earned === undefined) {
                 next = markPartial(next, ['pitching']);
             }
-            if (state.captureMode === 'full' && action.payload.to === 'out' && !action.payload.fielding?.putoutBy) {
+            if (state.captureMode === 'full' &&
+                action.payload.to === 'out' &&
+                !hasCompletePutoutEvidence(action.payload.fielding ? [action.payload.fielding] : [], 1)) {
                 next = markPartial(next, ['fielding']);
             }
             break;

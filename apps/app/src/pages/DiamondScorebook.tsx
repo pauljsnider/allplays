@@ -39,6 +39,7 @@ import {
 } from '../lib/diamondScorebookAi';
 import {
   getDiamondRulesProfile,
+  isDiamondTerminalPitchResult,
   type DiamondBattingRole,
   type DiamondDefensivePosition,
   type DiamondOutKind,
@@ -307,6 +308,10 @@ const pitchOptions = [
   { result: 'balk', label: 'Balk' },
   { result: 'pickoff_attempt', label: 'Pickoff attempt' }
 ] as const;
+
+function plateAppearanceRequiresResolution(snapshot: DiamondScorebookSnapshot) {
+  return snapshot.inning.balls >= 4 || snapshot.inning.strikes >= 3 || isDiamondTerminalPitchResult(snapshot.lastPitchResult);
+}
 
 const destinationOptions: Array<{ value: RunnerDestination; label: string }> = [
   { value: 'stay', label: 'Hold' },
@@ -1289,6 +1294,9 @@ function validateRunnerReview(pending: PendingPlay, snapshot: DiamondScorebookSn
   if (pending.type !== 'record_plate_appearance') {
     try {
       const payload = parseEditableProposalPayload(pending);
+      if (pending.type === 'record_pitch' && !pending.correction && plateAppearanceRequiresResolution(snapshot)) {
+        return 'Resolve the pending plate appearance before recording another pitch.';
+      }
       if (pending.type === 'advance_runner') {
         const from = readString(payload.from);
         const to = readString(payload.to);
@@ -1560,6 +1568,7 @@ export function DiamondScorebook({
   const queueCountRef = useRef(queueCount);
   const authenticatedUidRef = useRef(auth.user?.uid || null);
   const confirmingPendingRef = useRef(false);
+  const placingTiebreakerRef = useRef(false);
   const appBuildRef = useRef<number | null>(null);
   const appBuildPromiseRef = useRef<Promise<number> | null>(null);
 
@@ -2096,19 +2105,52 @@ export function DiamondScorebook({
   );
 
   const recordPitch = async (result: string, label: string) => {
-    if (!snapshot?.currentBatter || !snapshot.currentPitcher) {
+    const sourceSnapshot = snapshotRef.current;
+    if (!sourceSnapshot?.currentBatter || !sourceSnapshot.currentPitcher) {
       setNotice({ tone: 'error', message: 'Set the current batter and pitcher before recording a pitch.' });
+      return;
+    }
+    if (plateAppearanceRequiresResolution(sourceSnapshot)) {
+      setNotice({ tone: 'error', message: 'Resolve the pending plate appearance before recording another pitch.' });
       return;
     }
     await submitCommand(
       'record_pitch',
       {
-        batterId: snapshot.currentBatter.playerId,
-        pitcherId: snapshot.currentPitcher.playerId,
+        batterId: sourceSnapshot.currentBatter.playerId,
+        pitcherId: sourceSnapshot.currentPitcher.playerId,
         result
       },
-      `${label} recorded.`
+      `${label} recorded.`,
+      {
+        validateCurrentState: () => {
+          const current = snapshotRef.current;
+          return Boolean(current && !plateAppearanceRequiresResolution(current));
+        },
+        staleMessage: 'Resolve the pending plate appearance before recording another pitch.'
+      }
     );
+  };
+
+  const placeTiebreakerRunner = async () => {
+    if (placingTiebreakerRef.current || !snapshot || !battingSide || !pinnedRulesProfile || !tiebreakerRunner || !tiebreakerPitcherId) {
+      return;
+    }
+    placingTiebreakerRef.current = true;
+    try {
+      await submitCommand(
+        'place_tiebreaker_runner',
+        {
+          side: battingSide,
+          runnerId: tiebreakerRunner.playerId,
+          base: pinnedRulesProfile.tiebreaker.runnerBase,
+          chargedToPitcherId: tiebreakerPitcherId
+        },
+        'Tiebreaker runner placed.'
+      );
+    } finally {
+      placingTiebreakerRef.current = false;
+    }
   };
 
   const reviewPlateAppearance = (sourceSnapshot: DiamondScorebookSnapshot, option: OutcomeOption) => {
@@ -3057,19 +3099,24 @@ export function DiamondScorebook({
     liveDefenseDraft && defenseFingerprint(liveDefenseDraft.assignments) !== liveDefenseDraft.sourceDefenseFingerprint
   );
   const liveDefenseDisabled = Boolean(mutationDisabled || !getQueueIdentity(snapshot, auth.user?.uid));
-  const tiebreakerPending = Boolean(
+  const tiebreakerPristineContext = Boolean(
     snapshot &&
     battingSide &&
-    snapshot.lifecycle === 'active' &&
+    snapshot.authoritative &&
+    isOpenActiveHalf(snapshot) &&
     pinnedRulesProfile?.tiebreaker.enabled &&
     snapshot.inning.number >= pinnedRulesProfile.tiebreaker.startInning &&
     snapshot.inning.outs === 0 &&
     snapshot.inning.balls === 0 &&
     snapshot.inning.strikes === 0 &&
+    snapshot.inning.pitchesInPlateAppearance === 0 &&
     !snapshot.bases.first &&
     !snapshot.bases.second &&
     !snapshot.bases.third
   );
+  const currentHalfRunsKnown = Number.isSafeInteger(snapshot?.currentHalfRuns) && Number(snapshot?.currentHalfRuns) >= 0;
+  const tiebreakerPending = tiebreakerPristineContext && currentHalfRunsKnown && snapshot?.currentHalfRuns === 0;
+  const tiebreakerEvidenceUnknown = tiebreakerPristineContext && !currentHalfRunsKnown;
   const tiebreakerRunner =
     snapshot && battingSide && snapshot.lineups[battingSide].length
       ? snapshot.lineups[battingSide][
@@ -3079,7 +3126,8 @@ export function DiamondScorebook({
   const currentPitcherId = snapshot?.currentPitcher?.playerId || null;
   const tiebreakerPitcherId =
     snapshot && liveDefenseSide && currentPitcherId === snapshot.defense[liveDefenseSide].P?.playerId ? currentPitcherId : null;
-  const playControlsDisabled = mutationDisabled || snapshot?.lifecycle !== 'active' || tiebreakerPending;
+  const playControlsDisabled = mutationDisabled || snapshot?.lifecycle !== 'active' || tiebreakerPending || tiebreakerEvidenceUnknown;
+  const pitchControlsDisabled = playControlsDisabled || Boolean(snapshot && plateAppearanceRequiresResolution(snapshot));
   const correctionControlsDisabled = mutationDisabled || !snapshot || !['active', 'correction'].includes(snapshot.lifecycle);
   const privateNoteDisabled = mutationDisabled || snapshot?.lifecycle === 'configured';
   const lineupsReady = Boolean(snapshot?.lineups.home.length && snapshot.lineups.away.length);
@@ -3380,23 +3428,19 @@ export function DiamondScorebook({
                 type="button"
                 className="primary-button mt-3 w-full justify-center sm:w-auto"
                 disabled={mutationDisabled || !tiebreakerRunner || !tiebreakerPitcherId}
-                onClick={() =>
-                  tiebreakerRunner &&
-                  tiebreakerPitcherId &&
-                  void submitCommand(
-                    'place_tiebreaker_runner',
-                    {
-                      side: battingSide,
-                      runnerId: tiebreakerRunner.playerId,
-                      base: pinnedRulesProfile.tiebreaker.runnerBase,
-                      chargedToPitcherId: tiebreakerPitcherId
-                    },
-                    'Tiebreaker runner placed.'
-                  )
-                }
+                onClick={() => void placeTiebreakerRunner()}
               >
                 Confirm tiebreaker runner
               </button>
+            </section>
+          ) : null}
+
+          {tiebreakerEvidenceUnknown ? (
+            <section className="rounded-2xl border border-amber-300 bg-amber-50 p-4" role="alert">
+              <h2 className="text-sm font-black text-amber-950">Tiebreaker state needs refresh</h2>
+              <p className="mt-1 text-xs leading-5 font-semibold text-amber-900">
+                Current-half run evidence is unavailable. Refresh the authoritative scorebook before placing a runner or recording a play.
+              </p>
             </section>
           ) : null}
 
@@ -3440,7 +3484,7 @@ export function DiamondScorebook({
                       key={pitch.result}
                       type="button"
                       className="ghost-button min-h-12 justify-center !px-2 text-xs"
-                      disabled={playControlsDisabled}
+                      disabled={pitchControlsDisabled}
                       onClick={() => void recordPitch(pitch.result, pitch.label)}
                     >
                       {pitch.label}

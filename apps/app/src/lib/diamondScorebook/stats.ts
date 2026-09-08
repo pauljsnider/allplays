@@ -7,7 +7,13 @@ import {
   type DiamondSide
 } from './contracts';
 import { replayEffectiveDiamondEventStates, type DiamondEffectiveEventReplay } from './ledger';
-import { deriveDiamondCoverageFromEventStates, getBattingSide, getDiamondFinalizationReason, isDiamondDeliveredPitch } from './reducer';
+import {
+  deriveDiamondCoverageFromEventStates,
+  deriveDiamondPutoutCredits,
+  getBattingSide,
+  getDiamondFinalizationReason,
+  isDiamondDeliveredPitch
+} from './reducer';
 import { requireDiamondRulesProfile } from './rules';
 
 export type DiamondBattingRaw = {
@@ -282,13 +288,14 @@ function isOpenDefensiveEntry(state: DiamondGameState, side: DiamondSide) {
 
 function addMergedFielding(
   fieldings: readonly DiamondFieldingChain[],
+  actualOutCount: number,
   side: DiamondSide,
   eventId: string,
   ensure: (playerId: string, side: DiamondSide) => MutablePlayerLine,
   credit: (line: MutablePlayerLine, family: keyof DiamondPlayerRawStats, stat: string, value: number, eventId: string) => void,
   options: Readonly<{ creditPassedBall?: boolean }> = {}
 ) {
-  const putouts = new Set<string>();
+  const putouts = deriveDiamondPutoutCredits(fieldings, actualOutCount);
   const assists = new Set<string>();
   const passedBalls = new Set<string>();
   const errorMultiplicity = new Map<string, { maxChainTotal: number; maxFielding: number; maxThrowing: number }>();
@@ -296,7 +303,6 @@ function addMergedFielding(
   let triplePlay = false;
 
   fieldings.forEach((fielding) => {
-    if (fielding.putoutBy) putouts.add(fielding.putoutBy);
     (fielding.assists ?? []).forEach((playerId) => assists.add(playerId));
     const chainErrors = new Map<string, { total: number; fielding: number; throwing: number }>();
     (fielding.errors ?? []).forEach(({ playerId, kind }) => {
@@ -317,7 +323,7 @@ function addMergedFielding(
     triplePlay ||= fielding.triplePlay === true;
   });
 
-  putouts.forEach((playerId) => credit(ensure(playerId, side), 'fielding', 'PO', 1, eventId));
+  putouts.forEach((count, playerId) => credit(ensure(playerId, side), 'fielding', 'PO', count, eventId));
   assists.forEach((playerId) => credit(ensure(playerId, side), 'fielding', 'A', 1, eventId));
   let errorCredits = 0;
   errorMultiplicity.forEach(({ maxChainTotal, maxFielding, maxThrowing }, playerId) => {
@@ -330,7 +336,7 @@ function addMergedFielding(
   if (options.creditPassedBall !== false) {
     passedBalls.forEach((playerId) => credit(ensure(playerId, side), 'fielding', 'PB', 1, eventId));
   }
-  const participants = new Set<string>([...putouts, ...assists]);
+  const participants = new Set<string>([...putouts.keys(), ...assists]);
   if (doublePlay) participants.forEach((playerId) => credit(ensure(playerId, side), 'fielding', 'DP', 1, eventId));
   if (triplePlay) participants.forEach((playerId) => credit(ensure(playerId, side), 'fielding', 'TP', 1, eventId));
   return { errorCredits, passedBallObserved: passedBalls.size > 0 };
@@ -693,6 +699,7 @@ export function projectDiamondStats(ledger: DiamondLedger): DiamondStatProjectio
         defenders.forEach((playerId) => credit(ensure(playerId, pitchingSide), 'fielding', 'defensiveOuts', payload.outsOnPlay, eventId));
         const fieldingResult = addMergedFielding(
           [...(payload.fielding ? [payload.fielding] : []), ...attachmentsForPlay(attachments.fielding, event)],
+          payload.outsOnPlay,
           pitchingSide,
           eventId,
           ensure,
@@ -777,6 +784,7 @@ export function projectDiamondStats(ledger: DiamondLedger): DiamondStatProjectio
         }
         const fieldingResult = addMergedFielding(
           [...(payload.fielding ? [payload.fielding] : []), ...attachmentsForPlay(attachments.fielding, event)],
+          payload.to === 'out' ? 1 : 0,
           pitchingSide,
           eventId,
           ensure,
