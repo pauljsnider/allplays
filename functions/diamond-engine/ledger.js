@@ -174,6 +174,21 @@ function scoringParticipants(event) {
     }
     return { participants, scoringRunners };
 }
+function actualOutCount(event) {
+    if (event.type === 'record_plate_appearance') {
+        const payload = event.payload;
+        return new Set([
+            { runnerId: payload.batterId, to: payload.batterAdvance.to },
+            ...payload.runnerAdvances.map((advance) => ({ runnerId: advance.runnerId, to: advance.to }))
+        ]
+            .filter((move) => move.to === 'out')
+            .map((move) => move.runnerId)).size;
+    }
+    if (event.type === 'advance_runner') {
+        return event.payload.to === 'out' ? 1 : 0;
+    }
+    return 0;
+}
 function fieldingParticipantIds(fielding) {
     return [
         ...(fielding.putoutBy ? [fielding.putoutBy] : []),
@@ -199,6 +214,7 @@ function pitcherRoleIsUnambiguous(context, side, playerId) {
 function validateAttachmentAgainstHistoricalPlay(event, context) {
     if (event.type === 'record_fielding') {
         const fielding = event.payload.fielding;
+        (0, reducer_1.validateDiamondFieldingOutCredit)(fielding, context.actualOutCount);
         const invalidFielder = fieldingParticipantIds(fielding).find((playerId) => !context.activeDefenders.has(playerId) || !playerRoleIsUnambiguous(context, context.defensiveSide, playerId));
         if (invalidFielder) {
             throw new contracts_1.DiamondDomainError('invalid-fielding-participant', `${invalidFielder} was not an active ${context.defensiveSide} defender when the cited play occurred.`);
@@ -229,8 +245,7 @@ function validateAttachmentAgainstHistoricalPlay(event, context) {
             throw new contracts_1.DiamondDomainError('ambiguous-scoring-participant', 'A multi-run play requires the exact scoring runner for earned-run, RBI, or pitcher-responsibility judgment.');
         }
     }
-    if (payload.responsiblePitcherId &&
-        !pitcherRoleIsUnambiguous(context, context.defensiveSide, payload.responsiblePitcherId)) {
+    if (payload.responsiblePitcherId && !pitcherRoleIsUnambiguous(context, context.defensiveSide, payload.responsiblePitcherId)) {
         throw new contracts_1.DiamondDomainError('responsible-pitcher-role-mismatch', `${payload.responsiblePitcherId} was not unambiguously recorded as a ${context.defensiveSide} pitcher by the cited play.`);
     }
     if (payload.pitcherOfRecord) {
@@ -266,6 +281,7 @@ function observeEffectiveEventParticipants(state, event, tracker) {
             catcherId: state.lineups[defensiveSide].defense.C ?? null,
             participants,
             scoringRunners,
+            actualOutCount: actualOutCount(event),
             knownPlayers,
             pitcherAppearances: {
                 home: new Set(tracker.pitcherAppearances.home),

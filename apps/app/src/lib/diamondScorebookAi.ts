@@ -720,7 +720,7 @@ function normalizeInterpretResponse(
     throw new DiamondAiBoundaryError('AI command payload contained unsupported or private data.');
   }
   validateCommandPayload(type as DiamondAiCommandType, payload);
-  validateCommandReferences(payload, context);
+  validateCommandReferences(type as DiamondAiCommandType, payload, context);
   return {
     proposal: {
       schemaVersion: 1,
@@ -978,6 +978,8 @@ SECURITY AND AUTHORITY RULES:
 - Never output transcript, audio, private notes, actor/user identity, or prose outside the JSON object.
 - Use only the allowlisted command types below and only their documented payload fields.
 - If any player, runner advance, out, fielding credit, scoring judgment, or command choice is ambiguous, list concrete questions and lower confidence. Do not guess.
+- For home_run and triple, include every occupied base runner exactly once in runnerAdvances; each must reach home or be marked out.
+- For double_play record exactly 2 distinct actual outs, and for triple_play record exactly 3, including the batter and matching outsOnPlay. Do not infer timing from array order; leave countsRun explicit for scorer review.
 
 ALLOWLISTED COMMANDS:
 - record_pitch {pitcherId,batterId,result}
@@ -1377,7 +1379,7 @@ function validateOmissions(value: unknown) {
   });
 }
 
-function validateCommandReferences(payload: Record<string, unknown>, context: NormalizedCommandContext) {
+function validateCommandReferences(type: DiamondAiCommandType, payload: Record<string, unknown>, context: NormalizedCommandContext) {
   const knownPlayers = new Set(context.knownPlayerIds);
   walkJson(payload, (key, value) => {
     if (playerIdKeys.has(key) && typeof value === 'string' && !knownPlayers.has(value)) {
@@ -1393,6 +1395,56 @@ function validateCommandReferences(payload: Record<string, unknown>, context: No
   });
   if (typeof payload.playEventId === 'string' && !context.recentPlayIds.includes(payload.playEventId)) {
     throw new DiamondAiBoundaryError('AI proposed a scoring change for a play outside the supplied recent-play context.');
+  }
+  if (type === 'record_plate_appearance') validatePlateAppearanceAgainstContext(payload, context);
+}
+
+function validatePlateAppearanceAgainstContext(payload: Record<string, unknown>, context: NormalizedCommandContext) {
+  const result = payload.result as string;
+  const batterAdvance = payload.batterAdvance as Record<string, unknown>;
+  const runnerAdvances = payload.runnerAdvances as Record<string, unknown>[];
+  const requiredOuts = result === 'double_play' ? 2 : result === 'triple_play' ? 3 : null;
+  const actualOutSources = [
+    ...(batterAdvance.to === 'out' ? [`batter:${payload.batterId as string}`] : []),
+    ...runnerAdvances.flatMap((advance) => (advance.to === 'out' ? [`${advance.from as string}:${advance.runnerId as string}`] : []))
+  ];
+  if (
+    requiredOuts !== null &&
+    (batterAdvance.to !== 'out' ||
+      actualOutSources.length !== requiredOuts ||
+      new Set(actualOutSources).size !== requiredOuts ||
+      payload.outsOnPlay !== requiredOuts)
+  ) {
+    throw new DiamondAiBoundaryError(
+      `${result === 'double_play' ? 'Double play' : 'Triple play'} must record exactly ${requiredOuts} unique outs, including the batter.`
+    );
+  }
+  if (requiredOuts !== null && context.outs !== null && context.outs + requiredOuts > 3) {
+    throw new DiamondAiBoundaryError('The proposed multi-out play would record more than three outs in the current half inning.');
+  }
+
+  const seenSources = new Set<string>();
+  const seenRunners = new Set<string>();
+  runnerAdvances.forEach((advance) => {
+    const from = advance.from as keyof NormalizedCommandContext['bases'];
+    const runnerId = advance.runnerId as string;
+    if (context.bases[from] !== runnerId || seenSources.has(from) || seenRunners.has(runnerId)) {
+      throw new DiamondAiBoundaryError('Runner advances must match the exact current base context without duplicates.');
+    }
+    seenSources.add(from);
+    seenRunners.add(runnerId);
+  });
+
+  if (result !== 'home_run' && result !== 'triple') return;
+  const occupiedBases = (['first', 'second', 'third'] as const).filter((base) => context.bases[base]);
+  if (runnerAdvances.length !== occupiedBases.length || occupiedBases.some((base) => !seenSources.has(base))) {
+    throw new DiamondAiBoundaryError('A home run or triple proposal must include every occupied base runner exactly once.');
+  }
+  if (runnerAdvances.some((advance) => advance.to !== 'home' && advance.to !== 'out')) {
+    throw new DiamondAiBoundaryError('Every occupied runner on a home run or triple must reach home or be marked out.');
+  }
+  if (payload.outsOnPlay !== actualOutSources.length) {
+    throw new DiamondAiBoundaryError('Outs on play must exactly match the runners marked out.');
   }
 }
 

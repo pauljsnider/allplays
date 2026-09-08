@@ -119,6 +119,15 @@ type ActiveDefenseReviewSource = {
   sourceDefenseFingerprint: string;
   sourcePersonnelFingerprint: string;
 };
+type PlateAppearanceReviewSource = {
+  sourceRevision: number;
+  sourceInstanceId: string;
+  sourceLeaseId: string;
+  authenticatedUid: string;
+  batterId: string;
+  pitcherId: string;
+  sourceBaseFingerprint: string;
+};
 type SubstitutionCommandType = 'substitute' | 're_enter';
 type SubstitutionReviewSource = {
   commandType: SubstitutionCommandType;
@@ -156,6 +165,7 @@ type PendingPlay = {
   pitcherId?: string;
   correction?: { targetEventId: string; reason: string };
   activeDefenseSource?: ActiveDefenseReviewSource;
+  plateAppearanceSource?: PlateAppearanceReviewSource;
   substitutionSource?: SubstitutionReviewSource;
 };
 
@@ -388,6 +398,64 @@ function getQueueIdentity(
     instanceId: snapshot.instanceId,
     leaseId: snapshot.lease.leaseId
   };
+}
+
+function plateAppearanceBaseFingerprint(snapshot: DiamondScorebookSnapshot) {
+  return JSON.stringify(
+    diamondBases.map((base) => {
+      const runner = snapshot.bases[base];
+      return {
+        base,
+        runnerId: runner?.playerId || null,
+        responsiblePitcherId: runner?.responsiblePitcherId || null,
+        courtesyForPlayerId: runner?.courtesyForPlayerId || null,
+        reachedOnEventId: runner?.reachedOnEventId || null
+      };
+    })
+  );
+}
+
+function buildPlateAppearanceReviewSource(
+  snapshot: DiamondScorebookSnapshot,
+  authenticatedUid: string | null | undefined
+): PlateAppearanceReviewSource | null {
+  if (!snapshot.authoritative || snapshot.lifecycle !== 'active' || !snapshot.currentBatter || !snapshot.currentPitcher) return null;
+  const identity = getQueueIdentity(snapshot, authenticatedUid);
+  if (!identity) return null;
+  return {
+    sourceRevision: snapshot.revision,
+    sourceInstanceId: snapshot.instanceId,
+    sourceLeaseId: identity.leaseId,
+    authenticatedUid: identity.authenticatedUid,
+    batterId: snapshot.currentBatter.playerId,
+    pitcherId: snapshot.currentPitcher.playerId,
+    sourceBaseFingerprint: plateAppearanceBaseFingerprint(snapshot)
+  };
+}
+
+function plateAppearanceSourceMatchesSnapshot(
+  snapshot: DiamondScorebookSnapshot | null,
+  source: PlateAppearanceReviewSource,
+  authenticatedUid: string | null | undefined
+) {
+  if (!snapshot) return false;
+  const current = buildPlateAppearanceReviewSource(snapshot, authenticatedUid);
+  return Boolean(
+    current &&
+    current.sourceRevision === source.sourceRevision &&
+    current.sourceInstanceId === source.sourceInstanceId &&
+    current.sourceLeaseId === source.sourceLeaseId &&
+    current.authenticatedUid === source.authenticatedUid &&
+    current.batterId === source.batterId &&
+    current.pitcherId === source.pitcherId &&
+    current.sourceBaseFingerprint === source.sourceBaseFingerprint
+  );
+}
+
+function bindPlateAppearanceReview(snapshot: DiamondScorebookSnapshot, pending: PendingPlay, authenticatedUid: string | null | undefined) {
+  if (pending.type !== 'record_plate_appearance' || pending.correction) return pending;
+  const source = buildPlateAppearanceReviewSource(snapshot, authenticatedUid);
+  return source ? { ...pending, sourceRevision: source.sourceRevision, plateAppearanceSource: source } : null;
 }
 
 function copyLineupDrafts(snapshot: DiamondScorebookSnapshot | null): LineupDrafts {
@@ -1161,7 +1229,7 @@ function buildPendingVoicePlay(snapshot: DiamondScorebookSnapshot, proposal: Pen
   };
 }
 
-function validateRunnerReview(pending: PendingPlay, currentOuts: number) {
+function validateRunnerReview(pending: PendingPlay, snapshot: DiamondScorebookSnapshot) {
   if (pending.type !== 'record_plate_appearance') {
     try {
       parseEditableProposalPayload(pending);
@@ -1172,8 +1240,32 @@ function validateRunnerReview(pending: PendingPlay, currentOuts: number) {
         : describeError(error, 'The proposed payload is invalid.');
     }
   }
-  if (!pending.runnerMoves.some((move) => move.from === 'batter'))
+  const batterMoves = pending.runnerMoves.filter((move) => move.from === 'batter');
+  if (batterMoves.length !== 1) {
     return 'The current batter is missing. Refresh the scorebook before recording this play.';
+  }
+  const existingRunnerMoves = pending.runnerMoves.filter((move) => move.from !== 'batter');
+  if (!pending.correction) {
+    const expectedRunnerSources = diamondBases.flatMap((base) => {
+      const runner = snapshot.bases[base];
+      return runner ? [`${base}:${runner.playerId}`] : [];
+    });
+    const reviewedRunnerSources = existingRunnerMoves.map((move) => `${move.from}:${move.playerId}`);
+    if (
+      reviewedRunnerSources.length !== expectedRunnerSources.length ||
+      new Set(reviewedRunnerSources).size !== reviewedRunnerSources.length ||
+      new Set(existingRunnerMoves.map((move) => move.playerId)).size !== existingRunnerMoves.length ||
+      expectedRunnerSources.some((source) => !reviewedRunnerSources.includes(source))
+    ) {
+      return 'Every runner who occupied a base before this play must be reviewed exactly once. Refresh and review the play again.';
+    }
+  }
+  if (
+    (pending.result === 'home_run' || pending.result === 'triple') &&
+    existingRunnerMoves.some((move) => move.to !== 'home' && move.to !== 'out')
+  ) {
+    return 'Every occupied runner on a home run or triple must reach home or be marked out.';
+  }
   const occupiedDestinations = pending.runnerMoves
     .map((move) => move.to)
     .filter((destination) => destination === 'first' || destination === 'second' || destination === 'third');
@@ -1181,8 +1273,17 @@ function validateRunnerReview(pending: PendingPlay, currentOuts: number) {
     return 'Two runners cannot finish on the same base. Review every runner destination.';
   }
   const computedOuts = pending.runnerMoves.filter((move) => move.to === 'out').length;
+  const requiredOuts = pending.result === 'double_play' ? 2 : pending.result === 'triple_play' ? 3 : null;
+  if (requiredOuts !== null) {
+    const uniqueOutSources = new Set(pending.runnerMoves.flatMap((move) => (move.to === 'out' ? [`${move.from}:${move.playerId}`] : [])));
+    if (batterMoves[0]!.to !== 'out' || computedOuts !== requiredOuts || uniqueOutSources.size !== requiredOuts) {
+      return `${pending.result === 'double_play' ? 'Double play' : 'Triple play'} must record exactly ${requiredOuts} unique outs, including the batter.`;
+    }
+  }
   if (pending.outsOnPlay !== computedOuts) return 'Outs on play must exactly match the runners marked out.';
-  if (currentOuts + pending.outsOnPlay > 3) return 'This play would record more than three outs in the half inning.';
+  if (!pending.correction && snapshot.inning.outs + pending.outsOnPlay > 3) {
+    return 'This play would record more than three outs in the half inning.';
+  }
   const scored = pending.runnerMoves.filter((move) => move.to === 'home').length;
   const rbi = pending.runnerMoves.filter((move) => move.to === 'home' && move.rbi).length;
   if (pending.runsBattedIn !== rbi) return 'RBI total must match the individual runners credited with an RBI.';
@@ -1194,7 +1295,8 @@ function validateRunnerReview(pending: PendingPlay, currentOuts: number) {
   }
   const outMoves = pending.runnerMoves.filter((move) => move.to === 'out');
   const thirdOutCancellationIsProvable =
-    currentOuts + pending.outsOnPlay === 3 &&
+    !pending.correction &&
+    snapshot.inning.outs + pending.outsOnPlay === 3 &&
     outMoves.length > 0 &&
     outMoves.every((move) => move.from === 'batter' || move.outKind === 'force' || move.outKind === 'batter_runner');
   if (thirdOutCancellationIsProvable && pending.runnerMoves.some((move) => move.to === 'home' && move.countsRun !== false)) {
@@ -1425,6 +1527,18 @@ export function DiamondScorebook({
       tone: 'error',
       message:
         'This substitution review expired because the revision or live base state changed, the scoring lease moved, or another command entered the queue. Review the current lineup again.'
+    });
+  }, [auth.user?.uid, busy, pendingPlay, queueCount, snapshot]);
+
+  useEffect(() => {
+    const source = pendingPlay?.plateAppearanceSource;
+    if (!source || busy || confirmingPendingRef.current) return;
+    if (queueCount === 0 && plateAppearanceSourceMatchesSnapshot(snapshot, source, auth.user?.uid)) return;
+    setPendingPlay(null);
+    setNotice({
+      tone: 'error',
+      message:
+        'This plate-appearance review expired because the revision or base state changed, the scoring lease moved, or another command entered the queue. Review the current play again.'
     });
   }, [auth.user?.uid, busy, pendingPlay, queueCount, snapshot]);
 
@@ -1849,6 +1963,18 @@ export function DiamondScorebook({
     );
   };
 
+  const reviewPlateAppearance = (sourceSnapshot: DiamondScorebookSnapshot, option: OutcomeOption) => {
+    const pending = bindPlateAppearanceReview(sourceSnapshot, buildPendingOutcome(sourceSnapshot, option), authenticatedUidRef.current);
+    if (!pending || queueCountRef.current > 0) {
+      setNotice({
+        tone: 'error',
+        message: 'Refresh the authoritative batter, pitcher, bases, and scoring lease before reviewing this play.'
+      });
+      return;
+    }
+    setPendingPlay(pending);
+  };
+
   const bindSubstitutionReview = (sourceSnapshot: DiamondScorebookSnapshot, pending: PendingPlay) => {
     if (pending.type !== 'substitute' && pending.type !== 're_enter') return pending;
     if (queueCountRef.current > 0) return null;
@@ -1874,6 +2000,7 @@ export function DiamondScorebook({
     confirmingPendingRef.current = true;
     try {
       const activeDefenseSource = pendingPlay.activeDefenseSource;
+      const plateAppearanceSource = pendingPlay.plateAppearanceSource;
       const substitutionSource = pendingPlay.substitutionSource;
       if (activeDefenseSource && (queueCount > 0 || !activeDefenseSourceMatchesSnapshot(snapshot, activeDefenseSource, auth.user?.uid))) {
         setPendingPlay(null);
@@ -1881,6 +2008,18 @@ export function DiamondScorebook({
           tone: 'error',
           message:
             'This defensive alignment review expired because the revision or scoring lease changed, or another command entered the queue. Review the current defense again.'
+        });
+        return;
+      }
+      if (
+        plateAppearanceSource &&
+        (queueCount > 0 || !plateAppearanceSourceMatchesSnapshot(snapshot, plateAppearanceSource, auth.user?.uid))
+      ) {
+        setPendingPlay(null);
+        setNotice({
+          tone: 'error',
+          message:
+            'This plate-appearance review expired because the revision or base state changed, the scoring lease moved, or another command entered the queue. Review the current play again.'
         });
         return;
       }
@@ -1909,7 +2048,7 @@ export function DiamondScorebook({
         setNotice({ tone: 'error', message: substitutionValidationError });
         return;
       }
-      const validationError = validateRunnerReview(pendingPlay, snapshot.inning.outs);
+      const validationError = validateRunnerReview(pendingPlay, snapshot);
       if (validationError) {
         setNotice({ tone: 'error', message: validationError });
         return;
@@ -1937,21 +2076,42 @@ export function DiamondScorebook({
             `${pendingPlay.label} appended as a correction.`
           )
         : await submitCommand(pendingPlay.type, payload, `${pendingPlay.label} recorded.`, {
-            ...(substitutionSource
+            ...(plateAppearanceSource
               ? {
                   validateCurrentState: () =>
                     queueCountRef.current === 0 &&
-                    substitutionSourceMatchesSnapshot(snapshotRef.current, substitutionSource, authenticatedUidRef.current),
+                    plateAppearanceSourceMatchesSnapshot(snapshotRef.current, plateAppearanceSource, authenticatedUidRef.current),
                   staleMessage:
-                    'This substitution review expired because the revision, live base state, signed-in scorer, or scoring lease changed.'
+                    'This plate-appearance review expired because the game instance, revision, field state (including bases), signed-in scorer, or scoring lease changed while preparing this command.'
                 }
-              : {})
+              : substitutionSource
+                ? {
+                    validateCurrentState: () =>
+                      queueCountRef.current === 0 &&
+                      substitutionSourceMatchesSnapshot(snapshotRef.current, substitutionSource, authenticatedUidRef.current),
+                    staleMessage:
+                      'This substitution review expired because the revision, live base state, signed-in scorer, or scoring lease changed.'
+                  }
+                : {})
           });
       if (submitted === 'queued' && activeDefenseSource) {
         setActiveDefenseDrafts((current) => ({
           ...current,
           [activeDefenseSource.side]: activeDefenseDraftForSnapshot(snapshot, activeDefenseSource.side)
         }));
+      }
+      if (
+        !submitted &&
+        plateAppearanceSource &&
+        !plateAppearanceSourceMatchesSnapshot(snapshotRef.current, plateAppearanceSource, authenticatedUidRef.current)
+      ) {
+        setPendingPlay(null);
+        setNotice({
+          tone: 'error',
+          message:
+            'This plate-appearance review expired because the game instance, revision, field state (including bases), signed-in scorer, or scoring lease changed while preparing this command.'
+        });
+        return;
       }
       if (
         !submitted &&
@@ -2167,14 +2327,18 @@ export function DiamondScorebook({
         rejectStaleProposal();
         return;
       }
-      const pending = bindSubstitutionReview(requestSnapshot, buildPendingVoicePlay(requestSnapshot, proposal));
+      const candidate = buildPendingVoicePlay(requestSnapshot, proposal);
+      const plateAppearancePending = bindPlateAppearanceReview(requestSnapshot, candidate, authenticatedUidRef.current);
+      const pending = plateAppearancePending && bindSubstitutionReview(requestSnapshot, plateAppearancePending);
       if (!pending) {
         setVoiceQuestions([]);
         setVoiceConfidence(null);
         setNotice({
           tone: 'error',
           message:
-            'The proposed substitution does not match the authoritative lineup or live bases. Review the current field and try again.'
+            candidate.type === 'substitute' || candidate.type === 're_enter'
+              ? 'The proposed substitution does not match the authoritative lineup or live bases. Review the current field and try again.'
+              : 'The proposed play does not match the authoritative batter, pitcher, bases, or scoring lease. Review the current field and try again.'
         });
         return;
       }
@@ -2861,26 +3025,26 @@ export function DiamondScorebook({
   return (
     <div className="space-y-3 pb-8" data-testid="diamond-scorebook">
       <header
-        className="app-card shadow-app-lg overflow-hidden border-primary-900 bg-gradient-to-r from-primary-700 to-primary-900 text-white"
+        className="app-card shadow-app-lg border-primary-900 from-primary-700 to-primary-900 overflow-hidden bg-gradient-to-r text-white"
         data-testid="diamond-scorebook-header"
       >
-        <div className="flex items-center justify-between gap-3 border-b border-primary-600 px-3 py-2">
+        <div className="border-primary-600 flex items-center justify-between gap-3 border-b px-3 py-2">
           <Link
             to={backTarget}
-            className="inline-flex min-h-10 items-center gap-1 rounded-xl px-2 text-xs font-black text-primary-50 hover:bg-primary-800 focus-visible:ring-2 focus-visible:ring-white focus-visible:outline-none"
+            className="text-primary-50 hover:bg-primary-800 inline-flex min-h-10 items-center gap-1 rounded-xl px-2 text-xs font-black focus-visible:ring-2 focus-visible:ring-white focus-visible:outline-none"
           >
             <ChevronLeft className="h-4 w-4" aria-hidden="true" />
             Game
           </Link>
           <div className="min-w-0 text-center">
-            <h1 className="truncate text-xs font-black tracking-widest text-primary-100 uppercase">Diamond Scorebook</h1>
+            <h1 className="text-primary-100 truncate text-xs font-black tracking-widest uppercase">Diamond Scorebook</h1>
             <div className="truncate text-sm font-black">
               {snapshot.teamName} vs {snapshot.opponentName}
             </div>
           </div>
           <button
             type="button"
-            className="inline-flex h-10 w-10 items-center justify-center rounded-xl text-primary-50 hover:bg-primary-800 focus-visible:ring-2 focus-visible:ring-white focus-visible:outline-none"
+            className="text-primary-50 hover:bg-primary-800 inline-flex h-10 w-10 items-center justify-center rounded-xl focus-visible:ring-2 focus-visible:ring-white focus-visible:outline-none"
             aria-label="Refresh authoritative scorebook"
             disabled={busy || reconciling}
             onClick={() => void refreshSnapshot(false)}
@@ -2892,25 +3056,25 @@ export function DiamondScorebook({
         <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 px-4 py-4">
           <ScoreSide name={snapshot.awayName} score={snapshot.score.away} align="left" />
           <div className="text-center">
-            <div className="rounded-full border border-primary-500 bg-primary-800 px-3 py-1 text-[11px] font-black tracking-wider text-primary-100 uppercase">
+            <div className="border-primary-500 bg-primary-800 text-primary-100 rounded-full border px-3 py-1 text-[11px] font-black tracking-wider uppercase">
               {inningLabel(snapshot)}
             </div>
-            <div className="mt-2 text-xs font-bold text-primary-100">
+            <div className="text-primary-100 mt-2 text-xs font-bold">
               {snapshot.inning.outs} {snapshot.inning.outs === 1 ? 'out' : 'outs'}
             </div>
           </div>
           <ScoreSide name={snapshot.homeName} score={snapshot.score.home} align="right" />
         </div>
 
-        <div className="grid grid-cols-2 gap-px bg-primary-700">
+        <div className="bg-primary-700 grid grid-cols-2 gap-px">
           <div className="bg-primary-900 px-4 py-2 text-center">
-            <div className="text-[10px] font-black tracking-wider text-primary-200 uppercase">Count</div>
+            <div className="text-primary-200 text-[10px] font-black tracking-wider uppercase">Count</div>
             <div className="mt-0.5 text-lg font-black tabular-nums">
               {snapshot.inning.balls}–{snapshot.inning.strikes}
             </div>
           </div>
           <div className="bg-primary-900 px-4 py-2 text-center">
-            <div className="text-[10px] font-black tracking-wider text-primary-200 uppercase">Rules</div>
+            <div className="text-primary-200 text-[10px] font-black tracking-wider uppercase">Rules</div>
             <div className="mt-0.5 truncate text-xs font-black">
               {snapshot.rulesProfileId} · v{snapshot.rulesProfileVersion}
             </div>
@@ -3113,7 +3277,7 @@ export function DiamondScorebook({
                     type="button"
                     className={`focus-visible:ring-primary-500 min-h-14 rounded-xl border px-2 text-sm font-black transition focus-visible:ring-2 focus-visible:outline-none ${outcome.result === 'home_run' ? 'border-amber-300 bg-amber-50 text-amber-900' : outcome.outs ? 'border-gray-300 bg-gray-50 text-gray-800' : 'border-emerald-200 bg-emerald-50 text-emerald-900'}`}
                     disabled={playControlsDisabled}
-                    onClick={() => setPendingPlay(buildPendingOutcome(snapshot, outcome))}
+                    onClick={() => reviewPlateAppearance(snapshot, outcome)}
                   >
                     {outcome.label}
                   </button>
@@ -5519,7 +5683,7 @@ function PlayReviewModal({
   onClose: () => void;
   onConfirm: () => void;
 }) {
-  const validationError = validateRunnerReview(pending, snapshot.inning.outs) || validateSubstitutionPendingReview(pending);
+  const validationError = validateRunnerReview(pending, snapshot) || validateSubstitutionPendingReview(pending);
   const activeDefenseName = pending.activeDefenseSource
     ? pending.activeDefenseSource.side === 'home'
       ? snapshot.homeName
@@ -5552,7 +5716,8 @@ function PlayReviewModal({
       unresolvedFields: pending.unresolvedFields,
       ambiguityConfirmed: pending.ambiguityConfirmed,
       aiConfidence: pending.aiConfidence,
-      sourceRevision: pending.sourceRevision
+      sourceRevision: pending.sourceRevision,
+      ...(pending.plateAppearanceSource ? { plateAppearanceSource: pending.plateAppearanceSource } : {})
     });
   };
   const updateRunnerMove = (key: string, updates: Partial<RunnerMoveDraft>) => {

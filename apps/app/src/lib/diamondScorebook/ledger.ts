@@ -29,6 +29,7 @@ import {
   getBattingSide,
   reduceDiamondEvent,
   setDiamondStateRevision,
+  validateDiamondFieldingOutCredit,
   validateDiamondState,
   type DiamondReducerAction
 } from './reducer';
@@ -195,6 +196,7 @@ type HistoricalPlayContext = Readonly<{
   catcherId: string | null;
   participants: ReadonlySet<string>;
   scoringRunners: ReadonlySet<string>;
+  actualOutCount: number;
   knownPlayers: Readonly<Record<DiamondSide, ReadonlySet<string>>>;
   pitcherAppearances: Readonly<Record<DiamondSide, ReadonlySet<string>>>;
 }>;
@@ -234,6 +236,24 @@ function scoringParticipants(event: DiamondEffectiveEvent) {
   return { participants, scoringRunners };
 }
 
+function actualOutCount(event: DiamondEffectiveEvent) {
+  if (event.type === 'record_plate_appearance') {
+    const payload = event.payload as DiamondCommandPayloadMap['record_plate_appearance'];
+    return new Set(
+      [
+        { runnerId: payload.batterId, to: payload.batterAdvance.to },
+        ...payload.runnerAdvances.map((advance) => ({ runnerId: advance.runnerId, to: advance.to }))
+      ]
+        .filter((move) => move.to === 'out')
+        .map((move) => move.runnerId)
+    ).size;
+  }
+  if (event.type === 'advance_runner') {
+    return (event.payload as DiamondCommandPayloadMap['advance_runner']).to === 'out' ? 1 : 0;
+  }
+  return 0;
+}
+
 function fieldingParticipantIds(fielding: DiamondFieldingChain) {
   return [
     ...(fielding.putoutBy ? [fielding.putoutBy] : []),
@@ -260,12 +280,10 @@ function pitcherRoleIsUnambiguous(context: HistoricalPlayContext, side: DiamondS
   return context.pitcherAppearances[side].has(playerId) && playerRoleIsUnambiguous(context, side, playerId);
 }
 
-function validateAttachmentAgainstHistoricalPlay(
-  event: Pick<DiamondEffectiveEvent, 'type' | 'payload'>,
-  context: HistoricalPlayContext
-) {
+function validateAttachmentAgainstHistoricalPlay(event: Pick<DiamondEffectiveEvent, 'type' | 'payload'>, context: HistoricalPlayContext) {
   if (event.type === 'record_fielding') {
     const fielding = (event.payload as DiamondCommandPayloadMap['record_fielding']).fielding;
+    validateDiamondFieldingOutCredit(fielding, context.actualOutCount);
     const invalidFielder = fieldingParticipantIds(fielding).find(
       (playerId) => !context.activeDefenders.has(playerId) || !playerRoleIsUnambiguous(context, context.defensiveSide, playerId)
     );
@@ -301,7 +319,10 @@ function validateAttachmentAgainstHistoricalPlay(
     }
     if (payload.runnerId) {
       if (!context.scoringRunners.has(payload.runnerId)) {
-        throw new DiamondDomainError('invalid-scoring-participant', 'Runner-level scoring credit must name a counted run on the cited play.');
+        throw new DiamondDomainError(
+          'invalid-scoring-participant',
+          'Runner-level scoring credit must name a counted run on the cited play.'
+        );
       }
     } else if (context.scoringRunners.size !== 1) {
       throw new DiamondDomainError(
@@ -310,10 +331,7 @@ function validateAttachmentAgainstHistoricalPlay(
       );
     }
   }
-  if (
-    payload.responsiblePitcherId &&
-    !pitcherRoleIsUnambiguous(context, context.defensiveSide, payload.responsiblePitcherId)
-  ) {
+  if (payload.responsiblePitcherId && !pitcherRoleIsUnambiguous(context, context.defensiveSide, payload.responsiblePitcherId)) {
     throw new DiamondDomainError(
       'responsible-pitcher-role-mismatch',
       `${payload.responsiblePitcherId} was not unambiguously recorded as a ${context.defensiveSide} pitcher by the cited play.`
@@ -330,11 +348,7 @@ function validateAttachmentAgainstHistoricalPlay(
   }
 }
 
-function observeEffectiveEventParticipants(
-  state: DiamondGameState,
-  event: DiamondEffectiveEvent,
-  tracker: ParticipantReplayTracker
-) {
+function observeEffectiveEventParticipants(state: DiamondGameState, event: DiamondEffectiveEvent, tracker: ParticipantReplayTracker) {
   if (PITCHER_APPEARANCE_TYPES.has(event.type)) {
     const battingSide = getBattingSide(state);
     const defensiveSide = otherSide(battingSide);
@@ -356,10 +370,13 @@ function observeEffectiveEventParticipants(
     const context: HistoricalPlayContext = {
       battingSide,
       defensiveSide,
-      activeDefenders: new Set(Object.values(state.lineups[defensiveSide].defense).filter((playerId): playerId is string => Boolean(playerId))),
+      activeDefenders: new Set(
+        Object.values(state.lineups[defensiveSide].defense).filter((playerId): playerId is string => Boolean(playerId))
+      ),
       catcherId: state.lineups[defensiveSide].defense.C ?? null,
       participants,
       scoringRunners,
+      actualOutCount: actualOutCount(event),
       knownPlayers,
       pitcherAppearances: {
         home: new Set(tracker.pitcherAppearances.home),
@@ -423,10 +440,7 @@ function replayCanonicalDiamondEvents(initialState: DiamondGameState, events: re
               payload: event.payload
             };
       observeEffectiveEventParticipants(state, effectiveEvent, participantTracker);
-      state = reduceDiamondEvent(
-        state,
-        asReducerAction(effectiveEvent.type, effectiveEvent.payload, effectiveEvent.eventId)
-      );
+      state = reduceDiamondEvent(state, asReducerAction(effectiveEvent.type, effectiveEvent.payload, effectiveEvent.eventId));
       effectiveEvents.push(effectiveEvent);
     }
     state = setDiamondStateRevision(state, event.revision, event.hash);

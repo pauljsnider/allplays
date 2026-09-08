@@ -5,6 +5,7 @@ exports.getBattingSide = getBattingSide;
 exports.getDiamondFinalizationReason = getDiamondFinalizationReason;
 exports.createInitialDiamondState = createInitialDiamondState;
 exports.deriveDiamondCoverageFromEvents = deriveDiamondCoverageFromEvents;
+exports.validateDiamondFieldingOutCredit = validateDiamondFieldingOutCredit;
 exports.validateDiamondState = validateDiamondState;
 exports.reduceDiamondEvent = reduceDiamondEvent;
 exports.setDiamondStateRevision = setDiamondStateRevision;
@@ -655,6 +656,16 @@ function validateFieldingIds(value) {
         throw new contracts_1.DiamondDomainError('invalid-fielding-chain', 'Batted-ball location must be a string of at most 80 characters.');
     }
 }
+function validateDiamondFieldingOutCredit(fielding, actualOutCount) {
+    if (!fielding)
+        return;
+    if (fielding.doublePlay === true && actualOutCount !== 2) {
+        throw new contracts_1.DiamondDomainError('fielding-outs-mismatch', `Double-play fielding credit requires exactly two actual outs; this play records ${String(actualOutCount)}.`);
+    }
+    if (fielding.triplePlay === true && actualOutCount !== 3) {
+        throw new contracts_1.DiamondDomainError('fielding-outs-mismatch', `Triple-play fielding credit requires exactly three actual outs; this play records ${String(actualOutCount)}.`);
+    }
+}
 function knownPlayerIds(lineup) {
     return new Set([
         ...lineup.battingOrder.flatMap((entry) => [entry.activePlayerId, entry.starterPlayerId, ...entry.substitutions]),
@@ -741,12 +752,6 @@ function validateOutcomeDestination(state, result, destination) {
         }
     }
 }
-function validateResultSpecificOutCount(result, outsOnPlay) {
-    const requiredOuts = result === 'double_play' ? 2 : result === 'triple_play' ? 3 : null;
-    if (requiredOuts !== null && outsOnPlay !== requiredOuts) {
-        throw new contracts_1.DiamondDomainError('invalid-result-out-count', `${result} requires exactly ${String(requiredOuts)} outs on the play.`);
-    }
-}
 function resolveBatterOutKind(result, destination, supplied) {
     if (destination !== 'out') {
         if (supplied)
@@ -764,20 +769,39 @@ function resolveBatterOutKind(result, destination, supplied) {
     }
     throw new contracts_1.DiamondDomainError('missing-out-kind', 'An out batter destination requires an out kind.');
 }
-function validateMandatoryExtraBaseHitAdvances(state, result, runnerMoves) {
+function validateCompleteExtraBaseHitRunnerResolution(state, result, runnerMoves) {
     if (result !== 'triple' && result !== 'home_run')
         return;
-    for (const base of BASES) {
+    BASES.forEach((base) => {
         const placement = state.bases[base];
         if (!placement)
-            continue;
-        const move = runnerMoves.find((candidate) => candidate.from === base && candidate.runnerId === placement.runnerId);
-        if (!move) {
-            throw new contracts_1.DiamondDomainError('missing-mandatory-runner-advance', `${result} must resolve the runner on ${base}.`);
+            return;
+        const matchingMoves = runnerMoves.filter((move) => move.from === base);
+        if (matchingMoves.length === 0) {
+            throw new contracts_1.DiamondDomainError('incomplete-hit-runner-resolution', `${result} must explicitly resolve the runner occupying ${base}.`);
         }
-        if (move.to !== 'home' && move.to !== 'out') {
-            throw new contracts_1.DiamondDomainError('invalid-mandatory-runner-destination', `${result} must advance the runner on ${base} home or record that runner out.`);
+        if (matchingMoves.length > 1) {
+            throw new contracts_1.DiamondDomainError('duplicate-runner-source', 'Each runner source may appear only once per play.');
         }
+        if (matchingMoves[0].runnerId !== placement.runnerId) {
+            throw new contracts_1.DiamondDomainError('runner-not-on-base', `${matchingMoves[0].runnerId} is not on ${base}.`);
+        }
+        if (matchingMoves[0].to !== 'home' && matchingMoves[0].to !== 'out') {
+            throw new contracts_1.DiamondDomainError('invalid-hit-runner-destination', `${result} must resolve every occupied runner to home or out.`);
+        }
+    });
+}
+function validateNamedMultiOutResult(state, result, moves, outsOnPlay) {
+    const requiredOuts = result === 'double_play' ? 2 : result === 'triple_play' ? 3 : null;
+    if (requiredOuts === null)
+        return;
+    requireInteger(outsOnPlay, 'outsOnPlay', 0, 3);
+    const actualOuts = moves.filter((move) => move.to === 'out').length;
+    if (outsOnPlay !== requiredOuts || actualOuts !== requiredOuts) {
+        throw new contracts_1.DiamondDomainError('result-outs-mismatch', `${result} requires exactly ${String(requiredOuts)} actual outs.`);
+    }
+    if (state.inning.outs + requiredOuts > 3) {
+        throw new contracts_1.DiamondDomainError('result-outs-exceed-inning', `${result} cannot record more outs than remain in the inning.`);
     }
 }
 function applyMoves(state, side, moves, outsOnPlay, reachedOnEventId) {
@@ -1350,8 +1374,6 @@ function reduceDiamondEvent(state, action) {
             if (action.payload.runsBattedIn !== undefined) {
                 requireInteger(action.payload.runsBattedIn, 'runsBattedIn', 0, 4);
             }
-            const outsOnPlay = requireInteger(action.payload.outsOnPlay, 'outsOnPlay', 0, 3);
-            validateResultSpecificOutCount(action.payload.result, outsOnPlay);
             const batterMove = {
                 runnerId: action.payload.batterId,
                 from: 'batter',
@@ -1376,8 +1398,11 @@ function reduceDiamondEvent(state, action) {
                     outKind: advance.outKind
                 };
             });
-            validateMandatoryExtraBaseHitAdvances(state, action.payload.result, runnerMoves);
-            next = applyMoves(state, side, [batterMove, ...runnerMoves], outsOnPlay, action.eventId ?? null);
+            const moves = [batterMove, ...runnerMoves];
+            validateCompleteExtraBaseHitRunnerResolution(state, action.payload.result, runnerMoves);
+            validateNamedMultiOutResult(state, action.payload.result, moves, action.payload.outsOnPlay);
+            validateDiamondFieldingOutCredit(action.payload.fielding, moves.filter((move) => move.to === 'out').length);
+            next = applyMoves(state, side, moves, action.payload.outsOnPlay, action.eventId ?? null);
             const orderLength = state.lineups[side].battingOrder.length;
             next = {
                 ...next,
@@ -1400,7 +1425,7 @@ function reduceDiamondEvent(state, action) {
             if (state.captureMode === 'full' && !hasCompletePitchOutcomeEvidence(state, action.payload.result)) {
                 next = markPartial(next, ['pitches']);
             }
-            const missingFullFielding = outsOnPlay > 0 && !action.payload.fielding?.putoutBy;
+            const missingFullFielding = action.payload.outsOnPlay > 0 && !action.payload.fielding?.putoutBy;
             const missingReachedOnErrorFielder = action.payload.result === 'reached_on_error' && !action.payload.fielding?.errors?.length;
             if (state.captureMode === 'full' && (missingFullFielding || missingReachedOnErrorFielder)) {
                 next = markPartial(next, ['fielding']);
@@ -1419,6 +1444,7 @@ function reduceDiamondEvent(state, action) {
             if (action.payload.fielding) {
                 validateFieldingIds(action.payload.fielding);
                 validateInlineFieldingParticipants(state, action.payload.fielding);
+                validateDiamondFieldingOutCredit(action.payload.fielding, action.payload.to === 'out' ? 1 : 0);
             }
             validateOmissions(action.payload.omissions);
             validateInlineResponsiblePitcher(state, action.payload.responsiblePitcherId, placement.chargedToPitcherId, `The advance for ${runnerId}`);

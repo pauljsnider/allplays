@@ -45,6 +45,18 @@ function commandResponse(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function plateAppearanceResponse(payload: Record<string, unknown>) {
+  return commandResponse({
+    type: 'record_plate_appearance',
+    payloadJson: JSON.stringify({
+      batterId: 'batter-1',
+      pitcherId: 'pitcher-1',
+      runsBattedIn: 0,
+      ...payload
+    })
+  });
+}
+
 function sourcePacket(overrides: Partial<DiamondAiSourcePacket> = {}): DiamondAiSourcePacket {
   return {
     sourceRevision: 8,
@@ -151,6 +163,8 @@ describe('interpretDiamondTranscript', () => {
         })
       })
     );
+    expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/home_run and triple.*every occupied base runner/i);
+    expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/double_play.*exactly 2.*triple_play.*exactly 3/i);
   });
 
   it('treats prompt injection as untrusted and rejects a model mutation claim', async () => {
@@ -262,6 +276,168 @@ describe('interpretDiamondTranscript', () => {
     expect(invalidOutsResult.message).toMatch(/outs on play/i);
     expect(inventedPlayerResult.status).toBe('invalid-response');
     expect(inventedPlayerResult.message).toMatch(/player ID/i);
+  });
+
+  it.each([
+    {
+      label: 'omits an occupied runner from a home run',
+      payload: {
+        result: 'home_run',
+        batterAdvance: { to: 'home', countsRun: true },
+        runnerAdvances: [],
+        outsOnPlay: 0
+      },
+      message: /every occupied base runner/i
+    },
+    {
+      label: 'uses the wrong source base for a triple runner',
+      payload: {
+        result: 'triple',
+        batterAdvance: { to: 'third' },
+        runnerAdvances: [{ runnerId: 'runner-1', from: 'second', to: 'home', cause: 'batted_ball', countsRun: true }],
+        outsOnPlay: 0
+      },
+      message: /current base context/i
+    },
+    {
+      label: 'uses a different known runner from the occupied source base',
+      context: commandContext({ knownPlayerIds: ['batter-1', 'pitcher-1', 'runner-1', 'runner-2'] }),
+      payload: {
+        result: 'triple',
+        batterAdvance: { to: 'third' },
+        runnerAdvances: [{ runnerId: 'runner-2', from: 'first', to: 'home', cause: 'batted_ball', countsRun: true }],
+        outsOnPlay: 0
+      },
+      message: /current base context/i
+    },
+    {
+      label: 'stops a home-run runner short of home',
+      payload: {
+        result: 'home_run',
+        batterAdvance: { to: 'home', countsRun: true },
+        runnerAdvances: [{ runnerId: 'runner-1', from: 'first', to: 'third', cause: 'batted_ball' }],
+        outsOnPlay: 0
+      },
+      message: /home or be marked out/i
+    }
+  ])('rejects a high-confidence plate appearance that $label', async ({ payload, message, context }) => {
+    const model = jsonModel(plateAppearanceResponse(payload));
+
+    const result = await interpretDiamondTranscript(
+      'Review the complete hit and every runner.',
+      context || commandContext(),
+      model.dependencies
+    );
+
+    expect(result).toMatchObject({ status: 'invalid-response', proposal: null, authoritative: false });
+    expect(result.message).toMatch(message);
+  });
+
+  it.each([
+    {
+      label: 'double play with one out',
+      context: commandContext(),
+      payload: {
+        result: 'double_play',
+        batterAdvance: { to: 'out', outKind: 'batter_runner' },
+        runnerAdvances: [],
+        outsOnPlay: 1
+      },
+      expected: 2
+    },
+    {
+      label: 'triple play with only two outs',
+      context: commandContext({
+        outs: 0,
+        bases: { first: 'runner-1', second: 'runner-2', third: null },
+        knownPlayerIds: ['batter-1', 'pitcher-1', 'runner-1', 'runner-2']
+      }),
+      payload: {
+        result: 'triple_play',
+        batterAdvance: { to: 'out', outKind: 'batter_runner' },
+        runnerAdvances: [{ runnerId: 'runner-1', from: 'first', to: 'out', cause: 'force_out', outKind: 'force' }],
+        outsOnPlay: 2
+      },
+      expected: 3
+    },
+    {
+      label: 'double play with a duplicated runner out',
+      context: commandContext(),
+      payload: {
+        result: 'double_play',
+        batterAdvance: { to: 'out', outKind: 'batter_runner' },
+        runnerAdvances: [
+          { runnerId: 'runner-1', from: 'first', to: 'out', cause: 'force_out', outKind: 'force' },
+          { runnerId: 'runner-1', from: 'first', to: 'out', cause: 'tag_out', outKind: 'tag' }
+        ],
+        outsOnPlay: 2
+      },
+      expected: 2
+    }
+  ])('rejects a high-confidence $label instead of offering confirmation', async ({ context, payload, expected }) => {
+    const model = jsonModel(plateAppearanceResponse(payload));
+
+    const result = await interpretDiamondTranscript('That was the whole multi-out play.', context, model.dependencies);
+
+    expect(result).toMatchObject({ status: 'invalid-response', proposal: null, authoritative: false });
+    expect(result.message).toMatch(new RegExp(`exactly ${expected} unique outs`, 'i'));
+  });
+
+  it.each([
+    {
+      label: 'an empty-base home run',
+      context: commandContext({ bases: { first: null, second: null, third: null } }),
+      payload: {
+        result: 'home_run',
+        batterAdvance: { to: 'home', countsRun: true },
+        runnerAdvances: [],
+        outsOnPlay: 0,
+        runsBattedIn: 1
+      }
+    },
+    {
+      label: 'a home run with the current runner tagged out',
+      context: commandContext(),
+      payload: {
+        result: 'home_run',
+        batterAdvance: { to: 'home', countsRun: true },
+        runnerAdvances: [{ runnerId: 'runner-1', from: 'first', to: 'out', cause: 'tag_out', outKind: 'tag' }],
+        outsOnPlay: 1,
+        runsBattedIn: 1
+      }
+    },
+    {
+      label: 'a complete double play',
+      context: commandContext(),
+      payload: {
+        result: 'double_play',
+        batterAdvance: { to: 'out', outKind: 'batter_runner' },
+        runnerAdvances: [{ runnerId: 'runner-1', from: 'first', to: 'out', cause: 'force_out', outKind: 'force' }],
+        outsOnPlay: 2
+      }
+    },
+    {
+      label: 'a counted run on a mixed double play with a possible tag third out',
+      context: commandContext({
+        bases: { first: 'runner-1', second: null, third: 'runner-3' },
+        knownPlayerIds: ['batter-1', 'pitcher-1', 'runner-1', 'runner-3']
+      }),
+      payload: {
+        result: 'double_play',
+        batterAdvance: { to: 'out', outKind: 'batter_runner' },
+        runnerAdvances: [
+          { runnerId: 'runner-1', from: 'first', to: 'out', cause: 'tag_out', outKind: 'tag' },
+          { runnerId: 'runner-3', from: 'third', to: 'home', cause: 'batted_ball', countsRun: true, rbi: false }
+        ],
+        outsOnPlay: 2
+      }
+    }
+  ])('keeps $label eligible for explicit scorer confirmation', async ({ context, payload }) => {
+    const model = jsonModel(plateAppearanceResponse(payload));
+
+    const result = await interpretDiamondTranscript('Prepare this complete play for review.', context, model.dependencies);
+
+    expect(result).toMatchObject({ status: 'proposal', authoritative: false, proposal: { type: 'record_plate_appearance' } });
   });
 
   it('never accepts player or play references without caller-supplied allowlists', async () => {
