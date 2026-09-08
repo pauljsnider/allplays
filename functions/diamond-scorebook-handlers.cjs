@@ -1564,7 +1564,6 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       access?.scorekeeping,
       access?.videography,
       access?.streaming,
-      access?.media,
     ].some((value) => value === true);
   }
 

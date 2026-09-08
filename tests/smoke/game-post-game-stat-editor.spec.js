@@ -308,6 +308,7 @@ async function installMocks(
   {
     delayedAuth = false,
     controllableAuth = false,
+    anonymousAuth = false,
     accessLevel = "full",
     directAccess = true,
   } = {},
@@ -536,6 +537,8 @@ async function installMocks(
             const store = loadStore();
 
             if (path.endsWith('/aggregatedStats') || path.endsWith('/publicPlayerStats')) {
+                store.statReadPaths = [...(store.statReadPaths || []), path];
+                saveStore(store);
                 return createSnapshot(Object.entries(store.aggregatedStats || {}).map(([id, data]) => [
                     id,
                     data,
@@ -561,6 +564,7 @@ async function installMocks(
 
             if (path.endsWith('/statTrackerConfigs')) {
                 store.configReadCount = (store.configReadCount || 0) + 1;
+                store.configReadPaths = [...(store.configReadPaths || []), path];
                 saveStore(store);
                 return createSnapshot(store.config ? [[
                     store.config.id,
@@ -727,7 +731,14 @@ async function installMocks(
         }
     `;
 
-  const authModule = controllableAuth
+  const authModule = anonymousAuth
+    ? `
+        export function checkAuth(callback) {
+            window.__GAME_TEST_AUTH_UID__ = '';
+            callback(null);
+        }
+    `
+    : controllableAuth
     ? `
         export function checkAuth(callback) {
             window.__GAME_AUTH_CALLBACK__ = (user) => {
@@ -1285,6 +1296,58 @@ test("Diamond report labels partial observations, leaves uncollected stats unava
   expect(pageErrors).toEqual([]);
 });
 
+test("anonymous source-owned shared Diamond report reads canonical public evidence while keeping its synthetic share URL", async ({
+  page,
+  baseURL,
+}) => {
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  const scenario = createManagerDiamondScenario();
+  const sourceGameId = scenario.game.id;
+  const sharedGamePath = "organizations/org-1/sharedGames/shared-1";
+  const syntheticGameId = `shared_${encodeURIComponent(sharedGamePath)}`;
+  scenario.game = {
+    ...scenario.game,
+    id: syntheticGameId,
+    isSharedGame: true,
+    isPublicProjection: true,
+    diamondSourceTeamId: scenario.team.id,
+    diamondSourceGameId: sourceGameId,
+  };
+  await installMocks(page, scenario, { anonymousAuth: true, accessLevel: "member" });
+
+  await page.goto(
+    `${baseURL}/game.html#teamId=${scenario.team.id}&gameId=${encodeURIComponent(syntheticGameId)}`,
+    { waitUntil: "domcontentloaded" },
+  );
+  await expect.poll(() => pageErrors).toEqual([]);
+  await expect(
+    page.getByText("Diamond scorebook · Public stats · Read only"),
+  ).toBeVisible();
+  await expect(page.locator("#stats-body")).toContainText("Ava At Game Time");
+  await expect(page.locator("#team-stats-body")).toContainText("Runs");
+  await expect(page.locator("#team-stats-body")).toContainText("4");
+  await expect(page.locator("#game-log")).toContainText("Authorized replay event");
+
+  await page.locator("#share-report-btn").click();
+  const store = await readStore(page);
+  expect(store.statReadPaths).toEqual([
+    `teams/${scenario.team.id}/games/${sourceGameId}/diamondStatGenerations/${scenario.game.diamondScorebookInstanceId}/publicPlayerStats`,
+  ]);
+  expect(store.configReadPaths).toEqual([
+    `teams/${scenario.team.id}/statTrackerConfigs`,
+  ]);
+  expect(store.eventReadPaths || []).toEqual([]);
+  expect(store.callableCalls).toContainEqual({
+    name: "getPublicDiamondGame",
+    payload: { teamId: scenario.team.id, gameId: sourceGameId, cursor: null, limit: 200 },
+  });
+  expect(store.callableCalls.some(({ name }) => name === "getDiamondManagerStats")).toBe(false);
+  const sharePayloads = await page.evaluate(() => window.__GAME_SHARE_PAYLOADS__ || []);
+  expect(sharePayloads.at(-1)?.url).toContain(encodeURIComponent(syntheticGameId));
+  expect(pageErrors).toEqual([]);
+});
+
 test("Diamond manager reports never expose or invoke legacy stat editors across auth reloads", async ({
   page,
   baseURL,
@@ -1353,7 +1416,7 @@ test("Diamond manager reports never expose or invoke legacy stat editors across 
   expect(pageErrors).toEqual([]);
 });
 
-test("Diamond managers cannot force the legacy AI summary generator across auth reloads", async ({
+test("Diamond managers cannot force the legacy summary editor across auth reloads", async ({
   page,
   baseURL,
 }) => {
@@ -1387,15 +1450,30 @@ test("Diamond managers cannot force the legacy AI summary generator across auth 
   await expect.poll(() => pageErrors).toEqual([]);
 
   const expectDiamondSummaryBoundary = async () => {
-    await expect(page.locator("#summary-admin")).toBeVisible();
+    await expect(page.locator("#summary-admin")).toBeHidden();
+    await expect(page.locator("#summary-editor")).toBeHidden();
+    await expect(page.locator("#summary-edit-btn")).toBeHidden();
     await expect(page.locator("#summary-generate-btn")).toBeHidden();
     await expect(page.locator("#published-diamond-ai-recap")).toContainText(
       "The cited Diamond recap remains available.",
     );
     await page.evaluate(() => {
+      const admin = document.getElementById("summary-admin");
+      const editor = document.getElementById("summary-editor");
+      const editButton = document.getElementById("summary-edit-btn");
+      const saveButton = document.getElementById("summary-save-btn");
       const generateButton = document.getElementById("summary-generate-btn");
+      admin?.classList.remove("hidden");
+      editor?.classList.remove("hidden");
+      editButton?.classList.remove("hidden");
       generateButton?.classList.remove("hidden");
+      if (editButton) editButton.disabled = false;
+      if (saveButton) saveButton.disabled = false;
       if (generateButton) generateButton.disabled = false;
+      const textarea = document.getElementById("summary-textarea");
+      if (textarea) textarea.value = "Forced manual Diamond summary";
+      editButton?.click();
+      saveButton?.click();
       generateButton?.click();
     });
     await page.waitForTimeout(50);
@@ -1437,6 +1515,26 @@ test("a stale classic AI summary handler rechecks Diamond before model, draft, a
   });
   await expect.poll(() => pageErrors).toEqual([]);
   await expect(page.locator("#summary-generate-btn")).toBeVisible();
+
+  await page.evaluate(() => {
+    window.__GAME_LAST_LOADED_GAME__.trackingEngine = "diamond-v2";
+    const editor = document.getElementById("summary-editor");
+    const saveButton = document.getElementById("summary-save-btn");
+    editor?.classList.remove("hidden");
+    if (saveButton) saveButton.disabled = false;
+    const textarea = document.getElementById("summary-textarea");
+    if (textarea) textarea.value = "Manual Diamond summary must not persist";
+    saveButton?.click();
+  });
+  await page.waitForTimeout(50);
+  expect((await readStore(page)).updateGameCalls || []).toEqual([]);
+
+  await page.evaluate(() => {
+    window.__GAME_LAST_LOADED_GAME__.trackingEngine = "classic";
+    const generateButton = document.getElementById("summary-generate-btn");
+    generateButton?.classList.remove("hidden");
+    if (generateButton) generateButton.disabled = false;
+  });
 
   await page.evaluate(() => {
     window.__GAME_LAST_LOADED_GAME__.trackingEngine = "diamond-v2";

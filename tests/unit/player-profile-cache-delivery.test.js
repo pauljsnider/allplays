@@ -9,14 +9,14 @@ function read(relativePath) {
 describe('player profile cache delivery', () => {
     it('bumps externally loaded entry modules whose Firebase imports changed', () => {
         const entryModules = {
-            'admin.html': 'js/admin.js?v=443361',
-            'certificates.html': 'js/certificates/studio.js?v=443367',
-            'live-game.html': 'js/live-game.js?v=443359',
-            'live-tracker.html': 'js/live-tracker.js?v=443328',
-            'team-fees.html': 'js/team-fees-admin.js?v=443364',
-            'team-media.html': 'js/team-media.js?v=44545',
-            'track-basketball.html': 'js/track-basketball.js?v=443327',
-            'tracking-items.html': 'js/tracking-items-admin.js?v=443362'
+            'admin.html': 'js/admin.js?v=443362',
+            'certificates.html': 'js/certificates/studio.js?v=443368',
+            'live-game.html': 'js/live-game.js?v=443360',
+            'live-tracker.html': 'js/live-tracker.js?v=443329',
+            'team-fees.html': 'js/team-fees-admin.js?v=443365',
+            'team-media.html': 'js/team-media.js?v=44546',
+            'track-basketball.html': 'js/track-basketball.js?v=443328',
+            'tracking-items.html': 'js/tracking-items-admin.js?v=443363'
         };
 
         for (const [pagePath, expectedEntryModule] of Object.entries(entryModules)) {
@@ -25,10 +25,10 @@ describe('player profile cache delivery', () => {
     });
 
     it('delivers updated shared utility and nested entry-module imports', () => {
-        expect(read('js/utils.js')).toContain("import('./global-search.js?v=443355')");
-        expect(read('drills.html')).toContain('js/team-admin-banner.js?v=443349');
-        expect(read('game-day.html')).toContain('js/team-admin-banner.js?v=443349');
-        expect(read('js/certificates/studio.js')).toContain('team-admin-banner.js?v=443349');
-        expect(read('team.html')).toContain('js/team-staff-permissions.js?v=443347');
+        expect(read('js/utils.js')).toContain("import('./global-search.js?v=443356')");
+        expect(read('drills.html')).toContain('js/team-admin-banner.js?v=443350');
+        expect(read('game-day.html')).toContain('js/team-admin-banner.js?v=443350');
+        expect(read('js/certificates/studio.js')).toContain('team-admin-banner.js?v=443350');
+        expect(read('team.html')).toContain('js/team-staff-permissions.js?v=443348');
     });
 });

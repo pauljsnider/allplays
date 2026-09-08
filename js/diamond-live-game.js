@@ -7,7 +7,7 @@ import {
 import {
   subscribeLiveChat,
   subscribeReactions,
-} from "./diamond-live-engagement-subscriptions.js?v=1";
+} from "./diamond-live-engagement-subscriptions.js?v=2";
 import {
   formatDiamondInning,
   normalizeDiamondPublicGame,

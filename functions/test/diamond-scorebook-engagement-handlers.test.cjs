@@ -514,21 +514,64 @@ describe("Diamond live engagement authorization and validation", () => {
     );
     assert.equal(publicResult.outcome, "accepted");
 
-    const privateHarness = createHarness({
+    for (const access of [
+      { full: true },
+      { parent: true },
+      { scorekeeping: true },
+      { videography: true },
+      { streaming: true },
+    ]) {
+      const privateHarness = createHarness({ publicGame: false, access });
+      const privateResult =
+        await privateHarness.handlers.postDiamondLiveReaction(
+          reactionRequest(),
+          context(),
+        );
+      assert.equal(privateResult.outcome, "accepted");
+    }
+
+    const officialHarness = createHarness({
       publicGame: false,
-      access: { parent: true },
+      seed: baseSeed({
+        game: { officiatingAuthorizedUserIds: [UID] },
+      }),
     });
-    const privateResult = await privateHarness.handlers.postDiamondLiveReaction(
-      reactionRequest(),
-      context(),
-    );
-    assert.equal(privateResult.outcome, "accepted");
+    const officialResult =
+      await officialHarness.handlers.postDiamondLiveReaction(
+        reactionRequest(),
+        context(),
+      );
+    assert.equal(officialResult.outcome, "accepted");
   });
 
   it("denies an unrelated user on a private game", async () => {
     const harness = createHarness({ publicGame: false });
     await rejectsCode(
       harness.handlers.postDiamondLiveChat(chatRequest(), context()),
+      "permission-denied",
+    );
+    assert.equal(harness.firestore.commitCount, 0);
+  });
+
+  it("denies a media-only user from posting private-game chat", async () => {
+    const harness = createHarness({
+      publicGame: false,
+      access: { media: true },
+    });
+    await rejectsCode(
+      harness.handlers.postDiamondLiveChat(chatRequest(), context()),
+      "permission-denied",
+    );
+    assert.equal(harness.firestore.commitCount, 0);
+  });
+
+  it("denies a media-only user from posting private-game reactions", async () => {
+    const harness = createHarness({
+      publicGame: false,
+      access: { media: true },
+    });
+    await rejectsCode(
+      harness.handlers.postDiamondLiveReaction(reactionRequest(), context()),
       "permission-denied",
     );
     assert.equal(harness.firestore.commitCount, 0);

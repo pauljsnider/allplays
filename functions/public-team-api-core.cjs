@@ -3,6 +3,9 @@ const PUBLIC_TEAM_API_MAX_GAMES = 500;
 const PUBLIC_TEAM_API_DEFAULT_GAMES = 100;
 const PUBLIC_TEAM_API_MAX_RANGE_DAYS = 3660;
 const MILLIS_PER_DAY = 24 * 60 * 60 * 1000;
+const PUBLIC_DIAMOND_UUID_V4_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const PUBLIC_DIAMOND_SHA256_PATTERN = /^sha256:[0-9a-f]{64}$/;
+const PUBLIC_DIAMOND_COVERAGE_STATUSES = new Set(['complete', 'partial', 'not_collected']);
 
 function compactText(value, maxLength = 256) {
   if (typeof value !== 'string' && typeof value !== 'number') return '';
@@ -187,6 +190,72 @@ function serializePublicOpponentStats(value, allowedStatKeys = null) {
   return opponentStats;
 }
 
+function serializePublicDiamondOpponentStats(value, allowedStatKeys = null, identity = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  if (
+    !Number.isSafeInteger(identity?.diamondProjectionRevision) ||
+    identity.diamondProjectionRevision < 0 ||
+    typeof identity?.diamondStatConfigSnapshotHash !== 'string' ||
+    !PUBLIC_DIAMOND_SHA256_PATTERN.test(identity.diamondStatConfigSnapshotHash)
+  ) return null;
+  const entries = Object.entries(value);
+  if (entries.length > 100) return null;
+  const allowlist = new Set(
+    (Array.isArray(allowedStatKeys) ? allowedStatKeys : getPublicOpponentStatKeys())
+      .map(normalizePublicOpponentStatKey)
+      .filter(Boolean)
+  );
+  const opponentStats = {};
+  for (const [rawId, rawStats] of entries) {
+    const id = exactPublicResourceId(rawId);
+    if (
+      !id || id !== rawId ||
+      !rawStats || typeof rawStats !== 'object' || Array.isArray(rawStats) ||
+      exactPublicResourceId(rawStats.playerId) !== id ||
+      rawStats.diamondSourceRevision !== identity.diamondProjectionRevision ||
+      !rawStats.diamondCoverage ||
+      typeof rawStats.diamondCoverage !== 'object' ||
+      Array.isArray(rawStats.diamondCoverage)
+    ) return null;
+    const coverageEntries = Object.entries(rawStats.diamondCoverage);
+    if (
+      coverageEntries.length === 0 ||
+      coverageEntries.length > 32 ||
+      coverageEntries.some(([family, status]) => (
+        !/^[a-z0-9][a-z0-9_]{0,63}$/.test(family) ||
+        !PUBLIC_DIAMOND_COVERAGE_STATUSES.has(status)
+      ))
+    ) return null;
+
+    const stats = {
+      playerId: id,
+      diamondCoverage: Object.fromEntries(coverageEntries),
+      diamondSourceRevision: identity.diamondProjectionRevision
+    };
+    const name = compactText(rawStats.name, 160);
+    const number = compactText(rawStats.number, 32);
+    const photoUrl = publicHttpUrl(rawStats.photoUrl);
+    if (name) stats.name = name;
+    if (number) stats.number = number;
+    if (photoUrl) stats.photoUrl = photoUrl;
+    Object.entries(rawStats).forEach(([rawKey, rawValue]) => {
+      const key = normalizePublicOpponentStatKey(rawKey);
+      if (!key || key !== rawKey || !allowlist.has(key)) return;
+      if (typeof rawValue === 'number' && Number.isFinite(rawValue) && rawValue >= 0) {
+        stats[key] = rawValue;
+      } else if (
+        key === 'innings_pitched' &&
+        typeof rawValue === 'string' &&
+        /^\d+\.[012]$/.test(rawValue)
+      ) {
+        stats[key] = rawValue;
+      }
+    });
+    opponentStats[id] = stats;
+  }
+  return opponentStats;
+}
+
 function toDate(value) {
   if (!value) return null;
   if (typeof value?.toDate === 'function') return value.toDate();
@@ -199,6 +268,81 @@ function toDate(value) {
 function normalizeTeamId(value) {
   const teamId = compactText(value, 128);
   return /^[A-Za-z0-9_-]{1,128}$/.test(teamId) ? teamId : '';
+}
+
+function exactPublicResourceId(value) {
+  return typeof value === 'string' &&
+    value.length >= 1 &&
+    value.length <= 128 &&
+    value === value.trim() &&
+    value !== '.' &&
+    value !== '..' &&
+    !value.includes('/') &&
+    !/[\u0000-\u001f\u007f]/.test(value)
+    ? value
+    : '';
+}
+
+function normalizePublicDiamondSharedGamePath(value) {
+  if (typeof value !== 'string' || value !== value.trim() || !value || value.length > 512) return '';
+  const segments = value.split('/');
+  return segments.length === 4 &&
+    ['organizations', 'tournaments'].includes(segments[0]) &&
+    segments[2] === 'sharedGames' &&
+    segments.every((segment) => exactPublicResourceId(segment))
+    ? value
+    : '';
+}
+
+function serializePublicDiamondGameIdentity(game = {}, { sharedGamePath = '' } = {}) {
+  if (game?.trackingEngine !== 'diamond-v2') return null;
+  const statTrackerConfigId = exactPublicResourceId(game.statTrackerConfigId);
+  const status = game.diamondProjectionStatus;
+  const instanceId = game.diamondScorebookInstanceId;
+  const sourceRevision = game.diamondProjectionRevision;
+  const checkpointHash = game.diamondProjectionCheckpointHash;
+  const statConfigSnapshotHash = game.diamondStatConfigSnapshotHash;
+  const projectionHash = game.diamondProjectionHash;
+  if (
+    !statTrackerConfigId ||
+    !['current', 'complete'].includes(status) ||
+    game.diamondProjectionComplete !== true ||
+    typeof instanceId !== 'string' ||
+    !PUBLIC_DIAMOND_UUID_V4_PATTERN.test(instanceId) ||
+    !Number.isSafeInteger(sourceRevision) ||
+    sourceRevision < 0 ||
+    typeof checkpointHash !== 'string' ||
+    !PUBLIC_DIAMOND_SHA256_PATTERN.test(checkpointHash) ||
+    typeof statConfigSnapshotHash !== 'string' ||
+    !PUBLIC_DIAMOND_SHA256_PATTERN.test(statConfigSnapshotHash) ||
+    typeof projectionHash !== 'string' ||
+    !PUBLIC_DIAMOND_SHA256_PATTERN.test(projectionHash)
+  ) return null;
+
+  const identity = {
+    statTrackerConfigId,
+    diamondProjectionStatus: status,
+    diamondProjectionComplete: true,
+    diamondScorebookInstanceId: instanceId,
+    diamondProjectionRevision: sourceRevision,
+    diamondProjectionCheckpointHash: checkpointHash,
+    diamondStatConfigSnapshotHash: statConfigSnapshotHash,
+    diamondProjectionHash: projectionHash
+  };
+  if (!sharedGamePath) return identity;
+
+  const canonicalSharedGamePath = normalizePublicDiamondSharedGamePath(sharedGamePath);
+  const sourceTeamId = exactPublicResourceId(game.diamondSourceTeamId);
+  const sourceGameId = exactPublicResourceId(game.diamondSourceGameId);
+  const expectedId = canonicalSharedGamePath
+    ? `shared_${encodeURIComponent(canonicalSharedGamePath)}`
+    : '';
+  if (!canonicalSharedGamePath || game.id !== expectedId || !sourceTeamId || !sourceGameId) return null;
+  return {
+    ...identity,
+    diamondSourceTeamId: sourceTeamId,
+    diamondSourceGameId: sourceGameId
+  };
 }
 
 function isStrictPublicTeam(team = {}) {
@@ -752,7 +896,6 @@ function serializePublicGame(game = {}, options = {}) {
   const liveResetAt = toDate(game?.liveResetAt);
   const liveResetEventId = compactText(game?.liveResetEventId, 128);
   const tournament = serializePublicGameTournament(game?.tournament);
-  const opponentStats = serializePublicOpponentStats(game?.opponentStats, options.opponentStatKeys);
   const teamName = nullableText(game?.teamName, 160);
   const homeTeamName = nullableText(game?.homeTeamName, 160);
   const sport = nullableText(game?.sport, 80);
@@ -762,6 +905,31 @@ function serializePublicGame(game = {}, options = {}) {
   // The public watch dispatcher only needs to know whether this game is owned by
   // the immutable Diamond ledger. Never reflect arbitrary/internal engine names.
   const trackingEngine = game?.trackingEngine === 'diamond-v2' ? 'diamond-v2' : null;
+  const exactDiamondIdentity = trackingEngine && options.includeDiamondIdentity === true
+    ? serializePublicDiamondGameIdentity(game, { sharedGamePath: options.sharedGamePath || '' })
+    : null;
+  const exactDiamondOpponentStats = exactDiamondIdentity
+    ? serializePublicDiamondOpponentStats(
+        game?.opponentStats,
+        options.opponentStatKeys,
+        exactDiamondIdentity
+      )
+    : null;
+  // An invalid nested Diamond opponent envelope invalidates the exact public
+  // generation as a whole. Keeping only an empty opponent map would turn
+  // incomplete evidence into an authoritative absence in report consumers.
+  const completeDiamondIdentity = exactDiamondIdentity && exactDiamondOpponentStats !== null
+    ? exactDiamondIdentity
+    : null;
+  const opponentStats = trackingEngine && options.includeDiamondIdentity === true
+    ? (exactDiamondOpponentStats || {})
+    : serializePublicOpponentStats(game?.opponentStats, options.opponentStatKeys);
+  const exactSharedGamePath = options.includeDiamondIdentity === true
+    ? normalizePublicDiamondSharedGamePath(options.sharedGamePath || '')
+    : '';
+  const isSharedGame = options.includeDiamondIdentity === true
+    ? Boolean(exactSharedGamePath)
+    : game?.isSharedGame === true;
   const replayPaywallEnabled = isRecordedReplayPaywallEnabled(game, options.team);
   const recordedReplayMarkerOnly = options.recordedReplayMarkerOnly === true;
   const directVideoUrl = publicHttpUrl(game?.videoUrl);
@@ -801,7 +969,9 @@ function serializePublicGame(game = {}, options = {}) {
     ...(liveResetAt ? { liveResetAt: liveResetAt.toISOString() } : {}),
     ...(liveResetEventId ? { liveResetEventId } : {}),
     ...(tournament ? { tournament } : {}),
-    ...(Object.keys(opponentStats).length ? { opponentStats } : {}),
+    ...(completeDiamondIdentity
+      ? { opponentStats }
+      : (Object.keys(opponentStats).length ? { opponentStats } : {})),
     ...(teamName ? { teamName } : {}),
     ...(homeTeamName ? { homeTeamName } : {}),
     ...(sport ? { sport } : {}),
@@ -809,7 +979,11 @@ function serializePublicGame(game = {}, options = {}) {
     ...(opponentTeamPhoto ? { opponentTeamPhoto } : {}),
     ...(statSheetPhotoUrl ? { statSheetPhotoUrl } : {}),
     ...(trackingEngine ? { trackingEngine } : {}),
-    ...(game?.isSharedGame === true ? { isSharedGame: true } : {})
+    ...(completeDiamondIdentity || {}),
+    ...(completeDiamondIdentity && options.diamondPublicTeamStats
+      ? { diamondPublicTeamStats: options.diamondPublicTeamStats }
+      : {}),
+    ...(isSharedGame ? { isSharedGame: true } : {})
   };
 }
 
@@ -1026,6 +1200,8 @@ module.exports = {
   scanBoundedPublicCalendarTrackingEvents,
   sanitizePublicLocation,
   serializePublicCalendarEvent,
+  serializePublicDiamondGameIdentity,
+  serializePublicDiamondOpponentStats,
   serializePublicGame,
   serializePublicOpponentStats,
   serializePublicPlayer,

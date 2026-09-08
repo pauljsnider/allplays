@@ -3668,7 +3668,6 @@ describe("Diamond scorebook handler factory", () => {
       "scorekeeper-2": { scorekeeping: true },
       "videographer-1": { videography: true },
       "streamer-1": { streaming: true },
-      "media-1": { media: true },
       "official-uid-1": {},
       "official-email-1": {},
     };
@@ -3767,6 +3766,88 @@ describe("Diamond scorebook handler factory", () => {
         resourcePaths.rsvp("official-email-1"),
         resourcePaths.publicState,
       ]),
+    );
+  });
+
+  it("keeps a media-only role outside a private Diamond viewer", async () => {
+    const harness = createHarness({
+      authUsers: {
+        "media-1": {
+          uid: "media-1",
+          disabled: false,
+          email: "media-1@example.test",
+          emailVerified: true,
+        },
+      },
+      documents: {
+        "users/media-1": { displayName: "Media only" },
+      },
+      viewerAccessByUid: {
+        "media-1": { media: true },
+      },
+    });
+    await activate(harness);
+    const resourcePaths = paths("team-1", "game-1");
+    harness.firestore.seed(resourcePaths.team, {
+      ...harness.firestore.read(resourcePaths.team),
+      isPublic: false,
+    });
+    harness.firestore.seed(resourcePaths.game, {
+      ...harness.firestore.read(resourcePaths.game),
+      visibility: "private",
+      shareable: false,
+    });
+
+    await assert.rejects(
+      harness.handlers.getPublicDiamondGame(
+        { teamId: "team-1", gameId: "game-1", limit: 50 },
+        { auth: { uid: "media-1" } },
+      ),
+      (error) => error.code === "not-found",
+    );
+  });
+
+  it("returns no private viewer page when delegated access becomes media-only during assembly", async () => {
+    const viewerAccessByUid = {
+      "viewer-1": { videography: true },
+    };
+    const harness = createHarness({
+      authUsers: {
+        "viewer-1": {
+          uid: "viewer-1",
+          disabled: false,
+          email: "viewer-1@example.test",
+          emailVerified: true,
+        },
+      },
+      documents: {
+        "users/viewer-1": { displayName: "Current viewer" },
+      },
+      viewerAccessByUid,
+    });
+    await activate(harness);
+    const resourcePaths = paths("team-1", "game-1");
+    harness.firestore.seed(resourcePaths.team, {
+      ...harness.firestore.read(resourcePaths.team),
+      isPublic: false,
+    });
+    harness.firestore.seed(resourcePaths.game, {
+      ...harness.firestore.read(resourcePaths.game),
+      visibility: "private",
+      shareable: false,
+    });
+    harness.firestore.queryHook = (query) => {
+      if (query.path !== resourcePaths.publicEvents) return;
+      harness.firestore.queryHook = null;
+      viewerAccessByUid["viewer-1"] = { media: true };
+    };
+
+    await assert.rejects(
+      harness.handlers.getPublicDiamondGame(
+        { teamId: "team-1", gameId: "game-1", limit: 50 },
+        { auth: { uid: "viewer-1" } },
+      ),
+      (error) => error.code === "not-found",
     );
   });
 

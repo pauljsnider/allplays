@@ -42,12 +42,15 @@ describe('postgame summary editor', () => {
         expect(body.slice(closeEditorIndex, saveDisabledIndex)).toContain('saveBtn.disabled = false;');
     });
 
-    it('removes the legacy AI generator for Diamond and rechecks every generated-summary boundary', () => {
+    it('removes the entire legacy summary editor for Diamond and rechecks every write boundary', () => {
         const body = getFunctionBody(readGameHtml(), 'setupSummaryControls');
 
         expect(body).toBeTruthy();
-        expect(body).toContain("generateBtn.classList.add('hidden');");
-        expect(body).toContain('generateBtn.replaceWith(');
+        expect(body).toContain('blockLegacySummaryEditorForDiamond({ detach: true })');
+        expect(body).toContain("admin.classList.add('hidden');");
+        expect(body).toContain("editor.classList.add('hidden');");
+        expect(body).toContain("summaryDiv.classList.remove('hidden');");
+        expect(body).toContain('control.replaceWith(control.cloneNode(true));');
 
         const modelIndex = body.indexOf('await model.generateContent(prompt);');
         const postIndex = body.indexOf('generatedSummary = result.response.text();');
@@ -55,12 +58,15 @@ describe('postgame summary editor', () => {
         expect(modelIndex).toBeGreaterThan(-1);
         expect(postIndex).toBeGreaterThan(modelIndex);
         expect(persistIndex).toBeGreaterThan(postIndex);
-        expect(body.lastIndexOf('blockLegacyAiSummaryForDiamond()', modelIndex)).toBeGreaterThan(
+        expect(body.lastIndexOf('blockLegacySummaryEditorForDiamond()', modelIndex)).toBeGreaterThan(
             body.indexOf('getGenerativeModel(ai')
         );
-        expect(body.lastIndexOf('blockLegacyAiSummaryForDiamond()', postIndex)).toBeGreaterThan(modelIndex);
-        expect(body.lastIndexOf('blockLegacyAiSummaryForDiamond()', persistIndex)).toBeGreaterThan(
+        expect(body.lastIndexOf('blockLegacySummaryEditorForDiamond()', postIndex)).toBeGreaterThan(modelIndex);
+        expect(body.lastIndexOf('blockLegacySummaryEditorForDiamond()', persistIndex)).toBeGreaterThan(
             body.indexOf('const finalSummary =')
+        );
+        expect(body.slice(body.indexOf("addAuthBoundEventListener(saveBtn"), persistIndex)).toContain(
+            'blockLegacySummaryEditorForDiamond()'
         );
     });
 });

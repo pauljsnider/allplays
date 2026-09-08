@@ -131,13 +131,24 @@ export function subscribeReactions(
     options?.instanceId,
     20,
   );
+  let baselineEstablished = false;
+  const observedReactionIds = new Set();
   return onSnapshot(
     liveQuery,
+    { includeMetadataChanges: true },
     (snapshot) => {
-      snapshot.docChanges().forEach((change) => {
-        if (change.type === "added") {
-          callback({ id: change.doc.id, ...change.doc.data() });
+      if (!baselineEstablished) {
+        snapshot.docs.forEach((entry) => observedReactionIds.add(entry.id));
+        if (snapshot.metadata?.fromCache !== true) {
+          baselineEstablished = true;
         }
+        return;
+      }
+      snapshot.docChanges().forEach((change) => {
+        const reactionId = change.doc.id;
+        if (change.type !== "added" || observedReactionIds.has(reactionId)) return;
+        observedReactionIds.add(reactionId);
+        callback({ id: reactionId, ...change.doc.data() });
       });
     },
     onError,

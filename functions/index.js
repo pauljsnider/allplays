@@ -159,10 +159,13 @@ const {
   parsePublicGamesQuery,
   scanBoundedPublicCalendarTrackingEvents,
   serializePublicCalendarEvent,
+  serializePublicDiamondGameIdentity,
+  serializePublicDiamondOpponentStats,
   serializePublicGame,
   serializePublicTeamDiscovery,
   serializePublicTeamProfile
 } = require('./public-team-api-core.cjs');
+const { createDiamondStatConfigSnapshot } = require('./diamond-stat-config.cjs');
 const {
   buildGameReportShareHtml,
   buildGameReportShareMetadata,
@@ -392,6 +395,10 @@ const {
   resolveDelegatedAccess
 } = require('./delegated-team-context-core.cjs');
 const { createDiamondScorebookHandlers } = require('./diamond-scorebook-handlers.cjs');
+const {
+  sanitizeDiamondPublicTeamStatDocument,
+  serializeDiamondPublicStatsResponse
+} = require('./diamond-scorebook-projections.cjs');
 const {
   createDiamondLiveEngagementHandlers
 } = require('./diamond-live-engagement-handlers.cjs');
@@ -9534,6 +9541,257 @@ function decodePublicSharedGamePath(gameId) {
   }
 }
 
+function exactPublicDiamondResourceId(value) {
+  return typeof value === 'string' &&
+    value.length >= 1 &&
+    value.length <= 128 &&
+    value === value.trim() &&
+    value !== '.' &&
+    value !== '..' &&
+    !value.includes('/') &&
+    !/[\u0000-\u001f\u007f]/.test(value)
+    ? value
+    : '';
+}
+
+function normalizePublicDiamondSharedGamePath(value) {
+  if (typeof value !== 'string' || value !== value.trim() || !value || value.length > 512) return '';
+  const segments = value.split('/');
+  return segments.length === 4 &&
+    ['organizations', 'tournaments'].includes(segments[0]) &&
+    segments[2] === 'sharedGames' &&
+    segments.every((segment) => exactPublicDiamondResourceId(segment))
+    ? value
+    : '';
+}
+
+function publicDiamondProjectionUnavailable(reason, message = 'Diamond game report data is temporarily unavailable.') {
+  return new functions.https.HttpsError('unavailable', message, { reason });
+}
+
+function hasExactPublicDiamondSharedBacklink(game = {}, sharedGamePath = '') {
+  const candidates = [
+    game.diamondSharedGamePath,
+    game.sharedGamePath,
+    game._sharedGamePath
+  ].filter((value) => value !== null && value !== undefined && value !== '');
+  if (!candidates.length) return false;
+  const normalized = [...new Set(candidates.map(normalizePublicDiamondSharedGamePath))];
+  return normalized.length === 1 && normalized[0] === sharedGamePath;
+}
+
+function hasMatchingPublicDiamondSharedHead(sharedGame = {}, identity = {}) {
+  const requiredMatches = [
+    sharedGame.trackingEngine === 'diamond-v2',
+    sharedGame.diamondProjectionStatus === identity.diamondProjectionStatus,
+    sharedGame.diamondProjectionRevision === identity.diamondProjectionRevision,
+    sharedGame.diamondProjectionCheckpointHash === identity.diamondProjectionCheckpointHash,
+    sharedGame.diamondScorebookInstanceId === identity.diamondScorebookInstanceId,
+    sharedGame.diamondProjectionHash === identity.diamondProjectionHash
+  ];
+  if (Object.prototype.hasOwnProperty.call(sharedGame, 'diamondProjectionComplete')) {
+    requiredMatches.push(sharedGame.diamondProjectionComplete === true);
+  }
+  if (Object.prototype.hasOwnProperty.call(sharedGame, 'diamondStatConfigSnapshotHash')) {
+    requiredMatches.push(
+      sharedGame.diamondStatConfigSnapshotHash === identity.diamondStatConfigSnapshotHash
+    );
+  }
+  return requiredMatches.every(Boolean);
+}
+
+function publicDiamondProjectionCoherenceToken(state = {}) {
+  const replayFields = [
+    'hasRecordedReplay',
+    'replayArchiveRevision',
+    'replayVideoFallbackDisabled',
+    'replayStatus',
+    'recordedReplayStatus',
+    'videoReplayStatus',
+    'replayVideo',
+    'recordedVideo',
+    'videoReplay',
+    'replayVideoUrl',
+    'recordedVideoUrl',
+    'videoReplayUrl',
+    'archivedVideoUrl',
+    'replayVideoPublicUrl'
+  ];
+  const replayState = Object.fromEntries(replayFields.map((field) => [
+    field,
+    state.requestedGame?.[field] ?? null
+  ]));
+  return JSON.stringify({
+    publicGame: serializePublicGame(state.displayGame, {
+      team: state.team,
+      recordedReplayMarkerOnly: true
+    }),
+    identity: state.publicIdentity,
+    diamondStats: state.diamondStats,
+    sourceOpponentStats: state.sourceGame?.opponentStats ?? null,
+    replayState
+  });
+}
+
+async function loadPublicDiamondProjectionState({ teamId, gameId, sharedPath = '' } = {}) {
+  const requestedGameRef = sharedPath
+    ? firestore.doc(sharedPath)
+    : firestore.doc(`teams/${teamId}/games/${gameId}`);
+  return firestore.runTransaction(async (transaction) => {
+    const teamRef = firestore.doc(`teams/${teamId}`);
+    const [teamSnap, requestedGameSnap] = await Promise.all([
+      transaction.get(teamRef),
+      transaction.get(requestedGameRef)
+    ]);
+    if (!teamSnap.exists || !requestedGameSnap.exists) return null;
+
+    const team = { id: teamId, ...(teamSnap.data() || {}) };
+    const requestedGame = {
+      id: requestedGameSnap.id,
+      ...(requestedGameSnap.data() || {}),
+      ...(sharedPath ? { _sharedGamePath: requestedGameSnap.ref.path, isSharedGame: true } : {})
+    };
+    const displayGame = sharedPath
+      ? projectSharedGameForPublicTeam(requestedGame, teamId)
+      : requestedGame;
+    if (!displayGame || !canProjectPublicGame(team, displayGame)) return null;
+    if (requestedGame.trackingEngine !== 'diamond-v2') {
+      throw publicDiamondProjectionUnavailable('public-game-projection-changed');
+    }
+
+    let sourceTeamId = teamId;
+    let sourceGameId = gameId;
+    let sourceGame = requestedGame;
+    if (sharedPath) {
+      const canonicalSharedPath = normalizePublicDiamondSharedGamePath(sharedPath);
+      if (!canonicalSharedPath) {
+        throw publicDiamondProjectionUnavailable('diamond-shared-binding-invalid');
+      }
+      sourceTeamId = exactPublicDiamondResourceId(requestedGame.diamondSourceTeamId);
+      sourceGameId = exactPublicDiamondResourceId(requestedGame.diamondSourceGameId);
+      if (!sourceTeamId || !sourceGameId) {
+        throw publicDiamondProjectionUnavailable('diamond-shared-binding-invalid');
+      }
+      // Diamond public stat documents are source-team oriented. Until a
+      // complete opponent-oriented projection exists, never present them as
+      // the viewing team's statistics or infer source authority from that team.
+      if (sourceTeamId !== teamId) {
+        throw publicDiamondProjectionUnavailable(
+          'diamond-shared-source-inaccessible',
+          'Diamond statistics for this shared-game side are unavailable.'
+        );
+      }
+      const sourceGameSnap = await transaction.get(
+        firestore.doc(`teams/${sourceTeamId}/games/${sourceGameId}`)
+      );
+      if (!sourceGameSnap.exists) {
+        throw publicDiamondProjectionUnavailable('diamond-shared-binding-invalid');
+      }
+      sourceGame = {
+        ...(sourceGameSnap.data() || {}),
+        id: sourceGameId,
+        teamId: sourceTeamId
+      };
+      if (!canProjectPublicGame(team, sourceGame)) {
+        throw publicDiamondProjectionUnavailable('diamond-source-not-public');
+      }
+      if (!hasExactPublicDiamondSharedBacklink(sourceGame, canonicalSharedPath)) {
+        throw publicDiamondProjectionUnavailable('diamond-shared-binding-invalid');
+      }
+    } else {
+      sourceGame = { ...sourceGame, id: sourceGameId, teamId: sourceTeamId };
+    }
+
+    const canonicalIdentity = serializePublicDiamondGameIdentity(sourceGame);
+    if (!canonicalIdentity) {
+      throw publicDiamondProjectionUnavailable('diamond-projection-head-incomplete');
+    }
+    if (sharedPath && !hasMatchingPublicDiamondSharedHead(requestedGame, canonicalIdentity)) {
+      throw publicDiamondProjectionUnavailable('diamond-shared-head-mismatch');
+    }
+    const configSnap = await transaction.get(firestore.doc(
+      `teams/${sourceTeamId}/statTrackerConfigs/${canonicalIdentity.statTrackerConfigId}`
+    ));
+    let statConfigSnapshot = null;
+    if (configSnap.exists) {
+      try {
+        statConfigSnapshot = createDiamondStatConfigSnapshot({
+          teamId: sourceTeamId,
+          configId: canonicalIdentity.statTrackerConfigId,
+          config: configSnap.data() || {}
+        });
+      } catch {
+        statConfigSnapshot = null;
+      }
+    }
+    if (statConfigSnapshot?.snapshotHash !== canonicalIdentity.diamondStatConfigSnapshotHash) {
+      throw publicDiamondProjectionUnavailable('diamond-stat-config-snapshot-unavailable');
+    }
+    const opponentStatKeys = [...statConfigSnapshot.publicPlayerStatIds];
+    const opponentStats = serializePublicDiamondOpponentStats(
+      sourceGame.opponentStats,
+      opponentStatKeys,
+      canonicalIdentity
+    );
+    if (opponentStats === null) {
+      throw publicDiamondProjectionUnavailable('diamond-public-opponent-stats-incomplete');
+    }
+    const serializedDiamondStats = serializeDiamondPublicStatsResponse({
+      game: sourceGame,
+      teamId: sourceTeamId,
+      gameId: sourceGameId
+    });
+    const configBoundPublicTeamStats = sanitizeDiamondPublicTeamStatDocument({
+      game: sourceGame,
+      teamId: sourceTeamId,
+      gameId: sourceGameId,
+      allowedStatIds: statConfigSnapshot.publicTeamStatIds
+    });
+    if (
+      serializedDiamondStats.status !== 'complete' ||
+      serializedDiamondStats.complete !== true ||
+      !configBoundPublicTeamStats ||
+      JSON.stringify(configBoundPublicTeamStats.publicStatIds) !==
+        JSON.stringify(serializedDiamondStats.publicTeamStats.publicStatIds)
+    ) {
+      throw publicDiamondProjectionUnavailable('diamond-public-stats-incomplete');
+    }
+    const diamondStats = Object.freeze({
+      ...serializedDiamondStats,
+      publicTeamStats: configBoundPublicTeamStats
+    });
+    const publicIdentity = sharedPath
+      ? serializePublicDiamondGameIdentity({
+          ...displayGame,
+          ...canonicalIdentity,
+          diamondSourceTeamId: sourceTeamId,
+          diamondSourceGameId: sourceGameId
+        }, { sharedGamePath: sharedPath })
+      : canonicalIdentity;
+    if (!publicIdentity) {
+      throw publicDiamondProjectionUnavailable('diamond-shared-binding-invalid');
+    }
+    const state = {
+      team,
+      requestedGame,
+      displayGame,
+      sourceGame,
+      sourceTeamId,
+      sourceGameId,
+      publicIdentity,
+      diamondStats,
+      opponentStatKeys,
+      opponentStats,
+      requestedGamePath: requestedGameSnap.ref.path,
+      sharedPath
+    };
+    return {
+      ...state,
+      coherenceToken: publicDiamondProjectionCoherenceToken(state)
+    };
+  });
+}
+
 async function getPublicGameProjection(teamId, gameId, team) {
   const sharedPath = decodePublicSharedGamePath(gameId);
   const canonicalGameId = sharedPath ? '' : normalizeTeamId(gameId);
@@ -9548,6 +9806,42 @@ async function getPublicGameProjection(teamId, gameId, team) {
     ...(gameSnap.data() || {}),
     ...(sharedPath ? { _sharedGamePath: gameSnap.ref.path, isSharedGame: true } : {})
   };
+  const rawDisplayGame = sharedPath ? projectSharedGameForPublicTeam(rawGame, teamId) : rawGame;
+  if (!rawDisplayGame || !canProjectPublicGame(team, rawDisplayGame)) return null;
+  if (rawGame.trackingEngine === 'diamond-v2') {
+    const initial = await loadPublicDiamondProjectionState({ teamId, gameId, sharedPath });
+    if (!initial) return null;
+    const privateProjectedGame = await loadServerReplayProjection(
+      initial.requestedGame,
+      initial.requestedGamePath
+    );
+    const displayGame = sharedPath
+      ? projectSharedGameForPublicTeam(privateProjectedGame, teamId)
+      : privateProjectedGame;
+    if (!displayGame) return null;
+    const finalState = await loadPublicDiamondProjectionState({ teamId, gameId, sharedPath });
+    if (!finalState || finalState.coherenceToken !== initial.coherenceToken) {
+      throw publicDiamondProjectionUnavailable('public-game-projection-changed');
+    }
+    const exactGame = {
+      ...displayGame,
+      ...finalState.publicIdentity,
+      opponentStats: finalState.opponentStats,
+      diamondPublicTeamStats: finalState.diamondStats.publicTeamStats
+    };
+    const projection = serializePublicGame(exactGame, {
+      team: finalState.team,
+      recordedReplayMarkerOnly: true,
+      opponentStatKeys: finalState.opponentStatKeys,
+      includeDiamondIdentity: true,
+      sharedGamePath: sharedPath,
+      diamondPublicTeamStats: finalState.diamondStats.publicTeamStats
+    });
+    if (!projection || projection.id !== gameId) {
+      throw publicDiamondProjectionUnavailable('public-game-projection-id-mismatch');
+    }
+    return projection;
+  }
   const privateProjectedGame = await loadServerReplayProjection(rawGame, gameSnap.ref.path);
   const game = sharedPath ? projectSharedGameForPublicTeam(privateProjectedGame, teamId) : privateProjectedGame;
   if (!game || !canProjectPublicGame(team, game)) return null;
