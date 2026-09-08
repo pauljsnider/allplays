@@ -504,6 +504,219 @@ describe('Diamond rules and canonical contracts', () => {
     expect(afterStart.result.rejection?.code).toBe('invalid-lifecycle');
   });
 
+  it('transfers an occupied base through substitution and re-entry without rewriting its provenance', () => {
+    const game = harness('fastpitch-nfhs', 'quick');
+    setBasicLineups(game);
+    game.submit('record_plate_appearance', {
+      batterId: 'away-1',
+      pitcherId: 'home-1',
+      result: 'single',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    const beforeSubstitution = game.ledger.state;
+    const originalPlacement = beforeSubstitution.bases.first;
+    if (!originalPlacement) throw new Error('Fixture requires the outgoing player on first base.');
+
+    game.submit('substitute', {
+      side: 'away',
+      battingSlot: 1,
+      outgoingPlayerId: 'away-1',
+      incomingPlayerId: 'away-sub'
+    });
+    expect(game.ledger.state.bases.first).toEqual({ ...originalPlacement, runnerId: 'away-sub' });
+
+    game.submit('re_enter', {
+      side: 'away',
+      battingSlot: 1,
+      starterPlayerId: 'away-1',
+      replacedPlayerId: 'away-sub'
+    });
+    expect(game.ledger.state.bases.first).toEqual(originalPlacement);
+    expect(verifyDiamondLedger(game.ledger)).toBe(true);
+    expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
+
+    const provenancePlacement = { ...originalPlacement, courtesyForPlayerId: 'away-catcher' };
+    for (const base of ['first', 'second', 'third'] as const) {
+      const bases: DiamondGameState['bases'] = { first: null, second: null, third: null, [base]: provenancePlacement };
+      const provenanceTransfer = reduceDiamondEvent(
+        { ...beforeSubstitution, bases },
+        {
+          type: 'substitute',
+          eventId: `metadata-preserving-${base}-runner-substitution`,
+          payload: {
+            side: 'away',
+            battingSlot: 1,
+            outgoingPlayerId: 'away-1',
+            incomingPlayerId: 'away-metadata-sub'
+          }
+        }
+      );
+      expect(provenanceTransfer.bases[base]).toEqual({ ...provenancePlacement, runnerId: 'away-metadata-sub' });
+    }
+
+    const noTransfer = harness('fastpitch-nfhs', 'quick');
+    setBasicLineups(noTransfer);
+    noTransfer.submit('record_plate_appearance', {
+      batterId: 'away-1',
+      pitcherId: 'home-1',
+      result: 'single',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    const untouchedPlacement = noTransfer.ledger.state.bases.first;
+    if (!untouchedPlacement) throw new Error('Fixture requires the untouched runner on first base.');
+    noTransfer.submit('substitute', {
+      side: 'away',
+      battingSlot: 2,
+      outgoingPlayerId: 'away-2',
+      incomingPlayerId: 'away-2-sub'
+    });
+    expect(noTransfer.ledger.state.bases.first).toEqual(untouchedPlacement);
+
+    const endedHalf = {
+      ...noTransfer.ledger.state,
+      inning: { ...noTransfer.ledger.state.inning, outs: 3 }
+    };
+    const betweenInnings = reduceDiamondEvent(endedHalf, {
+      type: 'substitute',
+      eventId: 'between-innings-substitution',
+      payload: {
+        side: 'away',
+        battingSlot: 1,
+        outgoingPlayerId: 'away-1',
+        incomingPlayerId: 'away-between-innings'
+      }
+    });
+    expect(betweenInnings.bases.first).toEqual(untouchedPlacement);
+
+    const endedHalfIncomingPlacement = { ...untouchedPlacement, runnerId: 'away-ended-half-incoming' };
+    const endedHalfIncoming = reduceDiamondEvent(
+      {
+        ...endedHalf,
+        bases: { ...endedHalf.bases, first: endedHalfIncomingPlacement }
+      },
+      {
+        type: 'substitute',
+        eventId: 'between-innings-stale-incoming-runner',
+        payload: {
+          side: 'away',
+          battingSlot: 1,
+          outgoingPlayerId: 'away-1',
+          incomingPlayerId: 'away-ended-half-incoming'
+        }
+      }
+    );
+    expect(endedHalfIncoming.bases.first).toEqual(endedHalfIncomingPlacement);
+    expect(endedHalfIncoming.lineups.away.battingOrder[0].activePlayerId).toBe('away-ended-half-incoming');
+
+    const pendingRunLimit = harness('baseball-youth', 'quick');
+    setBasicLineups(pendingRunLimit);
+    pendingRunLimit.submit('record_plate_appearance', {
+      batterId: 'away-1',
+      pitcherId: 'home-1',
+      result: 'single',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    const pendingRunLimitPlacement = pendingRunLimit.ledger.state.bases.first;
+    if (!pendingRunLimitPlacement) throw new Error('Fixture requires the pending run-limit runner on first base.');
+    const runLimitPlan = reduceDiamondEvent(
+      {
+        ...pendingRunLimit.ledger.state,
+        score: { ...pendingRunLimit.ledger.state.score, away: 5 },
+        inningRuns: { ...pendingRunLimit.ledger.state.inningRuns, T1: 5 }
+      },
+      {
+        type: 'substitute',
+        eventId: 'run-limit-pending-substitution',
+        payload: {
+          side: 'away',
+          battingSlot: 1,
+          outgoingPlayerId: 'away-1',
+          incomingPlayerId: 'away-run-limit-plan'
+        }
+      }
+    );
+    expect(runLimitPlan.bases.first).toEqual({ ...pendingRunLimitPlacement, runnerId: 'away-run-limit-plan' });
+
+    const collidingPlacement = {
+      runnerId: 'home-1',
+      chargedToPitcherId: 'home-1',
+      courtesyForPlayerId: 'away-1',
+      reachedOnEventId: 'cross-team-id-collision'
+    };
+    const defensiveChange = reduceDiamondEvent(
+      {
+        ...beforeSubstitution,
+        bases: { ...beforeSubstitution.bases, first: collidingPlacement }
+      },
+      {
+        type: 'substitute',
+        eventId: 'defensive-cross-team-id-collision',
+        payload: {
+          side: 'home',
+          battingSlot: 1,
+          outgoingPlayerId: 'home-1',
+          incomingPlayerId: 'home-reliever',
+          defensivePosition: 'P'
+        }
+      }
+    );
+    expect(defensiveChange.bases.first).toEqual(collidingPlacement);
+  });
+
+  it('rejects no-op substitutions and an incoming player who is already on base', () => {
+    const noOp = harness('fastpitch-nfhs', 'quick');
+    setBasicLineups(noOp);
+    const revision = noOp.ledger.state.revision;
+    for (const execution of [
+      noOp.submit(
+        'substitute',
+        { side: 'away', battingSlot: 1, outgoingPlayerId: 'away-1', incomingPlayerId: 'away-1' },
+        { accept: false }
+      ),
+      noOp.submit('re_enter', { side: 'away', battingSlot: 1, starterPlayerId: 'away-1', replacedPlayerId: 'away-1' }, { accept: false })
+    ]) {
+      expect(execution.result.rejection?.code).toBe('substitution-no-op');
+      expect(execution.ledger.state.revision).toBe(revision);
+    }
+    expect(noOp.ledger.state.lineups.away.battingOrder[0]).toMatchObject({ starterReentriesUsed: 0, substitutions: [] });
+
+    const occupiedIncoming = harness('fastpitch-nfhs', 'quick');
+    setBasicLineups(occupiedIncoming);
+    occupiedIncoming.submit('record_plate_appearance', {
+      batterId: 'away-1',
+      pitcherId: 'home-1',
+      result: 'single',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    occupiedIncoming.submit('add_courtesy_runner', {
+      side: 'away',
+      forPlayerId: 'away-1',
+      runnerId: 'away-courtesy',
+      base: 'first',
+      forRole: 'pitcher'
+    });
+    const occupied = occupiedIncoming.submit(
+      'substitute',
+      {
+        side: 'away',
+        battingSlot: 1,
+        outgoingPlayerId: 'away-1',
+        incomingPlayerId: 'away-courtesy'
+      },
+      { accept: false }
+    );
+    expect(occupied.result.rejection?.code).toBe('incoming-runner-on-base');
+    expect(occupiedIncoming.ledger.state.bases.first?.runnerId).toBe('away-courtesy');
+  });
+
   it('requires authoritative pitchers at start and changes active defensive personnel only through substitution history', () => {
     const incomplete = harness('baseball-nfhs', 'quick');
     incomplete.submit('activate', { initialScorerUid: SCORER, captureMode: 'quick' });

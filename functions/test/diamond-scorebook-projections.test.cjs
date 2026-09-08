@@ -194,44 +194,25 @@ function harness(captureMode = "full", rulesProfileId = "baseball-youth") {
   };
 }
 
-function setLineupsAndStart(game) {
+function setLineupsAndStart(game, lineupSize = 2) {
+  const entries = (side) =>
+    Array.from({ length: lineupSize }, (_, index) => ({
+      slot: index + 1,
+      playerId: `${side}-${String(index + 1)}`,
+      displayName: `${side === "home" ? "Home" : "Away"} Player ${String(index + 1)}`,
+      jerseyNumber: String(index + 11),
+    }));
   game.submit("activate", {
     initialScorerUid: SCORER_UID,
     captureMode: game.ledger.captureMode,
   });
   game.submit("set_lineup", {
     side: "home",
-    entries: [
-      {
-        slot: 1,
-        playerId: "home-1",
-        displayName: "Casey Home",
-        jerseyNumber: "21",
-      },
-      {
-        slot: 2,
-        playerId: "home-2",
-        displayName: "Devon Home",
-        jerseyNumber: "22",
-      },
-    ],
+    entries: entries("home"),
   });
   game.submit("set_lineup", {
     side: "away",
-    entries: [
-      {
-        slot: 1,
-        playerId: "away-1",
-        displayName: "Alex Away",
-        jerseyNumber: "11",
-      },
-      {
-        slot: 2,
-        playerId: "away-2",
-        displayName: "Bailey Away",
-        jerseyNumber: "12",
-      },
-    ],
+    entries: entries("away"),
   });
   game.submit("set_defensive_alignment", {
     side: "home",
@@ -402,6 +383,496 @@ test("compiled reducer canonicalizes omitted tiebreaker pitcher responsibility a
       ),
     (error) => error?.code === "missing-defensive-pitcher",
   );
+});
+
+test("compiled substitutions transfer only a live batting runner and preserve exact base provenance", () => {
+  const game = harness("quick", "fastpitch-nfhs");
+  setLineupsAndStart(game);
+  game.submit("record_plate_appearance", {
+    batterId: "away-1",
+    pitcherId: "home-1",
+    result: "single",
+    batterAdvance: { to: "first" },
+    runnerAdvances: [],
+    outsOnPlay: 0,
+  });
+  const beforeSubstitution = game.ledger.state;
+  const originalPlacement = beforeSubstitution.bases.first;
+  assert.ok(originalPlacement);
+
+  game.submit("substitute", {
+    side: "away",
+    battingSlot: 1,
+    outgoingPlayerId: "away-1",
+    incomingPlayerId: "away-pinch-runner",
+  });
+  assert.deepEqual(game.ledger.state.bases.first, {
+    ...originalPlacement,
+    runnerId: "away-pinch-runner",
+  });
+  game.submit("re_enter", {
+    side: "away",
+    battingSlot: 1,
+    starterPlayerId: "away-1",
+    replacedPlayerId: "away-pinch-runner",
+  });
+  assert.deepEqual(game.ledger.state.bases.first, originalPlacement);
+  assert.equal(verifyDiamondLedger(game.ledger), true);
+  assert.deepEqual(replayDiamondLedger(game.ledger).state, game.ledger.state);
+
+  const provenancePlacement = {
+    ...originalPlacement,
+    courtesyForPlayerId: "away-catcher",
+  };
+  for (const base of ["first", "second", "third"]) {
+    const provenanceTransfer = reduceDiamondEvent(
+      {
+        ...beforeSubstitution,
+        bases: {
+          first: null,
+          second: null,
+          third: null,
+          [base]: provenancePlacement,
+        },
+      },
+      {
+        type: "substitute",
+        eventId: `compiled-metadata-preserving-${base}-runner-substitution`,
+        payload: {
+          side: "away",
+          battingSlot: 1,
+          outgoingPlayerId: "away-1",
+          incomingPlayerId: "away-metadata-sub",
+        },
+      },
+    );
+    assert.deepEqual(provenanceTransfer.bases[base], {
+      ...provenancePlacement,
+      runnerId: "away-metadata-sub",
+    });
+  }
+
+  const untouched = reduceDiamondEvent(beforeSubstitution, {
+    type: "substitute",
+    eventId: "compiled-non-runner-substitution",
+    payload: {
+      side: "away",
+      battingSlot: 2,
+      outgoingPlayerId: "away-2",
+      incomingPlayerId: "away-2-sub",
+    },
+  });
+  assert.deepEqual(untouched.bases.first, originalPlacement);
+
+  const endedHalf = {
+    ...beforeSubstitution,
+    inning: { ...beforeSubstitution.inning, outs: 3 },
+  };
+  const betweenInnings = reduceDiamondEvent(endedHalf, {
+    type: "substitute",
+    eventId: "compiled-between-innings-substitution",
+    payload: {
+      side: "away",
+      battingSlot: 1,
+      outgoingPlayerId: "away-1",
+      incomingPlayerId: "away-between-innings",
+    },
+  });
+  assert.deepEqual(betweenInnings.bases.first, originalPlacement);
+
+  const endedHalfIncomingPlacement = {
+    ...originalPlacement,
+    runnerId: "away-ended-half-incoming",
+  };
+  const endedHalfIncoming = reduceDiamondEvent(
+    {
+      ...endedHalf,
+      bases: { ...endedHalf.bases, first: endedHalfIncomingPlacement },
+    },
+    {
+      type: "substitute",
+      eventId: "compiled-between-innings-stale-incoming-runner",
+      payload: {
+        side: "away",
+        battingSlot: 1,
+        outgoingPlayerId: "away-1",
+        incomingPlayerId: "away-ended-half-incoming",
+      },
+    },
+  );
+  assert.deepEqual(endedHalfIncoming.bases.first, endedHalfIncomingPlacement);
+  assert.equal(
+    endedHalfIncoming.lineups.away.battingOrder[0].activePlayerId,
+    "away-ended-half-incoming",
+  );
+
+  const runLimitGame = harness("quick", "baseball-youth");
+  setLineupsAndStart(runLimitGame);
+  runLimitGame.submit("record_plate_appearance", {
+    batterId: "away-1",
+    pitcherId: "home-1",
+    result: "single",
+    batterAdvance: { to: "first" },
+    runnerAdvances: [],
+    outsOnPlay: 0,
+  });
+  const runLimitPlacement = runLimitGame.ledger.state.bases.first;
+  assert.ok(runLimitPlacement);
+  const runLimitPlan = reduceDiamondEvent(
+    {
+      ...runLimitGame.ledger.state,
+      score: { ...runLimitGame.ledger.state.score, away: 5 },
+      inningRuns: { ...runLimitGame.ledger.state.inningRuns, T1: 5 },
+    },
+    {
+      type: "substitute",
+      eventId: "compiled-run-limit-pending-substitution",
+      payload: {
+        side: "away",
+        battingSlot: 1,
+        outgoingPlayerId: "away-1",
+        incomingPlayerId: "away-run-limit-plan",
+      },
+    },
+  );
+  assert.deepEqual(runLimitPlan.bases.first, {
+    ...runLimitPlacement,
+    runnerId: "away-run-limit-plan",
+  });
+
+  const collidingPlacement = {
+    runnerId: "home-1",
+    chargedToPitcherId: "home-1",
+    courtesyForPlayerId: "away-1",
+    reachedOnEventId: "compiled-cross-team-id-collision",
+  };
+  const defensiveChange = reduceDiamondEvent(
+    {
+      ...beforeSubstitution,
+      bases: { ...beforeSubstitution.bases, first: collidingPlacement },
+    },
+    {
+      type: "substitute",
+      eventId: "compiled-defensive-id-collision",
+      payload: {
+        side: "home",
+        battingSlot: 1,
+        outgoingPlayerId: "home-1",
+        incomingPlayerId: "home-reliever",
+        defensivePosition: "P",
+      },
+    },
+  );
+  assert.deepEqual(defensiveChange.bases.first, collidingPlacement);
+
+  for (const action of [
+    {
+      type: "substitute",
+      eventId: "compiled-no-op-substitution",
+      payload: {
+        side: "away",
+        battingSlot: 1,
+        outgoingPlayerId: "away-1",
+        incomingPlayerId: "away-1",
+      },
+    },
+    {
+      type: "re_enter",
+      eventId: "compiled-no-op-reentry",
+      payload: {
+        side: "away",
+        battingSlot: 1,
+        starterPlayerId: "away-1",
+        replacedPlayerId: "away-1",
+      },
+    },
+  ]) {
+    assert.throws(
+      () => reduceDiamondEvent(beforeSubstitution, action),
+      (error) => error?.code === "substitution-no-op",
+    );
+  }
+  assert.equal(
+    beforeSubstitution.lineups.away.battingOrder[0].starterReentriesUsed,
+    0,
+  );
+
+  const occupiedIncoming = {
+    ...originalPlacement,
+    runnerId: "away-incoming",
+  };
+  assert.throws(
+    () =>
+      reduceDiamondEvent(
+        {
+          ...beforeSubstitution,
+          bases: { ...beforeSubstitution.bases, first: occupiedIncoming },
+        },
+        {
+          type: "substitute",
+          eventId: "compiled-incoming-already-on-base",
+          payload: {
+            side: "away",
+            battingSlot: 1,
+            outgoingPlayerId: "away-1",
+            incomingPlayerId: "away-incoming",
+          },
+        },
+      ),
+    (error) => error?.code === "incoming-runner-on-base",
+  );
+});
+
+test("compiled substituted runner scores with original pitcher responsibility and deterministic stats", () => {
+  const game = harness("quick", "fastpitch-nfhs");
+  setLineupsAndStart(game);
+  game.submit("record_plate_appearance", {
+    batterId: "away-1",
+    pitcherId: "home-1",
+    result: "single",
+    batterAdvance: { to: "first" },
+    runnerAdvances: [],
+    outsOnPlay: 0,
+  });
+  const reachedOnEventId = game.ledger.state.bases.first?.reachedOnEventId;
+  game.submit("substitute", {
+    side: "away",
+    battingSlot: 1,
+    outgoingPlayerId: "away-1",
+    incomingPlayerId: "away-pinch-runner",
+  });
+  assert.deepEqual(game.ledger.state.bases.first, {
+    runnerId: "away-pinch-runner",
+    chargedToPitcherId: "home-1",
+    courtesyForPlayerId: null,
+    reachedOnEventId,
+  });
+  game.submit("advance_runner", {
+    runnerId: "away-pinch-runner",
+    from: "first",
+    to: "home",
+    cause: "batted_ball",
+    countsRun: true,
+    earned: true,
+    rbi: false,
+  });
+
+  const stats = projectDiamondStats(game.ledger);
+  assert.equal(stats.players["away-pinch-runner"].raw.batting.R, 1);
+  assert.equal(stats.players["away-pinch-runner"].raw.baserunning.advances, 1);
+  assert.deepEqual(
+    {
+      R: stats.players["home-1"].raw.pitching.R,
+      ER: stats.players["home-1"].raw.pitching.ER,
+    },
+    { R: 1, ER: 1 },
+  );
+  assert.equal(verifyDiamondLedger(game.ledger), true);
+  assert.deepEqual(replayDiamondLedger(game.ledger).state, game.ledger.state);
+  assert.deepEqual(projectDiamondStats(game.ledger), stats);
+});
+
+test("compiled third-out run timing is explicit and independent of move array order", () => {
+  const game = harness("quick", "baseball-nfhs");
+  setLineupsAndStart(game, 5);
+  game.submit("record_plate_appearance", {
+    batterId: "away-1",
+    pitcherId: "home-1",
+    result: "triple",
+    batterAdvance: { to: "third" },
+    runnerAdvances: [],
+    outsOnPlay: 0,
+  });
+  game.submit("record_plate_appearance", {
+    batterId: "away-2",
+    pitcherId: "home-1",
+    result: "single",
+    batterAdvance: { to: "first" },
+    runnerAdvances: [],
+    outsOnPlay: 0,
+  });
+  recordOut(game);
+  const beforePlay = game.ledger.state;
+  assert.equal(beforePlay.inning.outs, 1);
+
+  const mixedPayload = (countsRun, taggedRunnerFirst = false) => {
+    const scoringAdvance = {
+      runnerId: "away-1",
+      from: "third",
+      to: "home",
+      cause: "batted_ball",
+      ...(countsRun === undefined ? {} : { countsRun }),
+      earned: true,
+      rbi: false,
+    };
+    const taggedRunner = {
+      runnerId: "away-2",
+      from: "first",
+      to: "out",
+      cause: "tag_out",
+      outKind: "tag",
+    };
+    return {
+      batterId: "away-4",
+      pitcherId: "home-1",
+      result: "ground_out",
+      batterAdvance: { to: "out", outKind: "batter_runner" },
+      runnerAdvances: taggedRunnerFirst
+        ? [taggedRunner, scoringAdvance]
+        : [scoringAdvance, taggedRunner],
+      outsOnPlay: 2,
+    };
+  };
+
+  assert.throws(
+    () =>
+      reduceDiamondEvent(beforePlay, {
+        type: "record_plate_appearance",
+        eventId: "compiled-mixed-missing-run-timing",
+        payload: mixedPayload(undefined),
+      }),
+    (error) => error?.code === "run-timing-required",
+  );
+  const malformed = mixedPayload(true);
+  malformed.runnerAdvances.find((advance) => advance.to === "home").countsRun =
+    "yes";
+  assert.throws(
+    () =>
+      reduceDiamondEvent(beforePlay, {
+        type: "record_plate_appearance",
+        eventId: "compiled-mixed-malformed-run-timing",
+        payload: malformed,
+      }),
+    (error) => error?.code === "invalid-boolean",
+  );
+
+  for (const taggedRunnerFirst of [false, true]) {
+    const after = reduceDiamondEvent(beforePlay, {
+      type: "record_plate_appearance",
+      eventId: `compiled-mixed-order-${String(taggedRunnerFirst)}`,
+      payload: mixedPayload(true, taggedRunnerFirst),
+    });
+    assert.deepEqual(after.score, { home: 0, away: 1 });
+    assert.equal(after.inning.outs, 3);
+  }
+  const noRun = reduceDiamondEvent(beforePlay, {
+    type: "record_plate_appearance",
+    eventId: "compiled-mixed-explicit-no-run",
+    payload: mixedPayload(false),
+  });
+  assert.equal(noRun.score.away, 0);
+
+  const allCancelling = mixedPayload(true);
+  allCancelling.runnerAdvances = allCancelling.runnerAdvances.map((advance) =>
+    advance.to === "out"
+      ? { ...advance, cause: "force_out", outKind: "force" }
+      : advance,
+  );
+  assert.throws(
+    () =>
+      reduceDiamondEvent(beforePlay, {
+        type: "record_plate_appearance",
+        eventId: "compiled-all-cancelling-outs",
+        payload: allCancelling,
+      }),
+    (error) => error?.code === "run-cannot-count",
+  );
+
+  const twoOutState = {
+    ...beforePlay,
+    inning: { ...beforePlay.inning, outs: 2 },
+  };
+  for (const [result, outKind] of [
+    ["fly_out", "catch"],
+    ["strikeout", "strikeout"],
+    ["fielders_choice", "tag"],
+  ]) {
+    assert.throws(
+      () =>
+        reduceDiamondEvent(twoOutState, {
+          type: "record_plate_appearance",
+          eventId: `compiled-batter-third-out-${result}`,
+          payload: {
+            batterId: "away-4",
+            pitcherId: "home-1",
+            result,
+            batterAdvance: { to: "out", outKind },
+            runnerAdvances: [
+              {
+                runnerId: "away-1",
+                from: "third",
+                to: "home",
+                cause: "batted_ball",
+                countsRun: true,
+                earned: true,
+                rbi: false,
+              },
+            ],
+            outsOnPlay: 1,
+          },
+        }),
+      (error) => error?.code === "run-cannot-count",
+    );
+  }
+
+  const allTagAppealState = {
+    ...beforePlay,
+    bases: {
+      ...beforePlay.bases,
+      second: {
+        runnerId: "away-extra",
+        chargedToPitcherId: "home-1",
+        courtesyForPlayerId: null,
+        reachedOnEventId: "compiled-extra-runner",
+      },
+    },
+  };
+  const allTagAppeal = reduceDiamondEvent(allTagAppealState, {
+    type: "record_plate_appearance",
+    eventId: "compiled-all-tag-appeal-outs",
+    payload: {
+      batterId: "away-4",
+      pitcherId: "home-1",
+      result: "fielders_choice",
+      batterAdvance: { to: "first" },
+      runnerAdvances: [
+        {
+          runnerId: "away-1",
+          from: "third",
+          to: "home",
+          cause: "batted_ball",
+          countsRun: true,
+          earned: true,
+          rbi: false,
+        },
+        {
+          runnerId: "away-extra",
+          from: "second",
+          to: "out",
+          cause: "appeal_out",
+          outKind: "appeal",
+        },
+        {
+          runnerId: "away-2",
+          from: "first",
+          to: "out",
+          cause: "tag_out",
+          outKind: "tag",
+        },
+      ],
+      outsOnPlay: 2,
+    },
+  });
+  assert.equal(allTagAppeal.score.away, 1);
+
+  game.submit("record_plate_appearance", mixedPayload(true, true));
+  assert.equal(game.ledger.state.score.away, 1);
+  assert.equal(
+    projectDiamondStats(game.ledger).players["away-1"].raw.batting.R,
+    1,
+  );
+  assert.equal(verifyDiamondLedger(game.ledger), true);
+  assert.deepEqual(replayDiamondLedger(game.ledger).state, game.ledger.state);
 });
 
 test("compiled ready-state forfeit blocks setup and start mutations but remains finalizable", () => {

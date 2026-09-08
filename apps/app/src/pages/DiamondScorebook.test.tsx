@@ -871,7 +871,7 @@ describe('DiamondScorebook', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Ground out' }));
     const dialog = screen.getByRole('dialog', { name: 'Review Ground out' });
     fireEvent.change(within(dialog).getByLabelText(/Third .* destination/), { target: { value: 'home' } });
-    expect(within(dialog).getByRole('alert')).toHaveTextContent(/run cannot count when the third out/i);
+    expect(within(dialog).getByRole('alert')).toHaveTextContent(/run cannot count.*every possible third out/i);
     expect(within(dialog).getByRole('button', { name: 'Confirm play' })).toBeDisabled();
     fireEvent.click(within(dialog).getByLabelText('Run counts'));
     expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument();
@@ -897,6 +897,62 @@ describe('DiamondScorebook', () => {
     );
     expect(reduced.score).toEqual({ home: 0, away: 0 });
     expect(reduced.inning.outs).toBe(3);
+  });
+
+  it('allows an explicit counted run when a mixed multi-out play has a possible tag third out', async () => {
+    const snapshot = buildSnapshot();
+    const fixture = createClient(snapshot);
+    renderScorebook(snapshot, fixture);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Double play' }));
+    const dialog = screen.getByRole('dialog', { name: 'Review Double play' });
+    fireEvent.change(within(dialog).getByLabelText(/Third .* destination/), { target: { value: 'home' } });
+    fireEvent.change(within(dialog).getByLabelText(/First .* out kind/), { target: { value: 'tag' } });
+
+    expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Confirm play' })).toBeEnabled();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm play' }));
+    await waitFor(() => expect(fixture.submitCommand).toHaveBeenCalledTimes(1));
+
+    expect(fixture.createCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'record_plate_appearance',
+        payload: expect.objectContaining({
+          outsOnPlay: 2,
+          runnerAdvances: expect.arrayContaining([
+            expect.objectContaining({ runnerId: 'runner-3', from: 'third', to: 'home', countsRun: true }),
+            expect.objectContaining({ runnerId: 'runner-1', from: 'first', to: 'out', outKind: 'tag' })
+          ])
+        })
+      })
+    );
+  });
+
+  it('rejects a counted run when every possible third out on a multi-out play cancels it', () => {
+    renderScorebook();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Double play' }));
+    const dialog = screen.getByRole('dialog', { name: 'Review Double play' });
+    fireEvent.change(within(dialog).getByLabelText(/Third .* destination/), { target: { value: 'home' } });
+
+    expect(within(dialog).getByRole('alert')).toHaveTextContent(/run cannot count/i);
+    expect(within(dialog).getByRole('button', { name: 'Confirm play' })).toBeDisabled();
+  });
+
+  it.each(['Fly out', 'Strikeout'])('treats the batter-origin %s third out as a provable run cancellation', (outcome) => {
+    const baseSnapshot = buildSnapshot();
+    const snapshot = buildSnapshot({
+      inning: { ...baseSnapshot.inning, outs: 2 },
+      bases: { first: null, second: null, third: baseSnapshot.bases.third }
+    });
+    renderScorebook(snapshot, createClient(snapshot));
+
+    fireEvent.click(screen.getByRole('button', { name: outcome }));
+    const dialog = screen.getByRole('dialog', { name: `Review ${outcome}` });
+    fireEvent.change(within(dialog).getByLabelText(/Third .* destination/), { target: { value: 'home' } });
+
+    expect(within(dialog).getByRole('alert')).toHaveTextContent(/run cannot count/i);
+    expect(within(dialog).getByRole('button', { name: 'Confirm play' })).toBeDisabled();
   });
 
   it('blocks an impossible duplicate-base review without writing a command', () => {
@@ -1610,6 +1666,151 @@ describe('DiamondScorebook', () => {
     expect(request?.prompt).not.toContain('Morgan Diaz');
     expect(request?.prompt).not.toContain('Coach Carter');
     expect(JSON.stringify(fixture.submitCommand.mock.calls[0]?.[0])).not.toMatch(/audio|transcript/i);
+  });
+
+  it('allows a voice-proposed counted run when a mixed multi-out play includes a possible tag third out', async () => {
+    const fixture = createClient();
+    const generateContent = vi.fn(async () =>
+      JSON.stringify({
+        schemaVersion: 1,
+        sourceRevision: 7,
+        type: 'record_plate_appearance',
+        payloadJson: JSON.stringify({
+          batterId: 'batter-1',
+          pitcherId: 'pitcher-1',
+          result: 'double_play',
+          batterAdvance: { to: 'out', cause: 'batted_ball', outKind: 'batter_runner' },
+          runnerAdvances: [
+            { runnerId: 'runner-3', from: 'third', to: 'home', cause: 'batted_ball', countsRun: true, rbi: false },
+            { runnerId: 'runner-1', from: 'first', to: 'out', cause: 'tag_out', outKind: 'tag' }
+          ],
+          outsOnPlay: 2,
+          runsBattedIn: 0
+        }),
+        confidence: 0.96,
+        unresolvedQuestions: [],
+        requiresConfirmation: true,
+        mutatesState: false
+      })
+    );
+    renderScorebook(buildSnapshot(), fixture, { generateContent });
+
+    fireEvent.click(screen.getByRole('button', { name: /Dictate play/ }));
+    fireEvent.change(screen.getByLabelText('Editable transcript'), { target: { value: 'Double play, Casey scored before the tag.' } });
+    fireEvent.click(screen.getByRole('button', { name: /Interpret play/ }));
+
+    const review = await screen.findByRole('dialog', { name: 'Review Double play' });
+    expect(within(review).queryByRole('alert')).not.toBeInTheDocument();
+    fireEvent.click(within(review).getByRole('button', { name: 'Confirm play' }));
+    await waitFor(() => expect(fixture.submitCommand).toHaveBeenCalledTimes(1));
+    expect(fixture.createCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'record_plate_appearance',
+        payload: expect.objectContaining({
+          runnerAdvances: expect.arrayContaining([
+            expect.objectContaining({ runnerId: 'runner-3', to: 'home', countsRun: true }),
+            expect.objectContaining({ runnerId: 'runner-1', to: 'out', outKind: 'tag' })
+          ])
+        })
+      })
+    );
+  });
+
+  it('binds a voice-proposed substitution to the same disclosed live-base transfer review', async () => {
+    const snapshot = buildSnapshot({
+      bases: {
+        first: {
+          playerId: 'batter-1',
+          name: 'Avery Carter',
+          number: '12',
+          responsiblePitcherId: 'pitcher-1',
+          courtesyForPlayerId: null,
+          reachedOnEventId: 'event-6'
+        },
+        second: null,
+        third: null
+      }
+    });
+    const fixture = createClient(snapshot);
+    const generateContent = vi.fn(async () =>
+      JSON.stringify({
+        schemaVersion: 1,
+        sourceRevision: 7,
+        type: 'substitute',
+        payloadJson: JSON.stringify({
+          side: 'home',
+          battingSlot: 1,
+          outgoingPlayerId: 'batter-1',
+          incomingPlayerId: 'bench-home'
+        }),
+        confidence: 0.96,
+        unresolvedQuestions: [],
+        requiresConfirmation: true,
+        mutatesState: false
+      })
+    );
+    renderScorebook(snapshot, fixture, { generateContent });
+
+    fireEvent.click(screen.getByRole('button', { name: /Dictate play/ }));
+    fireEvent.change(screen.getByLabelText('Editable transcript'), { target: { value: 'Taylor runs for Avery.' } });
+    fireEvent.click(screen.getByRole('button', { name: /Interpret play/ }));
+
+    const review = await screen.findByRole('dialog', { name: 'Review substitute' });
+    expect(review).toHaveTextContent(/first base transfer/i);
+    expect(review).toHaveTextContent(/#12 Avery Carter.*#15 Taylor Gray/i);
+    fireEvent.click(within(review).getByRole('button', { name: 'Confirm action' }));
+    await waitFor(() => expect(fixture.submitCommand).toHaveBeenCalledTimes(1));
+    expect(fixture.createCommand.mock.calls[0]![0].payload).toEqual({
+      side: 'home',
+      battingSlot: 1,
+      outgoingPlayerId: 'batter-1',
+      incomingPlayerId: 'bench-home'
+    });
+  });
+
+  it('rejects a voice-proposed substitute who already occupies a live batting-side base', async () => {
+    const baseSnapshot = buildSnapshot();
+    const snapshot = buildSnapshot({
+      bases: {
+        ...baseSnapshot.bases,
+        second: {
+          playerId: 'bench-home',
+          name: 'Taylor Gray',
+          number: '15',
+          responsiblePitcherId: 'pitcher-1',
+          courtesyForPlayerId: null,
+          reachedOnEventId: 'event-6'
+        }
+      }
+    });
+    const fixture = createClient(snapshot);
+    const generateContent = vi.fn(async () =>
+      JSON.stringify({
+        schemaVersion: 1,
+        sourceRevision: 7,
+        type: 'substitute',
+        payloadJson: JSON.stringify({
+          side: 'home',
+          battingSlot: 1,
+          outgoingPlayerId: 'batter-1',
+          incomingPlayerId: 'bench-home'
+        }),
+        confidence: 0.96,
+        unresolvedQuestions: [],
+        requiresConfirmation: true,
+        mutatesState: false
+      })
+    );
+    renderScorebook(snapshot, fixture, { generateContent });
+
+    fireEvent.click(screen.getByRole('button', { name: /Dictate play/ }));
+    fireEvent.change(screen.getByLabelText('Editable transcript'), { target: { value: 'Taylor runs for Avery.' } });
+    fireEvent.click(screen.getByRole('button', { name: /Interpret play/ }));
+
+    expect(await screen.findByText(/proposed substitution does not match.*live bases/i)).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'Review substitute' })).not.toBeInTheDocument();
+    expect(fixture.createCommand).not.toHaveBeenCalled();
+    expect(fixture.submitCommand).not.toHaveBeenCalled();
   });
 
   it('keeps low-confidence AI interpretation in the transcript dialog with questions and no command', async () => {
@@ -2529,6 +2730,283 @@ describe('DiamondScorebook', () => {
         payload: { playEventId: 'event-7', fielding: { putoutBy: 'fielder-2' } }
       })
     );
+  });
+
+  it('excludes batting-side substitute and re-entry candidates already occupying a live base without cross-team ID leakage', () => {
+    const baseSnapshot = buildSnapshot();
+    const snapshot = buildSnapshot({
+      bases: {
+        first: {
+          playerId: 'bench-away',
+          name: 'Local ID collision',
+          number: null,
+          responsiblePitcherId: 'pitcher-1',
+          courtesyForPlayerId: null,
+          reachedOnEventId: 'event-4'
+        },
+        second: {
+          playerId: 'bench-home',
+          name: 'Taylor Gray',
+          number: '15',
+          responsiblePitcherId: 'pitcher-1',
+          courtesyForPlayerId: null,
+          reachedOnEventId: 'event-5'
+        },
+        third: {
+          playerId: 'batter-1',
+          name: 'Avery Carter',
+          number: '12',
+          responsiblePitcherId: 'pitcher-1',
+          courtesyForPlayerId: null,
+          reachedOnEventId: 'event-6'
+        }
+      },
+      lineups: {
+        away: baseSnapshot.lineups.away,
+        home: [
+          {
+            playerId: 'runner-3',
+            name: 'Casey Kim',
+            number: '4',
+            slot: 1,
+            active: true,
+            starterPlayerId: 'batter-1',
+            starterReentriesUsed: 0,
+            substitutions: ['runner-3']
+          },
+          baseSnapshot.lineups.home[1]!
+        ]
+      }
+    });
+    renderScorebook(snapshot, createClient(snapshot));
+    fireEvent.click(screen.getByText('Full-mode advanced plays'));
+
+    const substitution = screen.getByRole('group', { name: 'Substitution' });
+    const incoming = within(substitution).getByLabelText('Incoming');
+    expect(within(incoming).queryByRole('option', { name: '#15 Taylor Gray' })).not.toBeInTheDocument();
+    expect(within(substitution).getByRole('button', { name: 'Review starter re-entry' })).toBeDisabled();
+
+    fireEvent.change(within(substitution).getByLabelText('Side'), { target: { value: 'away' } });
+    expect(within(within(substitution).getByLabelText('Incoming')).getByRole('option', { name: '#10 Sam Ortiz' })).toBeInTheDocument();
+  });
+
+  it('discloses a reducer-derived batting-side base transfer without adding it to the substitution payload', async () => {
+    const snapshot = buildSnapshot({
+      bases: {
+        first: {
+          playerId: 'batter-1',
+          name: 'Avery Carter',
+          number: '12',
+          responsiblePitcherId: 'pitcher-1',
+          courtesyForPlayerId: null,
+          reachedOnEventId: 'event-6'
+        },
+        second: null,
+        third: null
+      }
+    });
+    const fixture = createClient(snapshot);
+    renderScorebook(snapshot, fixture);
+    fireEvent.click(screen.getByText('Full-mode advanced plays'));
+
+    const substitution = screen.getByRole('group', { name: 'Substitution' });
+    fireEvent.change(within(substitution).getByLabelText('Incoming'), { target: { value: 'bench-home' } });
+    fireEvent.click(within(substitution).getByRole('button', { name: 'Review substitution' }));
+
+    const review = screen.getByRole('dialog', { name: 'Review substitution' });
+    expect(review).toHaveTextContent(/first base transfer/i);
+    expect(review).toHaveTextContent(/#12 Avery Carter.*#15 Taylor Gray/i);
+    expect(review).toHaveTextContent(/pitcher responsibility.*courtesy.*reach-event/i);
+    fireEvent.click(within(review).getByRole('button', { name: 'Confirm action' }));
+    await waitFor(() => expect(fixture.submitCommand).toHaveBeenCalledTimes(1));
+
+    expect(fixture.createCommand.mock.calls[0]![0].payload).toEqual({
+      side: 'home',
+      battingSlot: 1,
+      outgoingPlayerId: 'batter-1',
+      incomingPlayerId: 'bench-home'
+    });
+  });
+
+  it.each([
+    [
+      'revision',
+      (snapshot: DiamondScorebookSnapshot) => ({
+        ...snapshot,
+        revision: 8,
+        checkpointHash: checkpointForRevision(8),
+        completeness: { ...snapshot.completeness, authoritativeRevision: 8 }
+      })
+    ],
+    [
+      'base responsibility',
+      (snapshot: DiamondScorebookSnapshot) => ({
+        ...snapshot,
+        bases: {
+          ...snapshot.bases,
+          first: snapshot.bases.first ? { ...snapshot.bases.first, responsiblePitcherId: 'pitcher-2' } : null
+        }
+      })
+    ]
+  ])('expires a pending substitution review after a stale %s change', async (_label, updateSnapshot) => {
+    const snapshot = buildSnapshot({
+      bases: {
+        first: {
+          playerId: 'batter-1',
+          name: 'Avery Carter',
+          number: '12',
+          responsiblePitcherId: 'pitcher-1',
+          courtesyForPlayerId: null,
+          reachedOnEventId: 'event-6'
+        },
+        second: null,
+        third: null
+      }
+    });
+    const fixture = createClient(snapshot);
+    renderScorebook(snapshot, fixture);
+    fireEvent.click(screen.getByText('Full-mode advanced plays'));
+    const substitution = screen.getByRole('group', { name: 'Substitution' });
+    fireEvent.change(within(substitution).getByLabelText('Incoming'), { target: { value: 'bench-home' } });
+    fireEvent.click(within(substitution).getByRole('button', { name: 'Review substitution' }));
+
+    (fixture.client.load as ReturnType<typeof vi.fn>).mockResolvedValueOnce(updateSnapshot(snapshot));
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh authoritative scorebook' }));
+
+    expect(await screen.findByText(/substitution review expired.*revision or live base state changed/i)).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'Review substitution' })).not.toBeInTheDocument();
+    expect(fixture.createCommand).not.toHaveBeenCalled();
+    expect(fixture.submitCommand).not.toHaveBeenCalled();
+  });
+
+  it('rechecks the live-base fingerprint after asynchronous build verification and before command creation', async () => {
+    const snapshot = buildSnapshot({
+      bases: {
+        first: {
+          playerId: 'batter-1',
+          name: 'Avery Carter',
+          number: '12',
+          responsiblePitcherId: 'pitcher-1',
+          courtesyForPlayerId: null,
+          reachedOnEventId: 'event-6'
+        },
+        second: null,
+        third: null
+      }
+    });
+    let finishBuild: ((value: number) => void) | null = null;
+    const buildPending = new Promise<number>((resolve) => {
+      finishBuild = resolve;
+    });
+    const fixture = createClient(snapshot);
+    (fixture.client.resolveAppBuild as ReturnType<typeof vi.fn>).mockReturnValue(buildPending);
+    renderScorebook(snapshot, fixture);
+    fireEvent.click(screen.getByText('Full-mode advanced plays'));
+    const substitution = screen.getByRole('group', { name: 'Substitution' });
+    fireEvent.change(within(substitution).getByLabelText('Incoming'), { target: { value: 'bench-home' } });
+    fireEvent.click(within(substitution).getByRole('button', { name: 'Review substitution' }));
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Review substitution' })).getByRole('button', { name: 'Confirm action' }));
+    await waitFor(() => expect(fixture.client.resolveAppBuild).toHaveBeenCalledTimes(1));
+
+    (fixture.client.load as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ...snapshot,
+      bases: {
+        ...snapshot.bases,
+        first: snapshot.bases.first ? { ...snapshot.bases.first, reachedOnEventId: 'event-7-other' } : null
+      }
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh authoritative scorebook' }));
+    await waitFor(() => expect(fixture.client.load).toHaveBeenCalledTimes(1));
+    await act(async () => finishBuild?.(appBuild));
+
+    expect(await screen.findByText(/substitution review expired.*live base state changed/i)).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'Review substitution' })).not.toBeInTheDocument();
+    expect(fixture.createCommand).not.toHaveBeenCalled();
+    expect(fixture.submitCommand).not.toHaveBeenCalled();
+    expect(fixture.client.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('ignores retained left-on-base placements for a between-innings substitution', () => {
+    const baseSnapshot = buildSnapshot();
+    const snapshot = buildSnapshot({
+      inning: { ...baseSnapshot.inning, outs: 3 },
+      bases: {
+        first: {
+          playerId: 'bench-home',
+          name: 'Taylor Gray',
+          number: '15',
+          responsiblePitcherId: 'pitcher-1',
+          courtesyForPlayerId: null,
+          reachedOnEventId: 'event-6'
+        },
+        second: null,
+        third: null
+      }
+    });
+    renderScorebook(snapshot, createClient(snapshot));
+    fireEvent.click(screen.getByText('Full-mode advanced plays'));
+
+    const substitution = screen.getByRole('group', { name: 'Substitution' });
+    expect(within(within(substitution).getByLabelText('Incoming')).getByRole('option', { name: '#15 Taylor Gray' })).toBeInTheDocument();
+    fireEvent.change(within(substitution).getByLabelText('Incoming'), { target: { value: 'bench-home' } });
+    fireEvent.click(within(substitution).getByRole('button', { name: 'Review substitution' }));
+    expect(screen.getByRole('dialog', { name: 'Review substitution' })).not.toHaveTextContent(/base transfer/i);
+  });
+
+  it('discloses the same live-base transfer when the verified starter re-enters', async () => {
+    const baseSnapshot = buildSnapshot();
+    const snapshot = buildSnapshot({
+      bases: {
+        first: {
+          playerId: 'bench-home',
+          name: 'Taylor Gray',
+          number: '15',
+          responsiblePitcherId: 'pitcher-1',
+          courtesyForPlayerId: null,
+          reachedOnEventId: 'event-6'
+        },
+        second: null,
+        third: null
+      },
+      lineups: {
+        away: baseSnapshot.lineups.away,
+        home: [
+          {
+            playerId: 'bench-home',
+            name: 'Taylor Gray',
+            number: '15',
+            slot: 1,
+            active: true,
+            starterPlayerId: 'batter-1',
+            starterReentriesUsed: 0,
+            substitutions: ['bench-home']
+          },
+          baseSnapshot.lineups.home[1]!
+        ]
+      },
+      defense: {
+        ...baseSnapshot.defense,
+        home: { P: { playerId: 'bench-home', name: 'Taylor Gray', number: '15' } }
+      }
+    });
+    const fixture = createClient(snapshot);
+    renderScorebook(snapshot, fixture);
+    fireEvent.click(screen.getByText('Full-mode advanced plays'));
+
+    const substitution = screen.getByRole('group', { name: 'Substitution' });
+    fireEvent.click(within(substitution).getByRole('button', { name: 'Review starter re-entry' }));
+    const review = screen.getByRole('dialog', { name: 'Review starter re-entry' });
+    expect(review).toHaveTextContent(/first base transfer/i);
+    expect(review).toHaveTextContent(/#15 Taylor Gray.*#12 Avery Carter/i);
+    fireEvent.click(within(review).getByRole('button', { name: 'Confirm action' }));
+    await waitFor(() => expect(fixture.submitCommand).toHaveBeenCalledTimes(1));
+
+    expect(fixture.createCommand.mock.calls[0]![0].payload).toEqual({
+      side: 'home',
+      battingSlot: 1,
+      starterPlayerId: 'batter-1',
+      replacedPlayerId: 'bench-home'
+    });
   });
 
   it('re-enters the verified starter and restores the defensive assignment through a reducer-accepted command', async () => {

@@ -916,8 +916,15 @@ function applyMoves(
   });
 
   const playEndsHalf = state.inning.outs + outsOnPlay === 3;
+  const possibleThirdOuts = moves.filter((move) => move.to === 'out');
+  // Move arrays have stable serialization but no chronological meaning. Keep
+  // countsRun as the scorer's explicit timing judgment and reject it only when
+  // every possible third out necessarily cancels the run. Auditing the exact
+  // third out would require a future versioned payload field, never array order.
   const thirdOutCancelsRuns =
-    playEndsHalf && moves.some((move) => move.to === 'out' && (move.outKind === 'force' || move.outKind === 'batter_runner'));
+    playEndsHalf &&
+    possibleThirdOuts.length > 0 &&
+    possibleThirdOuts.every((move) => move.from === 'batter' || move.outKind === 'force' || move.outKind === 'batter_runner');
   let runs = 0;
   moves.forEach((move) => {
     if (move.to === 'out') return;
@@ -931,7 +938,7 @@ function applyMoves(
       if (thirdOutCancelsRuns && move.countsRun !== false) {
         throw new DiamondDomainError(
           'run-cannot-count',
-          'A run cannot count when the third out is a force out or the batter-runner is retired before first.'
+          'A run cannot count when every possible third out is a force out or retires the batter before first.'
         );
       }
       if (move.countsRun !== false) runs += 1;
@@ -984,6 +991,29 @@ function replaceDefensePlayer(
   return next;
 }
 
+function transferLiveSubstitutedRunner(
+  state: DiamondGameState,
+  side: DiamondSide,
+  outgoingPlayerId: string,
+  incomingPlayerId: string
+): DiamondGameState['bases'] {
+  const liveBattingHalf =
+    side === getBattingSide(state) && state.inning.outs < 3 && state.halfInningEnd === null && getDiamondFinalizationReason(state) === null;
+  if (!liveBattingHalf) return state.bases;
+
+  const incomingBase = BASES.find((base) => state.bases[base]?.runnerId === incomingPlayerId);
+  if (incomingBase) {
+    throw new DiamondDomainError('incoming-runner-on-base', 'The incoming substitute is already occupying a base.');
+  }
+  const outgoingBase = BASES.find((base) => state.bases[base]?.runnerId === outgoingPlayerId);
+  if (!outgoingBase) return state.bases;
+  const placement = state.bases[outgoingBase]!;
+  return {
+    ...state.bases,
+    [outgoingBase]: { ...placement, runnerId: incomingPlayerId }
+  };
+}
+
 function reduceSubstitution(
   state: DiamondGameState,
   payload: DiamondCommandPayloadMap['substitute'] | DiamondCommandPayloadMap['re_enter'],
@@ -1006,6 +1036,9 @@ function reduceSubstitution(
     : (payload as DiamondCommandPayloadMap['substitute']).incomingPlayerId;
   requireId(outgoingPlayerId, 'outgoingPlayerId');
   requireId(incomingPlayerId, 'incomingPlayerId');
+  if (outgoingPlayerId === incomingPlayerId) {
+    throw new DiamondDomainError('substitution-no-op', 'The incoming and outgoing players must be different.');
+  }
   if (slot.activePlayerId !== outgoingPlayerId) {
     throw new DiamondDomainError('substitution-mismatch', 'The outgoing player is not active in that batting slot.');
   }
@@ -1057,8 +1090,10 @@ function reduceSubstitution(
     starterReentriesUsed: slot.starterReentriesUsed + (reentry ? 1 : 0),
     substitutions: [...slot.substitutions, incomingPlayerId]
   };
+  const bases = transferLiveSubstitutedRunner(state, side, outgoingPlayerId, incomingPlayerId);
   return {
     ...state,
+    bases,
     lineups: {
       ...state.lineups,
       [side]: {

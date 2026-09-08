@@ -83,6 +83,7 @@ type Notice = {
   message: string;
 };
 
+type DiamondBase = 'first' | 'second' | 'third';
 type RunnerDestination = 'stay' | 'first' | 'second' | 'third' | 'home' | 'out';
 type RunnerMoveDraft = {
   key: string;
@@ -118,6 +119,20 @@ type ActiveDefenseReviewSource = {
   sourceDefenseFingerprint: string;
   sourcePersonnelFingerprint: string;
 };
+type SubstitutionCommandType = 'substitute' | 're_enter';
+type SubstitutionReviewSource = {
+  commandType: SubstitutionCommandType;
+  side: DiamondSide;
+  battingSlot: number;
+  outgoingPlayerId: string;
+  incomingPlayerId: string;
+  sourceRevision: number;
+  sourceInstanceId: string;
+  sourceLeaseId: string;
+  authenticatedUid: string;
+  sourceBaseFingerprint: string | null;
+  transferBase: DiamondBase | null;
+};
 
 type PendingPlay = {
   source: 'tap' | 'voice';
@@ -141,6 +156,7 @@ type PendingPlay = {
   pitcherId?: string;
   correction?: { targetEventId: string; reason: string };
   activeDefenseSource?: ActiveDefenseReviewSource;
+  substitutionSource?: SubstitutionReviewSource;
 };
 
 type PendingVoiceProposal = {
@@ -315,6 +331,7 @@ const outKindOptions: Array<{ value: DiamondOutKind; label: string }> = [
 ];
 
 const defensivePositions = ['P', 'C', '1B', '2B', '3B', 'SS', 'LF', 'LCF', 'CF', 'RCF', 'RF'] as const;
+const diamondBases: DiamondBase[] = ['first', 'second', 'third'];
 const diamondCoverageFamilies = ['batting', 'baserunning', 'pitching', 'fielding', 'situational', 'pitches', 'sensors'] as const;
 const minimumVoiceProposalConfidence = 0.75;
 
@@ -460,6 +477,159 @@ function isOpenActiveHalf(snapshot: DiamondScorebookSnapshot) {
     !snapshot.gameEndDecision &&
     !hasAutomaticHomeGameEnding(snapshot)
   );
+}
+
+function battingSideForSnapshot(snapshot: DiamondScorebookSnapshot): DiamondSide {
+  return snapshot.inning.half === 'top' ? 'away' : 'home';
+}
+
+function liveSubstitutionPlacements(snapshot: DiamondScorebookSnapshot, side: DiamondSide) {
+  if (!isOpenActiveHalf(snapshot) || battingSideForSnapshot(snapshot) !== side) return [];
+  return diamondBases.flatMap((base) => {
+    const runner = snapshot.bases[base];
+    return runner ? [{ base, runner }] : [];
+  });
+}
+
+function liveSubstitutionBaseFingerprint(snapshot: DiamondScorebookSnapshot, side: DiamondSide) {
+  if (!isOpenActiveHalf(snapshot) || battingSideForSnapshot(snapshot) !== side) return null;
+  return JSON.stringify(
+    diamondBases.map((base) => {
+      const runner = snapshot.bases[base];
+      return {
+        base,
+        runnerId: runner?.playerId || null,
+        chargedToPitcherId: runner?.responsiblePitcherId || null,
+        courtesyForPlayerId: runner?.courtesyForPlayerId || null,
+        reachedOnEventId: runner?.reachedOnEventId || null
+      };
+    })
+  );
+}
+
+function readSubstitutionParticipants(type: SubstitutionCommandType, payload: DiamondJsonObject) {
+  const side = payload.side;
+  const battingSlot = payload.battingSlot;
+  const outgoingPlayerId = type === 'substitute' ? payload.outgoingPlayerId : payload.replacedPlayerId;
+  const incomingPlayerId = type === 'substitute' ? payload.incomingPlayerId : payload.starterPlayerId;
+  if (
+    (side !== 'home' && side !== 'away') ||
+    typeof battingSlot !== 'number' ||
+    !Number.isInteger(battingSlot) ||
+    battingSlot < 1 ||
+    typeof outgoingPlayerId !== 'string' ||
+    !outgoingPlayerId ||
+    typeof incomingPlayerId !== 'string' ||
+    !incomingPlayerId ||
+    incomingPlayerId === outgoingPlayerId
+  ) {
+    return null;
+  }
+  const normalizedSide: DiamondSide = side;
+  return { side: normalizedSide, battingSlot, outgoingPlayerId, incomingPlayerId };
+}
+
+function buildSubstitutionReviewSource(
+  snapshot: DiamondScorebookSnapshot,
+  type: SubstitutionCommandType,
+  payload: DiamondJsonObject,
+  authenticatedUid: string | null | undefined
+): SubstitutionReviewSource | null {
+  if (!snapshot.authoritative || snapshot.lifecycle !== 'active') return null;
+  const identity = getQueueIdentity(snapshot, authenticatedUid);
+  const participants = readSubstitutionParticipants(type, payload);
+  if (!identity || !participants) return null;
+  const entry = snapshot.lineups[participants.side].find((candidate) => candidate.slot === participants.battingSlot);
+  if (!entry || entry.playerId !== participants.outgoingPlayerId) return null;
+  const livePlacements = liveSubstitutionPlacements(snapshot, participants.side);
+  if (livePlacements.some(({ runner }) => runner.playerId === participants.incomingPlayerId)) return null;
+  if (livePlacements.filter(({ runner }) => runner.playerId === participants.outgoingPlayerId).length > 1) return null;
+  if (type === 'substitute') {
+    if (
+      snapshot.lineups[participants.side].some((candidate) => candidate.playerId === participants.incomingPlayerId) ||
+      !snapshot.availablePlayers[participants.side].some((candidate) => candidate.playerId === participants.incomingPlayerId)
+    ) {
+      return null;
+    }
+  } else {
+    const profile = resolvePinnedRulesProfile(snapshot);
+    const reentryAvailable = Boolean(
+      entry.starterPlayerId === participants.incomingPlayerId &&
+      entry.starterPlayerId !== entry.playerId &&
+      !snapshot.lineups[participants.side].some(
+        (candidate) => candidate.slot !== entry.slot && candidate.playerId === participants.incomingPlayerId
+      ) &&
+      (profile?.freeSubstitution || (entry.starterReentriesUsed || 0) < (profile?.starterReentryLimit || 0))
+    );
+    if (!reentryAvailable) return null;
+  }
+  return {
+    commandType: type,
+    ...participants,
+    sourceRevision: snapshot.revision,
+    sourceInstanceId: snapshot.instanceId,
+    sourceLeaseId: identity.leaseId,
+    authenticatedUid: identity.authenticatedUid,
+    sourceBaseFingerprint: liveSubstitutionBaseFingerprint(snapshot, participants.side),
+    transferBase: livePlacements.find(({ runner }) => runner.playerId === participants.outgoingPlayerId)?.base || null
+  };
+}
+
+function substitutionSourceMatchesSnapshot(
+  snapshot: DiamondScorebookSnapshot | null,
+  source: SubstitutionReviewSource,
+  authenticatedUid: string | null | undefined
+) {
+  if (!snapshot) return false;
+  const payload: DiamondJsonObject =
+    source.commandType === 'substitute'
+      ? {
+          side: source.side,
+          battingSlot: source.battingSlot,
+          outgoingPlayerId: source.outgoingPlayerId,
+          incomingPlayerId: source.incomingPlayerId
+        }
+      : {
+          side: source.side,
+          battingSlot: source.battingSlot,
+          starterPlayerId: source.incomingPlayerId,
+          replacedPlayerId: source.outgoingPlayerId
+        };
+  const current = buildSubstitutionReviewSource(snapshot, source.commandType, payload, authenticatedUid);
+  return Boolean(
+    current &&
+    current.sourceRevision === source.sourceRevision &&
+    current.sourceInstanceId === source.sourceInstanceId &&
+    current.sourceLeaseId === source.sourceLeaseId &&
+    current.authenticatedUid === source.authenticatedUid &&
+    current.sourceBaseFingerprint === source.sourceBaseFingerprint &&
+    current.transferBase === source.transferBase
+  );
+}
+
+function validateSubstitutionPayload(payload: DiamondJsonObject, source: SubstitutionReviewSource) {
+  const participants = readSubstitutionParticipants(source.commandType, payload);
+  if (
+    !participants ||
+    participants.side !== source.side ||
+    participants.battingSlot !== source.battingSlot ||
+    participants.outgoingPlayerId !== source.outgoingPlayerId ||
+    participants.incomingPlayerId !== source.incomingPlayerId
+  ) {
+    return 'The reviewed substitution no longer matches the exact players and batting slot.';
+  }
+  return '';
+}
+
+function validateSubstitutionPendingReview(pending: PendingPlay) {
+  if (!pending.substitutionSource) return '';
+  try {
+    return validateSubstitutionPayload(parseEditableProposalPayload(pending), pending.substitutionSource);
+  } catch (error) {
+    return error instanceof SyntaxError
+      ? 'The proposed payload is not valid JSON.'
+      : describeError(error, 'The proposed substitution is invalid.');
+  }
 }
 
 function activeDefensePlayers(snapshot: DiamondScorebookSnapshot, side: DiamondSide) {
@@ -1022,11 +1192,13 @@ function validateRunnerReview(pending: PendingPlay, currentOuts: number) {
   if (pending.runnerMoves.some((move) => move.to === 'home' && typeof move.countsRun !== 'boolean')) {
     return 'Choose whether every runner crossing home counts.';
   }
-  const thirdOutCancelsRuns =
+  const outMoves = pending.runnerMoves.filter((move) => move.to === 'out');
+  const thirdOutCancellationIsProvable =
     currentOuts + pending.outsOnPlay === 3 &&
-    pending.runnerMoves.some((move) => move.to === 'out' && (move.outKind === 'force' || move.outKind === 'batter_runner'));
-  if (thirdOutCancelsRuns && pending.runnerMoves.some((move) => move.to === 'home' && move.countsRun !== false)) {
-    return 'A run cannot count when the third out is a force or the batter-runner is retired before first.';
+    outMoves.length > 0 &&
+    outMoves.every((move) => move.from === 'batter' || move.outKind === 'force' || move.outKind === 'batter_runner');
+  if (thirdOutCancellationIsProvable && pending.runnerMoves.some((move) => move.to === 'home' && move.countsRun !== false)) {
+    return 'A run cannot count when every possible third out is a force or retires the batter-runner before first.';
   }
   return '';
 }
@@ -1245,6 +1417,18 @@ export function DiamondScorebook({
   }, [auth.user?.uid, busy, pendingPlay, queueCount, snapshot]);
 
   useEffect(() => {
+    const source = pendingPlay?.substitutionSource;
+    if (!source || busy || confirmingPendingRef.current) return;
+    if (queueCount === 0 && substitutionSourceMatchesSnapshot(snapshot, source, auth.user?.uid)) return;
+    setPendingPlay(null);
+    setNotice({
+      tone: 'error',
+      message:
+        'This substitution review expired because the revision or live base state changed, the scoring lease moved, or another command entered the queue. Review the current lineup again.'
+    });
+  }, [auth.user?.uid, busy, pendingPlay, queueCount, snapshot]);
+
+  useEffect(() => {
     setRecapState(null);
     setPublishRecapOpen(false);
     setPrivateHistory(null);
@@ -1437,7 +1621,7 @@ export function DiamondScorebook({
       type: DiamondCommandType,
       payload: DiamondJsonObject,
       successMessage: string,
-      options: { allowWhenFinal?: boolean } = {}
+      options: { allowWhenFinal?: boolean; validateCurrentState?: () => boolean; staleMessage?: string } = {}
     ): Promise<CommandSubmissionResult> => {
       if (!snapshot || busy || reconciling) return false;
       if (!snapshot.lease.canScore) {
@@ -1473,11 +1657,12 @@ export function DiamondScorebook({
           currentIdentity.instanceId !== scoringIdentity.instanceId ||
           currentIdentity.leaseId !== scoringIdentity.leaseId ||
           currentSnapshot.revision !== snapshot.revision ||
-          queueCountRef.current !== queueCount
+          queueCountRef.current !== queueCount ||
+          (options.validateCurrentState && !options.validateCurrentState())
         ) {
           throw new DiamondScorebookError(
             'conflict',
-            'The signed-in scorer, scoring lease, game instance, or revision changed while preparing this command.'
+            options.staleMessage || 'The signed-in scorer, scoring lease, game instance, or revision changed while preparing this command.'
           );
         }
         command = buildCommand(type, payload, appBuild);
@@ -1664,17 +1849,47 @@ export function DiamondScorebook({
     );
   };
 
+  const bindSubstitutionReview = (sourceSnapshot: DiamondScorebookSnapshot, pending: PendingPlay) => {
+    if (pending.type !== 'substitute' && pending.type !== 're_enter') return pending;
+    if (queueCountRef.current > 0) return null;
+    const source = buildSubstitutionReviewSource(sourceSnapshot, pending.type, pending.payload, authenticatedUidRef.current);
+    return source ? { ...pending, sourceRevision: sourceSnapshot.revision, substitutionSource: source } : null;
+  };
+
+  const reviewStructuredCommand = (type: DiamondCommandType, label: string, payload: DiamondJsonObject) => {
+    if (!snapshot) return;
+    const pending = bindSubstitutionReview(snapshot, buildStructuredPending(type, label, payload));
+    if (!pending) {
+      setNotice({
+        tone: 'error',
+        message: 'Refresh the authoritative lineup and live bases before reviewing this substitution.'
+      });
+      return;
+    }
+    setPendingPlay(pending);
+  };
+
   const confirmPendingPlay = async () => {
     if (!snapshot || !pendingPlay || confirmingPendingRef.current) return;
     confirmingPendingRef.current = true;
     try {
       const activeDefenseSource = pendingPlay.activeDefenseSource;
+      const substitutionSource = pendingPlay.substitutionSource;
       if (activeDefenseSource && (queueCount > 0 || !activeDefenseSourceMatchesSnapshot(snapshot, activeDefenseSource, auth.user?.uid))) {
         setPendingPlay(null);
         setNotice({
           tone: 'error',
           message:
             'This defensive alignment review expired because the revision or scoring lease changed, or another command entered the queue. Review the current defense again.'
+        });
+        return;
+      }
+      if (substitutionSource && (queueCount > 0 || !substitutionSourceMatchesSnapshot(snapshot, substitutionSource, auth.user?.uid))) {
+        setPendingPlay(null);
+        setNotice({
+          tone: 'error',
+          message:
+            'This substitution review expired because the revision or live base state changed, the scoring lease moved, or another command entered the queue. Review the current lineup again.'
         });
         return;
       }
@@ -1687,6 +1902,11 @@ export function DiamondScorebook({
           tone: 'error',
           message: 'This AI draft is stale because the scorebook revision changed. Interpret the play again from the current field state.'
         });
+        return;
+      }
+      const substitutionValidationError = validateSubstitutionPendingReview(pendingPlay);
+      if (substitutionValidationError) {
+        setNotice({ tone: 'error', message: substitutionValidationError });
         return;
       }
       const validationError = validateRunnerReview(pendingPlay, snapshot.inning.outs);
@@ -1716,12 +1936,35 @@ export function DiamondScorebook({
             },
             `${pendingPlay.label} appended as a correction.`
           )
-        : await submitCommand(pendingPlay.type, payload, `${pendingPlay.label} recorded.`);
+        : await submitCommand(pendingPlay.type, payload, `${pendingPlay.label} recorded.`, {
+            ...(substitutionSource
+              ? {
+                  validateCurrentState: () =>
+                    queueCountRef.current === 0 &&
+                    substitutionSourceMatchesSnapshot(snapshotRef.current, substitutionSource, authenticatedUidRef.current),
+                  staleMessage:
+                    'This substitution review expired because the revision, live base state, signed-in scorer, or scoring lease changed.'
+                }
+              : {})
+          });
       if (submitted === 'queued' && activeDefenseSource) {
         setActiveDefenseDrafts((current) => ({
           ...current,
           [activeDefenseSource.side]: activeDefenseDraftForSnapshot(snapshot, activeDefenseSource.side)
         }));
+      }
+      if (
+        !submitted &&
+        substitutionSource &&
+        !substitutionSourceMatchesSnapshot(snapshotRef.current, substitutionSource, authenticatedUidRef.current)
+      ) {
+        setPendingPlay(null);
+        setNotice({
+          tone: 'error',
+          message:
+            'This substitution review expired because the revision or live base state changed, the scoring lease moved, or another command entered the queue. Review the current lineup again.'
+        });
+        return;
       }
       if (submitted) setPendingPlay(null);
     } catch (error) {
@@ -1924,7 +2167,18 @@ export function DiamondScorebook({
         rejectStaleProposal();
         return;
       }
-      setPendingPlay(buildPendingVoicePlay(requestSnapshot, proposal));
+      const pending = bindSubstitutionReview(requestSnapshot, buildPendingVoicePlay(requestSnapshot, proposal));
+      if (!pending) {
+        setVoiceQuestions([]);
+        setVoiceConfidence(null);
+        setNotice({
+          tone: 'error',
+          message:
+            'The proposed substitution does not match the authoritative lineup or live bases. Review the current field and try again.'
+        });
+        return;
+      }
+      setPendingPlay(pending);
       setVoiceDraft('');
       setVoiceQuestions([]);
       setVoiceConfidence(null);
@@ -2922,7 +3176,7 @@ export function DiamondScorebook({
                 historyLoaded={privateHistory?.headComplete === true}
                 historyLoading={loadingPrivateHistory || loadingOlderPrivateHistory}
                 onLoadHistory={() => void loadPrivateHistory(false)}
-                onReview={(type, label, payload) => setPendingPlay(buildStructuredPending(type, label, payload))}
+                onReview={reviewStructuredCommand}
               />
             ) : null}
           </section>
@@ -4319,15 +4573,22 @@ function AdvancedScoringPanel({
     ? (Object.entries(snapshot.defense[subSide]).find(([, player]) => player?.playerId === subEntry.playerId)?.[0] as
         DiamondDefensivePosition | undefined)
     : undefined;
+  const liveSubstitutionRunnerIds = new Set(liveSubstitutionPlacements(snapshot, subSide).map(({ runner }) => runner.playerId));
   const reentryAvailable = Boolean(
     subEntry &&
     subEntry.starterPlayerId &&
     subEntry.starterPlayerId !== subEntry.playerId &&
+    !liveSubstitutionRunnerIds.has(subEntry.starterPlayerId) &&
+    !subLineup.some((entry) => entry.slot !== subEntry.slot && entry.playerId === subEntry.starterPlayerId) &&
     (rulesProfile?.freeSubstitution || (subEntry.starterReentriesUsed || 0) < (rulesProfile?.starterReentryLimit || 0))
   );
   const subCandidates = snapshot.availablePlayers[subSide].filter(
-    (player) => !subLineup.some((entry) => entry.playerId === player.playerId) && player.playerId !== subEntry?.playerId
+    (player) =>
+      !subLineup.some((entry) => entry.playerId === player.playerId) &&
+      player.playerId !== subEntry?.playerId &&
+      !liveSubstitutionRunnerIds.has(player.playerId)
   );
+  const incomingSubCandidate = subCandidates.find((player) => player.playerId === incomingPlayerId) || null;
   const dpLineup = snapshot.lineups[dpSide];
   const dpCandidates = [...snapshot.availablePlayers[dpSide], ...dpLineup].filter(
     (player, index, all) => all.findIndex((candidate) => candidate.playerId === player.playerId) === index
@@ -4632,14 +4893,15 @@ function AdvancedScoringPanel({
           <button
             type="button"
             className="ghost-button w-full justify-center text-xs"
-            disabled={disabled || snapshot.lifecycle !== 'active' || !subEntry || !incomingPlayerId}
+            disabled={disabled || snapshot.lifecycle !== 'active' || !subEntry || !incomingSubCandidate}
             onClick={() =>
               subEntry &&
+              incomingSubCandidate &&
               onReview('substitute', 'substitution', {
                 side: subSide,
                 battingSlot: subEntry.slot,
                 outgoingPlayerId: subEntry.playerId,
-                incomingPlayerId,
+                incomingPlayerId: incomingSubCandidate.playerId,
                 ...(subDefensivePosition ? { defensivePosition: subDefensivePosition } : {})
               })
             }
@@ -5254,7 +5516,7 @@ function PlayReviewModal({
   onClose: () => void;
   onConfirm: () => void;
 }) {
-  const validationError = validateRunnerReview(pending, snapshot.inning.outs);
+  const validationError = validateRunnerReview(pending, snapshot.inning.outs) || validateSubstitutionPendingReview(pending);
   const activeDefenseName = pending.activeDefenseSource
     ? pending.activeDefenseSource.side === 'home'
       ? snapshot.homeName
@@ -5269,6 +5531,13 @@ function PlayReviewModal({
           return typeof position === 'string' && typeof playerId === 'string' ? [{ position, playerId }] : [];
         })
       : [];
+  const substitutionTransfer = pending.substitutionSource?.transferBase
+    ? {
+        base: pending.substitutionSource.transferBase,
+        outgoing: snapshotSidePlayer(snapshot, pending.substitutionSource.side, pending.substitutionSource.outgoingPlayerId),
+        incoming: snapshotSidePlayer(snapshot, pending.substitutionSource.side, pending.substitutionSource.incomingPlayerId)
+      }
+    : null;
   const setOutcome = (result: string) => {
     const option = outcomeOptions.find((candidate) => candidate.result === result);
     if (!option) return;
@@ -5606,6 +5875,23 @@ function PlayReviewModal({
             </dl>
           </div>
         )}
+
+        {substitutionTransfer ? (
+          <div className="mt-3 rounded-xl border border-violet-200 bg-violet-50 p-3" aria-label="Derived live-base transfer">
+            <div className="text-xs font-black tracking-wide text-violet-800 uppercase">
+              {`${substitutionTransfer.base[0]!.toUpperCase()}${substitutionTransfer.base.slice(1)}`} base transfer
+            </div>
+            <p className="mt-2 text-sm font-black text-violet-950">
+              {substitutionTransfer.outgoing ? playerLabel(substitutionTransfer.outgoing) : pending.substitutionSource!.outgoingPlayerId}
+              {' → '}
+              {substitutionTransfer.incoming ? playerLabel(substitutionTransfer.incoming) : pending.substitutionSource!.incomingPlayerId}
+            </p>
+            <p className="mt-2 text-xs leading-5 font-semibold text-violet-900">
+              The incoming player takes this live base. Pitcher responsibility, courtesy-runner identity, and reach-event evidence remain
+              attached to the placement.
+            </p>
+          </div>
+        ) : null}
 
         {validationError ? (
           <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-bold text-rose-900" role="alert">
