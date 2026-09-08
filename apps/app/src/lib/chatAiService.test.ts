@@ -237,6 +237,36 @@ describe('sendAllPlaysChatAnswer', () => {
     expect(prompt).toContain('Casey Public doubled');
     expect(prompt).toContain('"legacyGameCount":1');
     expect(prompt).toContain('"diamondGameCount":1');
+    expect(chatMocks.getGames).toHaveBeenCalledWith('team-1', { requireCompleteSharedGames: true });
+  });
+
+  it('fails closed before AI or legacy stats when the complete shared-game inventory is unavailable', async () => {
+    chatMocks.getGames.mockRejectedValue(Object.assign(
+      new Error('Unable to load a complete shared-game inventory.'),
+      { code: 'game-inventory-cache-only', complete: false, absenceConfirmed: false }
+    ));
+    const { sendAllPlaysChatAnswer } = await import('./chatAiService');
+
+    await expect(sendAllPlaysChatAnswer({
+      teamId: 'team-1',
+      team: { id: 'team-1', name: 'Mixed Bears' },
+      user,
+      question: 'Who is the stats leader?',
+      selectedConversation: null,
+      selectedConversationId: 'team',
+      selectedRecipientTarget: 'full_team',
+      selectedRecipientIds: []
+    })).rejects.toMatchObject({
+      code: 'game-inventory-cache-only',
+      complete: false,
+      absenceConfirmed: false
+    });
+
+    expect(chatMocks.getGames).toHaveBeenCalledWith('team-1', { requireCompleteSharedGames: true });
+    expect(chatMocks.getAggregatedStatsForGames).not.toHaveBeenCalled();
+    expect(gameReportMocks.loadGameReportSections).not.toHaveBeenCalled();
+    expect(aiMocks.generateContent).not.toHaveBeenCalled();
+    expect(chatMocks.postChatMessage).not.toHaveBeenCalled();
   });
 
   it('retries an incomplete Diamond replay once before answering', async () => {

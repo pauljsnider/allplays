@@ -38,10 +38,10 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { renderHeader, renderFooter, getUrlParams, escapeHtml, shareOrCopy } from './js/utils.js?v=443373';
-        import { checkAuth } from './js/auth.js?v=4433201';
-        import { getAthleteProfile } from './js/db.js?v=4433197';
-        import { buildAthleteProfileShareUrl } from './js/athlete-profile-utils.js?v=3';
+        import { renderHeader, renderFooter, getUrlParams, escapeHtml, shareOrCopy } from './js/utils.js?v=443374';
+        import { checkAuth } from './js/auth.js?v=4433202';
+        import { getAthleteProfile } from './js/db.js?v=4433198';
+        import { buildAthleteProfileShareUrl } from './js/athlete-profile-utils.js?v=4';
         import { createAthleteProfileAuthLoader } from './js/athlete-profile-auth.js?v=136';
 
         const params = getUrlParams();
@@ -164,6 +164,8 @@
                 const bio = profile.bio || {};
                 const summary = profile.careerSummary || {};
                 const gameClips = Array.isArray(profile.gameClips) ? profile.gameClips : [];
+                const totalMinutesLabel = summary.playingTimeComplete === false ? 'Unavailable' : (summary.totalMinutes || 0);
+                const formatSeasonMinutes = (season) => season.playingTimeComplete === false ? 'Minutes unavailable' : `${((season.totalTimeMs || 0) / 60000).toFixed(1)} minutes`;
 
                 content.innerHTML = `
                     <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-6">
@@ -204,7 +206,7 @@
                             </div>
                             <div class="rounded-2xl bg-indigo-50 border border-indigo-100 p-5">
                                 <div class="text-xs font-semibold uppercase tracking-wide text-indigo-700">Total Minutes</div>
-                                <div class="text-4xl font-bold text-indigo-900 mt-2">${escapeHtml(summary.totalMinutes || 0)}</div>
+                                <div class="text-4xl font-bold text-indigo-900 mt-2">${escapeHtml(totalMinutesLabel)}</div>
                             </div>
                         </div>
                         <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">${renderStatGrid(summary)}</div>
@@ -217,7 +219,7 @@
                                 <div class="rounded-2xl border border-slate-200 p-4">
                                     <div class="font-semibold text-slate-900">${escapeHtml(season.teamName || 'Team')}</div>
                                     <div class="text-sm text-slate-500 mt-1">${escapeHtml(season.playerName || '')}</div>
-                                    <div class="text-xs text-slate-500 mt-3">${escapeHtml(season.gamesPlayed || 0)} games · ${escapeHtml(((season.totalTimeMs || 0) / 60000).toFixed(1))} minutes</div>
+                                    <div class="text-xs text-slate-500 mt-3">${escapeHtml(season.gamesPlayed || 0)} games · ${escapeHtml(formatSeasonMinutes(season))}</div>
                                 </div>
                             `).join('')}
                         </div>

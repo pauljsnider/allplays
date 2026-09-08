@@ -120,6 +120,24 @@ export function getGenerativeModel() {
 }
 `;
 
+const DIAMOND_LEGACY_GAME_CONTEXT_STUB = `
+export async function loadCompleteDiamondPublicPlayerStats() { return { players: [], absenceConfirmed: true, complete: true, visibility: 'public' }; }
+export async function loadCompleteGameStatsForAi() { return { classicTotalsByPlayer: {}, diamondPlayersByGame: {}, evidence: { complete: true } }; }
+export async function loadCompleteGameEventsForAi() { return { eventsByGame: {}, evidenceByGame: {}, evidence: { complete: true } }; }
+export async function loadCompleteAiGameContext() {
+    return {
+        stats: { classicTotalsByPlayer: {}, diamondPlayersByGame: {}, evidence: { complete: true } },
+        events: { eventsByGame: {}, evidenceByGame: {}, evidence: { complete: true } },
+        recentGameIds: [], aggregatedStatsByPlayer: {}, diamondPlayerStatsByGame: {}, recentEventsByGame: {},
+        evidence: { complete: true }
+    };
+}
+export async function loadCompletePlayerStatsForGames({ games = [], playerId, loadClassicPlayerStats }) {
+    return Promise.all(games.map(async (game) => ({ game, stats: await loadClassicPlayerStats('team-1', game.id, playerId), evidence: { complete: true, source: 'legacy-classic' } })));
+}
+export function assertCompletePlayerStatEvidence() { return true; }
+`;
+
 const ROSTER_PROFILE_FIELDS_STUB = `
 export function buildFullRosterCsvTemplate() {
     return 'Name,Number\\n';
@@ -1060,6 +1078,7 @@ async function routeCommonPageStubs(page) {
     await page.route(/\/js\/utils\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: UTILS_STUB }));
     await page.route(/\/js\/team-admin-banner\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: TEAM_ADMIN_BANNER_STUB }));
     await page.route(/\/js\/firebase\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_STUB }));
+    await page.route(/\/js\/diamond-legacy-game-context\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: DIAMOND_LEGACY_GAME_CONTEXT_STUB }));
     await page.route(/\/js\/vendor\/firebase-app\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_APP_STUB }));
     await page.route(/\/js\/vendor\/firebase-ai\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_AI_STUB }));
 }
@@ -1128,6 +1147,30 @@ test('team chat falls back to the team-wide channel when conversation listing is
     await expect(page.locator('#messages-container')).toContainText('Hello team');
     await expect(page.locator('#messages-container')).not.toContainText('Loading messages');
     await expect(page.locator('#send-error')).toBeHidden();
+    expect(pageErrors).toEqual([]);
+});
+
+test('team chat does not generate an answer from incomplete Diamond AI evidence', async ({ page, baseURL }) => {
+    const pageErrors = await collectPageErrors(page);
+    await routeCommonPageStubs(page);
+    await page.unroute(/\/js\/diamond-legacy-game-context\.js(?:\?v=\d+)?$/);
+    await page.route(/\/js\/diamond-legacy-game-context\.js(?:\?v=\d+)?$/, (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: DIAMOND_LEGACY_GAME_CONTEXT_STUB.replace(
+            'export async function loadCompleteAiGameContext() {',
+            "export async function loadCompleteAiGameContext() { throw new Error('Complete public Diamond evidence is unavailable.'); }\nexport async function unusedCompleteAiGameContext() {"
+        )
+    }));
+    await page.route(/\/js\/db\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: CHAT_DB_STUB }));
+
+    await page.goto(`${baseURL}/team-chat.html?teamId=team-1`, { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('#messages-container')).toContainText('Hello team');
+    await page.locator('#message-input').fill('@ALL PLAYS show me the stats');
+    await page.locator('#send-btn').click();
+
+    await expect(page.locator('#send-error')).toHaveText('ALL PLAYS could not answer. Please try again.');
+    await expect(page.locator('#messages-container')).not.toContainText('ALL PLAYS\n\n');
     expect(pageErrors).toEqual([]);
 });
 

@@ -445,10 +445,10 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getDelegatedTeamContext, getGame, getPlayers, getUnreadChatCounts, getUserProfile, updateGame, uploadStatSheetPhoto, deleteUploadedMediaObjects, setCompletedGamePlayerStats, getTeamStatsForGame, setCompletedGameTeamStats } from './js/db.js?v=4433197';
+        import { getTeam, getDelegatedTeamContext, getGame, getPlayers, getUnreadChatCounts, getUserProfile, updateGame, uploadStatSheetPhoto, deleteUploadedMediaObjects, setCompletedGamePlayerStats, getTeamStatsForGame, setCompletedGameTeamStats } from './js/db.js?v=4433198';
         import { generateGameInsights } from './js/post-game-insights.js?v=2';
-        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, escapeHtml, shareOrCopy } from './js/utils.js?v=443373';
-        import { checkAuth } from './js/auth.js?v=4433201';
+        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, escapeHtml, shareOrCopy } from './js/utils.js?v=443374';
+        import { checkAuth } from './js/auth.js?v=4433202';
         import { collection, deleteField, doc, functions, getDocs, httpsCallable, query, orderBy, runTransaction } from "./js/firebase.js?v=33";
         import { db } from './js/firebase.js?v=33';
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=443349';
@@ -1454,11 +1454,23 @@
             const textarea = document.getElementById('summary-textarea');
             const saveBtn = document.getElementById('summary-save-btn');
             const cancelBtn = document.getElementById('summary-cancel-btn');
-            const generateBtn = document.getElementById('summary-generate-btn');
+            let generateBtn = document.getElementById('summary-generate-btn');
             const summaryDiv = document.getElementById('game-summary');
 
             if (!admin || !editBtn || !status || !editor || !textarea || !saveBtn || !cancelBtn || !generateBtn || !summaryDiv) {
                 return;
+            }
+
+            const diamondGame = isDiamondV2Game(game);
+            if (diamondGame) {
+                const unboundGenerateBtn = generateBtn.cloneNode(true);
+                generateBtn.replaceWith(unboundGenerateBtn);
+                generateBtn = unboundGenerateBtn;
+                generateBtn.classList.add('hidden');
+                generateBtn.disabled = true;
+            } else {
+                generateBtn.classList.remove('hidden');
+                generateBtn.disabled = false;
             }
 
             if (!canEditSummary) {
@@ -1470,6 +1482,18 @@
 
             let generatedSummary = '';
             let isSavingSummary = false;
+
+            const blockLegacyAiSummaryForDiamond = () => {
+                if (!isDiamondV2Game(game)) return false;
+                generateBtn.classList.add('hidden');
+                generateBtn.disabled = true;
+                if (generatedSummary && textarea.value.trim() === generatedSummary) {
+                    textarea.value = game.summary || '';
+                }
+                generatedSummary = '';
+                status.textContent = 'Legacy AI summaries are unavailable for Diamond games. Use the published Diamond recap.';
+                return true;
+            };
 
             const openEditor = (auto = false) => {
                 if (!isAuthBoundActionCurrent(actionContext)) return;
@@ -1502,8 +1526,9 @@
                 openEditor(true);
             }
 
-            addAuthBoundEventListener(generateBtn, 'click', async () => {
-                if (!isAuthBoundActionCurrent(actionContext)) return;
+            if (!diamondGame) {
+                addAuthBoundEventListener(generateBtn, 'click', async () => {
+                if (!isAuthBoundActionCurrent(actionContext) || blockLegacyAiSummaryForDiamond()) return;
                 generateBtn.disabled = true;
                 status.textContent = 'Generating AI summary…';
 
@@ -1552,9 +1577,9 @@ Write the match report now:`;
                     const firebaseApp = getApp();
                     const ai = getAI(firebaseApp, { backend: new GoogleAIBackend() });
                     const model = getGenerativeModel(ai, { model: "gemini-2.5-flash" });
-                    if (!isAuthBoundActionCurrent(actionContext)) return;
+                    if (!isAuthBoundActionCurrent(actionContext) || blockLegacyAiSummaryForDiamond()) return;
                     const result = await model.generateContent(prompt);
-                    if (!isAuthBoundActionCurrent(actionContext)) return;
+                    if (!isAuthBoundActionCurrent(actionContext) || blockLegacyAiSummaryForDiamond()) return;
                     generatedSummary = result.response.text();
                     textarea.value = generatedSummary;
                     status.textContent = 'Summary added to text area. You can edit it before saving.';
@@ -1563,9 +1588,10 @@ Write the match report now:`;
                     console.error('AI summary error:', error);
                     status.textContent = `Error: ${error.message}`;
                 } finally {
-                    if (isAuthBoundActionCurrent(actionContext)) generateBtn.disabled = false;
+                    if (isAuthBoundActionCurrent(actionContext) && !isDiamondV2Game(game)) generateBtn.disabled = false;
                 }
-            }, actionContext);
+                }, actionContext);
+            }
 
             addAuthBoundEventListener(saveBtn, 'click', async () => {
                 if (!isAuthBoundActionCurrent(actionContext)) return;
@@ -1584,7 +1610,14 @@ Write the match report now:`;
                 status.textContent = 'Saving summary…';
                 try {
                     const finalSummary = summaryText || generatedSummary;
-                    if (!isAuthBoundActionCurrent(actionContext)) return;
+                    const hasLegacyGeneratedDraft = Boolean(generatedSummary);
+                    if (!isAuthBoundActionCurrent(actionContext) || (hasLegacyGeneratedDraft && blockLegacyAiSummaryForDiamond())) {
+                        if (isAuthBoundActionCurrent(actionContext)) {
+                            isSavingSummary = false;
+                            saveBtn.disabled = false;
+                        }
+                        return;
+                    }
                     await updateGame(teamId, gameId, { summary: finalSummary });
                     if (!isAuthBoundActionCurrent(actionContext)) return;
                     game.summary = finalSummary;
@@ -1864,7 +1897,7 @@ Write the match report now:`;
             if (!editBtn || !admin || !panel || !status || !fieldsEl || !saveBtn || !cancelBtn) return;
 
             const gameCompleted = game?.status === 'completed' || game?.liveStatus === 'completed';
-            if (!canEditStats || !gameCompleted || !Array.isArray(teamStatFields) || teamStatFields.length === 0) {
+            if (isDiamondV2Game(game) || !canEditStats || !gameCompleted || !Array.isArray(teamStatFields) || teamStatFields.length === 0) {
                 editBtn.classList.add('hidden');
                 admin.classList.add('hidden');
                 return;
@@ -1923,7 +1956,7 @@ Write the match report now:`;
                 status.textContent = 'Saving team stats…';
 
                 try {
-                    if (!isAuthBoundActionCurrent(actionContext)) return;
+                    if (!isAuthBoundActionCurrent(actionContext) || isDiamondV2Game(game)) return;
                     await setCompletedGameTeamStats(teamId, gameId, payload);
                     if (!isAuthBoundActionCurrent(actionContext)) return;
                     Object.keys(teamStats).forEach((key) => delete teamStats[key]);
@@ -1985,7 +2018,7 @@ Write the match report now:`;
             }
 
             const gameCompleted = game?.status === 'completed' || game?.liveStatus === 'completed';
-            if (!canEditStats || !gameCompleted || !Array.isArray(players) || players.length === 0) {
+            if (isDiamondV2Game(game) || !canEditStats || !gameCompleted || !Array.isArray(players) || players.length === 0) {
                 editBtn.classList.add('hidden');
                 admin.classList.add('hidden');
                 return;
@@ -2074,7 +2107,7 @@ Write the match report now:`;
                 status.textContent = 'Saving stats…';
 
                 try {
-                    if (!isAuthBoundActionCurrent(actionContext)) return;
+                    if (!isAuthBoundActionCurrent(actionContext) || isDiamondV2Game(game)) return;
                     await setCompletedGamePlayerStats(teamId, gameId, player.id, {
                         ...payload,
                         statTrackerConfig: resolvedConfig
@@ -2699,27 +2732,29 @@ Write the match report now:`;
                     renderTeamStatsSection({ game, teamStats, teamStatFields, teamStatPresentation });
                 }
                 rerenderTeamStats();
-                setupPostGameTeamStatEditor({
-                    teamId,
-                    gameId,
-                    game,
-                    teamStats,
-                    teamStatFields,
-                    rerenderTeamStats
-                });
+                if (!diamondGame) {
+                    setupPostGameTeamStatEditor({
+                        teamId,
+                        gameId,
+                        game,
+                        teamStats,
+                        teamStatFields,
+                        rerenderTeamStats
+                    });
 
-                setupPostGameStatEditor({
-                    teamId,
-                    gameId,
-                    game,
-                    players: reportPlayers,
-                    statsMap: editorStatsMap,
-                    tableStatsMap: statsMap,
-                    didNotPlayMap,
-                    timeMap,
-                    resolvedConfig,
-                    rerenderTable: renderStatsTable
-                });
+                    setupPostGameStatEditor({
+                        teamId,
+                        gameId,
+                        game,
+                        players: reportPlayers,
+                        statsMap: editorStatsMap,
+                        tableStatsMap: statsMap,
+                        didNotPlayMap,
+                        timeMap,
+                        resolvedConfig,
+                        rerenderTable: renderStatsTable
+                    });
+                }
 
                 // Render Playing Time Insights
                 if (computeHasPlayingTime()) {

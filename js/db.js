@@ -113,7 +113,8 @@ import {
     collectAthleteProfileMediaCleanupPaths,
     summarizeAthleteProfileCareer,
     collectAthleteGameClipsForPlayer
-} from './athlete-profile-utils.js?v=3';
+} from './athlete-profile-utils.js?v=4';
+import { loadCompleteAthleteProfileSeasonStats } from './diamond-legacy-game-context.js?v=1';
 import {
     isTeamActive,
     filterTeamsByActive,
@@ -819,7 +820,7 @@ export async function uploadStatSheetPhoto(teamId, gameId, file, options = {}) {
         : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=443373'; // Import resolveZip
+import { resolveZip } from './utils.js?v=443374'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -6984,7 +6985,7 @@ async function buildAthleteProfileSeasonSummary(link) {
     const [team, playerSnap, games] = await Promise.all([
         getTeam(link.teamId, { includeInactive: true }),
         getDoc(doc(db, `teams/${link.teamId}/players`, link.playerId)),
-        getGames(link.teamId)
+        getGames(link.teamId, { requireCompleteSharedGames: true })
     ]);
 
     if (!team || !playerSnap.exists()) {
@@ -6992,23 +6993,23 @@ async function buildAthleteProfileSeasonSummary(link) {
     }
 
     const player = playerSnap.data() || {};
-    let gamesPlayed = 0;
-    let totalTimeMs = 0;
-    const statTotals = {};
-
-    for (const game of (games || [])) {
-        const statsSnap = await getDoc(doc(db, `teams/${link.teamId}/games/${game.id}/aggregatedStats`, link.playerId));
-        if (!statsSnap.exists()) continue;
-
-        const statsData = statsSnap.data() || {};
-        const stats = statsData.stats || {};
-
-        gamesPlayed += 1;
-        totalTimeMs += Number(statsData.timeMs || 0);
-        Object.entries(stats).forEach(([statKey, value]) => {
-            statTotals[statKey] = (statTotals[statKey] || 0) + Number(value || 0);
-        });
-    }
+    const seasonStatGames = (games || []).filter((game) => {
+        if (String(game?.trackingEngine || '').trim().toLowerCase() !== 'diamond-v2') return true;
+        const status = String(game?.status || '').trim().toLowerCase();
+        const liveStatus = String(game?.liveStatus || '').trim().toLowerCase();
+        return ['completed', 'complete', 'final'].includes(status)
+            || ['completed', 'complete', 'final'].includes(liveStatus);
+    });
+    const seasonStats = await loadCompleteAthleteProfileSeasonStats({
+        teamId: link.teamId,
+        games: seasonStatGames,
+        playerId: link.playerId,
+        loadClassicPlayerRecord: async (teamId, gameId, playerId) => {
+            const gameRef = getGameDocRef(teamId, gameId);
+            const statsSnap = await getDoc(doc(db, `${gameRef.path}/aggregatedStats`, playerId));
+            return statsSnap.exists() ? (statsSnap.data() || {}) : null;
+        }
+    });
 
     return {
         seasonKey: buildParentSeasonKey(link.teamId, link.playerId),
@@ -7017,9 +7018,30 @@ async function buildAthleteProfileSeasonSummary(link) {
         playerId: link.playerId,
         playerName: link.playerName || player.name || 'Athlete',
         playerPhotoUrl: player.photoUrl || link.playerPhotoUrl || null,
-        gamesPlayed,
-        totalTimeMs,
-        statTotals,
+        gamesPlayed: seasonStats.gamesPlayed,
+        totalTimeMs: seasonStats.totalTimeMs,
+        statTotals: seasonStats.statTotals,
+        ...(seasonStats.evidence
+            ? {
+                playingTimeComplete: seasonStats.playingTimeComplete,
+                playingTimeEvidence: {
+                    complete: seasonStats.evidence.playingTime?.complete === true,
+                    instructions: seasonStats.evidence.playingTime?.instructions || 'Unavailable playing time is unknown, never zero.'
+                },
+                statEvidence: {
+                    complete: seasonStats.evidence.complete === true,
+                    readComplete: seasonStats.evidence.readComplete === true,
+                    visibility: 'public',
+                    completeStatKeys: Array.isArray(seasonStats.evidence.completeStatKeys)
+                        ? seasonStats.evidence.completeStatKeys
+                        : [],
+                    omittedOrIncompleteStatKeys: Array.isArray(seasonStats.evidence.omittedOrIncompleteStatKeys)
+                        ? seasonStats.evidence.omittedOrIncompleteStatKeys
+                        : [],
+                    instructions: 'Only complete public totals are stored. Omitted counters are unknown, never zero.'
+                }
+            }
+            : {}),
         gameClips: collectAthleteGameClipsForPlayer(games, {
             teamId: link.teamId,
             teamName: team.name || link.teamName || 'Team',

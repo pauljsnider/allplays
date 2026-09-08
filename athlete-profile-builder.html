@@ -146,8 +146,8 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { renderHeader, renderFooter, getUrlParams, escapeHtml, shareOrCopy } from './js/utils.js?v=443373';
-        import { requireAuth, checkAuth } from './js/auth.js?v=4433201';
+        import { renderHeader, renderFooter, getUrlParams, escapeHtml, shareOrCopy } from './js/utils.js?v=443374';
+        import { requireAuth, checkAuth } from './js/auth.js?v=4433202';
         import {
             getUserProfile,
             getAthleteProfile,
@@ -157,8 +157,8 @@
             deleteAthleteProfileMediaByPath,
             releaseAthleteProfileMediaReservation,
             reserveAthleteProfileMediaOwnership
-        } from './js/db.js?v=4433197';
-        import { buildAthleteProfileShareUrl } from './js/athlete-profile-utils.js?v=3';
+        } from './js/db.js?v=4433198';
+        import { buildAthleteProfileShareUrl } from './js/athlete-profile-utils.js?v=4';
 
         const params = getUrlParams();
         const clipList = document.getElementById('clip-list');
@@ -421,6 +421,7 @@
                     <div class="text-xs text-gray-500">${escapeHtml(summary.statAverages?.[key] || '0.0')} per game</div>
                 </div>
             `).join('');
+            const totalMinutesLabel = summary.playingTimeComplete === false ? 'Unavailable' : summary.totalMinutes;
 
             careerStats.innerHTML = `
                 <div class="grid grid-cols-2 gap-3 mb-4">
@@ -430,7 +431,7 @@
                     </div>
                     <div class="rounded-xl bg-emerald-50 border border-emerald-100 p-4">
                         <div class="text-xs font-semibold uppercase tracking-wide text-emerald-700">Minutes</div>
-                        <div class="text-3xl font-bold text-emerald-900">${escapeHtml(summary.totalMinutes)}</div>
+                        <div class="text-3xl font-bold text-emerald-900">${escapeHtml(totalMinutesLabel)}</div>
                     </div>
                 </div>
                 <div class="grid grid-cols-2 gap-3">${statCards || '<div class="text-sm text-gray-500">No stats found for the selected seasons yet.</div>'}</div>

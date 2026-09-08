@@ -149,6 +149,20 @@ async function mockParentDashboardModules(page) {
     await page.route(/\/js\/db\.js(\?.*)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: dbStub }));
     await page.route(/\/js\/utils\.js(\?.*)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: utilsStub }));
     await page.route(/\/js\/auth\.js(\?.*)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: authStub }));
+    await page.route(/\/js\/diamond-legacy-game-context\.js(\?.*)?$/, (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: `
+export async function loadCompleteDiamondPublicPlayerStats() { return { players: [], absenceConfirmed: true, complete: true, visibility: 'public' }; }
+export async function loadCompleteGameStatsForAi() { return { classicTotalsByPlayer: {}, diamondPlayersByGame: {}, evidence: { complete: true } }; }
+export async function loadCompleteGameEventsForAi() { return { eventsByGame: {}, evidenceByGame: {}, evidence: { complete: true } }; }
+export async function loadCompleteAiGameContext() { return { stats: {}, events: {}, evidence: { complete: true } }; }
+export async function loadCompletePlayerStatsForGames({ games = [], playerId, loadClassicPlayerStats }) {
+    return Promise.all(games.map(async (game) => ({ game, stats: await loadClassicPlayerStats('team-1', game.id, playerId), evidence: { complete: true, source: 'legacy-classic' } })));
+}
+export function assertCompletePlayerStatEvidence() { return true; }
+`
+    }));
     await page.route(/\/js\/firebase\.js(\?.*)?$/, (route) => route.fulfill({
         status: 200,
         contentType: 'application/javascript',

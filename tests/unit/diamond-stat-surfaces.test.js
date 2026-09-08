@@ -82,6 +82,20 @@ describe('legacy Diamond stat surface contracts', () => {
         expect(teamSource).toContain("recordType: 'season_team'");
     });
 
+    it('never sets up legacy direct-write stat editors for Diamond reports', () => {
+        const gameSource = readRootFile('game.html');
+        const setupStart = gameSource.indexOf('function setupPostGameTeamStatEditor');
+        const setupEnd = gameSource.indexOf('// Render Playing Time Insights', setupStart);
+        const setupSource = gameSource.slice(setupStart, setupEnd);
+
+        expect(setupStart).toBeGreaterThan(-1);
+        expect(setupSource.match(/if \(isDiamondV2Game\(game\) \|\| !canEditStats/g)).toHaveLength(2);
+        expect(setupSource.match(/if \(!isAuthBoundActionCurrent\(actionContext\) \|\| isDiamondV2Game\(game\)\) return;/g)).toHaveLength(2);
+        expect(setupSource).toContain(`if (!diamondGame) {
+                    setupPostGameTeamStatEditor({`);
+        expect(setupSource).toContain('setupPostGameStatEditor({');
+    });
+
     it('requires activation-matched configs, retries bounded failures, and exposes an accessible retry action', () => {
         const gameSource = readRootFile('game.html');
         const playerSource = readRootFile('player.html');

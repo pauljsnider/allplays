@@ -7392,6 +7392,90 @@ describe('private AI service', () => {
         );
     });
 
+    it('preserves pinned Diamond fields during a confirmed location-only schedule update', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            children: [{ playerId: 'player-1', name: 'Avery', teamId: 'team-1', teamName: 'Bears' }],
+            events: [futureEvent({
+                trackingEngine: 'diamond-v2',
+                location: 'Old Diamond',
+                isHome: null,
+                statTrackerConfigId: 'diamond-config',
+                opponentTeamId: null
+            })]
+        });
+
+        const result = await executeConfirmedToolForTest(coachUser, {
+            name: 'update_schedule_event',
+            args: {
+                teamId: 'team-1',
+                eventId: 'game-1',
+                eventType: 'game',
+                input: { location: 'New Diamond' }
+            }
+        }, { conversationId: 'diamond-location-only-update' });
+
+        expect(result).toMatchObject({ name: 'update_schedule_event', ok: true });
+        expect(scheduleMocks.updateScheduledGameForApp).toHaveBeenCalledWith(
+            'team-1',
+            'game-1',
+            expect.objectContaining({
+                location: 'New Diamond',
+                isHome: null,
+                statTrackerConfigId: 'diamond-config',
+                opponentTeamId: ''
+            }),
+            coachUser,
+            { preservePinnedDiamondFields: true }
+        );
+    });
+
+    it.each([
+        ['isHome', false],
+        ['statTrackerConfigId', 'other-config'],
+        ['opponentTeamId', 'team-3']
+    ])('rejects Diamond schedule mutations to pinned %s', async (field, value) => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            children: [{ playerId: 'player-1', name: 'Avery', teamId: 'team-1', teamName: 'Bears' }],
+            events: [futureEvent({
+                trackingEngine: 'diamond-v2',
+                isHome: true,
+                statTrackerConfigId: 'diamond-config',
+                opponentTeamId: 'team-2'
+            })]
+        });
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        await expect(runPrivateAiTool(coachUser, {
+            name: 'update_schedule_event',
+            args: {
+                teamId: 'team-1',
+                eventId: 'game-1',
+                eventType: 'game',
+                input: {
+                    location: 'New Diamond',
+                    [field]: value
+                }
+            }
+        })).resolves.toMatchObject({
+            name: 'update_schedule_event',
+            ok: false,
+            error: expect.stringContaining('locked after Diamond activation')
+        });
+        expect(scheduleMocks.updateScheduledGameForApp).not.toHaveBeenCalled();
+    });
+
     it('preserves top-level event fields when preparing a partial schedule update', async () => {
         const coachUser = {
             ...authUser,

@@ -2048,6 +2048,10 @@ export type ScheduleGameFormInput = {
   opponentTeamPhoto?: string | null;
 };
 
+export type ScheduleGameUpdateOptions = {
+  preservePinnedDiamondFields?: boolean;
+};
+
 export type ScheduleTournamentGameFormInput = ScheduleGameFormInput;
 
 export type ScheduleTournamentCreateFormInput = {
@@ -2259,18 +2263,24 @@ export function buildSingleGameTournamentLegacySchedulePayload(
   return buildSingleLegacyTournamentGameDocument([payload], tournament);
 }
 
-function buildScheduledGameUpdatePayload(input: ScheduleGameFormInput, user: AuthUser) {
+function buildScheduledGameUpdatePayload(input: ScheduleGameFormInput, user: AuthUser, options: ScheduleGameUpdateOptions = {}) {
   const { assignments, status, homeScore, awayScore, createdBy, ...payload } = buildScheduledGamePayload(input, user) as Record<string, unknown>;
   void assignments;
   void status;
   void homeScore;
   void awayScore;
   void createdBy;
-  return {
+  const updatePayload: Record<string, unknown> = {
     ...payload,
     updatedAt: new Date(),
     updatedBy: user.uid
   };
+  if (options.preservePinnedDiamondFields === true) {
+    delete updatePayload.isHome;
+    delete updatePayload.statTrackerConfigId;
+    delete updatePayload.opponentTeamId;
+  }
+  return updatePayload;
 }
 
 function buildScheduleImportPracticePayload(row: ScheduleImportNormalizedRow, user: AuthUser) {
@@ -2475,13 +2485,19 @@ export async function createScheduledTournamentBlockForApp(teamId: string, input
   return createdIds;
 }
 
-export async function updateScheduledGameForApp(teamId: string, gameId: string, input: ScheduleGameFormInput, user: AuthUser | null) {
+export async function updateScheduledGameForApp(
+  teamId: string,
+  gameId: string,
+  input: ScheduleGameFormInput,
+  user: AuthUser | null,
+  options: ScheduleGameUpdateOptions = {}
+) {
   const normalizedTeamId = compactString(teamId);
   const normalizedGameId = compactString(gameId);
   if (!normalizedTeamId) throw new Error('Team is required.');
   if (!normalizedGameId) throw new Error('Game is required.');
   await requireScheduleImportStaff(normalizedTeamId, user);
-  const payload = buildScheduledGameUpdatePayload(input, user as AuthUser);
+  const payload = buildScheduledGameUpdatePayload(input, user as AuthUser, options);
 
   try {
     await withTimeout(Promise.resolve(updateGame(normalizedTeamId, normalizedGameId, payload)), 'Scheduled game update');

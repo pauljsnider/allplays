@@ -170,7 +170,10 @@ async function buildAiContext(
   question: string,
   { fetchStats, fetchEvents }: { fetchStats: boolean; fetchEvents: boolean }
 ) {
-  const [players, games] = await Promise.all([getPlayers(teamId, { includeInactive: true }), getGames(teamId)]);
+  const [players, games] = await Promise.all([
+    getPlayers(teamId, { includeInactive: true }),
+    getGames(teamId, { requireCompleteSharedGames: true })
+  ]);
   const playersById = new Map((players || []).map((player: any) => [player.id, player]));
   const now = new Date();
   const cutoff = new Date(now.getTime() - 3 * 60 * 60 * 1000);

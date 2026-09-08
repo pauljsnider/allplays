@@ -346,9 +346,9 @@
     </div>
 
     <script type="module">
-        import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=443373';
-        import { checkAuth } from './js/auth.js?v=4433201';
-        import { getTeam, getUserProfile, getPlayers, getGames, getGameEvents, getAggregatedStatsForGames, getChatConversations, upsertChatConversation, repairLegacyDirectConversation, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, getTeamEmailDrafts, saveTeamEmailDraft, getTeamEmailTemplates, saveTeamEmailTemplate, deleteTeamEmailTemplate, canAccessTeamChat, canModerateChat, updateChatLastRead, subscribeToChatMessages, sendTeamEmail, getSentTeamEmails, uploadChatImage, deleteUploadedChatAttachments, toggleChatReaction } from './js/db.js?v=4433197';
+        import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=443374';
+        import { checkAuth } from './js/auth.js?v=4433202';
+        import { getTeam, getUserProfile, getPlayers, getGames, getGameEvents, getAggregatedStatsForGames, getChatConversations, upsertChatConversation, repairLegacyDirectConversation, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, getTeamEmailDrafts, saveTeamEmailDraft, getTeamEmailTemplates, saveTeamEmailTemplate, deleteTeamEmailTemplate, canAccessTeamChat, canModerateChat, updateChatLastRead, subscribeToChatMessages, sendTeamEmail, getSentTeamEmails, uploadChatImage, deleteUploadedChatAttachments, toggleChatReaction } from './js/db.js?v=4433198';
         import { DEFAULT_TEAM_CONVERSATION_ID, buildDefaultTeamConversation, getConversationDisplayName, isDefaultTeamConversation } from './js/team-chat-conversations.js?v=2';
         import { shouldUpdateChatLastRead, shouldRetryChatLastReadOnViewReturn } from './js/team-chat-last-read.js?v=3';
         import {
@@ -360,6 +360,7 @@
             getChatMediaDownloadName
         } from './js/team-chat-media.js?v=2';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js?v=443349';
+        import { loadCompleteAiGameContext } from './js/diamond-legacy-game-context.js?v=1';
         import { functions, httpsCallable } from './js/firebase.js?v=33';
         import { getAI, getGenerativeModel, GoogleAIBackend } from './js/vendor/firebase-ai.js';
         import { getApp } from './js/vendor/firebase-app.js';
@@ -2453,24 +2454,32 @@
             const player = event.playerId ? playersById.get(event.playerId) : null;
             return {
                 id: event.id,
+                revision: event.revision ?? null,
                 timestamp: event.timestamp ?? null,
                 period: event.period ?? null,
                 gameTime: event.gameTime ?? null,
                 text: event.text || null,
+                inning: event.inning ?? null,
+                half: event.half || null,
+                description: event.description || null,
+                createdAt: event.createdAt || null,
                 type: event.type || null,
                 playerId: event.playerId || null,
                 playerName: player?.name || null,
                 playerNumber: player?.number ?? null,
                 statKey: event.statKey || null,
                 value: event.value ?? null,
-                isOpponent: event.isOpponent === true
+                isOpponent: event.isOpponent === true,
+                isCorrection: event.isCorrection === true,
+                isScoringPlay: event.isScoringPlay === true,
+                score: event.score || null
             };
         }
 
         async function buildAiContext(question, { fetchStats, fetchEvents }) {
             const [players, games] = await Promise.all([
                 getPlayers(teamId, { includeInactive: true }),
-                getGames(teamId)
+                getGames(teamId, { requireCompleteSharedGames: true })
             ]);
             const playersById = new Map(players.map(p => [p.id, p]));
 
@@ -2492,49 +2501,77 @@
                 .slice(0, AI_GAMES_CONTEXT_LIMIT)
                 .map(serializeGame);
 
-            let statsSummary = null;
-            if (fetchStats) {
-                const completedGames = gamesWithDates
+            const completedGames = fetchStats
+                ? gamesWithDates
                     .filter(isCompletedGame)
                     .sort((a, b) => b._date - a._date)
-                    .slice(0, AI_STATS_GAMES_LIMIT);
-                const totals = await getAggregatedStatsForGames(teamId, completedGames.map(g => g.id));
+                    .slice(0, AI_STATS_GAMES_LIMIT)
+                : [];
+            const recentCompleted = fetchEvents
+                ? gamesWithDates
+                    .filter(isCompletedGame)
+                    .sort((a, b) => b._date - a._date)
+                    .slice(0, AI_EVENTS_GAMES_LIMIT)
+                : [];
+            const completeGameContext = await loadCompleteAiGameContext({
+                teamId,
+                statsGames: completedGames,
+                eventGames: recentCompleted,
+                loadClassicAggregatedStats: getAggregatedStatsForGames,
+                loadClassicGameEvents: getGameEvents,
+                eventLimit: AI_EVENTS_PER_GAME_LIMIT
+            });
 
+            let statsSummary = null;
+            if (fetchStats) {
                 statsSummary = {
                     gamesUsed: completedGames.map(serializeGame),
-                    totalsByPlayer: Object.entries(totals).map(([playerId, stats]) => ({
+                    totalsByPlayer: Object.entries(completeGameContext.stats.classicTotalsByPlayer).map(([playerId, stats]) => ({
                         id: playerId,
                         name: playersById.get(playerId)?.name || 'Unknown',
                         number: playersById.get(playerId)?.number || null,
                         stats
-                    }))
+                    })),
+                    diamondByGame: completedGames.flatMap((game) => {
+                        const projectedPlayers = completeGameContext.stats.diamondPlayersByGame[game.id];
+                        if (!projectedPlayers) return [];
+                        return [{
+                            game: serializeGame(game),
+                            players: projectedPlayers.map((player) => ({
+                                id: player.playerId,
+                                name: player.playerName,
+                                number: player.playerNumber,
+                                participated: player.participated,
+                                stats: player.stats,
+                                completeStatKeys: player.completeStatKeys,
+                                omittedOrIncompleteStatKeys: player.omittedOrIncompleteStatKeys
+                            })),
+                            evidence: completeGameContext.stats.evidence.diamondByGame[game.id]
+                        }];
+                    }),
+                    evidence: completeGameContext.stats.evidence
                 };
             }
 
             let eventsSummary = null;
             if (fetchEvents) {
-                const recentCompleted = gamesWithDates
-                    .filter(isCompletedGame)
-                    .sort((a, b) => b._date - a._date)
-                    .slice(0, AI_EVENTS_GAMES_LIMIT);
-
-                const eventsByGame = await Promise.all(
-                    recentCompleted.map(async (game) => {
-                        const events = await getGameEvents(teamId, game.id, { limit: AI_EVENTS_PER_GAME_LIMIT });
-                        const ordered = events
-                            .slice()
-                            .reverse()
-                            .map(evt => serializeEvent(evt, playersById));
-                        return {
-                            game: serializeGame(game),
-                            events: ordered
-                        };
-                    })
-                );
+                const eventsByGame = recentCompleted.map((game) => {
+                    const events = completeGameContext.events.eventsByGame[game.id] || [];
+                    const ordered = events
+                        .slice()
+                        .reverse()
+                        .map(evt => serializeEvent(evt, playersById));
+                    return {
+                        game: serializeGame(game),
+                        events: ordered,
+                        evidence: completeGameContext.events.evidenceByGame[game.id]
+                    };
+                });
 
                 eventsSummary = {
                     gamesUsed: recentCompleted.map(serializeGame),
-                    eventsByGame
+                    eventsByGame,
+                    evidence: completeGameContext.events.evidence
                 };
             }
 
@@ -2628,6 +2665,7 @@
                 `If the question is about stats, summarize with top performers and include key numbers.\\n` +
                 `If game summaries are provided, use them to mention recent performance or highlights.\\n` +
                 `If play-by-play events are provided, use them to answer timeline or highlight questions.\\n` +
+                `Diamond stats include only complete public counters. Treat omittedOrIncompleteStatKeys as unknown, never zero, and honor truncation evidence.\\n` +
                 `If individual stats are missing, give 3-5 general improvement tips aligned to the team's sport and ask a short follow-up question.\\n\\n` +
                 `QUESTION:\\n${question}\\n\\n` +
                 `DATA (JSON):\\n${JSON.stringify(context)}\\n`;

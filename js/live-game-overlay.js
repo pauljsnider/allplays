@@ -34,7 +34,7 @@ import {
     resolveSafeProfilePhotoWriteUrl
 } from './safe-image-url.js?v=1';
 import { buildGameWatchShareUrl } from './game-share-links.js?v=1';
-import { shareOrCopy } from './utils.js?v=443373';
+import { shareOrCopy } from './utils.js?v=443374';
 import { createPlayAnnouncer } from './live-game-announcer.js?v=1';
 import { DIAMOND_ENGINE, buildDiamondViewerUrl } from './diamond-scorebook-routing.js?v=2';
 
@@ -235,7 +235,7 @@ function usesCompactPanelLayout() {
 }
 
 function loadOverlayDatabase() {
-    return import('./db.js?v=4433197');
+    return import('./db.js?v=4433198');
 }
 
 function getTimestampMs(value) {
@@ -1131,7 +1131,7 @@ async function initializeChatComposer(database, teamId, gameId) {
 
     try {
         const [authTools, chatTools] = await Promise.all([
-            import('./auth.js?v=4433201'),
+            import('./auth.js?v=4433202'),
             import('./live-game-chat.js?v=4')
         ]);
         uiState.chatServices = {

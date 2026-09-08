@@ -3017,6 +3017,8 @@ describe('ScheduleEventDetail assignments', () => {
     renderScheduleEventDetailWithRouteControls();
 
     fireEvent.click(await screen.findByRole('button', { name: 'Edit game' }));
+    expect(screen.getByLabelText('Home / away')).not.toBeDisabled();
+    expect(screen.getByLabelText('Tracker config')).not.toBeDisabled();
     fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Aux Gym' } });
 
     const liveScoreEditor = await screen.findByTestId('live-score-editor');
@@ -3036,6 +3038,40 @@ describe('ScheduleEventDetail assignments', () => {
         'game-1',
         expect.objectContaining({ location: 'Aux Gym' }),
         auth.user
+      );
+    });
+  });
+
+  it('locks Diamond schedule identity fields while saving unrelated edits', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        isTeamAdmin: true,
+        trackingEngine: 'diamond-v2',
+        isHome: true,
+        statTrackerConfigId: 'cfg-basketball'
+      })],
+      children: []
+    });
+    scheduleHubMocks.buildGameHubDestinations.mockReturnValue([]);
+
+    renderScheduleEventDetailWithRouteControls();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit game' }));
+
+    expect(screen.getByLabelText('Home / away')).toBeDisabled();
+    expect(screen.getByLabelText('Tracker config')).toBeDisabled();
+    expect(screen.getByText('Home/away and tracker config are locked after Diamond activation.')).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Diamond Field' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save game' }));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.updateScheduledGameForApp).toHaveBeenCalledWith(
+        'team-1',
+        'game-1',
+        expect.objectContaining({ location: 'Diamond Field' }),
+        auth.user,
+        { preservePinnedDiamondFields: true }
       );
     });
   });

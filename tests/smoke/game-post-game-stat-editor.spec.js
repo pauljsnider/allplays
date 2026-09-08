@@ -390,6 +390,7 @@ async function installMocks(
                     }
                 };
             }
+            window.__GAME_LAST_LOADED_GAME__ = game;
             return game;
         }
 
@@ -748,6 +749,7 @@ async function installMocks(
     `
     : `
         export function checkAuth(callback) {
+            window.__GAME_TEST_AUTH_UID__ = 'coach-1';
             callback({ uid: 'coach-1', email: 'coach@example.com' });
         }
     `;
@@ -823,6 +825,58 @@ async function installMocks(
         export function hasCompletedReplayLifecycle() { return true; }
     `;
 
+  const firebaseAiModule = `
+        const STORE_KEY = ${JSON.stringify(STORE_KEY)};
+
+        function loadStore() {
+            return JSON.parse(localStorage.getItem(STORE_KEY) || '{}');
+        }
+
+        function saveStore(store) {
+            localStorage.setItem(STORE_KEY, JSON.stringify(store));
+        }
+
+        function buildResult() {
+            return {
+                response: {
+                    text() {
+                        return String(loadStore().aiSummaryResponse || 'Classic generated summary.');
+                    }
+                }
+            };
+        }
+
+        export class GoogleAIBackend {}
+
+        export function getAI() {
+            return {};
+        }
+
+        export function getGenerativeModel() {
+            return {
+                async generateContent(prompt) {
+                    const store = loadStore();
+                    const shouldHold = store.holdAiSummaryModel === true;
+                    store.holdAiSummaryModel = false;
+                    store.aiSummaryModelCalls = [...(store.aiSummaryModelCalls || []), { prompt: String(prompt) }];
+                    saveStore(store);
+                    if (shouldHold) {
+                        return new Promise((resolve) => {
+                            window.__GAME_RELEASE_AI_SUMMARY_MODEL__ = () => resolve(buildResult());
+                        });
+                    }
+                    return buildResult();
+                }
+            };
+        }
+    `;
+
+  const firebaseAppModule = `
+        export function getApp() {
+            return {};
+        }
+    `;
+
   await page.route(/\/js\/db\.js\?v=\d+$/, (route) =>
     route.fulfill({
       status: 200,
@@ -877,6 +931,20 @@ async function installMocks(
       status: 200,
       contentType: "application/javascript",
       body: liveGameVideoModule,
+    }),
+  );
+  await page.route(/\/js\/vendor\/firebase-ai\.js(?:\?.*)?$/, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/javascript",
+      body: firebaseAiModule,
+    }),
+  );
+  await page.route(/\/js\/vendor\/firebase-app\.js(?:\?.*)?$/, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/javascript",
+      body: firebaseAppModule,
     }),
   );
 }
@@ -1214,6 +1282,241 @@ test("Diamond report labels partial observations, leaves uncollected stats unava
   expect(csv).toContain("Guest Slugger");
   expect(csv).not.toContain("manual-private-source-id");
   expect(csv).not.toContain("99");
+  expect(pageErrors).toEqual([]);
+});
+
+test("Diamond manager reports never expose or invoke legacy stat editors across auth reloads", async ({
+  page,
+  baseURL,
+}) => {
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await installMocks(page, createManagerDiamondScenario(), {
+    controllableAuth: true,
+    accessLevel: "full",
+  });
+
+  await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, {
+    waitUntil: "domcontentloaded",
+  });
+  await expect(page.locator("#diamond-report-status")).toContainText(
+    "Manager-internal stats",
+  );
+
+  const expectLegacyEditorsUnavailable = async () => {
+    await expect(page.locator("#edit-stats-btn")).toBeHidden();
+    await expect(page.locator("#stats-editor-admin")).toBeHidden();
+    await expect(page.locator("#stats-editor-panel")).toBeHidden();
+    await expect(page.locator("#edit-team-stats-btn")).toBeHidden();
+    await expect(page.locator("#team-stats-editor-admin")).toBeHidden();
+    await expect(page.locator("#team-stats-editor-panel")).toBeHidden();
+    expect(await readStore(page)).toMatchObject({
+      setCompletedGamePlayerStatsCalls: [],
+    });
+    expect(
+      (await readStore(page)).setCompletedGameTeamStatsCalls || [],
+    ).toEqual([]);
+  };
+
+  const attemptLegacyEditorActions = async () => {
+    await page.evaluate(() => {
+      for (const id of [
+        "edit-stats-btn",
+        "stats-save-btn",
+        "stats-save-prev-btn",
+        "stats-save-next-btn",
+        "edit-team-stats-btn",
+        "team-stats-save-btn",
+      ]) {
+        document.getElementById(id)?.click();
+      }
+    });
+    await expectLegacyEditorsUnavailable();
+  };
+
+  await attemptLegacyEditorActions();
+
+  await page.evaluate(() => {
+    window.__GAME_AUTH_CALLBACK__({
+      uid: "coach-2",
+      email: "second@example.com",
+    });
+  });
+
+  await expect
+    .poll(async () => (await readStore(page)).getGameCalls?.length || 0)
+    .toBe(2);
+  await expect(page.locator("#diamond-report-status")).toContainText(
+    "Manager-internal stats",
+  );
+  await attemptLegacyEditorActions();
+  expect(pageErrors).toEqual([]);
+});
+
+test("Diamond managers cannot force the legacy AI summary generator across auth reloads", async ({
+  page,
+  baseURL,
+}) => {
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  const scenario = createManagerDiamondScenario();
+  scenario.game.summary = "";
+  scenario.game.aiRecap = {
+    schemaVersion: 1,
+    trackingEngine: "diamond-v2",
+    published: true,
+    status: "current",
+    stale: false,
+    sourceRevision: 8,
+    recap: {
+      text: "The cited Diamond recap remains available.",
+      citations: [{ eventId: "event-8", revision: 8 }],
+    },
+    insights: [],
+    coverage: { batting: "complete" },
+    dataQualityNotes: [],
+  };
+  await installMocks(page, scenario, {
+    controllableAuth: true,
+    accessLevel: "full",
+  });
+
+  await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, {
+    waitUntil: "domcontentloaded",
+  });
+  await expect.poll(() => pageErrors).toEqual([]);
+
+  const expectDiamondSummaryBoundary = async () => {
+    await expect(page.locator("#summary-admin")).toBeVisible();
+    await expect(page.locator("#summary-generate-btn")).toBeHidden();
+    await expect(page.locator("#published-diamond-ai-recap")).toContainText(
+      "The cited Diamond recap remains available.",
+    );
+    await page.evaluate(() => {
+      const generateButton = document.getElementById("summary-generate-btn");
+      generateButton?.classList.remove("hidden");
+      if (generateButton) generateButton.disabled = false;
+      generateButton?.click();
+    });
+    await page.waitForTimeout(50);
+    const store = await readStore(page);
+    expect(store.aiSummaryModelCalls || []).toEqual([]);
+    expect(store.updateGameCalls || []).toEqual([]);
+  };
+
+  await expectDiamondSummaryBoundary();
+  await page.evaluate(() => {
+    window.__GAME_AUTH_CALLBACK__({
+      uid: "coach-2",
+      email: "second@example.com",
+    });
+  });
+  await expect
+    .poll(async () => (await readStore(page)).getGameCalls?.length || 0)
+    .toBe(2);
+  await expect(page.locator("#diamond-report-status")).toContainText(
+    "Manager-internal stats",
+  );
+  await expectDiamondSummaryBoundary();
+  expect(pageErrors).toEqual([]);
+});
+
+test("a stale classic AI summary handler rechecks Diamond before model, draft, and persistence", async ({
+  page,
+  baseURL,
+}) => {
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  const scenario = createScenario();
+  scenario.game.summary = "";
+  scenario.aiSummaryResponse = "Generated from legacy stats.";
+  await installMocks(page, scenario);
+
+  await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, {
+    waitUntil: "domcontentloaded",
+  });
+  await expect.poll(() => pageErrors).toEqual([]);
+  await expect(page.locator("#summary-generate-btn")).toBeVisible();
+
+  await page.evaluate(() => {
+    window.__GAME_LAST_LOADED_GAME__.trackingEngine = "diamond-v2";
+    document.getElementById("summary-generate-btn")?.click();
+  });
+  await page.waitForTimeout(50);
+  expect((await readStore(page)).aiSummaryModelCalls || []).toEqual([]);
+
+  await page.evaluate((storeKey) => {
+    window.__GAME_LAST_LOADED_GAME__.trackingEngine = "classic";
+    const store = JSON.parse(localStorage.getItem(storeKey) || "{}");
+    store.holdAiSummaryModel = true;
+    localStorage.setItem(storeKey, JSON.stringify(store));
+    const generateButton = document.getElementById("summary-generate-btn");
+    generateButton?.classList.remove("hidden");
+    if (generateButton) generateButton.disabled = false;
+    generateButton?.click();
+  }, STORE_KEY);
+  await expect
+    .poll(async () => (await readStore(page)).aiSummaryModelCalls?.length || 0)
+    .toBe(1);
+  await page.evaluate(() => {
+    window.__GAME_LAST_LOADED_GAME__.trackingEngine = "diamond-v2";
+    window.__GAME_RELEASE_AI_SUMMARY_MODEL__();
+  });
+  await page.waitForTimeout(50);
+  await expect(page.locator("#summary-textarea")).toHaveValue("");
+
+  await page.evaluate(() => {
+    window.__GAME_LAST_LOADED_GAME__.trackingEngine = "classic";
+    const generateButton = document.getElementById("summary-generate-btn");
+    generateButton?.classList.remove("hidden");
+    if (generateButton) generateButton.disabled = false;
+    generateButton?.click();
+  });
+  await expect(page.locator("#summary-textarea")).toHaveValue(
+    "Generated from legacy stats.",
+  );
+  await page.evaluate(() => {
+    window.__GAME_LAST_LOADED_GAME__.trackingEngine = "diamond-v2";
+    document.getElementById("summary-save-btn")?.click();
+  });
+  await page.waitForTimeout(50);
+  expect((await readStore(page)).updateGameCalls || []).toEqual([]);
+  expect(pageErrors).toEqual([]);
+});
+
+test("classic managers can still generate, review, and save the legacy AI summary", async ({
+  page,
+  baseURL,
+}) => {
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  const scenario = createScenario();
+  scenario.game.summary = "";
+  scenario.aiSummaryResponse = "Classic AI summary remains available.";
+  await installMocks(page, scenario);
+
+  await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, {
+    waitUntil: "domcontentloaded",
+  });
+  await expect.poll(() => pageErrors).toEqual([]);
+  await expect(page.locator("#summary-generate-btn")).toBeVisible();
+
+  await page.locator("#summary-generate-btn").click();
+  await expect(page.locator("#summary-textarea")).toHaveValue(
+    "Classic AI summary remains available.",
+  );
+  await page.locator("#summary-save-btn").click();
+  await expect(page.locator("#game-summary")).toContainText(
+    "Classic AI summary remains available.",
+  );
+
+  const store = await readStore(page);
+  expect(store.aiSummaryModelCalls).toHaveLength(1);
+  expect(store.aiSummaryModelCalls[0].prompt).toContain("PTS:10, FOULS:0");
+  expect(store.updateGameCalls).toContainEqual({
+    actorUid: "coach-1",
+    patch: { summary: "Classic AI summary remains available." },
+  });
   expect(pageErrors).toEqual([]);
 });
 

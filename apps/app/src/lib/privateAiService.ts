@@ -3031,7 +3031,7 @@ function buildCoachAdminPrivateAiToolDefinitions(): PrivateAiToolDefinition[] {
       name: 'update_schedule_event',
       mode: 'write',
       domain: 'schedule-attendance-planning',
-      description: 'Update a managed-team game or practice. Args: teamId, eventId, eventType, partial input fields to change, and practice scope occurrence|series.',
+      description: 'Update a managed-team game or practice. Args: teamId, eventId, eventType, partial input fields to change, and practice scope occurrence|series. After Diamond activation, home/away, tracker config, and linked opponent fields are locked.',
       prepare: (user, args) => prepareManagedScheduleEventUpdateAction(user, args, 'Update schedule event'),
       resolve: async (user, args) => {
         const teamId = await requireManagedTeamId(user, args);
@@ -3044,7 +3044,11 @@ function buildCoachAdminPrivateAiToolDefinitions(): PrivateAiToolDefinition[] {
               scope: compactText(args.scope) === 'occurrence' ? 'occurrence' : 'series',
               instanceDate: compactText(args.instanceDate)
             } as any)
-          : service.updateScheduledGameForApp(teamId, eventId, input, user);
+          : compactText(args.trackingEngine) === 'diamond-v2'
+            ? service.updateScheduledGameForApp(teamId, eventId, input, user, {
+                preservePinnedDiamondFields: true
+              })
+            : service.updateScheduledGameForApp(teamId, eventId, input, user);
       }
     },
     {
@@ -3569,6 +3573,25 @@ function applyPrivateAiScheduleEventUpdateInput(
   };
 }
 
+function hasPinnedDiamondScheduleFieldMutation(
+  event: ParentScheduleEvent,
+  requestedInput: Record<string, unknown>
+) {
+  if (event.type !== 'game' || compactText(event.trackingEngine) !== 'diamond-v2') return false;
+  if (hasOwn(requestedInput, 'isHome')) {
+    const requestedIsHome = requestedInput.isHome === null || requestedInput.isHome === undefined
+      ? null
+      : requestedInput.isHome === true;
+    if (requestedIsHome !== (event.isHome ?? null)) return true;
+  }
+  if (
+    hasOwn(requestedInput, 'statTrackerConfigId')
+    && compactText(requestedInput.statTrackerConfigId) !== compactText(event.statTrackerConfigId)
+  ) return true;
+  return hasOwn(requestedInput, 'opponentTeamId')
+    && compactText(requestedInput.opponentTeamId) !== compactText(event.opponentTeamId);
+}
+
 async function prepareManagedScheduleEventUpdateAction(
   user: AuthUser,
   args: Record<string, unknown>,
@@ -3583,6 +3606,10 @@ async function prepareManagedScheduleEventUpdateAction(
   // Keep the tool's existing argument contract: planners may place editable
   // event fields either inside `input` or directly alongside the selectors.
   const requestedInput = isPlainObject(args.input) ? args.input : args;
+  const isDiamondGame = event.type === 'game' && compactText(event.trackingEngine) === 'diamond-v2';
+  if (hasPinnedDiamondScheduleFieldMutation(event, requestedInput)) {
+    throw new Error('Home/away, tracker config, and linked opponent are locked after Diamond activation. Update other schedule details only.');
+  }
   const input = mergePrivateAiScheduleEventUpdateInput(event, requestedInput);
   const proposedEvent = applyPrivateAiScheduleEventUpdateInput(event, input);
   const eventSummary = summarizeScheduleEvent(proposedEvent);
@@ -3598,7 +3625,9 @@ async function prepareManagedScheduleEventUpdateAction(
             scope: compactText(args.scope) === 'occurrence' ? 'occurrence' : 'series',
             instanceDate: compactText(args.instanceDate)
           }
-        : {})
+        : isDiamondGame
+          ? { trackingEngine: 'diamond-v2' }
+          : {})
     },
     summary: `${label} | ${event.teamName}: ${getScheduleTitle(proposedEvent)}${event.childName ? ` | Player: ${event.childName}` : ''}`,
     previewSummary: {

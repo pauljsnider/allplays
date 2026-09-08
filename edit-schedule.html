@@ -207,9 +207,9 @@
                         <div>
                             <label class="block text-sm font-medium text-gray-700">Home / Away</label>
                             <div class="mt-1 flex gap-2">
-                                <button type="button" id="homeAwayHome" class="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-indigo-50 focus:outline-none transition" onclick="setHomeAway('home')">Home</button>
-                                <button type="button" id="homeAwayAway" class="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-indigo-50 focus:outline-none transition" onclick="setHomeAway('away')">Away</button>
-                                <button type="button" id="homeAwayClear" class="px-3 py-2 border border-gray-300 rounded-md text-sm text-gray-400 hover:bg-gray-50 focus:outline-none transition" onclick="setHomeAway(null)">Clear</button>
+                                <button type="button" id="homeAwayHome" aria-describedby="diamond-pinned-game-fields-note" class="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-indigo-50 focus:outline-none transition" onclick="setHomeAway('home')">Home</button>
+                                <button type="button" id="homeAwayAway" aria-describedby="diamond-pinned-game-fields-note" class="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-indigo-50 focus:outline-none transition" onclick="setHomeAway('away')">Away</button>
+                                <button type="button" id="homeAwayClear" aria-describedby="diamond-pinned-game-fields-note" class="px-3 py-2 border border-gray-300 rounded-md text-sm text-gray-400 hover:bg-gray-50 focus:outline-none transition" onclick="setHomeAway(null)">Clear</button>
                             </div>
                             <input type="hidden" id="isHome" value="">
                         </div>
@@ -353,13 +353,14 @@
                         </div>
                         <div>
                             <label class="block text-sm font-medium text-gray-700">Stat Config</label>
-                            <select id="statConfig"
+                            <select id="statConfig" aria-describedby="diamond-pinned-game-fields-note"
                                 class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
                                 <option value="">Default (None)</option>
                                 <!-- Configs loaded here -->
                             </select>
                             <p class="text-xs text-gray-500 mt-1">Create configs in <a href="#" id="config-link"
                                     class="text-indigo-600 hover:underline">Edit Configs</a></p>
+                            <p id="diamond-pinned-game-fields-note" class="hidden text-xs font-medium text-sky-700 mt-2">Home/away and tracker config are locked after Diamond activation.</p>
                         </div>
                         <div class="border-t border-gray-200 pt-4">
                             <div class="bg-emerald-50 border border-emerald-200 rounded-lg p-3">
@@ -956,11 +957,11 @@
     </div>
 
     <script type="module">
-        import { getTeam, getTeams, getGames, getEvents, addGame, updateGame, updateTeam, deleteGame, addPractice, updateEvent, deleteEvent, getConfigs, addCalendarToTeam, removeCalendarFromTeam, getTrackedCalendarEventUids, cancelOccurrence, updateOccurrence, restoreOccurrence, clearOccurrenceOverride, updateSeries, deleteSeries, getUnreadChatCount, getPracticeSessions, cancelGame, getLatestGameAssignments, postChatMessage, getRsvpBreakdownByPlayer, getPlayers, getRsvps, applyTournamentAdvancementPatches, saveTournamentPoolOverride, clearTournamentPoolOverride, getOfficials, addOfficial, updateOfficial, deleteOfficial, createOfficiatingAssignmentNotificationRecords } from './js/db.js?v=4433197';
-        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, formatTimeRange, getDefaultEndTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, getCalendarEventStatus, getCalendarEventTrackingId, isTrackedCalendarEvent, generateSeriesId, expandRecurrence, formatRecurrence, shareOrCopy, escapeHtml } from './js/utils.js?v=443373';
+        import { getTeam, getTeams, getGames, getEvents, addGame, updateGame, updateTeam, deleteGame, addPractice, updateEvent, deleteEvent, getConfigs, addCalendarToTeam, removeCalendarFromTeam, getTrackedCalendarEventUids, cancelOccurrence, updateOccurrence, restoreOccurrence, clearOccurrenceOverride, updateSeries, deleteSeries, getUnreadChatCount, getPracticeSessions, cancelGame, getLatestGameAssignments, postChatMessage, getRsvpBreakdownByPlayer, getPlayers, getRsvps, applyTournamentAdvancementPatches, saveTournamentPoolOverride, clearTournamentPoolOverride, getOfficials, addOfficial, updateOfficial, deleteOfficial, createOfficiatingAssignmentNotificationRecords } from './js/db.js?v=4433198';
+        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, formatTimeRange, getDefaultEndTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, getCalendarEventStatus, getCalendarEventTrackingId, isTrackedCalendarEvent, generateSeriesId, expandRecurrence, formatRecurrence, shareOrCopy, escapeHtml } from './js/utils.js?v=443374';
         import { mergeCalendarImportEvents, validateCalendarImportUrl } from './js/edit-schedule-calendar-import.js?v=2';
         import { materializeCalendarGame } from './js/calendar-game-materialization.js?v=4';
-        import { checkAuth } from './js/auth.js?v=4433201';
+        import { checkAuth } from './js/auth.js?v=4433202';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js?v=443349';
         import { computeOfficiatingCoverageStatus, flagRescheduledOfficiatingSlots, getOfficiatingAssignmentConflictWarnings, normalizeOfficiatingSlots as normalizeAssignmentOfficiatingSlots } from './js/officiating-utils.js?v=4';
         import { buildOfficiatingAssignmentNotificationRecords } from './js/officiating-notifications.js?v=3';
@@ -2220,6 +2221,7 @@
                         }),
                         arrivalTime: event.arrivalTime || null,
                         statTrackerConfigId: event.statTrackerConfigId || null,
+                        trackingEngine: event.trackingEngine || null,
                         assignments: Array.isArray(event.assignments) ? event.assignments : [],
                         officiatingSlots: Array.isArray(event.officiatingSlots) ? event.officiatingSlots : [],
                         officiatingSelfAssignmentEnabled: event.officiatingSelfAssignmentEnabled === true,
@@ -2971,6 +2973,7 @@
 
             // Populate new fields
             setHomeAway(game.isHome === true ? 'home' : (game.isHome === false ? 'away' : null));
+            setDiamondPinnedGameControls(game.trackingEngine === DIAMOND_ENGINE);
             document.getElementById('kitColor').value = game.kitColor || '';
             const seasonRecordFields = hydrateSeasonRecordFormFields({
                 game,
@@ -3006,6 +3009,21 @@
             document.getElementById('homeAwayHome').className = `flex-1 px-3 py-2 border rounded-md text-sm font-medium focus:outline-none transition ${val === 'home' ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-gray-300 text-gray-700 hover:bg-indigo-50'}`;
             document.getElementById('homeAwayAway').className = `flex-1 px-3 py-2 border rounded-md text-sm font-medium focus:outline-none transition ${val === 'away' ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-gray-300 text-gray-700 hover:bg-indigo-50'}`;
         };
+
+        function setDiamondPinnedGameControls(isPinned) {
+            const pinned = isPinned === true;
+            ['homeAwayHome', 'homeAwayAway', 'homeAwayClear'].forEach((id) => {
+                const button = document.getElementById(id);
+                button.disabled = pinned;
+                button.classList.toggle('cursor-not-allowed', pinned);
+                button.classList.toggle('opacity-60', pinned);
+            });
+            const config = document.getElementById('statConfig');
+            config.disabled = pinned;
+            config.classList.toggle('cursor-not-allowed', pinned);
+            config.classList.toggle('bg-gray-100', pinned);
+            document.getElementById('diamond-pinned-game-fields-note').classList.toggle('hidden', !pinned);
+        }
 
         function inferSeasonLabel(dateLike) {
             const d = dateLike instanceof Date
@@ -3410,6 +3428,7 @@
             document.getElementById('cancel-edit-game-btn').classList.add('hidden');
             clearLinkedOpponent();
             setHomeAway(null);
+            setDiamondPinnedGameControls(false);
             document.getElementById('kitColor').value = '';
             document.getElementById('seasonLabel').value = inferSeasonLabel(new Date());
             document.getElementById('competitionType').value = 'league';
@@ -3491,6 +3510,8 @@
                     competitionType: document.getElementById('competitionType').value,
                     countsTowardSeasonRecord: document.getElementById('countsTowardSeasonRecord').checked
                 });
+                const previousGame = editingGameId ? (gamesCache[editingGameId] || null) : null;
+                const isDiamondEditingGame = previousGame?.trackingEngine === DIAMOND_ENGINE;
                 const gameData = {
                     type: 'game',
                     date: Timestamp.fromDate(parsedGameDate),
@@ -3516,7 +3537,11 @@
                         eventDate: parsedGameDate
                     })
                 };
-                const previousGame = editingGameId ? (gamesCache[editingGameId] || null) : null;
+                if (isDiamondEditingGame) {
+                    delete gameData.isHome;
+                    delete gameData.statTrackerConfigId;
+                    delete gameData.opponentTeamId;
+                }
                 gameData.officiatingSlots = flagRescheduledOfficiatingSlots(previousGame, gameData);
                 Object.assign(gameData, getOfficiatingAuthorizationFields(gameData.officiatingSlots));
                 gameData.officiatingCoverageStatus = computeOfficiatingCoverageStatus(gameData.officiatingSlots);

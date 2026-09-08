@@ -424,6 +424,7 @@ function GameScheduleEditPanel({ auth, event }: { auth: AuthState; event: Parent
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
   const [configError, setConfigError] = useState<string | null>(null);
+  const hasPinnedDiamondFields = event.trackingEngine === 'diamond-v2';
   const formResetKey = buildGameFormResetKey(event);
   const eventRef = useRef(event);
   eventRef.current = event;
@@ -459,7 +460,11 @@ function GameScheduleEditPanel({ auth, event }: { auth: AuthState; event: Parent
     setSaving(true);
     setStatus(null);
     try {
-      await updateScheduledGameForApp(event.teamId, event.id, form, auth.user);
+      if (hasPinnedDiamondFields) {
+        await updateScheduledGameForApp(event.teamId, event.id, form, auth.user, { preservePinnedDiamondFields: true });
+      } else {
+        await updateScheduledGameForApp(event.teamId, event.id, form, auth.user);
+      }
       setStatus({ tone: 'success', message: 'Game schedule was updated.' });
     } catch (error: any) {
       setStatus({ tone: 'error', message: error?.message || 'Unable to update game.' });
@@ -474,7 +479,9 @@ function GameScheduleEditPanel({ auth, event }: { auth: AuthState; event: Parent
         <div>
           <div className="text-xs font-black uppercase tracking-[0.04em] text-primary-700">Schedule management</div>
           <h2 className="mt-1 text-base font-black text-gray-950">Edit game</h2>
-          <p className="mt-1 text-sm font-semibold text-gray-500">Update opponent, timing, location, home/away, and tracker config without touching score data.</p>
+          <p className="mt-1 text-sm font-semibold text-gray-500">{hasPinnedDiamondFields
+            ? 'Update opponent, timing, location, and other schedule details without changing pinned Diamond fields.'
+            : 'Update opponent, timing, location, home/away, and tracker config without touching score data.'}</p>
         </div>
         <button type="button" className="secondary-button" onClick={() => setOpen((current) => !current)}>{open ? 'Hide editor' : 'Edit game'}</button>
       </div>
@@ -486,10 +493,11 @@ function GameScheduleEditPanel({ auth, event }: { auth: AuthState; event: Parent
             <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Starts<input type="datetime-local" className="auth-input mt-1" value={toDatetimeLocalInputValue(form.startDate)} onChange={(e) => updateField('startDate', new Date(e.target.value))} /></label>
             <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Ends<input type="datetime-local" className="auth-input mt-1" value={toDatetimeLocalInputValue(form.endDate)} onChange={(e) => updateField('endDate', e.target.value ? new Date(e.target.value) : null)} /></label>
             <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Arrival<input type="datetime-local" className="auth-input mt-1" value={toDatetimeLocalInputValue(form.arrivalTime)} onChange={(e) => updateField('arrivalTime', e.target.value ? new Date(e.target.value) : null)} /></label>
-            <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Home / away<select className="auth-input mt-1" value={form.isHome === false ? 'away' : form.isHome === true ? 'home' : 'neutral'} onChange={(e) => updateField('isHome', e.target.value === 'neutral' ? null : e.target.value === 'home')}><option value="home">Home</option><option value="away">Away</option><option value="neutral">Neutral</option></select></label>
-            <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Tracker config<select className="auth-input mt-1" value={form.statTrackerConfigId || ''} onChange={(e) => updateField('statTrackerConfigId', e.target.value)}><option value="">No tracker config</option>{configs.map((config) => <option key={config.id} value={config.id}>{config.name}</option>)}</select></label>
+            <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Home / away<select className="auth-input mt-1 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-500" value={form.isHome === false ? 'away' : form.isHome === true ? 'home' : 'neutral'} onChange={(e) => updateField('isHome', e.target.value === 'neutral' ? null : e.target.value === 'home')} disabled={hasPinnedDiamondFields} aria-describedby={hasPinnedDiamondFields ? 'diamond-pinned-game-fields-note' : undefined}><option value="home">Home</option><option value="away">Away</option><option value="neutral">Neutral</option></select></label>
+            <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Tracker config<select className="auth-input mt-1 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-500" value={form.statTrackerConfigId || ''} onChange={(e) => updateField('statTrackerConfigId', e.target.value)} disabled={hasPinnedDiamondFields} aria-describedby={hasPinnedDiamondFields ? 'diamond-pinned-game-fields-note' : undefined}><option value="">No tracker config</option>{configs.map((config) => <option key={config.id} value={config.id}>{config.name}</option>)}</select></label>
             <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Competition<select className="auth-input mt-1" value={form.competitionType || 'league'} onChange={(e) => updateField('competitionType', e.target.value)}><option value="league">League</option><option value="tournament">Tournament</option><option value="scrimmage">Scrimmage</option><option value="friendly">Friendly</option></select></label>
           </div>
+          {hasPinnedDiamondFields ? <p id="diamond-pinned-game-fields-note" className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-sm font-semibold text-sky-800">Home/away and tracker config are locked after Diamond activation.</p> : null}
           <label className="flex items-center gap-2 text-sm font-black text-gray-800"><input type="checkbox" checked={form.countsTowardSeasonRecord !== false} onChange={(e) => updateField('countsTowardSeasonRecord', e.target.checked)} /> Counts toward season record</label>
           <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Notes<textarea className="auth-input mt-1 min-h-20" value={form.notes || ''} onChange={(e) => updateField('notes', e.target.value)} /></label>
           <button type="submit" className="primary-button" disabled={saving}>{saving ? 'Saving' : 'Save game'}</button>

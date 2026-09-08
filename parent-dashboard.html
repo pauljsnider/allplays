@@ -388,8 +388,8 @@
             listFamilyShareTokens,
             revokeFamilyShareToken,
             updateFamilyShareTokenCalendars
-        } from './js/db.js?v=4433197';
-        import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } from './js/utils.js?v=443373';
+        } from './js/db.js?v=4433198';
+        import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } from './js/utils.js?v=443374';
         import {
             getIncentiveRules,
             saveIncentiveRule as saveIncentiveRuleFn,
@@ -408,7 +408,8 @@
             saveCapSetting as saveCapSettingFn,
         } from './js/parent-incentives.js?v=9';
         import { functions, httpsCallable } from './js/firebase.js?v=33';
-        import { requireAuth, checkAuth } from './js/auth.js?v=4433201';
+        import { requireAuth, checkAuth } from './js/auth.js?v=4433202';
+        import { assertCompletePlayerStatEvidence, loadCompletePlayerStatsForGames } from './js/diamond-legacy-game-context.js?v=1';
         import { hasReplayVideoEvidence, resolveScheduleWatchCta } from './js/schedule-watch-cta.js?v=3';
         import {
             resolvePracticePacketSessionIdForEvent as resolvePracticePacketSessionIdForEventBase,
@@ -1973,6 +1974,14 @@
                                 title: game.title || null,
                                 status: game.status || null,
                                 liveStatus: game.liveStatus || null,
+                                trackingEngine: game.trackingEngine || null,
+                                diamondProjectionStatus: game.diamondProjectionStatus || null,
+                                diamondProjectionComplete: game.diamondProjectionComplete === true,
+                                diamondScorebookInstanceId: game.diamondScorebookInstanceId || null,
+                                diamondProjectionRevision: game.diamondProjectionRevision ?? null,
+                                diamondProjectionCheckpointHash: game.diamondProjectionCheckpointHash || null,
+                                diamondStatConfigSnapshotHash: game.diamondStatConfigSnapshotHash || null,
+                                diamondProjectionHash: game.diamondProjectionHash || null,
                                 hasReplayVideo: hasReplayVideoEvidence(game),
                                 isCancelled,
                                 isHome: game.isHome ?? null,
@@ -3130,6 +3139,13 @@
             incentivesPanelPlayer = null;
         }
 
+        function assertCompleteIncentiveStatEvidence(activeRules, gameStats) {
+            assertCompletePlayerStatEvidence({
+                evidence: gameStats?.evidence,
+                requiredStatKeys: (activeRules || []).map((rule) => rule?.statKey)
+            });
+        }
+
         async function refreshIncentivesPanel() {
             if (!incentivesPanelPlayer || !currentUserId) return;
             const { id: playerId, name: playerName, teamId } = incentivesPanelPlayer;
@@ -3142,28 +3158,51 @@
                     getCapSetting(currentUserId, playerId),
                 ]);
 
-                // Fetch stats for recent past games for this player
-                const pastGames = allScheduleEvents
-                    .filter(g => g.isDbGame && g.type === 'game' && !g.isCancelled && g.childId === playerId && g.teamId === teamId && new Date(g.date) < new Date())
-                    .sort((a, b) => new Date(b.date) - new Date(a.date));
+                // Reload the authoritative inventory before computing season
+                // absence/totals. The general schedule may be a cache-only or
+                // partial shared-game view and is not completeness evidence.
+                const completeTeamGames = await getGames(teamId, { requireCompleteSharedGames: true });
+                const pastGames = completeTeamGames
+                    .filter((game) => {
+                        const type = String(game?.type || 'game').trim().toLowerCase();
+                        const status = String(game?.status || '').trim().toLowerCase();
+                        const liveStatus = String(game?.liveStatus || '').trim().toLowerCase();
+                        const isCancelled = game?.isCancelled === true
+                            || game?.deleted === true
+                            || game?.isDeleted === true
+                            || ['cancelled', 'canceled'].includes(status)
+                            || ['cancelled', 'canceled'].includes(liveStatus);
+                        const gameDate = game?.date?.toDate ? game.date.toDate() : new Date(game?.date);
+                        return type === 'game' && !isCancelled && !Number.isNaN(gameDate.getTime()) && gameDate < new Date();
+                    })
+                    .sort((a, b) => {
+                        const aDate = a?.date?.toDate ? a.date.toDate() : new Date(a?.date);
+                        const bDate = b?.date?.toDate ? b.date.toDate() : new Date(b?.date);
+                        return bDate - aDate;
+                    });
 
                 const recentGames = pastGames.slice(0, 5);
                 const recentGameIds = new Set(recentGames.map(game => game.id));
 
-                const seasonGameStats = await Promise.all(
-                    pastGames.map(async (game) => {
-                        const stats = await getAggregatedStatsForPlayer(teamId, game.id, playerId);
-                        return { game, stats };
-                    })
-                );
+                const seasonGameStats = await loadCompletePlayerStatsForGames({
+                    teamId,
+                    games: pastGames,
+                    playerId,
+                    loadClassicPlayerStats: getAggregatedStatsForPlayer
+                });
                 incentivesPanelRules = rules;
 
-                // Update earnings cache for schedule chips
-                for (const { game, stats } of seasonGameStats) {
-                    if (stats) {
-                        const { totalCents } = calculateEarnings(getApplicableRulesForGame(rules, game.date), stats, maxPerGameCents);
-                        incentivesEarningsCache.set(`${game.id}__${playerId}`, totalCents);
-                    }
+                // Validate every game before mutating the last-complete earnings cache.
+                const evaluatedGameStats = seasonGameStats.map((gameStats) => {
+                    const activeRules = getApplicableRulesForGame(rules, gameStats.game.date);
+                    assertCompleteIncentiveStatEvidence(activeRules, gameStats);
+                    return {
+                        ...gameStats,
+                        totalCents: calculateEarnings(activeRules, gameStats.stats, maxPerGameCents).totalCents
+                    };
+                });
+                for (const { game, totalCents } of evaluatedGameStats) {
+                    incentivesEarningsCache.set(`${game.id}__${playerId}`, totalCents);
                 }
 
                 content.innerHTML = renderIncentivesPanel({
