@@ -173,6 +173,10 @@ function addMergedFielding(fieldings, actualOutCount, side, eventId, ensure, cre
         participants.forEach((playerId) => credit(ensure(playerId, side), 'fielding', 'TP', 1, eventId));
     return { errorCredits, passedBallObserved: passedBalls.size > 0 };
 }
+function hasUnambiguousGroundBallEvidence(fieldings) {
+    const observedBattedBalls = new Set(fieldings.flatMap((fielding) => (fielding.battedBall && fielding.battedBall !== 'unknown' ? [fielding.battedBall] : [])));
+    return observedBattedBalls.size === 1 && observedBattedBalls.has('ground');
+}
 function atBatForResult(result) {
     return !['walk', 'intentional_walk', 'hit_by_pitch', 'sacrifice_bunt', 'sacrifice_fly', 'interference'].includes(result);
 }
@@ -420,6 +424,7 @@ function projectDiamondStats(ledger) {
                 const batter = ensure(payload.batterId, battingSide);
                 const pitcher = ensure(payload.pitcherId, pitchingSide);
                 const currentPitcherId = before.lineups[pitchingSide].defense.P ?? payload.pitcherId;
+                const fieldingChains = [...(payload.fielding ? [payload.fielding] : []), ...attachmentsForPlay(attachments.fielding, event)];
                 creditGame(payload.batterId, battingSide, eventId, false);
                 creditPitchingAppearance(payload.pitcherId, pitchingSide, eventId, false);
                 credit(batter, 'batting', 'PA', 1, eventId);
@@ -462,8 +467,9 @@ function projectDiamondStats(ledger) {
                     credit(batter, 'batting', 'ROE', 1, eventId);
                 if (payload.result === 'fielders_choice')
                     credit(batter, 'batting', 'FC', 1, eventId);
-                if (payload.result === 'double_play')
+                if (payload.result === 'double_play' && hasUnambiguousGroundBallEvidence(fieldingChains)) {
                     credit(batter, 'batting', 'GIDP', 1, eventId);
+                }
                 const hasRisp = Boolean(before.bases.second || before.bases.third);
                 if (hasRisp)
                     teams[battingSide].rispOpportunities += 1;
@@ -536,7 +542,7 @@ function projectDiamondStats(ledger) {
                     teams[battingSide].twoOutRuns += runsOnPlay;
                 const defenders = new Set(Object.values(before.lineups[pitchingSide].defense).filter(Boolean));
                 defenders.forEach((playerId) => credit(ensure(playerId, pitchingSide), 'fielding', 'defensiveOuts', payload.outsOnPlay, eventId));
-                const fieldingResult = addMergedFielding([...(payload.fielding ? [payload.fielding] : []), ...attachmentsForPlay(attachments.fielding, event)], payload.outsOnPlay, pitchingSide, eventId, ensure, credit);
+                const fieldingResult = addMergedFielding(fieldingChains, payload.outsOnPlay, pitchingSide, eventId, ensure, credit);
                 teams[pitchingSide].E += fieldingResult.errorCredits;
                 physicalCauseCluster = null;
                 break;

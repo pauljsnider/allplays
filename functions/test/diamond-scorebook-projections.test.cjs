@@ -2668,6 +2668,205 @@ test("compiled bounded checkpoint fielding completeness stays byte-identical to 
   });
 });
 
+test("compiled GIDP credit requires explicit ground-ball evidence across checkpoints and final corrections", () => {
+  const matrix = [
+    {
+      battedBall: "fly",
+      runnerCause: "appeal_out",
+      runnerOutKind: "appeal",
+      expectedGidp: 0,
+    },
+    {
+      battedBall: "line",
+      runnerCause: "appeal_out",
+      runnerOutKind: "appeal",
+      expectedGidp: 0,
+    },
+    {
+      battedBall: "ground",
+      runnerCause: "force_out",
+      runnerOutKind: "force",
+      expectedGidp: 1,
+    },
+  ];
+
+  matrix.forEach(
+    ({ battedBall, runnerCause, runnerOutKind, expectedGidp }, index) => {
+      const game = harness("full", "baseball-nfhs");
+      setLineupsAndStart(game, 3);
+      game.submit("record_pitch", {
+        ...currentMatchup(game),
+        result: "in_play",
+      });
+      const reachMatchup = currentMatchup(game);
+      game.submit("record_plate_appearance", {
+        ...reachMatchup,
+        result: "single",
+        batterAdvance: { to: "first" },
+        runnerAdvances: [],
+        outsOnPlay: 0,
+      });
+      game.submit("record_pitch", {
+        ...currentMatchup(game),
+        result: "in_play",
+      });
+      const doubleMatchup = currentMatchup(game);
+      const command = {
+        schemaVersion: DIAMOND_SCHEMA_VERSION,
+        commandId: uuid(950 + index),
+        teamId: game.ledger.teamId,
+        gameId: game.ledger.gameId,
+        expectedRevision: game.ledger.state.revision,
+        rulesProfileId: game.ledger.rulesProfileId,
+        rulesProfileVersion: game.ledger.rulesProfileVersion,
+        type: "record_plate_appearance",
+        payload: {
+          ...doubleMatchup,
+          result: "double_play",
+          batterAdvance: { to: "out", outKind: "batter_runner" },
+          runnerAdvances: [
+            {
+              runnerId: reachMatchup.batterId,
+              from: "first",
+              to: "out",
+              cause: runnerCause,
+              outKind: runnerOutKind,
+            },
+          ],
+          outsOnPlay: 2,
+          fielding: { putoutBy: "home-2", doublePlay: true, battedBall },
+        },
+      };
+      const context = {
+        actorUid: SCORER_UID,
+        eventId: `checkpoint-gidp-${battedBall}-${String(index)}`,
+        serverTimestampMs: 1_700_000_110_000 + index,
+      };
+      const checkpoint = createDiamondCheckpoint(game.ledger);
+      const full = executeDiamondCommand(game.ledger, command, context);
+      const bounded = executeDiamondCommandFromCheckpoint(
+        checkpoint,
+        command,
+        context,
+      );
+
+      assert.equal(full.result.outcome, "accepted");
+      assert.equal(bounded.result.outcome, "accepted");
+      assert.deepEqual(bounded.checkpoint.state, full.ledger.state);
+      assert.deepEqual(bounded.event, full.event);
+      const stats = projectDiamondStats(full.ledger);
+      assert.equal(
+        stats.players[doubleMatchup.batterId].raw.batting.GIDP,
+        expectedGidp,
+      );
+      assert.deepEqual(
+        stats.players[doubleMatchup.batterId].sources["batting.GIDP"] ?? [],
+        expectedGidp === 1 ? [full.event.eventId] : [],
+      );
+      assert.deepEqual(
+        replayDiamondLedger(full.ledger).state,
+        full.ledger.state,
+      );
+    },
+  );
+
+  const corrected = harness("full", "baseball-nfhs");
+  setLineupsAndStart(corrected, 3);
+  corrected.submit("record_pitch", {
+    ...currentMatchup(corrected),
+    result: "in_play",
+  });
+  const reachMatchup = currentMatchup(corrected);
+  corrected.submit("record_plate_appearance", {
+    ...reachMatchup,
+    result: "single",
+    batterAdvance: { to: "first" },
+    runnerAdvances: [],
+    outsOnPlay: 0,
+  });
+  corrected.submit("record_pitch", {
+    ...currentMatchup(corrected),
+    result: "in_play",
+  });
+  const doubleMatchup = currentMatchup(corrected);
+  const groundPayload = {
+    ...doubleMatchup,
+    result: "double_play",
+    batterAdvance: { to: "out", outKind: "batter_runner" },
+    runnerAdvances: [
+      {
+        runnerId: reachMatchup.batterId,
+        from: "first",
+        to: "out",
+        cause: "force_out",
+        outKind: "force",
+      },
+    ],
+    outsOnPlay: 2,
+    fielding: {
+      putoutBy: "home-2",
+      doublePlay: true,
+      battedBall: "ground",
+    },
+  };
+  const doublePlay = corrected.submit("record_plate_appearance", groundPayload);
+  corrected.submit("rules_decision", {
+    code: "end_game_weather",
+    description: "Weather made the current score official.",
+  });
+  corrected.submit("finalize", { confirmed: true });
+  assert.equal(
+    projectDiamondStats(corrected.ledger).players[doubleMatchup.batterId].raw
+      .batting.GIDP,
+    1,
+  );
+
+  corrected.submit("reopen_for_correction", {
+    reason:
+      "Official scorer changed the ground ball to a line-drive double play.",
+  });
+  const correction = corrected.submit("supersede_event", {
+    targetEventId: doublePlay.eventId,
+    reason: "The runner was doubled off after a caught line drive.",
+    replacement: {
+      type: "record_plate_appearance",
+      payload: {
+        ...groundPayload,
+        runnerAdvances: [
+          {
+            runnerId: reachMatchup.batterId,
+            from: "first",
+            to: "out",
+            cause: "appeal_out",
+            outKind: "appeal",
+          },
+        ],
+        fielding: { ...groundPayload.fielding, battedBall: "line" },
+      },
+    },
+  });
+  corrected.submit("finalize", { confirmed: true });
+
+  const correctedStats = projectDiamondStats(corrected.ledger);
+  assert.equal(corrected.ledger.state.lifecycle, "final");
+  assert.equal(
+    correctedStats.players[doubleMatchup.batterId].raw.batting.GIDP,
+    0,
+  );
+  assert.deepEqual(
+    correctedStats.players[doubleMatchup.batterId].sources["batting.GIDP"] ??
+      [],
+    [],
+  );
+  assert.equal(correction.supersedesEventId, doublePlay.eventId);
+  assert.deepEqual(correctedStats, projectDiamondStats(corrected.ledger));
+  assert.deepEqual(
+    replayDiamondLedger(corrected.ledger).state,
+    corrected.ledger.state,
+  );
+  assert.equal(verifyDiamondLedger(corrected.ledger), true);
+});
+
 test("compiled final-half LOB follows only the authoritative effective finalize", () => {
   const game = harness("quick", "baseball-nfhs");
   setLineupsAndStart(game, 3);
@@ -2825,7 +3024,8 @@ test("compiled LOB retains nullified home advances across both half-ending paths
   assert.equal(projectDiamondStats(finalized.game.ledger).teams.away.LOB, 0);
   finalized.game.submit("supersede_event", {
     targetEventId: finalized.force.eventId,
-    reason: "The runner was tagged after the run crossed home rather than forced out.",
+    reason:
+      "The runner was tagged after the run crossed home rather than forced out.",
     replacement: {
       type: "record_plate_appearance",
       payload: {
@@ -2859,7 +3059,10 @@ test("compiled LOB retains nullified home advances across both half-ending paths
     { R: 1, LOB: 1 },
   );
   assert.deepEqual(projectDiamondStats(finalized.game.ledger), correctedStats);
-  assert.deepEqual(replayDiamondLedger(finalized.game.ledger).state, finalized.game.ledger.state);
+  assert.deepEqual(
+    replayDiamondLedger(finalized.game.ledger).state,
+    finalized.game.ledger.state,
+  );
   assert.equal(verifyDiamondLedger(finalized.game.ledger), true);
 
   const earlier = harness("quick", "baseball-nfhs");

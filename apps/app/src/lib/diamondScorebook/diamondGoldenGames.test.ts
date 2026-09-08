@@ -2567,6 +2567,132 @@ describe('Scoring decisions and correction reconciliation', () => {
     });
   });
 
+  it('credits GIDP only for explicit ground-ball double plays through checkpoints and final corrections', () => {
+    const matrix = [
+      { battedBall: 'fly', runnerCause: 'appeal_out', runnerOutKind: 'appeal', expectedGidp: 0 },
+      { battedBall: 'line', runnerCause: 'appeal_out', runnerOutKind: 'appeal', expectedGidp: 0 },
+      { battedBall: 'ground', runnerCause: 'force_out', runnerOutKind: 'force', expectedGidp: 1 }
+    ] as const;
+
+    matrix.forEach(({ battedBall, runnerCause, runnerOutKind, expectedGidp }, index) => {
+      const game = createHarness('baseball-nfhs', 'full');
+      configureGame(game);
+      recordPitch(game, 'in_play');
+      const reachMatchup = currentMatchup(game);
+      game.submit('record_plate_appearance', {
+        ...reachMatchup,
+        result: 'single',
+        batterAdvance: { to: 'first' },
+        runnerAdvances: [],
+        outsOnPlay: 0
+      });
+      recordPitch(game, 'in_play');
+      const doubleMatchup = currentMatchup(game);
+      const command = game.command('record_plate_appearance', {
+        ...doubleMatchup,
+        result: 'double_play',
+        batterAdvance: { to: 'out', outKind: 'batter_runner' },
+        runnerAdvances: [
+          {
+            runnerId: reachMatchup.batterId,
+            from: 'first',
+            to: 'out',
+            cause: runnerCause,
+            outKind: runnerOutKind
+          }
+        ],
+        outsOnPlay: 2,
+        fielding: { putoutBy: 'home-2', doublePlay: true, battedBall }
+      });
+      const context = {
+        actorUid: INITIAL_SCORER,
+        eventId: `checkpoint-gidp-${battedBall}-${String(index)}`,
+        serverTimestampMs: 1_900_000_110_000 + index
+      } as const;
+      const checkpoint = createDiamondCheckpoint(game.ledger);
+      const full = executeDiamondCommand(game.ledger, command, context);
+      const bounded = executeDiamondCommandFromCheckpoint(checkpoint, command, context);
+
+      expect(full.result, full.result.rejection?.message).toMatchObject({ outcome: 'accepted' });
+      expect(bounded.result, bounded.result.rejection?.message).toMatchObject({ outcome: 'accepted' });
+      expect(bounded.checkpoint.state).toEqual(full.ledger.state);
+      expect(bounded.event).toEqual(full.event);
+      const stats = projectDiamondStats(full.ledger);
+      expect(stats.players[doubleMatchup.batterId].raw.batting.GIDP).toBe(expectedGidp);
+      expect(stats.players[doubleMatchup.batterId].sources['batting.GIDP'] ?? []).toEqual(expectedGidp === 1 ? [full.event!.eventId] : []);
+      expect(replayDiamondLedger(full.ledger).state).toEqual(full.ledger.state);
+    });
+
+    const corrected = createHarness('baseball-nfhs', 'full');
+    configureGame(corrected);
+    recordPitch(corrected, 'in_play');
+    const reachMatchup = currentMatchup(corrected);
+    corrected.submit('record_plate_appearance', {
+      ...reachMatchup,
+      result: 'single',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    recordPitch(corrected, 'in_play');
+    const doubleMatchup = currentMatchup(corrected);
+    const groundPayload = {
+      ...doubleMatchup,
+      result: 'double_play' as const,
+      batterAdvance: { to: 'out' as const, outKind: 'batter_runner' as const },
+      runnerAdvances: [
+        {
+          runnerId: reachMatchup.batterId,
+          from: 'first' as const,
+          to: 'out' as const,
+          cause: 'force_out' as const,
+          outKind: 'force' as const
+        }
+      ],
+      outsOnPlay: 2,
+      fielding: { putoutBy: 'home-2', doublePlay: true, battedBall: 'ground' as const }
+    };
+    const doublePlay = corrected.submit('record_plate_appearance', groundPayload);
+    corrected.submit('rules_decision', {
+      code: 'end_game_weather',
+      description: 'Weather made the current score official.'
+    });
+    corrected.submit('finalize', { confirmed: true });
+    expect(projectDiamondStats(corrected.ledger).players[doubleMatchup.batterId].raw.batting.GIDP).toBe(1);
+
+    corrected.submit('reopen_for_correction', { reason: 'Official scorer changed the ground ball to a line-drive double play.' });
+    const correction = corrected.submit('supersede_event', {
+      targetEventId: doublePlay.event!.eventId,
+      reason: 'The runner was doubled off after a caught line drive.',
+      replacement: {
+        type: 'record_plate_appearance',
+        payload: {
+          ...groundPayload,
+          runnerAdvances: [
+            {
+              runnerId: reachMatchup.batterId,
+              from: 'first',
+              to: 'out',
+              cause: 'appeal_out',
+              outKind: 'appeal'
+            }
+          ],
+          fielding: { ...groundPayload.fielding, battedBall: 'line' }
+        }
+      }
+    });
+    corrected.submit('finalize', { confirmed: true });
+
+    const correctedStats = projectDiamondStats(corrected.ledger);
+    expect(corrected.ledger.state.lifecycle).toBe('final');
+    expect(correctedStats.players[doubleMatchup.batterId].raw.batting.GIDP).toBe(0);
+    expect(correctedStats.players[doubleMatchup.batterId].sources['batting.GIDP'] ?? []).toEqual([]);
+    expect(correction.event?.supersedesEventId).toBe(doublePlay.event!.eventId);
+    expect(correctedStats).toEqual(projectDiamondStats(corrected.ledger));
+    expect(replayDiamondLedger(corrected.ledger).state).toEqual(corrected.ledger.state);
+    expect(verifyDiamondLedger(corrected.ledger)).toBe(true);
+  });
+
   it('exposes pitcher decisions only for the coherent effective official result', () => {
     const prepareDecisionGame = () => {
       const game = createHarness('baseball-nfhs', 'quick');
@@ -2973,11 +3099,7 @@ describe('Scoring decisions and correction reconciliation', () => {
     expect(projectDiamondStats(runnerAdvance.ledger).teams.away.LOB).toBe(0);
 
     const cancelled = createHarness('baseball-nfhs', 'quick', runnerAdvance.ledger);
-    cancelled.submit(
-      'cancel',
-      { confirmed: true, reason: 'The unfinished exhibition was cancelled.' },
-      { managerAuthorized: true }
-    );
+    cancelled.submit('cancel', { confirmed: true, reason: 'The unfinished exhibition was cancelled.' }, { managerAuthorized: true });
     expect(projectDiamondStats(cancelled.ledger).teams.away.LOB).toBe(0);
 
     const runnerAdvanceClosed = closeWithAdvance(runnerAdvance.ledger);
