@@ -108,6 +108,8 @@ afterEach(() => {
 
 describe('VerifyPending verification return flow', () => {
     const diamondViewerRoute = '/live-game-diamond-v2.html?teamId=team%2Fone&gameId=game+one&replay=true&clipStart=1200&clipEnd=5600';
+    const familyFeeRoute = '/parent-tools/fees?teamId=team-1&batchId=batch-1&recipientId=recipient-1';
+    const scheduleRoute = '/schedule?teamId=team-1&eventId=event-1';
 
     it('preserves the validated static viewer next when a reloaded verification flow is signed out', async () => {
         const auth = createAuth({ user: null });
@@ -277,6 +279,59 @@ describe('VerifyPending verification return flow', () => {
         });
         expect(resendVerificationEmail).toHaveBeenCalledWith(diamondViewerRoute);
 
+        await act(async () => root.unmount());
+    });
+
+    it.each([
+        ['family fee', familyFeeRoute],
+        ['schedule', scheduleRoute]
+    ])('preserves the validated %s route when resending verification', async (_label, nextRoute) => {
+        const auth = createAuth({
+            refresh: vi.fn().mockResolvedValueOnce({
+                uid: 'user-1',
+                email: 'coach@example.com',
+                displayName: 'Coach Example',
+                emailVerified: false,
+                roles: []
+            })
+        });
+        reloadCurrentUser.mockResolvedValueOnce(false);
+        const entry = `/verify-pending?next=${encodeURIComponent(nextRoute)}`;
+        const { container, root } = await renderVerifyPending(auth, entry);
+
+        await act(async () => {
+            buttonByText(container, "I've verified, continue").click();
+        });
+        await act(async () => {
+            buttonByText(container, 'Resend verification email').click();
+        });
+
+        expect(resendVerificationEmail).toHaveBeenCalledWith(nextRoute);
+        await act(async () => root.unmount());
+    });
+
+    it('drops an unsafe next route when resending verification', async () => {
+        const auth = createAuth({
+            refresh: vi.fn().mockResolvedValueOnce({
+                uid: 'user-1',
+                email: 'coach@example.com',
+                displayName: 'Coach Example',
+                emailVerified: false,
+                roles: []
+            })
+        });
+        reloadCurrentUser.mockResolvedValueOnce(false);
+        const entry = `/verify-pending?next=${encodeURIComponent('https://evil.example/steal')}`;
+        const { container, root } = await renderVerifyPending(auth, entry);
+
+        await act(async () => {
+            buttonByText(container, "I've verified, continue").click();
+        });
+        await act(async () => {
+            buttonByText(container, 'Resend verification email').click();
+        });
+
+        expect(resendVerificationEmail).toHaveBeenCalledWith('');
         await act(async () => root.unmount());
     });
 

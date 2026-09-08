@@ -5,7 +5,6 @@ const { buildAcceptInviteAppUrl, buildAppUrl } = require('./app-links-core.cjs')
 
 const ALLPLAYS_ORIGIN = 'https://allplays.ai';
 const AUTH_ROUTE_ORIGIN = 'https://allplays.local';
-const VERIFICATION_DOCUMENT_NEXT_PATHNAME = '/live-game-diamond-v2.html';
 const AUTH_EMAIL_TYPES = Object.freeze({
   VERIFICATION: 'verification',
   PASSWORD_RESET: 'password_reset',
@@ -33,9 +32,9 @@ function normalizeHeaderText(value) {
   return String(value || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 160);
 }
 
-// Verification email continuations are intentionally narrower than ordinary
-// app routes. A Firebase action link can be opened on another device, so only
-// the public, read-only Diamond viewer document may survive that handoff.
+// Keep verification continuations on the same origin-relative boundary used by
+// the app's authentication entry point. This preserves a validated workflow
+// route when the email is opened in another tab or on another device.
 function normalizeVerificationNextRoute(value) {
   const route = String(value || '').trim();
   if (!route || route.length > 500 || !route.startsWith('/') || route.startsWith('//') || route.includes('\\')) {
@@ -43,7 +42,7 @@ function normalizeVerificationNextRoute(value) {
   }
   try {
     const url = new URL(route, AUTH_ROUTE_ORIGIN);
-    if (url.origin !== AUTH_ROUTE_ORIGIN || url.pathname !== VERIFICATION_DOCUMENT_NEXT_PATHNAME) return '';
+    if (url.origin !== AUTH_ROUTE_ORIGIN) return '';
     return `${url.pathname}${url.search}${url.hash}`;
   } catch {
     return '';

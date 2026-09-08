@@ -63,6 +63,8 @@ const auth: AuthState = {
 };
 
 const diamondViewerRoute = '/live-game-diamond-v2.html?teamId=team%2Fone&gameId=game+one&replay=true&clipStart=1200&clipEnd=5600';
+const familyFeeRoute = '/parent-tools/fees?teamId=team-1&batchId=batch-1&recipientId=recipient-1';
+const scheduleRoute = '/schedule?teamId=team-1&eventId=event-1';
 const hostedDiamondAuthUrl = 'https://allplays.ai/app/#/auth?next=%2Flive-game-diamond-v2.html%3FteamId%3Dteam%252Fone%26gameId%3Dgame%2Bone%26replay%3Dtrue%26clipStart%3D1200%26clipEnd%3D5600';
 const switchedHostedDiamondAuthUrl = `${hostedDiamondAuthUrl}&switch=1`;
 
@@ -533,6 +535,56 @@ describe('AuthPage native post-login routing', () => {
     await waitFor(() => expect(router.state.location.pathname).toBe('/verify-pending'));
     expect(new URLSearchParams(router.state.location.search).get('next')).toBe(diamondViewerRoute);
     expect(window.location.replace).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['family fee', familyFeeRoute],
+    ['schedule', scheduleRoute]
+  ])('preserves a valid %s route through a new email user verification handoff', async (_label, nextRoute) => {
+    authServiceMocks.signUpWithEmail.mockResolvedValue({
+      user: { uid: 'parent-1', email: 'parent@example.com' }
+    });
+    const router = renderNavigableAuthPage(`/auth?mode=signup&next=${encodeURIComponent(nextRoute)}`);
+
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'parent@example.com' } });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'password123' } });
+    fireEvent.change(screen.getByLabelText('Confirm password'), { target: { value: 'password123' } });
+    fireEvent.change(screen.getByLabelText('Join code'), { target: { value: 'ABCD1234' } });
+    fireEvent.click(screen.getByRole('checkbox', { name: /I agree/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create account' }));
+
+    await waitFor(() => expect(authServiceMocks.signUpWithEmail).toHaveBeenCalledWith(
+      'parent@example.com',
+      'password123',
+      'ABCD1234',
+      nextRoute
+    ));
+    await waitFor(() => expect(router.state.location.pathname).toBe('/verify-pending'));
+    expect(new URLSearchParams(router.state.location.search).get('next')).toBe(nextRoute);
+  });
+
+  it('drops an unsafe next route from the email signup and verification handoff', async () => {
+    authServiceMocks.signUpWithEmail.mockResolvedValue({
+      user: { uid: 'parent-1', email: 'parent@example.com' }
+    });
+    const unsafeRoute = 'https://evil.example/steal';
+    const router = renderNavigableAuthPage(`/auth?mode=signup&next=${encodeURIComponent(unsafeRoute)}`);
+
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'parent@example.com' } });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'password123' } });
+    fireEvent.change(screen.getByLabelText('Confirm password'), { target: { value: 'password123' } });
+    fireEvent.change(screen.getByLabelText('Join code'), { target: { value: 'ABCD1234' } });
+    fireEvent.click(screen.getByRole('checkbox', { name: /I agree/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create account' }));
+
+    await waitFor(() => expect(authServiceMocks.signUpWithEmail).toHaveBeenCalledTimes(1));
+    expect(authServiceMocks.signUpWithEmail.mock.calls[0]).toEqual([
+      'parent@example.com',
+      'password123',
+      'ABCD1234'
+    ]);
+    await waitFor(() => expect(router.state.location.pathname).toBe('/verify-pending'));
+    expect(router.state.location.search).toBe('');
   });
 
   it('preserves the static Diamond viewer through a new Google redirect verification handoff', async () => {

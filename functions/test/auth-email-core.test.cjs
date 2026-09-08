@@ -11,7 +11,8 @@ const {
   buildAuthEmailRateLimitId,
   getAuthEmailActionSettings,
   getInviteContinueUrl,
-  normalizeAuthEmail
+  normalizeAuthEmail,
+  normalizeVerificationNextRoute
 } = require('../auth-email-core.cjs');
 
 test('normalizes recipients and builds a Resend verification mail job', () => {
@@ -74,6 +75,37 @@ test('uses the ALL PLAYS action handler and rejects off-origin invite continuati
   );
 });
 
+test('preserves every validated app route in verification action settings', () => {
+  const routes = [
+    '/parent-tools/fees?teamId=team-1&batchId=batch-1&recipientId=recipient-1',
+    '/schedule?teamId=team-1&eventId=event-1'
+  ];
+
+  for (const route of routes) {
+    assert.deepEqual(getAuthEmailActionSettings(AUTH_EMAIL_TYPES.VERIFICATION, route), {
+      url: `https://allplays.ai/app/#/verify-pending?next=${encodeURIComponent(route)}`,
+      handleCodeInApp: false
+    });
+  }
+});
+
+test('drops unsafe verification routes before building an action URL', () => {
+  const unsafeRoutes = [
+    'https://evil.example/steal',
+    '//evil.example/steal',
+    '/\\evil.example/steal',
+    `/${'a'.repeat(600)}`
+  ];
+
+  for (const route of unsafeRoutes) {
+    assert.equal(normalizeVerificationNextRoute(route), '');
+    assert.deepEqual(
+      getAuthEmailActionSettings(AUTH_EMAIL_TYPES.VERIFICATION, route),
+      getAuthEmailActionSettings(AUTH_EMAIL_TYPES.VERIFICATION)
+    );
+  }
+});
+
 test('builds invite continuation URLs for each supported passwordless flow', () => {
   assert.equal(
     getInviteContinueUrl('ABCD1234', 'admin_invite'),
@@ -99,6 +131,26 @@ test('builds invite continuation URLs for each supported passwordless flow', () 
     'https://allplays.ai/app/#/accept-invite?code=COPE1234&type=coparent'
   );
   assert.throws(() => getInviteContinueUrl('short', 'admin_invite'), /eight-character code/);
+});
+
+test('preserves validated fee and schedule routes through canonical verification actions', () => {
+  const routes = [
+    '/parent-tools/fees?teamId=team-1&batchId=batch-1&recipientId=recipient-1',
+    '/schedule?teamId=team-1&eventId=event-1'
+  ];
+
+  for (const [index, route] of routes.entries()) {
+    const continueUrl = encodeURIComponent(
+      `https://allplays.ai/app/#/verify-pending?next=${encodeURIComponent(route)}`
+    );
+    assert.equal(
+      buildCanonicalAuthActionUrl(
+        `https://game-flow-c6311.firebaseapp.com/__/auth/action?mode=verifyEmail&oobCode=verify-code-${index}&apiKey=public-key&continueUrl=${continueUrl}`,
+        AUTH_EMAIL_TYPES.VERIFICATION
+      ),
+      `https://allplays.ai/app/#/reset-password?mode=verifyEmail&oobCode=verify-code-${index}&apiKey=public-key&next=${encodeURIComponent(route)}`
+    );
+  }
 });
 
 test('rewrites generated Firebase actions to canonical app entry routes', () => {

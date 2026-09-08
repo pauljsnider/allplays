@@ -33,7 +33,7 @@ import { loadAuthProfileViaRest } from './adapters/legacyAuthProfileRest';
 import { raceFirstSuccessfulRead } from './adapters/legacyHedgedRead';
 import { clearAppDataCache } from './appDataCache';
 import { buildFirebaseSdkActionHref } from './appLinks';
-import { getDocumentAuthNextRoute } from './authNextRoute';
+import { getSafeAuthNextRoute } from './authNextRoute';
 import { mergeOwnedTeamIds } from './teamAccess';
 import { callNativeFirebaseFunctionWithAuth } from './nativeCallable';
 import type { AuthUser, ProfileHydrationStatus, UserRole } from './types';
@@ -1440,7 +1440,7 @@ export async function signInWithEmail(email: string, password: string) {
 
 export async function signUpWithEmail(email: string, password: string, activationCode: string, requestedVerificationNextRoute = '') {
   const normalizedEmail = requireValidAuthEmail(email);
-  const verificationNextRoute = getDocumentAuthNextRoute(requestedVerificationNextRoute);
+  const verificationNextRoute = getSafeAuthNextRoute(requestedVerificationNextRoute);
   const [dbModule, { redeemAdminInviteAcceptance }, { executeEmailPasswordSignup }, { queueCurrentUserVerificationEmail }] =
     await Promise.all([loadLegacyAuthDb(), loadLegacyAdminInvite(), loadLegacySignupFlow(), loadLegacyAuthEmail()]);
 
@@ -1766,7 +1766,7 @@ export async function sendResetEmail(email: string) {
 
 export async function resendVerificationEmail(requestedVerificationNextRoute = '') {
   const { queueCurrentUserVerificationEmail } = await loadLegacyAuthEmail();
-  const verificationNextRoute = getDocumentAuthNextRoute(requestedVerificationNextRoute);
+  const verificationNextRoute = getSafeAuthNextRoute(requestedVerificationNextRoute);
   const user = getCurrentFirebaseUser();
   if (!user) {
     const idToken = await getNativeAuthIdToken();

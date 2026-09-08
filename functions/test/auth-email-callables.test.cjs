@@ -3,6 +3,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const { createAuthEmailCallableHandlers } = require('../auth-email-callables.cjs');
+const { normalizeVerificationNextRoute } = require('../auth-email-core.cjs');
 
 class TestHttpsError extends Error {
   constructor(code, message) {
@@ -172,19 +173,23 @@ test('verification accepts a server-verified native token and queues for that ui
   assert.equal(calls.queued[0].type, types.VERIFICATION);
 });
 
-test('verification forwards only the server-allowlisted Diamond viewer continuation', async () => {
-  const viewerRoute = '/live-game-diamond-v2.html?teamId=team%2Fone&gameId=game+one&replay=true';
-  const { handlers, calls } = createHarness({
-    normalizeVerificationNextRoute: (value) => value === viewerRoute ? viewerRoute : ''
-  });
+test('verification forwards validated app continuations and drops unsafe routes', async () => {
+  const routes = [
+    '/live-game-diamond-v2.html?teamId=team%2Fone&gameId=game+one&replay=true',
+    '/parent-tools/fees?teamId=team-1&batchId=batch-1&recipientId=recipient-1',
+    '/schedule?teamId=team-1&eventId=event-1'
+  ];
 
-  assert.deepEqual(
-    await handlers.queueEmailVerification({ next: viewerRoute }, { auth: { uid: 'user-1' } }),
-    { queued: true }
-  );
-  assert.deepEqual(calls.actionSettings, [[types.VERIFICATION, viewerRoute]]);
+  for (const route of routes) {
+    const { handlers, calls } = createHarness({ normalizeVerificationNextRoute });
+    assert.deepEqual(
+      await handlers.queueEmailVerification({ next: route }, { auth: { uid: 'user-1' } }),
+      { queued: true }
+    );
+    assert.deepEqual(calls.actionSettings, [[types.VERIFICATION, route]]);
+  }
 
-  const unsafe = createHarness({ normalizeVerificationNextRoute: () => '' });
+  const unsafe = createHarness({ normalizeVerificationNextRoute });
   await unsafe.handlers.queueEmailVerification({ next: 'https://evil.example/viewer' }, { auth: { uid: 'user-1' } });
   assert.deepEqual(unsafe.calls.actionSettings, [[types.VERIFICATION, '']]);
 });

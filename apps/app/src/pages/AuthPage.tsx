@@ -231,8 +231,8 @@ export function AuthPage({ auth }: { auth: AuthState }) {
           throw new Error('Passwords do not match.');
         }
 
-        if (requestedDocumentRoute) {
-          await signUpWithEmail(normalizedEmail, password, code, requestedDocumentRoute);
+        if (requestedNextRoute) {
+          await signUpWithEmail(normalizedEmail, password, code, requestedNextRoute);
         } else {
           await signUpWithEmail(normalizedEmail, password, code);
         }

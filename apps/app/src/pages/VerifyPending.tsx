@@ -57,7 +57,7 @@ export function VerifyPending({ auth }: { auth: AuthState }) {
     setError('');
     setMessage('');
     try {
-      await resendVerificationEmail(documentFallbackRoute);
+      await resendVerificationEmail(nextRoute);
       setMessage('Verification email queued. Check your inbox and spam folder shortly.');
     } catch (resendError: any) {
       setError(resendError?.message || 'Unable to resend verification email.');
