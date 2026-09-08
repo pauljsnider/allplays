@@ -2800,6 +2800,215 @@ describe('Scoring decisions and correction reconciliation', () => {
     expect(projectDiamondStats(cancelled.ledger).teams.away.LOB).toBe(0);
   });
 
+  it('counts a nullified run in LOB on an inning-ending force and rebuilds it through checkpoints and corrections', () => {
+    const setup = createHarness('baseball-nfhs', 'quick');
+    configureGame(setup);
+    const runnerOnThird = placeRunnerOnBase(setup, 'third');
+    const runnerOnFirst = placeRunnerOnBase(setup, 'first');
+    recordOut(setup);
+    recordOut(setup);
+    expect(setup.ledger.state).toMatchObject({
+      inning: { number: 1, half: 'top', outs: 2 },
+      bases: {
+        first: { runnerId: runnerOnFirst },
+        third: { runnerId: runnerOnThird }
+      }
+    });
+
+    const matchup = currentMatchup(setup);
+    const forcePayload = {
+      batterId: matchup.batterId,
+      pitcherId: matchup.pitcherId,
+      result: 'fielders_choice' as const,
+      batterAdvance: { to: 'first' as const },
+      runnerAdvances: [
+        {
+          runnerId: runnerOnFirst,
+          from: 'first' as const,
+          to: 'out' as const,
+          cause: 'force_out' as const,
+          outKind: 'force' as const
+        },
+        {
+          runnerId: runnerOnThird,
+          from: 'third' as const,
+          to: 'home' as const,
+          cause: 'batted_ball' as const,
+          countsRun: false
+        }
+      ],
+      outsOnPlay: 1,
+      runsBattedIn: 0
+    };
+    const command = setup.command('record_plate_appearance', forcePayload);
+    const context = {
+      actorUid: INITIAL_SCORER,
+      eventId: 'golden-nullified-force-third-out',
+      serverTimestampMs: 1_900_000_200_000
+    } as const;
+    const checkpoint = createDiamondCheckpoint(setup.ledger);
+    const full = executeDiamondCommand(setup.ledger, command, context);
+    const bounded = executeDiamondCommandFromCheckpoint(checkpoint, command, context);
+
+    expect(full.result, full.result.rejection?.message).toMatchObject({ outcome: 'accepted' });
+    expect(bounded.result, bounded.result.rejection?.message).toMatchObject({ outcome: 'accepted' });
+    expect(bounded.checkpoint.state).toEqual(full.ledger.state);
+    expect(bounded.checkpoint.sequence).toBe(checkpoint.sequence + 1);
+    expect(bounded.checkpoint.previousHash).toBe(bounded.event?.hash);
+    expect(bounded.event).toEqual(full.event);
+    expect(full.ledger.state).toMatchObject({
+      inning: { outs: 3 },
+      score: { away: 0 },
+      bases: { first: { runnerId: matchup.batterId }, third: null }
+    });
+
+    const game = createHarness('baseball-nfhs', 'quick', full.ledger);
+    game.submit('rules_decision', {
+      code: 'end_game_weather',
+      description: 'Weather made the force-ending score official.'
+    });
+    game.submit('finalize', { confirmed: true });
+    const originalStats = projectDiamondStats(game.ledger);
+    expect(originalStats.teams.away).toMatchObject({ R: 0, LOB: 2 });
+    expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
+    expect(projectDiamondStats(game.ledger)).toEqual(originalStats);
+
+    const advanced = createHarness('baseball-nfhs', 'quick');
+    configureGame(advanced);
+    const advancedRunnerOnThird = placeRunnerOnBase(advanced, 'third');
+    const advancedRunnerOnFirst = placeRunnerOnBase(advanced, 'first');
+    recordOut(advanced);
+    recordOut(advanced);
+    const advancedMatchup = currentMatchup(advanced);
+    advanced.submit('record_plate_appearance', {
+      batterId: advancedMatchup.batterId,
+      pitcherId: advancedMatchup.pitcherId,
+      result: 'fielders_choice',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [
+        {
+          runnerId: advancedRunnerOnFirst,
+          from: 'first',
+          to: 'out',
+          cause: 'force_out',
+          outKind: 'force'
+        },
+        {
+          runnerId: advancedRunnerOnThird,
+          from: 'third',
+          to: 'home',
+          cause: 'batted_ball',
+          countsRun: false
+        }
+      ],
+      outsOnPlay: 1,
+      runsBattedIn: 0
+    });
+    advanced.submit('advance_half_inning', {});
+    const advancedStats = projectDiamondStats(advanced.ledger);
+    expect(advancedStats.teams.away).toMatchObject({ R: 0, LOB: 2 });
+    expect(projectDiamondStats(advanced.ledger)).toEqual(advancedStats);
+    expect(replayDiamondLedger(advanced.ledger).state).toEqual(advanced.ledger.state);
+
+    const preCorrectionHash = game.ledger.state.checkpointHash;
+    game.submit('reopen_for_correction', { reason: 'The scorer reviewed whether the force was a timing play.' });
+    expect(projectDiamondStats(game.ledger).teams.away.LOB).toBe(0);
+    game.submit('supersede_event', {
+      targetEventId: full.event!.eventId,
+      reason: 'The runner was tagged after the run crossed home rather than forced out.',
+      replacement: {
+        type: 'record_plate_appearance',
+        payload: {
+          ...forcePayload,
+          runnerAdvances: [
+            {
+              runnerId: runnerOnFirst,
+              from: 'first',
+              to: 'out',
+              cause: 'batted_ball',
+              outKind: 'tag'
+            },
+            {
+              runnerId: runnerOnThird,
+              from: 'third',
+              to: 'home',
+              cause: 'batted_ball',
+              countsRun: true,
+              earned: true,
+              rbi: true
+            }
+          ],
+          runsBattedIn: 1
+        }
+      }
+    });
+    game.submit('finalize', { confirmed: true });
+    const correctedStats = projectDiamondStats(game.ledger);
+    expect(correctedStats.teams.away).toMatchObject({ R: 1, LOB: 1 });
+    expect(game.ledger.state.checkpointHash).not.toBe(preCorrectionHash);
+    expect(correctedStats.checkpointHash).toBe(game.ledger.state.checkpointHash);
+    expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
+    expect(projectDiamondStats(game.ledger)).toEqual(correctedStats);
+    expect(verifyDiamondLedger(game.ledger)).toBe(true);
+  });
+
+  it('defers earlier nullified home advances until a half closes and follows effective voids', () => {
+    const closeWithAdvance = (seed: DiamondLedger) => {
+      const closed = createHarness('baseball-nfhs', 'quick', seed);
+      while (closed.ledger.state.inning.outs < 3) recordOut(closed);
+      closed.submit('advance_half_inning', {});
+      return closed;
+    };
+
+    const runnerAdvance = createHarness('baseball-nfhs', 'quick');
+    configureGame(runnerAdvance);
+    const runnerId = placeRunnerOnBase(runnerAdvance, 'third');
+    runnerAdvance.submit('advance_runner', {
+      runnerId,
+      from: 'third',
+      to: 'home',
+      cause: 'batted_ball',
+      countsRun: false
+    });
+    expect(projectDiamondStats(runnerAdvance.ledger).teams.away.LOB).toBe(0);
+
+    const cancelled = createHarness('baseball-nfhs', 'quick', runnerAdvance.ledger);
+    cancelled.submit(
+      'cancel',
+      { confirmed: true, reason: 'The unfinished exhibition was cancelled.' },
+      { managerAuthorized: true }
+    );
+    expect(projectDiamondStats(cancelled.ledger).teams.away.LOB).toBe(0);
+
+    const runnerAdvanceClosed = closeWithAdvance(runnerAdvance.ledger);
+    expect(projectDiamondStats(runnerAdvanceClosed.ledger).teams.away).toMatchObject({ R: 0, LOB: 1 });
+    expect(replayDiamondLedger(runnerAdvanceClosed.ledger).state).toEqual(runnerAdvanceClosed.ledger.state);
+
+    const batterAdvance = createHarness('baseball-nfhs', 'quick');
+    configureGame(batterAdvance);
+    const batterMatchup = currentMatchup(batterAdvance);
+    const nullifiedBatter = batterAdvance.submit('record_plate_appearance', {
+      batterId: batterMatchup.batterId,
+      pitcherId: batterMatchup.pitcherId,
+      result: 'home_run',
+      batterAdvance: { to: 'home', countsRun: false },
+      runnerAdvances: [],
+      outsOnPlay: 0,
+      runsBattedIn: 0
+    });
+    const batterAdvanceClosed = closeWithAdvance(batterAdvance.ledger);
+    expect(projectDiamondStats(batterAdvanceClosed.ledger).teams.away).toMatchObject({ R: 0, LOB: 1 });
+
+    batterAdvance.submit('void_event', {
+      targetEventId: nullifiedBatter.event!.eventId,
+      reason: 'Remove the plate appearance that did not produce an official run.'
+    });
+    const voidedBatterAdvanceClosed = closeWithAdvance(batterAdvance.ledger);
+    expect(projectDiamondStats(voidedBatterAdvanceClosed.ledger).teams.away).toMatchObject({ R: 0, LOB: 0 });
+    expect(replayDiamondLedger(voidedBatterAdvanceClosed.ledger).state).toEqual(voidedBatterAdvanceClosed.ledger.state);
+    expect(verifyDiamondLedger(voidedBatterAdvanceClosed.ledger)).toBe(true);
+  });
+
   it('adds completed and final-half LOB for automatic endings without double-counting correction re-finalization', () => {
     const leaveRunnerOnFirst = (game: Harness) => {
       const { batterId, pitcherId } = currentMatchup(game);

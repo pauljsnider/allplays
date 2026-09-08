@@ -457,6 +457,9 @@ export function projectDiamondStats(ledger: DiamondLedger): DiamondStatProjectio
   };
   const attachments = collectAttachmentMaps(simulated);
   const exposedDecisionEventIds = exposedPitcherDecisionEventIds(simulated, ledger.state);
+  // A runner whose home advance is explicitly nullified no longer occupies a
+  // base, but still counts as left on base once this half officially closes.
+  let pendingNullifiedHomeAdvances = 0;
   let physicalCauseCluster: {
     cause: 'wild_pitch' | 'passed_ball' | 'balk' | 'illegal_pitch' | null;
     pitcherId: string | null;
@@ -643,6 +646,9 @@ export function projectDiamondStats(ledger: DiamondLedger): DiamondStatProjectio
         }
 
         const allAdvances = [{ runnerId: payload.batterId, from: 'batter' as const, ...payload.batterAdvance }, ...payload.runnerAdvances];
+        pendingNullifiedHomeAdvances += allAdvances.filter(
+          (advance) => advance.to === 'home' && advance.countsRun === false
+        ).length;
         let runsOnPlay = 0;
         allAdvances.forEach((advance) => {
           if (advance.from !== 'batter') {
@@ -717,6 +723,7 @@ export function projectDiamondStats(ledger: DiamondLedger): DiamondStatProjectio
         creditGame(payload.runnerId, battingSide, eventId, false);
         if (payload.to === 'out') credit(runner, 'baserunning', 'outs', 1, eventId);
         else if (payload.to !== 'stay') credit(runner, 'baserunning', 'advances', 1, eventId);
+        if (payload.to === 'home' && payload.countsRun === false) pendingNullifiedHomeAdvances += 1;
         if (payload.cause === 'stolen_base') credit(runner, 'baserunning', 'SB', 1, eventId);
         if (payload.cause === 'caught_stealing') credit(runner, 'baserunning', 'CS', 1, eventId);
         if (payload.cause === 'pickoff') credit(runner, 'baserunning', 'pickoffs', 1, eventId);
@@ -814,13 +821,17 @@ export function projectDiamondStats(ledger: DiamondLedger): DiamondStatProjectio
       }
       case 'advance_half_inning': {
         const side = battingSideFor(before);
-        teams[side].LOB += [before.bases.first, before.bases.second, before.bases.third].filter(Boolean).length;
+        teams[side].LOB +=
+          [before.bases.first, before.bases.second, before.bases.third].filter(Boolean).length + pendingNullifiedHomeAdvances;
+        pendingNullifiedHomeAdvances = 0;
         break;
       }
       case 'finalize': {
         if (ledger.state.lifecycle === 'final' && event.revision === ledger.state.finalConfirmedAtRevision) {
           const side = battingSideFor(before);
-          teams[side].LOB += [before.bases.first, before.bases.second, before.bases.third].filter(Boolean).length;
+          teams[side].LOB +=
+            [before.bases.first, before.bases.second, before.bases.third].filter(Boolean).length + pendingNullifiedHomeAdvances;
+          pendingNullifiedHomeAdvances = 0;
         }
         break;
       }

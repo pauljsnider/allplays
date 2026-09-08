@@ -2744,6 +2744,140 @@ test("compiled final-half LOB follows only the authoritative effective finalize"
   assert.equal(projectDiamondStats(cancelled.ledger).teams.away.LOB, 0);
 });
 
+test("compiled LOB retains nullified home advances across both half-ending paths and corrections", () => {
+  function prepareNullifiedForce() {
+    const game = harness("quick", "baseball-nfhs");
+    setLineupsAndStart(game, 6);
+    const runnerOnThird = placeRunnerOnBase(game, "third");
+    const runnerOnFirst = placeRunnerOnBase(game, "first");
+    recordOut(game);
+    recordOut(game);
+    const matchup = currentMatchup(game);
+    const forcePayload = {
+      batterId: matchup.batterId,
+      pitcherId: matchup.pitcherId,
+      result: "fielders_choice",
+      batterAdvance: { to: "first" },
+      runnerAdvances: [
+        {
+          runnerId: runnerOnFirst,
+          from: "first",
+          to: "out",
+          cause: "force_out",
+          outKind: "force",
+        },
+        {
+          runnerId: runnerOnThird,
+          from: "third",
+          to: "home",
+          cause: "batted_ball",
+          countsRun: false,
+        },
+      ],
+      outsOnPlay: 1,
+      runsBattedIn: 0,
+    };
+    const force = game.submit("record_plate_appearance", forcePayload);
+    assert.deepEqual(game.ledger.state.bases, {
+      first: {
+        runnerId: matchup.batterId,
+        chargedToPitcherId: matchup.pitcherId,
+        courtesyForPlayerId: null,
+        reachedOnEventId: force.eventId,
+      },
+      second: null,
+      third: null,
+    });
+    return { game, force, forcePayload, runnerOnFirst, runnerOnThird };
+  }
+
+  const advanced = prepareNullifiedForce();
+  advanced.game.submit("advance_half_inning", {});
+  assert.deepEqual(
+    {
+      R: projectDiamondStats(advanced.game.ledger).teams.away.R,
+      LOB: projectDiamondStats(advanced.game.ledger).teams.away.LOB,
+    },
+    { R: 0, LOB: 2 },
+  );
+  const advancedBundle = bundleFor(advanced.game.ledger);
+  assert.equal(advancedBundle.writes.teamStats.data.stats.lob, 2);
+  assert.equal(
+    advancedBundle.writes.gameUpdate.diamondPublicTeamStats.stats.lob,
+    2,
+  );
+
+  const finalized = prepareNullifiedForce();
+  finalized.game.submit("rules_decision", {
+    code: "end_game_weather",
+    description: "Weather made the force-ending score official.",
+  });
+  finalized.game.submit("finalize", { confirmed: true });
+  const originalStats = projectDiamondStats(finalized.game.ledger);
+  assert.deepEqual(
+    { R: originalStats.teams.away.R, LOB: originalStats.teams.away.LOB },
+    { R: 0, LOB: 2 },
+  );
+
+  finalized.game.submit("reopen_for_correction", {
+    reason: "The scorer reviewed whether the force was a timing play.",
+  });
+  assert.equal(projectDiamondStats(finalized.game.ledger).teams.away.LOB, 0);
+  finalized.game.submit("supersede_event", {
+    targetEventId: finalized.force.eventId,
+    reason: "The runner was tagged after the run crossed home rather than forced out.",
+    replacement: {
+      type: "record_plate_appearance",
+      payload: {
+        ...finalized.forcePayload,
+        runnerAdvances: [
+          {
+            runnerId: finalized.runnerOnFirst,
+            from: "first",
+            to: "out",
+            cause: "batted_ball",
+            outKind: "tag",
+          },
+          {
+            runnerId: finalized.runnerOnThird,
+            from: "third",
+            to: "home",
+            cause: "batted_ball",
+            countsRun: true,
+            earned: true,
+            rbi: true,
+          },
+        ],
+        runsBattedIn: 1,
+      },
+    },
+  });
+  finalized.game.submit("finalize", { confirmed: true });
+  const correctedStats = projectDiamondStats(finalized.game.ledger);
+  assert.deepEqual(
+    { R: correctedStats.teams.away.R, LOB: correctedStats.teams.away.LOB },
+    { R: 1, LOB: 1 },
+  );
+  assert.deepEqual(projectDiamondStats(finalized.game.ledger), correctedStats);
+  assert.deepEqual(replayDiamondLedger(finalized.game.ledger).state, finalized.game.ledger.state);
+  assert.equal(verifyDiamondLedger(finalized.game.ledger), true);
+
+  const earlier = harness("quick", "baseball-nfhs");
+  setLineupsAndStart(earlier, 4);
+  const earlierRunner = placeRunnerOnBase(earlier, "third");
+  earlier.submit("advance_runner", {
+    runnerId: earlierRunner,
+    from: "third",
+    to: "home",
+    cause: "batted_ball",
+    countsRun: false,
+  });
+  assert.equal(projectDiamondStats(earlier.ledger).teams.away.LOB, 0);
+  while (earlier.ledger.state.inning.outs < 3) recordOut(earlier);
+  earlier.submit("advance_half_inning", {});
+  assert.equal(projectDiamondStats(earlier.ledger).teams.away.LOB, 1);
+});
+
 test("compiled ready-state forfeit blocks setup and start mutations but remains finalizable", () => {
   const game = harness("quick", "fastpitch-nfhs");
   game.submit("activate", {
