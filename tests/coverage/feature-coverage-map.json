@@ -659,6 +659,7 @@
                 "getGameReplayPlayback",
                 "getPublicDiamondGame",
                 "getReplayPrivacyMigrationStatus",
+                "listDiamondScorerCandidates",
                 "listDiamondEvents",
                 "liveGameSharePreview",
                 "manageGameReplayArchive",
