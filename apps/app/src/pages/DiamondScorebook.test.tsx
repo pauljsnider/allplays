@@ -885,6 +885,70 @@ describe('DiamondScorebook', () => {
     });
   });
 
+  it('disables sacrifice outcomes with two pre-play outs while leaving ordinary outs available', () => {
+    const snapshot = buildSnapshot({
+      inning: { number: 4, half: 'bottom', outs: 2, balls: 0, strikes: 0, pitchesInPlateAppearance: 0 }
+    });
+
+    renderScorebook(snapshot, createClient(snapshot));
+
+    expect(screen.getByRole('button', { name: 'Sac bunt' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Sac fly' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Fly out' })).toBeEnabled();
+  });
+
+  it.each([
+    {
+      label: 'Sac bunt',
+      validation: /sacrifice bunt requires an existing runner to advance safely/i,
+      runnerLabel: /First .* destination/i,
+      destination: 'second'
+    },
+    {
+      label: 'Sac fly',
+      validation: /sacrifice fly requires a runner whose run scores/i,
+      runnerLabel: /Third .* destination/i,
+      destination: 'home'
+    }
+  ])('requires explicit qualifying runner evidence before confirming $label', async ({ label, validation, runnerLabel, destination }) => {
+    const fixture = createClient();
+    renderScorebook(buildSnapshot(), fixture);
+
+    fireEvent.click(screen.getByRole('button', { name: label }));
+    const dialog = screen.getByRole('dialog', { name: `Review ${label}` });
+    expect(within(dialog).getByRole('alert')).toHaveTextContent(validation);
+    expect(within(dialog).getByRole('button', { name: 'Confirm play' })).toBeDisabled();
+
+    fireEvent.change(within(dialog).getByLabelText(runnerLabel), { target: { value: destination } });
+    expect(within(dialog).queryByText(validation)).not.toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Confirm play' })).toBeEnabled();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm play' }));
+
+    await waitFor(() => expect(fixture.submitCommand).toHaveBeenCalledTimes(1));
+    expect(fixture.createCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'record_plate_appearance',
+        payload: expect.objectContaining({ result: label === 'Sac bunt' ? 'sacrifice_bunt' : 'sacrifice_fly' })
+      })
+    );
+  });
+
+  it('does not treat a non-counting home crossing as sacrifice-bunt advancement evidence', () => {
+    renderScorebook();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sac bunt' }));
+    const dialog = screen.getByRole('dialog', { name: 'Review Sac bunt' });
+    fireEvent.change(within(dialog).getByLabelText(/Third .* destination/i), { target: { value: 'home' } });
+    const runCounts = within(dialog).getByLabelText('Run counts');
+    expect(runCounts).toBeChecked();
+    expect(within(dialog).getByRole('button', { name: 'Confirm play' })).toBeEnabled();
+
+    fireEvent.click(runCounts);
+
+    expect(within(dialog).getByRole('alert')).toHaveTextContent(/sacrifice bunt requires an existing runner to advance safely/i);
+    expect(within(dialog).getByRole('button', { name: 'Confirm play' })).toBeDisabled();
+  });
+
   it.each([
     { lastPitchResult: 'in_play' as const, outcome: 'Single' },
     { lastPitchResult: 'hit_by_pitch' as const, outcome: 'Hit by pitch' },
@@ -3937,6 +4001,19 @@ describe('DiamondScorebook', () => {
     );
   });
 
+  it('limits a current-pitcher substitution to inherited or explicit P assignment', () => {
+    const snapshot = buildSnapshot();
+    renderScorebook(snapshot, createClient(snapshot));
+    fireEvent.click(screen.getByText('Full-mode advanced plays'));
+
+    const substitution = screen.getByRole('group', { name: 'Substitution' });
+    const assignment = within(substitution).getByLabelText('Defensive assignment');
+    expect(assignment).toHaveValue('');
+    expect(within(assignment).getByRole('option', { name: 'Replace at P' })).toBeInTheDocument();
+    expect(within(assignment).getByRole('option', { name: 'P' })).toBeInTheDocument();
+    expect(within(assignment).queryByRole('option', { name: '1B' })).not.toBeInTheDocument();
+  });
+
   it('excludes batting-side substitute and re-entry candidates already occupying a live base without cross-team ID leakage', () => {
     const baseSnapshot = buildSnapshot();
     const snapshot = buildSnapshot({
@@ -4050,6 +4127,19 @@ describe('DiamondScorebook', () => {
         bases: {
           ...snapshot.bases,
           first: snapshot.bases.first ? { ...snapshot.bases.first, responsiblePitcherId: 'pitcher-2' } : null
+        }
+      })
+    ],
+    [
+      'defensive assignment',
+      (snapshot: DiamondScorebookSnapshot) => ({
+        ...snapshot,
+        defense: {
+          ...snapshot.defense,
+          home: {
+            P: snapshot.lineups.home[1],
+            C: snapshot.lineups.home[0]
+          }
         }
       })
     ]

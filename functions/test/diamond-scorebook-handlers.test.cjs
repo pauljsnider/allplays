@@ -2312,6 +2312,191 @@ describe("Diamond scorebook handler factory", () => {
     assert.deepEqual([...harness.firestore.documents.entries()], before);
   });
 
+  it("enforces canonical pitcher occupancy and sacrifice evidence before durable writes", async () => {
+    const pitcherHarness = createHarness();
+    await activate(pitcherHarness);
+    await startGame(pitcherHarness);
+    const pitcherPaths = paths("team-1", "game-1");
+    const invalidPitcherCommandId = makeUuid(391);
+    const invalidPitcher = await submit(pitcherHarness, {
+      commandId: invalidPitcherCommandId,
+      expectedRevision: 6,
+      type: "substitute",
+      payload: {
+        side: "home",
+        battingSlot: 1,
+        outgoingPlayerId: "home-1",
+        incomingPlayerId: "home-reliever",
+        defensivePosition: "1B",
+      },
+    });
+    assert.equal(invalidPitcher.outcome, "rejected");
+    assert.equal(invalidPitcher.rejection.code, "missing-defensive-pitcher");
+    assert.equal(
+      pitcherHarness.firestore.read(pitcherPaths.scorebook).checkpoint.sequence,
+      6,
+    );
+    assert.equal(
+      pitcherHarness.firestore.read(
+        pitcherPaths.command(invalidPitcherCommandId),
+      ),
+      undefined,
+    );
+
+    const validPitcher = await submit(pitcherHarness, {
+      commandId: makeUuid(392),
+      expectedRevision: 6,
+      type: "substitute",
+      payload: {
+        side: "home",
+        battingSlot: 1,
+        outgoingPlayerId: "home-1",
+        incomingPlayerId: "home-reliever",
+      },
+    });
+    assert.equal(validPitcher.outcome, "accepted");
+    assert.equal(
+      validPitcher.state.state.lineups.home.defense.P,
+      "home-reliever",
+    );
+
+    const sacrificeHarness = createHarness();
+    await activate(sacrificeHarness);
+    await startGame(sacrificeHarness);
+    const sacrificePaths = paths("team-1", "game-1");
+    const missingEvidenceCommandId = makeUuid(393);
+    const missingEvidence = await submit(sacrificeHarness, {
+      commandId: missingEvidenceCommandId,
+      expectedRevision: 6,
+      type: "record_plate_appearance",
+      payload: {
+        batterId: "away-1",
+        pitcherId: "home-1",
+        result: "sacrifice_fly",
+        batterAdvance: { to: "out" },
+        runnerAdvances: [],
+        outsOnPlay: 1,
+      },
+    });
+    assert.equal(missingEvidence.outcome, "rejected");
+    assert.equal(missingEvidence.rejection.code, "sacrifice-evidence-missing");
+    assert.equal(
+      sacrificeHarness.firestore.read(
+        sacrificePaths.command(missingEvidenceCommandId),
+      ),
+      undefined,
+    );
+
+    const canceledBuntHarness = createHarness();
+    await activate(canceledBuntHarness);
+    await startGame(canceledBuntHarness);
+    const canceledBuntPaths = paths("team-1", "game-1");
+    const reached = await submit(canceledBuntHarness, {
+      commandId: makeUuid(397),
+      expectedRevision: 6,
+      type: "record_plate_appearance",
+      payload: {
+        batterId: "away-1",
+        pitcherId: "home-1",
+        result: "single",
+        batterAdvance: { to: "first" },
+        runnerAdvances: [],
+        outsOnPlay: 0,
+      },
+    });
+    assert.equal(reached.outcome, "accepted");
+    const courtesy = await submit(canceledBuntHarness, {
+      commandId: makeUuid(398),
+      expectedRevision: 7,
+      type: "add_courtesy_runner",
+      payload: {
+        side: "away",
+        forPlayerId: "away-1",
+        runnerId: "away-courtesy",
+        base: "first",
+        forRole: "pitcher",
+      },
+    });
+    assert.equal(courtesy.outcome, "accepted");
+    const canceledBuntCommandId = makeUuid(399);
+    const canceledBunt = await submit(canceledBuntHarness, {
+      commandId: canceledBuntCommandId,
+      expectedRevision: 8,
+      type: "record_plate_appearance",
+      payload: {
+        batterId: "away-1",
+        pitcherId: "home-1",
+        result: "sacrifice_bunt",
+        batterAdvance: { to: "out" },
+        runnerAdvances: [
+          {
+            runnerId: "away-courtesy",
+            from: "first",
+            to: "home",
+            cause: "batted_ball",
+            countsRun: false,
+          },
+        ],
+        outsOnPlay: 1,
+      },
+    });
+    assert.equal(canceledBunt.outcome, "rejected");
+    assert.equal(canceledBunt.rejection.code, "sacrifice-evidence-missing");
+    assert.equal(
+      canceledBuntHarness.firestore.read(canceledBuntPaths.scorebook)
+        .checkpoint.sequence,
+      8,
+    );
+    assert.equal(
+      canceledBuntHarness.firestore.read(
+        canceledBuntPaths.command(canceledBuntCommandId),
+      ),
+      undefined,
+    );
+
+    for (const [index, batterId] of ["away-1", "away-1"].entries()) {
+      const out = await submit(sacrificeHarness, {
+        commandId: makeUuid(394 + index),
+        expectedRevision: 6 + index,
+        type: "record_plate_appearance",
+        payload: {
+          batterId,
+          pitcherId: "home-1",
+          result: "ground_out",
+          batterAdvance: { to: "out" },
+          runnerAdvances: [],
+          outsOnPlay: 1,
+        },
+      });
+      assert.equal(out.outcome, "accepted");
+    }
+    const twoOutCommandId = makeUuid(396);
+    const twoOutSacrifice = await submit(sacrificeHarness, {
+      commandId: twoOutCommandId,
+      expectedRevision: 8,
+      type: "record_plate_appearance",
+      payload: {
+        batterId: "away-1",
+        pitcherId: "home-1",
+        result: "sacrifice_bunt",
+        batterAdvance: { to: "out" },
+        runnerAdvances: [],
+        outsOnPlay: 1,
+      },
+    });
+    assert.equal(twoOutSacrifice.outcome, "rejected");
+    assert.equal(twoOutSacrifice.rejection.code, "sacrifice-with-two-outs");
+    assert.equal(
+      sacrificeHarness.firestore.read(sacrificePaths.scorebook).checkpoint
+        .sequence,
+      8,
+    );
+    assert.equal(
+      sacrificeHarness.firestore.read(sacrificePaths.command(twoOutCommandId)),
+      undefined,
+    );
+  });
+
   it("serializes concurrent devices and definitively rejects the stale expected revision", async () => {
     const harness = createHarness();
     await activate(harness);

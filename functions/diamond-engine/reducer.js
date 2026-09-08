@@ -866,6 +866,24 @@ function validateCompleteExtraBaseHitRunnerResolution(state, result, runnerMoves
         }
     });
 }
+function validateSacrificeEvidence(state, result, runnerMoves) {
+    if (result !== 'sacrifice_bunt' && result !== 'sacrifice_fly')
+        return;
+    if (state.inning.outs >= 2) {
+        throw new contracts_1.DiamondDomainError('sacrifice-with-two-outs', 'A sacrifice cannot be recorded with two outs before the play.');
+    }
+    const matchingLiveRunnerMoves = runnerMoves.filter((move) => move.from !== 'batter' && state.bases[move.from]?.runnerId === move.runnerId);
+    if (result === 'sacrifice_fly') {
+        if (!matchingLiveRunnerMoves.some((move) => move.to === 'home' && move.countsRun !== false)) {
+            throw new contracts_1.DiamondDomainError('sacrifice-evidence-missing', 'A sacrifice fly requires a runner whose run scores on the play.');
+        }
+        return;
+    }
+    if (!matchingLiveRunnerMoves.some((move) => (move.to === 'home' && move.countsRun !== false) ||
+        (BASES.includes(move.to) && BASES.indexOf(move.to) > BASES.indexOf(move.from)))) {
+        throw new contracts_1.DiamondDomainError('sacrifice-evidence-missing', 'A sacrifice bunt requires an existing runner to advance safely.');
+    }
+}
 function validateNamedMultiOutResult(state, result, moves, outsOnPlay) {
     const requiredOuts = result === 'double_play' ? 2 : result === 'triple_play' ? 3 : null;
     if (requiredOuts === null)
@@ -1061,6 +1079,10 @@ function reduceSubstitution(state, payload, reentry) {
         substitutions: [...slot.substitutions, incomingPlayerId]
     };
     const bases = transferLiveSubstitutedRunner(state, side, outgoingPlayerId, incomingPlayerId);
+    const defense = replaceDefensePlayer(lineup.defense, outgoingPlayerId, incomingPlayerId, payload.defensivePosition);
+    if (!defense.P) {
+        throw new contracts_1.DiamondDomainError('missing-defensive-pitcher', 'An active substitution must leave the defensive pitcher position occupied.');
+    }
     return {
         ...state,
         bases,
@@ -1069,7 +1091,7 @@ function reduceSubstitution(state, payload, reentry) {
             [side]: {
                 ...lineup,
                 battingOrder: order,
-                defense: replaceDefensePlayer(lineup.defense, outgoingPlayerId, incomingPlayerId, payload.defensivePosition)
+                defense
             }
         }
     };
@@ -1476,6 +1498,7 @@ function reduceDiamondEvent(state, action) {
             });
             const moves = [batterMove, ...runnerMoves];
             validateCompleteExtraBaseHitRunnerResolution(state, action.payload.result, runnerMoves);
+            validateSacrificeEvidence(state, action.payload.result, runnerMoves);
             validateNamedMultiOutResult(state, action.payload.result, moves, action.payload.outsOnPlay);
             const actualOutCount = moves.filter((move) => move.to === 'out').length;
             validateDiamondFieldingOutCredit(action.payload.fielding, actualOutCount);

@@ -148,6 +148,7 @@ type SubstitutionReviewSource = {
   sourceInstanceId: string;
   sourceLeaseId: string;
   authenticatedUid: string;
+  outgoingDefensivePosition: DiamondDefensivePosition | null;
   sourceBaseFingerprint: string | null;
   transferBase: DiamondBase | null;
 };
@@ -300,6 +301,10 @@ const outcomeOptions: OutcomeOption[] = [
   { result: 'double_play', label: 'Double play', batterTo: 'out', outs: 2, fullOnly: true },
   { result: 'triple_play', label: 'Triple play', batterTo: 'out', outs: 3, fullOnly: true }
 ];
+
+function isSacrificeResult(result: string) {
+  return result === 'sacrifice_bunt' || result === 'sacrifice_fly';
+}
 
 const pitchOptions = [
   { result: 'ball', label: 'Ball' },
@@ -696,6 +701,9 @@ function buildSubstitutionReviewSource(
     sourceInstanceId: snapshot.instanceId,
     sourceLeaseId: identity.leaseId,
     authenticatedUid: identity.authenticatedUid,
+    outgoingDefensivePosition:
+      (Object.entries(snapshot.defense[participants.side]).find(([, player]) => player?.playerId === participants.outgoingPlayerId)?.[0] as
+        DiamondDefensivePosition | undefined) || null,
     sourceBaseFingerprint: liveSubstitutionBaseFingerprint(snapshot, participants.side),
     transferBase: livePlacements.find(({ runner }) => runner.playerId === participants.outgoingPlayerId)?.base || null
   };
@@ -728,6 +736,7 @@ function substitutionSourceMatchesSnapshot(
     current.sourceInstanceId === source.sourceInstanceId &&
     current.sourceLeaseId === source.sourceLeaseId &&
     current.authenticatedUid === source.authenticatedUid &&
+    current.outgoingDefensivePosition === source.outgoingDefensivePosition &&
     current.sourceBaseFingerprint === source.sourceBaseFingerprint &&
     current.transferBase === source.transferBase
   );
@@ -743,6 +752,9 @@ function validateSubstitutionPayload(payload: DiamondJsonObject, source: Substit
     participants.incomingPlayerId !== source.incomingPlayerId
   ) {
     return 'The reviewed substitution no longer matches the exact players and batting slot.';
+  }
+  if (source.outgoingDefensivePosition === 'P' && payload.defensivePosition !== undefined && payload.defensivePosition !== 'P') {
+    return 'A substitution replacing the current pitcher must retain defensive position P.';
   }
   return '';
 }
@@ -1394,6 +1406,23 @@ function validateRunnerReview(pending: PendingPlay, snapshot: DiamondScorebookSn
       expectedRunnerSources.some((source) => !reviewedRunnerSources.includes(source))
     ) {
       return 'Every runner who occupied a base before this play must be reviewed exactly once. Refresh and review the play again.';
+    }
+    if (pending.result === 'sacrifice_bunt' || pending.result === 'sacrifice_fly') {
+      if (snapshot.inning.outs >= 2) return 'A sacrifice cannot be recorded with two outs before the play.';
+      if (pending.result === 'sacrifice_fly' && !existingRunnerMoves.some((move) => move.to === 'home' && move.countsRun !== false)) {
+        return 'A sacrifice fly requires a runner whose run scores on the play.';
+      }
+      if (
+        pending.result === 'sacrifice_bunt' &&
+        !existingRunnerMoves.some(
+          (move) =>
+            (move.to === 'home' && move.countsRun !== false) ||
+            (diamondBases.includes(move.to as DiamondBase) &&
+              diamondBases.indexOf(move.to as DiamondBase) > diamondBases.indexOf(move.from as DiamondBase))
+        )
+      ) {
+        return 'A sacrifice bunt requires an existing runner to advance safely.';
+      }
     }
   }
   if (
@@ -3673,7 +3702,7 @@ export function DiamondScorebook({
                     key={outcome.result}
                     type="button"
                     className={`focus-visible:ring-primary-500 min-h-14 rounded-xl border px-2 text-sm font-black transition focus-visible:ring-2 focus-visible:outline-none ${outcome.result === 'home_run' ? 'border-amber-300 bg-amber-50 text-amber-900' : outcome.outs ? 'border-gray-300 bg-gray-50 text-gray-800' : 'border-emerald-200 bg-emerald-50 text-emerald-900'}`}
-                    disabled={playControlsDisabled}
+                    disabled={playControlsDisabled || (snapshot.inning.outs >= 2 && isSacrificeResult(outcome.result))}
                     onClick={() => reviewPlateAppearance(snapshot, outcome)}
                   >
                     {outcome.label}
@@ -5205,6 +5234,7 @@ function AdvancedScoringPanel({
       !liveSubstitutionRunnerIds.has(player.playerId)
   );
   const incomingSubCandidate = subCandidates.find((player) => player.playerId === incomingPlayerId) || null;
+  const substitutionRetainsPitcher = currentSubPosition !== 'P' || !subDefensivePosition || subDefensivePosition === 'P';
   const dpLineup = snapshot.lineups[dpSide];
   const dpCandidates = [...snapshot.availablePlayers[dpSide], ...dpLineup].filter(
     (player, index, all) => all.findIndex((candidate) => candidate.playerId === player.playerId) === index
@@ -5497,11 +5527,13 @@ function AdvancedScoringPanel({
               onChange={(event) => setSubDefensivePosition(event.target.value as DiamondDefensivePosition | '')}
             >
               <option value="">{currentSubPosition ? `Replace at ${currentSubPosition}` : 'Batting only'}</option>
-              {defensivePositions.map((position) => (
-                <option key={position} value={position}>
-                  {position}
-                </option>
-              ))}
+              {defensivePositions
+                .filter((position) => currentSubPosition !== 'P' || position === 'P')
+                .map((position) => (
+                  <option key={position} value={position}>
+                    {position}
+                  </option>
+                ))}
             </select>
           </label>
         </div>
@@ -5509,7 +5541,7 @@ function AdvancedScoringPanel({
           <button
             type="button"
             className="ghost-button w-full justify-center text-xs"
-            disabled={disabled || snapshot.lifecycle !== 'active' || !subEntry || !incomingSubCandidate}
+            disabled={disabled || snapshot.lifecycle !== 'active' || !subEntry || !incomingSubCandidate || !substitutionRetainsPitcher}
             onClick={() =>
               subEntry &&
               incomingSubCandidate &&
@@ -5527,7 +5559,7 @@ function AdvancedScoringPanel({
           <button
             type="button"
             className="ghost-button w-full justify-center text-xs"
-            disabled={disabled || snapshot.lifecycle !== 'active' || !subEntry || !reentryAvailable}
+            disabled={disabled || snapshot.lifecycle !== 'active' || !subEntry || !reentryAvailable || !substitutionRetainsPitcher}
             onClick={() =>
               subEntry?.starterPlayerId &&
               onReview('re_enter', 'starter re-entry', {
@@ -6241,7 +6273,11 @@ function PlayReviewModal({
               {outcomeOptions
                 .filter((option) => controlMode === 'full' || !option.fullOnly || option.result === pending.result)
                 .map((option) => (
-                  <option key={option.result} value={option.result}>
+                  <option
+                    key={option.result}
+                    value={option.result}
+                    disabled={!pending.correction && snapshot.inning.outs >= 2 && isSacrificeResult(option.result)}
+                  >
                     {option.label}
                   </option>
                 ))}

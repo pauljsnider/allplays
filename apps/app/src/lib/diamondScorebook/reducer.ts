@@ -1019,6 +1019,35 @@ function validateCompleteExtraBaseHitRunnerResolution(
   });
 }
 
+function validateSacrificeEvidence(
+  state: DiamondGameState,
+  result: DiamondCommandPayloadMap['record_plate_appearance']['result'],
+  runnerMoves: readonly Move[]
+) {
+  if (result !== 'sacrifice_bunt' && result !== 'sacrifice_fly') return;
+  if (state.inning.outs >= 2) {
+    throw new DiamondDomainError('sacrifice-with-two-outs', 'A sacrifice cannot be recorded with two outs before the play.');
+  }
+  const matchingLiveRunnerMoves = runnerMoves.filter(
+    (move) => move.from !== 'batter' && state.bases[move.from]?.runnerId === move.runnerId
+  );
+  if (result === 'sacrifice_fly') {
+    if (!matchingLiveRunnerMoves.some((move) => move.to === 'home' && move.countsRun !== false)) {
+      throw new DiamondDomainError('sacrifice-evidence-missing', 'A sacrifice fly requires a runner whose run scores on the play.');
+    }
+    return;
+  }
+  if (
+    !matchingLiveRunnerMoves.some(
+      (move) =>
+        (move.to === 'home' && move.countsRun !== false) ||
+        (BASES.includes(move.to as DiamondBase) && BASES.indexOf(move.to as DiamondBase) > BASES.indexOf(move.from as DiamondBase))
+    )
+  ) {
+    throw new DiamondDomainError('sacrifice-evidence-missing', 'A sacrifice bunt requires an existing runner to advance safely.');
+  }
+}
+
 function validateNamedMultiOutResult(
   state: DiamondGameState,
   result: DiamondCommandPayloadMap['record_plate_appearance']['result'],
@@ -1255,6 +1284,10 @@ function reduceSubstitution(
     substitutions: [...slot.substitutions, incomingPlayerId]
   };
   const bases = transferLiveSubstitutedRunner(state, side, outgoingPlayerId, incomingPlayerId);
+  const defense = replaceDefensePlayer(lineup.defense, outgoingPlayerId, incomingPlayerId, payload.defensivePosition);
+  if (!defense.P) {
+    throw new DiamondDomainError('missing-defensive-pitcher', 'An active substitution must leave the defensive pitcher position occupied.');
+  }
   return {
     ...state,
     bases,
@@ -1263,7 +1296,7 @@ function reduceSubstitution(
       [side]: {
         ...lineup,
         battingOrder: order,
-        defense: replaceDefensePlayer(lineup.defense, outgoingPlayerId, incomingPlayerId, payload.defensivePosition)
+        defense
       }
     }
   };
@@ -1695,6 +1728,7 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
       });
       const moves = [batterMove, ...runnerMoves];
       validateCompleteExtraBaseHitRunnerResolution(state, action.payload.result, runnerMoves);
+      validateSacrificeEvidence(state, action.payload.result, runnerMoves);
       validateNamedMultiOutResult(state, action.payload.result, moves, action.payload.outsOnPlay);
       const actualOutCount = moves.filter((move) => move.to === 'out').length;
       validateDiamondFieldingOutCredit(action.payload.fielding, actualOutCount);

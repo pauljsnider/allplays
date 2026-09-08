@@ -1007,6 +1007,8 @@ SECURITY AND AUTHORITY RULES:
 - A trailing safe runner must not pass a preceding runner. Preserve the pre-play order of every runner who is not recorded out; multiple runners may reach home on the same play.
 - Batter destinations are result-pinned: single=first, double=second, triple=third, home_run=home, walk/intentional_walk/hit_by_pitch=first, and ground_out/fly_out/line_out/sacrifice_bunt/sacrifice_fly/double_play/triple_play=out. strikeout is out or an eligible first-base reach; reached_on_error, fielders_choice, and interference remain scorer-defined but cannot use to=stay.
 - For dropped-third-strike advancement, use the pre-play context: an ordinary strikeout may reach first, and a named dropped_third_strike may advance to first, second, third, or home, only when droppedThirdStrike.enabled=true and the pinned rule does not disallow advancement with first base occupied and fewer than two outs. Missing or disabled capability means the batter must be out. A batter can never use to=stay.
+- A sacrifice requires known pre-play outs fewer than two: sacrifice_fly requires a runner whose run scores, and sacrifice_bunt requires an existing runner to advance safely.
+- When substituting or re-entering the current pitcher, the current pitcher must retain defensive position P: omit defensivePosition to inherit P or set defensivePosition=P.
 - These prompt rules guide the proposal only. The local deterministic validator remains authoritative.
 - For home_run and triple, include every occupied base runner exactly once in runnerAdvances; each must reach home or be marked out.
 - For double_play record exactly 2 distinct actual outs, and for triple_play record exactly 3, including the batter and matching outsOnPlay. Do not infer timing from array order; leave countsRun explicit for scorer review.
@@ -1448,6 +1450,18 @@ function validateCommandReferences(type: DiamondAiCommandType, payload: Record<s
   }
   if (type === 'record_plate_appearance') validatePlateAppearanceAgainstContext(payload, context);
   if (type === 'advance_runner') validateStandaloneRunnerAdvanceAgainstContext(payload, context);
+  if (type === 'substitute' || type === 're_enter') validateSubstitutionAgainstContext(type, payload, context);
+}
+
+function validateSubstitutionAgainstContext(
+  type: Extract<DiamondAiCommandType, 'substitute' | 're_enter'>,
+  payload: Record<string, unknown>,
+  context: NormalizedCommandContext
+) {
+  const outgoingPlayerId = type === 'substitute' ? payload.outgoingPlayerId : payload.replacedPlayerId;
+  if (outgoingPlayerId === context.currentPitcherId && payload.defensivePosition !== undefined && payload.defensivePosition !== 'P') {
+    throw new DiamondAiBoundaryError('A proposal that replaces the current pitcher must retain defensive position P.');
+  }
 }
 
 function validatePlateAppearanceAgainstContext(payload: Record<string, unknown>, context: NormalizedCommandContext) {
@@ -1491,6 +1505,8 @@ function validatePlateAppearanceAgainstContext(payload: Record<string, unknown>,
     seenRunners.add(runnerId);
   });
 
+  validateSacrificeAgainstContext(result, runnerAdvances, context);
+
   validatePlateAppearanceBaseDestinations(payload.batterId as string, batterAdvance, runnerAdvances, context);
   validateDroppedThirdStrikeAdvance(result, batterAdvance.to as string, context);
 
@@ -1510,6 +1526,32 @@ function validatePlateAppearanceAgainstContext(payload: Record<string, unknown>,
     { from: 'batter', to: batterAdvance.to as string },
     ...runnerAdvances.map((advance) => ({ from: advance.from as keyof NormalizedCommandContext['bases'], to: advance.to as string }))
   ]);
+}
+
+function validateSacrificeAgainstContext(result: string, runnerAdvances: Record<string, unknown>[], context: NormalizedCommandContext) {
+  if (result !== 'sacrifice_bunt' && result !== 'sacrifice_fly') return;
+  if (context.outs === null) {
+    throw new DiamondAiBoundaryError('A sacrifice proposal requires the exact pre-play outs.');
+  }
+  if (context.outs >= 2) {
+    throw new DiamondAiBoundaryError('A sacrifice cannot be proposed with two outs before the play.');
+  }
+  if (result === 'sacrifice_fly') {
+    if (!runnerAdvances.some((advance) => advance.to === 'home' && advance.countsRun !== false)) {
+      throw new DiamondAiBoundaryError('A sacrifice fly requires a runner whose run scores on the play.');
+    }
+    return;
+  }
+  const baseRank: Record<string, number> = { first: 1, second: 2, third: 3, home: 4 };
+  if (
+    !runnerAdvances.some(
+      (advance) =>
+        (advance.to === 'home' && advance.countsRun !== false) ||
+        (advance.to !== 'home' && baseRank[advance.to as string] > baseRank[advance.from as string])
+    )
+  ) {
+    throw new DiamondAiBoundaryError('A sacrifice bunt requires an existing runner to advance safely.');
+  }
 }
 
 function validatePlateAppearanceBatterDestination(result: string, destination: string) {

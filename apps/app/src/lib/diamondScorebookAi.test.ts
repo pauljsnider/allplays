@@ -178,6 +178,8 @@ describe('interpretDiamondTranscript', () => {
     expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/stay put or move forward/i);
     expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/must not pass a preceding runner/i);
     expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/dropped.third.strike.*pre-play.*first base.*two outs/i);
+    expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/sacrifice.*pre-play.*outs.*scor.*advance/i);
+    expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/current pitcher.*defensive position.*P/i);
   });
 
   it('treats prompt injection as untrusted and rejects a model mutation claim', async () => {
@@ -241,6 +243,58 @@ describe('interpretDiamondTranscript', () => {
 
     expect(result).toMatchObject({ status: 'invalid-response', proposal: null, authoritative: false });
     expect(result.message).toMatch(/defensive position/i);
+  });
+
+  it.each([
+    {
+      type: 'substitute',
+      payload: {
+        side: 'home',
+        battingSlot: 1,
+        outgoingPlayerId: 'pitcher-1',
+        incomingPlayerId: 'runner-1',
+        defensivePosition: '1B'
+      }
+    },
+    {
+      type: 're_enter',
+      payload: {
+        side: 'home',
+        battingSlot: 1,
+        starterPlayerId: 'runner-1',
+        replacedPlayerId: 'pitcher-1',
+        defensivePosition: '1B'
+      }
+    }
+  ])('rejects an AI $type proposal that moves the current pitcher away from P', async ({ type, payload }) => {
+    const model = jsonModel(commandResponse({ type, payloadJson: JSON.stringify(payload) }));
+
+    const result = await interpretDiamondTranscript('Move the pitcher to first base.', commandContext(), model.dependencies);
+
+    expect(result).toMatchObject({ status: 'invalid-response', proposal: null, authoritative: false });
+    expect(result.message).toMatch(/current pitcher.*P/i);
+  });
+
+  it.each([
+    { label: 'inherits P', defensivePosition: undefined },
+    { label: 'explicitly retains P', defensivePosition: 'P' }
+  ])('keeps an AI substitution eligible when it $label', async ({ defensivePosition }) => {
+    const model = jsonModel(
+      commandResponse({
+        type: 'substitute',
+        payloadJson: JSON.stringify({
+          side: 'home',
+          battingSlot: 1,
+          outgoingPlayerId: 'pitcher-1',
+          incomingPlayerId: 'runner-1',
+          ...(defensivePosition ? { defensivePosition } : {})
+        })
+      })
+    );
+
+    const result = await interpretDiamondTranscript('Bring in the new pitcher.', commandContext(), model.dependencies);
+
+    expect(result).toMatchObject({ status: 'proposal', proposal: { type: 'substitute' }, authoritative: false });
   });
 
   it('rejects unknown payload fields and embedded transcript/private data', async () => {
@@ -596,6 +650,126 @@ describe('interpretDiamondTranscript', () => {
     );
 
     const result = await interpretDiamondTranscript('Ground out; runner held.', commandContext(), model.dependencies);
+
+    expect(result).toMatchObject({ status: 'proposal', proposal: { type: 'record_plate_appearance' }, authoritative: false });
+  });
+
+  it.each([
+    {
+      label: 'sacrifice bunt with two pre-play outs',
+      context: commandContext({ outs: 2 }),
+      payload: {
+        result: 'sacrifice_bunt',
+        batterAdvance: { to: 'out' },
+        runnerAdvances: [{ runnerId: 'runner-1', from: 'first', to: 'second', cause: 'batted_ball' }],
+        outsOnPlay: 1
+      },
+      message: /sacrifice.*two outs/i
+    },
+    {
+      label: 'sacrifice fly with missing pre-play outs',
+      context: commandContext({ outs: undefined }),
+      payload: {
+        result: 'sacrifice_fly',
+        batterAdvance: { to: 'out' },
+        runnerAdvances: [{ runnerId: 'runner-1', from: 'first', to: 'home', cause: 'batted_ball', countsRun: true }],
+        outsOnPlay: 1
+      },
+      message: /pre-play outs/i
+    },
+    {
+      label: 'sacrifice bunt without a safe advancement',
+      context: commandContext(),
+      payload: {
+        result: 'sacrifice_bunt',
+        batterAdvance: { to: 'out' },
+        runnerAdvances: [{ runnerId: 'runner-1', from: 'first', to: 'stay', cause: 'batted_ball' }],
+        outsOnPlay: 1
+      },
+      message: /sacrifice bunt.*advance safely/i
+    },
+    {
+      label: 'sacrifice fly without a scoring runner',
+      context: commandContext(),
+      payload: {
+        result: 'sacrifice_fly',
+        batterAdvance: { to: 'out' },
+        runnerAdvances: [{ runnerId: 'runner-1', from: 'first', to: 'third', cause: 'batted_ball' }],
+        outsOnPlay: 1
+      },
+      message: /sacrifice fly.*run.*score/i
+    },
+    {
+      label: 'sacrifice fly with a canceled run',
+      context: commandContext(),
+      payload: {
+        result: 'sacrifice_fly',
+        batterAdvance: { to: 'out' },
+        runnerAdvances: [{ runnerId: 'runner-1', from: 'first', to: 'home', cause: 'batted_ball', countsRun: false }],
+        outsOnPlay: 1
+      },
+      message: /sacrifice fly.*run.*score/i
+    },
+    {
+      label: 'sacrifice bunt with a canceled home advance',
+      context: commandContext(),
+      payload: {
+        result: 'sacrifice_bunt',
+        batterAdvance: { to: 'out' },
+        runnerAdvances: [{ runnerId: 'runner-1', from: 'first', to: 'home', cause: 'batted_ball', countsRun: false }],
+        outsOnPlay: 1
+      },
+      message: /sacrifice bunt.*advance safely/i
+    }
+  ])('rejects an AI $label', async ({ context, payload, message }) => {
+    const model = jsonModel(plateAppearanceResponse(payload));
+
+    const result = await interpretDiamondTranscript('Review the sacrifice.', context, model.dependencies);
+
+    expect(result).toMatchObject({ status: 'invalid-response', proposal: null, authoritative: false });
+    expect(result.message).toMatch(message);
+  });
+
+  it.each([
+    {
+      label: 'sacrifice bunt with safe advancement',
+      context: commandContext(),
+      payload: {
+        result: 'sacrifice_bunt',
+        batterAdvance: { to: 'out' },
+        runnerAdvances: [{ runnerId: 'runner-1', from: 'first', to: 'second', cause: 'batted_ball' }],
+        outsOnPlay: 1
+      }
+    },
+    {
+      label: 'sacrifice fly with scoring evidence',
+      context: commandContext(),
+      payload: {
+        result: 'sacrifice_fly',
+        batterAdvance: { to: 'out' },
+        runnerAdvances: [{ runnerId: 'runner-1', from: 'first', to: 'home', cause: 'batted_ball', countsRun: true }],
+        outsOnPlay: 1
+      }
+    },
+    {
+      label: 'sacrifice bunt with a counted home advance',
+      context: commandContext(),
+      payload: {
+        result: 'sacrifice_bunt',
+        batterAdvance: { to: 'out' },
+        runnerAdvances: [{ runnerId: 'runner-1', from: 'first', to: 'home', cause: 'batted_ball', countsRun: true }],
+        outsOnPlay: 1
+      }
+    },
+    {
+      label: 'ordinary fly out without a runner',
+      context: commandContext({ bases: { first: null, second: null, third: null } }),
+      payload: { result: 'fly_out', batterAdvance: { to: 'out' }, runnerAdvances: [], outsOnPlay: 1 }
+    }
+  ])('keeps an AI $label eligible for scorer review', async ({ context, payload }) => {
+    const model = jsonModel(plateAppearanceResponse(payload));
+
+    const result = await interpretDiamondTranscript('Review the play.', context, model.dependencies);
 
     expect(result).toMatchObject({ status: 'proposal', proposal: { type: 'record_plate_appearance' }, authoritative: false });
   });
