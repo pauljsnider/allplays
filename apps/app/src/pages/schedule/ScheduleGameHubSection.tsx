@@ -69,7 +69,9 @@ import { useScheduleEventDetailContext } from './ScheduleEventDetailContext';
 const logger = createLogger('schedule-event-detail');
 const DIAMOND_INSTANCE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-function getDiamondLiveEngagementContext(event: ParentScheduleEvent) {
+function getDiamondLiveEngagementContext(
+  event: Pick<ParentScheduleEvent, 'trackingEngine' | 'diamondScorebookInstanceId'>,
+) {
   if (event.trackingEngine !== 'diamond-v2') return null;
   const instanceId = String(event.diamondScorebookInstanceId || '').trim().toLowerCase();
   return DIAMOND_INSTANCE_ID_PATTERN.test(instanceId)
@@ -79,6 +81,7 @@ function getDiamondLiveEngagementContext(event: ParentScheduleEvent) {
 
 type LiveGameChatModule = typeof import('../../lib/liveGameChatService');
 type LiveGameReactionsModule = typeof import('../../lib/liveGameReactionsService');
+type DiamondLiveEngagementModule = typeof import('../../lib/diamondLiveEngagementService');
 type GameDayLineupBuilderModule = typeof import('../../lib/gameDayLineupBuilder');
 type GameWrapupServiceModule = typeof import('../../lib/gameWrapupService');
 type PracticeTimelineServiceModule = typeof import('../../lib/practiceTimelineService');
@@ -90,6 +93,7 @@ type DiamondScorebookServiceModule = typeof import('../../lib/diamondScorebookSe
 
 let liveGameChatModulePromise: Promise<LiveGameChatModule> | null = null;
 let liveGameReactionsModulePromise: Promise<LiveGameReactionsModule> | null = null;
+let diamondLiveEngagementModulePromise: Promise<DiamondLiveEngagementModule> | null = null;
 let gameDayLineupBuilderModulePromise: Promise<GameDayLineupBuilderModule> | null = null;
 let gameWrapupServiceModulePromise: Promise<GameWrapupServiceModule> | null = null;
 let practiceTimelineServiceModulePromise: Promise<PracticeTimelineServiceModule> | null = null;
@@ -108,6 +112,11 @@ function loadLiveGameChatModule() {
 function loadLiveGameReactionsModule() {
   if (!liveGameReactionsModulePromise) liveGameReactionsModulePromise = import('../../lib/liveGameReactionsService');
   return liveGameReactionsModulePromise;
+}
+
+function loadDiamondLiveEngagementModule() {
+  if (!diamondLiveEngagementModulePromise) diamondLiveEngagementModulePromise = import('../../lib/diamondLiveEngagementService');
+  return diamondLiveEngagementModulePromise;
 }
 
 export function loadGameDayLineupBuilderModule() {
@@ -185,6 +194,112 @@ const DeferredGameReportSections = lazy(() => (
 export type GameHubPanelId = 'foul' | 'chat' | 'reactions' | 'wrapup' | 'statsheet' | 'lineup' | 'substitutions' | 'report';
 type HomeScoringPlayersUpdater = (players: ScheduleHomeScoringPlayer[]) => ScheduleHomeScoringPlayer[];
 type ActiveLiveReaction = LiveGameReaction & { localId: string; emoji: string };
+type DiamondInteractionWindowGate = {
+  isOpen: boolean;
+  isChecking: boolean;
+  hasError: boolean;
+  revalidate: () => Promise<boolean>;
+};
+
+const DIAMOND_TERMINAL_INTERACTION_STATES = new Set([
+  'completed',
+  'final',
+  'correction',
+  'cancelled',
+  'canceled',
+  'deleted',
+]);
+
+function isLocallyTerminalDiamondEvent(event: ParentScheduleEvent) {
+  const statuses = [event.status, event.liveStatus]
+    .map((value) => String(value || '').trim().toLowerCase());
+  return event.isCancelled === true
+    || statuses.some((status) => DIAMOND_TERMINAL_INTERACTION_STATES.has(status));
+}
+
+function useDiamondInteractionWindowGate(
+  event: ParentScheduleEvent,
+  active: boolean,
+  authUserId: string | null | undefined,
+): DiamondInteractionWindowGate {
+  const trackingEngine = event.trackingEngine;
+  const scorebookInstanceId = event.diamondScorebookInstanceId;
+  const normalizedAuthUserId = typeof authUserId === 'string' ? authUserId.trim() : '';
+  const context = useMemo(
+    () => getDiamondLiveEngagementContext({
+      trackingEngine,
+      diamondScorebookInstanceId: scorebookInstanceId,
+    }),
+    [scorebookInstanceId, trackingEngine],
+  );
+  const localLifecycleKey = JSON.stringify([
+    event.isCancelled === true,
+    event.status || null,
+    event.liveStatus || null,
+  ]);
+  const identityKey = context
+    ? JSON.stringify([event.teamId, event.id, context.instanceId, normalizedAuthUserId, localLifecycleKey])
+    : '';
+  const identityKeyRef = useRef(identityKey);
+  identityKeyRef.current = identityKey;
+  const requestSequenceRef = useRef(0);
+  const locallyTerminal = isLocallyTerminalDiamondEvent(event);
+  const [snapshot, setSnapshot] = useState({
+    identityKey: '',
+    isOpen: false,
+    isChecking: false,
+    hasError: false,
+  });
+
+  const revalidate = useCallback(async () => {
+    if (!context || !identityKey || !normalizedAuthUserId || locallyTerminal) return false;
+    const requestSequence = requestSequenceRef.current + 1;
+    requestSequenceRef.current = requestSequence;
+    setSnapshot({ identityKey, isOpen: false, isChecking: true, hasError: false });
+    try {
+      const service = await loadDiamondLiveEngagementModule();
+      const isOpen = await service.loadDiamondLiveInteractionWindow({
+        teamId: event.teamId,
+        gameId: event.id,
+        instanceId: context.instanceId,
+      });
+      if (identityKeyRef.current !== identityKey || requestSequenceRef.current !== requestSequence) return false;
+      setSnapshot({ identityKey, isOpen: isOpen === true, isChecking: false, hasError: false });
+      return isOpen === true;
+    } catch {
+      if (identityKeyRef.current === identityKey && requestSequenceRef.current === requestSequence) {
+        setSnapshot({ identityKey, isOpen: false, isChecking: false, hasError: true });
+      }
+      return false;
+    }
+  }, [context, event.id, event.teamId, identityKey, locallyTerminal, normalizedAuthUserId]);
+
+  useEffect(() => {
+    if (!active || !context || !normalizedAuthUserId || locallyTerminal) return undefined;
+    void revalidate();
+    return () => {
+      requestSequenceRef.current += 1;
+    };
+  }, [active, context, locallyTerminal, normalizedAuthUserId, revalidate]);
+
+  const isCurrent = snapshot.identityKey === identityKey;
+  return {
+    isOpen: Boolean(isCurrent && snapshot.isOpen && !locallyTerminal),
+    isChecking: Boolean(isCurrent && snapshot.isChecking),
+    hasError: Boolean(isCurrent && snapshot.hasError),
+    revalidate,
+  };
+}
+
+function getDiamondInteractionWindowNotice(
+  gate: DiamondInteractionWindowGate,
+  interactionLabel: 'chat' | 'reactions',
+) {
+  if (gate.isChecking) return `Checking the server game window for live ${interactionLabel}…`;
+  if (gate.hasError) return `Unable to verify the server game window. Live ${interactionLabel} stays locked until you retry.`;
+  if (!gate.isOpen) return `Live ${interactionLabel} is closed outside the server-verified game window.`;
+  return null;
+}
 
 const gameHubPanelDetails: Record<GameHubPanelId, { label: string; elementId: string }> = {
   foul: { label: 'Foul tracker', elementId: 'game-hub-foul-panel' },
@@ -522,7 +637,11 @@ function PracticeRecurrenceFields({ form, onChange }: { form: SchedulePracticeFo
   );
 }
 
-function LiveGameReactionsPanel({ auth, event }: { auth: AuthState; event: ParentScheduleEvent }) {
+function LiveGameReactionsPanel({ auth, event, diamondInteractionWindow }: {
+  auth: AuthState;
+  event: ParentScheduleEvent;
+  diamondInteractionWindow: DiamondInteractionWindowGate;
+}) {
   const [reactionsModule, setReactionsModule] = useState<LiveGameReactionsModule | null>(null);
   const [activeReactions, setActiveReactions] = useState<ActiveLiveReaction[]>([]);
   const [sendStatus, setSendStatus] = useState<string | null>(null);
@@ -539,10 +658,15 @@ function LiveGameReactionsPanel({ auth, event }: { auth: AuthState; event: Paren
     [event]
   );
   const canReact = reactionsModule
-    ? reactionsModule.canUseLiveGameReactions(event, { now: new Date() })
-      && (!isDiamondGame || Boolean(diamondContext && auth.user?.uid))
+    ? isDiamondGame
+      ? Boolean(diamondContext && auth.user?.uid && diamondInteractionWindow.isOpen)
+      : reactionsModule.canUseLiveGameReactions(event, { now: new Date() })
     : false;
-  const reactionNotice = reactionsModule ? reactionsModule.getLiveGameReactionNotice(event, { now: new Date() }) : null;
+  const reactionNotice = reactionsModule
+    ? isDiamondGame
+      ? getDiamondInteractionWindowNotice(diamondInteractionWindow, 'reactions')
+      : reactionsModule.getLiveGameReactionNotice(event, { now: new Date() })
+    : null;
   const reactionOptions = reactionsModule ? reactionsModule.liveGameReactionOptions : [];
   const reactionsReady = Boolean(reactionsModule && reactionOptions.length);
 
@@ -609,6 +733,10 @@ function LiveGameReactionsPanel({ auth, event }: { auth: AuthState; event: Paren
     setSendingReactionKey(type);
     setSendStatus(null);
     try {
+      if (isDiamondGame && !(await diamondInteractionWindow.revalidate())) {
+        setSendStatus('Live reactions are locked until the server confirms the game window.');
+        return;
+      }
       await reactionsModule.sendLiveGameReaction(event.teamId, event.id, {
         type,
         user: auth.user,
@@ -680,12 +808,26 @@ function LiveGameReactionsPanel({ auth, event }: { auth: AuthState; event: Paren
           ? (reactionNotice || 'Shared Firestore stream. App and web viewers see the same reactions in real time.')
           : 'Loading reaction controls…'}
       </div>
+      {isDiamondGame && diamondInteractionWindow.hasError ? (
+        <button
+          type="button"
+          className="mt-2 min-h-10 rounded-full border border-amber-300 bg-white px-3 text-xs font-black text-amber-800"
+          onClick={() => void diamondInteractionWindow.revalidate()}
+          disabled={diamondInteractionWindow.isChecking}
+        >
+          Retry live interaction check
+        </button>
+      ) : null}
       {sendStatus ? <div className="mt-2 text-xs font-bold text-rose-700">{sendStatus}</div> : null}
     </div>
   );
 }
 
-function LiveGameChatPanel({ auth, event }: { auth: AuthState; event: ParentScheduleEvent }) {
+function LiveGameChatPanel({ auth, event, diamondInteractionWindow }: {
+  auth: AuthState;
+  event: ParentScheduleEvent;
+  diamondInteractionWindow: DiamondInteractionWindowGate;
+}) {
   const [chatModule, setChatModule] = useState<LiveGameChatModule | null>(null);
   const [messages, setMessages] = useState<LiveGameChatMessage[]>([]);
   const [messageText, setMessageText] = useState('');
@@ -708,10 +850,15 @@ function LiveGameChatPanel({ auth, event }: { auth: AuthState; event: ParentSche
     [event]
   );
   const canChat = chatModule
-    ? chatModule.canUseLiveGameChat(event, { now: new Date() })
-      && (!isDiamondGame || Boolean(diamondContext && auth.user?.uid))
+    ? isDiamondGame
+      ? Boolean(diamondContext && auth.user?.uid && diamondInteractionWindow.isOpen)
+      : chatModule.canUseLiveGameChat(event, { now: new Date() })
     : false;
-  const chatNotice = chatModule ? chatModule.getLiveGameChatNotice(event, { now: new Date() }) : null;
+  const chatNotice = chatModule
+    ? isDiamondGame
+      ? getDiamondInteractionWindowNotice(diamondInteractionWindow, 'chat')
+      : chatModule.getLiveGameChatNotice(event, { now: new Date() })
+    : null;
   const canSend = canChat && Boolean(messageText.trim()) && !sending;
   const latestMessageId = messages[messages.length - 1]?.id || '';
 
@@ -805,6 +952,10 @@ function LiveGameChatPanel({ auth, event }: { auth: AuthState; event: ParentSche
     setSending(true);
     setStatus(null);
     try {
+      if (isDiamondGame && !(await diamondInteractionWindow.revalidate())) {
+        setStatus({ tone: 'error', message: 'Live chat is locked until the server confirms the game window.' });
+        return;
+      }
       await chatModule.sendLiveGameChatMessage(event.teamId, event.id, {
         text: messageText,
         user: auth.user || undefined,
@@ -931,6 +1082,16 @@ function LiveGameChatPanel({ auth, event }: { auth: AuthState; event: ParentSche
               {sending ? 'Sending' : 'Send'}
             </button>
           </div>
+          {isDiamondGame && diamondInteractionWindow.hasError ? (
+            <button
+              type="button"
+              className="min-h-10 rounded-full border border-sky-300 bg-white px-3 text-xs font-black text-sky-800"
+              onClick={() => void diamondInteractionWindow.revalidate()}
+              disabled={diamondInteractionWindow.isChecking}
+            >
+              Retry live interaction check
+            </button>
+          ) : null}
         </form>
       </div>
 
@@ -1145,6 +1306,11 @@ export function ScheduleGameHubSection({ auth, event, childEvents, requestedPane
   const canCancelPracticeOccurrence = Boolean(isRecurringPracticeOccurrence && event.isDbGame && !event.isCancelled && event.isTeamAdmin && auth.user);
   const canPublishLineup = Boolean(!isPractice && event.isDbGame && event.isTeamStaff && isLegacyOwned);
   const notifiesCounterpartTeam = Boolean(event.sharedScheduleOpponentTeamId);
+  const diamondInteractionWindow = useDiamondInteractionWindowGate(
+    event,
+    isDiamondOwned && Boolean(openPanels.chat || openPanels.reactions),
+    auth.user?.uid,
+  );
   const hubDestinations = isPractice ? buildPracticeHubDestinations(event) : buildGameHubDestinations(event);
   const standardTrackerHref = `/schedule/${encodeURIComponent(event.teamId)}/${encodeURIComponent(event.id)}/track`;
   const diamondScorebookHref = `/schedule/${encodeURIComponent(event.teamId)}/${encodeURIComponent(event.id)}/diamond-v2`;
@@ -1418,7 +1584,11 @@ export function ScheduleGameHubSection({ auth, event, childEvents, requestedPane
               open={Boolean(openPanels.reactions)}
               onToggle={() => togglePanel('reactions')}
             >
-              <LiveGameReactionsPanel auth={auth} event={event} />
+              <LiveGameReactionsPanel
+                auth={auth}
+                event={event}
+                diamondInteractionWindow={diamondInteractionWindow}
+              />
             </LazyGameHubPanel>
           ) : null}
           {!isPractice ? (
@@ -1429,7 +1599,11 @@ export function ScheduleGameHubSection({ auth, event, childEvents, requestedPane
               open={Boolean(openPanels.chat)}
               onToggle={() => togglePanel('chat')}
             >
-              <LiveGameChatPanel auth={auth} event={event} />
+              <LiveGameChatPanel
+                auth={auth}
+                event={event}
+                diamondInteractionWindow={diamondInteractionWindow}
+              />
             </LazyGameHubPanel>
           ) : null}
 

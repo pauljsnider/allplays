@@ -137,6 +137,14 @@ const diamondScorebookMocks = vi.hoisted(() => ({
   getDiamondAccess: vi.fn()
 }));
 vi.mock('../lib/diamondScorebookService', () => diamondScorebookMocks);
+const diamondLiveEngagementMocks = vi.hoisted(() => ({
+  loadDiamondLiveInteractionWindow: vi.fn<(identity: {
+    teamId: string;
+    gameId: string;
+    instanceId: string;
+  }) => Promise<boolean>>(() => Promise.resolve(true)),
+}));
+vi.mock('../lib/diamondLiveEngagementService', () => diamondLiveEngagementMocks);
 const publicActionMocks = vi.hoisted(() => ({
   exportCalendarIcsFile: vi.fn(),
   openPublicUrl: vi.fn(),
@@ -2061,6 +2069,7 @@ describe('ScheduleEventDetail assignments', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    diamondLiveEngagementMocks.loadDiamondLiveInteractionWindow.mockResolvedValue(true);
     liveGameReactionsServiceMocks.canUseLiveGameReactions.mockReturnValue(true);
     liveGameReactionsServiceMocks.getLiveGameReactionNotice.mockReturnValue(null);
     liveGameReactionsServiceMocks.subscribeToLiveGameReactions.mockReturnValue(vi.fn());
@@ -2330,6 +2339,282 @@ describe('ScheduleEventDetail assignments', () => {
     await waitFor(() => {
       expect(liveGameReactionsServiceMocks.sendLiveGameReaction).toHaveBeenCalledWith('team-1', 'game-1', expect.objectContaining({ type: 'heart', user: auth.user }));
     });
+  });
+
+  it('uses one server-authoritative Diamond window for chat and reactions despite a device-day mismatch', async () => {
+    const instanceId = '00000000-0000-4000-8000-000000000001';
+    liveGameChatServiceMocks.canUseLiveGameChat.mockReturnValue(false);
+    liveGameChatServiceMocks.getLiveGameChatNotice.mockReturnValue('Device-local chat gate is closed.');
+    liveGameReactionsServiceMocks.canUseLiveGameReactions.mockReturnValue(false);
+    liveGameReactionsServiceMocks.getLiveGameReactionNotice.mockReturnValue('Device-local reaction gate is closed.');
+    liveGameChatServiceMocks.sendLiveGameChatMessage.mockResolvedValue({ id: 'diamond-chat' });
+    liveGameReactionsServiceMocks.sendLiveGameReaction.mockResolvedValue({ id: 'diamond-reaction' });
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        date: new Date('2026-11-01T07:30:00.000Z'),
+        liveStatus: 'live',
+        status: 'live',
+        trackingEngine: 'diamond-v2',
+        diamondScorebookInstanceId: instanceId,
+      })],
+      children: [],
+    });
+
+    renderScheduleEventDetail();
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+    fireEvent.click(await screen.findByRole('button', { name: 'Live chat' }));
+
+    const chatInput = await screen.findByLabelText('Live chat message') as HTMLTextAreaElement;
+    await waitFor(() => expect(chatInput.disabled).toBe(false));
+    expect(diamondLiveEngagementMocks.loadDiamondLiveInteractionWindow).toHaveBeenCalledWith({
+      teamId: 'team-1',
+      gameId: 'game-1',
+      instanceId,
+    });
+    expect(liveGameChatServiceMocks.canUseLiveGameChat).not.toHaveBeenCalled();
+    expect(liveGameReactionsServiceMocks.canUseLiveGameReactions).not.toHaveBeenCalled();
+
+    diamondLiveEngagementMocks.loadDiamondLiveInteractionWindow.mockClear();
+    fireEvent.change(chatInput, { target: { value: 'Server-window hello' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(diamondLiveEngagementMocks.loadDiamondLiveInteractionWindow).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(liveGameChatServiceMocks.sendLiveGameChatMessage).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Live reactions' }));
+    const heartButton = await screen.findByRole('button', { name: 'Heart' }) as HTMLButtonElement;
+    await waitFor(() => expect(heartButton.disabled).toBe(false));
+    diamondLiveEngagementMocks.loadDiamondLiveInteractionWindow.mockClear();
+    fireEvent.click(heartButton);
+    await waitFor(() => expect(diamondLiveEngagementMocks.loadDiamondLiveInteractionWindow).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(liveGameReactionsServiceMocks.sendLiveGameReaction).toHaveBeenCalledTimes(1));
+  });
+
+  it('keeps both Diamond composers closed when the server window is false even if local gates are open', async () => {
+    const instanceId = '00000000-0000-4000-8000-000000000001';
+    diamondLiveEngagementMocks.loadDiamondLiveInteractionWindow.mockResolvedValue(false);
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        liveStatus: 'live',
+        status: 'live',
+        trackingEngine: 'diamond-v2',
+        diamondScorebookInstanceId: instanceId,
+      })],
+      children: [],
+    });
+
+    renderScheduleEventDetail();
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+    fireEvent.click(await screen.findByRole('button', { name: 'Live chat' }));
+    const chatInput = await screen.findByLabelText('Live chat message') as HTMLTextAreaElement;
+    await screen.findByText('Live chat is closed outside the server-verified game window.');
+    expect(chatInput.disabled).toBe(true);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Live reactions' }));
+    const heartButton = await screen.findByRole('button', { name: 'Heart' }) as HTMLButtonElement;
+    expect(heartButton.disabled).toBe(true);
+    expect(liveGameChatServiceMocks.canUseLiveGameChat).not.toHaveBeenCalled();
+    expect(liveGameReactionsServiceMocks.canUseLiveGameReactions).not.toHaveBeenCalled();
+  });
+
+  it('revalidates immediately before each Diamond send and closes both tools on a stale true', async () => {
+    const instanceId = '00000000-0000-4000-8000-000000000001';
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        liveStatus: 'live',
+        status: 'live',
+        trackingEngine: 'diamond-v2',
+        diamondScorebookInstanceId: instanceId,
+      })],
+      children: [],
+    });
+
+    renderScheduleEventDetail();
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+    fireEvent.click(await screen.findByRole('button', { name: 'Live chat' }));
+    const chatInput = await screen.findByLabelText('Live chat message') as HTMLTextAreaElement;
+    await waitFor(() => expect(chatInput.disabled).toBe(false));
+
+    diamondLiveEngagementMocks.loadDiamondLiveInteractionWindow.mockResolvedValueOnce(false);
+    fireEvent.change(chatInput, { target: { value: 'Do not send' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Live chat is locked until the server confirms the game window.');
+    expect(liveGameChatServiceMocks.sendLiveGameChatMessage).not.toHaveBeenCalled();
+    expect(chatInput.disabled).toBe(true);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Live chat' }));
+    diamondLiveEngagementMocks.loadDiamondLiveInteractionWindow.mockResolvedValueOnce(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Live reactions' }));
+    const heartButton = await screen.findByRole('button', { name: 'Heart' }) as HTMLButtonElement;
+    await waitFor(() => expect(heartButton.disabled).toBe(false));
+    diamondLiveEngagementMocks.loadDiamondLiveInteractionWindow.mockResolvedValueOnce(false);
+    fireEvent.click(heartButton);
+    await screen.findByText('Live reactions are locked until the server confirms the game window.');
+    expect(liveGameReactionsServiceMocks.sendLiveGameReaction).not.toHaveBeenCalled();
+    expect(heartButton.disabled).toBe(true);
+  });
+
+  it('ignores an older in-flight Diamond window result after a newer closed result', async () => {
+    const instanceId = '00000000-0000-4000-8000-000000000001';
+    let resolveOlderWindow!: (isOpen: boolean) => void;
+    diamondLiveEngagementMocks.loadDiamondLiveInteractionWindow
+      .mockReturnValueOnce(new Promise<boolean>((resolve) => {
+        resolveOlderWindow = resolve;
+      }))
+      .mockResolvedValueOnce(false);
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        liveStatus: 'live',
+        status: 'live',
+        trackingEngine: 'diamond-v2',
+        diamondScorebookInstanceId: instanceId,
+      })],
+      children: [],
+    });
+
+    renderScheduleEventDetail();
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+    const chatPanelButton = await screen.findByRole('button', { name: 'Live chat' });
+    fireEvent.click(chatPanelButton);
+    await waitFor(() => expect(diamondLiveEngagementMocks.loadDiamondLiveInteractionWindow).toHaveBeenCalledTimes(1));
+    fireEvent.click(chatPanelButton);
+    fireEvent.click(chatPanelButton);
+    await waitFor(() => expect(diamondLiveEngagementMocks.loadDiamondLiveInteractionWindow).toHaveBeenCalledTimes(2));
+    const chatInput = await screen.findByLabelText('Live chat message') as HTMLTextAreaElement;
+    await screen.findByText('Live chat is closed outside the server-verified game window.');
+    expect(chatInput.disabled).toBe(true);
+
+    await act(async () => {
+      resolveOlderWindow(true);
+      await Promise.resolve();
+    });
+    expect(chatInput.disabled).toBe(true);
+  });
+
+  it('invalidates a stale-open gate and pending Diamond send when the signed-in user changes', async () => {
+    const instanceId = '00000000-0000-4000-8000-000000000001';
+    const event = buildEvent({
+      liveStatus: 'live',
+      status: 'live',
+      trackingEngine: 'diamond-v2',
+      diamondScorebookInstanceId: instanceId,
+    });
+    const secondAuth = {
+      ...auth,
+      user: { ...auth.user, uid: 'coach-2', email: 'coach-2@example.com' },
+    } as AuthState;
+    const renderHub = (nextAuth: AuthState) => (
+      <MemoryRouter>
+        <scheduleGameHubSectionModule.ScheduleGameHubSection
+          auth={nextAuth}
+          event={event}
+          childEvents={[event]}
+          requestedPanel="chat"
+          onPanelChange={vi.fn()}
+          onScoreUpdated={vi.fn()}
+          onLiveClockUpdated={vi.fn()}
+          onWrapupCompleted={vi.fn()}
+          onStatsheetImported={vi.fn()}
+          onGameCancelled={vi.fn()}
+          onPracticeOccurrenceCancelled={vi.fn()}
+          onGamePlanPublished={vi.fn()}
+          onReplayVideoUpdated={vi.fn()}
+          onEventRefresh={vi.fn()}
+        />
+      </MemoryRouter>
+    );
+
+    const rendered = render(renderHub(auth));
+    const chatInput = await screen.findByLabelText('Live chat message') as HTMLTextAreaElement;
+    await waitFor(() => expect(chatInput.disabled).toBe(false));
+    let resolveFirstUser!: (isOpen: boolean) => void;
+    let resolveSecondUser!: (isOpen: boolean) => void;
+    diamondLiveEngagementMocks.loadDiamondLiveInteractionWindow.mockClear();
+    diamondLiveEngagementMocks.loadDiamondLiveInteractionWindow
+      .mockReturnValueOnce(new Promise<boolean>((resolve) => {
+        resolveFirstUser = resolve;
+      }))
+      .mockReturnValueOnce(new Promise<boolean>((resolve) => {
+        resolveSecondUser = resolve;
+      }));
+
+    fireEvent.change(chatInput, { target: { value: 'Do not cross accounts' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(diamondLiveEngagementMocks.loadDiamondLiveInteractionWindow).toHaveBeenCalledTimes(1));
+    rendered.rerender(renderHub(secondAuth));
+    await waitFor(() => expect(diamondLiveEngagementMocks.loadDiamondLiveInteractionWindow).toHaveBeenCalledTimes(2));
+    expect(chatInput.disabled).toBe(true);
+
+    await act(async () => {
+      resolveFirstUser(true);
+      await Promise.resolve();
+    });
+    expect(liveGameChatServiceMocks.sendLiveGameChatMessage).not.toHaveBeenCalled();
+    expect(chatInput.disabled).toBe(true);
+
+    await act(async () => {
+      resolveSecondUser(true);
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(chatInput.disabled).toBe(false));
+    expect(liveGameChatServiceMocks.sendLiveGameChatMessage).not.toHaveBeenCalled();
+  });
+
+  it('fails Diamond chat and reactions closed on an unreadable window and exposes a shared retry', async () => {
+    const instanceId = '00000000-0000-4000-8000-000000000001';
+    diamondLiveEngagementMocks.loadDiamondLiveInteractionWindow
+      .mockRejectedValueOnce(new Error('unavailable'))
+      .mockResolvedValue(true);
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        liveStatus: 'live',
+        status: 'live',
+        trackingEngine: 'diamond-v2',
+        diamondScorebookInstanceId: instanceId,
+      })],
+      children: [],
+    });
+
+    renderScheduleEventDetail();
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+    fireEvent.click(await screen.findByRole('button', { name: 'Live chat' }));
+
+    await screen.findByText('Unable to verify the server game window. Live chat stays locked until you retry.');
+    const chatInput = screen.getByLabelText('Live chat message') as HTMLTextAreaElement;
+    expect(chatInput.disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Retry live interaction check' }));
+    await waitFor(() => expect(chatInput.disabled).toBe(false));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Live reactions' }));
+    const heartButton = await screen.findByRole('button', { name: 'Heart' }) as HTMLButtonElement;
+    await waitFor(() => expect(heartButton.disabled).toBe(false));
+  });
+
+  it('locally vetoes a stale open Diamond window after cancellation', async () => {
+    const instanceId = '00000000-0000-4000-8000-000000000001';
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        isCancelled: true,
+        liveStatus: 'live',
+        status: 'cancelled',
+        trackingEngine: 'diamond-v2',
+        diamondScorebookInstanceId: instanceId,
+      })],
+      children: [],
+    });
+
+    renderScheduleEventDetail();
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+    fireEvent.click(await screen.findByRole('button', { name: 'Live chat' }));
+    expect((await screen.findByLabelText('Live chat message') as HTMLTextAreaElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Live reactions' }));
+    expect((await screen.findByRole('button', { name: 'Heart' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(diamondLiveEngagementMocks.loadDiamondLiveInteractionWindow).not.toHaveBeenCalled();
   });
 
   it('routes Diamond game-hub chat and reactions through exact-generation service contexts', async () => {

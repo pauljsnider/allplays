@@ -21,6 +21,7 @@ vi.mock('./nativeRuntime', () => ({
 
 import {
   createDiamondLiveEngagementRequestId,
+  loadDiamondLiveInteractionWindow,
   moderateDiamondLiveChat,
   postDiamondLiveChat,
   postDiamondLiveReaction,
@@ -31,6 +32,11 @@ const identity = {
   gameId: 'game-1',
   instanceId: '00000000-0000-4000-8000-000000000001',
   requestId: '00000000-0000-4000-8000-000000000002',
+};
+const windowIdentity = {
+  teamId: identity.teamId,
+  gameId: identity.gameId,
+  instanceId: identity.instanceId,
 };
 
 describe('diamondLiveEngagementService', () => {
@@ -82,6 +88,95 @@ describe('diamondLiveEngagementService', () => {
       type: 'heart',
     });
   });
+
+  it('loads the server-authoritative interaction window with exact web and native contracts', async () => {
+    const publicEnvelope = {
+      instanceId: identity.instanceId,
+      game: {
+        trackingEngine: 'diamond-v2',
+        interactionWindowOpen: true,
+        state: { status: 'live' },
+      },
+    };
+    const publicCallable = vi.fn().mockResolvedValue({ data: publicEnvelope });
+    adapterMocks.httpsCallable.mockReturnValue(publicCallable);
+
+    await expect(loadDiamondLiveInteractionWindow(windowIdentity)).resolves.toBe(true);
+    expect(adapterMocks.httpsCallable).toHaveBeenCalledWith(
+      adapterMocks.functions,
+      'getPublicDiamondGame',
+    );
+    expect(publicCallable).toHaveBeenCalledWith({
+      teamId: identity.teamId,
+      gameId: identity.gameId,
+      limit: 1,
+      cursor: null,
+    });
+
+    nativeMocks.isNativeRuntime.mockReturnValue(true);
+    nativeMocks.callNativeFirebaseFunction.mockResolvedValue(publicEnvelope);
+    await expect(loadDiamondLiveInteractionWindow(windowIdentity)).resolves.toBe(true);
+    expect(nativeMocks.callNativeFirebaseFunction).toHaveBeenCalledWith(
+      'getPublicDiamondGame',
+      {
+        teamId: identity.teamId,
+        gameId: identity.gameId,
+        limit: 1,
+        cursor: null,
+      },
+      { errorLabel: 'Diamond live engagement' },
+    );
+  });
+
+  it.each([
+    ['a missing game envelope', { instanceId: identity.instanceId }],
+    ['a non-boolean window value', {
+      instanceId: identity.instanceId,
+      game: { trackingEngine: 'diamond-v2', interactionWindowOpen: 'true', state: { status: 'live' } },
+    }],
+    ['a stale generation', {
+      instanceId: '00000000-0000-4000-8000-000000000099',
+      game: { trackingEngine: 'diamond-v2', interactionWindowOpen: true, state: { status: 'live' } },
+    }],
+    ['a malformed lifecycle', {
+      instanceId: identity.instanceId,
+      game: { trackingEngine: 'diamond-v2', interactionWindowOpen: true, state: { status: ' LIVE ' } },
+    }],
+  ])('fails closed for %s', async (_label, envelope) => {
+    adapterMocks.httpsCallable.mockReturnValue(vi.fn().mockResolvedValue({ data: envelope }));
+    await expect(loadDiamondLiveInteractionWindow(windowIdentity)).rejects.toThrow();
+  });
+
+  it('keeps a canonical nonterminal closed window closed', async () => {
+    adapterMocks.httpsCallable.mockReturnValue(vi.fn().mockResolvedValue({
+      data: {
+        instanceId: identity.instanceId,
+        game: {
+          trackingEngine: 'diamond-v2',
+          interactionWindowOpen: false,
+          state: { status: 'scheduled' },
+        },
+      },
+    }));
+    await expect(loadDiamondLiveInteractionWindow(windowIdentity)).resolves.toBe(false);
+  });
+
+  it.each(['completed', 'final', 'correction', 'cancelled', 'canceled', 'deleted'])(
+    'keeps the interaction window closed for terminal lifecycle %s',
+    async (status) => {
+      adapterMocks.httpsCallable.mockReturnValue(vi.fn().mockResolvedValue({
+        data: {
+          instanceId: identity.instanceId,
+          game: {
+            trackingEngine: 'diamond-v2',
+            interactionWindowOpen: true,
+            state: { status },
+          },
+        },
+      }));
+      await expect(loadDiamondLiveInteractionWindow(windowIdentity)).resolves.toBe(false);
+    },
+  );
 
   it('uses the native callable bridge and rejects an unbound response', async () => {
     nativeMocks.isNativeRuntime.mockReturnValue(true);

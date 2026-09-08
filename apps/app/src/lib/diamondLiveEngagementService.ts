@@ -9,6 +9,30 @@ import { isNativeRuntime } from './nativeRuntime';
 
 const UUID_V4_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const DIAMOND_INTERACTION_LIFECYCLES = new Set([
+  'configured',
+  'ready',
+  'scheduled',
+  'active',
+  'suspended',
+  'live',
+  'in_progress',
+  'in-progress',
+  'final',
+  'correction',
+  'completed',
+  'cancelled',
+  'canceled',
+  'deleted',
+]);
+const DIAMOND_TERMINAL_LIFECYCLES = new Set([
+  'final',
+  'correction',
+  'completed',
+  'cancelled',
+  'canceled',
+  'deleted',
+]);
 
 export type DiamondLiveEngagementIdentity = {
   teamId: string;
@@ -16,6 +40,8 @@ export type DiamondLiveEngagementIdentity = {
   instanceId: string;
   requestId: string;
 };
+
+export type DiamondLiveInteractionWindowIdentity = Omit<DiamondLiveEngagementIdentity, 'requestId'>;
 
 function normalizeId(value: unknown, field: string) {
   const normalized = typeof value === 'string' ? value.trim() : '';
@@ -60,7 +86,7 @@ function normalizeIdentity(identity: DiamondLiveEngagementIdentity) {
 }
 
 async function callDiamondLiveEngagement<T>(
-  name: 'postDiamondLiveChat' | 'postDiamondLiveReaction' | 'moderateDiamondLiveChat',
+  name: 'getPublicDiamondGame' | 'postDiamondLiveChat' | 'postDiamondLiveReaction' | 'moderateDiamondLiveChat',
   payload: Record<string, unknown>,
 ) {
   if (isNativeRuntime()) {
@@ -69,6 +95,47 @@ async function callDiamondLiveEngagement<T>(
     });
   }
   return (await httpsCallable(functions, name)(payload))?.data as T;
+}
+
+function requireRecord(value: unknown, message: string): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(message);
+  }
+  return value as Record<string, unknown>;
+}
+
+export async function loadDiamondLiveInteractionWindow(
+  identity: DiamondLiveInteractionWindowIdentity,
+) {
+  const expected = {
+    teamId: normalizeId(identity.teamId, 'teamId'),
+    gameId: normalizeId(identity.gameId, 'gameId'),
+    instanceId: normalizeUuid(identity.instanceId, 'instanceId'),
+  };
+  const response = requireRecord(await callDiamondLiveEngagement('getPublicDiamondGame', {
+    teamId: expected.teamId,
+    gameId: expected.gameId,
+    limit: 1,
+    cursor: null,
+  }), 'The Diamond interaction window response is invalid.');
+  if (response.instanceId !== expected.instanceId) {
+    throw new Error('The Diamond game generation changed. Refresh before interacting.');
+  }
+  const game = requireRecord(response.game, 'The Diamond interaction window response is invalid.');
+  const state = requireRecord(game.state, 'The Diamond interaction window response is invalid.');
+  const lifecycle = state.status;
+  if (
+    game.trackingEngine !== 'diamond-v2'
+    || typeof lifecycle !== 'string'
+    || lifecycle !== lifecycle.trim()
+    || lifecycle !== lifecycle.toLowerCase()
+    || !DIAMOND_INTERACTION_LIFECYCLES.has(lifecycle)
+    || typeof game.interactionWindowOpen !== 'boolean'
+  ) {
+    throw new Error('The Diamond interaction window response is invalid.');
+  }
+  if (DIAMOND_TERMINAL_LIFECYCLES.has(lifecycle)) return false;
+  return game.interactionWindowOpen === true;
 }
 
 function validateResponse(
