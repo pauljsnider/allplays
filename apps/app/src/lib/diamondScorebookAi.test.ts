@@ -31,6 +31,16 @@ function commandContext(overrides: Partial<DiamondAiCommandContext> = {}): Diamo
   };
 }
 
+function commandContextWithDroppedThirdStrike(
+  overrides: Partial<DiamondAiCommandContext> = {},
+  droppedThirdStrike = { enabled: true, disallowWhenFirstOccupiedWithFewerThanTwoOuts: true }
+): DiamondAiCommandContext {
+  return {
+    ...commandContext(overrides),
+    droppedThirdStrike
+  } as DiamondAiCommandContext;
+}
+
 function commandResponse(overrides: Record<string, unknown> = {}) {
   return {
     schemaVersion: 1,
@@ -165,6 +175,8 @@ describe('interpretDiamondTranscript', () => {
     );
     expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/home_run and triple.*every occupied base runner/i);
     expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/double_play.*exactly 2.*triple_play.*exactly 3/i);
+    expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/stay put or move forward/i);
+    expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/dropped.third.strike.*pre-play.*first base.*two outs/i);
   });
 
   it('treats prompt injection as untrusted and rejects a model mutation claim', async () => {
@@ -438,6 +450,395 @@ describe('interpretDiamondTranscript', () => {
     const result = await interpretDiamondTranscript('Prepare this complete play for review.', context, model.dependencies);
 
     expect(result).toMatchObject({ status: 'proposal', authoritative: false, proposal: { type: 'record_plate_appearance' } });
+  });
+
+  it.each([
+    {
+      label: 'same-base plate-appearance move',
+      context: commandContext(),
+      response: plateAppearanceResponse({
+        result: 'ground_out',
+        batterAdvance: { to: 'out', outKind: 'batter_runner' },
+        runnerAdvances: [{ runnerId: 'runner-1', from: 'first', to: 'first', cause: 'batted_ball' }],
+        outsOnPlay: 1
+      })
+    },
+    {
+      label: 'backward plate-appearance move',
+      context: commandContext({
+        bases: { first: null, second: 'runner-1', third: null }
+      }),
+      response: plateAppearanceResponse({
+        result: 'ground_out',
+        batterAdvance: { to: 'out', outKind: 'batter_runner' },
+        runnerAdvances: [{ runnerId: 'runner-1', from: 'second', to: 'first', cause: 'batted_ball' }],
+        outsOnPlay: 1
+      })
+    },
+    {
+      label: 'same-base standalone move',
+      context: commandContext(),
+      response: commandResponse({
+        type: 'advance_runner',
+        payloadJson: JSON.stringify({ runnerId: 'runner-1', from: 'first', to: 'first', cause: 'wild_pitch' })
+      })
+    },
+    {
+      label: 'backward standalone move',
+      context: commandContext({
+        bases: { first: null, second: 'runner-1', third: null }
+      }),
+      response: commandResponse({
+        type: 'advance_runner',
+        payloadJson: JSON.stringify({ runnerId: 'runner-1', from: 'second', to: 'first', cause: 'wild_pitch' })
+      })
+    }
+  ])('rejects a high-confidence $label instead of proposing an impossible runner path', async ({ context, response }) => {
+    const model = jsonModel(response);
+
+    const result = await interpretDiamondTranscript('Review the runner movement.', context, model.dependencies);
+
+    expect(result).toMatchObject({ status: 'invalid-response', proposal: null, authoritative: false });
+    expect(result.message).toMatch(/stay put or move forward/i);
+  });
+
+  it('binds a standalone runner proposal to the exact occupied base identity', async () => {
+    const model = jsonModel(
+      commandResponse({
+        type: 'advance_runner',
+        payloadJson: JSON.stringify({ runnerId: 'runner-2', from: 'first', to: 'second', cause: 'wild_pitch' })
+      })
+    );
+    const context = commandContext({
+      knownPlayerIds: ['batter-1', 'pitcher-1', 'runner-1', 'runner-2']
+    });
+
+    const result = await interpretDiamondTranscript('Runner advanced from first.', context, model.dependencies);
+
+    expect(result).toMatchObject({ status: 'invalid-response', proposal: null, authoritative: false });
+    expect(result.message).toMatch(/exact current base context/i);
+  });
+
+  it('rejects a standalone runner proposal onto an occupied destination base', async () => {
+    const model = jsonModel(
+      commandResponse({
+        type: 'advance_runner',
+        payloadJson: JSON.stringify({ runnerId: 'runner-1', from: 'first', to: 'second', cause: 'wild_pitch' })
+      })
+    );
+    const context = commandContext({
+      bases: { first: 'runner-1', second: 'runner-2', third: null },
+      knownPlayerIds: ['batter-1', 'pitcher-1', 'runner-1', 'runner-2']
+    });
+
+    const result = await interpretDiamondTranscript('Runner advanced from first to second.', context, model.dependencies);
+
+    expect(result).toMatchObject({ status: 'invalid-response', proposal: null, authoritative: false });
+    expect(result.message).toMatch(/destination.*occupied.base context/i);
+  });
+
+  it('keeps an explicit stay for an occupied runner eligible for scorer confirmation', async () => {
+    const model = jsonModel(
+      plateAppearanceResponse({
+        result: 'ground_out',
+        batterAdvance: { to: 'out', outKind: 'batter_runner' },
+        runnerAdvances: [{ runnerId: 'runner-1', from: 'first', to: 'stay', cause: 'batted_ball' }],
+        outsOnPlay: 1
+      })
+    );
+
+    const result = await interpretDiamondTranscript('Ground out; runner held.', commandContext(), model.dependencies);
+
+    expect(result).toMatchObject({ status: 'proposal', proposal: { type: 'record_plate_appearance' }, authoritative: false });
+  });
+
+  it('keeps an explicit standalone stay for the exact occupied runner eligible for scorer confirmation', async () => {
+    const model = jsonModel(
+      commandResponse({
+        type: 'advance_runner',
+        payloadJson: JSON.stringify({ runnerId: 'runner-1', from: 'first', to: 'stay', cause: 'wild_pitch' })
+      })
+    );
+
+    const result = await interpretDiamondTranscript('Runner held at first.', commandContext(), model.dependencies);
+
+    expect(result).toMatchObject({ status: 'proposal', proposal: { type: 'advance_runner' }, authoritative: false });
+  });
+
+  it.each([
+    {
+      label: 'named dropped-third-strike batter',
+      context: commandContextWithDroppedThirdStrike({ bases: { first: null, second: null, third: null } }),
+      result: 'dropped_third_strike'
+    },
+    { label: 'ordinary plate-appearance batter', context: commandContext(), result: 'fielders_choice' }
+  ])('rejects to=stay for a $label while preserving runner stays', async ({ context, result }) => {
+    const model = jsonModel(
+      plateAppearanceResponse({
+        result,
+        batterAdvance: { to: 'stay', cause: 'other' },
+        runnerAdvances: [],
+        outsOnPlay: 0
+      })
+    );
+
+    const interpretation = await interpretDiamondTranscript('The batter stayed put.', context, model.dependencies);
+
+    expect(interpretation).toMatchObject({ status: 'invalid-response', proposal: null, authoritative: false });
+    expect(interpretation.message).toMatch(/batter.*cannot stay/i);
+  });
+
+  it.each([
+    { result: 'single', invalidDestination: 'third', requiredDestination: 'first' },
+    { result: 'double', invalidDestination: 'first', requiredDestination: 'second' },
+    { result: 'triple', invalidDestination: 'second', requiredDestination: 'third' },
+    { result: 'home_run', invalidDestination: 'third', requiredDestination: 'home' },
+    { result: 'walk', invalidDestination: 'second', requiredDestination: 'first' },
+    { result: 'intentional_walk', invalidDestination: 'second', requiredDestination: 'first' },
+    { result: 'hit_by_pitch', invalidDestination: 'second', requiredDestination: 'first' },
+    { result: 'ground_out', invalidDestination: 'first', requiredDestination: 'out' },
+    { result: 'fly_out', invalidDestination: 'first', requiredDestination: 'out' },
+    { result: 'line_out', invalidDestination: 'first', requiredDestination: 'out' },
+    { result: 'sacrifice_bunt', invalidDestination: 'first', requiredDestination: 'out' },
+    { result: 'sacrifice_fly', invalidDestination: 'first', requiredDestination: 'out' },
+    { result: 'double_play', invalidDestination: 'first', requiredDestination: 'out' },
+    { result: 'triple_play', invalidDestination: 'first', requiredDestination: 'out' }
+  ])(
+    'pins $result to its intrinsic $requiredDestination batter destination',
+    async ({ result, invalidDestination, requiredDestination }) => {
+      const model = jsonModel(
+        plateAppearanceResponse({
+          result,
+          batterAdvance: { to: invalidDestination },
+          runnerAdvances: [],
+          outsOnPlay: 0
+        })
+      );
+
+      const interpretation = await interpretDiamondTranscript('Review the plate appearance.', commandContext(), model.dependencies);
+
+      expect(interpretation).toMatchObject({ status: 'invalid-response', proposal: null, authoritative: false });
+      expect(interpretation.message).toContain(`requires batter destination ${requiredDestination}`);
+    }
+  );
+
+  it('rejects an ordinary strikeout destination beyond first', async () => {
+    const model = jsonModel(
+      plateAppearanceResponse({
+        result: 'strikeout',
+        batterAdvance: { to: 'second', cause: 'other' },
+        runnerAdvances: [],
+        outsOnPlay: 0
+      })
+    );
+
+    const result = await interpretDiamondTranscript('Strike three; batter reached second.', commandContext(), model.dependencies);
+
+    expect(result).toMatchObject({ status: 'invalid-response', proposal: null, authoritative: false });
+    expect(result.message).toMatch(/strikeout batter.*out or reach first/i);
+  });
+
+  it.each([
+    {
+      label: 'ordinary strikeout reach with occupied first and fewer than two outs',
+      context: commandContextWithDroppedThirdStrike(),
+      payload: {
+        result: 'strikeout',
+        batterAdvance: { to: 'first', cause: 'other' },
+        runnerAdvances: [{ runnerId: 'runner-1', from: 'first', to: 'second', cause: 'other' }],
+        outsOnPlay: 0
+      },
+      status: 'invalid-response',
+      message: /dropped.third.strike.*first.*fewer than two outs/i
+    },
+    {
+      label: 'named dropped-third reach with occupied first and fewer than two outs',
+      context: commandContextWithDroppedThirdStrike(),
+      payload: {
+        result: 'dropped_third_strike',
+        batterAdvance: { to: 'first', cause: 'other' },
+        runnerAdvances: [{ runnerId: 'runner-1', from: 'first', to: 'second', cause: 'other' }],
+        outsOnPlay: 0
+      },
+      status: 'invalid-response',
+      message: /dropped.third.strike.*first.*fewer than two outs/i
+    },
+    {
+      label: 'ordinary strikeout reach with empty first',
+      context: commandContextWithDroppedThirdStrike({ bases: { first: null, second: null, third: null } }),
+      payload: {
+        result: 'strikeout',
+        batterAdvance: { to: 'first', cause: 'other' },
+        runnerAdvances: [],
+        outsOnPlay: 0
+      },
+      status: 'proposal'
+    },
+    {
+      label: 'ordinary strikeout reach with occupied first and two outs',
+      context: commandContextWithDroppedThirdStrike({ outs: 2 }),
+      payload: {
+        result: 'strikeout',
+        batterAdvance: { to: 'first', cause: 'other' },
+        runnerAdvances: [{ runnerId: 'runner-1', from: 'first', to: 'second', cause: 'other' }],
+        outsOnPlay: 0
+      },
+      status: 'proposal'
+    },
+    {
+      label: 'two-out reach while the occupied first-base runner stays',
+      context: commandContextWithDroppedThirdStrike({ outs: 2 }),
+      payload: {
+        result: 'strikeout',
+        batterAdvance: { to: 'first', cause: 'other' },
+        runnerAdvances: [{ runnerId: 'runner-1', from: 'first', to: 'stay', cause: 'other' }],
+        outsOnPlay: 0
+      },
+      status: 'invalid-response',
+      message: /occupied.base context/i
+    },
+    {
+      label: 'two-out reach that omits the occupied first-base runner',
+      context: commandContextWithDroppedThirdStrike({ outs: 2 }),
+      payload: {
+        result: 'strikeout',
+        batterAdvance: { to: 'first', cause: 'other' },
+        runnerAdvances: [],
+        outsOnPlay: 0
+      },
+      status: 'invalid-response',
+      message: /occupied.base context/i
+    },
+    {
+      label: 'reach when the pinned profile disables dropped-third advancement',
+      context: commandContextWithDroppedThirdStrike(
+        { bases: { first: null, second: null, third: null } },
+        { enabled: false, disallowWhenFirstOccupiedWithFewerThanTwoOuts: true }
+      ),
+      payload: {
+        result: 'strikeout',
+        batterAdvance: { to: 'first', cause: 'other' },
+        runnerAdvances: [],
+        outsOnPlay: 0
+      },
+      status: 'invalid-response',
+      message: /dropped.third.strike.*disabled/i
+    },
+    {
+      label: 'occupied-first reach when the pinned profile permits it',
+      context: commandContextWithDroppedThirdStrike({}, { enabled: true, disallowWhenFirstOccupiedWithFewerThanTwoOuts: false }),
+      payload: {
+        result: 'strikeout',
+        batterAdvance: { to: 'first', cause: 'other' },
+        runnerAdvances: [{ runnerId: 'runner-1', from: 'first', to: 'second', cause: 'other' }],
+        outsOnPlay: 0
+      },
+      status: 'proposal'
+    },
+    {
+      label: 'named dropped-third advance beyond first when eligible',
+      context: commandContextWithDroppedThirdStrike({ bases: { first: null, second: null, third: null } }),
+      payload: {
+        result: 'dropped_third_strike',
+        batterAdvance: { to: 'second', cause: 'other' },
+        runnerAdvances: [],
+        outsOnPlay: 0
+      },
+      status: 'proposal'
+    },
+    {
+      label: 'reach without exact pre-play outs',
+      context: commandContextWithDroppedThirdStrike({
+        outs: undefined,
+        bases: { first: null, second: null, third: null }
+      }),
+      payload: {
+        result: 'strikeout',
+        batterAdvance: { to: 'first', cause: 'other' },
+        runnerAdvances: [],
+        outsOnPlay: 0
+      },
+      status: 'invalid-response',
+      message: /dropped.third.strike.*pre-play outs/i
+    },
+    {
+      label: 'reach without exact pre-play first-base occupancy',
+      context: commandContextWithDroppedThirdStrike({ bases: { second: null, third: null } }),
+      payload: {
+        result: 'strikeout',
+        batterAdvance: { to: 'first', cause: 'other' },
+        runnerAdvances: [],
+        outsOnPlay: 0
+      },
+      status: 'invalid-response',
+      message: /dropped.third.strike.*pre-play first-base/i
+    }
+  ])('uses pinned pre-play rules for $label', async ({ context, payload, status, message }) => {
+    const model = jsonModel(plateAppearanceResponse(payload));
+
+    const result = await interpretDiamondTranscript('Strike three; review the batter and runners.', context, model.dependencies);
+
+    expect(result).toMatchObject({ status, authoritative: false });
+    if (message) expect(result.message).toMatch(message);
+  });
+
+  it.each([
+    { label: 'an ordinary strikeout reach', result: 'strikeout', to: 'first' },
+    { label: 'a named dropped-third advance', result: 'dropped_third_strike', to: 'second' }
+  ])('fails closed for $label when the pinned capability is unknown', async ({ result, to }) => {
+    const model = jsonModel(
+      plateAppearanceResponse({
+        result,
+        batterAdvance: { to, cause: 'other' },
+        runnerAdvances: [],
+        outsOnPlay: 0
+      })
+    );
+    const context = commandContext({ bases: { first: null, second: null, third: null } });
+
+    const interpretation = await interpretDiamondTranscript('Strike three; review the batter.', context, model.dependencies);
+
+    expect(interpretation).toMatchObject({ status: 'invalid-response', proposal: null, authoritative: false });
+    expect(interpretation.message).toMatch(/dropped.third.strike.*disabled or unavailable/i);
+  });
+
+  it('does not require a dropped-third-strike capability when the named result records the batter out', async () => {
+    const model = jsonModel(
+      plateAppearanceResponse({
+        result: 'dropped_third_strike',
+        batterAdvance: { to: 'out', outKind: 'strikeout' },
+        runnerAdvances: [],
+        outsOnPlay: 1
+      })
+    );
+
+    const result = await interpretDiamondTranscript('Strike three and the batter was retired.', commandContext(), model.dependencies);
+
+    expect(result).toMatchObject({ status: 'proposal', proposal: { type: 'record_plate_appearance' }, authoritative: false });
+  });
+
+  it.each([
+    { label: 'missing policy field', capability: { enabled: true } },
+    {
+      label: 'unsupported extra field',
+      capability: { enabled: true, disallowWhenFirstOccupiedWithFewerThanTwoOuts: true, sourceProfileId: 'baseball-nfhs' }
+    },
+    {
+      label: 'non-boolean policy',
+      capability: { enabled: true, disallowWhenFirstOccupiedWithFewerThanTwoOuts: 'yes' }
+    }
+  ])('rejects a $label in the bounded dropped-third-strike context before model execution', async ({ capability }) => {
+    const model = jsonModel(commandResponse());
+    const context = {
+      ...commandContext(),
+      droppedThirdStrike: capability
+    } as unknown as DiamondAiCommandContext;
+
+    const result = await interpretDiamondTranscript('Called strike.', context, model.dependencies);
+
+    expect(result).toMatchObject({ status: 'invalid-input', proposal: null, authoritative: false });
+    expect(result.message).toMatch(/dropped.third.strike/i);
+    expect(model.generateContent).not.toHaveBeenCalled();
   });
 
   it('never accepts player or play references without caller-supplied allowlists', async () => {

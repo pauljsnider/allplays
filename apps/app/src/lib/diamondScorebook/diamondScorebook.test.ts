@@ -193,6 +193,46 @@ function recordSoloHomeRun(game: ReturnType<typeof harness>) {
   });
 }
 
+function preparePitcherDecisionGame() {
+  const game = harness();
+  setBasicLineups(game);
+  recordSoloHomeRun(game);
+  finishHalf(game);
+  game.submit('advance_half_inning', {});
+
+  const recordGroundOut = () => {
+    const { batterId, pitcherId } = currentMatchup(game);
+    recordPitch(game, batterId, pitcherId);
+    return game.submit('record_plate_appearance', {
+      batterId,
+      pitcherId,
+      result: 'ground_out',
+      batterAdvance: { to: 'out', outKind: 'batter_runner' },
+      runnerAdvances: [],
+      outsOnPlay: 1
+    });
+  };
+
+  recordGroundOut();
+  game.submit('substitute', {
+    side: 'away',
+    battingSlot: 1,
+    outgoingPlayerId: 'away-1',
+    incomingPlayerId: 'away-4',
+    defensivePosition: 'P'
+  });
+  recordGroundOut();
+  game.submit('substitute', {
+    side: 'away',
+    battingSlot: 1,
+    outgoingPlayerId: 'away-4',
+    incomingPlayerId: 'away-5',
+    defensivePosition: 'P'
+  });
+  const decisionPlay = recordGroundOut();
+  return { game, playEventId: decisionPlay.event!.eventId };
+}
+
 function buildGoldenGame() {
   const game = harness();
   setBasicLineups(game);
@@ -1563,6 +1603,174 @@ describe('Diamond command ledger', () => {
     expect(afterCorrection.players['home-1'].raw.pitching.W).toBe(0);
     expect(getEffectiveDiamondEvents(game.ledger.events).some((event) => event.type === 'record_fielding')).toBe(false);
     expect(getEffectiveDiamondEvents(game.ledger.events).some((event) => event.type === 'record_scoring_judgment')).toBe(false);
+  });
+
+  it.each([
+    {
+      label: 'the same pitcher as both winner and loser',
+      existing: { side: 'home', playerId: 'home-1', decision: 'loss' },
+      incoming: { side: 'home', playerId: 'home-1', decision: 'win' },
+      code: 'contradictory-pitcher-decision'
+    },
+    {
+      label: 'different winning and losing pitchers on one side',
+      existing: { side: 'away', playerId: 'away-1', decision: 'win' },
+      incoming: { side: 'away', playerId: 'away-4', decision: 'loss' },
+      code: 'contradictory-pitcher-decision'
+    },
+    {
+      label: 'a save for the losing side',
+      existing: { side: 'away', playerId: 'away-1', decision: 'loss' },
+      incoming: { side: 'away', playerId: 'away-4', decision: 'save' },
+      code: 'contradictory-pitcher-decision'
+    },
+    {
+      label: 'a save for the side opposite the winner',
+      existing: { side: 'away', playerId: 'away-1', decision: 'win' },
+      incoming: { side: 'home', playerId: 'home-1', decision: 'save' },
+      code: 'contradictory-pitcher-decision'
+    },
+    {
+      label: 'one pitcher as both winner and saver',
+      existing: { side: 'away', playerId: 'away-1', decision: 'win' },
+      incoming: { side: 'away', playerId: 'away-1', decision: 'save' },
+      code: 'contradictory-pitcher-decision'
+    },
+    {
+      label: 'a winner opposite a save entered first',
+      existing: { side: 'away', playerId: 'away-4', decision: 'save' },
+      incoming: { side: 'home', playerId: 'home-1', decision: 'win' },
+      code: 'contradictory-pitcher-decision'
+    },
+    {
+      label: 'a loser on the same side as a save entered first',
+      existing: { side: 'away', playerId: 'away-4', decision: 'save' },
+      incoming: { side: 'away', playerId: 'away-1', decision: 'loss' },
+      code: 'contradictory-pitcher-decision'
+    },
+    {
+      label: 'a second decision of the same type for another pitcher',
+      existing: { side: 'away', playerId: 'away-1', decision: 'win' },
+      incoming: { side: 'away', playerId: 'away-4', decision: 'win' },
+      code: 'duplicate-pitcher-decision'
+    }
+  ] as const)('rejects $label across the complete effective pitcher-decision set', ({ existing, incoming, code }) => {
+    const { game, playEventId } = preparePitcherDecisionGame();
+    game.submit('record_scoring_judgment', { playEventId, pitcherOfRecord: existing });
+    const before = game.ledger;
+
+    const rejected = game.submit('record_scoring_judgment', { playEventId, pitcherOfRecord: incoming }, { accept: false });
+
+    expect(rejected.result).toMatchObject({
+      outcome: 'rejected',
+      revision: before.state.revision,
+      rejection: { code }
+    });
+    expect(rejected.ledger).toBe(before);
+  });
+
+  it('accepts partial decisions in any order and preserves a coherent final W/L/SV set through replay', () => {
+    const { game, playEventId } = preparePitcherDecisionGame();
+    game.submit('record_scoring_judgment', {
+      playEventId,
+      pitcherOfRecord: { side: 'away', playerId: 'away-4', decision: 'save' }
+    });
+    game.submit('record_scoring_judgment', {
+      playEventId,
+      pitcherOfRecord: { side: 'home', playerId: 'home-1', decision: 'loss' }
+    });
+    game.submit('record_scoring_judgment', {
+      playEventId,
+      pitcherOfRecord: { side: 'away', playerId: 'away-1', decision: 'win' }
+    });
+
+    const stats = projectDiamondStats(game.ledger);
+    expect(stats.players['away-1'].raw.pitching.W).toBe(1);
+    expect(stats.players['home-1'].raw.pitching.L).toBe(1);
+    expect(stats.players['away-4'].raw.pitching.SV).toBe(1);
+    expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
+    expect(verifyDiamondLedger(game.ledger)).toBe(true);
+  });
+
+  it('revalidates effective pitcher decisions for supersedes and permits a voided slot to be reassigned', () => {
+    const corrected = preparePitcherDecisionGame();
+    const win = corrected.game.submit('record_scoring_judgment', {
+      playEventId: corrected.playEventId,
+      pitcherOfRecord: { side: 'away', playerId: 'away-1', decision: 'win' }
+    });
+    corrected.game.submit('record_scoring_judgment', {
+      playEventId: corrected.playEventId,
+      pitcherOfRecord: { side: 'away', playerId: 'away-4', decision: 'save' }
+    });
+    const conflict = corrected.game.submit(
+      'supersede_event',
+      {
+        targetEventId: win.event!.eventId,
+        reason: 'Attempt to give the winning pitcher the save.',
+        replacement: {
+          type: 'record_scoring_judgment',
+          payload: {
+            playEventId: corrected.playEventId,
+            pitcherOfRecord: { side: 'away', playerId: 'away-4', decision: 'win' }
+          }
+        }
+      },
+      { accept: false }
+    );
+    expect(conflict.result.rejection?.code).toBe('contradictory-pitcher-decision');
+
+    corrected.game.submit('supersede_event', {
+      targetEventId: win.event!.eventId,
+      reason: 'Correct the winning pitcher.',
+      replacement: {
+        type: 'record_scoring_judgment',
+        payload: {
+          playEventId: corrected.playEventId,
+          pitcherOfRecord: { side: 'away', playerId: 'away-5', decision: 'win' }
+        }
+      }
+    });
+    const correctedStats = projectDiamondStats(corrected.game.ledger);
+    expect(correctedStats.players['away-1'].raw.pitching.W).toBe(0);
+    expect(correctedStats.players['away-5'].raw.pitching.W).toBe(1);
+    expect(correctedStats.players['away-4'].raw.pitching.SV).toBe(1);
+    expect(verifyDiamondLedger(corrected.game.ledger)).toBe(true);
+
+    const introduced = preparePitcherDecisionGame();
+    introduced.game.submit('record_scoring_judgment', {
+      playEventId: introduced.playEventId,
+      pitcherOfRecord: { side: 'away', playerId: 'away-1', decision: 'win' }
+    });
+    const note = introduced.game.submit('private_note', { text: 'Correction target for official scoring.' });
+    const introducedConflict = introduced.game.submit(
+      'supersede_event',
+      {
+        targetEventId: note.event!.eventId,
+        reason: 'Attempt to introduce a same-side loss.',
+        replacement: {
+          type: 'record_scoring_judgment',
+          payload: {
+            playEventId: introduced.playEventId,
+            pitcherOfRecord: { side: 'away', playerId: 'away-4', decision: 'loss' }
+          }
+        }
+      },
+      { accept: false }
+    );
+    expect(introducedConflict.result.rejection?.code).toBe('contradictory-pitcher-decision');
+
+    const voided = preparePitcherDecisionGame();
+    const voidedWin = voided.game.submit('record_scoring_judgment', {
+      playEventId: voided.playEventId,
+      pitcherOfRecord: { side: 'away', playerId: 'away-1', decision: 'win' }
+    });
+    voided.game.submit('void_event', { targetEventId: voidedWin.event!.eventId, reason: 'Remove the original winning decision.' });
+    voided.game.submit('record_scoring_judgment', {
+      playEventId: voided.playEventId,
+      pitcherOfRecord: { side: 'away', playerId: 'away-5', decision: 'win' }
+    });
+    expect(projectDiamondStats(voided.game.ledger).players['away-5'].raw.pitching.W).toBe(1);
+    expect(verifyDiamondLedger(voided.game.ledger)).toBe(true);
   });
 
   it('binds fielding attachments to the cited play defense and rejects an invalid correction replacement', () => {

@@ -1167,8 +1167,8 @@ describe('DiamondScorebook', () => {
 
   it('blocks an impossible duplicate-base review without writing a command', () => {
     const { submitCommand } = renderScorebook();
-    fireEvent.click(screen.getByRole('button', { name: 'Single' }));
-    const dialog = screen.getByRole('dialog', { name: 'Review Single' });
+    fireEvent.click(screen.getByRole('button', { name: 'Reached on error' }));
+    const dialog = screen.getByRole('dialog', { name: 'Review Reached on error' });
 
     fireEvent.change(within(dialog).getByLabelText(/Batter .* destination/), { target: { value: 'third' } });
     fireEvent.change(within(dialog).getByLabelText(/First .* destination/), { target: { value: 'third' } });
@@ -1176,6 +1176,458 @@ describe('DiamondScorebook', () => {
     expect(within(dialog).getByRole('alert')).toHaveTextContent('Two runners cannot finish on the same base');
     expect(within(dialog).getByRole('button', { name: 'Confirm play' })).toBeDisabled();
     expect(submitCommand).not.toHaveBeenCalled();
+  });
+
+  it('offers only the reducer-valid batter destination for a named tap outcome', () => {
+    const fixture = createClient();
+    renderScorebook(buildSnapshot(), fixture);
+    fireEvent.click(screen.getByRole('button', { name: 'Single' }));
+    const dialog = screen.getByRole('dialog', { name: 'Review Single' });
+    const batterDestination = within(dialog).getByLabelText(/Batter .* destination/) as HTMLSelectElement;
+
+    expect(Array.from(batterDestination.options).map((option) => option.value)).toEqual(['first']);
+    expect(within(dialog).getByRole('button', { name: 'Confirm play' })).toBeEnabled();
+    expect(fixture.createCommand).not.toHaveBeenCalled();
+  });
+
+  it('rejects a same-base runner edit while preserving an explicit stay', () => {
+    const fixture = createClient();
+    renderScorebook(buildSnapshot(), fixture);
+    fireEvent.click(screen.getByRole('button', { name: 'Ground out' }));
+    const dialog = screen.getByRole('dialog', { name: 'Review Ground out' });
+    const firstRunnerDestination = within(dialog).getByLabelText(/First .* destination/) as HTMLSelectElement;
+
+    fireEvent.change(firstRunnerDestination, { target: { value: 'first' } });
+
+    expect(within(dialog).getByRole('alert')).toHaveTextContent(/stay put or move forward/i);
+    expect(within(dialog).getByRole('button', { name: 'Confirm play' })).toBeDisabled();
+    expect(fixture.createCommand).not.toHaveBeenCalled();
+
+    fireEvent.change(firstRunnerDestination, { target: { value: 'stay' } });
+
+    expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Confirm play' })).toBeEnabled();
+  });
+
+  it('rejects an explicit stay when another runner would arrive at the held base', () => {
+    const fixture = createClient();
+    renderScorebook(buildSnapshot(), fixture);
+    fireEvent.click(screen.getByRole('button', { name: 'Single' }));
+    const dialog = screen.getByRole('dialog', { name: 'Review Single' });
+
+    fireEvent.change(within(dialog).getByLabelText(/First .* destination/), { target: { value: 'stay' } });
+
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('Two runners cannot finish on the same base');
+    expect(within(dialog).getByRole('button', { name: 'Confirm play' })).toBeDisabled();
+    expect(fixture.createCommand).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      label: 'a backward plate-appearance runner move',
+      snapshot: buildSnapshot({
+        bases: {
+          first: null,
+          second: { ...buildSnapshot().bases.first!, playerId: 'runner-1' },
+          third: null
+        }
+      }),
+      proposal: {
+        schemaVersion: 1,
+        type: 'record_plate_appearance',
+        payload: {
+          batterId: 'batter-1',
+          pitcherId: 'pitcher-1',
+          result: 'ground_out',
+          batterAdvance: { to: 'out', outKind: 'batter_runner' },
+          runnerAdvances: [{ runnerId: 'runner-1', from: 'second', to: 'first', cause: 'batted_ball' }],
+          outsOnPlay: 1,
+          runsBattedIn: 0
+        },
+        confidence: 0.9,
+        unresolvedFields: [],
+        requiresConfirmation: true,
+        mutatesState: false
+      },
+      dialogName: 'Review Ground out',
+      message: /stay put or move forward/i
+    },
+    {
+      label: 'a same-base standalone runner move',
+      snapshot: buildSnapshot(),
+      proposal: {
+        schemaVersion: 1,
+        type: 'advance_runner',
+        payload: { runnerId: 'runner-1', from: 'first', to: 'first', cause: 'wild_pitch' },
+        confidence: 0.9,
+        unresolvedFields: [],
+        requiresConfirmation: true,
+        mutatesState: false
+      },
+      dialogName: 'Review advance runner',
+      message: /stay put or move forward/i
+    },
+    {
+      label: 'the wrong runner identity for an occupied source base',
+      snapshot: buildSnapshot(),
+      proposal: {
+        schemaVersion: 1,
+        type: 'advance_runner',
+        payload: { runnerId: 'runner-3', from: 'first', to: 'second', cause: 'wild_pitch' },
+        confidence: 0.9,
+        unresolvedFields: [],
+        requiresConfirmation: true,
+        mutatesState: false
+      },
+      dialogName: 'Review advance runner',
+      message: /exact current base/i
+    },
+    {
+      label: 'an occupied standalone runner destination',
+      snapshot: buildSnapshot({
+        bases: {
+          ...buildSnapshot().bases,
+          second: {
+            playerId: 'runner-2',
+            name: 'Riley Park',
+            number: '6',
+            responsiblePitcherId: 'pitcher-1',
+            courtesyForPlayerId: null,
+            reachedOnEventId: 'event-6'
+          }
+        }
+      }),
+      proposal: {
+        schemaVersion: 1,
+        type: 'advance_runner',
+        payload: { runnerId: 'runner-1', from: 'first', to: 'second', cause: 'wild_pitch' },
+        confidence: 0.9,
+        unresolvedFields: [],
+        requiresConfirmation: true,
+        mutatesState: false
+      },
+      dialogName: 'Review advance runner',
+      message: /destination is already occupied/i
+    },
+    {
+      label: 'an explicit plate-appearance runner source that does not match the current base',
+      snapshot: buildSnapshot(),
+      proposal: {
+        schemaVersion: 1,
+        type: 'record_plate_appearance',
+        payload: {
+          batterId: 'batter-1',
+          pitcherId: 'pitcher-1',
+          result: 'ground_out',
+          batterAdvance: { to: 'out', outKind: 'batter_runner' },
+          runnerAdvances: [{ runnerId: 'runner-1', from: 'second', to: 'third', cause: 'batted_ball' }],
+          outsOnPlay: 1,
+          runsBattedIn: 0
+        },
+        confidence: 0.9,
+        unresolvedFields: [],
+        requiresConfirmation: true,
+        mutatesState: false
+      },
+      dialogName: 'Review Ground out',
+      message: /exact current base/i
+    },
+    {
+      label: 'a batter destination that contradicts the named result',
+      snapshot: buildSnapshot(),
+      proposal: {
+        schemaVersion: 1,
+        type: 'record_plate_appearance',
+        payload: {
+          batterId: 'batter-1',
+          pitcherId: 'pitcher-1',
+          result: 'walk',
+          batterAdvance: { to: 'second' },
+          runnerAdvances: [],
+          outsOnPlay: 0,
+          runsBattedIn: 0
+        },
+        confidence: 0.9,
+        unresolvedFields: [],
+        requiresConfirmation: true,
+        mutatesState: false
+      },
+      dialogName: 'Review Walk',
+      message: /batter destination.*selected play result/i
+    }
+  ])('blocks a server voice draft with $label', async ({ snapshot, proposal, dialogName, message }) => {
+    const fixture = createClient(snapshot);
+    (fixture.client.parseVoice as ReturnType<typeof vi.fn>).mockResolvedValue(proposal);
+    const generateContent = vi.fn(async () => {
+      throw new Error('model unavailable');
+    });
+    renderScorebook(snapshot, fixture, { generateContent });
+
+    fireEvent.click(screen.getByRole('button', { name: /Dictate play/ }));
+    fireEvent.change(screen.getByLabelText('Editable transcript'), { target: { value: 'Review the runner movement.' } });
+    fireEvent.click(screen.getByRole('button', { name: /Interpret play/ }));
+
+    const dialog = await screen.findByRole('dialog', { name: dialogName });
+    expect(within(dialog).getByRole('alert')).toHaveTextContent(message);
+    expect(within(dialog).getByRole('button', { name: /Confirm/ })).toBeDisabled();
+    expect(fixture.createCommand).not.toHaveBeenCalled();
+    expect(fixture.submitCommand).not.toHaveBeenCalled();
+  });
+
+  it('keeps an explicit standalone runner stay eligible for voice review', async () => {
+    const snapshot = buildSnapshot();
+    const fixture = createClient(snapshot);
+    (fixture.client.parseVoice as ReturnType<typeof vi.fn>).mockResolvedValue({
+      schemaVersion: 1,
+      type: 'advance_runner',
+      payload: { runnerId: 'runner-1', from: 'first', to: 'stay', cause: 'other' },
+      confidence: 0.9,
+      unresolvedFields: [],
+      requiresConfirmation: true,
+      mutatesState: false
+    });
+    const generateContent = vi.fn(async () => {
+      throw new Error('model unavailable');
+    });
+    renderScorebook(snapshot, fixture, { generateContent });
+
+    fireEvent.click(screen.getByRole('button', { name: /Dictate play/ }));
+    fireEvent.change(screen.getByLabelText('Editable transcript'), { target: { value: 'Runner held at first.' } });
+    fireEvent.click(screen.getByRole('button', { name: /Interpret play/ }));
+
+    const dialog = await screen.findByRole('dialog', { name: 'Review advance runner' });
+    expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm action' }));
+    await waitFor(() => expect(fixture.submitCommand).toHaveBeenCalledTimes(1));
+    expect(fixture.createCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'advance_runner',
+        payload: { runnerId: 'runner-1', from: 'first', to: 'stay', cause: 'other' }
+      })
+    );
+  });
+
+  it('expires a tap runner review when exact base responsibility changes at the same revision', async () => {
+    const snapshot = buildSnapshot();
+    const fixture = createClient(snapshot);
+    (fixture.client.load as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      buildSnapshot({
+        bases: {
+          ...snapshot.bases,
+          first: { ...snapshot.bases.first!, responsiblePitcherId: 'replacement-pitcher' }
+        }
+      })
+    );
+    renderScorebook(snapshot, fixture);
+    fireEvent.click(screen.getByText('Full-mode advanced plays'));
+    const runnerTools = screen.getByRole('group', { name: 'Runner-only play' });
+    fireEvent.change(within(runnerTools).getByLabelText('Event'), { target: { value: 'wild_pitch' } });
+    fireEvent.click(within(runnerTools).getByRole('button', { name: 'Review runner event' }));
+    expect(screen.getByRole('dialog', { name: 'Review wild pitch' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh authoritative scorebook' }));
+
+    expect(await screen.findByText(/runner review expired.*revision or base state changed/i)).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'Review wild pitch' })).not.toBeInTheDocument();
+    expect(fixture.createCommand).not.toHaveBeenCalled();
+    expect(fixture.submitCommand).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'revision',
+      buildSnapshot({
+        revision: 8,
+        checkpointHash: checkpointForRevision(8),
+        completeness: { ...buildSnapshot().completeness, authoritativeRevision: 8 }
+      })
+    ],
+    [
+      'scoring lease',
+      buildSnapshot({
+        lease: {
+          ...buildSnapshot().lease,
+          canScore: false,
+          holderUid: 'coach-2',
+          holderName: 'Coach Lee',
+          leaseId: replacementScorerLeaseId
+        }
+      })
+    ],
+    ['snapshot authority', buildSnapshot({ authoritative: false })]
+  ])('expires a tap runner review after a changed %s', async (_label, nextSnapshot) => {
+    const snapshot = buildSnapshot();
+    const fixture = createClient(snapshot);
+    (fixture.client.load as ReturnType<typeof vi.fn>).mockResolvedValueOnce(nextSnapshot);
+    renderScorebook(snapshot, fixture);
+    fireEvent.click(screen.getByText('Full-mode advanced plays'));
+    fireEvent.click(within(screen.getByRole('group', { name: 'Runner-only play' })).getByRole('button', { name: 'Review runner event' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh authoritative scorebook' }));
+
+    expect(await screen.findByText(/runner review expired.*revision or base state changed/i)).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'Review stolen base' })).not.toBeInTheDocument();
+    expect(fixture.createCommand).not.toHaveBeenCalled();
+    expect(fixture.submitCommand).not.toHaveBeenCalled();
+  });
+
+  it('expires a tap runner review when the authenticated scorer changes', async () => {
+    const snapshot = buildSnapshot();
+    const fixture = createClient(snapshot);
+    const rendered = render(
+      <MemoryRouter>
+        <DiamondScorebook auth={auth} teamId="team-1" gameId="game-1" initialSnapshot={snapshot} client={fixture.client} />
+      </MemoryRouter>
+    );
+    fireEvent.click(screen.getByText('Full-mode advanced plays'));
+    fireEvent.click(within(screen.getByRole('group', { name: 'Runner-only play' })).getByRole('button', { name: 'Review runner event' }));
+
+    const changedAuth: AuthState = {
+      ...auth,
+      user: { ...auth.user!, uid: 'coach-2', email: 'lee@example.com', displayName: 'Coach Lee' }
+    };
+    rendered.rerender(
+      <MemoryRouter>
+        <DiamondScorebook auth={changedAuth} teamId="team-1" gameId="game-1" initialSnapshot={snapshot} client={fixture.client} />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText(/runner review expired.*revision or base state changed/i)).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'Review stolen base' })).not.toBeInTheDocument();
+    expect(fixture.createCommand).not.toHaveBeenCalled();
+    expect(fixture.submitCommand).not.toHaveBeenCalled();
+  });
+
+  it('expires a tap runner review when another command enters the local queue', async () => {
+    const snapshot = buildSnapshot();
+    const fixture = createClient(snapshot);
+    renderScorebook(snapshot, fixture);
+    fireEvent.click(screen.getByText('Full-mode advanced plays'));
+    fireEvent.click(within(screen.getByRole('group', { name: 'Runner-only play' })).getByRole('button', { name: 'Review runner event' }));
+    fireEvent(window, new Event('offline'));
+    await screen.findByText('Offline · 0 queued');
+    vi.mocked(fixture.client.readQueue).mockReturnValue([
+      {
+        command: {} as DiamondCommandEnvelope,
+        queuedAt: '2026-09-05T12:00:00.000Z',
+        authenticatedUid: auth.user!.uid,
+        scorerUid: auth.user!.uid,
+        instanceId: snapshot.instanceId,
+        leaseId: scorerLeaseId
+      }
+    ]);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh authoritative scorebook' }));
+
+    expect(await screen.findByText(/runner review expired.*another command entered the queue/i)).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'Review stolen base' })).not.toBeInTheDocument();
+    expect(fixture.createCommand).not.toHaveBeenCalled();
+    expect(fixture.submitCommand).not.toHaveBeenCalled();
+  });
+
+  it('rechecks a runner review after async build verification before creating a command', async () => {
+    let finishBuild: ((value: number) => void) | null = null;
+    const buildPending = new Promise<number>((resolve) => {
+      finishBuild = resolve;
+    });
+    const snapshot = buildSnapshot();
+    const fixture = createClient(snapshot);
+    (fixture.client.resolveAppBuild as ReturnType<typeof vi.fn>).mockReturnValue(buildPending);
+    (fixture.client.load as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      buildSnapshot({
+        bases: {
+          ...snapshot.bases,
+          first: { ...snapshot.bases.first!, reachedOnEventId: 'replacement-event' }
+        }
+      })
+    );
+    renderScorebook(snapshot, fixture);
+    fireEvent.click(screen.getByText('Full-mode advanced plays'));
+    const runnerTools = screen.getByRole('group', { name: 'Runner-only play' });
+    fireEvent.change(within(runnerTools).getByLabelText('Event'), { target: { value: 'wild_pitch' } });
+    fireEvent.click(within(runnerTools).getByRole('button', { name: 'Review runner event' }));
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Review wild pitch' })).getByRole('button', { name: 'Confirm action' }));
+    await waitFor(() => expect(fixture.client.resolveAppBuild).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh authoritative scorebook' }));
+    await waitFor(() => expect(fixture.client.load).toHaveBeenCalledTimes(1));
+    await act(async () => finishBuild?.(appBuild));
+
+    expect(await screen.findByText(/runner review expired.*base state/i)).toBeInTheDocument();
+    expect(fixture.createCommand).not.toHaveBeenCalled();
+    expect(fixture.submitCommand).not.toHaveBeenCalled();
+    expect(fixture.client.enqueue).not.toHaveBeenCalled();
+  });
+
+  it.each(['Strikeout', 'Dropped third strike'])('blocks a live %s reach with first occupied and fewer than two outs', (outcome) => {
+    const snapshot = buildSnapshot({ inning: { ...buildSnapshot().inning, outs: 1 } });
+    const fixture = createClient(snapshot);
+    renderScorebook(snapshot, fixture);
+
+    fireEvent.click(screen.getByRole('button', { name: outcome }));
+    const dialog = screen.getByRole('dialog', { name: `Review ${outcome}` });
+    fireEvent.change(within(dialog).getByLabelText(/Batter .* destination/), { target: { value: 'first' } });
+
+    expect(within(dialog).getByRole('alert')).toHaveTextContent(/dropped.third.strike.*first.*fewer than two outs/i);
+    expect(within(dialog).getByRole('button', { name: 'Confirm play' })).toBeDisabled();
+    expect(fixture.createCommand).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      label: 'first is empty',
+      snapshot: buildSnapshot({ bases: { first: null, second: null, third: null } }),
+      advancesForcedRunner: false
+    },
+    {
+      label: 'there are already two outs',
+      snapshot: buildSnapshot({ inning: { ...buildSnapshot().inning, outs: 2 } }),
+      advancesForcedRunner: true
+    }
+  ])('allows a live strikeout reach when $label', async ({ snapshot, advancesForcedRunner }) => {
+    const fixture = createClient(snapshot);
+    renderScorebook(snapshot, fixture);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Strikeout' }));
+    const dialog = screen.getByRole('dialog', { name: 'Review Strikeout' });
+    fireEvent.change(within(dialog).getByLabelText(/Batter .* destination/), { target: { value: 'first' } });
+    if (advancesForcedRunner) {
+      fireEvent.change(within(dialog).getByLabelText(/First .* destination/), { target: { value: 'second' } });
+    }
+
+    expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm play' }));
+    await waitFor(() => expect(fixture.submitCommand).toHaveBeenCalledTimes(1));
+    expect(fixture.createCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'record_plate_appearance',
+        payload: expect.objectContaining({
+          result: 'strikeout',
+          batterAdvance: expect.objectContaining({ to: 'first' }),
+          runnerAdvances: advancesForcedRunner
+            ? expect.arrayContaining([expect.objectContaining({ runnerId: 'runner-1', from: 'first', to: 'second' })])
+            : [],
+          outsOnPlay: 0
+        })
+      })
+    );
+  });
+
+  it('fails a live strikeout reach closed when the pinned rules capability is unavailable', () => {
+    const snapshot = buildSnapshot({
+      rulesProfileId: 'unavailable-profile@1',
+      bases: { first: null, second: null, third: null }
+    });
+    const fixture = createClient(snapshot);
+    renderScorebook(snapshot, fixture);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Strikeout' }));
+    const dialog = screen.getByRole('dialog', { name: 'Review Strikeout' });
+    fireEvent.change(within(dialog).getByLabelText(/Batter .* destination/), { target: { value: 'first' } });
+
+    expect(within(dialog).getByRole('alert')).toHaveTextContent(/dropped.third.strike.*pinned rules profile/i);
+    expect(within(dialog).getByRole('button', { name: 'Confirm play' })).toBeDisabled();
+    expect(fixture.createCommand).not.toHaveBeenCalled();
   });
 
   it('implements undo as a confirmed append-only void_event', async () => {
@@ -1834,7 +2286,10 @@ describe('DiamondScorebook', () => {
           pitcherId: 'pitcher-1',
           result: 'single',
           batterAdvance: { to: 'first' },
-          runnerAdvances: [{ runnerId: 'runner-3', from: 'third', to: 'home', cause: 'batted_ball' }],
+          runnerAdvances: [
+            { runnerId: 'runner-1', from: 'first', to: 'second', cause: 'batted_ball' },
+            { runnerId: 'runner-3', from: 'third', to: 'home', cause: 'batted_ball' }
+          ],
           outsOnPlay: 0,
           runsBattedIn: 1
         }),
@@ -1849,7 +2304,9 @@ describe('DiamondScorebook', () => {
     fireEvent.click(screen.getByRole('button', { name: /Dictate play/ }));
     fireEvent.click(screen.getByRole('button', { name: /Start dictation/ }));
     await waitFor(() => expect(screen.getByLabelText('Editable transcript')).toHaveValue('Single to left, Casey scored.'));
-    fireEvent.change(screen.getByLabelText('Editable transcript'), { target: { value: 'Single to left. Casey scored; Jordan held.' } });
+    fireEvent.change(screen.getByLabelText('Editable transcript'), {
+      target: { value: 'Single to left. Casey scored; Jordan moved to second.' }
+    });
     fireEvent.click(screen.getByRole('button', { name: /Interpret play/ }));
 
     const review = await screen.findByRole('dialog', { name: 'Review Single' });
@@ -1870,6 +2327,7 @@ describe('DiamondScorebook', () => {
     expect(request?.prompt).toContain('"strikes":1');
     expect(request?.prompt).toContain('"first":"runner-1"');
     expect(request?.prompt).toContain('"third":"runner-3"');
+    expect(request?.prompt).toContain('"droppedThirdStrike":{"enabled":true,"disallowWhenFirstOccupiedWithFewerThanTwoOuts":true}');
     expect(request?.prompt).toContain('"knownPlayerIds"');
     expect(request?.prompt).toContain('"event-7"');
     expect(request?.prompt).not.toContain('Avery Carter');
@@ -3401,6 +3859,54 @@ describe('DiamondScorebook', () => {
               result: 'home_run',
               batterId: 'historical-batter',
               runnerAdvances: [expect.objectContaining({ runnerId: 'historical-runner', from: 'first', to: 'home' })]
+            })
+          })
+        })
+      })
+    );
+  });
+
+  it('keeps a historically legal dropped-third-strike correction independent of the current first-base state', async () => {
+    const snapshot = buildSnapshot({ inning: { ...buildSnapshot().inning, outs: 1 } });
+    const fixture = createClient(snapshot);
+    const history = buildPrivateHistoryItems();
+    history[6] = buildPrivateEvent('event-7', 7, {
+      payload: {
+        batterId: 'historical-batter',
+        pitcherId: 'pitcher-1',
+        result: 'strikeout',
+        batterAdvance: { to: 'out', cause: 'batted_ball', outKind: 'strikeout' },
+        runnerAdvances: [],
+        outsOnPlay: 1,
+        runsBattedIn: 0
+      }
+    });
+    fixture.loadPrivateHistory.mockResolvedValue(buildPrivateHistoryWindow(history, 7));
+    renderScorebook(snapshot, fixture);
+    fireEvent.click(screen.getByRole('button', { name: 'Load recent private history' }));
+    await screen.findByText(/Complete private history: 7 canonical events/);
+    fireEvent.change(screen.getByLabelText('Correction reason'), {
+      target: { value: 'The earlier batter reached on the dropped third strike.' }
+    });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Replace PA' })[0]!);
+
+    const review = screen.getByRole('dialog', { name: 'Review Strikeout replacement' });
+    fireEvent.change(within(review).getByLabelText('Play result'), { target: { value: 'dropped_third_strike' } });
+
+    expect(within(review).getByLabelText(/Batter .* destination/)).toHaveValue('first');
+    expect(within(review).queryByRole('alert')).not.toBeInTheDocument();
+    fireEvent.click(within(review).getByRole('button', { name: 'Confirm correction' }));
+    await waitFor(() => expect(fixture.submitCommand).toHaveBeenCalledTimes(1));
+    expect(fixture.createCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'supersede_event',
+        payload: expect.objectContaining({
+          replacement: expect.objectContaining({
+            type: 'record_plate_appearance',
+            payload: expect.objectContaining({
+              result: 'dropped_third_strike',
+              batterId: 'historical-batter',
+              batterAdvance: expect.objectContaining({ to: 'first' })
             })
           })
         })

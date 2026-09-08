@@ -14,11 +14,13 @@ import {
   requireDiamondRulesProfile,
   verifyDiamondLedger,
   type DiamondCaptureMode,
+  type DiamondBase,
   type DiamondBattingRole,
   type DiamondCommand,
   type DiamondCommandPayloadMap,
   type DiamondCommandType,
   type DiamondCoverageMap,
+  type DiamondDestination,
   type DiamondExecution,
   type DiamondLedger,
   type DiamondPlayerRawStats,
@@ -236,6 +238,20 @@ function recordOut(game: Harness) {
         }
       : {})
   });
+}
+
+function placeRunnerOnBase(game: Harness, base: DiamondBase) {
+  const { batterId, pitcherId } = currentMatchup(game);
+  const result = base === 'first' ? ('single' as const) : base === 'second' ? ('double' as const) : ('triple' as const);
+  game.submit('record_plate_appearance', {
+    batterId,
+    pitcherId,
+    result,
+    batterAdvance: { to: base },
+    runnerAdvances: [],
+    outsOnPlay: 0
+  });
+  return batterId;
 }
 
 function finishAndAdvanceHalf(game: Harness) {
@@ -595,6 +611,176 @@ describe('Baseball golden games', () => {
     const stats = projectDiamondStats(game.ledger);
     expect(stats.players['away-4'].raw.batting.SO).toBe(1);
     expect(stats.players['home-1'].raw.pitching.SO).toBe(1);
+  });
+
+  it('applies dropped-third-strike eligibility when an ordinary strikeout reaches first without changing valid old payloads', () => {
+    const emptyFirst = createHarness('baseball-nfhs', 'quick');
+    configureGame(emptyFirst);
+    emptyFirst.submit('record_plate_appearance', {
+      batterId: 'away-1',
+      pitcherId: 'home-1',
+      result: 'strikeout',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    expect(emptyFirst.ledger.state.bases.first?.runnerId).toBe('away-1');
+    expect(projectDiamondStats(emptyFirst.ledger).players['away-1'].raw.batting.SO).toBe(1);
+    expect(replayDiamondLedger(emptyFirst.ledger).state).toEqual(emptyFirst.ledger.state);
+
+    const occupiedFirst = createHarness('baseball-nfhs', 'quick');
+    configureGame(occupiedFirst);
+    placeRunnerOnBase(occupiedFirst, 'first');
+    recordOut(occupiedFirst);
+    const blockedRevision = occupiedFirst.ledger.state.revision;
+    const blocked = occupiedFirst.submit(
+      'record_plate_appearance',
+      {
+        batterId: 'away-3',
+        pitcherId: 'home-1',
+        result: 'strikeout',
+        batterAdvance: { to: 'first' },
+        runnerAdvances: [{ runnerId: 'away-1', from: 'first', to: 'second', cause: 'other' }],
+        outsOnPlay: 0
+      },
+      { accept: false }
+    );
+    expectRejected(blocked, 'dropped-third-strike-ineligible', blockedRevision);
+
+    recordOut(occupiedFirst);
+    occupiedFirst.submit('record_plate_appearance', {
+      batterId: 'away-4',
+      pitcherId: 'home-1',
+      result: 'strikeout',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [{ runnerId: 'away-1', from: 'first', to: 'second', cause: 'other' }],
+      outsOnPlay: 0
+    });
+    expect(occupiedFirst.ledger.state.bases).toMatchObject({
+      first: { runnerId: 'away-4' },
+      second: { runnerId: 'away-1' }
+    });
+    expect(replayDiamondLedger(occupiedFirst.ledger).state).toEqual(occupiedFirst.ledger.state);
+
+    const legacyDroppedThird = createHarness('baseball-nfhs', 'quick');
+    configureGame(legacyDroppedThird);
+    legacyDroppedThird.submit('record_plate_appearance', {
+      batterId: 'away-1',
+      pitcherId: 'home-1',
+      result: 'dropped_third_strike',
+      batterAdvance: { to: 'second', cause: 'error' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    expect(legacyDroppedThird.ledger.state.bases.second?.runnerId).toBe('away-1');
+    expect(replayDiamondLedger(legacyDroppedThird.ledger).state).toEqual(legacyDroppedThird.ledger.state);
+
+    const droppedThirdOut = createHarness('baseball-nfhs', 'quick');
+    configureGame(droppedThirdOut);
+    droppedThirdOut.submit('record_plate_appearance', {
+      batterId: 'away-1',
+      pitcherId: 'home-1',
+      result: 'dropped_third_strike',
+      batterAdvance: { to: 'out' },
+      runnerAdvances: [],
+      outsOnPlay: 1
+    });
+    expect(droppedThirdOut.ledger.state.inning.outs).toBe(1);
+    expect(replayDiamondLedger(droppedThirdOut.ledger).state).toEqual(droppedThirdOut.ledger.state);
+  });
+
+  it('rejects same-base and backward runner moves in standalone, plate-appearance, and correction replay paths', () => {
+    const matrix: readonly Readonly<{
+      from: DiamondBase;
+      allowed: readonly DiamondDestination[];
+      rejected: readonly DiamondDestination[];
+    }>[] = [
+      { from: 'first', allowed: ['stay', 'second', 'third', 'home', 'out'], rejected: ['first'] },
+      { from: 'second', allowed: ['stay', 'third', 'home', 'out'], rejected: ['first', 'second'] },
+      { from: 'third', allowed: ['stay', 'home', 'out'], rejected: ['first', 'second', 'third'] }
+    ];
+
+    for (const { from, allowed, rejected } of matrix) {
+      for (const to of allowed) {
+        const game = createHarness('baseball-nfhs', 'quick');
+        configureGame(game);
+        const runnerId = placeRunnerOnBase(game, from);
+        game.submit('advance_runner', {
+          runnerId,
+          from,
+          to,
+          cause: 'other',
+          ...(to === 'out' ? { outKind: 'tag' as const } : {})
+        });
+        if (to === 'stay') {
+          expect(projectDiamondStats(game.ledger).players[runnerId].raw.baserunning.advances).toBe(0);
+        }
+        expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
+      }
+
+      for (const to of rejected) {
+        const standalone = createHarness('baseball-nfhs', 'quick');
+        configureGame(standalone);
+        const standaloneRunnerId = placeRunnerOnBase(standalone, from);
+        const standaloneRevision = standalone.ledger.state.revision;
+        expectRejected(
+          standalone.submit('advance_runner', { runnerId: standaloneRunnerId, from, to, cause: 'other' }, { accept: false }),
+          'invalid-runner-destination',
+          standaloneRevision
+        );
+
+        const plateAppearance = createHarness('baseball-nfhs', 'quick');
+        configureGame(plateAppearance);
+        const plateAppearanceRunnerId = placeRunnerOnBase(plateAppearance, from);
+        const { batterId, pitcherId } = currentMatchup(plateAppearance);
+        const plateAppearanceRevision = plateAppearance.ledger.state.revision;
+        expectRejected(
+          plateAppearance.submit(
+            'record_plate_appearance',
+            {
+              batterId,
+              pitcherId,
+              result: 'ground_out',
+              batterAdvance: { to: 'out', outKind: 'batter_runner' },
+              runnerAdvances: [{ runnerId: plateAppearanceRunnerId, from, to, cause: 'batted_ball' }],
+              outsOnPlay: 1
+            },
+            { accept: false }
+          ),
+          'invalid-runner-destination',
+          plateAppearanceRevision
+        );
+      }
+    }
+
+    const correction = createHarness('baseball-nfhs', 'quick');
+    configureGame(correction);
+    const runnerId = placeRunnerOnBase(correction, 'first');
+    const advance = correction.submit('advance_runner', {
+      runnerId,
+      from: 'first',
+      to: 'second',
+      cause: 'other'
+    });
+    const correctionRevision = correction.ledger.state.revision;
+    expectRejected(
+      correction.submit(
+        'supersede_event',
+        {
+          targetEventId: advance.event!.eventId,
+          reason: 'Attempt an invalid backward correction.',
+          replacement: {
+            type: 'advance_runner',
+            payload: { runnerId, from: 'first', to: 'first', cause: 'other' }
+          }
+        },
+        { accept: false }
+      ),
+      'invalid-runner-destination',
+      correctionRevision
+    );
+    expect(verifyDiamondLedger(correction.ledger)).toBe(true);
+    expect(replayDiamondLedger(correction.ledger).state).toEqual(correction.ledger.state);
   });
 
   it('requires a third-out run decision, cancels a force-out run, and counts an earlier tag-play run', () => {

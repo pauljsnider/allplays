@@ -23,6 +23,11 @@ export type DiamondAiCommandType = Extract<
   | 'add_courtesy_runner'
 >;
 
+export type DiamondAiDroppedThirdStrikeCapability = Readonly<{
+  enabled: boolean;
+  disallowWhenFirstOccupiedWithFewerThanTwoOuts: boolean;
+}>;
+
 export type DiamondAiCommandContext = {
   sourceRevision: number;
   sport?: 'baseball' | 'fastpitch';
@@ -35,6 +40,7 @@ export type DiamondAiCommandContext = {
   currentBatterId?: string | null;
   currentPitcherId?: string | null;
   bases?: Partial<Record<'first' | 'second' | 'third', string | null>>;
+  droppedThirdStrike?: DiamondAiDroppedThirdStrikeCapability;
   knownPlayerIds?: string[];
   recentPlayIds?: string[];
 };
@@ -195,6 +201,22 @@ const plateAppearanceResults = new Set([
   'line_out',
   'double_play',
   'triple_play'
+]);
+const exactPlateAppearanceBatterDestinations = new Map<string, string>([
+  ['single', 'first'],
+  ['double', 'second'],
+  ['triple', 'third'],
+  ['home_run', 'home'],
+  ['walk', 'first'],
+  ['intentional_walk', 'first'],
+  ['hit_by_pitch', 'first'],
+  ['ground_out', 'out'],
+  ['fly_out', 'out'],
+  ['line_out', 'out'],
+  ['sacrifice_bunt', 'out'],
+  ['sacrifice_fly', 'out'],
+  ['double_play', 'out'],
+  ['triple_play', 'out']
 ]);
 const advanceCauses = new Set([
   'batted_ball',
@@ -494,6 +516,8 @@ type NormalizedCommandContext = {
   currentBatterId: string | null;
   currentPitcherId: string | null;
   bases: Record<'first' | 'second' | 'third', string | null>;
+  firstBaseKnown: boolean;
+  droppedThirdStrike: DiamondAiDroppedThirdStrikeCapability | null;
   knownPlayerIds: string[];
   recentPlayIds: string[];
 };
@@ -978,6 +1002,11 @@ SECURITY AND AUTHORITY RULES:
 - Never output transcript, audio, private notes, actor/user identity, or prose outside the JSON object.
 - Use only the allowlisted command types below and only their documented payload fields.
 - If any player, runner advance, out, fielding credit, scoring judgment, or command choice is ambiguous, list concrete questions and lower confidence. Do not guess.
+- Existing runners must use their exact occupied source base and runner ID. They may stay put or move forward to a later base, reach home, or be recorded out; use to=stay rather than repeating the source base.
+- No two safe runners may finish on the same base. A batter reaching an occupied first base requires that exact pre-play runner to vacate first in the same proposal.
+- Batter destinations are result-pinned: single=first, double=second, triple=third, home_run=home, walk/intentional_walk/hit_by_pitch=first, and ground_out/fly_out/line_out/sacrifice_bunt/sacrifice_fly/double_play/triple_play=out. strikeout is out or an eligible first-base reach; reached_on_error, fielders_choice, and interference remain scorer-defined but cannot use to=stay.
+- For dropped-third-strike advancement, use the pre-play context: an ordinary strikeout may reach first, and a named dropped_third_strike may advance to first, second, third, or home, only when droppedThirdStrike.enabled=true and the pinned rule does not disallow advancement with first base occupied and fewer than two outs. Missing or disabled capability means the batter must be out. A batter can never use to=stay.
+- These prompt rules guide the proposal only. The local deterministic validator remains authoritative.
 - For home_run and triple, include every occupied base runner exactly once in runnerAdvances; each must reach home or be marked out.
 - For double_play record exactly 2 distinct actual outs, and for triple_play record exactly 3, including the batter and matching outsOnPlay. Do not infer timing from array order; leave countsRun explicit for scorer review.
 
@@ -1040,6 +1069,7 @@ function normalizeCommandContext(value: unknown): NormalizedCommandContext {
       'currentBatterId',
       'currentPitcherId',
       'bases',
+      'droppedThirdStrike',
       'knownPlayerIds',
       'recentPlayIds'
     ],
@@ -1069,6 +1099,8 @@ function normalizeCommandContext(value: unknown): NormalizedCommandContext {
     second: optionalResourceId(baseSource.second, 'Second-base runner ID'),
     third: optionalResourceId(baseSource.third, 'Third-base runner ID')
   };
+  const firstBaseKnown = Object.prototype.hasOwnProperty.call(baseSource, 'first');
+  const droppedThirdStrike = normalizeDroppedThirdStrikeCapability(source.droppedThirdStrike);
   const knownPlayerIds = normalizeResourceIdArray(source.knownPlayerIds, 'Known player IDs', 100);
   [currentBatterId, currentPitcherId, ...Object.values(normalizedBases)].forEach((id) => {
     if (id && !knownPlayerIds.includes(id)) knownPlayerIds.push(id);
@@ -1085,8 +1117,25 @@ function normalizeCommandContext(value: unknown): NormalizedCommandContext {
     currentBatterId,
     currentPitcherId,
     bases: normalizedBases,
+    firstBaseKnown,
+    droppedThirdStrike,
     knownPlayerIds,
     recentPlayIds: normalizeResourceIdArray(source.recentPlayIds, 'Recent play IDs', 100)
+  };
+}
+
+function normalizeDroppedThirdStrikeCapability(value: unknown): DiamondAiDroppedThirdStrikeCapability | null {
+  if (value === undefined) return null;
+  if (!isPlainRecord(value)) {
+    throw new DiamondAiBoundaryError('Dropped-third-strike capability must be an object.');
+  }
+  requireExactKeys(value, ['enabled', 'disallowWhenFirstOccupiedWithFewerThanTwoOuts'], 'Dropped-third-strike capability');
+  return {
+    enabled: requireBoolean(value.enabled, 'Dropped-third-strike enabled capability'),
+    disallowWhenFirstOccupiedWithFewerThanTwoOuts: requireBoolean(
+      value.disallowWhenFirstOccupiedWithFewerThanTwoOuts,
+      'Dropped-third-strike occupied-first capability'
+    )
   };
 }
 
@@ -1397,12 +1446,17 @@ function validateCommandReferences(type: DiamondAiCommandType, payload: Record<s
     throw new DiamondAiBoundaryError('AI proposed a scoring change for a play outside the supplied recent-play context.');
   }
   if (type === 'record_plate_appearance') validatePlateAppearanceAgainstContext(payload, context);
+  if (type === 'advance_runner') validateStandaloneRunnerAdvanceAgainstContext(payload, context);
 }
 
 function validatePlateAppearanceAgainstContext(payload: Record<string, unknown>, context: NormalizedCommandContext) {
   const result = payload.result as string;
   const batterAdvance = payload.batterAdvance as Record<string, unknown>;
   const runnerAdvances = payload.runnerAdvances as Record<string, unknown>[];
+  if (batterAdvance.to === 'stay') {
+    throw new DiamondAiBoundaryError('The batter cannot stay at the batter source.');
+  }
+  validatePlateAppearanceBatterDestination(result, batterAdvance.to as string);
   const requiredOuts = result === 'double_play' ? 2 : result === 'triple_play' ? 3 : null;
   const actualOutSources = [
     ...(batterAdvance.to === 'out' ? [`batter:${payload.batterId as string}`] : []),
@@ -1431,9 +1485,13 @@ function validatePlateAppearanceAgainstContext(payload: Record<string, unknown>,
     if (context.bases[from] !== runnerId || seenSources.has(from) || seenRunners.has(runnerId)) {
       throw new DiamondAiBoundaryError('Runner advances must match the exact current base context without duplicates.');
     }
+    validateExistingRunnerDestination(from, advance.to as string);
     seenSources.add(from);
     seenRunners.add(runnerId);
   });
+
+  validatePlateAppearanceBaseDestinations(payload.batterId as string, batterAdvance, runnerAdvances, context);
+  validateDroppedThirdStrikeAdvance(result, batterAdvance.to as string, context);
 
   if (result !== 'home_run' && result !== 'triple') return;
   const occupiedBases = (['first', 'second', 'third'] as const).filter((base) => context.bases[base]);
@@ -1445,6 +1503,88 @@ function validatePlateAppearanceAgainstContext(payload: Record<string, unknown>,
   }
   if (payload.outsOnPlay !== actualOutSources.length) {
     throw new DiamondAiBoundaryError('Outs on play must exactly match the runners marked out.');
+  }
+}
+
+function validatePlateAppearanceBatterDestination(result: string, destination: string) {
+  const exactDestination = exactPlateAppearanceBatterDestinations.get(result);
+  if (exactDestination && destination !== exactDestination) {
+    throw new DiamondAiBoundaryError(`${result} requires batter destination ${exactDestination}.`);
+  }
+  if (result === 'strikeout' && destination !== 'out' && destination !== 'first') {
+    throw new DiamondAiBoundaryError('A strikeout batter must be out or reach first.');
+  }
+}
+
+function validatePlateAppearanceBaseDestinations(
+  batterId: string,
+  batterAdvance: Record<string, unknown>,
+  runnerAdvances: Record<string, unknown>[],
+  context: NormalizedCommandContext
+) {
+  const occupiedDestinations = new Map<keyof NormalizedCommandContext['bases'], string>();
+  (['first', 'second', 'third'] as const).forEach((base) => {
+    const runnerId = context.bases[base];
+    if (runnerId) occupiedDestinations.set(base, runnerId);
+  });
+  runnerAdvances.forEach((advance) => {
+    occupiedDestinations.delete(advance.from as keyof NormalizedCommandContext['bases']);
+  });
+
+  const moves = [
+    { runnerId: batterId, from: null, to: batterAdvance.to as string },
+    ...runnerAdvances.map((advance) => ({
+      runnerId: advance.runnerId as string,
+      from: advance.from as keyof NormalizedCommandContext['bases'],
+      to: advance.to as string
+    }))
+  ];
+  moves.forEach((move) => {
+    const destination = move.to === 'stay' ? move.from : move.to;
+    if (destination !== 'first' && destination !== 'second' && destination !== 'third') return;
+    if (occupiedDestinations.has(destination)) {
+      throw new DiamondAiBoundaryError('Runner destinations conflict with the exact pre-play occupied-base context.');
+    }
+    occupiedDestinations.set(destination, move.runnerId);
+  });
+}
+
+function validateStandaloneRunnerAdvanceAgainstContext(payload: Record<string, unknown>, context: NormalizedCommandContext) {
+  const from = payload.from as keyof NormalizedCommandContext['bases'];
+  const runnerId = payload.runnerId as string;
+  if (context.bases[from] !== runnerId) {
+    throw new DiamondAiBoundaryError('Runner advance must match the exact current base context.');
+  }
+  const to = payload.to as string;
+  validateExistingRunnerDestination(from, to);
+  if ((to === 'first' || to === 'second' || to === 'third') && context.bases[to]) {
+    throw new DiamondAiBoundaryError('Runner destination conflicts with the exact pre-play occupied-base context.');
+  }
+}
+
+function validateExistingRunnerDestination(from: keyof NormalizedCommandContext['bases'], to: string) {
+  if (to === 'stay' || to === 'home' || to === 'out') return;
+  const orderedBases: Array<keyof NormalizedCommandContext['bases']> = ['first', 'second', 'third'];
+  if (orderedBases.indexOf(to as keyof NormalizedCommandContext['bases']) <= orderedBases.indexOf(from)) {
+    throw new DiamondAiBoundaryError('An existing runner must stay put or move forward to a later base, reach home, or be recorded out.');
+  }
+}
+
+function validateDroppedThirdStrikeAdvance(result: string, batterDestination: string, context: NormalizedCommandContext) {
+  const advancesOnDroppedThirdStrike =
+    (result === 'strikeout' && batterDestination === 'first') || (result === 'dropped_third_strike' && batterDestination !== 'out');
+  if (!advancesOnDroppedThirdStrike) return;
+  if (!context.droppedThirdStrike?.enabled) {
+    throw new DiamondAiBoundaryError('Dropped-third-strike advancement is disabled or unavailable in the pinned rules context.');
+  }
+  if (context.outs === null) {
+    throw new DiamondAiBoundaryError('Dropped-third-strike advancement requires exact pre-play outs context.');
+  }
+  if (!context.firstBaseKnown) {
+    throw new DiamondAiBoundaryError('Dropped-third-strike advancement requires exact pre-play first-base occupancy context.');
+  }
+  if (context.droppedThirdStrike.disallowWhenFirstOccupiedWithFewerThanTwoOuts && context.bases.first && context.outs < 2) {
+    throw new DiamondAiBoundaryError('Dropped-third-strike advancement is not allowed with first occupied and fewer than two outs.');
   }
 }
 

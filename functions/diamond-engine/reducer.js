@@ -278,12 +278,20 @@ function validateBatterAdvanceShape(value) {
         requireMember(advance.outKind, OUT_KINDS, 'batter out kind');
     validateScoringCredit(advance, 'batterAdvance');
 }
+function validateRunnerDestination(from, to) {
+    if (to === 'stay' || to === 'home' || to === 'out')
+        return;
+    if (BASES.indexOf(to) <= BASES.indexOf(from)) {
+        throw new contracts_1.DiamondDomainError('invalid-runner-destination', `A runner on ${from} must stay, advance to a later base, reach home, or be recorded out.`);
+    }
+}
 function validateAdvanceShape(value, options = {}) {
     const advance = requireRecord(value, 'runner advance');
     requireOnlyFields(advance, options.standalone ? STANDALONE_RUNNER_ADVANCE_FIELDS : RUNNER_ADVANCE_FIELDS, 'runner advance');
     requireId(advance.runnerId, 'runnerId');
-    requireMember(advance.from, BASES, 'runner source');
-    requireMember(advance.to, DESTINATIONS, 'runner destination');
+    const from = requireMember(advance.from, BASES, 'runner source');
+    const to = requireMember(advance.to, DESTINATIONS, 'runner destination');
+    validateRunnerDestination(from, to);
     requireMember(advance.cause, ADVANCE_CAUSES, 'runner advance cause');
     if (advance.outKind !== undefined)
         requireMember(advance.outKind, OUT_KINDS, 'out kind');
@@ -742,7 +750,11 @@ function validateOutcomeDestination(state, result, destination) {
     if (result === 'strikeout' && !['out', 'first'].includes(destination)) {
         throw new contracts_1.DiamondDomainError('invalid-batter-destination', 'A strikeout batter must be out or reach first.');
     }
-    if (result === 'dropped_third_strike' && destination !== 'out') {
+    // An ordinary strikeout may encode a dropped-third reach to first. The named
+    // result also supports a later-base destination when the same play includes
+    // an error, but both use the pre-play eligibility snapshot here.
+    const advancesOnDroppedThirdStrike = (result === 'strikeout' && destination === 'first') || (result === 'dropped_third_strike' && destination !== 'out');
+    if (advancesOnDroppedThirdStrike) {
         const profile = (0, rules_1.requireDiamondRulesProfile)(state.rulesProfileId, state.rulesProfileVersion);
         if (!profile.droppedThirdStrike.enabled) {
             throw new contracts_1.DiamondDomainError('rule-not-enabled', 'Dropped-third-strike advancement is disabled by this profile.');

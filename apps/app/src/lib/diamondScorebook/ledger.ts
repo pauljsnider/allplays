@@ -204,12 +204,16 @@ type HistoricalPlayContext = Readonly<{
 type ParticipantReplayTracker = {
   plays: Map<string, HistoricalPlayContext>;
   pitcherAppearances: Record<DiamondSide, Set<string>>;
+  pitcherDecisions: Partial<Record<PitcherDecision['decision'], PitcherDecision>>;
 };
+
+type PitcherDecision = NonNullable<DiamondCommandPayloadMap['record_scoring_judgment']['pitcherOfRecord']>;
 
 function createParticipantReplayTracker(): ParticipantReplayTracker {
   return {
     plays: new Map<string, HistoricalPlayContext>(),
-    pitcherAppearances: { home: new Set<string>(), away: new Set<string>() }
+    pitcherAppearances: { home: new Set<string>(), away: new Set<string>() },
+    pitcherDecisions: {}
   };
 }
 
@@ -278,6 +282,33 @@ function playerRoleIsUnambiguous(context: HistoricalPlayContext, side: DiamondSi
 
 function pitcherRoleIsUnambiguous(context: HistoricalPlayContext, side: DiamondSide, playerId: string) {
   return context.pitcherAppearances[side].has(playerId) && playerRoleIsUnambiguous(context, side, playerId);
+}
+
+function recordPitcherDecision(tracker: ParticipantReplayTracker, decision: PitcherDecision) {
+  if (tracker.pitcherDecisions[decision.decision]) {
+    throw new DiamondDomainError(
+      'duplicate-pitcher-decision',
+      `A ${decision.decision} decision is already recorded. Correct the earlier judgment instead.`
+    );
+  }
+
+  const decisions = { ...tracker.pitcherDecisions, [decision.decision]: decision };
+  const win = decisions.win;
+  const loss = decisions.loss;
+  const save = decisions.save;
+  const contradictory =
+    (win && loss && win.side === loss.side) ||
+    (win && save && win.side !== save.side) ||
+    (loss && save && loss.side === save.side) ||
+    (win && save && win.playerId === save.playerId);
+  if (contradictory) {
+    throw new DiamondDomainError(
+      'contradictory-pitcher-decision',
+      'Winning, losing, and saving pitcher decisions must use coherent sides and distinct winning and saving pitchers.'
+    );
+  }
+
+  tracker.pitcherDecisions[decision.decision] = decision;
 }
 
 function validateAttachmentAgainstHistoricalPlay(event: Pick<DiamondEffectiveEvent, 'type' | 'payload'>, context: HistoricalPlayContext) {
@@ -397,6 +428,10 @@ function observeEffectiveEventParticipants(state: DiamondGameState, event: Diamo
       );
     }
     validateAttachmentAgainstHistoricalPlay(event, context);
+    if (event.type === 'record_scoring_judgment') {
+      const decision = (event.payload as DiamondCommandPayloadMap['record_scoring_judgment']).pitcherOfRecord;
+      if (decision) recordPitcherDecision(tracker, decision);
+    }
   }
 }
 
@@ -615,21 +650,6 @@ function validateAttachment(ledger: DiamondLedger, command: DiamondCommand) {
     payload: command.payload
   };
   observeEffectiveEventParticipants(replay.state, syntheticEvent, replay.participantTracker);
-  if (command.type !== 'record_scoring_judgment') return;
-  const scoringPayload = command.payload as DiamondCommandPayloadMap['record_scoring_judgment'];
-  if (!scoringPayload.pitcherOfRecord) return;
-  const decision = scoringPayload.pitcherOfRecord;
-  const duplicateDecision = replay.effectiveEvents.some((event) => {
-    if (event.type !== 'record_scoring_judgment') return false;
-    const judgment = event.payload as DiamondCommandPayloadMap['record_scoring_judgment'];
-    return judgment.pitcherOfRecord?.decision === decision.decision;
-  });
-  if (duplicateDecision) {
-    throw new DiamondDomainError(
-      'duplicate-pitcher-decision',
-      `A ${decision.decision} decision is already recorded. Correct the earlier judgment instead.`
-    );
-  }
 }
 
 function reject(ledger: DiamondLedger, error: unknown): DiamondExecution {
