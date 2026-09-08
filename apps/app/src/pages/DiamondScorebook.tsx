@@ -65,6 +65,7 @@ import {
   type DiamondRecapSource,
   type DiamondScorebookClient,
   type DiamondScorebookSnapshot,
+  type DiamondScorerCandidateList,
   type DiamondSide,
   type DiamondVoiceProposal
 } from '../lib/diamondScorebookService';
@@ -207,6 +208,11 @@ type DiamondAiDraftState = {
   draft: DiamondAiGameDraft;
   stale: boolean;
   publication: DiamondAiPublicationEvidence | null;
+};
+
+type DiamondHandoffCandidateState = {
+  authenticatedUid: string;
+  result: DiamondScorerCandidateList;
 };
 
 type OutcomeOption = {
@@ -1572,6 +1578,10 @@ export function DiamondScorebook({
   const [voiceConfidence, setVoiceConfidence] = useState<number | null>(null);
   const [savingNote, setSavingNote] = useState(false);
   const [attachNoteToLastPlay, setAttachNoteToLastPlay] = useState(false);
+  const [handoffOpen, setHandoffOpen] = useState(false);
+  const [handoffCandidates, setHandoffCandidates] = useState<DiamondHandoffCandidateState | null>(null);
+  const [handoffLoading, setHandoffLoading] = useState(false);
+  const [handoffError, setHandoffError] = useState<string | null>(null);
   const [handoffTarget, setHandoffTarget] = useState('');
   const [correctionReason, setCorrectionReason] = useState('');
   const [recapState, setRecapState] = useState<DiamondAiDraftState | null>(null);
@@ -1600,15 +1610,27 @@ export function DiamondScorebook({
   const placingTiebreakerRef = useRef(false);
   const appBuildRef = useRef<number | null>(null);
   const appBuildPromiseRef = useRef<Promise<number> | null>(null);
+  const handoffRequestGenerationRef = useRef(0);
 
   snapshotRef.current = snapshot;
   queueCountRef.current = queueCount;
   authenticatedUidRef.current = auth.user?.uid || null;
 
+  const expireHandoffCandidates = useCallback((closePanel = true) => {
+    handoffRequestGenerationRef.current += 1;
+    setHandoffCandidates(null);
+    setHandoffLoading(false);
+    setHandoffError(null);
+    setHandoffTarget('');
+    if (closePanel) setHandoffOpen(false);
+    setConfirmation((current) => (current?.kind === 'handoff' ? null : current));
+  }, []);
+
   const backTarget = teamId && gameId ? `/schedule/${encodeURIComponent(teamId)}/${encodeURIComponent(gameId)}?section=game` : '/schedule';
 
   const refreshSnapshot = useCallback(
     async (showLoading = false) => {
+      expireHandoffCandidates();
       if (!auth.user || !teamId || !gameId) {
         setLoading(false);
         setNotice({ tone: 'error', message: 'Sign in and open a scheduled game before using Diamond Scorebook.' });
@@ -1633,10 +1655,11 @@ export function DiamondScorebook({
         if (showLoading) setLoading(false);
       }
     },
-    [auth.user, client, gameId, teamId]
+    [auth.user, client, expireHandoffCandidates, gameId, teamId]
   );
 
   useEffect(() => {
+    expireHandoffCandidates();
     if (initialSnapshot) {
       setSnapshot(initialSnapshot);
       setControlMode(initialSnapshot.captureMode);
@@ -1644,7 +1667,27 @@ export function DiamondScorebook({
       return;
     }
     void refreshSnapshot(true);
-  }, [initialSnapshot, refreshSnapshot]);
+  }, [expireHandoffCandidates, initialSnapshot, refreshSnapshot]);
+
+  useEffect(() => {
+    expireHandoffCandidates();
+  }, [
+    auth.user?.uid,
+    expireHandoffCandidates,
+    gameId,
+    snapshot?.instanceId,
+    snapshot?.lease.holderUid,
+    snapshot?.lease.leaseId,
+    snapshot?.revision,
+    teamId
+  ]);
+
+  useEffect(
+    () => () => {
+      handoffRequestGenerationRef.current += 1;
+    },
+    []
+  );
 
   useEffect(() => {
     if (!snapshot) return;
@@ -2133,6 +2176,78 @@ export function DiamondScorebook({
     [busy, client, gameId, networkOnline, reconciling, refreshSnapshot, resolveAppBuildForMutation, teamId]
   );
 
+  const loadHandoffCandidates = useCallback(async () => {
+    const requestedSnapshot = snapshotRef.current;
+    const requestedUid = authenticatedUidRef.current;
+    if (
+      !requestedSnapshot ||
+      !requestedUid ||
+      !requestedSnapshot.authoritative ||
+      !requestedSnapshot.lease.canScore ||
+      requestedSnapshot.lease.holderUid !== requestedUid ||
+      !requestedSnapshot.lease.leaseId ||
+      requestedSnapshot.lifecycle === 'cancelled' ||
+      queueCountRef.current > 0 ||
+      busy ||
+      reconciling ||
+      !networkOnline
+    ) {
+      setNotice({
+        tone: 'error',
+        message: 'Refresh the authoritative scorebook and reconcile any queued plays before opening scorer handoff.'
+      });
+      return;
+    }
+
+    const requestGeneration = handoffRequestGenerationRef.current + 1;
+    handoffRequestGenerationRef.current = requestGeneration;
+    setHandoffOpen(true);
+    setHandoffCandidates(null);
+    setHandoffTarget('');
+    setHandoffError(null);
+    setHandoffLoading(true);
+    try {
+      const result = await client.listScorerCandidates({
+        teamId,
+        gameId,
+        expectedInstanceId: requestedSnapshot.instanceId,
+        expectedRevision: requestedSnapshot.revision,
+        leaseId: requestedSnapshot.lease.leaseId
+      });
+      if (handoffRequestGenerationRef.current !== requestGeneration) return;
+      const currentSnapshot = snapshotRef.current;
+      const currentUid = authenticatedUidRef.current;
+      if (
+        !currentSnapshot ||
+        currentUid !== requestedUid ||
+        !currentSnapshot.authoritative ||
+        !currentSnapshot.lease.canScore ||
+        currentSnapshot.lease.holderUid !== requestedUid ||
+        currentSnapshot.lease.leaseId !== requestedSnapshot.lease.leaseId ||
+        currentSnapshot.instanceId !== requestedSnapshot.instanceId ||
+        currentSnapshot.revision !== requestedSnapshot.revision ||
+        result.complete !== true ||
+        result.teamId !== teamId ||
+        result.gameId !== gameId ||
+        result.instanceId !== requestedSnapshot.instanceId ||
+        result.revision !== requestedSnapshot.revision ||
+        result.leaseId !== requestedSnapshot.lease.leaseId
+      ) {
+        expireHandoffCandidates();
+        setNotice({ tone: 'error', message: 'The scorer list expired because the revision, lease, or signed-in user changed.' });
+        return;
+      }
+      const candidates = result.candidates.filter((candidate) => candidate.playerId !== requestedUid);
+      setHandoffCandidates({ authenticatedUid: requestedUid, result: { ...result, candidates } });
+      setHandoffTarget(candidates[0]?.playerId || '');
+    } catch (error) {
+      if (handoffRequestGenerationRef.current !== requestGeneration) return;
+      setHandoffError(describeError(error, 'Unable to load the complete scorer handoff list.'));
+    } finally {
+      if (handoffRequestGenerationRef.current === requestGeneration) setHandoffLoading(false);
+    }
+  }, [busy, client, expireHandoffCandidates, gameId, networkOnline, reconciling, teamId]);
+
   const recordPitch = async (result: string, label: string) => {
     const sourceSnapshot = snapshotRef.current;
     if (!sourceSnapshot?.currentBatter || !sourceSnapshot.currentPitcher) {
@@ -2438,13 +2553,25 @@ export function DiamondScorebook({
     try {
       const appBuild = await resolveAppBuildForMutation();
       const currentIdentity = getQueueIdentity(snapshotRef.current, authenticatedUidRef.current);
+      const listedCandidates = handoffCandidates?.result;
+      const selectedCandidate = listedCandidates?.candidates.find(
+        (candidate) => candidate.playerId === confirmation.toUid && candidate.name === confirmation.toName
+      );
       if (
         !currentIdentity ||
         currentIdentity.authenticatedUid !== auth.user?.uid ||
         currentIdentity.scorerUid !== snapshot.lease.holderUid ||
         currentIdentity.instanceId !== snapshot.instanceId ||
         currentIdentity.leaseId !== snapshot.lease.leaseId ||
-        snapshotRef.current?.revision !== snapshot.revision
+        snapshotRef.current?.revision !== snapshot.revision ||
+        handoffCandidates?.authenticatedUid !== auth.user?.uid ||
+        listedCandidates?.complete !== true ||
+        listedCandidates.teamId !== teamId ||
+        listedCandidates.gameId !== gameId ||
+        listedCandidates.instanceId !== snapshot.instanceId ||
+        listedCandidates.revision !== snapshot.revision ||
+        listedCandidates.leaseId !== snapshot.lease.leaseId ||
+        !selectedCandidate
       ) {
         throw new DiamondScorebookError('conflict', 'The scoring lease or Diamond game instance changed before handoff confirmation.');
       }
@@ -2464,6 +2591,7 @@ export function DiamondScorebook({
     } catch (error) {
       setNotice({ tone: 'error', message: describeError(error, 'The scorebook handoff was not confirmed.') });
     } finally {
+      expireHandoffCandidates();
       setBusy(false);
     }
   };
@@ -3093,10 +3221,24 @@ export function DiamondScorebook({
     (event) => event.effectiveType === 'record_plate_appearance' || event.effectiveType === 'advance_runner'
   );
   const privateNotes = effectiveHistory.filter((event) => event.effectiveType === 'private_note');
-  const otherScorers = useMemo(
-    () => snapshot?.lease.eligibleScorers.filter((scorer) => scorer.playerId !== snapshot.lease.holderUid) || [],
-    [snapshot?.lease.eligibleScorers, snapshot?.lease.holderUid]
-  );
+  const otherScorers = useMemo(() => {
+    const result = handoffCandidates?.result;
+    if (
+      !snapshot ||
+      !result ||
+      result.complete !== true ||
+      handoffCandidates.authenticatedUid !== auth.user?.uid ||
+      snapshot.lease.holderUid !== auth.user?.uid ||
+      result.teamId !== teamId ||
+      result.gameId !== gameId ||
+      result.instanceId !== snapshot.instanceId ||
+      result.revision !== snapshot.revision ||
+      result.leaseId !== snapshot.lease.leaseId
+    ) {
+      return [];
+    }
+    return result.candidates.filter((scorer) => scorer.playerId !== snapshot.lease.holderUid);
+  }, [auth.user?.uid, gameId, handoffCandidates, snapshot, teamId]);
   const leaseAction: 'acquire' | 'recover' | null =
     snapshot && !snapshot.lease.canScore && snapshot.lifecycle !== 'cancelled'
       ? snapshot.lease.status === 'expired' && snapshot.lease.canRecover
@@ -3862,35 +4004,87 @@ export function DiamondScorebook({
                 {leaseAction === 'recover' ? 'Recover scoring' : 'Acquire scorebook'}
               </button>
             ) : null}
-            {snapshot.lifecycle !== 'cancelled' && snapshot.lease.canScore && otherScorers.length ? (
+            {snapshot.lifecycle !== 'cancelled' &&
+            snapshot.lease.canScore &&
+            snapshot.lease.holderUid === auth.user?.uid &&
+            snapshot.lease.leaseId ? (
               <div className="mt-3">
-                <label className="text-xs font-black text-gray-700" htmlFor="diamond-handoff-target">
-                  Hand off to
-                </label>
-                <select
-                  id="diamond-handoff-target"
-                  className="mt-1 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-bold text-gray-900"
-                  value={handoffTarget}
-                  onChange={(event) => setHandoffTarget(event.target.value)}
-                  disabled={mutationDisabled || !networkOnline}
-                >
-                  {otherScorers.map((scorer) => (
-                    <option key={scorer.playerId} value={scorer.playerId}>
-                      {playerLabel(scorer)}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  type="button"
-                  className="ghost-button mt-2 w-full justify-center text-xs"
-                  disabled={!handoffTarget || mutationDisabled || !networkOnline}
-                  onClick={() => {
-                    const target = otherScorers.find((scorer) => scorer.playerId === handoffTarget);
-                    if (target) setConfirmation({ kind: 'handoff', toUid: target.playerId, toName: target.name });
-                  }}
-                >
-                  Confirm handoff
-                </button>
+                {!handoffOpen ? (
+                  <button
+                    type="button"
+                    className="ghost-button w-full justify-center text-xs"
+                    disabled={mutationDisabled || !networkOnline}
+                    onClick={() => void loadHandoffCandidates()}
+                  >
+                    Hand off scorebook
+                  </button>
+                ) : (
+                  <div className="rounded-xl border border-gray-200 bg-white p-3" aria-label="Scorer handoff candidates">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-xs font-black text-gray-700">Hand off to</div>
+                      <button
+                        type="button"
+                        className="text-xs font-black text-gray-500 underline"
+                        onClick={() => expireHandoffCandidates()}
+                        disabled={busy}
+                      >
+                        Close handoff
+                      </button>
+                    </div>
+                    {handoffLoading ? (
+                      <div className="mt-3 flex items-center gap-2 text-xs font-semibold text-gray-600" role="status">
+                        <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                        Loading complete scorer list
+                      </div>
+                    ) : handoffError ? (
+                      <div className="mt-3">
+                        <p className="text-xs leading-5 font-semibold text-rose-700" role="alert">
+                          {handoffError}
+                        </p>
+                        <button
+                          type="button"
+                          className="ghost-button mt-2 w-full justify-center text-xs"
+                          disabled={mutationDisabled || !networkOnline}
+                          onClick={() => void loadHandoffCandidates()}
+                        >
+                          Retry scorer list
+                        </button>
+                      </div>
+                    ) : otherScorers.length ? (
+                      <>
+                        <label className="sr-only" htmlFor="diamond-handoff-target">
+                          Hand off to
+                        </label>
+                        <select
+                          id="diamond-handoff-target"
+                          className="mt-2 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-bold text-gray-900"
+                          value={handoffTarget}
+                          onChange={(event) => setHandoffTarget(event.target.value)}
+                          disabled={mutationDisabled || !networkOnline}
+                        >
+                          {otherScorers.map((scorer) => (
+                            <option key={scorer.playerId} value={scorer.playerId}>
+                              {playerLabel(scorer)}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          className="ghost-button mt-2 w-full justify-center text-xs"
+                          disabled={!handoffTarget || mutationDisabled || !networkOnline}
+                          onClick={() => {
+                            const target = otherScorers.find((scorer) => scorer.playerId === handoffTarget);
+                            if (target) setConfirmation({ kind: 'handoff', toUid: target.playerId, toName: target.name });
+                          }}
+                        >
+                          Confirm handoff
+                        </button>
+                      </>
+                    ) : (
+                      <p className="mt-3 text-xs leading-5 font-semibold text-gray-600">No other eligible scorekeepers are available.</p>
+                    )}
+                  </div>
+                )}
               </div>
             ) : null}
           </section>

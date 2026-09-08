@@ -589,6 +589,16 @@ function createClient(initialSnapshot = buildSnapshot()) {
       })
     )
   );
+  const listScorerCandidates = vi.fn(async (input: Parameters<DiamondScorebookClient['listScorerCandidates']>[0]) => ({
+    schemaVersion: 1 as const,
+    complete: true as const,
+    teamId: input.teamId,
+    gameId: input.gameId,
+    instanceId: input.expectedInstanceId,
+    revision: input.expectedRevision,
+    leaseId: input.leaseId,
+    candidates: loadedSnapshot.lease.eligibleScorers.map(({ playerId, name }) => ({ playerId, name }))
+  }));
   const getRecapSource = vi.fn();
   const publishAiDraft = vi.fn();
   const acquireLease = vi.fn(async (input: Parameters<DiamondScorebookClient['acquireLease']>[0]) => {
@@ -632,6 +642,7 @@ function createClient(initialSnapshot = buildSnapshot()) {
     createSecureId: vi.fn(() => '12345678-1234-4234-9234-123456789abc'),
     createCommand,
     acquireLease,
+    listScorerCandidates,
     submitCommand,
     parseVoice: vi.fn(),
     savePrivateNote,
@@ -647,6 +658,7 @@ function createClient(initialSnapshot = buildSnapshot()) {
     submitCommand,
     savePrivateNote,
     requestHandoff,
+    listScorerCandidates,
     getRecapSource,
     publishAiDraft,
     loadPrivateHistory
@@ -2873,6 +2885,17 @@ describe('DiamondScorebook', () => {
     const fixture = createClient();
     renderScorebook(buildSnapshot(), fixture);
 
+    expect(fixture.listScorerCandidates).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Hand off scorebook' }));
+    await waitFor(() =>
+      expect(fixture.listScorerCandidates).toHaveBeenCalledWith({
+        teamId: 'team-1',
+        gameId: 'game-1',
+        expectedInstanceId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        expectedRevision: 7,
+        leaseId: scorerLeaseId
+      })
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Confirm handoff' }));
     fireEvent.click(within(screen.getByRole('dialog', { name: 'Hand off the scorebook?' })).getByRole('button', { name: 'Confirm' }));
 
@@ -2885,6 +2908,113 @@ describe('DiamondScorebook', () => {
         })
       )
     );
+  });
+
+  it('discovers a confirmed-RSVP scorekeeper only after the handoff panel opens', async () => {
+    const snapshot = buildSnapshot({
+      lease: { ...buildSnapshot().lease, eligibleScorers: [] }
+    });
+    const fixture = createClient(snapshot);
+    fixture.listScorerCandidates.mockResolvedValue({
+      schemaVersion: 1,
+      complete: true,
+      teamId: snapshot.teamId,
+      gameId: snapshot.gameId,
+      instanceId: snapshot.instanceId,
+      revision: snapshot.revision,
+      leaseId: scorerLeaseId,
+      candidates: [{ playerId: 'confirmed-rsvp', name: 'Confirmed Volunteer' }]
+    });
+    renderScorebook(snapshot, fixture);
+
+    expect(fixture.listScorerCandidates).not.toHaveBeenCalled();
+    expect(screen.queryByText('Confirmed Volunteer')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Hand off scorebook' }));
+
+    expect(await screen.findByRole('option', { name: 'Confirmed Volunteer' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Confirm handoff' })).toBeEnabled();
+  });
+
+  it.each([
+    {
+      label: 'revision',
+      nextSnapshot: buildSnapshot({
+        revision: 8,
+        checkpointHash: checkpointForRevision(8),
+        completeness: { ...buildSnapshot().completeness, authoritativeRevision: 8 }
+      }),
+      nextAuth: auth
+    },
+    {
+      label: 'lease',
+      nextSnapshot: buildSnapshot({
+        lease: {
+          ...buildSnapshot().lease,
+          holderUid: 'coach-2',
+          holderName: 'Coach Lee',
+          leaseId: null,
+          canScore: false,
+          status: 'held-by-other'
+        }
+      }),
+      nextAuth: auth
+    },
+    {
+      label: 'authenticated user',
+      nextSnapshot: buildSnapshot(),
+      nextAuth: {
+        ...auth,
+        user: { ...auth.user!, uid: 'coach-other', email: 'other@example.test' }
+      } as AuthState
+    }
+  ])('expires loaded handoff candidates when the $label changes', async ({ nextSnapshot, nextAuth }) => {
+    const snapshot = buildSnapshot();
+    const fixture = createClient(snapshot);
+    const rendered = renderScorebook(snapshot, fixture);
+    fireEvent.click(screen.getByRole('button', { name: 'Hand off scorebook' }));
+    expect(await screen.findByRole('option', { name: 'Coach Lee' })).toBeInTheDocument();
+
+    rendered.rerender(
+      <MemoryRouter>
+        <DiamondScorebook auth={nextAuth} teamId="team-1" gameId="game-1" initialSnapshot={nextSnapshot} client={fixture.client} />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(screen.queryByRole('option', { name: 'Coach Lee' })).not.toBeInTheDocument());
+    expect(screen.queryByRole('button', { name: 'Confirm handoff' })).not.toBeInTheDocument();
+  });
+
+  it('expires an in-flight handoff lookup on same-revision reload and ignores its late response', async () => {
+    const snapshot = buildSnapshot();
+    const fixture = createClient(snapshot);
+    let resolveLookup!: (value: Awaited<ReturnType<DiamondScorebookClient['listScorerCandidates']>>) => void;
+    fixture.listScorerCandidates.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveLookup = resolve;
+        })
+    );
+    renderScorebook(snapshot, fixture);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Hand off scorebook' }));
+    await waitFor(() => expect(fixture.listScorerCandidates).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh authoritative scorebook' }));
+    await waitFor(() => expect(fixture.client.load).toHaveBeenCalled());
+
+    await act(async () => {
+      resolveLookup({
+        schemaVersion: 1,
+        complete: true,
+        teamId: snapshot.teamId,
+        gameId: snapshot.gameId,
+        instanceId: snapshot.instanceId,
+        revision: snapshot.revision,
+        leaseId: scorerLeaseId,
+        candidates: [{ playerId: 'late-candidate', name: 'Late Candidate' }]
+      });
+    });
+    expect(screen.queryByText('Late Candidate')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Confirm handoff' })).not.toBeInTheDocument();
   });
 
   it('is fail-closed when another scorer owns the lease', () => {

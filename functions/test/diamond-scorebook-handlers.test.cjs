@@ -221,6 +221,7 @@ class FakeFirestore {
     this.transactionHook = null;
     this.documentUpdateTimes = new Map();
     this.commitTimestampMs = 1_750_000_000_000;
+    this.queryReads = [];
   }
 
   doc(path) {
@@ -263,6 +264,11 @@ class FakeFirestore {
   }
 
   _querySnapshot(query) {
+    this.queryReads.push({
+      path: query.path,
+      filters: clone(query.filters),
+      maximum: query.maximum,
+    });
     const prefix = `${query.path}/`;
     let rows = [...this.documents.entries()]
       .filter(
@@ -448,13 +454,44 @@ function createHarness(overrides = {}) {
       ...(overrides.authUsers || {}),
     }),
   );
+  const authGetUserCalls = [];
+  const authGetUsersCalls = [];
   const auth = {
     async getUser(uid) {
+      authGetUserCalls.push(uid);
+      await overrides.getUserHook?.({
+        uid,
+        callCount: authGetUserCalls.length,
+        authUsers,
+        firestore,
+      });
       if (!authUsers.has(uid))
         throw Object.assign(new Error("missing"), {
           code: "auth/user-not-found",
         });
       return clone(authUsers.get(uid));
+    },
+    async getUsers(identifiers) {
+      const requested = clone(identifiers);
+      authGetUsersCalls.push(requested);
+      const users = [];
+      const notFound = [];
+      for (const identifier of identifiers) {
+        if (authUsers.has(identifier.uid)) {
+          users.push(clone(authUsers.get(identifier.uid)));
+        } else {
+          notFound.push({ uid: identifier.uid });
+        }
+      }
+      const result = { users, notFound };
+      return (
+        (await overrides.getUsersHook?.({
+          identifiers: requested,
+          result: clone(result),
+          authUsers,
+          firestore,
+        })) ?? result
+      );
     },
   };
   let randomIndex = 100;
@@ -465,7 +502,7 @@ function createHarness(overrides = {}) {
     clock: overrides.clock || (() => 1_750_000_000_000),
     random: overrides.random || (() => makeUuid(randomIndex++)),
     logger: { info() {}, warn() {}, error() {} },
-    resolveDelegatedAccess({ uid, user, team }) {
+    resolveDelegatedAccess({ uid, user, team, game, rsvp }) {
       if (overrides.viewerAccessByUid?.[uid]) {
         return clone(overrides.viewerAccessByUid[uid]);
       }
@@ -477,6 +514,21 @@ function createHarness(overrides = {}) {
       const scorekeeping =
         full ||
         selectedScorers.includes(uid) ||
+        (team?.teamPermissions?.scorekeeping?.mode === "all_confirmed" &&
+          ![
+            "cancelled",
+            "canceled",
+            "completed",
+            "finished",
+            "final",
+            "deleted",
+          ].includes(String(game?.status || "scheduled").toLowerCase()) &&
+          ["going", "yes", "confirmed", "attending"].includes(
+            String(rsvp?.response || rsvp?.status || "")
+              .replace(/\s+/g, " ")
+              .trim()
+              .toLowerCase(),
+          )) ||
         (Array.isArray(team?.scorekeeperIds) &&
           team.scorekeeperIds.includes(uid));
       return {
@@ -498,6 +550,8 @@ function createHarness(overrides = {}) {
   return {
     firestore,
     authUsers,
+    authGetUserCalls,
+    authGetUsersCalls,
     handlers,
     managerContext: {
       auth: { uid: "manager-1", token: { email: "stale-token@example.com" } },
@@ -600,6 +654,28 @@ async function regenerate(
       teamId: "team-1",
       gameId: "game-1",
       expectedRevision,
+    },
+    context,
+  );
+}
+
+async function listScorerCandidates(
+  harness,
+  {
+    context = harness.managerContext,
+    expectedInstanceId = null,
+    expectedRevision = null,
+    leaseId = null,
+  } = {},
+) {
+  const root = harness.firestore.read(paths("team-1", "game-1").scorebook);
+  return harness.handlers.listDiamondScorerCandidates(
+    {
+      teamId: "team-1",
+      gameId: "game-1",
+      expectedInstanceId: expectedInstanceId ?? root?.instanceId,
+      expectedRevision: expectedRevision ?? root?.checkpoint?.sequence,
+      leaseId: leaseId ?? root?.scorerLease?.leaseId,
     },
     context,
   );
@@ -2332,6 +2408,519 @@ describe("Diamond scorebook handler factory", () => {
       (error) =>
         error.code === "unavailable" &&
         error.details?.reason === "lease-held-by-other",
+    );
+  });
+
+  it("lists an exact confirmed RSVP scorekeeper only through the bounded handoff lookup", async () => {
+    const harness = createHarness({
+      authUsers: {
+        "confirmed-scorer": {
+          uid: "confirmed-scorer",
+          disabled: false,
+          displayName: "\u0000Confirmed\u007f\n Scorer",
+          email: "confirmed-private@example.test",
+          emailVerified: true,
+        },
+      },
+      documents: {
+        "teams/team-1": {
+          ...baseDocuments()["teams/team-1"],
+          teamPermissions: { scorekeeping: { mode: "all_confirmed" } },
+        },
+        "teams/team-1/games/game-1/rsvps/confirmed-scorer": {
+          response: "confirmed",
+          userId: "forged-payload-uid",
+          privateNote: "must never leave the server",
+        },
+      },
+    });
+    await activate(harness);
+
+    const result = await listScorerCandidates(harness);
+
+    assert.deepEqual(Object.keys(result).sort(), [
+      "candidates",
+      "complete",
+      "gameId",
+      "instanceId",
+      "leaseId",
+      "revision",
+      "schemaVersion",
+      "teamId",
+    ]);
+    assert.equal(result.complete, true);
+    assert.deepEqual(result.candidates, [
+      { playerId: "confirmed-scorer", name: "Confirmed Scorer" },
+    ]);
+    assert.deepEqual(Object.keys(result), [
+      "schemaVersion",
+      "complete",
+      "teamId",
+      "gameId",
+      "instanceId",
+      "revision",
+      "leaseId",
+      "candidates",
+    ]);
+    assert.deepEqual(Object.keys(result.candidates[0]), ["playerId", "name"]);
+    const rsvpQueries = harness.firestore.queryReads.filter(
+      (query) => query.path === paths("team-1", "game-1").rsvps,
+    );
+    assert.equal(rsvpQueries.length, 2);
+    assert.ok(
+      rsvpQueries.every(
+        (query) => query.maximum === 101 && query.filters.length === 0,
+      ),
+    );
+    assert.deepEqual(harness.authGetUsersCalls, [
+      [{ uid: "confirmed-scorer" }],
+    ]);
+    assert.doesNotMatch(
+      JSON.stringify(result),
+      /confirmed-private|forged-payload|privateNote/,
+    );
+  });
+
+  it("accepts only the canonical confirmed RSVP statuses from canonical document IDs", async () => {
+    const accepted = {
+      "attending-scorer": { status: "ATTENDING" },
+      "confirmed-scorer": { response: "  confirmed  " },
+      "going-scorer": { response: "going" },
+      "yes-scorer": { status: "yes" },
+    };
+    const excluded = {
+      "declined-scorer": { response: "declined" },
+      "empty-scorer": { response: "" },
+      "maybe-scorer": { status: "maybe" },
+      "precedence-scorer": { response: "no", status: "confirmed" },
+      "padded-uid ": { response: "confirmed" },
+    };
+    const allUids = [...Object.keys(accepted), ...Object.keys(excluded)];
+    const harness = createHarness({
+      authUsers: Object.fromEntries(
+        allUids.map((uid) => [
+          uid,
+          {
+            uid,
+            disabled: false,
+            displayName: `Name ${uid}`,
+            emailVerified: false,
+          },
+        ]),
+      ),
+      documents: {
+        "teams/team-1": {
+          ...baseDocuments()["teams/team-1"],
+          teamPermissions: { scorekeeping: { mode: "all_confirmed" } },
+        },
+        ...Object.fromEntries(
+          Object.entries({ ...accepted, ...excluded }).map(([uid, value]) => [
+            `teams/team-1/games/game-1/rsvps/${uid}`,
+            { ...value, uid: "payload-is-not-authority" },
+          ]),
+        ),
+      },
+    });
+    await activate(harness);
+
+    const result = await listScorerCandidates(harness);
+
+    assert.deepEqual(
+      result.candidates.map((candidate) => candidate.playerId),
+      Object.keys(accepted).sort((left, right) => left.localeCompare(right)),
+    );
+  });
+
+  it("excludes missing and disabled Auth accounts without returning partial private fields", async () => {
+    const harness = createHarness({
+      authUsers: {
+        enabled: {
+          uid: "enabled",
+          disabled: false,
+          displayName: "Enabled Person",
+          email: "enabled-private@example.test",
+        },
+        disabled: {
+          uid: "disabled",
+          disabled: true,
+          displayName: "Disabled Person",
+          email: "disabled-private@example.test",
+        },
+      },
+      documents: {
+        "teams/team-1": {
+          ...baseDocuments()["teams/team-1"],
+          teamPermissions: { scorekeeping: { mode: "all_confirmed" } },
+        },
+        "teams/team-1/games/game-1/rsvps/enabled": { response: "yes" },
+        "teams/team-1/games/game-1/rsvps/disabled": {
+          response: "going",
+        },
+        "teams/team-1/games/game-1/rsvps/missing": {
+          response: "attending",
+        },
+      },
+    });
+    await activate(harness);
+
+    const result = await listScorerCandidates(harness);
+
+    assert.deepEqual(result.candidates, [
+      { playerId: "enabled", name: "Enabled Person" },
+    ]);
+    assert.doesNotMatch(JSON.stringify(result), /private@example|Disabled/);
+  });
+
+  it("fails closed on RSVP read errors, RSVP overflow, and partial Auth batches", async (t) => {
+    await t.test("RSVP query error", async () => {
+      const harness = createHarness({
+        documents: {
+          "teams/team-1": {
+            ...baseDocuments()["teams/team-1"],
+            teamPermissions: { scorekeeping: { mode: "all_confirmed" } },
+          },
+        },
+      });
+      await activate(harness);
+      harness.firestore.queryHook = (query) => {
+        if (query.path === paths("team-1", "game-1").rsvps) {
+          throw Object.assign(new Error("denied"), {
+            code: "permission-denied",
+          });
+        }
+      };
+
+      await assert.rejects(listScorerCandidates(harness), (error) => {
+        assert.equal(error.code, "unavailable");
+        assert.equal(
+          error.details?.reason,
+          "scorer-candidate-rsvp-read-incomplete",
+        );
+        return true;
+      });
+      assert.equal(harness.authGetUsersCalls.length, 0);
+    });
+
+    await t.test("101 RSVP records", async () => {
+      const rsvps = Object.fromEntries(
+        Array.from({ length: 101 }, (_, index) => [
+          `teams/team-1/games/game-1/rsvps/scorer-${String(index).padStart(3, "0")}`,
+          { response: "maybe" },
+        ]),
+      );
+      const harness = createHarness({
+        documents: {
+          "teams/team-1": {
+            ...baseDocuments()["teams/team-1"],
+            teamPermissions: { scorekeeping: { mode: "all_confirmed" } },
+          },
+          ...rsvps,
+        },
+      });
+      await activate(harness);
+
+      await assert.rejects(listScorerCandidates(harness), (error) => {
+        assert.equal(error.code, "failed-precondition");
+        assert.equal(error.details?.reason, "scorer-candidate-rsvp-overflow");
+        return true;
+      });
+      assert.equal(harness.authGetUsersCalls.length, 0);
+    });
+
+    await t.test("partial Auth batch", async () => {
+      const harness = createHarness({
+        authUsers: {
+          "confirmed-1": { uid: "confirmed-1", disabled: false },
+          "confirmed-2": { uid: "confirmed-2", disabled: false },
+        },
+        documents: {
+          "teams/team-1": {
+            ...baseDocuments()["teams/team-1"],
+            teamPermissions: { scorekeeping: { mode: "all_confirmed" } },
+          },
+          "teams/team-1/games/game-1/rsvps/confirmed-1": {
+            response: "confirmed",
+          },
+          "teams/team-1/games/game-1/rsvps/confirmed-2": {
+            response: "confirmed",
+          },
+        },
+        getUsersHook({ result }) {
+          return { users: result.users.slice(0, 1), notFound: [] };
+        },
+      });
+      await activate(harness);
+
+      await assert.rejects(listScorerCandidates(harness), (error) => {
+        assert.equal(error.code, "unavailable");
+        assert.equal(
+          error.details?.reason,
+          "scorer-candidate-auth-result-incomplete",
+        );
+        return true;
+      });
+    });
+  });
+
+  it("uses stable selected-mode candidates without reading any RSVP collection", async () => {
+    const harness = createHarness({
+      authUsers: {
+        "selected-2": {
+          uid: "selected-2",
+          disabled: false,
+          displayName: "Selected Two",
+        },
+      },
+      documents: {
+        "teams/team-1": {
+          ...baseDocuments()["teams/team-1"],
+          teamPermissions: {
+            scorekeeping: {
+              mode: "selected",
+              memberIds: ["scorer-1", "selected-2"],
+            },
+          },
+        },
+        "teams/team-1/games/game-1/rsvps/unrelated": {
+          response: "confirmed",
+        },
+      },
+    });
+    await activate(harness);
+    harness.firestore.queryReads = [];
+    harness.firestore.queryHook = (query) => {
+      if (query.path === paths("team-1", "game-1").rsvps) {
+        throw new Error("selected mode must not enumerate RSVPs");
+      }
+    };
+
+    const result = await listScorerCandidates(harness);
+
+    assert.deepEqual(result.candidates, [
+      { playerId: "scorer-1", name: "scorer-1" },
+      { playerId: "selected-2", name: "Selected Two" },
+    ]);
+    assert.equal(
+      harness.firestore.queryReads.some(
+        (query) => query.path === paths("team-1", "game-1").rsvps,
+      ),
+      false,
+    );
+  });
+
+  it("removes the current holder before enforcing the selected-mode candidate bound", async (t) => {
+    function selectedHarness(targetCount) {
+      const targetUids = Array.from(
+        { length: targetCount },
+        (_, index) => `selected-${String(index).padStart(3, "0")}`,
+      );
+      return {
+        targetUids,
+        harness: createHarness({
+          authUsers: Object.fromEntries(
+            targetUids.map((uid) => [uid, { uid, disabled: false }]),
+          ),
+          documents: {
+            "teams/team-1": {
+              ...baseDocuments()["teams/team-1"],
+              teamPermissions: {
+                scorekeeping: {
+                  mode: "selected",
+                  memberIds: ["manager-1", ...targetUids],
+                },
+              },
+            },
+          },
+        }),
+      };
+    }
+
+    await t.test("100 candidates after holder removal", async () => {
+      const { harness, targetUids } = selectedHarness(100);
+      await activate(harness);
+
+      const result = await listScorerCandidates(harness);
+
+      assert.equal(result.complete, true);
+      assert.equal(result.candidates.length, 100);
+      assert.deepEqual(
+        result.candidates.map((candidate) => candidate.playerId),
+        targetUids,
+      );
+      assert.equal(harness.authGetUsersCalls.length, 1);
+      assert.equal(harness.authGetUsersCalls[0].length, 100);
+    });
+
+    await t.test("101 candidates after holder removal", async () => {
+      const { harness } = selectedHarness(101);
+      await activate(harness);
+
+      await assert.rejects(listScorerCandidates(harness), (error) => {
+        assert.equal(error.code, "failed-precondition");
+        assert.equal(error.details?.reason, "scorer-candidate-overflow");
+        return true;
+      });
+      assert.equal(harness.authGetUsersCalls.length, 0);
+    });
+  });
+
+  it("rechecks Auth, access, candidate grants, revision, and lease after the account batch", async (t) => {
+    function confirmedHarness(overrides = {}) {
+      return createHarness({
+        authUsers: {
+          target: { uid: "target", disabled: false },
+          ...(overrides.authUsers || {}),
+        },
+        documents: {
+          "teams/team-1": {
+            ...baseDocuments()["teams/team-1"],
+            teamPermissions: { scorekeeping: { mode: "all_confirmed" } },
+          },
+          "teams/team-1/games/game-1/rsvps/target": {
+            response: "confirmed",
+          },
+          ...(overrides.documents || {}),
+        },
+        ...overrides,
+      });
+    }
+
+    await t.test("caller Auth revocation", async () => {
+      const harness = confirmedHarness({
+        getUsersHook({ authUsers }) {
+          authUsers.set("manager-1", {
+            ...authUsers.get("manager-1"),
+            disabled: true,
+          });
+        },
+      });
+      await activate(harness);
+      await assert.rejects(
+        listScorerCandidates(harness),
+        (error) => error.code === "permission-denied",
+      );
+    });
+
+    await t.test("confirmed RSVP revocation", async () => {
+      const harness = confirmedHarness({
+        getUsersHook({ firestore }) {
+          firestore.seed(paths("team-1", "game-1").rsvp("target"), {
+            response: "declined",
+          });
+        },
+      });
+      await activate(harness);
+      await assert.rejects(listScorerCandidates(harness), (error) => {
+        assert.equal(error.code, "aborted");
+        assert.equal(
+          error.details?.reason,
+          "scorer-candidate-source-changed",
+        );
+        return true;
+      });
+    });
+
+    await t.test("revision race", async () => {
+      const harness = confirmedHarness({
+        getUsersHook({ firestore }) {
+          const resourcePaths = paths("team-1", "game-1");
+          const root = firestore.read(resourcePaths.scorebook);
+          firestore.seed(resourcePaths.scorebook, {
+            ...root,
+            checkpoint: { ...root.checkpoint, sequence: 2 },
+          });
+        },
+      });
+      await activate(harness);
+      await assert.rejects(listScorerCandidates(harness), (error) => {
+        assert.equal(error.code, "aborted");
+        assert.equal(error.details?.reason, "stale-revision");
+        return true;
+      });
+    });
+
+    await t.test("lease race", async () => {
+      const harness = confirmedHarness({
+        getUsersHook({ firestore }) {
+          const resourcePaths = paths("team-1", "game-1");
+          const root = firestore.read(resourcePaths.scorebook);
+          firestore.seed(resourcePaths.scorebook, {
+            ...root,
+            scorerLease: {
+              ...root.scorerLease,
+              leaseId: makeUuid(399),
+            },
+          });
+        },
+      });
+      await activate(harness);
+      await assert.rejects(listScorerCandidates(harness), (error) => {
+        assert.equal(error.code, "unavailable");
+        assert.equal(error.details?.reason, "lease-token-mismatch");
+        return true;
+      });
+    });
+  });
+
+  it("keeps the final handoff mutation authoritative after a candidate RSVP is revoked", async () => {
+    const harness = createHarness({
+      authUsers: {
+        target: { uid: "target", disabled: false, displayName: "Target" },
+      },
+      documents: {
+        "teams/team-1": {
+          ...baseDocuments()["teams/team-1"],
+          teamPermissions: { scorekeeping: { mode: "all_confirmed" } },
+        },
+        "teams/team-1/games/game-1/rsvps/target": {
+          response: "confirmed",
+        },
+      },
+    });
+    await activate(harness);
+    const listed = await listScorerCandidates(harness);
+    assert.deepEqual(listed.candidates, [
+      { playerId: "target", name: "Target" },
+    ]);
+
+    harness.firestore.seed(paths("team-1", "game-1").rsvp("target"), {
+      response: "declined",
+    });
+    await assert.rejects(
+      submit(harness, {
+        commandId: makeUuid(398),
+        expectedRevision: 1,
+        type: "scorer_handoff",
+        payload: { toUid: "target" },
+      }),
+      (error) =>
+        error.code === "failed-precondition" &&
+        /current scoring access/i.test(error.message),
+    );
+  });
+
+  it("does not enumerate game RSVPs while loading ordinary score snapshots", async () => {
+    const harness = createHarness({
+      documents: {
+        "teams/team-1": {
+          ...baseDocuments()["teams/team-1"],
+          teamPermissions: { scorekeeping: { mode: "all_confirmed" } },
+        },
+      },
+    });
+    await activate(harness);
+    harness.firestore.queryReads = [];
+
+    await harness.handlers.getDiamondState(
+      { teamId: "team-1", gameId: "game-1", visibility: "private" },
+      harness.managerContext,
+    );
+
+    assert.equal(
+      harness.firestore.queryReads.some(
+        (query) => query.path === paths("team-1", "game-1").rsvps,
+      ),
+      false,
     );
   });
 

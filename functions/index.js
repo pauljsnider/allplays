@@ -556,7 +556,8 @@ const statConfigManagementHandlers = createStatConfigManagementHandlers({
 const diamondScorebookHandlers = createDiamondScorebookHandlers({
   firestore,
   auth: {
-    getUser: (...args) => admin.auth().getUser(...args)
+    getUser: (...args) => admin.auth().getUser(...args),
+    getUsers: (...args) => admin.auth().getUsers(...args)
   },
   HttpsError: functions.https.HttpsError,
   logger: functions.logger,
@@ -22485,6 +22486,9 @@ exports.activateDiamondGame = diamondCallableFunctions.https.onCall(
 );
 exports.acquireDiamondScorerLease = diamondCallableFunctions.https.onCall(
   diamondScorebookHandlers.acquireDiamondScorerLease
+);
+exports.listDiamondScorerCandidates = diamondCallableFunctions.https.onCall(
+  diamondScorebookHandlers.listDiamondScorerCandidates
 );
 exports.submitDiamondCommand = diamondCallableFunctions.https.onCall(
   diamondScorebookHandlers.submitDiamondCommand

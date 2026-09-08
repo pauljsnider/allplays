@@ -18,6 +18,7 @@ describe("Diamond Scorebook Functions wiring", () => {
       "getDiamondManagerStats",
       "activateDiamondGame",
       "acquireDiamondScorerLease",
+      "listDiamondScorerCandidates",
       "submitDiamondCommand",
       "getDiamondState",
       "listDiamondEvents",
@@ -138,6 +139,9 @@ describe("Diamond Scorebook Functions wiring", () => {
   it("defers Auth lookup until a Diamond request is actually handled", () => {
     expect(source).toContain(
       "getUser: (...args) => admin.auth().getUser(...args)",
+    );
+    expect(source).toContain(
+      "getUsers: (...args) => admin.auth().getUsers(...args)",
     );
   });
 

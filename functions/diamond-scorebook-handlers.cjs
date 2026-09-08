@@ -11,6 +11,8 @@ const MAX_EVENT_PAGE_SIZE = 200;
 const FULL_HISTORY_PAGE_SIZE = 200;
 const MAX_CANONICAL_EVENTS = 20_000;
 const MAX_ROSTER_CANDIDATES_PER_SIDE = 100;
+const MAX_DIAMOND_SCORER_CANDIDATES = 100;
+const DIAMOND_SCORER_RSVP_SCAN_LIMIT = MAX_DIAMOND_SCORER_CANDIDATES + 1;
 const SCORER_LEASE_DURATION_MS = 15 * 60 * 1000;
 const MAX_PUBLIC_VIDEO_DURATION_MS = 24 * 60 * 60 * 1000;
 const PUBLIC_REPLAY_PAGE_SIZE = 100;
@@ -133,6 +135,12 @@ const RECENT_PLAY_TYPES = new Set([
   "void_event",
   "supersede_event",
   "finalize",
+]);
+const CONFIRMED_RSVP_RESPONSES = new Set([
+  "going",
+  "yes",
+  "confirmed",
+  "attending",
 ]);
 
 class DiamondHandlerError extends Error {
@@ -438,6 +446,7 @@ function paths(teamId, gameId) {
     game,
     statTrackerConfig: (configId) =>
       `teams/${teamId}/statTrackerConfigs/${configId}`,
+    rsvps: `${game}/rsvps`,
     rsvp: (uid) => `${game}/rsvps/${uid}`,
     scorebook,
     event: (eventId) => `${scorebook}/events/${eventId}`,
@@ -593,7 +602,7 @@ function completenessForState(state) {
   };
 }
 
-function stableScorerCandidates(team, state) {
+function stableScorerCandidateUids(team, state) {
   const values = [];
   const add = (value) => {
     if (
@@ -616,7 +625,42 @@ function stableScorerCandidates(team, state) {
     permission.memberIds.forEach(add);
   }
   add(state?.currentScorerUid);
-  return values.slice(0, 100).map((uid) => ({ playerId: uid, name: uid }));
+  return values;
+}
+
+function stableScorerCandidates(team, state) {
+  return stableScorerCandidateUids(team, state)
+    .slice(0, MAX_DIAMOND_SCORER_CANDIDATES)
+    .map((uid) => ({ playerId: uid, name: uid }));
+}
+
+function hasCanonicalConfirmedRsvp(rsvp) {
+  const response = compactText(rsvp?.response || rsvp?.status, 32).toLowerCase();
+  return CONFIRMED_RSVP_RESPONSES.has(response);
+}
+
+function scorerCandidateName(value, uid) {
+  const name = compactText(value, 160)
+    .replace(/[\u0000-\u001f\u007f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 160);
+  return name || uid;
+}
+
+function isConfirmedScoringGameEligible(game) {
+  if (!isPlainObject(game)) return false;
+  const status = compactText(game.status || "scheduled", 32).toLowerCase();
+  const liveStatus = compactText(game.liveStatus, 32).toLowerCase();
+  const terminalStatuses = new Set([
+    "cancelled",
+    "canceled",
+    "completed",
+    "finished",
+    "final",
+    "deleted",
+  ]);
+  return !terminalStatuses.has(status) && !terminalStatuses.has(liveStatus);
 }
 
 function getLineupPlayer(lineup, playerId) {
@@ -1167,8 +1211,14 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       "A Firestore dependency with doc, collection, and runTransaction is required.",
     );
   }
-  if (!auth || typeof auth.getUser !== "function") {
-    throw new TypeError("An Auth dependency with getUser is required.");
+  if (
+    !auth ||
+    typeof auth.getUser !== "function" ||
+    typeof auth.getUsers !== "function"
+  ) {
+    throw new TypeError(
+      "An Auth dependency with getUser and getUsers is required.",
+    );
   }
   if (
     typeof HttpsError !== "function" ||
@@ -4062,6 +4112,334 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     return { loaded, root: { ...root, availablePlayers }, checkpoint };
   }
 
+  function scorerCandidatePermissionMode(team) {
+    return team?.teamPermissions?.scorekeeping?.mode === "all_confirmed"
+      ? "all_confirmed"
+      : "stable";
+  }
+
+  function strictCandidateUid(value) {
+    try {
+      return core.normalizeDiamondId(value, "candidate uid");
+    } catch {
+      return null;
+    }
+  }
+
+  async function loadScorerCandidateSource(
+    transaction,
+    { team, game, state, callerUid, resourcePaths },
+  ) {
+    const permissionMode = scorerCandidatePermissionMode(team);
+    const candidateUids = new Set(
+      stableScorerCandidateUids(team, state)
+        .map(strictCandidateUid)
+        .filter(Boolean),
+    );
+
+    if (permissionMode === "all_confirmed") {
+      let rsvpSnapshot;
+      try {
+        rsvpSnapshot = await transaction.get(
+          firestore
+            .collection(resourcePaths.rsvps)
+            .limit(DIAMOND_SCORER_RSVP_SCAN_LIMIT),
+        );
+      } catch {
+        throw makeError(
+          "unavailable",
+          "Confirmed scorer eligibility could not be read completely. Try again.",
+          { reason: "scorer-candidate-rsvp-read-incomplete" },
+        );
+      }
+      const rsvpDocuments = snapshotDocuments(rsvpSnapshot);
+      if (rsvpDocuments.length > MAX_DIAMOND_SCORER_CANDIDATES) {
+        throw makeError(
+          "failed-precondition",
+          "This game has too many RSVP records for a bounded scorer lookup.",
+          { reason: "scorer-candidate-rsvp-overflow" },
+        );
+      }
+      if (isConfirmedScoringGameEligible(game)) {
+        for (const document of rsvpDocuments) {
+          const uid = strictCandidateUid(document?.id);
+          if (uid && hasCanonicalConfirmedRsvp(snapshotData(document))) {
+            candidateUids.add(uid);
+          }
+        }
+      }
+    }
+
+    candidateUids.delete(callerUid);
+    const values = [...candidateUids].sort((left, right) =>
+      left.localeCompare(right),
+    );
+    if (values.length > MAX_DIAMOND_SCORER_CANDIDATES) {
+      throw makeError(
+        "failed-precondition",
+        "This game has too many eligible scorers for a bounded handoff lookup.",
+        { reason: "scorer-candidate-overflow" },
+      );
+    }
+    return { permissionMode, candidateUids: values };
+  }
+
+  async function loadEnabledScorerCandidateProfiles(candidateUids) {
+    if (!candidateUids.length) return [];
+    if (candidateUids.length > MAX_DIAMOND_SCORER_CANDIDATES) {
+      throw makeError(
+        "failed-precondition",
+        "This game has too many eligible scorers for a bounded handoff lookup.",
+        { reason: "scorer-candidate-overflow" },
+      );
+    }
+    let result;
+    try {
+      result = await auth.getUsers(candidateUids.map((uid) => ({ uid })));
+    } catch {
+      throw makeError(
+        "unavailable",
+        "Scorer accounts could not be verified completely. Try again.",
+        { reason: "scorer-candidate-auth-read-incomplete" },
+      );
+    }
+    if (!Array.isArray(result?.users) || !Array.isArray(result?.notFound)) {
+      throw makeError(
+        "unavailable",
+        "Scorer accounts returned an incomplete result. Try again.",
+        { reason: "scorer-candidate-auth-result-incomplete" },
+      );
+    }
+    const requested = new Set(candidateUids);
+    const accountedFor = new Set();
+    const enabledProfiles = new Map();
+    const accountFor = (uid) => {
+      if (
+        typeof uid !== "string" ||
+        !requested.has(uid) ||
+        accountedFor.has(uid)
+      ) {
+        throw makeError(
+          "unavailable",
+          "Scorer accounts returned an invalid result. Try again.",
+          { reason: "scorer-candidate-auth-result-invalid" },
+        );
+      }
+      accountedFor.add(uid);
+    };
+    for (const authUser of result.users) {
+      accountFor(authUser?.uid);
+      if (authUser?.disabled === true) continue;
+      const uid = authUser.uid;
+      enabledProfiles.set(uid, {
+        playerId: uid,
+        name: scorerCandidateName(authUser.displayName, uid),
+      });
+    }
+    for (const identifier of result.notFound) accountFor(identifier?.uid);
+    if (accountedFor.size !== requested.size) {
+      throw makeError(
+        "unavailable",
+        "Scorer accounts returned an incomplete result. Try again.",
+        { reason: "scorer-candidate-auth-result-incomplete" },
+      );
+    }
+    return candidateUids
+      .map((uid) => enabledProfiles.get(uid))
+      .filter(Boolean);
+  }
+
+  async function loadScorerCandidateLookupState(
+    transaction,
+    {
+      teamId,
+      gameId,
+      caller,
+      expectedInstanceId,
+      expectedRevision,
+      leaseId,
+    },
+  ) {
+    const resourcePaths = paths(teamId, gameId);
+    const [loaded, rootSnapshot] = await Promise.all([
+      loadAccessDocuments(transaction, teamId, gameId, caller),
+      transaction.get(firestore.doc(resourcePaths.scorebook)),
+    ]);
+    requireScorekeeper(loaded.access);
+    requireAllowed(
+      core.decideDiamondOperation({
+        operation: "read",
+        teamId,
+        game: loaded.game,
+        policy: null,
+      }),
+      "This game is not owned by Diamond v2.",
+    );
+    const root = snapshotData(rootSnapshot);
+    const checkpoint = buildCheckpointFromRoot(root);
+    if (!root || !checkpoint) {
+      throw makeError("not-found", "Diamond scorebook not found.");
+    }
+    if (
+      loaded.game.trackingEngine !== DIAMOND_ENGINE ||
+      root.instanceId !== loaded.game.diamondScorebookInstanceId
+    ) {
+      throw makeError(
+        "failed-precondition",
+        "The Diamond scorebook generation does not match the game.",
+      );
+    }
+    validateCommittedOrientationSnapshot(root, teamId);
+    if (root.instanceId !== expectedInstanceId) {
+      throw makeError(
+        "aborted",
+        "The Diamond game instance changed. Reload scorer handoff.",
+        {
+          reason: "stale-instance",
+          authoritativeRevision: checkpoint.sequence,
+        },
+      );
+    }
+    if (checkpoint.sequence !== expectedRevision) {
+      throw makeError(
+        "aborted",
+        "The scorebook changed. Reload scorer handoff.",
+        {
+          reason: "stale-revision",
+          authoritativeRevision: checkpoint.sequence,
+        },
+      );
+    }
+    if (checkpoint.state?.currentScorerUid !== caller.uid) {
+      throw makeError(
+        "unavailable",
+        "The active scorer changed. Reload scorer handoff.",
+        { reason: "scorer-candidate-holder-changed", retryable: true },
+      );
+    }
+    requireAllowed(
+      core.decideDiamondScorerLease({
+        operation: "score",
+        lease: root.scorerLease,
+        actorUid: caller.uid,
+        presentedLeaseId: leaseId,
+        nowMillis: normalizeNow(clock, makeError),
+      }),
+      "Only the current scorer may list handoff candidates.",
+    );
+    const source = await loadScorerCandidateSource(transaction, {
+      team: loaded.team,
+      game: loaded.game,
+      state: checkpoint.state,
+      callerUid: caller.uid,
+      resourcePaths,
+    });
+    return { loaded, root, checkpoint, ...source };
+  }
+
+  async function listDiamondScorerCandidates(data = {}, context = {}) {
+    requireExactFields(
+      data,
+      new Set([
+        "teamId",
+        "gameId",
+        "expectedInstanceId",
+        "expectedRevision",
+        "leaseId",
+      ]),
+      makeError,
+      "Diamond scorer candidate request",
+    );
+    const teamId = normalizeId(data.teamId, "teamId");
+    const gameId = normalizeId(data.gameId, "gameId");
+    const expectedInstanceId = normalizeUuid(
+      data.expectedInstanceId,
+      "expectedInstanceId",
+    );
+    const expectedRevision = normalizeOptionalRevision(
+      data.expectedRevision,
+      makeError,
+    );
+    if (expectedRevision === null) {
+      throw makeError(
+        "invalid-argument",
+        "expectedRevision is required for scorer candidate lookup.",
+      );
+    }
+    const leaseId = normalizeId(data.leaseId, "leaseId");
+    const caller = await loadEnabledAuthUser(context);
+    let initial;
+    try {
+      initial = await firestore.runTransaction((transaction) =>
+        loadScorerCandidateLookupState(transaction, {
+          teamId,
+          gameId,
+          caller,
+          expectedInstanceId,
+          expectedRevision,
+          leaseId,
+        }),
+      );
+    } catch (error) {
+      if (error instanceof HttpsError || error instanceof DiamondHandlerError) {
+        throw error;
+      }
+      throw makeError(
+        "unavailable",
+        "Scorer candidates could not be loaded completely. Try again.",
+      );
+    }
+    const candidates = await loadEnabledScorerCandidateProfiles(
+      initial.candidateUids,
+    );
+
+    const freshCaller = await loadEnabledAuthUser(context);
+    let finalState;
+    try {
+      finalState = await firestore.runTransaction((transaction) =>
+        loadScorerCandidateLookupState(transaction, {
+          teamId,
+          gameId,
+          caller: freshCaller,
+          expectedInstanceId,
+          expectedRevision,
+          leaseId,
+        }),
+      );
+    } catch (error) {
+      if (error instanceof HttpsError || error instanceof DiamondHandlerError) {
+        throw error;
+      }
+      throw makeError(
+        "unavailable",
+        "Scorer candidates could not be reverified. Try again.",
+      );
+    }
+    if (
+      finalState.permissionMode !== initial.permissionMode ||
+      finalState.candidateUids.length !== initial.candidateUids.length ||
+      finalState.candidateUids.some(
+        (uid, index) => uid !== initial.candidateUids[index],
+      )
+    ) {
+      throw makeError(
+        "aborted",
+        "Scorer eligibility changed. Reload scorer handoff.",
+        { reason: "scorer-candidate-source-changed", retryable: true },
+      );
+    }
+    return {
+      schemaVersion: 1,
+      complete: true,
+      teamId,
+      gameId,
+      instanceId: finalState.root.instanceId,
+      revision: finalState.checkpoint.sequence,
+      leaseId,
+      candidates,
+    };
+  }
+
   async function reauthorizePrivateEventPage({
     teamId,
     gameId,
@@ -6305,6 +6683,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     getDiamondManagerStats,
     activateDiamondGame,
     acquireDiamondScorerLease,
+    listDiamondScorerCandidates,
     submitDiamondCommand,
     getDiamondState,
     listDiamondEvents,
@@ -6322,6 +6701,7 @@ module.exports = {
   FULL_HISTORY_PAGE_SIZE,
   LEGACY_TRACKING_COLLECTIONS,
   MAX_CANONICAL_EVENTS,
+  MAX_DIAMOND_SCORER_CANDIDATES,
   MAX_EVENT_PAGE_SIZE,
   MAX_MANAGER_STAT_GAMES,
   MAX_MANAGER_STAT_PLAYERS,

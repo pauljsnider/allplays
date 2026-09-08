@@ -241,6 +241,17 @@ export type DiamondScorerLeaseOutcome = {
   snapshot: DiamondScorebookSnapshot;
 };
 
+export type DiamondScorerCandidateList = {
+  schemaVersion: 1;
+  complete: true;
+  teamId: string;
+  gameId: string;
+  instanceId: string;
+  revision: number;
+  leaseId: string;
+  candidates: DiamondPlayerRef[];
+};
+
 export type DiamondVoiceProposal = {
   schemaVersion: 1;
   type: DiamondCommandType;
@@ -417,6 +428,7 @@ const legacyQueuePrefixes = ['allplays:diamond-scorebook:queue:v1', 'allplays:di
 const maxQueueCommands = 2000;
 const maxQueueBytes = 2_000_000;
 const maxPrivateEventPageBytes = 1_000_000;
+const maxScorerCandidates = 100;
 const defaultPrivateHistoryWindowEvents = 200;
 const maxPrivateHistoryWindowEvents = 200;
 const maxPrivateHistoryWindowBytes = 16_000_000;
@@ -458,6 +470,35 @@ function requireResourceId(value: unknown, label: string) {
     throw new DiamondScorebookError('invalid-input', `${label} is missing or invalid.`);
   }
   return normalized;
+}
+
+function containsAsciiControlCharacter(value: string) {
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index);
+    if (codeUnit <= 0x1f || codeUnit === 0x7f) return true;
+  }
+  return false;
+}
+
+function requireResponseResourceId(value: unknown, label: string) {
+  if (
+    typeof value !== 'string' ||
+    !value ||
+    value !== value.trim() ||
+    value.length > 128 ||
+    value.includes('/') ||
+    containsAsciiControlCharacter(value)
+  ) {
+    throw new DiamondScorebookError('invalid-response', `The ${label} was missing or invalid.`);
+  }
+  return value;
+}
+
+function requireScorerCandidateName(value: unknown) {
+  if (typeof value !== 'string' || !value || value !== value.trim() || value.length > 160 || containsAsciiControlCharacter(value)) {
+    throw new DiamondScorebookError('invalid-response', 'A scorer candidate name was missing or invalid.');
+  }
+  return value;
 }
 
 function requireRevision(value: unknown, label = 'Expected revision') {
@@ -698,6 +739,12 @@ function toDiamondError(error: unknown, fallbackMessage: string): DiamondScorebo
   }
   if (code === 'already-exists' || reason === 'command-conflict') {
     return new DiamondScorebookError('conflict', 'This command ID was already used for a different play. Refresh before continuing.', {
+      cause: error
+    });
+  }
+  if (code === 'resource-exhausted' && (reason === 'scorer-candidate-rsvp-overflow' || reason === 'scorer-candidate-overflow')) {
+    return new DiamondScorebookError('unavailable', message, {
+      retryable: false,
       cause: error
     });
   }
@@ -1262,6 +1309,88 @@ export async function getDiamondState(teamId: string, gameId: string, options: {
     return normalizeDiamondSnapshot(result);
   } catch (error) {
     throw toDiamondError(error, 'Unable to load the diamond scorebook.');
+  }
+}
+
+export async function listDiamondScorerCandidates(
+  input: {
+    teamId: string;
+    gameId: string;
+    expectedInstanceId: string;
+    expectedRevision: number;
+    leaseId: string;
+  },
+  options: { transport?: DiamondCallableTransport; maxAttempts?: number } = {}
+): Promise<DiamondScorerCandidateList> {
+  const payload = {
+    teamId: requireResourceId(input.teamId, 'Team ID'),
+    gameId: requireResourceId(input.gameId, 'Game ID'),
+    expectedInstanceId: requireDiamondInstanceId(input.expectedInstanceId, 'invalid-input'),
+    expectedRevision: requireRevision(input.expectedRevision),
+    leaseId: requireScorerLeaseId(input.leaseId)
+  };
+  try {
+    const raw = await callWithRetry<unknown>(
+      options.transport || defaultTransport,
+      'listDiamondScorerCandidates',
+      payload,
+      'Unable to load scorer handoff candidates.',
+      options.maxAttempts ?? 2
+    );
+    const source = requireResponseRecord(raw, 'scorer candidate list');
+    requireExactResponseKeys(
+      source,
+      ['schemaVersion', 'complete', 'teamId', 'gameId', 'instanceId', 'revision', 'leaseId', 'candidates'],
+      'Scorer candidate list'
+    );
+    if (source.schemaVersion !== 1 || source.complete !== true) {
+      throw new DiamondScorebookError('invalid-response', 'The scorer candidate list did not prove a complete supported result.');
+    }
+    const teamId = requireResponseResourceId(source.teamId, 'scorer candidate team ID');
+    const gameId = requireResponseResourceId(source.gameId, 'scorer candidate game ID');
+    const instanceId = requireDiamondInstanceId(source.instanceId, 'invalid-response');
+    const revision = normalizeOptionalRevision(source.revision);
+    let leaseId: string;
+    try {
+      leaseId = requireScorerLeaseId(source.leaseId);
+    } catch (error) {
+      throw new DiamondScorebookError('invalid-response', 'The scorer candidate list returned an invalid lease ID.', { cause: error });
+    }
+    if (
+      teamId !== payload.teamId ||
+      gameId !== payload.gameId ||
+      instanceId !== payload.expectedInstanceId ||
+      revision !== payload.expectedRevision ||
+      leaseId !== payload.leaseId
+    ) {
+      throw new DiamondScorebookError('invalid-response', 'The scorer candidate list belongs to another scorebook revision or lease.');
+    }
+    if (!Array.isArray(source.candidates) || source.candidates.length > maxScorerCandidates) {
+      throw new DiamondScorebookError('invalid-response', 'The scorer candidate list exceeded its safe bound.');
+    }
+    const seen = new Set<string>();
+    const candidates = source.candidates.map((value): DiamondPlayerRef => {
+      const candidate = requireResponseRecord(value, 'scorer candidate');
+      requireExactResponseKeys(candidate, ['playerId', 'name'], 'Scorer candidate');
+      const playerId = requireResponseResourceId(candidate.playerId, 'scorer candidate ID');
+      if (seen.has(playerId)) {
+        throw new DiamondScorebookError('invalid-response', 'The scorer candidate list contained a duplicate account.');
+      }
+      seen.add(playerId);
+      return { playerId, name: requireScorerCandidateName(candidate.name) };
+    });
+    return {
+      schemaVersion: 1,
+      complete: true,
+      teamId,
+      gameId,
+      instanceId,
+      revision: revision!,
+      leaseId,
+      candidates
+    };
+  } catch (error) {
+    throw toDiamondError(error, 'Unable to load scorer handoff candidates.');
   }
 }
 
@@ -2509,6 +2638,7 @@ export type DiamondScorebookClient = {
   createSecureId: typeof createSecureDiamondId;
   createCommand: typeof createDiamondCommand;
   acquireLease: typeof acquireDiamondScorerLease;
+  listScorerCandidates: typeof listDiamondScorerCandidates;
   submitCommand: typeof submitDiamondCommand;
   cancelGame: typeof cancelDiamondGame;
   parseVoice: typeof parseDiamondVoice;
@@ -2528,6 +2658,7 @@ export const diamondScorebookClient: DiamondScorebookClient = {
   createSecureId: createSecureDiamondId,
   createCommand: createDiamondCommand,
   acquireLease: acquireDiamondScorerLease,
+  listScorerCandidates: listDiamondScorerCandidates,
   submitCommand: submitDiamondCommand,
   cancelGame: cancelDiamondGame,
   parseVoice: parseDiamondVoice,

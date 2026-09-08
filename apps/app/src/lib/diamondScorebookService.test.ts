@@ -12,6 +12,7 @@ import {
   getDiamondQueueKey,
   getDiamondRecapSource,
   getDiamondState,
+  listDiamondScorerCandidates,
   mergeDiamondPrivateHistoryWindows,
   normalizeDiamondSnapshot,
   parseDiamondVoice,
@@ -446,6 +447,159 @@ describe('diamondScorebookService', () => {
       visibility: 'private'
     });
   });
+
+  it('loads only an exact revision-and-lease-bound scorer candidate list', async () => {
+    const call = vi.fn().mockResolvedValue({
+      schemaVersion: 1,
+      complete: true,
+      teamId: 'team-1',
+      gameId: 'game-1',
+      instanceId,
+      revision: 3,
+      leaseId: scorerLeaseId,
+      candidates: [
+        { playerId: 'confirmed-1', name: 'Confirmed One' },
+        { playerId: 'selected:2', name: 'Selected Two' }
+      ]
+    });
+
+    await expect(
+      listDiamondScorerCandidates(
+        {
+          teamId: 'team-1',
+          gameId: 'game-1',
+          expectedInstanceId: instanceId,
+          expectedRevision: 3,
+          leaseId: scorerLeaseId
+        },
+        { transport: { call } }
+      )
+    ).resolves.toEqual({
+      schemaVersion: 1,
+      complete: true,
+      teamId: 'team-1',
+      gameId: 'game-1',
+      instanceId,
+      revision: 3,
+      leaseId: scorerLeaseId,
+      candidates: [
+        { playerId: 'confirmed-1', name: 'Confirmed One' },
+        { playerId: 'selected:2', name: 'Selected Two' }
+      ]
+    });
+    expect(call).toHaveBeenCalledWith('listDiamondScorerCandidates', {
+      teamId: 'team-1',
+      gameId: 'game-1',
+      expectedInstanceId: instanceId,
+      expectedRevision: 3,
+      leaseId: scorerLeaseId
+    });
+  });
+
+  it.each([
+    {
+      label: 'an incomplete result',
+      mutate: (value: Record<string, unknown>) => ({ ...value, complete: false })
+    },
+    {
+      label: 'another team',
+      mutate: (value: Record<string, unknown>) => ({ ...value, teamId: 'team-2' })
+    },
+    {
+      label: 'another game',
+      mutate: (value: Record<string, unknown>) => ({ ...value, gameId: 'game-2' })
+    },
+    {
+      label: 'another instance',
+      mutate: (value: Record<string, unknown>) => ({ ...value, instanceId: replacementInstanceId })
+    },
+    {
+      label: 'another revision',
+      mutate: (value: Record<string, unknown>) => ({ ...value, revision: 4 })
+    },
+    {
+      label: 'another lease',
+      mutate: (value: Record<string, unknown>) => ({ ...value, leaseId: uuid })
+    },
+    {
+      label: 'an extra private top-level field',
+      mutate: (value: Record<string, unknown>) => ({ ...value, email: 'private@example.test' })
+    },
+    {
+      label: 'an extra private candidate field',
+      mutate: (value: Record<string, unknown>) => ({
+        ...value,
+        candidates: [{ playerId: 'confirmed-1', name: 'Confirmed One', email: 'private@example.test' }]
+      })
+    },
+    {
+      label: 'a duplicate candidate',
+      mutate: (value: Record<string, unknown>) => ({
+        ...value,
+        candidates: [
+          { playerId: 'confirmed-1', name: 'Confirmed One' },
+          { playerId: 'confirmed-1', name: 'Duplicate' }
+        ]
+      })
+    },
+    {
+      label: 'more than 100 candidates',
+      mutate: (value: Record<string, unknown>) => ({
+        ...value,
+        candidates: Array.from({ length: 101 }, (_, index) => ({ playerId: `candidate-${index}`, name: `Candidate ${index}` }))
+      })
+    }
+  ])('rejects a scorer candidate response bound to $label', async ({ mutate }) => {
+    const response = {
+      schemaVersion: 1,
+      complete: true,
+      teamId: 'team-1',
+      gameId: 'game-1',
+      instanceId,
+      revision: 3,
+      leaseId: scorerLeaseId,
+      candidates: [{ playerId: 'confirmed-1', name: 'Confirmed One' }]
+    };
+    const call = vi.fn().mockResolvedValue(mutate(response));
+
+    await expect(
+      listDiamondScorerCandidates(
+        {
+          teamId: 'team-1',
+          gameId: 'game-1',
+          expectedInstanceId: instanceId,
+          expectedRevision: 3,
+          leaseId: scorerLeaseId
+        },
+        { transport: { call } }
+      )
+    ).rejects.toMatchObject({ code: 'invalid-response' });
+  });
+
+  it.each(['scorer-candidate-rsvp-overflow', 'scorer-candidate-overflow'])(
+    'does not retry the deterministic %s candidate bound',
+    async (reason) => {
+      const call = vi.fn().mockRejectedValue({
+        code: 'functions/failed-precondition',
+        message: 'This game has too many eligible scorers for a bounded handoff lookup.',
+        details: { reason }
+      });
+
+      await expect(
+        listDiamondScorerCandidates(
+          {
+            teamId: 'team-1',
+            gameId: 'game-1',
+            expectedInstanceId: instanceId,
+            expectedRevision: 3,
+            leaseId: scorerLeaseId
+          },
+          { transport: { call } }
+        )
+      ).rejects.toMatchObject({ code: 'invalid-input', retryable: false });
+      expect(call).toHaveBeenCalledTimes(1);
+    }
+  );
 
   it('treats a valid sparse inning-runs map as a pristine zero-run current half', () => {
     const raw = buildRawSnapshot();
