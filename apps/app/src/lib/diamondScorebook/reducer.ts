@@ -846,6 +846,19 @@ function validateOutcomeDestination(
   }
 }
 
+function validateResultSpecificOutCount(
+  result: DiamondCommandPayloadMap['record_plate_appearance']['result'],
+  outsOnPlay: number
+) {
+  const requiredOuts = result === 'double_play' ? 2 : result === 'triple_play' ? 3 : null;
+  if (requiredOuts !== null && outsOnPlay !== requiredOuts) {
+    throw new DiamondDomainError(
+      'invalid-result-out-count',
+      `${result} requires exactly ${String(requiredOuts)} outs on the play.`
+    );
+  }
+}
+
 function resolveBatterOutKind(
   result: DiamondCommandPayloadMap['record_plate_appearance']['result'],
   destination: DiamondDestination,
@@ -873,6 +886,31 @@ type Move = Readonly<{
   courtesyForPlayerId: string | null;
   outKind?: DiamondCommandPayloadMap['advance_runner']['outKind'];
 }>;
+
+function validateMandatoryExtraBaseHitAdvances(
+  state: DiamondGameState,
+  result: DiamondCommandPayloadMap['record_plate_appearance']['result'],
+  runnerMoves: readonly Move[]
+) {
+  if (result !== 'triple' && result !== 'home_run') return;
+  for (const base of BASES) {
+    const placement = state.bases[base];
+    if (!placement) continue;
+    const move = runnerMoves.find((candidate) => candidate.from === base && candidate.runnerId === placement.runnerId);
+    if (!move) {
+      throw new DiamondDomainError(
+        'missing-mandatory-runner-advance',
+        `${result} must resolve the runner on ${base}.`
+      );
+    }
+    if (move.to !== 'home' && move.to !== 'out') {
+      throw new DiamondDomainError(
+        'invalid-mandatory-runner-destination',
+        `${result} must advance the runner on ${base} home or record that runner out.`
+      );
+    }
+  }
+}
 
 function applyMoves(
   state: DiamondGameState,
@@ -1495,6 +1533,8 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
       if (action.payload.runsBattedIn !== undefined) {
         requireInteger(action.payload.runsBattedIn, 'runsBattedIn', 0, 4);
       }
+      const outsOnPlay = requireInteger(action.payload.outsOnPlay, 'outsOnPlay', 0, 3);
+      validateResultSpecificOutCount(action.payload.result, outsOnPlay);
       const batterMove: Move = {
         runnerId: action.payload.batterId,
         from: 'batter',
@@ -1529,7 +1569,8 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
           outKind: advance.outKind
         };
       });
-      next = applyMoves(state, side, [batterMove, ...runnerMoves], action.payload.outsOnPlay, action.eventId ?? null);
+      validateMandatoryExtraBaseHitAdvances(state, action.payload.result, runnerMoves);
+      next = applyMoves(state, side, [batterMove, ...runnerMoves], outsOnPlay, action.eventId ?? null);
       const orderLength = state.lineups[side].battingOrder.length;
       next = {
         ...next,
@@ -1553,7 +1594,7 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
       if (state.captureMode === 'full' && !hasCompletePitchOutcomeEvidence(state, action.payload.result)) {
         next = markPartial(next, ['pitches']);
       }
-      const missingFullFielding = action.payload.outsOnPlay > 0 && !action.payload.fielding?.putoutBy;
+      const missingFullFielding = outsOnPlay > 0 && !action.payload.fielding?.putoutBy;
       const missingReachedOnErrorFielder = action.payload.result === 'reached_on_error' && !action.payload.fielding?.errors?.length;
       if (state.captureMode === 'full' && (missingFullFielding || missingReachedOnErrorFielder)) {
         next = markPartial(next, ['fielding']);

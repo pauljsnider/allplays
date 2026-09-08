@@ -1927,6 +1927,29 @@ describe('Audited game and half-inning endings', () => {
     expect(replayDiamondLedger(regulation.ledger).state).toEqual(regulation.ledger.state);
   });
 
+  it('counts runners on base at finalization exactly once across correction re-finalization', () => {
+    const game = harness('baseball-nfhs', 'quick');
+    setBasicLineups(game);
+    const matchup = currentMatchup(game);
+    game.submit('record_plate_appearance', {
+      ...matchup,
+      result: 'single',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    game.submit('rules_decision', {
+      code: 'end_game_weather',
+      description: 'The game was called with a runner still on base.'
+    });
+    game.submit('finalize', { confirmed: true });
+    expect(projectDiamondStats(game.ledger).teams.away.LOB).toBe(1);
+
+    game.submit('reopen_for_correction', { reason: 'Confirm the final stat line.' });
+    game.submit('finalize', { confirmed: true });
+    expect(projectDiamondStats(game.ledger).teams.away.LOB).toBe(1);
+  });
+
   it('records time-limit endings only for configured profiles and blocks later play', () => {
     const noClock = harness('baseball-nfhs', 'quick');
     setBasicLineups(noClock);
@@ -2326,6 +2349,82 @@ describe('Diamond stat-integrity evidence', () => {
       expect(execution.result).toMatchObject({ outcome: 'rejected', revision: initialRevision, rejection: { code } });
       expect(game.ledger.state.revision).toBe(initialRevision);
     });
+  });
+
+  it('requires complete extra-base runner resolution and result-specific out counts', () => {
+    (['triple', 'home_run'] as const).forEach((result) => {
+      const game = harness('baseball-nfhs', 'quick');
+      setBasicLineups(game);
+      const firstBatter = currentMatchup(game);
+      game.submit('record_plate_appearance', {
+        ...firstBatter,
+        result: 'single',
+        batterAdvance: { to: 'first' },
+        runnerAdvances: [],
+        outsOnPlay: 0
+      });
+      const nextBatter = currentMatchup(game);
+      const rejected = game.submit(
+        'record_plate_appearance',
+        {
+          ...nextBatter,
+          result,
+          batterAdvance: { to: result === 'triple' ? 'third' : 'home', countsRun: result === 'home_run' ? true : undefined },
+          runnerAdvances: [],
+          outsOnPlay: 0,
+          ...(result === 'home_run' ? { runsBattedIn: 1 } : {})
+        },
+        { accept: false }
+      );
+      expect(rejected.result.rejection?.code).toBe('missing-mandatory-runner-advance');
+      expect(game.ledger.state.bases.first?.runnerId).toBe('away-1');
+    });
+
+    const invalidDestination = harness('baseball-nfhs', 'quick');
+    setBasicLineups(invalidDestination);
+    const firstBatter = currentMatchup(invalidDestination);
+    invalidDestination.submit('record_plate_appearance', {
+      ...firstBatter,
+      result: 'single',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    const nextBatter = currentMatchup(invalidDestination);
+    const rejectedDestination = invalidDestination.submit(
+      'record_plate_appearance',
+      {
+        ...nextBatter,
+        result: 'home_run',
+        batterAdvance: { to: 'home', countsRun: true },
+        runnerAdvances: [{ runnerId: 'away-1', from: 'first', to: 'third', cause: 'batted_ball' }],
+        outsOnPlay: 0,
+        runsBattedIn: 1
+      },
+      { accept: false }
+    );
+    expect(rejectedDestination.result.rejection?.code).toBe('invalid-mandatory-runner-destination');
+
+    for (const [result, outsOnPlay] of [
+      ['double_play', 1],
+      ['triple_play', 2]
+    ] as const) {
+      const game = harness('baseball-nfhs', 'quick');
+      setBasicLineups(game);
+      const matchup = currentMatchup(game);
+      const rejected = game.submit(
+        'record_plate_appearance',
+        {
+          ...matchup,
+          result,
+          batterAdvance: { to: 'out', outKind: 'batter_runner' },
+          runnerAdvances: [],
+          outsOnPlay
+        },
+        { accept: false }
+      );
+      expect(rejected.result.rejection?.code).toBe('invalid-result-out-count');
+    }
   });
 
   it('uses terminal pitch evidence and excludes balks and pickoff attempts from delivered-pitch counts', () => {

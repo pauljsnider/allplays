@@ -181,6 +181,9 @@ function latestJudgmentValue(judgments, runnerId, field) {
 }
 function projectDiamondStats(ledger) {
     const simulated = simulate(ledger);
+    const finalizationEventId = ledger.state.lifecycle === 'final'
+        ? [...simulated].reverse().find(({ event }) => event.type === 'finalize')?.event.eventId ?? null
+        : null;
     const coverage = (0, reducer_1.deriveDiamondCoverageFromEvents)(ledger.initialState, (0, ledger_1.getEffectiveDiamondEvents)(ledger.events));
     const profile = (0, rules_1.requireDiamondRulesProfile)(ledger.rulesProfileId, ledger.rulesProfileVersion);
     const lines = new Map();
@@ -599,6 +602,13 @@ function projectDiamondStats(ledger) {
             case 'advance_half_inning': {
                 const side = battingSideFor(before);
                 teams[side].LOB += [before.bases.first, before.bases.second, before.bases.third].filter(Boolean).length;
+                break;
+            }
+            case 'finalize': {
+                if (event.eventId === finalizationEventId) {
+                    const side = battingSideFor(before);
+                    teams[side].LOB += [before.bases.first, before.bases.second, before.bases.third].filter(Boolean).length;
+                }
                 break;
             }
             default:

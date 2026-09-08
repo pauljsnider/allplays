@@ -875,6 +875,92 @@ test("compiled third-out run timing is explicit and independent of move array or
   assert.deepEqual(replayDiamondLedger(game.ledger).state, game.ledger.state);
 });
 
+test("compiled engine requires complete extra-base runner resolution, named-play outs, and final LOB", () => {
+  const game = harness("quick", "baseball-nfhs");
+  setLineupsAndStart(game, 3);
+  const firstBatter = currentMatchup(game);
+  game.submit("record_plate_appearance", {
+    ...firstBatter,
+    result: "single",
+    batterAdvance: { to: "first" },
+    runnerAdvances: [],
+    outsOnPlay: 0,
+  });
+  const before = game.ledger.state;
+  const nextBatter = currentMatchup(game);
+
+  for (const [result, batterDestination] of [
+    ["triple", "third"],
+    ["home_run", "home"],
+  ]) {
+    assert.throws(
+      () =>
+        reduceDiamondEvent(before, {
+          type: "record_plate_appearance",
+          eventId: `compiled-missing-${result}-runner`,
+          payload: {
+            ...nextBatter,
+            result,
+            batterAdvance: { to: batterDestination },
+            runnerAdvances: [],
+            outsOnPlay: 0,
+          },
+        }),
+      (error) => error?.code === "missing-mandatory-runner-advance",
+    );
+  }
+  assert.throws(
+    () =>
+      reduceDiamondEvent(before, {
+        type: "record_plate_appearance",
+        eventId: "compiled-extra-base-runner-stays-on-base",
+        payload: {
+          ...nextBatter,
+          result: "home_run",
+          batterAdvance: { to: "home", countsRun: true },
+          runnerAdvances: [
+            { runnerId: "away-1", from: "first", to: "third", cause: "batted_ball" },
+          ],
+          outsOnPlay: 0,
+          runsBattedIn: 1,
+        },
+      }),
+    (error) => error?.code === "invalid-mandatory-runner-destination",
+  );
+  for (const [result, outsOnPlay] of [
+    ["double_play", 1],
+    ["triple_play", 2],
+  ]) {
+    assert.throws(
+      () =>
+        reduceDiamondEvent(before, {
+          type: "record_plate_appearance",
+          eventId: `compiled-${result}-wrong-out-count`,
+          payload: {
+            ...nextBatter,
+            result,
+            batterAdvance: { to: "out", outKind: "batter_runner" },
+            runnerAdvances: [],
+            outsOnPlay,
+          },
+        }),
+      (error) => error?.code === "invalid-result-out-count",
+    );
+  }
+
+  game.submit("rules_decision", {
+    code: "end_game_weather",
+    description: "The game ended with a runner on first.",
+  });
+  game.submit("finalize", { confirmed: true });
+  assert.equal(projectDiamondStats(game.ledger).teams.away.LOB, 1);
+  game.submit("reopen_for_correction", { reason: "Confirm the final stat line." });
+  game.submit("finalize", { confirmed: true });
+  assert.equal(projectDiamondStats(game.ledger).teams.away.LOB, 1);
+  assert.equal(verifyDiamondLedger(game.ledger), true);
+  assert.deepEqual(replayDiamondLedger(game.ledger).state, game.ledger.state);
+});
+
 test("compiled ready-state forfeit blocks setup and start mutations but remains finalizable", () => {
   const game = harness("quick", "fastpitch-nfhs");
   game.submit("activate", {
