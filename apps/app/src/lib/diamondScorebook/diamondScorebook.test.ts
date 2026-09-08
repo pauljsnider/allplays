@@ -583,6 +583,186 @@ describe('Diamond rules and canonical contracts', () => {
     game.submit('record_pitch', { batterId: 'away-1', pitcherId: 'home-2', result: 'ball' });
   });
 
+  it('rejects roster and runner mutations after an explicit or automatic game-ending condition', () => {
+    const blockedActions: readonly Readonly<{
+      label: string;
+      action: Parameters<typeof reduceDiamondEvent>[1];
+    }>[] = [
+      {
+        label: 'defensive alignment',
+        action: {
+          type: 'set_defensive_alignment',
+          eventId: 'blocked-alignment',
+          payload: {
+            side: 'home',
+            assignments: [
+              { playerId: 'home-2', position: 'P' },
+              { playerId: 'home-1', position: 'C' },
+              { playerId: 'home-3', position: 'SS' }
+            ]
+          }
+        }
+      },
+      {
+        label: 'substitution',
+        action: {
+          type: 'substitute',
+          eventId: 'blocked-substitution',
+          payload: {
+            side: 'home',
+            battingSlot: 1,
+            outgoingPlayerId: 'home-1',
+            incomingPlayerId: 'home-reliever',
+            defensivePosition: 'P'
+          }
+        }
+      },
+      {
+        label: 're-entry',
+        action: {
+          type: 're_enter',
+          eventId: 'blocked-reentry',
+          payload: {
+            side: 'home',
+            battingSlot: 1,
+            starterPlayerId: 'home-1',
+            replacedPlayerId: 'home-reliever',
+            defensivePosition: 'P'
+          }
+        }
+      },
+      {
+        label: 'courtesy runner',
+        action: {
+          type: 'add_courtesy_runner',
+          eventId: 'blocked-courtesy-runner',
+          payload: {
+            side: 'away',
+            forPlayerId: 'away-1',
+            runnerId: 'away-courtesy',
+            base: 'first',
+            forRole: 'pitcher'
+          }
+        }
+      },
+      {
+        label: 'suspension',
+        action: {
+          type: 'suspend',
+          eventId: 'blocked-suspension',
+          payload: { reason: 'Do not suspend a game awaiting finalization.' }
+        }
+      }
+    ];
+    const explicit = harness('baseball-nfhs', 'quick');
+    setBasicLineups(explicit);
+    const officialPlay = explicit.submit('record_plate_appearance', {
+      batterId: 'away-1',
+      pitcherId: 'home-1',
+      result: 'ground_out',
+      batterAdvance: { to: 'out', outKind: 'batter_runner' },
+      runnerAdvances: [],
+      outsOnPlay: 1
+    });
+    explicit.submit('rules_decision', {
+      code: 'end_game_weather',
+      description: 'The umpire ended the game for weather.'
+    });
+    blockedActions.forEach(({ label, action }) => {
+      expect(() => reduceDiamondEvent(explicit.ledger.state, action), label).toThrowError(
+        expect.objectContaining({ code: 'game-end-decision-recorded' })
+      );
+    });
+    explicit.submit('record_fielding', {
+      playEventId: officialPlay.event!.eventId,
+      fielding: { putoutBy: 'home-2' }
+    });
+
+    const explicitlySuspended = harness('baseball-nfhs', 'quick');
+    setBasicLineups(explicitlySuspended);
+    explicitlySuspended.submit('suspend', { reason: 'Weather delay before the ruling.' });
+    explicitlySuspended.submit('rules_decision', {
+      code: 'end_game_weather',
+      description: 'The suspended game is now final by umpire ruling.'
+    });
+    expect(() =>
+      reduceDiamondEvent(explicitlySuspended.ledger.state, {
+        type: 'resume',
+        eventId: 'blocked-explicit-resume',
+        payload: {}
+      })
+    ).toThrowError(expect.objectContaining({ code: 'game-end-decision-recorded' }));
+
+    const automatic = harness('baseball-nfhs', 'quick');
+    setBasicLineups(automatic);
+    recordSoloHomeRun(automatic);
+    advanceToHalf(automatic, 7, 'bottom');
+    finishHalf(automatic);
+    blockedActions.forEach(({ label, action }) => {
+      expect(() => reduceDiamondEvent(automatic.ledger.state, action), label).toThrowError(
+        expect.objectContaining({ code: 'game-ending-condition-met' })
+      );
+    });
+    expect(() =>
+      reduceDiamondEvent(
+        {
+          ...automatic.ledger.state,
+          lifecycle: 'suspended',
+          suspendedReason: 'Delay after the final out.'
+        },
+        {
+          type: 'resume',
+          eventId: 'blocked-automatic-resume',
+          payload: {}
+        }
+      )
+    ).toThrowError(expect.objectContaining({ code: 'game-ending-condition-met' }));
+    expect(verifyDiamondLedger(automatic.ledger)).toBe(true);
+    expect(replayDiamondLedger(automatic.ledger).state).toEqual(automatic.ledger.state);
+
+    const readyForfeit = harness('fastpitch-nfhs', 'quick');
+    readyForfeit.submit('activate', { initialScorerUid: SCORER, captureMode: 'quick' });
+    readyForfeit.submit('rules_decision', {
+      code: 'end_game_forfeit_away',
+      description: 'The umpire awarded the ready game to the away team.'
+    });
+    const blockedReadyActions: readonly Parameters<typeof reduceDiamondEvent>[1][] = [
+      {
+        type: 'set_lineup',
+        eventId: 'blocked-post-forfeit-lineup',
+        payload: { side: 'home', entries: [{ slot: 1, playerId: 'home-1' }] }
+      },
+      {
+        type: 'set_dp_flex',
+        eventId: 'blocked-post-forfeit-dp-flex',
+        payload: {
+          side: 'home',
+          dpPlayerId: 'home-1',
+          flexPlayerId: 'home-flex',
+          dpBattingSlot: 1,
+          flexDefensivePosition: 'RF'
+        }
+      },
+      {
+        type: 'start',
+        eventId: 'blocked-post-forfeit-start',
+        payload: {}
+      }
+    ];
+    blockedReadyActions.forEach((action) => {
+      expect(() => reduceDiamondEvent(readyForfeit.ledger.state, action)).toThrowError(
+        expect.objectContaining({ code: 'game-end-decision-recorded' })
+      );
+    });
+    readyForfeit.submit('finalize', { confirmed: true });
+    expect(readyForfeit.ledger.state).toMatchObject({
+      lifecycle: 'final',
+      finalizationReason: { kind: 'forfeit' }
+    });
+    expect(verifyDiamondLedger(readyForfeit.ledger)).toBe(true);
+    expect(replayDiamondLedger(readyForfeit.ledger).state).toEqual(readyForfeit.ledger.state);
+  });
+
   it('requires the active previous scheduled batter as the tiebreaker runner before any play', () => {
     const game = harness('fastpitch-nfhs', 'quick');
     setBasicLineups(game);
@@ -591,6 +771,19 @@ describe('Diamond rules and canonical contracts', () => {
       inning: { ...game.ledger.state.inning, number: 8 }
     } satisfies DiamondGameState;
 
+    expect(() =>
+      reduceDiamondEvent(extraInningState, {
+        type: 'add_courtesy_runner',
+        eventId: 'courtesy-before-tiebreaker',
+        payload: {
+          side: 'away',
+          forPlayerId: 'away-3',
+          runnerId: 'away-courtesy',
+          base: 'second',
+          forRole: 'pitcher'
+        }
+      })
+    ).toThrowError(expect.objectContaining({ code: 'tiebreaker-runner-required' }));
     expect(() =>
       reduceDiamondEvent(extraInningState, {
         type: 'record_pitch',
@@ -664,22 +857,22 @@ describe('Diamond rules and canonical contracts', () => {
     });
     expect(placed.bases.second).toMatchObject({
       runnerId: 'away-3-sub',
-      chargedToPitcherId: null,
+      chargedToPitcherId: 'home-1',
       reachedOnEventId: 'correct-tiebreaker-runner'
     });
     expect(() =>
       reduceDiamondEvent(placed, {
         type: 'advance_runner',
-        eventId: 'invent-tiebreaker-pitcher',
+        eventId: 'change-tiebreaker-pitcher',
         payload: {
           runnerId: 'away-3-sub',
           from: 'second',
           to: 'third',
           cause: 'tiebreaker',
-          responsiblePitcherId: 'home-1'
+          responsiblePitcherId: 'home-2'
         }
       })
-    ).toThrowError(expect.objectContaining({ code: 'pitcher-responsibility-unavailable' }));
+    ).toThrowError(expect.objectContaining({ code: 'unexpected-responsible-pitcher' }));
     const advanced = reduceDiamondEvent(placed, {
       type: 'record_plate_appearance',
       eventId: 'advance-unassigned-tiebreaker-runner',
@@ -694,8 +887,25 @@ describe('Diamond rules and canonical contracts', () => {
     });
     expect(advanced.bases).toMatchObject({
       first: { runnerId: 'away-1', chargedToPitcherId: 'home-1' },
-      third: { runnerId: 'away-3-sub', chargedToPitcherId: null }
+      third: { runnerId: 'away-3-sub', chargedToPitcherId: 'home-1' }
     });
+    const withoutPitcher = {
+      ...extraInningState,
+      lineups: {
+        ...extraInningState.lineups,
+        home: {
+          ...extraInningState.lineups.home,
+          defense: Object.fromEntries(Object.entries(extraInningState.lineups.home.defense).filter(([position]) => position !== 'P'))
+        }
+      }
+    } satisfies DiamondGameState;
+    expect(() =>
+      reduceDiamondEvent(withoutPitcher, {
+        type: 'place_tiebreaker_runner',
+        eventId: 'tiebreaker-without-pitcher',
+        payload: { side: 'away', runnerId: 'away-3-sub', base: 'second' }
+      })
+    ).toThrowError(expect.objectContaining({ code: 'missing-defensive-pitcher' }));
     expect(
       reduceDiamondEvent(placed, {
         type: 'record_pitch',
@@ -983,15 +1193,33 @@ describe('Diamond command ledger', () => {
     };
 
     compare('activate', { initialScorerUid: SCORER, captureMode: 'quick' });
-    compare('set_lineup', { side: 'home', entries: [{ slot: 1, playerId: 'home-1' }] });
-    compare('set_lineup', { side: 'away', entries: [{ slot: 1, playerId: 'away-1' }] });
+    compare('set_lineup', {
+      side: 'home',
+      entries: [
+        { slot: 1, playerId: 'home-1' },
+        { slot: 2, playerId: 'home-2' }
+      ]
+    });
+    compare('set_lineup', {
+      side: 'away',
+      entries: [
+        { slot: 1, playerId: 'away-1' },
+        { slot: 2, playerId: 'away-2' }
+      ]
+    });
     compare('set_defensive_alignment', {
       side: 'home',
-      assignments: [{ playerId: 'home-1', position: 'P' }]
+      assignments: [
+        { playerId: 'home-1', position: 'P' },
+        { playerId: 'home-2', position: 'C' }
+      ]
     });
     compare('set_defensive_alignment', {
       side: 'away',
-      assignments: [{ playerId: 'away-1', position: 'P' }]
+      assignments: [
+        { playerId: 'away-1', position: 'P' },
+        { playerId: 'away-2', position: 'C' }
+      ]
     });
     compare('start', {});
     compare('record_pitch', { batterId: 'away-1', pitcherId: 'home-1', result: 'in_play' });
@@ -1002,6 +1230,13 @@ describe('Diamond command ledger', () => {
       batterAdvance: { to: 'first' },
       runnerAdvances: [],
       outsOnPlay: 0
+    });
+    compare('set_defensive_alignment', {
+      side: 'home',
+      assignments: [
+        { playerId: 'home-2', position: 'P' },
+        { playerId: 'home-1', position: 'C' }
+      ]
     });
 
     const duplicate = executeDiamondCommandFromCheckpoint(

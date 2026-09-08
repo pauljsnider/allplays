@@ -100,6 +100,24 @@ type RunnerMoveDraft = {
 
 type LineupDrafts = Record<DiamondSide, DiamondLineupEntry[]>;
 type DefenseDrafts = Record<DiamondSide, Partial<Record<DiamondDefensivePosition, string>>>;
+type ActiveDefenseDraft = {
+  assignments: Partial<Record<DiamondDefensivePosition, string>>;
+  sourceRevision: number;
+  sourceInstanceId: string;
+  sourceLeaseId: string;
+  sourceDefenseFingerprint: string;
+  sourcePersonnelFingerprint: string;
+};
+type ActiveDefenseDrafts = Record<DiamondSide, ActiveDefenseDraft | null>;
+type ActiveDefenseReviewSource = {
+  side: DiamondSide;
+  sourceRevision: number;
+  sourceInstanceId: string;
+  sourceLeaseId: string;
+  authenticatedUid: string;
+  sourceDefenseFingerprint: string;
+  sourcePersonnelFingerprint: string;
+};
 
 type PendingPlay = {
   source: 'tap' | 'voice';
@@ -122,6 +140,7 @@ type PendingPlay = {
   batterId?: string;
   pitcherId?: string;
   correction?: { targetEventId: string; reason: string };
+  activeDefenseSource?: ActiveDefenseReviewSource;
 };
 
 type PendingVoiceProposal = {
@@ -369,6 +388,143 @@ function copyDefenseDrafts(snapshot: DiamondScorebookSnapshot | null): DefenseDr
   return { home: copySide('home'), away: copySide('away') };
 }
 
+function canonicalDefenseAssignments(assignments: Partial<Record<DiamondDefensivePosition, string>>) {
+  return defensivePositions.flatMap((position) => {
+    const playerId = assignments[position];
+    return playerId ? [{ position, playerId }] : [];
+  });
+}
+
+function defenseFingerprint(assignments: Partial<Record<DiamondDefensivePosition, string>>) {
+  return JSON.stringify(canonicalDefenseAssignments(assignments));
+}
+
+function defensePersonnelFingerprint(assignments: Partial<Record<DiamondDefensivePosition, string>>) {
+  return JSON.stringify(
+    canonicalDefenseAssignments(assignments)
+      .map((assignment) => assignment.playerId)
+      .sort()
+  );
+}
+
+function activeDefenseDraftForSnapshot(snapshot: DiamondScorebookSnapshot, side: DiamondSide): ActiveDefenseDraft {
+  const assignments = copyDefenseDrafts(snapshot)[side];
+  return {
+    assignments,
+    sourceRevision: snapshot.revision,
+    sourceInstanceId: snapshot.instanceId,
+    sourceLeaseId: snapshot.lease.leaseId || '',
+    sourceDefenseFingerprint: defenseFingerprint(assignments),
+    sourcePersonnelFingerprint: defensePersonnelFingerprint(assignments)
+  };
+}
+
+function activeDefenseDraftsForSnapshot(snapshot: DiamondScorebookSnapshot | null): ActiveDefenseDrafts {
+  if (!snapshot || snapshot.lifecycle !== 'active') return { home: null, away: null };
+  return {
+    home: activeDefenseDraftForSnapshot(snapshot, 'home'),
+    away: activeDefenseDraftForSnapshot(snapshot, 'away')
+  };
+}
+
+function activeDefenseDraftMatchesSnapshot(draft: ActiveDefenseDraft, snapshot: DiamondScorebookSnapshot, side: DiamondSide) {
+  const current = copyDefenseDrafts(snapshot)[side];
+  return Boolean(
+    snapshot.lifecycle === 'active' &&
+    draft.sourceRevision === snapshot.revision &&
+    draft.sourceInstanceId === snapshot.instanceId &&
+    draft.sourceLeaseId === (snapshot.lease.leaseId || '') &&
+    draft.sourceDefenseFingerprint === defenseFingerprint(current) &&
+    draft.sourcePersonnelFingerprint === defensePersonnelFingerprint(current)
+  );
+}
+
+function activeFieldingSide(snapshot: DiamondScorebookSnapshot): DiamondSide {
+  return snapshot.inning.half === 'top' ? 'home' : 'away';
+}
+
+function hasAutomaticHomeGameEnding(snapshot: DiamondScorebookSnapshot) {
+  if (snapshot.inning.half !== 'bottom' || snapshot.score.home <= snapshot.score.away) return false;
+  const profile = resolvePinnedRulesProfile(snapshot);
+  if (!profile) return true;
+  if (snapshot.inning.number >= profile.scheduledInnings) return true;
+  const differential = snapshot.score.home - snapshot.score.away;
+  return profile.runAheadRules.some((rule) => snapshot.inning.number >= rule.afterInning && differential >= rule.runDifferential);
+}
+
+function isOpenActiveHalf(snapshot: DiamondScorebookSnapshot) {
+  return Boolean(
+    snapshot.lifecycle === 'active' &&
+    snapshot.inning.outs < 3 &&
+    !snapshot.halfInningEnd &&
+    !snapshot.gameEndDecision &&
+    !hasAutomaticHomeGameEnding(snapshot)
+  );
+}
+
+function activeDefensePlayers(snapshot: DiamondScorebookSnapshot, side: DiamondSide) {
+  return defensivePositions.flatMap((position, index, positions) => {
+    const player = snapshot.defense[side][position];
+    if (!player || positions.slice(0, index).some((prior) => snapshot.defense[side][prior]?.playerId === player.playerId)) return [];
+    return [player];
+  });
+}
+
+function activeDefenseSourceMatchesSnapshot(
+  snapshot: DiamondScorebookSnapshot | null,
+  source: ActiveDefenseReviewSource,
+  authenticatedUid: string | null | undefined
+) {
+  if (!snapshot || !isOpenActiveHalf(snapshot) || !snapshot.authoritative || activeFieldingSide(snapshot) !== source.side) return false;
+  const identity = getQueueIdentity(snapshot, authenticatedUid);
+  if (
+    !identity ||
+    identity.authenticatedUid !== source.authenticatedUid ||
+    identity.instanceId !== source.sourceInstanceId ||
+    identity.leaseId !== source.sourceLeaseId ||
+    snapshot.revision !== source.sourceRevision
+  ) {
+    return false;
+  }
+  const current = copyDefenseDrafts(snapshot)[source.side];
+  return (
+    defenseFingerprint(current) === source.sourceDefenseFingerprint &&
+    defensePersonnelFingerprint(current) === source.sourcePersonnelFingerprint
+  );
+}
+
+function validateActiveDefensePayload(payload: DiamondJsonObject, source: ActiveDefenseReviewSource) {
+  if (payload.side !== source.side || !Array.isArray(payload.assignments)) return 'The reviewed defensive alignment is invalid.';
+  const assignments: Partial<Record<DiamondDefensivePosition, string>> = {};
+  const playerIds = new Set<string>();
+  for (const entry of payload.assignments) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return 'The reviewed defensive alignment is invalid.';
+    const position = 'position' in entry ? entry.position : null;
+    const playerId = 'playerId' in entry ? entry.playerId : null;
+    if (
+      typeof position !== 'string' ||
+      !defensivePositions.some((candidate) => candidate === position) ||
+      typeof playerId !== 'string' ||
+      !playerId ||
+      assignments[position as DiamondDefensivePosition] ||
+      playerIds.has(playerId)
+    ) {
+      return 'The reviewed defensive alignment is invalid.';
+    }
+    assignments[position as DiamondDefensivePosition] = playerId;
+    playerIds.add(playerId);
+  }
+  if (
+    !assignments.P ||
+    canonicalDefenseAssignments(assignments).length !== payload.assignments.length ||
+    defensePersonnelFingerprint(assignments) !== source.sourcePersonnelFingerprint ||
+    defenseFingerprint(assignments) === source.sourceDefenseFingerprint
+  ) {
+    return 'The reviewed defensive alignment must swap the complete current personnel and retain a pitcher.';
+  }
+  return '';
+}
+
 function buildDiamondAiCommandContext(snapshot: DiamondScorebookSnapshot): DiamondAiCommandContext {
   const playerIds = new Set<string>();
   const addPlayer = (player: DiamondPlayerRef | null | undefined) => {
@@ -442,6 +598,14 @@ function buildStructuredPending(type: DiamondCommandType, label: string, payload
 function playerLabel(player: DiamondPlayerRef | null) {
   if (!player) return 'Not set';
   return `${player.number ? `#${player.number} ` : ''}${player.name}`;
+}
+
+function snapshotSidePlayer(snapshot: DiamondScorebookSnapshot, side: DiamondSide, playerId: string): DiamondPlayerRef | null {
+  const defensivePlayers = Object.values(snapshot.defense[side]).flatMap((player) => (player ? [player] : []));
+  return (
+    [...defensivePlayers, ...snapshot.lineups[side], ...snapshot.availablePlayers[side]].find((player) => player.playerId === playerId) ||
+    null
+  );
 }
 
 function inningLabel(snapshot: DiamondScorebookSnapshot) {
@@ -971,6 +1135,9 @@ export function DiamondScorebook({
   const [lineupDirty, setLineupDirty] = useState<Record<DiamondSide, boolean>>({ home: false, away: false });
   const [defenseDrafts, setDefenseDrafts] = useState<DefenseDrafts>(() => copyDefenseDrafts(initialSnapshot));
   const [defenseDirty, setDefenseDirty] = useState<Record<DiamondSide, boolean>>({ home: false, away: false });
+  const [activeDefenseDrafts, setActiveDefenseDrafts] = useState<ActiveDefenseDrafts>(() =>
+    activeDefenseDraftsForSnapshot(initialSnapshot)
+  );
   const [privateHistory, setPrivateHistory] = useState<DiamondPrivateHistoryWindow | null>(null);
   const [loadingPrivateHistory, setLoadingPrivateHistory] = useState(false);
   const [loadingOlderPrivateHistory, setLoadingOlderPrivateHistory] = useState(false);
@@ -982,6 +1149,7 @@ export function DiamondScorebook({
   const snapshotRef = useRef<DiamondScorebookSnapshot | null>(initialSnapshot);
   const queueCountRef = useRef(queueCount);
   const authenticatedUidRef = useRef(auth.user?.uid || null);
+  const confirmingPendingRef = useRef(false);
   const appBuildRef = useRef<number | null>(null);
   const appBuildPromiseRef = useRef<Promise<number> | null>(null);
 
@@ -1046,6 +1214,35 @@ export function DiamondScorebook({
       away: defenseDirty.away ? current.away : next.away
     }));
   }, [defenseDirty.away, defenseDirty.home, snapshot]);
+
+  useEffect(() => {
+    setActiveDefenseDrafts((current) => {
+      if (!snapshot || snapshot.lifecycle !== 'active') {
+        return current.home || current.away ? { home: null, away: null } : current;
+      }
+      const home =
+        current.home && activeDefenseDraftMatchesSnapshot(current.home, snapshot, 'home')
+          ? current.home
+          : activeDefenseDraftForSnapshot(snapshot, 'home');
+      const away =
+        current.away && activeDefenseDraftMatchesSnapshot(current.away, snapshot, 'away')
+          ? current.away
+          : activeDefenseDraftForSnapshot(snapshot, 'away');
+      return home === current.home && away === current.away ? current : { home, away };
+    });
+  }, [snapshot]);
+
+  useEffect(() => {
+    const source = pendingPlay?.activeDefenseSource;
+    if (!source || busy || confirmingPendingRef.current) return;
+    if (queueCount === 0 && activeDefenseSourceMatchesSnapshot(snapshot, source, auth.user?.uid)) return;
+    setPendingPlay(null);
+    setNotice({
+      tone: 'error',
+      message:
+        'This defensive alignment review expired because the revision or scoring lease changed, or another command entered the queue. Review the current defense again.'
+    });
+  }, [auth.user?.uid, busy, pendingPlay, queueCount, snapshot]);
 
   useEffect(() => {
     setRecapState(null);
@@ -1468,26 +1665,47 @@ export function DiamondScorebook({
   };
 
   const confirmPendingPlay = async () => {
-    if (!snapshot || !pendingPlay) return;
-    if (pendingPlay.source === 'voice' && (pendingPlay.sourceRevision !== snapshot.revision || !snapshot.authoritative || queueCount > 0)) {
-      setPendingPlay(null);
-      setNotice({
-        tone: 'error',
-        message: 'This AI draft is stale because the scorebook revision changed. Interpret the play again from the current field state.'
-      });
-      return;
-    }
-    const validationError = validateRunnerReview(pendingPlay, snapshot.inning.outs);
-    if (validationError) {
-      setNotice({ tone: 'error', message: validationError });
-      return;
-    }
-    if (!pendingPlay.ambiguityConfirmed) {
-      setNotice({ tone: 'error', message: 'Verify every unresolved AI field before confirming this play.' });
-      return;
-    }
+    if (!snapshot || !pendingPlay || confirmingPendingRef.current) return;
+    confirmingPendingRef.current = true;
     try {
+      const activeDefenseSource = pendingPlay.activeDefenseSource;
+      if (activeDefenseSource && (queueCount > 0 || !activeDefenseSourceMatchesSnapshot(snapshot, activeDefenseSource, auth.user?.uid))) {
+        setPendingPlay(null);
+        setNotice({
+          tone: 'error',
+          message:
+            'This defensive alignment review expired because the revision or scoring lease changed, or another command entered the queue. Review the current defense again.'
+        });
+        return;
+      }
+      if (
+        pendingPlay.source === 'voice' &&
+        (pendingPlay.sourceRevision !== snapshot.revision || !snapshot.authoritative || queueCount > 0)
+      ) {
+        setPendingPlay(null);
+        setNotice({
+          tone: 'error',
+          message: 'This AI draft is stale because the scorebook revision changed. Interpret the play again from the current field state.'
+        });
+        return;
+      }
+      const validationError = validateRunnerReview(pendingPlay, snapshot.inning.outs);
+      if (validationError) {
+        setNotice({ tone: 'error', message: validationError });
+        return;
+      }
+      if (!pendingPlay.ambiguityConfirmed) {
+        setNotice({ tone: 'error', message: 'Verify every unresolved AI field before confirming this play.' });
+        return;
+      }
       const payload = buildPendingPayload(snapshot, pendingPlay, controlMode);
+      if (activeDefenseSource) {
+        const validationError = validateActiveDefensePayload(payload, activeDefenseSource);
+        if (validationError) {
+          setNotice({ tone: 'error', message: validationError });
+          return;
+        }
+      }
       const submitted = pendingPlay.correction
         ? await submitCommand(
             'supersede_event',
@@ -1499,9 +1717,17 @@ export function DiamondScorebook({
             `${pendingPlay.label} appended as a correction.`
           )
         : await submitCommand(pendingPlay.type, payload, `${pendingPlay.label} recorded.`);
+      if (submitted === 'queued' && activeDefenseSource) {
+        setActiveDefenseDrafts((current) => ({
+          ...current,
+          [activeDefenseSource.side]: activeDefenseDraftForSnapshot(snapshot, activeDefenseSource.side)
+        }));
+      }
       if (submitted) setPendingPlay(null);
     } catch (error) {
       setNotice({ tone: 'error', message: describeError(error, 'Review this play before submitting it.') });
+    } finally {
+      confirmingPendingRef.current = false;
     }
   };
 
@@ -1960,6 +2186,68 @@ export function DiamondScorebook({
     if (submitted) setDefenseDirty((current) => ({ ...current, [side]: false }));
   };
 
+  const swapActiveDefense = (side: DiamondSide, position: DiamondDefensivePosition, playerId: string) => {
+    const currentSnapshot = snapshotRef.current;
+    if (!currentSnapshot || !isOpenActiveHalf(currentSnapshot) || activeFieldingSide(currentSnapshot) !== side) return;
+    setActiveDefenseDrafts((current) => {
+      const draft = current[side];
+      if (!draft || !activeDefenseDraftMatchesSnapshot(draft, currentSnapshot, side)) {
+        return { ...current, [side]: activeDefenseDraftForSnapshot(currentSnapshot, side) };
+      }
+      const currentPlayerId = draft.assignments[position];
+      const otherPosition = defensivePositions.find((candidate) => draft.assignments[candidate] === playerId);
+      if (!currentPlayerId || !otherPosition || otherPosition === position) return current;
+      const assignments = {
+        ...draft.assignments,
+        [position]: playerId,
+        [otherPosition]: currentPlayerId
+      };
+      if (defensePersonnelFingerprint(assignments) !== draft.sourcePersonnelFingerprint) return current;
+      return { ...current, [side]: { ...draft, assignments } };
+    });
+  };
+
+  const reviewActiveDefense = (side: DiamondSide) => {
+    if (!snapshot || !isOpenActiveHalf(snapshot) || activeFieldingSide(snapshot) !== side || queueCount > 0) {
+      setNotice({ tone: 'error', message: 'Use the current open half with no queued commands before changing live defense.' });
+      return;
+    }
+    const identity = getQueueIdentity(snapshot, auth.user?.uid);
+    const draft = activeDefenseDrafts[side];
+    if (!identity || !snapshot.authoritative || !draft || !activeDefenseDraftMatchesSnapshot(draft, snapshot, side)) {
+      setNotice({
+        tone: 'error',
+        message: 'Refresh as the current scoring-lease owner before reviewing a defensive alignment change.'
+      });
+      return;
+    }
+    const assignments = canonicalDefenseAssignments(draft.assignments);
+    const source: ActiveDefenseReviewSource = {
+      side,
+      sourceRevision: snapshot.revision,
+      sourceInstanceId: snapshot.instanceId,
+      sourceLeaseId: identity.leaseId,
+      authenticatedUid: identity.authenticatedUid,
+      sourceDefenseFingerprint: draft.sourceDefenseFingerprint,
+      sourcePersonnelFingerprint: draft.sourcePersonnelFingerprint
+    };
+    const payload: DiamondJsonObject = { side, assignments };
+    const validationError = validateActiveDefensePayload(payload, source);
+    if (validationError) {
+      setNotice({ tone: 'error', message: validationError });
+      return;
+    }
+    setPendingPlay({
+      ...buildStructuredPending(
+        'set_defensive_alignment',
+        `${side === 'home' ? snapshot.homeName : snapshot.awayName} defensive alignment`,
+        payload
+      ),
+      sourceRevision: snapshot.revision,
+      activeDefenseSource: source
+    });
+  };
+
   const recapSourceIsCurrent = (source: DiamondRecapSource) => {
     const current = snapshotRef.current;
     return Boolean(
@@ -2163,6 +2451,12 @@ export function DiamondScorebook({
     snapshot.lifecycle === 'cancelled'
   );
   const battingSide: DiamondSide | null = snapshot ? (snapshot.inning.half === 'top' ? 'away' : 'home') : null;
+  const liveDefenseSide: DiamondSide | null = snapshot && isOpenActiveHalf(snapshot) ? activeFieldingSide(snapshot) : null;
+  const liveDefenseDraft = liveDefenseSide ? activeDefenseDrafts[liveDefenseSide] : null;
+  const liveDefenseDirty = Boolean(
+    liveDefenseDraft && defenseFingerprint(liveDefenseDraft.assignments) !== liveDefenseDraft.sourceDefenseFingerprint
+  );
+  const liveDefenseDisabled = Boolean(mutationDisabled || !getQueueIdentity(snapshot, auth.user?.uid));
   const tiebreakerPending = Boolean(
     snapshot &&
     battingSide &&
@@ -2182,6 +2476,9 @@ export function DiamondScorebook({
           (snapshot.nextBatterSlot[battingSide] - 1 + snapshot.lineups[battingSide].length) % snapshot.lineups[battingSide].length
         ] || null
       : null;
+  const currentPitcherId = snapshot?.currentPitcher?.playerId || null;
+  const tiebreakerPitcherId =
+    snapshot && liveDefenseSide && currentPitcherId === snapshot.defense[liveDefenseSide].P?.playerId ? currentPitcherId : null;
   const playControlsDisabled = mutationDisabled || snapshot?.lifecycle !== 'active' || tiebreakerPending;
   const correctionControlsDisabled = mutationDisabled || !snapshot || !['active', 'correction'].includes(snapshot.lifecycle);
   const privateNoteDisabled = mutationDisabled || snapshot?.lifecycle === 'configured';
@@ -2444,6 +2741,19 @@ export function DiamondScorebook({
         </section>
       ) : null}
 
+      {liveDefenseSide && liveDefenseDraft ? (
+        <ActiveDefenseAlignmentEditor
+          side={liveDefenseSide}
+          name={liveDefenseSide === 'home' ? snapshot.homeName : snapshot.awayName}
+          assignments={liveDefenseDraft.assignments}
+          players={activeDefensePlayers(snapshot, liveDefenseSide)}
+          dirty={liveDefenseDirty}
+          disabled={liveDefenseDisabled}
+          onSwap={(position, playerId) => swapActiveDefense(liveDefenseSide, position, playerId)}
+          onReview={() => reviewActiveDefense(liveDefenseSide)}
+        />
+      ) : null}
+
       <section className="grid gap-3 lg:grid-cols-[minmax(0,1.6fr)_minmax(17rem,0.8fr)]">
         <div className="space-y-3">
           <section className="app-card overflow-hidden">
@@ -2466,15 +2776,17 @@ export function DiamondScorebook({
               <button
                 type="button"
                 className="primary-button mt-3 w-full justify-center sm:w-auto"
-                disabled={mutationDisabled || !tiebreakerRunner}
+                disabled={mutationDisabled || !tiebreakerRunner || !tiebreakerPitcherId}
                 onClick={() =>
                   tiebreakerRunner &&
+                  tiebreakerPitcherId &&
                   void submitCommand(
                     'place_tiebreaker_runner',
                     {
                       side: battingSide,
                       runnerId: tiebreakerRunner.playerId,
-                      base: pinnedRulesProfile.tiebreaker.runnerBase
+                      base: pinnedRulesProfile.tiebreaker.runnerBase,
+                      chargedToPitcherId: tiebreakerPitcherId
                     },
                     'Tiebreaker runner placed.'
                   )
@@ -3480,6 +3792,76 @@ function DefenseAlignmentEditor({
         Save {side} defense
       </button>
       {!online ? <div className="mt-2 text-xs font-bold text-amber-800">Reconnect to save this defense.</div> : null}
+    </fieldset>
+  );
+}
+
+function ActiveDefenseAlignmentEditor({
+  side,
+  name,
+  assignments,
+  players,
+  dirty,
+  disabled,
+  onSwap,
+  onReview
+}: {
+  side: DiamondSide;
+  name: string;
+  assignments: Partial<Record<DiamondDefensivePosition, string>>;
+  players: DiamondPlayerRef[];
+  dirty: boolean;
+  disabled: boolean;
+  onSwap: (position: DiamondDefensivePosition, playerId: string) => void;
+  onReview: () => void;
+}) {
+  const occupiedPositions = defensivePositions.filter((position) => Boolean(assignments[position]));
+  const assignedPlayers = canonicalDefenseAssignments(assignments).map((assignment) => assignment.playerId);
+  const valid = Boolean(
+    assignments.P &&
+    occupiedPositions.length >= 2 &&
+    occupiedPositions.length <= 10 &&
+    new Set(assignedPlayers).size === assignedPlayers.length &&
+    defensePersonnelFingerprint(assignments) === JSON.stringify(players.map((player) => player.playerId).sort())
+  );
+  return (
+    <fieldset className="app-card border-emerald-200 bg-emerald-50/40 p-3 sm:p-4">
+      <legend className="px-1 text-sm font-black text-gray-950">Live {name} defense</legend>
+      <p className="mt-1 text-xs leading-5 font-semibold text-gray-600">
+        Swap two currently active fielders, then review the complete alignment. Substitutions and re-entry stay on their separate confirmed
+        paths.
+      </p>
+      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+        {occupiedPositions.map((position) => (
+          <label key={position} className="text-[11px] font-black text-gray-700">
+            {position}
+            <select
+              aria-label={`Live ${name} ${position}`}
+              className="mt-1 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-2 text-sm font-bold"
+              value={assignments[position] || ''}
+              disabled={disabled || !valid}
+              onChange={(event) => onSwap(position, event.target.value)}
+            >
+              {players.map((player) => (
+                <option key={player.playerId} value={player.playerId}>
+                  {playerLabel(player)}
+                </option>
+              ))}
+            </select>
+          </label>
+        ))}
+      </div>
+      <button
+        type="button"
+        className="primary-button mt-3 w-full justify-center sm:w-auto"
+        disabled={disabled || !dirty || !valid}
+        onClick={onReview}
+      >
+        Review {side} defense change
+      </button>
+      <div className="mt-2 text-xs leading-5 font-semibold text-gray-600">
+        Offline confirmation queues this revision-bound swap first and locks later scoring until ordered reconciliation.
+      </div>
     </fieldset>
   );
 }
@@ -4873,6 +5255,20 @@ function PlayReviewModal({
   onConfirm: () => void;
 }) {
   const validationError = validateRunnerReview(pending, snapshot.inning.outs);
+  const activeDefenseName = pending.activeDefenseSource
+    ? pending.activeDefenseSource.side === 'home'
+      ? snapshot.homeName
+      : snapshot.awayName
+    : '';
+  const activeDefenseAssignments =
+    pending.activeDefenseSource && Array.isArray(pending.payload.assignments)
+      ? pending.payload.assignments.flatMap((entry) => {
+          if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return [];
+          const position = 'position' in entry ? entry.position : null;
+          const playerId = 'playerId' in entry ? entry.playerId : null;
+          return typeof position === 'string' && typeof playerId === 'string' ? [{ position, playerId }] : [];
+        })
+      : [];
   const setOutcome = (result: string) => {
     const option = outcomeOptions.find((candidate) => candidate.result === result);
     if (!option) return;
@@ -5174,6 +5570,23 @@ function PlayReviewModal({
               spellCheck={false}
             />
           </details>
+        ) : pending.activeDefenseSource ? (
+          <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+            <div className="text-xs font-black tracking-wide text-emerald-800 uppercase">Complete reviewed alignment</div>
+            <ul className="mt-2 grid gap-2 sm:grid-cols-2" aria-label={`Complete ${activeDefenseName} defensive alignment`}>
+              {activeDefenseAssignments.map((assignment) => {
+                const player = snapshotSidePlayer(snapshot, pending.activeDefenseSource!.side, assignment.playerId);
+                return (
+                  <li key={assignment.position} className="rounded-lg border border-emerald-200 bg-white px-3 py-2 text-sm font-black">
+                    {assignment.position} · {player ? playerLabel(player) : assignment.playerId}
+                  </li>
+                );
+              })}
+            </ul>
+            <p className="mt-2 text-xs leading-5 font-semibold text-emerald-900">
+              This replaces the full on-field position map without changing batting order, substitution, or re-entry history.
+            </p>
+          </div>
         ) : (
           <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 p-3">
             <div className="text-xs font-black tracking-wide text-gray-500 uppercase">Confirmed fields</div>

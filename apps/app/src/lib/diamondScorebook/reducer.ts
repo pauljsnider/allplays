@@ -403,19 +403,27 @@ export function getDiamondFinalizationReason(state: DiamondGameState): DiamondFi
   return automaticDiamondFinalizationReason(state);
 }
 
-function requireOpenHalfForPlay(state: DiamondGameState, options: Readonly<{ allowPendingTiebreakerPlacement?: boolean }> = {}) {
+function requireNoGameEndingCondition(state: DiamondGameState, nextAction: string) {
+  const ending = getDiamondFinalizationReason(state);
+  if (!ending) return;
   if (state.gameEndDecision) {
-    throw new DiamondDomainError('game-end-decision-recorded', 'Finalize the recorded game-ending decision before adding another play.');
+    throw new DiamondDomainError('game-end-decision-recorded', `Finalize the recorded game-ending decision before ${nextAction}.`);
   }
-  const ending = automaticDiamondFinalizationReason(state);
-  if (ending) {
-    throw new DiamondDomainError('game-ending-condition-met', `Finalize the ${ending.kind} result before adding another play.`);
-  }
-  if (state.halfInningEnd) {
+  throw new DiamondDomainError('game-ending-condition-met', `Finalize the ${ending.kind} result before ${nextAction}.`);
+}
+
+function currentHalfReachedRunLimit(state: DiamondGameState) {
+  const profile = requireDiamondRulesProfile(state.rulesProfileId, state.rulesProfileVersion);
+  return profile.inningRunLimit !== null && currentHalfRuns(state) >= profile.inningRunLimit;
+}
+
+function requireOpenHalfForPlay(state: DiamondGameState, options: Readonly<{ allowPendingTiebreakerPlacement?: boolean }> = {}) {
+  requireNoGameEndingCondition(state, 'adding another play');
+  if (state.inning.outs >= 3 || state.halfInningEnd) {
     throw new DiamondDomainError('half-inning-complete', 'Advance the half inning before adding another play.');
   }
   const profile = requireDiamondRulesProfile(state.rulesProfileId, state.rulesProfileVersion);
-  if (profile.inningRunLimit !== null && currentHalfRuns(state) >= profile.inningRunLimit) {
+  if (currentHalfReachedRunLimit(state)) {
     throw new DiamondDomainError(
       'run-limit-decision-required',
       'Record the scorer or umpire run-limit decision before adding another play.'
@@ -982,6 +990,7 @@ function reduceSubstitution(
   reentry: boolean
 ): DiamondGameState {
   requireLifecycle(state, ['active'], reentry ? 're-enter' : 'substitute');
+  requireNoGameEndingCondition(state, reentry ? 're-entering a starter' : 'making a substitution');
   const profile = requireDiamondRulesProfile(state.rulesProfileId, state.rulesProfileVersion);
   const side = requireSide(payload.side);
   if (payload.defensivePosition) requireMember(payload.defensivePosition, FIELDING_POSITIONS, 'defensive position');
@@ -1237,6 +1246,7 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
     }
     case 'set_lineup': {
       requireLifecycle(state, ['ready'], 'set lineup');
+      requireNoGameEndingCondition(state, 'changing the lineup');
       const side = requireSide(action.payload.side);
       const profile = requireDiamondRulesProfile(state.rulesProfileId, state.rulesProfileVersion);
       if (state.lineups[side].dpFlex) {
@@ -1275,6 +1285,13 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
     }
     case 'set_defensive_alignment': {
       requireLifecycle(state, ['ready', 'active'], 'set defensive alignment');
+      requireNoGameEndingCondition(state, 'changing the defensive alignment');
+      if (state.lifecycle === 'active' && currentHalfReachedRunLimit(state)) {
+        throw new DiamondDomainError(
+          'run-limit-decision-required',
+          'Record the scorer or umpire run-limit decision before changing the defensive alignment.'
+        );
+      }
       const side = requireSide(action.payload.side);
       if (!Array.isArray(action.payload.assignments) || action.payload.assignments.length > 10) {
         throw new DiamondDomainError('invalid-defense', 'A defensive alignment may contain at most ten assignments.');
@@ -1313,6 +1330,7 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
     }
     case 'set_dp_flex': {
       requireLifecycle(state, ['ready'], 'set DP/FLEX');
+      requireNoGameEndingCondition(state, 'changing the DP/FLEX pairing');
       const profile = requireDiamondRulesProfile(state.rulesProfileId, state.rulesProfileVersion);
       if (!profile.dpFlex.enabled) throw new DiamondDomainError('rule-not-enabled', 'DP/FLEX is disabled by this profile.');
       const side = requireSide(action.payload.side);
@@ -1365,6 +1383,7 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
     }
     case 'start': {
       requireLifecycle(state, ['ready'], 'start');
+      requireNoGameEndingCondition(state, 'starting the game');
       if (!state.lineups.home.battingOrder.length || !state.lineups.away.battingOrder.length) {
         throw new DiamondDomainError('missing-lineup', 'Both teams need a batting lineup before the game starts.');
       }
@@ -1641,21 +1660,24 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
           `The tiebreaker runner must be the previous scheduled batter (${expectedRunnerId}).`
         );
       }
-      const chargedToPitcherId =
+      const currentPitcherId = state.lineups[oppositeSide(side)].defense.P;
+      if (!currentPitcherId) {
+        throw new DiamondDomainError(
+          'missing-defensive-pitcher',
+          'The tiebreaker runner requires the current defensive pitcher before placement.'
+        );
+      }
+      const suppliedPitcherId =
         action.payload.chargedToPitcherId === undefined ? undefined : requireId(action.payload.chargedToPitcherId, 'chargedToPitcherId');
-      validateInlineResponsiblePitcher(
-        state,
-        chargedToPitcherId,
-        state.lineups[oppositeSide(side)].defense.P ?? null,
-        'The tiebreaker runner'
-      );
+      const chargedToPitcherId = suppliedPitcherId ?? currentPitcherId;
+      validateInlineResponsiblePitcher(state, chargedToPitcherId, currentPitcherId, 'The tiebreaker runner');
       next = {
         ...next,
         bases: {
           ...next.bases,
           [base]: {
             runnerId,
-            chargedToPitcherId: chargedToPitcherId ?? null,
+            chargedToPitcherId,
             courtesyForPlayerId: null,
             reachedOnEventId: action.eventId ?? null
           }
@@ -1673,6 +1695,7 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
     }
     case 'add_courtesy_runner': {
       requireLifecycle(state, ['active'], 'add courtesy runner');
+      requireOpenHalfForPlay(state);
       const profile = requireDiamondRulesProfile(state.rulesProfileId, state.rulesProfileVersion);
       const side = requireSide(action.payload.side);
       const base = requireMember(action.payload.base, BASES, 'courtesy runner base');
@@ -1716,11 +1739,13 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
     }
     case 'suspend': {
       requireLifecycle(state, ['active'], 'suspend');
+      requireNoGameEndingCondition(state, 'suspending the game');
       next = { ...next, lifecycle: 'suspended', suspendedReason: requireText(action.payload.reason, 'reason', 300) };
       break;
     }
     case 'resume': {
       requireLifecycle(state, ['suspended'], 'resume');
+      requireNoGameEndingCondition(state, 'resuming the game');
       next = { ...next, lifecycle: 'active', suspendedReason: null };
       break;
     }

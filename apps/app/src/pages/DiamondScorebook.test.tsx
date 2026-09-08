@@ -1825,6 +1825,11 @@ describe('DiamondScorebook', () => {
     expect(screen.getByText('Coach Lee has the active scoring lease.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Single' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Private note' })).toBeDisabled();
+    const liveDefense = screen.getByRole('group', { name: 'Live Wolves defense' });
+    within(liveDefense)
+      .getAllByRole('combobox')
+      .forEach((control) => expect(control).toBeDisabled());
+    expect(within(liveDefense).getByRole('button', { name: 'Review away defense change' })).toBeDisabled();
 
     const advancedPanel = screen.getByText('Full-mode advanced plays').closest('details');
     expect(advancedPanel).not.toBeNull();
@@ -2070,6 +2075,7 @@ describe('DiamondScorebook', () => {
     const snapshot = buildSnapshot({
       inning: { number: 7, half: 'top', outs: 0, balls: 0, strikes: 0, pitchesInPlateAppearance: 0 },
       bases: { first: null, second: null, third: null },
+      currentPitcher: { playerId: 'batter-1', name: 'Avery Carter', number: '12' },
       lineups: {
         home: buildSnapshot().lineups.home,
         away: [
@@ -2088,7 +2094,7 @@ describe('DiamondScorebook', () => {
     expect(fixture.createCommand).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'place_tiebreaker_runner',
-        payload: { side: 'away', runnerId: 'fielder-2', base: 'second' }
+        payload: { side: 'away', runnerId: 'fielder-2', base: 'second', chargedToPitcherId: 'batter-1' }
       })
     );
 
@@ -2114,10 +2120,314 @@ describe('DiamondScorebook', () => {
     );
     expect(reduced.bases.second).toMatchObject({
       runnerId: 'fielder-2',
-      chargedToPitcherId: null,
+      chargedToPitcherId: 'batter-1',
       courtesyForPlayerId: null,
       reachedOnEventId: 'ui-tiebreaker'
     });
+  });
+
+  it('fails the tiebreaker placement closed when the authoritative current pitcher is missing', () => {
+    const snapshot = buildSnapshot({
+      inning: { number: 7, half: 'top', outs: 0, balls: 0, strikes: 0, pitchesInPlateAppearance: 0 },
+      bases: { first: null, second: null, third: null },
+      currentPitcher: null,
+      lineups: {
+        home: buildSnapshot().lineups.home,
+        away: [
+          { playerId: 'pitcher-1', name: 'Morgan Diaz', number: '7', slot: 1 },
+          { playerId: 'fielder-2', name: 'Riley Chen', number: '2', slot: 2 }
+        ]
+      },
+      nextBatterSlot: { home: 0, away: 0 }
+    });
+    const fixture = createClient(snapshot);
+    renderScorebook(snapshot, fixture);
+
+    expect(screen.getByRole('button', { name: 'Confirm tiebreaker runner' })).toBeDisabled();
+    expect(fixture.createCommand).not.toHaveBeenCalled();
+  });
+
+  it('reviews and submits a complete same-personnel live defensive swap without changing lineup history', async () => {
+    const snapshot = buildSnapshot();
+    const fixture = createClient(snapshot);
+    renderScorebook(snapshot, fixture);
+
+    const defense = screen.getByRole('group', { name: 'Live Wolves defense' });
+    const pitcher = within(defense).getByLabelText('Live Wolves P') as HTMLSelectElement;
+    const catcher = within(defense).getByLabelText('Live Wolves C') as HTMLSelectElement;
+    expect(Array.from(pitcher.options).map((option) => option.value)).toEqual(['pitcher-1', 'fielder-2']);
+    expect(Array.from(pitcher.options).map((option) => option.value)).not.toContain('bench-away');
+    expect(within(defense).getByRole('button', { name: 'Review away defense change' })).toBeDisabled();
+
+    fireEvent.change(pitcher, { target: { value: 'fielder-2' } });
+    expect(pitcher).toHaveValue('fielder-2');
+    expect(catcher).toHaveValue('pitcher-1');
+    fireEvent.click(within(defense).getByRole('button', { name: 'Review away defense change' }));
+
+    expect(fixture.createCommand).not.toHaveBeenCalled();
+    const review = screen.getByRole('dialog', { name: 'Review Wolves defensive alignment' });
+    const reviewedAssignments = within(review).getByRole('list', { name: 'Complete Wolves defensive alignment' });
+    expect(within(reviewedAssignments).getByText('P · #2 Riley Chen')).toBeInTheDocument();
+    expect(within(reviewedAssignments).getByText('C · #7 Morgan Diaz')).toBeInTheDocument();
+    fireEvent.click(within(review).getByRole('button', { name: 'Cancel' }));
+    expect(fixture.createCommand).not.toHaveBeenCalled();
+
+    fireEvent.click(within(defense).getByRole('button', { name: 'Review away defense change' }));
+    fireEvent.click(
+      within(screen.getByRole('dialog', { name: 'Review Wolves defensive alignment' })).getByRole('button', {
+        name: 'Confirm action'
+      })
+    );
+
+    await waitFor(() => expect(fixture.submitCommand).toHaveBeenCalledTimes(1));
+    expect(fixture.createCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'set_defensive_alignment',
+        expectedRevision: 7,
+        leaseId: scorerLeaseId,
+        payload: {
+          side: 'away',
+          assignments: [
+            { position: 'P', playerId: 'fielder-2' },
+            { position: 'C', playerId: 'pitcher-1' }
+          ]
+        }
+      })
+    );
+
+    const uiPayload = fixture.createCommand.mock.calls[0]![0].payload as unknown as DiamondCommandPayloadMap['set_defensive_alignment'];
+    const startingState = buildReducerStateForUiSnapshot();
+    const reduced = reduceDiamondEvent(startingState, {
+      type: 'set_defensive_alignment',
+      eventId: 'ui-defense-swap',
+      payload: uiPayload
+    });
+    expect(reduced.lineups.away.defense).toEqual({ P: 'fielder-2', C: 'pitcher-1' });
+    expect(reduced.lineups.away.battingOrder).toEqual(startingState.lineups.away.battingOrder);
+    expect(reduced.lineups.away.dpFlex).toEqual(startingState.lineups.away.dpFlex);
+  });
+
+  it('targets only the side currently fielding for a live defensive swap', () => {
+    const snapshot = buildSnapshot({
+      inning: { ...buildSnapshot().inning, half: 'top' },
+      currentPitcher: { playerId: 'batter-1', name: 'Avery Carter', number: '12' },
+      defense: {
+        home: {
+          P: { playerId: 'batter-1', name: 'Avery Carter', number: '12' },
+          SS: { playerId: 'runner-1', name: 'Jordan Lee', number: '8' }
+        },
+        away: buildSnapshot().defense.away
+      }
+    });
+    renderScorebook(snapshot, createClient(snapshot));
+
+    expect(screen.getByRole('group', { name: 'Live Bears defense' })).toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: 'Live Wolves defense' })).not.toBeInTheDocument();
+  });
+
+  it('expires a live defensive review when the authoritative revision or lease changes', async () => {
+    const snapshot = buildSnapshot();
+    const fixture = createClient(snapshot);
+    renderScorebook(snapshot, fixture);
+    const defense = screen.getByRole('group', { name: 'Live Wolves defense' });
+    fireEvent.change(within(defense).getByLabelText('Live Wolves P'), { target: { value: 'fielder-2' } });
+    fireEvent.click(within(defense).getByRole('button', { name: 'Review away defense change' }));
+    expect(screen.getByRole('dialog', { name: 'Review Wolves defensive alignment' })).toBeInTheDocument();
+
+    (fixture.client.load as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      buildSnapshot({
+        revision: 8,
+        checkpointHash: checkpointForRevision(8),
+        completeness: { ...snapshot.completeness, authoritativeRevision: 8 }
+      })
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh authoritative scorebook' }));
+
+    expect(await screen.findByText(/defensive alignment review expired.*revision or scoring lease changed/i)).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'Review Wolves defensive alignment' })).not.toBeInTheDocument();
+    expect(fixture.createCommand).not.toHaveBeenCalled();
+    expect(fixture.submitCommand).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'lease ownership',
+      {
+        lease: {
+          status: 'held-by-other' as const,
+          canScore: false,
+          canAcquire: false,
+          canRecover: false,
+          holderUid: 'coach-2',
+          holderName: 'Coach Lee',
+          leaseId: replacementScorerLeaseId,
+          epoch: 2,
+          expiresAt: null,
+          eligibleScorers: []
+        }
+      }
+    ],
+    ['snapshot authority', { authoritative: false }],
+    [
+      'defensive map',
+      {
+        defense: {
+          home: buildSnapshot().defense.home,
+          away: {
+            P: { playerId: 'fielder-2', name: 'Riley Chen', number: '2' },
+            C: { playerId: 'pitcher-1', name: 'Morgan Diaz', number: '7' }
+          }
+        }
+      }
+    ],
+    [
+      'defensive personnel',
+      {
+        defense: {
+          home: buildSnapshot().defense.home,
+          away: {
+            P: { playerId: 'pitcher-1', name: 'Morgan Diaz', number: '7' },
+            C: { playerId: 'bench-away', name: 'Sam Ortiz', number: '10' }
+          }
+        }
+      }
+    ]
+  ])('expires a pending live defensive review after a same-revision %s change', async (_label, overrides) => {
+    const snapshot = buildSnapshot();
+    const fixture = createClient(snapshot);
+    renderScorebook(snapshot, fixture);
+    const defense = screen.getByRole('group', { name: 'Live Wolves defense' });
+    fireEvent.change(within(defense).getByLabelText('Live Wolves P'), { target: { value: 'fielder-2' } });
+    fireEvent.click(within(defense).getByRole('button', { name: 'Review away defense change' }));
+
+    (fixture.client.load as ReturnType<typeof vi.fn>).mockResolvedValueOnce(buildSnapshot(overrides));
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh authoritative scorebook' }));
+
+    expect(await screen.findByText(/defensive alignment review expired.*revision or scoring lease changed/i)).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'Review Wolves defensive alignment' })).not.toBeInTheDocument();
+    expect(fixture.createCommand).not.toHaveBeenCalled();
+    expect(fixture.submitCommand).not.toHaveBeenCalled();
+  });
+
+  it('expires a pending live defensive review when the authenticated scorer changes', async () => {
+    const snapshot = buildSnapshot();
+    const fixture = createClient(snapshot);
+    const rendered = render(
+      <MemoryRouter>
+        <DiamondScorebook auth={auth} teamId="team-1" gameId="game-1" initialSnapshot={snapshot} client={fixture.client} />
+      </MemoryRouter>
+    );
+    const defense = screen.getByRole('group', { name: 'Live Wolves defense' });
+    fireEvent.change(within(defense).getByLabelText('Live Wolves P'), { target: { value: 'fielder-2' } });
+    fireEvent.click(within(defense).getByRole('button', { name: 'Review away defense change' }));
+
+    const changedAuth: AuthState = {
+      ...auth,
+      user: { ...auth.user!, uid: 'coach-2', email: 'lee@example.com', displayName: 'Coach Lee' }
+    };
+    rendered.rerender(
+      <MemoryRouter>
+        <DiamondScorebook auth={changedAuth} teamId="team-1" gameId="game-1" initialSnapshot={snapshot} client={fixture.client} />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText(/defensive alignment review expired.*revision or scoring lease changed/i)).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'Review Wolves defensive alignment' })).not.toBeInTheDocument();
+    expect(fixture.createCommand).not.toHaveBeenCalled();
+    expect(fixture.submitCommand).not.toHaveBeenCalled();
+  });
+
+  it('keeps a rejected live defensive review available for an explicit retry', async () => {
+    const snapshot = buildSnapshot();
+    const fixture = createClient(snapshot);
+    fixture.submitCommand.mockRejectedValueOnce(new DiamondScorebookError('invalid-input', 'Alignment rejected.'));
+    renderScorebook(snapshot, fixture);
+    const defense = screen.getByRole('group', { name: 'Live Wolves defense' });
+    fireEvent.change(within(defense).getByLabelText('Live Wolves P'), { target: { value: 'fielder-2' } });
+    fireEvent.click(within(defense).getByRole('button', { name: 'Review away defense change' }));
+    const review = screen.getByRole('dialog', { name: 'Review Wolves defensive alignment' });
+    fireEvent.click(within(review).getByRole('button', { name: 'Confirm action' }));
+
+    expect(await screen.findByText('Alignment rejected.')).toBeInTheDocument();
+    expect(review).toBeInTheDocument();
+    expect(fixture.client.enqueue).not.toHaveBeenCalled();
+
+    fireEvent.click(within(review).getByRole('button', { name: 'Confirm action' }));
+    await waitFor(() => expect(fixture.submitCommand).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole('dialog', { name: 'Review Wolves defensive alignment' })).not.toBeInTheDocument();
+  });
+
+  it('queues one offline defensive swap, locks later scoring, and reconciles in order', async () => {
+    const snapshot = buildSnapshot();
+    const fixture = createClient(snapshot);
+    const reconciled = buildSnapshot({
+      revision: 8,
+      checkpointHash: checkpointForRevision(8),
+      currentPitcher: { playerId: 'fielder-2', name: 'Riley Chen', number: '2' },
+      defense: {
+        ...snapshot.defense,
+        away: {
+          P: { playerId: 'fielder-2', name: 'Riley Chen', number: '2' },
+          C: { playerId: 'pitcher-1', name: 'Morgan Diaz', number: '7' }
+        }
+      },
+      completeness: { ...snapshot.completeness, authoritativeRevision: 8 }
+    });
+    renderScorebook(snapshot, fixture);
+    fireEvent(window, new Event('offline'));
+    await screen.findByText('Offline · 0 queued');
+
+    const defense = screen.getByRole('group', { name: 'Live Wolves defense' });
+    fireEvent.change(within(defense).getByLabelText('Live Wolves P'), { target: { value: 'fielder-2' } });
+    fireEvent.click(within(defense).getByRole('button', { name: 'Review away defense change' }));
+    const confirm = within(screen.getByRole('dialog', { name: 'Review Wolves defensive alignment' })).getByRole('button', {
+      name: 'Confirm action'
+    });
+    fireEvent.click(confirm);
+    fireEvent.click(confirm);
+
+    await waitFor(() => expect(fixture.client.enqueue).toHaveBeenCalledTimes(1));
+    expect(fixture.createCommand).toHaveBeenCalledTimes(1);
+    expect(fixture.submitCommand).not.toHaveBeenCalled();
+    expect(screen.getByText('Offline · 1 queued')).toBeInTheDocument();
+    expect(within(defense).getByLabelText('Live Wolves P')).toHaveValue('pitcher-1');
+    expect(screen.getByRole('button', { name: 'Single' })).toBeDisabled();
+    expect(within(defense).getByRole('button', { name: 'Review away defense change' })).toBeDisabled();
+
+    (fixture.client.reconcileQueue as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      accepted: 1,
+      duplicates: 0,
+      remaining: [],
+      lastSnapshot: reconciled
+    });
+    (fixture.client.load as ReturnType<typeof vi.fn>).mockResolvedValueOnce(reconciled);
+    fireEvent(window, new Event('online'));
+
+    await waitFor(() => expect(fixture.client.reconcileQueue).toHaveBeenCalledTimes(1));
+    await screen.findByText('Live · revision 8');
+    await waitFor(() =>
+      expect(within(screen.getByRole('group', { name: 'Live Wolves defense' })).getByLabelText('Live Wolves P')).toHaveValue('fielder-2')
+    );
+  });
+
+  it.each([
+    ['a completed third-out half', { inning: { ...buildSnapshot().inning, outs: 3 } }],
+    ['an explicit half-ending decision', { halfInningEnd: { reason: 'run-limit' as const, decisionEventId: 'event-7' } }],
+    ['a game-ending decision', { gameEndDecision: { reason: 'time-limit' as const, decisionEventId: 'event-7', awardedSide: null } }],
+    [
+      'an automatic walkoff ending',
+      {
+        score: { home: 4, away: 3 },
+        inning: { number: 7, half: 'bottom' as const, outs: 1, balls: 0, strikes: 0, pitchesInPlateAppearance: 0 }
+      }
+    ]
+  ])('does not offer live defense changes during %s', (_label, overrides) => {
+    const snapshot = buildSnapshot(overrides);
+    const fixture = createClient(snapshot);
+    renderScorebook(snapshot, fixture);
+
+    expect(screen.queryByRole('group', { name: /Live .* defense/ })).not.toBeInTheDocument();
+    expect(fixture.createCommand).not.toHaveBeenCalled();
   });
 
   it('offers a courtesy runner only when the recorded pitcher or catcher occupies the selected base', async () => {

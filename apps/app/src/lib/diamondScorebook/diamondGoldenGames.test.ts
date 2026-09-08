@@ -510,6 +510,20 @@ describe('Baseball golden games', () => {
       { accept: false }
     );
     expectRejected(blockedPlay, 'run-limit-decision-required', capped.ledger.state.revision);
+    const blockedAlignment = capped.submit(
+      'set_defensive_alignment',
+      {
+        side: 'home',
+        assignments: [
+          { playerId: 'home-2', position: 'P' },
+          { playerId: 'home-1', position: 'C' },
+          { playerId: 'home-3', position: 'SS' }
+        ]
+      },
+      { accept: false }
+    );
+    expectRejected(blockedAlignment, 'run-limit-decision-required', capped.ledger.state.revision);
+    expect(projectDiamondStats(capped.ledger).players['home-2'].raw.pitching.APP).toBe(0);
     const decision = capped.submit('rules_decision', {
       code: 'end_half_inning_run_limit',
       description: 'The scorer and umpire confirm the five-run half-inning limit.'
@@ -821,21 +835,21 @@ describe('Fastpitch golden game', () => {
 });
 
 describe('Scoring decisions and correction reconciliation', () => {
-  it('keeps an unassigned tiebreaker run unknown while preserving explicit inherited-pitcher responsibility', () => {
+  it('canonicalizes old-client tiebreaker responsibility while keeping earned-run judgment explicit', () => {
     const seed = createHarness('fastpitch-nfhs', 'quick');
     configureGame(seed);
     advanceToHalf(seed, 8, 'top');
     const tiebreakerRunnerId = previousScheduledBatterId(seed, 'away');
 
-    const scoreTwoRunHomer = (chargedToPitcherId?: string) => {
+    const scoreTwoRunHomer = (options: Readonly<{ chargedToPitcherId?: string; tiebreakerEarned?: boolean }> = {}) => {
       const game = createHarness('fastpitch-nfhs', 'quick', seed.ledger);
       game.submit('place_tiebreaker_runner', {
         side: 'away',
         runnerId: tiebreakerRunnerId,
         base: 'second',
-        ...(chargedToPitcherId ? { chargedToPitcherId } : {})
+        ...(options.chargedToPitcherId ? { chargedToPitcherId: options.chargedToPitcherId } : {})
       });
-      expect(game.ledger.state.bases.second?.chargedToPitcherId).toBe(chargedToPitcherId ?? null);
+      expect(game.ledger.state.bases.second?.chargedToPitcherId).toBe('home-1');
       game.submit('substitute', {
         side: 'home',
         battingSlot: 1,
@@ -857,36 +871,260 @@ describe('Scoring decisions and correction reconciliation', () => {
             to: 'home',
             cause: 'batted_ball',
             countsRun: true,
-            earned: true,
+            ...(options.tiebreakerEarned === undefined ? {} : { earned: options.tiebreakerEarned }),
             rbi: true
           }
         ],
         outsOnPlay: 0,
         runsBattedIn: 2
       });
-      return projectDiamondStats(game.ledger);
+      expect(verifyDiamondLedger(game.ledger)).toBe(true);
+      expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
+      return { ledger: game.ledger, stats: projectDiamondStats(game.ledger) };
     };
 
-    const unknown = scoreTwoRunHomer();
-    expect(unknown.teams.away.R).toBe(2);
-    expect(unknown.players['home-1'].raw.pitching).toMatchObject({ APP: 1, R: 0, ER: 0 });
-    expect(unknown.players['home-reliever'].raw.pitching).toMatchObject({
-      APP: 1,
-      R: 1,
-      ER: 1,
-      inheritedRunners: 1,
-      inheritedScored: 0
-    });
-
-    const assigned = scoreTwoRunHomer('home-1');
-    expect(assigned.players['home-1'].raw.pitching).toMatchObject({ APP: 1, R: 1, ER: 1 });
-    expect(assigned.players['home-reliever'].raw.pitching).toMatchObject({
+    const oldClient = scoreTwoRunHomer();
+    expect(oldClient.stats.teams.away.R).toBe(2);
+    expect(oldClient.stats.coverage.pitching).toBe('partial');
+    expect(oldClient.stats.players['home-1'].raw.pitching).toMatchObject({ APP: 1, R: 1, ER: 0 });
+    expect(oldClient.stats.players['home-reliever'].raw.pitching).toMatchObject({
       APP: 1,
       R: 1,
       ER: 1,
       inheritedRunners: 1,
       inheritedScored: 1
     });
+
+    const explicit = scoreTwoRunHomer({ chargedToPitcherId: 'home-1', tiebreakerEarned: true });
+    expect(explicit.stats.players['home-1'].raw.pitching).toMatchObject({ APP: 1, R: 1, ER: 1 });
+    expect(explicit.stats.players['home-reliever'].raw.pitching).toMatchObject({
+      APP: 1,
+      R: 1,
+      ER: 1,
+      inheritedRunners: 1,
+      inheritedScored: 1
+    });
+  });
+
+  it('projects active same-personnel pitcher alignments exactly once per entry and preserves later responsibility', () => {
+    const game = createHarness('baseball-nfhs', 'quick');
+    configureGame(game);
+    game.submit('record_plate_appearance', {
+      batterId: 'away-1',
+      pitcherId: 'home-1',
+      result: 'single',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    game.submit('record_plate_appearance', {
+      batterId: 'away-2',
+      pitcherId: 'home-1',
+      result: 'single',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [{ runnerId: 'away-1', from: 'first', to: 'second', cause: 'batted_ball' }],
+      outsOnPlay: 0
+    });
+
+    const swapToCatcher = () =>
+      game.submit('set_defensive_alignment', {
+        side: 'home',
+        assignments: [
+          { playerId: 'home-2', position: 'P' },
+          { playerId: 'home-1', position: 'C' },
+          { playerId: 'home-3', position: 'SS' }
+        ]
+      });
+    const swapBackToStarter = () =>
+      game.submit('set_defensive_alignment', {
+        side: 'home',
+        assignments: [
+          { playerId: 'home-1', position: 'P' },
+          { playerId: 'home-2', position: 'C' },
+          { playerId: 'home-3', position: 'SS' }
+        ]
+      });
+
+    swapToCatcher();
+    swapToCatcher();
+    swapBackToStarter();
+    swapToCatcher();
+    game.submit('advance_runner', {
+      runnerId: 'away-1',
+      from: 'second',
+      to: 'home',
+      cause: 'batted_ball',
+      countsRun: true,
+      earned: false
+    });
+    game.submit('advance_runner', {
+      runnerId: 'away-2',
+      from: 'first',
+      to: 'out',
+      cause: 'pickoff',
+      outKind: 'tag',
+      fielding: { putoutBy: 'home-1' }
+    });
+
+    const stats = projectDiamondStats(game.ledger);
+    expect(stats.players['home-1'].raw.pitching).toMatchObject({ APP: 1, GS: 1, R: 1, ER: 0, inheritedRunners: 2 });
+    expect(stats.players['home-2'].raw.pitching).toMatchObject({
+      APP: 1,
+      GS: 0,
+      outs: 1,
+      inheritedRunners: 4,
+      inheritedScored: 1
+    });
+    expect(stats.players['home-2'].sources['pitching.APP']).toHaveLength(1);
+    expect(stats.players['home-2'].sources['pitching.inheritedRunners']).toHaveLength(2);
+    expect(stats.players['home-1'].raw.fielding.defensiveOuts).toBe(1);
+    expect(stats.players['home-2'].raw.fielding.defensiveOuts).toBe(1);
+    expect(stats.players['home-3'].raw.fielding.defensiveOuts).toBe(1);
+    expect(verifyDiamondLedger(game.ledger)).toBe(true);
+    expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
+    expect(projectDiamondStats(game.ledger)).toEqual(stats);
+  });
+
+  it('does not count planned offensive or closed-half pitcher assignments as pitching entries', () => {
+    const ready = createHarness('baseball-nfhs', 'quick');
+    configureGame(ready, { start: false });
+    ready.submit('set_defensive_alignment', {
+      side: 'home',
+      assignments: [
+        { playerId: 'home-2', position: 'P' },
+        { playerId: 'home-1', position: 'C' },
+        { playerId: 'home-3', position: 'SS' }
+      ]
+    });
+    expect(projectDiamondStats(ready.ledger).players['home-2']).toBeUndefined();
+    ready.submit('start', {});
+    expect(projectDiamondStats(ready.ledger).players['home-2'].raw.pitching).toMatchObject({ APP: 1, GS: 1 });
+
+    const offensive = createHarness('baseball-nfhs', 'quick');
+    configureGame(offensive);
+    offensive.submit('record_plate_appearance', {
+      batterId: 'away-1',
+      pitcherId: 'home-1',
+      result: 'single',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    offensive.submit('set_defensive_alignment', {
+      side: 'away',
+      assignments: [
+        { playerId: 'away-2', position: 'P' },
+        { playerId: 'away-1', position: 'C' },
+        { playerId: 'away-3', position: 'SS' }
+      ]
+    });
+    offensive.submit('substitute', {
+      side: 'away',
+      battingSlot: 2,
+      outgoingPlayerId: 'away-2',
+      incomingPlayerId: 'away-planned-pitcher',
+      defensivePosition: 'P'
+    });
+    offensive.submit('re_enter', {
+      side: 'away',
+      battingSlot: 2,
+      starterPlayerId: 'away-2',
+      replacedPlayerId: 'away-planned-pitcher',
+      defensivePosition: 'P'
+    });
+    offensive.submit('rules_decision', {
+      code: 'end_game_weather',
+      description: 'The game ended before the batting team returned to the field.'
+    });
+    offensive.submit('finalize', { confirmed: true });
+
+    const offensiveStats = projectDiamondStats(offensive.ledger);
+    expect(offensiveStats.players['away-planned-pitcher'].raw.batting.G).toBe(1);
+    expect(offensiveStats.players['away-planned-pitcher'].raw.pitching).toMatchObject({ APP: 0, inheritedRunners: 0 });
+    expect(offensiveStats.players['away-1'].raw.pitching).toMatchObject({ APP: 1, GS: 1, inheritedRunners: 0 });
+    expect(offensiveStats.players['away-2'].raw.pitching).toMatchObject({ APP: 0, GS: 0, inheritedRunners: 0 });
+
+    const closedHalf = createHarness('baseball-nfhs', 'quick');
+    configureGame(closedHalf);
+    closedHalf.submit('record_plate_appearance', {
+      batterId: 'away-1',
+      pitcherId: 'home-1',
+      result: 'single',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    recordOut(closedHalf);
+    recordOut(closedHalf);
+    recordOut(closedHalf);
+    expect(closedHalf.ledger.state).toMatchObject({ inning: { half: 'top', outs: 3 }, bases: { first: { runnerId: 'away-1' } } });
+    closedHalf.submit('set_defensive_alignment', {
+      side: 'home',
+      assignments: [
+        { playerId: 'home-2', position: 'P' },
+        { playerId: 'home-1', position: 'C' },
+        { playerId: 'home-3', position: 'SS' }
+      ]
+    });
+    const closedCourtesyRunner = closedHalf.submit(
+      'add_courtesy_runner',
+      {
+        side: 'away',
+        forPlayerId: 'away-1',
+        runnerId: 'away-courtesy',
+        base: 'first',
+        forRole: 'pitcher'
+      },
+      { accept: false }
+    );
+    expect(closedCourtesyRunner.result.rejection?.code).toBe('half-inning-complete');
+    closedHalf.submit('substitute', {
+      side: 'away',
+      battingSlot: 2,
+      outgoingPlayerId: 'away-2',
+      incomingPlayerId: 'away-between-innings',
+      defensivePosition: 'C'
+    });
+    closedHalf.submit('suspend', { reason: 'Weather delay between half innings.' });
+    closedHalf.submit('resume', {});
+    expect(closedHalf.ledger.state).toMatchObject({
+      lifecycle: 'active',
+      inning: { half: 'top', outs: 3 },
+      lineups: { away: { defense: { C: 'away-between-innings' } } }
+    });
+    expect(projectDiamondStats(closedHalf.ledger).players['home-2'].raw.pitching).toMatchObject({ APP: 0, inheritedRunners: 0 });
+  });
+
+  it('credits defensive pitcher substitutions and re-entries, but never the batting-side base inventory', () => {
+    const game = createHarness('baseball-nfhs', 'quick');
+    configureGame(game);
+    finishAndAdvanceHalf(game);
+    game.submit('record_plate_appearance', {
+      batterId: 'home-1',
+      pitcherId: 'away-1',
+      result: 'single',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    game.submit('substitute', {
+      side: 'away',
+      battingSlot: 1,
+      outgoingPlayerId: 'away-1',
+      incomingPlayerId: 'away-reliever',
+      defensivePosition: 'P'
+    });
+    game.submit('re_enter', {
+      side: 'away',
+      battingSlot: 1,
+      starterPlayerId: 'away-1',
+      replacedPlayerId: 'away-reliever',
+      defensivePosition: 'P'
+    });
+
+    const stats = projectDiamondStats(game.ledger);
+    expect(stats.players['away-reliever'].raw.pitching).toMatchObject({ APP: 1, GS: 0, inheritedRunners: 1 });
+    expect(stats.players['away-1'].raw.pitching).toMatchObject({ APP: 1, GS: 1, inheritedRunners: 1 });
   });
 
   it('pins an inherited runner to the responsible pitcher and applies explicit earned-run and RBI decisions', () => {

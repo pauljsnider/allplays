@@ -122,6 +122,18 @@ function isStrikePitch(result) {
 function battingSideFor(state) {
     return (0, reducer_1.getBattingSide)(state);
 }
+function isOpenDefensiveEntry(state, side) {
+    const defensiveSide = battingSideFor(state) === 'home' ? 'away' : 'home';
+    const profile = (0, rules_1.requireDiamondRulesProfile)(state.rulesProfileId, state.rulesProfileVersion);
+    const inningKey = `${state.inning.half === 'top' ? 'T' : 'B'}${String(state.inning.number)}`;
+    const runLimitReached = profile.inningRunLimit !== null && (state.inningRuns[inningKey] ?? 0) >= profile.inningRunLimit;
+    return (state.lifecycle === 'active' &&
+        side === defensiveSide &&
+        state.inning.outs < 3 &&
+        state.halfInningEnd === null &&
+        !runLimitReached &&
+        (0, reducer_1.getDiamondFinalizationReason)(state) === null);
+}
 function addFielding(fielding, side, eventId, ensure, credit, options = {}) {
     if (!fielding)
         return;
@@ -266,7 +278,7 @@ function projectDiamondStats(ledger) {
                 const payload = event.payload;
                 creditGame(payload.incomingPlayerId, payload.side, eventId, false);
                 const entersAsPitcher = payload.defensivePosition === 'P' || before.lineups[payload.side].defense.P === payload.outgoingPlayerId;
-                if (entersAsPitcher) {
+                if (entersAsPitcher && isOpenDefensiveEntry(before, payload.side)) {
                     creditPitchingAppearance(payload.incomingPlayerId, payload.side, eventId, false);
                     const inherited = [before.bases.first, before.bases.second, before.bases.third].filter(Boolean).length;
                     if (inherited > 0) {
@@ -279,11 +291,24 @@ function projectDiamondStats(ledger) {
                 const payload = event.payload;
                 creditGame(payload.starterPlayerId, payload.side, eventId, false);
                 const entersAsPitcher = payload.defensivePosition === 'P' || before.lineups[payload.side].defense.P === payload.replacedPlayerId;
-                if (entersAsPitcher) {
+                if (entersAsPitcher && isOpenDefensiveEntry(before, payload.side)) {
                     creditPitchingAppearance(payload.starterPlayerId, payload.side, eventId, false);
                     const inherited = [before.bases.first, before.bases.second, before.bases.third].filter(Boolean).length;
                     if (inherited > 0) {
                         credit(ensure(payload.starterPlayerId, payload.side), 'pitching', 'inheritedRunners', inherited, eventId);
+                    }
+                }
+                break;
+            }
+            case 'set_defensive_alignment': {
+                const payload = event.payload;
+                const priorPitcherId = before.lineups[payload.side].defense.P;
+                const incomingPitcherId = payload.assignments.find((assignment) => assignment.position === 'P')?.playerId;
+                if (incomingPitcherId && incomingPitcherId !== priorPitcherId && isOpenDefensiveEntry(before, payload.side)) {
+                    creditPitchingAppearance(incomingPitcherId, payload.side, eventId, false);
+                    const inherited = [before.bases.first, before.bases.second, before.bases.third].filter(Boolean).length;
+                    if (inherited > 0) {
+                        credit(ensure(incomingPitcherId, payload.side), 'pitching', 'inheritedRunners', inherited, eventId);
                     }
                 }
                 break;

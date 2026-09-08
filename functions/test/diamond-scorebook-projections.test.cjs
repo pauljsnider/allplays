@@ -7,6 +7,10 @@ const {
   DIAMOND_SCHEMA_VERSION,
   createDiamondLedger,
   executeDiamondCommand,
+  projectDiamondStats,
+  reduceDiamondEvent,
+  replayDiamondLedger,
+  verifyDiamondLedger,
 } = require("../diamond-engine");
 const {
   DiamondProjectionError,
@@ -143,11 +147,11 @@ function uuid(index) {
   return `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
 }
 
-function harness(captureMode = "full") {
+function harness(captureMode = "full", rulesProfileId = "baseball-youth") {
   let ledger = createDiamondLedger({
     teamId: "team-away",
     gameId: "game-1",
-    rulesProfileId: "baseball-youth",
+    rulesProfileId,
     rulesProfileVersion: 1,
     captureMode,
   });
@@ -246,6 +250,45 @@ function setLineupsAndStart(game) {
   game.submit("start", {});
 }
 
+function currentMatchup(game) {
+  const battingSide = game.ledger.state.inning.half === "top" ? "away" : "home";
+  const fieldingSide = battingSide === "home" ? "away" : "home";
+  const order = game.ledger.state.lineups[battingSide].battingOrder;
+  const batterId =
+    order[game.ledger.state.nextBatterSlot[battingSide]]?.activePlayerId;
+  const pitcherId = game.ledger.state.lineups[fieldingSide].defense.P;
+  assert.ok(
+    batterId && pitcherId,
+    "compiled fixture requires a current batter and pitcher",
+  );
+  return { batterId, pitcherId };
+}
+
+function recordOut(game) {
+  const { batterId, pitcherId } = currentMatchup(game);
+  game.submit("record_plate_appearance", {
+    batterId,
+    pitcherId,
+    result: "ground_out",
+    batterAdvance: { to: "out", outKind: "batter_runner" },
+    runnerAdvances: [],
+    outsOnPlay: 1,
+  });
+}
+
+function advanceToHalf(game, inning, half) {
+  const ordinal = (number, currentHalf) =>
+    (number - 1) * 2 + (currentHalf === "bottom" ? 1 : 0);
+  const target = ordinal(inning, half);
+  while (
+    ordinal(game.ledger.state.inning.number, game.ledger.state.inning.half) <
+    target
+  ) {
+    while (game.ledger.state.inning.outs < 3) recordOut(game);
+    game.submit("advance_half_inning", {});
+  }
+}
+
 function addHomeRun(game, { pitch = true } = {}) {
   if (pitch) {
     game.submit("record_pitch", {
@@ -306,10 +349,528 @@ function playerWrite(bundle, playerId) {
   )?.data;
 }
 
+test("compiled reducer canonicalizes omitted tiebreaker pitcher responsibility and rejects unavailable or mismatched identity", () => {
+  const game = harness("quick", "fastpitch-nfhs");
+  setLineupsAndStart(game);
+  const extraInning = {
+    ...game.ledger.state,
+    inning: { ...game.ledger.state.inning, number: 8 },
+  };
+  const placed = reduceDiamondEvent(extraInning, {
+    type: "place_tiebreaker_runner",
+    eventId: "compiled-tiebreaker",
+    payload: { side: "away", runnerId: "away-2", base: "second" },
+  });
+  assert.deepEqual(placed.bases.second, {
+    runnerId: "away-2",
+    chargedToPitcherId: "home-1",
+    courtesyForPlayerId: null,
+    reachedOnEventId: "compiled-tiebreaker",
+  });
+  assert.throws(
+    () =>
+      reduceDiamondEvent(extraInning, {
+        type: "place_tiebreaker_runner",
+        eventId: "compiled-tiebreaker-mismatch",
+        payload: {
+          side: "away",
+          runnerId: "away-2",
+          base: "second",
+          chargedToPitcherId: "home-2",
+        },
+      }),
+    (error) => error?.code === "unexpected-responsible-pitcher",
+  );
+  assert.throws(
+    () =>
+      reduceDiamondEvent(
+        {
+          ...extraInning,
+          lineups: {
+            ...extraInning.lineups,
+            home: {
+              ...extraInning.lineups.home,
+              defense: { C: "home-2" },
+            },
+          },
+        },
+        {
+          type: "place_tiebreaker_runner",
+          eventId: "compiled-tiebreaker-no-pitcher",
+          payload: { side: "away", runnerId: "away-2", base: "second" },
+        },
+      ),
+    (error) => error?.code === "missing-defensive-pitcher",
+  );
+});
+
+test("compiled ready-state forfeit blocks setup and start mutations but remains finalizable", () => {
+  const game = harness("quick", "fastpitch-nfhs");
+  game.submit("activate", {
+    initialScorerUid: SCORER_UID,
+    captureMode: "quick",
+  });
+  game.submit("rules_decision", {
+    code: "end_game_forfeit_away",
+    description: "The umpire awarded the ready game to the away team.",
+  });
+  const blocked = [
+    {
+      type: "set_lineup",
+      eventId: "compiled-post-forfeit-lineup",
+      payload: {
+        side: "home",
+        entries: [{ slot: 1, playerId: "home-1" }],
+      },
+    },
+    {
+      type: "set_dp_flex",
+      eventId: "compiled-post-forfeit-dp-flex",
+      payload: {
+        side: "home",
+        dpPlayerId: "home-1",
+        flexPlayerId: "home-flex",
+        dpBattingSlot: 1,
+        flexDefensivePosition: "RF",
+      },
+    },
+    {
+      type: "start",
+      eventId: "compiled-post-forfeit-start",
+      payload: {},
+    },
+  ];
+  for (const action of blocked) {
+    assert.throws(
+      () => reduceDiamondEvent(game.ledger.state, action),
+      (error) => error?.code === "game-end-decision-recorded",
+    );
+  }
+  game.submit("finalize", { confirmed: true });
+  assert.equal(game.ledger.state.lifecycle, "final");
+  assert.equal(game.ledger.state.finalizationReason.kind, "forfeit");
+  assert.equal(verifyDiamondLedger(game.ledger), true);
+  assert.deepEqual(replayDiamondLedger(game.ledger).state, game.ledger.state);
+});
+
+test("compiled replay carries an omitted tiebreaker charge through a relief appearance without inferring earned status", () => {
+  const game = harness("quick", "fastpitch-nfhs");
+  setLineupsAndStart(game);
+  advanceToHalf(game, 8, "top");
+  const awayOrder = game.ledger.state.lineups.away.battingOrder;
+  const previousAwayBatter =
+    awayOrder[
+      (game.ledger.state.nextBatterSlot.away - 1 + awayOrder.length) %
+        awayOrder.length
+    ].activePlayerId;
+  game.submit("place_tiebreaker_runner", {
+    side: "away",
+    runnerId: previousAwayBatter,
+    base: "second",
+  });
+  assert.equal(game.ledger.state.bases.second.chargedToPitcherId, "home-1");
+  game.submit("substitute", {
+    side: "home",
+    battingSlot: 1,
+    outgoingPlayerId: "home-1",
+    incomingPlayerId: "home-reliever",
+    defensivePosition: "P",
+  });
+  game.submit("advance_runner", {
+    runnerId: previousAwayBatter,
+    from: "second",
+    to: "home",
+    cause: "batted_ball",
+    countsRun: true,
+    earned: false,
+  });
+
+  const stats = projectDiamondStats(game.ledger);
+  assert.deepEqual(
+    {
+      R: stats.players["home-1"].raw.pitching.R,
+      ER: stats.players["home-1"].raw.pitching.ER,
+    },
+    { R: 1, ER: 0 },
+  );
+  assert.deepEqual(
+    {
+      APP: stats.players["home-reliever"].raw.pitching.APP,
+      GS: stats.players["home-reliever"].raw.pitching.GS,
+      inheritedRunners:
+        stats.players["home-reliever"].raw.pitching.inheritedRunners,
+      inheritedScored:
+        stats.players["home-reliever"].raw.pitching.inheritedScored,
+    },
+    { APP: 1, GS: 0, inheritedRunners: 1, inheritedScored: 1 },
+  );
+  assert.equal(verifyDiamondLedger(game.ledger), true);
+  assert.deepEqual(replayDiamondLedger(game.ledger).state, game.ledger.state);
+});
+
+test("compiled stats project active pitcher alignment entries once and preserve inherited-run attribution on replay", () => {
+  const game = harness("quick");
+  setLineupsAndStart(game);
+  game.submit("record_plate_appearance", {
+    batterId: "away-1",
+    pitcherId: "home-1",
+    result: "single",
+    batterAdvance: { to: "first" },
+    runnerAdvances: [],
+    outsOnPlay: 0,
+  });
+  const alignment = {
+    side: "home",
+    assignments: [
+      { playerId: "home-2", position: "P" },
+      { playerId: "home-1", position: "C" },
+    ],
+  };
+  game.submit("set_defensive_alignment", alignment);
+  game.submit("set_defensive_alignment", alignment);
+  game.submit("advance_runner", {
+    runnerId: "away-1",
+    from: "first",
+    to: "home",
+    cause: "batted_ball",
+    countsRun: true,
+    earned: false,
+  });
+
+  const stats = projectDiamondStats(game.ledger);
+  assert.deepEqual(
+    {
+      APP: stats.players["home-2"].raw.pitching.APP,
+      GS: stats.players["home-2"].raw.pitching.GS,
+      inheritedRunners: stats.players["home-2"].raw.pitching.inheritedRunners,
+      inheritedScored: stats.players["home-2"].raw.pitching.inheritedScored,
+    },
+    { APP: 1, GS: 0, inheritedRunners: 1, inheritedScored: 1 },
+  );
+  assert.deepEqual(
+    {
+      R: stats.players["home-1"].raw.pitching.R,
+      ER: stats.players["home-1"].raw.pitching.ER,
+    },
+    { R: 1, ER: 0 },
+  );
+  assert.equal(verifyDiamondLedger(game.ledger), true);
+  assert.deepEqual(replayDiamondLedger(game.ledger).state, game.ledger.state);
+  assert.deepEqual(projectDiamondStats(game.ledger), stats);
+});
+
+test("compiled stats exclude non-entry pitcher changes and every roster mutation closes at game end", () => {
+  const offensive = harness("quick");
+  setLineupsAndStart(offensive);
+  const officialPlay = offensive.submit("record_plate_appearance", {
+    batterId: "away-1",
+    pitcherId: "home-1",
+    result: "single",
+    batterAdvance: { to: "first" },
+    runnerAdvances: [],
+    outsOnPlay: 0,
+  });
+  offensive.submit("set_defensive_alignment", {
+    side: "away",
+    assignments: [
+      { playerId: "away-2", position: "P" },
+      { playerId: "away-1", position: "C" },
+    ],
+  });
+  offensive.submit("substitute", {
+    side: "away",
+    battingSlot: 2,
+    outgoingPlayerId: "away-2",
+    incomingPlayerId: "away-planned-pitcher",
+    defensivePosition: "P",
+  });
+  offensive.submit("re_enter", {
+    side: "away",
+    battingSlot: 2,
+    starterPlayerId: "away-2",
+    replacedPlayerId: "away-planned-pitcher",
+    defensivePosition: "P",
+  });
+  offensive.submit("rules_decision", {
+    code: "end_game_weather",
+    description: "The game ended before the batting team fielded again.",
+  });
+  const offensiveStats = projectDiamondStats(offensive.ledger);
+  assert.deepEqual(
+    {
+      G: offensiveStats.players["away-planned-pitcher"].raw.batting.G,
+      APP: offensiveStats.players["away-planned-pitcher"].raw.pitching.APP,
+      inheritedRunners:
+        offensiveStats.players["away-planned-pitcher"].raw.pitching
+          .inheritedRunners,
+    },
+    { G: 1, APP: 0, inheritedRunners: 0 },
+  );
+  assert.deepEqual(
+    {
+      APP: offensiveStats.players["away-2"].raw.pitching.APP,
+      inheritedRunners:
+        offensiveStats.players["away-2"].raw.pitching.inheritedRunners,
+    },
+    { APP: 0, inheritedRunners: 0 },
+  );
+
+  const blockedActions = [
+    {
+      type: "set_defensive_alignment",
+      eventId: "compiled-post-decision-alignment",
+      payload: {
+        side: "home",
+        assignments: [
+          { playerId: "home-2", position: "P" },
+          { playerId: "home-1", position: "C" },
+        ],
+      },
+    },
+    {
+      type: "substitute",
+      eventId: "compiled-post-decision-substitution",
+      payload: {
+        side: "home",
+        battingSlot: 1,
+        outgoingPlayerId: "home-1",
+        incomingPlayerId: "home-reliever",
+        defensivePosition: "P",
+      },
+    },
+    {
+      type: "re_enter",
+      eventId: "compiled-post-decision-reentry",
+      payload: {
+        side: "home",
+        battingSlot: 1,
+        starterPlayerId: "home-1",
+        replacedPlayerId: "home-reliever",
+        defensivePosition: "P",
+      },
+    },
+    {
+      type: "add_courtesy_runner",
+      eventId: "compiled-post-decision-courtesy",
+      payload: {
+        side: "away",
+        forPlayerId: "away-1",
+        runnerId: "away-courtesy",
+        base: "first",
+        forRole: "pitcher",
+      },
+    },
+    {
+      type: "suspend",
+      eventId: "compiled-post-decision-suspend",
+      payload: { reason: "Do not suspend a decided game." },
+    },
+  ];
+  for (const action of blockedActions) {
+    assert.throws(
+      () => reduceDiamondEvent(offensive.ledger.state, action),
+      (error) => error?.code === "game-end-decision-recorded",
+    );
+  }
+  assert.throws(
+    () =>
+      reduceDiamondEvent(
+        {
+          ...offensive.ledger.state,
+          lifecycle: "suspended",
+          suspendedReason: "Delay before the final ruling.",
+        },
+        {
+          type: "resume",
+          eventId: "compiled-post-decision-resume",
+          payload: {},
+        },
+      ),
+    (error) => error?.code === "game-end-decision-recorded",
+  );
+  offensive.submit("record_fielding", {
+    playEventId: officialPlay.eventId,
+    fielding: { errors: [{ playerId: "home-2", kind: "fielding" }] },
+  });
+
+  const closedHalf = harness("quick");
+  setLineupsAndStart(closedHalf);
+  closedHalf.submit("record_plate_appearance", {
+    batterId: "away-1",
+    pitcherId: "home-1",
+    result: "single",
+    batterAdvance: { to: "first" },
+    runnerAdvances: [],
+    outsOnPlay: 0,
+  });
+  closedHalf.submit("add_courtesy_runner", {
+    side: "away",
+    forPlayerId: "away-1",
+    runnerId: "away-stranded-runner",
+    base: "first",
+    forRole: "pitcher",
+  });
+  recordOut(closedHalf);
+  recordOut(closedHalf);
+  recordOut(closedHalf);
+  assert.throws(
+    () =>
+      reduceDiamondEvent(closedHalf.ledger.state, {
+        type: "add_courtesy_runner",
+        eventId: "compiled-closed-half-courtesy",
+        payload: {
+          side: "away",
+          forPlayerId: "away-1",
+          runnerId: "away-second-courtesy",
+          base: "first",
+          forRole: "pitcher",
+        },
+      }),
+    (error) => error?.code === "half-inning-complete",
+  );
+  const closedMatchup = currentMatchup(closedHalf);
+  assert.throws(
+    () =>
+      reduceDiamondEvent(closedHalf.ledger.state, {
+        type: "record_pitch",
+        eventId: "compiled-closed-half-pitch",
+        payload: {
+          batterId: closedMatchup.batterId,
+          pitcherId: closedMatchup.pitcherId,
+          result: "in_play",
+        },
+      }),
+    (error) => error?.code === "half-inning-complete",
+  );
+  assert.throws(
+    () =>
+      reduceDiamondEvent(closedHalf.ledger.state, {
+        type: "advance_runner",
+        eventId: "compiled-closed-half-runner-advance",
+        payload: {
+          runnerId: "away-stranded-runner",
+          from: "first",
+          to: "home",
+          cause: "other",
+          countsRun: true,
+          earned: false,
+          rbi: false,
+        },
+      }),
+    (error) => error?.code === "half-inning-complete",
+  );
+  closedHalf.submit("set_defensive_alignment", {
+    side: "home",
+    assignments: [
+      { playerId: "home-2", position: "P" },
+      { playerId: "home-1", position: "C" },
+    ],
+  });
+  assert.deepEqual(
+    {
+      APP: projectDiamondStats(closedHalf.ledger).players["home-2"].raw.pitching
+        .APP,
+      inheritedRunners: projectDiamondStats(closedHalf.ledger).players["home-2"]
+        .raw.pitching.inheritedRunners,
+    },
+    { APP: 0, inheritedRunners: 0 },
+  );
+
+  const automaticFinalState = {
+    ...closedHalf.ledger.state,
+    inning: {
+      number: 7,
+      half: "bottom",
+      outs: 3,
+      balls: 0,
+      strikes: 0,
+      pitchesInPlateAppearance: 0,
+      lastPitchResult: null,
+    },
+    score: { home: 1, away: 0 },
+    halfInningEnd: null,
+  };
+  for (const action of blockedActions) {
+    assert.throws(
+      () => reduceDiamondEvent(automaticFinalState, action),
+      (error) => error?.code === "game-ending-condition-met",
+    );
+  }
+  assert.throws(
+    () =>
+      reduceDiamondEvent(
+        {
+          ...automaticFinalState,
+          lifecycle: "suspended",
+          suspendedReason: "Delay after the final out.",
+        },
+        {
+          type: "resume",
+          eventId: "compiled-post-regulation-resume",
+          payload: {},
+        },
+      ),
+    (error) => error?.code === "game-ending-condition-met",
+  );
+  assert.equal(verifyDiamondLedger(offensive.ledger), true);
+  assert.deepEqual(
+    replayDiamondLedger(offensive.ledger).state,
+    offensive.ledger.state,
+  );
+});
+
+test("compiled active alignment rejects a pending run-limit decision without crediting a pitching entry", () => {
+  const game = harness("quick", "baseball-youth");
+  setLineupsAndStart(game);
+  for (let run = 0; run < 5; run += 1) {
+    const { batterId, pitcherId } = currentMatchup(game);
+    game.submit("record_plate_appearance", {
+      batterId,
+      pitcherId,
+      result: "home_run",
+      batterAdvance: {
+        to: "home",
+        cause: "batted_ball",
+        countsRun: true,
+        earned: true,
+        rbi: true,
+      },
+      runnerAdvances: [],
+      outsOnPlay: 0,
+      runsBattedIn: 1,
+    });
+  }
+  assert.equal(game.ledger.state.inningRuns.T1, 5);
+  assert.throws(
+    () =>
+      reduceDiamondEvent(game.ledger.state, {
+        type: "set_defensive_alignment",
+        eventId: "compiled-run-limit-alignment",
+        payload: {
+          side: "home",
+          assignments: [
+            { playerId: "home-2", position: "P" },
+            { playerId: "home-1", position: "C" },
+          ],
+        },
+      }),
+    (error) => error?.code === "run-limit-decision-required",
+  );
+  assert.equal(
+    projectDiamondStats(game.ledger).players["home-2"].raw.pitching.APP,
+    0,
+  );
+  game.submit("rules_decision", {
+    code: "end_half_inning_run_limit",
+    description: "The scorer confirms the five-run inning limit.",
+  });
+  assert.equal(verifyDiamondLedger(game.ledger), true);
+  assert.deepEqual(replayDiamondLedger(game.ledger).state, game.ledger.state);
+});
+
 test("completed public projection preserves the current matchup without exposing roster details", () => {
-  const configuredProjection = bundleFor(
-    harness("full").ledger,
-  ).writes.publicCurrent.data;
+  const configuredProjection = bundleFor(harness("full").ledger).writes
+    .publicCurrent.data;
   assert.equal(configuredProjection.currentBatter, null);
   assert.equal(configuredProjection.currentPitcher, null);
 
