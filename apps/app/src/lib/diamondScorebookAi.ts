@@ -1004,6 +1004,7 @@ SECURITY AND AUTHORITY RULES:
 - If any player, runner advance, out, fielding credit, scoring judgment, or command choice is ambiguous, list concrete questions and lower confidence. Do not guess.
 - Existing runners must use their exact occupied source base and runner ID. They may stay put or move forward to a later base, reach home, or be recorded out; use to=stay rather than repeating the source base.
 - No two safe runners may finish on the same base. A batter reaching an occupied first base requires that exact pre-play runner to vacate first in the same proposal.
+- A trailing safe runner must not pass a preceding runner. Preserve the pre-play order of every runner who is not recorded out; multiple runners may reach home on the same play.
 - Batter destinations are result-pinned: single=first, double=second, triple=third, home_run=home, walk/intentional_walk/hit_by_pitch=first, and ground_out/fly_out/line_out/sacrifice_bunt/sacrifice_fly/double_play/triple_play=out. strikeout is out or an eligible first-base reach; reached_on_error, fielders_choice, and interference remain scorer-defined but cannot use to=stay.
 - For dropped-third-strike advancement, use the pre-play context: an ordinary strikeout may reach first, and a named dropped_third_strike may advance to first, second, third, or home, only when droppedThirdStrike.enabled=true and the pinned rule does not disallow advancement with first base occupied and fewer than two outs. Missing or disabled capability means the batter must be out. A batter can never use to=stay.
 - These prompt rules guide the proposal only. The local deterministic validator remains authoritative.
@@ -1493,17 +1494,22 @@ function validatePlateAppearanceAgainstContext(payload: Record<string, unknown>,
   validatePlateAppearanceBaseDestinations(payload.batterId as string, batterAdvance, runnerAdvances, context);
   validateDroppedThirdStrikeAdvance(result, batterAdvance.to as string, context);
 
-  if (result !== 'home_run' && result !== 'triple') return;
-  const occupiedBases = (['first', 'second', 'third'] as const).filter((base) => context.bases[base]);
-  if (runnerAdvances.length !== occupiedBases.length || occupiedBases.some((base) => !seenSources.has(base))) {
-    throw new DiamondAiBoundaryError('A home run or triple proposal must include every occupied base runner exactly once.');
+  if (result === 'home_run' || result === 'triple') {
+    const occupiedBases = (['first', 'second', 'third'] as const).filter((base) => context.bases[base]);
+    if (runnerAdvances.length !== occupiedBases.length || occupiedBases.some((base) => !seenSources.has(base))) {
+      throw new DiamondAiBoundaryError('A home run or triple proposal must include every occupied base runner exactly once.');
+    }
+    if (runnerAdvances.some((advance) => advance.to !== 'home' && advance.to !== 'out')) {
+      throw new DiamondAiBoundaryError('Every occupied runner on a home run or triple must reach home or be marked out.');
+    }
+    if (payload.outsOnPlay !== actualOutSources.length) {
+      throw new DiamondAiBoundaryError('Outs on play must exactly match the runners marked out.');
+    }
   }
-  if (runnerAdvances.some((advance) => advance.to !== 'home' && advance.to !== 'out')) {
-    throw new DiamondAiBoundaryError('Every occupied runner on a home run or triple must reach home or be marked out.');
-  }
-  if (payload.outsOnPlay !== actualOutSources.length) {
-    throw new DiamondAiBoundaryError('Outs on play must exactly match the runners marked out.');
-  }
+  validateRunnerOrderAgainstContext(context, [
+    { from: 'batter', to: batterAdvance.to as string },
+    ...runnerAdvances.map((advance) => ({ from: advance.from as keyof NormalizedCommandContext['bases'], to: advance.to as string }))
+  ]);
 }
 
 function validatePlateAppearanceBatterDestination(result: string, destination: string) {
@@ -1560,6 +1566,7 @@ function validateStandaloneRunnerAdvanceAgainstContext(payload: Record<string, u
   if ((to === 'first' || to === 'second' || to === 'third') && context.bases[to]) {
     throw new DiamondAiBoundaryError('Runner destination conflicts with the exact pre-play occupied-base context.');
   }
+  validateRunnerOrderAgainstContext(context, [{ from, to }]);
 }
 
 function validateExistingRunnerDestination(from: keyof NormalizedCommandContext['bases'], to: string) {
@@ -1567,6 +1574,38 @@ function validateExistingRunnerDestination(from: keyof NormalizedCommandContext[
   const orderedBases: Array<keyof NormalizedCommandContext['bases']> = ['first', 'second', 'third'];
   if (orderedBases.indexOf(to as keyof NormalizedCommandContext['bases']) <= orderedBases.indexOf(from)) {
     throw new DiamondAiBoundaryError('An existing runner must stay put or move forward to a later base, reach home, or be recorded out.');
+  }
+}
+
+function validateRunnerOrderAgainstContext(
+  context: NormalizedCommandContext,
+  moves: ReadonlyArray<Readonly<{ from: keyof NormalizedCommandContext['bases'] | 'batter'; to: string }>>
+) {
+  const orderedBases: Array<keyof NormalizedCommandContext['bases']> = ['first', 'second', 'third'];
+  const moveBySource = new Map(moves.map((move) => [move.from, move.to]));
+  const survivingRunners: Array<Readonly<{ originRank: number; destinationRank: number }>> = [];
+  const addSurvivor = (from: keyof NormalizedCommandContext['bases'] | 'batter', originRank: number) => {
+    const destination = moveBySource.get(from) ?? from;
+    if (destination === 'out') return;
+    const resolvedDestination = destination === 'stay' ? from : destination;
+    const destinationRank =
+      resolvedDestination === 'home'
+        ? orderedBases.length + 1
+        : orderedBases.indexOf(resolvedDestination as keyof NormalizedCommandContext['bases']) + 1;
+    survivingRunners.push({ originRank, destinationRank });
+  };
+
+  if (moveBySource.has('batter')) addSurvivor('batter', 0);
+  orderedBases.forEach((base, index) => {
+    if (context.bases[base]) addSurvivor(base, index + 1);
+  });
+  survivingRunners.sort((left, right) => left.originRank - right.originRank);
+  for (let trailingIndex = 0; trailingIndex < survivingRunners.length; trailingIndex += 1) {
+    for (let precedingIndex = trailingIndex + 1; precedingIndex < survivingRunners.length; precedingIndex += 1) {
+      if (survivingRunners[trailingIndex]!.destinationRank > survivingRunners[precedingIndex]!.destinationRank) {
+        throw new DiamondAiBoundaryError('A trailing runner must not pass a preceding runner.');
+      }
+    }
   }
 }
 

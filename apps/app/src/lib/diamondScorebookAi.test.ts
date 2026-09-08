@@ -176,6 +176,7 @@ describe('interpretDiamondTranscript', () => {
     expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/home_run and triple.*every occupied base runner/i);
     expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/double_play.*exactly 2.*triple_play.*exactly 3/i);
     expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/stay put or move forward/i);
+    expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/must not pass a preceding runner/i);
     expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/dropped.third.strike.*pre-play.*first base.*two outs/i);
   });
 
@@ -429,6 +430,22 @@ describe('interpretDiamondTranscript', () => {
       }
     },
     {
+      label: 'a single with simultaneous ordered advances',
+      context: commandContext({
+        bases: { first: 'runner-1', second: 'runner-2', third: null },
+        knownPlayerIds: ['batter-1', 'pitcher-1', 'runner-1', 'runner-2']
+      }),
+      payload: {
+        result: 'single',
+        batterAdvance: { to: 'first' },
+        runnerAdvances: [
+          { runnerId: 'runner-1', from: 'first', to: 'second', cause: 'batted_ball' },
+          { runnerId: 'runner-2', from: 'second', to: 'third', cause: 'batted_ball' }
+        ],
+        outsOnPlay: 0
+      }
+    },
+    {
       label: 'a counted run on a mixed double play with a possible tag third out',
       context: commandContext({
         bases: { first: 'runner-1', second: null, third: 'runner-3' },
@@ -500,6 +517,37 @@ describe('interpretDiamondTranscript', () => {
 
     expect(result).toMatchObject({ status: 'invalid-response', proposal: null, authoritative: false });
     expect(result.message).toMatch(/stay put or move forward/i);
+  });
+
+  it.each([
+    {
+      label: 'standalone advance past a runner held ahead',
+      context: commandContext({
+        bases: { first: 'runner-1', second: 'runner-2', third: null },
+        knownPlayerIds: ['batter-1', 'pitcher-1', 'runner-1', 'runner-2']
+      }),
+      response: commandResponse({
+        type: 'advance_runner',
+        payloadJson: JSON.stringify({ runnerId: 'runner-1', from: 'first', to: 'third', cause: 'wild_pitch' })
+      })
+    },
+    {
+      label: 'double that leaves the preceding runner behind the batter-runner',
+      context: commandContext(),
+      response: plateAppearanceResponse({
+        result: 'double',
+        batterAdvance: { to: 'second' },
+        runnerAdvances: [{ runnerId: 'runner-1', from: 'first', to: 'stay', cause: 'batted_ball' }],
+        outsOnPlay: 0
+      })
+    }
+  ])('rejects a high-confidence $label', async ({ context, response }) => {
+    const model = jsonModel(response);
+
+    const result = await interpretDiamondTranscript('Review the runner movement.', context, model.dependencies);
+
+    expect(result).toMatchObject({ status: 'invalid-response', proposal: null, authoritative: false });
+    expect(result.message).toMatch(/pass a preceding runner/i);
   });
 
   it('binds a standalone runner proposal to the exact occupied base identity', async () => {

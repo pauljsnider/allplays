@@ -832,6 +832,140 @@ test("compiled runner moves reject same-base and backward destinations across co
   );
 });
 
+test("compiled runner moves reject order reversals and preserve simultaneous advances and replay", () => {
+  const standalone = harness("quick", "baseball-nfhs");
+  setLineupsAndStart(standalone, 6);
+  const leadingRunnerId = placeRunnerOnBase(standalone, "second");
+  const trailingRunnerId = placeRunnerOnBase(standalone, "first");
+  const standaloneRevision = standalone.ledger.state.revision;
+  const standaloneAttempt = standalone.attempt("advance_runner", {
+    runnerId: trailingRunnerId,
+    from: "first",
+    to: "third",
+    cause: "other",
+  });
+  assert.equal(standaloneAttempt.result.outcome, "rejected");
+  assert.equal(
+    standaloneAttempt.result.rejection?.code,
+    "runner-order-violation",
+  );
+  assert.equal(standaloneAttempt.ledger.state.revision, standaloneRevision);
+  assert.equal(standalone.ledger.state.bases.first?.runnerId, trailingRunnerId);
+  assert.equal(standalone.ledger.state.bases.second?.runnerId, leadingRunnerId);
+  assert.equal(standalone.ledger.state.bases.third, null);
+
+  const plateAppearance = harness("quick", "baseball-nfhs");
+  setLineupsAndStart(plateAppearance, 6);
+  const heldRunnerId = placeRunnerOnBase(plateAppearance, "first");
+  const matchup = currentMatchup(plateAppearance);
+  const plateAppearanceRevision = plateAppearance.ledger.state.revision;
+  const plateAppearanceAttempt = plateAppearance.attempt(
+    "record_plate_appearance",
+    {
+      ...matchup,
+      result: "double",
+      batterAdvance: { to: "second" },
+      runnerAdvances: [
+        {
+          runnerId: heldRunnerId,
+          from: "first",
+          to: "stay",
+          cause: "batted_ball",
+        },
+      ],
+      outsOnPlay: 0,
+    },
+  );
+  assert.equal(plateAppearanceAttempt.result.outcome, "rejected");
+  assert.equal(
+    plateAppearanceAttempt.result.rejection?.code,
+    "runner-order-violation",
+  );
+  assert.equal(
+    plateAppearanceAttempt.ledger.state.revision,
+    plateAppearanceRevision,
+  );
+
+  const simultaneous = harness("quick", "baseball-nfhs");
+  setLineupsAndStart(simultaneous, 6);
+  const runnerFromSecond = placeRunnerOnBase(simultaneous, "second");
+  const runnerFromFirst = placeRunnerOnBase(simultaneous, "first");
+  const simultaneousMatchup = currentMatchup(simultaneous);
+  simultaneous.submit("record_plate_appearance", {
+    ...simultaneousMatchup,
+    result: "single",
+    batterAdvance: { to: "first" },
+    runnerAdvances: [
+      {
+        runnerId: runnerFromSecond,
+        from: "second",
+        to: "third",
+        cause: "batted_ball",
+      },
+      {
+        runnerId: runnerFromFirst,
+        from: "first",
+        to: "second",
+        cause: "batted_ball",
+      },
+    ],
+    outsOnPlay: 0,
+  });
+  assert.equal(
+    simultaneous.ledger.state.bases.first?.runnerId,
+    simultaneousMatchup.batterId,
+  );
+  assert.equal(
+    simultaneous.ledger.state.bases.second?.runnerId,
+    runnerFromFirst,
+  );
+  assert.equal(
+    simultaneous.ledger.state.bases.third?.runnerId,
+    runnerFromSecond,
+  );
+  assert.deepEqual(
+    replayDiamondLedger(simultaneous.ledger).state,
+    simultaneous.ledger.state,
+  );
+
+  const correction = harness("quick", "baseball-nfhs");
+  setLineupsAndStart(correction, 6);
+  placeRunnerOnBase(correction, "second");
+  const correctionRunnerId = placeRunnerOnBase(correction, "first");
+  const stay = correction.submit("advance_runner", {
+    runnerId: correctionRunnerId,
+    from: "first",
+    to: "stay",
+    cause: "other",
+  });
+  const correctionRevision = correction.ledger.state.revision;
+  const correctionAttempt = correction.attempt("supersede_event", {
+    targetEventId: stay.eventId,
+    reason:
+      "Do not let the trailing runner pass the historical preceding runner.",
+    replacement: {
+      type: "advance_runner",
+      payload: {
+        runnerId: correctionRunnerId,
+        from: "first",
+        to: "third",
+        cause: "other",
+      },
+    },
+  });
+  assert.equal(correctionAttempt.result.outcome, "rejected");
+  assert.equal(
+    correctionAttempt.result.rejection?.code,
+    "runner-order-violation",
+  );
+  assert.equal(correctionAttempt.ledger.state.revision, correctionRevision);
+  assert.equal(verifyDiamondLedger(correction.ledger), true);
+  assert.deepEqual(
+    replayDiamondLedger(correction.ledger).state,
+    correction.ledger.state,
+  );
+});
+
 test("compiled ordinary strikeout-to-first uses dropped-third eligibility and keeps old payloads replayable", () => {
   const emptyFirst = harness("quick", "baseball-nfhs");
   setLineupsAndStart(emptyFirst, 6);

@@ -817,6 +817,33 @@ function resolveBatterOutKind(result, destination, supplied) {
     }
     throw new contracts_1.DiamondDomainError('missing-out-kind', 'An out batter destination requires an out kind.');
 }
+function validateFinalRunnerOrder(state, moves) {
+    const moveBySource = new Map(moves.map((move) => [move.from, move]));
+    const survivingRunners = [];
+    const addSurvivor = (from, originRank) => {
+        const move = moveBySource.get(from);
+        const destination = move?.to ?? from;
+        if (destination === 'out')
+            return;
+        const resolvedDestination = destination === 'stay' ? from : destination;
+        const destinationRank = resolvedDestination === 'home' ? BASES.length + 1 : BASES.indexOf(resolvedDestination) + 1;
+        survivingRunners.push({ originRank, destinationRank });
+    };
+    if (moveBySource.has('batter'))
+        addSurvivor('batter', 0);
+    BASES.forEach((base, index) => {
+        if (state.bases[base])
+            addSurvivor(base, index + 1);
+    });
+    survivingRunners.sort((left, right) => left.originRank - right.originRank);
+    for (let trailingIndex = 0; trailingIndex < survivingRunners.length; trailingIndex += 1) {
+        for (let precedingIndex = trailingIndex + 1; precedingIndex < survivingRunners.length; precedingIndex += 1) {
+            if (survivingRunners[trailingIndex].destinationRank > survivingRunners[precedingIndex].destinationRank) {
+                throw new contracts_1.DiamondDomainError('runner-order-violation', 'A trailing runner cannot pass a preceding runner; mark the appropriate runner out.');
+            }
+        }
+    }
+}
 function validateCompleteExtraBaseHitRunnerResolution(state, result, runnerMoves) {
     if (result !== 'triple' && result !== 'home_run')
         return;
@@ -921,6 +948,7 @@ function applyMoves(state, side, moves, outsOnPlay, reachedOnEventId) {
             reachedOnEventId
         };
     });
+    validateFinalRunnerOrder(state, moves);
     const inningKey = getInningKey(state);
     return {
         ...state,

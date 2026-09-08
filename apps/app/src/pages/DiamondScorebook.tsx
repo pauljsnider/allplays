@@ -1313,6 +1313,16 @@ function validateRunnerReview(pending: PendingPlay, snapshot: DiamondScorebookSn
         if (!pending.correction && diamondBases.includes(to as DiamondBase) && snapshot.bases[to as DiamondBase]) {
           return 'The proposed runner destination is already occupied in the current base state.';
         }
+        if (
+          !pending.correction &&
+          hasRunnerOrderViolation(
+            diamondBases.flatMap((base) =>
+              snapshot.bases[base] ? [{ from: base, to: base === from ? (to as RunnerDestination) : ('stay' as const) }] : []
+            )
+          )
+        ) {
+          return 'A trailing runner cannot pass a preceding runner. Review every runner destination.';
+        }
       }
       return '';
     } catch (error) {
@@ -1392,6 +1402,9 @@ function validateRunnerReview(pending: PendingPlay, snapshot: DiamondScorebookSn
   if (new Set(occupiedDestinations).size !== occupiedDestinations.length) {
     return 'Two runners cannot finish on the same base. Review every runner destination.';
   }
+  if (hasRunnerOrderViolation(pending.runnerMoves)) {
+    return 'A trailing runner cannot pass a preceding runner. Review every runner destination.';
+  }
   const computedOuts = pending.runnerMoves.filter((move) => move.to === 'out').length;
   const requiredOuts = pending.result === 'double_play' ? 2 : pending.result === 'triple_play' ? 3 : null;
   if (requiredOuts !== null) {
@@ -1431,6 +1444,22 @@ function canChooseDestination(from: RunnerMoveDraft['from'], destination: Runner
   if (from === 'first') return destination === 'second' || destination === 'third';
   if (from === 'second') return destination === 'third';
   return false;
+}
+
+function hasRunnerOrderViolation(moves: ReadonlyArray<Pick<RunnerMoveDraft, 'from' | 'to'>>) {
+  const survivingRunners = moves
+    .filter((move) => move.to !== 'out')
+    .map((move) => {
+      const originRank = move.from === 'batter' ? 0 : diamondBases.indexOf(move.from) + 1;
+      const resolvedDestination = move.to === 'stay' ? move.from : move.to;
+      const destinationRank =
+        resolvedDestination === 'home' ? diamondBases.length + 1 : diamondBases.indexOf(resolvedDestination as DiamondBase) + 1;
+      return { originRank, destinationRank };
+    })
+    .sort((left, right) => left.originRank - right.originRank);
+  return survivingRunners.some((trailingRunner, trailingIndex) =>
+    survivingRunners.slice(trailingIndex + 1).some((precedingRunner) => trailingRunner.destinationRank > precedingRunner.destinationRank)
+  );
 }
 
 function canChooseBatterDestination(result: string, destination: RunnerDestination) {

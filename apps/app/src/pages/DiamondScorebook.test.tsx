@@ -1365,6 +1365,19 @@ describe('DiamondScorebook', () => {
     expect(fixture.createCommand).not.toHaveBeenCalled();
   });
 
+  it('blocks a double that would pass a preceding runner left at first', () => {
+    const fixture = createClient();
+    renderScorebook(buildSnapshot(), fixture);
+    fireEvent.click(screen.getByRole('button', { name: 'Double' }));
+    const dialog = screen.getByRole('dialog', { name: 'Review Double' });
+
+    fireEvent.change(within(dialog).getByLabelText(/First .* destination/), { target: { value: 'stay' } });
+
+    expect(within(dialog).getByRole('alert')).toHaveTextContent(/pass a preceding runner/i);
+    expect(within(dialog).getByRole('button', { name: 'Confirm play' })).toBeDisabled();
+    expect(fixture.createCommand).not.toHaveBeenCalled();
+  });
+
   it.each([
     {
       label: 'a backward plate-appearance runner move',
@@ -1451,6 +1464,34 @@ describe('DiamondScorebook', () => {
       },
       dialogName: 'Review advance runner',
       message: /destination is already occupied/i
+    },
+    {
+      label: 'a standalone advance past a runner held ahead',
+      snapshot: buildSnapshot({
+        bases: {
+          first: buildSnapshot().bases.first,
+          second: {
+            playerId: 'runner-2',
+            name: 'Riley Park',
+            number: '6',
+            responsiblePitcherId: 'pitcher-1',
+            courtesyForPlayerId: null,
+            reachedOnEventId: 'event-6'
+          },
+          third: null
+        }
+      }),
+      proposal: {
+        schemaVersion: 1,
+        type: 'advance_runner',
+        payload: { runnerId: 'runner-1', from: 'first', to: 'third', cause: 'wild_pitch' },
+        confidence: 0.9,
+        unresolvedFields: [],
+        requiresConfirmation: true,
+        mutatesState: false
+      },
+      dialogName: 'Review advance runner',
+      message: /pass a preceding runner/i
     },
     {
       label: 'an explicit plate-appearance runner source that does not match the current base',

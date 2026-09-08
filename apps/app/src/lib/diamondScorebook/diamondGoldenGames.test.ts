@@ -886,6 +886,97 @@ describe('Baseball golden games', () => {
     expect(replayDiamondLedger(correction.ledger).state).toEqual(correction.ledger.state);
   });
 
+  it('rejects runner-order reversals while preserving simultaneous advances, stays, and replay', () => {
+    const standalone = createHarness('baseball-nfhs', 'quick');
+    configureGame(standalone);
+    const leadingRunnerId = placeRunnerOnBase(standalone, 'second');
+    const trailingRunnerId = placeRunnerOnBase(standalone, 'first');
+    const standaloneRevision = standalone.ledger.state.revision;
+    expectRejected(
+      standalone.submit('advance_runner', { runnerId: trailingRunnerId, from: 'first', to: 'third', cause: 'other' }, { accept: false }),
+      'runner-order-violation',
+      standaloneRevision
+    );
+    expect(standalone.ledger.state.bases).toMatchObject({
+      first: { runnerId: trailingRunnerId },
+      second: { runnerId: leadingRunnerId },
+      third: null
+    });
+
+    const plateAppearance = createHarness('baseball-nfhs', 'quick');
+    configureGame(plateAppearance);
+    const heldRunnerId = placeRunnerOnBase(plateAppearance, 'first');
+    const matchup = currentMatchup(plateAppearance);
+    const plateAppearanceRevision = plateAppearance.ledger.state.revision;
+    expectRejected(
+      plateAppearance.submit(
+        'record_plate_appearance',
+        {
+          ...matchup,
+          result: 'double',
+          batterAdvance: { to: 'second' },
+          runnerAdvances: [{ runnerId: heldRunnerId, from: 'first', to: 'stay', cause: 'batted_ball' }],
+          outsOnPlay: 0
+        },
+        { accept: false }
+      ),
+      'runner-order-violation',
+      plateAppearanceRevision
+    );
+
+    const simultaneous = createHarness('baseball-nfhs', 'quick');
+    configureGame(simultaneous);
+    const runnerFromSecond = placeRunnerOnBase(simultaneous, 'second');
+    const runnerFromFirst = placeRunnerOnBase(simultaneous, 'first');
+    const simultaneousMatchup = currentMatchup(simultaneous);
+    simultaneous.submit('record_plate_appearance', {
+      ...simultaneousMatchup,
+      result: 'single',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [
+        { runnerId: runnerFromSecond, from: 'second', to: 'third', cause: 'batted_ball' },
+        { runnerId: runnerFromFirst, from: 'first', to: 'second', cause: 'batted_ball' }
+      ],
+      outsOnPlay: 0
+    });
+    expect(simultaneous.ledger.state.bases).toMatchObject({
+      first: { runnerId: simultaneousMatchup.batterId },
+      second: { runnerId: runnerFromFirst },
+      third: { runnerId: runnerFromSecond }
+    });
+    expect(replayDiamondLedger(simultaneous.ledger).state).toEqual(simultaneous.ledger.state);
+
+    const correction = createHarness('baseball-nfhs', 'quick');
+    configureGame(correction);
+    placeRunnerOnBase(correction, 'second');
+    const correctionRunnerId = placeRunnerOnBase(correction, 'first');
+    const stay = correction.submit('advance_runner', {
+      runnerId: correctionRunnerId,
+      from: 'first',
+      to: 'stay',
+      cause: 'other'
+    });
+    const correctionRevision = correction.ledger.state.revision;
+    expectRejected(
+      correction.submit(
+        'supersede_event',
+        {
+          targetEventId: stay.event!.eventId,
+          reason: 'Do not let the trailing runner pass the historical preceding runner.',
+          replacement: {
+            type: 'advance_runner',
+            payload: { runnerId: correctionRunnerId, from: 'first', to: 'third', cause: 'other' }
+          }
+        },
+        { accept: false }
+      ),
+      'runner-order-violation',
+      correctionRevision
+    );
+    expect(verifyDiamondLedger(correction.ledger)).toBe(true);
+    expect(replayDiamondLedger(correction.ledger).state).toEqual(correction.ledger.state);
+  });
+
   it('requires a third-out run decision, cancels a force-out run, and counts an earlier tag-play run', () => {
     const seed = createHarness('baseball-nfhs', 'quick');
     configureGame(seed);

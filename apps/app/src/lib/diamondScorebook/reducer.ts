@@ -965,6 +965,35 @@ type Move = Readonly<{
   outKind?: DiamondCommandPayloadMap['advance_runner']['outKind'];
 }>;
 
+function validateFinalRunnerOrder(state: DiamondGameState, moves: readonly Move[]) {
+  const moveBySource = new Map(moves.map((move) => [move.from, move]));
+  const survivingRunners: Array<Readonly<{ originRank: number; destinationRank: number }>> = [];
+  const addSurvivor = (from: DiamondBase | 'batter', originRank: number) => {
+    const move = moveBySource.get(from);
+    const destination = move?.to ?? from;
+    if (destination === 'out') return;
+    const resolvedDestination = destination === 'stay' ? from : destination;
+    const destinationRank = resolvedDestination === 'home' ? BASES.length + 1 : BASES.indexOf(resolvedDestination as DiamondBase) + 1;
+    survivingRunners.push({ originRank, destinationRank });
+  };
+
+  if (moveBySource.has('batter')) addSurvivor('batter', 0);
+  BASES.forEach((base, index) => {
+    if (state.bases[base]) addSurvivor(base, index + 1);
+  });
+  survivingRunners.sort((left, right) => left.originRank - right.originRank);
+  for (let trailingIndex = 0; trailingIndex < survivingRunners.length; trailingIndex += 1) {
+    for (let precedingIndex = trailingIndex + 1; precedingIndex < survivingRunners.length; precedingIndex += 1) {
+      if (survivingRunners[trailingIndex]!.destinationRank > survivingRunners[precedingIndex]!.destinationRank) {
+        throw new DiamondDomainError(
+          'runner-order-violation',
+          'A trailing runner cannot pass a preceding runner; mark the appropriate runner out.'
+        );
+      }
+    }
+  }
+}
+
 function validateCompleteExtraBaseHitRunnerResolution(
   state: DiamondGameState,
   result: DiamondCommandPayloadMap['record_plate_appearance']['result'],
@@ -1092,6 +1121,7 @@ function applyMoves(
       reachedOnEventId
     };
   });
+  validateFinalRunnerOrder(state, moves);
 
   const inningKey = getInningKey(state);
   return {
