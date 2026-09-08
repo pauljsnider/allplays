@@ -1,4 +1,115 @@
 import { expect, test } from "@playwright/test";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const {
+  DIAMOND_SCHEMA_VERSION,
+  createDiamondLedger,
+  executeDiamondCommand,
+} = require("../../functions/diamond-engine");
+const {
+  buildDiamondProjectionBundle,
+} = require("../../functions/diamond-scorebook-projections.cjs");
+
+function buildCompletedViewerProjection() {
+  let ledger = createDiamondLedger({
+    teamId: "team-1",
+    gameId: "game-1",
+    rulesProfileId: "baseball-youth",
+    rulesProfileVersion: 1,
+    captureMode: "full",
+  });
+  const commands = [
+    ["activate", { initialScorerUid: "scorekeeper-1", captureMode: "full" }],
+    [
+      "set_lineup",
+      {
+        side: "home",
+        entries: [
+          {
+            slot: 1,
+            playerId: "home-pitcher",
+            displayName: "Projected Pitcher",
+            jerseyNumber: "21",
+          },
+        ],
+      },
+    ],
+    [
+      "set_lineup",
+      {
+        side: "away",
+        entries: [
+          {
+            slot: 1,
+            playerId: "away-batter",
+            displayName: "Projected Batter",
+            jerseyNumber: "11",
+          },
+        ],
+      },
+    ],
+    [
+      "set_defensive_alignment",
+      {
+        side: "home",
+        assignments: [{ playerId: "home-pitcher", position: "P" }],
+      },
+    ],
+    [
+      "set_defensive_alignment",
+      {
+        side: "away",
+        assignments: [{ playerId: "away-batter", position: "P" }],
+      },
+    ],
+    ["start", {}],
+  ];
+  commands.forEach(([type, payload], index) => {
+    const sequence = index + 1;
+    const suffix = String(sequence).padStart(12, "0");
+    const result = executeDiamondCommand(
+      ledger,
+      {
+        schemaVersion: DIAMOND_SCHEMA_VERSION,
+        commandId: `00000000-0000-4000-8000-${suffix}`,
+        teamId: ledger.teamId,
+        gameId: ledger.gameId,
+        expectedRevision: ledger.state.revision,
+        rulesProfileId: ledger.rulesProfileId,
+        rulesProfileVersion: ledger.rulesProfileVersion,
+        type,
+        payload,
+      },
+      {
+        actorUid: "scorekeeper-1",
+        eventId: `viewer-event-${String(sequence)}`,
+        serverTimestampMs: 1_700_000_000_000 + sequence,
+      },
+    );
+    expect(result.result.outcome).toBe("accepted");
+    ledger = result.ledger;
+  });
+
+  const projection = buildDiamondProjectionBundle({
+    ledger,
+    instanceId: "00000000-0000-4000-8000-000000000001",
+    orientationSnapshot: {
+      schemaVersion: 1,
+      managedSide: "home",
+      opponentSide: "away",
+      managedTeamId: "team-1",
+      opponentTeamId: "team-away",
+      homeTeamId: "team-1",
+      awayTeamId: "team-away",
+      teamName: "Home Hawks",
+      opponentName: "Away Aces",
+      homeName: "Home Hawks",
+      awayName: "Away Aces",
+    },
+  }).writes.publicCurrent.data;
+  return { ...projection, projectionStatus: "complete" };
+}
 
 const FIREBASE_STUB = `
 export const auth = {
@@ -84,6 +195,10 @@ export function httpsCallable(_functions, name) {
         const instanceId = window.__DIAMOND_INSTANCE_ID__ === undefined
             ? '00000000-0000-4000-8000-000000000001'
             : window.__DIAMOND_INSTANCE_ID__;
+        const completedProjection =
+            window.__DIAMOND_COMPLETED_PROJECTION__ && window.__DIAMOND_PUBLIC_READS__ > 1
+                ? window.__DIAMOND_COMPLETED_PROJECTION__
+                : null;
         const game = {
             teamName: 'Home Hawks',
             opponent: 'Away Aces',
@@ -112,8 +227,12 @@ export function httpsCallable(_functions, name) {
                 strikes: window.__DIAMOND_STRIKES__ ?? 1,
                 outs: window.__DIAMOND_OUTS__ ?? 1,
                 bases: window.__DIAMOND_BASES__ || { first: true, second: false, third: true },
-                batterName: 'Jordan Lee',
-                pitcherName: 'Riley Chen',
+                batterName: completedProjection
+                    ? (completedProjection.currentBatter?.name || '')
+                    : 'Jordan Lee',
+                pitcherName: completedProjection
+                    ? (completedProjection.currentPitcher?.name || '')
+                    : 'Riley Chen',
                 status: window.__DIAMOND_STATUS__ || (terminal ? 'correction' : 'active'),
                 completeness: 'partial'
             }
@@ -211,6 +330,40 @@ async function stubDiamondViewerModules(page) {
       }),
   );
 }
+
+test("completed projector state preserves the current matchup after replacing bootstrap", async ({
+  page,
+  baseURL,
+}) => {
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  const completedProjection = buildCompletedViewerProjection();
+  await page.addInitScript((projection) => {
+    window.__DIAMOND_COMPLETED_PROJECTION__ = projection;
+  }, completedProjection);
+  await stubDiamondViewerModules(page);
+
+  await page.goto(
+    `${baseURL}/live-game-diamond-v2.html?teamId=team-1&gameId=game-1`,
+    { waitUntil: "domcontentloaded" },
+  );
+
+  expect(pageErrors).toEqual([]);
+  await expect(page.locator("[data-diamond-batter]")).toHaveText("Jordan Lee");
+  await expect(page.locator("[data-diamond-pitcher]")).toHaveText("Riley Chen");
+  await expect
+    .poll(() => page.evaluate(() => window.__DIAMOND_PUBLIC_READS__ || 0), {
+      timeout: 8_000,
+    })
+    .toBeGreaterThanOrEqual(2);
+  await expect(page.locator("[data-diamond-batter]")).toHaveText(
+    "Projected Batter",
+  );
+  await expect(page.locator("[data-diamond-pitcher]")).toHaveText(
+    "Projected Pitcher",
+  );
+  expect(pageErrors).toEqual([]);
+});
 
 test("Diamond viewer renders revision-pinned replay and shares classic chat and reactions", async ({
   page,

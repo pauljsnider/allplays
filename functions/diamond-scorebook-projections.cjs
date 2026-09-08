@@ -520,6 +520,35 @@ function playerIdentity(playerId, directory) {
   };
 }
 
+function viewerPlayerIdentity(playerId, directory) {
+  if (!playerId) return null;
+  const identity = playerIdentity(playerId, directory);
+  return {
+    playerId: identity.playerId,
+    name: identity.displayName || identity.playerId,
+    ...(identity.number ? { number: identity.number } : {}),
+  };
+}
+
+function publicCurrentMatchup(state, directory) {
+  const battingSide = state.inning.half === "bottom" ? "home" : "away";
+  const fieldingSide = battingSide === "home" ? "away" : "home";
+  const battingOrder = state.lineups[battingSide].battingOrder;
+  const nextSlot = Number.isSafeInteger(state.nextBatterSlot[battingSide])
+    ? state.nextBatterSlot[battingSide]
+    : 0;
+  const batter = battingOrder.length
+    ? battingOrder[nextSlot % battingOrder.length]
+    : null;
+  const pitcherId = state.lineups[fieldingSide].defense.P || null;
+  return {
+    currentBatter: batter
+      ? viewerPlayerIdentity(batter.activePlayerId, directory)
+      : null,
+    currentPitcher: viewerPlayerIdentity(pitcherId, directory),
+  };
+}
+
 function playerLabel(playerId, directory) {
   return (
     directory[playerId]?.playerName || `Player ${compactText(playerId, 32)}`
@@ -1526,6 +1555,7 @@ function buildPublicCurrentProjection({
 }) {
   const state = ledger.state;
   const status = lifecycleStatus(state.lifecycle);
+  const currentMatchup = publicCurrentMatchup(state, directory);
   const incompleteFamilies = Object.entries(state.coverage)
     .filter(
       ([family, coverage]) => family !== "sensors" && coverage !== "complete",
@@ -1576,6 +1606,8 @@ function buildPublicCurrentProjection({
     outs: state.inning.outs,
     bases: publicBases(state, directory),
     lineup: publicLineup(state, directory),
+    currentBatter: currentMatchup.currentBatter,
+    currentPitcher: currentMatchup.currentPitcher,
     lastPlay: recentPlays.at(-1) || null,
     recentPlays,
     events: replayManifest,

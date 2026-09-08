@@ -306,6 +306,48 @@ function playerWrite(bundle, playerId) {
   )?.data;
 }
 
+test("completed public projection preserves the current matchup without exposing roster details", () => {
+  const configuredProjection = bundleFor(
+    harness("full").ledger,
+  ).writes.publicCurrent.data;
+  assert.equal(configuredProjection.currentBatter, null);
+  assert.equal(configuredProjection.currentPitcher, null);
+
+  const game = harness("full");
+  setLineupsAndStart(game);
+  addHomeRun(game);
+  const privateRosterDetail = "private medical detail";
+  const bundle = bundleFor(game.ledger, {
+    playerDirectory: {
+      ...DIRECTORY,
+      "away-1": {
+        ...DIRECTORY["away-1"],
+        medicalInfo: privateRosterDetail,
+      },
+      "home-1": {
+        ...DIRECTORY["home-1"],
+        contactEmail: "private@example.test",
+      },
+    },
+  });
+  const projection = bundle.writes.publicCurrent.data;
+
+  assert.deepEqual(projection.currentBatter, {
+    playerId: "away-2",
+    name: "Bailey Away",
+    number: "12",
+  });
+  assert.deepEqual(projection.currentPitcher, {
+    playerId: "home-1",
+    name: "Casey Home",
+    number: "21",
+  });
+  assert.doesNotMatch(
+    JSON.stringify(projection),
+    /medicalInfo|contactEmail|private medical detail|private@example\.test/,
+  );
+});
+
 test("full capture creates compatible additive stat documents with source play evidence", () => {
   const { game, homeRun } = buildFullGameWithPrivateData();
   const bundle = bundleFor(game.ledger);
