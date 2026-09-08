@@ -1076,6 +1076,7 @@ function buildLegacyViewerGame({
       : startsAtValue instanceof Date
         ? startsAtValue.toISOString()
         : compactText(startsAtValue, 80);
+  const location = game?.location || game?.venue || game?.address;
   return {
     // The legacy viewer labels these two slots home then away, despite its old
     // property names. Keep them aligned with canonical score.home/score.away.
@@ -1089,7 +1090,10 @@ function buildLegacyViewerGame({
       "Opponent",
     startsAt,
     interactionWindowOpen: interactionWindowOpen === true,
-    location: compactText(game?.location || game?.venue || game?.address, 160),
+    location: compactText(
+      publicGameApi.sanitizePublicLocation(location),
+      160,
+    ),
     trackingEngine: DIAMOND_ENGINE,
     media: buildPublicDiamondMedia({
       team,
@@ -1170,6 +1174,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     typeof resolveDelegatedAccess !== "function" ||
     typeof isPublicGame !== "function" ||
     typeof publicGameApi.publicHttpUrl !== "function" ||
+    typeof publicGameApi.sanitizePublicLocation !== "function" ||
     typeof publicGameApi.isRecordedReplayPaywallEnabled !== "function" ||
     typeof publicGameApi.getHistoricalReplayPublicUrl !== "function"
   ) {

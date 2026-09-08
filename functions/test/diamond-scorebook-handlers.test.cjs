@@ -3661,6 +3661,8 @@ describe("Diamond scorebook handler factory", () => {
   });
 
   it("serves the same sanitized viewer envelope to every current private-game viewer role", async () => {
+    const privateLocation =
+      "Field 4\nArrival Time: 5:00 PM\nAssignments: Snacks - Parent Name";
     const viewerAccessByUid = {
       "parent-1": { parent: true },
       "scorekeeper-2": { scorekeeping: true },
@@ -3704,6 +3706,7 @@ describe("Diamond scorebook handler factory", () => {
       ...harness.firestore.read(resourcePaths.game),
       visibility: "private",
       shareable: false,
+      location: privateLocation,
       privateCoachNotes: "game-secret",
       officiatingAuthorizedUserIds: ["official-uid-1"],
       officiatingAuthorizedEmails: ["official-email-1@example.test"],
@@ -3737,6 +3740,14 @@ describe("Diamond scorebook handler factory", () => {
       assert.equal(
         result.instanceId,
         harness.firestore.read(resourcePaths.game).diamondScorebookInstanceId,
+      );
+      assert.equal(
+        result.game.location,
+        "Field 4",
+      );
+      assert.doesNotMatch(
+        JSON.stringify(result),
+        /Arrival Time|Assignments|Parent Name/,
       );
       assert.doesNotMatch(
         JSON.stringify(result),
@@ -4026,6 +4037,30 @@ describe("Diamond scorebook handler factory", () => {
     }
   });
 
+  it("sanitizes sensitive location suffixes for the anonymous public viewer", async () => {
+    const sensitiveLocation =
+      "Field 4\nArrival Time: 5:00 PM\nAssignments: Snacks - Parent Name";
+    const harness = createHarness({
+      documents: {
+        "teams/team-1/games/game-1": {
+          ...baseDocuments()["teams/team-1/games/game-1"],
+          location: sensitiveLocation,
+        },
+      },
+    });
+    await activate(harness);
+
+    const publicResult = await harness.handlers.getPublicDiamondGame({
+      teamId: "team-1",
+      gameId: "game-1",
+    });
+    assert.equal(publicResult.game.location, "Field 4");
+    assert.doesNotMatch(
+      JSON.stringify(publicResult),
+      /Arrival Time|Assignments|Parent Name/,
+    );
+  });
+
   it("builds the public envelope only from the final coherent metadata snapshot", async () => {
     const harness = createHarness();
     await activate(harness);
@@ -4040,7 +4075,8 @@ describe("Diamond scorebook handler factory", () => {
       if (publicReadTransactions === 1) {
         harness.firestore.seed(resourcePaths.game, {
           ...harness.firestore.read(resourcePaths.game),
-          location: "Fresh Field",
+          location:
+            "Fresh Field\nArrival Time: 6:15 PM\nAssignments: Drinks - Parent Name",
         });
       }
       return result;
@@ -4053,6 +4089,10 @@ describe("Diamond scorebook handler factory", () => {
 
     assert.equal(publicReadTransactions, 2);
     assert.equal(result.game.location, "Fresh Field");
+    assert.doesNotMatch(
+      JSON.stringify(result),
+      /Arrival Time|Assignments|Parent Name/,
+    );
   });
 
   it("fails the public viewer closed when the game and projection generations differ", async () => {
