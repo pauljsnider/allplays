@@ -596,15 +596,21 @@ function latestRunnerJudgmentBoolean(
  * Coverage is evidence-derived from the effective ledger, so a later attachment
  * can resolve one omitted judgment and voiding that attachment revokes it again.
  */
-export function deriveDiamondCoverageFromEvents(
+export type DiamondCoverageEventState = Readonly<{
+  event: DiamondEffectiveEvent;
+  before: DiamondGameState;
+  after: DiamondGameState;
+}>;
+
+export function deriveDiamondCoverageFromEventStates(
   initialState: DiamondGameState,
-  events: readonly DiamondEffectiveEvent[]
+  eventStates: readonly DiamondCoverageEventState[]
 ): DiamondCoverageMap {
   let coverage: DiamondCoverageMap = { ...initialState.coverage };
   const fieldingByPlay = new Map<string, DiamondFieldingChain[]>();
   const judgmentsByPlay = new Map<string, DiamondCommandPayloadMap['record_scoring_judgment'][]>();
 
-  events.forEach((event) => {
+  eventStates.forEach(({ event }) => {
     if (event.type === 'record_fielding') {
       const payload = event.payload as DiamondCommandPayloadMap['record_fielding'];
       fieldingByPlay.set(payload.playEventId, [...(fieldingByPlay.get(payload.playEventId) ?? []), payload.fielding]);
@@ -615,9 +621,7 @@ export function deriveDiamondCoverageFromEvents(
     }
   });
 
-  let state = cloneState(initialState);
-  events.forEach((event) => {
-    const before = state;
+  eventStates.forEach(({ event, before }) => {
     if (event.type === 'record_pitch' && isDiamondDeliveredPitch((event.payload as DiamondCommandPayloadMap['record_pitch']).result)) {
       if (coverage.pitches === 'not_collected') coverage = { ...coverage, pitches: 'partial' };
     }
@@ -678,10 +682,22 @@ export function deriveDiamondCoverageFromEvents(
         if (!chains.some((chain) => Boolean(chain.putoutBy))) coverage = { ...coverage, fielding: 'partial' };
       }
     }
-    state = reduceDiamondEvent(state, { type: event.type, payload: event.payload, eventId: event.eventId } as DiamondReducerAction);
-    state = setDiamondStateRevision(state, event.revision);
   });
   return deepFreeze(coverage);
+}
+
+export function deriveDiamondCoverageFromEvents(
+  initialState: DiamondGameState,
+  events: readonly DiamondEffectiveEvent[]
+): DiamondCoverageMap {
+  let state = cloneState(initialState);
+  const eventStates = events.map((event): DiamondCoverageEventState => {
+    const before = state;
+    state = reduceDiamondEvent(state, { type: event.type, payload: event.payload, eventId: event.eventId } as DiamondReducerAction);
+    state = setDiamondStateRevision(state, event.revision);
+    return { event, before, after: state };
+  });
+  return deriveDiamondCoverageFromEventStates(initialState, eventStates);
 }
 
 function expectedBatter(state: DiamondGameState, side = getBattingSide(state)): DiamondLineupSlot {

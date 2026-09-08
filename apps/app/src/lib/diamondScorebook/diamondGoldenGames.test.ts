@@ -1703,7 +1703,7 @@ describe('Scoring decisions and correction reconciliation', () => {
     });
 
     const stats = projectDiamondStats(game.ledger);
-    expect(stats.players['home-1'].raw.pitching).toMatchObject({ R: 1, ER: 1, L: 1 });
+    expect(stats.players['home-1'].raw.pitching).toMatchObject({ R: 1, ER: 1, L: 0 });
     expect(stats.players['home-reliever'].raw.pitching).toMatchObject({
       R: 0,
       ER: 0,
@@ -1714,6 +1714,401 @@ describe('Scoring decisions and correction reconciliation', () => {
     expect(stats.players['home-3'].raw.fielding.E).toBe(1);
     expect(stats.teams.home.E).toBe(1);
     expect(stats.coverage).toEqual(COMPLETE_COVERAGE);
+  });
+
+  it('orders scoring judgments across original and corrected play identities for every scoring path', () => {
+    const plateAppearance = createHarness('baseball-nfhs', 'quick');
+    configureGame(plateAppearance);
+    plateAppearance.submit('record_plate_appearance', {
+      batterId: 'away-1',
+      pitcherId: 'home-1',
+      result: 'single',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    plateAppearance.submit('substitute', {
+      side: 'home',
+      battingSlot: 1,
+      outgoingPlayerId: 'home-1',
+      incomingPlayerId: 'home-reliever',
+      defensivePosition: 'P'
+    });
+    const scoringPayload = {
+      batterId: 'away-2',
+      pitcherId: 'home-reliever',
+      result: 'double' as const,
+      batterAdvance: { to: 'second' as const },
+      runnerAdvances: [
+        {
+          runnerId: 'away-1',
+          from: 'first' as const,
+          to: 'home' as const,
+          cause: 'batted_ball' as const,
+          countsRun: true,
+          earned: false,
+          rbi: false
+        }
+      ],
+      outsOnPlay: 0
+    };
+    const scoringPlay = plateAppearance.submit('record_plate_appearance', scoringPayload);
+    plateAppearance.submit('record_scoring_judgment', {
+      playEventId: scoringPlay.event!.eventId,
+      runnerId: 'away-1',
+      responsiblePitcherId: 'home-1',
+      earned: false,
+      rbi: false
+    });
+    const correction = plateAppearance.submit('supersede_event', {
+      targetEventId: scoringPlay.event!.eventId,
+      reason: 'Re-enter the official double while preserving the corrected play identity.',
+      replacement: { type: 'record_plate_appearance', payload: scoringPayload }
+    });
+    plateAppearance.submit('record_scoring_judgment', {
+      playEventId: correction.event!.eventId,
+      runnerId: 'away-1',
+      responsiblePitcherId: 'home-reliever',
+      earned: true,
+      rbi: true
+    });
+
+    let projected = projectDiamondStats(plateAppearance.ledger);
+    expect(projected.players['home-1'].raw.pitching).toMatchObject({ R: 0, ER: 0 });
+    expect(projected.players['home-reliever'].raw.pitching).toMatchObject({ R: 1, ER: 1, inheritedScored: 0 });
+    expect(projected.players['away-2'].raw.batting.RBI).toBe(1);
+
+    const latestOriginal = plateAppearance.submit('record_scoring_judgment', {
+      playEventId: scoringPlay.event!.eventId,
+      runnerId: 'away-1',
+      responsiblePitcherId: 'home-1',
+      earned: false,
+      rbi: false
+    });
+    projected = projectDiamondStats(plateAppearance.ledger);
+    expect(projected.players['home-1'].raw.pitching).toMatchObject({ R: 1, ER: 0 });
+    expect(projected.players['home-reliever'].raw.pitching).toMatchObject({ R: 0, ER: 0, inheritedScored: 1 });
+    expect(projected.players['away-2'].raw.batting.RBI).toBe(0);
+
+    plateAppearance.submit('void_event', {
+      targetEventId: latestOriginal.event!.eventId,
+      reason: 'Restore the later effective-play scoring judgment.'
+    });
+    projected = projectDiamondStats(plateAppearance.ledger);
+    expect(projected.players['home-reliever'].raw.pitching).toMatchObject({ R: 1, ER: 1, inheritedScored: 0 });
+    expect(projected.players['away-2'].raw.batting.RBI).toBe(1);
+    expect(projectDiamondStats(plateAppearance.ledger)).toEqual(projected);
+    expect(replayDiamondLedger(plateAppearance.ledger).state).toEqual(plateAppearance.ledger.state);
+
+    const standalone = createHarness('baseball-nfhs', 'quick');
+    configureGame(standalone);
+    const runnerId = placeRunnerOnBase(standalone, 'third');
+    const advancePayload = {
+      runnerId,
+      from: 'third' as const,
+      to: 'home' as const,
+      cause: 'batted_ball' as const,
+      countsRun: true,
+      earned: false,
+      rbi: false
+    };
+    const advance = standalone.submit('advance_runner', advancePayload);
+    standalone.submit('record_scoring_judgment', {
+      playEventId: advance.event!.eventId,
+      runnerId,
+      earned: false
+    });
+    const advanceCorrection = standalone.submit('supersede_event', {
+      targetEventId: advance.event!.eventId,
+      reason: 'Re-enter the scoring advance under the corrected event identity.',
+      replacement: { type: 'advance_runner', payload: advancePayload }
+    });
+    standalone.submit('record_scoring_judgment', {
+      playEventId: advanceCorrection.event!.eventId,
+      runnerId,
+      earned: true
+    });
+    expect(projectDiamondStats(standalone.ledger).players['home-1'].raw.pitching.ER).toBe(1);
+    expect(replayDiamondLedger(standalone.ledger).state).toEqual(standalone.ledger.state);
+  });
+
+  it('merges inline and detached fielding evidence without duplicate per-play credit', () => {
+    const doublePlay = createHarness('baseball-nfhs', 'quick');
+    configureGame(doublePlay);
+    placeRunnerOnBase(doublePlay, 'first');
+    const playPayload = {
+      batterId: 'away-2',
+      pitcherId: 'home-1',
+      result: 'double_play' as const,
+      batterAdvance: { to: 'out' as const, outKind: 'batter_runner' as const },
+      runnerAdvances: [
+        {
+          runnerId: 'away-1',
+          from: 'first' as const,
+          to: 'out' as const,
+          cause: 'force_out' as const,
+          outKind: 'force' as const
+        }
+      ],
+      outsOnPlay: 2,
+      fielding: {
+        putoutBy: 'home-2',
+        assists: ['home-3'],
+        errors: [{ playerId: 'home-3' }],
+        passedBallBy: 'home-2',
+        doublePlay: true
+      }
+    };
+    const play = doublePlay.submit('record_plate_appearance', playPayload);
+    const duplicateAttachment = doublePlay.submit('record_fielding', {
+      playEventId: play.event!.eventId,
+      fielding: {
+        putoutBy: 'home-2',
+        assists: ['home-3'],
+        errors: [{ playerId: 'home-3', kind: 'throwing' }],
+        passedBallBy: 'home-2',
+        doublePlay: true
+      }
+    });
+    const correction = doublePlay.submit('supersede_event', {
+      targetEventId: play.event!.eventId,
+      reason: 'Preserve the same official double play under its corrected event identity.',
+      replacement: { type: 'record_plate_appearance', payload: playPayload }
+    });
+    doublePlay.submit('record_fielding', {
+      playEventId: correction.event!.eventId,
+      fielding: {
+        putoutBy: 'home-1',
+        assists: ['home-1'],
+        errors: [{ playerId: 'home-1', kind: 'fielding' }],
+        doublePlay: true
+      }
+    });
+
+    let projected = projectDiamondStats(doublePlay.ledger);
+    expect(projected.players['home-2'].raw.fielding).toMatchObject({ PO: 1, PB: 1, DP: 1 });
+    expect(projected.players['home-3'].raw.fielding).toMatchObject({ A: 1, E: 1, DP: 1 });
+    expect(projected.players['home-1'].raw.fielding).toMatchObject({ PO: 1, A: 1, E: 1, DP: 1 });
+    expect(projected.teams.home.E).toBe(2);
+
+    doublePlay.submit('void_event', {
+      targetEventId: duplicateAttachment.event!.eventId,
+      reason: 'Remove redundant fielding detail without changing the merged result.'
+    });
+    projected = projectDiamondStats(doublePlay.ledger);
+    expect(projected.players['home-2'].raw.fielding).toMatchObject({ PO: 1, PB: 1, DP: 1 });
+    expect(projected.players['home-3'].raw.fielding).toMatchObject({ A: 1, E: 1, DP: 1 });
+    expect(projected.players['home-1'].raw.fielding).toMatchObject({ PO: 1, A: 1, E: 1, DP: 1 });
+    expect(projected.teams.home.E).toBe(2);
+    expect(projectDiamondStats(doublePlay.ledger)).toEqual(projected);
+    expect(replayDiamondLedger(doublePlay.ledger).state).toEqual(doublePlay.ledger.state);
+
+    const triplePlay = createHarness('baseball-nfhs', 'quick');
+    configureGame(triplePlay);
+    placeRunnerOnBase(triplePlay, 'first');
+    triplePlay.submit('record_plate_appearance', {
+      batterId: 'away-2',
+      pitcherId: 'home-1',
+      result: 'single',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [{ runnerId: 'away-1', from: 'first', to: 'second', cause: 'batted_ball' }],
+      outsOnPlay: 0
+    });
+    const triple = triplePlay.submit('record_plate_appearance', {
+      batterId: 'away-3',
+      pitcherId: 'home-1',
+      result: 'triple_play',
+      batterAdvance: { to: 'out', outKind: 'batter_runner' },
+      runnerAdvances: [
+        { runnerId: 'away-1', from: 'second', to: 'out', cause: 'force_out', outKind: 'force' },
+        { runnerId: 'away-2', from: 'first', to: 'out', cause: 'force_out', outKind: 'force' }
+      ],
+      outsOnPlay: 3,
+      fielding: { putoutBy: 'home-2', assists: ['home-3'], triplePlay: true }
+    });
+    triplePlay.submit('record_fielding', {
+      playEventId: triple.event!.eventId,
+      fielding: { putoutBy: 'home-2', assists: ['home-3'], triplePlay: true }
+    });
+    const tripleStats = projectDiamondStats(triplePlay.ledger);
+    expect(tripleStats.players['home-2'].raw.fielding).toMatchObject({ PO: 1, TP: 1 });
+    expect(tripleStats.players['home-3'].raw.fielding).toMatchObject({ A: 1, TP: 1 });
+
+    const standalone = createHarness('baseball-nfhs', 'quick');
+    configureGame(standalone);
+    const runnerId = placeRunnerOnBase(standalone, 'first');
+    const runnerOut = standalone.submit('advance_runner', {
+      runnerId,
+      from: 'first',
+      to: 'out',
+      cause: 'tag_out',
+      outKind: 'tag',
+      fielding: {
+        putoutBy: 'home-2',
+        assists: ['home-3'],
+        errors: [
+          { playerId: 'home-3', kind: 'throwing' },
+          { playerId: 'home-3', kind: 'throwing' }
+        ]
+      }
+    });
+    const extraDetail = standalone.submit('record_fielding', {
+      playEventId: runnerOut.event!.eventId,
+      fielding: {
+        putoutBy: 'home-2',
+        assists: ['home-3', 'home-1'],
+        errors: [
+          { playerId: 'home-3', kind: 'throwing' },
+          { playerId: 'home-3', kind: 'fielding' },
+          { playerId: 'home-1', kind: 'fielding' }
+        ]
+      }
+    });
+    let standaloneStats = projectDiamondStats(standalone.ledger);
+    expect(standaloneStats.players['home-2'].raw.fielding.PO).toBe(1);
+    expect(standaloneStats.players['home-3'].raw.fielding).toMatchObject({ A: 1, E: 3 });
+    expect(standaloneStats.players['home-1'].raw.fielding).toMatchObject({ A: 1, E: 1 });
+    expect(standaloneStats.teams.home.E).toBe(4);
+    standalone.submit('void_event', {
+      targetEventId: extraDetail.event!.eventId,
+      reason: 'Remove the added detached fielding detail.'
+    });
+    standaloneStats = projectDiamondStats(standalone.ledger);
+    expect(standaloneStats.players['home-2'].raw.fielding.PO).toBe(1);
+    expect(standaloneStats.players['home-3'].raw.fielding).toMatchObject({ A: 1, E: 2 });
+    expect(standaloneStats.players['home-1'].raw.fielding).toMatchObject({ A: 0, E: 0 });
+    expect(standaloneStats.teams.home.E).toBe(2);
+    expect(replayDiamondLedger(standalone.ledger).state).toEqual(standalone.ledger.state);
+
+    const sharedPitch = createHarness('baseball-nfhs', 'quick');
+    configureGame(sharedPitch);
+    placeRunnerOnBase(sharedPitch, 'first');
+    sharedPitch.submit('record_plate_appearance', {
+      batterId: 'away-2',
+      pitcherId: 'home-1',
+      result: 'single',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [{ runnerId: 'away-1', from: 'first', to: 'second', cause: 'batted_ball' }],
+      outsOnPlay: 0
+    });
+    sharedPitch.submit('record_pitch', { batterId: 'away-3', pitcherId: 'home-1', result: 'ball' });
+    const firstAdvance = sharedPitch.submit('advance_runner', {
+      runnerId: 'away-1',
+      from: 'second',
+      to: 'third',
+      cause: 'passed_ball',
+      fielding: { passedBallBy: 'home-2' }
+    });
+    sharedPitch.submit('advance_runner', {
+      runnerId: 'away-2',
+      from: 'first',
+      to: 'second',
+      cause: 'passed_ball',
+      fielding: { passedBallBy: 'home-2' }
+    });
+    sharedPitch.submit('record_fielding', {
+      playEventId: firstAdvance.event!.eventId,
+      fielding: { passedBallBy: 'home-2' }
+    });
+    expect(projectDiamondStats(sharedPitch.ledger).players['home-2'].raw.fielding.PB).toBe(1);
+  });
+
+  it('exposes pitcher decisions only for the coherent effective official result', () => {
+    const prepareDecisionGame = () => {
+      const game = createHarness('baseball-nfhs', 'quick');
+      configureGame(game);
+      recordSoloHomeRun(game);
+      while (game.ledger.state.inning.outs < 3) recordOut(game);
+      game.submit('advance_half_inning', {});
+      recordOut(game);
+      game.submit('substitute', {
+        side: 'away',
+        battingSlot: 1,
+        outgoingPlayerId: 'away-1',
+        incomingPlayerId: 'away-reliever',
+        defensivePosition: 'P'
+      });
+      const { batterId, pitcherId } = currentMatchup(game);
+      const decisionPlay = game.submit('record_plate_appearance', {
+        batterId,
+        pitcherId,
+        result: 'ground_out',
+        batterAdvance: { to: 'out', outKind: 'batter_runner' },
+        runnerAdvances: [],
+        outsOnPlay: 1
+      });
+      return { game, playEventId: decisionPlay.event!.eventId };
+    };
+
+    const scored = prepareDecisionGame();
+    scored.game.submit('record_scoring_judgment', {
+      playEventId: scored.playEventId,
+      pitcherOfRecord: { side: 'away', playerId: 'away-1', decision: 'win' }
+    });
+    scored.game.submit('record_scoring_judgment', {
+      playEventId: scored.playEventId,
+      pitcherOfRecord: { side: 'home', playerId: 'home-1', decision: 'loss' }
+    });
+    scored.game.submit('record_scoring_judgment', {
+      playEventId: scored.playEventId,
+      pitcherOfRecord: { side: 'away', playerId: 'away-reliever', decision: 'save' }
+    });
+    expect(projectDiamondStats(scored.game.ledger).players['away-1'].raw.pitching.W).toBe(0);
+    expect(projectDiamondStats(scored.game.ledger).players['home-1'].raw.pitching.L).toBe(0);
+    expect(projectDiamondStats(scored.game.ledger).players['away-reliever'].raw.pitching.SV).toBe(0);
+    scored.game.submit('suspend', { reason: 'Weather delay before the official ending.' });
+    expect(projectDiamondStats(scored.game.ledger).players['away-1'].raw.pitching.W).toBe(0);
+    scored.game.submit('resume', {});
+
+    scored.game.submit('rules_decision', {
+      code: 'end_game_weather',
+      description: 'The umpire declared the current scored result official.'
+    });
+    scored.game.submit('finalize', { confirmed: true });
+    let stats = projectDiamondStats(scored.game.ledger);
+    expect(stats.players['away-1'].raw.pitching.W).toBe(1);
+    expect(stats.players['home-1'].raw.pitching.L).toBe(1);
+    expect(stats.players['away-reliever'].raw.pitching.SV).toBe(1);
+    scored.game.submit('private_note', { text: 'Post-final audit note.' });
+    expect(projectDiamondStats(scored.game.ledger).players['away-1'].raw.pitching.W).toBe(1);
+    scored.game.submit('reopen_for_correction', { reason: 'Review the official decision set.' });
+    stats = projectDiamondStats(scored.game.ledger);
+    expect(stats.players['away-1'].raw.pitching.W).toBe(0);
+    expect(stats.players['home-1'].raw.pitching.L).toBe(0);
+    expect(stats.players['away-reliever'].raw.pitching.SV).toBe(0);
+    scored.game.submit('finalize', { confirmed: true });
+    expect(projectDiamondStats(scored.game.ledger).players['away-1'].raw.pitching.W).toBe(1);
+
+    const cancelled = prepareDecisionGame();
+    cancelled.game.submit('record_scoring_judgment', {
+      playEventId: cancelled.playEventId,
+      pitcherOfRecord: { side: 'away', playerId: 'away-1', decision: 'win' }
+    });
+    cancelled.game.submit(
+      'cancel',
+      { confirmed: true, reason: 'The exhibition ended without an official result.' },
+      { managerAuthorized: true }
+    );
+    expect(projectDiamondStats(cancelled.game.ledger).players['away-1'].raw.pitching.W).toBe(0);
+
+    const forfeit = prepareDecisionGame();
+    forfeit.game.submit('record_scoring_judgment', {
+      playEventId: forfeit.playEventId,
+      pitcherOfRecord: { side: 'home', playerId: 'home-1', decision: 'win' }
+    });
+    forfeit.game.submit('record_scoring_judgment', {
+      playEventId: forfeit.playEventId,
+      pitcherOfRecord: { side: 'away', playerId: 'away-reliever', decision: 'loss' }
+    });
+    forfeit.game.submit('rules_decision', {
+      code: 'end_game_forfeit_home',
+      description: 'The umpire awarded the game to home despite the away lead.'
+    });
+    forfeit.game.submit('finalize', { confirmed: true });
+    const forfeitStats = projectDiamondStats(forfeit.game.ledger);
+    expect(forfeit.game.ledger.state.score).toEqual({ home: 0, away: 1 });
+    expect(forfeitStats.players['home-1'].raw.pitching.W).toBe(1);
+    expect(forfeitStats.players['away-reliever'].raw.pitching.L).toBe(1);
   });
 
   it('preserves canonical history while a correction rebuilds state, hash, replay, and every affected stat', () => {

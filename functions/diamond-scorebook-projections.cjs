@@ -4,8 +4,7 @@ const {
   DIAMOND_SCHEMA_VERSION,
   getEffectiveDiamondEvents,
   projectDiamondStats,
-  reduceDiamondEvent,
-  setDiamondStateRevision,
+  replayEffectiveDiamondEventStates,
   verifyDiamondLedger,
 } = require("./diamond-engine");
 const {
@@ -319,6 +318,17 @@ function assertDiamondLedger(ledger) {
 
 function oppositeSide(side) {
   return side === "home" ? "away" : "home";
+}
+
+function officialFinalWinningSide(state) {
+  if (state.lifecycle !== "final") return null;
+  if (state.finalizationReason?.kind === "forfeit") {
+    return state.gameEndDecision?.reason === "forfeit"
+      ? state.gameEndDecision.awardedSide
+      : null;
+  }
+  if (state.score.home === state.score.away) return null;
+  return state.score.home > state.score.away ? "home" : "away";
 }
 
 function normalizeOrientationId(value, field, { optional = false } = {}) {
@@ -730,22 +740,17 @@ function buildDiamondPublicPlays({ ledger, playerDirectory = {} }) {
   const canonicalById = new Map(
     ledger.events.map((event) => [event.eventId, event]),
   );
-  let state = ledger.initialState;
   const plays = [];
-  for (const event of getEffectiveDiamondEvents(ledger.events)) {
-    const before = state;
-    state = reduceDiamondEvent(state, {
-      type: event.type,
-      payload: event.payload,
-      eventId: event.eventId,
-    });
-    state = setDiamondStateRevision(state, event.revision);
+  for (const { event, before, after } of replayEffectiveDiamondEventStates(
+    ledger.initialState,
+    ledger.events,
+  )) {
     if (!PRIVATE_EVENT_TYPES.has(event.type)) {
       plays.push(
         buildPublicPlay(
           event,
           before,
-          state,
+          after,
           directory,
           canonicalById.get(event.eventId),
         ),
@@ -1214,21 +1219,16 @@ function buildDiamondStatDocumentsFromProjection({
     publicTeamStatIds,
     "Public team",
   );
-  const winningSide =
-    ledger.state.score.home === ledger.state.score.away
-      ? null
-      : ledger.state.score.home > ledger.state.score.away
-        ? "home"
-        : "away";
+  const winningSide = officialFinalWinningSide(ledger.state);
   const decisionLines = Object.values(statsProjection.players);
-  const winningPitchers = decisionLines.filter(
-    (line) => line.raw.pitching.W === 1 && line.side === winningSide,
+  const recordedWins = decisionLines.filter(
+    (line) => line.raw.pitching.W === 1,
   );
-  const losingPitchers = decisionLines.filter(
-    (line) =>
-      line.raw.pitching.L === 1 &&
-      winningSide !== null &&
-      line.side === oppositeSide(winningSide),
+  const recordedLosses = decisionLines.filter(
+    (line) => line.raw.pitching.L === 1,
+  );
+  const recordedSaves = decisionLines.filter(
+    (line) => line.raw.pitching.SV === 1,
   );
   const hasInvalidDecisionCount = decisionLines.some(
     (line) =>
@@ -1236,15 +1236,16 @@ function buildDiamondStatDocumentsFromProjection({
       line.raw.pitching.L > 1 ||
       line.raw.pitching.SV > 1,
   );
-  const isFinalTie =
-    ledger.state.lifecycle === "final" &&
-    ledger.state.score.home === ledger.state.score.away;
   const pitcherDecisionCoverage =
-    isFinalTie ||
-    (ledger.state.lifecycle === "final" &&
-      winningPitchers.length === 1 &&
-      losingPitchers.length === 1 &&
-      !hasInvalidDecisionCount)
+    ledger.state.lifecycle === "final" &&
+    winningSide !== null &&
+    recordedWins.length === 1 &&
+    recordedWins[0].side === winningSide &&
+    recordedLosses.length === 1 &&
+    recordedLosses[0].side === oppositeSide(winningSide) &&
+    recordedSaves.length <= 1 &&
+    recordedSaves.every((line) => line.side === winningSide) &&
+    !hasInvalidDecisionCount
       ? "complete"
       : "not_collected";
   const publicPlayerStatsWrites = [];

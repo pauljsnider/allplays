@@ -1502,6 +1502,365 @@ test("compiled detached fielding credit stays bound to the corrected play out co
   assert.deepEqual(replayDiamondLedger(game.ledger).state, game.ledger.state);
 });
 
+test("compiled scoring judgments follow ledger order across original and correction play identities", () => {
+  const game = harness("quick", "baseball-nfhs");
+  setLineupsAndStart(game, 3);
+  game.submit("record_plate_appearance", {
+    batterId: "away-1",
+    pitcherId: "home-1",
+    result: "single",
+    batterAdvance: { to: "first" },
+    runnerAdvances: [],
+    outsOnPlay: 0,
+  });
+  game.submit("substitute", {
+    side: "home",
+    battingSlot: 1,
+    outgoingPlayerId: "home-1",
+    incomingPlayerId: "home-reliever",
+    defensivePosition: "P",
+  });
+  const scoringPayload = {
+    batterId: "away-2",
+    pitcherId: "home-reliever",
+    result: "double",
+    batterAdvance: { to: "second" },
+    runnerAdvances: [
+      {
+        runnerId: "away-1",
+        from: "first",
+        to: "home",
+        cause: "batted_ball",
+        countsRun: true,
+        earned: false,
+        rbi: false,
+      },
+    ],
+    outsOnPlay: 0,
+  };
+  const scoringPlay = game.submit("record_plate_appearance", scoringPayload);
+  game.submit("record_scoring_judgment", {
+    playEventId: scoringPlay.eventId,
+    runnerId: "away-1",
+    responsiblePitcherId: "home-1",
+    earned: false,
+    rbi: false,
+  });
+  const correction = game.submit("supersede_event", {
+    targetEventId: scoringPlay.eventId,
+    reason: "Re-enter the official double under the corrected identity.",
+    replacement: { type: "record_plate_appearance", payload: scoringPayload },
+  });
+  game.submit("record_scoring_judgment", {
+    playEventId: correction.eventId,
+    runnerId: "away-1",
+    responsiblePitcherId: "home-reliever",
+    earned: true,
+    rbi: true,
+  });
+
+  let projected = projectDiamondStats(game.ledger);
+  assert.equal(projected.players["home-1"].raw.pitching.R, 0);
+  assert.equal(projected.players["home-reliever"].raw.pitching.R, 1);
+  assert.equal(projected.players["home-reliever"].raw.pitching.ER, 1);
+  assert.equal(projected.players["away-2"].raw.batting.RBI, 1);
+
+  const latestOriginal = game.submit("record_scoring_judgment", {
+    playEventId: scoringPlay.eventId,
+    runnerId: "away-1",
+    responsiblePitcherId: "home-1",
+    earned: false,
+    rbi: false,
+  });
+  projected = projectDiamondStats(game.ledger);
+  assert.equal(projected.players["home-1"].raw.pitching.R, 1);
+  assert.equal(projected.players["home-1"].raw.pitching.ER, 0);
+  assert.equal(
+    projected.players["home-reliever"].raw.pitching.inheritedScored,
+    1,
+  );
+  assert.equal(projected.players["away-2"].raw.batting.RBI, 0);
+
+  game.submit("void_event", {
+    targetEventId: latestOriginal.eventId,
+    reason: "Restore the effective-play judgment.",
+  });
+  projected = projectDiamondStats(game.ledger);
+  assert.equal(projected.players["home-reliever"].raw.pitching.R, 1);
+  assert.equal(projected.players["home-reliever"].raw.pitching.ER, 1);
+  assert.equal(projected.players["away-2"].raw.batting.RBI, 1);
+  assert.deepEqual(projectDiamondStats(game.ledger), projected);
+  assert.deepEqual(replayDiamondLedger(game.ledger).state, game.ledger.state);
+
+  const standalone = harness("quick", "baseball-nfhs");
+  setLineupsAndStart(standalone, 3);
+  const runnerId = placeRunnerOnBase(standalone, "third");
+  const advancePayload = {
+    runnerId,
+    from: "third",
+    to: "home",
+    cause: "batted_ball",
+    countsRun: true,
+    earned: false,
+    rbi: false,
+  };
+  const advance = standalone.submit("advance_runner", advancePayload);
+  standalone.submit("record_scoring_judgment", {
+    playEventId: advance.eventId,
+    runnerId,
+    earned: false,
+  });
+  const advanceCorrection = standalone.submit("supersede_event", {
+    targetEventId: advance.eventId,
+    reason: "Re-enter the advance under the corrected identity.",
+    replacement: { type: "advance_runner", payload: advancePayload },
+  });
+  standalone.submit("record_scoring_judgment", {
+    playEventId: advanceCorrection.eventId,
+    runnerId,
+    earned: true,
+  });
+  assert.equal(
+    projectDiamondStats(standalone.ledger).players["home-1"].raw.pitching.ER,
+    1,
+  );
+});
+
+test("compiled fielding projection unions inline and detached evidence per physical play", () => {
+  const game = harness("quick", "baseball-nfhs");
+  setLineupsAndStart(game, 3);
+  placeRunnerOnBase(game, "first");
+  const playPayload = {
+    batterId: "away-2",
+    pitcherId: "home-1",
+    result: "double_play",
+    batterAdvance: { to: "out", outKind: "batter_runner" },
+    runnerAdvances: [
+      {
+        runnerId: "away-1",
+        from: "first",
+        to: "out",
+        cause: "force_out",
+        outKind: "force",
+      },
+    ],
+    outsOnPlay: 2,
+    fielding: {
+      putoutBy: "home-2",
+      assists: ["home-1"],
+      errors: [{ playerId: "home-1" }],
+      passedBallBy: "home-2",
+      doublePlay: true,
+    },
+  };
+  const play = game.submit("record_plate_appearance", playPayload);
+  const duplicateAttachment = game.submit("record_fielding", {
+    playEventId: play.eventId,
+    fielding: {
+      putoutBy: "home-2",
+      assists: ["home-1"],
+      errors: [{ playerId: "home-1", kind: "throwing" }],
+      passedBallBy: "home-2",
+      doublePlay: true,
+    },
+  });
+  const correction = game.submit("supersede_event", {
+    targetEventId: play.eventId,
+    reason:
+      "Preserve the same official double play under its corrected identity.",
+    replacement: { type: "record_plate_appearance", payload: playPayload },
+  });
+  game.submit("record_fielding", {
+    playEventId: correction.eventId,
+    fielding: {
+      putoutBy: "home-1",
+      errors: [{ playerId: "home-2", kind: "fielding" }],
+      doublePlay: true,
+    },
+  });
+
+  let projected = projectDiamondStats(game.ledger);
+  assert.deepEqual(
+    {
+      PO: projected.players["home-2"].raw.fielding.PO,
+      PB: projected.players["home-2"].raw.fielding.PB,
+      DP: projected.players["home-2"].raw.fielding.DP,
+    },
+    { PO: 1, PB: 1, DP: 1 },
+  );
+  assert.deepEqual(
+    {
+      PO: projected.players["home-1"].raw.fielding.PO,
+      A: projected.players["home-1"].raw.fielding.A,
+      E: projected.players["home-1"].raw.fielding.E,
+      DP: projected.players["home-1"].raw.fielding.DP,
+    },
+    { PO: 1, A: 1, E: 1, DP: 1 },
+  );
+  assert.deepEqual(
+    {
+      A: projected.players["home-2"].raw.fielding.A,
+      E: projected.players["home-2"].raw.fielding.E,
+      DP: projected.players["home-2"].raw.fielding.DP,
+    },
+    { A: 0, E: 1, DP: 1 },
+  );
+  assert.equal(projected.teams.home.E, 2);
+
+  game.submit("void_event", {
+    targetEventId: duplicateAttachment.eventId,
+    reason: "Remove redundant fielding detail.",
+  });
+  projected = projectDiamondStats(game.ledger);
+  assert.equal(projected.players["home-2"].raw.fielding.PO, 1);
+  assert.equal(projected.players["home-1"].raw.fielding.E, 1);
+  assert.equal(projected.players["home-2"].raw.fielding.E, 1);
+  assert.equal(projected.teams.home.E, 2);
+  assert.deepEqual(replayDiamondLedger(game.ledger).state, game.ledger.state);
+
+  const triple = harness("quick", "baseball-nfhs");
+  setLineupsAndStart(triple, 3);
+  placeRunnerOnBase(triple, "first");
+  triple.submit("record_plate_appearance", {
+    batterId: "away-2",
+    pitcherId: "home-1",
+    result: "single",
+    batterAdvance: { to: "first" },
+    runnerAdvances: [
+      {
+        runnerId: "away-1",
+        from: "first",
+        to: "second",
+        cause: "batted_ball",
+      },
+    ],
+    outsOnPlay: 0,
+  });
+  const triplePlay = triple.submit("record_plate_appearance", {
+    batterId: "away-3",
+    pitcherId: "home-1",
+    result: "triple_play",
+    batterAdvance: { to: "out", outKind: "batter_runner" },
+    runnerAdvances: [
+      {
+        runnerId: "away-1",
+        from: "second",
+        to: "out",
+        cause: "force_out",
+        outKind: "force",
+      },
+      {
+        runnerId: "away-2",
+        from: "first",
+        to: "out",
+        cause: "force_out",
+        outKind: "force",
+      },
+    ],
+    outsOnPlay: 3,
+    fielding: { putoutBy: "home-2", assists: ["home-1"], triplePlay: true },
+  });
+  triple.submit("record_fielding", {
+    playEventId: triplePlay.eventId,
+    fielding: { putoutBy: "home-2", assists: ["home-1"], triplePlay: true },
+  });
+  const tripleStats = projectDiamondStats(triple.ledger);
+  assert.equal(tripleStats.players["home-2"].raw.fielding.TP, 1);
+  assert.equal(tripleStats.players["home-1"].raw.fielding.TP, 1);
+
+  const standalone = harness("quick", "baseball-nfhs");
+  setLineupsAndStart(standalone, 3);
+  const runnerId = placeRunnerOnBase(standalone, "first");
+  const runnerOut = standalone.submit("advance_runner", {
+    runnerId,
+    from: "first",
+    to: "out",
+    cause: "tag_out",
+    outKind: "tag",
+    fielding: {
+      putoutBy: "home-2",
+      assists: ["home-1"],
+      errors: [
+        { playerId: "home-1", kind: "throwing" },
+        { playerId: "home-1", kind: "throwing" },
+      ],
+    },
+  });
+  const addedDetail = standalone.submit("record_fielding", {
+    playEventId: runnerOut.eventId,
+    fielding: {
+      putoutBy: "home-2",
+      assists: ["home-1"],
+      errors: [
+        { playerId: "home-1", kind: "throwing" },
+        { playerId: "home-1", kind: "fielding" },
+        { playerId: "home-2", kind: "fielding" },
+      ],
+    },
+  });
+  let standaloneStats = projectDiamondStats(standalone.ledger);
+  assert.equal(standaloneStats.players["home-2"].raw.fielding.PO, 1);
+  assert.equal(standaloneStats.players["home-1"].raw.fielding.A, 1);
+  assert.equal(standaloneStats.players["home-1"].raw.fielding.E, 3);
+  assert.equal(standaloneStats.players["home-2"].raw.fielding.E, 1);
+  assert.equal(standaloneStats.teams.home.E, 4);
+  standalone.submit("void_event", {
+    targetEventId: addedDetail.eventId,
+    reason: "Remove the added detached fielding detail.",
+  });
+  standaloneStats = projectDiamondStats(standalone.ledger);
+  assert.equal(standaloneStats.players["home-1"].raw.fielding.A, 1);
+  assert.equal(standaloneStats.players["home-1"].raw.fielding.E, 2);
+  assert.equal(standaloneStats.players["home-2"].raw.fielding.E, 0);
+  assert.equal(standaloneStats.teams.home.E, 2);
+
+  const sharedPitch = harness("quick", "baseball-nfhs");
+  setLineupsAndStart(sharedPitch, 3);
+  placeRunnerOnBase(sharedPitch, "first");
+  sharedPitch.submit("record_plate_appearance", {
+    batterId: "away-2",
+    pitcherId: "home-1",
+    result: "single",
+    batterAdvance: { to: "first" },
+    runnerAdvances: [
+      {
+        runnerId: "away-1",
+        from: "first",
+        to: "second",
+        cause: "batted_ball",
+      },
+    ],
+    outsOnPlay: 0,
+  });
+  sharedPitch.submit("record_pitch", {
+    batterId: "away-3",
+    pitcherId: "home-1",
+    result: "ball",
+  });
+  const firstAdvance = sharedPitch.submit("advance_runner", {
+    runnerId: "away-1",
+    from: "second",
+    to: "third",
+    cause: "passed_ball",
+    fielding: { passedBallBy: "home-2" },
+  });
+  sharedPitch.submit("advance_runner", {
+    runnerId: "away-2",
+    from: "first",
+    to: "second",
+    cause: "passed_ball",
+    fielding: { passedBallBy: "home-2" },
+  });
+  sharedPitch.submit("record_fielding", {
+    playEventId: firstAdvance.eventId,
+    fielding: { passedBallBy: "home-2" },
+  });
+  assert.equal(
+    projectDiamondStats(sharedPitch.ledger).players["home-2"].raw.fielding.PB,
+    1,
+  );
+});
+
 test("compiled final-half LOB follows only the authoritative effective finalize", () => {
   const game = harness("quick", "baseball-nfhs");
   setLineupsAndStart(game, 3);
@@ -2473,20 +2832,37 @@ test("pitcher decisions become complete only after explicit final win and loss j
     playEventId: scoringPlay.eventId,
     pitcherOfRecord: { side: "home", playerId: "home-1", decision: "loss" },
   });
-  game.submit("rules_decision", {
-    code: "end_game_weather",
-    description: "The umpire declared the game official.",
-  });
-  game.submit("finalize", { confirmed: true });
-
-  const documents = buildDiamondStatDocuments({
+  let documents = buildDiamondStatDocuments({
     ledger: game.ledger,
     orientationSnapshot: orientationFor("home"),
     playerDirectory: DIRECTORY,
     publicPlayerStatIds: ALL_PUBLIC_PLAYER_STAT_IDS,
     publicTeamStatIds: ALL_PUBLIC_TEAM_STAT_IDS,
   });
-  const homePitcher = documents.publicPlayerStatsWrites.find(
+  let homePitcher = documents.publicPlayerStatsWrites.find(
+    (write) => write.playerId === "home-1",
+  ).data;
+  assert.equal(
+    projectDiamondStats(game.ledger).players["home-1"].raw.pitching.L,
+    0,
+  );
+  assert.equal(homePitcher.statCoverage.w, "not_collected");
+  assert.equal(homePitcher.statCoverage.l, "not_collected");
+  assert.equal(Object.hasOwn(homePitcher.stats, "l"), false);
+  game.submit("rules_decision", {
+    code: "end_game_weather",
+    description: "The umpire declared the game official.",
+  });
+  game.submit("finalize", { confirmed: true });
+
+  documents = buildDiamondStatDocuments({
+    ledger: game.ledger,
+    orientationSnapshot: orientationFor("home"),
+    playerDirectory: DIRECTORY,
+    publicPlayerStatIds: ALL_PUBLIC_PLAYER_STAT_IDS,
+    publicTeamStatIds: ALL_PUBLIC_TEAM_STAT_IDS,
+  });
+  homePitcher = documents.publicPlayerStatsWrites.find(
     (write) => write.playerId === "home-1",
   ).data;
 
@@ -2495,6 +2871,175 @@ test("pitcher decisions become complete only after explicit final win and loss j
   assert.equal(homePitcher.stats.l, 1);
   assert.equal(homePitcher.stats.sv, 0);
   assert.equal(documents.opponentStats["away-1"].w, 1);
+
+  game.submit("reopen_for_correction", {
+    reason: "Review the official pitcher decision.",
+  });
+  documents = buildDiamondStatDocuments({
+    ledger: game.ledger,
+    orientationSnapshot: orientationFor("home"),
+    playerDirectory: DIRECTORY,
+    publicPlayerStatIds: ALL_PUBLIC_PLAYER_STAT_IDS,
+    publicTeamStatIds: ALL_PUBLIC_TEAM_STAT_IDS,
+  });
+  homePitcher = documents.publicPlayerStatsWrites.find(
+    (write) => write.playerId === "home-1",
+  ).data;
+  assert.equal(
+    projectDiamondStats(game.ledger).players["home-1"].raw.pitching.L,
+    0,
+  );
+  assert.equal(homePitcher.statCoverage.l, "not_collected");
+  assert.equal(Object.hasOwn(homePitcher.stats, "l"), false);
+});
+
+test("pitcher decision projection uses the official forfeit winner and suppresses tie, cancellation, and no-decision finals", () => {
+  const prepareDecisionPlay = () => {
+    const game = harness("quick", "baseball-nfhs");
+    setLineupsAndStart(game);
+    addHomeRun(game, { pitch: false });
+    while (game.ledger.state.inning.outs < 3) recordOut(game);
+    game.submit("advance_half_inning", {});
+    const { batterId, pitcherId } = currentMatchup(game);
+    const play = game.submit("record_plate_appearance", {
+      batterId,
+      pitcherId,
+      result: "ground_out",
+      batterAdvance: { to: "out", outKind: "batter_runner" },
+      runnerAdvances: [],
+      outsOnPlay: 1,
+    });
+    return { game, playEventId: play.eventId };
+  };
+
+  const forfeit = prepareDecisionPlay();
+  forfeit.game.submit("record_scoring_judgment", {
+    playEventId: forfeit.playEventId,
+    pitcherOfRecord: { side: "home", playerId: "home-1", decision: "win" },
+  });
+  forfeit.game.submit("record_scoring_judgment", {
+    playEventId: forfeit.playEventId,
+    pitcherOfRecord: { side: "away", playerId: "away-1", decision: "loss" },
+  });
+  forfeit.game.submit("rules_decision", {
+    code: "end_game_forfeit_home",
+    description: "The umpire awarded home the game despite the away lead.",
+  });
+  forfeit.game.submit("finalize", { confirmed: true });
+  const forfeitDocuments = buildDiamondStatDocuments({
+    ledger: forfeit.game.ledger,
+    orientationSnapshot: orientationFor("home"),
+    playerDirectory: DIRECTORY,
+    publicPlayerStatIds: ALL_PUBLIC_PLAYER_STAT_IDS,
+    publicTeamStatIds: ALL_PUBLIC_TEAM_STAT_IDS,
+  });
+  const winningPitcher = forfeitDocuments.publicPlayerStatsWrites.find(
+    (write) => write.playerId === "home-1",
+  ).data;
+  assert.deepEqual(forfeit.game.ledger.state.score, { home: 0, away: 1 });
+  assert.equal(winningPitcher.statCoverage.w, "complete");
+  assert.equal(winningPitcher.stats.w, 1);
+  assert.equal(forfeitDocuments.opponentStats["away-1"].l, 1);
+
+  const tied = harness("quick", "baseball-nfhs");
+  setLineupsAndStart(tied);
+  tied.submit("rules_decision", {
+    code: "end_game_weather",
+    description: "The umpire declared the tied game official.",
+  });
+  tied.submit("finalize", { confirmed: true });
+  const tiedDocuments = buildDiamondStatDocuments({
+    ledger: tied.ledger,
+    orientationSnapshot: orientationFor("home"),
+    playerDirectory: DIRECTORY,
+    publicPlayerStatIds: ALL_PUBLIC_PLAYER_STAT_IDS,
+    publicTeamStatIds: ALL_PUBLIC_TEAM_STAT_IDS,
+  });
+  const tiedPitcher = tiedDocuments.publicPlayerStatsWrites.find(
+    (write) => write.playerId === "home-1",
+  ).data;
+  assert.equal(tiedPitcher.statCoverage.w, "not_collected");
+  assert.equal(tiedPitcher.statCoverage.l, "not_collected");
+  assert.equal(tiedPitcher.statCoverage.sv, "not_collected");
+  assert.equal(Object.hasOwn(tiedPitcher.stats, "w"), false);
+
+  const noDecision = harness("quick", "baseball-nfhs");
+  setLineupsAndStart(noDecision);
+  addHomeRun(noDecision, { pitch: false });
+  noDecision.submit("rules_decision", {
+    code: "end_game_weather",
+    description: "The scored game ended without pitcher decisions.",
+  });
+  noDecision.submit("finalize", { confirmed: true });
+  const noDecisionDocuments = buildDiamondStatDocuments({
+    ledger: noDecision.ledger,
+    orientationSnapshot: orientationFor("home"),
+    playerDirectory: DIRECTORY,
+    publicPlayerStatIds: ALL_PUBLIC_PLAYER_STAT_IDS,
+    publicTeamStatIds: ALL_PUBLIC_TEAM_STAT_IDS,
+  });
+  const noDecisionPitcher = noDecisionDocuments.publicPlayerStatsWrites.find(
+    (write) => write.playerId === "home-1",
+  ).data;
+  assert.equal(noDecisionPitcher.statCoverage.w, "not_collected");
+  assert.equal(Object.hasOwn(noDecisionPitcher.stats, "w"), false);
+
+  const partial = prepareDecisionPlay();
+  partial.game.submit("record_scoring_judgment", {
+    playEventId: partial.playEventId,
+    pitcherOfRecord: { side: "away", playerId: "away-1", decision: "win" },
+  });
+  partial.game.submit("rules_decision", {
+    code: "end_game_weather",
+    description: "The scored game ended with only a winning-pitcher decision.",
+  });
+  partial.game.submit("finalize", { confirmed: true });
+  const partialDocuments = buildDiamondStatDocuments({
+    ledger: partial.game.ledger,
+    orientationSnapshot: orientationFor("away"),
+    playerDirectory: DIRECTORY,
+    publicPlayerStatIds: ALL_PUBLIC_PLAYER_STAT_IDS,
+    publicTeamStatIds: ALL_PUBLIC_TEAM_STAT_IDS,
+  });
+  const partialPitcher = partialDocuments.publicPlayerStatsWrites.find(
+    (write) => write.playerId === "away-1",
+  ).data;
+  assert.equal(
+    projectDiamondStats(partial.game.ledger).players["away-1"].raw.pitching.W,
+    1,
+  );
+  assert.equal(partialPitcher.statCoverage.w, "not_collected");
+  assert.equal(Object.hasOwn(partialPitcher.stats, "w"), false);
+
+  const cancelled = prepareDecisionPlay();
+  cancelled.game.submit("record_scoring_judgment", {
+    playEventId: cancelled.playEventId,
+    pitcherOfRecord: { side: "away", playerId: "away-1", decision: "win" },
+  });
+  cancelled.game.submit(
+    "cancel",
+    {
+      confirmed: true,
+      reason: "The exhibition ended without an official result.",
+    },
+    SCORER_UID,
+    { managerAuthorized: true },
+  );
+  const cancelledDocuments = buildDiamondStatDocuments({
+    ledger: cancelled.game.ledger,
+    orientationSnapshot: orientationFor("home"),
+    playerDirectory: DIRECTORY,
+    publicPlayerStatIds: ALL_PUBLIC_PLAYER_STAT_IDS,
+    publicTeamStatIds: ALL_PUBLIC_TEAM_STAT_IDS,
+  });
+  const cancelledPitcher = cancelledDocuments.opponentStats["away-1"];
+  assert.equal(
+    projectDiamondStats(cancelled.game.ledger).players["away-1"].raw.pitching.W,
+    0,
+  );
+  assert.equal(Object.hasOwn(cancelledPitcher, "w"), false);
+  assert.equal(Object.hasOwn(cancelledPitcher, "l"), false);
+  assert.equal(Object.hasOwn(cancelledPitcher, "sv"), false);
 });
 
 test("public current state and replay never expose private notes, actors, transcripts, or private rule text", () => {
@@ -2859,6 +3404,116 @@ test("superseded plays retain chronological source revision while identifying th
     bundle.publicPlays.length,
   );
   assert.equal(bundle.writes.gameUpdate.awayScore, 0);
+});
+
+test("public plays use correction-aware replay across suspended and ready obsolete finalization pairs", () => {
+  const suspended = harness("quick", "baseball-youth");
+  setLineupsAndStart(suspended);
+  const { batterId, pitcherId } = currentMatchup(suspended);
+  const play = suspended.submit("record_plate_appearance", {
+    batterId,
+    pitcherId,
+    result: "ground_out",
+    batterAdvance: { to: "out", outKind: "batter_runner" },
+    runnerAdvances: [],
+    outsOnPlay: 1,
+  });
+  suspended.submit("suspend", { reason: "Weather delay." });
+  const obsoleteEnding = suspended.submit("rules_decision", {
+    code: "end_game_weather",
+    description: "The initial ruling ended the game.",
+  });
+  suspended.submit("finalize", { confirmed: true });
+  suspended.submit("private_note", {
+    text: "Audit note between the obsolete finalization and reopen.",
+  });
+  suspended.submit("reopen_for_correction", {
+    reason: "Review whether weather ended the game.",
+  });
+  const correctedEnding = suspended.submit("supersede_event", {
+    targetEventId: obsoleteEnding.eventId,
+    reason: "The interruption did not end the game.",
+    replacement: {
+      type: "rules_decision",
+      payload: {
+        code: "coverage_adjustment",
+        description: "The interruption left fielding coverage incomplete.",
+        affectedFamilies: ["fielding"],
+      },
+    },
+  });
+  suspended.submit("record_fielding", {
+    playEventId: play.eventId,
+    fielding: { putoutBy: "home-2" },
+  });
+  suspended.submit("rules_decision", {
+    code: "end_game_weather",
+    description: "A later ruling made the corrected game official.",
+  });
+  suspended.submit("finalize", { confirmed: true });
+
+  const suspendedPlays = buildDiamondPublicPlays({
+    ledger: suspended.ledger,
+    playerDirectory: DIRECTORY,
+  });
+  assert.equal(
+    suspendedPlays.filter((candidate) => candidate.type === "finalize").length,
+    1,
+  );
+  assert.equal(
+    suspendedPlays.some(
+      (candidate) => candidate.type === "reopen_for_correction",
+    ),
+    false,
+  );
+  assert.ok(
+    suspendedPlays.some(
+      (candidate) =>
+        candidate.eventId === correctedEnding.eventId &&
+        candidate.sourceEventId === obsoleteEnding.eventId &&
+        candidate.corrected === true,
+    ),
+  );
+  assert.equal(suspendedPlays.at(-1).type, "finalize");
+  const suspendedBundle = bundleFor(suspended.ledger);
+  assert.equal(suspendedBundle.publicPlays.at(-1).type, "finalize");
+  assert.equal(suspendedBundle.writes.publicCurrent.data.lifecycle, "final");
+
+  const ready = harness("quick", "baseball-obr");
+  ready.submit("activate", {
+    initialScorerUid: SCORER_UID,
+    captureMode: "quick",
+  });
+  const obsoleteForfeit = ready.submit("rules_decision", {
+    code: "end_game_forfeit_away",
+    description: "The initial pregame forfeit ended the game.",
+  });
+  ready.submit("finalize", { confirmed: true });
+  ready.submit("reopen_for_correction", {
+    reason: "The pregame ruling must be corrected.",
+  });
+  ready.submit("void_event", {
+    targetEventId: obsoleteForfeit.eventId,
+    reason: "The initial forfeit ruling was rescinded.",
+  });
+  ready.submit("rules_decision", {
+    code: "end_game_forfeit_home",
+    description: "The corrected pregame ruling awards home the game.",
+  });
+  ready.submit("finalize", { confirmed: true });
+  const readyPlays = buildDiamondPublicPlays({
+    ledger: ready.ledger,
+    playerDirectory: DIRECTORY,
+  });
+  assert.equal(
+    readyPlays.filter((candidate) => candidate.type === "finalize").length,
+    1,
+  );
+  assert.equal(
+    readyPlays.some((candidate) => candidate.type === "reopen_for_correction"),
+    false,
+  );
+  assert.equal(readyPlays.at(-1).type, "finalize");
 });
 
 test("shared-game reconciliation uses only established score/status fields and returns explicit outcome evidence", () => {

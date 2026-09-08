@@ -4,6 +4,7 @@ exports.isDiamondDeliveredPitch = isDiamondDeliveredPitch;
 exports.getBattingSide = getBattingSide;
 exports.getDiamondFinalizationReason = getDiamondFinalizationReason;
 exports.createInitialDiamondState = createInitialDiamondState;
+exports.deriveDiamondCoverageFromEventStates = deriveDiamondCoverageFromEventStates;
 exports.deriveDiamondCoverageFromEvents = deriveDiamondCoverageFromEvents;
 exports.validateDiamondFieldingOutCredit = validateDiamondFieldingOutCredit;
 exports.validateDiamondState = validateDiamondState;
@@ -515,15 +516,11 @@ function latestRunnerJudgmentBoolean(judgments, runnerId, field) {
     }
     return undefined;
 }
-/**
- * Coverage is evidence-derived from the effective ledger, so a later attachment
- * can resolve one omitted judgment and voiding that attachment revokes it again.
- */
-function deriveDiamondCoverageFromEvents(initialState, events) {
+function deriveDiamondCoverageFromEventStates(initialState, eventStates) {
     let coverage = { ...initialState.coverage };
     const fieldingByPlay = new Map();
     const judgmentsByPlay = new Map();
-    events.forEach((event) => {
+    eventStates.forEach(({ event }) => {
         if (event.type === 'record_fielding') {
             const payload = event.payload;
             fieldingByPlay.set(payload.playEventId, [...(fieldingByPlay.get(payload.playEventId) ?? []), payload.fielding]);
@@ -533,9 +530,7 @@ function deriveDiamondCoverageFromEvents(initialState, events) {
             judgmentsByPlay.set(payload.playEventId, [...(judgmentsByPlay.get(payload.playEventId) ?? []), payload]);
         }
     });
-    let state = cloneState(initialState);
-    events.forEach((event) => {
-        const before = state;
+    eventStates.forEach(({ event, before }) => {
         if (event.type === 'record_pitch' && isDiamondDeliveredPitch(event.payload.result)) {
             if (coverage.pitches === 'not_collected')
                 coverage = { ...coverage, pitches: 'partial' };
@@ -595,10 +590,18 @@ function deriveDiamondCoverageFromEvents(initialState, events) {
                     coverage = { ...coverage, fielding: 'partial' };
             }
         }
-        state = reduceDiamondEvent(state, { type: event.type, payload: event.payload, eventId: event.eventId });
-        state = setDiamondStateRevision(state, event.revision);
     });
     return deepFreeze(coverage);
+}
+function deriveDiamondCoverageFromEvents(initialState, events) {
+    let state = cloneState(initialState);
+    const eventStates = events.map((event) => {
+        const before = state;
+        state = reduceDiamondEvent(state, { type: event.type, payload: event.payload, eventId: event.eventId });
+        state = setDiamondStateRevision(state, event.revision);
+        return { event, before, after: state };
+    });
+    return deriveDiamondCoverageFromEventStates(initialState, eventStates);
 }
 function expectedBatter(state, side = getBattingSide(state)) {
     const order = state.lineups[side].battingOrder;

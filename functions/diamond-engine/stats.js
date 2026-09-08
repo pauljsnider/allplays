@@ -61,18 +61,8 @@ function emptyRawStats() {
         fielding: { defensiveOuts: 0, PO: 0, A: 0, E: 0, DP: 0, TP: 0, PB: 0 }
     };
 }
-function asAction(event) {
-    return { type: event.type, payload: event.payload, eventId: event.eventId };
-}
 function simulate(ledger) {
-    const result = [];
-    let state = ledger.initialState;
-    (0, ledger_1.getEffectiveDiamondEvents)(ledger.events).forEach((event) => {
-        result.push({ event, before: state });
-        state = (0, reducer_1.reduceDiamondEvent)(state, asAction(event));
-        state = (0, reducer_1.setDiamondStateRevision)(state, event.revision);
-    });
-    return result;
+    return (0, ledger_1.replayEffectiveDiamondEventStates)(ledger.initialState, ledger.events);
 }
 function safeRatio(numerator, denominator) {
     return denominator === 0 ? null : numerator / denominator;
@@ -134,23 +124,56 @@ function isOpenDefensiveEntry(state, side) {
         !runLimitReached &&
         (0, reducer_1.getDiamondFinalizationReason)(state) === null);
 }
-function addFielding(fielding, side, eventId, ensure, credit, options = {}) {
-    if (!fielding)
-        return;
-    if (fielding.putoutBy)
-        credit(ensure(fielding.putoutBy, side), 'fielding', 'PO', 1, eventId);
-    (fielding.assists ?? []).forEach((playerId) => credit(ensure(playerId, side), 'fielding', 'A', 1, eventId));
-    (fielding.errors ?? []).forEach(({ playerId }) => credit(ensure(playerId, side), 'fielding', 'E', 1, eventId));
-    if (fielding.passedBallBy && options.creditPassedBall !== false) {
-        credit(ensure(fielding.passedBallBy, side), 'fielding', 'PB', 1, eventId);
+function addMergedFielding(fieldings, side, eventId, ensure, credit, options = {}) {
+    const putouts = new Set();
+    const assists = new Set();
+    const passedBalls = new Set();
+    const errorMultiplicity = new Map();
+    let doublePlay = false;
+    let triplePlay = false;
+    fieldings.forEach((fielding) => {
+        if (fielding.putoutBy)
+            putouts.add(fielding.putoutBy);
+        (fielding.assists ?? []).forEach((playerId) => assists.add(playerId));
+        const chainErrors = new Map();
+        (fielding.errors ?? []).forEach(({ playerId, kind }) => {
+            const counts = chainErrors.get(playerId) ?? { total: 0, fielding: 0, throwing: 0 };
+            counts.total += 1;
+            if (kind)
+                counts[kind] += 1;
+            chainErrors.set(playerId, counts);
+        });
+        chainErrors.forEach((counts, playerId) => {
+            const merged = errorMultiplicity.get(playerId) ?? { maxChainTotal: 0, maxFielding: 0, maxThrowing: 0 };
+            merged.maxChainTotal = Math.max(merged.maxChainTotal, counts.total);
+            merged.maxFielding = Math.max(merged.maxFielding, counts.fielding);
+            merged.maxThrowing = Math.max(merged.maxThrowing, counts.throwing);
+            errorMultiplicity.set(playerId, merged);
+        });
+        if (fielding.passedBallBy)
+            passedBalls.add(fielding.passedBallBy);
+        doublePlay || (doublePlay = fielding.doublePlay === true);
+        triplePlay || (triplePlay = fielding.triplePlay === true);
+    });
+    putouts.forEach((playerId) => credit(ensure(playerId, side), 'fielding', 'PO', 1, eventId));
+    assists.forEach((playerId) => credit(ensure(playerId, side), 'fielding', 'A', 1, eventId));
+    let errorCredits = 0;
+    errorMultiplicity.forEach(({ maxChainTotal, maxFielding, maxThrowing }, playerId) => {
+        const playerErrorCredits = Math.max(maxChainTotal, maxFielding + maxThrowing);
+        for (let count = 0; count < playerErrorCredits; count += 1) {
+            credit(ensure(playerId, side), 'fielding', 'E', 1, eventId);
+            errorCredits += 1;
+        }
+    });
+    if (options.creditPassedBall !== false) {
+        passedBalls.forEach((playerId) => credit(ensure(playerId, side), 'fielding', 'PB', 1, eventId));
     }
-    const participants = new Set([...(fielding.putoutBy ? [fielding.putoutBy] : []), ...(fielding.assists ?? [])]);
-    if (fielding.doublePlay) {
+    const participants = new Set([...putouts, ...assists]);
+    if (doublePlay)
         participants.forEach((playerId) => credit(ensure(playerId, side), 'fielding', 'DP', 1, eventId));
-    }
-    if (fielding.triplePlay) {
+    if (triplePlay)
         participants.forEach((playerId) => credit(ensure(playerId, side), 'fielding', 'TP', 1, eventId));
-    }
+    return { errorCredits, passedBallObserved: passedBalls.size > 0 };
 }
 function atBatForResult(result) {
     return !['walk', 'intentional_walk', 'hit_by_pitch', 'sacrifice_bunt', 'sacrifice_fly', 'interference'].includes(result);
@@ -158,17 +181,23 @@ function atBatForResult(result) {
 function collectAttachmentMaps(events) {
     const fielding = new Map();
     const judgments = new Map();
-    events.forEach(({ event }) => {
+    events.forEach(({ event }, order) => {
         if (event.type === 'record_fielding') {
             const payload = event.payload;
-            fielding.set(payload.playEventId, [...(fielding.get(payload.playEventId) ?? []), payload.fielding]);
+            fielding.set(payload.playEventId, [...(fielding.get(payload.playEventId) ?? []), { order, value: payload.fielding }]);
         }
         if (event.type === 'record_scoring_judgment') {
             const payload = event.payload;
-            judgments.set(payload.playEventId, [...(judgments.get(payload.playEventId) ?? []), payload]);
+            judgments.set(payload.playEventId, [...(judgments.get(payload.playEventId) ?? []), { order, value: payload }]);
         }
     });
     return { fielding, judgments };
+}
+function attachmentsForPlay(attachments, event) {
+    return [...new Set([event.sourceEventId, event.eventId])]
+        .flatMap((eventId) => attachments.get(eventId) ?? [])
+        .sort((left, right) => left.order - right.order)
+        .map(({ value }) => value);
 }
 function latestJudgmentValue(judgments, runnerId, field) {
     for (let index = judgments.length - 1; index >= 0; index -= 1) {
@@ -179,9 +208,45 @@ function latestJudgmentValue(judgments, runnerId, field) {
     }
     return undefined;
 }
+function officialWinningSide(state) {
+    if (state.lifecycle !== 'final')
+        return null;
+    if (state.finalizationReason?.kind === 'forfeit') {
+        return state.gameEndDecision?.reason === 'forfeit' ? state.gameEndDecision.awardedSide : null;
+    }
+    if (state.score.home === state.score.away)
+        return null;
+    return state.score.home > state.score.away ? 'home' : 'away';
+}
+function exposedPitcherDecisionEventIds(events, finalState) {
+    const winningSide = officialWinningSide(finalState);
+    if (!winningSide)
+        return new Set();
+    const losingSide = winningSide === 'home' ? 'away' : 'home';
+    const decisions = events.flatMap(({ event }) => {
+        if (event.type !== 'record_scoring_judgment')
+            return [];
+        const pitcherOfRecord = event.payload.pitcherOfRecord;
+        return pitcherOfRecord ? [{ eventId: event.eventId, value: pitcherOfRecord }] : [];
+    });
+    const byType = new Map();
+    for (const { value } of decisions) {
+        if (byType.has(value.decision))
+            return new Set();
+        byType.set(value.decision, value);
+        const expectedSide = value.decision === 'loss' ? losingSide : winningSide;
+        if (value.side !== expectedSide)
+            return new Set();
+    }
+    const win = byType.get('win');
+    const save = byType.get('save');
+    if (win && save && win.playerId === save.playerId)
+        return new Set();
+    return new Set(decisions.map(({ eventId }) => eventId));
+}
 function projectDiamondStats(ledger) {
     const simulated = simulate(ledger);
-    const coverage = (0, reducer_1.deriveDiamondCoverageFromEvents)(ledger.initialState, (0, ledger_1.getEffectiveDiamondEvents)(ledger.events));
+    const coverage = (0, reducer_1.deriveDiamondCoverageFromEventStates)(ledger.initialState, simulated);
     const profile = (0, rules_1.requireDiamondRulesProfile)(ledger.rulesProfileId, ledger.rulesProfileVersion);
     const lines = new Map();
     const gameSeen = new Set();
@@ -217,6 +282,7 @@ function projectDiamondStats(ledger) {
         }
     };
     const attachments = collectAttachmentMaps(simulated);
+    const exposedDecisionEventIds = exposedPitcherDecisionEventIds(simulated, ledger.state);
     let physicalCauseCluster = null;
     const ensure = (playerId, side) => {
         const existing = lines.get(playerId);
@@ -430,9 +496,7 @@ function projectDiamondStats(ledger) {
                     creditGame(advance.runnerId, battingSide, eventId, false);
                     credit(runner, 'batting', 'R', 1, eventId);
                     const placement = advance.from === 'batter' ? null : before.bases[advance.from];
-                    const matchingJudgments = (attachments.judgments.get(event.sourceEventId) ??
-                        attachments.judgments.get(event.eventId) ??
-                        []).filter((candidate) => !candidate.runnerId || candidate.runnerId === advance.runnerId);
+                    const matchingJudgments = attachmentsForPlay(attachments.judgments, event).filter((candidate) => !candidate.runnerId || candidate.runnerId === advance.runnerId);
                     const responsiblePitcherId = latestJudgmentValue(matchingJudgments, advance.runnerId, 'responsiblePitcherId') ??
                         advance.responsiblePitcherId ??
                         (advance.from === 'batter' ? payload.pitcherId : placement?.chargedToPitcherId);
@@ -470,25 +534,8 @@ function projectDiamondStats(ledger) {
                     teams[battingSide].twoOutRuns += runsOnPlay;
                 const defenders = new Set(Object.values(before.lineups[pitchingSide].defense).filter(Boolean));
                 defenders.forEach((playerId) => credit(ensure(playerId, pitchingSide), 'fielding', 'defensiveOuts', payload.outsOnPlay, eventId));
-                let passedBallCredited = false;
-                addFielding(payload.fielding, pitchingSide, eventId, ensure, credit, {
-                    creditPassedBall: !passedBallCredited
-                });
-                if (payload.fielding?.passedBallBy)
-                    passedBallCredited = true;
-                (attachments.fielding.get(event.sourceEventId) ?? attachments.fielding.get(event.eventId) ?? []).forEach((fielding) => {
-                    addFielding(fielding, pitchingSide, eventId, ensure, credit, {
-                        creditPassedBall: !passedBallCredited
-                    });
-                    if (fielding.passedBallBy)
-                        passedBallCredited = true;
-                    (fielding.errors ?? []).forEach(() => {
-                        teams[pitchingSide].E += 1;
-                    });
-                });
-                (payload.fielding?.errors ?? []).forEach(() => {
-                    teams[pitchingSide].E += 1;
-                });
+                const fieldingResult = addMergedFielding([...(payload.fielding ? [payload.fielding] : []), ...attachmentsForPlay(attachments.fielding, event)], pitchingSide, eventId, ensure, credit);
+                teams[pitchingSide].E += fieldingResult.errorCredits;
                 physicalCauseCluster = null;
                 break;
             }
@@ -509,7 +556,7 @@ function projectDiamondStats(ledger) {
                 if (payload.cause === 'pickoff')
                     credit(runner, 'baserunning', 'pickoffs', 1, eventId);
                 const placement = before.bases[payload.from];
-                const matchingJudgments = (attachments.judgments.get(event.sourceEventId) ?? attachments.judgments.get(event.eventId) ?? []).filter((candidate) => !candidate.runnerId || candidate.runnerId === payload.runnerId);
+                const matchingJudgments = attachmentsForPlay(attachments.judgments, event).filter((candidate) => !candidate.runnerId || candidate.runnerId === payload.runnerId);
                 const responsiblePitcherId = latestJudgmentValue(matchingJudgments, payload.runnerId, 'responsiblePitcherId') ??
                     payload.responsiblePitcherId ??
                     placement?.chargedToPitcherId;
@@ -569,14 +616,10 @@ function projectDiamondStats(ledger) {
                     if (physicalCauseCluster)
                         physicalCauseCluster.pitchingCreditRecorded = true;
                 }
-                addFielding(payload.fielding, pitchingSide, eventId, ensure, credit, {
-                    creditPassedBall: !physicalCauseCluster?.passedBallCreditRecorded
-                });
-                if (payload.fielding?.passedBallBy && physicalCauseCluster)
+                const fieldingResult = addMergedFielding([...(payload.fielding ? [payload.fielding] : []), ...attachmentsForPlay(attachments.fielding, event)], pitchingSide, eventId, ensure, credit, { creditPassedBall: !physicalCauseCluster?.passedBallCreditRecorded });
+                if (fieldingResult.passedBallObserved && physicalCauseCluster)
                     physicalCauseCluster.passedBallCreditRecorded = true;
-                (payload.fielding?.errors ?? []).forEach(() => {
-                    teams[pitchingSide].E += 1;
-                });
+                teams[pitchingSide].E += fieldingResult.errorCredits;
                 break;
             }
             case 'add_courtesy_runner': {
@@ -590,7 +633,7 @@ function projectDiamondStats(ledger) {
             }
             case 'record_scoring_judgment': {
                 const payload = event.payload;
-                if (payload.pitcherOfRecord) {
+                if (payload.pitcherOfRecord && exposedDecisionEventIds.has(eventId)) {
                     const decision = payload.pitcherOfRecord.decision === 'win' ? 'W' : payload.pitcherOfRecord.decision === 'loss' ? 'L' : 'SV';
                     credit(ensure(payload.pitcherOfRecord.playerId, payload.pitcherOfRecord.side), 'pitching', decision, 1, eventId);
                 }

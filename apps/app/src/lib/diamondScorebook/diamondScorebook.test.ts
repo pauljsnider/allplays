@@ -15,6 +15,7 @@ import {
   projectDiamondStats,
   reduceDiamondEvent,
   replayDiamondLedger,
+  replayEffectiveDiamondEventStates,
   sha256Hex,
   verifyDiamondLedger,
   type DiamondCommand,
@@ -231,6 +232,16 @@ function preparePitcherDecisionGame() {
   });
   const decisionPlay = recordGroundOut();
   return { game, playEventId: decisionPlay.event!.eventId };
+}
+
+function completePitcherDecisionGameForAwayWin(game: ReturnType<typeof harness>) {
+  advanceToHalf(game, 7, 'bottom');
+  finishHalf(game);
+  expect(game.ledger.state).toMatchObject({
+    lifecycle: 'active',
+    score: { away: 1, home: 0 },
+    inning: { number: 7, half: 'bottom', outs: 3 }
+  });
 }
 
 function buildGoldenGame() {
@@ -1592,7 +1603,7 @@ describe('Diamond command ledger', () => {
 
     const beforeCorrection = projectDiamondStats(game.ledger);
     expect(beforeCorrection.players['home-2'].raw.fielding.PO).toBe(1);
-    expect(beforeCorrection.players['home-1'].raw.pitching.W).toBe(1);
+    expect(beforeCorrection.players['home-1'].raw.pitching.W).toBe(0);
 
     game.submit('void_event', {
       targetEventId: play.event!.eventId,
@@ -1683,12 +1694,293 @@ describe('Diamond command ledger', () => {
       playEventId,
       pitcherOfRecord: { side: 'away', playerId: 'away-1', decision: 'win' }
     });
+    completePitcherDecisionGameForAwayWin(game);
+    game.submit('finalize', { confirmed: true });
 
     const stats = projectDiamondStats(game.ledger);
     expect(stats.players['away-1'].raw.pitching.W).toBe(1);
     expect(stats.players['home-1'].raw.pitching.L).toBe(1);
     expect(stats.players['away-4'].raw.pitching.SV).toBe(1);
     expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
+    expect(verifyDiamondLedger(game.ledger)).toBe(true);
+  });
+
+  it.each([
+    {
+      label: 'win for the losing side',
+      pitcherOfRecord: { side: 'home', playerId: 'home-1', decision: 'win' }
+    },
+    {
+      label: 'loss for the winning side',
+      pitcherOfRecord: { side: 'away', playerId: 'away-5', decision: 'loss' }
+    },
+    {
+      label: 'save for the losing side',
+      pitcherOfRecord: { side: 'home', playerId: 'home-1', decision: 'save' }
+    }
+  ] as const)('rejects an official $label when finalizing a scored result', ({ pitcherOfRecord }) => {
+    const { game, playEventId } = preparePitcherDecisionGame();
+    game.submit('record_scoring_judgment', { playEventId, pitcherOfRecord });
+    completePitcherDecisionGameForAwayWin(game);
+    const before = game.ledger;
+
+    const rejected = game.submit('finalize', { confirmed: true }, { accept: false });
+
+    expect(rejected.result).toMatchObject({
+      outcome: 'rejected',
+      revision: before.state.revision,
+      rejection: { code: 'pitcher-decision-official-result-mismatch' }
+    });
+    expect(rejected.ledger).toBe(before);
+  });
+
+  it('accepts coherent partial W/L/SV decisions for the official scored winner', () => {
+    const { game, playEventId } = preparePitcherDecisionGame();
+    game.submit('record_scoring_judgment', {
+      playEventId,
+      pitcherOfRecord: { side: 'away', playerId: 'away-1', decision: 'win' }
+    });
+    game.submit('record_scoring_judgment', {
+      playEventId,
+      pitcherOfRecord: { side: 'home', playerId: 'home-1', decision: 'loss' }
+    });
+    game.submit('record_scoring_judgment', {
+      playEventId,
+      pitcherOfRecord: { side: 'away', playerId: 'away-4', decision: 'save' }
+    });
+    completePitcherDecisionGameForAwayWin(game);
+
+    game.submit('finalize', { confirmed: true });
+
+    expect(game.ledger.state).toMatchObject({
+      lifecycle: 'final',
+      score: { away: 1, home: 0 },
+      finalizationReason: { kind: 'regulation' }
+    });
+    expect(verifyDiamondLedger(game.ledger)).toBe(true);
+  });
+
+  it.each([
+    { decision: 'win', side: 'away', playerId: 'away-1' },
+    { decision: 'loss', side: 'home', playerId: 'home-1' },
+    { decision: 'save', side: 'away', playerId: 'away-4' }
+  ] as const)('accepts a coherent partial $decision decision at finalization', ({ decision, side, playerId }) => {
+    const { game, playEventId } = preparePitcherDecisionGame();
+    game.submit('record_scoring_judgment', {
+      playEventId,
+      pitcherOfRecord: { side, playerId, decision }
+    });
+    completePitcherDecisionGameForAwayWin(game);
+
+    game.submit('finalize', { confirmed: true });
+
+    expect(game.ledger.state.lifecycle).toBe('final');
+    expect(verifyDiamondLedger(game.ledger)).toBe(true);
+  });
+
+  it('uses the awarded forfeit side instead of the scoreboard for official pitcher decisions', () => {
+    const accepted = preparePitcherDecisionGame();
+    accepted.game.submit('record_scoring_judgment', {
+      playEventId: accepted.playEventId,
+      pitcherOfRecord: { side: 'home', playerId: 'home-1', decision: 'win' }
+    });
+    accepted.game.submit('record_scoring_judgment', {
+      playEventId: accepted.playEventId,
+      pitcherOfRecord: { side: 'away', playerId: 'away-5', decision: 'loss' }
+    });
+    accepted.game.submit('rules_decision', {
+      code: 'end_game_forfeit_home',
+      description: 'The umpire awarded the game to the home team despite the on-field score.'
+    });
+    accepted.game.submit('finalize', { confirmed: true });
+    expect(accepted.game.ledger.state).toMatchObject({
+      lifecycle: 'final',
+      score: { away: 1, home: 0 },
+      finalizationReason: { kind: 'forfeit' },
+      gameEndDecision: { awardedSide: 'home' }
+    });
+
+    const acceptedSave = preparePitcherDecisionGame();
+    acceptedSave.game.submit('record_scoring_judgment', {
+      playEventId: acceptedSave.playEventId,
+      pitcherOfRecord: { side: 'home', playerId: 'home-1', decision: 'save' }
+    });
+    acceptedSave.game.submit('rules_decision', {
+      code: 'end_game_forfeit_home',
+      description: 'The umpire awarded the game to the home team despite the on-field score.'
+    });
+    acceptedSave.game.submit('finalize', { confirmed: true });
+    expect(acceptedSave.game.ledger.state.lifecycle).toBe('final');
+
+    const rejected = preparePitcherDecisionGame();
+    rejected.game.submit('record_scoring_judgment', {
+      playEventId: rejected.playEventId,
+      pitcherOfRecord: { side: 'away', playerId: 'away-4', decision: 'save' }
+    });
+    rejected.game.submit('rules_decision', {
+      code: 'end_game_forfeit_home',
+      description: 'The umpire awarded the game to the home team despite the on-field score.'
+    });
+    const before = rejected.game.ledger;
+    const wrongOfficialWinner = rejected.game.submit('finalize', { confirmed: true }, { accept: false });
+    expect(wrongOfficialWinner.result.rejection?.code).toBe('pitcher-decision-official-result-mismatch');
+    expect(wrongOfficialWinner.ledger).toBe(before);
+  });
+
+  it.each([
+    { decision: 'win', code: 'end_game_weather' },
+    { decision: 'loss', code: 'end_game_time_limit' },
+    { decision: 'save', code: 'end_game_weather' }
+  ] as const)('rejects a $decision decision when an official $code result is tied', ({ decision, code }) => {
+    const game = harness('baseball-youth', 'quick');
+    setBasicLineups(game);
+    const play = game.submit('record_plate_appearance', {
+      batterId: 'away-1',
+      pitcherId: 'home-1',
+      result: 'ground_out',
+      batterAdvance: { to: 'out', outKind: 'batter_runner' },
+      runnerAdvances: [],
+      outsOnPlay: 1
+    });
+    game.submit('record_scoring_judgment', {
+      playEventId: play.event!.eventId,
+      pitcherOfRecord: { side: 'home', playerId: 'home-1', decision }
+    });
+    game.submit('rules_decision', {
+      code,
+      description: 'The umpire declared the tied game official.'
+    });
+
+    const rejected = game.submit('finalize', { confirmed: true }, { accept: false });
+
+    expect(rejected.result.rejection?.code).toBe('pitcher-decision-not-allowed-for-tie');
+  });
+
+  it('requires full canonical history before a bounded checkpoint may finalize pitcher decisions', () => {
+    const { game, playEventId } = preparePitcherDecisionGame();
+    game.submit('record_scoring_judgment', {
+      playEventId,
+      pitcherOfRecord: { side: 'home', playerId: 'home-1', decision: 'win' }
+    });
+    completePitcherDecisionGameForAwayWin(game);
+    const checkpoint = createDiamondCheckpoint(game.ledger);
+    const command = game.command('finalize', { confirmed: true });
+
+    const rejected = executeDiamondCommandFromCheckpoint(checkpoint, command, {
+      actorUid: SCORER,
+      eventId: 'bounded-finalization-event',
+      serverTimestampMs: 1_900_000_000_003
+    });
+
+    expect(rejected.result.rejection).toMatchObject({ code: 'history-required', retryable: true });
+    expect(rejected.checkpoint).toBe(checkpoint);
+
+    const noDecisions = preparePitcherDecisionGame();
+    completePitcherDecisionGameForAwayWin(noDecisions.game);
+    const cleanCheckpoint = createDiamondCheckpoint(noDecisions.game.ledger);
+    const cleanRejected = executeDiamondCommandFromCheckpoint(cleanCheckpoint, noDecisions.game.command('finalize', { confirmed: true }), {
+      actorUid: SCORER,
+      eventId: 'bounded-clean-finalization-event',
+      serverTimestampMs: 1_900_000_000_004
+    });
+    expect(cleanRejected.result.rejection).toMatchObject({ code: 'history-required', retryable: true });
+    expect(cleanRejected.checkpoint).toBe(cleanCheckpoint);
+  });
+
+  it.each([
+    { code: 'end_game_weather', profileId: 'baseball-nfhs', kind: 'weather' },
+    { code: 'end_game_time_limit', profileId: 'baseball-youth', kind: 'time-limit' }
+  ] as const)('uses the numeric score for non-tied $kind decisions', ({ code, profileId, kind }) => {
+    const game = harness(profileId, 'quick');
+    setBasicLineups(game);
+    const scoringPlay = game.submit('record_plate_appearance', {
+      batterId: 'away-1',
+      pitcherId: 'home-1',
+      result: 'home_run',
+      batterAdvance: { to: 'home', cause: 'batted_ball', countsRun: true, earned: true, rbi: true },
+      runnerAdvances: [],
+      outsOnPlay: 0,
+      runsBattedIn: 1
+    });
+    finishHalf(game);
+    game.submit('advance_half_inning', {});
+    const decisionPlay = game.submit('record_plate_appearance', {
+      batterId: 'home-1',
+      pitcherId: 'away-1',
+      result: 'ground_out',
+      batterAdvance: { to: 'out', outKind: 'batter_runner' },
+      runnerAdvances: [],
+      outsOnPlay: 1
+    });
+    game.submit('record_scoring_judgment', {
+      playEventId: decisionPlay.event!.eventId,
+      pitcherOfRecord: { side: 'away', playerId: 'away-1', decision: 'win' }
+    });
+    game.submit('record_scoring_judgment', {
+      playEventId: scoringPlay.event!.eventId,
+      pitcherOfRecord: { side: 'home', playerId: 'home-1', decision: 'loss' }
+    });
+    game.submit('rules_decision', { code, description: 'The umpire declared the non-tied result official.' });
+
+    game.submit('finalize', { confirmed: true });
+
+    expect(game.ledger.state).toMatchObject({
+      lifecycle: 'final',
+      score: { away: 1, home: 0 },
+      finalizationReason: { kind }
+    });
+    expect(verifyDiamondLedger(game.ledger)).toBe(true);
+  });
+
+  it('keeps stale decisions provisional during correction and requires corrected decisions before re-finalization', () => {
+    const { game, playEventId } = preparePitcherDecisionGame();
+    const win = game.submit('record_scoring_judgment', {
+      playEventId,
+      pitcherOfRecord: { side: 'away', playerId: 'away-1', decision: 'win' }
+    });
+    const loss = game.submit('record_scoring_judgment', {
+      playEventId,
+      pitcherOfRecord: { side: 'home', playerId: 'home-1', decision: 'loss' }
+    });
+    const weather = game.submit('rules_decision', {
+      code: 'end_game_weather',
+      description: 'The initial ruling used the score on the field.'
+    });
+    game.submit('finalize', { confirmed: true });
+    game.submit('reopen_for_correction', { reason: 'The official result changed after review.' });
+    game.submit('supersede_event', {
+      targetEventId: weather.event!.eventId,
+      reason: 'The home team was awarded the game by forfeit.',
+      replacement: {
+        type: 'rules_decision',
+        payload: {
+          code: 'end_game_forfeit_home',
+          description: 'The corrected ruling awards the game to the home team.'
+        }
+      }
+    });
+    expect(game.ledger.state.lifecycle).toBe('correction');
+
+    const stale = game.submit('finalize', { confirmed: true }, { accept: false });
+    expect(stale.result.rejection?.code).toBe('pitcher-decision-official-result-mismatch');
+
+    game.submit('void_event', { targetEventId: win.event!.eventId, reason: 'Remove the stale winning decision.' });
+    game.submit('void_event', { targetEventId: loss.event!.eventId, reason: 'Remove the stale losing decision.' });
+    game.submit('record_scoring_judgment', {
+      playEventId,
+      pitcherOfRecord: { side: 'home', playerId: 'home-1', decision: 'win' }
+    });
+    game.submit('record_scoring_judgment', {
+      playEventId,
+      pitcherOfRecord: { side: 'away', playerId: 'away-5', decision: 'loss' }
+    });
+    game.submit('finalize', { confirmed: true });
+
+    expect(game.ledger.state).toMatchObject({
+      lifecycle: 'final',
+      finalizationReason: { kind: 'forfeit' },
+      gameEndDecision: { awardedSide: 'home' }
+    });
     expect(verifyDiamondLedger(game.ledger)).toBe(true);
   });
 
@@ -1730,6 +2022,8 @@ describe('Diamond command ledger', () => {
         }
       }
     });
+    completePitcherDecisionGameForAwayWin(corrected.game);
+    corrected.game.submit('finalize', { confirmed: true });
     const correctedStats = projectDiamondStats(corrected.game.ledger);
     expect(correctedStats.players['away-1'].raw.pitching.W).toBe(0);
     expect(correctedStats.players['away-5'].raw.pitching.W).toBe(1);
@@ -1769,6 +2063,8 @@ describe('Diamond command ledger', () => {
       playEventId: voided.playEventId,
       pitcherOfRecord: { side: 'away', playerId: 'away-5', decision: 'win' }
     });
+    completePitcherDecisionGameForAwayWin(voided.game);
+    voided.game.submit('finalize', { confirmed: true });
     expect(projectDiamondStats(voided.game.ledger).players['away-5'].raw.pitching.W).toBe(1);
     expect(verifyDiamondLedger(voided.game.ledger)).toBe(true);
   });
@@ -2135,6 +2431,65 @@ describe('Audited game and half-inning endings', () => {
     expect(replayDiamondLedger(regulation.ledger).state).toEqual(regulation.ledger.state);
   });
 
+  it('binds pitcher decisions to the numeric winner for walkoff and run-ahead finals', () => {
+    const walkoff = harness('baseball-nfhs', 'quick');
+    setBasicLineups(walkoff);
+    advanceToHalf(walkoff, 7, 'bottom');
+    const walkoffMatchup = currentMatchup(walkoff);
+    const walkoffPlay = walkoff.submit('record_plate_appearance', {
+      ...walkoffMatchup,
+      result: 'home_run',
+      batterAdvance: { to: 'home', cause: 'batted_ball', countsRun: true, earned: true, rbi: true },
+      runnerAdvances: [],
+      outsOnPlay: 0,
+      runsBattedIn: 1
+    });
+    walkoff.submit('record_scoring_judgment', {
+      playEventId: walkoffPlay.event!.eventId,
+      pitcherOfRecord: { side: 'home', playerId: 'home-1', decision: 'win' }
+    });
+    walkoff.submit('record_scoring_judgment', {
+      playEventId: walkoffPlay.event!.eventId,
+      pitcherOfRecord: { side: 'away', playerId: 'away-1', decision: 'loss' }
+    });
+    walkoff.submit('finalize', { confirmed: true });
+    expect(walkoff.ledger.state).toMatchObject({
+      lifecycle: 'final',
+      score: { away: 0, home: 1 },
+      finalizationReason: { kind: 'walkoff' }
+    });
+
+    const runAhead = harness('baseball-nfhs', 'quick');
+    setBasicLineups(runAhead);
+    for (let run = 0; run < 10; run += 1) recordSoloHomeRun(runAhead);
+    finishHalf(runAhead);
+    runAhead.submit('advance_half_inning', {});
+    const decisionPlay = runAhead.submit('record_plate_appearance', {
+      batterId: 'home-1',
+      pitcherId: 'away-1',
+      result: 'ground_out',
+      batterAdvance: { to: 'out', outKind: 'batter_runner' },
+      runnerAdvances: [],
+      outsOnPlay: 1
+    });
+    runAhead.submit('record_scoring_judgment', {
+      playEventId: decisionPlay.event!.eventId,
+      pitcherOfRecord: { side: 'away', playerId: 'away-1', decision: 'win' }
+    });
+    runAhead.submit('record_scoring_judgment', {
+      playEventId: decisionPlay.event!.eventId,
+      pitcherOfRecord: { side: 'home', playerId: 'home-1', decision: 'loss' }
+    });
+    advanceToHalf(runAhead, 5, 'bottom');
+    finishHalf(runAhead);
+    runAhead.submit('finalize', { confirmed: true });
+    expect(runAhead.ledger.state).toMatchObject({
+      lifecycle: 'final',
+      score: { away: 10, home: 0 },
+      finalizationReason: { kind: 'run-ahead' }
+    });
+  });
+
   it('records time-limit endings only for configured profiles and blocks later play', () => {
     const noClock = harness('baseball-nfhs', 'quick');
     setBasicLineups(noClock);
@@ -2268,8 +2623,149 @@ describe('Audited game and half-inning endings', () => {
       kind: 'forfeit',
       decisionEventId: correction.event!.eventId
     });
+    expect(getEffectiveDiamondEvents(game.ledger.events).filter((event) => event.type === 'finalize')).toHaveLength(1);
+    expect(getEffectiveDiamondEvents(game.ledger.events).some((event) => event.type === 'reopen_for_correction')).toBe(false);
     expect(verifyDiamondLedger(game.ledger)).toBe(true);
     expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
+  });
+
+  it('skips every obsolete finalization pair when a later correction removes the game-ending decision', () => {
+    const game = harness('baseball-youth', 'quick');
+    setBasicLineups(game);
+    const play = game.submit('record_plate_appearance', {
+      batterId: 'away-1',
+      pitcherId: 'home-1',
+      result: 'ground_out',
+      batterAdvance: { to: 'out', outKind: 'batter_runner' },
+      runnerAdvances: [],
+      outsOnPlay: 1
+    });
+    game.submit('suspend', { reason: 'Weather delay.' });
+    const weather = game.submit('rules_decision', {
+      code: 'end_game_weather',
+      description: 'Initial on-field ruling ended the game.'
+    });
+    game.submit('finalize', { confirmed: true });
+    game.submit('private_note', { text: 'Final-state audit note before the first reopen.' });
+    game.submit('scorer_handoff', { toUid: SCORER });
+    game.submit('reopen_for_correction', { reason: 'Review the official ruling.' });
+    game.submit('finalize', { confirmed: true });
+    game.submit('private_note', { text: 'Final-state audit note before the second reopen.' });
+    game.submit('reopen_for_correction', { reason: 'The ruling still requires correction.' });
+
+    game.submit('supersede_event', {
+      targetEventId: weather.event!.eventId,
+      reason: 'Weather delayed the game but did not end it.',
+      replacement: {
+        type: 'rules_decision',
+        payload: {
+          code: 'coverage_adjustment',
+          description: 'The weather interruption left fielding coverage incomplete.',
+          affectedFamilies: ['fielding']
+        }
+      }
+    });
+
+    expect(game.ledger.state).toMatchObject({
+      lifecycle: 'correction',
+      gameEndDecision: null,
+      finalizationReason: null,
+      finalConfirmedAtRevision: null,
+      suspendedReason: null,
+      coverage: { fielding: 'partial' }
+    });
+    game.submit('record_fielding', {
+      playEventId: play.event!.eventId,
+      fielding: { putoutBy: 'home-2' }
+    });
+    expect(getEffectiveDiamondEvents(game.ledger.events).some((event) => event.type === 'finalize')).toBe(false);
+    expect(getEffectiveDiamondEvents(game.ledger.events).some((event) => event.type === 'reopen_for_correction')).toBe(false);
+    const replayed = replayEffectiveDiamondEventStates(game.ledger.initialState, game.ledger.events);
+    expect(replayed.map(({ event }) => event)).toEqual(getEffectiveDiamondEvents(game.ledger.events));
+    expect(replayed[replayed.length - 1]).toMatchObject({
+      event: { type: 'record_fielding' },
+      before: { lifecycle: 'correction', suspendedReason: null },
+      after: { lifecycle: 'correction', suspendedReason: null }
+    });
+    expect(verifyDiamondLedger(game.ledger)).toBe(true);
+    expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
+  });
+
+  it('replays a corrected walkoff as a tied correction state instead of applying the obsolete final', () => {
+    const game = harness('baseball-nfhs', 'quick');
+    setBasicLineups(game);
+    advanceToHalf(game, 7, 'bottom');
+    const { batterId, pitcherId } = currentMatchup(game);
+    const walkoff = game.submit('record_plate_appearance', {
+      batterId,
+      pitcherId,
+      result: 'home_run',
+      batterAdvance: {
+        to: 'home',
+        cause: 'batted_ball',
+        countsRun: true,
+        earned: true,
+        rbi: true
+      },
+      runnerAdvances: [],
+      outsOnPlay: 0,
+      runsBattedIn: 1
+    });
+    game.submit('finalize', { confirmed: true });
+    game.submit('reopen_for_correction', { reason: 'Video review changed the walkoff ruling.' });
+
+    game.submit('supersede_event', {
+      targetEventId: walkoff.event!.eventId,
+      reason: 'The ball stayed in play for a triple and no run scored.',
+      replacement: {
+        type: 'record_plate_appearance',
+        payload: {
+          batterId,
+          pitcherId,
+          result: 'triple',
+          batterAdvance: { to: 'third', cause: 'batted_ball' },
+          runnerAdvances: [],
+          outsOnPlay: 0,
+          runsBattedIn: 0
+        }
+      }
+    });
+
+    expect(game.ledger.state).toMatchObject({
+      lifecycle: 'correction',
+      score: { away: 0, home: 0 },
+      inning: { number: 7, half: 'bottom' },
+      finalizationReason: null
+    });
+    expect(game.ledger.state.bases.third?.runnerId).toBe(batterId);
+    const premature = game.submit('finalize', { confirmed: true }, { accept: false });
+    expect(premature.result.rejection?.code).toBe('finalization-not-eligible');
+    expect(verifyDiamondLedger(game.ledger)).toBe(true);
+  });
+
+  it('voids an obsolete ready-state forfeit after reopen without replaying its prior finalization', () => {
+    const game = harness('baseball-obr', 'quick');
+    game.submit('activate', { initialScorerUid: SCORER, captureMode: 'quick' });
+    const ending = game.submit('rules_decision', {
+      code: 'end_game_forfeit_away',
+      description: 'The initial forfeit ruling ended the game before first pitch.'
+    });
+    game.submit('finalize', { confirmed: true });
+    game.submit('reopen_for_correction', { reason: 'The umpire rescinded the ending ruling.' });
+
+    game.submit('void_event', {
+      targetEventId: ending.event!.eventId,
+      reason: 'The forfeit ruling was rescinded before play.'
+    });
+
+    expect(game.ledger.state).toMatchObject({
+      lifecycle: 'correction',
+      gameEndDecision: null,
+      finalizationReason: null,
+      finalConfirmedAtRevision: null
+    });
+    expect(getEffectiveDiamondEvents(game.ledger.events).some((event) => event.type === 'finalize')).toBe(false);
+    expect(verifyDiamondLedger(game.ledger)).toBe(true);
   });
 
   it('accepts only closed rule-decision codes and requires coverage evidence for coverage changes', () => {

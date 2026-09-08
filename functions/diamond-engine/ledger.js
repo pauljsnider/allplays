@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getEffectiveDiamondEvents = getEffectiveDiamondEvents;
+exports.replayEffectiveDiamondEventStates = replayEffectiveDiamondEventStates;
 exports.replayDiamondEvents = replayDiamondEvents;
 exports.replayDiamondLedger = replayDiamondLedger;
 exports.createDiamondLedger = createDiamondLedger;
@@ -17,10 +18,12 @@ const HISTORY_REQUIRED_COMMANDS = new Set([
     'record_fielding',
     'record_scoring_judgment',
     'void_event',
-    'supersede_event'
+    'supersede_event',
+    'finalize'
 ]);
 const ATTACHABLE_PLAY_TYPES = new Set(['record_plate_appearance', 'advance_runner']);
 const PITCHER_APPEARANCE_TYPES = new Set(['record_pitch', 'record_plate_appearance', 'advance_runner']);
+const FINAL_REOPEN_INTERVENING_TYPES = new Set(['private_note', 'scorer_handoff']);
 function deepFreeze(value) {
     if (value && typeof value === 'object' && !Object.isFrozen(value)) {
         Object.freeze(value);
@@ -110,12 +113,47 @@ function attachmentTargetsVoidedPlay(event, voidedEventIds) {
     const payload = event.payload;
     return voidedEventIds.has(payload.playEventId);
 }
+function getObsoleteFinalizationPairs(events) {
+    const finalizeEventIds = new Set();
+    const reopenEventIds = new Set();
+    let candidateFinalizeEventId = null;
+    let invalidPair = false;
+    events.forEach((event) => {
+        if (event.type === 'finalize') {
+            if (candidateFinalizeEventId || invalidPair) {
+                candidateFinalizeEventId = null;
+                invalidPair = true;
+            }
+            else {
+                candidateFinalizeEventId = event.eventId;
+            }
+            return;
+        }
+        if (event.type === 'reopen_for_correction') {
+            if (candidateFinalizeEventId && !invalidPair) {
+                finalizeEventIds.add(candidateFinalizeEventId);
+                reopenEventIds.add(event.eventId);
+            }
+            candidateFinalizeEventId = null;
+            invalidPair = false;
+            return;
+        }
+        if (candidateFinalizeEventId && !FINAL_REOPEN_INTERVENING_TYPES.has(event.type)) {
+            candidateFinalizeEventId = null;
+            invalidPair = true;
+        }
+    });
+    return { finalizeEventIds, reopenEventIds };
+}
 function getEffectiveDiamondEvents(events) {
     const directives = getCorrectionDirectives(events);
+    const obsoleteFinalizations = getObsoleteFinalizationPairs(events);
     const voidedEventIds = new Set([...directives.entries()].filter(([, directive]) => directive.kind === 'void').map(([eventId]) => eventId));
     const effective = [];
     events.forEach((event) => {
         if (event.type === 'void_event' || event.type === 'supersede_event')
+            return;
+        if (obsoleteFinalizations.finalizeEventIds.has(event.eventId) || obsoleteFinalizations.reopenEventIds.has(event.eventId))
             return;
         if (attachmentTargetsVoidedPlay(event, voidedEventIds))
             return;
@@ -229,6 +267,34 @@ function recordPitcherDecision(tracker, decision) {
     }
     tracker.pitcherDecisions[decision.decision] = decision;
 }
+function validatePitcherDecisionsForFinalization(state, tracker) {
+    const decisions = Object.values(tracker.pitcherDecisions);
+    if (!decisions.length)
+        return;
+    const reason = (0, reducer_1.getDiamondFinalizationReason)(state);
+    if (!reason)
+        return;
+    let winningSide;
+    if (reason.kind === 'forfeit') {
+        winningSide = state.gameEndDecision?.reason === 'forfeit' ? state.gameEndDecision.awardedSide : null;
+    }
+    else if (state.score.home === state.score.away) {
+        winningSide = null;
+    }
+    else {
+        winningSide = state.score.home > state.score.away ? 'home' : 'away';
+    }
+    if (!winningSide) {
+        throw new contracts_1.DiamondDomainError('pitcher-decision-not-allowed-for-tie', 'A tied official result cannot award a winning, losing, or saving pitcher decision.');
+    }
+    const losingSide = otherSide(winningSide);
+    const win = tracker.pitcherDecisions.win;
+    const loss = tracker.pitcherDecisions.loss;
+    const save = tracker.pitcherDecisions.save;
+    if ((win && win.side !== winningSide) || (loss && loss.side !== losingSide) || (save && save.side !== winningSide)) {
+        throw new contracts_1.DiamondDomainError('pitcher-decision-official-result-mismatch', 'Winning and saving pitcher decisions must use the official winning side, and a losing decision must use the official losing side.');
+    }
+}
 function validateAttachmentAgainstHistoricalPlay(event, context) {
     if (event.type === 'record_fielding') {
         const fielding = event.payload.fielding;
@@ -324,19 +390,41 @@ function observeEffectiveEventParticipants(state, event, tracker) {
         }
     }
 }
+function validateObsoleteFinalizationEvent(event) {
+    (0, reducer_1.reduceDiamondEvent)(event.before, asReducerAction(event.type, event.payload, event.eventId));
+}
+function transitionToCorrectionState(state) {
+    return (0, reducer_1.validateDiamondState)({
+        ...state,
+        lifecycle: 'correction',
+        suspendedReason: null,
+        finalizationReason: null,
+        finalConfirmedAtRevision: null
+    });
+}
 function replayCanonicalDiamondEvents(initialState, events) {
     const directives = getCorrectionDirectives(events);
+    const obsoleteFinalizations = getObsoleteFinalizationPairs(events);
     const voidedEventIds = new Set([...directives.entries()].filter(([, directive]) => directive.kind === 'void').map(([eventId]) => eventId));
     let state = (0, reducer_1.cloneDiamondState)(initialState);
     const effectiveEvents = [];
+    const effectiveEventStates = [];
     const participantTracker = createParticipantReplayTracker();
     events.forEach((event) => {
+        let replayedEvent = null;
         const directive = directives.get(event.eventId);
         if (event.type === 'void_event' || event.type === 'supersede_event') {
             state = (0, reducer_1.reduceDiamondEvent)(state, asReducerAction(event.type, event.payload, event.eventId));
         }
         else if (directive?.kind === 'void' || attachmentTargetsVoidedPlay(event, voidedEventIds)) {
             // Its canonical record remains immutable, but its state effect is removed.
+        }
+        else if (obsoleteFinalizations.finalizeEventIds.has(event.eventId)) {
+            validateObsoleteFinalizationEvent(event);
+        }
+        else if (obsoleteFinalizations.reopenEventIds.has(event.eventId)) {
+            validateObsoleteFinalizationEvent(event);
+            state = transitionToCorrectionState(state);
         }
         else {
             const effectiveEvent = directive?.kind === 'supersede' && directive.replacement
@@ -355,13 +443,23 @@ function replayCanonicalDiamondEvents(initialState, events) {
                     type: event.type,
                     payload: event.payload
                 };
+            const before = state;
             observeEffectiveEventParticipants(state, effectiveEvent, participantTracker);
-            state = (0, reducer_1.reduceDiamondEvent)(state, asReducerAction(effectiveEvent.type, effectiveEvent.payload, effectiveEvent.eventId));
+            const reduced = (0, reducer_1.reduceDiamondEvent)(state, asReducerAction(effectiveEvent.type, effectiveEvent.payload, effectiveEvent.eventId));
+            if (effectiveEvent.type === 'finalize')
+                validatePitcherDecisionsForFinalization(state, participantTracker);
+            state = reduced;
             effectiveEvents.push(effectiveEvent);
+            replayedEvent = { event: effectiveEvent, before };
         }
         state = (0, reducer_1.setDiamondStateRevision)(state, event.revision, event.hash);
+        if (replayedEvent)
+            effectiveEventStates.push({ ...replayedEvent, after: state });
     });
-    return { state, effectiveEvents, participantTracker };
+    return { state, effectiveEvents, effectiveEventStates, participantTracker };
+}
+function replayEffectiveDiamondEventStates(initialState, events) {
+    return deepFreeze([...replayCanonicalDiamondEvents(initialState, events).effectiveEventStates]);
 }
 function verifyEventChain(events) {
     let previousHash = '';
@@ -385,10 +483,10 @@ function replayDiamondEvents(initialState, events, options = {}) {
         verifyEventChain(events);
     const replay = replayCanonicalDiamondEvents(initialState, events);
     let { state } = replay;
-    const { effectiveEvents } = replay;
+    const { effectiveEvents, effectiveEventStates } = replay;
     state = {
         ...state,
-        coverage: (0, reducer_1.deriveDiamondCoverageFromEvents)(initialState, effectiveEvents)
+        coverage: (0, reducer_1.deriveDiamondCoverageFromEventStates)(initialState, effectiveEventStates)
     };
     return deepFreeze({
         state,
@@ -501,10 +599,14 @@ function validateCorrection(ledger, command) {
         throw new contracts_1.DiamondDomainError('already-corrected', 'The target event already has a correction.');
     }
 }
-function validateAttachment(ledger, command) {
-    if (command.type !== 'record_fielding' && command.type !== 'record_scoring_judgment')
+function validateHistoryAwareCommand(ledger, command) {
+    if (command.type !== 'record_fielding' && command.type !== 'record_scoring_judgment' && command.type !== 'finalize')
         return;
     const replay = replayCanonicalDiamondEvents(ledger.initialState, ledger.events);
+    if (command.type === 'finalize') {
+        validatePitcherDecisionsForFinalization(replay.state, replay.participantTracker);
+        return;
+    }
     const syntheticEvent = {
         eventId: 'pending-attachment',
         sourceEventId: 'pending-attachment',
@@ -627,7 +729,7 @@ function executeDiamondCommandFromCheckpoint(checkpoint, command, context, exist
             throw new contracts_1.DiamondDomainError('stale-revision', `Expected revision ${String(command.expectedRevision)}, current revision is ${String(checkpoint.sequence)}.`, true);
         }
         if (HISTORY_REQUIRED_COMMANDS.has(command.type)) {
-            throw new contracts_1.DiamondDomainError('history-required', 'Corrections and play-linked scoring details require the complete canonical event history.', true);
+            throw new contracts_1.DiamondDomainError('history-required', 'Corrections, finalization, and play-linked scoring details require the complete canonical event history.', true);
         }
         const sequence = checkpoint.sequence + 1;
         const before = checkpoint.state;
@@ -714,7 +816,7 @@ function executeDiamondCommand(ledger, command, context) {
         let after = (0, reducer_1.reduceDiamondEvent)(before, asReducerAction(command.type, command.payload, context.eventId));
         // The reducer performs strict runtime shape validation first, so malformed
         // nested attachment payloads cannot reach history-aware membership checks.
-        validateAttachment(ledger, command);
+        validateHistoryAwareCommand(ledger, command);
         after = (0, reducer_1.setDiamondStateRevision)(after, sequence, '');
         const partialEvent = {
             schemaVersion: contracts_1.DIAMOND_SCHEMA_VERSION,
@@ -744,9 +846,10 @@ function executeDiamondCommand(ledger, command, context) {
             after = (0, reducer_1.setDiamondStateRevision)(after, sequence, '');
         }
         else {
+            const coverageReplay = replayCanonicalDiamondEvents(ledger.initialState, provisionalEvents);
             after = {
                 ...after,
-                coverage: (0, reducer_1.deriveDiamondCoverageFromEvents)(ledger.initialState, getEffectiveDiamondEvents(provisionalEvents))
+                coverage: (0, reducer_1.deriveDiamondCoverageFromEventStates)(ledger.initialState, coverageReplay.effectiveEventStates)
             };
         }
         let event = { ...partialEvent, after };
