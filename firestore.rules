@@ -3540,6 +3540,13 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Manager-stat request identities, weighted quotas, and active leases are
+    // server-only abuse controls. Hashing their boundaries is defense in depth;
+    // clients must never inspect or mutate the coordination state.
+    match /diamondManagerStatReadControls/{controlId} {
+      allow read, write: if false;
+    }
+
     match /telemetryDaily/{dateId} {
       allow get: if isGlobalAdmin();
       allow list: if isBoundedGlobalAdminListQuery(960);

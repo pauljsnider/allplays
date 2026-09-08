@@ -1145,6 +1145,17 @@
       "indexes": []
     },
     {
+      "collectionGroup": "diamondManagerStatReadControls",
+      "fieldPath": "*",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "diamondManagerStatReadControls",
+      "fieldPath": "expiresAt",
+      "ttl": true,
+      "indexes": []
+    },
+    {
       "collectionGroup": "telemetryEvents",
       "fieldPath": "expiresAt",
       "ttl": true,

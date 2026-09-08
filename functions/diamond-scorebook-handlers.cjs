@@ -24,6 +24,36 @@ const MAX_CLEANUP_TEAM_STAT_DOCUMENTS = 10;
 const MAX_MANAGER_STAT_GAMES = 40;
 const MAX_MANAGER_STAT_PLAYERS = 25;
 const MAX_MANAGER_STAT_RESPONSE_BYTES = 7_000_000;
+const MANAGER_STAT_CONTROL_COLLECTION = "diamondManagerStatReadControls";
+const MANAGER_STAT_RATE_WINDOW_MS = 60 * 1000;
+// The fixed security envelope is intentionally independent of manager-owned
+// team history. A production-shaped 120-game/100-player Team Insights load and
+// one bounded recovery consume 984 calls, 3,888 reservation-verification
+// units, and 49,920 requested private references. The rounded limits admit
+// that substantial compatibility case; larger histories or participant unions
+// can fail closed until a later window and must remain non-authoritative in
+// clients. These units are logical quota charges, not physical Firestore reads.
+const MAX_MANAGER_STAT_ADMISSIONS_PER_WINDOW = 1_024;
+const MAX_MANAGER_STAT_VERIFICATION_UNITS_PER_WINDOW = 4_096;
+const MAX_MANAGER_STAT_GLOBAL_READ_UNITS_PER_WINDOW = 65_536;
+const MAX_MANAGER_STAT_REQUESTS_PER_WINDOW = 1_024;
+const MAX_MANAGER_STAT_READ_UNITS_PER_WINDOW = 65_536;
+const MANAGER_STAT_SUSTAINED_WINDOW_MS = 10 * 60 * 1000;
+const MAX_MANAGER_STAT_SUSTAINED_ADMISSIONS_PER_WINDOW = 2_048;
+const MAX_MANAGER_STAT_SUSTAINED_VERIFICATION_UNITS_PER_WINDOW = 8_192;
+const MAX_MANAGER_STAT_SUSTAINED_GLOBAL_READ_UNITS_PER_WINDOW = 131_072;
+const MAX_MANAGER_STAT_SUSTAINED_REQUESTS_PER_WINDOW = 2_048;
+const MAX_MANAGER_STAT_SUSTAINED_READ_UNITS_PER_WINDOW = 131_072;
+const MAX_CONCURRENT_MANAGER_STAT_REQUESTS = 3;
+const MANAGER_STAT_REQUEST_LEASE_MS = 3 * 60 * 1000;
+// Attempt IDs are server-only and can be reconciled only by the current
+// 120-second invocation. Five minutes covers the full lease plus ambiguity
+// margin without accumulating a day of per-attempt receipts.
+const MANAGER_STAT_RECEIPT_RETENTION_MS = 5 * 60 * 1000;
+const MANAGER_STAT_ADMISSION_DEDUPE_MS = MANAGER_STAT_REQUEST_LEASE_MS;
+const MAX_MANAGER_STAT_RECENT_ADMISSIONS = 256;
+const MAX_MANAGER_STAT_RECENT_TERMINALS = 16;
+const MANAGER_STAT_CONTROL_QUARANTINE_MS = MANAGER_STAT_SUSTAINED_WINDOW_MS;
 const MAX_PRIVATE_EVENT_PAGE_BYTES = 1_000_000;
 const MANAGER_STAT_COMPACT_FIELD_MASK = Object.freeze([
   "trackingEngine",
@@ -2209,6 +2239,483 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     });
   }
 
+  function managerStatsControlHashes(request, callerUid, attemptHash) {
+    const scopeHash = core.hashDiamondValue({
+      schemaVersion: 1,
+      type: "diamond-manager-stat-read-scope",
+      callerUid,
+      teamId: request.teamId,
+    });
+    const inputHash = core.hashDiamondValue({
+      schemaVersion: 1,
+      type: "diamond-manager-stat-read-input",
+      teamId: request.teamId,
+      gameHeads: request.gameHeads,
+      playerIds: request.playerIds,
+    });
+    const requestHash = core.hashDiamondValue({
+      schemaVersion: 1,
+      type: "diamond-manager-stat-read-request",
+      scopeHash,
+      inputHash,
+      attemptHash,
+    });
+    return Object.freeze({ scopeHash, inputHash, requestHash, attemptHash });
+  }
+
+  function managerStatsAdmissionRef(callerUid) {
+    const scopeHash = core.hashDiamondValue({
+      schemaVersion: 1,
+      type: "diamond-manager-stat-read-admission",
+      callerUid,
+    });
+    return Object.freeze({
+      scopeHash,
+      reference: firestore.doc(
+        `${MANAGER_STAT_CONTROL_COLLECTION}/admission-${scopeHash.slice(7)}`,
+      ),
+    });
+  }
+
+  function managerStatsControlRefs(hashes) {
+    return Object.freeze({
+      scope: firestore.doc(
+        `${MANAGER_STAT_CONTROL_COLLECTION}/scope-${hashes.scopeHash.slice(7)}`,
+      ),
+    });
+  }
+
+  function controlSnapshotUpdatedAtMs(snapshot) {
+    const value = snapshot?.updateTime?.toMillis?.();
+    return Number.isSafeInteger(value) && value >= 0 ? value : null;
+  }
+
+  function managerStatsControlTimestampMs(value) {
+    const milliseconds =
+      value instanceof Date ? value.getTime() : value?.toMillis?.();
+    return Number.isSafeInteger(milliseconds) && milliseconds >= 0
+      ? milliseconds
+      : null;
+  }
+
+  function invalidManagerStatsControl(snapshot, nowMs, retentionMs) {
+    const updatedAtMs = controlSnapshotUpdatedAtMs(snapshot);
+    if (
+      updatedAtMs !== null &&
+      updatedAtMs + retentionMs <= nowMs
+    ) {
+      return null;
+    }
+    throw makeError(
+      "unavailable",
+      "Manager statistic read safety state is unavailable. Try again later.",
+      { reason: "manager-stat-read-control-invalid" },
+    );
+  }
+
+  function parseManagerStatsScope(snapshot, hashes, nowMs) {
+    if (!snapshot?.exists) return null;
+    const value = snapshotData(snapshot);
+    const activeAttempts = Array.isArray(value?.activeAttempts)
+      ? value.activeAttempts
+      : null;
+    const recentTerminals = Array.isArray(value?.recentTerminals)
+      ? value.recentTerminals
+      : null;
+    const validActiveAttempts =
+      activeAttempts &&
+      activeAttempts.length <= MAX_CONCURRENT_MANAGER_STAT_REQUESTS &&
+      activeAttempts.every(
+        (entry) =>
+          isPlainObject(entry) &&
+          Object.keys(entry).length === 3 &&
+          SHA256_PATTERN.test(entry.requestHash) &&
+          Number.isSafeInteger(entry.startedAtMs) &&
+          entry.startedAtMs >= 0 &&
+          entry.startedAtMs <= value.updatedAtMs &&
+          Number.isSafeInteger(entry.leaseExpiresAtMs) &&
+          entry.leaseExpiresAtMs ===
+            entry.startedAtMs + MANAGER_STAT_REQUEST_LEASE_MS,
+      );
+    const validRecentTerminals =
+      recentTerminals &&
+      recentTerminals.length <= MAX_MANAGER_STAT_RECENT_TERMINALS &&
+      recentTerminals.every(
+        (entry) =>
+          isPlainObject(entry) &&
+          Object.keys(entry).length === 4 &&
+          SHA256_PATTERN.test(entry.requestHash) &&
+          ["complete", "failed"].includes(entry.status) &&
+          Number.isSafeInteger(entry.finishedAtMs) &&
+          entry.finishedAtMs >= 0 &&
+          entry.finishedAtMs <= value.updatedAtMs &&
+          (entry.status === "complete"
+            ? SHA256_PATTERN.test(entry.responseHash) &&
+              !Object.hasOwn(entry, "failureCode")
+            : !Object.hasOwn(entry, "responseHash") &&
+              typeof entry.failureCode === "string" &&
+              entry.failureCode.length >= 1 &&
+              entry.failureCode.length <= 64),
+      );
+    const activeHashes = activeAttempts?.map(({ requestHash }) => requestHash);
+    const terminalHashes = recentTerminals?.map(
+      ({ requestHash }) => requestHash,
+    );
+    const expectedExpiresAtMs = Math.max(
+      value?.windowResetAtMs || 0,
+      value?.sustainedWindowResetAtMs || 0,
+      ...(activeAttempts || []).map(({ leaseExpiresAtMs }) => leaseExpiresAtMs),
+      ...(recentTerminals || []).map(
+        ({ finishedAtMs }) =>
+          finishedAtMs + MANAGER_STAT_RECEIPT_RETENTION_MS,
+      ),
+    );
+    if (
+      !isPlainObject(value) ||
+      Object.keys(value).length !== 15 ||
+      value.schemaVersion !== 1 ||
+      value.type !== "diamond-manager-stat-read-scope" ||
+      value.scopeHash !== hashes.scopeHash ||
+      !Number.isSafeInteger(value.windowStartedAtMs) ||
+      value.windowStartedAtMs < 0 ||
+      !Number.isSafeInteger(value.windowResetAtMs) ||
+      value.windowResetAtMs !==
+        value.windowStartedAtMs + MANAGER_STAT_RATE_WINDOW_MS ||
+      !Number.isSafeInteger(value.requestCount) ||
+      value.requestCount < 0 ||
+      value.requestCount > MAX_MANAGER_STAT_REQUESTS_PER_WINDOW ||
+      !Number.isSafeInteger(value.readUnits) ||
+      value.readUnits < 0 ||
+      value.readUnits > MAX_MANAGER_STAT_READ_UNITS_PER_WINDOW ||
+      !Number.isSafeInteger(value.sustainedWindowStartedAtMs) ||
+      value.sustainedWindowStartedAtMs < 0 ||
+      !Number.isSafeInteger(value.sustainedWindowResetAtMs) ||
+      value.sustainedWindowResetAtMs !==
+        value.sustainedWindowStartedAtMs + MANAGER_STAT_SUSTAINED_WINDOW_MS ||
+      !Number.isSafeInteger(value.sustainedRequestCount) ||
+      value.sustainedRequestCount < 0 ||
+      value.sustainedRequestCount >
+        MAX_MANAGER_STAT_SUSTAINED_REQUESTS_PER_WINDOW ||
+      !Number.isSafeInteger(value.sustainedReadUnits) ||
+      value.sustainedReadUnits < 0 ||
+      value.sustainedReadUnits >
+        MAX_MANAGER_STAT_SUSTAINED_READ_UNITS_PER_WINDOW ||
+      !validActiveAttempts ||
+      !validRecentTerminals ||
+      new Set(activeHashes).size !== activeHashes.length ||
+      new Set(terminalHashes).size !== terminalHashes.length ||
+      activeHashes.some((requestHash) =>
+        terminalHashes.includes(requestHash),
+      ) ||
+      !Number.isSafeInteger(value.updatedAtMs) ||
+      value.updatedAtMs < value.windowStartedAtMs ||
+      value.updatedAtMs < value.sustainedWindowStartedAtMs ||
+      managerStatsControlTimestampMs(value.expiresAt) !== expectedExpiresAtMs
+    ) {
+      return invalidManagerStatsControl(
+        snapshot,
+        nowMs,
+        MANAGER_STAT_CONTROL_QUARANTINE_MS,
+      );
+    }
+    return value;
+  }
+
+  function parseManagerStatsAdmission(snapshot, scopeHash, nowMs) {
+    if (!snapshot?.exists) return null;
+    const value = snapshotData(snapshot);
+    const recentAttempts = Array.isArray(value?.recentAttempts)
+      ? value.recentAttempts
+      : null;
+    if (
+      !isPlainObject(value) ||
+      Object.keys(value).length !== 16 ||
+      value.schemaVersion !== 1 ||
+      value.type !== "diamond-manager-stat-read-admission" ||
+      value.scopeHash !== scopeHash ||
+      !Number.isSafeInteger(value.windowStartedAtMs) ||
+      value.windowStartedAtMs < 0 ||
+      !Number.isSafeInteger(value.windowResetAtMs) ||
+      value.windowResetAtMs !==
+        value.windowStartedAtMs + MANAGER_STAT_RATE_WINDOW_MS ||
+      !Number.isSafeInteger(value.requestCount) ||
+      value.requestCount < 0 ||
+      value.requestCount > MAX_MANAGER_STAT_ADMISSIONS_PER_WINDOW ||
+      !Number.isSafeInteger(value.verificationUnits) ||
+      value.verificationUnits < 0 ||
+      value.verificationUnits >
+        MAX_MANAGER_STAT_VERIFICATION_UNITS_PER_WINDOW ||
+      !Number.isSafeInteger(value.readUnits) ||
+      value.readUnits < 0 ||
+      value.readUnits > MAX_MANAGER_STAT_GLOBAL_READ_UNITS_PER_WINDOW ||
+      !Number.isSafeInteger(value.sustainedWindowStartedAtMs) ||
+      value.sustainedWindowStartedAtMs < 0 ||
+      !Number.isSafeInteger(value.sustainedWindowResetAtMs) ||
+      value.sustainedWindowResetAtMs !==
+        value.sustainedWindowStartedAtMs + MANAGER_STAT_SUSTAINED_WINDOW_MS ||
+      !Number.isSafeInteger(value.sustainedRequestCount) ||
+      value.sustainedRequestCount < 0 ||
+      value.sustainedRequestCount >
+        MAX_MANAGER_STAT_SUSTAINED_ADMISSIONS_PER_WINDOW ||
+      !Number.isSafeInteger(value.sustainedVerificationUnits) ||
+      value.sustainedVerificationUnits < 0 ||
+      value.sustainedVerificationUnits >
+        MAX_MANAGER_STAT_SUSTAINED_VERIFICATION_UNITS_PER_WINDOW ||
+      !Number.isSafeInteger(value.sustainedReadUnits) ||
+      value.sustainedReadUnits < 0 ||
+      value.sustainedReadUnits >
+        MAX_MANAGER_STAT_SUSTAINED_GLOBAL_READ_UNITS_PER_WINDOW ||
+      !recentAttempts ||
+      recentAttempts.length > MAX_MANAGER_STAT_RECENT_ADMISSIONS ||
+      new Set(recentAttempts.map((entry) => entry?.attemptHash)).size !==
+        recentAttempts.length ||
+      !recentAttempts.every(
+        (entry) =>
+          isPlainObject(entry) &&
+          Object.keys(entry).length === 2 &&
+          SHA256_PATTERN.test(entry.attemptHash) &&
+          Number.isSafeInteger(entry.admittedAtMs) &&
+          entry.admittedAtMs >= 0 &&
+          entry.admittedAtMs <= value.updatedAtMs,
+      ) ||
+      !Number.isSafeInteger(value.updatedAtMs) ||
+      value.updatedAtMs < value.windowStartedAtMs ||
+      value.updatedAtMs < value.sustainedWindowStartedAtMs ||
+      managerStatsControlTimestampMs(value.expiresAt) !==
+        Math.max(
+          value.windowResetAtMs,
+          value.sustainedWindowResetAtMs,
+          value.updatedAtMs + MANAGER_STAT_ADMISSION_DEDUPE_MS,
+        )
+    ) {
+      return invalidManagerStatsControl(
+        snapshot,
+        nowMs,
+        MANAGER_STAT_CONTROL_QUARANTINE_MS,
+      );
+    }
+    return value;
+  }
+
+  async function reserveManagerStatsAdmission(
+    transaction,
+    request,
+    caller,
+    attemptHash,
+    nowMs,
+  ) {
+    const admissionRef = managerStatsAdmissionRef(caller.uid);
+    let snapshot;
+    try {
+      snapshot = await transaction.get(admissionRef.reference);
+    } catch {
+      throw makeError(
+        "unavailable",
+        "Manager statistic read admission could not be verified.",
+      );
+    }
+    const admission = parseManagerStatsAdmission(
+      snapshot,
+      admissionRef.scopeHash,
+      nowMs,
+    );
+    const windowActive = Boolean(admission && admission.windowResetAtMs > nowMs);
+    const sustainedWindowActive = Boolean(
+      admission && admission.sustainedWindowResetAtMs > nowMs,
+    );
+    const recentAttempts = (admission?.recentAttempts || []).filter(
+      (entry) => entry.admittedAtMs + MANAGER_STAT_ADMISSION_DEDUPE_MS > nowMs,
+    );
+    if (recentAttempts.some((entry) => entry.attemptHash === attemptHash)) return;
+
+    const verificationUnits = 2 + request.gameHeads.length;
+    const requestedReadUnits =
+      request.gameHeads.length * (request.playerIds.length + 1);
+    const requestCount = windowActive ? admission.requestCount : 0;
+    const consumedVerificationUnits = windowActive
+      ? admission.verificationUnits
+      : 0;
+    const consumedReadUnits = windowActive ? admission.readUnits : 0;
+    const windowStartedAtMs = windowActive
+      ? admission.windowStartedAtMs
+      : nowMs;
+    const windowResetAtMs = windowActive
+      ? admission.windowResetAtMs
+      : nowMs + MANAGER_STAT_RATE_WINDOW_MS;
+    const sustainedWindowStartedAtMs = sustainedWindowActive
+      ? admission.sustainedWindowStartedAtMs
+      : nowMs;
+    const sustainedWindowResetAtMs = sustainedWindowActive
+      ? admission.sustainedWindowResetAtMs
+      : nowMs + MANAGER_STAT_SUSTAINED_WINDOW_MS;
+    const sustainedRequestCount = sustainedWindowActive
+      ? admission.sustainedRequestCount
+      : 0;
+    const sustainedVerificationUnits = sustainedWindowActive
+      ? admission.sustainedVerificationUnits
+      : 0;
+    const sustainedReadUnits = sustainedWindowActive
+      ? admission.sustainedReadUnits
+      : 0;
+    const burstLimited =
+      requestCount + 1 > MAX_MANAGER_STAT_ADMISSIONS_PER_WINDOW ||
+      consumedVerificationUnits + verificationUnits >
+        MAX_MANAGER_STAT_VERIFICATION_UNITS_PER_WINDOW ||
+      consumedReadUnits + requestedReadUnits >
+        MAX_MANAGER_STAT_GLOBAL_READ_UNITS_PER_WINDOW;
+    const sustainedLimited =
+      sustainedRequestCount + 1 >
+        MAX_MANAGER_STAT_SUSTAINED_ADMISSIONS_PER_WINDOW ||
+      sustainedVerificationUnits + verificationUnits >
+        MAX_MANAGER_STAT_SUSTAINED_VERIFICATION_UNITS_PER_WINDOW ||
+      sustainedReadUnits + requestedReadUnits >
+        MAX_MANAGER_STAT_SUSTAINED_GLOBAL_READ_UNITS_PER_WINDOW;
+    if (burstLimited || sustainedLimited) {
+      throw makeError(
+        "resource-exhausted",
+        "Manager statistic read admission is temporarily limited.",
+        managerStatsRetryDetails(
+          "manager-stat-admission-limited",
+          Math.max(
+            burstLimited ? windowResetAtMs : 0,
+            sustainedLimited ? sustainedWindowResetAtMs : 0,
+          ),
+          nowMs,
+        ),
+      );
+    }
+    transaction.set(admissionRef.reference, {
+      schemaVersion: 1,
+      type: "diamond-manager-stat-read-admission",
+      scopeHash: admissionRef.scopeHash,
+      windowStartedAtMs,
+      windowResetAtMs,
+      requestCount: requestCount + 1,
+      verificationUnits: consumedVerificationUnits + verificationUnits,
+      readUnits: consumedReadUnits + requestedReadUnits,
+      sustainedWindowStartedAtMs,
+      sustainedWindowResetAtMs,
+      sustainedRequestCount: sustainedRequestCount + 1,
+      sustainedVerificationUnits:
+        sustainedVerificationUnits + verificationUnits,
+      sustainedReadUnits: sustainedReadUnits + requestedReadUnits,
+      recentAttempts: [
+        ...recentAttempts,
+        { attemptHash, admittedAtMs: nowMs },
+      ].slice(-MAX_MANAGER_STAT_RECENT_ADMISSIONS),
+      updatedAtMs: nowMs,
+      expiresAt: new Date(
+        Math.max(
+          windowResetAtMs,
+          sustainedWindowResetAtMs,
+          nowMs + MANAGER_STAT_ADMISSION_DEDUPE_MS,
+        ),
+      ),
+    });
+  }
+
+  async function readManagerStatsScopeSnapshot(transaction, reference) {
+    try {
+      return await transaction.get(reference);
+    } catch (error) {
+      if (error instanceof HttpsError || error instanceof DiamondHandlerError)
+        throw error;
+      throw makeError(
+        "unavailable",
+        "Manager statistic read safety state could not be verified.",
+      );
+    }
+  }
+
+  function managerStatsRetryDetails(reason, retryAtMs, nowMs) {
+    return {
+      reason,
+      retryable: true,
+      retryAfterMs: Math.max(1, retryAtMs - nowMs),
+    };
+  }
+
+  function managerStatsScopeValue(
+    hashes,
+    activeAttempts,
+    recentTerminals,
+    nowMs,
+    requestCount,
+    readUnits,
+    windowStartedAtMs,
+    windowResetAtMs,
+    sustainedRequestCount,
+    sustainedReadUnits,
+    sustainedWindowStartedAtMs,
+    sustainedWindowResetAtMs,
+  ) {
+    const retainedTerminals = recentTerminals
+      .filter(
+        (entry) =>
+          entry.finishedAtMs + MANAGER_STAT_RECEIPT_RETENTION_MS > nowMs,
+      )
+      .slice(-MAX_MANAGER_STAT_RECENT_TERMINALS);
+    const leaseExpiresAtMs = activeAttempts.reduce(
+      (maximum, entry) => Math.max(maximum, entry.leaseExpiresAtMs),
+      0,
+    );
+    const terminalExpiresAtMs = retainedTerminals.reduce(
+      (maximum, entry) =>
+        Math.max(
+          maximum,
+          entry.finishedAtMs + MANAGER_STAT_RECEIPT_RETENTION_MS,
+        ),
+      0,
+    );
+    return {
+      schemaVersion: 1,
+      type: "diamond-manager-stat-read-scope",
+      scopeHash: hashes.scopeHash,
+      windowStartedAtMs,
+      windowResetAtMs,
+      requestCount,
+      readUnits,
+      sustainedWindowStartedAtMs,
+      sustainedWindowResetAtMs,
+      sustainedRequestCount,
+      sustainedReadUnits,
+      activeAttempts,
+      recentTerminals: retainedTerminals,
+      updatedAtMs: nowMs,
+      expiresAt: new Date(
+        Math.max(
+          windowResetAtMs,
+          sustainedWindowResetAtMs,
+          leaseExpiresAtMs,
+          terminalExpiresAtMs,
+        ),
+      ),
+    };
+  }
+
+  function assertOwnedManagerStatsAttempt(scope, reservation, nowMs) {
+    const active = scope?.activeAttempts?.find(
+      (entry) => entry.requestHash === reservation.hashes.requestHash,
+    );
+    if (
+      !scope ||
+      !active ||
+      active.leaseExpiresAtMs <= nowMs
+    ) {
+      throw makeError(
+        "aborted",
+        "The manager statistic read reservation changed before completion.",
+        { reason: "manager-stat-read-reservation-lost" },
+      );
+    }
+  }
+
+  function removeOwnedManagerStatsAttempt(scope, reservation) {
+    return scope.activeAttempts.filter(
+      (entry) => entry.requestHash !== reservation.hashes.requestHash,
+    );
+  }
+
   function assertManagerStatsGameHead(game, head) {
     const projectionStatus = compactText(
       game?.diamondProjectionStatus,
@@ -2232,32 +2739,17 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     }
   }
 
-  async function verifyManagerStatsAccessAndHeads(
-    transaction,
-    request,
-    caller,
-  ) {
+  async function verifyManagerStatsTeamAccess(transaction, request, caller) {
     const teamRef = firestore.doc(paths(request.teamId, "__no_game__").team);
     const userRef = firestore.doc(
       paths(request.teamId, "__no_game__").user(caller.uid),
-    );
-    const gameRefs = request.gameHeads.map(({ gameId }) =>
-      firestore.doc(paths(request.teamId, gameId).game),
-    );
-    const rsvpRefs = request.gameHeads.map(({ gameId }) =>
-      firestore.doc(paths(request.teamId, gameId).rsvp(caller.uid)),
     );
     let snapshots;
     try {
       if (typeof transaction.getAll !== "function") {
         throw new Error("Firestore transactional bulk reads are unavailable.");
       }
-      snapshots = await transaction.getAll(
-        teamRef,
-        userRef,
-        ...gameRefs,
-        ...rsvpRefs,
-      );
+      snapshots = await transaction.getAll(teamRef, userRef);
     } catch {
       throw makeError(
         "unavailable",
@@ -2267,25 +2759,38 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     const team = snapshotData(snapshots[0]);
     const user = snapshotData(snapshots[1]) || {};
     if (!team) throw makeError("not-found", "Team not found.");
-    const gamesOffset = 2;
-    const rsvpsOffset = gamesOffset + request.gameHeads.length;
+    const access = resolveAccess({
+      caller,
+      user,
+      teamId: request.teamId,
+      team,
+    });
+    requireManager(
+      access,
+      "Current team manager access is required for internal Diamond statistics.",
+    );
+  }
+
+  async function verifyManagerStatsGameHeads(transaction, request) {
+    const gameRefs = request.gameHeads.map(({ gameId }) =>
+      firestore.doc(paths(request.teamId, gameId).game),
+    );
+    let snapshots;
+    try {
+      if (typeof transaction.getAll !== "function") {
+        throw new Error("Firestore transactional bulk reads are unavailable.");
+      }
+      snapshots = await transaction.getAll(...gameRefs);
+    } catch {
+      throw makeError(
+        "unavailable",
+        "Internal stat game heads could not be verified completely. Try again.",
+      );
+    }
     for (let index = 0; index < request.gameHeads.length; index += 1) {
       const head = request.gameHeads[index];
-      const game = snapshotData(snapshots[gamesOffset + index]);
-      const rsvp = snapshotData(snapshots[rsvpsOffset + index]);
+      const game = snapshotData(snapshots[index]);
       if (!game) throw makeError("not-found", "Game not found.");
-      const access = resolveAccess({
-        caller,
-        user,
-        teamId: request.teamId,
-        team,
-        game,
-        rsvp,
-      });
-      requireManager(
-        access,
-        "Current team manager access is required for internal Diamond statistics.",
-      );
       requireAllowed(
         core.decideDiamondOperation({
           operation: "read",
@@ -2297,6 +2802,323 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       );
       assertManagerStatsGameHead(game, head);
     }
+  }
+
+  async function reserveManagerStatsRead(
+    transaction,
+    request,
+    caller,
+    attemptHash,
+    nowMs,
+  ) {
+    await verifyManagerStatsTeamAccess(transaction, request, caller);
+    const hashes = managerStatsControlHashes(request, caller.uid, attemptHash);
+    const refs = managerStatsControlRefs(hashes);
+    const snapshot = await readManagerStatsScopeSnapshot(
+      transaction,
+      refs.scope,
+    );
+    const scope = parseManagerStatsScope(snapshot, hashes, nowMs);
+    const allActiveAttempts = scope?.activeAttempts || [];
+    const activeAttempts = (scope?.activeAttempts || []).filter(
+      (entry) => entry.leaseExpiresAtMs > nowMs,
+    );
+    const recentTerminals = (scope?.recentTerminals || []).filter(
+      (entry) =>
+        entry.finishedAtMs + MANAGER_STAT_RECEIPT_RETENTION_MS > nowMs,
+    );
+    const matchingActiveAttempt = allActiveAttempts.find(
+      (entry) => entry.requestHash === hashes.requestHash,
+    );
+    if (matchingActiveAttempt?.leaseExpiresAtMs > nowMs) {
+      return Object.freeze({ hashes, refs, attemptHash });
+    }
+    if (
+      recentTerminals.some(
+        (entry) => entry.requestHash === hashes.requestHash,
+      )
+    ) {
+      throw makeError(
+        "already-exists",
+        "This manager statistic read attempt is already terminal.",
+        { reason: "manager-stat-attempt-terminal", retryable: false },
+      );
+    }
+    const rearmingExpiredAttempt = Boolean(matchingActiveAttempt);
+
+    // Do not coalesce another invocation solely by inputHash. Existing clients
+    // need the actual response, while these controls intentionally never store
+    // multi-megabyte private stat payloads. Per-UID/team quotas and the three
+    // active-attempt slots bound that fan-out instead.
+
+    if (activeAttempts.length >= MAX_CONCURRENT_MANAGER_STAT_REQUESTS) {
+      const retryAtMs = Math.min(
+        ...activeAttempts.map(({ leaseExpiresAtMs }) => leaseExpiresAtMs),
+      );
+      throw makeError(
+        "resource-exhausted",
+        "Too many manager statistic reads are already in progress.",
+        managerStatsRetryDetails(
+          "manager-stat-concurrency-limited",
+          retryAtMs,
+          nowMs,
+        ),
+      );
+    }
+
+    const windowActive = Boolean(scope && scope.windowResetAtMs > nowMs);
+    const sustainedWindowActive = Boolean(
+      scope && scope.sustainedWindowResetAtMs > nowMs,
+    );
+    const windowStartedAtMs = windowActive ? scope.windowStartedAtMs : nowMs;
+    const windowResetAtMs = windowActive
+      ? scope.windowResetAtMs
+      : nowMs + MANAGER_STAT_RATE_WINDOW_MS;
+    const requestCount = windowActive ? scope.requestCount : 0;
+    const readUnits = windowActive ? scope.readUnits : 0;
+    const sustainedWindowStartedAtMs = sustainedWindowActive
+      ? scope.sustainedWindowStartedAtMs
+      : nowMs;
+    const sustainedWindowResetAtMs = sustainedWindowActive
+      ? scope.sustainedWindowResetAtMs
+      : nowMs + MANAGER_STAT_SUSTAINED_WINDOW_MS;
+    const sustainedRequestCount = sustainedWindowActive
+      ? scope.sustainedRequestCount
+      : 0;
+    const sustainedReadUnits = sustainedWindowActive
+      ? scope.sustainedReadUnits
+      : 0;
+    const requestedReadUnits =
+      request.gameHeads.length * (request.playerIds.length + 1);
+    const burstLimited =
+      requestCount + 1 > MAX_MANAGER_STAT_REQUESTS_PER_WINDOW ||
+      readUnits + requestedReadUnits > MAX_MANAGER_STAT_READ_UNITS_PER_WINDOW;
+    const sustainedLimited =
+      sustainedRequestCount + 1 >
+        MAX_MANAGER_STAT_SUSTAINED_REQUESTS_PER_WINDOW ||
+      sustainedReadUnits + requestedReadUnits >
+        MAX_MANAGER_STAT_SUSTAINED_READ_UNITS_PER_WINDOW;
+    if (!rearmingExpiredAttempt && (burstLimited || sustainedLimited)) {
+      throw makeError(
+        "resource-exhausted",
+        "Manager statistic reads are temporarily limited for this team.",
+        managerStatsRetryDetails(
+          "manager-stat-rate-limited",
+          Math.max(
+            burstLimited ? windowResetAtMs : 0,
+            sustainedLimited ? sustainedWindowResetAtMs : 0,
+          ),
+          nowMs,
+        ),
+      );
+    }
+
+    // Full manager authority is team-scoped and was established above. Read
+    // the mutable game heads only after active/rate controls pass so a limited
+    // caller cannot amplify head reads, and no RSVP documents are needed.
+    await verifyManagerStatsGameHeads(transaction, request);
+
+    const leaseExpiresAtMs = nowMs + MANAGER_STAT_REQUEST_LEASE_MS;
+    const activeAttempt = {
+      requestHash: hashes.requestHash,
+      startedAtMs: nowMs,
+      leaseExpiresAtMs,
+    };
+    const nextActiveAttempts = [...activeAttempts, activeAttempt].sort(
+      (left, right) => left.requestHash.localeCompare(right.requestHash),
+    );
+    transaction.set(
+      refs.scope,
+      managerStatsScopeValue(
+        hashes,
+        nextActiveAttempts,
+        recentTerminals,
+        nowMs,
+        requestCount + (rearmingExpiredAttempt ? 0 : 1),
+        readUnits + (rearmingExpiredAttempt ? 0 : requestedReadUnits),
+        windowStartedAtMs,
+        windowResetAtMs,
+        sustainedRequestCount + (rearmingExpiredAttempt ? 0 : 1),
+        sustainedReadUnits + (rearmingExpiredAttempt ? 0 : requestedReadUnits),
+        sustainedWindowStartedAtMs,
+        sustainedWindowResetAtMs,
+      ),
+    );
+    return Object.freeze({ hashes, refs, attemptHash });
+  }
+
+  async function failManagerStatsRead(reservation, failureCode) {
+    let lastError = null;
+    for (let closeAttempt = 0; closeAttempt < 2; closeAttempt += 1) {
+      try {
+        await firestore.runTransaction(async (transaction) => {
+          const nowMs = normalizeNow(clock, makeError);
+          const snapshot = await readManagerStatsScopeSnapshot(
+            transaction,
+            reservation.refs.scope,
+          );
+          const scope = parseManagerStatsScope(
+            snapshot,
+            reservation.hashes,
+            nowMs,
+          );
+          if (!scope) return false;
+          const nextActiveAttempts = removeOwnedManagerStatsAttempt(
+            scope,
+            reservation,
+          );
+          if (nextActiveAttempts.length === scope.activeAttempts.length)
+            return false;
+          transaction.set(
+            reservation.refs.scope,
+            managerStatsScopeValue(
+              reservation.hashes,
+              nextActiveAttempts,
+              [
+                ...scope.recentTerminals,
+                {
+                  requestHash: reservation.hashes.requestHash,
+                  status: "failed",
+                  finishedAtMs: nowMs,
+                  failureCode:
+                    compactText(failureCode, 64) || "unknown-failure",
+                },
+              ],
+              nowMs,
+              scope.requestCount,
+              scope.readUnits,
+              scope.windowStartedAtMs,
+              scope.windowResetAtMs,
+              scope.sustainedRequestCount,
+              scope.sustainedReadUnits,
+              scope.sustainedWindowStartedAtMs,
+              scope.sustainedWindowResetAtMs,
+            ),
+          );
+          return true;
+        });
+        return;
+      } catch (error) {
+        lastError = error;
+        if (
+          error instanceof HttpsError ||
+          error instanceof DiamondHandlerError
+        ) {
+          break;
+        }
+      }
+    }
+    logger.error?.("diamond_manager_stat_read_failure_state", {
+      code: lastError?.code || "write-failed",
+    });
+  }
+
+  async function completeManagerStatsRead(
+    transaction,
+    request,
+    caller,
+    reservation,
+    responseHash,
+    nowMs,
+  ) {
+    await verifyManagerStatsTeamAccess(transaction, request, caller);
+    await verifyManagerStatsGameHeads(transaction, request);
+    const snapshot = await readManagerStatsScopeSnapshot(
+      transaction,
+      reservation.refs.scope,
+    );
+    const scope = parseManagerStatsScope(
+      snapshot,
+      reservation.hashes,
+      nowMs,
+    );
+    assertOwnedManagerStatsAttempt(scope, reservation, nowMs);
+    transaction.set(
+      reservation.refs.scope,
+      managerStatsScopeValue(
+        reservation.hashes,
+        removeOwnedManagerStatsAttempt(scope, reservation),
+        [
+          ...scope.recentTerminals,
+          {
+            requestHash: reservation.hashes.requestHash,
+            status: "complete",
+            finishedAtMs: nowMs,
+            responseHash,
+          },
+        ],
+        nowMs,
+        scope.requestCount,
+        scope.readUnits,
+        scope.windowStartedAtMs,
+        scope.windowResetAtMs,
+        scope.sustainedRequestCount,
+        scope.sustainedReadUnits,
+        scope.sustainedWindowStartedAtMs,
+        scope.sustainedWindowResetAtMs,
+      ),
+    );
+  }
+
+  async function reconcileManagerStatsCompletion(
+    transaction,
+    request,
+    caller,
+    reservation,
+    responseHash,
+    nowMs,
+  ) {
+    await verifyManagerStatsTeamAccess(transaction, request, caller);
+    await verifyManagerStatsGameHeads(transaction, request);
+    const snapshot = await readManagerStatsScopeSnapshot(
+      transaction,
+      reservation.refs.scope,
+    );
+    const scope = parseManagerStatsScope(
+      snapshot,
+      reservation.hashes,
+      nowMs,
+    );
+    const terminal = scope?.recentTerminals?.find(
+      (entry) => entry.requestHash === reservation.hashes.requestHash,
+    );
+    if (terminal?.status === "complete" && terminal.responseHash === responseHash) {
+      return true;
+    }
+    if (scope) {
+      const nextActiveAttempts = removeOwnedManagerStatsAttempt(
+        scope,
+        reservation,
+      );
+      if (nextActiveAttempts.length !== scope.activeAttempts.length) {
+        transaction.set(
+          reservation.refs.scope,
+          managerStatsScopeValue(
+            reservation.hashes,
+            nextActiveAttempts,
+            [
+              ...scope.recentTerminals,
+              {
+                requestHash: reservation.hashes.requestHash,
+                status: "failed",
+                finishedAtMs: nowMs,
+                failureCode: "completion-unconfirmed",
+              },
+            ],
+            nowMs,
+            scope.requestCount,
+            scope.readUnits,
+            scope.windowStartedAtMs,
+            scope.windowResetAtMs,
+            scope.sustainedRequestCount,
+            scope.sustainedReadUnits,
+            scope.sustainedWindowStartedAtMs,
+            scope.sustainedWindowResetAtMs,
+          ),
+        );
+      }
+    }
+    return false;
   }
 
   function assertManagerPlayerStatDocument(data, head, playerId) {
@@ -2542,10 +3364,87 @@ function createDiamondScorebookHandlers(dependencies = {}) {
 
   async function getDiamondManagerStats(data = {}, context = {}) {
     const normalized = normalizeManagerStatsRequest(data);
-    const caller = await loadEnabledAuthUser(context);
-    await firestore.runTransaction((transaction) =>
-      verifyManagerStatsAccessAndHeads(transaction, normalized, caller),
-    );
+    let caller = await loadEnabledAuthUser(context);
+    const attemptHash = core.hashDiamondValue({
+      schemaVersion: 1,
+      type: "diamond-manager-stat-read-attempt",
+      attemptId: secureUuid(random, makeError, "manager statistic read"),
+    });
+    try {
+      await firestore.runTransaction((transaction) =>
+        reserveManagerStatsAdmission(
+          transaction,
+          normalized,
+          caller,
+          attemptHash,
+          normalizeNow(clock, makeError),
+        ),
+      );
+    } catch (error) {
+      if (error instanceof HttpsError || error instanceof DiamondHandlerError)
+        throw error;
+      caller = await loadEnabledAuthUser(context);
+      try {
+        await firestore.runTransaction((transaction) =>
+          reserveManagerStatsAdmission(
+            transaction,
+            normalized,
+            caller,
+            attemptHash,
+            normalizeNow(clock, makeError),
+          ),
+        );
+      } catch (reconcileError) {
+        if (
+          reconcileError instanceof HttpsError ||
+          reconcileError instanceof DiamondHandlerError
+        ) {
+          throw reconcileError;
+        }
+        throw makeError(
+          "unavailable",
+          "Manager statistic read admission could not be confirmed.",
+        );
+      }
+    }
+    let reservation;
+    try {
+      reservation = await firestore.runTransaction((transaction) =>
+        reserveManagerStatsRead(
+          transaction,
+          normalized,
+          caller,
+          attemptHash,
+          normalizeNow(clock, makeError),
+        ),
+      );
+    } catch (error) {
+      if (error instanceof HttpsError || error instanceof DiamondHandlerError)
+        throw error;
+      caller = await loadEnabledAuthUser(context);
+      try {
+        reservation = await firestore.runTransaction((transaction) =>
+          reserveManagerStatsRead(
+            transaction,
+            normalized,
+            caller,
+            attemptHash,
+            normalizeNow(clock, makeError),
+          ),
+        );
+      } catch (reconcileError) {
+        if (
+          reconcileError instanceof HttpsError ||
+          reconcileError instanceof DiamondHandlerError
+        ) {
+          throw reconcileError;
+        }
+        throw makeError(
+          "unavailable",
+          "The manager statistic read reservation could not be confirmed. Try again.",
+        );
+      }
+    }
 
     const playerRequests = normalized.gameHeads.flatMap((head) =>
       normalized.playerIds.map((playerId) => ({
@@ -2563,99 +3462,156 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       ),
     }));
     const requests = [...playerRequests, ...teamRequests];
-    let statSnapshots;
+    let response;
+    let failureCode = "bulk-read-failed";
     try {
       if (typeof firestore.getAll !== "function") {
         throw new Error("Firestore bulk reads are unavailable.");
       }
       const references = requests.map(({ reference }) => reference);
-      statSnapshots =
+      const statSnapshots =
         normalized.gameHeads.length === 1
           ? await firestore.getAll(...references)
           : await firestore.getAll(...references, {
               fieldMask: MANAGER_STAT_COMPACT_FIELD_MASK,
             });
-    } catch {
+      failureCode = "bulk-read-incomplete";
+      if (
+        !Array.isArray(statSnapshots) ||
+        statSnapshots.length !== requests.length
+      ) {
+        throw makeError(
+          "unavailable",
+          "Internal Diamond statistics returned an incomplete bounded read. Try again.",
+        );
+      }
+
+      failureCode = "private-document-invalid";
+      const documents = [];
+      for (let index = 0; index < playerRequests.length; index += 1) {
+        const request = playerRequests[index];
+        const document = snapshotData(statSnapshots[index]);
+        if (!document) continue;
+        assertManagerPlayerStatDocument(
+          document,
+          request.head,
+          request.playerId,
+        );
+        documents.push({
+          gameId: request.head.gameId,
+          playerId: request.playerId,
+          // Season reads omit play-source arrays so 40x25 remains safely below
+          // the callable response cap. A one-game drill-down retains citations.
+          data: serializeManagerPlayerStatDocument(
+            document,
+            normalized.gameHeads.length === 1,
+          ),
+        });
+      }
+      const teamDocuments = [];
+      for (let index = 0; index < teamRequests.length; index += 1) {
+        const request = teamRequests[index];
+        const document = snapshotData(
+          statSnapshots[playerRequests.length + index],
+        );
+        if (!document) continue;
+        assertManagerTeamStatDocument(document, request.head);
+        teamDocuments.push({
+          gameId: request.head.gameId,
+          data: serializeManagerTeamStatDocument(document),
+        });
+      }
+
+      failureCode = "response-finalization-failed";
+      const expectedDocumentCount = playerRequests.length;
+      const expectedTeamDocumentCount = teamRequests.length;
+      response = finalizeManagerStatsResponse({
+        schemaVersion: 1,
+        trackingEngine: DIAMOND_ENGINE,
+        visibility: "manager-internal",
+        status: "complete",
+        complete: true,
+        truncated: false,
+        requestedGameCount: normalized.gameHeads.length,
+        requestedPlayerCount: normalized.playerIds.length,
+        expectedDocumentCount,
+        documentCount: documents.length,
+        missingDocumentCount: expectedDocumentCount - documents.length,
+        absenceConfirmed: documents.length === 0,
+        documents,
+        expectedTeamDocumentCount,
+        teamDocumentCount: teamDocuments.length,
+        missingTeamDocumentCount:
+          expectedTeamDocumentCount - teamDocuments.length,
+        teamDocuments,
+      });
+    } catch (error) {
+      await failManagerStatsRead(reservation, failureCode);
+      if (error instanceof HttpsError || error instanceof DiamondHandlerError)
+        throw error;
       throw makeError(
         "unavailable",
         "Internal Diamond statistics could not be loaded completely. Try again.",
       );
     }
-    if (
-      !Array.isArray(statSnapshots) ||
-      statSnapshots.length !== requests.length
-    ) {
+
+    // Auth, the durable attempt owner, and every mutable role/head input are
+    // re-read together after the private bulk read. A revocation, new
+    // projection, or lost lease therefore returns no private payload.
+    caller = await loadEnabledAuthUser(context).catch(async (error) => {
+      await failManagerStatsRead(
+        reservation,
+        "final-auth-recheck-failed",
+      );
+      throw error;
+    });
+    const responseHash = core.hashDiamondValue(response);
+    try {
+      await firestore.runTransaction((transaction) =>
+        completeManagerStatsRead(
+          transaction,
+          normalized,
+          caller,
+          reservation,
+          responseHash,
+          normalizeNow(clock, makeError),
+        ),
+      );
+      return response;
+    } catch (error) {
+      if (error instanceof HttpsError || error instanceof DiamondHandlerError) {
+        await failManagerStatsRead(
+          reservation,
+          "final-access-recheck-failed",
+        );
+        throw error;
+      }
+      try {
+        caller = await loadEnabledAuthUser(context);
+        const reconciled = await firestore.runTransaction((transaction) =>
+          reconcileManagerStatsCompletion(
+            transaction,
+            normalized,
+            caller,
+            reservation,
+            responseHash,
+            normalizeNow(clock, makeError),
+          ),
+        );
+        if (reconciled) return response;
+      } catch (reconcileError) {
+        if (
+          reconcileError instanceof HttpsError ||
+          reconcileError instanceof DiamondHandlerError
+        ) {
+          throw reconcileError;
+        }
+      }
       throw makeError(
         "unavailable",
-        "Internal Diamond statistics returned an incomplete bounded read. Try again.",
+        "The manager statistic response commit could not be confirmed. Try again.",
       );
     }
-
-    const documents = [];
-    for (let index = 0; index < playerRequests.length; index += 1) {
-      const request = playerRequests[index];
-      const document = snapshotData(statSnapshots[index]);
-      if (!document) continue;
-      assertManagerPlayerStatDocument(document, request.head, request.playerId);
-      documents.push({
-        gameId: request.head.gameId,
-        playerId: request.playerId,
-        // Season reads omit play-source arrays so 40x25 remains safely below
-        // the callable response cap. A one-game drill-down retains citations.
-        data: serializeManagerPlayerStatDocument(
-          document,
-          normalized.gameHeads.length === 1,
-        ),
-      });
-    }
-    const teamDocuments = [];
-    for (let index = 0; index < teamRequests.length; index += 1) {
-      const request = teamRequests[index];
-      const document = snapshotData(
-        statSnapshots[playerRequests.length + index],
-      );
-      if (!document) continue;
-      assertManagerTeamStatDocument(document, request.head);
-      teamDocuments.push({
-        gameId: request.head.gameId,
-        data: serializeManagerTeamStatDocument(document),
-      });
-    }
-
-    // Auth and every mutable role/head input are re-read after the private
-    // bulk read. A revocation or newly projected generation therefore returns
-    // no private payload to the caller.
-    const recheckedCaller = await loadEnabledAuthUser(context);
-    await firestore.runTransaction((transaction) =>
-      verifyManagerStatsAccessAndHeads(
-        transaction,
-        normalized,
-        recheckedCaller,
-      ),
-    );
-
-    const expectedDocumentCount = playerRequests.length;
-    const expectedTeamDocumentCount = teamRequests.length;
-    return finalizeManagerStatsResponse({
-      schemaVersion: 1,
-      trackingEngine: DIAMOND_ENGINE,
-      visibility: "manager-internal",
-      status: "complete",
-      complete: true,
-      truncated: false,
-      requestedGameCount: normalized.gameHeads.length,
-      requestedPlayerCount: normalized.playerIds.length,
-      expectedDocumentCount,
-      documentCount: documents.length,
-      missingDocumentCount: expectedDocumentCount - documents.length,
-      absenceConfirmed: documents.length === 0,
-      documents,
-      expectedTeamDocumentCount,
-      teamDocumentCount: teamDocuments.length,
-      missingTeamDocumentCount:
-        expectedTeamDocumentCount - teamDocuments.length,
-      teamDocuments,
-    });
   }
 
   async function activateDiamondGame(data = {}, context = {}) {
@@ -6700,12 +7656,29 @@ module.exports = {
   DiamondHandlerError,
   FULL_HISTORY_PAGE_SIZE,
   LEGACY_TRACKING_COLLECTIONS,
+  MANAGER_STAT_ADMISSION_DEDUPE_MS,
+  MANAGER_STAT_CONTROL_COLLECTION,
+  MANAGER_STAT_RATE_WINDOW_MS,
+  MANAGER_STAT_RECEIPT_RETENTION_MS,
+  MANAGER_STAT_REQUEST_LEASE_MS,
+  MANAGER_STAT_SUSTAINED_WINDOW_MS,
   MAX_CANONICAL_EVENTS,
+  MAX_CONCURRENT_MANAGER_STAT_REQUESTS,
   MAX_DIAMOND_SCORER_CANDIDATES,
   MAX_EVENT_PAGE_SIZE,
+  MAX_MANAGER_STAT_ADMISSIONS_PER_WINDOW,
   MAX_MANAGER_STAT_GAMES,
+  MAX_MANAGER_STAT_GLOBAL_READ_UNITS_PER_WINDOW,
   MAX_MANAGER_STAT_PLAYERS,
+  MAX_MANAGER_STAT_READ_UNITS_PER_WINDOW,
+  MAX_MANAGER_STAT_REQUESTS_PER_WINDOW,
   MAX_MANAGER_STAT_RESPONSE_BYTES,
+  MAX_MANAGER_STAT_SUSTAINED_ADMISSIONS_PER_WINDOW,
+  MAX_MANAGER_STAT_SUSTAINED_GLOBAL_READ_UNITS_PER_WINDOW,
+  MAX_MANAGER_STAT_SUSTAINED_READ_UNITS_PER_WINDOW,
+  MAX_MANAGER_STAT_SUSTAINED_REQUESTS_PER_WINDOW,
+  MAX_MANAGER_STAT_SUSTAINED_VERIFICATION_UNITS_PER_WINDOW,
+  MAX_MANAGER_STAT_VERIFICATION_UNITS_PER_WINDOW,
   MAX_PRIVATE_EVENT_PAGE_BYTES,
   SCORER_LEASE_DURATION_MS,
   createDiamondScorebookHandlers,

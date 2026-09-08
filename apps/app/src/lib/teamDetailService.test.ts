@@ -1155,7 +1155,11 @@ function buildTeamDiamondManagerTeamData(
   };
 }
 
-function prepareBoundedDiamondManagerSeason(gameCount: number, playerCount: number) {
+function prepareBoundedDiamondManagerSeason(
+  gameCount: number,
+  playerCount: number,
+  projectedPlayerCount = playerCount
+) {
   __resetTeamDetailBaseSnapshotCacheForTests();
   seasonRecordMocks.listSeasonLabels.mockReturnValue(['2026']);
   dbMocks.getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1', sport: 'Baseball' });
@@ -1185,7 +1189,7 @@ function prepareBoundedDiamondManagerSeason(gameCount: number, playerCount: numb
   firebaseMocks.getDocs.mockImplementation(async (path: string) => {
     const game = games.find((candidate) => path.includes(`/games/${candidate.id}/`));
     if (!game) throw new Error(`Unexpected Diamond public stat path: ${path}`);
-    return teamSnapshot(...players.map((player) => buildTeamDiamondPlayerDoc(
+    return teamSnapshot(...players.slice(0, projectedPlayerCount).map((player) => buildTeamDiamondPlayerDoc(
       game,
       player.id,
       { playerName: player.name, playerNumber: player.number }
@@ -1201,18 +1205,20 @@ function buildBoundedDiamondManagerResult(
     includeTeamDocuments = true,
     malformedTeamDocuments = false,
     teamStatValue = 1,
-    privateStatValue = 9
+    privateStatValue = 9,
+    documentPlayerIds = playerIds
   }: {
     includeTeamDocuments?: boolean;
     malformedTeamDocuments?: boolean;
     teamStatValue?: number;
     privateStatValue?: number;
+    documentPlayerIds?: string[];
   } = {}
 ) {
   return {
     status: 'complete' as const,
     reason: null,
-    documentsByGameId: new Map(requestedGames.map((game) => [game.id, playerIds.map((playerId) => ({
+    documentsByGameId: new Map(requestedGames.map((game) => [game.id, documentPlayerIds.map((playerId) => ({
       id: playerId,
       data: buildTeamDiamondManagerPlayerData(game, playerId, {
         stats: { h: privateStatValue, pitches: privateStatValue },
@@ -1227,6 +1233,165 @@ function buildBoundedDiamondManagerResult(
       : [])
   };
 }
+
+describe('Team Insights manager-stat production fan-out', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(hasFullTeamAccess).mockImplementation((user: any, team: any) => user?.uid === team?.ownerId);
+  });
+
+  it('runs the grouped season and all-season overlap with exactly three active chunks', async () => {
+    const { config, games, players } = prepareBoundedDiamondManagerSeason(120, 25);
+    (config.statDefinitions.find(({ id }) => id === 'h') as any).topStat = true;
+    games.forEach((game, index) => {
+      game.seasonLabel = `season-${Math.floor(index / 40) + 1}`;
+    });
+    seasonRecordMocks.listSeasonLabels.mockReturnValue(['season-3', 'season-2', 'season-1']);
+    const firstWave: string[] = [];
+    let active = 0;
+    let peakActive = 0;
+    let releaseFirstWave!: () => void;
+    const firstWaveBarrier = new Promise<void>((resolve) => {
+      releaseFirstWave = resolve;
+    });
+    diamondManagerStatsMocks.loadDiamondManagerStats.mockImplementation(async ({ games: requestedGames, playerIds }: any) => {
+      active += 1;
+      peakActive = Math.max(peakActive, active);
+      if (firstWave.length < 3) {
+        firstWave.push(requestedGames.map((game: any) => game.id).join(','));
+        if (firstWave.length === 3) releaseFirstWave();
+        await firstWaveBarrier;
+      }
+      active -= 1;
+      return buildBoundedDiamondManagerResult(requestedGames, playerIds);
+    });
+
+    const insights = await loadTeamDetailInsights('team-1', { uid: 'owner-1' } as any);
+
+    const calls = diamondManagerStatsMocks.loadDiamondManagerStats.mock.calls.map(([request]: any[]) => request);
+    expect(calls).toHaveLength(6);
+    expect(peakActive).toBe(3);
+    expect(new Set(firstWave).size).toBe(2);
+    expect(calls.reduce((total: number, request: any) => (
+      total + request.games.length * (request.playerIds.length + 1)
+    ), 0)).toBe(6_240);
+    expect(calls.reduce((total: number, request: any) => total + 2 + request.games.length, 0)).toBe(252);
+    expect(calls.every((request: any) => request.playerIds.length === players.length)).toBe(true);
+    expect(insights.rosterStatistics.unavailableSeasons).toEqual([]);
+    expect(insights.rosterStatistics.seasons).toHaveLength(3);
+    expect(insights.rosterStatistics.seasons.every((season) => (
+      season.diamond?.privateStatsStatus === 'complete'
+      && season.diamond?.statVisibility === 'manager-internal'
+    ))).toBe(true);
+    expect(vi.mocked(buildPlayerLeaderboardSnapshot).mock.calls.some(([input]: any[]) => (
+      input?.seasonStatsByPlayerId?.['player-01']?.h === 1_080
+    ))).toBe(true);
+  });
+
+  it('binds the 100-player, 120-label late-chunk recovery envelope to 984 calls', async () => {
+    const { config, games, players } = prepareBoundedDiamondManagerSeason(120, 100, 50);
+    const projectedPlayerIds = new Set(players.slice(0, 50).map(({ id }) => id));
+    (config.statDefinitions.find(({ id }) => id === 'h') as any).topStat = true;
+    const labels = games.map((game, index) => {
+      const label = `fragment-${String(index + 1).padStart(3, '0')}`;
+      game.seasonLabel = label;
+      return label;
+    });
+    seasonRecordMocks.listSeasonLabels.mockReturnValue([...labels].reverse());
+    const signatureCalls = new Map<string, number>();
+    let active = 0;
+    let peakActive = 0;
+    diamondManagerStatsMocks.loadDiamondManagerStats.mockImplementation(async ({ games: requestedGames, playerIds }: any) => {
+      active += 1;
+      peakActive = Math.max(peakActive, active);
+      await Promise.resolve();
+      const signature = requestedGames.map((game: any) => game.id).join(',');
+      const signatureCall = (signatureCalls.get(signature) || 0) + 1;
+      signatureCalls.set(signature, signatureCall);
+      active -= 1;
+      const isFirstSeasonAttempt = requestedGames.length === 1 && signatureCall === 4;
+      const isFirstAggregateLastChunk = requestedGames.length === 40
+        && requestedGames[0]?.id === games[80]?.id
+        && signatureCall === 4;
+      if (isFirstSeasonAttempt || isFirstAggregateLastChunk) {
+        return {
+          status: 'unavailable' as const,
+          reason: 'forced-bounded-recovery',
+          documentsByGameId: new Map(),
+          teamDocumentsByGameId: new Map()
+        };
+      }
+      return buildBoundedDiamondManagerResult(requestedGames, playerIds, {
+        documentPlayerIds: playerIds.filter((playerId: string) => projectedPlayerIds.has(playerId))
+      });
+    });
+
+    const insights = await loadTeamDetailInsights('team-1', { uid: 'owner-1' } as any);
+
+    const calls = diamondManagerStatsMocks.loadDiamondManagerStats.mock.calls.map(([request]: any[]) => request);
+    expect(calls).toHaveLength(984);
+    expect(peakActive).toBeLessThanOrEqual(3);
+    expect(calls.reduce((total: number, request: any) => (
+      total + request.games.length * (request.playerIds.length + 1)
+    ), 0)).toBe(49_920);
+    expect(calls.reduce((total: number, request: any) => total + 2 + request.games.length, 0)).toBe(3_888);
+    expect(calls.filter((request: any) => request.games.length === 1)).toHaveLength(960);
+    expect(calls.filter((request: any) => request.games.length === 40)).toHaveLength(24);
+    expect(insights.rosterStatistics.unavailableSeasons).toEqual([]);
+    expect(insights.rosterStatistics.seasons).toHaveLength(120);
+    expect(insights.rosterStatistics.seasons.every((season) => (
+      season.diamond?.privateStatsStatus === 'complete'
+      && season.diamond?.statVisibility === 'manager-internal'
+    ))).toBe(true);
+    expect(vi.mocked(buildPlayerLeaderboardSnapshot).mock.calls.some(([input]: any[]) => (
+      input?.seasonStatsByPlayerId?.['player-01']?.h === 1_080
+    ))).toBe(true);
+  });
+
+  it('keeps a rate-limited manager result non-authoritative and reloadable', async () => {
+    const { games } = prepareBoundedDiamondManagerSeason(1, 1);
+    let rateLimited = true;
+    diamondManagerStatsMocks.loadDiamondManagerStats.mockImplementation(async ({ games: requestedGames, playerIds }: any) => (
+      rateLimited
+        ? {
+            status: 'unavailable' as const,
+            reason: 'manager-stat-admission-limited',
+            documentsByGameId: new Map(),
+            teamDocumentsByGameId: new Map()
+          }
+        : buildBoundedDiamondManagerResult(requestedGames, playerIds)
+    ));
+
+    const limited = await loadTeamDetailInsights('team-1', { uid: 'owner-1' } as any);
+    const limitedCalls = diamondManagerStatsMocks.loadDiamondManagerStats.mock.calls.length;
+    const limitedSeason = limited.rosterStatistics.seasons[0];
+
+    expect(limitedCalls).toBe(2);
+    expect(limited.rosterStatistics.unavailableSeasons).toEqual([]);
+    expect(limitedSeason.rows[0].values.h.value).toBe(1);
+    expect(limitedSeason.rows[0].values).not.toHaveProperty('pitches');
+    expect(limitedSeason.diamond).toMatchObject({
+      requestedStatVisibility: 'manager-internal',
+      statVisibility: 'public',
+      privateStatsStatus: 'unavailable',
+      privateStatsReason: 'manager-season-chunk-1:manager-stat-admission-limited'
+    });
+
+    rateLimited = false;
+    const recovered = await loadTeamDetailInsights('team-1', { uid: 'owner-1' } as any);
+    const recoveredSeason = recovered.rosterStatistics.seasons[0];
+
+    expect(diamondManagerStatsMocks.loadDiamondManagerStats.mock.calls).toHaveLength(limitedCalls + 1);
+    expect(diamondManagerStatsMocks.loadDiamondManagerStats.mock.calls.slice(limitedCalls).every(([request]: any[]) => (
+      request.games.length === games.length
+    ))).toBe(true);
+    expect(recoveredSeason.rows[0].values.pitches.value).toBe(9);
+    expect(recoveredSeason.diamond).toMatchObject({
+      statVisibility: 'manager-internal',
+      privateStatsStatus: 'complete'
+    });
+  });
+});
 
 describe('team detail bootstrap loading', () => {
   beforeEach(() => {

@@ -20,6 +20,12 @@ const rules = readFileSync(
   new URL("../../firestore.rules", import.meta.url),
   "utf8",
 );
+const indexes = JSON.parse(
+  readFileSync(
+    new URL("../../firestore.indexes.json", import.meta.url),
+    "utf8",
+  ),
+);
 
 describe("Diamond Scorebook v2 Firestore boundary", () => {
   it("defines a server-authoritative game boundary and fail-closed policy schema", () => {
@@ -44,6 +50,27 @@ describe("Diamond Scorebook v2 Firestore boundary", () => {
     expect(rules).toMatch(
       /match \/diamondPublic\/\{document=\*\*\} \{\s*allow read, write: if false;/,
     );
+    expect(rules).toMatch(
+      /match \/diamondManagerStatReadControls\/\{controlId\} \{\s*allow read, write: if false;/,
+    );
+    expect(
+      indexes.fieldOverrides.filter(
+        (override) =>
+          override.collectionGroup === "diamondManagerStatReadControls",
+      ),
+    ).toEqual([
+      {
+        collectionGroup: "diamondManagerStatReadControls",
+        fieldPath: "*",
+        indexes: [],
+      },
+      {
+        collectionGroup: "diamondManagerStatReadControls",
+        fieldPath: "expiresAt",
+        ttl: true,
+        indexes: [],
+      },
+    ]);
     expect(rules).toContain("match /diamondStatGenerations/{instanceId}");
     expect(rules).toContain("match /publicPlayerStats/{playerId}");
     expect(rules).toContain(
@@ -269,6 +296,43 @@ describe("Diamond Scorebook v2 Firestore boundary", () => {
             rolloutPercent: 10,
           }),
         );
+      });
+
+      it("denies every client operation on manager-stat read controls", async () => {
+        await testEnv.withSecurityRulesDisabled(async (context) => {
+          await setDoc(
+            doc(
+              context.firestore(),
+              "diamondManagerStatReadControls/existing-control",
+            ),
+            { expiresAt: Timestamp.now() },
+          );
+        });
+
+        const contexts = [
+          testEnv.unauthenticatedContext(),
+          testEnv.authenticatedContext("owner-a"),
+          testEnv.authenticatedContext("platform-admin"),
+        ];
+        for (const context of contexts) {
+          const db = context.firestore();
+          const existing = doc(
+            db,
+            "diamondManagerStatReadControls/existing-control",
+          );
+          await assertFails(getDoc(existing));
+          await assertFails(
+            getDocs(collection(db, "diamondManagerStatReadControls")),
+          );
+          await assertFails(
+            setDoc(
+              doc(db, "diamondManagerStatReadControls/client-created"),
+              { expiresAt: Timestamp.now() },
+            ),
+          );
+          await assertFails(updateDoc(existing, { clientWrite: true }));
+          await assertFails(deleteDoc(existing));
+        }
       });
 
       it("blocks legacy score and aggregate writes after the engine is claimed", async () => {

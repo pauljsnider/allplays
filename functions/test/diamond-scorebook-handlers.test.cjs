@@ -6,6 +6,23 @@ const { describe, it } = require("node:test");
 const {
   DIAMOND_ENGINE,
   LEGACY_TRACKING_COLLECTIONS,
+  MANAGER_STAT_ADMISSION_DEDUPE_MS,
+  MANAGER_STAT_CONTROL_COLLECTION,
+  MANAGER_STAT_RATE_WINDOW_MS,
+  MANAGER_STAT_RECEIPT_RETENTION_MS,
+  MANAGER_STAT_REQUEST_LEASE_MS,
+  MANAGER_STAT_SUSTAINED_WINDOW_MS,
+  MAX_CONCURRENT_MANAGER_STAT_REQUESTS,
+  MAX_MANAGER_STAT_ADMISSIONS_PER_WINDOW,
+  MAX_MANAGER_STAT_GLOBAL_READ_UNITS_PER_WINDOW,
+  MAX_MANAGER_STAT_READ_UNITS_PER_WINDOW,
+  MAX_MANAGER_STAT_REQUESTS_PER_WINDOW,
+  MAX_MANAGER_STAT_SUSTAINED_ADMISSIONS_PER_WINDOW,
+  MAX_MANAGER_STAT_SUSTAINED_GLOBAL_READ_UNITS_PER_WINDOW,
+  MAX_MANAGER_STAT_SUSTAINED_READ_UNITS_PER_WINDOW,
+  MAX_MANAGER_STAT_SUSTAINED_REQUESTS_PER_WINDOW,
+  MAX_MANAGER_STAT_SUSTAINED_VERIFICATION_UNITS_PER_WINDOW,
+  MAX_MANAGER_STAT_VERIFICATION_UNITS_PER_WINDOW,
   MAX_PRIVATE_EVENT_PAGE_BYTES,
   createDiamondScorebookHandlers,
   paths,
@@ -136,6 +153,8 @@ class FakeTransaction {
     this.database.transactionBulkGetCalls =
       (this.database.transactionBulkGetCalls || 0) + 1;
     this.database.lastTransactionBulkGetCount = references.length;
+    this.database.transactionBulkGetCounts.push(references.length);
+    this.readPaths.push(...references.map(({ path }) => path));
     return Promise.resolve(
       references.map((reference) => this.database._documentSnapshot(reference)),
     );
@@ -163,9 +182,10 @@ class FakeTransaction {
   }
 
   commit() {
-    const next = new Map(
-      [...this.database.documents].map(([path, value]) => [path, clone(value)]),
-    );
+    // Stored values are never exposed without cloning, so a shallow map copy
+    // preserves atomic commit behavior without repeatedly cloning thousands of
+    // seeded stat projections in fan-out quota tests.
+    const next = new Map(this.database.documents);
     for (const operation of this.operations) {
       const path = operation.reference.path;
       if (operation.kind === "create") {
@@ -217,6 +237,7 @@ class FakeFirestore {
     this.bulkGetHook = null;
     this.bulkGetCalls = 0;
     this.transactionReadBatches = [];
+    this.transactionBulkGetCounts = [];
     this.transactionCommits = [];
     this.transactionHook = null;
     this.documentUpdateTimes = new Map();
@@ -251,7 +272,8 @@ class FakeFirestore {
       fieldMask: readOptions?.fieldMask ? [...readOptions.fieldMask] : null,
     };
     if (typeof this.bulkGetHook === "function") {
-      await this.bulkGetHook(references, snapshots);
+      const override = await this.bulkGetHook(references, snapshots);
+      if (override !== undefined) return override;
     }
     return snapshots;
   }
@@ -306,12 +328,20 @@ class FakeFirestore {
 
   runTransaction(callback) {
     const run = async () => {
-      await this.transactionHook?.("before");
-      const transaction = new FakeTransaction(this);
-      const result = await callback(transaction);
-      transaction.commit();
-      await this.transactionHook?.("after", transaction, result);
-      return result;
+      for (;;) {
+        await this.transactionHook?.("before");
+        const transaction = new FakeTransaction(this);
+        const result = await callback(transaction);
+        const directive = await this.transactionHook?.(
+          "beforeCommit",
+          transaction,
+          result,
+        );
+        if (directive === "retry") continue;
+        transaction.commit();
+        await this.transactionHook?.("after", transaction, result);
+        return result;
+      }
     };
     const pending = this.transactionQueue.then(run, run);
     this.transactionQueue = pending.catch(() => {});
@@ -705,6 +735,27 @@ function regenerationControl(harness, type) {
   return matches[0];
 }
 
+function managerStatReadControls(harness, type = null) {
+  return directCollectionDocuments(
+    harness.firestore,
+    MANAGER_STAT_CONTROL_COLLECTION,
+  ).filter(({ value }) => !type || value?.type === type);
+}
+
+function managerStatReadControl(harness, type) {
+  const controls = managerStatReadControls(harness, type);
+  assert.equal(controls.length, 1, `expected one ${type} control`);
+  return controls[0];
+}
+
+function transactionControlWrite(transaction, type, status = undefined) {
+  return transaction?.operations?.find(
+    ({ value }) =>
+      value?.type === type &&
+      (status === undefined || value?.status === status),
+  );
+}
+
 async function startGame(harness) {
   const home = await submit(harness, {
     commandId: makeUuid(20),
@@ -762,6 +813,7 @@ const TEST_PROJECTION_HASH = `sha256:${"d".repeat(64)}`;
 function seedManagerStatProjection(
   harness,
   {
+    teamId = "team-1",
     gameId = "game-1",
     playerId = "home-1",
     revision = 7,
@@ -769,10 +821,10 @@ function seedManagerStatProjection(
     projectionHash = TEST_PROJECTION_HASH,
   } = {},
 ) {
-  const gamePath = paths("team-1", gameId).game;
+  const gamePath = paths(teamId, gameId).game;
   const existingGame = harness.firestore.read(gamePath) || {
     id: gameId,
-    teamId: "team-1",
+    teamId,
     type: "game",
     status: "completed",
   };
@@ -788,10 +840,10 @@ function seedManagerStatProjection(
     diamondStatConfigSnapshotHash: TEST_STAT_CONFIG_HASH,
   });
   harness.firestore.seed(
-    `${paths("team-1", gameId).diamondStatGeneration(instanceId)}/privatePlayerStats/${playerId}`,
+    `${paths(teamId, gameId).diamondStatGeneration(instanceId)}/privatePlayerStats/${playerId}`,
     {
       trackingEngine: DIAMOND_ENGINE,
-      teamId: "team-1",
+      teamId,
       diamondGameId: gameId,
       playerId,
       side: "home",
@@ -824,10 +876,10 @@ function seedManagerStatProjection(
     },
   );
   harness.firestore.seed(
-    `${paths("team-1", gameId).diamondStatGeneration(instanceId)}/teamStats/team`,
+    `${paths(teamId, gameId).diamondStatGeneration(instanceId)}/teamStats/team`,
     {
       trackingEngine: DIAMOND_ENGINE,
-      teamId: "team-1",
+      teamId,
       diamondGameId: gameId,
       side: "home",
       complete: true,
@@ -853,6 +905,85 @@ function seedManagerStatProjection(
     checkpointHash: TEST_CHECKPOINT_HASH,
     statConfigSnapshotHash: TEST_STAT_CONFIG_HASH,
     projectionHash,
+  };
+}
+
+function seedManagerStatRequest(
+  harness,
+  { gameCount, playerCount, gamePrefix = "game", teamId = "team-1" },
+) {
+  const playerIds = Array.from(
+    { length: playerCount },
+    (_, index) => `player-${String(index + 1).padStart(2, "0")}`,
+  );
+  const gameHeads = [];
+  for (let gameIndex = 0; gameIndex < gameCount; gameIndex += 1) {
+    const gameId = `${gamePrefix}-${String(gameIndex + 1).padStart(3, "0")}`;
+    let head;
+    for (let playerIndex = 0; playerIndex < playerIds.length; playerIndex += 1) {
+      head = seedManagerStatProjection(harness, {
+        teamId,
+        gameId,
+        playerId: playerIds[playerIndex],
+        revision: gameIndex + 1,
+        instanceId: makeUuid(10_000 + gameIndex),
+      });
+    }
+    gameHeads.push(head);
+  }
+  return { gameHeads, playerIds };
+}
+
+async function runManagerStatChunks(harness, gameHeads, playerIds) {
+  const results = [];
+  for (let gameOffset = 0; gameOffset < gameHeads.length; gameOffset += 40) {
+    for (let playerOffset = 0; playerOffset < playerIds.length; playerOffset += 25) {
+      results.push(
+        await harness.handlers.getDiamondManagerStats(
+          {
+            teamId: "team-1",
+            gameHeads: gameHeads.slice(gameOffset, gameOffset + 40),
+            playerIds: playerIds.slice(playerOffset, playerOffset + 25),
+          },
+          harness.managerContext,
+        ),
+      );
+    }
+  }
+  return results;
+}
+
+async function runTeamInsightsManagerStatsTopology(
+  harness,
+  seasonGameHeadGroups,
+  allGameHeads,
+  playerIds,
+) {
+  const seasonResults = [];
+  const seasonReads = (async () => {
+    for (let offset = 0; offset < seasonGameHeadGroups.length; offset += 2) {
+      const batchResults = await Promise.all(
+        seasonGameHeadGroups
+          .slice(offset, offset + 2)
+          .map((gameHeads) =>
+            runManagerStatChunks(harness, gameHeads, playerIds),
+          ),
+      );
+      seasonResults.push(...batchResults.flat());
+    }
+  })();
+  const aggregateResults = runManagerStatChunks(
+    harness,
+    allGameHeads,
+    playerIds,
+  );
+  const [, resolvedAggregateResults] = await Promise.all([
+    seasonReads,
+    aggregateResults,
+  ]);
+  return {
+    seasonResults,
+    aggregateResults: resolvedAggregateResults,
   };
 }
 
@@ -930,7 +1061,8 @@ describe("Diamond scorebook handler factory", () => {
     );
 
     assert.equal(harness.firestore.bulkGetCalls, 1);
-    assert.equal(harness.firestore.transactionBulkGetCalls, 2);
+    assert.equal(harness.firestore.transactionBulkGetCalls, 4);
+    assert.deepEqual(harness.firestore.transactionBulkGetCounts, [2, 2, 2, 2]);
     assert.equal(harness.firestore.lastBulkGet.count, 4);
     assert.ok(harness.firestore.lastBulkGet.fieldMask.length > 0);
     assert.equal(
@@ -945,6 +1077,7 @@ describe("Diamond scorebook handler factory", () => {
     assert.equal(result.complete, true);
     assert.equal(result.truncated, false);
     assert.equal(result.visibility, "manager-internal");
+    assert.equal(Object.hasOwn(result, "requestId"), false);
     assert.equal(result.expectedDocumentCount, 2);
     assert.equal(result.documentCount, 2);
     assert.equal(result.missingDocumentCount, 0);
@@ -1008,7 +1141,10 @@ describe("Diamond scorebook handler factory", () => {
 
     assert.equal(harness.firestore.bulkGetCalls, 1);
     assert.equal(harness.firestore.lastBulkGet.count, 1_040);
-    assert.equal(harness.firestore.lastTransactionBulkGetCount, 82);
+    assert.deepEqual(
+      harness.firestore.transactionBulkGetCounts,
+      [2, 40, 2, 40],
+    );
     assert.equal(result.documentCount, 1_000);
     assert.equal(result.teamDocumentCount, 40);
     assert.equal(result.missingDocumentCount, 0);
@@ -1016,6 +1152,1438 @@ describe("Diamond scorebook handler factory", () => {
     assert.ok(
       result.documents.every(({ data }) => data.statSources === undefined),
     );
+  });
+
+  it("keeps the deployed manager-stat request and response contract exact", async () => {
+    let randomCalls = 0;
+    const harness = createHarness({
+      random() {
+        randomCalls += 1;
+        return makeUuid(90_000 + randomCalls);
+      },
+    });
+    const head = seedManagerStatProjection(harness);
+    const request = {
+      teamId: "team-1",
+      gameHeads: [head],
+      playerIds: ["home-1"],
+    };
+
+    const response = await harness.handlers.getDiamondManagerStats(
+      request,
+      harness.managerContext,
+    );
+    assert.equal(response.status, "complete");
+    assert.equal(Object.hasOwn(response, "requestId"), false);
+    assert.equal(randomCalls, 1);
+
+    const readsBeforeInvalidRequest = harness.firestore.transactionReadBatches.length;
+    await assert.rejects(
+      harness.handlers.getDiamondManagerStats(
+        { ...request, requestId: makeUuid(90_100) },
+        harness.managerContext,
+      ),
+      (error) => error.code === "invalid-argument",
+    );
+    assert.equal(randomCalls, 1);
+    assert.equal(
+      harness.firestore.transactionReadBatches.length,
+      readsBeforeInvalidRequest,
+    );
+    assert.equal(harness.firestore.bulkGetCalls, 1);
+  });
+
+  it("charges sequential completed rereads as new bounded server attempts", async () => {
+    const harness = createHarness();
+    const head = seedManagerStatProjection(harness);
+    const request = {
+      teamId: "team-1",
+      gameHeads: [head],
+      playerIds: ["home-1"],
+    };
+
+    const first = await harness.handlers.getDiamondManagerStats(
+      request,
+      harness.managerContext,
+    );
+    const second = await harness.handlers.getDiamondManagerStats(
+      request,
+      harness.managerContext,
+    );
+
+    assert.equal(first.status, "complete");
+    assert.equal(second.status, "complete");
+    assert.equal(harness.firestore.bulkGetCalls, 2);
+    const admission = managerStatReadControl(
+      harness,
+      "diamond-manager-stat-read-admission",
+    ).value;
+    assert.equal(admission.requestCount, 2);
+    assert.equal(admission.verificationUnits, 6);
+    assert.equal(admission.recentAttempts.length, 2);
+    const scope = managerStatReadControl(
+      harness,
+      "diamond-manager-stat-read-scope",
+    ).value;
+    assert.equal(scope.requestCount, 2);
+    assert.equal(scope.readUnits, 4);
+    assert.deepEqual(scope.activeAttempts, []);
+    assert.equal(scope.recentTerminals.length, 2);
+    assert.ok(
+      scope.recentTerminals.every(({ status }) => status === "complete"),
+    );
+    assert.equal(managerStatReadControls(harness).length, 2);
+  });
+
+  it("admits the real three-way overlapping Team Insights fan-out", async () => {
+    const harness = createHarness();
+    const { gameHeads, playerIds } = seedManagerStatRequest(harness, {
+      gameCount: 120,
+      playerCount: 25,
+      gamePrefix: "insights",
+    });
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const firstWaveSignatures = [];
+    let releaseFirstWave;
+    const firstWave = new Promise((resolve) => {
+      releaseFirstWave = resolve;
+    });
+    harness.firestore.bulkGetHook = async (references) => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      if (firstWaveSignatures.length < 3) {
+        firstWaveSignatures.push(
+          references.map(({ path }) => path).join("\n"),
+        );
+        if (firstWaveSignatures.length === 3) releaseFirstWave();
+        await firstWave;
+      }
+      inFlight -= 1;
+    };
+
+    const result = await runTeamInsightsManagerStatsTopology(
+      harness,
+      [
+        gameHeads.slice(0, 40),
+        gameHeads.slice(40, 80),
+        gameHeads.slice(80, 120),
+      ],
+      gameHeads,
+      playerIds,
+    );
+
+    assert.equal(maxInFlight, 3);
+    assert.equal(new Set(firstWaveSignatures).size, 2);
+    assert.equal(result.seasonResults.length, 3);
+    assert.equal(result.aggregateResults.length, 3);
+    assert.ok(
+      [...result.seasonResults, ...result.aggregateResults].every(
+        ({ status, complete }) => status === "complete" && complete === true,
+      ),
+    );
+    assert.equal(harness.firestore.bulkGetCalls, 6);
+    const scope = managerStatReadControl(
+      harness,
+      "diamond-manager-stat-read-scope",
+    ).value;
+    assert.equal(scope.requestCount, 6);
+    assert.equal(scope.readUnits, 6_240);
+    assert.deepEqual(scope.activeAttempts, []);
+    const admission = managerStatReadControl(
+      harness,
+      "diamond-manager-stat-read-admission",
+    ).value;
+    assert.equal(admission.requestCount, 6);
+    assert.equal(admission.verificationUnits, 252);
+  });
+
+  it("admits a 120-label Team Insights load plus its one bounded recovery", async () => {
+    const harness = createHarness();
+    const { gameHeads, playerIds } = seedManagerStatRequest(harness, {
+      gameCount: 120,
+      playerCount: 100,
+      gamePrefix: "fragmented",
+    });
+    const seasonGroups = gameHeads.map((head) => [head]);
+
+    const first = await runTeamInsightsManagerStatsTopology(
+      harness,
+      seasonGroups,
+      gameHeads,
+      playerIds,
+    );
+    const recovery = await runTeamInsightsManagerStatsTopology(
+      harness,
+      seasonGroups,
+      gameHeads,
+      playerIds,
+    );
+
+    assert.equal(first.seasonResults.length, 480);
+    assert.equal(first.aggregateResults.length, 12);
+    assert.equal(recovery.seasonResults.length, 480);
+    assert.equal(recovery.aggregateResults.length, 12);
+    assert.ok(
+      [
+        ...first.seasonResults,
+        ...first.aggregateResults,
+        ...recovery.seasonResults,
+        ...recovery.aggregateResults,
+      ].every(({ status }) => status === "complete"),
+    );
+    assert.equal(harness.firestore.bulkGetCalls, 984);
+    const scope = managerStatReadControl(
+      harness,
+      "diamond-manager-stat-read-scope",
+    ).value;
+    assert.equal(scope.requestCount, 984);
+    assert.equal(scope.readUnits, 49_920);
+    assert.equal(scope.sustainedRequestCount, 984);
+    assert.equal(scope.sustainedReadUnits, 49_920);
+    const admission = managerStatReadControl(
+      harness,
+      "diamond-manager-stat-read-admission",
+    ).value;
+    assert.equal(admission.requestCount, 984);
+    assert.equal(admission.verificationUnits, 3_888);
+    assert.equal(admission.readUnits, 49_920);
+    assert.equal(admission.sustainedRequestCount, 984);
+    assert.equal(admission.sustainedVerificationUnits, 3_888);
+    assert.equal(admission.sustainedReadUnits, 49_920);
+    assert.ok(admission.requestCount < MAX_MANAGER_STAT_ADMISSIONS_PER_WINDOW);
+    assert.ok(
+      admission.verificationUnits <
+        MAX_MANAGER_STAT_VERIFICATION_UNITS_PER_WINDOW,
+    );
+
+    const maxRequest = {
+      teamId: "team-1",
+      gameHeads: gameHeads.slice(0, 40),
+      playerIds: playerIds.slice(0, 25),
+    };
+    for (let index = 0; index < 4; index += 1) {
+      const result = await harness.handlers.getDiamondManagerStats(
+        maxRequest,
+        harness.managerContext,
+      );
+      assert.equal(result.status, "complete");
+    }
+
+    const transactionalReadsBeforeAdmissionRejection =
+      harness.firestore.transactionBulkGetCounts.length;
+    let rejectedResponse = null;
+    await assert.rejects(
+      async () => {
+        rejectedResponse = await harness.handlers.getDiamondManagerStats(
+          maxRequest,
+          harness.managerContext,
+        );
+      },
+      (error) =>
+        error.code === "resource-exhausted" &&
+        error.details?.reason === "manager-stat-admission-limited",
+    );
+    assert.equal(rejectedResponse, null);
+    assert.equal(harness.firestore.bulkGetCalls, 988);
+    assert.equal(
+      harness.firestore.transactionBulkGetCounts.length,
+      transactionalReadsBeforeAdmissionRejection,
+    );
+    assert.equal(
+      harness.firestore.transactionCommits.filter((commit) =>
+        commit.some(
+          ({ value }) =>
+            value?.type === "diamond-manager-stat-read-admission",
+        ),
+      ).length,
+      988,
+    );
+    assert.equal(
+      harness.firestore.transactionCommits.filter((commit) =>
+        commit.some(
+          ({ value }) => value?.type === "diamond-manager-stat-read-scope",
+        ),
+      ).length,
+      1_976,
+    );
+  });
+
+  it("blocks a fourth simultaneous bulk read before it starts", async () => {
+    const harness = createHarness();
+    const { gameHeads, playerIds } = seedManagerStatRequest(harness, {
+      gameCount: 4,
+      playerCount: 1,
+      gamePrefix: "parallel",
+    });
+    let releaseBulks;
+    const heldBulks = new Promise((resolve) => {
+      releaseBulks = resolve;
+    });
+    let startedBulks = 0;
+    harness.firestore.bulkGetHook = async () => {
+      startedBulks += 1;
+      await heldBulks;
+    };
+    const calls = gameHeads.map((head) =>
+      harness.handlers.getDiamondManagerStats(
+        { teamId: "team-1", gameHeads: [head], playerIds },
+        harness.managerContext,
+      ),
+    );
+
+    await assert.rejects(
+      calls[3],
+      (error) =>
+        error.code === "resource-exhausted" &&
+        error.details?.reason === "manager-stat-concurrency-limited",
+    );
+    assert.equal(startedBulks, MAX_CONCURRENT_MANAGER_STAT_REQUESTS);
+    assert.equal(harness.firestore.bulkGetCalls, 3);
+    releaseBulks();
+    const completed = await Promise.all(calls.slice(0, 3));
+    assert.ok(completed.every(({ status }) => status === "complete"));
+    const scope = managerStatReadControl(
+      harness,
+      "diamond-manager-stat-read-scope",
+    ).value;
+    assert.equal(scope.requestCount, 3);
+    assert.equal(scope.readUnits, 6);
+    assert.deepEqual(scope.activeAttempts, []);
+  });
+
+  it("enforces the weighted team ceiling before another maximum bulk read", async () => {
+    const initialNowMs = 1_750_000_000_000;
+    let nowMs = initialNowMs;
+    const harness = createHarness({ clock: () => nowMs });
+    harness.firestore.seed("teams/team-2", {
+      ownerId: "manager-1",
+      sport: "Baseball",
+      active: true,
+    });
+    const otherHead = seedManagerStatProjection(harness, {
+      teamId: "team-2",
+      gameId: "offset-game",
+      playerId: "offset-player",
+      instanceId: makeUuid(20_000),
+    });
+    await harness.handlers.getDiamondManagerStats(
+      {
+        teamId: "team-2",
+        gameHeads: [otherHead],
+        playerIds: ["offset-player"],
+      },
+      harness.managerContext,
+    );
+
+    const { gameHeads, playerIds } = seedManagerStatRequest(harness, {
+      gameCount: 40,
+      playerCount: 25,
+      gamePrefix: "weighted",
+    });
+    const request = { teamId: "team-1", gameHeads, playerIds };
+
+    nowMs = initialNowMs + MANAGER_STAT_RATE_WINDOW_MS - 1;
+    harness.firestore.commitTimestampMs = nowMs;
+    await harness.handlers.getDiamondManagerStats(
+      request,
+      harness.managerContext,
+    );
+    nowMs += 2;
+    harness.firestore.commitTimestampMs = nowMs;
+    for (let attempt = 1; attempt < 63; attempt += 1) {
+      const result = await harness.handlers.getDiamondManagerStats(
+        request,
+        harness.managerContext,
+      );
+      assert.equal(result.status, "complete");
+    }
+    assert.equal(harness.firestore.bulkGetCalls, 64);
+    const scope = managerStatReadControls(
+      harness,
+      "diamond-manager-stat-read-scope",
+    ).find(({ value }) => value.readUnits === 65_520)?.value;
+    assert.ok(scope);
+    assert.equal(scope.requestCount, 63);
+    assert.equal(scope.readUnits, 65_520);
+    assert.ok(scope.requestCount < MAX_MANAGER_STAT_REQUESTS_PER_WINDOW);
+
+    const transactionalReadsBeforeRejection =
+      harness.firestore.transactionBulkGetCounts.length;
+    await assert.rejects(
+      harness.handlers.getDiamondManagerStats(
+        request,
+        harness.managerContext,
+      ),
+      (error) =>
+        error.code === "resource-exhausted" &&
+        error.details?.reason === "manager-stat-rate-limited" &&
+        error.details?.retryable === true &&
+        error.details?.retryAfterMs === MANAGER_STAT_RATE_WINDOW_MS - 2,
+    );
+    assert.equal(harness.firestore.bulkGetCalls, 64);
+    assert.deepEqual(
+      harness.firestore.transactionBulkGetCounts.slice(
+        transactionalReadsBeforeRejection,
+      ),
+      [2],
+    );
+    const admission = managerStatReadControl(
+      harness,
+      "diamond-manager-stat-read-admission",
+    ).value;
+    assert.equal(admission.requestCount, 63);
+    assert.equal(admission.readUnits, 65_520);
+    assert.equal(scope.sustainedRequestCount, 63);
+    assert.equal(scope.sustainedReadUnits, 65_520);
+  });
+
+  it("enforces the UID-global private-read ceiling across authorized teams", async () => {
+    const harness = createHarness();
+    harness.firestore.seed("teams/team-2", {
+      ownerId: "manager-1",
+      sport: "Baseball",
+      active: true,
+    });
+    const teamOne = seedManagerStatRequest(harness, {
+      gameCount: 40,
+      playerCount: 25,
+      gamePrefix: "global-one",
+      teamId: "team-1",
+    });
+    const teamTwo = seedManagerStatRequest(harness, {
+      gameCount: 40,
+      playerCount: 25,
+      gamePrefix: "global-two",
+      teamId: "team-2",
+    });
+    const requests = [
+      { teamId: "team-1", ...teamOne },
+      { teamId: "team-2", ...teamTwo },
+    ];
+
+    for (let attempt = 0; attempt < 63; attempt += 1) {
+      const result = await harness.handlers.getDiamondManagerStats(
+        requests[attempt % requests.length],
+        harness.managerContext,
+      );
+      assert.equal(result.status, "complete");
+    }
+    const scopes = managerStatReadControls(
+      harness,
+      "diamond-manager-stat-read-scope",
+    ).map(({ value }) => value);
+    assert.equal(scopes.length, 2);
+    assert.ok(scopes.every(({ readUnits }) => readUnits < 34_000));
+    const admission = managerStatReadControl(
+      harness,
+      "diamond-manager-stat-read-admission",
+    ).value;
+    assert.equal(admission.requestCount, 63);
+    assert.equal(admission.readUnits, 65_520);
+    assert.ok(
+      admission.readUnits <= MAX_MANAGER_STAT_GLOBAL_READ_UNITS_PER_WINDOW,
+    );
+
+    const accessReadsBeforeRejection =
+      harness.firestore.transactionBulkGetCounts.length;
+    await assert.rejects(
+      harness.handlers.getDiamondManagerStats(
+        requests[1],
+        harness.managerContext,
+      ),
+      (error) =>
+        error.code === "resource-exhausted" &&
+        error.details?.reason === "manager-stat-admission-limited",
+    );
+    assert.equal(harness.firestore.bulkGetCalls, 63);
+    assert.equal(
+      harness.firestore.transactionBulkGetCounts.length,
+      accessReadsBeforeRejection,
+    );
+  });
+
+  it("bounds two burst windows inside the sustained UID and team envelope", async () => {
+    const initialNowMs = 1_750_000_000_000;
+    let nowMs = initialNowMs;
+    const harness = createHarness({ clock: () => nowMs });
+    const { gameHeads, playerIds } = seedManagerStatRequest(harness, {
+      gameCount: 40,
+      playerCount: 25,
+      gamePrefix: "sustained",
+    });
+    const request = { teamId: "team-1", gameHeads, playerIds };
+
+    for (let burst = 0; burst < 2; burst += 1) {
+      if (burst > 0) {
+        nowMs += MANAGER_STAT_RATE_WINDOW_MS;
+        harness.firestore.commitTimestampMs = nowMs;
+      }
+      for (let attempt = 0; attempt < 63; attempt += 1) {
+        const result = await harness.handlers.getDiamondManagerStats(
+          request,
+          harness.managerContext,
+        );
+        assert.equal(result.status, "complete");
+      }
+    }
+    const admissionBeforeLimit = managerStatReadControl(
+      harness,
+      "diamond-manager-stat-read-admission",
+    ).value;
+    const scopeBeforeLimit = managerStatReadControl(
+      harness,
+      "diamond-manager-stat-read-scope",
+    ).value;
+    assert.equal(admissionBeforeLimit.sustainedRequestCount, 126);
+    assert.equal(admissionBeforeLimit.sustainedVerificationUnits, 5_292);
+    assert.equal(admissionBeforeLimit.sustainedReadUnits, 131_040);
+    assert.equal(scopeBeforeLimit.sustainedRequestCount, 126);
+    assert.equal(scopeBeforeLimit.sustainedReadUnits, 131_040);
+    assert.ok(
+      admissionBeforeLimit.sustainedReadUnits <=
+        MAX_MANAGER_STAT_SUSTAINED_GLOBAL_READ_UNITS_PER_WINDOW,
+    );
+    assert.ok(
+      scopeBeforeLimit.sustainedReadUnits <=
+        MAX_MANAGER_STAT_SUSTAINED_READ_UNITS_PER_WINDOW,
+    );
+
+    nowMs += MANAGER_STAT_RATE_WINDOW_MS;
+    harness.firestore.commitTimestampMs = nowMs;
+    const readsBeforeSustainedRejection =
+      harness.firestore.transactionBulkGetCounts.length;
+    await assert.rejects(
+      harness.handlers.getDiamondManagerStats(
+        request,
+        harness.managerContext,
+      ),
+      (error) =>
+        error.code === "resource-exhausted" &&
+        error.details?.reason === "manager-stat-admission-limited" &&
+        error.details?.retryAfterMs ===
+          MANAGER_STAT_SUSTAINED_WINDOW_MS -
+            2 * MANAGER_STAT_RATE_WINDOW_MS,
+    );
+    assert.equal(harness.firestore.bulkGetCalls, 126);
+    assert.equal(
+      harness.firestore.transactionBulkGetCounts.length,
+      readsBeforeSustainedRejection,
+    );
+
+    nowMs = initialNowMs + MANAGER_STAT_SUSTAINED_WINDOW_MS;
+    harness.firestore.commitTimestampMs = nowMs;
+    const afterSustainedReset = await harness.handlers.getDiamondManagerStats(
+      request,
+      harness.managerContext,
+    );
+    assert.equal(afterSustainedReset.status, "complete");
+    const admissionAfterReset = managerStatReadControl(
+      harness,
+      "diamond-manager-stat-read-admission",
+    ).value;
+    const scopeAfterReset = managerStatReadControl(
+      harness,
+      "diamond-manager-stat-read-scope",
+    ).value;
+    assert.equal(admissionAfterReset.requestCount, 1);
+    assert.equal(admissionAfterReset.readUnits, 1_040);
+    assert.equal(admissionAfterReset.sustainedRequestCount, 1);
+    assert.equal(admissionAfterReset.sustainedReadUnits, 1_040);
+    assert.equal(scopeAfterReset.requestCount, 1);
+    assert.equal(scopeAfterReset.readUnits, 1_040);
+    assert.equal(scopeAfterReset.sustainedRequestCount, 1);
+    assert.equal(scopeAfterReset.sustainedReadUnits, 1_040);
+  });
+
+  it("bounds concurrent rotated-team max-head denials before any head or private read", async () => {
+    const harness = createHarness();
+    const { gameHeads, playerIds } = seedManagerStatRequest(harness, {
+      gameCount: 40,
+      playerCount: 25,
+      gamePrefix: "denied",
+    });
+    const attempts = Array.from({ length: 64 }, (_, index) =>
+      harness.handlers.getDiamondManagerStats(
+        {
+          teamId: `missing-team-${String(index + 1)}`,
+          gameHeads,
+          playerIds,
+        },
+        harness.managerContext,
+      ),
+    );
+    const results = await Promise.allSettled(attempts);
+    const admissionLimited = results.filter(
+      (result) =>
+        result.status === "rejected" &&
+        result.reason?.details?.reason === "manager-stat-admission-limited",
+    );
+    const missingTeams = results.filter(
+      (result) =>
+        result.status === "rejected" && result.reason?.code === "not-found",
+    );
+
+    assert.equal(admissionLimited.length, 1);
+    assert.equal(missingTeams.length, 63);
+    assert.equal(harness.firestore.bulkGetCalls, 0);
+    assert.deepEqual(
+      harness.firestore.transactionBulkGetCounts,
+      Array.from({ length: 63 }, () => 2),
+    );
+    const admission = managerStatReadControl(
+      harness,
+      "diamond-manager-stat-read-admission",
+    ).value;
+    assert.equal(admission.requestCount, 63);
+    assert.equal(admission.verificationUnits, 2_646);
+    assert.equal(admission.readUnits, 65_520);
+    assert.ok(
+      admission.verificationUnits <=
+        MAX_MANAGER_STAT_VERIFICATION_UNITS_PER_WINDOW,
+    );
+    const serializedControls = JSON.stringify(managerStatReadControls(harness));
+    assert.equal(serializedControls.includes("manager-1"), false);
+    assert.equal(serializedControls.includes("missing-team"), false);
+    assert.equal(serializedControls.includes("denied-"), false);
+  });
+
+  it("bounds serial rotated-team small-head denials by UID admission count", async () => {
+    const harness = createHarness();
+    const head = seedManagerStatProjection(harness);
+
+    for (
+      let attempt = 0;
+      attempt < MAX_MANAGER_STAT_ADMISSIONS_PER_WINDOW;
+      attempt += 1
+    ) {
+      await assert.rejects(
+        harness.handlers.getDiamondManagerStats(
+          {
+            teamId: `rotated-team-${String(attempt + 1)}`,
+            gameHeads: [head],
+            playerIds: ["home-1"],
+          },
+          harness.managerContext,
+        ),
+        (error) => error.code === "not-found",
+      );
+    }
+    const teamChecksBeforeLimit = harness.firestore.transactionBulkGetCounts.length;
+    await assert.rejects(
+      harness.handlers.getDiamondManagerStats(
+        {
+          teamId: "rotated-team-over-limit",
+          gameHeads: [head],
+          playerIds: ["home-1"],
+        },
+        harness.managerContext,
+      ),
+      (error) =>
+        error.code === "resource-exhausted" &&
+        error.details?.reason === "manager-stat-admission-limited",
+    );
+    assert.equal(
+      harness.firestore.transactionBulkGetCounts.length,
+      teamChecksBeforeLimit,
+    );
+    assert.equal(teamChecksBeforeLimit, MAX_MANAGER_STAT_ADMISSIONS_PER_WINDOW);
+    assert.equal(harness.firestore.bulkGetCalls, 0);
+    const admission = managerStatReadControl(
+      harness,
+      "diamond-manager-stat-read-admission",
+    ).value;
+    assert.equal(
+      admission.requestCount,
+      MAX_MANAGER_STAT_ADMISSIONS_PER_WINDOW,
+    );
+    assert.equal(
+      admission.verificationUnits,
+      MAX_MANAGER_STAT_ADMISSIONS_PER_WINDOW * 3,
+    );
+  });
+
+  it("reconciles one admission charge across a rate-window response loss", async () => {
+    const initialNowMs = 1_750_000_000_000;
+    let nowMs = initialNowMs;
+    const harness = createHarness({ clock: () => nowMs });
+    const head = seedManagerStatProjection(harness);
+    let droppedAdmissionResponse = false;
+    harness.firestore.transactionHook = async (stage, transaction) => {
+      const admissionWrite = transactionControlWrite(
+        transaction,
+        "diamond-manager-stat-read-admission",
+      );
+      if (stage === "after" && admissionWrite && !droppedAdmissionResponse) {
+        droppedAdmissionResponse = true;
+        nowMs += MANAGER_STAT_RATE_WINDOW_MS + 1;
+        harness.firestore.commitTimestampMs = nowMs;
+        throw new Error("ambiguous admission commit");
+      }
+    };
+
+    const result = await harness.handlers.getDiamondManagerStats(
+      {
+        teamId: "team-1",
+        gameHeads: [head],
+        playerIds: ["home-1"],
+      },
+      harness.managerContext,
+    );
+
+    assert.equal(result.status, "complete");
+    assert.equal(harness.firestore.bulkGetCalls, 1);
+    const admission = managerStatReadControl(
+      harness,
+      "diamond-manager-stat-read-admission",
+    ).value;
+    assert.equal(admission.windowStartedAtMs, initialNowMs);
+    assert.equal(
+      admission.windowResetAtMs,
+      initialNowMs + MANAGER_STAT_RATE_WINDOW_MS,
+    );
+    assert.equal(admission.requestCount, 1);
+    assert.equal(admission.verificationUnits, 3);
+    assert.equal(admission.recentAttempts.length, 1);
+    assert.equal(
+      harness.firestore.transactionCommits.filter((commit) =>
+        commit.some(
+          ({ value }) =>
+            value?.type === "diamond-manager-stat-read-admission",
+        ),
+      ).length,
+      1,
+    );
+  });
+
+  it("reconciles a live ambiguous reservation without a second charge or bulk", async () => {
+    const harness = createHarness();
+    const head = seedManagerStatProjection(harness);
+    let droppedReservationResponse = false;
+    harness.firestore.transactionHook = async (stage, transaction) => {
+      const scopeWrite = transactionControlWrite(
+        transaction,
+        "diamond-manager-stat-read-scope",
+      );
+      if (
+        stage === "after" &&
+        scopeWrite?.value?.activeAttempts?.length === 1 &&
+        !droppedReservationResponse
+      ) {
+        droppedReservationResponse = true;
+        throw new Error("ambiguous reservation commit");
+      }
+    };
+
+    const result = await harness.handlers.getDiamondManagerStats(
+      {
+        teamId: "team-1",
+        gameHeads: [head],
+        playerIds: ["home-1"],
+      },
+      harness.managerContext,
+    );
+
+    assert.equal(result.status, "complete");
+    assert.equal(harness.firestore.bulkGetCalls, 1);
+    const admission = managerStatReadControl(
+      harness,
+      "diamond-manager-stat-read-admission",
+    ).value;
+    assert.equal(admission.requestCount, 1);
+    const scope = managerStatReadControl(
+      harness,
+      "diamond-manager-stat-read-scope",
+    ).value;
+    assert.equal(scope.requestCount, 1);
+    assert.equal(scope.readUnits, 2);
+    assert.deepEqual(scope.activeAttempts, []);
+    assert.equal(scope.recentTerminals.length, 1);
+    assert.equal(scope.recentTerminals[0].status, "complete");
+  });
+
+  it("uses a fresh callback clock when an ambiguous reservation lease expires", async () => {
+    const initialNowMs = 1_750_000_000_000;
+    let nowMs = initialNowMs;
+    const harness = createHarness({ clock: () => nowMs });
+    const head = seedManagerStatProjection(harness);
+    let droppedReservationResponse = false;
+    harness.firestore.transactionHook = async (stage, transaction) => {
+      const scopeWrite = transactionControlWrite(
+        transaction,
+        "diamond-manager-stat-read-scope",
+      );
+      if (
+        stage === "after" &&
+        scopeWrite?.value?.activeAttempts?.length === 1 &&
+        !droppedReservationResponse
+      ) {
+        droppedReservationResponse = true;
+        nowMs += MANAGER_STAT_REQUEST_LEASE_MS + 1;
+        harness.firestore.commitTimestampMs = nowMs;
+        throw new Error("delayed ambiguous reservation commit");
+      }
+    };
+
+    const result = await harness.handlers.getDiamondManagerStats(
+      {
+        teamId: "team-1",
+        gameHeads: [head],
+        playerIds: ["home-1"],
+      },
+      harness.managerContext,
+    );
+
+    assert.equal(result.status, "complete");
+    assert.equal(harness.firestore.bulkGetCalls, 1);
+    const activeReservationWrites = harness.firestore.transactionCommits
+      .flat()
+      .filter(
+        ({ value }) =>
+          value?.type === "diamond-manager-stat-read-scope" &&
+          value.activeAttempts?.length === 1,
+      );
+    assert.equal(activeReservationWrites.length, 2);
+    assert.equal(
+      activeReservationWrites[0].value.activeAttempts[0].startedAtMs,
+      initialNowMs,
+    );
+    assert.equal(
+      activeReservationWrites[1].value.activeAttempts[0].startedAtMs,
+      nowMs,
+    );
+    assert.equal(
+      activeReservationWrites[1].value.activeAttempts[0].leaseExpiresAtMs,
+      nowMs + MANAGER_STAT_REQUEST_LEASE_MS,
+    );
+    assert.equal(
+      activeReservationWrites[0].value.activeAttempts[0].requestHash,
+      activeReservationWrites[1].value.activeAttempts[0].requestHash,
+    );
+    const admission = managerStatReadControl(
+      harness,
+      "diamond-manager-stat-read-admission",
+    ).value;
+    assert.equal(admission.requestCount, 1);
+    assert.equal(admission.recentAttempts.length, 1);
+  });
+
+  it("derives reservation and completion leases from each retried callback clock", async () => {
+    {
+      const initialNowMs = 1_750_000_000_000;
+      let nowMs = initialNowMs;
+      const harness = createHarness({ clock: () => nowMs });
+      const head = seedManagerStatProjection(harness);
+      let retriedReservation = false;
+      harness.firestore.transactionHook = async (stage, transaction) => {
+        const scopeWrite = transactionControlWrite(
+          transaction,
+          "diamond-manager-stat-read-scope",
+        );
+        if (
+          stage === "beforeCommit" &&
+          scopeWrite?.value?.activeAttempts?.length === 1 &&
+          !retriedReservation
+        ) {
+          retriedReservation = true;
+          nowMs += MANAGER_STAT_REQUEST_LEASE_MS + 1;
+          harness.firestore.commitTimestampMs = nowMs;
+          return "retry";
+        }
+      };
+
+      const result = await harness.handlers.getDiamondManagerStats(
+        {
+          teamId: "team-1",
+          gameHeads: [head],
+          playerIds: ["home-1"],
+        },
+        harness.managerContext,
+      );
+      assert.equal(result.status, "complete");
+      const activeWrite = harness.firestore.transactionCommits
+        .flat()
+        .find(
+          ({ value }) =>
+            value?.type === "diamond-manager-stat-read-scope" &&
+            value.activeAttempts?.length === 1,
+        );
+      assert.equal(activeWrite.value.activeAttempts[0].startedAtMs, nowMs);
+      assert.equal(
+        activeWrite.value.activeAttempts[0].leaseExpiresAtMs,
+        nowMs + MANAGER_STAT_REQUEST_LEASE_MS,
+      );
+    }
+
+    {
+      let nowMs = 1_750_000_000_000;
+      const harness = createHarness({ clock: () => nowMs });
+      const head = seedManagerStatProjection(harness);
+      let retriedCompletion = false;
+      harness.firestore.transactionHook = async (stage, transaction) => {
+        const scopeWrite = transactionControlWrite(
+          transaction,
+          "diamond-manager-stat-read-scope",
+        );
+        if (
+          stage === "beforeCommit" &&
+          scopeWrite?.value?.recentTerminals?.some(
+            ({ status }) => status === "complete",
+          ) &&
+          !retriedCompletion
+        ) {
+          retriedCompletion = true;
+          nowMs += MANAGER_STAT_REQUEST_LEASE_MS + 1;
+          harness.firestore.commitTimestampMs = nowMs;
+          return "retry";
+        }
+      };
+
+      await assert.rejects(
+        harness.handlers.getDiamondManagerStats(
+          {
+            teamId: "team-1",
+            gameHeads: [head],
+            playerIds: ["home-1"],
+          },
+          harness.managerContext,
+        ),
+        (error) =>
+          error.code === "aborted" &&
+          error.details?.reason === "manager-stat-read-reservation-lost",
+      );
+      assert.equal(harness.firestore.bulkGetCalls, 1);
+      const scope = managerStatReadControl(
+        harness,
+        "diamond-manager-stat-read-scope",
+      ).value;
+      assert.deepEqual(scope.activeAttempts, []);
+      assert.equal(scope.recentTerminals.at(-1).status, "failed");
+      assert.equal(
+        scope.recentTerminals.at(-1).failureCode,
+        "final-access-recheck-failed",
+      );
+    }
+  });
+
+  it("returns an ambiguous completion only for its exact durable response hash", async () => {
+    const run = async (mode) => {
+      const harness = createHarness();
+      const head = seedManagerStatProjection(harness);
+      let droppedCompletionResponse = false;
+      harness.firestore.transactionHook = async (stage, transaction) => {
+        const scopeWrite = transactionControlWrite(
+          transaction,
+          "diamond-manager-stat-read-scope",
+        );
+        if (
+          stage !== "after" ||
+          droppedCompletionResponse ||
+          !scopeWrite?.value?.recentTerminals?.some(
+            ({ status }) => status === "complete",
+          )
+        ) {
+          return;
+        }
+        droppedCompletionResponse = true;
+        const scopePath = scopeWrite.reference.path;
+        const scope = harness.firestore.read(scopePath);
+        if (mode === "wrong-hash") {
+          scope.recentTerminals.at(-1).responseHash = `sha256:${"f".repeat(64)}`;
+          harness.firestore.seed(scopePath, scope);
+        } else if (mode === "evicted") {
+          scope.recentTerminals = Array.from({ length: 16 }, (_, index) => ({
+            requestHash: `sha256:${index.toString(16).padStart(64, "0")}`,
+            status: "complete",
+            finishedAtMs: scope.updatedAtMs,
+            responseHash: `sha256:${(index + 32).toString(16).padStart(64, "0")}`,
+          }));
+          harness.firestore.seed(scopePath, scope);
+        }
+        throw new Error("ambiguous completion commit");
+      };
+      const invocation = harness.handlers.getDiamondManagerStats(
+        {
+          teamId: "team-1",
+          gameHeads: [head],
+          playerIds: ["home-1"],
+        },
+        harness.managerContext,
+      );
+      return { harness, invocation };
+    };
+
+    const exact = await run("exact");
+    await assert.doesNotReject(exact.invocation);
+    assert.equal(exact.harness.firestore.bulkGetCalls, 1);
+
+    for (const mode of ["wrong-hash", "evicted"]) {
+      const candidate = await run(mode);
+      await assert.rejects(
+        candidate.invocation,
+        (error) => error.code === "unavailable",
+      );
+      assert.equal(candidate.harness.firestore.bulkGetCalls, 1);
+      const scope = managerStatReadControl(
+        candidate.harness,
+        "diamond-manager-stat-read-scope",
+      ).value;
+      assert.deepEqual(scope.activeAttempts, []);
+      assert.ok(Buffer.byteLength(JSON.stringify(scope), "utf8") < 100 * 1024);
+    }
+  });
+
+  it("closes thrown and partial bulk reads before a later invocation succeeds", async () => {
+    for (const mode of ["throw", "partial"]) {
+      const harness = createHarness();
+      const head = seedManagerStatProjection(harness);
+      const request = {
+        teamId: "team-1",
+        gameHeads: [head],
+        playerIds: ["home-1"],
+      };
+      let firstBulk = true;
+      harness.firestore.bulkGetHook = (_references, snapshots) => {
+        if (!firstBulk) return undefined;
+        firstBulk = false;
+        if (mode === "throw") throw new Error("bulk transport failed");
+        return snapshots.slice(0, -1);
+      };
+
+      await assert.rejects(
+        harness.handlers.getDiamondManagerStats(
+          request,
+          harness.managerContext,
+        ),
+        (error) => error.code === "unavailable",
+      );
+      let scope = managerStatReadControl(
+        harness,
+        "diamond-manager-stat-read-scope",
+      ).value;
+      assert.deepEqual(scope.activeAttempts, []);
+      assert.equal(scope.recentTerminals.at(-1).status, "failed");
+      assert.equal(
+        scope.recentTerminals.at(-1).failureCode,
+        mode === "throw" ? "bulk-read-failed" : "bulk-read-incomplete",
+      );
+
+      const recovered = await harness.handlers.getDiamondManagerStats(
+        request,
+        harness.managerContext,
+      );
+      assert.equal(recovered.status, "complete");
+      assert.equal(harness.firestore.bulkGetCalls, 2);
+      scope = managerStatReadControl(
+        harness,
+        "diamond-manager-stat-read-scope",
+      ).value;
+      assert.deepEqual(scope.activeAttempts, []);
+      assert.deepEqual(
+        scope.recentTerminals.map(({ status }) => status),
+        ["failed", "complete"],
+      );
+    }
+  });
+
+  it("returns no private response when final Auth is disabled or deleted", async () => {
+    for (const mode of ["disabled", "deleted"]) {
+      const harness = createHarness({
+        getUserHook({ callCount, authUsers }) {
+          if (callCount !== 2) return;
+          if (mode === "disabled") {
+            authUsers.set("manager-1", {
+              ...authUsers.get("manager-1"),
+              disabled: true,
+            });
+          } else {
+            authUsers.delete("manager-1");
+          }
+        },
+      });
+      const head = seedManagerStatProjection(harness);
+      await assert.rejects(
+        harness.handlers.getDiamondManagerStats(
+          {
+            teamId: "team-1",
+            gameHeads: [head],
+            playerIds: ["home-1"],
+          },
+          harness.managerContext,
+        ),
+      );
+      assert.equal(harness.firestore.bulkGetCalls, 1);
+      const scope = managerStatReadControl(
+        harness,
+        "diamond-manager-stat-read-scope",
+      ).value;
+      assert.deepEqual(scope.activeAttempts, []);
+      assert.equal(scope.recentTerminals.at(-1).status, "failed");
+      assert.equal(
+        scope.recentTerminals.at(-1).failureCode,
+        "final-auth-recheck-failed",
+      );
+    }
+  });
+
+  it("fails malformed controls closed until their quarantine ages out", async () => {
+    const initialNowMs = 1_750_000_000_000;
+    let nowMs = initialNowMs;
+    const harness = createHarness({ clock: () => nowMs });
+    const head = seedManagerStatProjection(harness);
+    const request = {
+      teamId: "team-1",
+      gameHeads: [head],
+      playerIds: ["home-1"],
+    };
+    await harness.handlers.getDiamondManagerStats(
+      request,
+      harness.managerContext,
+    );
+
+    const admissionControl = managerStatReadControl(
+      harness,
+      "diamond-manager-stat-read-admission",
+    );
+    const malformedAdmission = { ...admissionControl.value };
+    delete malformedAdmission.expiresAt;
+    malformedAdmission.unexpectedTtl = true;
+    harness.firestore.seed(admissionControl.path, malformedAdmission);
+    harness.firestore.setDocumentUpdateTime(admissionControl.path, nowMs);
+    const transactionReadsBeforeAdmissionFailure =
+      harness.firestore.transactionBulkGetCounts.length;
+    await assert.rejects(
+      harness.handlers.getDiamondManagerStats(
+        request,
+        harness.managerContext,
+      ),
+      (error) =>
+        error.code === "unavailable" &&
+        error.details?.reason === "manager-stat-read-control-invalid",
+    );
+    assert.equal(harness.firestore.bulkGetCalls, 1);
+    assert.equal(
+      harness.firestore.transactionBulkGetCounts.length,
+      transactionReadsBeforeAdmissionFailure,
+    );
+
+    for (const quarantineAgeMs of [
+      MANAGER_STAT_RATE_WINDOW_MS,
+      MANAGER_STAT_RECEIPT_RETENTION_MS,
+    ]) {
+      nowMs = initialNowMs + quarantineAgeMs;
+      harness.firestore.commitTimestampMs = nowMs;
+      await assert.rejects(
+        harness.handlers.getDiamondManagerStats(
+          request,
+          harness.managerContext,
+        ),
+        (error) =>
+          error.code === "unavailable" &&
+          error.details?.reason === "manager-stat-read-control-invalid",
+      );
+      assert.equal(harness.firestore.bulkGetCalls, 1);
+    }
+
+    nowMs = initialNowMs + MANAGER_STAT_SUSTAINED_WINDOW_MS;
+    harness.firestore.commitTimestampMs = nowMs;
+    const afterAdmissionQuarantine =
+      await harness.handlers.getDiamondManagerStats(
+        request,
+        harness.managerContext,
+      );
+    assert.equal(afterAdmissionQuarantine.status, "complete");
+    assert.equal(harness.firestore.bulkGetCalls, 2);
+
+    const scopeControl = managerStatReadControl(
+      harness,
+      "diamond-manager-stat-read-scope",
+    );
+    const malformedScope = { ...scopeControl.value };
+    malformedScope.recentTerminals = [{ untrusted: true }];
+    harness.firestore.seed(scopeControl.path, malformedScope);
+    harness.firestore.setDocumentUpdateTime(scopeControl.path, nowMs);
+    const scopeMalformedAtMs = nowMs;
+    const transactionReadsBeforeScopeFailure =
+      harness.firestore.transactionBulkGetCounts.length;
+    await assert.rejects(
+      harness.handlers.getDiamondManagerStats(
+        request,
+        harness.managerContext,
+      ),
+      (error) =>
+        error.code === "unavailable" &&
+        error.details?.reason === "manager-stat-read-control-invalid",
+    );
+    assert.equal(harness.firestore.bulkGetCalls, 2);
+    assert.deepEqual(
+      harness.firestore.transactionBulkGetCounts.slice(
+        transactionReadsBeforeScopeFailure,
+      ),
+      [2],
+    );
+
+    for (const quarantineAgeMs of [
+      MANAGER_STAT_RATE_WINDOW_MS,
+      MANAGER_STAT_RECEIPT_RETENTION_MS,
+    ]) {
+      nowMs = scopeMalformedAtMs + quarantineAgeMs;
+      harness.firestore.commitTimestampMs = nowMs;
+      await assert.rejects(
+        harness.handlers.getDiamondManagerStats(
+          request,
+          harness.managerContext,
+        ),
+        (error) =>
+          error.code === "unavailable" &&
+          error.details?.reason === "manager-stat-read-control-invalid",
+      );
+      assert.equal(harness.firestore.bulkGetCalls, 2);
+    }
+
+    nowMs = scopeMalformedAtMs + MANAGER_STAT_SUSTAINED_WINDOW_MS;
+    harness.firestore.commitTimestampMs = nowMs;
+    const afterScopeQuarantine = await harness.handlers.getDiamondManagerStats(
+      request,
+      harness.managerContext,
+    );
+    assert.equal(afterScopeQuarantine.status, "complete");
+    assert.equal(harness.firestore.bulkGetCalls, 3);
+    const recoveredScope = managerStatReadControl(
+      harness,
+      "diamond-manager-stat-read-scope",
+    ).value;
+    assert.deepEqual(recoveredScope.activeAttempts, []);
+    assert.equal(recoveredScope.recentTerminals.length, 1);
+    assert.equal(recoveredScope.recentTerminals[0].status, "complete");
+  });
+
+  it("prunes expired terminal evidence while preserving a fresh charged read", async () => {
+    let nowMs = 1_750_000_000_000;
+    const harness = createHarness({ clock: () => nowMs });
+    const head = seedManagerStatProjection(harness);
+    const request = {
+      teamId: "team-1",
+      gameHeads: [head],
+      playerIds: ["home-1"],
+    };
+    await harness.handlers.getDiamondManagerStats(
+      request,
+      harness.managerContext,
+    );
+    const firstRequestHash = managerStatReadControl(
+      harness,
+      "diamond-manager-stat-read-scope",
+    ).value.recentTerminals[0].requestHash;
+
+    nowMs += MANAGER_STAT_RECEIPT_RETENTION_MS;
+    harness.firestore.commitTimestampMs = nowMs;
+    const result = await harness.handlers.getDiamondManagerStats(
+      request,
+      harness.managerContext,
+    );
+    assert.equal(result.status, "complete");
+    const scope = managerStatReadControl(
+      harness,
+      "diamond-manager-stat-read-scope",
+    ).value;
+    assert.equal(scope.requestCount, 1);
+    assert.equal(scope.readUnits, 2);
+    assert.equal(scope.recentTerminals.length, 1);
+    assert.notEqual(scope.recentTerminals[0].requestHash, firstRequestHash);
+    assert.equal(
+      scope.expiresAt.getTime(),
+      nowMs + MANAGER_STAT_RECEIPT_RETENTION_MS,
+    );
+  });
+
+  it("keeps maximum control rings compact, hash-only, and fixed-cardinality", async () => {
+    const nowMs = 1_750_000_000_000;
+    const harness = createHarness({ clock: () => nowMs });
+    const head = seedManagerStatProjection(harness);
+    const request = {
+      teamId: "team-1",
+      gameHeads: [head],
+      playerIds: ["home-1"],
+    };
+
+    for (
+      let attempt = 0;
+      attempt < MAX_MANAGER_STAT_REQUESTS_PER_WINDOW;
+      attempt += 1
+    ) {
+      const result = await harness.handlers.getDiamondManagerStats(
+        request,
+        harness.managerContext,
+      );
+      assert.equal(result.status, "complete");
+    }
+    const controls = managerStatReadControls(harness);
+    assert.equal(controls.length, 2);
+    const admission = managerStatReadControl(
+      harness,
+      "diamond-manager-stat-read-admission",
+    ).value;
+    const scope = managerStatReadControl(
+      harness,
+      "diamond-manager-stat-read-scope",
+    ).value;
+    assert.equal(admission.recentAttempts.length, 256);
+    assert.equal(new Set(admission.recentAttempts.map(({ attemptHash }) => attemptHash)).size, 256);
+    assert.equal(scope.recentTerminals.length, 16);
+    assert.equal(new Set(scope.recentTerminals.map(({ requestHash }) => requestHash)).size, 16);
+    assert.deepEqual(scope.activeAttempts, []);
+    assert.equal(
+      admission.expiresAt.getTime(),
+      nowMs + MANAGER_STAT_SUSTAINED_WINDOW_MS,
+    );
+    assert.equal(
+      scope.expiresAt.getTime(),
+      nowMs + MANAGER_STAT_SUSTAINED_WINDOW_MS,
+    );
+    assert.ok(Buffer.byteLength(JSON.stringify(admission), "utf8") < 100 * 1024);
+    assert.ok(Buffer.byteLength(JSON.stringify(scope), "utf8") < 100 * 1024);
+    assert.ok(
+      controls.every(({ path }) =>
+        new RegExp(
+          `^${MANAGER_STAT_CONTROL_COLLECTION}/(?:admission|scope)-[0-9a-f]{64}$`,
+        ).test(path),
+      ),
+    );
+    const serializedControls = JSON.stringify(controls);
+    for (const privateValue of [
+      "manager-1",
+      "team-1",
+      "game-1",
+      "home-1",
+      "Home Hitter",
+      "play-1",
+    ]) {
+      assert.equal(serializedControls.includes(privateValue), false);
+    }
+    assert.equal(
+      harness.firestore.transactionCommits.filter((commit) =>
+        commit.some(
+          ({ value }) =>
+            value?.type === "diamond-manager-stat-read-admission",
+        ),
+      ).length,
+      MAX_MANAGER_STAT_REQUESTS_PER_WINDOW,
+    );
+    assert.equal(
+      harness.firestore.transactionCommits.filter((commit) =>
+        commit.some(
+          ({ value }) => value?.type === "diamond-manager-stat-read-scope",
+        ),
+      ).length,
+      MAX_MANAGER_STAT_REQUESTS_PER_WINDOW * 2,
+    );
+    assert.equal(
+      harness.firestore.queryReads.some(
+        ({ path }) => path === MANAGER_STAT_CONTROL_COLLECTION,
+      ),
+      false,
+    );
+  });
+
+  it("isolates controls across principals and teams without storing identities", async () => {
+    const harness = createHarness({
+      documents: {
+        "teams/team-2": {
+          id: "team-2",
+          ownerId: "manager-1",
+          sport: "baseball",
+          active: true,
+        },
+        "users/manager-2": { isAdmin: true },
+      },
+      authUsers: {
+        "manager-2": {
+          uid: "manager-2",
+          disabled: false,
+          email: "manager-2@example.com",
+          emailVerified: true,
+        },
+      },
+    });
+    const teamOneHead = seedManagerStatProjection(harness);
+    const teamTwoHead = seedManagerStatProjection(harness, {
+      teamId: "team-2",
+      gameId: "game-2",
+      playerId: "player-2",
+      instanceId: makeUuid(702),
+    });
+    await harness.handlers.getDiamondManagerStats(
+      {
+        teamId: "team-1",
+        gameHeads: [teamOneHead],
+        playerIds: ["home-1"],
+      },
+      harness.managerContext,
+    );
+    await harness.handlers.getDiamondManagerStats(
+      {
+        teamId: "team-2",
+        gameHeads: [teamTwoHead],
+        playerIds: ["player-2"],
+      },
+      harness.managerContext,
+    );
+    await harness.handlers.getDiamondManagerStats(
+      {
+        teamId: "team-1",
+        gameHeads: [teamOneHead],
+        playerIds: ["home-1"],
+      },
+      { auth: { uid: "manager-2" } },
+    );
+
+    const controls = managerStatReadControls(harness);
+    assert.equal(
+      controls.filter(
+        ({ value }) =>
+          value.type === "diamond-manager-stat-read-admission",
+      ).length,
+      2,
+    );
+    assert.equal(
+      controls.filter(
+        ({ value }) => value.type === "diamond-manager-stat-read-scope",
+      ).length,
+      3,
+    );
+    const serialized = JSON.stringify(controls);
+    for (const identity of [
+      "manager-1",
+      "manager-2",
+      "team-1",
+      "team-2",
+      "game-1",
+      "game-2",
+      "home-1",
+      "player-2",
+    ]) {
+      assert.equal(serialized.includes(identity), false);
+    }
+  });
+
+  it("fails before control or private reads when secure randomness is unavailable", async () => {
+    const harness = createHarness({ random: () => "not-a-secure-uuid" });
+    const head = seedManagerStatProjection(harness);
+    await assert.rejects(
+      harness.handlers.getDiamondManagerStats(
+        {
+          teamId: "team-1",
+          gameHeads: [head],
+          playerIds: ["home-1"],
+        },
+        harness.managerContext,
+      ),
+      (error) => error.code === "unavailable",
+    );
+    assert.equal(managerStatReadControls(harness).length, 0);
+    assert.equal(harness.firestore.transactionReadBatches.length, 0);
+    assert.equal(harness.firestore.bulkGetCalls, 0);
   });
 
   it("denies public callers and delegated scorekeepers before private reads", async () => {
