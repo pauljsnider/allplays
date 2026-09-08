@@ -4,6 +4,7 @@ const nodeCrypto = require("node:crypto");
 const {
   isDiamondInteractionWindowOpen,
 } = require("./diamond-live-engagement-handlers.cjs");
+const regeneration = require("./diamond-projection-regeneration-core.cjs");
 
 const DEFAULT_EVENT_PAGE_SIZE = 100;
 const MAX_EVENT_PAGE_SIZE = 200;
@@ -5087,39 +5088,140 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     }
   }
 
-  async function regenerateDiamondProjection(data = {}, context = {}) {
-    requireExactFields(
-      data,
-      new Set(["teamId", "gameId", "expectedRevision"]),
-      makeError,
-      "Projection regeneration request",
-    );
-    const teamId = normalizeId(data.teamId, "teamId");
-    const gameId = normalizeId(data.gameId, "gameId");
-    const expectedRevision = normalizeOptionalRevision(
-      data.expectedRevision,
-      makeError,
-    );
-    const caller = await loadEnabledAuthUser(context);
-    let preauthorized;
-    try {
-      preauthorized = await loadAccessDocuments(
-        firestore,
+  function projectionRegenerationHead(root, game, teamId, gameId, checkpoint) {
+    const current = checkpoint || buildCheckpointFromRoot(root);
+    if (
+      !root ||
+      root.schemaVersion !== 2 ||
+      root.trackingEngine !== DIAMOND_ENGINE ||
+      root.teamId !== teamId ||
+      root.gameId !== gameId ||
+      !UUID_V4_PATTERN.test(root.instanceId || "") ||
+      root.instanceId !== root.instanceId.toLowerCase() ||
+      game?.trackingEngine !== DIAMOND_ENGINE ||
+      game.diamondScorebookInstanceId !== root.instanceId ||
+      !isPlainObject(root.initialState) ||
+      !isPlainObject(current) ||
+      !isPlainObject(current.state) ||
+      current.teamId !== teamId ||
+      current.gameId !== gameId ||
+      current.rulesProfileId !== root.rulesProfileId ||
+      current.rulesProfileVersion !== root.rulesProfileVersion ||
+      current.captureMode !== root.captureMode ||
+      !Number.isSafeInteger(current.sequence) ||
+      current.sequence < 0 ||
+      current.state.revision !== current.sequence ||
+      !SHA256_PATTERN.test(current.previousHash || "") ||
+      current.state.checkpointHash !== current.previousHash
+    ) {
+      throw makeError("failed-precondition", "The Diamond checkpoint is malformed.");
+    }
+    const stat = validateCommittedStatConfigSnapshot(root, game, teamId);
+    const orientationSnapshot = validateCommittedOrientationSnapshot(root, teamId);
+    return {
+      instanceId: root.instanceId,
+      sourceRevision: current.sequence,
+      checkpointHash: current.previousHash,
+      statConfigSnapshotHash: stat.snapshotHash,
+      orientationSnapshotHash: core.hashDiamondValue(orientationSnapshot),
+      checkpointDigest: core.hashDiamondValue({
+        schemaVersion: root.schemaVersion,
+        trackingEngine: root.trackingEngine,
+        instanceId: root.instanceId,
         teamId,
         gameId,
-        caller,
-      );
-    } catch (error) {
-      if (error instanceof HttpsError || error instanceof DiamondHandlerError) {
-        throw error;
-      }
-      throw makeError(
-        "unavailable",
-        "Projection access could not be verified before replay. Try again.",
-      );
+        rulesProfileId: root.rulesProfileId,
+        rulesProfileVersion: root.rulesProfileVersion,
+        captureMode: root.captureMode,
+        initialState: root.initialState,
+        checkpoint: current,
+        statConfigSnapshot: root.statConfigSnapshot,
+        orientationSnapshot: root.orientationSnapshot,
+      }),
+    };
+  }
+
+  function projectionRegenerationRefs(resourcePaths, request) {
+    const key = (kind, value) =>
+      `${resourcePaths.scorebook}/audit/projection-regeneration-${kind}-${core.hashDiamondValue(value).slice(7)}`;
+    return {
+      receipt: firestore.doc(key("receipt", [request.actorUid, request.requestId])),
+      rate: firestore.doc(key("rate", request.actorUid)),
+      claim: firestore.doc(`${resourcePaths.scorebook}/audit/projection-regeneration-claim`),
+      audit: (attemptId) =>
+        firestore.doc(key("requested", [request.requestHash, attemptId])),
+    };
+  }
+
+  function projectionRegenerationCoordinationHash(root) {
+    return core.hashDiamondValue({
+      projectionFailure: root?.projectionFailure ?? null,
+      projectionLease: root?.projectionLease ?? null,
+      projectionRequest: root?.projectionRequest ?? null,
+      projectionStatus: root?.projectionStatus ?? null,
+      projectionMarker: root?.diamondProjectionMarker ?? null,
+    });
+  }
+
+  function parseRegenerationControl(snapshot, type, teamId, gameId, nowMs) {
+    if (snapshot?.exists !== true) return null;
+    const value = regeneration.parseProjectionRegenerationControl(
+      snapshotData(snapshot),
+      { type, teamId, gameId, nowMs },
+    );
+    if (value) return value;
+    const updatedAtMs = snapshot?.updateTime?.toMillis?.();
+    if (
+      Number.isSafeInteger(updatedAtMs) &&
+      updatedAtMs + regeneration.PROJECTION_REGENERATION_RESERVATION_MS <= nowMs
+    ) {
+      return null;
     }
+    throw makeError(
+      "unavailable",
+      "Projection regeneration safety state is unavailable. Try again later.",
+      { reason: "projection-regeneration-control-invalid" },
+    );
+  }
+
+  function parseRegenerationControls(
+    snapshots,
+    teamId,
+    gameId,
+    nowMs,
+    receipt = null,
+  ) {
+    return {
+      receipt:
+        receipt ||
+        parseRegenerationControl(
+          snapshots[0],
+          "projection-regeneration-receipt",
+          teamId,
+          gameId,
+          nowMs,
+        ),
+      rate: parseRegenerationControl(
+        snapshots[1],
+        "projection-regeneration-rate",
+        teamId,
+        gameId,
+        nowMs,
+      ),
+      claim: parseRegenerationControl(
+        snapshots[2],
+        "projection-regeneration-claim",
+        teamId,
+        gameId,
+        nowMs,
+      ),
+    };
+  }
+
+  async function loadRegenerationAccess(reader, teamId, gameId, caller) {
+    const loaded = await loadAccessDocuments(reader, teamId, gameId, caller);
     requireManager(
-      preauthorized.access,
+      loaded.access,
       "Only a current team manager can regenerate Diamond projections.",
     );
     requireAllowed(
@@ -5127,131 +5229,499 @@ function createDiamondScorebookHandlers(dependencies = {}) {
         operation: "project",
         policy: null,
         teamId,
-        game: preauthorized.game,
+        game: loaded.game,
       }),
       "This game is not owned by Diamond v2.",
     );
+    return loaded;
+  }
+
+  function failRegenerationAttempt(transaction, refs, controls, code, nowMs) {
+    const failed = regeneration.failProjectionRegenerationAttempt(
+      controls,
+      code,
+      nowMs,
+    );
+    transaction.set(refs.receipt, failed.receipt);
+    transaction.set(refs.claim, failed.claim);
+  }
+
+  function writeRegenerationControls(transaction, refs, controls) {
+    for (const key of ["receipt", "rate", "claim"]) {
+      if (controls[key]) transaction.set(refs[key], controls[key]);
+    }
+  }
+
+  function projectionClaimProven(root, head, claim) {
+    if (
+      claim?.status !== "accepted" ||
+      !regeneration.sameProjectionRegenerationHead(head, claim.resultHead)
+    ) return false;
+    const request = root.projectionRequest;
+    if (
+      root.projectionStatus === "pending" &&
+      request?.type === "projection-regeneration" &&
+      request.attemptId === claim.attemptId &&
+      request.requestedBy === claim.ownerUid &&
+      UUID_V4_PATTERN.test(request.requestId || "") &&
+      SHA256_PATTERN.test(request.requestHash || "") &&
+      regeneration.sameProjectionRegenerationHead(
+        request.sourceHead,
+        claim.sourceHead,
+      ) &&
+      regeneration.sameProjectionRegenerationHead(
+        request.resultHead,
+        claim.resultHead,
+      ) &&
+      regeneration.sameProjectionRegenerationHead(request.resultHead, head)
+    ) return true;
+    const marker = root.diamondProjectionMarker;
+    return Boolean(
+      root.projectionStatus === "complete" &&
+        marker?.status === "current" &&
+        marker.instanceId === head.instanceId &&
+        marker.sourceRevision === head.sourceRevision &&
+        marker.checkpointHash === head.checkpointHash &&
+        marker.statConfigSnapshotHash === head.statConfigSnapshotHash &&
+        marker.orientationSnapshotHash === head.orientationSnapshotHash,
+    );
+  }
+
+  function projectionWorkUntil(root, head, nowMs) {
+    const lease = root.projectionLease;
+    if (
+      lease?.instanceId === head.instanceId &&
+      lease.sourceRevision === head.sourceRevision &&
+      lease.checkpointHash === head.checkpointHash &&
+      lease.statConfigSnapshotHash === head.statConfigSnapshotHash &&
+      lease.orientationSnapshotHash === head.orientationSnapshotHash &&
+      Number.isSafeInteger(lease.expiresAtMs) &&
+      lease.expiresAtMs > nowMs
+    ) return lease.expiresAtMs;
+    const request = root.projectionRequest;
+    const requestedAtMs = Date.parse(request?.requestedAt || "");
+    if (
+      root.projectionStatus === "pending" &&
+      request?.sourceRevision === head.sourceRevision &&
+      Number.isSafeInteger(requestedAtMs) &&
+      requestedAtMs <= nowMs &&
+      requestedAtMs + regeneration.PROJECTION_REGENERATION_RESERVATION_MS > nowMs
+    ) return requestedAtMs + regeneration.PROJECTION_REGENERATION_RESERVATION_MS;
+    return null;
+  }
+
+  function regenerationResponse(receipt, deduplicated = true) {
+    return {
+      regenerated: false,
+      regenerationQueued: true,
+      deduplicated,
+      projectionStatus: receipt.resultProjectionStatus,
+      revision: receipt.resultRevision,
+      notificationsSuppressed: true,
+    };
+  }
+
+  function throwRegenerationPlan(plan, nowMs) {
+    if (plan.reason === "idempotency-conflict") {
+      throw makeError("already-exists", "requestId was already used with different regeneration inputs.");
+    }
+    if (plan.reason === "stale-head") {
+      throw makeError("aborted", "The scorebook changed before regeneration began.");
+    }
+    throw makeError(
+      "resource-exhausted",
+      "Projection regeneration is already reserved. Retry with the same requestId.",
+      {
+        reason:
+          plan.reason === "rate-limited"
+            ? "projection-regeneration-rate-limited"
+            : "projection-regeneration-in-progress",
+        retryAfterMs: Math.max(0, (plan.retryAtMs || nowMs) - nowMs),
+      },
+    );
+  }
+
+  async function regenerateDiamondProjection(data = {}, context = {}) {
+    requireExactFields(
+      data,
+      new Set(["requestId", "teamId", "gameId", "expectedRevision"]),
+      makeError,
+      "Projection regeneration request",
+    );
+    const requestId = normalizeUuid(data.requestId, "requestId");
+    const teamId = normalizeId(data.teamId, "teamId");
+    const gameId = normalizeId(data.gameId, "gameId");
+    const expectedRevision = normalizeOptionalRevision(data.expectedRevision, makeError);
     const nowMs = normalizeNow(clock, makeError);
-    const auditId = secureUuid(random, makeError, "projection audit");
+    let attemptId = null;
+    const getAttemptId = () => {
+      if (!attemptId) {
+        attemptId = secureUuid(
+          random,
+          makeError,
+          "projection regeneration attempt",
+        );
+      }
+      return attemptId;
+    };
     const resourcePaths = paths(teamId, gameId);
-    let rootSnapshot;
+    let caller = await loadEnabledAuthUser(context);
+    const request = {
+      actorUid: caller.uid,
+      requestId,
+      requestHash: core.hashDiamondValue({
+        schemaVersion: 1,
+        type: "projection-regeneration",
+        actorUid: caller.uid,
+        requestId,
+        teamId,
+        gameId,
+        expectedRevision,
+      }),
+    };
+    const refs = projectionRegenerationRefs(resourcePaths, request);
+
+    const readControlSnapshots = (reader) =>
+      Promise.all([
+        reader.get(refs.receipt),
+        reader.get(refs.rate),
+        reader.get(refs.claim),
+      ]);
+    const parseReceipt = (snapshot, atMs) =>
+      parseRegenerationControl(
+        snapshot,
+        "projection-regeneration-receipt",
+        teamId,
+        gameId,
+        atMs,
+      );
+    const parseControls = (snapshots, atMs, receipt = null) =>
+      parseRegenerationControls(snapshots, teamId, gameId, atMs, receipt);
+    const readState = async (reader, activeCaller, atMs) => {
+      const [loaded, rootSnapshot, controlSnapshots] = await Promise.all([
+        loadRegenerationAccess(reader, teamId, gameId, activeCaller),
+        reader.get(firestore.doc(resourcePaths.scorebook)),
+        readControlSnapshots(reader),
+      ]);
+      const root = snapshotData(rootSnapshot);
+      return {
+        loaded,
+        root,
+        controlSnapshots,
+        receipt: parseReceipt(controlSnapshots[0], atMs),
+      };
+    };
+    const controlsMatch = (controls, head, coordinationHash, atMs) =>
+      regeneration.reservationControlsMatch({
+        ...controls,
+        request,
+        head,
+        coordinationHash,
+        attemptId,
+        nowMs: atMs,
+      });
+
+    const readReservation = async (transaction, activeCaller, reconcile = false) => {
+      const { root, loaded, controlSnapshots, receipt } = await readState(
+        transaction,
+        activeCaller,
+        nowMs,
+      );
+      const early = regeneration.planProjectionRegeneration({
+        nowMs,
+        request,
+        receipt,
+      });
+      if (early.action === "accepted") return { kind: "accepted", receipt };
+      if (early.reason === "idempotency-conflict") throwRegenerationPlan(early, nowMs);
+      if (!root) throw makeError("not-found", "Diamond scorebook not found.");
+      const head = projectionRegenerationHead(root, loaded.game, teamId, gameId);
+      const coordinationHash = projectionRegenerationCoordinationHash(root);
+      const controls = parseControls(controlSnapshots, nowMs, receipt);
+      const { rate, claim } = controls;
+      if (reconcile) {
+        if (!attemptId) {
+          throw makeError(
+            "unavailable",
+            "The regeneration reservation could not be confirmed. Retry with the same requestId.",
+          );
+        }
+        if (controlsMatch(controls, head, coordinationHash, nowMs)) {
+          return { kind: "reserved", root, head, coordinationHash, controls };
+        }
+        throw makeError(
+          "unavailable",
+          "The regeneration reservation could not be confirmed. Retry with the same requestId.",
+        );
+      }
+      const plan = regeneration.planProjectionRegeneration({
+        nowMs,
+        request,
+        head,
+        expectedRevision,
+        receipt,
+        rate,
+        claim,
+        claimProven: projectionClaimProven(root, head, claim),
+        rootWorkUntilMs: projectionWorkUntil(root, head, nowMs),
+      });
+      if (plan.action === "accepted") return { kind: "accepted", receipt };
+      if (plan.action === "reject") throwRegenerationPlan(plan, nowMs);
+      if (plan.action.startsWith("follow-")) {
+        const followerAttemptId =
+          receipt?.status === "blocked" ? receipt.attemptId : getAttemptId();
+        const follower = regeneration.buildProjectionRegenerationFollower({
+          teamId,
+          gameId,
+          request,
+          head,
+          coordinationHash,
+          receiptAttemptId: followerAttemptId,
+          blockedByAttemptId: plan.claim?.attemptId || followerAttemptId,
+          nowMs,
+          acceptedClaim: plan.action === "follow-accepted" ? plan.claim : null,
+          reason: plan.reason,
+          retryAtMs: plan.retryAtMs,
+        });
+        writeRegenerationControls(transaction, refs, follower);
+        return plan.action === "follow-accepted"
+          ? { kind: "accepted", receipt: follower.receipt }
+          : { kind: "blocked", plan };
+      }
+      const newControls = regeneration.buildProjectionRegenerationControls({
+        teamId,
+        gameId,
+        request,
+        head,
+        coordinationHash,
+        attemptId: getAttemptId(),
+        nowMs,
+      });
+      writeRegenerationControls(transaction, refs, newControls);
+      return { kind: "reserved", root, head, coordinationHash, controls: newControls };
+    };
+
+    let reserved;
     try {
-      rootSnapshot = await firestore.doc(resourcePaths.scorebook).get();
-    } catch {
-      throw makeError(
-        "unavailable",
-        "The Diamond checkpoint could not be read for regeneration. Try again.",
+      reserved = await firestore.runTransaction((transaction) =>
+        readReservation(transaction, caller),
       );
+    } catch (error) {
+      if (error instanceof HttpsError || error instanceof DiamondHandlerError) throw error;
+      caller = await loadEnabledAuthUser(context);
+      try {
+        reserved = await firestore.runTransaction((transaction) =>
+          readReservation(transaction, caller, true),
+        );
+      } catch (reconcileError) {
+        if (reconcileError instanceof HttpsError || reconcileError instanceof DiamondHandlerError)
+          throw reconcileError;
+        throw makeError(
+          "unavailable",
+          "The regeneration reservation could not be confirmed. Retry with the same requestId.",
+        );
+      }
     }
-    const root = snapshotData(rootSnapshot);
-    if (!root) throw makeError("not-found", "Diamond scorebook not found.");
-    const events = await loadAllCanonicalEvents(teamId, gameId);
-    const { checkpoint, replay } = validateCompleteHistory(root, events);
-    if (expectedRevision !== null && expectedRevision !== checkpoint.sequence) {
-      throw makeError(
-        "aborted",
-        "The scorebook changed before regeneration began.",
-        {
-          authoritativeRevision: checkpoint.sequence,
-        },
-      );
+    if (reserved.kind === "accepted") return regenerationResponse(reserved.receipt);
+    if (reserved.kind === "blocked") throwRegenerationPlan(reserved.plan, nowMs);
+
+    let history;
+    try {
+      const events = await loadAllCanonicalEvents(teamId, gameId);
+      history = validateCompleteHistory(reserved.root, events);
+    } catch (error) {
+      const failureNowMs = normalizeNow(clock, makeError);
+      try {
+        await firestore.runTransaction(async (transaction) => {
+          const controls = parseControls(
+            await readControlSnapshots(transaction),
+            failureNowMs,
+          );
+          if (!controlsMatch(controls, reserved.head, reserved.coordinationHash, failureNowMs)) return;
+          const code = error?.code === "failed-precondition" ? "history-invalid" : "history-unavailable";
+          failRegenerationAttempt(
+            transaction,
+            refs,
+            controls,
+            code,
+            failureNowMs,
+          );
+        });
+      } catch (failureError) {
+        logger.error?.("diamond_projection_regeneration_failure_state", {
+          code: failureError?.code || "write-failed",
+        });
+      }
+      throw error;
     }
+
+    const { checkpoint, replay } = history;
     const repairedCheckpoint = {
       teamId,
       gameId,
-      rulesProfileId: root.rulesProfileId,
-      rulesProfileVersion: root.rulesProfileVersion,
-      captureMode: root.captureMode,
+      rulesProfileId: reserved.root.rulesProfileId,
+      rulesProfileVersion: reserved.root.rulesProfileVersion,
+      captureMode: reserved.root.captureMode,
       sequence: checkpoint.sequence,
       previousHash: checkpoint.previousHash,
       state: replay.state,
     };
-    const projectionStatus = "pending";
-    return firestore.runTransaction(async (transaction) => {
-      const loaded = await loadAccessDocuments(
-        transaction,
-        teamId,
-        gameId,
-        caller,
-      );
-      requireManager(
-        loaded.access,
-        "Only a current team manager can regenerate Diamond projections.",
-      );
-      requireAllowed(
-        core.decideDiamondOperation({
-          operation: "project",
-          policy: null,
-          teamId,
-          game: loaded.game,
-        }),
-        "This game is not owned by Diamond v2.",
-      );
-      const rootRef = firestore.doc(resourcePaths.scorebook);
-      const rootCurrent = snapshotData(await transaction.get(rootRef));
-      const currentCheckpoint = buildCheckpointFromRoot(rootCurrent);
-      if (
-        !rootCurrent ||
-        !currentCheckpoint ||
-        rootCurrent.instanceId !== root.instanceId ||
-        currentCheckpoint.sequence !== checkpoint.sequence ||
-        currentCheckpoint.previousHash !== checkpoint.previousHash
-      ) {
-        throw makeError(
-          "aborted",
-          "The scorebook changed while regeneration was running. Try again.",
+    caller = await loadEnabledAuthUser(context);
+    const commitNowMs = normalizeNow(clock, makeError);
+    try {
+      const result = await firestore.runTransaction(async (transaction) => {
+        const state = await readState(
+          transaction,
+          caller,
+          commitNowMs,
         );
-      }
-      const nextRoot = {
-        ...rootCurrent,
-        checkpoint: repairedCheckpoint,
-        projectionStatus,
-        projectionRequest: {
-          requestId: auditId,
-          sourceRevision: replay.state.revision,
+        const { loaded, root } = state;
+        if (!root) throw makeError("not-found", "Diamond scorebook not found.");
+        const sourceHead = projectionRegenerationHead(
+          root,
+          loaded.game,
+          teamId,
+          gameId,
+        );
+        const coordinationHash = projectionRegenerationCoordinationHash(root);
+        const controls = parseControls(
+          state.controlSnapshots,
+          commitNowMs,
+          state.receipt,
+        );
+        const rootRef = firestore.doc(resourcePaths.scorebook);
+        if (
+          !regeneration.sameProjectionRegenerationHead(sourceHead, reserved.head) ||
+          !controlsMatch(
+            controls,
+            reserved.head,
+            reserved.coordinationHash,
+            commitNowMs,
+          )
+        ) {
+          throw makeError("aborted", "The scorebook changed while regeneration was running. Try again.");
+        }
+        if (coordinationHash !== reserved.coordinationHash) {
+          throw makeError("aborted", "Projection work changed while regeneration was running. Try again.");
+        }
+        const resultHead = projectionRegenerationHead(
+          root,
+          loaded.game,
+          teamId,
+          gameId,
+          repairedCheckpoint,
+        );
+        const accepted = regeneration.acceptProjectionRegenerationAttempt(
+          controls,
+          resultHead,
+          commitNowMs,
+        );
+        const projectionRequest = {
+          schemaVersion: 1,
+          type: "projection-regeneration",
+          requestId,
+          requestHash: request.requestHash,
+          attemptId,
           requestedBy: caller.uid,
-          requestedAt: timestampIso(nowMs),
-        },
-        updatedAt: timestampIso(nowMs),
-      };
-      transaction.update(rootRef, {
-        checkpoint: repairedCheckpoint,
-        projectionStatus,
-        projectionRequest: nextRoot.projectionRequest,
-        updatedAt: timestampIso(nowMs),
+          sourceRevision: resultHead.sourceRevision,
+          sourceHead: reserved.head,
+          resultHead,
+          requestedAt: timestampIso(commitNowMs),
+        };
+        const nextRoot = {
+          ...root,
+          checkpoint: repairedCheckpoint,
+          projectionStatus: "pending",
+          projectionLease: null,
+          projectionFailure: null,
+          projectionRequest,
+        };
+        transaction.update(rootRef, {
+          checkpoint: repairedCheckpoint,
+          projectionStatus: "pending",
+          projectionLease: null,
+          projectionFailure: null,
+          projectionRequest,
+          updatedAt: timestampIso(commitNowMs),
+        });
+        transaction.update(loaded.gameRef, gameProjectionPatch(replay.state, "pending"));
+        transaction.create(refs.audit(attemptId), {
+          schemaVersion: 1,
+          trackingEngine: DIAMOND_ENGINE,
+          teamId,
+          gameId,
+          instanceId: root.instanceId,
+          type: "projection-regeneration-requested",
+          sourceRevision: replay.state.revision,
+          actorUid: caller.uid,
+          createdAt: timestampIso(commitNowMs),
+          notificationsSuppressed: true,
+        });
+        transaction.set(refs.receipt, accepted.receipt);
+        transaction.set(refs.claim, accepted.claim);
+        return {
+          ...regenerationResponse(accepted.receipt, false),
+          state: buildPrivateSnapshot({
+            state: replay.state,
+            root: nextRoot,
+            team: loaded.team,
+            game: loaded.game,
+            callerUid: caller.uid,
+            canScore: loaded.access.scorekeeping,
+            canManage: loaded.access.full,
+            nowMs: commitNowMs,
+            core,
+          }),
+        };
       });
-      transaction.update(
-        loaded.gameRef,
-        gameProjectionPatch(replay.state, projectionStatus),
+      return result;
+    } catch (error) {
+      if (error instanceof HttpsError || error instanceof DiamondHandlerError) throw error;
+      caller = await loadEnabledAuthUser(context);
+      try {
+        const reconciled = await firestore.runTransaction(async (transaction) => {
+          const reconcileNowMs = normalizeNow(clock, makeError);
+          const [, snapshots] = await Promise.all([
+            loadRegenerationAccess(transaction, teamId, gameId, caller),
+            readControlSnapshots(transaction),
+          ]);
+          const receipt = parseReceipt(snapshots[0], reconcileNowMs);
+          const plan = regeneration.planProjectionRegeneration({
+            nowMs: reconcileNowMs,
+            request,
+            head: reserved.head,
+            receipt,
+          });
+          if (plan.action === "accepted") return receipt;
+          const controls = parseControls(snapshots, reconcileNowMs, receipt);
+          if (
+            controlsMatch(
+              controls,
+              reserved.head,
+              reserved.coordinationHash,
+              reconcileNowMs,
+            )
+          ) {
+            failRegenerationAttempt(
+              transaction,
+              refs,
+              controls,
+              "commit-rejected",
+              reconcileNowMs,
+            );
+          }
+          return null;
+        });
+        if (reconciled) return regenerationResponse(reconciled);
+      } catch (reconcileError) {
+        if (reconcileError instanceof HttpsError || reconcileError instanceof DiamondHandlerError)
+          throw reconcileError;
+      }
+      throw makeError(
+        "unavailable",
+        "The regeneration commit could not be confirmed. Retry with the same requestId.",
       );
-      transaction.create(firestore.doc(resourcePaths.audit(auditId)), {
-        schemaVersion: 1,
-        instanceId: root.instanceId,
-        type: "projection-regeneration-requested",
-        sourceRevision: replay.state.revision,
-        actorUid: caller.uid,
-        createdAt: timestampIso(nowMs),
-        notificationsSuppressed: true,
-      });
-      return {
-        regenerated: false,
-        regenerationQueued: true,
-        projectionStatus,
-        revision: replay.state.revision,
-        state: buildPrivateSnapshot({
-          state: replay.state,
-          root: nextRoot,
-          team: loaded.team,
-          game: loaded.game,
-          callerUid: caller.uid,
-          canScore: loaded.access.scorekeeping,
-          canManage: loaded.access.full,
-          nowMs,
-          core,
-        }),
-        notificationsSuppressed: true,
-      };
-    });
+    }
   }
 
   async function cleanupDeletedDiamondGame(snapshot) {

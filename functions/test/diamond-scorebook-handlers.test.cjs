@@ -34,6 +34,12 @@ class FakeDocumentSnapshot {
     this.id = reference.id;
     this.exists = value !== undefined;
     this._value = clone(value);
+    const updatedAtMs = reference.database.documentUpdateTimes.get(
+      reference.path,
+    );
+    if (Number.isSafeInteger(updatedAtMs)) {
+      this.updateTime = { toMillis: () => updatedAtMs };
+    }
   }
 
   data() {
@@ -101,7 +107,13 @@ class FakeQuery {
   }
 
   get() {
-    return Promise.resolve(this.database._querySnapshot(this));
+    const snapshot = this.database._querySnapshot(this);
+    if (typeof this.database.queryAsyncHook === "function") {
+      return Promise.resolve(this.database.queryAsyncHook(this, snapshot)).then(
+        () => snapshot,
+      );
+    }
+    return Promise.resolve(snapshot);
   }
 }
 
@@ -178,6 +190,19 @@ class FakeTransaction {
       }
     }
     this.database.documents = next;
+    for (const operation of this.operations) {
+      this.database.documentUpdateTimes.set(
+        operation.reference.path,
+        this.database.commitTimestampMs,
+      );
+    }
+    this.database.transactionCommits.push(
+      this.operations.map((operation) => ({
+        kind: operation.kind,
+        path: operation.reference.path,
+        value: clone(operation.value),
+      })),
+    );
   }
 }
 
@@ -188,9 +213,14 @@ class FakeFirestore {
     );
     this.transactionQueue = Promise.resolve();
     this.queryHook = null;
+    this.queryAsyncHook = null;
     this.bulkGetHook = null;
     this.bulkGetCalls = 0;
     this.transactionReadBatches = [];
+    this.transactionCommits = [];
+    this.transactionHook = null;
+    this.documentUpdateTimes = new Map();
+    this.commitTimestampMs = 1_750_000_000_000;
   }
 
   doc(path) {
@@ -270,9 +300,11 @@ class FakeFirestore {
 
   runTransaction(callback) {
     const run = async () => {
+      await this.transactionHook?.("before");
       const transaction = new FakeTransaction(this);
       const result = await callback(transaction);
       transaction.commit();
+      await this.transactionHook?.("after", transaction, result);
       return result;
     };
     const pending = this.transactionQueue.then(run, run);
@@ -290,6 +322,10 @@ class FakeFirestore {
 
   seed(path, value) {
     this.documents.set(path, clone(value));
+  }
+
+  setDocumentUpdateTime(path, milliseconds) {
+    this.documentUpdateTimes.set(path, milliseconds);
   }
 
   delete(path) {
@@ -314,6 +350,8 @@ function makeUuid(index) {
 }
 
 const DIAMOND_APP_BUILD = 2;
+const PROJECTION_REGENERATION_COOLDOWN_MS = 5 * 60 * 1000;
+const PROJECTION_REGENERATION_RESERVATION_MS = 10 * 60 * 1000;
 
 function baseDocuments(overrides = {}) {
   return {
@@ -425,7 +463,7 @@ function createHarness(overrides = {}) {
     auth,
     HttpsError: TestHttpsError,
     clock: overrides.clock || (() => 1_750_000_000_000),
-    random: () => makeUuid(randomIndex++),
+    random: overrides.random || (() => makeUuid(randomIndex++)),
     logger: { info() {}, warn() {}, error() {} },
     resolveDelegatedAccess({ uid, user, team }) {
       if (overrides.viewerAccessByUid?.[uid]) {
@@ -546,6 +584,49 @@ async function changeScorerLease(
     },
     context,
   );
+}
+
+async function regenerate(
+  harness,
+  {
+    requestId,
+    expectedRevision = null,
+    context = harness.managerContext,
+  },
+) {
+  return harness.handlers.regenerateDiamondProjection(
+    {
+      requestId,
+      teamId: "team-1",
+      gameId: "game-1",
+      expectedRevision,
+    },
+    context,
+  );
+}
+
+function directCollectionDocuments(firestore, collectionPath) {
+  const prefix = `${collectionPath}/`;
+  return [...firestore.documents.entries()]
+    .filter(
+      ([path]) =>
+        path.startsWith(prefix) && !path.slice(prefix.length).includes("/"),
+    )
+    .map(([path, value]) => ({ path, value: clone(value) }))
+    .sort((left, right) => left.path.localeCompare(right.path));
+}
+
+function regenerationAuditDocuments(harness, type = null) {
+  const collectionPath = `${paths("team-1", "game-1").scorebook}/audit`;
+  return directCollectionDocuments(harness.firestore, collectionPath).filter(
+    ({ value }) => !type || value?.type === type,
+  );
+}
+
+function regenerationControl(harness, type) {
+  const matches = regenerationAuditDocuments(harness, type);
+  assert.equal(matches.length, 1, `expected one ${type} document`);
+  return matches[0];
 }
 
 async function startGame(harness) {
@@ -2360,7 +2441,11 @@ describe("Diamond scorebook handler factory", () => {
     };
     await assert.rejects(
       harness.handlers.regenerateDiamondProjection(
-        { teamId: "team-1", gameId: "game-1" },
+        {
+          requestId: makeUuid(479),
+          teamId: "team-1",
+          gameId: "game-1",
+        },
         harness.scorerContext,
       ),
       (error) => error.code === "permission-denied",
@@ -3245,6 +3330,7 @@ describe("Diamond scorebook handler factory", () => {
     harness.firestore.seed(rootPath, corrupt);
     const result = await harness.handlers.regenerateDiamondProjection(
       {
+        requestId: makeUuid(480),
         teamId: "team-1",
         gameId: "game-1",
         expectedRevision: 1,
@@ -3271,53 +3357,814 @@ describe("Diamond scorebook handler factory", () => {
     );
   });
 
+  it("deduplicates repeated same-revision regeneration before replay or queue writes", async () => {
+    const harness = createHarness();
+    await activate(harness);
+    const resourcePaths = paths("team-1", "game-1");
+    let canonicalHistoryReads = 0;
+    harness.firestore.queryHook = (query) => {
+      if (query.path === resourcePaths.events) canonicalHistoryReads += 1;
+    };
+
+    const requestId = makeUuid(481);
+    const first = await regenerate(harness, { requestId, expectedRevision: 1 });
+    const firstRequest = harness.firestore.read(
+      resourcePaths.scorebook,
+    ).projectionRequest;
+    const firstAuditCount = harness.firestore.countDirectChildren(
+      `${resourcePaths.scorebook}/audit`,
+    );
+
+    const repeated = await regenerate(harness, {
+      requestId,
+      expectedRevision: 1,
+    });
+
+    assert.equal(first.regenerationQueued, true);
+    assert.equal(repeated.deduplicated, true);
+    assert.equal(canonicalHistoryReads, 1);
+    assert.equal(
+      harness.firestore.countDirectChildren(`${resourcePaths.scorebook}/audit`),
+      firstAuditCount,
+    );
+    assert.deepEqual(
+      harness.firestore.read(resourcePaths.scorebook).projectionRequest,
+      firstRequest,
+    );
+    await assert.rejects(
+      regenerate(harness, {
+        requestId: makeUuid(482),
+        expectedRevision: 1,
+      }),
+      (error) =>
+        error.code === "resource-exhausted" &&
+        error.details?.reason === "projection-regeneration-rate-limited",
+    );
+    assert.equal(canonicalHistoryReads, 1);
+  });
+
+  it("serializes a cross-manager reservation and upgrades only a proven blocked follower", async () => {
+    const harness = createHarness({
+      documents: { "users/admin-1": { isAdmin: true } },
+      authUsers: {
+        "admin-1": {
+          uid: "admin-1",
+          disabled: false,
+          email: "admin@example.com",
+          emailVerified: true,
+        },
+      },
+    });
+    await activate(harness);
+    const resourcePaths = paths("team-1", "game-1");
+    let releaseHistory;
+    let historyStarted;
+    const historyGate = new Promise((resolve) => {
+      releaseHistory = resolve;
+    });
+    const started = new Promise((resolve) => {
+      historyStarted = resolve;
+    });
+    let canonicalHistoryReads = 0;
+    harness.firestore.queryAsyncHook = async (query) => {
+      if (query.path !== resourcePaths.events) return;
+      canonicalHistoryReads += 1;
+      historyStarted();
+      await historyGate;
+    };
+    const ownerRequestId = makeUuid(485);
+    const owner = regenerate(harness, {
+      requestId: ownerRequestId,
+      expectedRevision: 1,
+    });
+    await started;
+    assert.equal(
+      regenerationControl(
+        harness,
+        "projection-regeneration-receipt",
+      ).value.status,
+      "reserved",
+    );
+    assert.equal(
+      harness.firestore.read(resourcePaths.scorebook).projectionRequest,
+      undefined,
+    );
+    for (const [requestId, reason] of [
+      [ownerRequestId, "projection-regeneration-in-progress"],
+      [makeUuid(514), "projection-regeneration-rate-limited"],
+    ]) {
+      await assert.rejects(
+        regenerate(harness, { requestId, expectedRevision: 1 }),
+        (error) =>
+          error.code === "resource-exhausted" &&
+          error.details?.reason === reason,
+      );
+    }
+    const adminContext = { auth: { uid: "admin-1" } };
+    await assert.rejects(
+      regenerate(harness, {
+        requestId: makeUuid(486),
+        expectedRevision: 1,
+        context: adminContext,
+      }),
+      (error) =>
+        error.code === "resource-exhausted" &&
+        error.details?.reason === "projection-regeneration-in-progress",
+    );
+    releaseHistory();
+    assert.equal((await owner).regenerationQueued, true);
+    const follower = await regenerate(harness, {
+      requestId: makeUuid(486),
+      expectedRevision: 1,
+      context: adminContext,
+    });
+    assert.equal(follower.deduplicated, true);
+    assert.equal(canonicalHistoryReads, 1);
+    assert.equal(
+      regenerationAuditDocuments(
+        harness,
+        "projection-regeneration-requested",
+      ).length,
+      1,
+    );
+  });
+
+  it("replays an accepted request after head advancement and rejects requestId input drift", async () => {
+    const harness = createHarness();
+    await activate(harness);
+    const requestId = makeUuid(487);
+    await regenerate(harness, { requestId, expectedRevision: 1 });
+    await submit(harness, {
+      commandId: makeUuid(488),
+      expectedRevision: 1,
+      type: "set_lineup",
+      payload: {
+        side: "home",
+        entries: [{ slot: 1, playerId: "home-1" }],
+      },
+    });
+
+    const retry = await regenerate(harness, {
+      requestId,
+      expectedRevision: 1,
+    });
+    assert.equal(retry.deduplicated, true);
+    assert.equal(retry.revision, 1);
+    await assert.rejects(
+      regenerate(harness, { requestId, expectedRevision: null }),
+      (error) => error.code === "already-exists",
+    );
+  });
+
+  it("replays durable receipts and rate limits without requiring fresh randomness", async () => {
+    let randomAvailable = true;
+    let randomIndex = 700;
+    const harness = createHarness({
+      random: () => {
+        if (!randomAvailable) throw new Error("rng unavailable");
+        return makeUuid(randomIndex++);
+      },
+    });
+    await activate(harness);
+    const requestId = makeUuid(502);
+    await regenerate(harness, { requestId, expectedRevision: 1 });
+    randomAvailable = false;
+    assert.equal(
+      (
+        await regenerate(harness, {
+          requestId,
+          expectedRevision: 1,
+        })
+      ).deduplicated,
+      true,
+    );
+    await assert.rejects(
+      regenerate(harness, {
+        requestId: makeUuid(503),
+        expectedRevision: 1,
+      }),
+      (error) =>
+        error.code === "resource-exhausted" &&
+        error.details?.reason === "projection-regeneration-rate-limited",
+    );
+  });
+
+  it("replays an exact accepted receipt despite malformed unrelated controls", async () => {
+    for (const type of [
+      "projection-regeneration-rate",
+      "projection-regeneration-claim",
+    ]) {
+      const harness = createHarness();
+      await activate(harness);
+      const requestId = makeUuid(type.endsWith("rate") ? 504 : 505);
+      await regenerate(harness, { requestId, expectedRevision: 1 });
+      const control = regenerationControl(harness, type);
+      harness.firestore.seed(control.path, { malformed: true });
+      assert.equal(
+        (
+          await regenerate(harness, {
+            requestId,
+            expectedRevision: 1,
+          })
+        ).deduplicated,
+        true,
+      );
+    }
+  });
+
+  it("retains failed work across the actor and global cooldown horizons", async () => {
+    let nowMs = 1_750_000_000_000;
+    const harness = createHarness({ clock: () => nowMs });
+    await activate(harness);
+    const resourcePaths = paths("team-1", "game-1");
+    let canonicalHistoryReads = 0;
+    harness.firestore.queryAsyncHook = (query) => {
+      if (query.path !== resourcePaths.events) return;
+      canonicalHistoryReads += 1;
+      throw new Error("transient history failure");
+    };
+    const requestId = makeUuid(489);
+    await assert.rejects(
+      regenerate(harness, { requestId, expectedRevision: 1 }),
+      (error) => error.code === "unavailable",
+    );
+    assert.equal(
+      regenerationControl(
+        harness,
+        "projection-regeneration-receipt",
+      ).value.status,
+      "failed",
+    );
+    assert.equal(
+      regenerationControl(harness, "projection-regeneration-claim").value
+        .status,
+      "failed",
+    );
+    await assert.rejects(
+      regenerate(harness, { requestId, expectedRevision: 1 }),
+      (error) => error.code === "resource-exhausted",
+    );
+    nowMs += PROJECTION_REGENERATION_COOLDOWN_MS + 1;
+    harness.firestore.commitTimestampMs = nowMs;
+    harness.firestore.queryAsyncHook = null;
+    await assert.rejects(
+      regenerate(harness, { requestId, expectedRevision: 1 }),
+      (error) =>
+        error.code === "resource-exhausted" &&
+        error.details?.reason === "projection-regeneration-in-progress",
+    );
+    nowMs = 1_750_000_000_000 + PROJECTION_REGENERATION_RESERVATION_MS + 1;
+    harness.firestore.commitTimestampMs = nowMs;
+    const recovered = await regenerate(harness, {
+      requestId,
+      expectedRevision: 1,
+    });
+    assert.equal(recovered.regenerationQueued, true);
+    assert.equal(canonicalHistoryReads, 1);
+  });
+
+  it("holds failed downstream work globally after the actor cooldown expires", async () => {
+    let nowMs = 1_750_000_000_000;
+    const harness = createHarness({
+      clock: () => nowMs,
+      documents: { "users/admin-1": { isAdmin: true } },
+      authUsers: {
+        "admin-1": {
+          uid: "admin-1",
+          disabled: false,
+          email: "admin@example.com",
+          emailVerified: true,
+        },
+      },
+    });
+    await activate(harness);
+    const resourcePaths = paths("team-1", "game-1");
+    let reads = 0;
+    harness.firestore.queryHook = (query) => {
+      if (query.path === resourcePaths.events) reads += 1;
+    };
+    await regenerate(harness, {
+      requestId: makeUuid(506),
+      expectedRevision: 1,
+    });
+    const queuedRoot = harness.firestore.read(resourcePaths.scorebook);
+    harness.firestore.seed(resourcePaths.scorebook, {
+      ...queuedRoot,
+      projectionStatus: "failed",
+    });
+    nowMs += PROJECTION_REGENERATION_COOLDOWN_MS + 1;
+    harness.firestore.commitTimestampMs = nowMs;
+    const blockedRequestId = makeUuid(507);
+    for (const [requestId, context] of [
+      [blockedRequestId, harness.managerContext],
+      [makeUuid(508), { auth: { uid: "admin-1" } }],
+    ]) {
+      await assert.rejects(
+        regenerate(harness, { requestId, expectedRevision: 1, context }),
+        (error) =>
+          error.code === "resource-exhausted" &&
+          error.details?.reason === "projection-regeneration-in-progress",
+      );
+    }
+    assert.equal(reads, 1);
+
+    nowMs =
+      1_750_000_000_000 + PROJECTION_REGENERATION_RESERVATION_MS + 2;
+    harness.firestore.commitTimestampMs = nowMs;
+    assert.equal(
+      (
+        await regenerate(harness, {
+          requestId: blockedRequestId,
+          expectedRevision: 1,
+        })
+      ).regenerationQueued,
+      true,
+    );
+    assert.equal(reads, 2);
+  });
+
+  it("fails final commit when Auth or the immutable game generation changes during replay", async () => {
+    for (const kind of ["auth", "generation"]) {
+      const harness = createHarness();
+      await activate(harness);
+      const resourcePaths = paths("team-1", "game-1");
+      harness.firestore.queryAsyncHook = (query) => {
+        if (query.path !== resourcePaths.events) return;
+        if (kind === "auth") {
+          harness.authUsers.get("manager-1").disabled = true;
+        } else {
+          const game = harness.firestore.read(resourcePaths.game);
+          harness.firestore.seed(resourcePaths.game, {
+            ...game,
+            diamondScorebookInstanceId: makeUuid(999),
+          });
+        }
+      };
+      await assert.rejects(
+        regenerate(harness, {
+          requestId: makeUuid(kind === "auth" ? 490 : 491),
+          expectedRevision: 1,
+        }),
+        (error) =>
+          error.code ===
+          (kind === "auth" ? "permission-denied" : "failed-precondition"),
+      );
+      assert.equal(
+        regenerationAuditDocuments(
+          harness,
+          "projection-regeneration-requested",
+        ).length,
+        0,
+      );
+      assert.equal(
+        harness.firestore.read(resourcePaths.scorebook).projectionRequest,
+        undefined,
+      );
+    }
+  });
+
+  it("fails final commit when same-chain checkpoint state changes during replay", async () => {
+    const harness = createHarness();
+    await activate(harness);
+    const resourcePaths = paths("team-1", "game-1");
+    let reads = 0;
+    harness.firestore.queryAsyncHook = (query) => {
+      if (query.path !== resourcePaths.events) return;
+      reads += 1;
+      const root = harness.firestore.read(resourcePaths.scorebook);
+      root.checkpoint.state.score.home = 41;
+      harness.firestore.seed(resourcePaths.scorebook, root);
+    };
+    await assert.rejects(
+      regenerate(harness, {
+        requestId: makeUuid(509),
+        expectedRevision: 1,
+      }),
+      (error) => error.code === "aborted",
+    );
+    assert.equal(reads, 1);
+    assert.equal(
+      regenerationAuditDocuments(
+        harness,
+        "projection-regeneration-requested",
+      ).length,
+      0,
+    );
+    assert.equal(
+      harness.firestore.read(resourcePaths.scorebook).projectionRequest,
+      undefined,
+    );
+  });
+
+  it("aborts without mutating a projector lease acquired after reservation", async () => {
+    for (const kind of ["active", "expired"]) {
+      const harness = createHarness();
+      await activate(harness);
+      const resourcePaths = paths("team-1", "game-1");
+      let reads = 0;
+      let lateLease;
+      harness.firestore.queryAsyncHook = (query) => {
+        if (query.path !== resourcePaths.events) return;
+        reads += 1;
+        const head = regenerationControl(
+          harness,
+          "projection-regeneration-claim",
+        ).value.sourceHead;
+        const root = harness.firestore.read(resourcePaths.scorebook);
+        lateLease = {
+          schemaVersion: 1,
+          trackingEngine: "diamond-v2",
+          leaseId: makeUuid(kind === "active" ? 515 : 516),
+          instanceId: head.instanceId,
+          sourceRevision: head.sourceRevision,
+          checkpointHash: head.checkpointHash,
+          statConfigSnapshotHash: head.statConfigSnapshotHash,
+          orientationSnapshotHash: head.orientationSnapshotHash,
+          projectionKey: `late-${kind}`,
+          acquiredAtMs: 1_750_000_000_000,
+          expiresAtMs:
+            1_750_000_000_000 + (kind === "active" ? 60_000 : -1),
+        };
+        harness.firestore.seed(resourcePaths.scorebook, {
+          ...root,
+          projectionStatus: "pending",
+          projectionLease: lateLease,
+        });
+      };
+      await assert.rejects(
+        regenerate(harness, {
+          requestId: makeUuid(kind === "active" ? 517 : 518),
+          expectedRevision: 1,
+        }),
+        (error) => error.code === "aborted",
+      );
+      const root = harness.firestore.read(resourcePaths.scorebook);
+      assert.equal(reads, 1);
+      assert.deepEqual(root.projectionLease, lateLease);
+      assert.equal(root.projectionRequest, undefined);
+      assert.equal(
+        regenerationControl(
+          harness,
+          "projection-regeneration-receipt",
+        ).value.status,
+        "reserved",
+      );
+      assert.equal(
+        regenerationAuditDocuments(
+          harness,
+          "projection-regeneration-requested",
+        ).length,
+        0,
+      );
+    }
+  });
+
+  it("replaces an unchanged stale lease while committing a repaired checkpoint", async () => {
+    const harness = createHarness();
+    await activate(harness);
+    const resourcePaths = paths("team-1", "game-1");
+    const root = harness.firestore.read(resourcePaths.scorebook);
+    harness.firestore.seed(resourcePaths.scorebook, {
+      ...root,
+      projectionLease: {
+        leaseId: makeUuid(519),
+        expiresAtMs: 1_750_000_000_000 - 1,
+      },
+    });
+    const result = await regenerate(harness, {
+      requestId: makeUuid(520),
+      expectedRevision: 1,
+    });
+    assert.equal(result.regenerationQueued, true);
+    assert.equal(
+      harness.firestore.read(resourcePaths.scorebook).projectionLease,
+      null,
+    );
+  });
+
+  it("reconciles reservation and final-commit response ambiguity without replaying twice", async () => {
+    for (const failurePhase of ["reservation", "commit"]) {
+      const harness = createHarness();
+      await activate(harness);
+      const resourcePaths = paths("team-1", "game-1");
+      let transactions = 0;
+      let canonicalHistoryReads = 0;
+      harness.firestore.queryHook = (query) => {
+        if (query.path === resourcePaths.events) canonicalHistoryReads += 1;
+      };
+      harness.firestore.transactionHook = (phase) => {
+        if (phase !== "after") return;
+        transactions += 1;
+        if (
+          (failurePhase === "reservation" && transactions === 1) ||
+          (failurePhase === "commit" && transactions === 2)
+        ) {
+          throw new Error("response lost after commit");
+        }
+      };
+      const result = await regenerate(harness, {
+        requestId: makeUuid(failurePhase === "reservation" ? 492 : 493),
+        expectedRevision: 1,
+      });
+      assert.equal(result.regenerationQueued, true);
+      assert.equal(canonicalHistoryReads, 1);
+      assert.equal(
+        regenerationAuditDocuments(
+          harness,
+          "projection-regeneration-requested",
+        ).length,
+        1,
+      );
+    }
+
+    const precommit = createHarness();
+    await activate(precommit);
+    let first = true;
+    let reads = 0;
+    precommit.firestore.queryHook = (query) => {
+      if (query.path === paths("team-1", "game-1").events) reads += 1;
+    };
+    precommit.firestore.transactionHook = (phase) => {
+      if (phase === "before" && first) {
+        first = false;
+        throw new Error("reservation not committed");
+      }
+    };
+    await assert.rejects(
+      regenerate(precommit, {
+        requestId: makeUuid(494),
+        expectedRevision: 1,
+      }),
+      (error) => error.code === "unavailable",
+    );
+    assert.equal(reads, 0);
+  });
+
+  it("replays an ambiguously committed receipt after the root changes", async () => {
+    const harness = createHarness();
+    await activate(harness);
+    const resourcePaths = paths("team-1", "game-1");
+    let transactions = 0;
+    let reads = 0;
+    harness.firestore.queryHook = (query) => {
+      if (query.path === resourcePaths.events) reads += 1;
+    };
+    harness.firestore.transactionHook = (phase) => {
+      if (phase !== "after" || ++transactions !== 2) return;
+      const root = harness.firestore.read(resourcePaths.scorebook);
+      root.checkpoint.state.score.home = 73;
+      root.projectionStatus = "failed";
+      harness.firestore.seed(resourcePaths.scorebook, root);
+      throw new Error("final response lost after later root change");
+    };
+    const result = await regenerate(harness, {
+      requestId: makeUuid(510),
+      expectedRevision: 1,
+    });
+    assert.equal(result.deduplicated, true);
+    assert.equal(result.revision, 1);
+    assert.equal(reads, 1);
+  });
+
+  it("does not read history when Auth is revoked after an ambiguous reservation commit", async () => {
+    const harness = createHarness();
+    await activate(harness);
+    const resourcePaths = paths("team-1", "game-1");
+    let reads = 0;
+    let firstCommit = true;
+    harness.firestore.queryHook = (query) => {
+      if (query.path === resourcePaths.events) reads += 1;
+    };
+    harness.firestore.transactionHook = (phase) => {
+      if (phase !== "after" || !firstCommit) return;
+      firstCommit = false;
+      harness.authUsers.get("manager-1").disabled = true;
+      throw new Error("reservation response lost");
+    };
+    await assert.rejects(
+      regenerate(harness, {
+        requestId: makeUuid(511),
+        expectedRevision: 1,
+      }),
+      (error) => error.code === "permission-denied",
+    );
+    assert.equal(reads, 0);
+    assert.equal(
+      regenerationControl(
+        harness,
+        "projection-regeneration-receipt",
+      ).value.status,
+      "reserved",
+    );
+  });
+
+  it("rejects stale revisions and root-game generation mismatches before history or controls", async () => {
+    for (const kind of ["revision", "generation"]) {
+      const harness = createHarness();
+      await activate(harness);
+      const resourcePaths = paths("team-1", "game-1");
+      if (kind === "generation") {
+        const game = harness.firestore.read(resourcePaths.game);
+        harness.firestore.seed(resourcePaths.game, {
+          ...game,
+          diamondScorebookInstanceId: makeUuid(999),
+        });
+      }
+      let reads = 0;
+      harness.firestore.queryHook = (query) => {
+        if (query.path === resourcePaths.events) reads += 1;
+      };
+      await assert.rejects(
+        regenerate(harness, {
+          requestId: makeUuid(kind === "revision" ? 512 : 513),
+          expectedRevision: kind === "revision" ? 0 : 1,
+        }),
+        (error) =>
+          error.code ===
+          (kind === "revision" ? "aborted" : "failed-precondition"),
+      );
+      assert.equal(reads, 0);
+      assert.equal(
+        regenerationAuditDocuments(harness).some(({ value }) =>
+          value?.type?.startsWith("projection-regeneration-"),
+        ),
+        false,
+      );
+    }
+  });
+
+  it("fails malformed private controls closed and replaces them only after quarantine", async () => {
+    let nowMs = 1_750_000_000_000;
+    const harness = createHarness({ clock: () => nowMs });
+    await activate(harness);
+    const resourcePaths = paths("team-1", "game-1");
+    const claimPath = `${resourcePaths.scorebook}/audit/projection-regeneration-claim`;
+    harness.firestore.seed(claimPath, { malformed: true });
+    harness.firestore.setDocumentUpdateTime(claimPath, nowMs);
+    let reads = 0;
+    harness.firestore.queryHook = (query) => {
+      if (query.path === resourcePaths.events) reads += 1;
+    };
+    await assert.rejects(
+      regenerate(harness, {
+        requestId: makeUuid(495),
+        expectedRevision: 1,
+      }),
+      (error) =>
+        error.code === "unavailable" &&
+        error.details?.reason === "projection-regeneration-control-invalid",
+    );
+    assert.equal(reads, 0);
+    nowMs += PROJECTION_REGENERATION_RESERVATION_MS + 1;
+    harness.firestore.commitTimestampMs = nowMs;
+    const result = await regenerate(harness, {
+      requestId: makeUuid(496),
+      expectedRevision: 1,
+    });
+    assert.equal(result.regenerationQueued, true);
+    assert.equal(reads, 1);
+  });
+
+  it("deduplicates rollout-era queued work before history and rate-limits fresh actor requests", async () => {
+    const harness = createHarness();
+    await activate(harness);
+    const resourcePaths = paths("team-1", "game-1");
+    const root = harness.firestore.read(resourcePaths.scorebook);
+    harness.firestore.seed(resourcePaths.scorebook, {
+      ...root,
+      projectionStatus: "pending",
+      projectionRequest: {
+        requestId: makeUuid(497),
+        sourceRevision: 1,
+        requestedAt: new Date(1_750_000_000_000).toISOString(),
+      },
+    });
+    let reads = 0;
+    harness.firestore.queryHook = (query) => {
+      if (query.path === resourcePaths.events) reads += 1;
+    };
+    await assert.rejects(
+      regenerate(harness, {
+        requestId: makeUuid(498),
+        expectedRevision: 1,
+      }),
+      (error) =>
+        error.code === "resource-exhausted" &&
+        error.details?.reason === "projection-regeneration-in-progress",
+    );
+    await assert.rejects(
+      regenerate(harness, {
+        requestId: makeUuid(499),
+        expectedRevision: 1,
+      }),
+      (error) =>
+        error.code === "resource-exhausted" &&
+        error.details?.reason === "projection-regeneration-rate-limited",
+    );
+    assert.equal(reads, 0);
+  });
+
+  it("does not dedupe a distinct same-chain checkpoint corruption or collide with scorer audit IDs", async () => {
+    let nowMs = 1_750_000_000_000;
+    const harness = createHarness({ clock: () => nowMs });
+    await activate(harness);
+    const resourcePaths = paths("team-1", "game-1");
+    const requestId = makeUuid(500);
+    harness.firestore.seed(resourcePaths.audit(requestId), {
+      type: "scorer-lease-acquired",
+      instanceId: harness.firestore.read(resourcePaths.scorebook).instanceId,
+    });
+    let reads = 0;
+    harness.firestore.queryHook = (query) => {
+      if (query.path === resourcePaths.events) reads += 1;
+    };
+    const corrupt = harness.firestore.read(resourcePaths.scorebook);
+    corrupt.checkpoint.state.score.home = 55;
+    harness.firestore.seed(resourcePaths.scorebook, corrupt);
+    await regenerate(harness, { requestId, expectedRevision: 1 });
+    nowMs += PROJECTION_REGENERATION_RESERVATION_MS + 1;
+    harness.firestore.commitTimestampMs = nowMs;
+    const secondCorruption = harness.firestore.read(resourcePaths.scorebook);
+    secondCorruption.checkpoint.state.score.home = 77;
+    harness.firestore.seed(resourcePaths.scorebook, secondCorruption);
+    await regenerate(harness, {
+      requestId: makeUuid(501),
+      expectedRevision: 1,
+    });
+    assert.equal(reads, 2);
+    assert.equal(
+      harness.firestore.read(resourcePaths.scorebook).checkpoint.state.score
+        .home,
+      0,
+    );
+    assert.ok(harness.firestore.read(resourcePaths.audit(requestId)));
+  });
+
   it("keeps projection replay read failures retryable and reauthorizes before repair commit", async () => {
     const harness = createHarness();
     await activate(harness);
     const resourcePaths = paths("team-1", "game-1");
-    const originalDoc = harness.firestore.doc.bind(harness.firestore);
-    harness.firestore.doc = (path) => {
-      const reference = originalDoc(path);
-      if (path === resourcePaths.scorebook) {
-        reference.get = () => Promise.reject(new Error("transient root read"));
+    harness.firestore.queryAsyncHook = (query) => {
+      if (query.path === resourcePaths.events) {
+        throw new Error("transient event read");
       }
-      return reference;
     };
     await assert.rejects(
       harness.handlers.regenerateDiamondProjection(
-        { teamId: "team-1", gameId: "game-1", expectedRevision: 1 },
+        {
+          requestId: makeUuid(483),
+          teamId: "team-1",
+          gameId: "game-1",
+          expectedRevision: 1,
+        },
         harness.managerContext,
       ),
       (error) => error.code === "unavailable",
     );
-    harness.firestore.doc = originalDoc;
+    harness.firestore.queryAsyncHook = null;
 
-    const originalRunTransaction = harness.firestore.runTransaction.bind(
-      harness.firestore,
+    const revokedHarness = createHarness();
+    await activate(revokedHarness);
+    const revokedPaths = paths("team-1", "game-1");
+    const originalRunTransaction = revokedHarness.firestore.runTransaction.bind(
+      revokedHarness.firestore,
     );
     let revokedBeforeCommit = false;
-    harness.firestore.runTransaction = (callback) => {
-      if (!revokedBeforeCommit) {
-        revokedBeforeCommit = true;
-        const team = harness.firestore.read("teams/team-1");
-        harness.firestore.seed("teams/team-1", {
+    revokedHarness.firestore.runTransaction = (callback) => {
+      if (revokedBeforeCommit) {
+        revokedBeforeCommit = false;
+        const team = revokedHarness.firestore.read("teams/team-1");
+        revokedHarness.firestore.seed("teams/team-1", {
           ...team,
           ownerId: "replacement-manager",
         });
       }
       return originalRunTransaction(callback);
     };
-    const auditCollection = `${resourcePaths.scorebook}/audit`;
-    const auditCount = harness.firestore.countDirectChildren(auditCollection);
+    revokedHarness.firestore.queryAsyncHook = (query) => {
+      if (query.path === revokedPaths.events) revokedBeforeCommit = true;
+    };
+    const auditCount = regenerationAuditDocuments(
+      revokedHarness,
+      "projection-regeneration-requested",
+    ).length;
     await assert.rejects(
-      harness.handlers.regenerateDiamondProjection(
-        { teamId: "team-1", gameId: "game-1", expectedRevision: 1 },
-        harness.managerContext,
+      revokedHarness.handlers.regenerateDiamondProjection(
+        {
+          requestId: makeUuid(484),
+          teamId: "team-1",
+          gameId: "game-1",
+          expectedRevision: 1,
+        },
+        revokedHarness.managerContext,
       ),
       (error) => error.code === "permission-denied",
     );
     assert.equal(
-      harness.firestore.countDirectChildren(auditCollection),
+      regenerationAuditDocuments(
+        revokedHarness,
+        "projection-regeneration-requested",
+      ).length,
       auditCount,
     );
   });
