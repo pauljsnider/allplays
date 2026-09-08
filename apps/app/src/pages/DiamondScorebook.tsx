@@ -2860,24 +2860,27 @@ export function DiamondScorebook({
 
   return (
     <div className="space-y-3 pb-8" data-testid="diamond-scorebook">
-      <header className="app-card shadow-app-lg overflow-hidden border-emerald-900 bg-emerald-950 text-white">
-        <div className="flex items-center justify-between gap-3 border-b border-emerald-800 px-3 py-2">
+      <header
+        className="app-card shadow-app-lg overflow-hidden border-primary-900 bg-gradient-to-r from-primary-700 to-primary-900 text-white"
+        data-testid="diamond-scorebook-header"
+      >
+        <div className="flex items-center justify-between gap-3 border-b border-primary-600 px-3 py-2">
           <Link
             to={backTarget}
-            className="inline-flex min-h-10 items-center gap-1 rounded-xl px-2 text-xs font-black text-emerald-50 hover:bg-emerald-900 focus-visible:ring-2 focus-visible:ring-white focus-visible:outline-none"
+            className="inline-flex min-h-10 items-center gap-1 rounded-xl px-2 text-xs font-black text-primary-50 hover:bg-primary-800 focus-visible:ring-2 focus-visible:ring-white focus-visible:outline-none"
           >
             <ChevronLeft className="h-4 w-4" aria-hidden="true" />
             Game
           </Link>
           <div className="min-w-0 text-center">
-            <h1 className="truncate text-xs font-black tracking-widest text-emerald-200 uppercase">Diamond Scorebook</h1>
+            <h1 className="truncate text-xs font-black tracking-widest text-primary-100 uppercase">Diamond Scorebook</h1>
             <div className="truncate text-sm font-black">
               {snapshot.teamName} vs {snapshot.opponentName}
             </div>
           </div>
           <button
             type="button"
-            className="inline-flex h-10 w-10 items-center justify-center rounded-xl text-emerald-50 hover:bg-emerald-900 focus-visible:ring-2 focus-visible:ring-white focus-visible:outline-none"
+            className="inline-flex h-10 w-10 items-center justify-center rounded-xl text-primary-50 hover:bg-primary-800 focus-visible:ring-2 focus-visible:ring-white focus-visible:outline-none"
             aria-label="Refresh authoritative scorebook"
             disabled={busy || reconciling}
             onClick={() => void refreshSnapshot(false)}
@@ -2889,25 +2892,25 @@ export function DiamondScorebook({
         <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 px-4 py-4">
           <ScoreSide name={snapshot.awayName} score={snapshot.score.away} align="left" />
           <div className="text-center">
-            <div className="rounded-full border border-emerald-700 bg-emerald-900 px-3 py-1 text-[11px] font-black tracking-wider text-emerald-100 uppercase">
+            <div className="rounded-full border border-primary-500 bg-primary-800 px-3 py-1 text-[11px] font-black tracking-wider text-primary-100 uppercase">
               {inningLabel(snapshot)}
             </div>
-            <div className="mt-2 text-xs font-bold text-emerald-200">
+            <div className="mt-2 text-xs font-bold text-primary-100">
               {snapshot.inning.outs} {snapshot.inning.outs === 1 ? 'out' : 'outs'}
             </div>
           </div>
           <ScoreSide name={snapshot.homeName} score={snapshot.score.home} align="right" />
         </div>
 
-        <div className="grid grid-cols-2 gap-px bg-emerald-800">
-          <div className="bg-emerald-950 px-4 py-2 text-center">
-            <div className="text-[10px] font-black tracking-wider text-emerald-300 uppercase">Count</div>
+        <div className="grid grid-cols-2 gap-px bg-primary-700">
+          <div className="bg-primary-900 px-4 py-2 text-center">
+            <div className="text-[10px] font-black tracking-wider text-primary-200 uppercase">Count</div>
             <div className="mt-0.5 text-lg font-black tabular-nums">
               {snapshot.inning.balls}–{snapshot.inning.strikes}
             </div>
           </div>
-          <div className="bg-emerald-950 px-4 py-2 text-center">
-            <div className="text-[10px] font-black tracking-wider text-emerald-300 uppercase">Rules</div>
+          <div className="bg-primary-900 px-4 py-2 text-center">
+            <div className="text-[10px] font-black tracking-wider text-primary-200 uppercase">Rules</div>
             <div className="mt-0.5 truncate text-xs font-black">
               {snapshot.rulesProfileId} · v{snapshot.rulesProfileVersion}
             </div>

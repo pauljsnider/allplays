@@ -651,6 +651,11 @@ describe('DiamondScorebook', () => {
   it('shows authoritative game, player, base, lineup, lease, and stat-coverage context', () => {
     renderScorebook();
 
+    expect(screen.getByTestId('diamond-scorebook-header')).toHaveClass(
+      'border-primary-900',
+      'from-primary-700',
+      'to-primary-900'
+    );
     expect(screen.getByText('Bears vs Wolves')).toBeInTheDocument();
     expect(screen.getByText('Live · revision 7')).toBeInTheDocument();
     expect(screen.getByText('Bottom 4')).toBeInTheDocument();

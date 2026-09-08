@@ -433,4 +433,24 @@ describe("diamond live view model", () => {
     expect(script).not.toContain("sendReaction(");
     expect(script).not.toContain("senderId: state.user.uid");
   });
+
+  it("uses the same live-viewer palette and typography as the rest of the website", () => {
+    const html = readFileSync(
+      new URL("../../live-game-diamond-v2.html", import.meta.url),
+      "utf8",
+    );
+    const css = readFileSync(
+      new URL("../../css/diamond-scorebook.css", import.meta.url),
+      "utf8",
+    );
+
+    expect(html).toContain("family=Inter+Tight");
+    expect(html).toContain("family=Space+Grotesk");
+    expect(html).toContain('css/diamond-scorebook.css?v=3');
+    expect(css).toContain("--diamond-ink: #0b132b;");
+    expect(css).toContain("--diamond-teal: #5bc0be;");
+    expect(css).toContain("--diamond-sand: #f7f5ed;");
+    expect(css).toContain('font-family: "Inter Tight"');
+    expect(css).toContain('font-family: "Space Grotesk"');
+  });
 });
