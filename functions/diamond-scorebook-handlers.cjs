@@ -35,24 +35,27 @@ const COMMAND_HISTORY_RATE_WINDOW_MS = 60 * 1000;
 const COMMAND_HISTORY_SUSTAINED_WINDOW_MS = 10 * 60 * 1000;
 const COMMAND_HISTORY_CONTROL_QUARANTINE_MS =
   COMMAND_HISTORY_SUSTAINED_WINDOW_MS;
-// The shared React/native caller can make two immediate attempts and two more
-// while reconciling the retained offline item. The admitted-fresh-history
-// request cap covers that four-call recovery, one same-tick double-confirm
-// (eight), and two overlapping tabs/devices (sixteen) at shallow heads; excess
-// offline items remain queued for a later Sync. The 80k weighted budget admits
-// one ordinary four-attempt recovery at the 20k-event boundary, while larger
-// max-head bursts fail closed. These aligned fixed windows are not rolling
-// limits: the 60s caps can double to 32 calls/160k at a boundary, although the
-// concurrent 10m weighted cap restricts repeated minute-boundary work to 120k.
-// The 10m caps can double to 128 calls/240k across a boundary. These bounds
-// cover admitted expensive history work for one UID/team/game, not total
-// callable ingress or its small authorization reads. A scorer handoff receives
-// a distinct UID budget, and cross-game fan-out is outside this per-game review
-// scope.
+const MAX_COMMAND_HISTORY_CONTROL_BYTES = 16 * 1024;
+// Full-history verification retains its original 16/64 request and 80k/120k
+// weighted bounds. Every accepted canonical command also charges its eventual
+// post-command projector head through the same hash-only UID/team/game control.
+// The larger 256/512 projection counts preserve ordinary pitch entry and the
+// bounded offline queue at shallow heads; the unchanged weighted budgets
+// dominate first (from an empty ledger, roughly 489 sequential projections fit
+// in 120k units). At the 20k boundary, weighted work admits only a few commands.
+// FULL_REPLAY commands charge both the captured synchronous history and the
+// eventual projected head. Aligned fixed-window boundaries may double each
+// stated bound. Atomic command/root/control commits serialize fresh commands,
+// and the projector's existing durable lease serializes downstream game-wide
+// replay.
 const MAX_COMMAND_HISTORY_REQUESTS_PER_WINDOW = 16;
 const MAX_COMMAND_HISTORY_READ_UNITS_PER_WINDOW = 80_000;
 const MAX_COMMAND_HISTORY_SUSTAINED_REQUESTS_PER_WINDOW = 64;
 const MAX_COMMAND_HISTORY_SUSTAINED_READ_UNITS_PER_WINDOW = 120_000;
+const MAX_COMMAND_PROJECTION_REQUESTS_PER_WINDOW = 256;
+const MAX_COMMAND_PROJECTION_READ_UNITS_PER_WINDOW = 80_000;
+const MAX_COMMAND_PROJECTION_SUSTAINED_REQUESTS_PER_WINDOW = 512;
+const MAX_COMMAND_PROJECTION_SUSTAINED_READ_UNITS_PER_WINDOW = 120_000;
 const MANAGER_STAT_RATE_WINDOW_MS = 60 * 1000;
 // The fixed security envelope is intentionally independent of manager-owned
 // team history. A production-shaped 120-game/100-player Team Insights load and
@@ -4240,6 +4243,10 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     const requestHash = core.hashDiamondValue(request);
     const resourcePaths = paths(teamId, gameId);
     const nowMs = normalizeNow(clock, makeError);
+    const admissionIdentity = commandHistoryAdmissionIdentity(
+      request,
+      caller.uid,
+    );
 
     return firestore.runTransaction(async (transaction) => {
       const policy = await readPolicy(transaction);
@@ -4337,6 +4344,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
           { authoritativeRevision: checkpoint.sequence },
         );
       }
+      requireCanonicalEventCapacity(checkpoint);
       if (!isActiveTeam(loaded.team)) {
         throw makeError(
           "failed-precondition",
@@ -4408,6 +4416,15 @@ function createDiamondScorebookHandlers(dependencies = {}) {
             "The scorer lease change was rejected.",
         );
       }
+      const admissionSnapshot = await transaction.get(
+        admissionIdentity.reference,
+      );
+      const nextAdmission = planCommandHistoryAdmission({
+        snapshot: admissionSnapshot,
+        identity: admissionIdentity,
+        requestedProjectionReadUnits: execution.result.revision,
+        nowMs,
+      });
       const nextLease = {
         ...leaseDecision.nextLease,
         expiresAtMillis: nowMs + SCORER_LEASE_DURATION_MS,
@@ -4441,6 +4458,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       const publicStateRef = firestore.doc(resourcePaths.publicState);
       const publicStateSnapshot = await transaction.get(publicStateRef);
       const existingPublicState = snapshotData(publicStateSnapshot) || {};
+      transaction.set(admissionIdentity.reference, nextAdmission);
       transaction.create(
         firestore.doc(resourcePaths.event(execution.event.eventId)),
         { ...execution.event, instanceId: root.instanceId },
@@ -4800,17 +4818,55 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     );
   }
 
+  function commandHistoryControlByteLength(value) {
+    try {
+      return Buffer.byteLength(JSON.stringify(value), "utf8");
+    } catch {
+      return Number.POSITIVE_INFINITY;
+    }
+  }
+
   function parseCommandHistoryAdmission(snapshot, identity, nowMs) {
     if (!snapshot?.exists) return null;
     const value = snapshotData(snapshot);
+    const legacyKeys = [
+      "schemaVersion",
+      "type",
+      "scopeHash",
+      "windowStartedAtMs",
+      "windowResetAtMs",
+      "requestCount",
+      "readUnits",
+      "sustainedWindowStartedAtMs",
+      "sustainedWindowResetAtMs",
+      "sustainedRequestCount",
+      "sustainedReadUnits",
+      "updatedAtMs",
+      "expiresAt",
+    ];
+    const currentKeys = [
+      ...legacyKeys,
+      "projectionRequestCount",
+      "projectionReadUnits",
+      "sustainedProjectionRequestCount",
+      "sustainedProjectionReadUnits",
+    ];
+    const legacy =
+      isPlainObject(value) &&
+      value.schemaVersion === 1 &&
+      Object.keys(value).length === legacyKeys.length &&
+      legacyKeys.every((key) => own(value, key));
+    const current =
+      isPlainObject(value) &&
+      value.schemaVersion === 2 &&
+      Object.keys(value).length === currentKeys.length &&
+      currentKeys.every((key) => own(value, key));
     const expectedExpiresAtMs = Math.max(
       value?.windowResetAtMs || 0,
       value?.sustainedWindowResetAtMs || 0,
     );
     if (
-      !isPlainObject(value) ||
-      Object.keys(value).length !== 13 ||
-      value.schemaVersion !== 1 ||
+      (!legacy && !current) ||
       value.type !== identity.type ||
       value.scopeHash !== identity.scopeHash ||
       !Number.isSafeInteger(value.windowStartedAtMs) ||
@@ -4820,12 +4876,30 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       value.windowResetAtMs !==
         value.windowStartedAtMs + COMMAND_HISTORY_RATE_WINDOW_MS ||
       !Number.isSafeInteger(value.requestCount) ||
-      value.requestCount < 1 ||
+      value.requestCount < (legacy ? 1 : 0) ||
       value.requestCount > MAX_COMMAND_HISTORY_REQUESTS_PER_WINDOW ||
       !Number.isSafeInteger(value.readUnits) ||
-      value.readUnits < value.requestCount ||
+      value.readUnits < (value.requestCount > 0 ? value.requestCount : 0) ||
+      (value.requestCount === 0 && value.readUnits !== 0) ||
       value.readUnits > value.requestCount * MAX_CANONICAL_EVENTS ||
       value.readUnits > MAX_COMMAND_HISTORY_READ_UNITS_PER_WINDOW ||
+      (current &&
+        (!Number.isSafeInteger(value.projectionRequestCount) ||
+          value.projectionRequestCount < 0 ||
+          value.projectionRequestCount >
+            MAX_COMMAND_PROJECTION_REQUESTS_PER_WINDOW ||
+          !Number.isSafeInteger(value.projectionReadUnits) ||
+          value.projectionReadUnits <
+            (value.projectionRequestCount > 0
+              ? value.projectionRequestCount
+              : 0) ||
+          (value.projectionRequestCount === 0 &&
+            value.projectionReadUnits !== 0) ||
+          value.projectionReadUnits >
+            value.projectionRequestCount * MAX_CANONICAL_EVENTS ||
+          value.projectionReadUnits >
+            MAX_COMMAND_PROJECTION_READ_UNITS_PER_WINDOW)) ||
+      (current && value.requestCount + value.projectionRequestCount < 1) ||
       !Number.isSafeInteger(value.sustainedWindowStartedAtMs) ||
       value.sustainedWindowStartedAtMs < 0 ||
       value.sustainedWindowStartedAtMs % COMMAND_HISTORY_SUSTAINED_WINDOW_MS !==
@@ -4840,11 +4914,34 @@ function createDiamondScorebookHandlers(dependencies = {}) {
         MAX_COMMAND_HISTORY_SUSTAINED_REQUESTS_PER_WINDOW ||
       !Number.isSafeInteger(value.sustainedReadUnits) ||
       value.sustainedReadUnits < value.readUnits ||
-      value.sustainedReadUnits < value.sustainedRequestCount ||
+      value.sustainedReadUnits <
+        (value.sustainedRequestCount > 0 ? value.sustainedRequestCount : 0) ||
+      (value.sustainedRequestCount === 0 && value.sustainedReadUnits !== 0) ||
       value.sustainedReadUnits >
         value.sustainedRequestCount * MAX_CANONICAL_EVENTS ||
       value.sustainedReadUnits >
         MAX_COMMAND_HISTORY_SUSTAINED_READ_UNITS_PER_WINDOW ||
+      (current &&
+        (!Number.isSafeInteger(value.sustainedProjectionRequestCount) ||
+          value.sustainedProjectionRequestCount <
+            value.projectionRequestCount ||
+          value.sustainedProjectionRequestCount >
+            MAX_COMMAND_PROJECTION_SUSTAINED_REQUESTS_PER_WINDOW ||
+          !Number.isSafeInteger(value.sustainedProjectionReadUnits) ||
+          value.sustainedProjectionReadUnits < value.projectionReadUnits ||
+          value.sustainedProjectionReadUnits <
+            (value.sustainedProjectionRequestCount > 0
+              ? value.sustainedProjectionRequestCount
+              : 0) ||
+          (value.sustainedProjectionRequestCount === 0 &&
+            value.sustainedProjectionReadUnits !== 0) ||
+          value.sustainedProjectionReadUnits >
+            value.sustainedProjectionRequestCount * MAX_CANONICAL_EVENTS ||
+          value.sustainedProjectionReadUnits >
+            MAX_COMMAND_PROJECTION_SUSTAINED_READ_UNITS_PER_WINDOW)) ||
+      (current &&
+        value.sustainedRequestCount + value.sustainedProjectionRequestCount <
+          1) ||
       value.windowStartedAtMs < value.sustainedWindowStartedAtMs ||
       value.windowResetAtMs > value.sustainedWindowResetAtMs ||
       !Number.isSafeInteger(value.updatedAtMs) ||
@@ -4853,11 +4950,24 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       value.updatedAtMs >= value.windowResetAtMs ||
       value.updatedAtMs >= value.sustainedWindowResetAtMs ||
       value.updatedAtMs > nowMs ||
-      managerStatsControlTimestampMs(value.expiresAt) !== expectedExpiresAtMs
+      managerStatsControlTimestampMs(value.expiresAt) !== expectedExpiresAtMs ||
+      (current &&
+        commandHistoryControlByteLength(value) >
+          MAX_COMMAND_HISTORY_CONTROL_BYTES)
     ) {
       return invalidCommandHistoryAdmission(snapshot, nowMs);
     }
-    return value;
+    return {
+      ...value,
+      projectionRequestCount: current ? value.projectionRequestCount : 0,
+      projectionReadUnits: current ? value.projectionReadUnits : 0,
+      sustainedProjectionRequestCount: current
+        ? value.sustainedProjectionRequestCount
+        : 0,
+      sustainedProjectionReadUnits: current
+        ? value.sustainedProjectionReadUnits
+        : 0,
+    };
   }
 
   function commandHistoryRetryDetails(retryAtMs, nowMs) {
@@ -4868,6 +4978,19 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     };
   }
 
+  function requireCanonicalEventCapacity(checkpoint) {
+    if (checkpoint.sequence < MAX_CANONICAL_EVENTS) return;
+    throw makeError(
+      "resource-exhausted",
+      "The Diamond event history exceeds the bounded replay limit.",
+      {
+        reason: "command-history-replay-bound-exceeded",
+        retryable: false,
+        maximumEvents: MAX_CANONICAL_EVENTS,
+      },
+    );
+  }
+
   function alignedCommandHistoryWindowStart(nowMs, durationMs) {
     return Math.floor(nowMs / durationMs) * durationMs;
   }
@@ -4875,9 +4998,25 @@ function createDiamondScorebookHandlers(dependencies = {}) {
   function planCommandHistoryAdmission({
     snapshot,
     identity,
-    requestedReadUnits,
+    requestedHistoryReadUnits = 0,
+    requestedProjectionReadUnits = 0,
     nowMs,
   }) {
+    if (
+      !Number.isSafeInteger(requestedHistoryReadUnits) ||
+      requestedHistoryReadUnits < 0 ||
+      requestedHistoryReadUnits > MAX_CANONICAL_EVENTS ||
+      !Number.isSafeInteger(requestedProjectionReadUnits) ||
+      requestedProjectionReadUnits < 0 ||
+      requestedProjectionReadUnits > MAX_CANONICAL_EVENTS ||
+      requestedHistoryReadUnits + requestedProjectionReadUnits < 1
+    ) {
+      throw makeError(
+        "unavailable",
+        "Diamond command work could not be bounded safely.",
+        { reason: "command-history-work-invalid", retryable: true },
+      );
+    }
     const admission = parseCommandHistoryAdmission(snapshot, identity, nowMs);
     const windowActive = Boolean(
       admission && admission.windowResetAtMs > nowMs,
@@ -4891,9 +5030,17 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     const windowResetAtMs = windowActive
       ? admission.windowResetAtMs
       : windowStartedAtMs + COMMAND_HISTORY_RATE_WINDOW_MS;
-    const requestCount = (windowActive ? admission.requestCount : 0) + 1;
+    const requestCount =
+      (windowActive ? admission.requestCount : 0) +
+      (requestedHistoryReadUnits > 0 ? 1 : 0);
     const readUnits =
-      (windowActive ? admission.readUnits : 0) + requestedReadUnits;
+      (windowActive ? admission.readUnits : 0) + requestedHistoryReadUnits;
+    const projectionRequestCount =
+      (windowActive ? admission.projectionRequestCount : 0) +
+      (requestedProjectionReadUnits > 0 ? 1 : 0);
+    const projectionReadUnits =
+      (windowActive ? admission.projectionReadUnits : 0) +
+      requestedProjectionReadUnits;
     const sustainedWindowStartedAtMs = sustainedWindowActive
       ? admission.sustainedWindowStartedAtMs
       : alignedCommandHistoryWindowStart(
@@ -4904,45 +5051,81 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       ? admission.sustainedWindowResetAtMs
       : sustainedWindowStartedAtMs + COMMAND_HISTORY_SUSTAINED_WINDOW_MS;
     const sustainedRequestCount =
-      (sustainedWindowActive ? admission.sustainedRequestCount : 0) + 1;
+      (sustainedWindowActive ? admission.sustainedRequestCount : 0) +
+      (requestedHistoryReadUnits > 0 ? 1 : 0);
     const sustainedReadUnits =
       (sustainedWindowActive ? admission.sustainedReadUnits : 0) +
-      requestedReadUnits;
-    const burstLimited =
+      requestedHistoryReadUnits;
+    const sustainedProjectionRequestCount =
+      (sustainedWindowActive ? admission.sustainedProjectionRequestCount : 0) +
+      (requestedProjectionReadUnits > 0 ? 1 : 0);
+    const sustainedProjectionReadUnits =
+      (sustainedWindowActive ? admission.sustainedProjectionReadUnits : 0) +
+      requestedProjectionReadUnits;
+    const historyBurstLimited =
       requestCount > MAX_COMMAND_HISTORY_REQUESTS_PER_WINDOW ||
       readUnits > MAX_COMMAND_HISTORY_READ_UNITS_PER_WINDOW;
-    const sustainedLimited =
+    const historySustainedLimited =
       sustainedRequestCount >
         MAX_COMMAND_HISTORY_SUSTAINED_REQUESTS_PER_WINDOW ||
       sustainedReadUnits > MAX_COMMAND_HISTORY_SUSTAINED_READ_UNITS_PER_WINDOW;
-    if (burstLimited || sustainedLimited) {
+    const projectionBurstLimited =
+      projectionRequestCount > MAX_COMMAND_PROJECTION_REQUESTS_PER_WINDOW ||
+      projectionReadUnits > MAX_COMMAND_PROJECTION_READ_UNITS_PER_WINDOW;
+    const projectionSustainedLimited =
+      sustainedProjectionRequestCount >
+        MAX_COMMAND_PROJECTION_SUSTAINED_REQUESTS_PER_WINDOW ||
+      sustainedProjectionReadUnits >
+        MAX_COMMAND_PROJECTION_SUSTAINED_READ_UNITS_PER_WINDOW;
+    if (
+      historyBurstLimited ||
+      historySustainedLimited ||
+      projectionBurstLimited ||
+      projectionSustainedLimited
+    ) {
       throw makeError(
         "resource-exhausted",
-        "Full-history scorebook verification is temporarily limited.",
+        "Diamond command replay work is temporarily limited.",
         commandHistoryRetryDetails(
           Math.max(
-            burstLimited ? windowResetAtMs : 0,
-            sustainedLimited ? sustainedWindowResetAtMs : 0,
+            historyBurstLimited || projectionBurstLimited ? windowResetAtMs : 0,
+            historySustainedLimited || projectionSustainedLimited
+              ? sustainedWindowResetAtMs
+              : 0,
           ),
           nowMs,
         ),
       );
     }
-    return {
-      schemaVersion: 1,
+    const value = {
+      schemaVersion: 2,
       type: identity.type,
       scopeHash: identity.scopeHash,
       windowStartedAtMs,
       windowResetAtMs,
       requestCount,
       readUnits,
+      projectionRequestCount,
+      projectionReadUnits,
       sustainedWindowStartedAtMs,
       sustainedWindowResetAtMs,
       sustainedRequestCount,
       sustainedReadUnits,
+      sustainedProjectionRequestCount,
+      sustainedProjectionReadUnits,
       updatedAtMs: nowMs,
       expiresAt: new Date(Math.max(windowResetAtMs, sustainedWindowResetAtMs)),
     };
+    if (
+      commandHistoryControlByteLength(value) > MAX_COMMAND_HISTORY_CONTROL_BYTES
+    ) {
+      throw makeError(
+        "unavailable",
+        "Diamond command safety state exceeded its bounded size.",
+        { reason: "command-history-control-overflow", retryable: true },
+      );
+    }
+    return value;
   }
 
   function earlyRejectedCommandResponse(
@@ -5122,14 +5305,14 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       return newEventId;
     };
     const fullReplayCommand = FULL_REPLAY_COMMANDS.has(command.type);
+    const admissionIdentity = commandHistoryAdmissionIdentity(
+      command,
+      caller.uid,
+    );
     let commandHistoryAdmission = null;
     let needsFullHistory = false;
     let preparedHistory = null;
     if (fullReplayCommand) {
-      const admissionIdentity = commandHistoryAdmissionIdentity(
-        command,
-        caller.uid,
-      );
       let admissionCallbackCount = 0;
       let admission;
       try {
@@ -5214,17 +5397,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
                 ),
               });
             }
-            if (checkpoint.sequence > MAX_CANONICAL_EVENTS) {
-              throw makeError(
-                "resource-exhausted",
-                "The Diamond event history exceeds the bounded replay limit.",
-                {
-                  reason: "command-history-replay-bound-exceeded",
-                  retryable: false,
-                  maximumEvents: MAX_CANONICAL_EVENTS,
-                },
-              );
-            }
+            requireCanonicalEventCapacity(checkpoint);
             const admissionSnapshot = await transaction.get(
               admissionIdentity.reference,
             );
@@ -5234,7 +5407,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
               planCommandHistoryAdmission({
                 snapshot: admissionSnapshot,
                 identity: admissionIdentity,
-                requestedReadUnits,
+                requestedHistoryReadUnits: requestedReadUnits,
                 nowMs,
               }),
             );
@@ -5410,6 +5583,9 @@ function createDiamondScorebookHandlers(dependencies = {}) {
           nowMs: responseNowMs,
         });
       }
+      if (checkpoint.sequence === command.expectedRevision) {
+        requireCanonicalEventCapacity(checkpoint);
+      }
       if (!isActiveTeam(loaded.team)) {
         throw makeError(
           "failed-precondition",
@@ -5566,6 +5742,15 @@ function createDiamondScorebookHandlers(dependencies = {}) {
         event: execution.event,
         result: execution.result,
       };
+      const admissionSnapshot = await transaction.get(
+        admissionIdentity.reference,
+      );
+      const nextAdmission = planCommandHistoryAdmission({
+        snapshot: admissionSnapshot,
+        identity: admissionIdentity,
+        requestedProjectionReadUnits: resolvedCheckpoint.sequence,
+        nowMs,
+      });
       const recentPublicEvents = updateRecentPlays(
         root.recentPublicEvents,
         execution.event,
@@ -5592,6 +5777,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       const publicStateRef = firestore.doc(resourcePaths.publicState);
       const publicStateSnapshot = await transaction.get(publicStateRef);
       const existingPublicState = snapshotData(publicStateSnapshot) || {};
+      transaction.set(admissionIdentity.reference, nextAdmission);
       transaction.create(
         firestore.doc(resourcePaths.event(execution.event.eventId)),
         {
@@ -9521,6 +9707,10 @@ module.exports = {
   MAX_COMMAND_HISTORY_REQUESTS_PER_WINDOW,
   MAX_COMMAND_HISTORY_SUSTAINED_READ_UNITS_PER_WINDOW,
   MAX_COMMAND_HISTORY_SUSTAINED_REQUESTS_PER_WINDOW,
+  MAX_COMMAND_PROJECTION_READ_UNITS_PER_WINDOW,
+  MAX_COMMAND_PROJECTION_REQUESTS_PER_WINDOW,
+  MAX_COMMAND_PROJECTION_SUSTAINED_READ_UNITS_PER_WINDOW,
+  MAX_COMMAND_PROJECTION_SUSTAINED_REQUESTS_PER_WINDOW,
   MAX_CONCURRENT_MANAGER_STAT_REQUESTS,
   MAX_DIAMOND_SCORER_CANDIDATES,
   MAX_EVENT_PAGE_SIZE,
