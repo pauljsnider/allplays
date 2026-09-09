@@ -508,6 +508,52 @@ async function deleteAccountMediaStoragePages({
   return { documentsProcessed, pagesRead };
 }
 
+async function deleteAccountQueryPages({
+  firestore,
+  query,
+  pageSize = 250,
+  maxConcurrentDeletes = 10
+}) {
+  if (!firestore || typeof firestore.recursiveDelete !== 'function') {
+    throw new TypeError('Account query cleanup requires recursiveDelete.');
+  }
+  if (!query || typeof query.limit !== 'function') {
+    throw new TypeError('Account query cleanup requires a Firestore query.');
+  }
+  if (!Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 500) {
+    throw new TypeError('Account query cleanup page size is invalid.');
+  }
+  if (!Number.isSafeInteger(maxConcurrentDeletes) || maxConcurrentDeletes < 1 || maxConcurrentDeletes > 100) {
+    throw new TypeError('Account query cleanup concurrency is invalid.');
+  }
+
+  let documentsProcessed = 0;
+  let pagesRead = 0;
+  while (true) {
+    const snapshot = await query.limit(pageSize).get();
+    if (!snapshot || typeof snapshot.empty !== 'boolean' || !Array.isArray(snapshot.docs)) {
+      throw new TypeError('Account query cleanup received an invalid Firestore snapshot.');
+    }
+    if (snapshot.empty) {
+      if (snapshot.docs.length) {
+        throw new TypeError('Account query cleanup received an inconsistent Firestore snapshot.');
+      }
+      return { documentsProcessed, pagesRead };
+    }
+    if (!snapshot.docs.length) {
+      throw new TypeError('Account query cleanup received an inconsistent Firestore snapshot.');
+    }
+
+    pagesRead += 1;
+    documentsProcessed += snapshot.docs.length;
+    for (let index = 0; index < snapshot.docs.length; index += maxConcurrentDeletes) {
+      await Promise.all(snapshot.docs
+        .slice(index, index + maxConcurrentDeletes)
+        .map((docSnapshot) => firestore.recursiveDelete(docSnapshot.ref)));
+    }
+  }
+}
+
 function getAccountTeamPermissionQueryFields() {
   return [
     'teamPermissions.scorekeeping.memberIds',
@@ -541,8 +587,10 @@ function getAccountDeletionCollectionGroupQueries() {
   return [
     ['messages', 'authorId'],
     ['chatMessages', 'senderId'],
+    ['chat', 'senderId'],
     ['comments', 'authorId'],
     ['reactions', 'userId'],
+    ['reactions', 'senderId'],
     ['rsvps', 'userId'],
     ['rideOffers', 'driverUserId'],
     ['rideRequests', 'parentUserId'],
@@ -1138,6 +1186,7 @@ module.exports = {
   cleanupAccountCalendarCredentials,
   createAccountDeletionRequestHandler,
   deleteAccountMediaStoragePages,
+  deleteAccountQueryPages,
   extractAccountProfileStoragePath,
   getAccountEmailQueryCandidates,
   getCanonicalCalendarCredentialPrincipal,

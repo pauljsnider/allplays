@@ -482,6 +482,7 @@ const {
   cleanupAccountCalendarCredentials,
   createAccountDeletionRequestHandler,
   deleteAccountMediaStoragePages,
+  deleteAccountQueryPages,
   getAccountDeletionCollectionQueries,
   getAccountDeletionCollectionGroupQueries,
   getAccountEmailQueryCandidates,
@@ -22132,15 +22133,7 @@ exports.requestAccountDeletion = functions.https.onCall(createAccountDeletionReq
 }));
 
 async function deleteAccountQuery(query) {
-  while (true) {
-    const snapshot = await query.limit(250).get();
-    if (snapshot.empty) return;
-    for (let index = 0; index < snapshot.docs.length; index += 10) {
-      await Promise.all(snapshot.docs
-        .slice(index, index + 10)
-        .map((docSnapshot) => firestore.recursiveDelete(docSnapshot.ref)));
-    }
-  }
+  return deleteAccountQueryPages({ firestore, query });
 }
 
 async function deleteAccountStorage(uid, mediaQueries, profilePhotoUrls = []) {

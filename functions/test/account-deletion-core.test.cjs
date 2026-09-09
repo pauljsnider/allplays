@@ -15,6 +15,7 @@ const {
   collectAccountTeamIds,
   collectAccountMediaStoragePaths,
   createAccountDeletionRequestHandler,
+  deleteAccountQueryPages,
   deleteAccountMediaStoragePages,
   extractAccountProfileStoragePath,
   getAccountEmailQueryCandidates,
@@ -514,8 +515,10 @@ test('keeps private calendar credentials out of generic account query deletion',
   assert.deepEqual(getAccountDeletionCollectionGroupQueries(), [
     ['messages', 'authorId'],
     ['chatMessages', 'senderId'],
+    ['chat', 'senderId'],
     ['comments', 'authorId'],
     ['reactions', 'userId'],
+    ['reactions', 'senderId'],
     ['rsvps', 'userId'],
     ['rideOffers', 'driverUserId'],
     ['rideRequests', 'parentUserId'],
@@ -525,6 +528,220 @@ test('keeps private calendar credentials out of generic account query deletion',
     ['notificationTargets', 'uid'],
     ['notificationRecipients', 'uid']
   ]);
+});
+
+function createCollectionGroupDeletionHarness(seed, {
+  failOnceAtPath = '',
+  yieldDeletes = false
+} = {}) {
+  const documents = new Map(Object.entries(seed));
+  const deleteAttempts = [];
+  const queryLimits = [];
+  let activeDeletes = 0;
+  let peakConcurrentDeletes = 0;
+  let pendingFailurePath = failOnceAtPath;
+
+  const matchesCollectionGroup = (path, collectionGroup) => {
+    const parts = path.split('/');
+    return parts.some((part, index) => index % 2 === 0 && part === collectionGroup);
+  };
+
+  const firestore = {
+    collectionGroup(collectionGroup) {
+      return {
+        where(field, operator, value) {
+          assert.equal(operator, '==');
+          return {
+            limit(pageSize) {
+              queryLimits.push({ collectionGroup, field, pageSize });
+              return {
+                async get() {
+                  const docs = [...documents.entries()]
+                    .filter(([path, data]) => (
+                      matchesCollectionGroup(path, collectionGroup) && data?.[field] === value
+                    ))
+                    .sort(([left], [right]) => left.localeCompare(right))
+                    .slice(0, pageSize)
+                    .map(([path, data]) => ({
+                      ref: { path },
+                      data: () => structuredClone(data)
+                    }));
+                  return { docs, empty: docs.length === 0 };
+                }
+              };
+            }
+          };
+        }
+      };
+    },
+    async recursiveDelete(ref) {
+      deleteAttempts.push(ref.path);
+      activeDeletes += 1;
+      peakConcurrentDeletes = Math.max(peakConcurrentDeletes, activeDeletes);
+      try {
+        if (yieldDeletes) await new Promise((resolve) => setImmediate(resolve));
+        if (ref.path === pendingFailurePath) {
+          pendingFailurePath = '';
+          throw new Error('injected recursive delete failure');
+        }
+        for (const path of [...documents.keys()]) {
+          if (path === ref.path || path.startsWith(`${ref.path}/`)) documents.delete(path);
+        }
+      } finally {
+        activeDeletes -= 1;
+      }
+    }
+  };
+
+  return {
+    deleteAttempts,
+    documents,
+    firestore,
+    get peakConcurrentDeletes() {
+      return peakConcurrentDeletes;
+    },
+    queryLimits
+  };
+}
+
+test('deletes every Diamond live engagement document owned by the account across scopes', async () => {
+  const deletedUid = 'deleted-user';
+  const diamondChat = {
+    schemaVersion: 1,
+    trackingEngine: 'diamond-v2',
+    teamId: 'team-1',
+    gameId: 'game-1',
+    instanceId: 'instance-1',
+    text: 'Personal message',
+    senderId: deletedUid,
+    senderName: 'Deleted Fan',
+    senderPhotoUrl: 'https://allplays.ai/deleted-fan.jpg',
+    isAnonymous: false,
+    createdAt: 'timestamp'
+  };
+  const paginatedDiamondChats = Object.fromEntries(Array.from({ length: 251 }, (_, index) => [
+    `teams/team-page/games/game-page/diamondLiveGenerations/instance-page/chat/chat-${String(index).padStart(3, '0')}`,
+    {
+      ...diamondChat,
+      teamId: 'team-page',
+      gameId: 'game-page',
+      instanceId: 'instance-page',
+      text: `Personal message ${String(index)}`
+    }
+  ]));
+  const seed = {
+    ...paginatedDiamondChats,
+    'teams/team-1/games/game-1/diamondLiveGenerations/instance-1/chat/chat-1': diamondChat,
+    'teams/team-2/games/game-2/diamondLiveGenerations/instance-2/chat/chat-2': {
+      ...diamondChat,
+      teamId: 'team-2',
+      gameId: 'game-2',
+      instanceId: 'instance-2'
+    },
+    'teams/team-1/games/game-1/diamondLiveGenerations/instance-1/chat/chat-survivor': {
+      ...diamondChat,
+      senderId: 'remaining-user',
+      senderName: 'Remaining Fan',
+      senderPhotoUrl: 'https://allplays.ai/remaining-fan.jpg'
+    },
+    'teams/team-1/games/game-1/diamondLiveGenerations/instance-1/reactions/reaction-1': {
+      schemaVersion: 1,
+      trackingEngine: 'diamond-v2',
+      teamId: 'team-1',
+      gameId: 'game-1',
+      instanceId: 'instance-1',
+      type: 'clap',
+      senderId: deletedUid,
+      createdAt: 'timestamp'
+    },
+    'teams/team-2/games/game-2/diamondLiveGenerations/instance-2/reactions/reaction-2': {
+      schemaVersion: 1,
+      trackingEngine: 'diamond-v2',
+      teamId: 'team-2',
+      gameId: 'game-2',
+      instanceId: 'instance-2',
+      type: 'heart',
+      senderId: deletedUid,
+      createdAt: 'timestamp'
+    },
+    'teams/team-1/games/game-1/diamondLiveGenerations/instance-1/reactions/reaction-survivor': {
+      senderId: 'remaining-user',
+      type: 'clap'
+    },
+    'socialPosts/post-1/reactions/legacy-reaction': {
+      userId: deletedUid,
+      type: 'like'
+    },
+    'socialPosts/post-1/reactions/legacy-survivor': {
+      userId: 'remaining-user',
+      type: 'like'
+    }
+  };
+  const harness = createCollectionGroupDeletionHarness(seed, { yieldDeletes: true });
+
+  for (const [collectionGroup, field] of getAccountDeletionCollectionGroupQueries()) {
+    await deleteAccountQueryPages({
+      firestore: harness.firestore,
+      query: harness.firestore.collectionGroup(collectionGroup).where(field, '==', deletedUid)
+    });
+  }
+
+  assert.deepEqual([...harness.documents.keys()].sort(), [
+    'socialPosts/post-1/reactions/legacy-survivor',
+    'teams/team-1/games/game-1/diamondLiveGenerations/instance-1/chat/chat-survivor',
+    'teams/team-1/games/game-1/diamondLiveGenerations/instance-1/reactions/reaction-survivor'
+  ]);
+  assert.ok(harness.queryLimits.some(({ collectionGroup, field }) => (
+    collectionGroup === 'chat' && field === 'senderId'
+  )));
+  assert.ok(harness.queryLimits.some(({ collectionGroup, field }) => (
+    collectionGroup === 'reactions' && field === 'senderId'
+  )));
+  assert.ok(harness.queryLimits.some(({ collectionGroup, field }) => (
+    collectionGroup === 'reactions' && field === 'userId'
+  )));
+  const chatPageReads = harness.queryLimits.filter(({ collectionGroup, field }) => (
+    collectionGroup === 'chat' && field === 'senderId'
+  ));
+  assert.equal(chatPageReads.length, 3);
+  assert.ok(chatPageReads.every(({ pageSize }) => pageSize === 250));
+  assert.equal(harness.peakConcurrentDeletes, 10);
+});
+
+test('propagates a partial recursive-delete failure and completes idempotently on retry', async () => {
+  const uid = 'deleted-user';
+  const firstPath = 'teams/team-1/games/game-1/diamondLiveGenerations/instance-1/chat/chat-1';
+  const failedPath = 'teams/team-1/games/game-1/diamondLiveGenerations/instance-1/chat/chat-2';
+  const finalPath = 'teams/team-1/games/game-1/diamondLiveGenerations/instance-1/chat/chat-3';
+  const harness = createCollectionGroupDeletionHarness({
+    [firstPath]: { senderId: uid, senderName: 'One', senderPhotoUrl: null, text: 'one' },
+    [failedPath]: { senderId: uid, senderName: 'Two', senderPhotoUrl: null, text: 'two' },
+    [finalPath]: { senderId: uid, senderName: 'Three', senderPhotoUrl: null, text: 'three' }
+  }, { failOnceAtPath: failedPath });
+  const query = () => harness.firestore.collectionGroup('chat').where('senderId', '==', uid);
+
+  await assert.rejects(
+    deleteAccountQueryPages({
+      firestore: harness.firestore,
+      query: query(),
+      pageSize: 2,
+      maxConcurrentDeletes: 1
+    }),
+    /injected recursive delete failure/
+  );
+  assert.equal(harness.documents.has(firstPath), false);
+  assert.equal(harness.documents.has(failedPath), true);
+  assert.equal(harness.documents.has(finalPath), true);
+
+  const retry = await deleteAccountQueryPages({
+    firestore: harness.firestore,
+    query: query(),
+    pageSize: 2,
+    maxConcurrentDeletes: 1
+  });
+  assert.deepEqual(retry, { documentsProcessed: 2, pagesRead: 1 });
+  assert.equal(harness.documents.size, 0);
+  assert.deepEqual(harness.deleteAttempts, [firstPath, failedPath, failedPath, finalPath]);
 });
 
 test('queues deletion for a signed-in non-owner', async () => {
@@ -825,7 +1042,7 @@ test('gives the deletion worker extended runtime and automatic event retries', (
   assert.match(mediaCleanupSource, /authUser\?\.photoURL/);
   assert.doesNotMatch(mediaCleanupSource, /\.get\(\)/);
   assert.match(functionsSource, /deleteAccountMediaStoragePages\([\s\S]*FieldPath\.documentId\(\)/);
-  assert.match(functionsSource, /deleteAccountQuery[\s\S]*firestore\.recursiveDelete\(docSnapshot\.ref\)/);
+  assert.match(functionsSource, /async function deleteAccountQuery\(query\) \{\s*return deleteAccountQueryPages\(\{ firestore, query \}\);\s*\}/);
   assert.ok(workerSource.indexOf('await scrubAccountTeamGrants(') < workerSource.indexOf('admin.auth().deleteUser(uid)'));
   assert.ok(workerSource.indexOf('await scrubAccountChatConversationMembership(') < workerSource.indexOf('admin.auth().deleteUser(uid)'));
   assert.ok(workerSource.indexOf('await scrubAccountRegistrationLinks(') < workerSource.indexOf('admin.auth().deleteUser(uid)'));
