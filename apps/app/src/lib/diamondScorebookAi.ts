@@ -1024,6 +1024,7 @@ SECURITY AND AUTHORITY RULES:
 - These prompt rules guide the proposal only. The local deterministic validator remains authoritative.
 - For home_run and triple, include every occupied base runner exactly once in runnerAdvances; each must reach home or be marked out.
 - On home_run, every advance to home whose run is not explicitly nullified with countsRun=false must use rbi=true, and runsBattedIn must equal the number of counted runs. Never propose a later rbi=false judgment for a counted home-run score.
+- Derive RBI for each scoring advance from its cause: credit a batted-ball fielder's choice by default; do not credit a wild pitch, passed ball, balk, illegal pitch, error, stolen base, or defensive indifference. If the RBI judgment remains ambiguous, ask the scorer instead of guessing.
 - For double_play record exactly 2 distinct actual outs, and for triple_play record exactly 3, including the batter and matching outsOnPlay. Do not infer timing from array order; leave countsRun explicit for scorer review.
 
 ALLOWLISTED COMMANDS:

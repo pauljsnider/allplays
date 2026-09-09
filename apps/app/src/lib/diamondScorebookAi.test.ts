@@ -175,6 +175,7 @@ describe('interpretDiamondTranscript', () => {
     );
     expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/home_run and triple.*every occupied base runner/i);
     expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/home_run.*rbi=true.*runsBattedIn.*counted runs/i);
+    expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/derive.*RBI.*each scoring advance.*fielder.?s choice.*wild pitch/i);
     expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/double_play.*exactly 2.*triple_play.*exactly 3/i);
     expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/stay put or move forward/i);
     expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/must not pass a preceding runner/i);

@@ -1095,6 +1095,77 @@ describe('DiamondScorebook', () => {
     expect(fixture.submitCommand).not.toHaveBeenCalled();
   });
 
+  it("defaults a fielder's-choice scoring advance to RBI credit from its batted-ball cause", async () => {
+    const fixture = createClient();
+    renderScorebook(buildSnapshot(), fixture);
+
+    fireEvent.click(screen.getByRole('button', { name: "Fielder's choice" }));
+    const dialog = screen.getByRole('dialog', { name: "Review Fielder's choice" });
+    const destination = within(dialog).getByLabelText(/Third .* destination/);
+    fireEvent.change(destination, { target: { value: 'home' } });
+
+    const scoringRunner = destination.closest('fieldset')!;
+    expect(within(scoringRunner).getByLabelText(/Third .* cause/)).toHaveValue('batted_ball');
+    const countsRun = within(scoringRunner).getByRole('checkbox', { name: 'Run counts' });
+    const rbi = within(scoringRunner).getByRole('checkbox', { name: 'Credit RBI' });
+    expect(rbi).toBeChecked();
+    expect(within(dialog).getByRole('status', { name: 'RBI credit' })).toHaveTextContent('1');
+
+    fireEvent.click(countsRun);
+    expect(rbi).not.toBeChecked();
+    fireEvent.click(countsRun);
+    expect(rbi).toBeChecked();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm play' }));
+    await waitFor(() => expect(fixture.submitCommand).toHaveBeenCalledTimes(1));
+    expect(fixture.createCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'record_plate_appearance',
+        payload: expect.objectContaining({
+          result: 'fielders_choice',
+          runnerAdvances: expect.arrayContaining([
+            expect.objectContaining({ runnerId: 'runner-3', from: 'third', to: 'home', cause: 'batted_ball', rbi: true })
+          ]),
+          runsBattedIn: 1
+        })
+      })
+    );
+  });
+
+  it('recomputes a scoring advance to no RBI when its cause changes to wild pitch', async () => {
+    const fixture = createClient();
+    renderScorebook(buildSnapshot(), fixture);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Strikeout' }));
+    const dialog = screen.getByRole('dialog', { name: 'Review Strikeout' });
+    const destination = within(dialog).getByLabelText(/Third .* destination/);
+    fireEvent.change(destination, { target: { value: 'home' } });
+
+    const scoringRunner = destination.closest('fieldset')!;
+    const cause = within(scoringRunner).getByLabelText(/Third .* cause/);
+    const rbi = within(scoringRunner).getByRole('checkbox', { name: 'Credit RBI' });
+    expect(rbi).toBeChecked();
+
+    fireEvent.change(cause, { target: { value: 'wild_pitch' } });
+    expect(rbi).not.toBeChecked();
+    expect(within(dialog).getByRole('status', { name: 'RBI credit' })).toHaveTextContent('0');
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm play' }));
+    await waitFor(() => expect(fixture.submitCommand).toHaveBeenCalledTimes(1));
+    expect(fixture.createCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'record_plate_appearance',
+        payload: expect.objectContaining({
+          result: 'strikeout',
+          runnerAdvances: expect.arrayContaining([
+            expect.objectContaining({ runnerId: 'runner-3', from: 'third', to: 'home', cause: 'wild_pitch', rbi: false })
+          ]),
+          runsBattedIn: 0
+        })
+      })
+    );
+  });
+
   it.each([
     {
       label: 'a home-run runner stopped at second',
@@ -1199,6 +1270,57 @@ describe('DiamondScorebook', () => {
           batterAdvance: expect.objectContaining({ rbi: true }),
           runnerAdvances: expect.arrayContaining([expect.objectContaining({ rbi: true })]),
           runsBattedIn: 3
+        })
+      })
+    );
+  });
+
+  it("derives an omitted voice-draft RBI from the scoring runner's fielder's-choice advance", async () => {
+    const fixture = createClient();
+    (fixture.client.parseVoice as ReturnType<typeof vi.fn>).mockResolvedValue({
+      schemaVersion: 1,
+      type: 'record_plate_appearance',
+      payload: {
+        batterId: 'batter-1',
+        pitcherId: 'pitcher-1',
+        result: 'fielders_choice',
+        batterAdvance: { to: 'first', cause: 'batted_ball' },
+        runnerAdvances: [
+          { runnerId: 'runner-1', from: 'first', to: 'out', cause: 'force_out', outKind: 'force' },
+          { runnerId: 'runner-3', from: 'third', to: 'home', cause: 'batted_ball', countsRun: true }
+        ],
+        outsOnPlay: 1
+      },
+      confidence: 0.9,
+      unresolvedFields: [],
+      requiresConfirmation: true,
+      mutatesState: false
+    });
+    const generateContent = vi.fn(async () => {
+      throw new Error('model unavailable');
+    });
+    renderScorebook(buildSnapshot(), fixture, { generateContent });
+
+    fireEvent.click(screen.getByRole('button', { name: /Dictate play/ }));
+    fireEvent.change(screen.getByLabelText('Editable transcript'), { target: { value: "Fielder's choice, Casey scored." } });
+    fireEvent.click(screen.getByRole('button', { name: /Interpret play/ }));
+
+    const dialog = await screen.findByRole('dialog', { name: "Review Fielder's choice" });
+    const scoringRunner = within(dialog)
+      .getByLabelText(/Third .* destination/)
+      .closest('fieldset')!;
+    expect(within(scoringRunner).getByRole('checkbox', { name: 'Credit RBI' })).toBeChecked();
+    expect(within(dialog).getByRole('status', { name: 'RBI credit' })).toHaveTextContent('1');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm play' }));
+
+    await waitFor(() => expect(fixture.submitCommand).toHaveBeenCalledTimes(1));
+    expect(fixture.createCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'record_plate_appearance',
+        payload: expect.objectContaining({
+          result: 'fielders_choice',
+          runnerAdvances: expect.arrayContaining([expect.objectContaining({ runnerId: 'runner-3', rbi: true })]),
+          runsBattedIn: 1
         })
       })
     );
@@ -1362,7 +1484,14 @@ describe('DiamondScorebook', () => {
     fireEvent.change(within(dialog).getByLabelText(/Batter .* destination/), { target: { value: 'out' } });
     fireEvent.change(within(dialog).getByLabelText(/Batter .* cause/), { target: { value: 'tag_out' } });
     fireEvent.change(within(dialog).getByLabelText(/Batter .* out kind/), { target: { value: 'tag' } });
-    fireEvent.change(within(dialog).getByLabelText(/Third .* destination/), { target: { value: 'home' } });
+    const scoringRunner = within(dialog)
+      .getByLabelText(/Third .* destination/)
+      .closest('fieldset')!;
+    fireEvent.change(within(scoringRunner).getByLabelText(/Third .* destination/), { target: { value: 'home' } });
+    const rbi = within(scoringRunner).getByRole('checkbox', { name: 'Credit RBI' });
+    expect(rbi).toBeChecked();
+    fireEvent.click(rbi);
+    expect(rbi).not.toBeChecked();
 
     expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument();
     expect(within(dialog).getByRole('button', { name: 'Confirm play' })).toBeEnabled();
@@ -2872,7 +3001,9 @@ describe('DiamondScorebook', () => {
     );
     const submittedPayload = fixture.createCommand.mock.calls[0]![0]
       .payload as unknown as DiamondCommandPayloadMap['record_plate_appearance'];
-    expect(submittedPayload.runnerAdvances.find((advance) => advance.runnerId === 'runner-3')).not.toHaveProperty('outKind');
+    const scoringAdvance = submittedPayload.runnerAdvances.find((advance) => advance.runnerId === 'runner-3');
+    expect(scoringAdvance).toMatchObject({ countsRun: true, rbi: false });
+    expect(scoringAdvance).not.toHaveProperty('outKind');
   });
 
   it('clears the default batter out kind when a voice proposal safely advances the batter', async () => {
