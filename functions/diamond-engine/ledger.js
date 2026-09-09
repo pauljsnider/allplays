@@ -6,6 +6,8 @@ exports.replayDiamondEvents = replayDiamondEvents;
 exports.replayDiamondLedger = replayDiamondLedger;
 exports.createDiamondLedger = createDiamondLedger;
 exports.createDiamondCheckpoint = createDiamondCheckpoint;
+exports.validateDiamondPlayerIdentityOwnership = validateDiamondPlayerIdentityOwnership;
+exports.getDiamondPlayerIdentityIdsBySide = getDiamondPlayerIdentityIdsBySide;
 exports.executeDiamondCommandFromCheckpoint = executeDiamondCommandFromCheckpoint;
 exports.executeDiamondCommand = executeDiamondCommand;
 exports.verifyDiamondLedger = verifyDiamondLedger;
@@ -241,6 +243,7 @@ function knownPlayerIds(state, side) {
     return new Set([
         ...lineup.battingOrder.flatMap((slot) => [slot.starterPlayerId, slot.activePlayerId, ...slot.substitutions]),
         ...Object.values(lineup.defense).filter((playerId) => Boolean(playerId)),
+        ...lineup.courtesyRunnerIds,
         ...(lineup.dpFlex ? [lineup.dpFlex.dpPlayerId, lineup.dpFlex.flexPlayerId] : [])
     ]);
 }
@@ -403,6 +406,7 @@ function transitionToCorrectionState(state) {
     });
 }
 function replayCanonicalDiamondEvents(initialState, events) {
+    (0, reducer_1.validateDiamondState)(initialState);
     const directives = getCorrectionDirectives(events);
     const obsoleteFinalizations = getObsoleteFinalizationPairs(events);
     const voidedEventIds = new Set([...directives.entries()].filter(([, directive]) => directive.kind === 'void').map(([eventId]) => eventId));
@@ -532,6 +536,19 @@ function createDiamondCheckpoint(ledger) {
         sequence: ledger.state.revision,
         previousHash,
         state: ledger.state
+    });
+}
+/** Returns side ownership from validated marked initial and effective states. */
+function validateDiamondPlayerIdentityOwnership(ledger) {
+    getDiamondPlayerIdentityIdsBySide(ledger);
+    return true;
+}
+function getDiamondPlayerIdentityIdsBySide(ledger) {
+    (0, reducer_1.validateDiamondState)(ledger.initialState);
+    const ownershipState = (0, reducer_1.validateDiamondState)(ledger.state);
+    return deepFreeze({
+        home: [...knownPlayerIds(ownershipState, 'home')].sort(),
+        away: [...knownPlayerIds(ownershipState, 'away')].sort()
     });
 }
 function validateEnvelope(ledger, command, context) {
@@ -806,6 +823,8 @@ function executeDiamondCommand(ledger, command, context) {
                 event: existing
             };
         }
+        (0, reducer_1.validateDiamondState)(ledger.initialState);
+        (0, reducer_1.validateDiamondState)(ledger.state);
         validateEnvelope(ledger, command, context);
         if (command.expectedRevision !== ledger.state.revision) {
             throw new contracts_1.DiamondDomainError('stale-revision', `Expected revision ${String(command.expectedRevision)}, current revision is ${String(ledger.state.revision)}.`, true);

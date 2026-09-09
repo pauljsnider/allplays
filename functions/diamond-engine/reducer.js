@@ -22,6 +22,7 @@ const EMPTY_BASES = Object.freeze({ first: null, second: null, third: null });
 const EMPTY_LINEUP = Object.freeze({
     battingOrder: Object.freeze([]),
     defense: Object.freeze({}),
+    courtesyRunnerIds: Object.freeze([]),
     dpFlex: null
 });
 const BASES = ['first', 'second', 'third'];
@@ -130,6 +131,7 @@ function cloneLineup(lineup) {
             substitutions: [...entry.substitutions]
         })),
         defense: { ...lineup.defense },
+        courtesyRunnerIds: [...lineup.courtesyRunnerIds],
         dpFlex: lineup.dpFlex ? { ...lineup.dpFlex } : null
     };
 }
@@ -167,8 +169,15 @@ function requireId(value, label) {
     if (typeof value !== 'string')
         throw new contracts_1.DiamondDomainError('invalid-id', `${label} must be a string.`);
     const normalized = value.trim();
-    if (!normalized || normalized.length > 128 || normalized.includes('/')) {
-        throw new contracts_1.DiamondDomainError('invalid-id', `${label} must be nonempty, slash-free, and at most 128 characters.`);
+    if (!normalized ||
+        value !== normalized ||
+        normalized.length > 128 ||
+        normalized.includes('/') ||
+        [...normalized].some((character) => {
+            const codePoint = character.codePointAt(0) ?? 0;
+            return codePoint <= 0x1f || codePoint === 0x7f;
+        })) {
+        throw new contracts_1.DiamondDomainError('invalid-id', `${label} must be canonical, nonempty, slash- and control-free, and at most 128 characters.`);
     }
     return normalized;
 }
@@ -722,8 +731,16 @@ function knownPlayerIds(lineup) {
     return new Set([
         ...lineup.battingOrder.flatMap((entry) => [entry.activePlayerId, entry.starterPlayerId, ...entry.substitutions]),
         ...Object.values(lineup.defense).filter((playerId) => Boolean(playerId)),
+        ...lineup.courtesyRunnerIds,
         ...(lineup.dpFlex ? [lineup.dpFlex.dpPlayerId, lineup.dpFlex.flexPlayerId] : [])
     ]);
+}
+function validateOpposingLineupIdentities(lineups) {
+    const homePlayerIds = knownPlayerIds(lineups.home);
+    const awayPlayerIds = knownPlayerIds(lineups.away);
+    if ([...homePlayerIds].some((playerId) => awayPlayerIds.has(playerId))) {
+        throw new contracts_1.DiamondDomainError('opposing-lineup-player', 'Home and away lineups must use disjoint player identities.');
+    }
 }
 function currentBattingParticipantIds(state) {
     const battingIds = knownPlayerIds(state.lineups[getBattingSide(state)]);
@@ -1135,8 +1152,9 @@ function validateDiamondState(state) {
     if (new Set(baseRunners).size !== baseRunners.length) {
         throw new contracts_1.DiamondDomainError('duplicate-base-runner', 'One runner cannot occupy multiple bases.');
     }
-    ['home', 'away'].forEach((side) => {
-        const order = state.lineups[side].battingOrder;
+    SIDES.forEach((side) => {
+        const lineup = state.lineups[side];
+        const order = lineup.battingOrder;
         const slots = order.map((entry) => entry.slot);
         const players = order.map((entry) => entry.activePlayerId);
         if (new Set(slots).size !== slots.length || new Set(players).size !== players.length) {
@@ -1146,6 +1164,7 @@ function validateDiamondState(state) {
             requireInteger(entry.slot, 'batting slot', 1, 25);
             requireId(entry.activePlayerId, 'activePlayerId');
             requireId(entry.starterPlayerId, 'starterPlayerId');
+            entry.substitutions.forEach((playerId) => requireId(playerId, 'substitution playerId'));
             requireBattingRole(profile, entry.battingRole);
         });
         validateBattingRoleCounts(order);
@@ -1156,7 +1175,20 @@ function validateDiamondState(state) {
         if (new Set(defensivePlayers).size !== defensivePlayers.length) {
             throw new contracts_1.DiamondDomainError('invalid-defense', `${side} defense contains a duplicate player.`);
         }
-        const dpFlex = state.lineups[side].dpFlex;
+        if (!Array.isArray(lineup.courtesyRunnerIds)) {
+            throw new contracts_1.DiamondDomainError('history-required', `${side} courtesy-runner identity history is unavailable.`);
+        }
+        const courtesyRunnerIds = lineup.courtesyRunnerIds.map((playerId) => requireId(playerId, 'courtesy runner playerId'));
+        if (courtesyRunnerIds.some((playerId, index) => playerId !== lineup.courtesyRunnerIds[index])) {
+            throw new contracts_1.DiamondDomainError('invalid-lineup', `${side} courtesy-runner identities must use canonical player IDs.`);
+        }
+        if (new Set(courtesyRunnerIds).size !== courtesyRunnerIds.length) {
+            throw new contracts_1.DiamondDomainError('invalid-lineup', `${side} courtesy-runner identities must be unique.`);
+        }
+        if (courtesyRunnerIds.length > contracts_1.DIAMOND_MAX_COURTESY_RUNNER_IDENTITIES_PER_SIDE) {
+            throw new contracts_1.DiamondDomainError('courtesy-runner-identity-limit', `A side cannot retain more than ${String(contracts_1.DIAMOND_MAX_COURTESY_RUNNER_IDENTITIES_PER_SIDE)} courtesy-runner identities.`);
+        }
+        const dpFlex = lineup.dpFlex;
         if (!dpFlex) {
             if (order.some((entry) => entry.battingRole === 'flex')) {
                 throw new contracts_1.DiamondDomainError('invalid-dp-flex', 'A FLEX batter requires an established DP/FLEX pairing.');
@@ -1196,6 +1228,7 @@ function validateDiamondState(state) {
             throw new contracts_1.DiamondDomainError('invalid-dp-flex', 'The configured FLEX defensive position must contain the DP or FLEX.');
         }
     });
+    validateOpposingLineupIdentities(state.lineups);
     Object.values(state.coverage).forEach((coverage) => {
         if (!COVERAGE_VALUES.includes(coverage)) {
             throw new contracts_1.DiamondDomainError('invalid-coverage', `Invalid coverage value ${String(coverage)}.`);
@@ -1720,6 +1753,9 @@ function reduceDiamondEvent(state, action) {
             }
             const forPlayerId = requireId(action.payload.forPlayerId, 'forPlayerId');
             const runnerId = requireId(action.payload.runnerId, 'runnerId');
+            if (knownPlayerIds(state.lineups[oppositeSide(side)]).has(runnerId)) {
+                throw new contracts_1.DiamondDomainError('opposing-lineup-player', 'A courtesy runner cannot use a player identity assigned to the opposing lineup.');
+            }
             const placement = state.bases[base];
             if (!placement || placement.runnerId !== forPlayerId) {
                 throw new contracts_1.DiamondDomainError('runner-not-on-base', 'The pitcher or catcher is not on the declared base.');
@@ -1731,6 +1767,10 @@ function reduceDiamondEvent(state, action) {
             if (BASES.some((base) => state.bases[base]?.runnerId === runnerId)) {
                 throw new contracts_1.DiamondDomainError('duplicate-base-runner', 'The courtesy runner is already on base.');
             }
+            const courtesyRunnerIds = state.lineups[side].courtesyRunnerIds;
+            if (!courtesyRunnerIds.includes(runnerId) && courtesyRunnerIds.length >= contracts_1.DIAMOND_MAX_COURTESY_RUNNER_IDENTITIES_PER_SIDE) {
+                throw new contracts_1.DiamondDomainError('courtesy-runner-identity-limit', `A side cannot retain more than ${String(contracts_1.DIAMOND_MAX_COURTESY_RUNNER_IDENTITIES_PER_SIDE)} courtesy-runner identities.`);
+            }
             next = {
                 ...next,
                 bases: {
@@ -1739,6 +1779,13 @@ function reduceDiamondEvent(state, action) {
                         ...placement,
                         runnerId,
                         courtesyForPlayerId: forPlayerId
+                    }
+                },
+                lineups: {
+                    ...next.lineups,
+                    [side]: {
+                        ...next.lineups[side],
+                        courtesyRunnerIds: courtesyRunnerIds.includes(runnerId) ? courtesyRunnerIds : [...courtesyRunnerIds, runnerId]
                     }
                 }
             };

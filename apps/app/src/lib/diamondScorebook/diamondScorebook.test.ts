@@ -2349,48 +2349,26 @@ describe('Diamond command ledger', () => {
     });
   });
 
-  it('rejects a pitcher identity that is ambiguous across the two recorded teams', () => {
+  it('rejects a pitcher identity before it can become ambiguous across the two recorded teams', () => {
     const game = harness();
     setBasicLineups(game, { start: false });
-    game.submit('set_lineup', {
-      side: 'away',
-      entries: [
-        { slot: 1, playerId: 'away-1' },
-        { slot: 2, playerId: 'away-2' },
-        { slot: 3, playerId: 'home-1' }
-      ]
-    });
-    game.submit('start', {});
-    recordPitch(game, 'away-1', 'home-1');
-    const play = game.submit('record_plate_appearance', {
-      batterId: 'away-1',
-      pitcherId: 'home-1',
-      result: 'home_run',
-      batterAdvance: { to: 'home', countsRun: true },
-      runnerAdvances: [],
-      outsOnPlay: 0,
-      runsBattedIn: 1
-    });
-
+    const before = game.ledger;
     const ambiguousPitcher = game.submit(
-      'record_scoring_judgment',
+      'set_lineup',
       {
-        playEventId: play.event!.eventId,
-        runnerId: 'away-1',
-        responsiblePitcherId: 'home-1'
+        side: 'away',
+        entries: [
+          { slot: 1, playerId: 'away-1' },
+          { slot: 2, playerId: 'away-2' },
+          { slot: 3, playerId: 'home-1' }
+        ]
       },
       { accept: false }
     );
-    expect(ambiguousPitcher.result.rejection?.code).toBe('responsible-pitcher-role-mismatch');
-    const ambiguousDecision = game.submit(
-      'record_scoring_judgment',
-      {
-        playEventId: play.event!.eventId,
-        pitcherOfRecord: { side: 'home', playerId: 'home-1', decision: 'loss' }
-      },
-      { accept: false }
-    );
-    expect(ambiguousDecision.result.rejection?.code).toBe('pitcher-not-in-lineup');
+    expect(ambiguousPitcher.result.rejection?.code).toBe('opposing-lineup-player');
+    expect(ambiguousPitcher.ledger).toBe(before);
+    expect(ambiguousPitcher.ledger.state.revision).toBe(before.state.revision);
+    expect(replayDiamondLedger(game.ledger).state).toEqual(before.state);
   });
 
   it('replays more than 1,500 immutable events from zero without a bounded-window shortcut', () => {
@@ -4110,45 +4088,26 @@ describe('Diamond stat-integrity evidence', () => {
     expect(verifyDiamondLedger(inheritedRunner.ledger)).toBe(true);
   });
 
-  it('rejects ambiguous inline credits and validates replacements in historical play context', () => {
+  it('rejects opposing identities at lineup admission and validates replacements in historical play context', () => {
     const ambiguous = harness('baseball-nfhs', 'full');
     setBasicLineups(ambiguous, { start: false });
-    ambiguous.submit('set_lineup', {
-      side: 'away',
-      entries: [
-        { slot: 1, playerId: 'away-1' },
-        { slot: 2, playerId: 'home-1' },
-        { slot: 3, playerId: 'home-2' }
-      ]
-    });
-    ambiguous.submit('start', {});
+    const beforeAmbiguousLineup = ambiguous.ledger;
     const ambiguousFielder = ambiguous.submit(
-      'record_plate_appearance',
+      'set_lineup',
       {
-        batterId: 'away-1',
-        pitcherId: 'home-1',
-        result: 'ground_out',
-        batterAdvance: { to: 'out', outKind: 'batter_runner' },
-        runnerAdvances: [],
-        outsOnPlay: 1,
-        fielding: { putoutBy: 'home-2' }
+        side: 'away',
+        entries: [
+          { slot: 1, playerId: 'away-1' },
+          { slot: 2, playerId: 'home-1' },
+          { slot: 3, playerId: 'home-2' }
+        ]
       },
       { accept: false }
     );
-    expect(ambiguousFielder.result.rejection?.code).toBe('invalid-fielding-participant');
-    const ambiguousPitcher = ambiguous.submit(
-      'record_plate_appearance',
-      {
-        batterId: 'away-1',
-        pitcherId: 'home-1',
-        result: 'single',
-        batterAdvance: { to: 'first', responsiblePitcherId: 'home-1' },
-        runnerAdvances: [],
-        outsOnPlay: 0
-      },
-      { accept: false }
-    );
-    expect(ambiguousPitcher.result.rejection?.code).toBe('responsible-pitcher-role-mismatch');
+    expect(ambiguousFielder.result.rejection?.code).toBe('opposing-lineup-player');
+    expect(ambiguousFielder.ledger).toBe(beforeAmbiguousLineup);
+    expect(ambiguousFielder.ledger.state.revision).toBe(beforeAmbiguousLineup.state.revision);
+    expect(replayDiamondLedger(ambiguous.ledger).state).toEqual(beforeAmbiguousLineup.state);
 
     const corrected = harness('baseball-nfhs', 'full');
     setBasicLineups(corrected);

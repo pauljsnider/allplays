@@ -636,6 +636,13 @@ function buildCheckpointFromRoot(root) {
   return checkpoint;
 }
 
+function hasDiamondPlayerIdentityHistory(state) {
+  return Boolean(
+    Array.isArray(state?.lineups?.home?.courtesyRunnerIds) &&
+    Array.isArray(state?.lineups?.away?.courtesyRunnerIds),
+  );
+}
+
 function completenessForState(state) {
   const families = isPlainObject(state?.coverage) ? { ...state.coverage } : {};
   const values = Object.values(families);
@@ -1615,6 +1622,20 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       reason: decision?.code || "diamond-operation-denied",
       retryable,
     });
+  }
+
+  function requireDiamondPlayerIdentityHistory(root, checkpoint) {
+    if (
+      hasDiamondPlayerIdentityHistory(root?.initialState) &&
+      hasDiamondPlayerIdentityHistory(checkpoint?.state)
+    ) {
+      return;
+    }
+    throw makeError(
+      "failed-precondition",
+      "This Diamond scorebook is read-only because player identity history is unavailable.",
+      { reason: "history-required", retryable: false },
+    );
   }
 
   function requireManager(
@@ -4205,6 +4226,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
           }),
         };
       }
+      requireDiamondPlayerIdentityHistory(root, checkpoint);
       if (root.instanceId !== expectedInstanceId) {
         throw makeError(
           "aborted",

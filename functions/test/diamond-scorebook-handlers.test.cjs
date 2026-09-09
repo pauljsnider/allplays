@@ -4331,6 +4331,50 @@ describe("Diamond scorebook handler factory", () => {
     );
   });
 
+  it("quarantines unmarked scorer-lease acquisition and recovery without writes", async () => {
+    for (const [index, operation] of ["acquire", "recover"].entries()) {
+      const harness = createHarness();
+      await activate(harness);
+      const resourcePaths = paths("team-1", "game-1");
+      const unmarkedRoot = harness.firestore.read(resourcePaths.scorebook);
+      delete unmarkedRoot.initialState.lineups.home.courtesyRunnerIds;
+      delete unmarkedRoot.initialState.lineups.away.courtesyRunnerIds;
+      delete unmarkedRoot.checkpoint.state.lineups.home.courtesyRunnerIds;
+      delete unmarkedRoot.checkpoint.state.lineups.away.courtesyRunnerIds;
+      harness.firestore.seed(resourcePaths.scorebook, unmarkedRoot);
+      const beforeRoot = harness.firestore.read(resourcePaths.scorebook);
+      const beforeEventCount = harness.firestore.countDirectChildren(
+        resourcePaths.events,
+      );
+      const requestId = makeUuid(319 + index);
+
+      await assert.rejects(
+        changeScorerLease(harness, { requestId, operation }),
+        (error) =>
+          error.code === "failed-precondition" &&
+          error.details?.reason === "history-required" &&
+          error.details?.retryable === false,
+      );
+
+      assert.deepEqual(
+        harness.firestore.read(resourcePaths.scorebook),
+        beforeRoot,
+      );
+      assert.equal(
+        harness.firestore.countDirectChildren(resourcePaths.events),
+        beforeEventCount,
+      );
+      assert.equal(
+        harness.firestore.read(resourcePaths.command(requestId)),
+        undefined,
+      );
+      assert.equal(
+        harness.firestore.read(resourcePaths.audit(requestId)),
+        undefined,
+      );
+    }
+  });
+
   it("persists, renews, and rotates the scorer lease while rejecting stale tokens", async () => {
     let nowMs = 1_750_000_000_000;
     const harness = createHarness({ clock: () => nowMs });

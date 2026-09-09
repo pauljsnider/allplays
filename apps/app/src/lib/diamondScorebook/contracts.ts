@@ -1,6 +1,7 @@
 export const DIAMOND_SCHEMA_VERSION = 2 as const;
 export const DIAMOND_REDUCER_VERSION = 2 as const;
 export const DIAMOND_STAT_CATALOG_VERSION = 1 as const;
+export const DIAMOND_MAX_COURTESY_RUNNER_IDENTITIES_PER_SIDE = 100 as const;
 
 export type DiamondSport = 'baseball' | 'fastpitch';
 export type DiamondSide = 'home' | 'away';
@@ -76,6 +77,8 @@ export type DiamondLineupSlot = Readonly<{
 export type DiamondTeamLineup = Readonly<{
   battingOrder: readonly DiamondLineupSlot[];
   defense: Readonly<Partial<Record<DiamondDefensivePosition, string>>>;
+  /** Side binding for courtesy-runner identities in the effective canonical history. */
+  courtesyRunnerIds: readonly string[];
   dpFlex: Readonly<{
     dpPlayerId: string;
     flexPlayerId: string;

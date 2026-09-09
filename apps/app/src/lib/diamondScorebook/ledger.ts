@@ -316,6 +316,7 @@ function knownPlayerIds(state: DiamondGameState, side: DiamondSide) {
   return new Set([
     ...lineup.battingOrder.flatMap((slot) => [slot.starterPlayerId, slot.activePlayerId, ...slot.substitutions]),
     ...Object.values(lineup.defense).filter((playerId): playerId is string => Boolean(playerId)),
+    ...lineup.courtesyRunnerIds,
     ...(lineup.dpFlex ? [lineup.dpFlex.dpPlayerId, lineup.dpFlex.flexPlayerId] : [])
   ]);
 }
@@ -542,6 +543,7 @@ function transitionToCorrectionState(state: DiamondGameState): DiamondGameState 
 }
 
 function replayCanonicalDiamondEvents(initialState: DiamondGameState, events: readonly DiamondEvent[]): InternalDiamondReplay {
+  validateDiamondState(initialState);
   const directives = getCorrectionDirectives(events);
   const obsoleteFinalizations = getObsoleteFinalizationPairs(events);
   const voidedEventIds = new Set(
@@ -690,6 +692,21 @@ export function createDiamondCheckpoint(ledger: DiamondLedger): DiamondCheckpoin
     sequence: ledger.state.revision,
     previousHash,
     state: ledger.state
+  });
+}
+
+/** Returns side ownership from validated marked initial and effective states. */
+export function validateDiamondPlayerIdentityOwnership(ledger: DiamondLedger): true {
+  getDiamondPlayerIdentityIdsBySide(ledger);
+  return true;
+}
+
+export function getDiamondPlayerIdentityIdsBySide(ledger: DiamondLedger): Readonly<Record<DiamondSide, readonly string[]>> {
+  validateDiamondState(ledger.initialState);
+  const ownershipState = validateDiamondState(ledger.state);
+  return deepFreeze({
+    home: [...knownPlayerIds(ownershipState, 'home')].sort(),
+    away: [...knownPlayerIds(ownershipState, 'away')].sort()
   });
 }
 
@@ -992,6 +1009,8 @@ export function executeDiamondCommand(ledger: DiamondLedger, command: DiamondCom
       };
     }
 
+    validateDiamondState(ledger.initialState);
+    validateDiamondState(ledger.state);
     validateEnvelope(ledger, command, context);
     if (command.expectedRevision !== ledger.state.revision) {
       throw new DiamondDomainError(
