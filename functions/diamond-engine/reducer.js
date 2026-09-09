@@ -574,6 +574,15 @@ function hasCompletePutoutEvidence(fieldings, actualOutCount) {
     const creditedOuts = Array.from(deriveDiamondPutoutCredits(fieldings, actualOutCount).values()).reduce((total, count) => total + count, 0);
     return creditedOuts === actualOutCount;
 }
+function hasCompleteSemanticFieldingEvidence(advances, fieldings, result) {
+    const requiresError = result === 'reached_on_error' ||
+        result === 'interference' ||
+        advances.some((advance) => advance.cause === 'error' || (advance.cause === 'obstruction' && advance.to !== 'stay'));
+    return ((!requiresError || fieldings.some((fielding) => Boolean(fielding.errors?.length))) &&
+        (!advances.some((advance) => advance.cause === 'passed_ball') || fieldings.some((fielding) => Boolean(fielding.passedBallBy))) &&
+        (result !== 'double_play' || fieldings.some((fielding) => fielding.doublePlay === true)) &&
+        (result !== 'triple_play' || fieldings.some((fielding) => fielding.triplePlay === true)));
+}
 function judgmentsForPlay(event, attached) {
     return [
         ...(attached.get(event.sourceEventId) ?? []),
@@ -650,7 +659,7 @@ function deriveDiamondCoverageFromEventStates(initialState, eventStates) {
                 if (payload.outsOnPlay > 0 && !hasCompletePutoutEvidence(fieldingChains, payload.outsOnPlay)) {
                     coverage = { ...coverage, fielding: 'partial' };
                 }
-                if (payload.result === 'reached_on_error' && !fieldingChains.some((chain) => Boolean(chain.errors?.length))) {
+                if (!hasCompleteSemanticFieldingEvidence([payload.batterAdvance, ...payload.runnerAdvances], fieldingChains, payload.result)) {
                     coverage = { ...coverage, fielding: 'partial' };
                 }
             }
@@ -670,6 +679,9 @@ function deriveDiamondCoverageFromEventStates(initialState, eventStates) {
             if (initialState.captureMode === 'full' && payload.to === 'out') {
                 if (!hasCompletePutoutEvidence(fieldingChains, 1))
                     coverage = { ...coverage, fielding: 'partial' };
+            }
+            if (initialState.captureMode === 'full' && !hasCompleteSemanticFieldingEvidence([payload], fieldingChains)) {
+                coverage = { ...coverage, fielding: 'partial' };
             }
         }
     });
@@ -1617,8 +1629,8 @@ function reduceDiamondEvent(state, action) {
             }
             const missingFullFielding = action.payload.outsOnPlay > 0 &&
                 !hasCompletePutoutEvidence(action.payload.fielding ? [action.payload.fielding] : [], action.payload.outsOnPlay);
-            const missingReachedOnErrorFielder = action.payload.result === 'reached_on_error' && !action.payload.fielding?.errors?.length;
-            if (state.captureMode === 'full' && (missingFullFielding || missingReachedOnErrorFielder)) {
+            const missingSemanticFielding = !hasCompleteSemanticFieldingEvidence([action.payload.batterAdvance, ...action.payload.runnerAdvances], action.payload.fielding ? [action.payload.fielding] : [], action.payload.result);
+            if (state.captureMode === 'full' && (missingFullFielding || missingSemanticFielding)) {
                 next = markPartial(next, ['fielding']);
             }
             break;
@@ -1657,9 +1669,10 @@ function reduceDiamondEvent(state, action) {
             if (action.payload.to === 'home' && action.payload.countsRun !== false && action.payload.earned === undefined) {
                 next = markPartial(next, ['pitching']);
             }
+            const inlineFielding = action.payload.fielding ? [action.payload.fielding] : [];
             if (state.captureMode === 'full' &&
-                action.payload.to === 'out' &&
-                !hasCompletePutoutEvidence(action.payload.fielding ? [action.payload.fielding] : [], 1)) {
+                ((action.payload.to === 'out' && !hasCompletePutoutEvidence(inlineFielding, 1)) ||
+                    !hasCompleteSemanticFieldingEvidence([action.payload], inlineFielding))) {
                 next = markPartial(next, ['fielding']);
             }
             break;

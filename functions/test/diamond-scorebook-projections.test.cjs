@@ -2991,94 +2991,380 @@ test("compiled fielding projection preserves one-fielder putout multiplicity wit
 
 test("compiled bounded checkpoint fielding completeness stays byte-identical to full replay", () => {
   const matrix = [
-    { captureMode: "full", assists: [], expectedCoverage: "complete" },
-    { captureMode: "full", assists: ["home-1"], expectedCoverage: "partial" },
-    { captureMode: "quick", assists: [], expectedCoverage: "partial" },
-    { captureMode: "quick", assists: ["home-1"], expectedCoverage: "partial" },
+    {
+      captureMode: "full",
+      assists: [],
+      includeNamedFlag: true,
+      expectedCoverage: "complete",
+    },
+    {
+      captureMode: "full",
+      assists: [],
+      includeNamedFlag: false,
+      expectedCoverage: "partial",
+    },
+    {
+      captureMode: "full",
+      assists: ["home-1"],
+      includeNamedFlag: true,
+      expectedCoverage: "partial",
+    },
+    {
+      captureMode: "quick",
+      assists: [],
+      includeNamedFlag: true,
+      expectedCoverage: "partial",
+    },
+    {
+      captureMode: "quick",
+      assists: ["home-1"],
+      includeNamedFlag: true,
+      expectedCoverage: "partial",
+    },
   ];
 
-  matrix.forEach(({ captureMode, assists, expectedCoverage }, index) => {
-    const game = harness(captureMode, "baseball-nfhs");
-    setLineupsAndStart(game, 3);
-    game.submit("record_pitch", {
-      ...currentMatchup(game),
-      result: "in_play",
+  matrix.forEach(
+    ({ captureMode, assists, includeNamedFlag, expectedCoverage }, index) => {
+      const game = harness(captureMode, "baseball-nfhs");
+      setLineupsAndStart(game, 3);
+      game.submit("record_pitch", {
+        ...currentMatchup(game),
+        result: "in_play",
+      });
+      const reachMatchup = currentMatchup(game);
+      game.submit("record_plate_appearance", {
+        ...reachMatchup,
+        result: "single",
+        batterAdvance: { to: "first" },
+        runnerAdvances: [],
+        outsOnPlay: 0,
+      });
+      game.submit("record_pitch", {
+        ...currentMatchup(game),
+        result: "in_play",
+      });
+      const doubleMatchup = currentMatchup(game);
+      const command = {
+        schemaVersion: DIAMOND_SCHEMA_VERSION,
+        commandId: uuid(900 + index),
+        teamId: game.ledger.teamId,
+        gameId: game.ledger.gameId,
+        expectedRevision: game.ledger.state.revision,
+        rulesProfileId: game.ledger.rulesProfileId,
+        rulesProfileVersion: game.ledger.rulesProfileVersion,
+        type: "record_plate_appearance",
+        payload: {
+          ...doubleMatchup,
+          result: "double_play",
+          batterAdvance: { to: "out", outKind: "batter_runner" },
+          runnerAdvances: [
+            {
+              runnerId: reachMatchup.batterId,
+              from: "first",
+              to: "out",
+              cause: "force_out",
+              outKind: "force",
+            },
+          ],
+          outsOnPlay: 2,
+          fielding: {
+            putoutBy: "home-2",
+            ...(assists.length ? { assists } : {}),
+            ...(includeNamedFlag ? { doublePlay: true } : {}),
+          },
+        },
+      };
+      const context = {
+        actorUid: SCORER_UID,
+        eventId: `checkpoint-double-play-${captureMode}-${String(index)}`,
+        serverTimestampMs: 1_700_000_100_000 + index,
+      };
+      const checkpoint = createDiamondCheckpoint(game.ledger);
+      const full = executeDiamondCommand(game.ledger, command, context);
+      const bounded = executeDiamondCommandFromCheckpoint(
+        checkpoint,
+        command,
+        context,
+      );
+
+      assert.equal(full.result.outcome, "accepted");
+      assert.equal(bounded.result.outcome, "accepted");
+      assert.equal(full.ledger.state.coverage.fielding, expectedCoverage);
+      assert.equal(
+        bounded.checkpoint.state.coverage.fielding,
+        expectedCoverage,
+      );
+      assert.equal(bounded.checkpoint.sequence, checkpoint.sequence + 1);
+      assert.equal(bounded.checkpoint.previousHash, bounded.event.hash);
+      assert.deepEqual(bounded.event, full.event);
+      assert.deepEqual(
+        replayDiamondLedger(full.ledger).state,
+        full.ledger.state,
+      );
+
+      const duplicate = executeDiamondCommandFromCheckpoint(
+        checkpoint,
+        command,
+        context,
+        bounded.receipt,
+      );
+      assert.equal(duplicate.result.outcome, "duplicate");
+      assert.equal(duplicate.result.revision, full.ledger.state.revision);
+      assert.deepEqual(duplicate.event, full.event);
+    },
+  );
+});
+
+test("compiled runner-cause fielding completeness matches full replay for every advance shape", () => {
+  const causes = [
+    { cause: "error", playerId: "home-1", stat: "E" },
+    { cause: "passed_ball", playerId: "home-2", stat: "PB" },
+    { cause: "obstruction", playerId: "home-1", stat: "E" },
+  ];
+  const shapes = ["plate_existing", "plate_batter", "standalone"];
+
+  causes
+    .flatMap((fixture) => shapes.map((shape) => ({ ...fixture, shape })))
+    .forEach((fixture, index) => {
+      const game = harness("full", "baseball-nfhs");
+      setLineupsAndStart(game, 3);
+      let type;
+      let payload;
+      if (fixture.shape === "plate_batter") {
+        type = "record_plate_appearance";
+        payload = {
+          ...currentMatchup(game),
+          result: "dropped_third_strike",
+          batterAdvance: { to: "first", cause: fixture.cause },
+          runnerAdvances: [],
+          outsOnPlay: 0,
+        };
+      } else {
+        const runnerId = placeRunnerOnBase(game, "first");
+        if (fixture.shape === "standalone") {
+          type = "advance_runner";
+          payload = {
+            runnerId,
+            from: "first",
+            to: "second",
+            cause: fixture.cause,
+          };
+        } else {
+          type = "record_plate_appearance";
+          payload = {
+            ...currentMatchup(game),
+            result: "single",
+            batterAdvance: { to: "first", cause: "batted_ball" },
+            runnerAdvances: [
+              {
+                runnerId,
+                from: "first",
+                to: "third",
+                cause: fixture.cause,
+              },
+            ],
+            outsOnPlay: 0,
+          };
+        }
+      }
+      const command = {
+        schemaVersion: DIAMOND_SCHEMA_VERSION,
+        commandId: uuid(950 + index),
+        teamId: game.ledger.teamId,
+        gameId: game.ledger.gameId,
+        expectedRevision: game.ledger.state.revision,
+        rulesProfileId: game.ledger.rulesProfileId,
+        rulesProfileVersion: game.ledger.rulesProfileVersion,
+        type,
+        payload,
+      };
+      const context = {
+        actorUid: SCORER_UID,
+        eventId: `checkpoint-runner-cause-${fixture.cause}-${fixture.shape}`,
+        serverTimestampMs: 1_700_000_200_000 + index,
+      };
+      const checkpoint = createDiamondCheckpoint(game.ledger);
+      const full = executeDiamondCommand(game.ledger, command, context);
+      const bounded = executeDiamondCommandFromCheckpoint(
+        checkpoint,
+        command,
+        context,
+      );
+
+      assert.equal(full.result.outcome, "accepted");
+      assert.equal(bounded.result.outcome, "accepted");
+      assert.equal(full.ledger.state.coverage.fielding, "partial");
+      assert.equal(bounded.checkpoint.state.coverage.fielding, "partial");
+      assert.equal(
+        projectDiamondStats(full.ledger).players[fixture.playerId].raw.fielding[
+          fixture.stat
+        ],
+        0,
+      );
+      assert.deepEqual(bounded.event, full.event);
+      assert.deepEqual(
+        replayDiamondLedger(full.ledger).state,
+        full.ledger.state,
+      );
     });
-    const reachMatchup = currentMatchup(game);
-    game.submit("record_plate_appearance", {
-      ...reachMatchup,
-      result: "single",
+
+  const stay = harness("full", "baseball-nfhs");
+  setLineupsAndStart(stay, 3);
+  const stayRunnerId = placeRunnerOnBase(stay, "first");
+  const stayCommand = {
+    schemaVersion: DIAMOND_SCHEMA_VERSION,
+    commandId: uuid(980),
+    teamId: stay.ledger.teamId,
+    gameId: stay.ledger.gameId,
+    expectedRevision: stay.ledger.state.revision,
+    rulesProfileId: stay.ledger.rulesProfileId,
+    rulesProfileVersion: stay.ledger.rulesProfileVersion,
+    type: "advance_runner",
+    payload: {
+      runnerId: stayRunnerId,
+      from: "first",
+      to: "stay",
+      cause: "obstruction",
+    },
+  };
+  const stayContext = {
+    actorUid: SCORER_UID,
+    eventId: "checkpoint-obstruction-stay",
+    serverTimestampMs: 1_700_000_200_100,
+  };
+  const stayCheckpoint = createDiamondCheckpoint(stay.ledger);
+  const fullStay = executeDiamondCommand(stay.ledger, stayCommand, stayContext);
+  const boundedStay = executeDiamondCommandFromCheckpoint(
+    stayCheckpoint,
+    stayCommand,
+    stayContext,
+  );
+  assert.equal(fullStay.result.outcome, "accepted");
+  assert.equal(boundedStay.result.outcome, "accepted");
+  assert.equal(fullStay.ledger.state.coverage.fielding, "complete");
+  assert.equal(boundedStay.checkpoint.state.coverage.fielding, "complete");
+  assert.deepEqual(boundedStay.event, fullStay.event);
+  assert.deepEqual(
+    replayDiamondLedger(fullStay.ledger).state,
+    fullStay.ledger.state,
+  );
+});
+
+test("compiled catcher-interference coverage matches checkpoints and follows full-history attachments and voids", () => {
+  const game = harness("full", "baseball-nfhs");
+  setLineupsAndStart(game, 3);
+  game.submit("record_pitch", {
+    ...currentMatchup(game),
+    result: "catcher_interference",
+  });
+  const matchup = currentMatchup(game);
+  const playCommand = {
+    schemaVersion: DIAMOND_SCHEMA_VERSION,
+    commandId: uuid(990),
+    teamId: game.ledger.teamId,
+    gameId: game.ledger.gameId,
+    expectedRevision: game.ledger.state.revision,
+    rulesProfileId: game.ledger.rulesProfileId,
+    rulesProfileVersion: game.ledger.rulesProfileVersion,
+    type: "record_plate_appearance",
+    payload: {
+      ...matchup,
+      result: "interference",
       batterAdvance: { to: "first" },
       runnerAdvances: [],
       outsOnPlay: 0,
-    });
-    game.submit("record_pitch", {
-      ...currentMatchup(game),
-      result: "in_play",
-    });
-    const doubleMatchup = currentMatchup(game);
-    const command = {
-      schemaVersion: DIAMOND_SCHEMA_VERSION,
-      commandId: uuid(900 + index),
-      teamId: game.ledger.teamId,
-      gameId: game.ledger.gameId,
-      expectedRevision: game.ledger.state.revision,
-      rulesProfileId: game.ledger.rulesProfileId,
-      rulesProfileVersion: game.ledger.rulesProfileVersion,
-      type: "record_plate_appearance",
-      payload: {
-        ...doubleMatchup,
-        result: "double_play",
-        batterAdvance: { to: "out", outKind: "batter_runner" },
-        runnerAdvances: [
-          {
-            runnerId: reachMatchup.batterId,
-            from: "first",
-            to: "out",
-            cause: "force_out",
-            outKind: "force",
-          },
-        ],
-        outsOnPlay: 2,
-        fielding: {
-          putoutBy: "home-2",
-          ...(assists.length ? { assists } : {}),
-          doublePlay: true,
-        },
+    },
+  };
+  const playContext = {
+    actorUid: SCORER_UID,
+    eventId: "checkpoint-catcher-interference",
+    serverTimestampMs: 1_700_000_201_000,
+  };
+  const initialCheckpoint = createDiamondCheckpoint(game.ledger);
+  const fullPlay = executeDiamondCommand(game.ledger, playCommand, playContext);
+  const boundedPlay = executeDiamondCommandFromCheckpoint(
+    initialCheckpoint,
+    playCommand,
+    playContext,
+  );
+  assert.equal(fullPlay.result.outcome, "accepted");
+  assert.equal(boundedPlay.result.outcome, "accepted");
+  assert.equal(fullPlay.ledger.state.coverage.fielding, "partial");
+  assert.equal(boundedPlay.checkpoint.state.coverage.fielding, "partial");
+  assert.equal(
+    projectDiamondStats(fullPlay.ledger).players["home-2"].raw.fielding.E,
+    0,
+  );
+  assert.deepEqual(boundedPlay.event, fullPlay.event);
+  assert.deepEqual(boundedPlay.checkpoint.state, fullPlay.ledger.state);
+
+  const fieldingCommand = {
+    schemaVersion: DIAMOND_SCHEMA_VERSION,
+    commandId: uuid(991),
+    teamId: game.ledger.teamId,
+    gameId: game.ledger.gameId,
+    expectedRevision: fullPlay.ledger.state.revision,
+    rulesProfileId: game.ledger.rulesProfileId,
+    rulesProfileVersion: game.ledger.rulesProfileVersion,
+    type: "record_fielding",
+    payload: {
+      playEventId: fullPlay.event.eventId,
+      fielding: {
+        errors: [{ playerId: "home-2", kind: "fielding" }],
       },
-    };
-    const context = {
-      actorUid: SCORER_UID,
-      eventId: `checkpoint-double-play-${captureMode}-${String(index)}`,
-      serverTimestampMs: 1_700_000_100_000 + index,
-    };
-    const checkpoint = createDiamondCheckpoint(game.ledger);
-    const full = executeDiamondCommand(game.ledger, command, context);
-    const bounded = executeDiamondCommandFromCheckpoint(
-      checkpoint,
-      command,
-      context,
-    );
+    },
+  };
+  const fieldingContext = {
+    actorUid: SCORER_UID,
+    eventId: "checkpoint-catcher-interference-fielding",
+    serverTimestampMs: 1_700_000_201_001,
+  };
+  const fullFielding = executeDiamondCommand(
+    fullPlay.ledger,
+    fieldingCommand,
+    fieldingContext,
+  );
+  assert.equal(fullFielding.result.outcome, "accepted");
+  assert.equal(fullFielding.ledger.state.coverage.fielding, "complete");
+  assert.equal(
+    projectDiamondStats(fullFielding.ledger).players["home-2"].raw.fielding.E,
+    1,
+  );
 
-    assert.equal(full.result.outcome, "accepted");
-    assert.equal(bounded.result.outcome, "accepted");
-    assert.equal(full.ledger.state.coverage.fielding, expectedCoverage);
-    assert.equal(bounded.checkpoint.state.coverage.fielding, expectedCoverage);
-    assert.equal(bounded.checkpoint.sequence, checkpoint.sequence + 1);
-    assert.equal(bounded.checkpoint.previousHash, bounded.event.hash);
-    assert.deepEqual(bounded.event, full.event);
-    assert.deepEqual(replayDiamondLedger(full.ledger).state, full.ledger.state);
-
-    const duplicate = executeDiamondCommandFromCheckpoint(
-      checkpoint,
-      command,
-      context,
-      bounded.receipt,
-    );
-    assert.equal(duplicate.result.outcome, "duplicate");
-    assert.equal(duplicate.result.revision, full.ledger.state.revision);
-    assert.deepEqual(duplicate.event, full.event);
-  });
+  const voidCommand = {
+    schemaVersion: DIAMOND_SCHEMA_VERSION,
+    commandId: uuid(992),
+    teamId: game.ledger.teamId,
+    gameId: game.ledger.gameId,
+    expectedRevision: fullFielding.ledger.state.revision,
+    rulesProfileId: game.ledger.rulesProfileId,
+    rulesProfileVersion: game.ledger.rulesProfileVersion,
+    type: "void_event",
+    payload: {
+      targetEventId: fullFielding.event.eventId,
+      reason: "Remove catcher interference error credit.",
+    },
+  };
+  const voidContext = {
+    actorUid: SCORER_UID,
+    eventId: "checkpoint-catcher-interference-void",
+    serverTimestampMs: 1_700_000_201_002,
+  };
+  const fullVoid = executeDiamondCommand(
+    fullFielding.ledger,
+    voidCommand,
+    voidContext,
+  );
+  assert.equal(fullVoid.result.outcome, "accepted");
+  assert.equal(fullVoid.ledger.state.coverage.fielding, "partial");
+  assert.equal(
+    projectDiamondStats(fullVoid.ledger).players["home-2"].raw.fielding.E,
+    0,
+  );
+  assert.deepEqual(
+    replayDiamondLedger(fullVoid.ledger).state,
+    fullVoid.ledger.state,
+  );
 });
 
 test("compiled GIDP credit requires explicit ground-ball evidence across checkpoints and final corrections", () => {

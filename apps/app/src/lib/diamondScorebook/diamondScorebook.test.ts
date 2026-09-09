@@ -3953,6 +3953,310 @@ describe('Diamond stat-integrity evidence', () => {
     expect(projection.teams.home).toMatchObject({ firstPitchStrikeOpportunities: 1, firstPitchStrikes: 0 });
   });
 
+  it.each([
+    {
+      cause: 'error' as const,
+      fielding: { errors: [{ playerId: 'home-3', kind: 'fielding' as const }] },
+      playerId: 'home-3',
+      stat: 'E' as const
+    },
+    {
+      cause: 'passed_ball' as const,
+      fielding: { passedBallBy: 'home-2' },
+      playerId: 'home-2',
+      stat: 'PB' as const
+    },
+    {
+      cause: 'obstruction' as const,
+      fielding: { errors: [{ playerId: 'home-3', kind: 'fielding' as const }] },
+      playerId: 'home-3',
+      stat: 'E' as const
+    }
+  ])(
+    'marks every full-capture $cause advance shape partial until matching fielding credit is attached',
+    ({ cause, fielding, playerId, stat }) => {
+      const game = harness('baseball-nfhs', 'full');
+      setBasicLineups(game);
+      recordPitch(game, 'away-1', 'home-1');
+      game.submit('record_plate_appearance', {
+        batterId: 'away-1',
+        pitcherId: 'home-1',
+        result: 'single',
+        batterAdvance: { to: 'first', cause: 'batted_ball' },
+        runnerAdvances: [],
+        outsOnPlay: 0
+      });
+      expect(game.ledger.state.coverage.fielding).toBe('complete');
+
+      recordPitch(game, 'away-2', 'home-1');
+      const play = game.submit('record_plate_appearance', {
+        batterId: 'away-2',
+        pitcherId: 'home-1',
+        result: 'single',
+        batterAdvance: { to: 'first', cause: 'batted_ball' },
+        runnerAdvances: [{ runnerId: 'away-1', from: 'first', to: 'third', cause }],
+        outsOnPlay: 0
+      });
+
+      expect(game.ledger.state.coverage.fielding).toBe('partial');
+      expect(projectDiamondStats(game.ledger).players[playerId].raw.fielding[stat]).toBe(0);
+      const attachment = game.submit('record_fielding', { playEventId: play.event!.eventId, fielding });
+      expect(game.ledger.state.coverage.fielding).toBe('complete');
+      expect(projectDiamondStats(game.ledger).players[playerId].raw.fielding[stat]).toBe(1);
+      expect(verifyDiamondLedger(game.ledger)).toBe(true);
+      expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
+
+      game.submit('void_event', { targetEventId: attachment.event!.eventId, reason: 'Remove the attached fielding credit.' });
+      expect(game.ledger.state.coverage.fielding).toBe('partial');
+      expect(projectDiamondStats(game.ledger).players[playerId].raw.fielding[stat]).toBe(0);
+      expect(verifyDiamondLedger(game.ledger)).toBe(true);
+      expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
+
+      const standalone = harness('baseball-nfhs', 'full');
+      setBasicLineups(standalone);
+      standalone.submit('record_plate_appearance', {
+        batterId: 'away-1',
+        pitcherId: 'home-1',
+        result: 'single',
+        batterAdvance: { to: 'first', cause: 'batted_ball' },
+        runnerAdvances: [],
+        outsOnPlay: 0
+      });
+      const standalonePlay = standalone.submit('advance_runner', {
+        runnerId: 'away-1',
+        from: 'first',
+        to: 'second',
+        cause
+      });
+      expect(standalone.ledger.state.coverage.fielding).toBe('partial');
+      standalone.submit('record_fielding', { playEventId: standalonePlay.event!.eventId, fielding });
+      expect(standalone.ledger.state.coverage.fielding).toBe('complete');
+      expect(projectDiamondStats(standalone.ledger).players[playerId].raw.fielding[stat]).toBe(1);
+      expect(replayDiamondLedger(standalone.ledger).state).toEqual(standalone.ledger.state);
+
+      const batter = harness('baseball-nfhs', 'full');
+      setBasicLineups(batter);
+      const batterPlay = batter.submit('record_plate_appearance', {
+        batterId: 'away-1',
+        pitcherId: 'home-1',
+        result: 'dropped_third_strike',
+        batterAdvance: { to: 'first', cause },
+        runnerAdvances: [],
+        outsOnPlay: 0
+      });
+      expect(batter.ledger.state.coverage.fielding).toBe('partial');
+      batter.submit('record_fielding', { playEventId: batterPlay.event!.eventId, fielding });
+      expect(batter.ledger.state.coverage.fielding).toBe('complete');
+      expect(projectDiamondStats(batter.ledger).players[playerId].raw.fielding[stat]).toBe(1);
+      expect(replayDiamondLedger(batter.ledger).state).toEqual(batter.ledger.state);
+    }
+  );
+
+  it('marks full-capture catcher interference partial until its error is recorded', () => {
+    const game = harness('baseball-nfhs', 'full');
+    setBasicLineups(game);
+    game.submit('record_pitch', { batterId: 'away-1', pitcherId: 'home-1', result: 'catcher_interference' });
+    const play = game.submit('record_plate_appearance', {
+      batterId: 'away-1',
+      pitcherId: 'home-1',
+      result: 'interference',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+
+    expect(game.ledger.state.coverage.fielding).toBe('partial');
+    expect(projectDiamondStats(game.ledger).players['home-2'].raw.fielding.E).toBe(0);
+    const attachment = game.submit('record_fielding', {
+      playEventId: play.event!.eventId,
+      fielding: { errors: [{ playerId: 'home-2', kind: 'fielding' }] }
+    });
+    expect(game.ledger.state.coverage.fielding).toBe('complete');
+    expect(projectDiamondStats(game.ledger).players['home-2'].raw.fielding.E).toBe(1);
+
+    game.submit('void_event', { targetEventId: attachment.event!.eventId, reason: 'Remove catcher interference error credit.' });
+    expect(game.ledger.state.coverage.fielding).toBe('partial');
+    expect(projectDiamondStats(game.ledger).players['home-2'].raw.fielding.E).toBe(0);
+
+    game.submit('supersede_event', {
+      targetEventId: play.event!.eventId,
+      reason: 'Restore the catcher interference error on the corrected play.',
+      replacement: {
+        type: 'record_plate_appearance',
+        payload: {
+          batterId: 'away-1',
+          pitcherId: 'home-1',
+          result: 'interference',
+          batterAdvance: { to: 'first' },
+          runnerAdvances: [],
+          outsOnPlay: 0,
+          fielding: { errors: [{ playerId: 'home-2', kind: 'fielding' }] }
+        }
+      }
+    });
+    expect(game.ledger.state.coverage.fielding).toBe('complete');
+    expect(projectDiamondStats(game.ledger).players['home-2'].raw.fielding.E).toBe(1);
+    expect(verifyDiamondLedger(game.ledger)).toBe(true);
+    expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
+  });
+
+  it('does not require an error when obstruction leaves the runner in place', () => {
+    const game = harness('baseball-nfhs', 'full');
+    setBasicLineups(game);
+    game.submit('record_plate_appearance', {
+      batterId: 'away-1',
+      pitcherId: 'home-1',
+      result: 'single',
+      batterAdvance: { to: 'first', cause: 'batted_ball' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    game.submit('advance_runner', {
+      runnerId: 'away-1',
+      from: 'first',
+      to: 'stay',
+      cause: 'obstruction'
+    });
+
+    expect(game.ledger.state.coverage.fielding).toBe('complete');
+    expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
+  });
+
+  it('preserves quick-capture fielding coverage semantics for uncaptured cause credit', () => {
+    const notCollected = harness('baseball-nfhs', 'quick');
+    setBasicLineups(notCollected);
+    notCollected.submit('record_plate_appearance', {
+      batterId: 'away-1',
+      pitcherId: 'home-1',
+      result: 'dropped_third_strike',
+      batterAdvance: { to: 'first', cause: 'passed_ball' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    expect(notCollected.ledger.state.coverage.fielding).toBe('not_collected');
+
+    const omitted = harness('baseball-nfhs', 'quick');
+    setBasicLineups(omitted);
+    omitted.submit('record_plate_appearance', {
+      batterId: 'away-1',
+      pitcherId: 'home-1',
+      result: 'dropped_third_strike',
+      batterAdvance: { to: 'first', cause: 'error' },
+      runnerAdvances: [],
+      outsOnPlay: 0,
+      omissions: ['fielding']
+    });
+    expect(omitted.ledger.state.coverage.fielding).toBe('partial');
+  });
+
+  it.each(['passed_ball', 'obstruction'] as const)(
+    'recomputes missing $cause fielding credit through a superseding correction',
+    (cause) => {
+      const game = harness('baseball-nfhs', 'full');
+      setBasicLineups(game);
+      recordPitch(game, 'away-1', 'home-1');
+      game.submit('record_plate_appearance', {
+        batterId: 'away-1',
+        pitcherId: 'home-1',
+        result: 'single',
+        batterAdvance: { to: 'first', cause: 'batted_ball' },
+        runnerAdvances: [],
+        outsOnPlay: 0
+      });
+      recordPitch(game, 'away-2', 'home-1');
+      const original = game.submit('record_plate_appearance', {
+        batterId: 'away-2',
+        pitcherId: 'home-1',
+        result: 'single',
+        batterAdvance: { to: 'first', cause: 'batted_ball' },
+        runnerAdvances: [{ runnerId: 'away-1', from: 'first', to: 'third', cause: 'batted_ball' }],
+        outsOnPlay: 0
+      });
+      expect(game.ledger.state.coverage.fielding).toBe('complete');
+
+      game.submit('supersede_event', {
+        targetEventId: original.event!.eventId,
+        reason: `The existing runner advanced on uncaptured ${cause} credit.`,
+        replacement: {
+          type: 'record_plate_appearance',
+          payload: {
+            batterId: 'away-2',
+            pitcherId: 'home-1',
+            result: 'single',
+            batterAdvance: { to: 'first', cause: 'batted_ball' },
+            runnerAdvances: [{ runnerId: 'away-1', from: 'first', to: 'third', cause }],
+            outsOnPlay: 0
+          }
+        }
+      });
+
+      expect(game.ledger.state.coverage.fielding).toBe('partial');
+      expect(verifyDiamondLedger(game.ledger)).toBe(true);
+      expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
+    }
+  );
+
+  it.each([
+    { result: 'double_play' as const, outsOnPlay: 2 as const, stat: 'DP' as const },
+    { result: 'triple_play' as const, outsOnPlay: 3 as const, stat: 'TP' as const }
+  ])('marks a named $result partial until its explicit fielding flag is attached', ({ result, outsOnPlay, stat }) => {
+    const game = harness('baseball-nfhs', 'full');
+    setBasicLineups(game);
+    recordPitch(game, 'away-1', 'home-1');
+    game.submit('record_plate_appearance', {
+      batterId: 'away-1',
+      pitcherId: 'home-1',
+      result: 'single',
+      batterAdvance: { to: 'first', cause: 'batted_ball' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    if (outsOnPlay === 3) {
+      recordPitch(game, 'away-2', 'home-1');
+      game.submit('record_plate_appearance', {
+        batterId: 'away-2',
+        pitcherId: 'home-1',
+        result: 'single',
+        batterAdvance: { to: 'first', cause: 'batted_ball' },
+        runnerAdvances: [{ runnerId: 'away-1', from: 'first', to: 'second', cause: 'batted_ball' }],
+        outsOnPlay: 0
+      });
+    }
+    const { batterId, pitcherId } = currentMatchup(game);
+    recordPitch(game, batterId, pitcherId);
+    const play = game.submit('record_plate_appearance', {
+      batterId,
+      pitcherId,
+      result,
+      batterAdvance: { to: 'out', outKind: 'batter_runner' },
+      runnerAdvances:
+        outsOnPlay === 2
+          ? [{ runnerId: 'away-1', from: 'first', to: 'out', cause: 'force_out', outKind: 'force' }]
+          : [
+              { runnerId: 'away-1', from: 'second', to: 'out', cause: 'force_out', outKind: 'force' },
+              { runnerId: 'away-2', from: 'first', to: 'out', cause: 'force_out', outKind: 'force' }
+            ],
+      outsOnPlay,
+      fielding: { putoutBy: 'home-2' }
+    });
+
+    expect(game.ledger.state.coverage.fielding).toBe('partial');
+    expect(projectDiamondStats(game.ledger).players['home-2'].raw.fielding).toMatchObject({ PO: outsOnPlay, [stat]: 0 });
+    const attachment = game.submit('record_fielding', {
+      playEventId: play.event!.eventId,
+      fielding: result === 'double_play' ? { doublePlay: true } : { triplePlay: true }
+    });
+    expect(game.ledger.state.coverage.fielding).toBe('complete');
+    expect(projectDiamondStats(game.ledger).players['home-2'].raw.fielding[stat]).toBe(1);
+    expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
+
+    game.submit('void_event', { targetEventId: attachment.event!.eventId, reason: 'Remove the named multi-out fielding flag.' });
+    expect(game.ledger.state.coverage.fielding).toBe('partial');
+    expect(projectDiamondStats(game.ledger).players['home-2'].raw.fielding[stat]).toBe(0);
+    expect(verifyDiamondLedger(game.ledger)).toBe(true);
+    expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
+  });
+
   it('recomputes fielding and earned-run coverage from effective attachments and revokes it when voided', () => {
     const fieldingGame = harness('baseball-nfhs', 'full');
     setBasicLineups(fieldingGame);
@@ -4089,9 +4393,13 @@ describe('Diamond stat-integrity evidence', () => {
 
     game.submit('record_pitch', { batterId: 'away-3', pitcherId: 'home-1', result: 'balk' });
     game.submit('advance_runner', { runnerId: 'away-2', from: 'third', to: 'stay', cause: 'balk' });
+    game.submit('record_pitch', { batterId: 'away-3', pitcherId: 'home-1', result: 'illegal_pitch' });
+    game.submit('advance_runner', { runnerId: 'away-2', from: 'third', to: 'stay', cause: 'illegal_pitch' });
+    game.submit('advance_runner', { runnerId: 'away-2', from: 'third', to: 'stay', cause: 'other' });
 
     const projection = projectDiamondStats(game.ledger);
-    expect(projection.players['home-1'].raw.pitching).toMatchObject({ WP: 1, balkIllegalPitch: 1, pitches: 4 });
+    expect(game.ledger.state.coverage.fielding).toBe('complete');
+    expect(projection.players['home-1'].raw.pitching).toMatchObject({ WP: 1, balkIllegalPitch: 2, pitches: 5 });
     expect(projection.players['home-2'].raw.fielding.PB).toBe(1);
   });
 
