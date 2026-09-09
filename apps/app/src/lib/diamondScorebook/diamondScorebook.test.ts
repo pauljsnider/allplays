@@ -2374,14 +2374,42 @@ describe('Diamond command ledger', () => {
   it('replays more than 1,500 immutable events from zero without a bounded-window shortcut', () => {
     const game = harness('baseball-youth', 'quick');
     setBasicLineups(game);
+    const initialLedger = game.ledger;
+    let checkpoint = createDiamondCheckpoint(initialLedger);
+    const events = [...initialLedger.events];
     for (let index = 0; index < 1_501; index += 1) {
-      game.submit('private_note', { text: `Bounded replay fixture ${String(index)}` });
+      const execution = executeDiamondCommandFromCheckpoint(
+        checkpoint,
+        game.command(
+          'private_note',
+          { text: `Bounded replay fixture ${String(index)}` },
+          { commandId: uuid(10_000 + index), expectedRevision: checkpoint.sequence }
+        ),
+        {
+          actorUid: SCORER,
+          eventId: uuid(20_000 + index),
+          serverTimestampMs: 1_800_000_000_000 + index
+        }
+      );
+      expect(execution.result, execution.result.rejection?.message).toMatchObject({ outcome: 'accepted' });
+      expect(execution.event).toBeDefined();
+      expect(execution.checkpoint.sequence).toBe(checkpoint.sequence + 1);
+      events.push(execution.event!);
+      checkpoint = execution.checkpoint;
     }
-    expect(game.ledger.events.length).toBeGreaterThan(1_500);
-    const replay = replayDiamondLedger(game.ledger);
+    const ledger: DiamondLedger = {
+      ...initialLedger,
+      state: checkpoint.state,
+      events
+    };
+    expect(ledger.initialState).toBe(initialLedger.initialState);
+    expect(ledger.events.length).toBeGreaterThan(1_500);
+    expect(verifyDiamondLedger(ledger)).toBe(true);
+    const replay = replayDiamondLedger(ledger);
     expect(replay.complete).toBe(true);
-    expect(replay.state.revision).toBe(game.ledger.events.length);
-    expect(replay.state.checkpointHash).toBe(game.ledger.state.checkpointHash);
+    expect(replay.state.revision).toBe(ledger.events.length);
+    expect(replay.state).toEqual(ledger.state);
+    expect(replay.state.checkpointHash).toBe(ledger.state.checkpointHash);
   }, 60_000);
 });
 
