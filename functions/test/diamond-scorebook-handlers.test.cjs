@@ -59,6 +59,9 @@ const {
   SCORER_CANDIDATE_CONTROL_QUARANTINE_MS,
   SCORER_CANDIDATE_REQUEST_LEASE_MS,
 } = require("../diamond-scorer-candidate-admission.cjs");
+const {
+  MAX_DIAMOND_ROSTER_READS_PER_WINDOW,
+} = require("../diamond-roster-read-admission.cjs");
 
 function clone(value) {
   return value === undefined ? undefined : structuredClone(value);
@@ -865,6 +868,18 @@ function scorerCandidateRateControls(harness) {
   return managerStatReadControls(harness).filter(({ path }) =>
     /^diamondManagerStatReadControls\/[0-9a-f]{64}$/.test(path),
   );
+}
+
+function rosterReadControls(harness) {
+  return managerStatReadControls(harness).filter(({ path }) =>
+    path.includes("/roster-read-lock-"),
+  );
+}
+
+function rosterReadControl(harness) {
+  const controls = rosterReadControls(harness);
+  assert.equal(controls.length, 1, "expected one roster read control");
+  return controls[0];
 }
 
 function privateHistoryControl(harness, type) {
@@ -5413,6 +5428,420 @@ describe("Diamond scorebook handler factory", () => {
     );
   });
 
+  it("deduplicates parallel state reads before either request can repeat the roster fan-out", async () => {
+    const harness = createHarness();
+    await activate(harness);
+    harness.firestore.queryReads = [];
+    let releaseFirstRosterReads;
+    const firstRosterReadsReleased = new Promise((resolve) => {
+      releaseFirstRosterReads = resolve;
+    });
+    let announceFirstRosterRead;
+    const firstRosterReadStarted = new Promise((resolve) => {
+      announceFirstRosterRead = resolve;
+    });
+    let heldRosterReads = 0;
+    harness.firestore.queryAsyncHook = async (query) => {
+      if (!query.path.endsWith("/players") || heldRosterReads >= 2) return;
+      heldRosterReads += 1;
+      announceFirstRosterRead();
+      await firstRosterReadsReleased;
+    };
+    const invoke = () =>
+      harness.handlers.getDiamondState(
+        { teamId: "team-1", gameId: "game-1", visibility: "private" },
+        harness.managerContext,
+      );
+
+    const first = invoke();
+    await firstRosterReadStarted;
+    const secondOutcome = invoke().then(
+      (value) => ({ value }),
+      (error) => ({ error }),
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+    releaseFirstRosterReads();
+    await first;
+    const second = await secondOutcome;
+
+    assert.equal(second.error?.code, "resource-exhausted");
+    assert.equal(
+      second.error?.details?.reason,
+      "diamond-roster-read-duplicate-active",
+    );
+    assert.equal(
+      harness.firestore.queryReads.filter((query) =>
+        query.path.endsWith("/players"),
+      ).length,
+      2,
+    );
+  });
+
+  it("uses the lean authorized source for voice parsing without any roster query", async () => {
+    const harness = createHarness();
+    await activate(harness);
+    harness.firestore.queryReads = [];
+
+    await harness.handlers.parseDiamondVoice(
+      {
+        teamId: "team-1",
+        gameId: "game-1",
+        expectedRevision: 1,
+        rulesProfileId: "baseball-youth",
+        rulesProfileVersion: 1,
+        transcript: "single to right field",
+      },
+      harness.managerContext,
+    );
+
+    assert.equal(
+      harness.firestore.queryReads.some((query) =>
+        query.path.endsWith("/players"),
+      ),
+      false,
+    );
+  });
+
+  it("shares a durable per-game burst budget across repeated state and voice roster reads", async () => {
+    const harness = createHarness();
+    await activate(harness);
+    harness.firestore.queryReads = [];
+
+    for (
+      let attempt = 0;
+      attempt < MAX_DIAMOND_ROSTER_READS_PER_WINDOW;
+      attempt += 1
+    ) {
+      await harness.handlers.getDiamondState(
+        { teamId: "team-1", gameId: "game-1", visibility: "private" },
+        harness.managerContext,
+      );
+    }
+    await assert.rejects(
+      harness.handlers.parseDiamondVoice(
+        {
+          teamId: "team-1",
+          gameId: "game-1",
+          expectedRevision: 1,
+          rulesProfileId: "baseball-youth",
+          rulesProfileVersion: 1,
+          transcript: "single to right field",
+        },
+        harness.managerContext,
+      ),
+      (error) =>
+        error.code === "resource-exhausted" &&
+        error.details?.reason === "diamond-roster-read-rate-limited",
+    );
+    assert.equal(
+      harness.firestore.queryReads.filter((query) =>
+        query.path.endsWith("/players"),
+      ).length,
+      64,
+    );
+  });
+
+  it("releases a partial roster failure before a later complete state load", async () => {
+    const harness = createHarness();
+    await activate(harness);
+    let failManagedRoster = true;
+    harness.firestore.queryAsyncHook = async (query) => {
+      if (query.path === "teams/team-1/players" && failManagedRoster) {
+        failManagedRoster = false;
+        throw new Error("managed roster unavailable");
+      }
+    };
+    const request = {
+      teamId: "team-1",
+      gameId: "game-1",
+      visibility: "private",
+    };
+
+    await assert.rejects(
+      harness.handlers.getDiamondState(request, harness.managerContext),
+      (error) => error.code === "unavailable",
+    );
+    assert.deepEqual(rosterReadControl(harness).value.activeAttempts, []);
+
+    harness.firestore.queryAsyncHook = null;
+    const recovered = await harness.handlers.getDiamondState(
+      request,
+      harness.managerContext,
+    );
+    assert.equal(recovered.authoritative, true);
+    assert.equal(recovered.presentation.availablePlayers.home.length, 1);
+    assert.deepEqual(rosterReadControl(harness).value.activeAttempts, []);
+  });
+
+  it("returns no state after final Auth, access, or exact source reauthorization fails", async (t) => {
+    const cases = [
+      {
+        name: "enabled Auth",
+        mutate(harness) {
+          harness.authUsers.set("manager-1", {
+            ...harness.authUsers.get("manager-1"),
+            disabled: true,
+          });
+        },
+        code: "permission-denied",
+      },
+      {
+        name: "team access",
+        mutate(harness) {
+          harness.firestore.seed("teams/team-1", {
+            ...harness.firestore.read("teams/team-1"),
+            ownerId: "another-manager",
+          });
+        },
+        code: "permission-denied",
+      },
+      {
+        name: "checkpoint source",
+        mutate(harness) {
+          const scorebookPath = paths("team-1", "game-1").scorebook;
+          const root = harness.firestore.read(scorebookPath);
+          harness.firestore.seed(scorebookPath, {
+            ...root,
+            checkpoint: {
+              ...root.checkpoint,
+              sequence: root.checkpoint.sequence + 1,
+              previousHash: `sha256:${"f".repeat(64)}`,
+              state: {
+                ...root.checkpoint.state,
+                revision: root.checkpoint.state.revision + 1,
+                checkpointHash: `sha256:${"f".repeat(64)}`,
+              },
+            },
+          });
+        },
+        code: "aborted",
+      },
+      {
+        name: "opponent roster visibility",
+        triggerPath: "teams/opponent-1/players",
+        mutate(harness) {
+          harness.firestore.seed("teams/opponent-1", {
+            ...harness.firestore.read("teams/opponent-1"),
+            isPublic: false,
+          });
+        },
+        code: "aborted",
+      },
+      {
+        name: "opponent roster removal",
+        triggerPath: "teams/opponent-1/players",
+        mutate(harness) {
+          harness.firestore.documents.delete("teams/opponent-1");
+        },
+        code: "aborted",
+      },
+      {
+        name: "opponent roster replacement",
+        triggerPath: "teams/opponent-1/players",
+        mutate(harness) {
+          harness.firestore.seed("teams/opponent-1", {
+            ...harness.firestore.read("teams/opponent-1"),
+            id: "replacement-team",
+          });
+        },
+        code: "aborted",
+      },
+      {
+        name: "opponent roster access read failure",
+        triggerPath: "teams/opponent-1/players",
+        mutate(harness) {
+          const original =
+            harness.firestore._documentSnapshot.bind(harness.firestore);
+          harness.firestore._documentSnapshot = (reference) => {
+            if (reference.path === "teams/opponent-1") {
+              throw new Error("opponent access unavailable");
+            }
+            return original(reference);
+          };
+        },
+        code: "unavailable",
+      },
+    ];
+
+    for (const testCase of cases) {
+      await t.test(testCase.name, async () => {
+        const harness = createHarness();
+        await activate(harness);
+        let mutated = false;
+        harness.firestore.queryAsyncHook = async (query) => {
+          if (
+            query.path ===
+              (testCase.triggerPath || "teams/team-1/players") &&
+            !mutated
+          ) {
+            mutated = true;
+            testCase.mutate(harness);
+          }
+        };
+        await assert.rejects(
+          harness.handlers.getDiamondState(
+            {
+              teamId: "team-1",
+              gameId: "game-1",
+              visibility: "private",
+            },
+            harness.managerContext,
+          ),
+          (error) => error.code === testCase.code,
+        );
+        assert.equal(mutated, true);
+        assert.deepEqual(rosterReadControl(harness).value.activeAttempts, []);
+      });
+    }
+  });
+
+  it("reauthorizes state in the completion transaction before releasing admission", async () => {
+    const harness = createHarness();
+    await activate(harness);
+    harness.firestore.transactionReadBatches = [];
+    await harness.handlers.getDiamondState(
+      { teamId: "team-1", gameId: "game-1", visibility: "private" },
+      harness.managerContext,
+    );
+    const lock = rosterReadControl(harness);
+    const finalBatch = harness.firestore.transactionReadBatches.find(
+      (batch) =>
+        batch.includes(lock.path) &&
+        batch.includes(paths("team-1", "game-1").scorebook) &&
+        batch.includes("teams/team-1") &&
+        batch.includes("users/manager-1"),
+    );
+    assert.deepEqual(
+      new Set(finalBatch),
+      new Set([
+        lock.path,
+        "teams/team-1",
+        "users/manager-1",
+        "teams/team-1/games/game-1",
+        "teams/team-1/games/game-1/rsvps/manager-1",
+        paths("team-1", "game-1").scorebook,
+        "teams/opponent-1",
+      ]),
+    );
+    assert.deepEqual(lock.value.activeAttempts, []);
+  });
+
+  it("denies unauthorized and public reads without roster admission or roster queries", async (t) => {
+    await t.test("unauthorized state and voice", async () => {
+      const harness = createHarness({
+        authUsers: {
+          outsider: {
+            uid: "outsider",
+            disabled: false,
+            email: "outsider@example.com",
+            emailVerified: true,
+          },
+        },
+      });
+      await activate(harness);
+      harness.firestore.queryReads = [];
+      const outsider = { auth: { uid: "outsider" } };
+      await assert.rejects(
+        harness.handlers.getDiamondState(
+          { teamId: "team-1", gameId: "game-1", visibility: "private" },
+          outsider,
+        ),
+        (error) => error.code === "permission-denied",
+      );
+      await assert.rejects(
+        harness.handlers.parseDiamondVoice(
+          {
+            teamId: "team-1",
+            gameId: "game-1",
+            expectedRevision: 1,
+            rulesProfileId: "baseball-youth",
+            rulesProfileVersion: 1,
+            transcript: "single to right field",
+          },
+          outsider,
+        ),
+        (error) => error.code === "permission-denied",
+      );
+      assert.equal(rosterReadControls(harness).length, 0);
+      assert.equal(
+        harness.firestore.queryReads.some((query) =>
+          query.path.endsWith("/players"),
+        ),
+        false,
+      );
+    });
+
+    await t.test("public viewer", async () => {
+      const harness = createHarness();
+      await activate(harness);
+      harness.firestore.queryReads = [];
+      await harness.handlers.getPublicDiamondGame({
+        teamId: "team-1",
+        gameId: "game-1",
+        limit: 20,
+      });
+      assert.equal(rosterReadControls(harness).length, 0);
+      assert.equal(
+        harness.firestore.queryReads.some((query) =>
+          query.path.endsWith("/players"),
+        ),
+        false,
+      );
+    });
+  });
+
+  it("fails voice final-source reauthorization without roster reads or an authoritative proposal", async () => {
+    const harness = createHarness();
+    await activate(harness);
+    harness.firestore.queryReads = [];
+    let changed = false;
+    harness.firestore.transactionHook = (phase, transaction) => {
+      const reserved = transaction?.operations?.some(({ value }) =>
+        value?.activeAttempts?.some(Boolean),
+      );
+      if (phase === "after" && reserved && !changed) {
+        changed = true;
+        const scorebookPath = paths("team-1", "game-1").scorebook;
+        const root = harness.firestore.read(scorebookPath);
+        harness.firestore.seed(scorebookPath, {
+          ...root,
+          checkpoint: {
+            ...root.checkpoint,
+            sequence: 2,
+            previousHash: `sha256:${"e".repeat(64)}`,
+            state: {
+              ...root.checkpoint.state,
+              revision: 2,
+              checkpointHash: `sha256:${"e".repeat(64)}`,
+            },
+          },
+        });
+      }
+    };
+    await assert.rejects(
+      harness.handlers.parseDiamondVoice(
+        {
+          teamId: "team-1",
+          gameId: "game-1",
+          expectedRevision: 1,
+          rulesProfileId: "baseball-youth",
+          rulesProfileVersion: 1,
+          transcript: "single to right field",
+        },
+        harness.managerContext,
+      ),
+      (error) => error.code === "aborted",
+    );
+    assert.equal(changed, true);
+    assert.equal(
+      harness.firestore.queryReads.some((query) =>
+        query.path.endsWith("/players"),
+      ),
+      false,
+    );
+    assert.deepEqual(rosterReadControl(harness).value.activeAttempts, []);
+  });
+
   it("acquires or manager-recovers only an expired lease with durable idempotent audit", async () => {
     let nowMs = 1_750_000_000_000;
     const harness = createHarness({ clock: () => nowMs });
@@ -7302,10 +7731,14 @@ describe("Diamond scorebook handler factory", () => {
     assert.equal(scope.value.recentTerminals.at(-1).status, "failed");
   });
 
-  it("parses voice into a confirmation-only proposal without any persistence", async () => {
+  it("parses voice into a confirmation-only proposal without game persistence", async () => {
     const harness = createHarness();
     await activate(harness);
-    const before = [...harness.firestore.documents.entries()];
+    const gameDocuments = () =>
+      [...harness.firestore.documents.entries()].filter(
+        ([path]) => !path.startsWith(`${MANAGER_STAT_CONTROL_COLLECTION}/`),
+      );
+    const before = gameDocuments();
     const proposal = await harness.handlers.parseDiamondVoice(
       {
         teamId: "team-1",
@@ -7321,7 +7754,7 @@ describe("Diamond scorebook handler factory", () => {
     assert.equal(proposal.mutatesState, false);
     assert.equal(proposal.confirmable, false);
     assert.equal(proposal.type, "record_plate_appearance");
-    assert.deepEqual([...harness.firestore.documents.entries()], before);
+    assert.deepEqual(gameDocuments(), before);
   });
 
   it("paginates more than 1,500 public replay events without treating a page as complete history", async () => {

@@ -7,6 +7,9 @@ const {
 const {
   createDiamondScorerCandidateAdmission,
 } = require("./diamond-scorer-candidate-admission.cjs");
+const {
+  createDiamondRosterReadAdmission,
+} = require("./diamond-roster-read-admission.cjs");
 const regeneration = require("./diamond-projection-regeneration-core.cjs");
 
 const DEFAULT_EVENT_PAGE_SIZE = 100;
@@ -1376,6 +1379,14 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     makeError,
     logger,
   });
+  const rosterReadAdmission = createDiamondRosterReadAdmission({
+    firestore,
+    collectionName: MANAGER_STAT_CONTROL_COLLECTION,
+    clock,
+    hashValue: core.hashDiamondValue,
+    makeError,
+    logger,
+  });
 
   function readReference(reader, reference) {
     if (reader && typeof reader.get === "function")
@@ -1796,10 +1807,11 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     };
   }
 
-  function isStrictPublicRosterTeam(team) {
+  function isStrictPublicRosterTeam(team, expectedTeamId = null) {
     const status = compactText(team?.status, 32).toLowerCase();
     return (
       isPlainObject(team) &&
+      (!expectedTeamId || !own(team, "id") || team.id === expectedTeamId) &&
       team.isPublic === true &&
       team.active !== false &&
       team.archived !== true &&
@@ -1808,7 +1820,12 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     );
   }
 
-  async function loadRosterCandidates(reader, teamId, orientationSnapshot) {
+  async function loadRosterCandidates(
+    reader,
+    teamId,
+    orientationSnapshot,
+    { includeSource = false } = {},
+  ) {
     const sides = resolveRosterSides(teamId, orientationSnapshot);
     let homeRosterSnapshot;
     let opponentTeamSnapshot = null;
@@ -1836,7 +1853,10 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     let opponentRosterSnapshot = null;
     if (
       sides.opponentTeamId &&
-      isStrictPublicRosterTeam(snapshotData(opponentTeamSnapshot))
+      isStrictPublicRosterTeam(
+        snapshotData(opponentTeamSnapshot),
+        sides.opponentTeamId,
+      )
     ) {
       try {
         opponentRosterSnapshot = await readReference(
@@ -1882,10 +1902,19 @@ function createDiamondScorebookHandlers(dependencies = {}) {
               left.playerId.localeCompare(right.playerId),
           )
       : [];
-    return {
+    const candidates = {
       [sides.teamSide]: homeRoster,
       [sides.opponentSide]: opponentRoster,
     };
+    return includeSource
+      ? {
+          candidates,
+          teamSide: sides.teamSide,
+          opponentSide: sides.opponentSide,
+          opponentTeamId: sides.opponentTeamId,
+          opponentRosterReadable: Boolean(opponentRosterSnapshot),
+        }
+      : candidates;
   }
 
   function rejectedExecutionResponse(execution, metadata) {
@@ -5655,13 +5684,18 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     });
   }
 
-  async function loadAuthorizedHistoryState(teamId, gameId, caller) {
+  async function loadAuthorizedHistoryState(
+    teamId,
+    gameId,
+    caller,
+    reader = firestore,
+  ) {
     let loaded;
     let rootSnapshot;
     try {
       [loaded, rootSnapshot] = await Promise.all([
-        loadAccessDocuments(firestore, teamId, gameId, caller),
-        firestore.doc(paths(teamId, gameId).scorebook).get(),
+        loadAccessDocuments(reader, teamId, gameId, caller),
+        readReference(reader, firestore.doc(paths(teamId, gameId).scorebook)),
       ]);
     } catch (error) {
       if (error instanceof HttpsError || error instanceof DiamondHandlerError)
@@ -5700,17 +5734,118 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     return { loaded, root, checkpoint };
   }
 
-  async function loadAuthorizedState(teamId, gameId, caller) {
-    const state = await loadAuthorizedHistoryState(teamId, gameId, caller);
-    const availablePlayers = await loadRosterCandidates(
-      firestore,
-      teamId,
-      state.root.orientationSnapshot,
-    );
+  function rosterReadSourceIdentity({ root, checkpoint }, teamId) {
+    let checkpointHash;
+    let orientationHash;
+    let pinnedOrientation;
+    try {
+      checkpointHash = core.hashDiamondValue(checkpoint);
+      orientationHash = core.hashDiamondValue(root.orientationSnapshot);
+      pinnedOrientation = validateCommittedOrientationSnapshot(root, teamId);
+    } catch {
+      throw makeError(
+        "failed-precondition",
+        "The Diamond scorebook source is malformed. Reload the scorebook.",
+      );
+    }
+    if (
+      !UUID_V4_PATTERN.test(root.instanceId || "") ||
+      root.instanceId !== root.instanceId.toLowerCase() ||
+      !Number.isSafeInteger(checkpoint.sequence) ||
+      checkpoint.sequence < 0 ||
+      checkpoint.sequence > MAX_CANONICAL_EVENTS ||
+      !SHA256_PATTERN.test(checkpointHash) ||
+      !SHA256_PATTERN.test(orientationHash)
+    ) {
+      throw makeError(
+        "failed-precondition",
+        "The Diamond scorebook source is malformed. Reload the scorebook.",
+      );
+    }
     return {
-      ...state,
-      root: { ...state.root, availablePlayers },
+      instanceId: root.instanceId,
+      sourceRevision: checkpoint.sequence,
+      checkpointHash,
+      orientationHash,
+      managedSide: pinnedOrientation.managedSide,
+      opponentSide: pinnedOrientation.opponentSide,
+      opponentTeamId: pinnedOrientation.opponentTeamId,
     };
+  }
+
+  function requireMatchingRosterReadSource(teamId, initial, current) {
+    const latest = rosterReadSourceIdentity(current, teamId);
+    if (
+      latest.instanceId !== initial.instanceId ||
+      latest.sourceRevision !== initial.sourceRevision ||
+      latest.checkpointHash !== initial.checkpointHash ||
+      latest.orientationHash !== initial.orientationHash
+    ) {
+      throw makeError(
+        "aborted",
+        "The Diamond scorebook changed while it was loading. Try again.",
+        { reason: "diamond-roster-read-source-changed", retryable: true },
+      );
+    }
+    return current;
+  }
+
+  async function requireMatchingOpponentRosterAccess(transaction, source, roster) {
+    if (
+      roster.teamSide !== source.managedSide ||
+      roster.opponentSide !== source.opponentSide ||
+      roster.opponentTeamId !== source.opponentTeamId
+    ) {
+      throw makeError(
+        "aborted",
+        "The opponent roster source changed while it was loading. Try again.",
+        { reason: "diamond-roster-read-source-changed", retryable: true },
+      );
+    }
+    if (!source.opponentTeamId) return;
+    let snapshot;
+    try {
+      snapshot = await readReference(
+        transaction,
+        firestore.doc(`teams/${source.opponentTeamId}`),
+      );
+    } catch {
+      throw makeError(
+        "unavailable",
+        "The opponent roster source could not be reverified. Try again.",
+      );
+    }
+    if (
+      isStrictPublicRosterTeam(
+        snapshotData(snapshot),
+        source.opponentTeamId,
+      ) !== roster.opponentRosterReadable
+    ) {
+      throw makeError(
+        "aborted",
+        "The opponent roster source changed while it was loading. Try again.",
+        { reason: "diamond-roster-read-source-changed", retryable: true },
+      );
+    }
+  }
+
+  function requireVoiceReadSource(
+    state,
+    { expectedRevision, rulesProfileId, rulesProfileVersion },
+  ) {
+    requireScorekeeper(state.loaded.access);
+    if (
+      state.checkpoint.sequence !== expectedRevision ||
+      state.root.rulesProfileId !== rulesProfileId ||
+      state.root.rulesProfileVersion !== rulesProfileVersion
+    ) {
+      throw makeError(
+        "aborted",
+        "Refresh the scorebook before interpreting this dictation.",
+        { authoritativeRevision: state.checkpoint.sequence },
+      );
+    }
+    return state;
   }
 
   function scorerCandidatePermissionMode(team) {
@@ -7340,22 +7475,59 @@ function createDiamondScorebookHandlers(dependencies = {}) {
         "Raw Diamond state is private. Use getPublicDiamondGame for public viewing.",
       );
     }
-    const { loaded, root, checkpoint } = await loadAuthorizedState(
+    const attemptId = secureUuid(random, makeError, "Diamond state read");
+    const initial = await loadAuthorizedHistoryState(
       teamId,
       gameId,
       caller,
     );
-    return buildPrivateSnapshot({
-      state: checkpoint.state,
-      root,
-      team: loaded.team,
-      game: loaded.game,
+    const source = rosterReadSourceIdentity(initial, teamId);
+    const reservation = await rosterReadAdmission.reserve({
       callerUid: caller.uid,
-      canScore: loaded.access.scorekeeping,
-      canManage: loaded.access.full,
-      nowMs: normalizeNow(clock, makeError),
-      core,
+      teamId,
+      gameId,
+      operation: "state",
+      sourceRevision: source.sourceRevision,
+      input: { instanceId: source.instanceId, visibility: "private" },
+      attemptId,
     });
+    try {
+      const roster = await loadRosterCandidates(
+        firestore,
+        teamId,
+        initial.root.orientationSnapshot,
+        { includeSource: true },
+      );
+      const final = await rosterReadAdmission.complete({
+        reservation,
+        authorize: async (transaction) => {
+          const freshCaller = await loadEnabledAuthUser(context);
+          const current = await loadAuthorizedHistoryState(
+            teamId,
+            gameId,
+            freshCaller,
+            transaction,
+          );
+          requireMatchingRosterReadSource(teamId, source, current);
+          await requireMatchingOpponentRosterAccess(transaction, source, roster);
+          return { caller: freshCaller, state: current };
+        },
+      });
+      return buildPrivateSnapshot({
+        state: final.state.checkpoint.state,
+        root: { ...final.state.root, availablePlayers: roster.candidates },
+        team: final.state.loaded.team,
+        game: final.state.loaded.game,
+        callerUid: final.caller.uid,
+        canScore: final.state.loaded.access.scorekeeping,
+        canManage: final.state.loaded.access.full,
+        nowMs: normalizeNow(clock, makeError),
+        core,
+      });
+    } catch (error) {
+      await rosterReadAdmission.fail({ reservation });
+      throw error;
+    }
   }
 
   function publicProjectionIdentity(loaded) {
@@ -8015,61 +8187,82 @@ function createDiamondScorebookHandlers(dependencies = {}) {
         "Dictation must be between 1 and 2,000 characters.",
       );
     }
+    const attemptId = secureUuid(random, makeError, "Diamond voice read");
     const caller = await loadEnabledAuthUser(context);
-    const { loaded, root, checkpoint } = await loadAuthorizedState(
+    const initial = requireVoiceReadSource(
+      await loadAuthorizedHistoryState(teamId, gameId, caller),
+      { expectedRevision, rulesProfileId, rulesProfileVersion },
+    );
+    const source = rosterReadSourceIdentity(initial, teamId);
+    const reservation = await rosterReadAdmission.reserve({
+      callerUid: caller.uid,
       teamId,
       gameId,
-      caller,
-    );
-    requireScorekeeper(loaded.access);
-    if (
-      checkpoint.sequence !== expectedRevision ||
-      root.rulesProfileId !== rulesProfileId ||
-      root.rulesProfileVersion !== rulesProfileVersion
-    ) {
-      throw makeError(
-        "aborted",
-        "Refresh the scorebook before interpreting this dictation.",
-        {
-          authoritativeRevision: checkpoint.sequence,
-        },
-      );
-    }
-    let proposal;
-    if (
-      /^(next|advance)( the)? half( inning)?[.!]?$/i.test(transcript) ||
-      /^switch sides[.!]?$/i.test(transcript)
-    ) {
-      proposal = {
-        schemaVersion: 1,
-        type: "advance_half_inning",
-        payload: {},
-        confidence: 0.9,
-        unresolvedFields: [],
-        requiresConfirmation: true,
-        mutatesState: false,
-      };
-    } else {
-      proposal = {
-        schemaVersion: 1,
-        type: "record_plate_appearance",
-        payload: {},
-        confidence: 0,
-        unresolvedFields: [
-          "batterId",
-          "pitcherId",
-          "result",
-          "batterAdvance",
-          "runnerAdvances",
-          "outsOnPlay",
-        ],
-        requiresConfirmation: true,
-        mutatesState: false,
-      };
-    }
+      operation: "voice",
+      sourceRevision: source.sourceRevision,
+      input: {
+        instanceId: source.instanceId,
+        rulesProfileId,
+        rulesProfileVersion,
+        transcript,
+      },
+      attemptId,
+    });
     try {
-      return core.validateDiamondVoiceProposal(proposal);
+      const proposal = core.validateDiamondVoiceProposal(
+        /^(next|advance)( the)? half( inning)?[.!]?$/i.test(transcript) ||
+        /^switch sides[.!]?$/i.test(transcript)
+          ? {
+              schemaVersion: 1,
+              type: "advance_half_inning",
+              payload: {},
+              confidence: 0.9,
+              unresolvedFields: [],
+              requiresConfirmation: true,
+              mutatesState: false,
+            }
+          : {
+              schemaVersion: 1,
+              type: "record_plate_appearance",
+              payload: {},
+              confidence: 0,
+              unresolvedFields: [
+                "batterId",
+                "pitcherId",
+                "result",
+                "batterAdvance",
+                "runnerAdvances",
+                "outsOnPlay",
+              ],
+              requiresConfirmation: true,
+              mutatesState: false,
+            },
+      );
+      await rosterReadAdmission.complete({
+        reservation,
+        authorize: async (transaction) => {
+          const freshCaller = await loadEnabledAuthUser(context);
+          const current = requireVoiceReadSource(
+            await loadAuthorizedHistoryState(
+              teamId,
+              gameId,
+              freshCaller,
+              transaction,
+            ),
+            { expectedRevision, rulesProfileId, rulesProfileVersion },
+          );
+          requireMatchingRosterReadSource(teamId, source, current);
+        },
+      });
+      return proposal;
     } catch (error) {
+      await rosterReadAdmission.fail({ reservation });
+      if (
+        error instanceof HttpsError ||
+        error instanceof DiamondHandlerError
+      ) {
+        throw error;
+      }
       logger.error?.("diamond_voice_proposal_rejected", {
         code: error?.code || "invalid-proposal",
       });
