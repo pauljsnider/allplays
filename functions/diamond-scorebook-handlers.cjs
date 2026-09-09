@@ -25,6 +25,28 @@ const MAX_MANAGER_STAT_GAMES = 40;
 const MAX_MANAGER_STAT_PLAYERS = 25;
 const MAX_MANAGER_STAT_RESPONSE_BYTES = 7_000_000;
 const MANAGER_STAT_CONTROL_COLLECTION = "diamondManagerStatReadControls";
+const COMMAND_HISTORY_RATE_WINDOW_MS = 60 * 1000;
+const COMMAND_HISTORY_SUSTAINED_WINDOW_MS = 10 * 60 * 1000;
+const COMMAND_HISTORY_CONTROL_QUARANTINE_MS =
+  COMMAND_HISTORY_SUSTAINED_WINDOW_MS;
+// The shared React/native caller can make two immediate attempts and two more
+// while reconciling the retained offline item. The admitted-fresh-history
+// request cap covers that four-call recovery, one same-tick double-confirm
+// (eight), and two overlapping tabs/devices (sixteen) at shallow heads; excess
+// offline items remain queued for a later Sync. The 80k weighted budget admits
+// one ordinary four-attempt recovery at the 20k-event boundary, while larger
+// max-head bursts fail closed. These aligned fixed windows are not rolling
+// limits: the 60s caps can double to 32 calls/160k at a boundary, although the
+// concurrent 10m weighted cap restricts repeated minute-boundary work to 120k.
+// The 10m caps can double to 128 calls/240k across a boundary. These bounds
+// cover admitted expensive history work for one UID/team/game, not total
+// callable ingress or its small authorization reads. A scorer handoff receives
+// a distinct UID budget, and cross-game fan-out is outside this per-game review
+// scope.
+const MAX_COMMAND_HISTORY_REQUESTS_PER_WINDOW = 16;
+const MAX_COMMAND_HISTORY_READ_UNITS_PER_WINDOW = 80_000;
+const MAX_COMMAND_HISTORY_SUSTAINED_REQUESTS_PER_WINDOW = 64;
+const MAX_COMMAND_HISTORY_SUSTAINED_READ_UNITS_PER_WINDOW = 120_000;
 const MANAGER_STAT_RATE_WINDOW_MS = 60 * 1000;
 // The fixed security envelope is intentionally independent of manager-owned
 // team history. A production-shaped 120-game/100-player Team Insights load and
@@ -4399,17 +4421,43 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     return query.orderBy("sequence", "desc").limit(limit);
   }
 
-  async function loadAllCanonicalEvents(teamId, gameId) {
+  async function loadAllCanonicalEvents(
+    teamId,
+    gameId,
+    throughSequence = null,
+  ) {
     const resourcePaths = paths(teamId, gameId);
+    const boundedSequence = Number.isSafeInteger(throughSequence)
+      ? throughSequence
+      : null;
+    if (
+      boundedSequence !== null &&
+      (boundedSequence < 0 || boundedSequence > MAX_CANONICAL_EVENTS)
+    ) {
+      throw makeError(
+        "resource-exhausted",
+        "This game exceeds the bounded Diamond replay limit.",
+      );
+    }
     const events = [];
+    if (boundedSequence === 0) return events;
     let afterSequence = 0;
-    while (events.length <= MAX_CANONICAL_EVENTS) {
+    const maximumEvents = boundedSequence ?? MAX_CANONICAL_EVENTS;
+    while (events.length <= maximumEvents) {
       let snapshot;
       try {
+        const pageLimit =
+          boundedSequence === null
+            ? FULL_HISTORY_PAGE_SIZE
+            : Math.min(
+                FULL_HISTORY_PAGE_SIZE,
+                boundedSequence - afterSequence,
+              );
         snapshot = await canonicalEventsQuery(
           resourcePaths.events,
           afterSequence,
-          FULL_HISTORY_PAGE_SIZE,
+          pageLimit,
+          boundedSequence,
         ).get();
       } catch {
         throw makeError(
@@ -4439,6 +4487,9 @@ function createDiamondScorebookHandlers(dependencies = {}) {
         }
         events.push(event);
         afterSequence = event.sequence;
+      }
+      if (boundedSequence !== null && afterSequence === boundedSequence) {
+        return events;
       }
       if (documents.length < FULL_HISTORY_PAGE_SIZE) return events;
     }
@@ -4559,30 +4610,360 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     });
   }
 
-  async function preauthorizePrivateReplay(teamId, gameId, caller) {
-    let loaded;
-    try {
-      loaded = await loadAccessDocuments(firestore, teamId, gameId, caller);
-    } catch (error) {
-      if (error instanceof HttpsError || error instanceof DiamondHandlerError) {
-        throw error;
-      }
+  function commandHistoryOperationName(command, checkpoint) {
+    return RESILIENT_CORRECTION_COMMANDS.has(command.type) ||
+      (checkpoint.state?.lifecycle === "correction" &&
+        ["record_fielding", "record_scoring_judgment", "finalize"].includes(
+          command.type,
+        ))
+      ? "correct"
+      : "score";
+  }
+
+  function commandHistorySourceHash(root, checkpoint) {
+    return core.hashDiamondValue({
+      schemaVersion: 1,
+      type: "diamond-command-history-source",
+      scorebookSchemaVersion: root.schemaVersion,
+      trackingEngine: root.trackingEngine,
+      instanceId: root.instanceId,
+      teamId: root.teamId,
+      gameId: root.gameId,
+      rulesProfileId: root.rulesProfileId,
+      rulesProfileVersion: root.rulesProfileVersion,
+      captureMode: root.captureMode,
+      initialState: root.initialState,
+      checkpoint,
+      statConfigSnapshot: root.statConfigSnapshot,
+      orientationSnapshot: root.orientationSnapshot,
+    });
+  }
+
+  function commandHistoryAdmissionIdentity(command, callerUid) {
+    const scopeHash = core.hashDiamondValue({
+      schemaVersion: 1,
+      type: "diamond-command-history-admission-scope",
+      callerUid,
+      teamId: command.teamId,
+      gameId: command.gameId,
+    });
+    return Object.freeze({
+      type: "diamond-command-history-admission",
+      scopeHash,
+      reference: firestore.doc(
+        `${MANAGER_STAT_CONTROL_COLLECTION}/command-admission-${scopeHash.slice(7)}`,
+      ),
+    });
+  }
+
+  function invalidCommandHistoryAdmission(snapshot, nowMs) {
+    const updatedAtMs = controlSnapshotUpdatedAtMs(snapshot);
+    if (
+      updatedAtMs !== null &&
+      updatedAtMs + COMMAND_HISTORY_CONTROL_QUARANTINE_MS <= nowMs
+    ) {
+      return null;
+    }
+    throw makeError(
+      "unavailable",
+      "Command history safety state is unavailable. Try again later.",
+      { reason: "command-history-control-invalid", retryable: true },
+    );
+  }
+
+  function parseCommandHistoryAdmission(snapshot, identity, nowMs) {
+    if (!snapshot?.exists) return null;
+    const value = snapshotData(snapshot);
+    const expectedExpiresAtMs = Math.max(
+      value?.windowResetAtMs || 0,
+      value?.sustainedWindowResetAtMs || 0,
+    );
+    if (
+      !isPlainObject(value) ||
+      Object.keys(value).length !== 13 ||
+      value.schemaVersion !== 1 ||
+      value.type !== identity.type ||
+      value.scopeHash !== identity.scopeHash ||
+      !Number.isSafeInteger(value.windowStartedAtMs) ||
+      value.windowStartedAtMs < 0 ||
+      value.windowStartedAtMs % COMMAND_HISTORY_RATE_WINDOW_MS !== 0 ||
+      !Number.isSafeInteger(value.windowResetAtMs) ||
+      value.windowResetAtMs !==
+        value.windowStartedAtMs + COMMAND_HISTORY_RATE_WINDOW_MS ||
+      !Number.isSafeInteger(value.requestCount) ||
+      value.requestCount < 1 ||
+      value.requestCount > MAX_COMMAND_HISTORY_REQUESTS_PER_WINDOW ||
+      !Number.isSafeInteger(value.readUnits) ||
+      value.readUnits < value.requestCount ||
+      value.readUnits > value.requestCount * MAX_CANONICAL_EVENTS ||
+      value.readUnits > MAX_COMMAND_HISTORY_READ_UNITS_PER_WINDOW ||
+      !Number.isSafeInteger(value.sustainedWindowStartedAtMs) ||
+      value.sustainedWindowStartedAtMs < 0 ||
+      value.sustainedWindowStartedAtMs % COMMAND_HISTORY_SUSTAINED_WINDOW_MS !==
+        0 ||
+      !Number.isSafeInteger(value.sustainedWindowResetAtMs) ||
+      value.sustainedWindowResetAtMs !==
+        value.sustainedWindowStartedAtMs +
+          COMMAND_HISTORY_SUSTAINED_WINDOW_MS ||
+      !Number.isSafeInteger(value.sustainedRequestCount) ||
+      value.sustainedRequestCount < value.requestCount ||
+      value.sustainedRequestCount >
+        MAX_COMMAND_HISTORY_SUSTAINED_REQUESTS_PER_WINDOW ||
+      !Number.isSafeInteger(value.sustainedReadUnits) ||
+      value.sustainedReadUnits < value.readUnits ||
+      value.sustainedReadUnits < value.sustainedRequestCount ||
+      value.sustainedReadUnits >
+        value.sustainedRequestCount * MAX_CANONICAL_EVENTS ||
+      value.sustainedReadUnits >
+        MAX_COMMAND_HISTORY_SUSTAINED_READ_UNITS_PER_WINDOW ||
+      value.windowStartedAtMs < value.sustainedWindowStartedAtMs ||
+      value.windowResetAtMs > value.sustainedWindowResetAtMs ||
+      !Number.isSafeInteger(value.updatedAtMs) ||
+      value.updatedAtMs < value.windowStartedAtMs ||
+      value.updatedAtMs < value.sustainedWindowStartedAtMs ||
+      value.updatedAtMs >= value.windowResetAtMs ||
+      value.updatedAtMs >= value.sustainedWindowResetAtMs ||
+      value.updatedAtMs > nowMs ||
+      managerStatsControlTimestampMs(value.expiresAt) !== expectedExpiresAtMs
+    ) {
+      return invalidCommandHistoryAdmission(snapshot, nowMs);
+    }
+    return value;
+  }
+
+  function commandHistoryRetryDetails(retryAtMs, nowMs) {
+    return {
+      reason: "command-history-rate-limited",
+      retryable: true,
+      retryAfterMs: Math.max(1, retryAtMs - nowMs),
+    };
+  }
+
+  function alignedCommandHistoryWindowStart(nowMs, durationMs) {
+    return Math.floor(nowMs / durationMs) * durationMs;
+  }
+
+  function planCommandHistoryAdmission({
+    snapshot,
+    identity,
+    requestedReadUnits,
+    nowMs,
+  }) {
+    const admission = parseCommandHistoryAdmission(snapshot, identity, nowMs);
+    const windowActive = Boolean(
+      admission && admission.windowResetAtMs > nowMs,
+    );
+    const sustainedWindowActive = Boolean(
+      admission && admission.sustainedWindowResetAtMs > nowMs,
+    );
+    const windowStartedAtMs = windowActive
+      ? admission.windowStartedAtMs
+      : alignedCommandHistoryWindowStart(nowMs, COMMAND_HISTORY_RATE_WINDOW_MS);
+    const windowResetAtMs = windowActive
+      ? admission.windowResetAtMs
+      : windowStartedAtMs + COMMAND_HISTORY_RATE_WINDOW_MS;
+    const requestCount = (windowActive ? admission.requestCount : 0) + 1;
+    const readUnits =
+      (windowActive ? admission.readUnits : 0) + requestedReadUnits;
+    const sustainedWindowStartedAtMs = sustainedWindowActive
+      ? admission.sustainedWindowStartedAtMs
+      : alignedCommandHistoryWindowStart(
+          nowMs,
+          COMMAND_HISTORY_SUSTAINED_WINDOW_MS,
+        );
+    const sustainedWindowResetAtMs = sustainedWindowActive
+      ? admission.sustainedWindowResetAtMs
+      : sustainedWindowStartedAtMs + COMMAND_HISTORY_SUSTAINED_WINDOW_MS;
+    const sustainedRequestCount =
+      (sustainedWindowActive ? admission.sustainedRequestCount : 0) + 1;
+    const sustainedReadUnits =
+      (sustainedWindowActive ? admission.sustainedReadUnits : 0) +
+      requestedReadUnits;
+    const burstLimited =
+      requestCount > MAX_COMMAND_HISTORY_REQUESTS_PER_WINDOW ||
+      readUnits > MAX_COMMAND_HISTORY_READ_UNITS_PER_WINDOW;
+    const sustainedLimited =
+      sustainedRequestCount >
+        MAX_COMMAND_HISTORY_SUSTAINED_REQUESTS_PER_WINDOW ||
+      sustainedReadUnits > MAX_COMMAND_HISTORY_SUSTAINED_READ_UNITS_PER_WINDOW;
+    if (burstLimited || sustainedLimited) {
       throw makeError(
-        "unavailable",
-        "Scorekeeping access could not be verified before replay. Try again.",
+        "resource-exhausted",
+        "Full-history scorebook verification is temporarily limited.",
+        commandHistoryRetryDetails(
+          Math.max(
+            burstLimited ? windowResetAtMs : 0,
+            sustainedLimited ? sustainedWindowResetAtMs : 0,
+          ),
+          nowMs,
+        ),
       );
     }
-    requireScorekeeper(loaded.access);
+    return {
+      schemaVersion: 1,
+      type: identity.type,
+      scopeHash: identity.scopeHash,
+      windowStartedAtMs,
+      windowResetAtMs,
+      requestCount,
+      readUnits,
+      sustainedWindowStartedAtMs,
+      sustainedWindowResetAtMs,
+      sustainedRequestCount,
+      sustainedReadUnits,
+      updatedAtMs: nowMs,
+      expiresAt: new Date(Math.max(windowResetAtMs, sustainedWindowResetAtMs)),
+    };
+  }
+
+  function earlyRejectedCommandResponse(
+    command,
+    checkpoint,
+    loaded,
+    root,
+    caller,
+    nowMs,
+  ) {
+    const execution = domainEngine.executeDiamondCommandFromCheckpoint(
+      checkpoint,
+      command,
+      {
+        actorUid: caller.uid,
+        eventId: command.commandId,
+        serverTimestampMs: nowMs,
+        managerAuthorized: loaded.access.full,
+      },
+      null,
+    );
+    if (
+      execution.result.outcome !== "rejected" ||
+      execution.result.rejection?.code !== "stale-revision"
+    ) {
+      throw makeError(
+        "failed-precondition",
+        "The Diamond checkpoint could not safely reject this stale command.",
+      );
+    }
+    return rejectedExecutionResponse(execution, {
+      root,
+      team: loaded.team,
+      game: loaded.game,
+      callerUid: caller.uid,
+      canScore: loaded.access.scorekeeping,
+      canManage: loaded.access.full,
+      nowMs,
+    });
+  }
+
+  function requireCurrentCommandHistoryAuthority({
+    command,
+    checkpoint,
+    caller,
+    policy,
+    team,
+    game,
+    root,
+    nowMs,
+  }) {
+    if (!isActiveTeam(team)) {
+      throw makeError(
+        "failed-precondition",
+        "Inactive teams cannot submit Diamond commands.",
+      );
+    }
     requireAllowed(
       core.decideDiamondOperation({
-        operation: "read",
-        teamId,
-        game: loaded.game,
-        policy: null,
+        operation: commandHistoryOperationName(command, checkpoint),
+        policy,
+        teamId: command.teamId,
+        appBuild: command.appBuild,
+        game,
       }),
-      "This game is not owned by Diamond v2.",
+      "Diamond scoring is disabled.",
     );
-    return loaded;
+    requireAllowed(
+      core.decideDiamondScorerLease({
+        operation: "score",
+        lease: root.scorerLease,
+        actorUid: caller.uid,
+        presentedLeaseId: command.leaseId || null,
+        nowMillis: nowMs,
+      }),
+      "Acquire the current scorer lease before submitting this command.",
+    );
+  }
+
+  function requireCurrentCommandHistorySource(
+    root,
+    checkpoint,
+    admission,
+    callerUid,
+  ) {
+    if (
+      admission.callerUid !== callerUid ||
+      commandHistorySourceHash(root, checkpoint) !== admission.sourceHash
+    ) {
+      throw makeError(
+        "aborted",
+        "The scorebook changed while the command history was being verified.",
+        { reason: "command-history-source-changed", retryable: true },
+      );
+    }
+  }
+
+  function requireCurrentCommandHistoryReceipt({
+    root,
+    checkpoint,
+    receipt,
+    admission,
+    command,
+    callerUid,
+  }) {
+    let exactHead = false;
+    try {
+      exactHead =
+        admission.callerUid === callerUid &&
+        commandHistorySourceHash(root, admission.checkpoint) ===
+          admission.sourceHash &&
+        receipt.instanceId === root.instanceId &&
+        receipt.commandId === command.commandId &&
+        receipt.event?.sequence === admission.checkpoint.sequence + 1 &&
+        receipt.event?.revision === receipt.event?.sequence &&
+        receipt.event?.previousHash === admission.checkpoint.previousHash &&
+        core.hashDiamondValue(receipt.event?.before) ===
+          core.hashDiamondValue(admission.checkpoint.state) &&
+        checkpoint.sequence === receipt.result?.revision &&
+        checkpoint.previousHash === receipt.event?.hash &&
+        core.hashDiamondValue(checkpoint.state) ===
+          core.hashDiamondValue(receipt.result?.state);
+    } catch {
+      exactHead = false;
+    }
+    if (!exactHead) {
+      throw makeError(
+        "unavailable",
+        "The committed Diamond command head could not be verified. Retry the same command.",
+        {
+          reason: "command-history-receipt-head-mismatch",
+          retryable: true,
+        },
+      );
+    }
+  }
+
+  function requireCommandHistoryReceiptOutcome(execution) {
+    if (
+      execution.result.outcome === "duplicate" ||
+      (execution.result.outcome === "rejected" &&
+        execution.result.rejection?.code === "idempotency-conflict")
+    ) {
+      return;
+    }
+    throw makeError(
+      "unavailable",
+      "The committed Diamond command receipt could not be verified. Retry the same command.",
+      { reason: "command-history-receipt-invalid", retryable: true },
+    );
   }
 
   async function submitDiamondCommand(data = {}, context = {}) {
@@ -4598,7 +4979,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
         "Use activateDiamondGame for the initial Diamond activation.",
       );
     }
-    const caller = await loadEnabledAuthUser(context);
+    let caller = await loadEnabledAuthUser(context);
     const resourcePaths = paths(command.teamId, command.gameId);
     let writeNowMs = null;
     let newEventId = null;
@@ -4612,46 +4993,181 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       return newEventId;
     };
     const fullReplayCommand = FULL_REPLAY_COMMANDS.has(command.type);
-    if (fullReplayCommand) {
-      await preauthorizePrivateReplay(command.teamId, command.gameId, caller);
-    }
-    let needsFullHistory = fullReplayCommand;
+    let commandHistoryAdmission = null;
+    let needsFullHistory = false;
     let preparedHistory = null;
     if (fullReplayCommand) {
-      let boundedReceiptSnapshot;
+      const admissionIdentity = commandHistoryAdmissionIdentity(
+        command,
+        caller.uid,
+      );
+      let admissionCallbackCount = 0;
+      let admission;
       try {
-        boundedReceiptSnapshot = await firestore
-          .doc(resourcePaths.command(command.commandId))
-          .get();
-      } catch {
+        admission = await firestore.runTransaction(
+          async (transaction) => {
+            caller = await loadEnabledAuthUser(context);
+            admissionCallbackCount += 1;
+            if (admissionCallbackCount > 1) {
+              throw makeError(
+                "unavailable",
+                "Command history admission could not be confirmed. Retry the command.",
+                {
+                  reason: "command-history-admission-retried",
+                  retryable: true,
+                },
+              );
+            }
+            const nowMs = normalizeNow(clock, makeError);
+            const rootRef = firestore.doc(resourcePaths.scorebook);
+            const receiptRef = firestore.doc(
+              resourcePaths.command(command.commandId),
+            );
+            const [loaded, rootSnapshot, receiptSnapshot] = await Promise.all([
+              loadAccessDocuments(
+                transaction,
+                command.teamId,
+                command.gameId,
+                caller,
+              ),
+              transaction.get(rootRef),
+              transaction.get(receiptRef),
+            ]);
+            requireScorekeeper(loaded.access);
+            const root = snapshotData(rootSnapshot);
+            if (!root)
+              throw makeError("not-found", "Diamond scorebook not found.");
+            if (root.instanceId !== loaded.game.diamondScorebookInstanceId) {
+              throw makeError(
+                "failed-precondition",
+                "The Diamond scorebook generation does not match the game.",
+              );
+            }
+            validateCommittedOrientationSnapshot(root, command.teamId);
+            if (root.instanceId !== command.expectedInstanceId) {
+              throw makeError(
+                "aborted",
+                "The Diamond game instance changed. Reload before submitting this command.",
+                { reason: "stale-instance" },
+              );
+            }
+            const checkpoint = buildCheckpointFromRoot(root);
+            if (!checkpoint) {
+              throw makeError(
+                "failed-precondition",
+                "The Diamond checkpoint is unavailable.",
+              );
+            }
+            if (snapshotData(receiptSnapshot)) {
+              return Object.freeze({ kind: "receipt" });
+            }
+            const policy = await readPolicy(transaction);
+            requireCurrentCommandHistoryAuthority({
+              command,
+              checkpoint,
+              caller,
+              policy,
+              team: loaded.team,
+              game: loaded.game,
+              root,
+              nowMs,
+            });
+            if (checkpoint.sequence !== command.expectedRevision) {
+              return Object.freeze({
+                kind: "rejected",
+                response: earlyRejectedCommandResponse(
+                  command,
+                  checkpoint,
+                  loaded,
+                  root,
+                  caller,
+                  nowMs,
+                ),
+              });
+            }
+            if (checkpoint.sequence > MAX_CANONICAL_EVENTS) {
+              throw makeError(
+                "resource-exhausted",
+                "The Diamond event history exceeds the bounded replay limit.",
+                {
+                  reason: "command-history-replay-bound-exceeded",
+                  retryable: false,
+                  maximumEvents: MAX_CANONICAL_EVENTS,
+                },
+              );
+            }
+            const admissionSnapshot = await transaction.get(
+              admissionIdentity.reference,
+            );
+            const requestedReadUnits = Math.max(1, checkpoint.sequence);
+            transaction.set(
+              admissionIdentity.reference,
+              planCommandHistoryAdmission({
+                snapshot: admissionSnapshot,
+                identity: admissionIdentity,
+                requestedReadUnits,
+                nowMs,
+              }),
+            );
+            return Object.freeze({
+              kind: "admitted",
+              callerUid: caller.uid,
+              root,
+              checkpoint,
+              sourceHash: commandHistorySourceHash(root, checkpoint),
+              requestedReadUnits,
+            });
+          },
+          { maxAttempts: 1 },
+        );
+      } catch (error) {
+        if (
+          error instanceof HttpsError ||
+          error instanceof DiamondHandlerError
+        ) {
+          throw error;
+        }
         throw makeError(
           "unavailable",
-          "The correction receipt could not be checked. Try again.",
+          "Command history admission could not be confirmed. Retry the command.",
+          { reason: "command-history-admission-unconfirmed", retryable: true },
         );
       }
-      needsFullHistory = !snapshotData(boundedReceiptSnapshot);
+      if (admission.kind === "rejected") return admission.response;
+      if (admission.kind === "admitted") {
+        commandHistoryAdmission = admission;
+        needsFullHistory = true;
+      }
     }
     if (needsFullHistory) {
-      let rootSnapshot;
-      try {
-        rootSnapshot = await firestore.doc(resourcePaths.scorebook).get();
-      } catch {
-        throw makeError(
-          "unavailable",
-          "The Diamond checkpoint could not be read. Try again.",
-        );
-      }
-      const root = snapshotData(rootSnapshot);
-      if (!root) throw makeError("not-found", "Diamond scorebook not found.");
       const events = await loadAllCanonicalEvents(
         command.teamId,
         command.gameId,
+        commandHistoryAdmission.checkpoint.sequence,
       );
-      const validated = validateCompleteHistory(root, events);
-      preparedHistory = { root, events, checkpoint: validated.checkpoint };
+      const validated = validateCompleteHistory(
+        commandHistoryAdmission.root,
+        events,
+      );
+      if (
+        core.hashDiamondValue(validated.replay.state) !==
+        core.hashDiamondValue(commandHistoryAdmission.checkpoint.state)
+      ) {
+        throw makeError(
+          "failed-precondition",
+          "The Diamond checkpoint state does not match its canonical history.",
+          { reason: "command-history-checkpoint-state-mismatch" },
+        );
+      }
+      preparedHistory = {
+        root: commandHistoryAdmission.root,
+        events,
+        checkpoint: validated.checkpoint,
+      };
     }
 
     return firestore.runTransaction(async (transaction) => {
+      if (fullReplayCommand) caller = await loadEnabledAuthUser(context);
       const policy = await readPolicy(transaction);
       const loaded = await loadAccessDocuments(
         transaction,
@@ -4706,6 +5222,29 @@ function createDiamondScorebookHandlers(dependencies = {}) {
           "The Diamond checkpoint is unavailable.",
         );
       if (existingReceipt) {
+        const responseNowMs = commandHistoryAdmission
+          ? normalizeNow(clock, makeError)
+          : getWriteNowMs();
+        if (commandHistoryAdmission) {
+          requireCurrentCommandHistoryAuthority({
+            command,
+            checkpoint: commandHistoryAdmission.checkpoint,
+            caller,
+            policy,
+            team: loaded.team,
+            game: loaded.game,
+            root,
+            nowMs: responseNowMs,
+          });
+          requireCurrentCommandHistoryReceipt({
+            root,
+            checkpoint,
+            receipt: existingReceipt,
+            admission: commandHistoryAdmission,
+            command,
+            callerUid: caller.uid,
+          });
+        }
         const duplicateExecution =
           domainEngine.executeDiamondCommandFromCheckpoint(
             checkpoint,
@@ -4718,6 +5257,9 @@ function createDiamondScorebookHandlers(dependencies = {}) {
             },
             existingReceipt,
           );
+        if (commandHistoryAdmission) {
+          requireCommandHistoryReceiptOutcome(duplicateExecution);
+        }
         if (duplicateExecution.result.outcome === "rejected") {
           return rejectedExecutionResponse(duplicateExecution, {
             root,
@@ -4726,7 +5268,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
             callerUid: caller.uid,
             canScore: loaded.access.scorekeeping,
             canManage: loaded.access.full,
-            nowMs: getWriteNowMs(),
+            nowMs: responseNowMs,
           });
         }
         return acceptedExecutionResponse(duplicateExecution, {
@@ -4736,7 +5278,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
           callerUid: caller.uid,
           canScore: loaded.access.scorekeeping,
           canManage: loaded.access.full,
-          nowMs: getWriteNowMs(),
+          nowMs: responseNowMs,
         });
       }
       if (!isActiveTeam(loaded.team)) {
@@ -4745,13 +5287,19 @@ function createDiamondScorebookHandlers(dependencies = {}) {
           "Inactive teams cannot submit Diamond commands.",
         );
       }
-      const operationName =
-        command.type === "cancel" ||
-        RESILIENT_CORRECTION_COMMANDS.has(command.type) ||
-        (checkpoint.state?.lifecycle === "correction" &&
-          ["record_fielding", "record_scoring_judgment", "finalize"].includes(
-            command.type,
-          ))
+      const operationName = commandHistoryAdmission
+        ? commandHistoryOperationName(
+            command,
+            commandHistoryAdmission.checkpoint,
+          )
+        : command.type === "cancel" ||
+            RESILIENT_CORRECTION_COMMANDS.has(command.type) ||
+            (checkpoint.state?.lifecycle === "correction" &&
+              [
+                "record_fielding",
+                "record_scoring_judgment",
+                "finalize",
+              ].includes(command.type))
           ? "correct"
           : "score";
       requireAllowed(
@@ -4764,7 +5312,9 @@ function createDiamondScorebookHandlers(dependencies = {}) {
         }),
         "Diamond scoring is disabled.",
       );
-      const nowMs = getWriteNowMs();
+      const nowMs = commandHistoryAdmission
+        ? normalizeNow(clock, makeError)
+        : getWriteNowMs();
       let nextScorerLease = null;
       if (command.type !== "cancel") {
         const leaseOperation =
@@ -4799,46 +5349,33 @@ function createDiamondScorebookHandlers(dependencies = {}) {
         };
       }
 
+      if (commandHistoryAdmission) {
+        requireCurrentCommandHistorySource(
+          root,
+          checkpoint,
+          commandHistoryAdmission,
+          caller.uid,
+        );
+      }
+
       let execution;
       const eventId = getNewEventId();
       if (needsFullHistory) {
-        if (
-          !preparedHistory ||
-          preparedHistory.checkpoint.sequence !== checkpoint.sequence ||
-          preparedHistory.checkpoint.previousHash !== checkpoint.previousHash
-        ) {
-          return {
-            outcome: "rejected",
-            revision: checkpoint.sequence,
-            eventId: null,
-            state: buildPrivateSnapshot({
-              state: checkpoint.state,
-              root,
-              team: loaded.team,
-              game: loaded.game,
-              callerUid: caller.uid,
-              canScore: loaded.access.scorekeeping,
-              canManage: loaded.access.full,
-              nowMs,
-              core,
-            }),
-            rejection: {
-              code: "stale-revision",
-              message:
-                "The scorebook changed while the correction was being verified.",
-              retryable: true,
-              authoritativeRevision: checkpoint.sequence,
-            },
-          };
+        if (!preparedHistory) {
+          throw makeError(
+            "unavailable",
+            "The verified Diamond event history is unavailable. Retry the command.",
+            { reason: "command-history-missing", retryable: true },
+          );
         }
         const ledger = {
           teamId: command.teamId,
           gameId: command.gameId,
-          rulesProfileId: root.rulesProfileId,
-          rulesProfileVersion: root.rulesProfileVersion,
-          captureMode: root.captureMode,
-          initialState: root.initialState,
-          state: checkpoint.state,
+          rulesProfileId: preparedHistory.root.rulesProfileId,
+          rulesProfileVersion: preparedHistory.root.rulesProfileVersion,
+          captureMode: preparedHistory.root.captureMode,
+          initialState: preparedHistory.root.initialState,
+          state: preparedHistory.checkpoint.state,
           events: preparedHistory.events,
         };
         execution = domainEngine.executeDiamondCommand(ledger, command, {
@@ -7651,6 +8188,9 @@ function createDiamondScorebookHandlers(dependencies = {}) {
 }
 
 module.exports = {
+  COMMAND_HISTORY_CONTROL_QUARANTINE_MS,
+  COMMAND_HISTORY_RATE_WINDOW_MS,
+  COMMAND_HISTORY_SUSTAINED_WINDOW_MS,
   DEFAULT_EVENT_PAGE_SIZE,
   DIAMOND_ENGINE,
   DiamondHandlerError,
@@ -7663,6 +8203,10 @@ module.exports = {
   MANAGER_STAT_REQUEST_LEASE_MS,
   MANAGER_STAT_SUSTAINED_WINDOW_MS,
   MAX_CANONICAL_EVENTS,
+  MAX_COMMAND_HISTORY_READ_UNITS_PER_WINDOW,
+  MAX_COMMAND_HISTORY_REQUESTS_PER_WINDOW,
+  MAX_COMMAND_HISTORY_SUSTAINED_READ_UNITS_PER_WINDOW,
+  MAX_COMMAND_HISTORY_SUSTAINED_REQUESTS_PER_WINDOW,
   MAX_CONCURRENT_MANAGER_STAT_REQUESTS,
   MAX_DIAMOND_SCORER_CANDIDATES,
   MAX_EVENT_PAGE_SIZE,

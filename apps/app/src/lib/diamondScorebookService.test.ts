@@ -1431,6 +1431,69 @@ describe('diamondScorebookService', () => {
     expect(call.mock.calls.map(([name]) => name)).toEqual(['getDiamondState', 'submitDiamondCommand']);
   });
 
+  it('retains a rate-limited queue and drains it on a later manual sync', async () => {
+    const storage = createStorage();
+    const identity = buildQueueIdentity();
+    const first = buildCommand({
+      type: 'record_fielding',
+      payload: {
+        playEventId: 'event-3',
+        fielding: { putoutBy: 'pitcher-1', battedBall: 'ground' }
+      }
+    });
+    const second = {
+      ...buildCommand({
+        expectedRevision: 4,
+        payload: {
+          batterId: 'batter-1',
+          pitcherId: 'pitcher-1',
+          result: 'called_strike'
+        }
+      }),
+      commandId: replacementInstanceId
+    };
+    enqueueDiamondCommand(first, identity, storage);
+    enqueueDiamondCommand(second, identity, storage);
+
+    const limitedCall = vi.fn(async (name: string) => {
+      if (name === 'getDiamondState') return buildRawSnapshot(3);
+      throw {
+        code: 'functions/resource-exhausted',
+        message: 'Full-history scorebook verification is temporarily limited.',
+        details: { reason: 'command-history-rate-limited', retryable: true }
+      };
+    });
+    await expect(
+      reconcileDiamondCommandQueue(identity, {
+        storage,
+        transport: { call: limitedCall } as unknown as DiamondCallableTransport
+      })
+    ).rejects.toMatchObject({ code: 'rate-limited', retryable: true });
+    expect(limitedCall.mock.calls.map(([name]) => name)).toEqual(['getDiamondState', 'submitDiamondCommand', 'submitDiamondCommand']);
+    expect(limitedCall.mock.calls.slice(1).map(([, payload]) => payload.commandId)).toEqual([first.commandId, first.commandId]);
+    expect(limitedCall.mock.calls.slice(1).map(([, payload]) => payload.type)).toEqual(['record_fielding', 'record_fielding']);
+    expect(readDiamondCommandQueue(identity, storage).map(({ command }) => command)).toEqual([first, second]);
+
+    const recoveredCall = vi.fn(async (name: string, payload: Record<string, unknown>) => {
+      if (name === 'getDiamondState') return buildRawSnapshot(3);
+      const revision = payload.commandId === first.commandId ? 4 : 5;
+      return {
+        outcome: 'accepted',
+        revision,
+        eventId: `event-${revision}`,
+        state: buildRawSnapshot(revision)
+      };
+    });
+    await expect(
+      reconcileDiamondCommandQueue(identity, {
+        storage,
+        transport: { call: recoveredCall } as unknown as DiamondCallableTransport
+      })
+    ).resolves.toMatchObject({ accepted: 2, duplicates: 0, remaining: [] });
+    expect(recoveredCall.mock.calls.map(([name]) => name)).toEqual(['getDiamondState', 'submitDiamondCommand', 'submitDiamondCommand']);
+    expect(readDiamondCommandQueue(identity, storage)).toEqual([]);
+  });
+
   it('never stores private notes or transcripts in the offline command queue', () => {
     const storage = createStorage();
     const note = createDiamondCommand(

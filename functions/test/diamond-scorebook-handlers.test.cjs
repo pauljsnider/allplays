@@ -4,6 +4,9 @@ const assert = require("node:assert/strict");
 const { describe, it } = require("node:test");
 
 const {
+  COMMAND_HISTORY_CONTROL_QUARANTINE_MS,
+  COMMAND_HISTORY_RATE_WINDOW_MS,
+  COMMAND_HISTORY_SUSTAINED_WINDOW_MS,
   DIAMOND_ENGINE,
   LEGACY_TRACKING_COLLECTIONS,
   MANAGER_STAT_ADMISSION_DEDUPE_MS,
@@ -13,6 +16,10 @@ const {
   MANAGER_STAT_REQUEST_LEASE_MS,
   MANAGER_STAT_SUSTAINED_WINDOW_MS,
   MAX_CONCURRENT_MANAGER_STAT_REQUESTS,
+  MAX_COMMAND_HISTORY_READ_UNITS_PER_WINDOW,
+  MAX_COMMAND_HISTORY_REQUESTS_PER_WINDOW,
+  MAX_COMMAND_HISTORY_SUSTAINED_READ_UNITS_PER_WINDOW,
+  MAX_COMMAND_HISTORY_SUSTAINED_REQUESTS_PER_WINDOW,
   MAX_MANAGER_STAT_ADMISSIONS_PER_WINDOW,
   MAX_MANAGER_STAT_GLOBAL_READ_UNITS_PER_WINDOW,
   MAX_MANAGER_STAT_READ_UNITS_PER_WINDOW,
@@ -239,6 +246,7 @@ class FakeFirestore {
     this.transactionReadBatches = [];
     this.transactionBulkGetCounts = [];
     this.transactionCommits = [];
+    this.transactionOptions = [];
     this.transactionHook = null;
     this.documentUpdateTimes = new Map();
     this.commitTimestampMs = 1_750_000_000_000;
@@ -326,9 +334,17 @@ class FakeFirestore {
     return result;
   }
 
-  runTransaction(callback) {
+  runTransaction(callback, transactionOptions) {
+    this.transactionOptions.push(clone(transactionOptions));
     const run = async () => {
+      let attempt = 0;
+      const maximumAttempts = Number.isSafeInteger(
+        transactionOptions?.maxAttempts,
+      )
+        ? transactionOptions.maxAttempts
+        : Number.POSITIVE_INFINITY;
       for (;;) {
+        attempt += 1;
         await this.transactionHook?.("before");
         const transaction = new FakeTransaction(this);
         const result = await callback(transaction);
@@ -337,7 +353,40 @@ class FakeFirestore {
           transaction,
           result,
         );
-        if (directive === "retry") continue;
+        if (directive === "retry") {
+          if (attempt >= maximumAttempts) {
+            throw Object.assign(
+              new Error("transaction attempt limit reached"),
+              {
+                code: "aborted",
+              },
+            );
+          }
+          continue;
+        }
+        if (directive === "retry-after-commit") {
+          transaction.commit();
+          await this.transactionHook?.(
+            "afterRetryableCommit",
+            transaction,
+            result,
+          );
+          if (attempt >= maximumAttempts) {
+            throw Object.assign(new Error("transaction commit was ambiguous"), {
+              code: "unavailable",
+            });
+          }
+          continue;
+        }
+        if (directive === "force-retry-after-commit") {
+          transaction.commit();
+          await this.transactionHook?.(
+            "afterRetryableCommit",
+            transaction,
+            result,
+          );
+          continue;
+        }
         transaction.commit();
         await this.transactionHook?.("after", transaction, result);
         return result;
@@ -746,6 +795,10 @@ function managerStatReadControl(harness, type) {
   const controls = managerStatReadControls(harness, type);
   assert.equal(controls.length, 1, `expected one ${type} control`);
   return controls[0];
+}
+
+function commandHistoryAdmission(harness) {
+  return managerStatReadControl(harness, "diamond-command-history-admission");
 }
 
 function transactionControlWrite(transaction, type, status = undefined) {
@@ -5475,8 +5528,18 @@ describe("Diamond scorebook handler factory", () => {
     });
     const resourcePaths = paths("team-1", "game-1");
     let canonicalEventReads = 0;
+    let revokeDuringHistory = false;
     harness.firestore.queryHook = (query) => {
-      if (query.path === resourcePaths.events) canonicalEventReads += 1;
+      if (query.path !== resourcePaths.events) return;
+      canonicalEventReads += 1;
+      if (revokeDuringHistory) {
+        revokeDuringHistory = false;
+        const team = harness.firestore.read("teams/team-1");
+        harness.firestore.seed("teams/team-1", {
+          ...team,
+          ownerId: "replacement-manager",
+        });
+      }
     };
     await assert.rejects(
       submit(harness, {
@@ -5497,21 +5560,7 @@ describe("Diamond scorebook handler factory", () => {
       undefined,
     );
 
-    const originalRunTransaction = harness.firestore.runTransaction.bind(
-      harness.firestore,
-    );
-    let revokedBeforeTransaction = false;
-    harness.firestore.runTransaction = (callback) => {
-      if (!revokedBeforeTransaction) {
-        revokedBeforeTransaction = true;
-        const team = harness.firestore.read("teams/team-1");
-        harness.firestore.seed("teams/team-1", {
-          ...team,
-          ownerId: "replacement-manager",
-        });
-      }
-      return originalRunTransaction(callback);
-    };
+    revokeDuringHistory = true;
     await assert.rejects(
       submit(harness, {
         commandId: makeUuid(472),
@@ -5533,6 +5582,1231 @@ describe("Diamond scorebook handler factory", () => {
       harness.firestore.countDirectChildren(resourcePaths.events),
       7,
     );
+  });
+
+  it("rejects every full-history command from a non-holder before reading the ledger", async () => {
+    const cases = [
+      [
+        "record_fielding",
+        {
+          playEventId: makeUuid(24),
+          fielding: { putoutBy: "home-1", battedBall: "ground" },
+        },
+      ],
+      [
+        "record_scoring_judgment",
+        { playEventId: makeUuid(24), runnerId: "away-1", earned: true },
+      ],
+      [
+        "void_event",
+        { targetEventId: makeUuid(24), reason: "Official scoring correction" },
+      ],
+      [
+        "supersede_event",
+        {
+          targetEventId: makeUuid(24),
+          reason: "Official scoring replacement",
+          replacement: {
+            type: "record_pitch",
+            payload: {
+              batterId: "away-1",
+              pitcherId: "home-1",
+              result: "ball",
+            },
+          },
+        },
+      ],
+      [
+        "reopen_for_correction",
+        { reason: "The official scorer must correct the book." },
+      ],
+      ["finalize", { confirmed: true }],
+    ];
+    for (let index = 0; index < cases.length; index += 1) {
+      const [type, payload] = cases[index];
+      const harness = createHarness();
+      await activate(harness);
+      await startGame(harness);
+      const resourcePaths = paths("team-1", "game-1");
+      let historyReads = 0;
+      harness.firestore.queryHook = (query) => {
+        if (query.path === resourcePaths.events) historyReads += 1;
+      };
+
+      await assert.rejects(
+        submit(harness, {
+          commandId: makeUuid(1_000 + index),
+          expectedRevision: 6,
+          type,
+          payload,
+          context: harness.scorerContext,
+        }),
+        (error) =>
+          error.code === "unavailable" &&
+          error.details?.reason === "lease-held-by-other",
+        type,
+      );
+      assert.equal(historyReads, 0, type);
+      assert.equal(
+        managerStatReadControls(harness, "diamond-command-history-admission")
+          .length,
+        0,
+        type,
+      );
+    }
+  });
+
+  it("admits through one hash-only UID/game counter with maxAttempts one and a bounded query", async () => {
+    const harness = createHarness();
+    await activate(harness);
+    await startGame(harness);
+    const resourcePaths = paths("team-1", "game-1");
+    harness.firestore.seed(`${resourcePaths.events}/uncommitted-extra`, {
+      sequence: 7,
+      revision: 7,
+      privatePayload: "must not be read past the captured head",
+    });
+    let historyRows = null;
+    harness.firestore.queryHook = (query, snapshot) => {
+      if (query.path === resourcePaths.events) historyRows = snapshot.size;
+    };
+
+    const result = await submit(harness, {
+      commandId: makeUuid(1_010),
+      expectedRevision: 6,
+      type: "record_fielding",
+      payload: {
+        playEventId: makeUuid(24),
+        fielding: { putoutBy: "home-1" },
+      },
+    });
+    assert.equal(result.outcome, "rejected");
+    assert.equal(historyRows, 6);
+    const control = commandHistoryAdmission(harness);
+    assert.match(
+      control.path,
+      /^diamondManagerStatReadControls\/command-admission-[0-9a-f]{64}$/,
+    );
+    assert.deepEqual(Object.keys(control.value).sort(), [
+      "expiresAt",
+      "readUnits",
+      "requestCount",
+      "schemaVersion",
+      "scopeHash",
+      "sustainedReadUnits",
+      "sustainedRequestCount",
+      "sustainedWindowResetAtMs",
+      "sustainedWindowStartedAtMs",
+      "type",
+      "updatedAtMs",
+      "windowResetAtMs",
+      "windowStartedAtMs",
+    ]);
+    assert.equal(control.value.requestCount, 1);
+    assert.equal(control.value.readUnits, 6);
+    assert.equal(control.value.sustainedRequestCount, 1);
+    assert.equal(control.value.sustainedReadUnits, 6);
+    assert.doesNotMatch(
+      JSON.stringify({ path: control.path, value: control.value }),
+      /manager-1|team-1|game-1|00000000-/,
+    );
+    assert.ok(
+      harness.firestore.transactionOptions.some(
+        (options) => options?.maxAttempts === 1,
+      ),
+    );
+    const historyQuery = harness.firestore.queryReads.find(
+      ({ path }) => path === resourcePaths.events,
+    );
+    assert.deepEqual(
+      historyQuery.filters.find(({ operator }) => operator === "<="),
+      { field: "sequence", operator: "<=", value: 6 },
+    );
+
+    const beforeStale = clone(control.value);
+    const readsBeforeStale = harness.firestore.queryReads.length;
+    const stale = await submit(harness, {
+      commandId: makeUuid(1_011),
+      expectedRevision: 5,
+      type: "record_fielding",
+      payload: {
+        playEventId: makeUuid(24),
+        fielding: { putoutBy: "home-1" },
+      },
+    });
+    assert.equal(stale.rejection.code, "stale-revision");
+    assert.deepEqual(commandHistoryAdmission(harness).value, beforeStale);
+    assert.equal(harness.firestore.queryReads.length, readsBeforeStale);
+
+    await submit(harness, {
+      commandId: makeUuid(1_012),
+      expectedRevision: 6,
+      type: "record_pitch",
+      payload: {
+        batterId: "away-1",
+        pitcherId: "home-1",
+        result: "ball",
+      },
+    });
+    assert.deepEqual(commandHistoryAdmission(harness).value, beforeStale);
+  });
+
+  it("charges the captured head and stops pagination without an uncharged tail query", async () => {
+    const cases = [
+      { label: "zero head", head: 0, storedRows: 0, pageSizes: [] },
+      { label: "single row", head: 1, storedRows: 1, pageSizes: [1] },
+      { label: "exact page", head: 200, storedRows: 200, pageSizes: [200] },
+      {
+        label: "partial tail",
+        head: 201,
+        storedRows: 201,
+        pageSizes: [200, 1],
+      },
+      { label: "empty tail", head: 201, storedRows: 200, pageSizes: [200, 0] },
+    ];
+    for (let index = 0; index < cases.length; index += 1) {
+      const { label, head, storedRows, pageSizes } = cases[index];
+      const harness = createHarness();
+      await activate(harness);
+      await startGame(harness);
+      const resourcePaths = paths("team-1", "game-1");
+      const root = harness.firestore.read(resourcePaths.scorebook);
+      if (head === 0) {
+        const firstEvent = directCollectionDocuments(
+          harness.firestore,
+          resourcePaths.events,
+        ).find(({ value }) => value.sequence === 1).value;
+        root.checkpoint = {
+          sequence: 0,
+          previousHash: firstEvent.previousHash,
+          state: clone(root.initialState),
+        };
+      } else {
+        root.checkpoint = {
+          ...root.checkpoint,
+          sequence: head,
+          state: { ...root.checkpoint.state, revision: head },
+        };
+        for (let sequence = 7; sequence <= storedRows; sequence += 1) {
+          harness.firestore.seed(
+            `${resourcePaths.events}/synthetic-${String(sequence).padStart(6, "0")}`,
+            { sequence, revision: sequence },
+          );
+        }
+      }
+      harness.firestore.seed(resourcePaths.scorebook, root);
+      const observedPageSizes = [];
+      harness.firestore.queryHook = (query, snapshot) => {
+        if (query.path === resourcePaths.events) {
+          observedPageSizes.push(snapshot.size);
+        }
+      };
+
+      const response = await submit(harness, {
+        commandId: makeUuid(1_013 + index),
+        expectedRevision: head,
+        type: "record_fielding",
+        payload: {
+          playEventId: makeUuid(24),
+          fielding: { putoutBy: "home-1" },
+        },
+      }).catch((error) => error);
+      if (head === 0) assert.equal(response.outcome, "rejected", label);
+      else assert.ok(response instanceof Error, label);
+      assert.deepEqual(observedPageSizes, pageSizes, label);
+      const control = commandHistoryAdmission(harness).value;
+      assert.equal(control.readUnits, Math.max(1, head), label);
+      assert.equal(control.sustainedReadUnits, Math.max(1, head), label);
+      const minimumBilledReads = observedPageSizes.reduce(
+        (total, size) => total + Math.max(1, size),
+        0,
+      );
+      assert.ok(minimumBilledReads <= control.readUnits, label);
+      const historyQueries = harness.firestore.queryReads.filter(
+        ({ path }) => path === resourcePaths.events,
+      );
+      assert.ok(
+        historyQueries.every(({ maximum }) => maximum <= Math.max(1, head)),
+        label,
+      );
+      for (const query of historyQueries) {
+        assert.deepEqual(
+          query.filters.find(({ operator }) => operator === "<="),
+          { field: "sequence", operator: "<=", value: head },
+          label,
+        );
+      }
+    }
+  });
+
+  it("enforces the intended 20k replay envelope without breaking exact receipts", async () => {
+    const harness = createHarness();
+    await activate(harness);
+    await startGame(harness);
+    const resourcePaths = paths("team-1", "game-1");
+    const pitch = await submit(harness, {
+      commandId: makeUuid(1_017),
+      expectedRevision: 6,
+      type: "record_pitch",
+      payload: {
+        batterId: "away-1",
+        pitcherId: "home-1",
+        result: "ball",
+      },
+    });
+    const receiptCommand = {
+      commandId: makeUuid(1_018),
+      expectedRevision: 7,
+      type: "void_event",
+      payload: {
+        targetEventId: pitch.eventId,
+        reason: "The pitch was never delivered.",
+      },
+    };
+    assert.equal((await submit(harness, receiptCommand)).outcome, "accepted");
+    const charged = clone(commandHistoryAdmission(harness).value);
+    let root = harness.firestore.read(resourcePaths.scorebook);
+    root.checkpoint = {
+      ...root.checkpoint,
+      sequence: 20_001,
+      state: { ...root.checkpoint.state, revision: 20_001 },
+    };
+    harness.firestore.seed(resourcePaths.scorebook, root);
+    let historyReads = 0;
+    harness.firestore.queryHook = (query) => {
+      if (query.path === resourcePaths.events) historyReads += 1;
+    };
+
+    await assert.rejects(
+      submit(harness, {
+        commandId: makeUuid(1_019),
+        expectedRevision: 20_001,
+        type: "record_fielding",
+        payload: {
+          playEventId: pitch.eventId,
+          fielding: { putoutBy: "home-1" },
+        },
+      }),
+      (error) =>
+        error.code === "resource-exhausted" &&
+        error.details?.reason === "command-history-replay-bound-exceeded" &&
+        error.details?.maximumEvents === 20_000,
+    );
+    assert.equal(historyReads, 0);
+    assert.deepEqual(commandHistoryAdmission(harness).value, charged);
+
+    const duplicate = await submit(harness, receiptCommand);
+    assert.equal(duplicate.outcome, "duplicate");
+    assert.equal(historyReads, 0);
+    assert.deepEqual(commandHistoryAdmission(harness).value, charged);
+
+    root = harness.firestore.read(resourcePaths.scorebook);
+    root.checkpoint = {
+      ...root.checkpoint,
+      sequence: 20_000,
+      state: { ...root.checkpoint.state, revision: 20_000 },
+    };
+    harness.firestore.seed(resourcePaths.scorebook, root);
+    await assert.rejects(
+      submit(harness, {
+        commandId: makeUuid(1_020),
+        expectedRevision: 20_000,
+        type: "record_fielding",
+        payload: {
+          playEventId: pitch.eventId,
+          fielding: { putoutBy: "home-1" },
+        },
+      }),
+      (error) => error.code === "unavailable",
+    );
+    assert.equal(historyReads, 1);
+    const atLimit = commandHistoryAdmission(harness).value;
+    assert.equal(atLimit.readUnits, charged.readUnits + 20_000);
+    const boundedQuery = harness.firestore.queryReads
+      .filter(({ path }) => path === resourcePaths.events)
+      .at(-1);
+    assert.deepEqual(
+      boundedQuery.filters.find(({ operator }) => operator === "<="),
+      { field: "sequence", operator: "<=", value: 20_000 },
+    );
+  });
+
+  it("serializes fresh IDs at burst, sustained, and weighted admission limits", async () => {
+    let nowMs = 1_750_000_000_000;
+    const harness = createHarness({ clock: () => nowMs });
+    await activate(harness);
+    await startGame(harness);
+    const resourcePaths = paths("team-1", "game-1");
+    let historyReads = 0;
+    harness.firestore.queryHook = (query) => {
+      if (query.path === resourcePaths.events) historyReads += 1;
+    };
+    const request = (index) =>
+      submit(harness, {
+        commandId: makeUuid(index),
+        expectedRevision: 6,
+        type: "record_fielding",
+        payload: {
+          playEventId: makeUuid(24),
+          fielding: { putoutBy: "home-1" },
+        },
+      });
+
+    assert.equal((await request(1_020)).outcome, "rejected");
+    let control = commandHistoryAdmission(harness);
+    harness.firestore.seed(control.path, {
+      ...control.value,
+      requestCount: MAX_COMMAND_HISTORY_REQUESTS_PER_WINDOW - 1,
+      readUnits: MAX_COMMAND_HISTORY_READ_UNITS_PER_WINDOW - 6,
+      sustainedRequestCount: MAX_COMMAND_HISTORY_REQUESTS_PER_WINDOW - 1,
+      sustainedReadUnits: MAX_COMMAND_HISTORY_READ_UNITS_PER_WINDOW - 6,
+    });
+    const burst = await Promise.allSettled([
+      request(1_021),
+      request(1_022),
+      request(1_023),
+    ]);
+    assert.equal(
+      burst.filter(({ status }) => status === "fulfilled").length,
+      1,
+    );
+    for (const rejected of burst.filter(
+      ({ status }) => status === "rejected",
+    )) {
+      assert.equal(rejected.reason.code, "resource-exhausted");
+      assert.equal(
+        rejected.reason.details?.reason,
+        "command-history-rate-limited",
+      );
+    }
+    control = commandHistoryAdmission(harness);
+    assert.equal(
+      control.value.requestCount,
+      MAX_COMMAND_HISTORY_REQUESTS_PER_WINDOW,
+    );
+    assert.equal(
+      control.value.readUnits,
+      MAX_COMMAND_HISTORY_READ_UNITS_PER_WINDOW,
+    );
+    assert.equal(historyReads, 2);
+
+    nowMs += COMMAND_HISTORY_RATE_WINDOW_MS + 1;
+    harness.firestore.commitTimestampMs = nowMs;
+    harness.firestore.seed(control.path, {
+      ...control.value,
+      sustainedRequestCount:
+        MAX_COMMAND_HISTORY_SUSTAINED_REQUESTS_PER_WINDOW - 1,
+      sustainedReadUnits:
+        MAX_COMMAND_HISTORY_SUSTAINED_READ_UNITS_PER_WINDOW - 6,
+    });
+    const sustained = await Promise.allSettled([
+      request(1_024),
+      request(1_025),
+    ]);
+    assert.deepEqual(
+      sustained.map(({ status }) => status),
+      ["fulfilled", "rejected"],
+    );
+    assert.equal(sustained[1].reason.code, "resource-exhausted");
+    control = commandHistoryAdmission(harness);
+    assert.equal(
+      control.value.sustainedRequestCount,
+      MAX_COMMAND_HISTORY_SUSTAINED_REQUESTS_PER_WINDOW,
+    );
+    assert.equal(
+      control.value.sustainedReadUnits,
+      MAX_COMMAND_HISTORY_SUSTAINED_READ_UNITS_PER_WINDOW,
+    );
+    assert.equal(historyReads, 3);
+  });
+
+  it("bounds aligned minute and sustained-window boundary bursts", async () => {
+    const sustainedStartMs = COMMAND_HISTORY_SUSTAINED_WINDOW_MS * 3_000;
+    let nowMs = sustainedStartMs + 8 * COMMAND_HISTORY_RATE_WINDOW_MS + 1;
+    const harness = createHarness({ clock: () => nowMs });
+    harness.firestore.commitTimestampMs = nowMs;
+    await activate(harness);
+    await startGame(harness);
+    const resourcePaths = paths("team-1", "game-1");
+    const root = harness.firestore.read(resourcePaths.scorebook);
+    root.checkpoint = {
+      ...root.checkpoint,
+      sequence: 20_000,
+      state: { ...root.checkpoint.state, revision: 20_000 },
+    };
+    harness.firestore.seed(resourcePaths.scorebook, root);
+    let historyReads = 0;
+    harness.firestore.queryHook = (query) => {
+      if (query.path === resourcePaths.events) historyReads += 1;
+    };
+    harness.firestore.transactionHook = (phase, transaction) => {
+      if (
+        phase === "beforeCommit" &&
+        transaction?.operations?.some(
+          ({ value }) => value?.type === "diamond-command-history-admission",
+        )
+      ) {
+        return "retry-after-commit";
+      }
+    };
+    let nextId = 1_110;
+    const attempt = () =>
+      submit(harness, {
+        commandId: makeUuid(nextId++),
+        expectedRevision: 20_000,
+        type: "record_fielding",
+        payload: {
+          playEventId: makeUuid(24),
+          fielding: { putoutBy: "home-1" },
+        },
+      });
+    const admitWithoutHistory = async (count) => {
+      for (let index = 0; index < count; index += 1) {
+        await assert.rejects(
+          attempt(),
+          (error) =>
+            error.code === "unavailable" &&
+            error.details?.reason === "command-history-admission-unconfirmed",
+        );
+      }
+    };
+    const rejectAtLimit = () =>
+      assert.rejects(
+        attempt(),
+        (error) =>
+          error.code === "resource-exhausted" &&
+          error.details?.reason === "command-history-rate-limited",
+      );
+
+    // The previous sustained window reaches 120k over two aligned minutes.
+    await admitWithoutHistory(2);
+    nowMs = sustainedStartMs + COMMAND_HISTORY_SUSTAINED_WINDOW_MS - 1;
+    harness.firestore.commitTimestampMs = nowMs;
+    await admitWithoutHistory(4);
+    await rejectAtLimit();
+    let control = commandHistoryAdmission(harness).value;
+    assert.equal(control.readUnits, 80_000);
+    assert.equal(control.sustainedReadUnits, 120_000);
+    assert.equal(
+      control.windowStartedAtMs,
+      sustainedStartMs + 9 * COMMAND_HISTORY_RATE_WINDOW_MS,
+    );
+    assert.equal(control.sustainedWindowStartedAtMs, sustainedStartMs);
+
+    // Both counters reset exactly at the shared 10m/minute boundary. Four
+    // recovery attempts fit; the next minute adds only 40k before the new
+    // sustained window closes, for 240k across the two adjacent 10m windows.
+    nowMs = sustainedStartMs + COMMAND_HISTORY_SUSTAINED_WINDOW_MS;
+    harness.firestore.commitTimestampMs = nowMs;
+    await admitWithoutHistory(4);
+    nowMs += COMMAND_HISTORY_RATE_WINDOW_MS;
+    harness.firestore.commitTimestampMs = nowMs;
+    await admitWithoutHistory(2);
+    await rejectAtLimit();
+    control = commandHistoryAdmission(harness).value;
+    assert.equal(control.requestCount, 2);
+    assert.equal(control.readUnits, 40_000);
+    assert.equal(control.sustainedRequestCount, 6);
+    assert.equal(control.sustainedReadUnits, 120_000);
+    assert.equal(
+      control.windowStartedAtMs,
+      sustainedStartMs +
+        COMMAND_HISTORY_SUSTAINED_WINDOW_MS +
+        COMMAND_HISTORY_RATE_WINDOW_MS,
+    );
+    assert.equal(
+      control.sustainedWindowStartedAtMs,
+      sustainedStartMs + COMMAND_HISTORY_SUSTAINED_WINDOW_MS,
+    );
+    assert.equal(historyReads, 0);
+  });
+
+  it("atomically bounds shallow replay admissions across aligned windows", async () => {
+    const sustainedStartMs = COMMAND_HISTORY_SUSTAINED_WINDOW_MS * 3_100;
+    let nowMs = sustainedStartMs + 5 * COMMAND_HISTORY_RATE_WINDOW_MS + 1;
+    const harness = createHarness({ clock: () => nowMs });
+    harness.firestore.commitTimestampMs = nowMs;
+    await activate(harness);
+    await startGame(harness);
+    const resourcePaths = paths("team-1", "game-1");
+    let historyReads = 0;
+    harness.firestore.queryHook = (query) => {
+      if (query.path === resourcePaths.events) historyReads += 1;
+    };
+    harness.firestore.transactionHook = (phase, transaction) => {
+      if (
+        phase === "beforeCommit" &&
+        transaction?.operations?.some(
+          ({ value }) => value?.type === "diamond-command-history-admission",
+        )
+      ) {
+        return "retry-after-commit";
+      }
+    };
+    let nextId = 1_130;
+    const attempt = () =>
+      submit(harness, {
+        commandId: makeUuid(nextId++),
+        expectedRevision: 6,
+        type: "record_fielding",
+        payload: {
+          playEventId: makeUuid(24),
+          fielding: { putoutBy: "home-1" },
+        },
+      });
+    const admitConcurrently = async () => {
+      const outcomes = await Promise.allSettled(
+        Array.from(
+          { length: MAX_COMMAND_HISTORY_REQUESTS_PER_WINDOW },
+          attempt,
+        ),
+      );
+      assert.ok(
+        outcomes.every(
+          ({ status, reason }) =>
+            status === "rejected" &&
+            reason.code === "unavailable" &&
+            reason.details?.reason === "command-history-admission-unconfirmed",
+        ),
+      );
+    };
+    const rejectAtLimit = () =>
+      assert.rejects(
+        attempt(),
+        (error) =>
+          error.code === "resource-exhausted" &&
+          error.details?.reason === "command-history-rate-limited",
+      );
+
+    for (let minute = 5; minute < 9; minute += 1) {
+      nowMs = sustainedStartMs + minute * COMMAND_HISTORY_RATE_WINDOW_MS + 1;
+      harness.firestore.commitTimestampMs = nowMs;
+      await admitConcurrently();
+      await rejectAtLimit();
+    }
+    assert.equal(
+      commandHistoryAdmission(harness).value.sustainedRequestCount,
+      MAX_COMMAND_HISTORY_SUSTAINED_REQUESTS_PER_WINDOW,
+    );
+    nowMs = sustainedStartMs + 9 * COMMAND_HISTORY_RATE_WINDOW_MS + 1;
+    harness.firestore.commitTimestampMs = nowMs;
+    await rejectAtLimit();
+
+    for (let minute = 10; minute < 14; minute += 1) {
+      nowMs = sustainedStartMs + minute * COMMAND_HISTORY_RATE_WINDOW_MS + 1;
+      harness.firestore.commitTimestampMs = nowMs;
+      await admitConcurrently();
+      await rejectAtLimit();
+    }
+    nowMs = sustainedStartMs + 14 * COMMAND_HISTORY_RATE_WINDOW_MS + 1;
+    harness.firestore.commitTimestampMs = nowMs;
+    await rejectAtLimit();
+    const control = commandHistoryAdmission(harness).value;
+    assert.equal(
+      control.sustainedRequestCount,
+      MAX_COMMAND_HISTORY_SUSTAINED_REQUESTS_PER_WINDOW,
+    );
+    assert.equal(MAX_COMMAND_HISTORY_REQUESTS_PER_WINDOW * 2, 32);
+    assert.equal(MAX_COMMAND_HISTORY_SUSTAINED_REQUESTS_PER_WINDOW * 2, 128);
+    assert.equal(historyReads, 0);
+  });
+
+  it("fails malformed admission state closed until its quarantine expires", async () => {
+    let nowMs = 1_750_000_000_000;
+    const harness = createHarness({ clock: () => nowMs });
+    await activate(harness);
+    await startGame(harness);
+    const resourcePaths = paths("team-1", "game-1");
+    let historyReads = 0;
+    harness.firestore.queryHook = (query) => {
+      if (query.path === resourcePaths.events) historyReads += 1;
+    };
+    const command = (index) => ({
+      commandId: makeUuid(index),
+      expectedRevision: 6,
+      type: "record_fielding",
+      payload: {
+        playEventId: makeUuid(24),
+        fielding: { putoutBy: "home-1" },
+      },
+    });
+    await submit(harness, command(1_030));
+    const control = commandHistoryAdmission(harness);
+    const invalidControls = [
+      {
+        ...control.value,
+        requestCount: 0,
+        readUnits: 0,
+      },
+      {
+        ...control.value,
+        sustainedRequestCount: 0,
+        sustainedReadUnits: 0,
+      },
+      {
+        ...control.value,
+        requestCount: 1,
+        readUnits: 20_001,
+        sustainedRequestCount: 1,
+        sustainedReadUnits: 20_001,
+      },
+      {
+        ...control.value,
+        windowStartedAtMs: control.value.windowStartedAtMs + 1,
+        windowResetAtMs: control.value.windowResetAtMs + 1,
+      },
+      {
+        ...control.value,
+        updatedAtMs: control.value.windowResetAtMs,
+      },
+      {
+        ...control.value,
+        callerUid: "manager-1",
+      },
+    ];
+    for (let index = 0; index < invalidControls.length; index += 1) {
+      harness.firestore.seed(control.path, invalidControls[index]);
+      await assert.rejects(
+        submit(harness, command(1_031 + index)),
+        (error) =>
+          error.code === "unavailable" &&
+          error.details?.reason === "command-history-control-invalid",
+      );
+    }
+    assert.equal(historyReads, 1);
+
+    nowMs += COMMAND_HISTORY_CONTROL_QUARANTINE_MS + 1;
+    harness.firestore.commitTimestampMs = nowMs;
+    const recovered = await submit(harness, command(1_039));
+    assert.equal(recovered.outcome, "rejected");
+    assert.equal(historyReads, 2);
+    const replacement = commandHistoryAdmission(harness).value;
+    assert.equal(replacement.callerUid, undefined);
+    assert.equal(replacement.requestCount, 1);
+    assert.equal(replacement.readUnits, 6);
+  });
+
+  it("never reads history after an ambiguous or unexpectedly retried admission", async () => {
+    for (const mode of ["ambiguous", "enabled", "disabled", "deleted"]) {
+      const harness = createHarness();
+      await activate(harness);
+      await startGame(harness);
+      const resourcePaths = paths("team-1", "game-1");
+      let historyReads = 0;
+      let injected = false;
+      harness.firestore.queryHook = (query) => {
+        if (query.path === resourcePaths.events) historyReads += 1;
+      };
+      harness.firestore.transactionHook = (phase, transaction) => {
+        const admissionWrite = transaction?.operations?.some(
+          ({ value }) => value?.type === "diamond-command-history-admission",
+        );
+        if (phase === "beforeCommit" && admissionWrite && !injected) {
+          injected = true;
+          return mode === "ambiguous"
+            ? "retry-after-commit"
+            : "force-retry-after-commit";
+        }
+        if (phase === "afterRetryableCommit" && mode === "disabled") {
+          harness.authUsers.get("manager-1").disabled = true;
+        }
+        if (phase === "afterRetryableCommit" && mode === "deleted") {
+          harness.authUsers.delete("manager-1");
+        }
+      };
+
+      await assert.rejects(
+        submit(harness, {
+          commandId: makeUuid(
+            1_040 +
+              ["ambiguous", "enabled", "disabled", "deleted"].indexOf(mode),
+          ),
+          expectedRevision: 6,
+          type: "record_fielding",
+          payload: {
+            playEventId: makeUuid(24),
+            fielding: { putoutBy: "home-1" },
+          },
+        }),
+        (error) => {
+          if (mode === "disabled" || mode === "deleted") {
+            return error.code === "permission-denied";
+          }
+          return (
+            error.code === "unavailable" &&
+            [
+              "command-history-admission-retried",
+              "command-history-admission-unconfirmed",
+            ].includes(error.details?.reason)
+          );
+        },
+        mode,
+      );
+      assert.equal(injected, true, mode);
+      assert.equal(historyReads, 0, mode);
+      const control = commandHistoryAdmission(harness).value;
+      assert.equal(control.requestCount, 1, mode);
+      assert.equal(control.readUnits, 6, mode);
+      assert.equal(
+        harness.firestore.read(
+          resourcePaths.command(
+            makeUuid(
+              1_040 +
+                ["ambiguous", "enabled", "disabled", "deleted"].indexOf(mode),
+            ),
+          ),
+        ),
+        undefined,
+        mode,
+      );
+      assert.ok(
+        harness.firestore.transactionOptions.some(
+          (options) => options?.maxAttempts === 1,
+        ),
+        mode,
+      );
+    }
+  });
+
+  it("keeps exact and conflicting committed retries receipt-first and uncharged", async () => {
+    const harness = createHarness();
+    await activate(harness);
+    await startGame(harness);
+    const pitch = await submit(harness, {
+      commandId: makeUuid(1_050),
+      expectedRevision: 6,
+      type: "record_pitch",
+      payload: {
+        batterId: "away-1",
+        pitcherId: "home-1",
+        result: "ball",
+      },
+    });
+    const resourcePaths = paths("team-1", "game-1");
+    const command = {
+      commandId: makeUuid(1_051),
+      expectedRevision: 7,
+      type: "void_event",
+      leaseId: harness.firestore.read(resourcePaths.scorebook).scorerLease
+        .leaseId,
+      payload: {
+        targetEventId: pitch.eventId,
+        reason: "The pitch was never delivered.",
+      },
+    };
+    let historyReads = 0;
+    harness.firestore.queryHook = (query) => {
+      if (query.path === resourcePaths.events) historyReads += 1;
+    };
+    const accepted = await submit(harness, command);
+    assert.equal(accepted.outcome, "accepted");
+    const charged = clone(commandHistoryAdmission(harness).value);
+
+    harness.firestore.seed("securityPolicies/diamondScorebook", {
+      mode: "disabled",
+      revision: 2,
+      teamIds: [],
+    });
+    const root = harness.firestore.read(resourcePaths.scorebook);
+    root.scorerLease = {
+      ...root.scorerLease,
+      holderUid: "scorer-1",
+      leaseId: makeUuid(1_052),
+    };
+    harness.firestore.seed(resourcePaths.scorebook, root);
+    const duplicate = await submit(harness, command);
+    assert.equal(duplicate.outcome, "duplicate");
+    const conflict = await submit(harness, {
+      ...command,
+      payload: {
+        ...command.payload,
+        reason: "A different correction using the same command ID.",
+      },
+    });
+    assert.equal(conflict.outcome, "rejected");
+    assert.equal(conflict.rejection.code, "idempotency-conflict");
+    assert.equal(historyReads, 1);
+    assert.deepEqual(commandHistoryAdmission(harness).value, charged);
+
+    harness.authUsers.get("manager-1").disabled = true;
+    await assert.rejects(
+      submit(harness, command),
+      (error) => error.code === "permission-denied",
+    );
+    assert.equal(historyReads, 1);
+  });
+
+  it("rechecks Auth, access, policy, lease, and the full source after history", async () => {
+    const races = ["auth", "access", "policy", "lease", "source", "head"];
+    for (const race of races) {
+      const harness = createHarness();
+      await activate(harness);
+      await startGame(harness);
+      const resourcePaths = paths("team-1", "game-1");
+      let historyReads = 0;
+      harness.firestore.queryHook = (query) => {
+        if (query.path !== resourcePaths.events) return;
+        historyReads += 1;
+        if (race === "auth") {
+          harness.authUsers.get("manager-1").disabled = true;
+        } else if (race === "access") {
+          const team = harness.firestore.read(resourcePaths.team);
+          harness.firestore.seed(resourcePaths.team, {
+            ...team,
+            ownerId: "replacement-manager",
+          });
+        } else if (race === "policy") {
+          harness.firestore.seed("securityPolicies/diamondScorebook", {
+            mode: "disabled",
+            revision: 2,
+            teamIds: [],
+          });
+        } else {
+          const root = harness.firestore.read(resourcePaths.scorebook);
+          if (race === "lease") {
+            root.scorerLease = {
+              ...root.scorerLease,
+              holderUid: "scorer-1",
+              leaseId: makeUuid(1_060),
+            };
+          } else if (race === "source") {
+            root.captureMode = "standard";
+          } else {
+            root.checkpoint = {
+              ...root.checkpoint,
+              sequence: root.checkpoint.sequence + 1,
+              state: {
+                ...root.checkpoint.state,
+                revision: root.checkpoint.state.revision + 1,
+              },
+            };
+          }
+          harness.firestore.seed(resourcePaths.scorebook, root);
+        }
+      };
+      const commandId = makeUuid(1_061 + races.indexOf(race));
+      await assert.rejects(
+        submit(harness, {
+          commandId,
+          expectedRevision: 6,
+          type: "record_fielding",
+          payload: {
+            playEventId: makeUuid(24),
+            fielding: { putoutBy: "home-1" },
+          },
+        }),
+        (error) => {
+          if (race === "auth" || race === "access") {
+            return error.code === "permission-denied";
+          }
+          if (race === "policy") return error.code === "failed-precondition";
+          if (race === "lease") {
+            return (
+              error.code === "unavailable" &&
+              error.details?.reason === "lease-held-by-other"
+            );
+          }
+          return (
+            error.code === "aborted" &&
+            error.details?.reason === "command-history-source-changed"
+          );
+        },
+        race,
+      );
+      assert.equal(historyReads, 1, race);
+      assert.equal(
+        harness.firestore.read(resourcePaths.command(commandId)),
+        undefined,
+        race,
+      );
+      assert.equal(
+        harness.firestore.countDirectChildren(resourcePaths.events),
+        6,
+        race,
+      );
+      assert.equal(commandHistoryAdmission(harness).value.requestCount, 1);
+    }
+  });
+
+  it("rejects preexisting and in-flight same-head checkpoint corruption", async () => {
+    for (const phase of ["before-admission", "during-history"]) {
+      const harness = createHarness();
+      await activate(harness);
+      await startGame(harness);
+      const resourcePaths = paths("team-1", "game-1");
+      const corrupt = () => {
+        const root = harness.firestore.read(resourcePaths.scorebook);
+        root.checkpoint.state.score.home = 41;
+        harness.firestore.seed(resourcePaths.scorebook, root);
+      };
+      if (phase === "before-admission") corrupt();
+      let historyReads = 0;
+      harness.firestore.queryHook = (query) => {
+        if (query.path !== resourcePaths.events) return;
+        historyReads += 1;
+        if (phase === "during-history") corrupt();
+      };
+      const commandId = makeUuid(phase === "before-admission" ? 1_070 : 1_071);
+      await assert.rejects(
+        submit(harness, {
+          commandId,
+          expectedRevision: 6,
+          type: "record_fielding",
+          payload: {
+            playEventId: makeUuid(24),
+            fielding: { putoutBy: "home-1" },
+          },
+        }),
+        (error) =>
+          error.details?.reason ===
+          (phase === "before-admission"
+            ? "command-history-checkpoint-state-mismatch"
+            : "command-history-source-changed"),
+        phase,
+      );
+      assert.equal(historyReads, 1, phase);
+      assert.equal(
+        harness.firestore.read(resourcePaths.command(commandId)),
+        undefined,
+        phase,
+      );
+      assert.equal(
+        harness.firestore.countDirectChildren(resourcePaths.events),
+        6,
+        phase,
+      );
+    }
+  });
+
+  it("reauthorizes an ambiguously committed final callback and preserves receipt-first recovery", async () => {
+    for (const mode of ["disabled", "deleted", "lease-expired"]) {
+      let nowMs = 1_750_000_000_000;
+      const harness = createHarness({ clock: () => nowMs });
+      const eligibleManager = clone(harness.authUsers.get("manager-1"));
+      await activate(harness);
+      await startGame(harness);
+      const pitch = await submit(harness, {
+        commandId: makeUuid(1_080),
+        expectedRevision: 6,
+        type: "record_pitch",
+        payload: {
+          batterId: "away-1",
+          pitcherId: "home-1",
+          result: "ball",
+        },
+      });
+      const resourcePaths = paths("team-1", "game-1");
+      const commandId = makeUuid(
+        1_081 + ["disabled", "deleted", "lease-expired"].indexOf(mode),
+      );
+      let historyReads = 0;
+      let retried = false;
+      harness.firestore.queryHook = (query) => {
+        if (query.path === resourcePaths.events) historyReads += 1;
+      };
+      harness.firestore.transactionHook = (phase, transaction) => {
+        const writesReceipt = transaction?.operations?.some(
+          ({ kind, reference }) =>
+            kind === "create" &&
+            reference.path === resourcePaths.command(commandId),
+        );
+        if (phase === "beforeCommit" && writesReceipt && !retried) {
+          retried = true;
+          return "force-retry-after-commit";
+        }
+        if (phase === "afterRetryableCommit" && retried) {
+          if (mode === "disabled") {
+            harness.authUsers.get("manager-1").disabled = true;
+          } else if (mode === "deleted") {
+            harness.authUsers.delete("manager-1");
+          } else {
+            nowMs =
+              harness.firestore.read(resourcePaths.scorebook).scorerLease
+                .expiresAtMillis + 1;
+            harness.firestore.commitTimestampMs = nowMs;
+          }
+        }
+      };
+
+      const command = {
+        commandId,
+        expectedRevision: 7,
+        type: "void_event",
+        payload: {
+          targetEventId: pitch.eventId,
+          reason: "The pitch was never delivered.",
+        },
+      };
+      await assert.rejects(
+        submit(harness, command),
+        (error) =>
+          error.code ===
+          (mode === "lease-expired" ? "unavailable" : "permission-denied"),
+        mode,
+      );
+      assert.equal(retried, true, mode);
+      assert.equal(historyReads, 1, mode);
+      assert.ok(harness.firestore.read(resourcePaths.command(commandId)), mode);
+      assert.equal(
+        harness.firestore.countDirectChildren(resourcePaths.events),
+        8,
+        mode,
+      );
+
+      harness.firestore.transactionHook = null;
+      if (mode === "disabled" || mode === "deleted") {
+        harness.authUsers.set("manager-1", clone(eligibleManager));
+      }
+      const recovered = await submit(harness, command);
+      assert.equal(recovered.outcome, "duplicate", mode);
+      assert.equal(recovered.revision, 8, mode);
+      assert.equal(historyReads, 1, mode);
+      assert.equal(
+        harness.firestore.countDirectChildren(resourcePaths.events),
+        8,
+        mode,
+      );
+      assert.equal(commandHistoryAdmission(harness).value.requestCount, 1, mode);
+    }
+  });
+
+  it("validates policy, lease, and exact source before returning raced receipts", async () => {
+    for (const race of ["conflict", "policy", "lease", "head"]) {
+      const harness = createHarness();
+      await activate(harness);
+      await startGame(harness);
+      const target = await submit(
+        harness,
+        race === "policy"
+          ? {
+              commandId: makeUuid(1_090),
+              expectedRevision: 6,
+              type: "record_plate_appearance",
+              payload: {
+                batterId: "away-1",
+                pitcherId: "home-1",
+                result: "ground_out",
+                batterAdvance: { to: "out", outKind: "batter_runner" },
+                runnerAdvances: [],
+                outsOnPlay: 1,
+              },
+            }
+          : {
+              commandId: makeUuid(1_090),
+              expectedRevision: 6,
+              type: "record_pitch",
+              payload: {
+                batterId: "away-1",
+                pitcherId: "home-1",
+                result: "ball",
+              },
+            },
+      );
+      const resourcePaths = paths("team-1", "game-1");
+      let releaseWinner;
+      let releaseLoser;
+      let signalBoth;
+      const winnerGate = new Promise((resolve) => {
+        releaseWinner = resolve;
+      });
+      const loserGate = new Promise((resolve) => {
+        releaseLoser = resolve;
+      });
+      const bothReading = new Promise((resolve) => {
+        signalBoth = resolve;
+      });
+      let historyReads = 0;
+      harness.firestore.queryAsyncHook = async (query) => {
+        if (query.path !== resourcePaths.events) return;
+        historyReads += 1;
+        if (historyReads === 2) signalBoth();
+        await (historyReads === 1 ? winnerGate : loserGate);
+      };
+      const commandId = makeUuid(
+        1_091 + ["conflict", "policy", "lease", "head"].indexOf(race),
+      );
+      const attempt = (variant) =>
+        submit(
+          harness,
+          race === "policy"
+            ? {
+                commandId,
+                expectedRevision: 7,
+                type: "record_fielding",
+                payload: {
+                  playEventId: target.eventId,
+                  fielding: { putoutBy: "home-1", battedBall: variant },
+                },
+              }
+            : {
+                commandId,
+                expectedRevision: 7,
+                type: "void_event",
+                payload: { targetEventId: target.eventId, reason: variant },
+              },
+        );
+      const winner = attempt(
+        race === "policy" ? "ground" : "Official scorer correction A",
+      );
+      const loser = attempt(
+        race === "policy" ? "line" : "Official scorer correction B",
+      );
+      await bothReading;
+      releaseWinner();
+      assert.equal((await winner).outcome, "accepted", race);
+
+      if (race === "policy") {
+        harness.firestore.seed("securityPolicies/diamondScorebook", {
+          mode: "disabled",
+          revision: 2,
+          teamIds: [],
+        });
+      } else if (race === "lease" || race === "head") {
+        const root = harness.firestore.read(resourcePaths.scorebook);
+        if (race === "lease") {
+          root.scorerLease = {
+            ...root.scorerLease,
+            holderUid: "scorer-1",
+            leaseId: makeUuid(1_095),
+          };
+        } else {
+          root.checkpoint.state.score.home = 41;
+        }
+        harness.firestore.seed(resourcePaths.scorebook, root);
+      }
+      releaseLoser();
+
+      if (race === "conflict") {
+        const conflict = await loser;
+        assert.equal(conflict.outcome, "rejected");
+        assert.equal(conflict.rejection.code, "idempotency-conflict");
+      } else {
+        await assert.rejects(
+          loser,
+          (error) => {
+            if (race === "policy") return error.code === "failed-precondition";
+            if (race === "lease") {
+              return (
+                error.code === "unavailable" &&
+                error.details?.reason === "lease-held-by-other"
+              );
+            }
+            return (
+              error.code === "unavailable" &&
+              error.details?.reason === "command-history-receipt-head-mismatch"
+            );
+          },
+          race,
+        );
+      }
+      assert.equal(historyReads, 2, race);
+      assert.equal(
+        harness.firestore.countDirectChildren(resourcePaths.events),
+        8,
+        race,
+      );
+      assert.equal(commandHistoryAdmission(harness).value.requestCount, 2);
+    }
   });
 
   it("uses normal scoring policy for active fielding and resilient correction policy only after reopen", async () => {
@@ -5646,14 +6920,17 @@ describe("Diamond scorebook handler factory", () => {
       };
       harness.firestore.seed(rootPath, root);
     };
-    const correction = await submit(harness, {
-      commandId: makeUuid(44),
-      expectedRevision: 7,
-      type: "void_event",
-      payload: { targetEventId: pitch.eventId, reason: "Racing correction" },
-    });
-    assert.equal(correction.outcome, "rejected");
-    assert.equal(correction.rejection.code, "stale-revision");
+    await assert.rejects(
+      submit(harness, {
+        commandId: makeUuid(44),
+        expectedRevision: 7,
+        type: "void_event",
+        payload: { targetEventId: pitch.eventId, reason: "Racing correction" },
+      }),
+      (error) =>
+        error.code === "aborted" &&
+        error.details?.reason === "command-history-source-changed",
+    );
     assert.equal(
       harness.firestore.read(paths("team-1", "game-1").command(makeUuid(44))),
       undefined,

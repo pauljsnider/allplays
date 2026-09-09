@@ -298,11 +298,13 @@ describe("Diamond Scorebook v2 Firestore boundary", () => {
         );
       });
 
-      it("denies every client operation on manager-stat and recap-source read controls", async () => {
+      it("denies every client operation on manager-stat, recap-source, and command-history read controls", async () => {
         const controlIds = [
           "existing-manager-control",
           "recap-admission-hash",
           "recap-scope-hash",
+          "existing-control",
+          `command-admission-${"a".repeat(64)}`,
         ];
         await testEnv.withSecurityRulesDisabled(async (context) => {
           for (const controlId of controlIds) {
