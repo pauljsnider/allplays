@@ -433,7 +433,18 @@ const maxScorerCandidates = 100;
 const defaultPrivateHistoryWindowEvents = 200;
 const maxPrivateHistoryWindowEvents = 200;
 const maxPrivateHistoryWindowBytes = 16_000_000;
+const scorerCandidateNativeTimeoutMs = 125_000;
+const scorerCandidateRetryHandleRetentionMs = 8 * 60 * 1000;
+const maxScorerCandidateRetryHandles = 32;
 const retryableCallableCodes = new Set(['deadline-exceeded', 'internal', 'network-request-failed', 'unavailable', 'unknown']);
+
+type ScorerCandidateRetryHandle = {
+  requestId: string;
+  expiresAtMs: number;
+};
+
+const scorerCandidateRetryHandles = new Map<string, ScorerCandidateRetryHandle>();
+let scorerCandidateRetryPrincipal: string | null = null;
 
 function compactText(value: unknown) {
   return typeof value === 'string' ? value.trim() : '';
@@ -751,7 +762,7 @@ function toDiamondError(error: unknown, fallbackMessage: string): DiamondScorebo
   }
   if (code === 'resource-exhausted') {
     return new DiamondScorebookError('rate-limited', 'Too many scorebook requests. Pause briefly, then retry.', {
-      retryable: true,
+      retryable: details.retryable !== false,
       cause: error
     });
   }
@@ -776,12 +787,73 @@ function toDiamondError(error: unknown, fallbackMessage: string): DiamondScorebo
 const defaultTransport: DiamondCallableTransport = {
   async call<T>(name: string, data: Record<string, unknown>) {
     if (isNativeRuntime()) {
-      return callNativeFirebaseFunction<T>(name, data, { errorLabel: 'Diamond scorebook' });
+      return callNativeFirebaseFunction<T>(name, data, {
+        errorLabel: 'Diamond scorebook',
+        ...(name === 'listDiamondScorerCandidates' ? { timeoutMs: scorerCandidateNativeTimeoutMs } : {})
+      });
     }
     const response = await httpsCallable(functions, name)(data);
     return response?.data as T;
   }
 };
+
+function scorerCandidateRetryKey(request: {
+  authenticatedUid: string;
+  teamId: string;
+  gameId: string;
+  expectedInstanceId: string;
+  expectedRevision: number;
+  leaseId: string;
+}) {
+  return JSON.stringify([
+    request.authenticatedUid,
+    request.teamId,
+    request.gameId,
+    request.expectedInstanceId,
+    request.expectedRevision,
+    request.leaseId
+  ]);
+}
+
+function selectScorerCandidateRetryPrincipal(authenticatedUid: string) {
+  if (scorerCandidateRetryPrincipal === authenticatedUid) return;
+  scorerCandidateRetryHandles.clear();
+  scorerCandidateRetryPrincipal = authenticatedUid;
+}
+
+function pruneScorerCandidateRetryHandles(nowMs: number) {
+  for (const [key, handle] of scorerCandidateRetryHandles) {
+    if (handle.expiresAtMs <= nowMs) scorerCandidateRetryHandles.delete(key);
+  }
+}
+
+function scorerCandidateRetryHandle(key: string, cryptoSource: SecureCrypto | null | undefined) {
+  const nowMs = Date.now();
+  pruneScorerCandidateRetryHandles(nowMs);
+  const existing = scorerCandidateRetryHandles.get(key);
+  if (existing) return existing;
+  if (scorerCandidateRetryHandles.size >= maxScorerCandidateRetryHandles) {
+    throw new DiamondScorebookError('rate-limited', 'Too many scorer candidate retries are pending. Pause briefly, then retry.', {
+      retryable: true
+    });
+  }
+  const handle = {
+    requestId: createSecureDiamondId(cryptoSource),
+    expiresAtMs: nowMs + scorerCandidateRetryHandleRetentionMs
+  };
+  scorerCandidateRetryHandles.set(key, handle);
+  return handle;
+}
+
+function finishScorerCandidateRetryHandle(key: string, requestId: string, retryable: boolean) {
+  const current = scorerCandidateRetryHandles.get(key);
+  if (current?.requestId !== requestId) return;
+  if (!retryable) {
+    scorerCandidateRetryHandles.delete(key);
+    return;
+  }
+  current.expiresAtMs = Date.now() + scorerCandidateRetryHandleRetentionMs;
+}
 
 async function callWithRetry<T>(
   transport: DiamondCallableTransport,
@@ -1341,20 +1413,33 @@ export async function getDiamondState(teamId: string, gameId: string, options: {
 
 export async function listDiamondScorerCandidates(
   input: {
+    authenticatedUid: string;
     teamId: string;
     gameId: string;
     expectedInstanceId: string;
     expectedRevision: number;
     leaseId: string;
   },
-  options: { transport?: DiamondCallableTransport; maxAttempts?: number } = {}
+  options: { transport?: DiamondCallableTransport; maxAttempts?: number; crypto?: SecureCrypto | null } = {}
 ): Promise<DiamondScorerCandidateList> {
-  const payload = {
+  const request = {
+    authenticatedUid: requireResourceId(input.authenticatedUid, 'Authenticated user ID'),
     teamId: requireResourceId(input.teamId, 'Team ID'),
     gameId: requireResourceId(input.gameId, 'Game ID'),
     expectedInstanceId: requireDiamondInstanceId(input.expectedInstanceId, 'invalid-input'),
     expectedRevision: requireRevision(input.expectedRevision),
     leaseId: requireScorerLeaseId(input.leaseId)
+  };
+  selectScorerCandidateRetryPrincipal(request.authenticatedUid);
+  const retryKey = scorerCandidateRetryKey(request);
+  const retryHandle = scorerCandidateRetryHandle(retryKey, options.crypto);
+  const payload = {
+    requestId: retryHandle.requestId,
+    teamId: request.teamId,
+    gameId: request.gameId,
+    expectedInstanceId: request.expectedInstanceId,
+    expectedRevision: request.expectedRevision,
+    leaseId: request.leaseId
   };
   try {
     const raw = await callWithRetry<unknown>(
@@ -1406,7 +1491,7 @@ export async function listDiamondScorerCandidates(
       seen.add(playerId);
       return { playerId, name: requireScorerCandidateName(candidate.name) };
     });
-    return {
+    const result: DiamondScorerCandidateList = {
       schemaVersion: 1,
       complete: true,
       teamId,
@@ -1416,8 +1501,12 @@ export async function listDiamondScorerCandidates(
       leaseId,
       candidates
     };
+    finishScorerCandidateRetryHandle(retryKey, retryHandle.requestId, false);
+    return result;
   } catch (error) {
-    throw toDiamondError(error, 'Unable to load scorer handoff candidates.');
+    const normalized = toDiamondError(error, 'Unable to load scorer handoff candidates.');
+    finishScorerCandidateRetryHandle(retryKey, retryHandle.requestId, normalized.retryable);
+    throw normalized;
   }
 }
 

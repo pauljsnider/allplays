@@ -53,6 +53,12 @@ const {
   createDiamondScorebookHandlers,
   paths,
 } = require("../diamond-scorebook-handlers.cjs");
+const {
+  MAX_CONCURRENT_SCORER_CANDIDATE_GLOBAL_REQUESTS,
+  MAX_SCORER_CANDIDATE_REQUESTS_PER_WINDOW,
+  SCORER_CANDIDATE_CONTROL_QUARANTINE_MS,
+  SCORER_CANDIDATE_REQUEST_LEASE_MS,
+} = require("../diamond-scorer-candidate-admission.cjs");
 
 function clone(value) {
   return value === undefined ? undefined : structuredClone(value);
@@ -153,6 +159,10 @@ class FakeQuery {
       this.ordering,
       maximum,
     );
+  }
+
+  doc(id) {
+    return this.database.doc(`${this.path}/${id}`);
   }
 
   get() {
@@ -764,20 +774,26 @@ async function regenerate(
   );
 }
 
+let scorerCandidateRequestIndex = 10_000;
+
 async function listScorerCandidates(
   harness,
   {
+    requestId = makeUuid(scorerCandidateRequestIndex++),
     context = harness.managerContext,
+    teamId = "team-1",
+    gameId = "game-1",
     expectedInstanceId = null,
     expectedRevision = null,
     leaseId = null,
   } = {},
 ) {
-  const root = harness.firestore.read(paths("team-1", "game-1").scorebook);
+  const root = harness.firestore.read(paths(teamId, gameId).scorebook);
   return harness.handlers.listDiamondScorerCandidates(
     {
-      teamId: "team-1",
-      gameId: "game-1",
+      requestId,
+      teamId,
+      gameId,
       expectedInstanceId: expectedInstanceId ?? root?.instanceId,
       expectedRevision: expectedRevision ?? root?.checkpoint?.sequence,
       leaseId: leaseId ?? root?.scorerLease?.leaseId,
@@ -830,6 +846,24 @@ function commandHistoryAdmission(harness) {
 function privateHistoryControls(harness, type = null) {
   return managerStatReadControls(harness, type).filter(({ value }) =>
     String(value?.type || "").startsWith("diamond-private-history-read-"),
+  );
+}
+
+function scorerCandidateControls(harness, type = null) {
+  return managerStatReadControls(harness, type).filter(({ path }) =>
+    path.includes("/scorer-candidate-"),
+  );
+}
+
+function scorerCandidateControl(harness, type) {
+  const controls = scorerCandidateControls(harness, type);
+  assert.equal(controls.length, 1, `expected one ${type} control`);
+  return controls[0];
+}
+
+function scorerCandidateRateControls(harness) {
+  return managerStatReadControls(harness).filter(({ path }) =>
+    /^diamondManagerStatReadControls\/[0-9a-f]{64}$/.test(path),
   );
 }
 
@@ -4548,6 +4582,392 @@ describe("Diamond scorebook handler factory", () => {
       JSON.stringify(result),
       /confirmed-private|forged-payload|privateNote/,
     );
+  });
+
+  it("deduplicates a concurrent unchanged candidate read before Auth or RSVP amplification", async () => {
+    let releaseBatch;
+    let signalBatch;
+    const batchStarted = new Promise((resolve) => {
+      signalBatch = resolve;
+    });
+    const batchGate = new Promise((resolve) => {
+      releaseBatch = resolve;
+    });
+    const harness = createHarness({
+      authUsers: { target: { uid: "target", disabled: false } },
+      documents: {
+        "teams/team-1": {
+          ...baseDocuments()["teams/team-1"],
+          teamPermissions: { scorekeeping: { mode: "all_confirmed" } },
+        },
+        "teams/team-1/games/game-1/rsvps/target": {
+          response: "confirmed",
+        },
+      },
+      async getUsersHook({ result }) {
+        signalBatch();
+        await batchGate;
+        return result;
+      },
+    });
+    await activate(harness);
+    const requestId = makeUuid(80_001);
+    const first = listScorerCandidates(harness, { requestId });
+    await batchStarted;
+    const authReads = harness.authGetUserCalls.length;
+    const rsvpReads = harness.firestore.queryReads.length;
+    try {
+      await assert.rejects(
+        listScorerCandidates(harness, { requestId }),
+        (error) =>
+          error.code === "resource-exhausted" &&
+          error.details?.reason === "scorer-candidate-duplicate-active",
+      );
+      assert.equal(harness.authGetUserCalls.length, authReads);
+      assert.equal(harness.firestore.queryReads.length, rsvpReads);
+      assert.equal(harness.authGetUsersCalls.length, 1);
+    } finally {
+      releaseBatch();
+    }
+    const completedButLost = await first;
+    const rateCounts = scorerCandidateRateControls(harness).map(
+      ({ value }) => value.count,
+    );
+    const completedAuthBatches = harness.authGetUsersCalls.length;
+    const completedRsvpReads = harness.firestore.queryReads.filter(
+      ({ path }) => path === paths("team-1", "game-1").rsvps,
+    ).length;
+    const recovered = await listScorerCandidates(harness, { requestId });
+    assert.deepEqual(recovered, completedButLost);
+    assert.deepEqual(
+      scorerCandidateRateControls(harness).map(({ value }) => value.count),
+      rateCounts,
+    );
+    assert.equal(harness.authGetUsersCalls.length, completedAuthBatches);
+    assert.equal(
+      harness.firestore.queryReads.filter(
+        ({ path }) => path === paths("team-1", "game-1").rsvps,
+      ).length,
+      completedRsvpReads,
+    );
+  });
+
+  it("replays one lost exact response without another RSVP or candidate Auth read", async () => {
+    const requestId = makeUuid(80_010);
+    const harness = createHarness({
+      authUsers: {
+        target: {
+          uid: "target",
+          disabled: false,
+          displayName: "Target",
+          email: "private@example.test",
+        },
+      },
+      documents: {
+        "teams/team-1": {
+          ...baseDocuments()["teams/team-1"],
+          teamPermissions: { scorekeeping: { mode: "all_confirmed" } },
+        },
+        "teams/team-1/games/game-1/rsvps/target": {
+          response: "confirmed",
+          privateNote: "never persist",
+        },
+      },
+    });
+    await activate(harness);
+    const first = await listScorerCandidates(harness, { requestId });
+    const authBatches = harness.authGetUsersCalls.length;
+    const rsvpReads = harness.firestore.queryReads.filter(
+      ({ path }) => path === paths("team-1", "game-1").rsvps,
+    ).length;
+    const rates = scorerCandidateRateControls(harness).map(
+      ({ value }) => value.count,
+    );
+    const replayed = await listScorerCandidates(harness, { requestId });
+    assert.deepEqual(replayed, first);
+    assert.equal(harness.authGetUsersCalls.length, authBatches);
+    assert.equal(
+      harness.firestore.queryReads.filter(
+        ({ path }) => path === paths("team-1", "game-1").rsvps,
+      ).length,
+      rsvpReads,
+    );
+    assert.deepEqual(
+      scorerCandidateRateControls(harness).map(({ value }) => value.count),
+      rates,
+    );
+    const receipt = scorerCandidateControl(
+      harness,
+      "diamond-scorer-candidate-receipt",
+    ).value;
+    assert.deepEqual(receipt.candidates, [
+      { playerId: "target", name: "Target" },
+    ]);
+    assert.doesNotMatch(JSON.stringify(receipt), /private@example|privateNote/);
+    const authReads = harness.authGetUserCalls.length;
+    await assert.rejects(
+      listScorerCandidates(harness, { requestId }),
+      (error) =>
+        error.code === "resource-exhausted" &&
+        error.details?.reason === "scorer-candidate-replay-limited",
+    );
+    assert.equal(harness.authGetUserCalls.length, authReads);
+  });
+
+  it("reauthorizes every scorer authority boundary before replay without candidate fan-out", async (t) => {
+    const scenarios = [
+      {
+        name: "enabled caller",
+        code: "permission-denied",
+        mutate({ harness }) {
+          harness.authUsers.get("manager-1").disabled = true;
+        },
+      },
+      {
+        name: "team access",
+        code: "permission-denied",
+        mutate({ harness }) {
+          const team = harness.firestore.read("teams/team-1");
+          harness.firestore.seed("teams/team-1", {
+            ...team,
+            ownerId: "another-manager",
+          });
+        },
+      },
+      {
+        name: "scorebook instance",
+        code: "aborted",
+        reason: "stale-instance",
+        mutate({ harness, root, resourcePaths }) {
+          const instanceId = makeUuid(80_511);
+          const game = harness.firestore.read(resourcePaths.game);
+          harness.firestore.seed(resourcePaths.game, {
+            ...game,
+            diamondScorebookInstanceId: instanceId,
+          });
+          harness.firestore.seed(resourcePaths.scorebook, {
+            ...root,
+            instanceId,
+          });
+        },
+      },
+      {
+        name: "scorebook revision",
+        code: "aborted",
+        reason: "stale-revision",
+        mutate({ harness, root, resourcePaths }) {
+          harness.firestore.seed(resourcePaths.scorebook, {
+            ...root,
+            checkpoint: {
+              ...root.checkpoint,
+              sequence: root.checkpoint.sequence + 1,
+            },
+          });
+        },
+      },
+      {
+        name: "current scorer",
+        code: "unavailable",
+        reason: "scorer-candidate-holder-changed",
+        mutate({ harness, root, resourcePaths }) {
+          harness.firestore.seed(resourcePaths.scorebook, {
+            ...root,
+            checkpoint: {
+              ...root.checkpoint,
+              state: {
+                ...root.checkpoint.state,
+                currentScorerUid: "scorer-1",
+              },
+            },
+          });
+        },
+      },
+      {
+        name: "scorer lease",
+        code: "unavailable",
+        reason: "lease-token-mismatch",
+        mutate({ harness, root, resourcePaths }) {
+          harness.firestore.seed(resourcePaths.scorebook, {
+            ...root,
+            scorerLease: {
+              ...root.scorerLease,
+              leaseId: makeUuid(80_512),
+            },
+          });
+        },
+      },
+    ];
+
+    for (const [index, scenario] of scenarios.entries()) {
+      await t.test(scenario.name, async () => {
+        const harness = createHarness({
+          authUsers: {
+            target: { uid: "target", disabled: false, displayName: "Target" },
+          },
+          documents: {
+            "teams/team-1": {
+              ...baseDocuments()["teams/team-1"],
+              teamPermissions: { scorekeeping: { mode: "all_confirmed" } },
+            },
+            "teams/team-1/games/game-1/rsvps/target": {
+              response: "confirmed",
+            },
+          },
+        });
+        await activate(harness);
+        const resourcePaths = paths("team-1", "game-1");
+        const root = harness.firestore.read(resourcePaths.scorebook);
+        const request = {
+          requestId: makeUuid(80_500 + index),
+          expectedInstanceId: root.instanceId,
+          expectedRevision: root.checkpoint.sequence,
+          leaseId: root.scorerLease.leaseId,
+        };
+        await listScorerCandidates(harness, request);
+        const authReads = harness.authGetUserCalls.length;
+        const candidateAuthReads = harness.authGetUsersCalls.length;
+        const rsvpReads = harness.firestore.queryReads.filter(
+          ({ path }) => path === resourcePaths.rsvps,
+        ).length;
+        scenario.mutate({ harness, root, resourcePaths });
+
+        await assert.rejects(
+          listScorerCandidates(harness, request),
+          (error) =>
+            error.code === scenario.code &&
+            (!scenario.reason || error.details?.reason === scenario.reason),
+        );
+        assert.equal(harness.authGetUserCalls.length, authReads + 1);
+        assert.equal(harness.authGetUsersCalls.length, candidateAuthReads);
+        assert.equal(
+          harness.firestore.queryReads.filter(
+            ({ path }) => path === resourcePaths.rsvps,
+          ).length,
+          rsvpReads,
+        );
+      });
+    }
+  });
+
+  it("charges a confirmed failed logical retry and recovers after releasing both locks", async () => {
+    let failBatch = true;
+    const harness = createHarness({
+      async getUsersHook({ result }) {
+        if (failBatch) {
+          failBatch = false;
+          throw new Error("transient Auth batch failure");
+        }
+        return result;
+      },
+    });
+    await activate(harness);
+    const requestId = makeUuid(80_020);
+    await assert.rejects(
+      listScorerCandidates(harness, { requestId }),
+      (error) => error.code === "unavailable",
+    );
+    assert.ok(
+      scorerCandidateControls(harness, "diamond-scorer-candidate-global-lock")
+        .every(({ value }) => value.activeAttempts.length === 0),
+    );
+    assert.ok(
+      scorerCandidateControls(harness, "diamond-scorer-candidate-scope-lock")
+        .every(({ value }) => value.activeAttempts.length === 0),
+    );
+    await listScorerCandidates(harness, { requestId });
+    assert.equal(harness.authGetUsersCalls.length, 2);
+    assert.ok(
+      scorerCandidateRateControls(harness).every(({ value }) => value.count === 2),
+    );
+  });
+
+  it("rate limits fresh candidate work before Auth and leaves all four counters unchanged", async () => {
+    const harness = createHarness();
+    await activate(harness);
+    for (
+      let index = 0;
+      index < MAX_SCORER_CANDIDATE_REQUESTS_PER_WINDOW;
+      index += 1
+    ) {
+      await listScorerCandidates(harness, {
+        requestId: makeUuid(80_100 + index),
+      });
+    }
+    const before = new Map(
+      scorerCandidateRateControls(harness).map(({ path, value }) => [
+        path,
+        value.count,
+      ]),
+    );
+    const authReads = harness.authGetUserCalls.length;
+    const queryReads = harness.firestore.queryReads.length;
+    await assert.rejects(
+      listScorerCandidates(harness, { requestId: makeUuid(80_200) }),
+      (error) =>
+        error.code === "resource-exhausted" &&
+        error.details?.reason === "scorer-candidate-rate-limited",
+    );
+    assert.equal(harness.authGetUserCalls.length, authReads);
+    assert.equal(harness.firestore.queryReads.length, queryReads);
+    assert.deepEqual(
+      new Map(
+        scorerCandidateRateControls(harness).map(({ path, value }) => [
+          path,
+          value.count,
+        ]),
+      ),
+      before,
+    );
+  });
+
+  it("releases an unauthorized pre-Auth reservation without RSVP or candidate Auth reads", async () => {
+    const harness = createHarness({
+      authUsers: { outsider: { uid: "outsider", disabled: false } },
+      documents: {
+        "teams/team-1": {
+          ...baseDocuments()["teams/team-1"],
+          teamPermissions: { scorekeeping: { mode: "all_confirmed" } },
+        },
+      },
+    });
+    await activate(harness);
+    await assert.rejects(
+      listScorerCandidates(harness, {
+        requestId: makeUuid(80_300),
+        context: { auth: { uid: "outsider" } },
+      }),
+      (error) => error.code === "permission-denied",
+    );
+    assert.equal(harness.authGetUsersCalls.length, 0);
+    assert.equal(
+      harness.firestore.queryReads.some(
+        ({ path }) => path === paths("team-1", "game-1").rsvps,
+      ),
+      false,
+    );
+    assert.ok(
+      scorerCandidateControls(harness)
+        .filter(({ value }) => Array.isArray(value.activeAttempts))
+        .every(({ value }) => value.activeAttempts.length === 0),
+    );
+  });
+
+  it("fails candidate lookup before controls and Auth when server randomness is unavailable", async () => {
+    let secure = true;
+    let index = 80_400;
+    const harness = createHarness({
+      random: () => (secure ? makeUuid(index++) : "predictable"),
+    });
+    await activate(harness);
+    secure = false;
+    const controlCount = managerStatReadControls(harness).length;
+    const authReads = harness.authGetUserCalls.length;
+    await assert.rejects(
+      listScorerCandidates(harness),
+      (error) => error.code === "unavailable",
+    );
+    assert.equal(managerStatReadControls(harness).length, controlCount);
+    assert.equal(harness.authGetUserCalls.length, authReads);
   });
 
   it("accepts only the canonical confirmed RSVP statuses from canonical document IDs", async () => {

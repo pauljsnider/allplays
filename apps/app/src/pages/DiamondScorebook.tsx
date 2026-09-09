@@ -2358,6 +2358,7 @@ export function DiamondScorebook({
     setHandoffLoading(true);
     try {
       const result = await client.listScorerCandidates({
+        authenticatedUid: requestedUid,
         teamId,
         gameId,
         expectedInstanceId: requestedSnapshot.instanceId,

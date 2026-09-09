@@ -4,6 +4,9 @@ const nodeCrypto = require("node:crypto");
 const {
   isDiamondInteractionWindowOpen,
 } = require("./diamond-live-engagement-handlers.cjs");
+const {
+  createDiamondScorerCandidateAdmission,
+} = require("./diamond-scorer-candidate-admission.cjs");
 const regeneration = require("./diamond-projection-regeneration-core.cjs");
 
 const DEFAULT_EVENT_PAGE_SIZE = 100;
@@ -1365,6 +1368,14 @@ function createDiamondScorebookHandlers(dependencies = {}) {
 
   const makeError = (code, message, details) =>
     new HttpsError(code, message, details);
+  const scorerCandidateAdmission = createDiamondScorerCandidateAdmission({
+    firestore,
+    collectionName: MANAGER_STAT_CONTROL_COLLECTION,
+    clock,
+    hashValue: core.hashDiamondValue,
+    makeError,
+    logger,
+  });
 
   function readReference(reader, reference) {
     if (reader && typeof reader.get === "function")
@@ -5839,7 +5850,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       .filter(Boolean);
   }
 
-  async function loadScorerCandidateLookupState(
+  async function loadScorerCandidateAuthorizationState(
     transaction,
     {
       teamId,
@@ -5848,6 +5859,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       expectedInstanceId,
       expectedRevision,
       leaseId,
+      nowMs,
     },
   ) {
     const resourcePaths = paths(teamId, gameId);
@@ -5913,24 +5925,33 @@ function createDiamondScorebookHandlers(dependencies = {}) {
         lease: root.scorerLease,
         actorUid: caller.uid,
         presentedLeaseId: leaseId,
-        nowMillis: normalizeNow(clock, makeError),
+        nowMillis: nowMs,
       }),
       "Only the current scorer may list handoff candidates.",
     );
+    return { loaded, root, checkpoint, resourcePaths };
+  }
+
+  async function loadScorerCandidateLookupState(transaction, input) {
+    const authorized = await loadScorerCandidateAuthorizationState(
+      transaction,
+      input,
+    );
     const source = await loadScorerCandidateSource(transaction, {
-      team: loaded.team,
-      game: loaded.game,
-      state: checkpoint.state,
-      callerUid: caller.uid,
-      resourcePaths,
+      team: authorized.loaded.team,
+      game: authorized.loaded.game,
+      state: authorized.checkpoint.state,
+      callerUid: input.caller.uid,
+      resourcePaths: authorized.resourcePaths,
     });
-    return { loaded, root, checkpoint, ...source };
+    return { ...authorized, ...source };
   }
 
   async function listDiamondScorerCandidates(data = {}, context = {}) {
     requireExactFields(
       data,
       new Set([
+        "requestId",
         "teamId",
         "gameId",
         "expectedInstanceId",
@@ -5940,6 +5961,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       makeError,
       "Diamond scorer candidate request",
     );
+    const requestId = normalizeUuid(data.requestId, "requestId");
     const teamId = normalizeId(data.teamId, "teamId");
     const gameId = normalizeId(data.gameId, "gameId");
     const expectedInstanceId = normalizeUuid(
@@ -5957,77 +5979,109 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       );
     }
     const leaseId = normalizeId(data.leaseId, "leaseId");
-    const caller = await loadEnabledAuthUser(context);
-    let initial;
-    try {
-      initial = await firestore.runTransaction((transaction) =>
-        loadScorerCandidateLookupState(transaction, {
-          teamId,
-          gameId,
-          caller,
-          expectedInstanceId,
-          expectedRevision,
-          leaseId,
-        }),
-      );
-    } catch (error) {
-      if (error instanceof HttpsError || error instanceof DiamondHandlerError) {
-        throw error;
-      }
-      throw makeError(
-        "unavailable",
-        "Scorer candidates could not be loaded completely. Try again.",
-      );
-    }
-    const candidates = await loadEnabledScorerCandidateProfiles(
-      initial.candidateUids,
-    );
-
-    const freshCaller = await loadEnabledAuthUser(context);
-    let finalState;
-    try {
-      finalState = await firestore.runTransaction((transaction) =>
-        loadScorerCandidateLookupState(transaction, {
-          teamId,
-          gameId,
-          caller: freshCaller,
-          expectedInstanceId,
-          expectedRevision,
-          leaseId,
-        }),
-      );
-    } catch (error) {
-      if (error instanceof HttpsError || error instanceof DiamondHandlerError) {
-        throw error;
-      }
-      throw makeError(
-        "unavailable",
-        "Scorer candidates could not be reverified. Try again.",
-      );
-    }
-    if (
-      finalState.permissionMode !== initial.permissionMode ||
-      finalState.candidateUids.length !== initial.candidateUids.length ||
-      finalState.candidateUids.some(
-        (uid, index) => uid !== initial.candidateUids[index],
-      )
-    ) {
-      throw makeError(
-        "aborted",
-        "Scorer eligibility changed. Reload scorer handoff.",
-        { reason: "scorer-candidate-source-changed", retryable: true },
-      );
-    }
-    return {
+    const request = Object.freeze({
+      requestId,
+      teamId,
+      gameId,
+      expectedInstanceId,
+      expectedRevision,
+      leaseId,
+    });
+    const callerUid = requireCallerUid(context);
+    const executionId = secureUuid(random, makeError, "scorer candidate read");
+    const reservation = await scorerCandidateAdmission.reserve({
+      request,
+      callerUid,
+      executionId,
+    });
+    const response = (candidates) => ({
       schemaVersion: 1,
       complete: true,
       teamId,
       gameId,
-      instanceId: finalState.root.instanceId,
-      revision: finalState.checkpoint.sequence,
+      instanceId: expectedInstanceId,
+      revision: expectedRevision,
       leaseId,
       candidates,
-    };
+    });
+    try {
+      if (reservation.kind === "replay") {
+        const candidates = await scorerCandidateAdmission.replay({
+          reservation,
+          authorize: async (transaction) => {
+            const caller = await loadEnabledAuthUser(context);
+            await loadScorerCandidateAuthorizationState(transaction, {
+              ...request,
+              caller,
+              nowMs: normalizeNow(clock, makeError),
+            });
+          },
+        });
+        return response(candidates);
+      }
+      const caller = await loadEnabledAuthUser(context);
+      let initial;
+      try {
+        initial = await firestore.runTransaction(
+          (transaction) =>
+            loadScorerCandidateLookupState(transaction, {
+              ...request,
+              caller,
+              nowMs: normalizeNow(clock, makeError),
+            }),
+          { maxAttempts: 1 },
+        );
+      } catch (error) {
+        if (
+          error instanceof HttpsError ||
+          error instanceof DiamondHandlerError
+        ) {
+          throw error;
+        }
+        throw makeError(
+          "unavailable",
+          "Scorer candidates could not be loaded completely. Try again.",
+        );
+      }
+      const candidates = await loadEnabledScorerCandidateProfiles(
+        initial.candidateUids,
+      );
+      await scorerCandidateAdmission.complete({
+        reservation,
+        candidates,
+        authorize: async (transaction) => {
+          const freshCaller = await loadEnabledAuthUser(context);
+          const finalState = await loadScorerCandidateLookupState(
+            transaction,
+            {
+              ...request,
+              caller: freshCaller,
+              nowMs: normalizeNow(clock, makeError),
+            },
+          );
+          if (
+            finalState.permissionMode !== initial.permissionMode ||
+            finalState.candidateUids.length !== initial.candidateUids.length ||
+            finalState.candidateUids.some(
+              (uid, index) => uid !== initial.candidateUids[index],
+            )
+          ) {
+            throw makeError(
+              "aborted",
+              "Scorer eligibility changed. Reload scorer handoff.",
+              { reason: "scorer-candidate-source-changed", retryable: true },
+            );
+          }
+        },
+      });
+      return response(candidates);
+    } catch (error) {
+      await scorerCandidateAdmission.fail({
+        reservation,
+        failureCode: error?.details?.reason || error?.code,
+      });
+      throw error;
+    }
   }
 
   function privateHistoryControlIdentity({

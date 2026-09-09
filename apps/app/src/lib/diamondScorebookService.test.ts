@@ -1,4 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const nativeTransportMocks = vi.hoisted(() => ({
+  callNativeFirebaseFunction: vi.fn(),
+  isNativeRuntime: vi.fn(() => false)
+}));
+
+vi.mock('./nativeCallable', () => ({
+  callNativeFirebaseFunction: nativeTransportMocks.callNativeFirebaseFunction
+}));
+vi.mock('./nativeRuntime', () => ({
+  isNativeRuntime: nativeTransportMocks.isNativeRuntime
+}));
+
 import {
   acquireDiamondScorerLease,
   activateDiamondGame,
@@ -34,6 +47,7 @@ const uuid = '12345678-1234-4234-9234-123456789abc';
 const instanceId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const replacementInstanceId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const scorerLeaseId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+const scorerAuthenticatedUid = 'coach-1';
 const checkpointHash = `sha256:${'a'.repeat(64)}`;
 const appBuild = 20260905;
 
@@ -301,6 +315,7 @@ function buildRecapDraft(): DiamondAiGameDraft {
 describe('diamondScorebookService', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    nativeTransportMocks.isNativeRuntime.mockReturnValue(false);
   });
 
   it('creates RFC 4122 command IDs only from secure randomness and fails closed without it', () => {
@@ -614,13 +629,14 @@ describe('diamondScorebookService', () => {
     await expect(
       listDiamondScorerCandidates(
         {
+          authenticatedUid: scorerAuthenticatedUid,
           teamId: 'team-1',
           gameId: 'game-1',
           expectedInstanceId: instanceId,
           expectedRevision: 3,
           leaseId: scorerLeaseId
         },
-        { transport: { call } }
+        { transport: { call }, crypto: cryptoWithUuid() }
       )
     ).resolves.toEqual({
       schemaVersion: 1,
@@ -636,12 +652,328 @@ describe('diamondScorebookService', () => {
       ]
     });
     expect(call).toHaveBeenCalledWith('listDiamondScorerCandidates', {
+      requestId: uuid,
       teamId: 'team-1',
       gameId: 'game-1',
       expectedInstanceId: instanceId,
       expectedRevision: 3,
       leaseId: scorerLeaseId
     });
+  });
+
+  it('allows the bounded scorer-candidate callable envelope on native transport', async () => {
+    nativeTransportMocks.isNativeRuntime.mockReturnValue(true);
+    nativeTransportMocks.callNativeFirebaseFunction.mockResolvedValue({
+      schemaVersion: 1,
+      complete: true,
+      teamId: 'team-native',
+      gameId: 'game-native',
+      instanceId,
+      revision: 3,
+      leaseId: scorerLeaseId,
+      candidates: []
+    });
+
+    await expect(
+      listDiamondScorerCandidates(
+        {
+          authenticatedUid: scorerAuthenticatedUid,
+          teamId: 'team-native',
+          gameId: 'game-native',
+          expectedInstanceId: instanceId,
+          expectedRevision: 3,
+          leaseId: scorerLeaseId
+        },
+        { crypto: cryptoWithUuid() }
+      )
+    ).resolves.toMatchObject({ teamId: 'team-native', gameId: 'game-native' });
+    expect(nativeTransportMocks.callNativeFirebaseFunction).toHaveBeenCalledWith(
+      'listDiamondScorerCandidates',
+      expect.objectContaining({ requestId: uuid }),
+      { errorLabel: 'Diamond scorebook', timeoutMs: 125_000 }
+    );
+  });
+
+  it('reuses one secure scorer-candidate request ID across a transport retry', async () => {
+    const response = {
+      schemaVersion: 1,
+      complete: true,
+      teamId: 'team-1',
+      gameId: 'game-1',
+      instanceId,
+      revision: 3,
+      leaseId: scorerLeaseId,
+      candidates: []
+    };
+    const call = vi.fn().mockRejectedValueOnce({ code: 'functions/unavailable' }).mockResolvedValue(response);
+    const crypto = cryptoWithUuid();
+
+    await expect(
+      listDiamondScorerCandidates(
+        {
+          authenticatedUid: scorerAuthenticatedUid,
+          teamId: 'team-1',
+          gameId: 'game-1',
+          expectedInstanceId: instanceId,
+          expectedRevision: 3,
+          leaseId: scorerLeaseId
+        },
+        { transport: { call }, crypto }
+      )
+    ).resolves.toEqual(response);
+    expect(call).toHaveBeenCalledTimes(2);
+    expect(call.mock.calls[0]?.[1]).toEqual(call.mock.calls[1]?.[1]);
+    expect(call.mock.calls[0]?.[1]).toMatchObject({ requestId: uuid });
+    expect(crypto.randomUUID).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps one scorer-candidate request ID after an overlapping active retry and reuses it for manual recovery', async () => {
+    const response = {
+      schemaVersion: 1,
+      complete: true,
+      teamId: 'team-overlap',
+      gameId: 'game-overlap',
+      instanceId,
+      revision: 3,
+      leaseId: scorerLeaseId,
+      candidates: []
+    };
+    const call = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Native transport timed out while the server remained active.'))
+      .mockRejectedValueOnce(
+        Object.assign(new Error('This scorer candidate request is already active.'), {
+          code: 'functions/resource-exhausted',
+          details: { reason: 'scorer-candidate-duplicate-active', retryable: true }
+        })
+      )
+      .mockResolvedValue(response);
+    const crypto = cryptoWithUuid();
+    const input = {
+      authenticatedUid: scorerAuthenticatedUid,
+      teamId: response.teamId,
+      gameId: response.gameId,
+      expectedInstanceId: instanceId,
+      expectedRevision: response.revision,
+      leaseId: scorerLeaseId
+    };
+
+    await expect(listDiamondScorerCandidates(input, { transport: { call }, crypto })).rejects.toMatchObject({
+      code: 'rate-limited',
+      retryable: true
+    });
+    await expect(listDiamondScorerCandidates(input, { transport: { call }, crypto })).resolves.toEqual(response);
+    expect(call).toHaveBeenCalledTimes(3);
+    expect(call.mock.calls.map((entry) => entry[1]?.requestId)).toEqual([uuid, uuid, uuid]);
+    expect(crypto.randomUUID).toHaveBeenCalledTimes(1);
+  });
+
+  it('rotates scorer-candidate request IDs after success and when the exact source input changes', async () => {
+    const firstId = '11111111-1111-4111-8111-111111111111';
+    const secondId = '22222222-2222-4222-8222-222222222222';
+    const thirdId = '33333333-3333-4333-8333-333333333333';
+    const crypto = {
+      randomUUID: vi.fn().mockReturnValueOnce(firstId).mockReturnValueOnce(secondId).mockReturnValueOnce(thirdId)
+    } as unknown as Crypto;
+    const call = vi.fn(async (_name: string, payload: Record<string, unknown>) => ({
+      schemaVersion: 1,
+      complete: true,
+      teamId: payload.teamId,
+      gameId: payload.gameId,
+      instanceId: payload.expectedInstanceId,
+      revision: payload.expectedRevision,
+      leaseId: payload.leaseId,
+      candidates: []
+    }));
+    const transport: DiamondCallableTransport = { call: call as DiamondCallableTransport['call'] };
+    const input = {
+      authenticatedUid: scorerAuthenticatedUid,
+      teamId: 'team-rotation',
+      gameId: 'game-rotation',
+      expectedInstanceId: instanceId,
+      expectedRevision: 3,
+      leaseId: scorerLeaseId
+    };
+
+    await listDiamondScorerCandidates(input, { transport, crypto });
+    await listDiamondScorerCandidates(input, { transport, crypto });
+    await listDiamondScorerCandidates({ ...input, expectedRevision: 4 }, { transport, crypto });
+    expect(call.mock.calls.map((entry) => entry[1]?.requestId)).toEqual([firstId, secondId, thirdId]);
+    expect(crypto.randomUUID).toHaveBeenCalledTimes(3);
+  });
+
+  it('clears a terminal scorer-candidate replay ID instead of pinning it as retryable', async () => {
+    const firstId = '44444444-4444-4444-8444-444444444444';
+    const secondId = '55555555-5555-4555-8555-555555555555';
+    const crypto = {
+      randomUUID: vi.fn().mockReturnValueOnce(firstId).mockReturnValueOnce(secondId)
+    } as unknown as Crypto;
+    const input = {
+      authenticatedUid: scorerAuthenticatedUid,
+      teamId: 'team-terminal',
+      gameId: 'game-terminal',
+      expectedInstanceId: instanceId,
+      expectedRevision: 3,
+      leaseId: scorerLeaseId
+    };
+    const response = {
+      schemaVersion: 1,
+      complete: true,
+      teamId: input.teamId,
+      gameId: input.gameId,
+      instanceId,
+      revision: input.expectedRevision,
+      leaseId: scorerLeaseId,
+      candidates: []
+    };
+    const call = vi
+      .fn()
+      .mockRejectedValueOnce({
+        code: 'functions/resource-exhausted',
+        details: { reason: 'scorer-candidate-replay-limited', retryable: false }
+      })
+      .mockResolvedValueOnce(response);
+
+    await expect(listDiamondScorerCandidates(input, { transport: { call }, crypto, maxAttempts: 2 })).rejects.toMatchObject({
+      code: 'rate-limited',
+      retryable: false
+    });
+    await expect(listDiamondScorerCandidates(input, { transport: { call }, crypto })).resolves.toEqual(response);
+    expect(call.mock.calls.map((entry) => entry[1]?.requestId)).toEqual([firstId, secondId]);
+  });
+
+  it('bounds uncertain scorer-candidate retry handles per authenticated principal', async () => {
+    let requestIndex = 1;
+    let succeed = false;
+    const crypto = {
+      randomUUID: vi.fn(() => `99999999-9999-4999-8999-${String(requestIndex++).padStart(12, '0')}`)
+    } as unknown as Crypto;
+    const call = vi.fn(async (_name: string, payload: Record<string, unknown>) => {
+      if (!succeed) throw { code: 'functions/unavailable' };
+      return {
+        schemaVersion: 1,
+        complete: true,
+        teamId: payload.teamId,
+        gameId: payload.gameId,
+        instanceId: payload.expectedInstanceId,
+        revision: payload.expectedRevision,
+        leaseId: payload.leaseId,
+        candidates: []
+      };
+    });
+    const transport: DiamondCallableTransport = { call: call as DiamondCallableTransport['call'] };
+    const input = (index: number, authenticatedUid = 'coach-cache-a') => ({
+      authenticatedUid,
+      teamId: 'team-cache-bound',
+      gameId: `game-${index}`,
+      expectedInstanceId: instanceId,
+      expectedRevision: 3,
+      leaseId: scorerLeaseId
+    });
+
+    for (let index = 0; index < 32; index += 1) {
+      await expect(listDiamondScorerCandidates(input(index), { transport, crypto, maxAttempts: 1 })).rejects.toMatchObject({
+        code: 'unavailable',
+        retryable: true
+      });
+    }
+    await expect(listDiamondScorerCandidates(input(32), { transport, crypto, maxAttempts: 1 })).rejects.toMatchObject({
+      code: 'rate-limited',
+      retryable: true
+    });
+    expect(call).toHaveBeenCalledTimes(32);
+    expect(crypto.randomUUID).toHaveBeenCalledTimes(32);
+
+    succeed = true;
+    await expect(listDiamondScorerCandidates(input(32, 'coach-cache-b'), { transport, crypto })).resolves.toMatchObject({
+      gameId: 'game-32'
+    });
+    expect(call).toHaveBeenCalledTimes(33);
+    expect(crypto.randomUUID).toHaveBeenCalledTimes(33);
+    expect(call.mock.calls[32]?.[1]).not.toHaveProperty('authenticatedUid');
+  });
+
+  it('retains uncertain scorer-candidate request IDs for eight minutes and prunes expired handles', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-09T10:00:00.000Z'));
+    const firstId = '66666666-6666-4666-8666-666666666666';
+    const secondId = '77777777-7777-4777-8777-777777777777';
+    const replacementId = '88888888-8888-4888-8888-888888888888';
+    const crypto = {
+      randomUUID: vi.fn().mockReturnValueOnce(firstId).mockReturnValueOnce(secondId).mockReturnValueOnce(replacementId)
+    } as unknown as Crypto;
+    let succeed = false;
+    const call = vi.fn(async (_name: string, payload: Record<string, unknown>) => {
+      if (!succeed) throw new Error('The web network connection ended before the server result arrived.');
+      return {
+        schemaVersion: 1,
+        complete: true,
+        teamId: payload.teamId,
+        gameId: payload.gameId,
+        instanceId: payload.expectedInstanceId,
+        revision: payload.expectedRevision,
+        leaseId: payload.leaseId,
+        candidates: []
+      };
+    });
+    const transport: DiamondCallableTransport = { call: call as DiamondCallableTransport['call'] };
+    const input = (gameId: string) => ({
+      authenticatedUid: 'coach-retention',
+      teamId: 'team-retention',
+      gameId,
+      expectedInstanceId: instanceId,
+      expectedRevision: 3,
+      leaseId: scorerLeaseId
+    });
+
+    try {
+      await expect(listDiamondScorerCandidates(input('game-before'), { transport, crypto, maxAttempts: 1 })).rejects.toMatchObject({
+        retryable: true
+      });
+      await expect(listDiamondScorerCandidates(input('game-after'), { transport, crypto, maxAttempts: 1 })).rejects.toMatchObject({
+        retryable: true
+      });
+
+      await vi.advanceTimersByTimeAsync(8 * 60 * 1000 - 1);
+      succeed = true;
+      await expect(listDiamondScorerCandidates(input('game-before'), { transport, crypto, maxAttempts: 1 })).resolves.toMatchObject({
+        gameId: 'game-before'
+      });
+
+      await vi.advanceTimersByTimeAsync(2);
+      await expect(listDiamondScorerCandidates(input('game-after'), { transport, crypto, maxAttempts: 1 })).resolves.toMatchObject({
+        gameId: 'game-after'
+      });
+      expect(call.mock.calls.map((entry) => entry[1]?.requestId)).toEqual([firstId, secondId, firstId, replacementId]);
+      expect(crypto.randomUUID).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('fails scorer-candidate validation and missing secure randomness before transport', async () => {
+    const call = vi.fn();
+    const crypto = cryptoWithUuid();
+    const input = {
+      authenticatedUid: scorerAuthenticatedUid,
+      teamId: 'team-1',
+      gameId: 'game-1',
+      expectedInstanceId: instanceId,
+      expectedRevision: 3,
+      leaseId: scorerLeaseId
+    };
+
+    await expect(listDiamondScorerCandidates({ ...input, teamId: '' }, { transport: { call }, crypto })).rejects.toMatchObject({
+      code: 'invalid-input'
+    });
+    await expect(listDiamondScorerCandidates({ ...input, authenticatedUid: '/' }, { transport: { call }, crypto })).rejects.toMatchObject({
+      code: 'invalid-input'
+    });
+    expect(crypto.randomUUID).not.toHaveBeenCalled();
+    await expect(listDiamondScorerCandidates(input, { transport: { call }, crypto: null })).rejects.toMatchObject({
+      code: 'secure-randomness-unavailable'
+    });
+    expect(call).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -713,6 +1045,7 @@ describe('diamondScorebookService', () => {
     await expect(
       listDiamondScorerCandidates(
         {
+          authenticatedUid: scorerAuthenticatedUid,
           teamId: 'team-1',
           gameId: 'game-1',
           expectedInstanceId: instanceId,
@@ -736,6 +1069,7 @@ describe('diamondScorebookService', () => {
       await expect(
         listDiamondScorerCandidates(
           {
+            authenticatedUid: scorerAuthenticatedUid,
             teamId: 'team-1',
             gameId: 'game-1',
             expectedInstanceId: instanceId,

@@ -3057,6 +3057,7 @@ describe('DiamondScorebook', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Hand off scorebook' }));
     await waitFor(() =>
       expect(fixture.listScorerCandidates).toHaveBeenCalledWith({
+        authenticatedUid: 'coach-1',
         teamId: 'team-1',
         gameId: 'game-1',
         expectedInstanceId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
