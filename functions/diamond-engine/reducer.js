@@ -605,6 +605,16 @@ function deriveDiamondAggregateRbiInference(scoringAdvances, runsBattedIn) {
     const unattributedValue = unattributedCount > 0 && residual === 0 ? false : unattributedCount > 0 && residual === unattributedCount ? true : undefined;
     return { explicitTrueCount, unattributedCount, unattributedValue };
 }
+function validateHomeRunRbiEvidence(result, scoringAdvances, runsBattedIn) {
+    if (result !== 'home_run')
+        return;
+    if (scoringAdvances.some((advance) => advance.rbi === false)) {
+        throw new contracts_1.DiamondDomainError('invalid-rbi', 'Every counted run on a home run must credit the batter with an RBI.');
+    }
+    if (runsBattedIn !== undefined && runsBattedIn !== scoringAdvances.length) {
+        throw new contracts_1.DiamondDomainError('invalid-rbi', 'A home-run RBI total must equal the number of counted runs on the play.');
+    }
+}
 function deriveDiamondCoverageFromEventStates(initialState, eventStates) {
     let coverage = { ...initialState.coverage };
     const fieldingByPlay = new Map();
@@ -1595,6 +1605,8 @@ function reduceDiamondEvent(state, action) {
                 };
             });
             const moves = [batterMove, ...runnerMoves];
+            const scoringAdvances = [action.payload.batterAdvance, ...action.payload.runnerAdvances].filter((advance) => advance.to === 'home' && advance.countsRun !== false);
+            validateHomeRunRbiEvidence(action.payload.result, scoringAdvances, action.payload.runsBattedIn);
             validateCompleteExtraBaseHitRunnerResolution(state, action.payload.result, runnerMoves);
             validateSacrificeEvidence(state, action.payload.result, runnerMoves);
             validateNamedMultiOutResult(state, action.payload.result, moves, action.payload.outsOnPlay);
@@ -1611,7 +1623,6 @@ function reduceDiamondEvent(state, action) {
             if (action.payload.fielding)
                 next = markFieldingObserved(next);
             next = markPartial(next, action.payload.omissions);
-            const scoringAdvances = [action.payload.batterAdvance, ...action.payload.runnerAdvances].filter((advance) => advance.to === 'home' && advance.countsRun !== false);
             if (action.payload.runsBattedIn !== undefined) {
                 const { explicitTrueCount, unattributedCount } = deriveDiamondAggregateRbiInference(scoringAdvances, action.payload.runsBattedIn);
                 if (action.payload.runsBattedIn < explicitTrueCount || action.payload.runsBattedIn > explicitTrueCount + unattributedCount) {

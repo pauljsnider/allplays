@@ -240,6 +240,7 @@ type HistoricalPlayContext = Readonly<{
   catcherId: string | null;
   participants: ReadonlySet<string>;
   scoringRunners: ReadonlySet<string>;
+  requiresHomeRunRbi: boolean;
   actualOutCount: number;
   knownPlayers: Readonly<Record<DiamondSide, ReadonlySet<string>>>;
   pitcherAppearances: Readonly<Record<DiamondSide, ReadonlySet<string>>>;
@@ -268,8 +269,10 @@ function otherSide(side: DiamondSide): DiamondSide {
 function scoringParticipants(event: DiamondEffectiveEvent) {
   const participants = new Set<string>();
   const scoringRunners = new Set<string>();
+  let requiresHomeRunRbi = false;
   if (event.type === 'record_plate_appearance') {
     const payload = event.payload as DiamondCommandPayloadMap['record_plate_appearance'];
+    requiresHomeRunRbi = payload.result === 'home_run';
     participants.add(payload.batterId);
     if (payload.batterAdvance.to === 'home' && payload.batterAdvance.countsRun !== false) scoringRunners.add(payload.batterId);
     payload.runnerAdvances.forEach((advance) => {
@@ -281,7 +284,7 @@ function scoringParticipants(event: DiamondEffectiveEvent) {
     participants.add(payload.runnerId);
     if (payload.to === 'home' && payload.countsRun !== false) scoringRunners.add(payload.runnerId);
   }
-  return { participants, scoringRunners };
+  return { participants, scoringRunners, requiresHomeRunRbi };
 }
 
 function actualOutCount(event: DiamondEffectiveEvent) {
@@ -442,6 +445,9 @@ function validateAttachmentAgainstHistoricalPlay(event: Pick<DiamondEffectiveEve
       );
     }
   }
+  if (payload.rbi === false && context.requiresHomeRunRbi) {
+    throw new DiamondDomainError('invalid-rbi', 'A counted run on a home run cannot have its batter RBI revoked.');
+  }
   if (payload.responsiblePitcherId && !pitcherRoleIsUnambiguous(context, context.defensiveSide, payload.responsiblePitcherId)) {
     throw new DiamondDomainError(
       'responsible-pitcher-role-mismatch',
@@ -472,7 +478,7 @@ function observeEffectiveEventParticipants(state: DiamondGameState, event: Diamo
   if (ATTACHABLE_PLAY_TYPES.has(event.type)) {
     const battingSide = getBattingSide(state);
     const defensiveSide = otherSide(battingSide);
-    const { participants, scoringRunners } = scoringParticipants(event);
+    const { participants, scoringRunners, requiresHomeRunRbi } = scoringParticipants(event);
     const knownPlayers = {
       home: knownPlayerIds(state, 'home'),
       away: knownPlayerIds(state, 'away')
@@ -487,6 +493,7 @@ function observeEffectiveEventParticipants(state: DiamondGameState, event: Diamo
       catcherId: state.lineups[defensiveSide].defense.C ?? null,
       participants,
       scoringRunners,
+      requiresHomeRunRbi,
       actualOutCount: actualOutCount(event),
       knownPlayers,
       pitcherAppearances: {

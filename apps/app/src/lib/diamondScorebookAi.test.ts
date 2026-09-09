@@ -174,6 +174,7 @@ describe('interpretDiamondTranscript', () => {
       })
     );
     expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/home_run and triple.*every occupied base runner/i);
+    expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/home_run.*rbi=true.*runsBattedIn.*counted runs/i);
     expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/double_play.*exactly 2.*triple_play.*exactly 3/i);
     expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/stay put or move forward/i);
     expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/must not pass a preceding runner/i);
@@ -386,6 +387,28 @@ describe('interpretDiamondTranscript', () => {
         outsOnPlay: 0
       },
       message: /home or be marked out/i
+    },
+    {
+      label: 'revokes RBI credit from a counted home-run score',
+      payload: {
+        result: 'home_run',
+        batterAdvance: { to: 'home', countsRun: true, rbi: true },
+        runnerAdvances: [{ runnerId: 'runner-1', from: 'first', to: 'home', cause: 'batted_ball', countsRun: true, rbi: false }],
+        outsOnPlay: 0,
+        runsBattedIn: undefined
+      },
+      message: /every counted run.*home run.*RBI/i
+    },
+    {
+      label: 'uses an interior aggregate RBI total for a home run',
+      payload: {
+        result: 'home_run',
+        batterAdvance: { to: 'home', countsRun: true },
+        runnerAdvances: [{ runnerId: 'runner-1', from: 'first', to: 'home', cause: 'batted_ball', countsRun: true }],
+        outsOnPlay: 0,
+        runsBattedIn: 1
+      },
+      message: /RBI total.*number of counted runs/i
     }
   ])('rejects a high-confidence plate appearance that $label', async ({ payload, message, context }) => {
     const model = jsonModel(plateAppearanceResponse(payload));

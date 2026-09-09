@@ -2223,6 +2223,146 @@ test("compiled scoring judgments follow ledger order across original and correct
   );
 });
 
+test("compiled home-run RBI evidence rejects contradictory direct, checkpoint, correction, and judgment paths", () => {
+  const game = harness("quick", "baseball-nfhs");
+  setLineupsAndStart(game, 3);
+  const scoringRunnerId = placeRunnerOnBase(game, "third");
+  const { batterId, pitcherId } = currentMatchup(game);
+  const basePayload = {
+    batterId,
+    pitcherId,
+    result: "home_run",
+    batterAdvance: {
+      to: "home",
+      cause: "batted_ball",
+      countsRun: true,
+      earned: true,
+    },
+    runnerAdvances: [
+      {
+        runnerId: scoringRunnerId,
+        from: "third",
+        to: "home",
+        cause: "batted_ball",
+        countsRun: true,
+        earned: true,
+      },
+    ],
+    outsOnPlay: 0,
+  };
+  const baseline = createDiamondCheckpoint(game.ledger);
+  const falseRbiPayload = {
+    ...basePayload,
+    runnerAdvances: [{ ...basePayload.runnerAdvances[0], rbi: false }],
+  };
+  const lowAggregatePayload = { ...basePayload, runsBattedIn: 1 };
+
+  const falseRbi = game.attempt("record_plate_appearance", falseRbiPayload);
+  assert.equal(falseRbi.result.outcome, "rejected");
+  assert.equal(falseRbi.result.rejection?.code, "invalid-rbi");
+  const lowAggregate = game.attempt(
+    "record_plate_appearance",
+    lowAggregatePayload,
+  );
+  assert.equal(lowAggregate.result.outcome, "rejected");
+  assert.equal(lowAggregate.result.rejection?.code, "invalid-rbi");
+  assert.deepEqual(createDiamondCheckpoint(game.ledger), baseline);
+
+  const boundedCommand = {
+    schemaVersion: DIAMOND_SCHEMA_VERSION,
+    commandId: uuid(850),
+    teamId: game.ledger.teamId,
+    gameId: game.ledger.gameId,
+    expectedRevision: game.ledger.state.revision,
+    rulesProfileId: game.ledger.rulesProfileId,
+    rulesProfileVersion: game.ledger.rulesProfileVersion,
+    type: "record_plate_appearance",
+    payload: lowAggregatePayload,
+  };
+  const boundedContext = {
+    actorUid: SCORER_UID,
+    eventId: "checkpoint-home-run-rbi-mismatch",
+    serverTimestampMs: 1_700_000_085_000,
+  };
+  const full = executeDiamondCommand(
+    game.ledger,
+    boundedCommand,
+    boundedContext,
+  );
+  const bounded = executeDiamondCommandFromCheckpoint(
+    baseline,
+    boundedCommand,
+    boundedContext,
+  );
+  assert.equal(full.result.outcome, "rejected");
+  assert.equal(full.result.rejection?.code, "invalid-rbi");
+  assert.equal(bounded.result.outcome, "rejected");
+  assert.equal(bounded.result.rejection?.code, "invalid-rbi");
+  assert.deepEqual(bounded.checkpoint, baseline);
+
+  const validPayload = {
+    ...basePayload,
+    batterAdvance: { ...basePayload.batterAdvance, rbi: true },
+    runnerAdvances: [{ ...basePayload.runnerAdvances[0], rbi: true }],
+    runsBattedIn: 2,
+  };
+  const play = game.submit("record_plate_appearance", validPayload);
+  assert.equal(
+    projectDiamondStats(game.ledger).players[batterId].raw.batting.RBI,
+    2,
+  );
+  const stableRevision = game.ledger.state.revision;
+  const revokedOriginal = game.attempt("record_scoring_judgment", {
+    playEventId: play.eventId,
+    runnerId: scoringRunnerId,
+    rbi: false,
+  });
+  assert.equal(revokedOriginal.result.outcome, "rejected");
+  assert.equal(revokedOriginal.result.rejection?.code, "invalid-rbi");
+  assert.equal(game.ledger.state.revision, stableRevision);
+
+  const invalidCorrection = game.attempt("supersede_event", {
+    targetEventId: play.eventId,
+    reason: "A corrected home run still must credit every counted run.",
+    replacement: {
+      type: "record_plate_appearance",
+      payload: falseRbiPayload,
+    },
+  });
+  assert.equal(invalidCorrection.result.outcome, "rejected");
+  assert.equal(invalidCorrection.result.rejection?.code, "invalid-rbi");
+  assert.equal(game.ledger.state.revision, stableRevision);
+
+  const correction = game.submit("supersede_event", {
+    targetEventId: play.eventId,
+    reason: "Re-enter the valid home run under a corrected event identity.",
+    replacement: { type: "record_plate_appearance", payload: validPayload },
+  });
+  const revokedCorrection = game.attempt("record_scoring_judgment", {
+    playEventId: correction.eventId,
+    runnerId: scoringRunnerId,
+    rbi: false,
+  });
+  assert.equal(revokedCorrection.result.outcome, "rejected");
+  assert.equal(revokedCorrection.result.rejection?.code, "invalid-rbi");
+
+  const redundantCredit = game.submit("record_scoring_judgment", {
+    playEventId: correction.eventId,
+    runnerId: scoringRunnerId,
+    rbi: true,
+  });
+  game.submit("void_event", {
+    targetEventId: redundantCredit.eventId,
+    reason: "The home-run result already supplies the required RBI evidence.",
+  });
+  assert.equal(
+    projectDiamondStats(game.ledger).players[batterId].raw.batting.RBI,
+    2,
+  );
+  assert.deepEqual(replayDiamondLedger(game.ledger).state, game.ledger.state);
+  assert.equal(verifyDiamondLedger(game.ledger), true);
+});
+
 test("compiled aggregate RBI constraints preserve feasible parent history across correction and void", () => {
   const game = harness("quick", "baseball-nfhs");
   setLineupsAndStart(game, 3);

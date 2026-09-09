@@ -196,8 +196,10 @@ function otherSide(side) {
 function scoringParticipants(event) {
     const participants = new Set();
     const scoringRunners = new Set();
+    let requiresHomeRunRbi = false;
     if (event.type === 'record_plate_appearance') {
         const payload = event.payload;
+        requiresHomeRunRbi = payload.result === 'home_run';
         participants.add(payload.batterId);
         if (payload.batterAdvance.to === 'home' && payload.batterAdvance.countsRun !== false)
             scoringRunners.add(payload.batterId);
@@ -213,7 +215,7 @@ function scoringParticipants(event) {
         if (payload.to === 'home' && payload.countsRun !== false)
             scoringRunners.add(payload.runnerId);
     }
-    return { participants, scoringRunners };
+    return { participants, scoringRunners, requiresHomeRunRbi };
 }
 function actualOutCount(event) {
     if (event.type === 'record_plate_appearance') {
@@ -332,6 +334,9 @@ function validateAttachmentAgainstHistoricalPlay(event, context) {
             throw new contracts_1.DiamondDomainError('ambiguous-scoring-participant', 'A multi-run play requires the exact scoring runner for earned-run, RBI, or pitcher-responsibility judgment.');
         }
     }
+    if (payload.rbi === false && context.requiresHomeRunRbi) {
+        throw new contracts_1.DiamondDomainError('invalid-rbi', 'A counted run on a home run cannot have its batter RBI revoked.');
+    }
     if (payload.responsiblePitcherId && !pitcherRoleIsUnambiguous(context, context.defensiveSide, payload.responsiblePitcherId)) {
         throw new contracts_1.DiamondDomainError('responsible-pitcher-role-mismatch', `${payload.responsiblePitcherId} was not unambiguously recorded as a ${context.defensiveSide} pitcher by the cited play.`);
     }
@@ -355,7 +360,7 @@ function observeEffectiveEventParticipants(state, event, tracker) {
     if (ATTACHABLE_PLAY_TYPES.has(event.type)) {
         const battingSide = (0, reducer_1.getBattingSide)(state);
         const defensiveSide = otherSide(battingSide);
-        const { participants, scoringRunners } = scoringParticipants(event);
+        const { participants, scoringRunners, requiresHomeRunRbi } = scoringParticipants(event);
         const knownPlayers = {
             home: knownPlayerIds(state, 'home'),
             away: knownPlayerIds(state, 'away')
@@ -368,6 +373,7 @@ function observeEffectiveEventParticipants(state, event, tracker) {
             catcherId: state.lineups[defensiveSide].defense.C ?? null,
             participants,
             scoringRunners,
+            requiresHomeRunRbi,
             actualOutCount: actualOutCount(event),
             knownPlayers,
             pitcherAppearances: {

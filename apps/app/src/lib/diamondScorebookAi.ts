@@ -1021,6 +1021,7 @@ SECURITY AND AUTHORITY RULES:
 - When substituting or re-entering the current pitcher, the current pitcher must retain defensive position P: omit defensivePosition to inherit P or set defensivePosition=P.
 - These prompt rules guide the proposal only. The local deterministic validator remains authoritative.
 - For home_run and triple, include every occupied base runner exactly once in runnerAdvances; each must reach home or be marked out.
+- On home_run, every advance to home whose run is not explicitly nullified with countsRun=false must use rbi=true, and runsBattedIn must equal the number of counted runs. Never propose a later rbi=false judgment for a counted home-run score.
 - For double_play record exactly 2 distinct actual outs, and for triple_play record exactly 3, including the batter and matching outsOnPlay. Do not infer timing from array order; leave countsRun explicit for scorer review.
 
 ALLOWLISTED COMMANDS:
@@ -1553,6 +1554,15 @@ function validatePlateAppearanceAgainstContext(payload: Record<string, unknown>,
     }
     if (payload.outsOnPlay !== actualOutSources.length) {
       throw new DiamondAiBoundaryError('Outs on play must exactly match the runners marked out.');
+    }
+  }
+  if (result === 'home_run') {
+    const scoringAdvances = [batterAdvance, ...runnerAdvances].filter((advance) => advance.to === 'home' && advance.countsRun !== false);
+    if (scoringAdvances.some((advance) => advance.rbi === false)) {
+      throw new DiamondAiBoundaryError('Every counted run on a home run must credit the batter with an RBI.');
+    }
+    if (payload.runsBattedIn !== undefined && payload.runsBattedIn !== scoringAdvances.length) {
+      throw new DiamondAiBoundaryError('A home-run RBI total must equal the number of counted runs.');
     }
   }
   validateRunnerOrderAgainstContext(context, [

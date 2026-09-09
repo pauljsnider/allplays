@@ -1158,10 +1158,10 @@ describe('DiamondScorebook', () => {
         batterId: 'batter-1',
         pitcherId: 'pitcher-1',
         result: 'home_run',
-        batterAdvance: { to: 'home', countsRun: true },
+        batterAdvance: { to: 'home', countsRun: true, rbi: false },
         runnerAdvances: [],
         outsOnPlay: 0,
-        runsBattedIn: 3
+        runsBattedIn: 0
       },
       confidence: 0.9,
       unresolvedFields: [],
@@ -1180,8 +1180,28 @@ describe('DiamondScorebook', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Review Home run' });
     expect(within(dialog).getByLabelText(/First .* destination/)).toHaveValue('home');
     expect(within(dialog).getByLabelText(/Third .* destination/)).toHaveValue('home');
+    within(dialog)
+      .getAllByRole('checkbox', { name: 'Credit RBI' })
+      .forEach((checkbox) => {
+        expect(checkbox).toBeChecked();
+        expect(checkbox).toBeDisabled();
+      });
+    expect(within(dialog).getByRole('status', { name: 'RBI credit' })).toHaveTextContent('3');
     expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument();
     expect(within(dialog).getByRole('button', { name: 'Confirm play' })).toBeEnabled();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm play' }));
+    await waitFor(() => expect(fixture.submitCommand).toHaveBeenCalledTimes(1));
+    expect(fixture.createCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'record_plate_appearance',
+        payload: expect.objectContaining({
+          result: 'home_run',
+          batterAdvance: expect.objectContaining({ rbi: true }),
+          runnerAdvances: expect.arrayContaining([expect.objectContaining({ rbi: true })]),
+          runsBattedIn: 3
+        })
+      })
+    );
   });
 
   it.each([
@@ -4667,6 +4687,64 @@ describe('DiamondScorebook', () => {
           rbi: true,
           responsiblePitcherId: 'pitcher-1'
         }
+      })
+    );
+  });
+
+  it('retargets a no-RBI scoring judgment to required credit when the selected play is a home run', async () => {
+    const base = buildSnapshot();
+    const snapshot = buildSnapshot({
+      revision: 8,
+      checkpointHash: checkpointForRevision(8),
+      completeness: { ...base.completeness, authoritativeRevision: 8 }
+    });
+    const history = buildPrivateHistoryItems(8);
+    history[6] = buildPrivateEvent('event-7', 7, {
+      payload: {
+        batterId: 'batter-1',
+        pitcherId: 'pitcher-1',
+        result: 'home_run',
+        batterAdvance: {
+          to: 'home',
+          cause: 'batted_ball',
+          countsRun: true,
+          rbi: true,
+          responsiblePitcherId: 'pitcher-1'
+        },
+        runnerAdvances: [],
+        outsOnPlay: 0,
+        runsBattedIn: 1
+      }
+    });
+    history[7] = buildPrivateEvent('event-8', 8);
+    const fixture = createClient(snapshot);
+    fixture.loadPrivateHistory.mockResolvedValue(buildPrivateHistoryWindow(history, 8));
+    renderScorebook(snapshot, fixture);
+
+    fireEvent.click(screen.getByText('Full-mode advanced plays'));
+    const structured = screen.getByRole('group', { name: 'Structured fielding or scoring judgment' });
+    fireEvent.click(within(structured).getByRole('button', { name: 'Load exact play targets' }));
+    await waitFor(() => expect(within(structured).getByLabelText('Effective play')).toHaveValue('event-8'));
+    fireEvent.change(within(structured).getByLabelText('Structured command type'), {
+      target: { value: 'record_scoring_judgment' }
+    });
+    const rbi = within(structured).getByText('RBI').querySelector('select')!;
+    fireEvent.change(rbi, { target: { value: 'no' } });
+    expect(rbi).toHaveValue('no');
+
+    fireEvent.change(within(structured).getByLabelText('Effective play'), { target: { value: 'event-7' } });
+    await waitFor(() => expect(rbi).toHaveValue('yes'));
+    expect(within(rbi).getByRole('option', { name: 'No RBI' })).toBeDisabled();
+    fireEvent.click(within(structured).getByRole('button', { name: 'Review scoring judgment' }));
+    fireEvent.click(
+      within(screen.getByRole('dialog', { name: 'Review scoring judgment' })).getByRole('button', { name: 'Confirm action' })
+    );
+
+    await waitFor(() => expect(fixture.submitCommand).toHaveBeenCalledTimes(1));
+    expect(fixture.createCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'record_scoring_judgment',
+        payload: { playEventId: 'event-7', rbi: true }
       })
     );
   });

@@ -1067,6 +1067,19 @@ function resultAllowsRbi(result: string) {
   return !['reached_on_error', 'fielders_choice', 'double_play', 'triple_play'].includes(result);
 }
 
+function requiresHomeRunRbi(result: string, move: Pick<RunnerMoveDraft, 'to' | 'countsRun'>) {
+  return result === 'home_run' && move.to === 'home' && move.countsRun !== false;
+}
+
+function reviewedMoveHasRbi(result: string, move: Pick<RunnerMoveDraft, 'to' | 'countsRun' | 'rbi'>) {
+  return requiresHomeRunRbi(result, move) || move.rbi === true;
+}
+
+function forceHomeRunRbis(result: string, moves: RunnerMoveDraft[]) {
+  if (result !== 'home_run') return moves;
+  return moves.map((move) => (requiresHomeRunRbi(result, move) ? { ...move, rbi: true } : move));
+}
+
 function buildRunnerMoves(snapshot: DiamondScorebookSnapshot, result: string): RunnerMoveDraft[] {
   const occupiedBases = new Set<RunnerMoveDraft['from']>();
   (['first', 'second', 'third'] as const).forEach((base) => {
@@ -1221,7 +1234,7 @@ function buildPendingPlateAppearanceCorrection(
     return `${role} · ${playerLabel(player)}`;
   };
   const batterAdvance = asJsonObject(payload.batterAdvance);
-  const runnerMoves: RunnerMoveDraft[] = [
+  const runnerMoves = forceHomeRunRbis(result, [
     {
       key: `batter:${batterId}`,
       label: labelForId(batterId, 'Batter'),
@@ -1259,7 +1272,7 @@ function buildPendingPlateAppearanceCorrection(
         } satisfies RunnerMoveDraft
       ];
     })
-  ];
+  ]);
   const fielding = asJsonObject(payload.fielding);
   const assists = Array.isArray(fielding.assists) ? fielding.assists.map(readString).filter(Boolean) : [];
   const errors = Array.isArray(fielding.errors) ? fielding.errors.map(asJsonObject) : [];
@@ -1329,45 +1342,53 @@ function buildPendingVoicePlay(snapshot: DiamondScorebookSnapshot, proposal: Pen
     const batterAdvance =
       payload.batterAdvance && typeof payload.batterAdvance === 'object' ? (payload.batterAdvance as Record<string, unknown>) : {};
     const runnerAdvances = Array.isArray(payload.runnerAdvances) ? payload.runnerAdvances : [];
-    pending.runnerMoves = pending.runnerMoves.map((move) => {
-      if (move.from === 'batter') {
-        const to = readString(batterAdvance.to) as RunnerDestination;
-        const earned = typeof batterAdvance.earned === 'boolean' ? batterAdvance.earned : move.earned;
-        const cause = readString(batterAdvance.cause) as DiamondRunnerAdvanceCause;
-        const outKind = readString(batterAdvance.outKind) as DiamondOutKind;
+    pending.runnerMoves = forceHomeRunRbis(
+      result,
+      pending.runnerMoves.map((move) => {
+        if (move.from === 'batter') {
+          const to = readString(batterAdvance.to) as RunnerDestination;
+          const earned = typeof batterAdvance.earned === 'boolean' ? batterAdvance.earned : move.earned;
+          const cause = readString(batterAdvance.cause) as DiamondRunnerAdvanceCause;
+          const outKind = readString(batterAdvance.outKind) as DiamondOutKind;
+          return {
+            ...move,
+            ...(destinationOptions.some((option) => option.value === to) ? { to } : {}),
+            ...(runnerCauseOptions.some((option) => option.value === cause) ? { cause } : {}),
+            ...(outKindOptions.some((option) => option.value === outKind) ? { outKind } : {}),
+            ...(typeof batterAdvance.countsRun === 'boolean' ? { countsRun: batterAdvance.countsRun } : {}),
+            ...(typeof batterAdvance.rbi === 'boolean' ? { rbi: batterAdvance.rbi } : {}),
+            ...(readString(batterAdvance.responsiblePitcherId)
+              ? { responsiblePitcherId: readString(batterAdvance.responsiblePitcherId) }
+              : {}),
+            earned
+          };
+        }
+        const proposedMove = runnerAdvances.find(
+          (entry) => entry && typeof entry === 'object' && readString((entry as Record<string, unknown>).runnerId) === move.playerId
+        ) as Record<string, unknown> | undefined;
+        const to = readString(proposedMove?.to) as RunnerDestination;
+        const earned = typeof proposedMove?.earned === 'boolean' ? proposedMove.earned : move.earned;
+        const cause = readString(proposedMove?.cause) as DiamondRunnerAdvanceCause;
+        const outKind = readString(proposedMove?.outKind) as DiamondOutKind;
         return {
           ...move,
           ...(destinationOptions.some((option) => option.value === to) ? { to } : {}),
           ...(runnerCauseOptions.some((option) => option.value === cause) ? { cause } : {}),
           ...(outKindOptions.some((option) => option.value === outKind) ? { outKind } : {}),
-          ...(typeof batterAdvance.countsRun === 'boolean' ? { countsRun: batterAdvance.countsRun } : {}),
-          ...(typeof batterAdvance.rbi === 'boolean' ? { rbi: batterAdvance.rbi } : {}),
-          ...(readString(batterAdvance.responsiblePitcherId)
-            ? { responsiblePitcherId: readString(batterAdvance.responsiblePitcherId) }
+          ...(typeof proposedMove?.countsRun === 'boolean' ? { countsRun: proposedMove.countsRun } : {}),
+          ...(typeof proposedMove?.rbi === 'boolean' ? { rbi: proposedMove.rbi } : {}),
+          ...(readString(proposedMove?.responsiblePitcherId)
+            ? { responsiblePitcherId: readString(proposedMove?.responsiblePitcherId) }
             : {}),
           earned
         };
-      }
-      const proposedMove = runnerAdvances.find(
-        (entry) => entry && typeof entry === 'object' && readString((entry as Record<string, unknown>).runnerId) === move.playerId
-      ) as Record<string, unknown> | undefined;
-      const to = readString(proposedMove?.to) as RunnerDestination;
-      const earned = typeof proposedMove?.earned === 'boolean' ? proposedMove.earned : move.earned;
-      const cause = readString(proposedMove?.cause) as DiamondRunnerAdvanceCause;
-      const outKind = readString(proposedMove?.outKind) as DiamondOutKind;
-      return {
-        ...move,
-        ...(destinationOptions.some((option) => option.value === to) ? { to } : {}),
-        ...(runnerCauseOptions.some((option) => option.value === cause) ? { cause } : {}),
-        ...(outKindOptions.some((option) => option.value === outKind) ? { outKind } : {}),
-        ...(typeof proposedMove?.countsRun === 'boolean' ? { countsRun: proposedMove.countsRun } : {}),
-        ...(typeof proposedMove?.rbi === 'boolean' ? { rbi: proposedMove.rbi } : {}),
-        ...(readString(proposedMove?.responsiblePitcherId) ? { responsiblePitcherId: readString(proposedMove?.responsiblePitcherId) } : {}),
-        earned
-      };
-    });
+      })
+    );
     pending.outsOnPlay = readNumber(payload.outsOnPlay, pending.outsOnPlay);
-    pending.runsBattedIn = readNumber(payload.runsBattedIn, pending.runsBattedIn);
+    pending.runsBattedIn =
+      result === 'home_run'
+        ? pending.runnerMoves.filter((move) => move.to === 'home' && move.countsRun !== false).length
+        : readNumber(payload.runsBattedIn, pending.runsBattedIn);
     pending.unresolvedFields = proposal.unresolvedQuestions;
     pending.ambiguityConfirmed = proposal.unresolvedQuestions.length === 0;
     pending.payload = proposal.payload;
@@ -1558,7 +1579,7 @@ function validateRunnerReview(pending: PendingPlay, snapshot: DiamondScorebookSn
     return 'This play would record more than three outs in the half inning.';
   }
   const scored = pending.runnerMoves.filter((move) => move.to === 'home').length;
-  const rbi = pending.runnerMoves.filter((move) => move.to === 'home' && move.rbi).length;
+  const rbi = pending.runnerMoves.filter((move) => move.to === 'home' && reviewedMoveHasRbi(pending.result, move)).length;
   if (pending.runsBattedIn !== rbi) return 'RBI total must match the individual runners credited with an RBI.';
   if (rbi > scored) return 'RBI credit cannot exceed the runners marked safe at home.';
   if (pending.runnerMoves.some((move) => move.to === 'out' && !move.outKind)) return 'Choose an out kind for every runner marked out.';
@@ -1666,7 +1687,7 @@ function buildPendingPayload(snapshot: DiamondScorebookSnapshot, pending: Pendin
       ...(batterMove.to === 'home'
         ? {
             countsRun: batterMove.countsRun,
-            rbi: batterMove.rbi === true,
+            rbi: reviewedMoveHasRbi(pending.result, batterMove),
             ...(batterMove.responsiblePitcherId ? { responsiblePitcherId: batterMove.responsiblePitcherId } : {}),
             ...(typeof batterMove.earned === 'boolean' ? { earned: batterMove.earned } : {})
           }
@@ -1683,7 +1704,7 @@ function buildPendingPayload(snapshot: DiamondScorebookSnapshot, pending: Pendin
         ...(move.to === 'home'
           ? {
               countsRun: move.countsRun,
-              rbi: move.rbi === true,
+              rbi: reviewedMoveHasRbi(pending.result, move),
               ...(move.responsiblePitcherId ? { responsiblePitcherId: move.responsiblePitcherId } : {}),
               ...(typeof move.earned === 'boolean' ? { earned: move.earned } : {})
             }
@@ -1691,7 +1712,10 @@ function buildPendingPayload(snapshot: DiamondScorebookSnapshot, pending: Pendin
         ...(move.to === 'out' ? { outKind: move.outKind } : {})
       })),
     outsOnPlay: pending.outsOnPlay,
-    runsBattedIn: Math.min(pending.runnerMoves.filter((move) => move.to === 'home' && move.rbi).length, scoredMoves.length),
+    runsBattedIn: Math.min(
+      pending.runnerMoves.filter((move) => move.to === 'home' && reviewedMoveHasRbi(pending.result, move)).length,
+      scoredMoves.length
+    ),
     ...(hasFielding ? { fielding } : {}),
     ...(snapshot.captureMode === 'quick' || controlMode === 'quick' ? { omissions: ['fielding', 'situational', 'pitches'] } : {})
   };
@@ -5378,6 +5402,12 @@ function AdvancedScoringPanel({
   const courtesyCandidates = snapshot.availablePlayers[battingSide].filter((player) => !occupiedIds.has(player.playerId));
   const canUseCourtesy = snapshot.ruleCapabilities.courtesyRunner[effectiveCourtesyRole];
   const structuredEvent = attachableEvents.find((event) => event.sourceEventId === structuredPlayId) || null;
+  const structuredRequiresHomeRunRbi = Boolean(
+    structuredEvent?.effectiveType === 'record_plate_appearance' && readString(structuredEvent.effectivePayload.result) === 'home_run'
+  );
+  useEffect(() => {
+    if (structuredRequiresHomeRunRbi && judgmentRbi === 'no') setJudgmentRbi('yes');
+  }, [judgmentRbi, structuredRequiresHomeRunRbi]);
   const structuredBattingSide = structuredEvent ? structuredEventBattingSide(snapshot, structuredEvent) : null;
   const structuredFieldingSide = structuredBattingSide ? oppositeDiamondSide(structuredBattingSide) : null;
   const structuredBattingPlayers = structuredBattingSide ? snapshotSidePlayers(snapshot, structuredBattingSide) : [];
@@ -5458,7 +5488,7 @@ function AdvancedScoringPanel({
         playEventId: structuredPlayId,
         ...(judgmentRunnerId ? { runnerId: judgmentRunnerId } : {}),
         ...(judgmentEarned ? { earned: judgmentEarned === 'yes' } : {}),
-        ...(judgmentRbi ? { rbi: judgmentRbi === 'yes' } : {}),
+        ...(judgmentRbi ? { rbi: structuredRequiresHomeRunRbi || judgmentRbi === 'yes' } : {}),
         ...(judgmentPitcherId ? { responsiblePitcherId: judgmentPitcherId } : {}),
         ...(pitcherDecision && pitcherDecisionPlayerId
           ? { pitcherOfRecord: { side: pitcherDecisionSide, playerId: pitcherDecisionPlayerId, decision: pitcherDecision } }
@@ -6107,7 +6137,9 @@ function AdvancedScoringPanel({
               >
                 <option value="">Not entered</option>
                 <option value="yes">Credit RBI</option>
-                <option value="no">No RBI</option>
+                <option value="no" disabled={structuredRequiresHomeRunRbi}>
+                  No RBI
+                </option>
               </select>
             </label>
             <FielderSelect
@@ -6359,7 +6391,10 @@ function PlayReviewModal({
     });
   };
   const updateRunnerMove = (key: string, updates: Partial<RunnerMoveDraft>) => {
-    const runnerMoves = pending.runnerMoves.map((move) => (move.key === key ? { ...move, ...updates } : move));
+    const runnerMoves = forceHomeRunRbis(
+      pending.result,
+      pending.runnerMoves.map((move) => (move.key === key ? { ...move, ...updates } : move))
+    );
     onChange({
       ...pending,
       runnerMoves,
@@ -6549,8 +6584,8 @@ function PlayReviewModal({
                           <label className="flex min-h-11 items-center gap-2 rounded-lg border border-gray-200 px-3 text-xs font-black text-gray-700">
                             <input
                               type="checkbox"
-                              checked={move.rbi === true}
-                              disabled={move.countsRun !== true}
+                              checked={reviewedMoveHasRbi(pending.result, move)}
+                              disabled={move.countsRun !== true || requiresHomeRunRbi(pending.result, move)}
                               onChange={(event) => updateRunnerMove(move.key, { rbi: event.target.checked })}
                             />
                             Credit RBI
