@@ -38,11 +38,15 @@ import {
   type DiamondAiGameDraft
 } from '../lib/diamondScorebookAi';
 import {
+  diamondOutNecessarilyCancelsRun,
+  diamondRequiredBatterAdvanceOutKind,
+  diamondRequiredBatterOutKind,
   getDiamondRulesProfile,
   isDiamondTerminalPitchResult,
   type DiamondBattingRole,
   type DiamondDefensivePosition,
   type DiamondOutKind,
+  type DiamondPlateAppearanceResult,
   type DiamondRunnerAdvanceCause,
   type DiamondRuleDecisionCode,
   type DiamondRulesProfile
@@ -1354,7 +1358,8 @@ function buildPendingVoicePlay(snapshot: DiamondScorebookSnapshot, proposal: Pen
             ...move,
             ...(destinationOptions.some((option) => option.value === to) ? { to } : {}),
             ...(runnerCauseOptions.some((option) => option.value === cause) ? { cause } : {}),
-            ...(outKindOptions.some((option) => option.value === outKind) ? { outKind } : {}),
+            ...(destinationOptions.some((option) => option.value === to) && to !== 'out' ? { outKind: undefined } : {}),
+            ...(to === 'out' && outKindOptions.some((option) => option.value === outKind) ? { outKind } : {}),
             ...(typeof batterAdvance.countsRun === 'boolean' ? { countsRun: batterAdvance.countsRun } : {}),
             ...(typeof batterAdvance.rbi === 'boolean' ? { rbi: batterAdvance.rbi } : {}),
             ...(readString(batterAdvance.responsiblePitcherId)
@@ -1374,7 +1379,8 @@ function buildPendingVoicePlay(snapshot: DiamondScorebookSnapshot, proposal: Pen
           ...move,
           ...(destinationOptions.some((option) => option.value === to) ? { to } : {}),
           ...(runnerCauseOptions.some((option) => option.value === cause) ? { cause } : {}),
-          ...(outKindOptions.some((option) => option.value === outKind) ? { outKind } : {}),
+          ...(destinationOptions.some((option) => option.value === to) && to !== 'out' ? { outKind: undefined } : {}),
+          ...(to === 'out' && outKindOptions.some((option) => option.value === outKind) ? { outKind } : {}),
           ...(typeof proposedMove?.countsRun === 'boolean' ? { countsRun: proposedMove.countsRun } : {}),
           ...(typeof proposedMove?.rbi === 'boolean' ? { rbi: proposedMove.rbi } : {}),
           ...(readString(proposedMove?.responsiblePitcherId)
@@ -1442,7 +1448,9 @@ function validateRunnerReview(pending: PendingPlay, snapshot: DiamondScorebookSn
         if (!canChooseRunnerCauseDestination(cause, to as RunnerDestination)) {
           return 'The selected runner event does not match its destination.';
         }
-        if (!canChooseRunnerCauseOutKind(cause, to as RunnerDestination, readString(payload.outKind) as DiamondOutKind)) {
+        if (
+          !canChooseAdvanceCauseOutKind(cause, to as RunnerDestination, readString(payload.outKind) as DiamondOutKind, from as DiamondBase)
+        ) {
           return 'The selected runner event does not match its out kind.';
         }
         if (!pending.correction && snapshot.bases[from as DiamondBase]?.playerId !== runnerId) {
@@ -1479,12 +1487,16 @@ function validateRunnerReview(pending: PendingPlay, snapshot: DiamondScorebookSn
   if (pending.runnerMoves.some((move) => !canChooseRunnerCauseDestination(move.cause, move.to))) {
     return 'The selected runner event does not match its destination.';
   }
-  if (pending.runnerMoves.some((move) => move.from !== 'batter' && !canChooseRunnerCauseOutKind(move.cause, move.to, move.outKind))) {
+  if (pending.runnerMoves.some((move) => !canChooseAdvanceCauseOutKind(move.cause, move.to, move.outKind, move.from))) {
     return 'The selected runner event does not match its out kind.';
   }
   const batterMove = batterMoves[0]!;
   if (!canChooseBatterDestination(pending.result, batterMove.to)) {
     return 'The batter destination does not match the selected play result.';
+  }
+  const requiredBatterOutKind = diamondRequiredBatterOutKind(pending.result as DiamondPlateAppearanceResult);
+  if (batterMove.to === 'out' && requiredBatterOutKind && batterMove.outKind !== requiredBatterOutKind) {
+    return `${pending.result} requires batter out kind ${requiredBatterOutKind}.`;
   }
   const advancesOnDroppedThirdStrike =
     (pending.result === 'strikeout' && batterMove.to === 'first') || (pending.result === 'dropped_third_strike' && batterMove.to !== 'out');
@@ -1592,7 +1604,7 @@ function validateRunnerReview(pending: PendingPlay, snapshot: DiamondScorebookSn
     !pending.correction &&
     snapshot.inning.outs + pending.outsOnPlay === 3 &&
     outMoves.length > 0 &&
-    outMoves.every((move) => move.from === 'batter' || move.outKind === 'force' || move.outKind === 'batter_runner');
+    outMoves.every(diamondOutNecessarilyCancelsRun);
   if (thirdOutCancellationIsProvable && pending.runnerMoves.some((move) => move.to === 'home' && move.countsRun !== false)) {
     return 'A run cannot count when every possible third out is a force or retires the batter-runner before first.';
   }
@@ -1613,13 +1625,21 @@ function canChooseRunnerCauseDestination(cause: DiamondRunnerAdvanceCause, desti
   return true;
 }
 
-function canChooseRunnerCauseOutKind(
+function canChooseAdvanceCauseOutKind(
   cause: DiamondRunnerAdvanceCause,
   destination: RunnerDestination,
-  outKind: DiamondOutKind | undefined
+  outKind: DiamondOutKind | undefined,
+  from: RunnerMoveDraft['from']
 ) {
-  const expected = requiredRunnerOutKinds.get(cause);
+  const expected = from === 'batter' ? diamondRequiredBatterAdvanceOutKind(cause) : requiredRunnerOutKinds.get(cause);
   return destination !== 'out' || !expected || outKind === expected;
+}
+
+function requiredReviewOutKind(result: string, move: Pick<RunnerMoveDraft, 'from' | 'cause'>): DiamondOutKind | null {
+  if (move.from === 'batter') {
+    return diamondRequiredBatterOutKind(result as DiamondPlateAppearanceResult) || diamondRequiredBatterAdvanceOutKind(move.cause);
+  }
+  return requiredRunnerOutKinds.get(move.cause) ?? null;
 }
 
 function hasRunnerOrderViolation(moves: ReadonlyArray<Pick<RunnerMoveDraft, 'from' | 'to'>>) {
@@ -6527,7 +6547,8 @@ function PlayReviewModal({
                           value={move.cause}
                           onChange={(event) => {
                             const cause = event.target.value as DiamondRunnerAdvanceCause;
-                            const requiredOutKind = move.from === 'batter' ? undefined : requiredRunnerOutKinds.get(cause);
+                            const requiredOutKind =
+                              move.from === 'batter' ? diamondRequiredBatterAdvanceOutKind(cause) : requiredRunnerOutKinds.get(cause);
                             updateRunnerMove(move.key, {
                               cause,
                               ...(move.to === 'out' && requiredOutKind ? { outKind: requiredOutKind } : {})
@@ -6554,9 +6575,8 @@ function PlayReviewModal({
                             {outKindOptions
                               .filter(
                                 (option) =>
-                                  move.from === 'batter' ||
-                                  !requiredRunnerOutKinds.has(move.cause) ||
-                                  option.value === requiredRunnerOutKinds.get(move.cause)
+                                  !requiredReviewOutKind(pending.result, move) ||
+                                  option.value === requiredReviewOutKind(pending.result, move)
                               )
                               .map((option) => (
                                 <option key={option.value} value={option.value}>

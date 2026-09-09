@@ -1348,6 +1348,48 @@ describe('DiamondScorebook', () => {
     expect(reduced.inning.outs).toBe(3);
   });
 
+  it('allows a counted timing run when the batter reaches first before a tag third out', async () => {
+    const baseSnapshot = buildSnapshot();
+    const snapshot = buildSnapshot({
+      inning: { ...baseSnapshot.inning, outs: 2 },
+      bases: { first: null, second: null, third: baseSnapshot.bases.third }
+    });
+    const fixture = createClient(snapshot);
+    renderScorebook(snapshot, fixture);
+
+    fireEvent.click(screen.getByRole('button', { name: "Fielder's choice" }));
+    const dialog = screen.getByRole('dialog', { name: "Review Fielder's choice" });
+    fireEvent.change(within(dialog).getByLabelText(/Batter .* destination/), { target: { value: 'out' } });
+    fireEvent.change(within(dialog).getByLabelText(/Batter .* cause/), { target: { value: 'tag_out' } });
+    fireEvent.change(within(dialog).getByLabelText(/Batter .* out kind/), { target: { value: 'tag' } });
+    fireEvent.change(within(dialog).getByLabelText(/Third .* destination/), { target: { value: 'home' } });
+
+    expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Confirm play' })).toBeEnabled();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm play' }));
+    await waitFor(() => expect(fixture.submitCommand).toHaveBeenCalledTimes(1));
+
+    const uiPayload = fixture.createCommand.mock.calls[0]![0].payload as unknown as DiamondCommandPayloadMap['record_plate_appearance'];
+    expect(uiPayload).toMatchObject({
+      result: 'fielders_choice',
+      outsOnPlay: 1,
+      runsBattedIn: 0,
+      batterAdvance: { to: 'out', cause: 'tag_out', outKind: 'tag' },
+      runnerAdvances: [{ runnerId: 'runner-3', from: 'third', to: 'home', countsRun: true, rbi: false }]
+    });
+    const startingState = buildReducerStateForUiSnapshot();
+    const reduced = reduceDiamondEvent(
+      {
+        ...startingState,
+        inning: { ...startingState.inning, outs: 2 },
+        bases: { first: null, second: null, third: startingState.bases.third }
+      },
+      { type: 'record_plate_appearance', eventId: 'ui-batter-tag-third-out', payload: uiPayload }
+    );
+    expect(reduced.score).toEqual({ home: 1, away: 0 });
+    expect(reduced.inning.outs).toBe(3);
+  });
+
   it('allows an explicit counted run when a mixed multi-out play has a possible tag third out', async () => {
     const snapshot = buildSnapshot();
     const fixture = createClient(snapshot);
@@ -1402,6 +1444,20 @@ describe('DiamondScorebook', () => {
 
     expect(within(dialog).getByRole('alert')).toHaveTextContent(/run cannot count/i);
     expect(within(dialog).getByRole('button', { name: 'Confirm play' })).toBeDisabled();
+  });
+
+  it.each([
+    ['Fly out', 'catch'],
+    ['Line out', 'catch'],
+    ['Ground out', 'batter_runner']
+  ])('offers only the canonical batter out kind for %s', (outcome, expectedOutKind) => {
+    renderScorebook();
+
+    fireEvent.click(screen.getByRole('button', { name: outcome }));
+    const dialog = screen.getByRole('dialog', { name: `Review ${outcome}` });
+    const batterOutKind = within(dialog).getByLabelText(/Batter .* out kind/) as HTMLSelectElement;
+
+    expect(Array.from(batterOutKind.options).map((option) => option.value)).toEqual(['', expectedOutKind]);
   });
 
   it('blocks an impossible duplicate-base review without writing a command', () => {
@@ -1738,6 +1794,52 @@ describe('DiamondScorebook', () => {
       },
       dialogName: 'Review Interference',
       message: /batter destination.*selected play result/i
+    },
+    {
+      label: 'a fly out paired with a batter tag',
+      snapshot: buildSnapshot(),
+      proposal: {
+        schemaVersion: 1,
+        type: 'record_plate_appearance',
+        payload: {
+          batterId: 'batter-1',
+          pitcherId: 'pitcher-1',
+          result: 'fly_out',
+          batterAdvance: { to: 'out', outKind: 'tag' },
+          runnerAdvances: [],
+          outsOnPlay: 1,
+          runsBattedIn: 0
+        },
+        confidence: 0.9,
+        unresolvedFields: [],
+        requiresConfirmation: true,
+        mutatesState: false
+      },
+      dialogName: 'Review Fly out',
+      message: /fly_out requires batter out kind catch/i
+    },
+    {
+      label: 'a batter force-out cause paired with a tag out kind',
+      snapshot: buildSnapshot({ bases: { first: null, second: null, third: null } }),
+      proposal: {
+        schemaVersion: 1,
+        type: 'record_plate_appearance',
+        payload: {
+          batterId: 'batter-1',
+          pitcherId: 'pitcher-1',
+          result: 'fielders_choice',
+          batterAdvance: { to: 'out', cause: 'force_out', outKind: 'tag' },
+          runnerAdvances: [],
+          outsOnPlay: 1,
+          runsBattedIn: 0
+        },
+        confidence: 0.9,
+        unresolvedFields: [],
+        requiresConfirmation: true,
+        mutatesState: false
+      },
+      dialogName: "Review Fielder's choice",
+      message: /runner event does not match its out kind/i
     }
   ])('blocks a server voice draft with $label', async ({ snapshot, proposal, dialogName, message }) => {
     const fixture = createClient(snapshot);
@@ -2720,8 +2822,13 @@ describe('DiamondScorebook', () => {
     expect(JSON.stringify(fixture.submitCommand.mock.calls[0]?.[0])).not.toMatch(/audio|transcript/i);
   });
 
-  it('allows a voice-proposed counted run when a mixed multi-out play includes a possible tag third out', async () => {
-    const fixture = createClient();
+  it('allows a voice-proposed timing run when the batter reaches first before a tag third out', async () => {
+    const baseSnapshot = buildSnapshot();
+    const snapshot = buildSnapshot({
+      inning: { ...baseSnapshot.inning, outs: 2 },
+      bases: { first: null, second: null, third: baseSnapshot.bases.third }
+    });
+    const fixture = createClient(snapshot);
     const generateContent = vi.fn(async () =>
       JSON.stringify({
         schemaVersion: 1,
@@ -2730,13 +2837,10 @@ describe('DiamondScorebook', () => {
         payloadJson: JSON.stringify({
           batterId: 'batter-1',
           pitcherId: 'pitcher-1',
-          result: 'double_play',
-          batterAdvance: { to: 'out', cause: 'batted_ball', outKind: 'batter_runner' },
-          runnerAdvances: [
-            { runnerId: 'runner-3', from: 'third', to: 'home', cause: 'batted_ball', countsRun: true, rbi: false },
-            { runnerId: 'runner-1', from: 'first', to: 'out', cause: 'tag_out', outKind: 'tag' }
-          ],
-          outsOnPlay: 2,
+          result: 'fielders_choice',
+          batterAdvance: { to: 'out', cause: 'tag_out', outKind: 'tag' },
+          runnerAdvances: [{ runnerId: 'runner-3', from: 'third', to: 'home', cause: 'batted_ball', countsRun: true, rbi: false }],
+          outsOnPlay: 1,
           runsBattedIn: 0
         }),
         confidence: 0.96,
@@ -2745,13 +2849,15 @@ describe('DiamondScorebook', () => {
         mutatesState: false
       })
     );
-    renderScorebook(buildSnapshot(), fixture, { generateContent });
+    renderScorebook(snapshot, fixture, { generateContent });
 
     fireEvent.click(screen.getByRole('button', { name: /Dictate play/ }));
-    fireEvent.change(screen.getByLabelText('Editable transcript'), { target: { value: 'Double play, Casey scored before the tag.' } });
+    fireEvent.change(screen.getByLabelText('Editable transcript'), {
+      target: { value: 'Casey scored before Avery was tagged trying for second.' }
+    });
     fireEvent.click(screen.getByRole('button', { name: /Interpret play/ }));
 
-    const review = await screen.findByRole('dialog', { name: 'Review Double play' });
+    const review = await screen.findByRole('dialog', { name: "Review Fielder's choice" });
     expect(within(review).queryByRole('alert')).not.toBeInTheDocument();
     fireEvent.click(within(review).getByRole('button', { name: 'Confirm play' }));
     await waitFor(() => expect(fixture.submitCommand).toHaveBeenCalledTimes(1));
@@ -2759,13 +2865,58 @@ describe('DiamondScorebook', () => {
       expect.objectContaining({
         type: 'record_plate_appearance',
         payload: expect.objectContaining({
-          runnerAdvances: expect.arrayContaining([
-            expect.objectContaining({ runnerId: 'runner-3', to: 'home', countsRun: true }),
-            expect.objectContaining({ runnerId: 'runner-1', to: 'out', outKind: 'tag' })
-          ])
+          batterAdvance: expect.objectContaining({ to: 'out', cause: 'tag_out', outKind: 'tag' }),
+          runnerAdvances: expect.arrayContaining([expect.objectContaining({ runnerId: 'runner-3', to: 'home', countsRun: true })])
         })
       })
     );
+    const submittedPayload = fixture.createCommand.mock.calls[0]![0]
+      .payload as unknown as DiamondCommandPayloadMap['record_plate_appearance'];
+    expect(submittedPayload.runnerAdvances.find((advance) => advance.runnerId === 'runner-3')).not.toHaveProperty('outKind');
+  });
+
+  it('clears the default batter out kind when a voice proposal safely advances the batter', async () => {
+    const baseSnapshot = buildSnapshot();
+    const snapshot = buildSnapshot({
+      inning: { ...baseSnapshot.inning, outs: 1 },
+      bases: { first: null, second: null, third: null }
+    });
+    const fixture = createClient(snapshot);
+    const generateContent = vi.fn(async () =>
+      JSON.stringify({
+        schemaVersion: 1,
+        sourceRevision: 7,
+        type: 'record_plate_appearance',
+        payloadJson: JSON.stringify({
+          batterId: 'batter-1',
+          pitcherId: 'pitcher-1',
+          result: 'strikeout',
+          batterAdvance: { to: 'first', cause: 'other' },
+          runnerAdvances: [],
+          outsOnPlay: 0,
+          runsBattedIn: 0
+        }),
+        confidence: 0.96,
+        unresolvedQuestions: [],
+        requiresConfirmation: true,
+        mutatesState: false
+      })
+    );
+    renderScorebook(snapshot, fixture, { generateContent });
+
+    fireEvent.click(screen.getByRole('button', { name: /Dictate play/ }));
+    fireEvent.change(screen.getByLabelText('Editable transcript'), { target: { value: 'Strike three, but Avery reached first.' } });
+    fireEvent.click(screen.getByRole('button', { name: /Interpret play/ }));
+
+    const review = await screen.findByRole('dialog', { name: 'Review Strikeout' });
+    expect(within(review).queryByRole('alert')).not.toBeInTheDocument();
+    fireEvent.click(within(review).getByRole('button', { name: 'Confirm play' }));
+    await waitFor(() => expect(fixture.submitCommand).toHaveBeenCalledTimes(1));
+
+    const submittedPayload = fixture.createCommand.mock.calls[0]![0]
+      .payload as unknown as DiamondCommandPayloadMap['record_plate_appearance'];
+    expect(submittedPayload.batterAdvance).toMatchObject({ to: 'first', cause: 'other' });
+    expect(submittedPayload.batterAdvance).not.toHaveProperty('outKind');
   });
 
   it('binds a voice-proposed substitution to the same disclosed live-base transfer review', async () => {
@@ -2938,6 +3089,68 @@ describe('DiamondScorebook', () => {
       })
     );
   });
+
+  it.each(['batter', 'existing runner'] as const)(
+    'drops an explicit out kind when a server voice draft sends the %s to a safe destination',
+    async (target) => {
+      const baseSnapshot = buildSnapshot();
+      const snapshot =
+        target === 'batter'
+          ? buildSnapshot({ bases: { first: null, second: null, third: null } })
+          : buildSnapshot({ bases: { first: baseSnapshot.bases.first, second: null, third: null } });
+      const payload: DiamondCommandPayloadMap['record_plate_appearance'] =
+        target === 'batter'
+          ? {
+              batterId: 'batter-1',
+              pitcherId: 'pitcher-1',
+              result: 'strikeout',
+              batterAdvance: { to: 'first', cause: 'other', outKind: 'tag' },
+              runnerAdvances: [],
+              outsOnPlay: 0,
+              runsBattedIn: 0
+            }
+          : {
+              batterId: 'batter-1',
+              pitcherId: 'pitcher-1',
+              result: 'fielders_choice',
+              batterAdvance: { to: 'first' },
+              runnerAdvances: [{ runnerId: 'runner-1', from: 'first', to: 'second', cause: 'batted_ball', outKind: 'tag' }],
+              outsOnPlay: 0,
+              runsBattedIn: 0
+            };
+      const fixture = createClient(snapshot);
+      (fixture.client.parseVoice as ReturnType<typeof vi.fn>).mockResolvedValue({
+        schemaVersion: 1,
+        type: 'record_plate_appearance',
+        payload,
+        confidence: 0.9,
+        unresolvedFields: [],
+        requiresConfirmation: true,
+        mutatesState: false
+      });
+      const generateContent = vi.fn(async () => {
+        throw new Error('model unavailable');
+      });
+      renderScorebook(snapshot, fixture, { generateContent });
+
+      fireEvent.click(screen.getByRole('button', { name: /Dictate play/ }));
+      fireEvent.change(screen.getByLabelText('Editable transcript'), { target: { value: 'Review the safe advance.' } });
+      fireEvent.click(screen.getByRole('button', { name: /Interpret play/ }));
+
+      const review = await screen.findByRole('dialog', { name: target === 'batter' ? 'Review Strikeout' : "Review Fielder's choice" });
+      expect(within(review).queryByRole('alert')).not.toBeInTheDocument();
+      fireEvent.click(within(review).getByRole('button', { name: 'Confirm play' }));
+      await waitFor(() => expect(fixture.submitCommand).toHaveBeenCalledTimes(1));
+
+      const submittedPayload = fixture.createCommand.mock.calls[0]![0]
+        .payload as unknown as DiamondCommandPayloadMap['record_plate_appearance'];
+      const submittedAdvance =
+        target === 'batter'
+          ? submittedPayload.batterAdvance
+          : submittedPayload.runnerAdvances.find((advance) => advance.runnerId === 'runner-1');
+      expect(submittedAdvance).not.toHaveProperty('outKind');
+    }
+  );
 
   it('rejects a fallback voice pitch while a terminal pitch awaits plate-appearance resolution', async () => {
     const snapshot = buildSnapshot({ lastPitchResult: 'in_play' });

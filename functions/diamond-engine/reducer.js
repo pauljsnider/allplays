@@ -11,6 +11,10 @@ exports.deriveDiamondAggregateRbiInference = deriveDiamondAggregateRbiInference;
 exports.deriveDiamondCoverageFromEventStates = deriveDiamondCoverageFromEventStates;
 exports.deriveDiamondCoverageFromEvents = deriveDiamondCoverageFromEvents;
 exports.validateDiamondFieldingOutCredit = validateDiamondFieldingOutCredit;
+exports.diamondRequiredBatterOutKind = diamondRequiredBatterOutKind;
+exports.diamondDefaultBatterOutKind = diamondDefaultBatterOutKind;
+exports.diamondRequiredBatterAdvanceOutKind = diamondRequiredBatterAdvanceOutKind;
+exports.diamondOutNecessarilyCancelsRun = diamondOutNecessarilyCancelsRun;
 exports.validateDiamondState = validateDiamondState;
 exports.reduceDiamondEvent = reduceDiamondEvent;
 exports.setDiamondStateRevision = setDiamondStateRevision;
@@ -122,6 +126,13 @@ const REQUIRED_ADVANCE_OUT_KINDS = {
     force_out: 'force',
     tag_out: 'tag',
     appeal_out: 'appeal'
+};
+const REQUIRED_BATTER_OUT_KINDS = {
+    fly_out: 'catch',
+    line_out: 'catch',
+    sacrifice_fly: 'catch',
+    ground_out: 'batter_runner',
+    sacrifice_bunt: 'batter_runner'
 };
 const OUT_KINDS = [
     'force',
@@ -309,12 +320,12 @@ function validateBatterAdvanceShape(value) {
     const advance = requireRecord(value, 'batterAdvance');
     requireOnlyFields(advance, BATTER_ADVANCE_FIELDS, 'batterAdvance');
     const to = requireMember(advance.to, DESTINATIONS, 'batter destination');
-    if (advance.cause !== undefined) {
-        const cause = requireMember(advance.cause, ADVANCE_CAUSES, 'batter advance cause');
-        validateAdvanceCauseDestination(cause, to);
-    }
+    const cause = advance.cause === undefined ? undefined : requireMember(advance.cause, ADVANCE_CAUSES, 'batter advance cause');
     if (advance.outKind !== undefined)
         requireMember(advance.outKind, OUT_KINDS, 'batter out kind');
+    if (cause !== undefined) {
+        validateAdvanceCauseDestination(cause, to);
+    }
     validateScoringCredit(advance, 'batterAdvance');
 }
 function validateRunnerDestination(from, to) {
@@ -336,6 +347,12 @@ function validateAdvanceCauseOutKind(cause, destination, outKind) {
     const expected = REQUIRED_ADVANCE_OUT_KINDS[cause];
     if (destination === 'out' && expected && outKind !== expected) {
         throw new contracts_1.DiamondDomainError('advance-cause-out-kind-mismatch', `${cause} requires out kind ${expected}.`);
+    }
+}
+function validateBatterAdvanceCauseOutKind(cause, destination, outKind) {
+    const expected = diamondRequiredBatterAdvanceOutKind(cause);
+    if (destination === 'out' && expected && outKind !== expected) {
+        throw new contracts_1.DiamondDomainError('advance-cause-out-kind-mismatch', `${cause} requires batter out kind ${expected}.`);
     }
 }
 function validateAdvanceShape(value, options = {}) {
@@ -886,16 +903,44 @@ function resolveBatterOutKind(result, destination, supplied) {
             throw new contracts_1.DiamondDomainError('invalid-out-kind', 'Only an out destination may include an out kind.');
         return undefined;
     }
+    const required = diamondRequiredBatterOutKind(result);
+    if (required) {
+        if (supplied && supplied !== required) {
+            throw new contracts_1.DiamondDomainError('batter-result-out-kind-mismatch', `${result} requires batter out kind ${required}.`);
+        }
+        return required;
+    }
     if (supplied)
         return requireMember(supplied, OUT_KINDS, 'batter out kind');
+    const inferred = diamondDefaultBatterOutKind(result);
+    if (inferred)
+        return inferred;
+    throw new contracts_1.DiamondDomainError('missing-out-kind', 'An out batter destination requires an out kind.');
+}
+function diamondRequiredBatterOutKind(result) {
+    return REQUIRED_BATTER_OUT_KINDS[result] ?? null;
+}
+function diamondDefaultBatterOutKind(result) {
+    const required = diamondRequiredBatterOutKind(result);
+    if (required)
+        return required;
     if (result === 'strikeout' || result === 'dropped_third_strike')
         return 'strikeout';
-    if (result === 'fly_out' || result === 'line_out' || result === 'sacrifice_fly')
-        return 'catch';
-    if (result === 'ground_out' || result === 'sacrifice_bunt' || result === 'double_play' || result === 'triple_play') {
+    if (result === 'double_play' || result === 'triple_play')
         return 'batter_runner';
-    }
-    throw new contracts_1.DiamondDomainError('missing-out-kind', 'An out batter destination requires an out kind.');
+    return null;
+}
+function diamondRequiredBatterAdvanceOutKind(cause) {
+    if (cause === 'force_out')
+        return 'batter_runner';
+    return REQUIRED_ADVANCE_OUT_KINDS[cause] ?? null;
+}
+function diamondOutNecessarilyCancelsRun(move) {
+    if (move.outKind === 'force' || move.outKind === 'batter_runner')
+        return true;
+    // A batter-origin tag or appeal can happen after first base was reached. Only
+    // the explicit catch and strikeout kinds prove the batter was retired before first.
+    return move.from === 'batter' && (move.outKind === 'catch' || move.outKind === 'strikeout');
 }
 function validateFinalRunnerOrder(state, moves) {
     const moveBySource = new Map(moves.map((move) => [move.from, move]));
@@ -1016,9 +1061,7 @@ function applyMoves(state, side, moves, outsOnPlay, reachedOnEventId) {
     // reject a counted run only when every possible third out necessarily cancels
     // it. Auditing the exact third out would require a future versioned payload
     // field, never array order.
-    const thirdOutCancelsRuns = playEndsHalf &&
-        possibleThirdOuts.length > 0 &&
-        possibleThirdOuts.every((move) => move.from === 'batter' || move.outKind === 'force' || move.outKind === 'batter_runner');
+    const thirdOutCancelsRuns = playEndsHalf && possibleThirdOuts.length > 0 && possibleThirdOuts.every(diamondOutNecessarilyCancelsRun);
     let runs = 0;
     moves.forEach((move) => {
         if (move.to === 'out')
@@ -1566,6 +1609,9 @@ function reduceDiamondEvent(state, action) {
             validateBatterAdvanceShape(action.payload.batterAdvance);
             validateOutcomeDestination(state, action.payload.result, action.payload.batterAdvance.to);
             const batterOutKind = resolveBatterOutKind(action.payload.result, action.payload.batterAdvance.to, action.payload.batterAdvance.outKind);
+            if (action.payload.batterAdvance.cause !== undefined) {
+                validateBatterAdvanceCauseOutKind(action.payload.batterAdvance.cause, action.payload.batterAdvance.to, batterOutKind);
+            }
             if (action.payload.fielding) {
                 validateFieldingIds(action.payload.fielding);
                 validateInlineFieldingParticipants(state, action.payload.fielding);

@@ -178,6 +178,11 @@ describe('interpretDiamondTranscript', () => {
     expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/double_play.*exactly 2.*triple_play.*exactly 3/i);
     expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/stay put or move forward/i);
     expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/must not pass a preceding runner/i);
+    expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/existing.runner.*force_out.*outKind=force/i);
+    expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/batterAdvance.*force_out.*outKind=batter_runner/i);
+    expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/fly_out.*line_out.*sacrifice_fly.*outKind=catch/i);
+    expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/ground_out.*sacrifice_bunt.*outKind=batter_runner/i);
+    expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/fielders_choice.*tagged after first.*outKind=tag.*timing third out/i);
     expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/dropped.third.strike.*pre-play.*first base.*two outs/i);
     expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/sacrifice.*pre-play.*outs.*scor.*advance/i);
     expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/current pitcher.*defensive position.*P/i);
@@ -536,6 +541,20 @@ describe('interpretDiamondTranscript', () => {
           { runnerId: 'runner-3', from: 'third', to: 'home', cause: 'batted_ball', countsRun: true, rbi: false }
         ],
         outsOnPlay: 2
+      }
+    },
+    {
+      label: 'a two-out timing run before the batter is tagged trying for second',
+      context: commandContext({
+        outs: 2,
+        bases: { first: null, second: null, third: 'runner-3' },
+        knownPlayerIds: ['batter-1', 'pitcher-1', 'runner-3']
+      }),
+      payload: {
+        result: 'fielders_choice',
+        batterAdvance: { to: 'out', cause: 'tag_out', outKind: 'tag' },
+        runnerAdvances: [{ runnerId: 'runner-3', from: 'third', to: 'home', cause: 'batted_ball', countsRun: true, rbi: false }],
+        outsOnPlay: 1
       }
     }
   ])('keeps $label eligible for explicit scorer confirmation', async ({ context, payload }) => {
@@ -958,6 +977,100 @@ describe('interpretDiamondTranscript', () => {
 
     expect(result).toMatchObject({ status: 'invalid-response', proposal: null, authoritative: false });
     expect(result.message).toMatch(/requires the runner to be recorded out/i);
+  });
+
+  it.each([
+    ['fly_out', 'tag', 'catch'],
+    ['line_out', 'appeal', 'catch'],
+    ['ground_out', 'tag', 'batter_runner']
+  ] as const)('rejects %s paired with batter out kind %s instead of %s', async (plateAppearanceResult, outKind, expectedOutKind) => {
+    const model = jsonModel(
+      plateAppearanceResponse({
+        result: plateAppearanceResult,
+        batterAdvance: { to: 'out', outKind },
+        runnerAdvances: [],
+        outsOnPlay: 1
+      })
+    );
+
+    const result = await interpretDiamondTranscript('Review the caught ball.', commandContext(), model.dependencies);
+
+    expect(result).toMatchObject({ status: 'invalid-response', proposal: null, authoritative: false });
+    expect(result.message).toContain(`${plateAppearanceResult} requires batter out kind ${expectedOutKind}`);
+  });
+
+  it('rejects a batter force-out cause paired with a tag out kind', async () => {
+    const model = jsonModel(
+      plateAppearanceResponse({
+        result: 'fielders_choice',
+        batterAdvance: { to: 'out', cause: 'force_out', outKind: 'tag' },
+        runnerAdvances: [],
+        outsOnPlay: 1
+      })
+    );
+
+    const result = await interpretDiamondTranscript('Review the force out.', commandContext(), model.dependencies);
+
+    expect(result).toMatchObject({ status: 'invalid-response', proposal: null, authoritative: false });
+    expect(result.message).toContain('force_out requires batter out kind batter_runner');
+  });
+
+  it('infers a fixed-result batter out kind before validating its cause', async () => {
+    const model = jsonModel(
+      plateAppearanceResponse({
+        result: 'ground_out',
+        batterAdvance: { to: 'out', cause: 'force_out' },
+        runnerAdvances: [],
+        outsOnPlay: 1
+      })
+    );
+
+    const result = await interpretDiamondTranscript('Ground out at first.', commandContext(), model.dependencies);
+
+    expect(result).toMatchObject({ status: 'proposal', proposal: { payload: { batterAdvance: { to: 'out', cause: 'force_out' } } } });
+  });
+
+  it('infers an omitted multi-out batter out kind before validating its cause', async () => {
+    const model = jsonModel(
+      plateAppearanceResponse({
+        result: 'double_play',
+        batterAdvance: { to: 'out', cause: 'force_out' },
+        runnerAdvances: [{ runnerId: 'runner-1', from: 'first', to: 'out', cause: 'force_out', outKind: 'force' }],
+        outsOnPlay: 2
+      })
+    );
+
+    const result = await interpretDiamondTranscript('Ground-ball double play.', commandContext(), model.dependencies);
+
+    expect(result).toMatchObject({ status: 'proposal', proposal: { payload: { batterAdvance: { to: 'out', cause: 'force_out' } } } });
+  });
+
+  it.each([
+    {
+      label: 'a safe batter destination',
+      payload: {
+        result: 'single',
+        batterAdvance: { to: 'first', outKind: 'tag' },
+        runnerAdvances: [],
+        outsOnPlay: 0
+      }
+    },
+    {
+      label: 'a safe existing-runner destination',
+      payload: {
+        result: 'single',
+        batterAdvance: { to: 'first' },
+        runnerAdvances: [{ runnerId: 'runner-1', from: 'first', to: 'second', cause: 'batted_ball', outKind: 'tag' }],
+        outsOnPlay: 0
+      }
+    }
+  ])('rejects an out kind attached to $label', async ({ payload }) => {
+    const model = jsonModel(plateAppearanceResponse(payload));
+
+    const result = await interpretDiamondTranscript('Review the safe advance.', commandContext(), model.dependencies);
+
+    expect(result).toMatchObject({ status: 'invalid-response', proposal: null, authoritative: false });
+    expect(result.message).toMatch(/only an out destination may include an out kind/i);
   });
 
   it.each([

@@ -1635,7 +1635,6 @@ test("compiled third-out run timing is explicit and independent of move array or
   for (const [result, outKind] of [
     ["fly_out", "catch"],
     ["strikeout", "strikeout"],
-    ["fielders_choice", "tag"],
   ]) {
     assert.throws(
       () =>
@@ -1664,6 +1663,119 @@ test("compiled third-out run timing is explicit and independent of move array or
       (error) => error?.code === "run-cannot-count",
     );
   }
+
+  for (const [result, outKind] of [
+    ["fly_out", "tag"],
+    ["line_out", "appeal"],
+    ["ground_out", "tag"],
+  ]) {
+    assert.throws(
+      () =>
+        reduceDiamondEvent(twoOutState, {
+          type: "record_plate_appearance",
+          eventId: `compiled-contradictory-batter-out-${result}`,
+          payload: {
+            batterId: "away-4",
+            pitcherId: "home-1",
+            result,
+            batterAdvance: { to: "out", outKind },
+            runnerAdvances: [
+              {
+                runnerId: "away-1",
+                from: "third",
+                to: "home",
+                cause: "batted_ball",
+                countsRun: true,
+                earned: true,
+                rbi: false,
+              },
+            ],
+            outsOnPlay: 1,
+          },
+        }),
+      (error) => error?.code === "batter-result-out-kind-mismatch",
+    );
+  }
+
+  assert.throws(
+    () =>
+      reduceDiamondEvent(twoOutState, {
+        type: "record_plate_appearance",
+        eventId: "compiled-contradictory-batter-cause",
+        payload: {
+          batterId: "away-4",
+          pitcherId: "home-1",
+          result: "fielders_choice",
+          batterAdvance: { to: "out", cause: "force_out", outKind: "tag" },
+          runnerAdvances: [
+            {
+              runnerId: "away-1",
+              from: "third",
+              to: "home",
+              cause: "batted_ball",
+              countsRun: true,
+              earned: true,
+              rbi: false,
+            },
+          ],
+          outsOnPlay: 1,
+        },
+      }),
+    (error) => error?.code === "advance-cause-out-kind-mismatch",
+  );
+
+  const inferredBatterOutState = reduceDiamondEvent(twoOutState, {
+    type: "record_plate_appearance",
+    eventId: "compiled-inferred-batter-out-kind",
+    payload: {
+      batterId: "away-4",
+      pitcherId: "home-1",
+      result: "ground_out",
+      batterAdvance: { to: "out", cause: "force_out" },
+      runnerAdvances: [],
+      outsOnPlay: 1,
+    },
+  });
+  assert.equal(inferredBatterOutState.inning.outs, 3);
+  assert.deepEqual(inferredBatterOutState.score, { home: 0, away: 0 });
+
+  const batterTagGame = harness("quick", "baseball-nfhs");
+  setLineupsAndStart(batterTagGame, 5);
+  const batterTagRunner = placeRunnerOnBase(batterTagGame, "third");
+  recordOut(batterTagGame);
+  recordOut(batterTagGame);
+  const batterTagMatchup = currentMatchup(batterTagGame);
+  batterTagGame.submit("record_plate_appearance", {
+    batterId: batterTagMatchup.batterId,
+    pitcherId: batterTagMatchup.pitcherId,
+    result: "fielders_choice",
+    batterAdvance: { to: "out", cause: "tag_out", outKind: "tag" },
+    runnerAdvances: [
+      {
+        runnerId: batterTagRunner,
+        from: "third",
+        to: "home",
+        cause: "batted_ball",
+        countsRun: true,
+        earned: true,
+        rbi: false,
+      },
+    ],
+    outsOnPlay: 1,
+    runsBattedIn: 0,
+  });
+  assert.deepEqual(batterTagGame.ledger.state.score, { home: 0, away: 1 });
+  assert.equal(batterTagGame.ledger.state.inning.outs, 3);
+  assert.equal(
+    projectDiamondStats(batterTagGame.ledger).players[batterTagRunner].raw
+      .batting.R,
+    1,
+  );
+  assert.equal(verifyDiamondLedger(batterTagGame.ledger), true);
+  assert.deepEqual(
+    replayDiamondLedger(batterTagGame.ledger).state,
+    batterTagGame.ledger.state,
+  );
 
   const allTagAppealState = {
     ...beforePlay,

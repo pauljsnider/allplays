@@ -19,7 +19,10 @@ import {
   type DiamondGameState,
   type DiamondLedgerConfig,
   type DiamondLineupSlot,
+  type DiamondOutKind,
+  type DiamondPlateAppearanceResult,
   type DiamondRunnerAdvance,
+  type DiamondRunnerAdvanceCause,
   type DiamondRunnerPlacement,
   type DiamondRuleDecisionCode,
   type DiamondRulesProfile,
@@ -143,6 +146,13 @@ const REQUIRED_ADVANCE_OUT_KINDS: Partial<
   force_out: 'force',
   tag_out: 'tag',
   appeal_out: 'appeal'
+};
+const REQUIRED_BATTER_OUT_KINDS: Partial<Record<DiamondPlateAppearanceResult, DiamondOutKind>> = {
+  fly_out: 'catch',
+  line_out: 'catch',
+  sacrifice_fly: 'catch',
+  ground_out: 'batter_runner',
+  sacrifice_bunt: 'batter_runner'
 };
 const OUT_KINDS: readonly NonNullable<DiamondCommandPayloadMap['advance_runner']['outKind']>[] = [
   'force',
@@ -350,11 +360,11 @@ function validateBatterAdvanceShape(value: unknown) {
   const advance = requireRecord(value, 'batterAdvance');
   requireOnlyFields(advance, BATTER_ADVANCE_FIELDS, 'batterAdvance');
   const to = requireMember(advance.to, DESTINATIONS, 'batter destination');
-  if (advance.cause !== undefined) {
-    const cause = requireMember(advance.cause, ADVANCE_CAUSES, 'batter advance cause');
+  const cause = advance.cause === undefined ? undefined : requireMember(advance.cause, ADVANCE_CAUSES, 'batter advance cause');
+  if (advance.outKind !== undefined) requireMember(advance.outKind, OUT_KINDS, 'batter out kind');
+  if (cause !== undefined) {
     validateAdvanceCauseDestination(cause, to);
   }
-  if (advance.outKind !== undefined) requireMember(advance.outKind, OUT_KINDS, 'batter out kind');
   validateScoringCredit(advance, 'batterAdvance');
 }
 
@@ -385,6 +395,17 @@ function validateAdvanceCauseOutKind(
   const expected = REQUIRED_ADVANCE_OUT_KINDS[cause];
   if (destination === 'out' && expected && outKind !== expected) {
     throw new DiamondDomainError('advance-cause-out-kind-mismatch', `${cause} requires out kind ${expected}.`);
+  }
+}
+
+function validateBatterAdvanceCauseOutKind(
+  cause: DiamondRunnerAdvance['cause'],
+  destination: DiamondDestination,
+  outKind: DiamondOutKind | undefined
+) {
+  const expected = diamondRequiredBatterAdvanceOutKind(cause);
+  if (destination === 'out' && expected && outKind !== expected) {
+    throw new DiamondDomainError('advance-cause-out-kind-mismatch', `${cause} requires batter out kind ${expected}.`);
   }
 }
 
@@ -1065,13 +1086,34 @@ function resolveBatterOutKind(
     if (supplied) throw new DiamondDomainError('invalid-out-kind', 'Only an out destination may include an out kind.');
     return undefined;
   }
-  if (supplied) return requireMember(supplied, OUT_KINDS, 'batter out kind');
-  if (result === 'strikeout' || result === 'dropped_third_strike') return 'strikeout' as const;
-  if (result === 'fly_out' || result === 'line_out' || result === 'sacrifice_fly') return 'catch' as const;
-  if (result === 'ground_out' || result === 'sacrifice_bunt' || result === 'double_play' || result === 'triple_play') {
-    return 'batter_runner' as const;
+  const required = diamondRequiredBatterOutKind(result);
+  if (required) {
+    if (supplied && supplied !== required) {
+      throw new DiamondDomainError('batter-result-out-kind-mismatch', `${result} requires batter out kind ${required}.`);
+    }
+    return required;
   }
+  if (supplied) return requireMember(supplied, OUT_KINDS, 'batter out kind');
+  const inferred = diamondDefaultBatterOutKind(result);
+  if (inferred) return inferred;
   throw new DiamondDomainError('missing-out-kind', 'An out batter destination requires an out kind.');
+}
+
+export function diamondRequiredBatterOutKind(result: DiamondPlateAppearanceResult): DiamondOutKind | null {
+  return REQUIRED_BATTER_OUT_KINDS[result] ?? null;
+}
+
+export function diamondDefaultBatterOutKind(result: DiamondPlateAppearanceResult): DiamondOutKind | null {
+  const required = diamondRequiredBatterOutKind(result);
+  if (required) return required;
+  if (result === 'strikeout' || result === 'dropped_third_strike') return 'strikeout';
+  if (result === 'double_play' || result === 'triple_play') return 'batter_runner';
+  return null;
+}
+
+export function diamondRequiredBatterAdvanceOutKind(cause: DiamondRunnerAdvanceCause): DiamondOutKind | null {
+  if (cause === 'force_out') return 'batter_runner';
+  return REQUIRED_ADVANCE_OUT_KINDS[cause] ?? null;
 }
 
 type Move = Readonly<{
@@ -1083,6 +1125,13 @@ type Move = Readonly<{
   courtesyForPlayerId: string | null;
   outKind?: DiamondCommandPayloadMap['advance_runner']['outKind'];
 }>;
+
+export function diamondOutNecessarilyCancelsRun(move: Readonly<{ from: DiamondBase | 'batter'; outKind?: DiamondOutKind }>) {
+  if (move.outKind === 'force' || move.outKind === 'batter_runner') return true;
+  // A batter-origin tag or appeal can happen after first base was reached. Only
+  // the explicit catch and strikeout kinds prove the batter was retired before first.
+  return move.from === 'batter' && (move.outKind === 'catch' || move.outKind === 'strikeout');
+}
 
 function validateFinalRunnerOrder(state: DiamondGameState, moves: readonly Move[]) {
   const moveBySource = new Map(moves.map((move) => [move.from, move]));
@@ -1234,10 +1283,7 @@ function applyMoves(
   // reject a counted run only when every possible third out necessarily cancels
   // it. Auditing the exact third out would require a future versioned payload
   // field, never array order.
-  const thirdOutCancelsRuns =
-    playEndsHalf &&
-    possibleThirdOuts.length > 0 &&
-    possibleThirdOuts.every((move) => move.from === 'batter' || move.outKind === 'force' || move.outKind === 'batter_runner');
+  const thirdOutCancelsRuns = playEndsHalf && possibleThirdOuts.length > 0 && possibleThirdOuts.every(diamondOutNecessarilyCancelsRun);
   let runs = 0;
   moves.forEach((move) => {
     if (move.to === 'out') return;
@@ -1831,6 +1877,9 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
         action.payload.batterAdvance.to,
         action.payload.batterAdvance.outKind
       );
+      if (action.payload.batterAdvance.cause !== undefined) {
+        validateBatterAdvanceCauseOutKind(action.payload.batterAdvance.cause, action.payload.batterAdvance.to, batterOutKind);
+      }
       if (action.payload.fielding) {
         validateFieldingIds(action.payload.fielding);
         validateInlineFieldingParticipants(state, action.payload.fielding);

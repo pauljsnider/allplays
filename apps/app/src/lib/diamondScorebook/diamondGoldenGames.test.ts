@@ -1319,8 +1319,7 @@ describe('Baseball golden games', () => {
 
     for (const [result, batterAdvance] of [
       ['fly_out', { to: 'out', outKind: 'catch' }],
-      ['strikeout', { to: 'out', outKind: 'strikeout' }],
-      ['fielders_choice', { to: 'out', outKind: 'tag' }]
+      ['strikeout', { to: 'out', outKind: 'strikeout' }]
     ] as const) {
       const batterThirdOut = createHarness('baseball-nfhs', 'quick', seed.ledger);
       const revision = batterThirdOut.ledger.state.revision;
@@ -1351,6 +1350,123 @@ describe('Baseball golden games', () => {
         revision
       );
     }
+
+    for (const [result, outKind] of [
+      ['fly_out', 'tag'],
+      ['line_out', 'appeal'],
+      ['ground_out', 'tag']
+    ] as const) {
+      const contradictoryBatterOut = createHarness('baseball-nfhs', 'quick', seed.ledger);
+      const revision = contradictoryBatterOut.ledger.state.revision;
+      expectRejected(
+        contradictoryBatterOut.submit(
+          'record_plate_appearance',
+          {
+            batterId: 'away-5',
+            pitcherId: 'home-1',
+            result,
+            batterAdvance: { to: 'out', outKind },
+            runnerAdvances: [
+              {
+                runnerId: 'away-1',
+                from: 'third',
+                to: 'home',
+                cause: 'batted_ball',
+                countsRun: true,
+                earned: true,
+                rbi: false
+              }
+            ],
+            outsOnPlay: 1
+          },
+          { accept: false }
+        ),
+        'batter-result-out-kind-mismatch',
+        revision
+      );
+      expect(contradictoryBatterOut.ledger.state.score.away).toBe(0);
+    }
+
+    const contradictoryBatterCause = createHarness('baseball-nfhs', 'quick', seed.ledger);
+    const contradictoryCauseRevision = contradictoryBatterCause.ledger.state.revision;
+    expectRejected(
+      contradictoryBatterCause.submit(
+        'record_plate_appearance',
+        {
+          batterId: 'away-5',
+          pitcherId: 'home-1',
+          result: 'fielders_choice',
+          batterAdvance: { to: 'out', cause: 'force_out', outKind: 'tag' },
+          runnerAdvances: [
+            {
+              runnerId: 'away-1',
+              from: 'third',
+              to: 'home',
+              cause: 'batted_ball',
+              countsRun: true,
+              earned: true,
+              rbi: false
+            }
+          ],
+          outsOnPlay: 1
+        },
+        { accept: false }
+      ),
+      'advance-cause-out-kind-mismatch',
+      contradictoryCauseRevision
+    );
+
+    const inferredBatterOut = createHarness('baseball-nfhs', 'quick', seed.ledger);
+    inferredBatterOut.submit('record_plate_appearance', {
+      batterId: 'away-5',
+      pitcherId: 'home-1',
+      result: 'ground_out',
+      batterAdvance: { to: 'out', cause: 'force_out' },
+      runnerAdvances: [],
+      outsOnPlay: 1
+    });
+    expect(inferredBatterOut.ledger.state).toMatchObject({ inning: { outs: 3 }, score: { away: 0, home: 0 } });
+    expect(verifyDiamondLedger(inferredBatterOut.ledger)).toBe(true);
+    expect(replayDiamondLedger(inferredBatterOut.ledger).state).toEqual(inferredBatterOut.ledger.state);
+
+    const taggedBatter = createHarness('baseball-nfhs', 'quick', seed.ledger);
+    const taggedBatterPayload = {
+      batterId: 'away-5',
+      pitcherId: 'home-1',
+      result: 'fielders_choice' as const,
+      batterAdvance: { to: 'out' as const, cause: 'tag_out' as const, outKind: 'tag' as const },
+      runnerAdvances: [
+        {
+          runnerId: 'away-1',
+          from: 'third' as const,
+          to: 'home' as const,
+          cause: 'batted_ball' as const,
+          countsRun: true,
+          earned: true,
+          rbi: false
+        },
+        { runnerId: 'away-2', from: 'first' as const, to: 'second' as const, cause: 'batted_ball' as const }
+      ],
+      outsOnPlay: 1,
+      runsBattedIn: 0
+    };
+    const taggedBatterCommand = taggedBatter.command('record_plate_appearance', taggedBatterPayload);
+    const taggedBatterContext = {
+      actorUid: INITIAL_SCORER,
+      eventId: 'golden-batter-tag-timing-run',
+      serverTimestampMs: 1_900_000_150_000
+    } as const;
+    const taggedBatterCheckpoint = createDiamondCheckpoint(taggedBatter.ledger);
+    const taggedBatterFull = executeDiamondCommand(taggedBatter.ledger, taggedBatterCommand, taggedBatterContext);
+    const taggedBatterBounded = executeDiamondCommandFromCheckpoint(taggedBatterCheckpoint, taggedBatterCommand, taggedBatterContext);
+
+    expect(taggedBatterFull.result, taggedBatterFull.result.rejection?.message).toMatchObject({ outcome: 'accepted' });
+    expect(taggedBatterBounded.result, taggedBatterBounded.result.rejection?.message).toMatchObject({ outcome: 'accepted' });
+    expect(taggedBatterBounded.checkpoint.state).toEqual(taggedBatterFull.ledger.state);
+    expect(taggedBatterFull.ledger.state).toMatchObject({ inning: { outs: 3 }, score: { away: 1, home: 0 } });
+    expect(projectDiamondStats(taggedBatterFull.ledger).players['away-1'].raw.batting.R).toBe(1);
+    expect(verifyDiamondLedger(taggedBatterFull.ledger)).toBe(true);
+    expect(replayDiamondLedger(taggedBatterFull.ledger).state).toEqual(taggedBatterFull.ledger.state);
 
     const force = createHarness('baseball-nfhs', 'quick', seed.ledger);
     force.submit('record_plate_appearance', thirdOutPayload('force', false));
