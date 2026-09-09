@@ -2,9 +2,11 @@
 
 const {
   DIAMOND_SCHEMA_VERSION,
+  getDiamondPlayerIdentityIdsBySide,
   getEffectiveDiamondEvents,
   projectDiamondStats,
   replayEffectiveDiamondEventStates,
+  validateDiamondPlayerIdentityOwnership,
   verifyDiamondLedger,
 } = require("./diamond-engine");
 const {
@@ -313,6 +315,7 @@ function assertDiamondLedger(ledger) {
   }
   requireHash(ledger.state.checkpointHash);
   verifyDiamondLedger(ledger);
+  validateDiamondPlayerIdentityOwnership(ledger);
   return ledger;
 }
 
@@ -475,11 +478,24 @@ function normalizeDiamondOrientationSnapshot(orientationSnapshot, teamId) {
   });
 }
 
-function normalizePlayerDirectory(playerDirectory, ledger) {
+function normalizePlayerDirectory(
+  playerDirectory,
+  ledger,
+  playerDirectoryBySide,
+) {
   if (playerDirectory !== undefined && !isPlainObject(playerDirectory)) {
     throw new DiamondProjectionError(
       "invalid-player-directory",
       "playerDirectory must be an object keyed by player ID.",
+    );
+  }
+  if (
+    playerDirectoryBySide !== undefined &&
+    !isPlainObject(playerDirectoryBySide)
+  ) {
+    throw new DiamondProjectionError(
+      "invalid-player-directory",
+      "playerDirectoryBySide must contain home and away player directories.",
     );
   }
   const directory = Object.create(null);
@@ -517,6 +533,37 @@ function normalizePlayerDirectory(playerDirectory, ledger) {
         24,
       ),
     };
+  }
+  const claimedPlayerIds = getDiamondPlayerIdentityIdsBySide(ledger);
+  for (const side of ["home", "away"]) {
+    const rawSideDirectory = playerDirectoryBySide?.[side];
+    if (rawSideDirectory === undefined) continue;
+    if (!isPlainObject(rawSideDirectory)) {
+      throw new DiamondProjectionError(
+        "invalid-player-directory",
+        `playerDirectoryBySide.${side} must be an object keyed by player ID.`,
+      );
+    }
+    const sideDirectory = Object.create(null);
+    for (const [rawPlayerId, rawPlayer] of Object.entries(rawSideDirectory)) {
+      const playerId = normalizeDiamondId(
+        rawPlayerId,
+        `playerDirectoryBySide.${side} playerId`,
+      );
+      if (!isPlainObject(rawPlayer)) continue;
+      sideDirectory[playerId] = {
+        playerName: compactText(rawPlayer.playerName || rawPlayer.name, 100),
+        playerNumber: compactText(
+          rawPlayer.playerNumber || rawPlayer.number || rawPlayer.num,
+          24,
+        ),
+      };
+    }
+    for (const playerId of claimedPlayerIds[side]) {
+      if (own(sideDirectory, playerId)) {
+        directory[playerId] = sideDirectory[playerId];
+      }
+    }
   }
   return Object.fromEntries(Object.entries(directory));
 }
@@ -734,9 +781,17 @@ function buildPublicPlay(event, before, after, directory, canonicalEvent) {
   });
 }
 
-function buildDiamondPublicPlays({ ledger, playerDirectory = {} }) {
+function buildDiamondPublicPlays({
+  ledger,
+  playerDirectory = {},
+  playerDirectoryBySide,
+}) {
   assertDiamondLedger(ledger);
-  const directory = normalizePlayerDirectory(playerDirectory, ledger);
+  const directory = normalizePlayerDirectory(
+    playerDirectory,
+    ledger,
+    playerDirectoryBySide,
+  );
   const canonicalById = new Map(
     ledger.events.map((event) => [event.eventId, event]),
   );
@@ -1193,6 +1248,7 @@ function buildDiamondStatDocumentsFromProjection({
   projection,
   orientationSnapshot,
   playerDirectory = {},
+  playerDirectoryBySide,
   existingPublicPlayerIds = [],
   existingPrivatePlayerIds = [],
   publicPlayerStatIds = [],
@@ -1214,7 +1270,11 @@ function buildDiamondStatDocumentsFromProjection({
       "The stat projection does not match the ledger checkpoint.",
     );
   }
-  const directory = normalizePlayerDirectory(playerDirectory, ledger);
+  const directory = normalizePlayerDirectory(
+    playerDirectory,
+    ledger,
+    playerDirectoryBySide,
+  );
   const explicitlyPublicTeamStatIds = normalizePublicStatIds(
     publicTeamStatIds,
     "Public team",
@@ -1371,6 +1431,7 @@ function buildDiamondStatDocuments({
   ledger,
   orientationSnapshot,
   playerDirectory = {},
+  playerDirectoryBySide,
   existingPublicPlayerIds = [],
   existingPrivatePlayerIds = [],
   publicPlayerStatIds = [],
@@ -1382,6 +1443,7 @@ function buildDiamondStatDocuments({
     projection: projectDiamondStats(ledger),
     orientationSnapshot,
     playerDirectory,
+    playerDirectoryBySide,
     existingPublicPlayerIds,
     existingPrivatePlayerIds,
     publicPlayerStatIds,
@@ -1937,6 +1999,7 @@ function buildDiamondEffectsPlan({
   ledger,
   instanceId,
   playerDirectory = {},
+  playerDirectoryBySide,
   projectionSource = "projection-rebuild",
   previousEffectRevision = 0,
   previousNotificationRevision = 0,
@@ -1948,7 +2011,11 @@ function buildDiamondEffectsPlan({
   return buildDiamondEffectsPlanFromPublicPlays({
     ledger,
     instanceId,
-    publicPlays: buildDiamondPublicPlays({ ledger, playerDirectory }),
+    publicPlays: buildDiamondPublicPlays({
+      ledger,
+      playerDirectory,
+      playerDirectoryBySide,
+    }),
     projectionSource,
     previousEffectRevision,
     previousNotificationRevision,
@@ -2111,6 +2178,7 @@ function buildDiamondProjectionBundle({
   orientationSnapshot,
   sharedGame = null,
   playerDirectory = {},
+  playerDirectoryBySide,
   pageSize = DIAMOND_PUBLIC_REPLAY_PAGE_SIZE,
   recentPlayLimit = DIAMOND_PUBLIC_RECENT_PLAY_LIMIT,
   existingReplayPageIds = [],
@@ -2142,9 +2210,17 @@ function buildDiamondProjectionBundle({
       "recentPlayLimit must be between 1 and 100.",
     );
   }
-  const directory = normalizePlayerDirectory(playerDirectory, ledger);
+  const directory = normalizePlayerDirectory(
+    playerDirectory,
+    ledger,
+    playerDirectoryBySide,
+  );
   const statsProjection = projectDiamondStats(ledger);
-  const publicPlays = buildDiamondPublicPlays({ ledger, playerDirectory });
+  const publicPlays = buildDiamondPublicPlays({
+    ledger,
+    playerDirectory,
+    playerDirectoryBySide,
+  });
   const replay = buildDiamondReplayPages({
     plays: publicPlays,
     sourceRevision: ledger.state.revision,
@@ -2169,6 +2245,7 @@ function buildDiamondProjectionBundle({
     projection: statsProjection,
     orientationSnapshot: orientation,
     playerDirectory,
+    playerDirectoryBySide,
     existingPublicPlayerIds,
     existingPrivatePlayerIds,
     publicPlayerStatIds,

@@ -194,6 +194,7 @@ export type DiamondScorebookSnapshot = {
   currentBatter: DiamondPlayerRef | null;
   currentPitcher: DiamondPlayerRef | null;
   lineups: Record<DiamondSide, DiamondLineupEntry[]>;
+  courtesyRunnerIds?: Record<DiamondSide, string[]>;
   defense: Record<DiamondSide, DiamondDefense>;
   nextBatterSlot: Record<DiamondSide, number>;
   battingLineup: DiamondLineupEntry[];
@@ -947,6 +948,18 @@ function normalizePlayerList(value: unknown, fallback: DiamondPlayerRef[] = []):
     .slice(0, 100);
 }
 
+function normalizePlayerIdList(value: unknown): string[] {
+  const seen = new Set<string>();
+  return (Array.isArray(value) ? value : [])
+    .flatMap((entry) => {
+      const playerId = compactText(entry);
+      if (!playerId || seen.has(playerId)) return [];
+      seen.add(playerId);
+      return [playerId];
+    })
+    .slice(0, 100);
+}
+
 function normalizeCoverageStatus(value: unknown): DiamondCoverageStatus {
   return value === 'complete' || value === 'not_collected' ? value : 'partial';
 }
@@ -1124,6 +1137,10 @@ export function normalizeDiamondSnapshot(value: unknown): DiamondScorebookSnapsh
   const battingSide = half === 'top' ? 'away' : 'home';
   const rawHomeLineup = normalizeLineup(lineupSource.home);
   const rawAwayLineup = normalizeLineup(lineupSource.away);
+  const courtesyRunnerIds = {
+    home: normalizePlayerIdList(asRecord(lineupSource.home).courtesyRunnerIds),
+    away: normalizePlayerIdList(asRecord(lineupSource.away).courtesyRunnerIds)
+  } satisfies Record<DiamondSide, string[]>;
   const candidatesSource = presentation.availablePlayers || presentation.rosterCandidates;
   const candidateSides = asRecord(candidatesSource);
   const flatCandidates = Array.isArray(candidatesSource) ? candidatesSource : [];
@@ -1135,25 +1152,29 @@ export function normalizeDiamondSnapshot(value: unknown): DiamondScorebookSnapsh
     candidateSides.away || presentation.awayPlayers || flatCandidates.filter((candidate) => asRecord(candidate).side === 'away'),
     rawAwayLineup
   );
-  const playersById = new Map(
-    [...rawHomeLineup, ...rawAwayLineup, ...homeCandidates, ...awayCandidates].map((player) => [player.playerId, player])
-  );
-  const enrichLineup = (entries: DiamondLineupEntry[]) =>
-    entries.map((entry) => ({ ...entry, ...(playersById.get(entry.playerId) || {}) }));
-  const homeLineup = enrichLineup(rawHomeLineup);
-  const awayLineup = enrichLineup(rawAwayLineup);
+  const playersBySide: Record<DiamondSide, ReadonlyMap<string, DiamondPlayerRef>> = {
+    home: new Map([...rawHomeLineup, ...homeCandidates].map((player) => [player.playerId, player])),
+    away: new Map([...rawAwayLineup, ...awayCandidates].map((player) => [player.playerId, player]))
+  };
+  const enrichLineup = (entries: DiamondLineupEntry[], side: DiamondSide) =>
+    entries.map((entry) => ({ ...entry, ...(playersBySide[side].get(entry.playerId) || {}) }));
+  const homeLineup = enrichLineup(rawHomeLineup, 'home');
+  const awayLineup = enrichLineup(rawAwayLineup, 'away');
   const nextBatterSlots = {
     home: normalizeBoundedInteger(asRecord(state.nextBatterSlot).home, 0, 98, 0),
     away: normalizeBoundedInteger(asRecord(state.nextBatterSlot).away, 0, 98, 0)
   };
-  const battingLineup = enrichLineup(normalizeLineup(presentation.battingLineup || lineupSource[battingSide] || state.battingLineup));
+  const battingLineup = enrichLineup(
+    normalizeLineup(presentation.battingLineup || lineupSource[battingSide] || state.battingLineup),
+    battingSide
+  );
   const nextBatterSlot = nextBatterSlots[battingSide];
   const derivedBatter = battingLineup.length ? battingLineup[nextBatterSlot % battingLineup.length] || null : null;
   const defensiveSide = battingSide === 'home' ? 'away' : 'home';
   const defensiveLineupSource = asRecord(lineupSource[defensiveSide]);
   const defense = {
-    home: normalizeDefense(asRecord(lineupSource.home).defense, playersById),
-    away: normalizeDefense(asRecord(lineupSource.away).defense, playersById)
+    home: normalizeDefense(asRecord(lineupSource.home).defense, playersBySide.home),
+    away: normalizeDefense(asRecord(lineupSource.away).defense, playersBySide.away)
   } satisfies Record<DiamondSide, DiamondDefense>;
   const derivedPitcherId = defense[defensiveSide].P?.playerId || compactText(asRecord(defensiveLineupSource.defense).P);
   const defensePlayers = Object.values(defense[defensiveSide]).filter(Boolean) as DiamondPlayerRef[];
@@ -1164,7 +1185,7 @@ export function normalizeDiamondSnapshot(value: unknown): DiamondScorebookSnapsh
   const normalizeBase = (name: 'first' | 'second' | 'third', number: '1' | '2' | '3') => {
     const canonical = asRecord(basesSource[name] || basesSource[number]);
     const presented = asRecord(presentedBases[name] || presentedBases[number]);
-    return normalizeRunner({ ...canonical, ...presented }, playersById);
+    return normalizeRunner({ ...canonical, ...presented }, playersBySide[battingSide]);
   };
   const lease = normalizeLease(root.lease || state.lease, state.currentScorerUid);
   const rulesProfileId = requireResourceId(state.rulesProfileId || root.rulesProfileId, 'Rules profile ID');
@@ -1227,9 +1248,15 @@ export function normalizeDiamondSnapshot(value: unknown): DiamondScorebookSnapsh
       second: normalizeBase('second', '2'),
       third: normalizeBase('third', '3')
     },
-    currentBatter: derivedBatter || normalizePlayer(state.currentBatter || presentation.currentBatter),
-    currentPitcher: derivedPitcherId ? playersById.get(derivedPitcherId) || normalizePlayer(derivedPitcherId) : null,
+    currentBatter:
+      derivedBatter ||
+      (() => {
+        const player = normalizePlayer(state.currentBatter || presentation.currentBatter);
+        return player ? playersBySide[battingSide].get(player.playerId) || player : null;
+      })(),
+    currentPitcher: derivedPitcherId ? playersBySide[defensiveSide].get(derivedPitcherId) || normalizePlayer(derivedPitcherId) : null,
     lineups: { home: homeLineup, away: awayLineup },
+    courtesyRunnerIds,
     defense,
     nextBatterSlot: nextBatterSlots,
     battingLineup,

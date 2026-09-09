@@ -26,7 +26,6 @@ const {
   sanitizeDiamondPublicTeamStatDocument,
   serializeDiamondPublicStatsResponse,
 } = require("../diamond-scorebook-projections.cjs");
-
 const SCORER_UID = "scorer-1";
 const INSTANCE_ID = "00000000-0000-4000-8000-000000000900";
 const PRIVATE_SENTINEL = "MEDICAL-PRIVATE-TRANSCRIPT-ALPHA";
@@ -368,6 +367,170 @@ function playerWrite(bundle, playerId) {
     (write) => write.playerId === playerId,
   )?.data;
 }
+
+// Side-aware player metadata isolation.
+test("projection binds colliding player metadata to the authoritative side", () => {
+  const game = harness("full");
+  setLineupsAndStart(game);
+  addHomeRun(game);
+
+  for (const {
+    managedSide,
+    opponentSide,
+    collisionId,
+    managedPlayerId,
+    collisionReplayRole,
+    managedReplayRole,
+  } of [
+    {
+      managedSide: "home",
+      opponentSide: "away",
+      collisionId: "away-1",
+      managedPlayerId: "home-1",
+      collisionReplayRole: "batter",
+      managedReplayRole: "pitcher",
+    },
+    {
+      managedSide: "away",
+      opponentSide: "home",
+      collisionId: "home-1",
+      managedPlayerId: "away-1",
+      collisionReplayRole: "pitcher",
+      managedReplayRole: "batter",
+    },
+  ]) {
+    const opponentName = `Public ${opponentSide} identity`;
+    const opponentNumber = opponentSide === "home" ? "31" : "41";
+    const managedName = `Managed ${managedSide} roster identity`;
+    const managedNumber = managedSide === "home" ? "51" : "61";
+    const privateCollisionName = `PRIVATE ${managedSide.toUpperCase()} ROSTER`;
+    const privateCollisionNumber = "PRIVATE-99";
+    const playerDirectoryBySide = { home: {}, away: {} };
+    playerDirectoryBySide[managedSide] = {
+      [collisionId]: {
+        playerName: privateCollisionName,
+        playerNumber: privateCollisionNumber,
+      },
+      [managedPlayerId]: {
+        playerName: managedName,
+        playerNumber: managedNumber,
+      },
+    };
+    playerDirectoryBySide[opponentSide] = {
+      [collisionId]: {
+        playerName: opponentName,
+        playerNumber: opponentNumber,
+      },
+    };
+
+    const bundle = buildDiamondProjectionBundle({
+      ledger: game.ledger,
+      instanceId: INSTANCE_ID,
+      orientationSnapshot: orientationFor(managedSide),
+      playerDirectory: {
+        [collisionId]: {
+          playerName: privateCollisionName,
+          playerNumber: privateCollisionNumber,
+        },
+      },
+      playerDirectoryBySide,
+      publicPlayerStatIds: ALL_PUBLIC_PLAYER_STAT_IDS,
+      publicTeamStatIds: ALL_PUBLIC_TEAM_STAT_IDS,
+    });
+    const currentOpponent = bundle.writes.publicCurrent.data.lineup[
+      opponentSide
+    ].find((player) => player.playerId === collisionId);
+    const scoringPlay = bundle.publicPlays.find(
+      (play) => play.type === "record_plate_appearance",
+    );
+
+    assert.deepEqual(currentOpponent, {
+      slot: 1,
+      playerId: collisionId,
+      displayName: opponentName,
+      number: opponentNumber,
+      battingRole: "regular",
+    });
+    assert.deepEqual(scoringPlay[collisionReplayRole], {
+      playerId: collisionId,
+      displayName: opponentName,
+      number: opponentNumber,
+    });
+    assert.equal(
+      bundle.writes.gameUpdate.opponentStats[collisionId].name,
+      opponentName,
+    );
+    assert.equal(
+      bundle.writes.gameUpdate.opponentStats[collisionId].number,
+      opponentNumber,
+    );
+    assert.equal(
+      bundle.writes.publicPlayerStats.some(
+        (write) => write.playerId === collisionId,
+      ),
+      false,
+    );
+    assert.equal(
+      bundle.writes.privatePlayerStats.some(
+        (write) => write.playerId === collisionId,
+      ),
+      false,
+    );
+
+    const managedPublicStats = bundle.writes.publicPlayerStats.find(
+      (write) => write.playerId === managedPlayerId,
+    )?.data;
+    const managedPrivateStats = bundle.writes.privatePlayerStats.find(
+      (write) => write.playerId === managedPlayerId,
+    )?.data;
+    assert.equal(managedPublicStats.playerName, managedName);
+    assert.equal(managedPublicStats.playerNumber, managedNumber);
+    assert.equal(managedPrivateStats.playerName, managedName);
+    assert.equal(managedPrivateStats.playerNumber, managedNumber);
+    assert.deepEqual(scoringPlay[managedReplayRole], {
+      playerId: managedPlayerId,
+      displayName: managedName,
+      number: managedNumber,
+    });
+    assert.doesNotMatch(
+      JSON.stringify({
+        current: bundle.writes.publicCurrent.data,
+        plays: bundle.publicPlays,
+        opponentStats: bundle.writes.gameUpdate.opponentStats,
+      }),
+      /PRIVATE (?:HOME|AWAY) ROSTER|PRIVATE-99/,
+    );
+  }
+});
+
+test("projection rejects a ledger without required player identity history", () => {
+  const ledger = structuredClone(harness("full").ledger);
+  delete ledger.initialState.lineups.home.courtesyRunnerIds;
+  delete ledger.initialState.lineups.away.courtesyRunnerIds;
+  delete ledger.state.lineups.home.courtesyRunnerIds;
+  delete ledger.state.lineups.away.courtesyRunnerIds;
+
+  assert.throws(
+    () => verifyDiamondLedger(ledger),
+    (error) => error?.code === "history-required",
+  );
+
+  assert.throws(
+    () =>
+      buildDiamondProjectionBundle({
+        ledger,
+        instanceId: INSTANCE_ID,
+        orientationSnapshot: orientationFor("home", {
+          managedTeamId: ledger.teamId,
+          homeTeamId: ledger.teamId,
+        }),
+        playerDirectoryBySide: { home: {}, away: {} },
+        publicPlayerStatIds: ALL_PUBLIC_PLAYER_STAT_IDS,
+        publicTeamStatIds: ALL_PUBLIC_TEAM_STAT_IDS,
+      }),
+    (error) => error?.code === "history-required",
+  );
+});
 
 test("compiled reducer canonicalizes omitted tiebreaker pitcher responsibility and rejects unavailable or mismatched identity", () => {
   const game = harness("quick", "fastpitch-nfhs");

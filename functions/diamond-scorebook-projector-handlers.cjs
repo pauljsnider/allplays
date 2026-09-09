@@ -295,12 +295,19 @@ function normalizePlayerIdentity(value) {
   };
 }
 
-function buildPlayerDirectory(root, rosterDocuments) {
-  const directory = Object.create(null);
-  const add = (candidate) => {
+function buildPlayerDirectoryBySide(
+  root,
+  rosterDocuments,
+  orientationSnapshot,
+) {
+  const directories = {
+    home: Object.create(null),
+    away: Object.create(null),
+  };
+  const add = (side, candidate) => {
     const player = normalizePlayerIdentity(candidate);
     if (!player) return;
-    directory[player.playerId] = {
+    directories[side][player.playerId] = {
       playerName: player.playerName,
       playerNumber: player.playerNumber,
     };
@@ -308,12 +315,18 @@ function buildPlayerDirectory(root, rosterDocuments) {
   for (const side of ["home", "away"]) {
     const candidates = root?.availablePlayers?.[side];
     if (Array.isArray(candidates))
-      candidates.slice(0, MAX_PLAYER_DOCUMENTS).forEach(add);
+      candidates
+        .slice(0, MAX_PLAYER_DOCUMENTS)
+        .forEach((candidate) => add(side, candidate));
   }
+  const managedSide = orientationSnapshot.managedSide;
   rosterDocuments.forEach((snapshot) =>
-    add({ id: snapshot.id, ...snapshotData(snapshot) }),
+    add(managedSide, { id: snapshot.id, ...snapshotData(snapshot) }),
   );
-  return Object.fromEntries(Object.entries(directory));
+  return {
+    home: Object.fromEntries(Object.entries(directories.home)),
+    away: Object.fromEntries(Object.entries(directories.away)),
+  };
 }
 
 function hasExactDiamondSharedGameClaim(shared, teamId, gameId) {
@@ -745,6 +758,16 @@ function createDiamondScorebookProjectorHandlers(dependencies = {}) {
     try {
       domainEngine.verifyDiamondLedger(ledger);
     } catch (error) {
+      if (error?.code === "history-required") {
+        throw new DiamondProjectorError(
+          "projection-input-invalid",
+          "The canonical Diamond ledger is missing required player identity history.",
+          {
+            retryable: false,
+            details: { causeCode: error.code },
+          },
+        );
+      }
       throw new DiamondProjectorError(
         "ledger-integrity-failed",
         "The canonical Diamond ledger failed sequence, hash, or checkpoint verification.",
@@ -1048,7 +1071,11 @@ function createDiamondScorebookProjectorHandlers(dependencies = {}) {
     return {
       team,
       orientationSnapshot: acquired.orientationSnapshot,
-      playerDirectory: buildPlayerDirectory(root, rosterDocuments),
+      playerDirectoryBySide: buildPlayerDirectoryBySide(
+        root,
+        rosterDocuments,
+        acquired.orientationSnapshot,
+      ),
       sharedGame,
       clipTimings,
       publicPlayerStatIds: [...acquired.statConfigSnapshot.publicPlayerStatIds],
@@ -1890,7 +1917,7 @@ function createDiamondScorebookProjectorHandlers(dependencies = {}) {
         instanceId: acquired.instanceId,
         orientationSnapshot: inputs.orientationSnapshot,
         sharedGame: inputs.sharedGame?.data || null,
-        playerDirectory: inputs.playerDirectory,
+        playerDirectoryBySide: inputs.playerDirectoryBySide,
         pageSize: 100,
         existingReplayPageIds: inputs.existingReplayPageIds,
         existingPublicPlayerIds: inputs.existingPublicPlayerIds,

@@ -317,11 +317,12 @@ function createGame({
   teamId = "team-1",
   gameId = "game-1",
   captureMode = "quick",
+  rulesProfileId = "baseball-youth",
 } = {}) {
   let ledger = domainEngine.createDiamondLedger({
     teamId,
     gameId,
-    rulesProfileId: "baseball-youth",
+    rulesProfileId,
     rulesProfileVersion: 1,
     captureMode,
   });
@@ -789,6 +790,307 @@ describe("Diamond scorebook authoritative projector", () => {
     assert.equal(current.opponentName, "Rockets");
     assert.equal(current.homeName, "Rockets");
     assert.equal(current.awayName, "Comets");
+  });
+
+  describe("side-aware player metadata isolation", () => {
+    for (const {
+      label,
+      isHome,
+      collisionId,
+      publicName,
+      publicNumber,
+      replayRole,
+      opponentSide,
+    } of [
+      {
+        label: "managed home",
+        isHome: true,
+        collisionId: "away-1",
+        publicName: "Away Player 1",
+        publicNumber: "1",
+        replayRole: "batter",
+        opponentSide: "away",
+      },
+      {
+        label: "managed away",
+        isHome: false,
+        collisionId: "home-1",
+        publicName: "Home Player 1",
+        publicNumber: "1",
+        replayRole: "pitcher",
+        opponentSide: "home",
+      },
+    ]) {
+      it(`does not expose an unused managed roster record through an opponent ID collision (${label})`, async () => {
+        const privateName = `PRIVATE MANAGED ${label.toUpperCase()}`;
+        const privateNumber = "PRIVATE-99";
+        const game = createGame({ captureMode: "full" });
+        setLineupsAndStart(game);
+        addAwayHomeRun(game);
+        const harness = createHarness();
+        const { paths } = seedGame(harness.firestore, game, { isHome });
+
+        harness.firestore.seed(`${paths.players}/${collisionId}`, {
+          displayName: privateName,
+          jerseyNumber: privateNumber,
+          medicalNote: "PRIVATE-COLLISION-MEDICAL-NOTE",
+        });
+
+        const result = await harness.handlers.projectDiamondGame({
+          teamId: "team-1",
+          gameId: "game-1",
+        });
+
+        assert.equal(result.projected, true);
+        const projectedGame = harness.firestore.read(paths.game);
+        assert.equal(projectedGame.opponentStats[collisionId].name, publicName);
+        assert.equal(
+          projectedGame.opponentStats[collisionId].number,
+          publicNumber,
+        );
+        assert.equal(
+          harness.firestore.read(
+            paths.publicPlayerStat("instance-1", collisionId),
+          ),
+          undefined,
+        );
+        assert.equal(
+          harness.firestore.read(
+            paths.privatePlayerStat("instance-1", collisionId),
+          ),
+          undefined,
+        );
+
+        const current = harness.firestore.read(paths.publicCurrent);
+        assert.deepEqual(
+          current.lineup[opponentSide].find(
+            (player) => player.playerId === collisionId,
+          ),
+          {
+            slot: 1,
+            playerId: collisionId,
+            displayName: publicName,
+            number: publicNumber,
+            battingRole: "regular",
+          },
+        );
+        const replayPages = harness.firestore
+          .directChildren(paths.replayPages)
+          .map((entry) => entry.data);
+        const scoringPlay = replayPages
+          .flatMap((page) => page.items)
+          .find((play) => play.type === "record_plate_appearance");
+        assert.deepEqual(scoringPlay[replayRole], {
+          playerId: collisionId,
+          displayName: publicName,
+          number: publicNumber,
+        });
+        const publicProjection = {
+          current,
+          replay: replayPages,
+          opponentStats: projectedGame.opponentStats,
+        };
+        const serialized = JSON.stringify(publicProjection);
+        assert.doesNotMatch(
+          serialized,
+          /PRIVATE MANAGED|PRIVATE-99|PRIVATE-COLLISION/,
+        );
+        assert.match(serialized, new RegExp(publicName));
+      });
+    }
+
+    it("retains an opponent courtesy runner identity after the runner leaves base and the half advances", async () => {
+      const collisionId = "departed-away-courtesy";
+      const publicName = "Public away courtesy runner";
+      const publicNumber = "73";
+      const game = createGame({
+        captureMode: "full",
+        rulesProfileId: "fastpitch-nfhs",
+      });
+      setLineupsAndStart(game);
+      game.submit("record_plate_appearance", {
+        batterId: "away-1",
+        pitcherId: "home-1",
+        result: "single",
+        batterAdvance: { to: "first" },
+        runnerAdvances: [],
+        outsOnPlay: 0,
+      });
+      game.submit("add_courtesy_runner", {
+        side: "away",
+        forPlayerId: "away-1",
+        runnerId: collisionId,
+        base: "first",
+        forRole: "pitcher",
+      });
+      game.submit("advance_runner", {
+        runnerId: collisionId,
+        from: "first",
+        to: "home",
+        cause: "other",
+        countsRun: true,
+        earned: true,
+      });
+      for (let out = 0; out < 3; out += 1) {
+        const slot = game.ledger.state.nextBatterSlot.away;
+        const batterId =
+          game.ledger.state.lineups.away.battingOrder[slot].activePlayerId;
+        game.submit("record_plate_appearance", {
+          batterId,
+          pitcherId: "home-1",
+          result: "ground_out",
+          batterAdvance: { to: "out", outKind: "batter_runner" },
+          runnerAdvances: [],
+          outsOnPlay: 1,
+        });
+      }
+      game.submit("advance_half_inning", {});
+      assert.equal(game.ledger.state.inning.half, "bottom");
+      assert.equal(game.ledger.state.bases.first, null);
+      assert.deepEqual(game.ledger.state.lineups.away.courtesyRunnerIds, [
+        collisionId,
+      ]);
+
+      const harness = createHarness();
+      const { paths } = seedGame(harness.firestore, game, { isHome: true });
+      const root = harness.firestore.read(paths.scorebook);
+      harness.firestore.seed(paths.scorebook, {
+        ...root,
+        availablePlayers: {
+          ...root.availablePlayers,
+          away: [
+            ...root.availablePlayers.away,
+            {
+              playerId: collisionId,
+              displayName: publicName,
+              jerseyNumber: publicNumber,
+            },
+          ],
+        },
+      });
+      harness.firestore.seed(`${paths.players}/${collisionId}`, {
+        displayName: "PRIVATE MANAGED COURTESY COLLISION",
+        jerseyNumber: "PRIVATE-99",
+        medicalNote: "PRIVATE-COURTESY-MEDICAL-NOTE",
+      });
+
+      const result = await harness.handlers.projectDiamondGame({
+        teamId: "team-1",
+        gameId: "game-1",
+      });
+
+      assert.equal(result.projected, true);
+      const projectedGame = harness.firestore.read(paths.game);
+      assert.equal(projectedGame.opponentStats[collisionId].name, publicName);
+      assert.equal(
+        projectedGame.opponentStats[collisionId].number,
+        publicNumber,
+      );
+      assert.equal(
+        harness.firestore.read(
+          paths.publicPlayerStat("instance-1", collisionId),
+        ),
+        undefined,
+      );
+      assert.equal(
+        harness.firestore.read(
+          paths.privatePlayerStat("instance-1", collisionId),
+        ),
+        undefined,
+      );
+      const replayPages = harness.firestore
+        .directChildren(paths.replayPages)
+        .map((entry) => entry.data);
+      const courtesyPlays = replayPages
+        .flatMap((page) => page.items)
+        .filter(
+          (play) =>
+            play.type === "add_courtesy_runner" ||
+            play.type === "advance_runner",
+        );
+      assert.equal(courtesyPlays.length, 2);
+      for (const play of courtesyPlays) {
+        assert.deepEqual(play.runners, [
+          {
+            playerId: collisionId,
+            displayName: publicName,
+            number: publicNumber,
+          },
+        ]);
+      }
+      assert.doesNotMatch(
+        JSON.stringify({
+          courtesyPlays,
+          opponentStats: projectedGame.opponentStats,
+        }),
+        /PRIVATE MANAGED|PRIVATE-99|PRIVATE-COURTESY/,
+      );
+    });
+
+    it("quarantines missing player identity history before live writes", async () => {
+      const ledger = structuredClone(
+        domainEngine.createDiamondLedger({
+          teamId: "team-1",
+          gameId: "game-1",
+          rulesProfileId: "baseball-youth",
+          rulesProfileVersion: 1,
+          captureMode: "quick",
+        }),
+      );
+      delete ledger.initialState.lineups.home.courtesyRunnerIds;
+      delete ledger.initialState.lineups.away.courtesyRunnerIds;
+      delete ledger.state.lineups.home.courtesyRunnerIds;
+      delete ledger.state.lineups.away.courtesyRunnerIds;
+      assert.throws(
+        () => domainEngine.verifyDiamondLedger(ledger),
+        (error) => error?.code === "history-required",
+      );
+      const harness = createHarness();
+      const { paths, instanceId } = seedGame(
+        harness.firestore,
+        { ledger },
+        { isHome: true },
+      );
+      const currentBefore = harness.firestore.read(paths.publicCurrent);
+      const gameBefore = harness.firestore.read(paths.game);
+
+      await assert.rejects(
+        () =>
+          harness.handlers.projectDiamondGame({
+            teamId: ledger.teamId,
+            gameId: ledger.gameId,
+          }),
+        (error) =>
+          error instanceof DiamondProjectorError &&
+          error.code === "projection-input-invalid" &&
+          error.retryable === false &&
+          error.details?.causeCode === "history-required",
+      );
+
+      assert.deepEqual(
+        harness.firestore.read(paths.publicCurrent),
+        currentBefore,
+      );
+      assert.deepEqual(harness.firestore.read(paths.game), gameBefore);
+      assert.equal(
+        harness.firestore.directChildren(paths.replayPages).length,
+        0,
+      );
+      assert.equal(
+        harness.firestore.directChildren(paths.publicPlayerStats(instanceId))
+          .length,
+        0,
+      );
+      assert.equal(
+        harness.firestore.directChildren(paths.privatePlayerStats(instanceId))
+          .length,
+        0,
+      );
+      assert.equal(
+        harness.firestore.read(paths.scorebook).projectionFailure.retryable,
+        false,
+      );
+    });
   });
 
   it("fails closed when the immutable orientation snapshot is absent or malformed", async () => {

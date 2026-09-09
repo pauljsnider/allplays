@@ -925,6 +925,72 @@ function snapshotSidePlayer(snapshot: DiamondScorebookSnapshot, side: DiamondSid
   );
 }
 
+function snapshotSidePlayers(snapshot: DiamondScorebookSnapshot, side: DiamondSide): DiamondPlayerRef[] {
+  const defensivePlayers = Object.values(snapshot.defense[side]).flatMap((player) => (player ? [player] : []));
+  return [...defensivePlayers, ...snapshot.lineups[side], ...snapshot.availablePlayers[side]]
+    .filter((player) => {
+      const claimedSides = snapshotClaimedPlayerSides(snapshot, player.playerId);
+      return claimedSides.length === 0 || (claimedSides.length === 1 && claimedSides[0] === side);
+    })
+    .filter((player, index, all) => all.findIndex((candidate) => candidate.playerId === player.playerId) === index);
+}
+
+function oppositeDiamondSide(side: DiamondSide): DiamondSide {
+  return side === 'home' ? 'away' : 'home';
+}
+
+function snapshotClaimedPlayerSides(snapshot: DiamondScorebookSnapshot, playerId: string): DiamondSide[] {
+  const battingSide: DiamondSide = snapshot.inning.half === 'bottom' ? 'home' : 'away';
+  const fieldingSide = oppositeDiamondSide(battingSide);
+  const claims = new Set<DiamondSide>();
+  for (const side of ['home', 'away'] as const) {
+    if (
+      snapshot.lineups[side].some(
+        (entry) => entry.playerId === playerId || entry.starterPlayerId === playerId || entry.substitutions?.includes(playerId)
+      ) ||
+      snapshot.courtesyRunnerIds?.[side]?.includes(playerId) ||
+      Object.values(snapshot.defense[side]).some((player) => player?.playerId === playerId)
+    ) {
+      claims.add(side);
+    }
+  }
+  for (const placement of Object.values(snapshot.bases)) {
+    if (placement?.playerId === playerId || placement?.courtesyForPlayerId === playerId) claims.add(battingSide);
+    if (placement?.responsiblePitcherId === playerId) claims.add(fieldingSide);
+  }
+  if (snapshot.currentBatter?.playerId === playerId) claims.add(battingSide);
+  if (snapshot.currentPitcher?.playerId === playerId) claims.add(fieldingSide);
+  return [...claims];
+}
+
+function correctionBattingSide(snapshot: DiamondScorebookSnapshot, batterId: string, pitcherId: string): DiamondSide | null {
+  const batterSides = snapshotClaimedPlayerSides(snapshot, batterId);
+  const pitcherSides = snapshotClaimedPlayerSides(snapshot, pitcherId);
+  if (batterSides.length === 1) {
+    const side = batterSides[0]!;
+    return pitcherSides.length === 0 || (pitcherSides.length === 1 && pitcherSides[0] === oppositeDiamondSide(side)) ? side : null;
+  }
+  if (batterSides.length === 0 && pitcherSides.length === 1) return oppositeDiamondSide(pitcherSides[0]!);
+  return null;
+}
+
+function structuredEventBattingSide(snapshot: DiamondScorebookSnapshot, event: DiamondEffectivePrivateEvent): DiamondSide | null {
+  if (event.effectiveType === 'record_plate_appearance') {
+    return correctionBattingSide(snapshot, readString(event.effectivePayload.batterId), readString(event.effectivePayload.pitcherId));
+  }
+  if (event.effectiveType === 'advance_runner') {
+    const runnerSides = snapshotClaimedPlayerSides(snapshot, readString(event.effectivePayload.runnerId));
+    if (runnerSides.length === 1) return runnerSides[0]!;
+    if (runnerSides.length > 1) return null;
+    const runnerId = readString(event.effectivePayload.runnerId);
+    const candidateSides = (['home', 'away'] as const).filter((side) =>
+      snapshot.availablePlayers[side].some((player) => player.playerId === runnerId)
+    );
+    return candidateSides.length === 1 ? candidateSides[0]! : null;
+  }
+  return null;
+}
+
 function inningLabel(snapshot: DiamondScorebookSnapshot) {
   return `${snapshot.inning.half === 'top' ? 'Top' : 'Bottom'} ${snapshot.inning.number}`;
 }
@@ -1119,18 +1185,13 @@ function buildPendingPlateAppearanceCorrection(
   const result = readString(payload.result);
   const option = outcomeOptions.find((candidate) => candidate.result === result);
   if (!option) throw new Error('This plate-appearance result cannot be edited with the standard correction form.');
-  const allPlayers = [
-    ...snapshot.availablePlayers.home,
-    ...snapshot.availablePlayers.away,
-    ...snapshot.lineups.home,
-    ...snapshot.lineups.away
-  ];
-  const labelForId = (playerId: string, role: string) => {
-    const player = allPlayers.find((candidate) => candidate.playerId === playerId) || { playerId, name: playerId };
-    return `${role} · ${playerLabel(player)}`;
-  };
   const batterId = readString(payload.batterId);
   const pitcherId = readString(payload.pitcherId);
+  const battingSide = correctionBattingSide(snapshot, batterId, pitcherId);
+  const labelForId = (playerId: string, role: string) => {
+    const player = (battingSide && snapshotSidePlayer(snapshot, battingSide, playerId)) || { playerId, name: playerId };
+    return `${role} · ${playerLabel(player)}`;
+  };
   const batterAdvance = asJsonObject(payload.batterAdvance);
   const runnerMoves: RunnerMoveDraft[] = [
     {
@@ -5252,13 +5313,11 @@ function AdvancedScoringPanel({
   const occupiedIds = new Set(occupiedBases.map((entry) => entry.runner.playerId));
   const courtesyCandidates = snapshot.availablePlayers[battingSide].filter((player) => !occupiedIds.has(player.playerId));
   const canUseCourtesy = snapshot.ruleCapabilities.courtesyRunner[effectiveCourtesyRole];
-  const allKnownPlayers = [
-    ...snapshot.availablePlayers.home,
-    ...snapshot.availablePlayers.away,
-    ...snapshot.lineups.home,
-    ...snapshot.lineups.away,
-    ...snapshot.defensiveLineup
-  ].filter((player, index, all) => all.findIndex((candidate) => candidate.playerId === player.playerId) === index);
+  const structuredEvent = attachableEvents.find((event) => event.sourceEventId === structuredPlayId) || null;
+  const structuredBattingSide = structuredEvent ? structuredEventBattingSide(snapshot, structuredEvent) : null;
+  const structuredFieldingSide = structuredBattingSide ? oppositeDiamondSide(structuredBattingSide) : null;
+  const structuredBattingPlayers = structuredBattingSide ? snapshotSidePlayers(snapshot, structuredBattingSide) : [];
+  const structuredFieldingPlayers = structuredFieldingSide ? snapshotSidePlayers(snapshot, structuredFieldingSide) : [];
 
   const reviewRunnerEvent = () => {
     if (!activeRunner) return;
@@ -5294,6 +5353,14 @@ function AdvancedScoringPanel({
       }
       if (structuredType === 'record_fielding') {
         const assists = [fieldingAssistOne, fieldingAssistTwo].filter(Boolean);
+        const fieldingPlayerIds = new Set(structuredFieldingPlayers.map((player) => player.playerId));
+        if (
+          [fieldingPutout, ...assists, fieldingErrorPlayer, fieldingPassedBall]
+            .filter(Boolean)
+            .some((playerId) => !fieldingPlayerIds.has(playerId))
+        ) {
+          throw new Error('Choose fielders from the selected play’s fielding side.');
+        }
         const fielding: DiamondJsonObject = {
           ...(fieldingPutout ? { putoutBy: fieldingPutout } : {}),
           ...(assists.length ? { assists } : {}),
@@ -5310,6 +5377,12 @@ function AdvancedScoringPanel({
         setStructuredError('');
         onReview('record_fielding', 'fielding detail', { playEventId: structuredPlayId, fielding });
         return;
+      }
+      if (judgmentRunnerId && !structuredBattingPlayers.some((player) => player.playerId === judgmentRunnerId)) {
+        throw new Error('Choose a runner from the selected play’s batting side.');
+      }
+      if (judgmentPitcherId && !structuredFieldingPlayers.some((player) => player.playerId === judgmentPitcherId)) {
+        throw new Error('Choose a responsible pitcher from the selected play’s fielding side.');
       }
       const judgment: DiamondJsonObject = {
         playEventId: structuredPlayId,
@@ -5826,28 +5899,28 @@ function AdvancedScoringPanel({
             <FielderSelect
               label="Putout"
               value={fieldingPutout}
-              players={allKnownPlayers}
+              players={structuredFieldingPlayers}
               disabled={disabled}
               onChange={setFieldingPutout}
             />
             <FielderSelect
               label="First assist"
               value={fieldingAssistOne}
-              players={allKnownPlayers}
+              players={structuredFieldingPlayers}
               disabled={disabled}
               onChange={setFieldingAssistOne}
             />
             <FielderSelect
               label="Second assist"
               value={fieldingAssistTwo}
-              players={allKnownPlayers}
+              players={structuredFieldingPlayers}
               disabled={disabled}
               onChange={setFieldingAssistTwo}
             />
             <FielderSelect
               label="Error charged to"
               value={fieldingErrorPlayer}
-              players={allKnownPlayers}
+              players={structuredFieldingPlayers}
               disabled={disabled}
               onChange={setFieldingErrorPlayer}
             />
@@ -5868,7 +5941,7 @@ function AdvancedScoringPanel({
             <FielderSelect
               label="Passed ball charged to"
               value={fieldingPassedBall}
-              players={allKnownPlayers}
+              players={structuredFieldingPlayers}
               disabled={disabled}
               onChange={setFieldingPassedBall}
             />
@@ -5927,7 +6000,7 @@ function AdvancedScoringPanel({
                 onChange={(event) => setJudgmentRunnerId(event.target.value)}
               >
                 <option value="">Play-level judgment</option>
-                {allKnownPlayers.map((player) => (
+                {structuredBattingPlayers.map((player) => (
                   <option key={player.playerId} value={player.playerId}>
                     {playerLabel(player)}
                   </option>
@@ -5963,7 +6036,7 @@ function AdvancedScoringPanel({
             <FielderSelect
               label="Responsible pitcher"
               value={judgmentPitcherId}
-              players={allKnownPlayers}
+              players={structuredFieldingPlayers}
               disabled={disabled}
               onChange={setJudgmentPitcherId}
             />

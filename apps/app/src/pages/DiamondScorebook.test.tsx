@@ -4001,6 +4001,78 @@ describe('DiamondScorebook', () => {
     );
   });
 
+  it('side-scopes structured play controls when an unused opponent candidate reuses a managed player ID', async () => {
+    const base = buildSnapshot();
+    const snapshot = buildSnapshot({
+      managedSide: 'away',
+      availablePlayers: {
+        home: [{ playerId: 'pitcher-1', name: 'PRIVATE HOME COLLISION', number: '99' }, ...base.availablePlayers.home],
+        away: base.availablePlayers.away
+      }
+    });
+    const fixture = createClient(snapshot);
+    fixture.loadPrivateHistory.mockResolvedValue(buildPrivateHistoryWindow(buildPrivateHistoryItems(), 7));
+    renderScorebook(snapshot, fixture);
+    fireEvent.click(screen.getByText('Full-mode advanced plays'));
+    const structured = screen.getByRole('group', { name: 'Structured fielding or scoring judgment' });
+    fireEvent.click(within(structured).getByRole('button', { name: 'Load exact play targets' }));
+    await waitFor(() => expect(within(structured).getByLabelText('Effective play')).toHaveValue('event-7'));
+
+    const putout = within(structured).getByLabelText('Putout');
+    await waitFor(() => expect(within(putout).getByRole('option', { name: '#7 Morgan Diaz' })).toHaveValue('pitcher-1'));
+    expect(within(putout).queryByRole('option', { name: /PRIVATE HOME COLLISION/ })).not.toBeInTheDocument();
+
+    fireEvent.change(within(structured).getByLabelText('Structured command type'), {
+      target: { value: 'record_scoring_judgment' }
+    });
+    const runner = within(structured).getByLabelText('Runner (optional)');
+    const responsiblePitcher = within(structured).getByLabelText('Responsible pitcher');
+    expect(within(runner).queryByRole('option', { name: /PRIVATE HOME COLLISION/ })).not.toBeInTheDocument();
+    expect(within(responsiblePitcher).getByRole('option', { name: '#7 Morgan Diaz' })).toHaveValue('pitcher-1');
+    expect(within(responsiblePitcher).queryByRole('option', { name: /PRIVATE HOME COLLISION/ })).not.toBeInTheDocument();
+  });
+
+  it('uses durable courtesy ownership for a departed runner in structured play controls', async () => {
+    const base = buildSnapshot();
+    const courtesyId = 'departed-away-courtesy';
+    const snapshot = buildSnapshot({
+      revision: 8,
+      checkpointHash: checkpointForRevision(8),
+      completeness: { ...base.completeness, authoritativeRevision: 8 },
+      courtesyRunnerIds: { home: [], away: [courtesyId] },
+      availablePlayers: {
+        home: [{ playerId: courtesyId, name: 'PRIVATE HOME COURTESY COLLISION', number: '99' }, ...base.availablePlayers.home],
+        away: [{ playerId: courtesyId, name: 'Public away courtesy runner', number: '73' }, ...base.availablePlayers.away]
+      }
+    });
+    const history = buildPrivateHistoryItems(8);
+    history[7] = buildPrivateEvent('event-8', 8, {
+      type: 'advance_runner',
+      payload: {
+        runnerId: courtesyId,
+        from: 'third',
+        to: 'home',
+        cause: 'other',
+        countsRun: true,
+        earned: true
+      }
+    });
+    const fixture = createClient(snapshot);
+    fixture.loadPrivateHistory.mockResolvedValue(buildPrivateHistoryWindow(history, 8));
+    renderScorebook(snapshot, fixture);
+    fireEvent.click(screen.getByText('Full-mode advanced plays'));
+    const structured = screen.getByRole('group', { name: 'Structured fielding or scoring judgment' });
+    fireEvent.click(within(structured).getByRole('button', { name: 'Load exact play targets' }));
+    await waitFor(() => expect(within(structured).getByLabelText('Effective play')).toHaveValue('event-8'));
+    fireEvent.change(within(structured).getByLabelText('Structured command type'), {
+      target: { value: 'record_scoring_judgment' }
+    });
+
+    const runner = within(structured).getByLabelText('Runner (optional)');
+    await waitFor(() => expect(within(runner).getByRole('option', { name: '#73 Public away courtesy runner' })).toHaveValue(courtesyId));
+    expect(within(runner).queryByRole('option', { name: /PRIVATE HOME COURTESY COLLISION/ })).not.toBeInTheDocument();
+  });
+
   it('limits a current-pitcher substitution to inherited or explicit P assignment', () => {
     const snapshot = buildSnapshot();
     renderScorebook(snapshot, createClient(snapshot));
@@ -4438,6 +4510,70 @@ describe('DiamondScorebook', () => {
         })
       })
     );
+  });
+
+  it('uses the event batting side for correction labels when managed candidates reuse opponent IDs', async () => {
+    const fixture = createClient();
+    const batterId = 'shared-opponent-batter';
+    const runnerId = 'shared-opponent-runner';
+    const pitcherId = 'managed-home-pitcher';
+    const history = buildPrivateHistoryItems();
+    history[6] = buildPrivateEvent('event-7', 7, {
+      payload: {
+        batterId,
+        pitcherId,
+        result: 'double',
+        batterAdvance: { to: 'second', cause: 'batted_ball', responsiblePitcherId: pitcherId },
+        runnerAdvances: [
+          {
+            runnerId,
+            from: 'first',
+            to: 'third',
+            cause: 'batted_ball',
+            responsiblePitcherId: pitcherId
+          }
+        ],
+        outsOnPlay: 0,
+        runsBattedIn: 0
+      }
+    });
+    fixture.loadPrivateHistory.mockResolvedValue(buildPrivateHistoryWindow(history, 7));
+    const snapshot = buildSnapshot({
+      managedSide: 'home',
+      lineups: {
+        home: [{ playerId: pitcherId, name: 'Managed pitcher', number: '5', slot: 1 }],
+        away: [
+          { playerId: batterId, name: 'Public opponent batter', number: '21', slot: 1 },
+          { playerId: runnerId, name: 'Public opponent runner', number: '22', slot: 2 }
+        ]
+      },
+      defense: {
+        home: { P: { playerId: pitcherId, name: 'Managed pitcher', number: '5' } },
+        away: {}
+      },
+      availablePlayers: {
+        home: [
+          { playerId: batterId, name: 'PRIVATE MANAGED BATTER', number: 'PRIVATE-91' },
+          { playerId: runnerId, name: 'PRIVATE MANAGED RUNNER', number: 'PRIVATE-92' },
+          { playerId: pitcherId, name: 'Managed pitcher', number: '5' }
+        ],
+        away: [
+          { playerId: batterId, name: 'Public opponent batter', number: '21' },
+          { playerId: runnerId, name: 'Public opponent runner', number: '22' }
+        ]
+      }
+    });
+
+    renderScorebook(snapshot, fixture);
+    fireEvent.click(screen.getByRole('button', { name: 'Load recent private history' }));
+    await screen.findByText(/Complete private history: 7 canonical events/);
+    fireEvent.change(screen.getByLabelText('Correction reason'), { target: { value: 'Correct the opponent double.' } });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Replace PA' })[0]!);
+
+    const review = screen.getByRole('dialog', { name: 'Review Double replacement' });
+    expect(within(review).getByLabelText('Batter · #21 Public opponent batter destination')).toBeInTheDocument();
+    expect(within(review).getByLabelText('First · #22 Public opponent runner destination')).toBeInTheDocument();
+    expect(within(review).queryByText(/PRIVATE MANAGED/)).not.toBeInTheDocument();
   });
 
   it('retargets every historical runner in a home-run correction without matching against current bases', async () => {

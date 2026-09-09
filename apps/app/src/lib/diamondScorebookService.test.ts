@@ -147,6 +147,19 @@ function buildRawSnapshot(revision = 3) {
   };
 }
 
+type MutableRawSnapshotFixture = {
+  state: Record<string, unknown> & {
+    inning: Record<string, unknown>;
+    lineups: Record<
+      'home' | 'away',
+      { battingOrder: Array<Record<string, unknown>>; defense: Record<string, string>; courtesyRunnerIds?: unknown[] }
+    >;
+    bases: Record<'first' | 'second' | 'third', unknown>;
+  };
+  presentation: Record<string, unknown>;
+  [key: string]: unknown;
+};
+
 function buildQueueIdentity(overrides: Partial<DiamondQueueIdentity> = {}): DiamondQueueIdentity {
   return {
     teamId: 'team-1',
@@ -416,6 +429,141 @@ describe('diamondScorebookService', () => {
     expect(snapshot.availablePlayers.home.map((player) => player.name)).toEqual(['Taylor Gray', 'Avery Carter', 'Jordan Lee']);
     expect(snapshot.defensiveLineup.map((player) => player.name)).toEqual(['Morgan Diaz']);
     expect(snapshot.recentPlays[0]?.eventId).toBe('event-3');
+  });
+
+  describe('side-aware Diamond snapshot metadata', () => {
+    it.each([
+      { managedSide: 'home', opponentSide: 'away', half: 'top' },
+      { managedSide: 'away', opponentSide: 'home', half: 'bottom' }
+    ] as const)(
+      'does not enrich opponent lineup, defense, or courtesy placements from colliding $managedSide managed candidates',
+      ({ managedSide, opponentSide, half }) => {
+        const raw = buildRawSnapshot() as unknown as MutableRawSnapshotFixture;
+        const collisionId = 'shared-collision-id';
+        const managedName = `PRIVATE ${managedSide.toUpperCase()} ROSTER NAME`;
+        const opponentName = `Public ${opponentSide} player`;
+        raw.state.inning.half = half;
+        raw.state.lineups = {
+          home: {
+            battingOrder:
+              opponentSide === 'home'
+                ? [
+                    {
+                      slot: 1,
+                      starterPlayerId: collisionId,
+                      activePlayerId: collisionId,
+                      displayName: opponentName,
+                      jerseyNumber: '21',
+                      substitutions: [collisionId]
+                    }
+                  ]
+                : [{ slot: 1, activePlayerId: 'managed-home', displayName: 'Managed home', jerseyNumber: '1' }],
+            defense: opponentSide === 'home' ? { P: collisionId } : { P: 'managed-home' },
+            courtesyRunnerIds: opponentSide === 'home' ? [collisionId] : []
+          },
+          away: {
+            battingOrder:
+              opponentSide === 'away'
+                ? [
+                    {
+                      slot: 1,
+                      starterPlayerId: collisionId,
+                      activePlayerId: collisionId,
+                      displayName: opponentName,
+                      jerseyNumber: '21',
+                      substitutions: [collisionId]
+                    }
+                  ]
+                : [{ slot: 1, activePlayerId: 'managed-away', displayName: 'Managed away', jerseyNumber: '2' }],
+            defense: opponentSide === 'away' ? { P: collisionId } : { P: 'managed-away' },
+            courtesyRunnerIds: opponentSide === 'away' ? [collisionId] : []
+          }
+        };
+        raw.state.bases.first = {
+          runnerId: collisionId,
+          chargedToPitcherId: managedSide === 'home' ? 'managed-home' : 'managed-away',
+          courtesyForPlayerId: collisionId,
+          reachedOnEventId: 'event-courtesy'
+        };
+        raw.presentation = {
+          ...raw.presentation,
+          managedSide,
+          bases: { first: { playerId: collisionId } },
+          availablePlayers: {
+            home: [
+              {
+                playerId: collisionId,
+                name: managedSide === 'home' ? managedName : opponentName,
+                number: managedSide === 'home' ? 'PRIVATE-99' : '21'
+              }
+            ],
+            away: [
+              {
+                playerId: collisionId,
+                name: managedSide === 'away' ? managedName : opponentName,
+                number: managedSide === 'away' ? 'PRIVATE-99' : '21'
+              }
+            ]
+          }
+        };
+
+        const snapshot = normalizeDiamondSnapshot(raw);
+
+        expect(snapshot.lineups[opponentSide][0]).toMatchObject({
+          playerId: collisionId,
+          name: opponentName,
+          number: '21'
+        });
+        expect(snapshot.defense[opponentSide].P).toMatchObject({
+          playerId: collisionId,
+          name: opponentName,
+          number: '21'
+        });
+        expect(snapshot.bases.first).toMatchObject({
+          playerId: collisionId,
+          name: opponentName,
+          number: '21'
+        });
+        expect(snapshot.currentBatter).toMatchObject({
+          playerId: collisionId,
+          name: opponentName,
+          number: '21'
+        });
+        expect(snapshot.courtesyRunnerIds?.[opponentSide]).toEqual([collisionId]);
+        expect(snapshot.availablePlayers[managedSide][0]).toMatchObject({
+          playerId: collisionId,
+          name: managedName,
+          number: 'PRIVATE-99'
+        });
+      }
+    );
+
+    it('preserves inline current-batter metadata when no same-side directory entry exists', () => {
+      const raw = buildRawSnapshot() as unknown as MutableRawSnapshotFixture;
+      raw.state.inning.half = 'top';
+      raw.state.lineups.away = { battingOrder: [], defense: {} };
+      raw.state.currentBatter = {
+        playerId: 'inline-away-batter',
+        name: 'Inline away batter',
+        number: '31'
+      };
+      raw.presentation = {
+        ...raw.presentation,
+        battingLineup: [],
+        currentBatter: {
+          playerId: 'inline-away-batter',
+          name: 'Inline away batter',
+          number: '31'
+        },
+        availablePlayers: { home: [], away: [] }
+      };
+
+      expect(normalizeDiamondSnapshot(raw).currentBatter).toEqual({
+        playerId: 'inline-away-batter',
+        name: 'Inline away batter',
+        number: '31'
+      });
+    });
   });
 
   it('loads the exact authoritative current-half run total from the canonical inning key', async () => {
