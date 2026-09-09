@@ -30,7 +30,26 @@ const {
   MAX_MANAGER_STAT_SUSTAINED_REQUESTS_PER_WINDOW,
   MAX_MANAGER_STAT_SUSTAINED_VERIFICATION_UNITS_PER_WINDOW,
   MAX_MANAGER_STAT_VERIFICATION_UNITS_PER_WINDOW,
+  MAX_CONCURRENT_PRIVATE_HISTORY_GLOBAL_REQUESTS,
+  MAX_CONCURRENT_PRIVATE_HISTORY_REQUESTS,
+  MAX_PRIVATE_HISTORY_GLOBAL_REQUESTS_PER_WINDOW,
+  MAX_PRIVATE_HISTORY_GLOBAL_SUSTAINED_READ_UNITS_PER_WINDOW,
+  MAX_PRIVATE_HISTORY_GLOBAL_SUSTAINED_REQUESTS_PER_WINDOW,
+  MAX_PRIVATE_HISTORY_READ_UNITS_PER_WINDOW,
+  MAX_PRIVATE_HISTORY_RECENT_ADMISSIONS,
+  MAX_PRIVATE_HISTORY_REPORT_PAGES,
+  MAX_PRIVATE_HISTORY_REQUESTS_PER_WINDOW,
+  MAX_PRIVATE_HISTORY_SUSTAINED_REQUESTS_PER_WINDOW,
+  MAX_PRIVATE_HISTORY_SUSTAINED_READ_UNITS_PER_WINDOW,
   MAX_PRIVATE_EVENT_PAGE_BYTES,
+  PRIVATE_HISTORY_ADMISSION_DEDUPE_MS,
+  PRIVATE_HISTORY_CONTROL_QUARANTINE_MS,
+  PRIVATE_HISTORY_FIXED_READ_UNITS,
+  PRIVATE_HISTORY_RATE_WINDOW_MS,
+  PRIVATE_HISTORY_RECEIPT_RETENTION_MS,
+  PRIVATE_HISTORY_REPORT_RETRY_ALLOWANCE,
+  PRIVATE_HISTORY_REQUEST_LEASE_MS,
+  PRIVATE_HISTORY_SUSTAINED_WINDOW_MS,
   createDiamondScorebookHandlers,
   paths,
 } = require("../diamond-scorebook-handlers.cjs");
@@ -87,7 +106,13 @@ class FakeDocumentReference {
   }
 
   get() {
-    return Promise.resolve(this.database._documentSnapshot(this));
+    const snapshot = this.database._documentSnapshot(this);
+    if (typeof this.database.documentAsyncHook === "function") {
+      return Promise.resolve(
+        this.database.documentAsyncHook(this, snapshot),
+      ).then((override) => override ?? snapshot);
+    }
+    return Promise.resolve(snapshot);
   }
 }
 
@@ -241,6 +266,7 @@ class FakeFirestore {
     this.transactionQueue = Promise.resolve();
     this.queryHook = null;
     this.queryAsyncHook = null;
+    this.documentAsyncHook = null;
     this.bulkGetHook = null;
     this.bulkGetCalls = 0;
     this.transactionReadBatches = [];
@@ -799,6 +825,18 @@ function managerStatReadControl(harness, type) {
 
 function commandHistoryAdmission(harness) {
   return managerStatReadControl(harness, "diamond-command-history-admission");
+}
+
+function privateHistoryControls(harness, type = null) {
+  return managerStatReadControls(harness, type).filter(({ value }) =>
+    String(value?.type || "").startsWith("diamond-private-history-read-"),
+  );
+}
+
+function privateHistoryControl(harness, type) {
+  const controls = privateHistoryControls(harness, type);
+  assert.equal(controls.length, 1, `expected one ${type} control`);
+  return controls[0];
 }
 
 function transactionControlWrite(transaction, type, status = undefined) {
@@ -5279,6 +5317,1298 @@ describe("Diamond scorebook handler factory", () => {
     );
   });
 
+  it("rejects a concurrent identical private-history read before event fan-out", async () => {
+    const harness = createHarness();
+    await activate(harness);
+    const resourcePaths = paths("team-1", "game-1");
+    let releaseBlockedReads;
+    const blockedReads = new Promise((resolve) => {
+      releaseBlockedReads = resolve;
+    });
+    let eventReadCount = 0;
+    harness.firestore.queryAsyncHook = async (query) => {
+      if (query.path !== resourcePaths.events) return;
+      eventReadCount += 1;
+      if (eventReadCount <= 2) await blockedReads;
+    };
+    const request = {
+      teamId: "team-1",
+      gameId: "game-1",
+      visibility: "private",
+      limit: 200,
+    };
+    const first = harness.handlers.listDiamondEvents(
+      request,
+      harness.managerContext,
+    );
+    while (eventReadCount < 1) await new Promise(setImmediate);
+
+    try {
+      await assert.rejects(
+        harness.handlers.listDiamondEvents(request, harness.managerContext),
+        (error) =>
+          error.code === "resource-exhausted" &&
+          error.details?.reason === "private-history-duplicate-active",
+      );
+      assert.equal(eventReadCount, 1);
+    } finally {
+      releaseBlockedReads();
+    }
+    await first;
+  });
+
+  it("bounds concurrent distinct private-history reads before event fan-out", async () => {
+    const harness = createHarness();
+    await activate(harness);
+    const resourcePaths = paths("team-1", "game-1");
+    let releaseBlockedReads;
+    const blockedReads = new Promise((resolve) => {
+      releaseBlockedReads = resolve;
+    });
+    let eventReadCount = 0;
+    harness.firestore.queryAsyncHook = async (query) => {
+      if (query.path !== resourcePaths.events) return;
+      eventReadCount += 1;
+      if (eventReadCount <= 2) await blockedReads;
+    };
+    const request = {
+      teamId: "team-1",
+      gameId: "game-1",
+      visibility: "private",
+      limit: 200,
+    };
+    const first = harness.handlers.listDiamondEvents(
+      request,
+      harness.managerContext,
+    );
+    const second = harness.handlers.listDiamondEvents(
+      { ...request, cursor: "1" },
+      harness.managerContext,
+    );
+    while (eventReadCount < 2) await new Promise(setImmediate);
+
+    try {
+      await assert.rejects(
+        harness.handlers.listDiamondEvents(
+          { ...request, limit: 1 },
+          harness.managerContext,
+        ),
+        (error) =>
+          error.code === "resource-exhausted" &&
+          error.details?.reason === "private-history-concurrency-limited",
+      );
+      assert.equal(eventReadCount, 2);
+    } finally {
+      releaseBlockedReads();
+    }
+    await Promise.all([first, second]);
+  });
+
+  it("persists hash-only bounded controls before private-history work and releases them on success", async () => {
+    const harness = createHarness();
+    await activate(harness);
+    const resourcePaths = paths("team-1", "game-1");
+    const queryReadsBefore = harness.firestore.queryReads.length;
+    const authReadsBefore = harness.authGetUserCalls.length;
+    harness.firestore.queryAsyncHook = async (query) => {
+      if (query.path !== resourcePaths.events) return;
+      const scope = privateHistoryControl(
+        harness,
+        "diamond-private-history-read-scope",
+      ).value;
+      const admission = privateHistoryControl(
+        harness,
+        "diamond-private-history-read-admission",
+      ).value;
+      assert.equal(scope.activeAttempts.length, 1);
+      assert.equal(admission.activeAttempts.length, 1);
+      assert.equal(
+        scope.activeAttempts[0].requestHash,
+        admission.activeAttempts[0].requestHash,
+      );
+    };
+
+    const page = await harness.handlers.listDiamondEvents(
+      {
+        teamId: "team-1",
+        gameId: "game-1",
+        visibility: "private",
+        limit: 200,
+      },
+      harness.managerContext,
+    );
+    assert.equal(page.complete, true);
+    const privateHistoryQueries =
+      harness.firestore.queryReads.slice(queryReadsBefore);
+    assert.deepEqual(
+      privateHistoryQueries.map(({ path, maximum }) => ({ path, maximum })),
+      [{ path: resourcePaths.events, maximum: 201 }],
+    );
+    assert.equal(
+      privateHistoryQueries.some(({ path }) => path.includes("/players")),
+      false,
+    );
+    assert.equal(harness.authGetUserCalls.length, authReadsBefore + 2);
+    // 32 + limit conservatively covers 4 reservation-control reads, 5 initial
+    // access/root reads, limit+1 event reads, 14 completion-control/access
+    // reads, and 4 fail-closed release reads after ambiguous attempts.
+    assert.ok(PRIVATE_HISTORY_FIXED_READ_UNITS >= 28);
+
+    const controls = privateHistoryControls(harness);
+    assert.equal(controls.length, 2);
+    const serialized = JSON.stringify(controls);
+    assert.doesNotMatch(serialized, /manager-1|team-1|game-1/);
+    for (const { path, value } of controls) {
+      assert.match(
+        path,
+        /^diamondManagerStatReadControls\/history-(?:admission|scope)-[0-9a-f]{64}$/,
+      );
+      assert.match(value.scopeHash, /^sha256:[0-9a-f]{64}$/);
+      assert.ok(value.expiresAt instanceof Date);
+      assert.ok(Buffer.byteLength(JSON.stringify(value), "utf8") < 100 * 1024);
+      assert.deepEqual(value.activeAttempts, []);
+    }
+    const admission = privateHistoryControl(
+      harness,
+      "diamond-private-history-read-admission",
+    ).value;
+    const scope = privateHistoryControl(
+      harness,
+      "diamond-private-history-read-scope",
+    ).value;
+    assert.equal(admission.requestCount, 1);
+    assert.equal(scope.requestCount, 1);
+    assert.equal(admission.readUnits, PRIVATE_HISTORY_FIXED_READ_UNITS + 200);
+    assert.equal(scope.readUnits, admission.readUnits);
+    assert.equal(
+      admission.recentAttempts.length,
+      admission.activeAttempts.length,
+    );
+    assert.equal(scope.recentTerminals.length, 1);
+    assert.equal(scope.recentTerminals[0].status, "complete");
+    assert.match(
+      scope.recentTerminals[0].responseHash,
+      /^sha256:[0-9a-f]{64}$/,
+    );
+  });
+
+  it("does not admit or persist private-history controls on the public replay path", async () => {
+    const harness = createHarness();
+    await activate(harness);
+    const publicGame = await harness.handlers.getPublicDiamondGame({
+      teamId: "team-1",
+      gameId: "game-1",
+      limit: 200,
+    });
+    assert.equal(publicGame.complete, true);
+    assert.equal(privateHistoryControls(harness).length, 0);
+  });
+
+  it("fails before private-history controls or reads when secure randomness is unavailable", async () => {
+    let secureRandomAvailable = true;
+    let randomIndex = 80_000;
+    const harness = createHarness({
+      random: () =>
+        secureRandomAvailable ? makeUuid(randomIndex++) : "predictable-attempt",
+    });
+    await activate(harness);
+    secureRandomAvailable = false;
+    const eventReadsBefore = harness.firestore.queryReads.filter(
+      ({ path }) => path === paths("team-1", "game-1").events,
+    ).length;
+
+    await assert.rejects(
+      harness.handlers.listDiamondEvents(
+        {
+          teamId: "team-1",
+          gameId: "game-1",
+          visibility: "private",
+          limit: 200,
+        },
+        harness.managerContext,
+      ),
+      (error) => error.code === "unavailable",
+    );
+    assert.equal(privateHistoryControls(harness).length, 0);
+    assert.equal(
+      harness.firestore.queryReads.filter(
+        ({ path }) => path === paths("team-1", "game-1").events,
+      ).length,
+      eventReadsBefore,
+    );
+  });
+
+  it("releases unauthorized private-history reservations without reading events", async () => {
+    const harness = createHarness({
+      authUsers: {
+        outsider: {
+          uid: "outsider",
+          disabled: false,
+          email: "outsider@example.com",
+          emailVerified: true,
+        },
+      },
+    });
+    await activate(harness);
+    const resourcePaths = paths("team-1", "game-1");
+    await assert.rejects(
+      harness.handlers.listDiamondEvents(
+        {
+          teamId: "team-1",
+          gameId: "game-1",
+          visibility: "private",
+          limit: 200,
+        },
+        { auth: { uid: "outsider" } },
+      ),
+      (error) => error.code === "permission-denied",
+    );
+    assert.equal(
+      harness.firestore.queryReads.some(
+        ({ path }) => path === resourcePaths.events,
+      ),
+      false,
+    );
+    const scope = privateHistoryControl(
+      harness,
+      "diamond-private-history-read-scope",
+    ).value;
+    const admission = privateHistoryControl(
+      harness,
+      "diamond-private-history-read-admission",
+    ).value;
+    assert.deepEqual(scope.activeAttempts, []);
+    assert.deepEqual(admission.activeAttempts, []);
+    assert.equal(scope.recentTerminals.at(-1).status, "failed");
+  });
+
+  it("bounds caller-wide concurrency across distinct game scopes before history fan-out", async () => {
+    const harness = createHarness();
+    await activate(harness);
+    const originalPaths = paths("team-1", "game-1");
+    const originalGame = harness.firestore.read(originalPaths.game);
+    const originalRoot = harness.firestore.read(originalPaths.scorebook);
+    const originalEventPath = [...harness.firestore.documents.keys()].find(
+      (path) => path.startsWith(`${originalPaths.events}/`),
+    );
+    const originalEvent = harness.firestore.read(originalEventPath);
+    for (
+      let index = 2;
+      index <= MAX_CONCURRENT_PRIVATE_HISTORY_GLOBAL_REQUESTS + 1;
+      index += 1
+    ) {
+      const gameId = `game-${String(index)}`;
+      const resourcePaths = paths("team-1", gameId);
+      harness.firestore.seed(resourcePaths.game, {
+        ...originalGame,
+        id: gameId,
+      });
+      harness.firestore.seed(resourcePaths.scorebook, {
+        ...originalRoot,
+        gameId,
+      });
+      harness.firestore.seed(resourcePaths.event(originalEvent.eventId), {
+        ...originalEvent,
+      });
+    }
+    let releaseBlockedReads;
+    const blockedReads = new Promise((resolve) => {
+      releaseBlockedReads = resolve;
+    });
+    let eventReadCount = 0;
+    harness.firestore.queryAsyncHook = async (query) => {
+      if (!query.path.endsWith("/diamondScorebooks/v2/events")) return;
+      eventReadCount += 1;
+      if (eventReadCount <= MAX_CONCURRENT_PRIVATE_HISTORY_GLOBAL_REQUESTS) {
+        await blockedReads;
+      }
+    };
+    const active = Array.from(
+      { length: MAX_CONCURRENT_PRIVATE_HISTORY_GLOBAL_REQUESTS },
+      (_, index) =>
+        harness.handlers.listDiamondEvents(
+          {
+            teamId: "team-1",
+            gameId: `game-${String(index + 1)}`,
+            visibility: "private",
+            limit: 200,
+          },
+          harness.managerContext,
+        ),
+    );
+    while (eventReadCount < MAX_CONCURRENT_PRIVATE_HISTORY_GLOBAL_REQUESTS) {
+      await new Promise(setImmediate);
+    }
+    try {
+      await assert.rejects(
+        harness.handlers.listDiamondEvents(
+          {
+            teamId: "team-1",
+            gameId: `game-${String(MAX_CONCURRENT_PRIVATE_HISTORY_GLOBAL_REQUESTS + 1)}`,
+            visibility: "private",
+            limit: 200,
+          },
+          harness.managerContext,
+        ),
+        (error) =>
+          error.code === "resource-exhausted" &&
+          error.details?.reason ===
+            "private-history-global-concurrency-limited",
+      );
+      assert.equal(
+        eventReadCount,
+        MAX_CONCURRENT_PRIVATE_HISTORY_GLOBAL_REQUESTS,
+      );
+    } finally {
+      releaseBlockedReads();
+    }
+    await Promise.all(active);
+  });
+
+  it("preserves active global lease evidence while completed game scopes cycle", async () => {
+    const harness = createHarness();
+    await activate(harness);
+    const originalPaths = paths("team-1", "game-1");
+    const originalGame = harness.firestore.read(originalPaths.game);
+    const originalRoot = harness.firestore.read(originalPaths.scorebook);
+    const originalEventPath = [...harness.firestore.documents.keys()].find(
+      (path) => path.startsWith(`${originalPaths.events}/`),
+    );
+    const originalEvent = harness.firestore.read(originalEventPath);
+    const completedScopeCount = MAX_PRIVATE_HISTORY_RECENT_ADMISSIONS + 3;
+    for (let index = 2; index <= completedScopeCount + 1; index += 1) {
+      const gameId = `game-${String(index)}`;
+      const resourcePaths = paths("team-1", gameId);
+      harness.firestore.seed(resourcePaths.game, {
+        ...originalGame,
+        id: gameId,
+      });
+      harness.firestore.seed(resourcePaths.scorebook, {
+        ...originalRoot,
+        gameId,
+      });
+      harness.firestore.seed(resourcePaths.event(originalEvent.eventId), {
+        ...originalEvent,
+      });
+    }
+    let releaseLongRead;
+    const longReadBlocked = new Promise((resolve) => {
+      releaseLongRead = resolve;
+    });
+    let longReadStarted = false;
+    harness.firestore.queryAsyncHook = async (query) => {
+      if (query.path !== originalPaths.events) return;
+      longReadStarted = true;
+      await longReadBlocked;
+    };
+    const longRead = harness.handlers.listDiamondEvents(
+      {
+        teamId: "team-1",
+        gameId: "game-1",
+        visibility: "private",
+        limit: 200,
+      },
+      harness.managerContext,
+    );
+    while (!longReadStarted) await new Promise(setImmediate);
+
+    for (let index = 2; index <= completedScopeCount + 1; index += 1) {
+      const page = await harness.handlers.listDiamondEvents(
+        {
+          teamId: "team-1",
+          gameId: `game-${String(index)}`,
+          visibility: "private",
+          limit: 200,
+        },
+        harness.managerContext,
+      );
+      assert.equal(page.complete, true);
+    }
+    let admission = privateHistoryControl(
+      harness,
+      "diamond-private-history-read-admission",
+    ).value;
+    assert.equal(admission.activeAttempts.length, 1);
+    assert.equal(admission.recentAttempts.length, 1);
+    assert.equal(
+      admission.activeAttempts[0].attemptHash,
+      admission.recentAttempts[0].attemptHash,
+    );
+    assert.equal(
+      admission.activeAttempts[0].startedAtMs,
+      admission.recentAttempts[0].admittedAtMs,
+    );
+
+    releaseLongRead();
+    const completed = await longRead;
+    assert.equal(completed.complete, true);
+    admission = privateHistoryControl(
+      harness,
+      "diamond-private-history-read-admission",
+    ).value;
+    assert.deepEqual(admission.activeAttempts, []);
+    assert.deepEqual(admission.recentAttempts, []);
+  });
+
+  it("admits the 1,600-page byte-packed report envelope plus retry recovery", async () => {
+    let nowMs = 1_750_000_000_000;
+    const startedAtMs = nowMs;
+    const harness = createHarness({ clock: () => nowMs });
+    await activate(harness);
+    const resourcePaths = paths("team-1", "game-1");
+    const firstEventPath = [...harness.firestore.documents.keys()].find(
+      (path) => path.startsWith(`${resourcePaths.events}/`),
+    );
+    const firstEvent = harness.firestore.read(firstEventPath);
+    const provenCursorPages = 8;
+    for (let sequence = 2; sequence <= provenCursorPages; sequence += 1) {
+      harness.firestore.seed(
+        resourcePaths.event(`pagination-${String(sequence).padStart(5, "0")}`),
+        {
+          ...firstEvent,
+          eventId: `pagination-${String(sequence).padStart(5, "0")}`,
+          sequence,
+          revision: sequence,
+          serverTimestampMs: nowMs + sequence,
+        },
+      );
+    }
+    const root = harness.firestore.read(resourcePaths.scorebook);
+    harness.firestore.seed(resourcePaths.scorebook, {
+      ...root,
+      checkpoint: {
+        ...root.checkpoint,
+        sequence: provenCursorPages,
+        state: {
+          ...root.checkpoint.state,
+          revision: provenCursorPages,
+        },
+      },
+    });
+    const request = {
+      teamId: "team-1",
+      gameId: "game-1",
+      visibility: "private",
+      limit: 1,
+    };
+    assert.equal(MAX_PRIVATE_HISTORY_REPORT_PAGES, 1_600);
+    assert.equal(PRIVATE_HISTORY_REPORT_RETRY_ALLOWANCE, 2);
+    assert.equal(MAX_PRIVATE_HISTORY_REQUESTS_PER_WINDOW, 256);
+    assert.ok(
+      MAX_PRIVATE_HISTORY_REQUESTS_PER_WINDOW <
+        MAX_PRIVATE_HISTORY_SUSTAINED_REQUESTS_PER_WINDOW,
+    );
+    assert.equal(
+      MAX_PRIVATE_HISTORY_SUSTAINED_REQUESTS_PER_WINDOW,
+      MAX_PRIVATE_HISTORY_REPORT_PAGES + PRIVATE_HISTORY_REPORT_RETRY_ALLOWANCE,
+    );
+    assert.equal(
+      MAX_PRIVATE_HISTORY_READ_UNITS_PER_WINDOW,
+      MAX_PRIVATE_HISTORY_REQUESTS_PER_WINDOW *
+        (PRIVATE_HISTORY_FIXED_READ_UNITS + 200),
+    );
+    assert.equal(
+      MAX_PRIVATE_HISTORY_SUSTAINED_READ_UNITS_PER_WINDOW,
+      MAX_PRIVATE_HISTORY_SUSTAINED_REQUESTS_PER_WINDOW *
+        (PRIVATE_HISTORY_FIXED_READ_UNITS + 200),
+    );
+    assert.equal(
+      MAX_PRIVATE_HISTORY_GLOBAL_SUSTAINED_REQUESTS_PER_WINDOW,
+      MAX_PRIVATE_HISTORY_SUSTAINED_REQUESTS_PER_WINDOW * 2,
+    );
+    assert.equal(
+      MAX_PRIVATE_HISTORY_GLOBAL_SUSTAINED_READ_UNITS_PER_WINDOW,
+      MAX_PRIVATE_HISTORY_GLOBAL_SUSTAINED_REQUESTS_PER_WINDOW *
+        (PRIVATE_HISTORY_FIXED_READ_UNITS + 200),
+    );
+
+    let cursor = null;
+    for (let sequence = 1; sequence <= provenCursorPages; sequence += 1) {
+      const page = await harness.handlers.listDiamondEvents(
+        { ...request, ...(cursor ? { cursor } : {}) },
+        harness.managerContext,
+      );
+      assert.equal(page.complete, true);
+      assert.equal(page.items.length, 1);
+      assert.equal(page.items[0].sequence, sequence);
+      cursor = page.nextCursor;
+    }
+    assert.equal(cursor, null);
+
+    // Seed the already-validated bounded control at the mathematical worst
+    // case for all 1,600 prior pages. The two real max-cost requests below
+    // prove both count and read-unit boundaries admit retry recovery exactly.
+    let admissionControl = privateHistoryControl(
+      harness,
+      "diamond-private-history-read-admission",
+    );
+    let scopeControl = privateHistoryControl(
+      harness,
+      "diamond-private-history-read-scope",
+    );
+    const reportReadUnits =
+      MAX_PRIVATE_HISTORY_REPORT_PAGES *
+      (PRIVATE_HISTORY_FIXED_READ_UNITS + 200);
+    harness.firestore.seed(admissionControl.path, {
+      ...admissionControl.value,
+      requestCount: 200,
+      readUnits: 200 * (PRIVATE_HISTORY_FIXED_READ_UNITS + 200),
+      sustainedRequestCount: MAX_PRIVATE_HISTORY_REPORT_PAGES,
+      sustainedReadUnits: reportReadUnits,
+    });
+    harness.firestore.seed(scopeControl.path, {
+      ...scopeControl.value,
+      requestCount: 200,
+      readUnits: 200 * (PRIVATE_HISTORY_FIXED_READ_UNITS + 200),
+      sustainedRequestCount: MAX_PRIVATE_HISTORY_REPORT_PAGES,
+      sustainedReadUnits: reportReadUnits,
+    });
+
+    const recoveryRequest = { ...request, limit: 200 };
+    for (
+      let attempt = 0;
+      attempt < PRIVATE_HISTORY_REPORT_RETRY_ALLOWANCE;
+      attempt += 1
+    ) {
+      const recovery = await harness.handlers.listDiamondEvents(
+        recoveryRequest,
+        harness.managerContext,
+      );
+      assert.equal(recovery.items.length, provenCursorPages);
+      assert.equal(recovery.collectionComplete, true);
+    }
+
+    let scope = privateHistoryControl(
+      harness,
+      "diamond-private-history-read-scope",
+    ).value;
+    assert.equal(
+      scope.requestCount,
+      200 + PRIVATE_HISTORY_REPORT_RETRY_ALLOWANCE,
+    );
+    assert.equal(
+      scope.readUnits,
+      200 * (PRIVATE_HISTORY_FIXED_READ_UNITS + 200) +
+        PRIVATE_HISTORY_REPORT_RETRY_ALLOWANCE *
+          (PRIVATE_HISTORY_FIXED_READ_UNITS + 200),
+    );
+    assert.ok(scope.readUnits < MAX_PRIVATE_HISTORY_READ_UNITS_PER_WINDOW);
+    assert.equal(
+      scope.sustainedReadUnits,
+      reportReadUnits +
+        PRIVATE_HISTORY_REPORT_RETRY_ALLOWANCE *
+          (PRIVATE_HISTORY_FIXED_READ_UNITS + 200),
+    );
+    assert.equal(
+      scope.sustainedReadUnits,
+      MAX_PRIVATE_HISTORY_SUSTAINED_READ_UNITS_PER_WINDOW,
+    );
+    const eventReadsAtSustainedLimit = harness.firestore.queryReads.filter(
+      ({ path }) => path === resourcePaths.events,
+    ).length;
+    await assert.rejects(
+      harness.handlers.listDiamondEvents(request, harness.managerContext),
+      (error) =>
+        error.code === "resource-exhausted" &&
+        error.details?.reason === "private-history-rate-limited" &&
+        error.details?.retryAfterMs > 0,
+    );
+    assert.equal(
+      harness.firestore.queryReads.filter(
+        ({ path }) => path === resourcePaths.events,
+      ).length,
+      eventReadsAtSustainedLimit,
+    );
+    assert.equal(
+      scope.sustainedRequestCount,
+      MAX_PRIVATE_HISTORY_SUSTAINED_REQUESTS_PER_WINDOW,
+    );
+    nowMs = startedAtMs + PRIVATE_HISTORY_SUSTAINED_WINDOW_MS + 1;
+    await harness.handlers.listDiamondEvents(request, harness.managerContext);
+    scope = privateHistoryControl(
+      harness,
+      "diamond-private-history-read-scope",
+    ).value;
+    assert.equal(scope.requestCount, 1);
+    assert.equal(scope.sustainedRequestCount, 1);
+    assert.equal(scope.recentTerminals.length, 1);
+    const admission = privateHistoryControl(
+      harness,
+      "diamond-private-history-read-admission",
+    ).value;
+    assert.ok(
+      admission.recentAttempts.length <= MAX_PRIVATE_HISTORY_RECENT_ADMISSIONS,
+    );
+    assert.equal(
+      admission.recentAttempts.length,
+      admission.activeAttempts.length,
+    );
+  });
+
+  it("enforces the shorter per-game burst and resets it inside the sustained report window", async () => {
+    let nowMs = 1_750_000_000_000;
+    const harness = createHarness({ clock: () => nowMs });
+    await activate(harness);
+    const request = {
+      teamId: "team-1",
+      gameId: "game-1",
+      visibility: "private",
+      limit: 200,
+    };
+    await harness.handlers.listDiamondEvents(request, harness.managerContext);
+    const scopeControl = privateHistoryControl(
+      harness,
+      "diamond-private-history-read-scope",
+    );
+    harness.firestore.seed(scopeControl.path, {
+      ...scopeControl.value,
+      requestCount: MAX_PRIVATE_HISTORY_REQUESTS_PER_WINDOW,
+      readUnits: MAX_PRIVATE_HISTORY_READ_UNITS_PER_WINDOW,
+      sustainedRequestCount: MAX_PRIVATE_HISTORY_REQUESTS_PER_WINDOW,
+      sustainedReadUnits: MAX_PRIVATE_HISTORY_READ_UNITS_PER_WINDOW,
+    });
+    const authReadsBefore = harness.authGetUserCalls.length;
+    const eventReadsBefore = harness.firestore.queryReads.filter(
+      ({ path }) => path === paths("team-1", "game-1").events,
+    ).length;
+    await assert.rejects(
+      harness.handlers.listDiamondEvents(request, harness.managerContext),
+      (error) =>
+        error.code === "resource-exhausted" &&
+        error.details?.reason === "private-history-rate-limited",
+    );
+    assert.equal(harness.authGetUserCalls.length, authReadsBefore);
+    assert.equal(
+      harness.firestore.queryReads.filter(
+        ({ path }) => path === paths("team-1", "game-1").events,
+      ).length,
+      eventReadsBefore,
+    );
+
+    nowMs += PRIVATE_HISTORY_RATE_WINDOW_MS + 1;
+    const recovered = await harness.handlers.listDiamondEvents(
+      request,
+      harness.managerContext,
+    );
+    assert.equal(recovered.complete, true);
+    const scope = privateHistoryControl(
+      harness,
+      "diamond-private-history-read-scope",
+    ).value;
+    assert.equal(scope.requestCount, 1);
+    assert.equal(
+      scope.sustainedRequestCount,
+      MAX_PRIVATE_HISTORY_REQUESTS_PER_WINDOW + 1,
+    );
+  });
+
+  it("enforces the caller-global admission budget before creating another game scope", async () => {
+    const harness = createHarness();
+    await activate(harness);
+    await harness.handlers.listDiamondEvents(
+      {
+        teamId: "team-1",
+        gameId: "game-1",
+        visibility: "private",
+        limit: 200,
+      },
+      harness.managerContext,
+    );
+    const admissionControl = privateHistoryControl(
+      harness,
+      "diamond-private-history-read-admission",
+    );
+    harness.firestore.seed(admissionControl.path, {
+      ...admissionControl.value,
+      requestCount: MAX_PRIVATE_HISTORY_GLOBAL_REQUESTS_PER_WINDOW,
+      readUnits:
+        MAX_PRIVATE_HISTORY_GLOBAL_REQUESTS_PER_WINDOW *
+        (PRIVATE_HISTORY_FIXED_READ_UNITS + 200),
+      sustainedRequestCount: MAX_PRIVATE_HISTORY_GLOBAL_REQUESTS_PER_WINDOW,
+      sustainedReadUnits:
+        MAX_PRIVATE_HISTORY_GLOBAL_REQUESTS_PER_WINDOW *
+        (PRIVATE_HISTORY_FIXED_READ_UNITS + 200),
+    });
+    harness.firestore.setDocumentUpdateTime(
+      admissionControl.path,
+      1_750_000_000_000,
+    );
+    const controlCountBefore = privateHistoryControls(harness).length;
+    const authReadsBefore = harness.authGetUserCalls.length;
+    const eventReadsBefore = harness.firestore.queryReads.filter(({ path }) =>
+      path.endsWith("/diamondScorebooks/v2/events"),
+    ).length;
+    await assert.rejects(
+      harness.handlers.listDiamondEvents(
+        {
+          teamId: "rotated-target",
+          gameId: "rotated-game",
+          visibility: "private",
+          limit: 200,
+        },
+        harness.managerContext,
+      ),
+      (error) =>
+        error.code === "resource-exhausted" &&
+        error.details?.reason === "private-history-rate-limited",
+    );
+    assert.equal(privateHistoryControls(harness).length, controlCountBefore);
+    assert.equal(harness.authGetUserCalls.length, authReadsBefore);
+    assert.equal(
+      harness.firestore.queryReads.filter(({ path }) =>
+        path.endsWith("/diamondScorebooks/v2/events"),
+      ).length,
+      eventReadsBefore,
+    );
+    assert.equal(
+      harness.firestore.queryReads.some(({ path }) =>
+        path.includes("rotated-target"),
+      ),
+      false,
+    );
+  });
+
+  for (const directive of ["retry", "retry-after-commit"]) {
+    it(`reconciles one private-history admission after transaction ${directive}`, async () => {
+      const harness = createHarness();
+      await activate(harness);
+      let injected = false;
+      harness.firestore.transactionHook = (phase, transaction) => {
+        const admissionWrite = transactionControlWrite(
+          transaction,
+          "diamond-private-history-read-admission",
+        );
+        if (phase === "beforeCommit" && admissionWrite && !injected) {
+          injected = true;
+          return directive;
+        }
+        return undefined;
+      };
+      const page = await harness.handlers.listDiamondEvents(
+        {
+          teamId: "team-1",
+          gameId: "game-1",
+          visibility: "private",
+          limit: 200,
+        },
+        harness.managerContext,
+      );
+      assert.equal(page.complete, true);
+      assert.equal(injected, true);
+      const admission = privateHistoryControl(
+        harness,
+        "diamond-private-history-read-admission",
+      ).value;
+      const scope = privateHistoryControl(
+        harness,
+        "diamond-private-history-read-scope",
+      ).value;
+      assert.equal(admission.requestCount, 1);
+      assert.equal(scope.requestCount, 1);
+      assert.deepEqual(admission.activeAttempts, []);
+      assert.deepEqual(scope.activeAttempts, []);
+      assert.equal(scope.recentTerminals.length, 1);
+      assert.equal(
+        harness.firestore.queryReads.filter(
+          ({ path }) => path === paths("team-1", "game-1").events,
+        ).length,
+        1,
+      );
+    });
+  }
+
+  it("fails closed before history reads when reservation reconciliation stays ambiguous", async () => {
+    const harness = createHarness();
+    await activate(harness);
+    harness.firestore.transactionHook = (phase, transaction) => {
+      if (
+        phase === "beforeCommit" &&
+        transactionControlWrite(
+          transaction,
+          "diamond-private-history-read-admission",
+        )
+      ) {
+        return "retry";
+      }
+      return undefined;
+    };
+    await assert.rejects(
+      harness.handlers.listDiamondEvents(
+        {
+          teamId: "team-1",
+          gameId: "game-1",
+          visibility: "private",
+          limit: 200,
+        },
+        harness.managerContext,
+      ),
+      (error) =>
+        error.code === "unavailable" &&
+        error.details?.reason === "private-history-admission-unconfirmed",
+    );
+    assert.equal(privateHistoryControls(harness).length, 0);
+    assert.equal(
+      harness.firestore.queryReads.some(
+        ({ path }) => path === paths("team-1", "game-1").events,
+      ),
+      false,
+    );
+  });
+
+  it("reconciles an ambiguous private-history completion without duplicating work or quota", async () => {
+    const harness = createHarness();
+    await activate(harness);
+    let injected = false;
+    harness.firestore.transactionHook = (phase, transaction) => {
+      const completedScope = transactionControlWrite(
+        transaction,
+        "diamond-private-history-read-scope",
+      );
+      if (
+        phase === "beforeCommit" &&
+        completedScope?.value?.recentTerminals?.some(
+          ({ status }) => status === "complete",
+        ) &&
+        !injected
+      ) {
+        injected = true;
+        return "retry-after-commit";
+      }
+      return undefined;
+    };
+    const page = await harness.handlers.listDiamondEvents(
+      {
+        teamId: "team-1",
+        gameId: "game-1",
+        visibility: "private",
+        limit: 200,
+      },
+      harness.managerContext,
+    );
+    assert.equal(page.complete, true);
+    assert.equal(injected, true);
+    const admission = privateHistoryControl(
+      harness,
+      "diamond-private-history-read-admission",
+    ).value;
+    const scope = privateHistoryControl(
+      harness,
+      "diamond-private-history-read-scope",
+    ).value;
+    assert.equal(admission.requestCount, 1);
+    assert.equal(scope.requestCount, 1);
+    assert.deepEqual(admission.activeAttempts, []);
+    assert.deepEqual(scope.activeAttempts, []);
+    assert.equal(scope.recentTerminals.length, 1);
+    assert.equal(scope.recentTerminals[0].status, "complete");
+    assert.equal(
+      harness.firestore.queryReads.filter(
+        ({ path }) => path === paths("team-1", "game-1").events,
+      ).length,
+      1,
+    );
+  });
+
+  for (const failingStage of ["root", "events"]) {
+    it(`releases both private-history leases after a ${failingStage} read failure`, async () => {
+      const harness = createHarness();
+      await activate(harness);
+      const resourcePaths = paths("team-1", "game-1");
+      let failed = false;
+      harness.firestore.documentAsyncHook = async (reference) => {
+        if (
+          failingStage === "root" &&
+          reference.path === resourcePaths.scorebook &&
+          !failed
+        ) {
+          failed = true;
+          throw new Error("root read failed");
+        }
+      };
+      harness.firestore.queryAsyncHook = async (query) => {
+        if (
+          failingStage === "events" &&
+          query.path === resourcePaths.events &&
+          !failed
+        ) {
+          failed = true;
+          throw new Error("event read failed");
+        }
+      };
+      await assert.rejects(
+        harness.handlers.listDiamondEvents(
+          {
+            teamId: "team-1",
+            gameId: "game-1",
+            visibility: "private",
+            limit: 200,
+          },
+          harness.managerContext,
+        ),
+        (error) => error.code === "unavailable",
+      );
+      const admission = privateHistoryControl(
+        harness,
+        "diamond-private-history-read-admission",
+      ).value;
+      const scope = privateHistoryControl(
+        harness,
+        "diamond-private-history-read-scope",
+      ).value;
+      assert.deepEqual(admission.activeAttempts, []);
+      assert.deepEqual(scope.activeAttempts, []);
+      assert.equal(scope.recentTerminals.at(-1).status, "failed");
+      harness.firestore.documentAsyncHook = null;
+      harness.firestore.queryAsyncHook = null;
+      const recovered = await harness.handlers.listDiamondEvents(
+        {
+          teamId: "team-1",
+          gameId: "game-1",
+          visibility: "private",
+          limit: 200,
+        },
+        harness.managerContext,
+      );
+      assert.equal(recovered.complete, true);
+    });
+  }
+
+  it("keeps an ambiguously released failure closed while permitting a later bounded retry", async () => {
+    const harness = createHarness();
+    await activate(harness);
+    const resourcePaths = paths("team-1", "game-1");
+    let queryFailed = false;
+    harness.firestore.queryAsyncHook = async (query) => {
+      if (query.path === resourcePaths.events && !queryFailed) {
+        queryFailed = true;
+        throw new Error("history query failed");
+      }
+    };
+    let releaseAmbiguous = false;
+    harness.firestore.transactionHook = (phase, transaction) => {
+      const failedScope = transactionControlWrite(
+        transaction,
+        "diamond-private-history-read-scope",
+      );
+      if (
+        phase === "beforeCommit" &&
+        failedScope?.value?.recentTerminals?.some(
+          ({ status }) => status === "failed",
+        ) &&
+        !releaseAmbiguous
+      ) {
+        releaseAmbiguous = true;
+        return "retry-after-commit";
+      }
+      return undefined;
+    };
+    await assert.rejects(
+      harness.handlers.listDiamondEvents(
+        {
+          teamId: "team-1",
+          gameId: "game-1",
+          visibility: "private",
+          limit: 200,
+        },
+        harness.managerContext,
+      ),
+      (error) => error.code === "unavailable",
+    );
+    assert.equal(releaseAmbiguous, true);
+    let admission = privateHistoryControl(
+      harness,
+      "diamond-private-history-read-admission",
+    ).value;
+    let scope = privateHistoryControl(
+      harness,
+      "diamond-private-history-read-scope",
+    ).value;
+    assert.deepEqual(admission.activeAttempts, []);
+    assert.deepEqual(scope.activeAttempts, []);
+    assert.equal(scope.recentTerminals.length, 1);
+    assert.equal(scope.recentTerminals[0].status, "failed");
+
+    harness.firestore.queryAsyncHook = null;
+    await harness.handlers.listDiamondEvents(
+      {
+        teamId: "team-1",
+        gameId: "game-1",
+        visibility: "private",
+        limit: 200,
+      },
+      harness.managerContext,
+    );
+    admission = privateHistoryControl(
+      harness,
+      "diamond-private-history-read-admission",
+    ).value;
+    scope = privateHistoryControl(
+      harness,
+      "diamond-private-history-read-scope",
+    ).value;
+    assert.equal(admission.requestCount, 2);
+    assert.equal(scope.requestCount, 2);
+    assert.deepEqual(admission.activeAttempts, []);
+    assert.deepEqual(scope.activeAttempts, []);
+  });
+
+  it("does not reopen capacity when private-history failure release stays ambiguous", async () => {
+    const harness = createHarness();
+    await activate(harness);
+    const resourcePaths = paths("team-1", "game-1");
+    let eventReadCount = 0;
+    harness.firestore.queryAsyncHook = async (query) => {
+      if (query.path !== resourcePaths.events) return;
+      eventReadCount += 1;
+      throw new Error("history query failed");
+    };
+    harness.firestore.transactionHook = (phase, transaction) => {
+      const failedScope = transactionControlWrite(
+        transaction,
+        "diamond-private-history-read-scope",
+      );
+      if (
+        phase === "beforeCommit" &&
+        failedScope?.value?.recentTerminals?.some(
+          ({ status }) => status === "failed",
+        )
+      ) {
+        return "retry";
+      }
+      return undefined;
+    };
+    const request = {
+      teamId: "team-1",
+      gameId: "game-1",
+      visibility: "private",
+      limit: 200,
+    };
+    await assert.rejects(
+      harness.handlers.listDiamondEvents(request, harness.managerContext),
+      (error) => error.code === "unavailable",
+    );
+    let admission = privateHistoryControl(
+      harness,
+      "diamond-private-history-read-admission",
+    ).value;
+    let scope = privateHistoryControl(
+      harness,
+      "diamond-private-history-read-scope",
+    ).value;
+    assert.equal(admission.activeAttempts.length, 1);
+    assert.equal(admission.recentAttempts.length, 1);
+    assert.equal(scope.activeAttempts.length, 1);
+    assert.deepEqual(scope.recentTerminals, []);
+
+    harness.firestore.queryAsyncHook = null;
+    await assert.rejects(
+      harness.handlers.listDiamondEvents(request, harness.managerContext),
+      (error) =>
+        error.code === "resource-exhausted" &&
+        error.details?.reason === "private-history-duplicate-active",
+    );
+    assert.equal(eventReadCount, 1);
+    admission = privateHistoryControl(
+      harness,
+      "diamond-private-history-read-admission",
+    ).value;
+    scope = privateHistoryControl(
+      harness,
+      "diamond-private-history-read-scope",
+    ).value;
+    assert.equal(admission.activeAttempts.length, 1);
+    assert.equal(admission.recentAttempts.length, 1);
+    assert.equal(scope.activeAttempts.length, 1);
+  });
+
+  it("expires abandoned private-history leases and never returns the expired read", async () => {
+    let nowMs = 1_750_000_000_000;
+    const harness = createHarness({ clock: () => nowMs });
+    await activate(harness);
+    const resourcePaths = paths("team-1", "game-1");
+    let releaseFirstRead;
+    const firstReadBlocked = new Promise((resolve) => {
+      releaseFirstRead = resolve;
+    });
+    let eventReadCount = 0;
+    harness.firestore.queryAsyncHook = async (query) => {
+      if (query.path !== resourcePaths.events) return;
+      eventReadCount += 1;
+      if (eventReadCount === 1) await firstReadBlocked;
+    };
+    const request = {
+      teamId: "team-1",
+      gameId: "game-1",
+      visibility: "private",
+      limit: 200,
+    };
+    const expired = harness.handlers.listDiamondEvents(
+      request,
+      harness.managerContext,
+    );
+    while (eventReadCount < 1) await new Promise(setImmediate);
+
+    nowMs += PRIVATE_HISTORY_REQUEST_LEASE_MS + 1;
+    const replacement = await harness.handlers.listDiamondEvents(
+      request,
+      harness.managerContext,
+    );
+    assert.equal(replacement.complete, true);
+    releaseFirstRead();
+    await assert.rejects(
+      expired,
+      (error) =>
+        error.code === "aborted" &&
+        error.details?.reason === "private-history-reservation-lost",
+    );
+    assert.equal(eventReadCount, 2);
+    const admission = privateHistoryControl(
+      harness,
+      "diamond-private-history-read-admission",
+    ).value;
+    const scope = privateHistoryControl(
+      harness,
+      "diamond-private-history-read-scope",
+    ).value;
+    assert.equal(admission.requestCount, 1);
+    assert.equal(admission.sustainedRequestCount, 2);
+    assert.equal(scope.requestCount, 1);
+    assert.equal(scope.sustainedRequestCount, 2);
+    assert.deepEqual(admission.activeAttempts, []);
+    assert.deepEqual(scope.activeAttempts, []);
+    assert.equal(scope.recentTerminals.length, 1);
+    assert.equal(scope.recentTerminals[0].status, "complete");
+  });
+
+  it("prunes an expired sibling lease when a staggered private-history read completes", async () => {
+    let nowMs = 1_750_000_000_000;
+    const harness = createHarness({ clock: () => nowMs });
+    await activate(harness);
+    const resourcePaths = paths("team-1", "game-1");
+    let releaseOlder;
+    let releaseNewer;
+    const olderBlocked = new Promise((resolve) => {
+      releaseOlder = resolve;
+    });
+    const newerBlocked = new Promise((resolve) => {
+      releaseNewer = resolve;
+    });
+    let eventReadCount = 0;
+    harness.firestore.queryAsyncHook = async (query) => {
+      if (query.path !== resourcePaths.events) return;
+      eventReadCount += 1;
+      if (eventReadCount === 1) await olderBlocked;
+      if (eventReadCount === 2) await newerBlocked;
+    };
+    const baseRequest = {
+      teamId: "team-1",
+      gameId: "game-1",
+      visibility: "private",
+    };
+    const older = harness.handlers.listDiamondEvents(
+      { ...baseRequest, limit: 199 },
+      harness.managerContext,
+    );
+    while (eventReadCount < 1) await new Promise(setImmediate);
+    nowMs += PRIVATE_HISTORY_RATE_WINDOW_MS;
+    const newer = harness.handlers.listDiamondEvents(
+      { ...baseRequest, limit: 200 },
+      harness.managerContext,
+    );
+    while (eventReadCount < 2) await new Promise(setImmediate);
+    nowMs +=
+      PRIVATE_HISTORY_REQUEST_LEASE_MS - PRIVATE_HISTORY_RATE_WINDOW_MS + 1;
+
+    releaseNewer();
+    const completed = await newer;
+    assert.equal(completed.complete, true);
+    let admission = privateHistoryControl(
+      harness,
+      "diamond-private-history-read-admission",
+    ).value;
+    let scope = privateHistoryControl(
+      harness,
+      "diamond-private-history-read-scope",
+    ).value;
+    assert.deepEqual(admission.activeAttempts, []);
+    assert.deepEqual(admission.recentAttempts, []);
+    assert.deepEqual(scope.activeAttempts, []);
+
+    const later = await harness.handlers.listDiamondEvents(
+      { ...baseRequest, limit: 1 },
+      harness.managerContext,
+    );
+    assert.equal(later.complete, true);
+    admission = privateHistoryControl(
+      harness,
+      "diamond-private-history-read-admission",
+    ).value;
+    scope = privateHistoryControl(
+      harness,
+      "diamond-private-history-read-scope",
+    ).value;
+    assert.deepEqual(admission.activeAttempts, []);
+    assert.deepEqual(admission.recentAttempts, []);
+    assert.deepEqual(scope.activeAttempts, []);
+
+    releaseOlder();
+    await assert.rejects(
+      older,
+      (error) =>
+        error.code === "aborted" &&
+        error.details?.reason === "private-history-reservation-lost",
+    );
+  });
+
+  for (const controlType of [
+    "diamond-private-history-read-admission",
+    "diamond-private-history-read-scope",
+  ]) {
+    it(`fails malformed ${controlType} state closed until quarantine expiry`, async () => {
+      let nowMs = 1_750_000_000_000;
+      const harness = createHarness({ clock: () => nowMs });
+      await activate(harness);
+      const request = {
+        teamId: "team-1",
+        gameId: "game-1",
+        visibility: "private",
+        limit: 200,
+      };
+      await harness.handlers.listDiamondEvents(request, harness.managerContext);
+      const control = privateHistoryControl(harness, controlType);
+      harness.firestore.seed(control.path, {
+        ...control.value,
+        requestCount: "corrupt",
+      });
+      harness.firestore.setDocumentUpdateTime(control.path, nowMs);
+      const eventReadsBefore = harness.firestore.queryReads.filter(
+        ({ path }) => path === paths("team-1", "game-1").events,
+      ).length;
+      await assert.rejects(
+        harness.handlers.listDiamondEvents(request, harness.managerContext),
+        (error) =>
+          error.code === "unavailable" &&
+          error.details?.reason === "private-history-control-invalid",
+      );
+      assert.equal(
+        harness.firestore.queryReads.filter(
+          ({ path }) => path === paths("team-1", "game-1").events,
+        ).length,
+        eventReadsBefore,
+      );
+
+      nowMs += PRIVATE_HISTORY_CONTROL_QUARANTINE_MS + 1;
+      const recovered = await harness.handlers.listDiamondEvents(
+        request,
+        harness.managerContext,
+      );
+      assert.equal(recovered.complete, true);
+      const repaired = privateHistoryControl(harness, controlType).value;
+      assert.equal(repaired.requestCount, 1);
+      assert.deepEqual(repaired.activeAttempts, []);
+    });
+  }
+
   it("rejects a private event page that exceeds the scorer-view byte bound", async () => {
     const harness = createHarness();
     await activate(harness);
@@ -5428,6 +6758,64 @@ describe("Diamond scorebook handler factory", () => {
       ),
       (error) => error.code === "permission-denied",
     );
+    const admission = privateHistoryControl(
+      harness,
+      "diamond-private-history-read-admission",
+    ).value;
+    const scope = privateHistoryControl(
+      harness,
+      "diamond-private-history-read-scope",
+    ).value;
+    assert.deepEqual(admission.activeAttempts, []);
+    assert.deepEqual(admission.recentAttempts, []);
+    assert.deepEqual(scope.activeAttempts, []);
+    assert.equal(scope.recentTerminals.at(-1).status, "failed");
+  });
+
+  it("returns no private event page when the source revision changes before final reauthorization", async () => {
+    const harness = createHarness();
+    await activate(harness);
+    const resourcePaths = paths("team-1", "game-1");
+    harness.firestore.queryHook = (query) => {
+      if (query.path !== resourcePaths.events) return;
+      const root = harness.firestore.read(resourcePaths.scorebook);
+      harness.firestore.seed(resourcePaths.scorebook, {
+        ...root,
+        checkpoint: {
+          ...root.checkpoint,
+          sequence: root.checkpoint.sequence + 1,
+          state: {
+            ...root.checkpoint.state,
+            revision: root.checkpoint.state.revision + 1,
+          },
+        },
+      });
+    };
+
+    await assert.rejects(
+      harness.handlers.listDiamondEvents(
+        {
+          teamId: "team-1",
+          gameId: "game-1",
+          visibility: "private",
+          limit: 200,
+        },
+        harness.managerContext,
+      ),
+      (error) => error.code === "unavailable",
+    );
+    const admission = privateHistoryControl(
+      harness,
+      "diamond-private-history-read-admission",
+    ).value;
+    const scope = privateHistoryControl(
+      harness,
+      "diamond-private-history-read-scope",
+    ).value;
+    assert.deepEqual(admission.activeAttempts, []);
+    assert.deepEqual(admission.recentAttempts, []);
+    assert.deepEqual(scope.activeAttempts, []);
+    assert.equal(scope.recentTerminals.at(-1).status, "failed");
   });
 
   it("reauthorizes private access, game generation, and root revision in one transaction", async () => {
@@ -5457,20 +6845,41 @@ describe("Diamond scorebook handler factory", () => {
       ),
       (error) => error.code === "permission-denied",
     );
-    assert.equal(
-      harness.firestore.transactionReadBatches.length,
-      transactionsBeforeRead + 1,
+    const admission = privateHistoryControl(
+      harness,
+      "diamond-private-history-read-admission",
+    );
+    const scope = privateHistoryControl(
+      harness,
+      "diamond-private-history-read-scope",
+    );
+    const readBatches = harness.firestore.transactionReadBatches.slice(
+      transactionsBeforeRead,
+    );
+    assert.equal(readBatches.length, 3);
+    assert.deepEqual(
+      new Set(readBatches[0]),
+      new Set([admission.path, scope.path]),
     );
     assert.deepEqual(
-      new Set(harness.firestore.transactionReadBatches.at(-1)),
+      new Set(readBatches[1]),
       new Set([
         resourcePaths.team,
         resourcePaths.user("manager-1"),
         resourcePaths.game,
         resourcePaths.rsvp("manager-1"),
         resourcePaths.scorebook,
+        admission.path,
+        scope.path,
       ]),
     );
+    assert.deepEqual(
+      new Set(readBatches[2]),
+      new Set([admission.path, scope.path]),
+    );
+    assert.deepEqual(admission.value.activeAttempts, []);
+    assert.deepEqual(scope.value.activeAttempts, []);
+    assert.equal(scope.value.recentTerminals.at(-1).status, "failed");
   });
 
   it("parses voice into a confirmation-only proposal without any persistence", async () => {

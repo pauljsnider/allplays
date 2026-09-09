@@ -76,6 +76,54 @@ const MANAGER_STAT_ADMISSION_DEDUPE_MS = MANAGER_STAT_REQUEST_LEASE_MS;
 const MAX_MANAGER_STAT_RECENT_ADMISSIONS = 256;
 const MAX_MANAGER_STAT_RECENT_TERMINALS = 16;
 const MANAGER_STAT_CONTROL_QUARANTINE_MS = MANAGER_STAT_SUSTAINED_WINDOW_MS;
+const PRIVATE_HISTORY_RATE_WINDOW_MS = 60 * 1000;
+const PRIVATE_HISTORY_SUSTAINED_WINDOW_MS = 10 * 60 * 1000;
+const PRIVATE_HISTORY_CONTROL_QUARANTINE_MS =
+  PRIVATE_HISTORY_SUSTAINED_WINDOW_MS;
+// A maximum private-history page reads two admission controls, the initial
+// access/checkpoint envelope, a 201-document event query, and the final
+// access/checkpoint/control envelope. Charge 32 fixed logical units plus the
+// requested event limit so quota also covers one ambiguous reservation and
+// completion reconciliation plus fail-closed release bookkeeping. The legacy
+// manager report permits up to sixteen byte-packed pages for each nominal
+// 200-event page, or 1,600 pages for the bounded 20,000-event history.
+// Sustained per-game budgets preserve that full envelope plus two independent
+// React/native retry attempts; the lower one-minute burst remains substantive.
+// Caller-wide budgets preserve two such game loads while exact-input and
+// active-lease bounds prevent parallel amplification and arbitrary game-ID
+// rotation.
+const PRIVATE_HISTORY_FIXED_READ_UNITS = 32;
+const MAX_PRIVATE_HISTORY_REPORT_PAGES =
+  (MAX_CANONICAL_EVENTS / FULL_HISTORY_PAGE_SIZE) * 16;
+const PRIVATE_HISTORY_REPORT_RETRY_ALLOWANCE = 2;
+const MAX_PRIVATE_HISTORY_REQUESTS_PER_WINDOW = 256;
+const MAX_PRIVATE_HISTORY_READ_UNITS_PER_WINDOW =
+  MAX_PRIVATE_HISTORY_REQUESTS_PER_WINDOW *
+  (PRIVATE_HISTORY_FIXED_READ_UNITS + MAX_EVENT_PAGE_SIZE);
+const MAX_PRIVATE_HISTORY_GLOBAL_REQUESTS_PER_WINDOW = 512;
+const MAX_PRIVATE_HISTORY_GLOBAL_READ_UNITS_PER_WINDOW =
+  MAX_PRIVATE_HISTORY_GLOBAL_REQUESTS_PER_WINDOW *
+  (PRIVATE_HISTORY_FIXED_READ_UNITS + MAX_EVENT_PAGE_SIZE);
+const MAX_PRIVATE_HISTORY_SUSTAINED_REQUESTS_PER_WINDOW =
+  MAX_PRIVATE_HISTORY_REPORT_PAGES + PRIVATE_HISTORY_REPORT_RETRY_ALLOWANCE;
+const MAX_PRIVATE_HISTORY_SUSTAINED_READ_UNITS_PER_WINDOW =
+  MAX_PRIVATE_HISTORY_SUSTAINED_REQUESTS_PER_WINDOW *
+  (PRIVATE_HISTORY_FIXED_READ_UNITS + MAX_EVENT_PAGE_SIZE);
+const MAX_PRIVATE_HISTORY_GLOBAL_SUSTAINED_REQUESTS_PER_WINDOW =
+  MAX_PRIVATE_HISTORY_SUSTAINED_REQUESTS_PER_WINDOW * 2;
+const MAX_PRIVATE_HISTORY_GLOBAL_SUSTAINED_READ_UNITS_PER_WINDOW =
+  MAX_PRIVATE_HISTORY_GLOBAL_SUSTAINED_REQUESTS_PER_WINDOW *
+  (PRIVATE_HISTORY_FIXED_READ_UNITS + MAX_EVENT_PAGE_SIZE);
+const MAX_CONCURRENT_PRIVATE_HISTORY_REQUESTS = 2;
+const MAX_CONCURRENT_PRIVATE_HISTORY_GLOBAL_REQUESTS = 4;
+const PRIVATE_HISTORY_REQUEST_LEASE_MS = 3 * 60 * 1000;
+const PRIVATE_HISTORY_RECEIPT_RETENTION_MS = 5 * 60 * 1000;
+const PRIVATE_HISTORY_ADMISSION_DEDUPE_MS = PRIVATE_HISTORY_REQUEST_LEASE_MS;
+// Reservation receipts exist only while their correlated caller-global lease
+// is active, so this array can never grow beyond the concurrency bound.
+const MAX_PRIVATE_HISTORY_RECENT_ADMISSIONS =
+  MAX_CONCURRENT_PRIVATE_HISTORY_GLOBAL_REQUESTS;
+const MAX_PRIVATE_HISTORY_RECENT_TERMINALS = 16;
 const MAX_PRIVATE_EVENT_PAGE_BYTES = 1_000_000;
 const MANAGER_STAT_COMPACT_FIELD_MASK = Object.freeze([
   "trackingEngine",
@@ -1501,7 +1549,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     }
   }
 
-  async function loadEnabledAuthUser(context) {
+  function requireCallerUid(context) {
     const uid = typeof context?.auth?.uid === "string" ? context.auth.uid : "";
     if (!uid || uid !== uid.trim() || uid.length > 128 || uid.includes("/")) {
       throw makeError(
@@ -1509,6 +1557,11 @@ function createDiamondScorebookHandlers(dependencies = {}) {
         "Sign in to use the Diamond scorebook.",
       );
     }
+    return uid;
+  }
+
+  async function loadEnabledAuthUser(context) {
+    const uid = requireCallerUid(context);
     let authUser;
     try {
       authUser = await auth.getUser(uid);
@@ -5591,7 +5644,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     });
   }
 
-  async function loadAuthorizedState(teamId, gameId, caller) {
+  async function loadAuthorizedHistoryState(teamId, gameId, caller) {
     let loaded;
     let rootSnapshot;
     try {
@@ -5633,12 +5686,20 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       );
     }
     validateCommittedOrientationSnapshot(root, teamId);
+    return { loaded, root, checkpoint };
+  }
+
+  async function loadAuthorizedState(teamId, gameId, caller) {
+    const state = await loadAuthorizedHistoryState(teamId, gameId, caller);
     const availablePlayers = await loadRosterCandidates(
       firestore,
       teamId,
-      root.orientationSnapshot,
+      state.root.orientationSnapshot,
     );
-    return { loaded, root: { ...root, availablePlayers }, checkpoint };
+    return {
+      ...state,
+      root: { ...state.root, availablePlayers },
+    };
   }
 
   function scorerCandidatePermissionMode(team) {
@@ -5969,59 +6030,998 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     };
   }
 
-  async function reauthorizePrivateEventPage({
+  function privateHistoryControlIdentity({
+    teamId,
+    gameId,
+    limit,
+    cursor,
+    callerUid,
+    attemptHash,
+  }) {
+    const callerScopeHash = core.hashDiamondValue({
+      schemaVersion: 1,
+      type: "diamond-private-history-caller-scope",
+      callerUid,
+    });
+    const scopeHash = core.hashDiamondValue({
+      schemaVersion: 1,
+      type: "diamond-private-history-read-scope",
+      callerUid,
+      teamId,
+      gameId,
+    });
+    const inputHash = core.hashDiamondValue({
+      schemaVersion: 1,
+      type: "diamond-private-history-read-input",
+      scopeHash,
+      limit,
+      cursor,
+    });
+    const requestHash = core.hashDiamondValue({
+      schemaVersion: 1,
+      type: "diamond-private-history-read-request",
+      scopeHash,
+      inputHash,
+      attemptHash,
+    });
+    return Object.freeze({
+      callerScopeHash,
+      scopeHash,
+      inputHash,
+      requestHash,
+      attemptHash,
+      callerAdmissionRef: firestore.doc(
+        `${MANAGER_STAT_CONTROL_COLLECTION}/history-admission-${callerScopeHash.slice(7)}`,
+      ),
+      scopeRef: firestore.doc(
+        `${MANAGER_STAT_CONTROL_COLLECTION}/history-scope-${scopeHash.slice(7)}`,
+      ),
+    });
+  }
+
+  function invalidPrivateHistoryControl(snapshot, nowMs) {
+    const updatedAtMs = controlSnapshotUpdatedAtMs(snapshot);
+    if (
+      updatedAtMs !== null &&
+      updatedAtMs + PRIVATE_HISTORY_CONTROL_QUARANTINE_MS <= nowMs
+    ) {
+      return null;
+    }
+    throw makeError(
+      "unavailable",
+      "Private scorebook history safety state is unavailable. Try again later.",
+      { reason: "private-history-control-invalid", retryable: true },
+    );
+  }
+
+  function parsePrivateHistoryAdmission(snapshot, identity, nowMs) {
+    if (!snapshot?.exists) return null;
+    const value = snapshotData(snapshot);
+    const recentAttempts = Array.isArray(value?.recentAttempts)
+      ? value.recentAttempts
+      : null;
+    const activeAttempts = Array.isArray(value?.activeAttempts)
+      ? value.activeAttempts
+      : null;
+    const expectedExpiresAtMs = Math.max(
+      value?.windowResetAtMs || 0,
+      value?.sustainedWindowResetAtMs || 0,
+      (value?.updatedAtMs || 0) + PRIVATE_HISTORY_ADMISSION_DEDUPE_MS,
+      ...(activeAttempts || []).map(({ leaseExpiresAtMs }) => leaseExpiresAtMs),
+    );
+    if (
+      !isPlainObject(value) ||
+      Object.keys(value).length !== 15 ||
+      value.schemaVersion !== 1 ||
+      value.type !== "diamond-private-history-read-admission" ||
+      value.scopeHash !== identity.callerScopeHash ||
+      !Number.isSafeInteger(value.windowStartedAtMs) ||
+      value.windowStartedAtMs < 0 ||
+      value.windowStartedAtMs % PRIVATE_HISTORY_RATE_WINDOW_MS !== 0 ||
+      !Number.isSafeInteger(value.windowResetAtMs) ||
+      value.windowResetAtMs !==
+        value.windowStartedAtMs + PRIVATE_HISTORY_RATE_WINDOW_MS ||
+      !Number.isSafeInteger(value.requestCount) ||
+      value.requestCount < 0 ||
+      value.requestCount > MAX_PRIVATE_HISTORY_GLOBAL_REQUESTS_PER_WINDOW ||
+      !Number.isSafeInteger(value.readUnits) ||
+      value.readUnits < 0 ||
+      value.readUnits > MAX_PRIVATE_HISTORY_GLOBAL_READ_UNITS_PER_WINDOW ||
+      !Number.isSafeInteger(value.sustainedWindowStartedAtMs) ||
+      value.sustainedWindowStartedAtMs < 0 ||
+      value.sustainedWindowStartedAtMs % PRIVATE_HISTORY_SUSTAINED_WINDOW_MS !==
+        0 ||
+      !Number.isSafeInteger(value.sustainedWindowResetAtMs) ||
+      value.sustainedWindowResetAtMs !==
+        value.sustainedWindowStartedAtMs +
+          PRIVATE_HISTORY_SUSTAINED_WINDOW_MS ||
+      !Number.isSafeInteger(value.sustainedRequestCount) ||
+      value.sustainedRequestCount < value.requestCount ||
+      value.sustainedRequestCount >
+        MAX_PRIVATE_HISTORY_GLOBAL_SUSTAINED_REQUESTS_PER_WINDOW ||
+      !Number.isSafeInteger(value.sustainedReadUnits) ||
+      value.sustainedReadUnits < value.readUnits ||
+      value.sustainedReadUnits >
+        MAX_PRIVATE_HISTORY_GLOBAL_SUSTAINED_READ_UNITS_PER_WINDOW ||
+      !recentAttempts ||
+      recentAttempts.length > MAX_PRIVATE_HISTORY_RECENT_ADMISSIONS ||
+      new Set(recentAttempts.map((entry) => entry?.attemptHash)).size !==
+        recentAttempts.length ||
+      !recentAttempts.every(
+        (entry) =>
+          isPlainObject(entry) &&
+          Object.keys(entry).length === 2 &&
+          SHA256_PATTERN.test(entry.attemptHash) &&
+          Number.isSafeInteger(entry.admittedAtMs) &&
+          entry.admittedAtMs >= 0 &&
+          entry.admittedAtMs <= value.updatedAtMs,
+      ) ||
+      !activeAttempts ||
+      activeAttempts.length > MAX_CONCURRENT_PRIVATE_HISTORY_GLOBAL_REQUESTS ||
+      new Set(activeAttempts.map((entry) => entry?.requestHash)).size !==
+        activeAttempts.length ||
+      new Set(activeAttempts.map((entry) => entry?.attemptHash)).size !==
+        activeAttempts.length ||
+      !activeAttempts.every(
+        (entry) =>
+          isPlainObject(entry) &&
+          Object.keys(entry).length === 4 &&
+          SHA256_PATTERN.test(entry.requestHash) &&
+          SHA256_PATTERN.test(entry.attemptHash) &&
+          Number.isSafeInteger(entry.startedAtMs) &&
+          entry.startedAtMs >= 0 &&
+          entry.startedAtMs <= value.updatedAtMs &&
+          Number.isSafeInteger(entry.leaseExpiresAtMs) &&
+          entry.leaseExpiresAtMs ===
+            entry.startedAtMs + PRIVATE_HISTORY_REQUEST_LEASE_MS &&
+          recentAttempts.some(
+            ({ attemptHash, admittedAtMs }) =>
+              attemptHash === entry.attemptHash &&
+              admittedAtMs === entry.startedAtMs,
+          ),
+      ) ||
+      recentAttempts.length !== activeAttempts.length ||
+      !Number.isSafeInteger(value.updatedAtMs) ||
+      value.updatedAtMs < value.windowStartedAtMs ||
+      value.updatedAtMs < value.sustainedWindowStartedAtMs ||
+      value.updatedAtMs >= value.windowResetAtMs ||
+      value.updatedAtMs >= value.sustainedWindowResetAtMs ||
+      value.updatedAtMs > nowMs ||
+      managerStatsControlTimestampMs(value.expiresAt) !== expectedExpiresAtMs
+    ) {
+      return invalidPrivateHistoryControl(snapshot, nowMs);
+    }
+    return value;
+  }
+
+  function parsePrivateHistoryScope(snapshot, identity, nowMs) {
+    if (!snapshot?.exists) return null;
+    const value = snapshotData(snapshot);
+    const activeAttempts = Array.isArray(value?.activeAttempts)
+      ? value.activeAttempts
+      : null;
+    const recentTerminals = Array.isArray(value?.recentTerminals)
+      ? value.recentTerminals
+      : null;
+    const activeHashes = activeAttempts?.map(({ requestHash }) => requestHash);
+    const activeInputHashes = activeAttempts?.map(({ inputHash }) => inputHash);
+    const terminalHashes = recentTerminals?.map(
+      ({ requestHash }) => requestHash,
+    );
+    const expectedExpiresAtMs = Math.max(
+      value?.windowResetAtMs || 0,
+      value?.sustainedWindowResetAtMs || 0,
+      ...(activeAttempts || []).map(({ leaseExpiresAtMs }) => leaseExpiresAtMs),
+      ...(recentTerminals || []).map(
+        ({ finishedAtMs }) =>
+          finishedAtMs + PRIVATE_HISTORY_RECEIPT_RETENTION_MS,
+      ),
+    );
+    if (
+      !isPlainObject(value) ||
+      Object.keys(value).length !== 15 ||
+      value.schemaVersion !== 1 ||
+      value.type !== "diamond-private-history-read-scope" ||
+      value.scopeHash !== identity.scopeHash ||
+      !Number.isSafeInteger(value.windowStartedAtMs) ||
+      value.windowStartedAtMs < 0 ||
+      value.windowStartedAtMs % PRIVATE_HISTORY_RATE_WINDOW_MS !== 0 ||
+      !Number.isSafeInteger(value.windowResetAtMs) ||
+      value.windowResetAtMs !==
+        value.windowStartedAtMs + PRIVATE_HISTORY_RATE_WINDOW_MS ||
+      !Number.isSafeInteger(value.requestCount) ||
+      value.requestCount < 0 ||
+      value.requestCount > MAX_PRIVATE_HISTORY_REQUESTS_PER_WINDOW ||
+      !Number.isSafeInteger(value.readUnits) ||
+      value.readUnits < 0 ||
+      value.readUnits > MAX_PRIVATE_HISTORY_READ_UNITS_PER_WINDOW ||
+      !Number.isSafeInteger(value.sustainedWindowStartedAtMs) ||
+      value.sustainedWindowStartedAtMs < 0 ||
+      value.sustainedWindowStartedAtMs % PRIVATE_HISTORY_SUSTAINED_WINDOW_MS !==
+        0 ||
+      !Number.isSafeInteger(value.sustainedWindowResetAtMs) ||
+      value.sustainedWindowResetAtMs !==
+        value.sustainedWindowStartedAtMs +
+          PRIVATE_HISTORY_SUSTAINED_WINDOW_MS ||
+      !Number.isSafeInteger(value.sustainedRequestCount) ||
+      value.sustainedRequestCount < value.requestCount ||
+      value.sustainedRequestCount >
+        MAX_PRIVATE_HISTORY_SUSTAINED_REQUESTS_PER_WINDOW ||
+      !Number.isSafeInteger(value.sustainedReadUnits) ||
+      value.sustainedReadUnits < value.readUnits ||
+      value.sustainedReadUnits >
+        MAX_PRIVATE_HISTORY_SUSTAINED_READ_UNITS_PER_WINDOW ||
+      !activeAttempts ||
+      activeAttempts.length > MAX_CONCURRENT_PRIVATE_HISTORY_REQUESTS ||
+      !activeAttempts.every(
+        (entry) =>
+          isPlainObject(entry) &&
+          Object.keys(entry).length === 4 &&
+          SHA256_PATTERN.test(entry.requestHash) &&
+          SHA256_PATTERN.test(entry.inputHash) &&
+          Number.isSafeInteger(entry.startedAtMs) &&
+          entry.startedAtMs >= 0 &&
+          entry.startedAtMs <= value.updatedAtMs &&
+          Number.isSafeInteger(entry.leaseExpiresAtMs) &&
+          entry.leaseExpiresAtMs ===
+            entry.startedAtMs + PRIVATE_HISTORY_REQUEST_LEASE_MS,
+      ) ||
+      !recentTerminals ||
+      recentTerminals.length > MAX_PRIVATE_HISTORY_RECENT_TERMINALS ||
+      !recentTerminals.every(
+        (entry) =>
+          isPlainObject(entry) &&
+          Object.keys(entry).length === 4 &&
+          SHA256_PATTERN.test(entry.requestHash) &&
+          ["complete", "failed"].includes(entry.status) &&
+          Number.isSafeInteger(entry.finishedAtMs) &&
+          entry.finishedAtMs >= 0 &&
+          entry.finishedAtMs <= value.updatedAtMs &&
+          (entry.status === "complete"
+            ? SHA256_PATTERN.test(entry.responseHash) &&
+              !Object.hasOwn(entry, "failureCode")
+            : !Object.hasOwn(entry, "responseHash") &&
+              typeof entry.failureCode === "string" &&
+              entry.failureCode.length >= 1 &&
+              entry.failureCode.length <= 64),
+      ) ||
+      new Set(activeHashes).size !== activeHashes.length ||
+      new Set(activeInputHashes).size !== activeInputHashes.length ||
+      new Set(terminalHashes).size !== terminalHashes.length ||
+      activeHashes.some((requestHash) =>
+        terminalHashes.includes(requestHash),
+      ) ||
+      !Number.isSafeInteger(value.updatedAtMs) ||
+      value.updatedAtMs < value.windowStartedAtMs ||
+      value.updatedAtMs < value.sustainedWindowStartedAtMs ||
+      value.updatedAtMs > nowMs ||
+      managerStatsControlTimestampMs(value.expiresAt) !== expectedExpiresAtMs
+    ) {
+      return invalidPrivateHistoryControl(snapshot, nowMs);
+    }
+    return value;
+  }
+
+  function privateHistoryWindowState(control, nowMs, durationMs, prefix = "") {
+    const startedKey = prefix
+      ? `${prefix}WindowStartedAtMs`
+      : "windowStartedAtMs";
+    const resetKey = prefix ? `${prefix}WindowResetAtMs` : "windowResetAtMs";
+    const requestKey = prefix ? `${prefix}RequestCount` : "requestCount";
+    const readKey = prefix ? `${prefix}ReadUnits` : "readUnits";
+    const active = Boolean(control && control[resetKey] > nowMs);
+    const windowStartedAtMs = active
+      ? control[startedKey]
+      : alignedCommandHistoryWindowStart(nowMs, durationMs);
+    return {
+      windowStartedAtMs,
+      windowResetAtMs: active
+        ? control[resetKey]
+        : windowStartedAtMs + durationMs,
+      requestCount: active ? control[requestKey] : 0,
+      readUnits: active ? control[readKey] : 0,
+    };
+  }
+
+  function privateHistoryAdmissionValue({
+    identity,
+    admission,
+    recentAttempts,
+    activeAttempts,
+    nowMs,
+    requestedReadUnits = 0,
+    charge = false,
+  }) {
+    const burst = privateHistoryWindowState(
+      admission,
+      nowMs,
+      PRIVATE_HISTORY_RATE_WINDOW_MS,
+    );
+    const sustained = privateHistoryWindowState(
+      admission,
+      nowMs,
+      PRIVATE_HISTORY_SUSTAINED_WINDOW_MS,
+      "sustained",
+    );
+    return {
+      schemaVersion: 1,
+      type: "diamond-private-history-read-admission",
+      scopeHash: identity.callerScopeHash,
+      windowStartedAtMs: burst.windowStartedAtMs,
+      windowResetAtMs: burst.windowResetAtMs,
+      requestCount: burst.requestCount + (charge ? 1 : 0),
+      readUnits: burst.readUnits + (charge ? requestedReadUnits : 0),
+      sustainedWindowStartedAtMs: sustained.windowStartedAtMs,
+      sustainedWindowResetAtMs: sustained.windowResetAtMs,
+      sustainedRequestCount: sustained.requestCount + (charge ? 1 : 0),
+      sustainedReadUnits:
+        sustained.readUnits + (charge ? requestedReadUnits : 0),
+      recentAttempts: (charge
+        ? [
+            ...recentAttempts,
+            { attemptHash: identity.attemptHash, admittedAtMs: nowMs },
+          ]
+        : recentAttempts
+      ).slice(-MAX_PRIVATE_HISTORY_RECENT_ADMISSIONS),
+      activeAttempts,
+      updatedAtMs: nowMs,
+      expiresAt: new Date(
+        Math.max(
+          burst.windowResetAtMs,
+          sustained.windowResetAtMs,
+          nowMs + PRIVATE_HISTORY_ADMISSION_DEDUPE_MS,
+          ...activeAttempts.map(({ leaseExpiresAtMs }) => leaseExpiresAtMs),
+        ),
+      ),
+    };
+  }
+
+  function privateHistoryScopeValue({
+    identity,
+    scope,
+    activeAttempts,
+    recentTerminals,
+    nowMs,
+    requestedReadUnits = 0,
+    charge = false,
+  }) {
+    const burst = privateHistoryWindowState(
+      scope,
+      nowMs,
+      PRIVATE_HISTORY_RATE_WINDOW_MS,
+    );
+    const sustained = privateHistoryWindowState(
+      scope,
+      nowMs,
+      PRIVATE_HISTORY_SUSTAINED_WINDOW_MS,
+      "sustained",
+    );
+    const retainedTerminals = recentTerminals
+      .filter(
+        ({ finishedAtMs }) =>
+          finishedAtMs + PRIVATE_HISTORY_RECEIPT_RETENTION_MS > nowMs,
+      )
+      .slice(-MAX_PRIVATE_HISTORY_RECENT_TERMINALS);
+    return {
+      schemaVersion: 1,
+      type: "diamond-private-history-read-scope",
+      scopeHash: identity.scopeHash,
+      windowStartedAtMs: burst.windowStartedAtMs,
+      windowResetAtMs: burst.windowResetAtMs,
+      requestCount: burst.requestCount + (charge ? 1 : 0),
+      readUnits: burst.readUnits + (charge ? requestedReadUnits : 0),
+      sustainedWindowStartedAtMs: sustained.windowStartedAtMs,
+      sustainedWindowResetAtMs: sustained.windowResetAtMs,
+      sustainedRequestCount: sustained.requestCount + (charge ? 1 : 0),
+      sustainedReadUnits:
+        sustained.readUnits + (charge ? requestedReadUnits : 0),
+      activeAttempts,
+      recentTerminals: retainedTerminals,
+      updatedAtMs: nowMs,
+      expiresAt: new Date(
+        Math.max(
+          burst.windowResetAtMs,
+          sustained.windowResetAtMs,
+          ...activeAttempts.map(({ leaseExpiresAtMs }) => leaseExpiresAtMs),
+          ...retainedTerminals.map(
+            ({ finishedAtMs }) =>
+              finishedAtMs + PRIVATE_HISTORY_RECEIPT_RETENTION_MS,
+          ),
+        ),
+      ),
+    };
+  }
+
+  function privateHistoryRetryDetails(reason, retryAtMs, nowMs) {
+    return {
+      reason,
+      retryable: true,
+      retryAfterMs: Math.max(1, retryAtMs - nowMs),
+    };
+  }
+
+  function assertPrivateHistoryQuota(
+    control,
+    nowMs,
+    requestedReadUnits,
+    limits,
+  ) {
+    const burst = privateHistoryWindowState(
+      control,
+      nowMs,
+      PRIVATE_HISTORY_RATE_WINDOW_MS,
+    );
+    const sustained = privateHistoryWindowState(
+      control,
+      nowMs,
+      PRIVATE_HISTORY_SUSTAINED_WINDOW_MS,
+      "sustained",
+    );
+    const burstLimited =
+      burst.requestCount + 1 > limits.requests ||
+      burst.readUnits + requestedReadUnits > limits.readUnits;
+    const sustainedLimited =
+      sustained.requestCount + 1 > limits.sustainedRequests ||
+      sustained.readUnits + requestedReadUnits > limits.sustainedReadUnits;
+    if (burstLimited || sustainedLimited) {
+      throw makeError(
+        "resource-exhausted",
+        "Private scorebook history reads are temporarily limited.",
+        privateHistoryRetryDetails(
+          "private-history-rate-limited",
+          Math.max(
+            burstLimited ? burst.windowResetAtMs : 0,
+            sustainedLimited ? sustained.windowResetAtMs : 0,
+          ),
+          nowMs,
+        ),
+      );
+    }
+  }
+
+  async function reservePrivateHistoryRead(
+    transaction,
+    request,
+    caller,
+    attemptHash,
+    nowMs,
+  ) {
+    const identity = privateHistoryControlIdentity({
+      ...request,
+      callerUid: caller.uid,
+      attemptHash,
+    });
+    let admissionSnapshot;
+    let scopeSnapshot;
+    try {
+      [admissionSnapshot, scopeSnapshot] = await Promise.all([
+        transaction.get(identity.callerAdmissionRef),
+        transaction.get(identity.scopeRef),
+      ]);
+    } catch {
+      throw makeError(
+        "unavailable",
+        "Private scorebook history admission could not be verified.",
+        { reason: "private-history-admission-read-failed", retryable: true },
+      );
+    }
+    const admission = parsePrivateHistoryAdmission(
+      admissionSnapshot,
+      identity,
+      nowMs,
+    );
+    const scope = parsePrivateHistoryScope(scopeSnapshot, identity, nowMs);
+    const storedRecentAttempts = admission?.recentAttempts || [];
+    const existingAdmission = storedRecentAttempts.find(
+      ({ attemptHash: value }) => value === attemptHash,
+    );
+    const existingActive = scope?.activeAttempts?.find(
+      ({ requestHash }) => requestHash === identity.requestHash,
+    );
+    const existingGlobalActive = admission?.activeAttempts?.find(
+      ({ requestHash, attemptHash: value }) =>
+        requestHash === identity.requestHash && value === attemptHash,
+    );
+    if (existingAdmission) {
+      if (
+        !existingActive ||
+        existingActive.inputHash !== identity.inputHash ||
+        !existingGlobalActive
+      ) {
+        throw makeError(
+          "unavailable",
+          "Private scorebook history admission could not be reconciled.",
+          {
+            reason: "private-history-admission-unconfirmed",
+            retryable: true,
+          },
+        );
+      }
+      if (existingActive.leaseExpiresAtMs > nowMs) {
+        return Object.freeze({ identity, request });
+      }
+      const activeAttempts = scope.activeAttempts.filter(
+        ({ requestHash, leaseExpiresAtMs }) =>
+          requestHash !== identity.requestHash && leaseExpiresAtMs > nowMs,
+      );
+      const globalActiveAttempts = admission.activeAttempts.filter(
+        ({ requestHash, leaseExpiresAtMs }) =>
+          requestHash !== identity.requestHash && leaseExpiresAtMs > nowMs,
+      );
+      const retainedAttemptHashes = new Set(
+        globalActiveAttempts.map(({ attemptHash: value }) => value),
+      );
+      const rearmedScope = {
+        requestHash: identity.requestHash,
+        inputHash: identity.inputHash,
+        startedAtMs: nowMs,
+        leaseExpiresAtMs: nowMs + PRIVATE_HISTORY_REQUEST_LEASE_MS,
+      };
+      const rearmedGlobal = {
+        requestHash: identity.requestHash,
+        attemptHash: identity.attemptHash,
+        startedAtMs: nowMs,
+        leaseExpiresAtMs: nowMs + PRIVATE_HISTORY_REQUEST_LEASE_MS,
+      };
+      transaction.set(
+        identity.callerAdmissionRef,
+        privateHistoryAdmissionValue({
+          identity,
+          admission,
+          recentAttempts: [
+            ...storedRecentAttempts.filter(({ attemptHash: value }) =>
+              retainedAttemptHashes.has(value),
+            ),
+            { attemptHash: identity.attemptHash, admittedAtMs: nowMs },
+          ],
+          activeAttempts: [...globalActiveAttempts, rearmedGlobal].sort(
+            (left, right) => left.requestHash.localeCompare(right.requestHash),
+          ),
+          nowMs,
+        }),
+      );
+      transaction.set(
+        identity.scopeRef,
+        privateHistoryScopeValue({
+          identity,
+          scope,
+          activeAttempts: [...activeAttempts, rearmedScope].sort(
+            (left, right) => left.requestHash.localeCompare(right.requestHash),
+          ),
+          recentTerminals: scope.recentTerminals,
+          nowMs,
+        }),
+      );
+      return Object.freeze({ identity, request });
+    }
+
+    const activeAttempts = (scope?.activeAttempts || []).filter(
+      ({ leaseExpiresAtMs }) => leaseExpiresAtMs > nowMs,
+    );
+    const globalActiveAttempts = (admission?.activeAttempts || []).filter(
+      ({ leaseExpiresAtMs }) => leaseExpiresAtMs > nowMs,
+    );
+    const retainedAttemptHashes = new Set(
+      globalActiveAttempts.map(({ attemptHash: value }) => value),
+    );
+    const recentAttempts = storedRecentAttempts.filter(
+      ({ attemptHash: value }) => retainedAttemptHashes.has(value),
+    );
+    const matchingInput = activeAttempts.find(
+      ({ inputHash }) => inputHash === identity.inputHash,
+    );
+    if (matchingInput) {
+      throw makeError(
+        "resource-exhausted",
+        "This private scorebook history page is already loading.",
+        privateHistoryRetryDetails(
+          "private-history-duplicate-active",
+          matchingInput.leaseExpiresAtMs,
+          nowMs,
+        ),
+      );
+    }
+    if (activeAttempts.length >= MAX_CONCURRENT_PRIVATE_HISTORY_REQUESTS) {
+      throw makeError(
+        "resource-exhausted",
+        "Too many private scorebook history reads are already active.",
+        privateHistoryRetryDetails(
+          "private-history-concurrency-limited",
+          Math.min(
+            ...activeAttempts.map(({ leaseExpiresAtMs }) => leaseExpiresAtMs),
+          ),
+          nowMs,
+        ),
+      );
+    }
+    if (
+      globalActiveAttempts.length >=
+      MAX_CONCURRENT_PRIVATE_HISTORY_GLOBAL_REQUESTS
+    ) {
+      throw makeError(
+        "resource-exhausted",
+        "Too many private scorebook history reads are already active for this account.",
+        privateHistoryRetryDetails(
+          "private-history-global-concurrency-limited",
+          Math.min(
+            ...globalActiveAttempts.map(
+              ({ leaseExpiresAtMs }) => leaseExpiresAtMs,
+            ),
+          ),
+          nowMs,
+        ),
+      );
+    }
+    const requestedReadUnits = PRIVATE_HISTORY_FIXED_READ_UNITS + request.limit;
+    assertPrivateHistoryQuota(admission, nowMs, requestedReadUnits, {
+      requests: MAX_PRIVATE_HISTORY_GLOBAL_REQUESTS_PER_WINDOW,
+      readUnits: MAX_PRIVATE_HISTORY_GLOBAL_READ_UNITS_PER_WINDOW,
+      sustainedRequests:
+        MAX_PRIVATE_HISTORY_GLOBAL_SUSTAINED_REQUESTS_PER_WINDOW,
+      sustainedReadUnits:
+        MAX_PRIVATE_HISTORY_GLOBAL_SUSTAINED_READ_UNITS_PER_WINDOW,
+    });
+    assertPrivateHistoryQuota(scope, nowMs, requestedReadUnits, {
+      requests: MAX_PRIVATE_HISTORY_REQUESTS_PER_WINDOW,
+      readUnits: MAX_PRIVATE_HISTORY_READ_UNITS_PER_WINDOW,
+      sustainedRequests: MAX_PRIVATE_HISTORY_SUSTAINED_REQUESTS_PER_WINDOW,
+      sustainedReadUnits: MAX_PRIVATE_HISTORY_SUSTAINED_READ_UNITS_PER_WINDOW,
+    });
+    const activeAttempt = {
+      requestHash: identity.requestHash,
+      inputHash: identity.inputHash,
+      startedAtMs: nowMs,
+      leaseExpiresAtMs: nowMs + PRIVATE_HISTORY_REQUEST_LEASE_MS,
+    };
+    const globalActiveAttempt = {
+      requestHash: identity.requestHash,
+      attemptHash: identity.attemptHash,
+      startedAtMs: nowMs,
+      leaseExpiresAtMs: nowMs + PRIVATE_HISTORY_REQUEST_LEASE_MS,
+    };
+    transaction.set(
+      identity.callerAdmissionRef,
+      privateHistoryAdmissionValue({
+        identity,
+        admission,
+        recentAttempts,
+        activeAttempts: [...globalActiveAttempts, globalActiveAttempt].sort(
+          (left, right) => left.requestHash.localeCompare(right.requestHash),
+        ),
+        nowMs,
+        requestedReadUnits,
+        charge: true,
+      }),
+    );
+    transaction.set(
+      identity.scopeRef,
+      privateHistoryScopeValue({
+        identity,
+        scope,
+        activeAttempts: [...activeAttempts, activeAttempt].sort((left, right) =>
+          left.requestHash.localeCompare(right.requestHash),
+        ),
+        recentTerminals: scope?.recentTerminals || [],
+        nowMs,
+        requestedReadUnits,
+        charge: true,
+      }),
+    );
+    return Object.freeze({ identity, request });
+  }
+
+  async function reservePrivateHistoryReadWithReconciliation({
+    request,
+    callerUid,
+    attemptHash,
+  }) {
+    const caller = Object.freeze({ uid: callerUid });
+    let lastError = null;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const reservation = await firestore.runTransaction(
+          (transaction) =>
+            reservePrivateHistoryRead(
+              transaction,
+              request,
+              caller,
+              attemptHash,
+              normalizeNow(clock, makeError),
+            ),
+          { maxAttempts: 1 },
+        );
+        return reservation;
+      } catch (error) {
+        if (error instanceof HttpsError || error instanceof DiamondHandlerError)
+          throw error;
+        lastError = error;
+      }
+    }
+    logger.error?.("diamond_private_history_admission_unconfirmed", {
+      code: lastError?.code || "transaction-failed",
+    });
+    throw makeError(
+      "unavailable",
+      "Private scorebook history admission could not be confirmed. Try again.",
+      { reason: "private-history-admission-unconfirmed", retryable: true },
+    );
+  }
+
+  function privateHistoryTerminalValue(reservation, scope, terminal, nowMs) {
+    return privateHistoryScopeValue({
+      identity: reservation.identity,
+      scope,
+      activeAttempts: scope.activeAttempts.filter(
+        ({ requestHash, leaseExpiresAtMs }) =>
+          requestHash !== reservation.identity.requestHash &&
+          leaseExpiresAtMs > nowMs,
+      ),
+      recentTerminals: [...scope.recentTerminals, terminal],
+      nowMs,
+    });
+  }
+
+  function privateHistoryReleasedAdmissionValue(reservation, admission, nowMs) {
+    const activeAttempts = admission.activeAttempts.filter(
+      ({ requestHash, leaseExpiresAtMs }) =>
+        requestHash !== reservation.identity.requestHash &&
+        leaseExpiresAtMs > nowMs,
+    );
+    const retainedAttemptHashes = new Set(
+      activeAttempts.map(({ attemptHash }) => attemptHash),
+    );
+    return privateHistoryAdmissionValue({
+      identity: reservation.identity,
+      admission,
+      recentAttempts: admission.recentAttempts.filter(({ attemptHash }) =>
+        retainedAttemptHashes.has(attemptHash),
+      ),
+      activeAttempts,
+      nowMs,
+    });
+  }
+
+  async function completePrivateHistoryReadTransaction(
+    transaction,
+    {
+      teamId,
+      gameId,
+      caller,
+      expectedInstanceId,
+      sourceRevision,
+      reservation,
+      responseHash,
+      nowMs,
+    },
+  ) {
+    const [loaded, rootSnapshot, admissionSnapshot, scopeSnapshot] =
+      await Promise.all([
+        loadAccessDocuments(transaction, teamId, gameId, caller),
+        transaction.get(firestore.doc(paths(teamId, gameId).scorebook)),
+        transaction.get(reservation.identity.callerAdmissionRef),
+        transaction.get(reservation.identity.scopeRef),
+      ]);
+    if (!loaded.access.full && !loaded.access.scorekeeping) {
+      throw makeError(
+        "permission-denied",
+        "Current scorekeeping access is required to view the private scorebook.",
+      );
+    }
+    requireAllowed(
+      core.decideDiamondOperation({
+        operation: "read",
+        teamId,
+        game: loaded.game,
+        policy: null,
+      }),
+      "This game is not owned by Diamond v2.",
+    );
+    const root = snapshotData(rootSnapshot);
+    const checkpoint = buildCheckpointFromRoot(root);
+    if (
+      !root ||
+      !checkpoint ||
+      root.instanceId !== expectedInstanceId ||
+      root.instanceId !== loaded.game.diamondScorebookInstanceId ||
+      checkpoint.sequence !== sourceRevision
+    ) {
+      throw makeError(
+        "unavailable",
+        "The private scorebook changed while history was loading. Try again.",
+      );
+    }
+    const scope = parsePrivateHistoryScope(
+      scopeSnapshot,
+      reservation.identity,
+      nowMs,
+    );
+    const admission = parsePrivateHistoryAdmission(
+      admissionSnapshot,
+      reservation.identity,
+      nowMs,
+    );
+    const terminal = scope?.recentTerminals?.find(
+      ({ requestHash }) => requestHash === reservation.identity.requestHash,
+    );
+    const globalActive = admission?.activeAttempts?.find(
+      ({ requestHash, attemptHash }) =>
+        requestHash === reservation.identity.requestHash &&
+        attemptHash === reservation.identity.attemptHash,
+    );
+    if (terminal) {
+      if (
+        terminal.status === "complete" &&
+        terminal.responseHash === responseHash &&
+        !globalActive
+      )
+        return;
+      throw makeError(
+        "unavailable",
+        "Private scorebook history completion could not be reconciled.",
+        { reason: "private-history-completion-unconfirmed", retryable: true },
+      );
+    }
+    const active = scope?.activeAttempts?.find(
+      ({ requestHash }) => requestHash === reservation.identity.requestHash,
+    );
+    if (
+      !active ||
+      !globalActive ||
+      active.leaseExpiresAtMs <= nowMs ||
+      globalActive.leaseExpiresAtMs <= nowMs
+    ) {
+      throw makeError(
+        "aborted",
+        "The private scorebook history reservation expired. Try again.",
+        { reason: "private-history-reservation-lost", retryable: true },
+      );
+    }
+    transaction.set(
+      reservation.identity.callerAdmissionRef,
+      privateHistoryReleasedAdmissionValue(reservation, admission, nowMs),
+    );
+    transaction.set(
+      reservation.identity.scopeRef,
+      privateHistoryTerminalValue(
+        reservation,
+        scope,
+        {
+          requestHash: reservation.identity.requestHash,
+          status: "complete",
+          finishedAtMs: nowMs,
+          responseHash,
+        },
+        nowMs,
+      ),
+    );
+  }
+
+  async function completePrivateHistoryRead({
     teamId,
     gameId,
     context,
     expectedInstanceId,
     sourceRevision,
+    reservation,
+    response,
   }) {
-    const caller = await loadEnabledAuthUser(context);
-    try {
-      await firestore.runTransaction(async (transaction) => {
-        const [loaded, rootSnapshot] = await Promise.all([
-          loadAccessDocuments(transaction, teamId, gameId, caller),
-          transaction.get(firestore.doc(paths(teamId, gameId).scorebook)),
-        ]);
-        if (!loaded.access.full && !loaded.access.scorekeeping) {
-          throw makeError(
-            "permission-denied",
-            "Current scorekeeping access is required to view the private scorebook.",
-          );
-        }
-        requireAllowed(
-          core.decideDiamondOperation({
-            operation: "read",
-            teamId,
-            game: loaded.game,
-            policy: null,
-          }),
-          "This game is not owned by Diamond v2.",
+    const responseHash = core.hashDiamondValue({
+      schemaVersion: 1,
+      type: "diamond-private-history-read-response",
+      response,
+    });
+    let lastError = null;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const caller = await loadEnabledAuthUser(context);
+      try {
+        await firestore.runTransaction(
+          (transaction) =>
+            completePrivateHistoryReadTransaction(transaction, {
+              teamId,
+              gameId,
+              caller,
+              expectedInstanceId,
+              sourceRevision,
+              reservation,
+              responseHash,
+              nowMs: normalizeNow(clock, makeError),
+            }),
+          { maxAttempts: 1 },
         );
-        const root = snapshotData(rootSnapshot);
-        const checkpoint = buildCheckpointFromRoot(root);
-        if (
-          !root ||
-          !checkpoint ||
-          root.instanceId !== expectedInstanceId ||
-          root.instanceId !== loaded.game.diamondScorebookInstanceId ||
-          checkpoint.sequence !== sourceRevision
-        ) {
-          throw makeError(
-            "unavailable",
-            "The private scorebook changed while history was loading. Try again.",
-          );
-        }
-      });
-    } catch (error) {
-      if (error instanceof HttpsError || error instanceof DiamondHandlerError) {
-        throw error;
+        return;
+      } catch (error) {
+        if (error instanceof HttpsError || error instanceof DiamondHandlerError)
+          throw error;
+        lastError = error;
       }
-      throw makeError(
-        "unavailable",
-        "Private scorebook access could not be reverified. Try again.",
-      );
     }
+    logger.error?.("diamond_private_history_completion_unconfirmed", {
+      code: lastError?.code || "transaction-failed",
+    });
+    throw makeError(
+      "unavailable",
+      "Private scorebook access could not be reverified. Try again.",
+      { reason: "private-history-completion-unconfirmed", retryable: true },
+    );
+  }
+
+  async function failPrivateHistoryRead(reservation, failureCode) {
+    let lastError = null;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        await firestore.runTransaction(
+          async (transaction) => {
+            const nowMs = normalizeNow(clock, makeError);
+            const [admissionSnapshot, scopeSnapshot] = await Promise.all([
+              transaction.get(reservation.identity.callerAdmissionRef),
+              transaction.get(reservation.identity.scopeRef),
+            ]);
+            const admission = parsePrivateHistoryAdmission(
+              admissionSnapshot,
+              reservation.identity,
+              nowMs,
+            );
+            const scope = parsePrivateHistoryScope(
+              scopeSnapshot,
+              reservation.identity,
+              nowMs,
+            );
+            const active = scope?.activeAttempts?.find(
+              ({ requestHash }) =>
+                requestHash === reservation.identity.requestHash,
+            );
+            const globalActive = admission?.activeAttempts?.find(
+              ({ requestHash, attemptHash }) =>
+                requestHash === reservation.identity.requestHash &&
+                attemptHash === reservation.identity.attemptHash,
+            );
+            if (!active && !globalActive) return;
+            if (!active || !globalActive) {
+              throw makeError(
+                "unavailable",
+                "Private scorebook history failure state could not be reconciled.",
+                {
+                  reason: "private-history-completion-unconfirmed",
+                  retryable: true,
+                },
+              );
+            }
+            transaction.set(
+              reservation.identity.callerAdmissionRef,
+              privateHistoryReleasedAdmissionValue(
+                reservation,
+                admission,
+                nowMs,
+              ),
+            );
+            transaction.set(
+              reservation.identity.scopeRef,
+              privateHistoryTerminalValue(
+                reservation,
+                scope,
+                {
+                  requestHash: reservation.identity.requestHash,
+                  status: "failed",
+                  finishedAtMs: nowMs,
+                  failureCode:
+                    compactText(failureCode, 64) || "private-history-failed",
+                },
+                nowMs,
+              ),
+            );
+          },
+          { maxAttempts: 1 },
+        );
+        return;
+      } catch (error) {
+        lastError = error;
+        if (error instanceof HttpsError || error instanceof DiamondHandlerError)
+          break;
+      }
+    }
+    logger.error?.("diamond_private_history_failure_state", {
+      code: lastError?.code || "write-failed",
+    });
   }
 
   function buildSanitizedViewerState({ team, game, projection, scope }) {
@@ -6688,6 +7688,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     cursor,
     caller = null,
     context = null,
+    privateReservation = null,
     loadedPublicState = null,
   }) {
     if (visibility === "public") {
@@ -6700,7 +7701,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       });
     }
     const resourcePaths = paths(teamId, gameId);
-    const state = await loadAuthorizedState(teamId, gameId, caller);
+    const state = await loadAuthorizedHistoryState(teamId, gameId, caller);
     const sourceRevision = state.checkpoint.sequence;
     const collectionPath = resourcePaths.events;
     let querySnapshot;
@@ -6742,19 +7743,29 @@ function createDiamondScorebookHandlers(dependencies = {}) {
         "The Diamond event page is incomplete. Try again.",
       );
     }
-    await reauthorizePrivateEventPage({
-      teamId,
-      gameId,
-      context,
-      expectedInstanceId: state.root.instanceId,
-      sourceRevision,
-    });
-    return buildByteBoundedPrivateEventPage({
+    if (!privateReservation) {
+      throw makeError(
+        "unavailable",
+        "Private scorebook history admission is required. Try again.",
+        { reason: "private-history-admission-missing", retryable: true },
+      );
+    }
+    const response = buildByteBoundedPrivateEventPage({
       events: items,
       limit,
       hasMore,
       sourceRevision,
     });
+    await completePrivateHistoryRead({
+      teamId,
+      gameId,
+      context,
+      expectedInstanceId: state.root.instanceId,
+      sourceRevision,
+      reservation: privateReservation,
+      response,
+    });
+    return response;
   }
 
   async function listDiamondEvents(data = {}, context = {}) {
@@ -6766,7 +7777,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     );
     const teamId = normalizeId(data.teamId, "teamId");
     const gameId = normalizeId(data.gameId, "gameId");
-    const caller = await loadEnabledAuthUser(context);
+    const callerUid = requireCallerUid(context);
     if (data.visibility !== "private" && data.visibility != null) {
       throw makeError(
         "invalid-argument",
@@ -6776,15 +7787,35 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     const visibility = "private";
     const limit = normalizePageLimit(data.limit, makeError);
     const cursor = normalizeSequenceCursor(data.cursor, makeError);
-    return readEventPage({
-      teamId,
-      gameId,
-      visibility,
-      limit,
-      cursor,
-      caller,
-      context,
+    const attemptHash = core.hashDiamondValue({
+      schemaVersion: 1,
+      type: "diamond-private-history-read-attempt",
+      attemptId: secureUuid(random, makeError, "private history read"),
     });
+    const admitted = await reservePrivateHistoryReadWithReconciliation({
+      request: { teamId, gameId, limit, cursor },
+      callerUid,
+      attemptHash,
+    });
+    try {
+      const caller = await loadEnabledAuthUser(context);
+      return await readEventPage({
+        teamId,
+        gameId,
+        visibility,
+        limit,
+        cursor,
+        caller,
+        context,
+        privateReservation: admitted,
+      });
+    } catch (error) {
+      await failPrivateHistoryRead(
+        admitted,
+        error?.details?.reason || error?.code || "private-history-failed",
+      );
+      throw error;
+    }
   }
 
   async function getPublicDiamondGame(data = {}, context = {}) {
@@ -8259,7 +9290,26 @@ module.exports = {
   MAX_MANAGER_STAT_SUSTAINED_REQUESTS_PER_WINDOW,
   MAX_MANAGER_STAT_SUSTAINED_VERIFICATION_UNITS_PER_WINDOW,
   MAX_MANAGER_STAT_VERIFICATION_UNITS_PER_WINDOW,
+  MAX_CONCURRENT_PRIVATE_HISTORY_GLOBAL_REQUESTS,
+  MAX_CONCURRENT_PRIVATE_HISTORY_REQUESTS,
+  MAX_PRIVATE_HISTORY_GLOBAL_REQUESTS_PER_WINDOW,
+  MAX_PRIVATE_HISTORY_GLOBAL_SUSTAINED_READ_UNITS_PER_WINDOW,
+  MAX_PRIVATE_HISTORY_GLOBAL_SUSTAINED_REQUESTS_PER_WINDOW,
+  MAX_PRIVATE_HISTORY_READ_UNITS_PER_WINDOW,
+  MAX_PRIVATE_HISTORY_RECENT_ADMISSIONS,
+  MAX_PRIVATE_HISTORY_REPORT_PAGES,
+  MAX_PRIVATE_HISTORY_REQUESTS_PER_WINDOW,
+  MAX_PRIVATE_HISTORY_SUSTAINED_REQUESTS_PER_WINDOW,
+  MAX_PRIVATE_HISTORY_SUSTAINED_READ_UNITS_PER_WINDOW,
   MAX_PRIVATE_EVENT_PAGE_BYTES,
+  PRIVATE_HISTORY_ADMISSION_DEDUPE_MS,
+  PRIVATE_HISTORY_CONTROL_QUARANTINE_MS,
+  PRIVATE_HISTORY_FIXED_READ_UNITS,
+  PRIVATE_HISTORY_RATE_WINDOW_MS,
+  PRIVATE_HISTORY_RECEIPT_RETENTION_MS,
+  PRIVATE_HISTORY_REPORT_RETRY_ALLOWANCE,
+  PRIVATE_HISTORY_REQUEST_LEASE_MS,
+  PRIVATE_HISTORY_SUSTAINED_WINDOW_MS,
   SCORER_LEASE_DURATION_MS,
   createDiamondScorebookHandlers,
   paths,
