@@ -1455,7 +1455,7 @@ describe('diamondScorebookService', () => {
     enqueueDiamondCommand(first, identity, storage);
     enqueueDiamondCommand(second, identity, storage);
 
-    const limitedCall = vi.fn(async (name: string) => {
+    const limitedCall = vi.fn(async (name: string, _payload: Record<string, unknown>) => {
       if (name === 'getDiamondState') return buildRawSnapshot(3);
       throw {
         code: 'functions/resource-exhausted',
