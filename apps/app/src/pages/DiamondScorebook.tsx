@@ -42,6 +42,8 @@ import {
   diamondRequiredBatterAdvanceOutKind,
   diamondRequiredBatterOutKind,
   getDiamondRulesProfile,
+  hasCompleteDiamondDroppedThirdStrikeCause,
+  isDiamondDroppedThirdStrikeAdvance,
   isDiamondTerminalPitchResult,
   type DiamondBattingRole,
   type DiamondDefensivePosition,
@@ -1051,6 +1053,7 @@ function getDefaultDestination(
 }
 
 function defaultRunnerCause(result: string, to: RunnerDestination): DiamondRunnerAdvanceCause {
+  if (isDiamondDroppedThirdStrikeAdvance(result, to)) return 'other';
   if (result === 'walk' || result === 'intentional_walk') return 'walk';
   if (result === 'hit_by_pitch') return 'hit_by_pitch';
   if (result === 'reached_on_error') return 'error';
@@ -1524,8 +1527,7 @@ function validateRunnerReview(pending: PendingPlay, snapshot: DiamondScorebookSn
   if (batterMove.to === 'out' && requiredBatterOutKind && batterMove.outKind !== requiredBatterOutKind) {
     return `${pending.result} requires batter out kind ${requiredBatterOutKind}.`;
   }
-  const advancesOnDroppedThirdStrike =
-    (pending.result === 'strikeout' && batterMove.to === 'first') || (pending.result === 'dropped_third_strike' && batterMove.to !== 'out');
+  const advancesOnDroppedThirdStrike = isDiamondDroppedThirdStrikeAdvance(pending.result, batterMove.to);
   if (!pending.correction && advancesOnDroppedThirdStrike) {
     const profile = resolvePinnedRulesProfile(snapshot);
     if (!profile?.droppedThirdStrike.enabled) {
@@ -1534,6 +1536,9 @@ function validateRunnerReview(pending: PendingPlay, snapshot: DiamondScorebookSn
     if (profile.droppedThirdStrike.disallowWhenFirstOccupiedWithFewerThanTwoOuts && snapshot.bases.first && snapshot.inning.outs < 2) {
       return 'Dropped-third-strike advancement is not allowed with first occupied and fewer than two outs.';
     }
+  }
+  if (snapshot.captureMode === 'full' && !hasCompleteDiamondDroppedThirdStrikeCause(pending.result, batterMove.to, batterMove.cause)) {
+    return 'Choose wild pitch, passed ball, or error as the dropped-third-strike advance cause.';
   }
   const existingRunnerMoves = pending.runnerMoves.filter((move) => move.from !== 'batter');
   if (!pending.correction) {

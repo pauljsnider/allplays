@@ -191,6 +191,9 @@ describe('interpretDiamondTranscript', () => {
       /mixed multi-out play.*possible timing tag.*countsRun explicit.*scorer review/i
     );
     expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/dropped.third.strike.*pre-play.*first base.*two outs/i);
+    expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(
+      /Full capture.*dropped.third.strike.*cause=wild_pitch.*cause=passed_ball.*cause=error/i
+    );
     expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/sacrifice.*pre-play.*outs.*scor.*advance/i);
     expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/current pitcher.*defensive position.*P/i);
   });
@@ -1128,7 +1131,7 @@ describe('interpretDiamondTranscript', () => {
       context: commandContextWithDroppedThirdStrike({ bases: { first: null, second: null, third: null } }),
       payload: {
         result: 'strikeout',
-        batterAdvance: { to: 'first', cause: 'other' },
+        batterAdvance: { to: 'first', cause: 'wild_pitch' },
         runnerAdvances: [],
         outsOnPlay: 0
       },
@@ -1139,8 +1142,8 @@ describe('interpretDiamondTranscript', () => {
       context: commandContextWithDroppedThirdStrike({ outs: 2 }),
       payload: {
         result: 'strikeout',
-        batterAdvance: { to: 'first', cause: 'other' },
-        runnerAdvances: [{ runnerId: 'runner-1', from: 'first', to: 'second', cause: 'other' }],
+        batterAdvance: { to: 'first', cause: 'passed_ball' },
+        runnerAdvances: [{ runnerId: 'runner-1', from: 'first', to: 'second', cause: 'passed_ball' }],
         outsOnPlay: 0
       },
       status: 'proposal'
@@ -1189,8 +1192,8 @@ describe('interpretDiamondTranscript', () => {
       context: commandContextWithDroppedThirdStrike({}, { enabled: true, disallowWhenFirstOccupiedWithFewerThanTwoOuts: false }),
       payload: {
         result: 'strikeout',
-        batterAdvance: { to: 'first', cause: 'other' },
-        runnerAdvances: [{ runnerId: 'runner-1', from: 'first', to: 'second', cause: 'other' }],
+        batterAdvance: { to: 'first', cause: 'error' },
+        runnerAdvances: [{ runnerId: 'runner-1', from: 'first', to: 'second', cause: 'error' }],
         outsOnPlay: 0
       },
       status: 'proposal'
@@ -1200,7 +1203,7 @@ describe('interpretDiamondTranscript', () => {
       context: commandContextWithDroppedThirdStrike({ bases: { first: null, second: null, third: null } }),
       payload: {
         result: 'dropped_third_strike',
-        batterAdvance: { to: 'second', cause: 'other' },
+        batterAdvance: { to: 'second', cause: 'error' },
         runnerAdvances: [],
         outsOnPlay: 0
       },
@@ -1240,6 +1243,48 @@ describe('interpretDiamondTranscript', () => {
 
     expect(result).toMatchObject({ status, authoritative: false });
     if (message) expect(result.message).toMatch(message);
+  });
+
+  it.each([
+    { result: 'strikeout', to: 'first', cause: 'batted_ball' },
+    { result: 'dropped_third_strike', to: 'second', cause: 'other' }
+  ])('rejects a Full-capture $result advance whose defensive cause is $cause', async ({ result, to, cause }) => {
+    const model = jsonModel(
+      plateAppearanceResponse({
+        result,
+        batterAdvance: { to, cause },
+        runnerAdvances: [],
+        outsOnPlay: 0
+      })
+    );
+
+    const interpretation = await interpretDiamondTranscript(
+      'Strike three; the batter reached, but the defensive cause is unknown.',
+      commandContextWithDroppedThirdStrike({ bases: { first: null, second: null, third: null } }),
+      model.dependencies
+    );
+
+    expect(interpretation).toMatchObject({ status: 'invalid-response', proposal: null, authoritative: false });
+    expect(interpretation.message).toMatch(/Full-capture dropped.third.strike.*wild_pitch.*passed_ball.*error/i);
+  });
+
+  it('preserves Quick-capture review when a dropped-third-strike cause was not collected', async () => {
+    const model = jsonModel(
+      plateAppearanceResponse({
+        result: 'dropped_third_strike',
+        batterAdvance: { to: 'first', cause: 'other' },
+        runnerAdvances: [],
+        outsOnPlay: 0
+      })
+    );
+
+    const interpretation = await interpretDiamondTranscript(
+      'Strike three; the batter reached and the cause was not collected.',
+      commandContextWithDroppedThirdStrike({ captureMode: 'quick', bases: { first: null, second: null, third: null } }),
+      model.dependencies
+    );
+
+    expect(interpretation).toMatchObject({ status: 'proposal', proposal: { type: 'record_plate_appearance' }, authoritative: false });
   });
 
   it.each([

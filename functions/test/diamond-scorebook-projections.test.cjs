@@ -3572,6 +3572,171 @@ test("compiled runner-cause fielding completeness matches full replay for every 
   );
 });
 
+test("compiled dropped-third-strike cause coverage matches direct checkpoints, replay, and corrections", () => {
+  const fixtures = [
+    {
+      cause: "other",
+      expectedCoverage: { pitching: "partial", fielding: "partial" },
+      expected: { WP: 0, PB: 0, E: 0 },
+    },
+    {
+      cause: undefined,
+      expectedCoverage: { pitching: "partial", fielding: "partial" },
+      expected: { WP: 0, PB: 0, E: 0 },
+    },
+    {
+      cause: "wild_pitch",
+      expectedCoverage: { pitching: "complete", fielding: "complete" },
+      expected: { WP: 1, PB: 0, E: 0 },
+    },
+    {
+      cause: "passed_ball",
+      fielding: { passedBallBy: "home-2" },
+      expectedCoverage: { pitching: "complete", fielding: "complete" },
+      expected: { WP: 0, PB: 1, E: 0 },
+    },
+    {
+      cause: "error",
+      fielding: {
+        errors: [{ playerId: "home-2", kind: "fielding" }],
+      },
+      expectedCoverage: { pitching: "complete", fielding: "complete" },
+      expected: { WP: 0, PB: 0, E: 1 },
+    },
+  ];
+
+  fixtures.forEach((fixture, index) => {
+    const game = harness("full", "baseball-nfhs");
+    setLineupsAndStart(game, 3);
+    for (let pitch = 0; pitch < 3; pitch += 1) {
+      game.submit("record_pitch", {
+        ...currentMatchup(game),
+        result: "swinging_strike",
+      });
+    }
+    const matchup = currentMatchup(game);
+    const command = {
+      schemaVersion: DIAMOND_SCHEMA_VERSION,
+      commandId: uuid(985 + index),
+      teamId: game.ledger.teamId,
+      gameId: game.ledger.gameId,
+      expectedRevision: game.ledger.state.revision,
+      rulesProfileId: game.ledger.rulesProfileId,
+      rulesProfileVersion: game.ledger.rulesProfileVersion,
+      type: "record_plate_appearance",
+      payload: {
+        ...matchup,
+        result: "dropped_third_strike",
+        batterAdvance: {
+          to: "first",
+          ...(fixture.cause ? { cause: fixture.cause } : {}),
+        },
+        runnerAdvances: [],
+        outsOnPlay: 0,
+        ...(fixture.fielding ? { fielding: fixture.fielding } : {}),
+      },
+    };
+    const context = {
+      actorUid: SCORER_UID,
+      eventId: `compiled-dropped-third-${fixture.cause || "omitted"}`,
+      serverTimestampMs: 1_700_000_250_000 + index,
+    };
+    const checkpoint = createDiamondCheckpoint(game.ledger);
+    const full = executeDiamondCommand(game.ledger, command, context);
+    const bounded = executeDiamondCommandFromCheckpoint(
+      checkpoint,
+      command,
+      context,
+    );
+
+    assert.equal(full.result.outcome, "accepted");
+    assert.equal(bounded.result.outcome, "accepted");
+    assert.deepEqual(
+      {
+        pitching: full.ledger.state.coverage.pitching,
+        fielding: full.ledger.state.coverage.fielding,
+      },
+      fixture.expectedCoverage,
+    );
+    assert.deepEqual(
+      {
+        pitching: bounded.checkpoint.state.coverage.pitching,
+        fielding: bounded.checkpoint.state.coverage.fielding,
+      },
+      fixture.expectedCoverage,
+    );
+    const projection = projectDiamondStats(full.ledger);
+    assert.equal(
+      projection.players["home-1"].raw.pitching.WP,
+      fixture.expected.WP,
+    );
+    assert.equal(
+      projection.players["home-2"].raw.fielding.PB,
+      fixture.expected.PB,
+    );
+    assert.equal(
+      projection.players["home-2"].raw.fielding.E,
+      fixture.expected.E,
+    );
+    assert.deepEqual(bounded.event, full.event);
+    assert.deepEqual(replayDiamondLedger(full.ledger).state, full.ledger.state);
+  });
+
+  const correction = harness("full", "baseball-nfhs");
+  setLineupsAndStart(correction, 3);
+  for (let pitch = 0; pitch < 3; pitch += 1) {
+    correction.submit("record_pitch", {
+      ...currentMatchup(correction),
+      result: "swinging_strike",
+    });
+  }
+  const matchup = currentMatchup(correction);
+  const original = correction.submit("record_plate_appearance", {
+    ...matchup,
+    result: "dropped_third_strike",
+    batterAdvance: { to: "first", cause: "other" },
+    runnerAdvances: [],
+    outsOnPlay: 0,
+  });
+  assert.deepEqual(
+    {
+      pitching: correction.ledger.state.coverage.pitching,
+      fielding: correction.ledger.state.coverage.fielding,
+    },
+    { pitching: "partial", fielding: "partial" },
+  );
+  correction.submit("supersede_event", {
+    targetEventId: original.eventId,
+    reason: "Score the uncaught third strike as a wild pitch.",
+    replacement: {
+      type: "record_plate_appearance",
+      payload: {
+        ...matchup,
+        result: "dropped_third_strike",
+        batterAdvance: { to: "first", cause: "wild_pitch" },
+        runnerAdvances: [],
+        outsOnPlay: 0,
+      },
+    },
+  });
+  assert.deepEqual(
+    {
+      pitching: correction.ledger.state.coverage.pitching,
+      fielding: correction.ledger.state.coverage.fielding,
+    },
+    { pitching: "complete", fielding: "complete" },
+  );
+  assert.equal(
+    projectDiamondStats(correction.ledger).players["home-1"].raw.pitching.WP,
+    1,
+  );
+  assert.equal(verifyDiamondLedger(correction.ledger), true);
+  assert.deepEqual(
+    replayDiamondLedger(correction.ledger).state,
+    correction.ledger.state,
+  );
+});
+
 test("compiled catcher-interference coverage matches checkpoints and follows full-history attachments and voids", () => {
   const game = harness("full", "baseball-nfhs");
   setLineupsAndStart(game, 3);

@@ -1,5 +1,16 @@
-import type { DiamondCommandType, DiamondPlateAppearanceResult, DiamondRunnerAdvanceCause } from './diamondScorebook/contracts';
-import { diamondDefaultBatterOutKind, diamondRequiredBatterAdvanceOutKind, diamondRequiredBatterOutKind } from './diamondScorebook/reducer';
+import type {
+  DiamondCommandType,
+  DiamondDestination,
+  DiamondPlateAppearanceResult,
+  DiamondRunnerAdvanceCause
+} from './diamondScorebook/contracts';
+import {
+  diamondDefaultBatterOutKind,
+  diamondRequiredBatterAdvanceOutKind,
+  diamondRequiredBatterOutKind,
+  hasCompleteDiamondDroppedThirdStrikeCause,
+  isDiamondDroppedThirdStrikeAdvance
+} from './diamondScorebook/reducer';
 
 type DiamondJsonValue = string | number | boolean | null | DiamondJsonValue[] | { [key: string]: DiamondJsonValue };
 type DiamondJsonObject = { [key: string]: DiamondJsonValue };
@@ -1019,7 +1030,7 @@ SECURITY AND AUTHORITY RULES:
 - caught_stealing, pickoff, force_out, tag_out, and appeal_out require to=out. On an existing-runner advance, pair caught_stealing, pickoff, and tag_out with outKind=tag; force_out with outKind=force; and appeal_out with outKind=appeal. On batterAdvance, pair caught_stealing, pickoff, and tag_out with outKind=tag; force_out with outKind=batter_runner; and appeal_out with outKind=appeal. stolen_base requires a safe forward destination, never stay or out.
 - Batter out kinds are result-pinned for intrinsically fixed outs: fly_out, line_out, and sacrifice_fly require outKind=catch; ground_out and sacrifice_bunt require outKind=batter_runner. A fielders_choice batter tagged after first while trying for the next base may use cause=tag_out and outKind=tag; that tag can be a timing third out, so leave each run's countsRun explicit for scorer review.
 - A batter-origin appeal cannot identify the appealed base or prove that first base was reached in the current payload. Treat it as retiring the batter before first when evaluating third-out timing. If it is the only possible third out, every run must use countsRun=false; never use that appeal itself to justify a counted timing run. On a mixed multi-out play with a possible timing tag, leave countsRun explicit for scorer review. Existing-runner appeals remain explicit scorer timing judgments.
-- For dropped-third-strike advancement, use the pre-play context: an ordinary strikeout may reach first, and a named dropped_third_strike may advance to first, second, third, or home, only when droppedThirdStrike.enabled=true and the pinned rule does not disallow advancement with first base occupied and fewer than two outs. Missing or disabled capability means the batter must be out. A batter can never use to=stay.
+- For dropped-third-strike advancement, use the pre-play context: an ordinary strikeout may reach first, and a named dropped_third_strike may advance to first, second, third, or home, only when droppedThirdStrike.enabled=true and the pinned rule does not disallow advancement with first base occupied and fewer than two outs. Missing or disabled capability means the batter must be out. A batter can never use to=stay. In Full capture, every safe dropped-third-strike batter advance must use cause=wild_pitch, cause=passed_ball, or cause=error; if that cause is unknown, ask the scorer instead of using other or batted_ball.
 - A sacrifice requires known pre-play outs fewer than two: sacrifice_fly requires a runner whose run scores, and sacrifice_bunt requires an existing runner to advance safely.
 - When substituting or re-entering the current pitcher, the current pitcher must retain defensive position P: omit defensivePosition to inherit P or set defensivePosition=P.
 - These prompt rules guide the proposal only. The local deterministic validator remains authoritative.
@@ -1570,7 +1581,12 @@ function validatePlateAppearanceAgainstContext(payload: Record<string, unknown>,
   validateSacrificeAgainstContext(result, runnerAdvances, context);
 
   validatePlateAppearanceBaseDestinations(payload.batterId as string, batterAdvance, runnerAdvances, context);
-  validateDroppedThirdStrikeAdvance(result, batterAdvance.to as string, context);
+  validateDroppedThirdStrikeAdvance(
+    result,
+    batterAdvance.to as string,
+    batterAdvance.cause as DiamondRunnerAdvanceCause | undefined,
+    context
+  );
 
   if (result === 'home_run' || result === 'triple') {
     const occupiedBases = (['first', 'second', 'third'] as const).filter((base) => context.bases[base]);
@@ -1722,9 +1738,13 @@ function validateRunnerOrderAgainstContext(
   }
 }
 
-function validateDroppedThirdStrikeAdvance(result: string, batterDestination: string, context: NormalizedCommandContext) {
-  const advancesOnDroppedThirdStrike =
-    (result === 'strikeout' && batterDestination === 'first') || (result === 'dropped_third_strike' && batterDestination !== 'out');
+function validateDroppedThirdStrikeAdvance(
+  result: string,
+  batterDestination: string,
+  batterCause: DiamondRunnerAdvanceCause | undefined,
+  context: NormalizedCommandContext
+) {
+  const advancesOnDroppedThirdStrike = isDiamondDroppedThirdStrikeAdvance(result, batterDestination as DiamondDestination);
   if (!advancesOnDroppedThirdStrike) return;
   if (!context.droppedThirdStrike?.enabled) {
     throw new DiamondAiBoundaryError('Dropped-third-strike advancement is disabled or unavailable in the pinned rules context.');
@@ -1737,6 +1757,14 @@ function validateDroppedThirdStrikeAdvance(result: string, batterDestination: st
   }
   if (context.droppedThirdStrike.disallowWhenFirstOccupiedWithFewerThanTwoOuts && context.bases.first && context.outs < 2) {
     throw new DiamondAiBoundaryError('Dropped-third-strike advancement is not allowed with first occupied and fewer than two outs.');
+  }
+  if (
+    context.captureMode === 'full' &&
+    !hasCompleteDiamondDroppedThirdStrikeCause(result, batterDestination as DiamondDestination, batterCause)
+  ) {
+    throw new DiamondAiBoundaryError(
+      'A Full-capture dropped-third-strike advance requires wild_pitch, passed_ball, or error as its cause.'
+    );
   }
 }
 

@@ -3954,6 +3954,139 @@ describe('Diamond stat-integrity evidence', () => {
   });
 
   it.each([
+    { result: 'strikeout' as const, cause: 'batted_ball' as const },
+    { result: 'dropped_third_strike' as const, cause: 'other' as const },
+    { result: 'dropped_third_strike' as const, cause: undefined }
+  ])(
+    'keeps an unknown-cause $result batter reach ($cause) non-authoritative across direct, checkpoint, and replay paths',
+    ({ result, cause }) => {
+      const game = harness('baseball-nfhs', 'full');
+      setBasicLineups(game);
+      for (let index = 0; index < 3; index += 1) {
+        game.submit('record_pitch', { batterId: 'away-1', pitcherId: 'home-1', result: 'swinging_strike' });
+      }
+      const command = game.command('record_plate_appearance', {
+        batterId: 'away-1',
+        pitcherId: 'home-1',
+        result,
+        batterAdvance: { to: 'first', ...(cause ? { cause } : {}) },
+        runnerAdvances: [],
+        outsOnPlay: 0
+      });
+      const context = {
+        actorUid: SCORER,
+        eventId: `unknown-cause-${result}-${cause || 'omitted'}`,
+        serverTimestampMs: 1_700_000_090_000
+      };
+      const checkpoint = createDiamondCheckpoint(game.ledger);
+      const full = executeDiamondCommand(game.ledger, command, context);
+      const bounded = executeDiamondCommandFromCheckpoint(checkpoint, command, context);
+
+      expect(full.result).toMatchObject({ outcome: 'accepted' });
+      expect(bounded.result).toMatchObject({ outcome: 'accepted' });
+      expect(full.ledger.state.coverage).toMatchObject({ pitching: 'partial', fielding: 'partial', pitches: 'complete' });
+      expect(bounded.checkpoint.state.coverage).toMatchObject({ pitching: 'partial', fielding: 'partial', pitches: 'complete' });
+      expect(projectDiamondStats(full.ledger)).toMatchObject({
+        coverage: { pitching: 'partial', fielding: 'partial' },
+        players: {
+          'home-1': { raw: { pitching: { WP: 0 } } },
+          'home-2': { raw: { fielding: { PB: 0, E: 0 } } }
+        }
+      });
+      expect(bounded.event).toEqual(full.event);
+      expect(replayDiamondLedger(full.ledger).state).toEqual(full.ledger.state);
+    }
+  );
+
+  it.each([
+    {
+      cause: 'wild_pitch' as const,
+      fielding: undefined,
+      expected: { WP: 1, PB: 0, E: 0 }
+    },
+    {
+      cause: 'passed_ball' as const,
+      fielding: { passedBallBy: 'home-2' },
+      expected: { WP: 0, PB: 1, E: 0 }
+    },
+    {
+      cause: 'error' as const,
+      fielding: { errors: [{ playerId: 'home-2', kind: 'fielding' as const }] },
+      expected: { WP: 0, PB: 0, E: 1 }
+    }
+  ])('keeps explicit dropped-third-strike $cause credit authoritative', ({ cause, fielding, expected }) => {
+    const game = harness('baseball-nfhs', 'full');
+    setBasicLineups(game);
+    for (let index = 0; index < 3; index += 1) {
+      game.submit('record_pitch', { batterId: 'away-1', pitcherId: 'home-1', result: 'swinging_strike' });
+    }
+    game.submit('record_plate_appearance', {
+      batterId: 'away-1',
+      pitcherId: 'home-1',
+      result: 'dropped_third_strike',
+      batterAdvance: { to: 'first', cause },
+      runnerAdvances: [],
+      outsOnPlay: 0,
+      ...(fielding ? { fielding } : {})
+    });
+
+    const projection = projectDiamondStats(game.ledger);
+    expect(game.ledger.state.coverage).toMatchObject({ pitching: 'complete', fielding: 'complete', pitches: 'complete' });
+    expect(projection.players['home-1'].raw.pitching.WP).toBe(expected.WP);
+    expect(projection.players['home-2'].raw.fielding).toMatchObject({ PB: expected.PB, E: expected.E });
+    expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
+  });
+
+  it('recomputes unknown dropped-third-strike cause coverage through an effective correction and preserves quick capture', () => {
+    const game = harness('baseball-nfhs', 'full');
+    setBasicLineups(game);
+    for (let index = 0; index < 3; index += 1) {
+      game.submit('record_pitch', { batterId: 'away-1', pitcherId: 'home-1', result: 'swinging_strike' });
+    }
+    const original = game.submit('record_plate_appearance', {
+      batterId: 'away-1',
+      pitcherId: 'home-1',
+      result: 'dropped_third_strike',
+      batterAdvance: { to: 'first', cause: 'other' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    expect(game.ledger.state.coverage).toMatchObject({ pitching: 'partial', fielding: 'partial' });
+
+    game.submit('supersede_event', {
+      targetEventId: original.event!.eventId,
+      reason: 'Score the uncaught third strike as a wild pitch.',
+      replacement: {
+        type: 'record_plate_appearance',
+        payload: {
+          batterId: 'away-1',
+          pitcherId: 'home-1',
+          result: 'dropped_third_strike',
+          batterAdvance: { to: 'first', cause: 'wild_pitch' },
+          runnerAdvances: [],
+          outsOnPlay: 0
+        }
+      }
+    });
+    expect(game.ledger.state.coverage).toMatchObject({ pitching: 'complete', fielding: 'complete' });
+    expect(projectDiamondStats(game.ledger).players['home-1'].raw.pitching.WP).toBe(1);
+    expect(verifyDiamondLedger(game.ledger)).toBe(true);
+    expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
+
+    const quick = harness('baseball-nfhs', 'quick');
+    setBasicLineups(quick);
+    quick.submit('record_plate_appearance', {
+      batterId: 'away-1',
+      pitcherId: 'home-1',
+      result: 'dropped_third_strike',
+      batterAdvance: { to: 'first', cause: 'other' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    expect(quick.ledger.state.coverage).toMatchObject({ pitching: 'partial', fielding: 'not_collected' });
+  });
+
+  it.each([
     {
       cause: 'error' as const,
       fielding: { errors: [{ playerId: 'home-3', kind: 'fielding' as const }] },
@@ -4039,7 +4172,7 @@ describe('Diamond stat-integrity evidence', () => {
       const batterPlay = batter.submit('record_plate_appearance', {
         batterId: 'away-1',
         pitcherId: 'home-1',
-        result: 'dropped_third_strike',
+        result: cause === 'obstruction' ? 'fielders_choice' : 'dropped_third_strike',
         batterAdvance: { to: 'first', cause },
         runnerAdvances: [],
         outsOnPlay: 0

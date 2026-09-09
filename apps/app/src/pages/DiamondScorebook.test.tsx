@@ -1220,6 +1220,42 @@ describe('DiamondScorebook', () => {
     expect(fixture.submitCommand).not.toHaveBeenCalled();
   });
 
+  it('blocks a server voice draft whose safe dropped-third-strike advance has an unknown cause', async () => {
+    const snapshot = buildSnapshot({ bases: { first: null, second: null, third: null } });
+    const fixture = createClient(snapshot);
+    (fixture.client.parseVoice as ReturnType<typeof vi.fn>).mockResolvedValue({
+      schemaVersion: 1,
+      type: 'record_plate_appearance',
+      payload: {
+        batterId: 'batter-1',
+        pitcherId: 'pitcher-1',
+        result: 'dropped_third_strike',
+        batterAdvance: { to: 'first', cause: 'other' },
+        runnerAdvances: [],
+        outsOnPlay: 0
+      },
+      confidence: 0.9,
+      unresolvedFields: [],
+      requiresConfirmation: true,
+      mutatesState: false
+    });
+    const generateContent = vi.fn(async () => {
+      throw new Error('model unavailable');
+    });
+    renderScorebook(snapshot, fixture, { generateContent });
+
+    fireEvent.click(screen.getByRole('button', { name: /Dictate play/ }));
+    fireEvent.change(screen.getByLabelText('Editable transcript'), { target: { value: 'Strike three, but the batter reached.' } });
+    fireEvent.click(screen.getByRole('button', { name: /Interpret play/ }));
+
+    const dialog = await screen.findByRole('dialog', { name: 'Review Dropped third strike' });
+    expect(within(dialog).getByLabelText(/Batter .* cause/)).toHaveValue('other');
+    expect(within(dialog).getByRole('alert')).toHaveTextContent(/choose wild pitch, passed ball, or error/i);
+    expect(within(dialog).getByRole('button', { name: 'Confirm play' })).toBeDisabled();
+    expect(fixture.createCommand).not.toHaveBeenCalled();
+    expect(fixture.submitCommand).not.toHaveBeenCalled();
+  });
+
   it('safely synthesizes omitted home-run advances for every current runner in a server voice draft', async () => {
     const fixture = createClient();
     (fixture.client.parseVoice as ReturnType<typeof vi.fn>).mockResolvedValue({
@@ -2247,6 +2283,7 @@ describe('DiamondScorebook', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Strikeout' }));
     const dialog = screen.getByRole('dialog', { name: 'Review Strikeout' });
     fireEvent.change(within(dialog).getByLabelText(/Batter .* destination/), { target: { value: 'first' } });
+    fireEvent.change(within(dialog).getByLabelText(/Batter .* cause/), { target: { value: 'wild_pitch' } });
     if (advancesForcedRunner) {
       fireEvent.change(within(dialog).getByLabelText(/First .* destination/), { target: { value: 'second' } });
     }
@@ -2259,11 +2296,39 @@ describe('DiamondScorebook', () => {
         type: 'record_plate_appearance',
         payload: expect.objectContaining({
           result: 'strikeout',
-          batterAdvance: expect.objectContaining({ to: 'first' }),
+          batterAdvance: expect.objectContaining({ to: 'first', cause: 'wild_pitch' }),
           runnerAdvances: advancesForcedRunner
             ? expect.arrayContaining([expect.objectContaining({ runnerId: 'runner-1', from: 'first', to: 'second' })])
             : [],
           outsOnPlay: 0
+        })
+      })
+    );
+  });
+
+  it('requires an explicit defensive cause before confirming a live dropped-third-strike reach', async () => {
+    const snapshot = buildSnapshot({ bases: { first: null, second: null, third: null } });
+    const fixture = createClient(snapshot);
+    renderScorebook(snapshot, fixture);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Dropped third strike' }));
+    const dialog = screen.getByRole('dialog', { name: 'Review Dropped third strike' });
+    const cause = within(dialog).getByLabelText(/Batter .* cause/);
+    expect(cause).toHaveValue('other');
+    expect(within(dialog).getByRole('alert')).toHaveTextContent(/choose wild pitch, passed ball, or error/i);
+    expect(within(dialog).getByRole('button', { name: 'Confirm play' })).toBeDisabled();
+
+    fireEvent.change(cause, { target: { value: 'passed_ball' } });
+    expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm play' }));
+
+    await waitFor(() => expect(fixture.submitCommand).toHaveBeenCalledTimes(1));
+    expect(fixture.createCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'record_plate_appearance',
+        payload: expect.objectContaining({
+          result: 'dropped_third_strike',
+          batterAdvance: expect.objectContaining({ to: 'first', cause: 'passed_ball' })
         })
       })
     );
@@ -3105,7 +3170,7 @@ describe('DiamondScorebook', () => {
     );
   });
 
-  it('clears the default batter out kind when a voice proposal safely advances the batter', async () => {
+  it('clears the default batter out kind while preserving a voice-proposed dropped-third-strike cause', async () => {
     const baseSnapshot = buildSnapshot();
     const snapshot = buildSnapshot({
       inning: { ...baseSnapshot.inning, outs: 1 },
@@ -3121,7 +3186,7 @@ describe('DiamondScorebook', () => {
           batterId: 'batter-1',
           pitcherId: 'pitcher-1',
           result: 'strikeout',
-          batterAdvance: { to: 'first', cause: 'other' },
+          batterAdvance: { to: 'first', cause: 'wild_pitch' },
           runnerAdvances: [],
           outsOnPlay: 0,
           runsBattedIn: 0
@@ -3145,7 +3210,7 @@ describe('DiamondScorebook', () => {
 
     const submittedPayload = fixture.createCommand.mock.calls[0]![0]
       .payload as unknown as DiamondCommandPayloadMap['record_plate_appearance'];
-    expect(submittedPayload.batterAdvance).toMatchObject({ to: 'first', cause: 'other' });
+    expect(submittedPayload.batterAdvance).toMatchObject({ to: 'first', cause: 'wild_pitch' });
     expect(submittedPayload.batterAdvance).not.toHaveProperty('outKind');
   });
 
@@ -3334,7 +3399,7 @@ describe('DiamondScorebook', () => {
               batterId: 'batter-1',
               pitcherId: 'pitcher-1',
               result: 'strikeout',
-              batterAdvance: { to: 'first', cause: 'other', outKind: 'tag' },
+              batterAdvance: { to: 'first', cause: 'wild_pitch', outKind: 'tag' },
               runnerAdvances: [],
               outsOnPlay: 0,
               runsBattedIn: 0
@@ -5403,6 +5468,10 @@ describe('DiamondScorebook', () => {
     fireEvent.change(within(review).getByLabelText('Play result'), { target: { value: 'dropped_third_strike' } });
 
     expect(within(review).getByLabelText(/Batter .* destination/)).toHaveValue('first');
+    expect(within(review).getByLabelText(/Batter .* cause/)).toHaveValue('other');
+    expect(within(review).getByRole('alert')).toHaveTextContent(/choose wild pitch, passed ball, or error/i);
+    expect(within(review).getByRole('button', { name: 'Confirm correction' })).toBeDisabled();
+    fireEvent.change(within(review).getByLabelText(/Batter .* cause/), { target: { value: 'error' } });
     expect(within(review).queryByRole('alert')).not.toBeInTheDocument();
     fireEvent.click(within(review).getByRole('button', { name: 'Confirm correction' }));
     await waitFor(() => expect(fixture.submitCommand).toHaveBeenCalledTimes(1));
@@ -5415,7 +5484,7 @@ describe('DiamondScorebook', () => {
             payload: expect.objectContaining({
               result: 'dropped_third_strike',
               batterId: 'historical-batter',
-              batterAdvance: expect.objectContaining({ to: 'first' })
+              batterAdvance: expect.objectContaining({ to: 'first', cause: 'error' })
             })
           })
         })

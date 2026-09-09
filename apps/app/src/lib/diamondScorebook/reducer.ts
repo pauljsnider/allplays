@@ -88,6 +88,7 @@ const TERMINAL_PITCH_RESULTS: readonly DiamondCommandPayloadMap['record_pitch'][
   'hit_by_pitch',
   'catcher_interference'
 ];
+const DROPPED_THIRD_STRIKE_ADVANCE_CAUSES: readonly DiamondRunnerAdvanceCause[] = ['wild_pitch', 'passed_ball', 'error'];
 const PLATE_APPEARANCE_RESULTS: readonly DiamondCommandPayloadMap['record_plate_appearance']['result'][] = [
   'single',
   'double',
@@ -308,6 +309,20 @@ export function isDiamondDeliveredPitch(result: DiamondCommandPayloadMap['record
 
 export function isDiamondTerminalPitchResult(result: DiamondCommandPayloadMap['record_pitch']['result'] | null): boolean {
   return result !== null && TERMINAL_PITCH_RESULTS.includes(result);
+}
+
+export function isDiamondDroppedThirdStrikeAdvance(result: string, destination: DiamondDestination): boolean {
+  return (result === 'strikeout' && destination === 'first') || (result === 'dropped_third_strike' && destination !== 'out');
+}
+
+export function hasCompleteDiamondDroppedThirdStrikeCause(
+  result: string,
+  destination: DiamondDestination,
+  cause: DiamondRunnerAdvanceCause | undefined
+): boolean {
+  return (
+    !isDiamondDroppedThirdStrikeAdvance(result, destination) || (cause !== undefined && DROPPED_THIRD_STRIKE_ADVANCE_CAUSES.includes(cause))
+  );
 }
 
 function hasCompletePitchOutcomeEvidence(
@@ -830,10 +845,19 @@ export function deriveDiamondCoverageFromEventStates(
         coverage = { ...coverage, pitches: 'partial' };
       }
       if (initialState.captureMode === 'full') {
+        const hasKnownDroppedThirdStrikeCause = hasCompleteDiamondDroppedThirdStrikeCause(
+          payload.result,
+          payload.batterAdvance.to,
+          payload.batterAdvance.cause
+        );
+        if (!hasKnownDroppedThirdStrikeCause) coverage = { ...coverage, pitching: 'partial' };
         if (payload.outsOnPlay > 0 && !hasCompletePutoutEvidence(fieldingChains, payload.outsOnPlay)) {
           coverage = { ...coverage, fielding: 'partial' };
         }
-        if (!hasCompleteSemanticFieldingEvidence([payload.batterAdvance, ...payload.runnerAdvances], fieldingChains, payload.result)) {
+        if (
+          !hasKnownDroppedThirdStrikeCause ||
+          !hasCompleteSemanticFieldingEvidence([payload.batterAdvance, ...payload.runnerAdvances], fieldingChains, payload.result)
+        ) {
           coverage = { ...coverage, fielding: 'partial' };
         }
       }
@@ -1967,6 +1991,14 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
       if (state.captureMode === 'full' && !hasCompletePitchOutcomeEvidence(state, action.payload.result)) {
         next = markPartial(next, ['pitches']);
       }
+      const hasKnownDroppedThirdStrikeCause = hasCompleteDiamondDroppedThirdStrikeCause(
+        action.payload.result,
+        action.payload.batterAdvance.to,
+        action.payload.batterAdvance.cause
+      );
+      if (state.captureMode === 'full' && !hasKnownDroppedThirdStrikeCause) {
+        next = markPartial(next, ['pitching']);
+      }
       const missingFullFielding =
         action.payload.outsOnPlay > 0 &&
         !hasCompletePutoutEvidence(action.payload.fielding ? [action.payload.fielding] : [], action.payload.outsOnPlay);
@@ -1975,7 +2007,7 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
         action.payload.fielding ? [action.payload.fielding] : [],
         action.payload.result
       );
-      if (state.captureMode === 'full' && (missingFullFielding || missingSemanticFielding)) {
+      if (state.captureMode === 'full' && (!hasKnownDroppedThirdStrikeCause || missingFullFielding || missingSemanticFielding)) {
         next = markPartial(next, ['fielding']);
       }
       break;
