@@ -2,7 +2,7 @@
 import React, { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot } from 'react-dom/client';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 
 const authServiceMocks = vi.hoisted(() => ({
     applyEmailActionCode: vi.fn(),
@@ -57,6 +57,18 @@ function buildAuth(overrides = {}) {
     };
 }
 
+function AuthTarget() {
+    const location = useLocation();
+    return React.createElement(
+        'div',
+        {
+            'data-testid': 'auth-target',
+            'data-route': `${location.pathname}${location.search}`
+        },
+        'Auth target'
+    );
+}
+
 async function renderWithRoutes(initialEntry, routeElement, routePath = '/reset-password') {
     const container = document.createElement('div');
     document.body.appendChild(container);
@@ -70,7 +82,11 @@ async function renderWithRoutes(initialEntry, routeElement, routePath = '/reset-
                 Routes,
                 null,
                 React.createElement(Route, { path: routePath, element: routeElement }),
-                React.createElement(Route, { path: '/auth', element: React.createElement('div', { 'data-testid': 'auth-target' }, 'Auth target') }),
+                React.createElement(Route, {
+                    path: '/verify-pending',
+                    element: React.createElement(VerifyPending, { auth: buildAuth({ user: null }) })
+                }),
+                React.createElement(Route, { path: '/auth', element: React.createElement(AuthTarget) }),
                 React.createElement(Route, { path: '/home', element: React.createElement('div', { 'data-testid': 'home-target' }, 'Home target') })
             )
         ));
@@ -170,6 +186,30 @@ describe('ResetPassword account actions', () => {
         expect(container.querySelector('a[href="/verify-pending"]')).toBeTruthy();
         expect(container.querySelector('a[href="//evil.example"]')).toBeNull();
         expect(container.querySelector('a.mb-5')?.getAttribute('href')).toBe('/auth');
+    });
+
+    it.each([
+        ['family fee', '/parent-tools/fees?teamId=team-1&batchId=batch-1&recipientId=recipient-1'],
+        ['schedule', '/schedule?teamId=team-1&eventId=event-1']
+    ])('preserves a signed-out %s route after completing verification', async (_label, nextRoute) => {
+        const { container } = await renderWithRoutes(
+            `/reset-password?mode=verifyEmail&oobCode=verify-code&next=${encodeURIComponent(nextRoute)}`,
+            React.createElement(ResetPassword)
+        );
+
+        await waitForText(container, 'Email verified. You can continue to ALL PLAYS.');
+        const continueLink = Array.from(container.querySelectorAll('a'))
+            .find((link) => link.textContent === 'Continue after verification');
+        const verificationBridge = `/verify-pending?next=${encodeURIComponent(nextRoute)}`;
+        expect(continueLink?.getAttribute('href')).toBe(verificationBridge);
+
+        await act(async () => {
+            continueLink.click();
+        });
+        await waitForText(container, 'Auth target');
+        expect(container.querySelector('[data-testid="auth-target"]')?.getAttribute('data-route')).toBe(
+            `/auth?next=${encodeURIComponent(nextRoute)}`
+        );
     });
 
     it('returns a verified email action to the exact static Diamond viewer document', async () => {

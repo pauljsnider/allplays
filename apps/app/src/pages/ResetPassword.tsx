@@ -13,7 +13,12 @@ export function ResetPassword() {
   const requestedNext = getSafeAuthNextRoute(searchParams.get('next'));
   const documentRequestedNext = getDocumentAuthNextRoute(requestedNext);
   const authBackRoute = requestedNext ? `/auth?next=${encodeURIComponent(requestedNext)}` : '/auth';
-  const successRoute = mode === 'verifyEmail' ? '/verify-pending' : '/auth';
+  const verificationSuccessRoute = requestedNext
+    ? `/verify-pending?next=${encodeURIComponent(requestedNext)}`
+    : '/verify-pending';
+  const successRoute = mode === 'verifyEmail'
+    ? verificationSuccessRoute
+    : requestedNext || '/auth';
   const successLabel = mode === 'verifyEmail' ? 'Continue after verification' : 'Continue to login';
   const [state, setState] = useState<'loading' | 'reset' | 'success' | 'invalid'>('loading');
   const [message, setMessage] = useState('Verifying account action...');
@@ -120,7 +125,7 @@ export function ResetPassword() {
           {documentRequestedNext ? (
             <DocumentAuthLink route={documentRequestedNext} className="primary-button mt-4 w-full justify-center">{successLabel}</DocumentAuthLink>
           ) : (
-            <Link to={requestedNext || successRoute} className="primary-button mt-4 w-full justify-center">{successLabel}</Link>
+            <Link to={successRoute} className="primary-button mt-4 w-full justify-center">{successLabel}</Link>
           )}
         </>
       ) : null}
