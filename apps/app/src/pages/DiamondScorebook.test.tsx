@@ -3989,7 +3989,9 @@ describe('DiamondScorebook', () => {
     const structured = screen.getByRole('group', { name: 'Structured fielding or scoring judgment' });
     fireEvent.click(within(structured).getByRole('button', { name: 'Load exact play targets' }));
     await waitFor(() => expect(within(structured).getByLabelText('Effective play')).toHaveValue('event-7'));
-    fireEvent.change(within(structured).getByLabelText('Putout'), { target: { value: 'fielder-2' } });
+    const structuredPutout = within(structured).getByLabelText('Putout');
+    await waitFor(() => expect(within(structuredPutout).getByRole('option', { name: '#2 Riley Chen' })).toHaveValue('fielder-2'));
+    fireEvent.change(structuredPutout, { target: { value: 'fielder-2' } });
     fireEvent.click(within(structured).getByRole('button', { name: 'Review fielding detail' }));
     fireEvent.click(within(screen.getByRole('dialog', { name: 'Review fielding detail' })).getByRole('button', { name: 'Confirm action' }));
     await waitFor(() => expect(fixture.submitCommand).toHaveBeenCalledTimes(2));
@@ -4517,6 +4519,9 @@ describe('DiamondScorebook', () => {
     const batterId = 'shared-opponent-batter';
     const runnerId = 'shared-opponent-runner';
     const pitcherId = 'managed-home-pitcher';
+    const historicalFielderId = 'managed-home-fielder';
+    const currentPitcherId = 'current-away-pitcher';
+    const currentFielderId = 'current-away-fielder';
     const history = buildPrivateHistoryItems();
     history[6] = buildPrivateEvent('event-7', 7, {
       payload: {
@@ -4529,8 +4534,7 @@ describe('DiamondScorebook', () => {
             runnerId,
             from: 'first',
             to: 'third',
-            cause: 'batted_ball',
-            responsiblePitcherId: pitcherId
+            cause: 'batted_ball'
           }
         ],
         outsOnPlay: 0,
@@ -4541,25 +4545,44 @@ describe('DiamondScorebook', () => {
     const snapshot = buildSnapshot({
       managedSide: 'home',
       lineups: {
-        home: [{ playerId: pitcherId, name: 'Managed pitcher', number: '5', slot: 1 }],
+        home: [
+          { playerId: pitcherId, name: 'Managed pitcher', number: '5', slot: 1 },
+          { playerId: historicalFielderId, name: 'Historical managed fielder', number: '6', slot: 2 }
+        ],
         away: [
           { playerId: batterId, name: 'Public opponent batter', number: '21', slot: 1 },
-          { playerId: runnerId, name: 'Public opponent runner', number: '22', slot: 2 }
+          { playerId: runnerId, name: 'Public opponent runner', number: '22', slot: 2 },
+          { playerId: currentPitcherId, name: 'Current opponent pitcher', number: '31', slot: 3 },
+          { playerId: currentFielderId, name: 'Current opponent fielder', number: '32', slot: 4 }
         ]
       },
       defense: {
-        home: { P: { playerId: pitcherId, name: 'Managed pitcher', number: '5' } },
-        away: {}
+        home: {
+          P: { playerId: pitcherId, name: 'Managed pitcher', number: '5' },
+          C: { playerId: historicalFielderId, name: 'Historical managed fielder', number: '6' }
+        },
+        away: {
+          P: { playerId: currentPitcherId, name: 'Current opponent pitcher', number: '31' },
+          C: { playerId: currentFielderId, name: 'Current opponent fielder', number: '32' }
+        }
       },
+      currentPitcher: { playerId: currentPitcherId, name: 'Current opponent pitcher', number: '31' },
+      defensiveLineup: [
+        { playerId: currentPitcherId, name: 'Current opponent pitcher', number: '31' },
+        { playerId: currentFielderId, name: 'Current opponent fielder', number: '32' }
+      ],
       availablePlayers: {
         home: [
           { playerId: batterId, name: 'PRIVATE MANAGED BATTER', number: 'PRIVATE-91' },
           { playerId: runnerId, name: 'PRIVATE MANAGED RUNNER', number: 'PRIVATE-92' },
-          { playerId: pitcherId, name: 'Managed pitcher', number: '5' }
+          { playerId: pitcherId, name: 'Managed pitcher', number: '5' },
+          { playerId: historicalFielderId, name: 'Historical managed fielder', number: '6' }
         ],
         away: [
           { playerId: batterId, name: 'Public opponent batter', number: '21' },
-          { playerId: runnerId, name: 'Public opponent runner', number: '22' }
+          { playerId: runnerId, name: 'Public opponent runner', number: '22' },
+          { playerId: currentPitcherId, name: 'Current opponent pitcher', number: '31' },
+          { playerId: currentFielderId, name: 'Current opponent fielder', number: '32' }
         ]
       }
     });
@@ -4572,8 +4595,25 @@ describe('DiamondScorebook', () => {
 
     const review = screen.getByRole('dialog', { name: 'Review Double replacement' });
     expect(within(review).getByLabelText('Batter · #21 Public opponent batter destination')).toBeInTheDocument();
-    expect(within(review).getByLabelText('First · #22 Public opponent runner destination')).toBeInTheDocument();
+    const historicalRunnerDestination = within(review).getByLabelText('First · #22 Public opponent runner destination');
+    expect(historicalRunnerDestination).toBeInTheDocument();
     expect(within(review).queryByText(/PRIVATE MANAGED/)).not.toBeInTheDocument();
+    const putout = within(review).getByLabelText('Putout');
+    expect(within(putout).getByRole('option', { name: '#6 Historical managed fielder' })).toHaveValue(historicalFielderId);
+    expect(within(putout).queryByRole('option', { name: /Current opponent/ })).not.toBeInTheDocument();
+
+    fireEvent.change(putout, { target: { value: historicalFielderId } });
+    fireEvent.change(historicalRunnerDestination, { target: { value: 'home' } });
+    fireEvent.click(within(review).getByRole('button', { name: 'Confirm correction' }));
+    await waitFor(() => expect(fixture.submitCommand).toHaveBeenCalledTimes(1));
+    const correction = fixture.createCommand.mock.calls[0]![0].payload as unknown as DiamondCommandPayloadMap['supersede_event'];
+    const replacementPayload = correction.replacement.payload as DiamondCommandPayloadMap['record_plate_appearance'];
+    expect(replacementPayload).toMatchObject({
+      fielding: { putoutBy: historicalFielderId },
+      runnerAdvances: [expect.objectContaining({ runnerId, to: 'home' })]
+    });
+    expect(replacementPayload.runnerAdvances[0]?.responsiblePitcherId).toBeUndefined();
+    expect(JSON.stringify(replacementPayload)).not.toContain(currentPitcherId);
   });
 
   it('retargets every historical runner in a home-run correction without matching against current bases', async () => {

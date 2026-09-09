@@ -6238,6 +6238,15 @@ function PlayReviewModal({
   onConfirm: () => void;
 }) {
   const validationError = validateRunnerReview(pending, snapshot) || validateSubstitutionPendingReview(pending);
+  const correctionBattingSideValue =
+    pending.correction && pending.batterId && pending.pitcherId
+      ? correctionBattingSide(snapshot, pending.batterId, pending.pitcherId)
+      : null;
+  const reviewFieldingPlayers = pending.correction
+    ? correctionBattingSideValue
+      ? snapshotSidePlayers(snapshot, oppositeDiamondSide(correctionBattingSideValue))
+      : []
+    : snapshot.defensiveLineup;
   const activeDefenseName = pending.activeDefenseSource
     ? pending.activeDefenseSource.side === 'home'
       ? snapshot.homeName
@@ -6379,7 +6388,9 @@ function PlayReviewModal({
                               rbi: to === 'home' ? resultAllowsRbi(pending.result) : undefined,
                               earned: to === 'home' ? move.earned : undefined,
                               responsiblePitcherId:
-                                to === 'home' ? move.responsiblePitcherId || snapshot.currentPitcher?.playerId : undefined
+                                to === 'home'
+                                  ? move.responsiblePitcherId || (pending.correction ? undefined : snapshot.currentPitcher?.playerId)
+                                  : undefined
                             });
                           }}
                         >
@@ -6516,19 +6527,19 @@ function PlayReviewModal({
                   <FielderSelect
                     label="Putout"
                     value={pending.putoutBy}
-                    players={snapshot.defensiveLineup}
+                    players={reviewFieldingPlayers}
                     onChange={(value) => onChange({ ...pending, putoutBy: value })}
                   />
                   <FielderSelect
                     label="Assist"
                     value={pending.assistBy}
-                    players={snapshot.defensiveLineup}
+                    players={reviewFieldingPlayers}
                     onChange={(value) => onChange({ ...pending, assistBy: value })}
                   />
                   <FielderSelect
                     label="Error"
                     value={pending.errorBy}
-                    players={snapshot.defensiveLineup}
+                    players={reviewFieldingPlayers}
                     onChange={(value) => onChange({ ...pending, errorBy: value })}
                   />
                   <label className="text-xs font-black text-gray-700">
