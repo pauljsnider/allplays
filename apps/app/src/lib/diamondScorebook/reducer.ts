@@ -1109,10 +1109,12 @@ function applyMoves(
 
   const playEndsHalf = state.inning.outs + outsOnPlay === 3;
   const possibleThirdOuts = moves.filter((move) => move.to === 'out');
-  // Move arrays have stable serialization but no chronological meaning. Keep
-  // countsRun as the scorer's explicit timing judgment and reject it only when
-  // every possible third out necessarily cancels the run. Auditing the exact
-  // third out would require a future versioned payload field, never array order.
+  // A non-counting home advance is meaningful only when this play records the
+  // third out. Move arrays have stable serialization but no chronological
+  // meaning, so keep countsRun as the scorer's explicit timing judgment and
+  // reject a counted run only when every possible third out necessarily cancels
+  // it. Auditing the exact third out would require a future versioned payload
+  // field, never array order.
   const thirdOutCancelsRuns =
     playEndsHalf &&
     possibleThirdOuts.length > 0 &&
@@ -1121,6 +1123,12 @@ function applyMoves(
   moves.forEach((move) => {
     if (move.to === 'out') return;
     if (move.to === 'home') {
+      if (!playEndsHalf && move.countsRun === false) {
+        throw new DiamondDomainError(
+          'run-nullification-requires-third-out',
+          'A run may be marked not counting only on a play that records the third out.'
+        );
+      }
       if (playEndsHalf && move.countsRun === undefined) {
         throw new DiamondDomainError(
           'run-timing-required',

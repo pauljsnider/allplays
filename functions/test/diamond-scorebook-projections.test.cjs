@@ -2943,7 +2943,7 @@ test("compiled final-half LOB follows only the authoritative effective finalize"
   assert.equal(projectDiamondStats(cancelled.ledger).teams.away.LOB, 0);
 });
 
-test("compiled LOB retains nullified home advances across both half-ending paths and corrections", () => {
+test("compiled LOB retains inning-ending nullified runs but rejects earlier nullification", () => {
   function prepareNullifiedForce() {
     const game = harness("quick", "baseball-nfhs");
     setLineupsAndStart(game, 6);
@@ -3065,20 +3065,44 @@ test("compiled LOB retains nullified home advances across both half-ending paths
   );
   assert.equal(verifyDiamondLedger(finalized.game.ledger), true);
 
+  const earlierHomeRun = harness("quick", "baseball-nfhs");
+  setLineupsAndStart(earlierHomeRun, 4);
+  const rejectedHomeRun = earlierHomeRun.attempt("record_plate_appearance", {
+    batterId: "away-1",
+    pitcherId: "home-1",
+    result: "home_run",
+    batterAdvance: { to: "home", countsRun: false },
+    runnerAdvances: [],
+    outsOnPlay: 0,
+    runsBattedIn: 0,
+  });
+  assert.equal(rejectedHomeRun.result.outcome, "rejected");
+  assert.equal(
+    rejectedHomeRun.result.rejection?.code,
+    "run-nullification-requires-third-out",
+  );
+
   const earlier = harness("quick", "baseball-nfhs");
   setLineupsAndStart(earlier, 4);
   const earlierRunner = placeRunnerOnBase(earlier, "third");
-  earlier.submit("advance_runner", {
+  const earlierRevision = earlier.ledger.state.revision;
+  const rejected = earlier.attempt("advance_runner", {
     runnerId: earlierRunner,
     from: "third",
     to: "home",
     cause: "batted_ball",
     countsRun: false,
   });
-  assert.equal(projectDiamondStats(earlier.ledger).teams.away.LOB, 0);
-  while (earlier.ledger.state.inning.outs < 3) recordOut(earlier);
-  earlier.submit("advance_half_inning", {});
-  assert.equal(projectDiamondStats(earlier.ledger).teams.away.LOB, 1);
+  assert.equal(rejected.result.outcome, "rejected");
+  assert.equal(
+    rejected.result.rejection?.code,
+    "run-nullification-requires-third-out",
+  );
+  assert.equal(rejected.ledger.state.revision, earlierRevision);
+  assert.deepEqual(
+    replayDiamondLedger(earlier.ledger).state,
+    earlier.ledger.state,
+  );
 });
 
 test("compiled ready-state forfeit blocks setup and start mutations but remains finalizable", () => {

@@ -3078,57 +3078,100 @@ describe('Scoring decisions and correction reconciliation', () => {
     expect(verifyDiamondLedger(game.ledger)).toBe(true);
   });
 
-  it('defers earlier nullified home advances until a half closes and follows effective voids', () => {
-    const closeWithAdvance = (seed: DiamondLedger) => {
-      const closed = createHarness('baseball-nfhs', 'quick', seed);
-      while (closed.ledger.state.inning.outs < 3) recordOut(closed);
-      closed.submit('advance_half_inning', {});
-      return closed;
-    };
+  it('rejects a nullified run before a third-out play through live, checkpoint, replay, and correction paths', () => {
+    const homeRun = createHarness('baseball-nfhs', 'quick');
+    configureGame(homeRun);
+    const homeRunMatchup = currentMatchup(homeRun);
+    const homeRunRevision = homeRun.ledger.state.revision;
+    expectRejected(
+      homeRun.submit(
+        'record_plate_appearance',
+        {
+          batterId: homeRunMatchup.batterId,
+          pitcherId: homeRunMatchup.pitcherId,
+          result: 'home_run',
+          batterAdvance: { to: 'home', countsRun: false },
+          runnerAdvances: [],
+          outsOnPlay: 0,
+          runsBattedIn: 0
+        },
+        { accept: false }
+      ),
+      'run-nullification-requires-third-out',
+      homeRunRevision
+    );
+    expect(homeRun.ledger.state).toMatchObject({
+      inning: { outs: 0 },
+      score: { away: 0 },
+      bases: { first: null, second: null, third: null }
+    });
+    expect(replayDiamondLedger(homeRun.ledger).state).toEqual(homeRun.ledger.state);
 
-    const runnerAdvance = createHarness('baseball-nfhs', 'quick');
-    configureGame(runnerAdvance);
-    const runnerId = placeRunnerOnBase(runnerAdvance, 'third');
-    runnerAdvance.submit('advance_runner', {
+    const standalone = createHarness('baseball-nfhs', 'quick');
+    configureGame(standalone);
+    const runnerId = placeRunnerOnBase(standalone, 'third');
+    const command = standalone.command('advance_runner', {
       runnerId,
       from: 'third',
       to: 'home',
       cause: 'batted_ball',
       countsRun: false
     });
-    expect(projectDiamondStats(runnerAdvance.ledger).teams.away.LOB).toBe(0);
-
-    const cancelled = createHarness('baseball-nfhs', 'quick', runnerAdvance.ledger);
-    cancelled.submit('cancel', { confirmed: true, reason: 'The unfinished exhibition was cancelled.' }, { managerAuthorized: true });
-    expect(projectDiamondStats(cancelled.ledger).teams.away.LOB).toBe(0);
-
-    const runnerAdvanceClosed = closeWithAdvance(runnerAdvance.ledger);
-    expect(projectDiamondStats(runnerAdvanceClosed.ledger).teams.away).toMatchObject({ R: 0, LOB: 1 });
-    expect(replayDiamondLedger(runnerAdvanceClosed.ledger).state).toEqual(runnerAdvanceClosed.ledger.state);
-
-    const batterAdvance = createHarness('baseball-nfhs', 'quick');
-    configureGame(batterAdvance);
-    const batterMatchup = currentMatchup(batterAdvance);
-    const nullifiedBatter = batterAdvance.submit('record_plate_appearance', {
-      batterId: batterMatchup.batterId,
-      pitcherId: batterMatchup.pitcherId,
-      result: 'home_run',
-      batterAdvance: { to: 'home', countsRun: false },
-      runnerAdvances: [],
-      outsOnPlay: 0,
-      runsBattedIn: 0
+    const context = {
+      actorUid: INITIAL_SCORER,
+      eventId: 'golden-pre-third-out-nullified-run',
+      serverTimestampMs: 1_900_000_300_000
+    } as const;
+    const checkpoint = createDiamondCheckpoint(standalone.ledger);
+    const full = executeDiamondCommand(standalone.ledger, command, context);
+    const bounded = executeDiamondCommandFromCheckpoint(checkpoint, command, context);
+    expectRejected(full, 'run-nullification-requires-third-out', standalone.ledger.state.revision);
+    expect(bounded.result).toMatchObject({
+      outcome: 'rejected',
+      revision: checkpoint.sequence,
+      rejection: { code: 'run-nullification-requires-third-out' }
     });
-    const batterAdvanceClosed = closeWithAdvance(batterAdvance.ledger);
-    expect(projectDiamondStats(batterAdvanceClosed.ledger).teams.away).toMatchObject({ R: 0, LOB: 1 });
+    expect(bounded.checkpoint).toBe(checkpoint);
+    expect(replayDiamondLedger(standalone.ledger).state).toEqual(standalone.ledger.state);
+    expect(verifyDiamondLedger(standalone.ledger)).toBe(true);
 
-    batterAdvance.submit('void_event', {
-      targetEventId: nullifiedBatter.event!.eventId,
-      reason: 'Remove the plate appearance that did not produce an official run.'
+    const correction = createHarness('baseball-nfhs', 'quick');
+    configureGame(correction);
+    const correctionRunnerId = placeRunnerOnBase(correction, 'third');
+    const scoringAdvance = correction.submit('advance_runner', {
+      runnerId: correctionRunnerId,
+      from: 'third',
+      to: 'home',
+      cause: 'batted_ball',
+      countsRun: true,
+      earned: true
     });
-    const voidedBatterAdvanceClosed = closeWithAdvance(batterAdvance.ledger);
-    expect(projectDiamondStats(voidedBatterAdvanceClosed.ledger).teams.away).toMatchObject({ R: 0, LOB: 0 });
-    expect(replayDiamondLedger(voidedBatterAdvanceClosed.ledger).state).toEqual(voidedBatterAdvanceClosed.ledger.state);
-    expect(verifyDiamondLedger(voidedBatterAdvanceClosed.ledger)).toBe(true);
+    const correctionRevision = correction.ledger.state.revision;
+    expectRejected(
+      correction.submit(
+        'supersede_event',
+        {
+          targetEventId: scoringAdvance.event!.eventId,
+          reason: 'Attempt to nullify a run before the inning-ending play.',
+          replacement: {
+            type: 'advance_runner',
+            payload: {
+              runnerId: correctionRunnerId,
+              from: 'third',
+              to: 'home',
+              cause: 'batted_ball',
+              countsRun: false
+            }
+          }
+        },
+        { accept: false }
+      ),
+      'run-nullification-requires-third-out',
+      correctionRevision
+    );
+    expect(correction.ledger.state.score.away).toBe(1);
+    expect(replayDiamondLedger(correction.ledger).state).toEqual(correction.ledger.state);
+    expect(verifyDiamondLedger(correction.ledger)).toBe(true);
   });
 
   it('adds completed and final-half LOB for automatic endings without double-counting correction re-finalization', () => {
