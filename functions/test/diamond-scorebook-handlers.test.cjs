@@ -2957,6 +2957,187 @@ describe("Diamond scorebook handler factory", () => {
     );
   });
 
+  it("returns indistinguishable not-found errors for missing and unauthorized Diamond access targets", async () => {
+    const outsiderContext = { auth: { uid: "outsider-1" } };
+    const createOutsiderHarness = ({
+      teamPresent = true,
+      gamePresent = true,
+    } = {}) => {
+      const documents = baseDocuments({
+        "teams/team-1": {
+          ...baseDocuments()["teams/team-1"],
+          isPublic: false,
+        },
+        "teams/team-1/games/game-1": {
+          ...baseDocuments()["teams/team-1/games/game-1"],
+          visibility: "private",
+          trackingEngine: DIAMOND_ENGINE,
+        },
+        "users/outsider-1": { isAdmin: false },
+      });
+      if (!teamPresent) delete documents["teams/team-1"];
+      if (!gamePresent) delete documents["teams/team-1/games/game-1"];
+      return createHarness({
+        firestore: new FakeFirestore(documents),
+        authUsers: {
+          "outsider-1": {
+            uid: "outsider-1",
+            disabled: false,
+            email: "outsider@example.test",
+            emailVerified: true,
+          },
+        },
+        viewerAccessByUid: {
+          "outsider-1": {
+            full: false,
+            parent: false,
+            scorekeeping: false,
+            videography: false,
+            streaming: false,
+            media: false,
+          },
+        },
+      });
+    };
+    const readError = async (harness, request) => {
+      let signature = null;
+      await assert.rejects(
+        harness.handlers.getDiamondAccess(request, outsiderContext),
+        (error) => {
+          signature = {
+            code: error.code,
+            message: error.message,
+            details: error.details ?? null,
+          };
+          return true;
+        },
+      );
+      return signature;
+    };
+
+    const gameRequest = {
+      teamId: "team-1",
+      gameId: "game-1",
+      appBuild: DIAMOND_APP_BUILD,
+    };
+    const gameErrors = await Promise.all([
+      readError(createOutsiderHarness({ teamPresent: false }), gameRequest),
+      readError(createOutsiderHarness({ gamePresent: false }), gameRequest),
+      readError(createOutsiderHarness(), gameRequest),
+    ]);
+    assert.deepEqual(
+      gameErrors,
+      Array.from({ length: 3 }, () => ({
+        code: "not-found",
+        message: "Game not found.",
+        details: null,
+      })),
+    );
+
+    const teamRequest = {
+      teamId: "team-1",
+      appBuild: DIAMOND_APP_BUILD,
+    };
+    const teamErrors = await Promise.all([
+      readError(createOutsiderHarness({ teamPresent: false }), teamRequest),
+      readError(createOutsiderHarness(), teamRequest),
+    ]);
+    assert.deepEqual(
+      teamErrors,
+      Array.from({ length: 2 }, () => ({
+        code: "not-found",
+        message: "Team not found.",
+        details: null,
+      })),
+    );
+  });
+
+  it("keeps Diamond access document read failures retryable", async () => {
+    const harness = createHarness();
+    const original = harness.firestore._documentSnapshot.bind(
+      harness.firestore,
+    );
+    harness.firestore._documentSnapshot = (reference) => {
+      if (reference.path === "teams/team-1") {
+        throw new Error("read failed");
+      }
+      return original(reference);
+    };
+
+    await assert.rejects(
+      harness.handlers.getDiamondAccess(
+        {
+          teamId: "team-1",
+          gameId: "game-1",
+          appBuild: DIAMOND_APP_BUILD,
+        },
+        harness.managerContext,
+      ),
+      (error) =>
+        error.code === "unavailable" &&
+        error.message === "Diamond access could not be verified. Try again.",
+    );
+  });
+
+  it("preserves Diamond access metadata for each current private viewer role", async () => {
+    const viewerAccessByUid = {
+      "parent-1": { parent: true },
+      "scorekeeper-2": { scorekeeping: true },
+      "videographer-1": { videography: true },
+      "streamer-1": { streaming: true },
+      "official-uid-1": {},
+      "official-email-1": {},
+    };
+    const authUsers = Object.fromEntries(
+      Object.keys(viewerAccessByUid).map((uid) => [
+        uid,
+        {
+          uid,
+          disabled: false,
+          email: `${uid}@example.test`,
+          emailVerified: true,
+        },
+      ]),
+    );
+    const documents = Object.fromEntries(
+      Object.keys(viewerAccessByUid).map((uid) => [
+        `users/${uid}`,
+        { displayName: uid },
+      ]),
+    );
+    const harness = createHarness({
+      authUsers,
+      documents,
+      viewerAccessByUid,
+    });
+    harness.firestore.seed("teams/team-1/games/game-1", {
+      ...harness.firestore.read("teams/team-1/games/game-1"),
+      visibility: "private",
+      officiatingAuthorizedUserIds: ["official-uid-1"],
+      officiatingAuthorizedEmails: ["official-email-1@example.test"],
+    });
+
+    const viewers = [
+      harness.managerContext,
+      harness.scorerContext,
+      ...Object.keys(viewerAccessByUid).map((uid) => ({ auth: { uid } })),
+    ];
+    for (const viewerContext of viewers) {
+      const access = await harness.handlers.getDiamondAccess(
+        {
+          teamId: "team-1",
+          gameId: "game-1",
+          appBuild: DIAMOND_APP_BUILD,
+        },
+        viewerContext,
+      );
+      assert.equal(access.policyMode, "enabled");
+      assert.equal(access.sport, "baseball");
+      assert.equal(access.teamOptIn, true);
+      assert.equal(access.trackingEngine, null);
+    }
+  });
+
   it("performs no team-configuration writes while rollout policy is dark", async () => {
     const dark = createHarness({
       documents: {

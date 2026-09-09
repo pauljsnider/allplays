@@ -2041,11 +2041,25 @@ function createDiamondScorebookHandlers(dependencies = {}) {
         readPolicy(firestore),
       ]);
     } catch (error) {
-      if (error instanceof HttpsError || error instanceof DiamondHandlerError)
+      const isHandlerError =
+        error instanceof HttpsError || error instanceof DiamondHandlerError;
+      if (isHandlerError && error.code === "not-found") {
+        throw makeError(
+          "not-found",
+          gameId ? "Game not found." : "Team not found.",
+        );
+      }
+      if (isHandlerError)
         throw error;
       throw makeError(
         "unavailable",
         "Diamond access could not be verified. Try again.",
+      );
+    }
+    if (!hasAuthorizedViewerAccess(loaded.access, loaded.game, caller)) {
+      throw makeError(
+        "not-found",
+        gameId ? "Game not found." : "Team not found.",
       );
     }
     const optIn = core.parseDiamondTeamOptIn(loaded.team.diamondScorebook);
