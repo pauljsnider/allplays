@@ -194,6 +194,126 @@ test("compiled engine rejects one player identity across opposing batting lineup
   assert.strictEqual(boundedWhitespace.checkpoint, checkpoint);
 });
 
+test("compiled engine rejects an eleventh defender atomically from a checkpoint", () => {
+  let ledger = createDiamondLedger({
+    teamId: "compiled-defense-cap-team",
+    gameId: "compiled-defense-cap-game",
+    rulesProfileId: "baseball-nfhs",
+    rulesProfileVersion: 1,
+    captureMode: "quick",
+  });
+  let commandIndex = 1;
+  const command = (
+    type,
+    payload,
+    expectedRevision = ledger.state.revision,
+  ) => ({
+    schemaVersion: DIAMOND_SCHEMA_VERSION,
+    commandId: `50000000-0000-4000-8000-${String(commandIndex).padStart(12, "0")}`,
+    teamId: ledger.teamId,
+    gameId: ledger.gameId,
+    expectedRevision,
+    rulesProfileId: ledger.rulesProfileId,
+    rulesProfileVersion: ledger.rulesProfileVersion,
+    type,
+    payload,
+  });
+  const submit = (type, payload) => {
+    const input = command(type, payload);
+    const execution = executeDiamondCommand(ledger, input, {
+      actorUid: SCORER_UID,
+      eventId: `compiled-defense-cap-event-${String(commandIndex)}`,
+      serverTimestampMs: 1_800_000_400_000 + commandIndex,
+    });
+    commandIndex += 1;
+    if (execution.result.outcome === "accepted") ledger = execution.ledger;
+    return execution;
+  };
+
+  assert.equal(
+    submit("activate", { initialScorerUid: SCORER_UID, captureMode: "quick" })
+      .result.outcome,
+    "accepted",
+  );
+  assert.equal(
+    submit("set_lineup", {
+      side: "home",
+      entries: [{ slot: 1, playerId: "home-batting-only" }],
+    }).result.outcome,
+    "accepted",
+  );
+  assert.equal(
+    submit("set_lineup", {
+      side: "away",
+      entries: [{ slot: 1, playerId: "away-batter" }],
+    }).result.outcome,
+    "accepted",
+  );
+  assert.equal(
+    submit("set_defensive_alignment", {
+      side: "home",
+      assignments: [
+        "P",
+        "C",
+        "1B",
+        "2B",
+        "3B",
+        "SS",
+        "LF",
+        "CF",
+        "RCF",
+        "RF",
+      ].map((position, index) => ({
+        position,
+        playerId: `home-defense-${String(index + 1)}`,
+      })),
+    }).result.outcome,
+    "accepted",
+  );
+  assert.equal(
+    submit("set_defensive_alignment", {
+      side: "away",
+      assignments: [{ position: "P", playerId: "away-pitcher" }],
+    }).result.outcome,
+    "accepted",
+  );
+  assert.equal(submit("start", {}).result.outcome, "accepted");
+
+  const checkpoint = createDiamondCheckpoint(ledger);
+  const overflowCommand = command(
+    "substitute",
+    {
+      side: "home",
+      battingSlot: 1,
+      outgoingPlayerId: "home-batting-only",
+      incomingPlayerId: "home-overflow-sub",
+      defensivePosition: "LCF",
+    },
+    checkpoint.sequence,
+  );
+  const execution = executeDiamondCommandFromCheckpoint(
+    checkpoint,
+    overflowCommand,
+    {
+      actorUid: SCORER_UID,
+      eventId: "compiled-defense-cap-overflow",
+      serverTimestampMs: 1_800_000_400_099,
+    },
+  );
+
+  assert.equal(execution.result.outcome, "rejected");
+  assert.equal(execution.result.rejection?.code, "invalid-defense");
+  assert.strictEqual(execution.checkpoint, checkpoint);
+  assert.equal(execution.checkpoint.sequence, checkpoint.sequence);
+  assert.equal(
+    Object.keys(execution.checkpoint.state.lineups.home.defense).length,
+    10,
+  );
+  assert.equal(execution.checkpoint.state.lineups.home.defense.LCF, undefined);
+  assert.equal(verifyDiamondLedger(ledger), true);
+  assert.deepEqual(replayDiamondLedger(ledger).state, ledger.state);
+});
+
 test("compiled engine rejects an opposing courtesy runner across direct, checkpoint, and correction paths", () => {
   let ledger = createDiamondLedger({
     teamId: "compiled-courtesy-team",

@@ -17,6 +17,7 @@ import {
   replayDiamondLedger,
   replayEffectiveDiamondEventStates,
   sha256Hex,
+  validateDiamondState,
   verifyDiamondLedger,
   type DiamondCommand,
   type DiamondBattingRole,
@@ -770,6 +771,133 @@ describe('Diamond rules and canonical contracts', () => {
     );
     expect(occupied.result.rejection?.code).toBe('incoming-runner-on-base');
     expect(occupiedIncoming.ledger.state.bases.first?.runnerId).toBe('away-courtesy');
+  });
+
+  it('rejects a state whose defense contains more than ten assignments', () => {
+    const game = harness('baseball-nfhs', 'quick');
+    setBasicLineups(game);
+
+    expect(() =>
+      validateDiamondState({
+        ...game.ledger.state,
+        lineups: {
+          ...game.ledger.state.lineups,
+          home: {
+            ...game.ledger.state.lineups.home,
+            defense: {
+              P: 'home-defense-1',
+              C: 'home-defense-2',
+              '1B': 'home-defense-3',
+              '2B': 'home-defense-4',
+              '3B': 'home-defense-5',
+              SS: 'home-defense-6',
+              LF: 'home-defense-7',
+              LCF: 'home-defense-8',
+              CF: 'home-defense-9',
+              RCF: 'home-defense-10',
+              RF: 'home-defense-11'
+            }
+          }
+        }
+      })
+    ).toThrowError(expect.objectContaining({ code: 'invalid-defense' }));
+  });
+
+  it('atomically rejects an eleventh defender while preserving ten-player replacements and batting-only substitutions', () => {
+    const game = harness('fastpitch-nfhs', 'quick');
+    game.submit('activate', { initialScorerUid: SCORER, captureMode: 'quick' });
+    game.submit('set_lineup', {
+      side: 'home',
+      entries: [
+        { slot: 1, playerId: 'home-batting-only', battingRole: 'ep' },
+        { slot: 2, playerId: 'home-defense-2' }
+      ]
+    });
+    game.submit('set_lineup', { side: 'away', entries: [{ slot: 1, playerId: 'away-batter' }] });
+    game.submit('set_defensive_alignment', {
+      side: 'home',
+      assignments: [
+        { position: 'P', playerId: 'home-defense-1' },
+        { position: 'C', playerId: 'home-defense-2' },
+        { position: '1B', playerId: 'home-defense-3' },
+        { position: '2B', playerId: 'home-defense-4' },
+        { position: '3B', playerId: 'home-defense-5' },
+        { position: 'SS', playerId: 'home-defense-6' },
+        { position: 'LF', playerId: 'home-defense-7' },
+        { position: 'CF', playerId: 'home-defense-8' },
+        { position: 'RCF', playerId: 'home-defense-9' },
+        { position: 'RF', playerId: 'home-defense-10' }
+      ]
+    });
+    game.submit('set_defensive_alignment', {
+      side: 'away',
+      assignments: [{ position: 'P', playerId: 'away-pitcher' }]
+    });
+    game.submit('start', {});
+
+    const beforeOverflow = game.ledger;
+    const overflow = game.submit(
+      'substitute',
+      {
+        side: 'home',
+        battingSlot: 1,
+        outgoingPlayerId: 'home-batting-only',
+        incomingPlayerId: 'home-overflow-sub',
+        defensivePosition: 'LCF'
+      },
+      { accept: false }
+    );
+    expect(overflow.result.rejection?.code).toBe('invalid-defense');
+    expect(overflow.ledger).toBe(beforeOverflow);
+    expect(overflow.ledger.state.revision).toBe(beforeOverflow.state.revision);
+    expect(overflow.ledger.events).toHaveLength(beforeOverflow.events.length);
+
+    const battingOnly = game.submit('substitute', {
+      side: 'home',
+      battingSlot: 1,
+      outgoingPlayerId: 'home-batting-only',
+      incomingPlayerId: 'home-batting-only-sub'
+    });
+    expect(Object.keys(game.ledger.state.lineups.home.defense)).toHaveLength(10);
+    expect(game.ledger.state.lineups.home.defense.LCF).toBeUndefined();
+
+    game.submit('substitute', {
+      side: 'home',
+      battingSlot: 2,
+      outgoingPlayerId: 'home-defense-2',
+      incomingPlayerId: 'home-defense-replacement',
+      defensivePosition: 'LCF'
+    });
+    expect(Object.keys(game.ledger.state.lineups.home.defense)).toHaveLength(10);
+    expect(game.ledger.state.lineups.home.defense).toMatchObject({
+      P: 'home-defense-1',
+      LCF: 'home-defense-replacement'
+    });
+    expect(game.ledger.state.lineups.home.defense.C).toBeUndefined();
+
+    const beforeCorrection = game.ledger;
+    const invalidCorrection = game.submit(
+      'supersede_event',
+      {
+        targetEventId: battingOnly.event!.eventId,
+        reason: 'Attempt to add an eleventh defender.',
+        replacement: {
+          type: 'substitute',
+          payload: {
+            side: 'home',
+            battingSlot: 1,
+            outgoingPlayerId: 'home-batting-only',
+            incomingPlayerId: 'home-batting-only-sub',
+            defensivePosition: 'LCF'
+          }
+        }
+      },
+      { accept: false }
+    );
+    expect(invalidCorrection.result.rejection?.code).toBe('invalid-defense');
+    expect(invalidCorrection.ledger).toBe(beforeCorrection);
+    expect(verifyDiamondLedger(game.ledger)).toBe(true);
+    expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
   });
 
   it('requires authoritative pitchers at start and changes active defensive personnel only through substitution history', () => {

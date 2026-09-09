@@ -57,6 +57,7 @@ const LIFECYCLES: readonly DiamondGameState['lifecycle'][] = [
   'cancelled'
 ];
 const FIELDING_POSITIONS: readonly DiamondDefensivePosition[] = ['P', 'C', '1B', '2B', '3B', 'SS', 'LF', 'LCF', 'CF', 'RCF', 'RF'];
+const MAX_DEFENSIVE_ASSIGNMENTS = 10;
 const BATTING_ROLES: readonly DiamondBattingRole[] = ['regular', 'dh', 'dp', 'flex', 'eh', 'ep'];
 const RULE_DECISION_CODES: readonly DiamondRuleDecisionCode[] = [
   'coverage_adjustment',
@@ -1273,6 +1274,9 @@ function replaceDefensePlayer(
   } else if (currentPosition) {
     next[currentPosition] = incomingPlayerId;
   }
+  if (Object.keys(next).length > MAX_DEFENSIVE_ASSIGNMENTS) {
+    throw new DiamondDomainError('invalid-defense', 'A defensive alignment may contain at most ten assignments.');
+  }
   return next;
 }
 
@@ -1438,7 +1442,11 @@ export function validateDiamondState(state: DiamondGameState): DiamondGameState 
       requireBattingRole(profile, entry.battingRole);
     });
     validateBattingRoleCounts(order);
-    const defensivePlayers = Object.entries(state.lineups[side].defense).map(([position, playerId]) => {
+    const defensiveEntries = Object.entries(state.lineups[side].defense);
+    if (defensiveEntries.length > MAX_DEFENSIVE_ASSIGNMENTS) {
+      throw new DiamondDomainError('invalid-defense', `${side} defense may contain at most ten assignments.`);
+    }
+    const defensivePlayers = defensiveEntries.map(([position, playerId]) => {
       requireMember(position, FIELDING_POSITIONS, 'defensive position');
       return requireId(playerId, 'defensive playerId');
     });
@@ -1636,7 +1644,7 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
         );
       }
       const side = requireSide(action.payload.side);
-      if (!Array.isArray(action.payload.assignments) || action.payload.assignments.length > 10) {
+      if (!Array.isArray(action.payload.assignments) || action.payload.assignments.length > MAX_DEFENSIVE_ASSIGNMENTS) {
         throw new DiamondDomainError('invalid-defense', 'A defensive alignment may contain at most ten assignments.');
       }
       const players = action.payload.assignments.map((assignment) => requireId(assignment.playerId, 'defender playerId'));

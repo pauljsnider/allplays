@@ -4236,6 +4236,42 @@ describe('DiamondScorebook', () => {
     expect(within(assignment).queryByRole('option', { name: '1B' })).not.toBeInTheDocument();
   });
 
+  it('does not offer an eleventh-defender review for a batting-only outgoing player', () => {
+    const base = buildSnapshot();
+    const defender = (index: number) => ({
+      playerId: `home-defense-${String(index)}`,
+      name: `Home defender ${String(index)}`,
+      number: String(index)
+    });
+    const snapshot = buildSnapshot({
+      defense: {
+        ...base.defense,
+        home: {
+          P: defender(1),
+          C: defender(2),
+          '1B': defender(3),
+          '2B': defender(4),
+          '3B': defender(5),
+          SS: defender(6),
+          LF: defender(7),
+          CF: defender(8),
+          RCF: defender(9),
+          RF: defender(10)
+        }
+      }
+    });
+    renderScorebook(snapshot, createClient(snapshot));
+    fireEvent.click(screen.getByText('Full-mode advanced plays'));
+
+    const substitution = screen.getByRole('group', { name: 'Substitution' });
+    fireEvent.change(within(substitution).getByLabelText('Incoming'), { target: { value: 'bench-home' } });
+    fireEvent.change(within(substitution).getByLabelText('Defensive assignment'), { target: { value: 'LCF' } });
+
+    expect(within(substitution).getByRole('button', { name: 'Review substitution' })).toBeDisabled();
+    expect(within(substitution).getByText(/full ten-player defense/i)).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'Review substitution' })).not.toBeInTheDocument();
+  });
+
   it('excludes batting-side substitute and re-entry candidates already occupying a live base without cross-team ID leakage', () => {
     const baseSnapshot = buildSnapshot();
     const snapshot = buildSnapshot({

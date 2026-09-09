@@ -149,6 +149,8 @@ type SubstitutionReviewSource = {
   sourceLeaseId: string;
   authenticatedUid: string;
   outgoingDefensivePosition: DiamondDefensivePosition | null;
+  sourceDefensiveAssignmentCount: number;
+  sourceDefenseFingerprint: string;
   sourceBaseFingerprint: string | null;
   transferBase: DiamondBase | null;
 };
@@ -373,6 +375,7 @@ const outKindOptions: Array<{ value: DiamondOutKind; label: string }> = [
 ];
 
 const defensivePositions = ['P', 'C', '1B', '2B', '3B', 'SS', 'LF', 'LCF', 'CF', 'RCF', 'RF'] as const;
+const maximumDefensiveAssignments = 10;
 const diamondBases: DiamondBase[] = ['first', 'second', 'third'];
 const diamondCoverageFamilies = ['batting', 'baserunning', 'pitching', 'fielding', 'situational', 'pitches', 'sensors'] as const;
 const minimumVoiceProposalConfidence = 0.75;
@@ -680,6 +683,14 @@ function buildSubstitutionReviewSource(
   if (!identity || !participants) return null;
   const entry = snapshot.lineups[participants.side].find((candidate) => candidate.slot === participants.battingSlot);
   if (!entry || entry.playerId !== participants.outgoingPlayerId) return null;
+  const defenseAssignments = copyDefenseDrafts(snapshot)[participants.side];
+  const outgoingDefensivePosition =
+    (Object.entries(defenseAssignments).find(([, playerId]) => playerId === participants.outgoingPlayerId)?.[0] as
+      DiamondDefensivePosition | undefined) || null;
+  const sourceDefensiveAssignmentCount = Object.keys(defenseAssignments).length;
+  if (payload.defensivePosition && !outgoingDefensivePosition && sourceDefensiveAssignmentCount >= maximumDefensiveAssignments) {
+    return null;
+  }
   const livePlacements = liveSubstitutionPlacements(snapshot, participants.side);
   if (livePlacements.some(({ runner }) => runner.playerId === participants.incomingPlayerId)) return null;
   if (livePlacements.filter(({ runner }) => runner.playerId === participants.outgoingPlayerId).length > 1) return null;
@@ -709,9 +720,9 @@ function buildSubstitutionReviewSource(
     sourceInstanceId: snapshot.instanceId,
     sourceLeaseId: identity.leaseId,
     authenticatedUid: identity.authenticatedUid,
-    outgoingDefensivePosition:
-      (Object.entries(snapshot.defense[participants.side]).find(([, player]) => player?.playerId === participants.outgoingPlayerId)?.[0] as
-        DiamondDefensivePosition | undefined) || null,
+    outgoingDefensivePosition,
+    sourceDefensiveAssignmentCount,
+    sourceDefenseFingerprint: defenseFingerprint(defenseAssignments),
     sourceBaseFingerprint: liveSubstitutionBaseFingerprint(snapshot, participants.side),
     transferBase: livePlacements.find(({ runner }) => runner.playerId === participants.outgoingPlayerId)?.base || null
   };
@@ -745,6 +756,8 @@ function substitutionSourceMatchesSnapshot(
     current.sourceLeaseId === source.sourceLeaseId &&
     current.authenticatedUid === source.authenticatedUid &&
     current.outgoingDefensivePosition === source.outgoingDefensivePosition &&
+    current.sourceDefensiveAssignmentCount === source.sourceDefensiveAssignmentCount &&
+    current.sourceDefenseFingerprint === source.sourceDefenseFingerprint &&
     current.sourceBaseFingerprint === source.sourceBaseFingerprint &&
     current.transferBase === source.transferBase
   );
@@ -763,6 +776,13 @@ function validateSubstitutionPayload(payload: DiamondJsonObject, source: Substit
   }
   if (source.outgoingDefensivePosition === 'P' && payload.defensivePosition !== undefined && payload.defensivePosition !== 'P') {
     return 'A substitution replacing the current pitcher must retain defensive position P.';
+  }
+  if (
+    payload.defensivePosition !== undefined &&
+    !source.outgoingDefensivePosition &&
+    source.sourceDefensiveAssignmentCount >= maximumDefensiveAssignments
+  ) {
+    return 'A full ten-player defense requires replacing a current defender or keeping this substitution batting-only.';
   }
   return '';
 }
@@ -5336,6 +5356,9 @@ function AdvancedScoringPanel({
   );
   const incomingSubCandidate = subCandidates.find((player) => player.playerId === incomingPlayerId) || null;
   const substitutionRetainsPitcher = currentSubPosition !== 'P' || !subDefensivePosition || subDefensivePosition === 'P';
+  const substitutionWithinDefenseLimit = Boolean(
+    !subDefensivePosition || currentSubPosition || Object.keys(snapshot.defense[subSide]).length < maximumDefensiveAssignments
+  );
   const dpLineup = snapshot.lineups[dpSide];
   const dpCandidates = [...snapshot.availablePlayers[dpSide], ...dpLineup].filter(
     (player, index, all) => all.findIndex((candidate) => candidate.playerId === player.playerId) === index
@@ -5648,7 +5671,14 @@ function AdvancedScoringPanel({
           <button
             type="button"
             className="ghost-button w-full justify-center text-xs"
-            disabled={disabled || snapshot.lifecycle !== 'active' || !subEntry || !incomingSubCandidate || !substitutionRetainsPitcher}
+            disabled={
+              disabled ||
+              snapshot.lifecycle !== 'active' ||
+              !subEntry ||
+              !incomingSubCandidate ||
+              !substitutionRetainsPitcher ||
+              !substitutionWithinDefenseLimit
+            }
             onClick={() =>
               subEntry &&
               incomingSubCandidate &&
@@ -5666,7 +5696,14 @@ function AdvancedScoringPanel({
           <button
             type="button"
             className="ghost-button w-full justify-center text-xs"
-            disabled={disabled || snapshot.lifecycle !== 'active' || !subEntry || !reentryAvailable || !substitutionRetainsPitcher}
+            disabled={
+              disabled ||
+              snapshot.lifecycle !== 'active' ||
+              !subEntry ||
+              !reentryAvailable ||
+              !substitutionRetainsPitcher ||
+              !substitutionWithinDefenseLimit
+            }
             onClick={() =>
               subEntry?.starterPlayerId &&
               onReview('re_enter', 'starter re-entry', {
@@ -5681,6 +5718,11 @@ function AdvancedScoringPanel({
             Review starter re-entry
           </button>
         </div>
+        {!substitutionWithinDefenseLimit ? (
+          <p className="mt-2 text-[11px] font-semibold text-amber-800">
+            A full ten-player defense requires replacing a current defender or keeping this substitution batting-only.
+          </p>
+        ) : null}
         {subEntry && subEntry.starterPlayerId !== subEntry.playerId ? (
           <p className="mt-2 text-[11px] font-semibold text-gray-600">
             Starter {subEntry.starterPlayerId} · re-entries used {subEntry.starterReentriesUsed || 0}
