@@ -125,6 +125,9 @@ describe("Diamond Scorebook Functions wiring", () => {
     expect(source).toContain(
       "const diamondScorebookAiHandlers = createDiamondScorebookAiHandlers({",
     );
+    expect(source).toMatch(
+      /const diamondScorebookAiHandlers = createDiamondScorebookAiHandlers\(\{[\s\S]*?logger: functions\.logger,[\s\S]*?resolveDelegatedAccess[\s\S]*?\}\);/,
+    );
     expect(source).toContain(
       "diamondScorebookAiHandlers.getDiamondRecapSource",
     );

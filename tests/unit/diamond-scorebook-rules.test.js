@@ -298,15 +298,22 @@ describe("Diamond Scorebook v2 Firestore boundary", () => {
         );
       });
 
-      it("denies every client operation on manager-stat read controls", async () => {
+      it("denies every client operation on manager-stat and recap-source read controls", async () => {
+        const controlIds = [
+          "existing-manager-control",
+          "recap-admission-hash",
+          "recap-scope-hash",
+        ];
         await testEnv.withSecurityRulesDisabled(async (context) => {
-          await setDoc(
-            doc(
-              context.firestore(),
-              "diamondManagerStatReadControls/existing-control",
-            ),
-            { expiresAt: Timestamp.now() },
-          );
+          for (const controlId of controlIds) {
+            await setDoc(
+              doc(
+                context.firestore(),
+                `diamondManagerStatReadControls/${controlId}`,
+              ),
+              { expiresAt: Timestamp.now() },
+            );
+          }
         });
 
         const contexts = [
@@ -316,22 +323,29 @@ describe("Diamond Scorebook v2 Firestore boundary", () => {
         ];
         for (const context of contexts) {
           const db = context.firestore();
-          const existing = doc(
-            db,
-            "diamondManagerStatReadControls/existing-control",
-          );
-          await assertFails(getDoc(existing));
           await assertFails(
             getDocs(collection(db, "diamondManagerStatReadControls")),
           );
-          await assertFails(
-            setDoc(
-              doc(db, "diamondManagerStatReadControls/client-created"),
-              { expiresAt: Timestamp.now() },
-            ),
-          );
-          await assertFails(updateDoc(existing, { clientWrite: true }));
-          await assertFails(deleteDoc(existing));
+          for (const controlId of controlIds) {
+            const existing = doc(
+              db,
+              `diamondManagerStatReadControls/${controlId}`,
+            );
+            await assertFails(getDoc(existing));
+            await assertFails(updateDoc(existing, { clientWrite: true }));
+            await assertFails(deleteDoc(existing));
+          }
+          for (const controlId of [
+            "client-created",
+            "recap-admission-client-created",
+            "recap-scope-client-created",
+          ]) {
+            await assertFails(
+              setDoc(doc(db, `diamondManagerStatReadControls/${controlId}`), {
+                expiresAt: Timestamp.now(),
+              }),
+            );
+          }
         }
       });
 

@@ -11,8 +11,17 @@ const {
 } = require("../diamond-stat-config.cjs");
 const {
   DIAMOND_ENGINE,
+  MAX_CONCURRENT_RECAP_SOURCE_REQUESTS,
   MAX_PACKET_BYTES,
   MAX_RECAP_PLAYS,
+  MAX_RECAP_SOURCE_BULK_READ_UNITS,
+  MAX_RECAP_SOURCE_GLOBAL_REQUESTS_PER_WINDOW,
+  MAX_RECAP_SOURCE_REQUESTS_PER_WINDOW,
+  MAX_RECAP_SOURCE_SUSTAINED_REQUESTS_PER_WINDOW,
+  RECAP_SOURCE_CONTROL_COLLECTION,
+  RECAP_SOURCE_RATE_WINDOW_MS,
+  RECAP_SOURCE_REQUEST_LEASE_MS,
+  RECAP_SOURCE_SUSTAINED_WINDOW_MS,
   aiPaths,
   createDiamondScorebookAiHandlers,
 } = require("../diamond-scorebook-ai-handlers.cjs");
@@ -35,11 +44,14 @@ class TestHttpsError extends Error {
 }
 
 class FakeDocumentSnapshot {
-  constructor(reference, value) {
+  constructor(reference, value, updateTimeMs = null) {
     this.ref = reference;
     this.id = reference.id;
     this.exists = value !== undefined;
     this.value = clone(value);
+    this.updateTime = Number.isSafeInteger(updateTimeMs)
+      ? { toMillis: () => updateTimeMs }
+      : null;
   }
 
   data() {
@@ -148,9 +160,15 @@ class FakeFirestore {
     this.failDocumentPaths = new Set();
     this.failQueryPaths = new Set();
     this.queryTransform = null;
+    this.beforeQuery = null;
     this.queryLog = [];
     this.readLog = [];
+    this.documentUpdateTimes = new Map();
     this.failAfterNextTransactionCommit = false;
+    this.failAfterCommitPredicate = null;
+    this.afterCommitBeforeFailure = null;
+    this.retryTransactionPredicate = null;
+    this.beforeTransactionRetry = null;
   }
 
   doc(path) {
@@ -171,11 +189,15 @@ class FakeFirestore {
       );
     }
     return Promise.resolve(
-      new FakeDocumentSnapshot(reference, this.documents.get(reference.path)),
+      new FakeDocumentSnapshot(
+        reference,
+        this.documents.get(reference.path),
+        this.documentUpdateTimes.get(reference.path),
+      ),
     );
   }
 
-  getQuery(query) {
+  async getQuery(query) {
     this.queryLog.push({
       path: query.path,
       filters: clone(query.filters),
@@ -183,19 +205,25 @@ class FakeFirestore {
       maximum: query.maximum,
     });
     if (this.failQueryPaths.has(query.path)) {
-      return Promise.reject(
-        Object.assign(new Error("Injected query failure"), {
-          code: "unavailable",
-        }),
-      );
+      throw Object.assign(new Error("Injected query failure"), {
+        code: "unavailable",
+      });
     }
+    if (typeof this.beforeQuery === "function") await this.beforeQuery(query);
     const prefix = `${query.path}/`;
     let rows = [...this.documents.entries()]
       .filter(
         ([path]) =>
           path.startsWith(prefix) && !path.slice(prefix.length).includes("/"),
       )
-      .map(([path, value]) => new FakeDocumentSnapshot(this.doc(path), value));
+      .map(
+        ([path, value]) =>
+          new FakeDocumentSnapshot(
+            this.doc(path),
+            value,
+            this.documentUpdateTimes.get(path),
+          ),
+      );
     for (const filter of query.filters) {
       rows = rows.filter((document) => {
         const value = fieldValue(document.data(), filter.field);
@@ -222,13 +250,14 @@ class FakeFirestore {
     if (typeof this.queryTransform === "function") {
       rows = this.queryTransform(query, rows) || rows;
     }
-    return Promise.resolve(new FakeQuerySnapshot(rows));
+    return new FakeQuerySnapshot(rows);
   }
 
   applyOperations(operations) {
     const next = new Map(
       [...this.documents].map(([path, value]) => [path, clone(value)]),
     );
+    const nextUpdateTimes = new Map(this.documentUpdateTimes);
     for (const operation of operations) {
       const path = operation.reference.path;
       if (operation.kind === "create") {
@@ -238,6 +267,10 @@ class FakeFirestore {
           });
         }
         next.set(path, clone(operation.value));
+        const updatedAtMs = operation.value?.updatedAtMs;
+        if (Number.isSafeInteger(updatedAtMs)) {
+          nextUpdateTimes.set(path, updatedAtMs);
+        }
       } else if (operation.kind === "set") {
         next.set(
           path,
@@ -245,6 +278,10 @@ class FakeFirestore {
             ? { ...(next.get(path) || {}), ...clone(operation.value) }
             : clone(operation.value),
         );
+        const updatedAtMs = operation.value?.updatedAtMs;
+        if (Number.isSafeInteger(updatedAtMs)) {
+          nextUpdateTimes.set(path, updatedAtMs);
+        }
       } else if (operation.kind === "update") {
         if (!next.has(path)) {
           throw Object.assign(new Error(`Document missing: ${path}`), {
@@ -252,21 +289,46 @@ class FakeFirestore {
           });
         }
         next.set(path, { ...next.get(path), ...clone(operation.value) });
+        const updatedAtMs = operation.value?.updatedAtMs;
+        if (Number.isSafeInteger(updatedAtMs)) {
+          nextUpdateTimes.set(path, updatedAtMs);
+        }
       }
     }
     this.documents = next;
+    this.documentUpdateTimes = nextUpdateTimes;
   }
 
   runTransaction(callback) {
     const run = async () => {
-      const transaction = new FakeTransaction(this);
-      const result = await callback(transaction);
+      let transaction = new FakeTransaction(this);
+      let result = await callback(transaction);
+      const retryMatched =
+        typeof this.retryTransactionPredicate === "function" &&
+        this.retryTransactionPredicate(transaction.operations);
+      if (retryMatched) {
+        this.retryTransactionPredicate = null;
+        if (typeof this.beforeTransactionRetry === "function") {
+          this.beforeTransactionRetry(transaction.operations, this);
+          this.beforeTransactionRetry = null;
+        }
+        transaction = new FakeTransaction(this);
+        result = await callback(transaction);
+      }
       this.applyOperations(transaction.operations);
+      const predicateMatched =
+        typeof this.failAfterCommitPredicate === "function" &&
+        this.failAfterCommitPredicate(transaction.operations);
+      if (predicateMatched) this.failAfterCommitPredicate = null;
       if (
-        this.failAfterNextTransactionCommit &&
-        transaction.operations.length > 0
+        transaction.operations.length > 0 &&
+        (this.failAfterNextTransactionCommit || predicateMatched)
       ) {
         this.failAfterNextTransactionCommit = false;
+        if (typeof this.afterCommitBeforeFailure === "function") {
+          this.afterCommitBeforeFailure(transaction.operations, this);
+          this.afterCommitBeforeFailure = null;
+        }
         throw Object.assign(new Error("Injected post-commit ambiguity"), {
           code: "unavailable",
         });
@@ -282,8 +344,11 @@ class FakeFirestore {
     return clone(this.documents.get(path));
   }
 
-  seed(path, value) {
+  seed(path, value, updateTimeMs = null) {
     this.documents.set(path, clone(value));
+    if (Number.isSafeInteger(updateTimeMs)) {
+      this.documentUpdateTimes.set(path, updateTimeMs);
+    }
   }
 
   delete(path) {
@@ -297,6 +362,30 @@ function hash(value) {
 
 function uuid(index = 1) {
   return `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
+}
+
+async function waitFor(predicate, maximumTurns = 100) {
+  for (let turn = 0; turn < maximumTurns; turn += 1) {
+    if (predicate()) return;
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  throw new Error("Timed out waiting for deterministic test state");
+}
+
+function recapControls(firestore, type = null) {
+  return [...firestore.documents.entries()]
+    .filter(
+      ([path, value]) =>
+        path.startsWith(`${RECAP_SOURCE_CONTROL_COLLECTION}/recap-`) &&
+        (!type || value?.type === type),
+    )
+    .map(([path, value]) => ({ path, value: clone(value) }));
+}
+
+function onlyRecapControl(firestore, type) {
+  const matches = recapControls(firestore, type);
+  assert.equal(matches.length, 1);
+  return matches[0];
 }
 
 const coverage = Object.freeze({
@@ -625,6 +714,7 @@ function createHarness(options = {}) {
       ...(options.authUsers || {}),
     }),
   );
+  let randomIndex = options.randomStart || 1_000;
   const handlers = createDiamondScorebookAiHandlers({
     firestore,
     auth: {
@@ -650,6 +740,7 @@ function createHarness(options = {}) {
         uid === "former-scorer",
     }),
     clock: options.clock || (() => 1_788_652_800_000),
+    random: options.random || (() => uuid(randomIndex++)),
   });
   return { ...base, firestore, handlers, authUsers };
 }
@@ -784,6 +875,12 @@ describe("Diamond scorebook postgame AI handlers", () => {
     await assert.rejects(loadSource(harness, "disabled-1"), {
       code: "permission-denied",
     });
+    assert.equal(
+      harness.firestore.readLog.some((path) =>
+        path.startsWith("diamondManagerStatReadControls/"),
+      ),
+      false,
+    );
     await assert.rejects(
       harness.handlers.getDiamondRecapSource(
         { ...sourceRequest(harness.identity), actorUid: "manager-1" },
@@ -791,6 +888,519 @@ describe("Diamond scorebook postgame AI handlers", () => {
       ),
       { code: "invalid-argument" },
     );
+  });
+
+  it("durably limits sequential recap-source amplification before another bulk read", async () => {
+    const harness = createHarness();
+
+    for (
+      let attempt = 0;
+      attempt < MAX_RECAP_SOURCE_REQUESTS_PER_WINDOW;
+      attempt += 1
+    ) {
+      await assert.doesNotReject(loadSource(harness));
+    }
+    const bulkQueriesBeforeLimit = harness.firestore.queryLog.length;
+    const teamReadsBeforeLimit = harness.firestore.readLog.filter(
+      (path) => path === harness.paths.team,
+    ).length;
+
+    await assert.rejects(loadSource(harness), (error) => {
+      return (
+        error.code === "resource-exhausted" &&
+        error.details.reason === "diamond-recap-source-rate-limited"
+      );
+    });
+    assert.equal(harness.firestore.queryLog.length, bulkQueriesBeforeLimit);
+    assert.equal(
+      harness.firestore.readLog.filter((path) => path === harness.paths.team)
+        .length,
+      teamReadsBeforeLimit,
+    );
+  });
+
+  it("reserves at most two concurrent recap-source bulk reads per UID and game", async () => {
+    const harness = createHarness();
+    let releaseBulkReads;
+    const bulkReadGate = new Promise((resolve) => {
+      releaseBulkReads = resolve;
+    });
+    harness.firestore.beforeQuery = async (query) => {
+      if (
+        query.path === harness.paths.replayPages ||
+        query.path ===
+          harness.paths.publicPlayerStats(harness.identity.instanceId)
+      ) {
+        await bulkReadGate;
+      }
+    };
+    const first = loadSource(harness);
+    const second = loadSource(harness);
+    await waitFor(() => harness.firestore.queryLog.length === 4);
+    const queriesBeforeThird = harness.firestore.queryLog.length;
+    const teamReadsBeforeThird = harness.firestore.readLog.filter(
+      (path) => path === harness.paths.team,
+    ).length;
+    const third = loadSource(harness).then(
+      () => ({ kind: "resolved" }),
+      (error) => ({ kind: "rejected", error }),
+    );
+    const outcome = await Promise.race([
+      third,
+      waitFor(
+        () => harness.firestore.queryLog.length > queriesBeforeThird,
+      ).then(() => ({ kind: "entered-bulk" })),
+    ]);
+
+    try {
+      assert.equal(outcome.kind, "rejected");
+      assert.equal(outcome.error.code, "resource-exhausted");
+      assert.equal(
+        outcome.error.details.reason,
+        "diamond-recap-source-concurrency-limited",
+      );
+      assert.equal(harness.firestore.queryLog.length, queriesBeforeThird);
+      assert.equal(
+        harness.firestore.readLog.filter((path) => path === harness.paths.team)
+          .length,
+        teamReadsBeforeThird,
+      );
+    } finally {
+      releaseBulkReads();
+      await Promise.allSettled([first, second, third]);
+    }
+  });
+
+  it("keeps failed attempts leased until every sibling bulk read settles", async () => {
+    const harness = createHarness();
+    let releaseStatReads;
+    const statReadGate = new Promise((resolve) => {
+      releaseStatReads = resolve;
+    });
+    harness.firestore.failQueryPaths.add(harness.paths.replayPages);
+    harness.firestore.beforeQuery = async (query) => {
+      if (
+        query.path ===
+        harness.paths.publicPlayerStats(harness.identity.instanceId)
+      ) {
+        await statReadGate;
+      }
+    };
+
+    const first = loadSource(harness);
+    const second = loadSource(harness);
+    await waitFor(
+      () =>
+        harness.firestore.queryLog.filter(
+          ({ path }) =>
+            path ===
+            harness.paths.publicPlayerStats(harness.identity.instanceId),
+        ).length === 2,
+    );
+    const queriesBeforeThird = harness.firestore.queryLog.length;
+
+    await assert.rejects(loadSource(harness), (error) => {
+      return (
+        error.code === "resource-exhausted" &&
+        error.details.reason === "diamond-recap-source-concurrency-limited"
+      );
+    });
+    assert.equal(harness.firestore.queryLog.length, queriesBeforeThird);
+
+    releaseStatReads();
+    await Promise.all([
+      assert.rejects(first, { code: "unavailable" }),
+      assert.rejects(second, { code: "unavailable" }),
+    ]);
+    const scope = onlyRecapControl(
+      harness.firestore,
+      "diamond-recap-source-read-scope",
+    ).value;
+    assert.deepEqual(scope.activeAttempts, []);
+    assert.equal(
+      scope.recentTerminals.filter(({ status }) => status === "failed").length,
+      2,
+    );
+  });
+
+  it("bounds rotated-resource identity amplification before team or game reads", async () => {
+    const harness = createHarness();
+    const rotatedSource = (gameId) =>
+      harness.handlers.getDiamondRecapSource(
+        { ...sourceRequest(harness.identity), gameId },
+        context("former-scorer"),
+      );
+
+    for (
+      let attempt = 0;
+      attempt < MAX_RECAP_SOURCE_GLOBAL_REQUESTS_PER_WINDOW;
+      attempt += 1
+    ) {
+      await assert.rejects(rotatedSource(`missing-game-${attempt}`), {
+        code: "not-found",
+      });
+    }
+    const teamReadsBeforeLimit = harness.firestore.readLog.filter(
+      (path) => path === harness.paths.team,
+    ).length;
+    const gameReadsBeforeLimit = harness.firestore.readLog.filter((path) =>
+      path.startsWith(`${harness.paths.team}/games/missing-game-`),
+    ).length;
+
+    await assert.rejects(rotatedSource("missing-game-limit"), (error) => {
+      return (
+        error.code === "resource-exhausted" &&
+        error.details.reason === "diamond-recap-source-admission-limited"
+      );
+    });
+    assert.equal(
+      harness.firestore.readLog.filter((path) => path === harness.paths.team)
+        .length,
+      teamReadsBeforeLimit,
+    );
+    assert.equal(
+      harness.firestore.readLog.filter((path) =>
+        path.startsWith(`${harness.paths.team}/games/missing-game-`),
+      ).length,
+      gameReadsBeforeLimit,
+    );
+    assert.equal(harness.firestore.queryLog.length, 0);
+  });
+
+  it("applies the same source-read budget to publication before draft validation", async () => {
+    const harness = createHarness();
+    const source = await loadSource(harness);
+    const invalidDraft = { ...validDraft(source), published: true };
+
+    for (
+      let attempt = 0;
+      attempt < MAX_RECAP_SOURCE_REQUESTS_PER_WINDOW - 1;
+      attempt += 1
+    ) {
+      await assert.rejects(
+        harness.handlers.publishDiamondAiDraft(
+          {
+            requestId: uuid(500 + attempt),
+            ...sourceRequest(harness.identity),
+            checkpointHash: source.checkpointHash,
+            draft: invalidDraft,
+          },
+          context(),
+        ),
+        { code: "invalid-argument" },
+      );
+    }
+    const bulkQueriesBeforeLimit = harness.firestore.queryLog.length;
+    await assert.rejects(
+      harness.handlers.publishDiamondAiDraft(
+        {
+          requestId: uuid(504),
+          ...sourceRequest(harness.identity),
+          checkpointHash: source.checkpointHash,
+          draft: invalidDraft,
+        },
+        context(),
+      ),
+      (error) =>
+        error.code === "resource-exhausted" &&
+        error.details.reason === "diamond-recap-source-rate-limited",
+    );
+    assert.equal(harness.firestore.queryLog.length, bulkQueriesBeforeLimit);
+  });
+
+  it("stores only bounded hashes in the existing server-private TTL control collection", async () => {
+    const harness = createHarness();
+    await loadSource(harness);
+
+    const controls = recapControls(harness.firestore);
+    assert.equal(controls.length, 2);
+    for (const { path, value } of controls) {
+      assert.match(
+        path,
+        /^diamondManagerStatReadControls\/recap-(?:admission|scope)-[0-9a-f]{64}$/,
+      );
+      const serialized = JSON.stringify(value);
+      assert.equal(serialized.includes("manager-1"), false);
+      assert.equal(serialized.includes("team-1"), false);
+      assert.equal(serialized.includes("game-1"), false);
+      assert.equal(serialized.includes("instance-1"), false);
+      assert.ok(Buffer.byteLength(serialized, "utf8") < 100_000);
+      assert.match(value.scopeHash, /^sha256:[0-9a-f]{64}$/);
+      assert.ok(value.expiresAt instanceof Date);
+    }
+    const admission = onlyRecapControl(
+      harness.firestore,
+      "diamond-recap-source-read-admission",
+    ).value;
+    assert.equal(admission.requestCount, 1);
+    assert.equal(admission.readUnits, MAX_RECAP_SOURCE_BULK_READ_UNITS);
+    assert.equal(admission.recentAttempts.length, 1);
+    const scope = onlyRecapControl(
+      harness.firestore,
+      "diamond-recap-source-read-scope",
+    ).value;
+    assert.equal(scope.requestCount, 1);
+    assert.equal(scope.readUnits, MAX_RECAP_SOURCE_BULK_READ_UNITS);
+    assert.deepEqual(scope.activeAttempts, []);
+    assert.equal(scope.recentTerminals.length, 1);
+    assert.equal(scope.recentTerminals[0].status, "complete");
+    assert.match(
+      scope.recentTerminals[0].responseHash,
+      /^sha256:[0-9a-f]{64}$/,
+    );
+  });
+
+  it("reconciles ambiguous global and game reservations without double charging", async () => {
+    for (const target of ["recap-admission-", "recap-scope-"]) {
+      const harness = createHarness();
+      harness.firestore.failAfterCommitPredicate = (operations) =>
+        operations.some(
+          ({ reference, value }) =>
+            reference.path.includes(target) &&
+            (target === "recap-admission-" ||
+              value?.activeAttempts?.length === 1),
+        );
+
+      await assert.doesNotReject(loadSource(harness));
+      const admission = onlyRecapControl(
+        harness.firestore,
+        "diamond-recap-source-read-admission",
+      ).value;
+      const scope = onlyRecapControl(
+        harness.firestore,
+        "diamond-recap-source-read-scope",
+      ).value;
+      assert.equal(admission.requestCount, 1);
+      assert.equal(admission.sustainedRequestCount, 1);
+      assert.equal(scope.requestCount, 1);
+      assert.equal(scope.sustainedRequestCount, 1);
+      assert.equal(scope.recentTerminals.length, 1);
+    }
+  });
+
+  it("re-arms the same ambiguous reservation after lease expiry without a second quota charge", async () => {
+    const startedAt = 1_788_652_800_000;
+    let nowMs = startedAt;
+    const harness = createHarness({ clock: () => nowMs });
+    harness.firestore.failAfterCommitPredicate = (operations) =>
+      operations.some(
+        ({ reference, value }) =>
+          reference.path.includes("/recap-scope-") &&
+          value?.activeAttempts?.length === 1,
+      );
+    harness.firestore.afterCommitBeforeFailure = () => {
+      nowMs = startedAt + RECAP_SOURCE_REQUEST_LEASE_MS + 1;
+    };
+
+    await assert.doesNotReject(loadSource(harness));
+    const admission = onlyRecapControl(
+      harness.firestore,
+      "diamond-recap-source-read-admission",
+    ).value;
+    const scope = onlyRecapControl(
+      harness.firestore,
+      "diamond-recap-source-read-scope",
+    ).value;
+    assert.equal(admission.sustainedRequestCount, 1);
+    assert.equal(scope.sustainedRequestCount, 1);
+    assert.equal(scope.sustainedReadUnits, MAX_RECAP_SOURCE_BULK_READ_UNITS);
+    assert.deepEqual(scope.activeAttempts, []);
+    assert.equal(scope.recentTerminals.at(-1).status, "complete");
+  });
+
+  it("returns a response only after exact response-hash completion reconciliation", async () => {
+    const committed = createHarness();
+    committed.firestore.failAfterCommitPredicate = (operations) =>
+      operations.some(({ reference, value }) =>
+        Boolean(
+          reference.path.includes("/recap-scope-") &&
+          value?.recentTerminals?.some((entry) => entry.status === "complete"),
+        ),
+      );
+    await assert.doesNotReject(loadSource(committed));
+
+    const mismatched = createHarness();
+    mismatched.firestore.failAfterCommitPredicate =
+      committed.firestore.failAfterCommitPredicate ||
+      ((operations) =>
+        operations.some(({ reference, value }) =>
+          Boolean(
+            reference.path.includes("/recap-scope-") &&
+            value?.recentTerminals?.some(
+              (entry) => entry.status === "complete",
+            ),
+          ),
+        ));
+    mismatched.firestore.afterCommitBeforeFailure = (operations, database) => {
+      const operation = operations.find(({ reference }) =>
+        reference.path.includes("/recap-scope-"),
+      );
+      const value = database.read(operation.reference.path);
+      value.recentTerminals.at(-1).responseHash = hash({ forged: true });
+      database.seed(operation.reference.path, value, value.updatedAtMs);
+    };
+    await assert.rejects(loadSource(mismatched), {
+      code: "unavailable",
+    });
+  });
+
+  it("withholds the source after final Auth revocation and closes only its own lease", async () => {
+    const harness = createHarness();
+    let revoked = false;
+    harness.firestore.beforeQuery = async (query) => {
+      if (!revoked && query.path === harness.paths.replayPages) {
+        revoked = true;
+        harness.authUsers.get("manager-1").disabled = true;
+      }
+    };
+
+    await assert.rejects(loadSource(harness), {
+      code: "permission-denied",
+    });
+    const scope = onlyRecapControl(
+      harness.firestore,
+      "diamond-recap-source-read-scope",
+    ).value;
+    assert.deepEqual(scope.activeAttempts, []);
+    assert.equal(scope.recentTerminals.length, 1);
+    assert.equal(scope.recentTerminals[0].status, "failed");
+    assert.equal(
+      scope.recentTerminals[0].failureCode,
+      "final-auth-recheck-failed",
+    );
+  });
+
+  it("withholds the source when scorer authority is revoked during bulk reads", async () => {
+    const harness = createHarness();
+    let revoked = false;
+    harness.firestore.beforeQuery = async (query) => {
+      if (!revoked && query.path === harness.paths.replayPages) {
+        revoked = true;
+        const root = harness.firestore.read(harness.paths.scorebook);
+        harness.firestore.seed(harness.paths.scorebook, {
+          ...root,
+          checkpoint: {
+            ...root.checkpoint,
+            state: {
+              ...root.checkpoint.state,
+              currentScorerUid: "manager-1",
+            },
+          },
+        });
+      }
+    };
+
+    await assert.rejects(loadSource(harness, "scorer-1"), {
+      code: "permission-denied",
+    });
+    const scope = onlyRecapControl(
+      harness.firestore,
+      "diamond-recap-source-read-scope",
+    ).value;
+    assert.deepEqual(scope.activeAttempts, []);
+    assert.equal(scope.recentTerminals.at(-1).status, "failed");
+    assert.equal(
+      scope.recentTerminals.at(-1).failureCode,
+      "final-access-recheck-failed",
+    );
+  });
+
+  it("uses a fresh transaction clock and returns nothing when completion crosses the lease", async () => {
+    const startedAt = 1_788_652_800_000;
+    let nowMs = startedAt;
+    const harness = createHarness({ clock: () => nowMs });
+    harness.firestore.retryTransactionPredicate = (operations) =>
+      operations.some(({ reference, value }) =>
+        Boolean(
+          reference.path.includes("/recap-scope-") &&
+          value?.recentTerminals?.some((entry) => entry.status === "complete"),
+        ),
+      );
+    harness.firestore.beforeTransactionRetry = () => {
+      nowMs = startedAt + RECAP_SOURCE_REQUEST_LEASE_MS + 1;
+    };
+
+    await assert.rejects(loadSource(harness), (error) => {
+      return (
+        error.code === "aborted" &&
+        error.details.reason === "diamond-recap-source-reservation-lost"
+      );
+    });
+    const scope = onlyRecapControl(
+      harness.firestore,
+      "diamond-recap-source-read-scope",
+    ).value;
+    assert.deepEqual(scope.activeAttempts, []);
+    assert.equal(scope.recentTerminals.at(-1).status, "failed");
+  });
+
+  it("enforces the sustained per-game envelope across burst-window rollovers", async () => {
+    const startedAt = 1_788_652_800_000;
+    let nowMs = startedAt;
+    const harness = createHarness({ clock: () => nowMs });
+    const requestsPerBurst = MAX_RECAP_SOURCE_REQUESTS_PER_WINDOW;
+    const burstCount =
+      MAX_RECAP_SOURCE_SUSTAINED_REQUESTS_PER_WINDOW / requestsPerBurst;
+    assert.equal(Number.isInteger(burstCount), true);
+
+    for (let burst = 0; burst < burstCount; burst += 1) {
+      nowMs = startedAt + burst * (RECAP_SOURCE_RATE_WINDOW_MS + 1);
+      for (let attempt = 0; attempt < requestsPerBurst; attempt += 1) {
+        await loadSource(harness);
+      }
+    }
+    const queriesBeforeLimit = harness.firestore.queryLog.length;
+    nowMs = startedAt + burstCount * (RECAP_SOURCE_RATE_WINDOW_MS + 1);
+    await assert.rejects(loadSource(harness), (error) => {
+      return (
+        error.code === "resource-exhausted" &&
+        error.details.reason === "diamond-recap-source-rate-limited" &&
+        error.details.retryAfterMs > 0
+      );
+    });
+    assert.equal(harness.firestore.queryLog.length, queriesBeforeLimit);
+
+    nowMs = startedAt + RECAP_SOURCE_SUSTAINED_WINDOW_MS + 1;
+    await assert.doesNotReject(loadSource(harness));
+  });
+
+  it("quarantines young malformed controls and resets only after authoritative age", async () => {
+    const startedAt = 1_788_652_800_000;
+    let nowMs = startedAt;
+    const harness = createHarness({ clock: () => nowMs });
+    await loadSource(harness);
+    const scopeControl = onlyRecapControl(
+      harness.firestore,
+      "diamond-recap-source-read-scope",
+    );
+    harness.firestore.seed(
+      scopeControl.path,
+      { ...scopeControl.value, activeAttempts: "malformed" },
+      startedAt,
+    );
+    const queriesBeforeQuarantine = harness.firestore.queryLog.length;
+
+    nowMs = startedAt + 1;
+    await assert.rejects(loadSource(harness), (error) => {
+      return (
+        error.code === "unavailable" &&
+        error.details.reason === "diamond-recap-source-control-invalid"
+      );
+    });
+    assert.equal(harness.firestore.queryLog.length, queriesBeforeQuarantine);
+
+    nowMs = startedAt + RECAP_SOURCE_SUSTAINED_WINDOW_MS + 1;
+    await assert.doesNotReject(loadSource(harness));
+  });
+
+  it("fails closed before Firestore when secure server randomness is unavailable", async () => {
+    const harness = createHarness({ random: () => "not-a-secure-uuid" });
+
+    await assert.rejects(loadSource(harness), {
+      code: "unavailable",
+    });
+    assert.equal(harness.firestore.readLog.length, 0);
+    assert.equal(harness.firestore.queryLog.length, 0);
   });
 
   it("fails closed for stale, non-final, foreign-engine, or invalid stat-config state", async () => {
@@ -849,6 +1459,12 @@ describe("Diamond scorebook postgame AI handlers", () => {
     await assert.rejects(loadSource(replayHarness), {
       code: "unavailable",
     });
+    const replayScope = onlyRecapControl(
+      replayHarness.firestore,
+      "diamond-recap-source-read-scope",
+    ).value;
+    assert.deepEqual(replayScope.activeAttempts, []);
+    assert.equal(replayScope.recentTerminals.at(-1).status, "failed");
 
     const statHarness = createHarness();
     statHarness.firestore.queryTransform = (query, rows) =>
@@ -859,6 +1475,12 @@ describe("Diamond scorebook postgame AI handlers", () => {
     await assert.rejects(loadSource(statHarness), {
       code: "unavailable",
     });
+    const statScope = onlyRecapControl(
+      statHarness.firestore,
+      "diamond-recap-source-read-scope",
+    ).value;
+    assert.deepEqual(statScope.activeAttempts, []);
+    assert.equal(statScope.recentTerminals.at(-1).status, "failed");
 
     const empty = createHarness({
       documentsOptions: { plays: [], sourceRevision: 8, aggregateCount: 0 },

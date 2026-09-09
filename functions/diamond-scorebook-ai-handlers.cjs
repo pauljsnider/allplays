@@ -1,5 +1,7 @@
 "use strict";
 
+const nodeCrypto = require("node:crypto");
+
 const DIAMOND_ENGINE = "diamond-v2";
 const AI_SCHEMA_VERSION = 1;
 const MAX_REPLAY_PAGES = 200;
@@ -10,6 +12,38 @@ const MAX_DRAFT_BYTES = 64_000;
 const MAX_AGGREGATED_STAT_DOCUMENTS = 100;
 const MAX_STAT_SOURCES = 500;
 const MAX_METRICS_PER_SOURCE = 200;
+const RECAP_SOURCE_CONTROL_COLLECTION = "diamondManagerStatReadControls";
+const RECAP_SOURCE_RATE_WINDOW_MS = 60 * 1000;
+const RECAP_SOURCE_SUSTAINED_WINDOW_MS = 10 * 60 * 1000;
+// One UI generation followed by one publication can each receive one
+// transport retry, so four attempts per game remain compatible. The global
+// envelope admits two such game workflows without allowing team/game rotation
+// to multiply bulk reads. Each attempt is charged for both bounded query
+// sentinels: 201 replay-page reads plus 101 public-player-stat reads.
+const MAX_RECAP_SOURCE_BULK_READ_UNITS =
+  MAX_REPLAY_PAGES + MAX_AGGREGATED_STAT_DOCUMENTS + 2;
+const MAX_RECAP_SOURCE_GLOBAL_REQUESTS_PER_WINDOW = 8;
+const MAX_RECAP_SOURCE_GLOBAL_READ_UNITS_PER_WINDOW =
+  MAX_RECAP_SOURCE_GLOBAL_REQUESTS_PER_WINDOW *
+  MAX_RECAP_SOURCE_BULK_READ_UNITS;
+const MAX_RECAP_SOURCE_GLOBAL_SUSTAINED_REQUESTS_PER_WINDOW = 24;
+const MAX_RECAP_SOURCE_GLOBAL_SUSTAINED_READ_UNITS_PER_WINDOW =
+  MAX_RECAP_SOURCE_GLOBAL_SUSTAINED_REQUESTS_PER_WINDOW *
+  MAX_RECAP_SOURCE_BULK_READ_UNITS;
+const MAX_RECAP_SOURCE_REQUESTS_PER_WINDOW = 4;
+const MAX_RECAP_SOURCE_READ_UNITS_PER_WINDOW =
+  MAX_RECAP_SOURCE_REQUESTS_PER_WINDOW * MAX_RECAP_SOURCE_BULK_READ_UNITS;
+const MAX_RECAP_SOURCE_SUSTAINED_REQUESTS_PER_WINDOW = 12;
+const MAX_RECAP_SOURCE_SUSTAINED_READ_UNITS_PER_WINDOW =
+  MAX_RECAP_SOURCE_SUSTAINED_REQUESTS_PER_WINDOW *
+  MAX_RECAP_SOURCE_BULK_READ_UNITS;
+const MAX_CONCURRENT_RECAP_SOURCE_REQUESTS = 2;
+const RECAP_SOURCE_REQUEST_LEASE_MS = 3 * 60 * 1000;
+const RECAP_SOURCE_RECEIPT_RETENTION_MS = 5 * 60 * 1000;
+const RECAP_SOURCE_ADMISSION_DEDUPE_MS = RECAP_SOURCE_REQUEST_LEASE_MS;
+const MAX_RECAP_SOURCE_RECENT_ADMISSIONS = 32;
+const MAX_RECAP_SOURCE_RECENT_TERMINALS = 16;
+const RECAP_SOURCE_CONTROL_QUARANTINE_MS = RECAP_SOURCE_SUSTAINED_WINDOW_MS;
 const UUID_V4_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA256_PATTERN = /^sha256:[0-9a-f]{64}$/;
@@ -237,6 +271,8 @@ function createDiamondScorebookAiHandlers(dependencies = {}) {
     dependencies.resolveDelegatedAccess ||
     require("./delegated-team-context-core.cjs").resolveDelegatedAccess;
   const clock = dependencies.clock || (() => Date.now());
+  const random = dependencies.random || nodeCrypto;
+  const logger = dependencies.logger || {};
 
   if (
     !firestore?.doc ||
@@ -393,6 +429,30 @@ function createDiamondScorebookAiHandlers(dependencies = {}) {
     return value;
   }
 
+  function secureServerUuid(label) {
+    let value;
+    try {
+      value =
+        typeof random === "function"
+          ? random()
+          : typeof random?.randomUUID === "function"
+            ? random.randomUUID()
+            : typeof random?.uuid === "function"
+              ? random.uuid()
+              : null;
+    } catch {
+      value = null;
+    }
+    if (typeof value !== "string" || !UUID_V4_PATTERN.test(value)) {
+      throw makeError(
+        "unavailable",
+        `Secure randomness is unavailable for this ${label}.`,
+        { retryable: true },
+      );
+    }
+    return value.toLowerCase();
+  }
+
   function canonicalHash(value, label) {
     let result;
     try {
@@ -418,6 +478,454 @@ function createDiamondScorebookAiHandlers(dependencies = {}) {
     } catch {
       return false;
     }
+  }
+
+  function recapSourceRetryDetails(reason, retryAtMs, nowMs) {
+    return {
+      reason,
+      retryable: true,
+      retryAfterMs: Math.max(1, retryAtMs - nowMs),
+    };
+  }
+
+  function recapSourceControlHashes(request, callerUid, attemptHash) {
+    const scopeHash = canonicalHash(
+      {
+        schemaVersion: 1,
+        type: "diamond-recap-source-read-scope",
+        callerUid,
+        teamId: request.teamId,
+        gameId: request.gameId,
+      },
+      "The Diamond recap-source read scope",
+    );
+    const requestHash = canonicalHash(
+      {
+        schemaVersion: 1,
+        type: "diamond-recap-source-read-request",
+        scopeHash,
+        sourceRevision: request.sourceRevision,
+        attemptHash,
+      },
+      "The Diamond recap-source read request",
+    );
+    return Object.freeze({ scopeHash, requestHash, attemptHash });
+  }
+
+  function recapSourceAdmissionRef(callerUid) {
+    const scopeHash = canonicalHash(
+      {
+        schemaVersion: 1,
+        type: "diamond-recap-source-read-admission",
+        callerUid,
+      },
+      "The Diamond recap-source global admission scope",
+    );
+    return Object.freeze({
+      scopeHash,
+      reference: firestore.doc(
+        `${RECAP_SOURCE_CONTROL_COLLECTION}/recap-admission-${scopeHash.slice(7)}`,
+      ),
+    });
+  }
+
+  function recapSourceScopeRef(hashes) {
+    return firestore.doc(
+      `${RECAP_SOURCE_CONTROL_COLLECTION}/recap-scope-${hashes.scopeHash.slice(7)}`,
+    );
+  }
+
+  function recapSourceControlTimestampMs(value) {
+    const milliseconds =
+      value instanceof Date ? value.getTime() : value?.toMillis?.();
+    return Number.isSafeInteger(milliseconds) && milliseconds >= 0
+      ? milliseconds
+      : null;
+  }
+
+  function recapSourceControlUpdatedAtMs(snapshot) {
+    const value = snapshot?.updateTime?.toMillis?.();
+    return Number.isSafeInteger(value) && value >= 0 ? value : null;
+  }
+
+  function invalidRecapSourceControl(snapshot, nowMs) {
+    const updatedAtMs = recapSourceControlUpdatedAtMs(snapshot);
+    if (
+      updatedAtMs !== null &&
+      updatedAtMs + RECAP_SOURCE_CONTROL_QUARANTINE_MS <= nowMs
+    ) {
+      return null;
+    }
+    throw makeError(
+      "unavailable",
+      "Diamond recap-source read safety state is unavailable. Try again later.",
+      { reason: "diamond-recap-source-control-invalid", retryable: true },
+    );
+  }
+
+  function parseRecapSourceAdmission(snapshot, scopeHash, nowMs) {
+    if (!snapshot?.exists) return null;
+    const value = snapshotData(snapshot);
+    const recentAttempts = Array.isArray(value?.recentAttempts)
+      ? value.recentAttempts
+      : null;
+    if (
+      !isPlainObject(value) ||
+      Object.keys(value).length !== 14 ||
+      value.schemaVersion !== 1 ||
+      value.type !== "diamond-recap-source-read-admission" ||
+      value.scopeHash !== scopeHash ||
+      !Number.isSafeInteger(value.windowStartedAtMs) ||
+      value.windowStartedAtMs < 0 ||
+      !Number.isSafeInteger(value.windowResetAtMs) ||
+      value.windowResetAtMs !==
+        value.windowStartedAtMs + RECAP_SOURCE_RATE_WINDOW_MS ||
+      !Number.isSafeInteger(value.requestCount) ||
+      value.requestCount < 0 ||
+      value.requestCount > MAX_RECAP_SOURCE_GLOBAL_REQUESTS_PER_WINDOW ||
+      !Number.isSafeInteger(value.readUnits) ||
+      value.readUnits < 0 ||
+      value.readUnits > MAX_RECAP_SOURCE_GLOBAL_READ_UNITS_PER_WINDOW ||
+      value.readUnits !==
+        value.requestCount * MAX_RECAP_SOURCE_BULK_READ_UNITS ||
+      !Number.isSafeInteger(value.sustainedWindowStartedAtMs) ||
+      value.sustainedWindowStartedAtMs < 0 ||
+      !Number.isSafeInteger(value.sustainedWindowResetAtMs) ||
+      value.sustainedWindowResetAtMs !==
+        value.sustainedWindowStartedAtMs + RECAP_SOURCE_SUSTAINED_WINDOW_MS ||
+      !Number.isSafeInteger(value.sustainedRequestCount) ||
+      value.sustainedRequestCount < 0 ||
+      value.sustainedRequestCount >
+        MAX_RECAP_SOURCE_GLOBAL_SUSTAINED_REQUESTS_PER_WINDOW ||
+      !Number.isSafeInteger(value.sustainedReadUnits) ||
+      value.sustainedReadUnits < 0 ||
+      value.sustainedReadUnits >
+        MAX_RECAP_SOURCE_GLOBAL_SUSTAINED_READ_UNITS_PER_WINDOW ||
+      value.sustainedReadUnits !==
+        value.sustainedRequestCount * MAX_RECAP_SOURCE_BULK_READ_UNITS ||
+      !recentAttempts ||
+      recentAttempts.length > MAX_RECAP_SOURCE_RECENT_ADMISSIONS ||
+      new Set(recentAttempts.map((entry) => entry?.attemptHash)).size !==
+        recentAttempts.length ||
+      !recentAttempts.every(
+        (entry) =>
+          isPlainObject(entry) &&
+          Object.keys(entry).length === 2 &&
+          SHA256_PATTERN.test(entry.attemptHash) &&
+          Number.isSafeInteger(entry.admittedAtMs) &&
+          entry.admittedAtMs >= 0 &&
+          entry.admittedAtMs <= value.updatedAtMs,
+      ) ||
+      !Number.isSafeInteger(value.updatedAtMs) ||
+      value.updatedAtMs < value.windowStartedAtMs ||
+      value.updatedAtMs < value.sustainedWindowStartedAtMs ||
+      recapSourceControlTimestampMs(value.expiresAt) !==
+        Math.max(
+          value.windowResetAtMs,
+          value.sustainedWindowResetAtMs,
+          value.updatedAtMs + RECAP_SOURCE_ADMISSION_DEDUPE_MS,
+        )
+    ) {
+      return invalidRecapSourceControl(snapshot, nowMs);
+    }
+    return value;
+  }
+
+  function parseRecapSourceScope(snapshot, hashes, nowMs) {
+    if (!snapshot?.exists) return null;
+    const value = snapshotData(snapshot);
+    const activeAttempts = Array.isArray(value?.activeAttempts)
+      ? value.activeAttempts
+      : null;
+    const recentTerminals = Array.isArray(value?.recentTerminals)
+      ? value.recentTerminals
+      : null;
+    const validActiveAttempts =
+      activeAttempts &&
+      activeAttempts.length <= MAX_CONCURRENT_RECAP_SOURCE_REQUESTS &&
+      activeAttempts.every(
+        (entry) =>
+          isPlainObject(entry) &&
+          Object.keys(entry).length === 3 &&
+          SHA256_PATTERN.test(entry.requestHash) &&
+          Number.isSafeInteger(entry.startedAtMs) &&
+          entry.startedAtMs >= 0 &&
+          entry.startedAtMs <= value.updatedAtMs &&
+          Number.isSafeInteger(entry.leaseExpiresAtMs) &&
+          entry.leaseExpiresAtMs ===
+            entry.startedAtMs + RECAP_SOURCE_REQUEST_LEASE_MS,
+      );
+    const validRecentTerminals =
+      recentTerminals &&
+      recentTerminals.length <= MAX_RECAP_SOURCE_RECENT_TERMINALS &&
+      recentTerminals.every(
+        (entry) =>
+          isPlainObject(entry) &&
+          Object.keys(entry).length === 4 &&
+          SHA256_PATTERN.test(entry.requestHash) &&
+          ["complete", "failed"].includes(entry.status) &&
+          Number.isSafeInteger(entry.finishedAtMs) &&
+          entry.finishedAtMs >= 0 &&
+          entry.finishedAtMs <= value.updatedAtMs &&
+          (entry.status === "complete"
+            ? SHA256_PATTERN.test(entry.responseHash) &&
+              !own(entry, "failureCode")
+            : !own(entry, "responseHash") &&
+              typeof entry.failureCode === "string" &&
+              entry.failureCode.length >= 1 &&
+              entry.failureCode.length <= 64),
+      );
+    const activeHashes = (activeAttempts || []).map(
+      ({ requestHash }) => requestHash,
+    );
+    const terminalHashes = (recentTerminals || []).map(
+      ({ requestHash }) => requestHash,
+    );
+    const expectedExpiresAtMs = Math.max(
+      value?.windowResetAtMs || 0,
+      value?.sustainedWindowResetAtMs || 0,
+      ...(activeAttempts || []).map(({ leaseExpiresAtMs }) => leaseExpiresAtMs),
+      ...(recentTerminals || []).map(
+        ({ finishedAtMs }) => finishedAtMs + RECAP_SOURCE_RECEIPT_RETENTION_MS,
+      ),
+    );
+    if (
+      !isPlainObject(value) ||
+      Object.keys(value).length !== 15 ||
+      value.schemaVersion !== 1 ||
+      value.type !== "diamond-recap-source-read-scope" ||
+      value.scopeHash !== hashes.scopeHash ||
+      !Number.isSafeInteger(value.windowStartedAtMs) ||
+      value.windowStartedAtMs < 0 ||
+      !Number.isSafeInteger(value.windowResetAtMs) ||
+      value.windowResetAtMs !==
+        value.windowStartedAtMs + RECAP_SOURCE_RATE_WINDOW_MS ||
+      !Number.isSafeInteger(value.requestCount) ||
+      value.requestCount < 0 ||
+      value.requestCount > MAX_RECAP_SOURCE_REQUESTS_PER_WINDOW ||
+      !Number.isSafeInteger(value.readUnits) ||
+      value.readUnits < 0 ||
+      value.readUnits > MAX_RECAP_SOURCE_READ_UNITS_PER_WINDOW ||
+      value.readUnits !==
+        value.requestCount * MAX_RECAP_SOURCE_BULK_READ_UNITS ||
+      !Number.isSafeInteger(value.sustainedWindowStartedAtMs) ||
+      value.sustainedWindowStartedAtMs < 0 ||
+      !Number.isSafeInteger(value.sustainedWindowResetAtMs) ||
+      value.sustainedWindowResetAtMs !==
+        value.sustainedWindowStartedAtMs + RECAP_SOURCE_SUSTAINED_WINDOW_MS ||
+      !Number.isSafeInteger(value.sustainedRequestCount) ||
+      value.sustainedRequestCount < 0 ||
+      value.sustainedRequestCount >
+        MAX_RECAP_SOURCE_SUSTAINED_REQUESTS_PER_WINDOW ||
+      !Number.isSafeInteger(value.sustainedReadUnits) ||
+      value.sustainedReadUnits < 0 ||
+      value.sustainedReadUnits >
+        MAX_RECAP_SOURCE_SUSTAINED_READ_UNITS_PER_WINDOW ||
+      value.sustainedReadUnits !==
+        value.sustainedRequestCount * MAX_RECAP_SOURCE_BULK_READ_UNITS ||
+      !validActiveAttempts ||
+      !validRecentTerminals ||
+      new Set(activeHashes).size !== activeHashes.length ||
+      new Set(terminalHashes).size !== terminalHashes.length ||
+      activeHashes.some((requestHash) =>
+        terminalHashes.includes(requestHash),
+      ) ||
+      !Number.isSafeInteger(value.updatedAtMs) ||
+      value.updatedAtMs < value.windowStartedAtMs ||
+      value.updatedAtMs < value.sustainedWindowStartedAtMs ||
+      recapSourceControlTimestampMs(value.expiresAt) !== expectedExpiresAtMs
+    ) {
+      return invalidRecapSourceControl(snapshot, nowMs);
+    }
+    return value;
+  }
+
+  async function readRecapSourceControl(transaction, reference) {
+    try {
+      return await transaction.get(reference);
+    } catch (error) {
+      if (isHandlerError(error)) throw error;
+      throw makeError(
+        "unavailable",
+        "Diamond recap-source read safety state could not be verified.",
+        { retryable: true },
+      );
+    }
+  }
+
+  async function reserveRecapSourceAdmission(
+    transaction,
+    caller,
+    attemptHash,
+    nowMs,
+  ) {
+    const admissionRef = recapSourceAdmissionRef(caller.uid);
+    const snapshot = await readRecapSourceControl(
+      transaction,
+      admissionRef.reference,
+    );
+    const admission = parseRecapSourceAdmission(
+      snapshot,
+      admissionRef.scopeHash,
+      nowMs,
+    );
+    const windowActive = Boolean(
+      admission && admission.windowResetAtMs > nowMs,
+    );
+    const sustainedWindowActive = Boolean(
+      admission && admission.sustainedWindowResetAtMs > nowMs,
+    );
+    const recentAttempts = (admission?.recentAttempts || []).filter(
+      (entry) => entry.admittedAtMs + RECAP_SOURCE_ADMISSION_DEDUPE_MS > nowMs,
+    );
+    if (recentAttempts.some((entry) => entry.attemptHash === attemptHash))
+      return;
+
+    const requestCount = windowActive ? admission.requestCount : 0;
+    const readUnits = windowActive ? admission.readUnits : 0;
+    const sustainedRequestCount = sustainedWindowActive
+      ? admission.sustainedRequestCount
+      : 0;
+    const sustainedReadUnits = sustainedWindowActive
+      ? admission.sustainedReadUnits
+      : 0;
+    const windowStartedAtMs = windowActive
+      ? admission.windowStartedAtMs
+      : nowMs;
+    const windowResetAtMs = windowActive
+      ? admission.windowResetAtMs
+      : nowMs + RECAP_SOURCE_RATE_WINDOW_MS;
+    const sustainedWindowStartedAtMs = sustainedWindowActive
+      ? admission.sustainedWindowStartedAtMs
+      : nowMs;
+    const sustainedWindowResetAtMs = sustainedWindowActive
+      ? admission.sustainedWindowResetAtMs
+      : nowMs + RECAP_SOURCE_SUSTAINED_WINDOW_MS;
+    const burstLimited =
+      requestCount + 1 > MAX_RECAP_SOURCE_GLOBAL_REQUESTS_PER_WINDOW ||
+      readUnits + MAX_RECAP_SOURCE_BULK_READ_UNITS >
+        MAX_RECAP_SOURCE_GLOBAL_READ_UNITS_PER_WINDOW;
+    const sustainedLimited =
+      sustainedRequestCount + 1 >
+        MAX_RECAP_SOURCE_GLOBAL_SUSTAINED_REQUESTS_PER_WINDOW ||
+      sustainedReadUnits + MAX_RECAP_SOURCE_BULK_READ_UNITS >
+        MAX_RECAP_SOURCE_GLOBAL_SUSTAINED_READ_UNITS_PER_WINDOW;
+    if (burstLimited || sustainedLimited) {
+      throw makeError(
+        "resource-exhausted",
+        "Diamond recap-source admission is temporarily limited.",
+        recapSourceRetryDetails(
+          "diamond-recap-source-admission-limited",
+          Math.max(
+            burstLimited ? windowResetAtMs : 0,
+            sustainedLimited ? sustainedWindowResetAtMs : 0,
+          ),
+          nowMs,
+        ),
+      );
+    }
+    transaction.set(admissionRef.reference, {
+      schemaVersion: 1,
+      type: "diamond-recap-source-read-admission",
+      scopeHash: admissionRef.scopeHash,
+      windowStartedAtMs,
+      windowResetAtMs,
+      requestCount: requestCount + 1,
+      readUnits: readUnits + MAX_RECAP_SOURCE_BULK_READ_UNITS,
+      sustainedWindowStartedAtMs,
+      sustainedWindowResetAtMs,
+      sustainedRequestCount: sustainedRequestCount + 1,
+      sustainedReadUnits: sustainedReadUnits + MAX_RECAP_SOURCE_BULK_READ_UNITS,
+      recentAttempts: [
+        ...recentAttempts,
+        { attemptHash, admittedAtMs: nowMs },
+      ].slice(-MAX_RECAP_SOURCE_RECENT_ADMISSIONS),
+      updatedAtMs: nowMs,
+      expiresAt: new Date(
+        Math.max(
+          windowResetAtMs,
+          sustainedWindowResetAtMs,
+          nowMs + RECAP_SOURCE_ADMISSION_DEDUPE_MS,
+        ),
+      ),
+    });
+  }
+
+  function recapSourceScopeValue(
+    hashes,
+    activeAttempts,
+    recentTerminals,
+    nowMs,
+    requestCount,
+    readUnits,
+    windowStartedAtMs,
+    windowResetAtMs,
+    sustainedRequestCount,
+    sustainedReadUnits,
+    sustainedWindowStartedAtMs,
+    sustainedWindowResetAtMs,
+  ) {
+    const retainedTerminals = recentTerminals
+      .filter(
+        (entry) =>
+          entry.finishedAtMs + RECAP_SOURCE_RECEIPT_RETENTION_MS > nowMs,
+      )
+      .slice(-MAX_RECAP_SOURCE_RECENT_TERMINALS);
+    const leaseExpiresAtMs = activeAttempts.reduce(
+      (maximum, entry) => Math.max(maximum, entry.leaseExpiresAtMs),
+      0,
+    );
+    const terminalExpiresAtMs = retainedTerminals.reduce(
+      (maximum, entry) =>
+        Math.max(
+          maximum,
+          entry.finishedAtMs + RECAP_SOURCE_RECEIPT_RETENTION_MS,
+        ),
+      0,
+    );
+    return {
+      schemaVersion: 1,
+      type: "diamond-recap-source-read-scope",
+      scopeHash: hashes.scopeHash,
+      windowStartedAtMs,
+      windowResetAtMs,
+      requestCount,
+      readUnits,
+      sustainedWindowStartedAtMs,
+      sustainedWindowResetAtMs,
+      sustainedRequestCount,
+      sustainedReadUnits,
+      activeAttempts,
+      recentTerminals: retainedTerminals,
+      updatedAtMs: nowMs,
+      expiresAt: new Date(
+        Math.max(
+          windowResetAtMs,
+          sustainedWindowResetAtMs,
+          leaseExpiresAtMs,
+          terminalExpiresAtMs,
+        ),
+      ),
+    };
+  }
+
+  function assertOwnedRecapSourceAttempt(scope, reservation, nowMs) {
+    const active = scope?.activeAttempts?.find(
+      (entry) => entry.requestHash === reservation.hashes.requestHash,
+    );
+    if (!scope || !active || active.leaseExpiresAtMs <= nowMs) {
+      throw makeError(
+        "aborted",
+        "The Diamond recap-source read reservation changed before completion.",
+        { reason: "diamond-recap-source-reservation-lost" },
+      );
+    }
+  }
+
+  function removeOwnedRecapSourceAttempt(scope, reservation) {
+    return scope.activeAttempts.filter(
+      (entry) => entry.requestHash !== reservation.hashes.requestHash,
+    );
   }
 
   function readReference(reader, reference) {
@@ -972,6 +1480,350 @@ function createDiamondScorebookAiHandlers(dependencies = {}) {
     }
   }
 
+  async function reserveRecapSourceRead(
+    transaction,
+    request,
+    caller,
+    permission,
+    attemptHash,
+    nowMs,
+  ) {
+    const hashes = recapSourceControlHashes(request, caller.uid, attemptHash);
+    const reference = recapSourceScopeRef(hashes);
+    const snapshot = await readRecapSourceControl(transaction, reference);
+    const scope = parseRecapSourceScope(snapshot, hashes, nowMs);
+    const allActiveAttempts = scope?.activeAttempts || [];
+    const activeAttempts = allActiveAttempts.filter(
+      (entry) => entry.leaseExpiresAtMs > nowMs,
+    );
+    const recentTerminals = (scope?.recentTerminals || []).filter(
+      (entry) => entry.finishedAtMs + RECAP_SOURCE_RECEIPT_RETENTION_MS > nowMs,
+    );
+    const matchingActiveAttempt = allActiveAttempts.find(
+      (entry) => entry.requestHash === hashes.requestHash,
+    );
+    const reservation = Object.freeze({
+      hashes,
+      reference,
+      permission,
+    });
+    if (matchingActiveAttempt?.leaseExpiresAtMs > nowMs) {
+      const identity = await loadIdentity(
+        transaction,
+        request,
+        caller,
+        permission,
+      );
+      return {
+        reservation: Object.freeze({ ...reservation, token: identity.token }),
+        identity,
+      };
+    }
+    if (
+      recentTerminals.some((entry) => entry.requestHash === hashes.requestHash)
+    ) {
+      throw makeError(
+        "already-exists",
+        "This Diamond recap-source read attempt is already terminal.",
+        { reason: "diamond-recap-source-attempt-terminal" },
+      );
+    }
+    const rearmingExpiredAttempt = Boolean(matchingActiveAttempt);
+    if (activeAttempts.length >= MAX_CONCURRENT_RECAP_SOURCE_REQUESTS) {
+      throw makeError(
+        "resource-exhausted",
+        "Too many Diamond recap-source reads are already in progress.",
+        recapSourceRetryDetails(
+          "diamond-recap-source-concurrency-limited",
+          Math.min(
+            ...activeAttempts.map(({ leaseExpiresAtMs }) => leaseExpiresAtMs),
+          ),
+          nowMs,
+        ),
+      );
+    }
+
+    const windowActive = Boolean(scope && scope.windowResetAtMs > nowMs);
+    const sustainedWindowActive = Boolean(
+      scope && scope.sustainedWindowResetAtMs > nowMs,
+    );
+    const requestCount = windowActive ? scope.requestCount : 0;
+    const readUnits = windowActive ? scope.readUnits : 0;
+    const sustainedRequestCount = sustainedWindowActive
+      ? scope.sustainedRequestCount
+      : 0;
+    const sustainedReadUnits = sustainedWindowActive
+      ? scope.sustainedReadUnits
+      : 0;
+    const windowStartedAtMs = windowActive ? scope.windowStartedAtMs : nowMs;
+    const windowResetAtMs = windowActive
+      ? scope.windowResetAtMs
+      : nowMs + RECAP_SOURCE_RATE_WINDOW_MS;
+    const sustainedWindowStartedAtMs = sustainedWindowActive
+      ? scope.sustainedWindowStartedAtMs
+      : nowMs;
+    const sustainedWindowResetAtMs = sustainedWindowActive
+      ? scope.sustainedWindowResetAtMs
+      : nowMs + RECAP_SOURCE_SUSTAINED_WINDOW_MS;
+    const burstLimited =
+      requestCount + 1 > MAX_RECAP_SOURCE_REQUESTS_PER_WINDOW ||
+      readUnits + MAX_RECAP_SOURCE_BULK_READ_UNITS >
+        MAX_RECAP_SOURCE_READ_UNITS_PER_WINDOW;
+    const sustainedLimited =
+      sustainedRequestCount + 1 >
+        MAX_RECAP_SOURCE_SUSTAINED_REQUESTS_PER_WINDOW ||
+      sustainedReadUnits + MAX_RECAP_SOURCE_BULK_READ_UNITS >
+        MAX_RECAP_SOURCE_SUSTAINED_READ_UNITS_PER_WINDOW;
+    if (!rearmingExpiredAttempt && (burstLimited || sustainedLimited)) {
+      throw makeError(
+        "resource-exhausted",
+        "Diamond recap-source reads are temporarily limited for this game.",
+        recapSourceRetryDetails(
+          "diamond-recap-source-rate-limited",
+          Math.max(
+            burstLimited ? windowResetAtMs : 0,
+            sustainedLimited ? sustainedWindowResetAtMs : 0,
+          ),
+          nowMs,
+        ),
+      );
+    }
+
+    // The global UID admission above bounds invalid resource rotation. Keep
+    // the per-game throttle decision ahead of these identity reads, then prove
+    // current manager/scorer authority in this same reservation transaction.
+    const identity = await loadIdentity(
+      transaction,
+      request,
+      caller,
+      permission,
+    );
+    const leaseExpiresAtMs = nowMs + RECAP_SOURCE_REQUEST_LEASE_MS;
+    const nextActiveAttempts = [
+      ...activeAttempts,
+      {
+        requestHash: hashes.requestHash,
+        startedAtMs: nowMs,
+        leaseExpiresAtMs,
+      },
+    ].sort((left, right) => left.requestHash.localeCompare(right.requestHash));
+    transaction.set(
+      reference,
+      recapSourceScopeValue(
+        hashes,
+        nextActiveAttempts,
+        recentTerminals,
+        nowMs,
+        requestCount + (rearmingExpiredAttempt ? 0 : 1),
+        readUnits +
+          (rearmingExpiredAttempt ? 0 : MAX_RECAP_SOURCE_BULK_READ_UNITS),
+        windowStartedAtMs,
+        windowResetAtMs,
+        sustainedRequestCount + (rearmingExpiredAttempt ? 0 : 1),
+        sustainedReadUnits +
+          (rearmingExpiredAttempt ? 0 : MAX_RECAP_SOURCE_BULK_READ_UNITS),
+        sustainedWindowStartedAtMs,
+        sustainedWindowResetAtMs,
+      ),
+    );
+    return {
+      reservation: Object.freeze({ ...reservation, token: identity.token }),
+      identity,
+    };
+  }
+
+  async function failRecapSourceRead(reservation, failureCode) {
+    let lastError = null;
+    for (let closeAttempt = 0; closeAttempt < 2; closeAttempt += 1) {
+      try {
+        await firestore.runTransaction(async (transaction) => {
+          const nowMs = normalizeNow();
+          const snapshot = await readRecapSourceControl(
+            transaction,
+            reservation.reference,
+          );
+          const scope = parseRecapSourceScope(
+            snapshot,
+            reservation.hashes,
+            nowMs,
+          );
+          if (!scope) return false;
+          const nextActiveAttempts = removeOwnedRecapSourceAttempt(
+            scope,
+            reservation,
+          );
+          if (nextActiveAttempts.length === scope.activeAttempts.length)
+            return false;
+          transaction.set(
+            reservation.reference,
+            recapSourceScopeValue(
+              reservation.hashes,
+              nextActiveAttempts,
+              [
+                ...scope.recentTerminals,
+                {
+                  requestHash: reservation.hashes.requestHash,
+                  status: "failed",
+                  finishedAtMs: nowMs,
+                  failureCode:
+                    typeof failureCode === "string" && failureCode
+                      ? failureCode.slice(0, 64)
+                      : "unknown-failure",
+                },
+              ],
+              nowMs,
+              scope.requestCount,
+              scope.readUnits,
+              scope.windowStartedAtMs,
+              scope.windowResetAtMs,
+              scope.sustainedRequestCount,
+              scope.sustainedReadUnits,
+              scope.sustainedWindowStartedAtMs,
+              scope.sustainedWindowResetAtMs,
+            ),
+          );
+          return true;
+        });
+        return;
+      } catch (error) {
+        lastError = error;
+        if (isHandlerError(error)) break;
+      }
+    }
+    logger.error?.("diamond_recap_source_read_failure_state", {
+      code:
+        typeof lastError?.code === "string"
+          ? lastError.code.slice(0, 64)
+          : "write-failed",
+    });
+  }
+
+  async function completeRecapSourceRead(
+    transaction,
+    request,
+    caller,
+    reservation,
+    responseHash,
+    nowMs,
+  ) {
+    const snapshot = await readRecapSourceControl(
+      transaction,
+      reservation.reference,
+    );
+    const scope = parseRecapSourceScope(snapshot, reservation.hashes, nowMs);
+    assertOwnedRecapSourceAttempt(scope, reservation, nowMs);
+    const current = await loadIdentity(
+      transaction,
+      request,
+      caller,
+      reservation.permission,
+    );
+    if (!canonicalEqual(reservation.token, current.token)) {
+      staleError(current.sourceRevision);
+    }
+    transaction.set(
+      reservation.reference,
+      recapSourceScopeValue(
+        reservation.hashes,
+        removeOwnedRecapSourceAttempt(scope, reservation),
+        [
+          ...scope.recentTerminals,
+          {
+            requestHash: reservation.hashes.requestHash,
+            status: "complete",
+            finishedAtMs: nowMs,
+            responseHash,
+          },
+        ],
+        nowMs,
+        scope.requestCount,
+        scope.readUnits,
+        scope.windowStartedAtMs,
+        scope.windowResetAtMs,
+        scope.sustainedRequestCount,
+        scope.sustainedReadUnits,
+        scope.sustainedWindowStartedAtMs,
+        scope.sustainedWindowResetAtMs,
+      ),
+    );
+    return current;
+  }
+
+  async function reconcileRecapSourceCompletion(
+    transaction,
+    request,
+    caller,
+    reservation,
+    responseHash,
+    nowMs,
+  ) {
+    const snapshot = await readRecapSourceControl(
+      transaction,
+      reservation.reference,
+    );
+    const scope = parseRecapSourceScope(snapshot, reservation.hashes, nowMs);
+    if (!scope) return null;
+    const terminal = scope.recentTerminals.find(
+      (entry) => entry.requestHash === reservation.hashes.requestHash,
+    );
+    if (
+      terminal?.status === "complete" &&
+      terminal.responseHash === responseHash
+    ) {
+      const current = await loadIdentity(
+        transaction,
+        request,
+        caller,
+        reservation.permission,
+      );
+      if (!canonicalEqual(reservation.token, current.token)) {
+        staleError(current.sourceRevision);
+      }
+      return current;
+    }
+    const nextActiveAttempts = removeOwnedRecapSourceAttempt(
+      scope,
+      reservation,
+    );
+    if (nextActiveAttempts.length !== scope.activeAttempts.length) {
+      const current = await loadIdentity(
+        transaction,
+        request,
+        caller,
+        reservation.permission,
+      );
+      if (!canonicalEqual(reservation.token, current.token)) {
+        staleError(current.sourceRevision);
+      }
+      transaction.set(
+        reservation.reference,
+        recapSourceScopeValue(
+          reservation.hashes,
+          nextActiveAttempts,
+          [
+            ...scope.recentTerminals,
+            {
+              requestHash: reservation.hashes.requestHash,
+              status: "failed",
+              finishedAtMs: nowMs,
+              failureCode: "completion-unconfirmed",
+            },
+          ],
+          nowMs,
+          scope.requestCount,
+          scope.readUnits,
+          scope.windowStartedAtMs,
+          scope.windowResetAtMs,
+          scope.sustainedRequestCount,
+          scope.sustainedReadUnits,
+          scope.sustainedWindowStartedAtMs,
+          scope.sustainedWindowResetAtMs,
+        ),
+      );
+    }
+    return null;
+  }
+
   function validatePublicPlay(item, identity, seenIds, seenRevisions) {
     if (!isPlainObject(item)) {
       throw makeError(
@@ -1414,37 +2266,206 @@ function createDiamondScorebookAiHandlers(dependencies = {}) {
     return stats;
   }
 
-  async function buildSourcePacket(request, caller, permission) {
+  async function confirmRecapSourceAdmission(caller, context, attemptHash) {
+    try {
+      await firestore.runTransaction((transaction) =>
+        reserveRecapSourceAdmission(
+          transaction,
+          caller,
+          attemptHash,
+          normalizeNow(),
+        ),
+      );
+      return caller;
+    } catch (error) {
+      if (isHandlerError(error)) throw error;
+    }
+
+    const currentCaller = await loadEnabledAuthUser(context);
+    try {
+      await firestore.runTransaction((transaction) =>
+        reserveRecapSourceAdmission(
+          transaction,
+          currentCaller,
+          attemptHash,
+          normalizeNow(),
+        ),
+      );
+      return currentCaller;
+    } catch (error) {
+      if (isHandlerError(error)) throw error;
+      throw makeError(
+        "unavailable",
+        "Diamond recap-source admission could not be confirmed. Try again.",
+        { retryable: true },
+      );
+    }
+  }
+
+  async function confirmRecapSourceReservation(
+    request,
+    caller,
+    context,
+    permission,
+    attemptHash,
+  ) {
+    try {
+      const result = await firestore.runTransaction((transaction) =>
+        reserveRecapSourceRead(
+          transaction,
+          request,
+          caller,
+          permission,
+          attemptHash,
+          normalizeNow(),
+        ),
+      );
+      return { ...result, caller };
+    } catch (error) {
+      if (isHandlerError(error)) throw error;
+    }
+
+    const currentCaller = await loadEnabledAuthUser(context);
+    try {
+      const result = await firestore.runTransaction((transaction) =>
+        reserveRecapSourceRead(
+          transaction,
+          request,
+          currentCaller,
+          permission,
+          attemptHash,
+          normalizeNow(),
+        ),
+      );
+      return { ...result, caller: currentCaller };
+    } catch (error) {
+      if (isHandlerError(error)) throw error;
+      throw makeError(
+        "unavailable",
+        "The Diamond recap-source read reservation could not be confirmed. Try again.",
+        { retryable: true },
+      );
+    }
+  }
+
+  async function buildSourcePacket(request, context, permission) {
+    let caller = await loadEnabledAuthUser(context);
+    const attemptHash = canonicalHash(
+      {
+        schemaVersion: 1,
+        type: "diamond-recap-source-read-attempt",
+        attemptId: secureServerUuid("Diamond recap-source read"),
+      },
+      "The Diamond recap-source read attempt",
+    );
+    caller = await confirmRecapSourceAdmission(caller, context, attemptHash);
+    const reserved = await confirmRecapSourceReservation(
+      request,
+      caller,
+      context,
+      permission,
+      attemptHash,
+    );
+    caller = reserved.caller;
+    const { reservation, identity: before } = reserved;
     const resourcePaths = aiPaths(request.teamId, request.gameId);
-    const before = await readIdentity(request, caller, permission);
-    const [plays, stats] = await Promise.all([
-      loadReplayPlays(before, resourcePaths),
-      loadPublicStats(before, resourcePaths),
-    ]);
-    const after = await readIdentity(request, caller, permission);
-    if (!canonicalEqual(before.token, after.token)) {
-      staleError(after.sourceRevision);
-    }
-    const packet = {
-      sourceRevision: request.sourceRevision,
-      coverage: after.coverage,
-      plays,
-      stats,
-    };
-    if (findSensitiveData(packet)) {
+    let packet;
+    let failureCode = "source-bulk-read-failed";
+    try {
+      const [playsResult, statsResult] = await Promise.allSettled([
+        loadReplayPlays(before, resourcePaths),
+        loadPublicStats(before, resourcePaths),
+      ]);
+      const rejected = [playsResult, statsResult].find(
+        (result) => result.status === "rejected",
+      );
+      if (rejected) throw rejected.reason;
+      const plays = playsResult.value;
+      const stats = statsResult.value;
+      failureCode = "source-packet-invalid";
+      packet = {
+        sourceRevision: request.sourceRevision,
+        coverage: before.coverage,
+        plays,
+        stats,
+      };
+      if (findSensitiveData(packet)) {
+        throw makeError(
+          "failed-precondition",
+          "The sanitized Diamond recap source contains private data.",
+          { reason: "unsafe-recap-packet" },
+        );
+      }
+      if (jsonByteLength(packet) > MAX_PACKET_BYTES) {
+        throw makeError(
+          "resource-exhausted",
+          "The complete sanitized Diamond recap source exceeds 80 KiB.",
+        );
+      }
+    } catch (error) {
+      await failRecapSourceRead(reservation, failureCode);
+      if (isHandlerError(error)) throw error;
       throw makeError(
-        "failed-precondition",
-        "The sanitized Diamond recap source contains private data.",
-        { reason: "unsafe-recap-packet" },
+        "unavailable",
+        "The complete Diamond recap source could not be loaded. Try again.",
+        { retryable: true },
       );
     }
-    if (jsonByteLength(packet) > MAX_PACKET_BYTES) {
-      throw makeError(
-        "resource-exhausted",
-        "The complete sanitized Diamond recap source exceeds 80 KiB.",
+
+    caller = await loadEnabledAuthUser(context).catch(async (error) => {
+      await failRecapSourceRead(reservation, "final-auth-recheck-failed");
+      throw error;
+    });
+    const responseHash = canonicalHash(
+      {
+        schemaVersion: 1,
+        type: "diamond-recap-source-read-result",
+        token: reservation.token,
+        packet,
+      },
+      "The Diamond recap-source result",
+    );
+    try {
+      const identity = await firestore.runTransaction((transaction) =>
+        completeRecapSourceRead(
+          transaction,
+          request,
+          caller,
+          reservation,
+          responseHash,
+          normalizeNow(),
+        ),
       );
+      return { identity, packet, caller };
+    } catch (error) {
+      if (isHandlerError(error)) {
+        await failRecapSourceRead(reservation, "final-access-recheck-failed");
+        throw error;
+      }
     }
-    return { identity: after, packet };
+
+    try {
+      caller = await loadEnabledAuthUser(context);
+      const identity = await firestore.runTransaction((transaction) =>
+        reconcileRecapSourceCompletion(
+          transaction,
+          request,
+          caller,
+          reservation,
+          responseHash,
+          normalizeNow(),
+        ),
+      );
+      if (identity) return { identity, packet, caller };
+    } catch (error) {
+      await failRecapSourceRead(reservation, "completion-reconcile-failed");
+      if (isHandlerError(error)) throw error;
+    }
+    throw makeError(
+      "unavailable",
+      "The Diamond recap-source response commit could not be confirmed. Try again.",
+      { retryable: true },
+    );
   }
 
   function normalizeMetricReference(value, label) {
@@ -1740,10 +2761,9 @@ function createDiamondScorebookAiHandlers(dependencies = {}) {
       gameId: normalizeId(data.gameId, "gameId"),
       sourceRevision: requireRevision(data.sourceRevision),
     };
-    const caller = await loadEnabledAuthUser(context);
     const { identity, packet } = await buildSourcePacket(
       request,
-      caller,
+      context,
       "source",
     );
     return {
@@ -1804,8 +2824,8 @@ function createDiamondScorebookAiHandlers(dependencies = {}) {
       sourceRevision: requireRevision(data.sourceRevision),
       checkpointHash: requireHash(data.checkpointHash),
     };
-    const caller = await loadEnabledAuthUser(context);
-    const source = await buildSourcePacket(request, caller, "manager");
+    const source = await buildSourcePacket(request, context, "manager");
+    const caller = source.caller;
     if (request.checkpointHash !== source.identity.checkpointHash) {
       staleError(source.identity.sourceRevision);
     }
@@ -1949,11 +2969,23 @@ module.exports = {
   DIAMOND_ENGINE,
   DiamondAiHandlerError,
   MAX_AGGREGATED_STAT_DOCUMENTS,
+  MAX_CONCURRENT_RECAP_SOURCE_REQUESTS,
   MAX_DRAFT_BYTES,
   MAX_PACKET_BYTES,
   MAX_RECAP_PLAYS,
+  MAX_RECAP_SOURCE_BULK_READ_UNITS,
+  MAX_RECAP_SOURCE_GLOBAL_REQUESTS_PER_WINDOW,
+  MAX_RECAP_SOURCE_GLOBAL_SUSTAINED_REQUESTS_PER_WINDOW,
+  MAX_RECAP_SOURCE_REQUESTS_PER_WINDOW,
+  MAX_RECAP_SOURCE_SUSTAINED_REQUESTS_PER_WINDOW,
   MAX_REPLAY_ITEMS,
   MAX_REPLAY_PAGES,
+  RECAP_SOURCE_ADMISSION_DEDUPE_MS,
+  RECAP_SOURCE_CONTROL_COLLECTION,
+  RECAP_SOURCE_RATE_WINDOW_MS,
+  RECAP_SOURCE_RECEIPT_RETENTION_MS,
+  RECAP_SOURCE_REQUEST_LEASE_MS,
+  RECAP_SOURCE_SUSTAINED_WINDOW_MS,
   aiPaths,
   createDiamondScorebookAiHandlers,
 };

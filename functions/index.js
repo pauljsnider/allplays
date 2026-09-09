@@ -683,6 +683,7 @@ const diamondScorebookAiHandlers = createDiamondScorebookAiHandlers({
     getUser: (...args) => admin.auth().getUser(...args)
   },
   HttpsError: functions.https.HttpsError,
+  logger: functions.logger,
   resolveDelegatedAccess
 });
 const saveAthleteProfileProjectionHandler = createAthleteProfileProjectionSaveHandler({
