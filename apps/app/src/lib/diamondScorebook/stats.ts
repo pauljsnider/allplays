@@ -8,6 +8,7 @@ import {
 } from './contracts';
 import { replayEffectiveDiamondEventStates, type DiamondEffectiveEventReplay } from './ledger';
 import {
+  deriveDiamondAggregateRbiInference,
   deriveDiamondCoverageFromEventStates,
   deriveDiamondPutoutCredits,
   getBattingSide,
@@ -392,6 +393,42 @@ function latestJudgmentValue<K extends 'earned' | 'rbi' | 'responsiblePitcherId'
   return undefined;
 }
 
+function effectiveAggregateRunsBattedIn(
+  scoringAdvances: readonly Readonly<{ runnerId: string; rbi?: boolean }>[],
+  judgments: readonly DiamondCommandPayloadMap['record_scoring_judgment'][],
+  runsBattedIn: number
+) {
+  const inference = deriveDiamondAggregateRbiInference(scoringAdvances, runsBattedIn);
+  const originalUnattributedTrueCount = runsBattedIn - inference.explicitTrueCount;
+  let effective = runsBattedIn;
+
+  if (inference.unattributedCount === 0 || inference.unattributedValue !== undefined) {
+    scoringAdvances.forEach((advance) => {
+      const latest = latestJudgmentValue(judgments, advance.runnerId, 'rbi');
+      const baseline = advance.rbi ?? inference.unattributedValue;
+      if (latest !== undefined && baseline !== undefined) effective += Number(latest) - Number(baseline);
+    });
+    return effective;
+  }
+
+  let judgedTrueCount = 0;
+  let unjudgedCount = 0;
+  scoringAdvances.forEach((advance) => {
+    const latest = latestJudgmentValue(judgments, advance.runnerId, 'rbi');
+    if (advance.rbi !== undefined) {
+      if (latest !== undefined) effective += Number(latest) - Number(advance.rbi);
+      return;
+    }
+    if (latest === true) judgedTrueCount += 1;
+    else if (latest === undefined) unjudgedCount += 1;
+  });
+  const constrainedUnattributedTrueCount = Math.max(
+    judgedTrueCount,
+    Math.min(originalUnattributedTrueCount, judgedTrueCount + unjudgedCount)
+  );
+  return effective + constrainedUnattributedTrueCount - originalUnattributedTrueCount;
+}
+
 type PitcherDecision = NonNullable<DiamondCommandPayloadMap['record_scoring_judgment']['pitcherOfRecord']>;
 
 function officialWinningSide(state: DiamondGameState): DiamondSide | null {
@@ -656,6 +693,12 @@ export function projectDiamondStats(ledger: DiamondLedger): DiamondStatProjectio
         }
 
         const allAdvances = [{ runnerId: payload.batterId, from: 'batter' as const, ...payload.batterAdvance }, ...payload.runnerAdvances];
+        const scoringJudgments = attachmentsForPlay(attachments.judgments, event);
+        const scoringAdvances = allAdvances.filter((advance) => advance.to === 'home' && advance.countsRun !== false);
+        const effectiveRunsBattedIn =
+          payload.runsBattedIn === undefined
+            ? undefined
+            : effectiveAggregateRunsBattedIn(scoringAdvances, scoringJudgments, payload.runsBattedIn);
         pendingNullifiedHomeAdvances += allAdvances.filter((advance) => advance.to === 'home' && advance.countsRun === false).length;
         let runsOnPlay = 0;
         allAdvances.forEach((advance) => {
@@ -673,9 +716,7 @@ export function projectDiamondStats(ledger: DiamondLedger): DiamondStatProjectio
           creditGame(advance.runnerId, battingSide, eventId, false);
           credit(runner, 'batting', 'R', 1, eventId);
           const placement = advance.from === 'batter' ? null : before.bases[advance.from];
-          const matchingJudgments = attachmentsForPlay(attachments.judgments, event).filter(
-            (candidate) => !candidate.runnerId || candidate.runnerId === advance.runnerId
-          );
+          const matchingJudgments = scoringJudgments.filter((candidate) => !candidate.runnerId || candidate.runnerId === advance.runnerId);
           const responsiblePitcherId =
             latestJudgmentValue(matchingJudgments, advance.runnerId, 'responsiblePitcherId') ??
             advance.responsiblePitcherId ??
@@ -690,11 +731,12 @@ export function projectDiamondStats(ledger: DiamondLedger): DiamondStatProjectio
             }
             if (earned === true) credit(responsiblePitcher, 'pitching', 'ER', 1, eventId);
           }
-          const rbi = latestJudgmentValue(matchingJudgments, advance.runnerId, 'rbi') ?? advance.rbi;
-          if (payload.runsBattedIn === undefined && rbi === true) credit(batter, 'batting', 'RBI', 1, eventId);
+          const latestRbi = latestJudgmentValue(matchingJudgments, advance.runnerId, 'rbi');
+          const rbi = latestRbi ?? advance.rbi;
+          if (effectiveRunsBattedIn === undefined && rbi === true) credit(batter, 'batting', 'RBI', 1, eventId);
         });
-        if (payload.runsBattedIn !== undefined) {
-          credit(batter, 'batting', 'RBI', payload.runsBattedIn, eventId);
+        if (effectiveRunsBattedIn !== undefined) {
+          credit(batter, 'batting', 'RBI', Math.max(0, Math.min(runsOnPlay, effectiveRunsBattedIn)), eventId);
         }
         const physicalCauses = new Set(allAdvances.map((advance) => advance.cause));
         if (physicalCauses.has('wild_pitch')) credit(pitcher, 'pitching', 'WP', 1, eventId);

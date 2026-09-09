@@ -1910,7 +1910,7 @@ describe('Scoring decisions and correction reconciliation', () => {
     expect(stats.coverage).toEqual(COMPLETE_COVERAGE);
   });
 
-  it('orders scoring judgments across original and corrected play identities for every scoring path', () => {
+  it('applies aggregate RBI judgments across corrected play identities and voids', () => {
     const plateAppearance = createHarness('baseball-nfhs', 'quick');
     configureGame(plateAppearance);
     plateAppearance.submit('record_plate_appearance', {
@@ -1944,7 +1944,8 @@ describe('Scoring decisions and correction reconciliation', () => {
           rbi: false
         }
       ],
-      outsOnPlay: 0
+      outsOnPlay: 0,
+      runsBattedIn: 0
     };
     const scoringPlay = plateAppearance.submit('record_plate_appearance', scoringPayload);
     plateAppearance.submit('record_scoring_judgment', {
@@ -1971,6 +1972,7 @@ describe('Scoring decisions and correction reconciliation', () => {
     expect(projected.players['home-1'].raw.pitching).toMatchObject({ R: 0, ER: 0 });
     expect(projected.players['home-reliever'].raw.pitching).toMatchObject({ R: 1, ER: 1, inheritedScored: 0 });
     expect(projected.players['away-2'].raw.batting.RBI).toBe(1);
+    expect(projected.checkpointHash).toBe(createDiamondCheckpoint(plateAppearance.ledger).previousHash);
 
     const latestOriginal = plateAppearance.submit('record_scoring_judgment', {
       playEventId: scoringPlay.event!.eventId,
@@ -1983,6 +1985,7 @@ describe('Scoring decisions and correction reconciliation', () => {
     expect(projected.players['home-1'].raw.pitching).toMatchObject({ R: 1, ER: 0 });
     expect(projected.players['home-reliever'].raw.pitching).toMatchObject({ R: 0, ER: 0, inheritedScored: 1 });
     expect(projected.players['away-2'].raw.batting.RBI).toBe(0);
+    expect(projected.checkpointHash).toBe(createDiamondCheckpoint(plateAppearance.ledger).previousHash);
 
     plateAppearance.submit('void_event', {
       targetEventId: latestOriginal.event!.eventId,
@@ -1991,6 +1994,7 @@ describe('Scoring decisions and correction reconciliation', () => {
     projected = projectDiamondStats(plateAppearance.ledger);
     expect(projected.players['home-reliever'].raw.pitching).toMatchObject({ R: 1, ER: 1, inheritedScored: 0 });
     expect(projected.players['away-2'].raw.batting.RBI).toBe(1);
+    expect(projected.checkpointHash).toBe(createDiamondCheckpoint(plateAppearance.ledger).previousHash);
     expect(projectDiamondStats(plateAppearance.ledger)).toEqual(projected);
     expect(replayDiamondLedger(plateAppearance.ledger).state).toEqual(plateAppearance.ledger.state);
 
@@ -2024,6 +2028,321 @@ describe('Scoring decisions and correction reconciliation', () => {
     });
     expect(projectDiamondStats(standalone.ledger).players['home-1'].raw.pitching.ER).toBe(1);
     expect(replayDiamondLedger(standalone.ledger).state).toEqual(standalone.ledger.state);
+  });
+
+  it('replays parent-valid single-run aggregate RBI judgments when the baseline is forced', () => {
+    const cases = [
+      { name: 'credited baseline', aggregate: 1, judgment: false, adjusted: 0 },
+      { name: 'uncredited baseline', aggregate: 0, judgment: true, adjusted: 1 }
+    ] as const;
+
+    cases.forEach(({ name, aggregate, judgment, adjusted }) => {
+      const game = createHarness('baseball-nfhs', 'quick');
+      configureGame(game);
+      const { batterId, pitcherId } = currentMatchup(game);
+      const play = game.submit('record_plate_appearance', {
+        batterId,
+        pitcherId,
+        result: 'home_run',
+        batterAdvance: { to: 'home', cause: 'batted_ball', countsRun: true, earned: true },
+        runnerAdvances: [],
+        outsOnPlay: 0,
+        runsBattedIn: aggregate
+      });
+      const judgmentEvent = game.submit('record_scoring_judgment', {
+        playEventId: play.event!.eventId,
+        runnerId: batterId,
+        rbi: judgment
+      });
+
+      expect(projectDiamondStats(game.ledger).players[batterId].raw.batting.RBI, name).toBe(adjusted);
+      expect(verifyDiamondLedger(game.ledger), name).toBe(true);
+      expect(replayDiamondLedger(game.ledger).state, name).toEqual(game.ledger.state);
+
+      game.submit('void_event', {
+        targetEventId: judgmentEvent.event!.eventId,
+        reason: `Restore the ${name} aggregate RBI baseline forced by the only scoring runner.`
+      });
+      const restored = projectDiamondStats(game.ledger);
+      expect(restored.players[batterId].raw.batting.RBI, name).toBe(aggregate);
+      expect(restored.checkpointHash, name).toBe(createDiamondCheckpoint(game.ledger).previousHash);
+      expect(verifyDiamondLedger(game.ledger), name).toBe(true);
+      expect(replayDiamondLedger(game.ledger).state, name).toEqual(game.ledger.state);
+    });
+  });
+
+  it('derives forced all-or-none aggregate RBI values for unattributed runners', () => {
+    const cases = [
+      { name: 'all unattributed runners forced false', explicitRbi: true, aggregate: 1, judgment: true, adjusted: 2 },
+      { name: 'all unattributed runners forced true', explicitRbi: false, aggregate: 2, judgment: false, adjusted: 1 }
+    ] as const;
+
+    cases.forEach(({ name, explicitRbi, aggregate, judgment, adjusted }) => {
+      const game = createHarness('baseball-nfhs', 'quick');
+      configureGame(game);
+      const explicitRunnerId = placeRunnerOnBase(game, 'third');
+      const judgedRunnerId = placeRunnerOnBase(game, 'second');
+      const { batterId, pitcherId } = currentMatchup(game);
+      const play = game.submit('record_plate_appearance', {
+        batterId,
+        pitcherId,
+        result: 'home_run',
+        batterAdvance: { to: 'home', cause: 'batted_ball', countsRun: true, earned: true },
+        runnerAdvances: [
+          {
+            runnerId: explicitRunnerId,
+            from: 'third',
+            to: 'home',
+            cause: 'batted_ball',
+            countsRun: true,
+            earned: true,
+            rbi: explicitRbi
+          },
+          {
+            runnerId: judgedRunnerId,
+            from: 'second',
+            to: 'home',
+            cause: 'batted_ball',
+            countsRun: true,
+            earned: true
+          }
+        ],
+        outsOnPlay: 0,
+        runsBattedIn: aggregate
+      });
+      const baseline = projectDiamondStats(game.ledger);
+      expect(baseline.players[batterId].raw.batting.RBI, name).toBe(aggregate);
+      const judgmentEvent = game.submit('record_scoring_judgment', {
+        playEventId: play.event!.eventId,
+        runnerId: judgedRunnerId,
+        rbi: judgment
+      });
+
+      expect(projectDiamondStats(game.ledger).players[batterId].raw.batting.RBI, name).toBe(adjusted);
+      expect(verifyDiamondLedger(game.ledger), name).toBe(true);
+      expect(replayDiamondLedger(game.ledger).state, name).toEqual(game.ledger.state);
+
+      game.submit('void_event', {
+        targetEventId: judgmentEvent.event!.eventId,
+        reason: `Restore the ${name} aggregate RBI baseline.`
+      });
+      const restored = projectDiamondStats(game.ledger);
+      expect(restored.players[batterId].raw.batting.RBI, name).toBe(aggregate);
+      expect(restored.checkpointHash, name).toBe(createDiamondCheckpoint(game.ledger).previousHash);
+      expect(verifyDiamondLedger(game.ledger), name).toBe(true);
+      expect(replayDiamondLedger(game.ledger).state, name).toEqual(game.ledger.state);
+    });
+  });
+
+  it('preserves exact-parent interior aggregate RBI constraints through order, correction, void, replay, and checkpoints', () => {
+    const game = createHarness('baseball-nfhs', 'quick');
+    configureGame(game);
+    const leadRunnerId = placeRunnerOnBase(game, 'third');
+    const trailRunnerId = placeRunnerOnBase(game, 'second');
+    const { batterId, pitcherId } = currentMatchup(game);
+    const scoringPayload = {
+      batterId,
+      pitcherId,
+      result: 'double' as const,
+      batterAdvance: { to: 'second' as const },
+      runnerAdvances: [
+        {
+          runnerId: leadRunnerId,
+          from: 'third' as const,
+          to: 'home' as const,
+          cause: 'batted_ball' as const,
+          countsRun: true,
+          earned: true
+        },
+        {
+          runnerId: trailRunnerId,
+          from: 'second' as const,
+          to: 'home' as const,
+          cause: 'batted_ball' as const,
+          countsRun: true,
+          earned: true
+        }
+      ],
+      outsOnPlay: 0,
+      runsBattedIn: 1
+    };
+    const play = game.submit('record_plate_appearance', scoringPayload);
+    const expectStableRbi = (expected: number, label: string) => {
+      const projected = projectDiamondStats(game.ledger);
+      const checkpoint = createDiamondCheckpoint(game.ledger);
+      expect(projected.players[batterId].raw.batting.RBI, label).toBe(expected);
+      expect(projected.checkpointHash, label).toBe(checkpoint.previousHash);
+      expect(verifyDiamondLedger(game.ledger), label).toBe(true);
+      expect(replayDiamondLedger(game.ledger).state, label).toEqual(game.ledger.state);
+      expect(projectDiamondStats(game.ledger), label).toEqual(projected);
+    };
+    expectStableRbi(1, 'unattributed baseline');
+
+    game.submit('record_scoring_judgment', {
+      playEventId: play.event!.eventId,
+      runnerId: leadRunnerId,
+      rbi: true
+    });
+    expectStableRbi(1, 'one true leaves the original one-of-two allocation feasible');
+
+    game.submit('record_scoring_judgment', {
+      playEventId: play.event!.eventId,
+      runnerId: leadRunnerId,
+      rbi: false
+    });
+    expectStableRbi(1, 'later false wins while the other runner can retain the aggregate credit');
+
+    const correctedPlay = game.submit('supersede_event', {
+      targetEventId: play.event!.eventId,
+      reason: 'Preserve the official play under its corrected event identity.',
+      replacement: { type: 'record_plate_appearance', payload: scoringPayload }
+    });
+    expectStableRbi(1, 'source identity judgment survives a play correction');
+
+    const trailFalse = game.submit('record_scoring_judgment', {
+      playEventId: correctedPlay.event!.eventId,
+      runnerId: trailRunnerId,
+      rbi: false
+    });
+    expectStableRbi(0, 'both runners resolved false force the feasible allocation to zero');
+
+    const leadTrue = game.submit('record_scoring_judgment', {
+      playEventId: play.event!.eventId,
+      runnerId: leadRunnerId,
+      rbi: true
+    });
+    expectStableRbi(1, 'latest source-identity judgment wins across correction identities');
+
+    const trailTrue = game.submit('record_scoring_judgment', {
+      playEventId: correctedPlay.event!.eventId,
+      runnerId: trailRunnerId,
+      rbi: true
+    });
+    expectStableRbi(2, 'both runners resolved true force the feasible allocation to two');
+
+    game.submit('void_event', {
+      targetEventId: trailTrue.event!.eventId,
+      reason: 'Restore the earlier false judgment for the trailing runner.'
+    });
+    expectStableRbi(1, 'voiding the latest trailing judgment restores the prior value');
+
+    game.submit('void_event', {
+      targetEventId: leadTrue.event!.eventId,
+      reason: 'Restore the earlier false judgment for the lead runner.'
+    });
+    expectStableRbi(0, 'voiding both latest true judgments restores both false values');
+
+    game.submit('void_event', {
+      targetEventId: trailFalse.event!.eventId,
+      reason: 'Leave the trailing runner unattributed again.'
+    });
+    expectStableRbi(1, 'one false and one unattributed runner preserve the parent aggregate');
+  });
+
+  it('combines explicit RBI deltas with an interior unattributed allocation', () => {
+    const game = createHarness('baseball-nfhs', 'quick');
+    configureGame(game);
+    const leadRunnerId = placeRunnerOnBase(game, 'third');
+    const trailRunnerId = placeRunnerOnBase(game, 'second');
+    const { batterId, pitcherId } = currentMatchup(game);
+    const play = game.submit('record_plate_appearance', {
+      batterId,
+      pitcherId,
+      result: 'home_run',
+      batterAdvance: { to: 'home', countsRun: true, earned: true, rbi: true },
+      runnerAdvances: [
+        {
+          runnerId: leadRunnerId,
+          from: 'third',
+          to: 'home',
+          cause: 'batted_ball',
+          countsRun: true,
+          earned: true
+        },
+        {
+          runnerId: trailRunnerId,
+          from: 'second',
+          to: 'home',
+          cause: 'batted_ball',
+          countsRun: true,
+          earned: true
+        }
+      ],
+      outsOnPlay: 0,
+      runsBattedIn: 2
+    });
+    const rbi = () => projectDiamondStats(game.ledger).players[batterId].raw.batting.RBI;
+    expect(rbi()).toBe(2);
+
+    game.submit('record_scoring_judgment', { playEventId: play.event!.eventId, runnerId: batterId, rbi: false });
+    expect(rbi()).toBe(1);
+    game.submit('record_scoring_judgment', { playEventId: play.event!.eventId, runnerId: leadRunnerId, rbi: false });
+    expect(rbi()).toBe(1);
+    game.submit('record_scoring_judgment', { playEventId: play.event!.eventId, runnerId: trailRunnerId, rbi: false });
+    expect(rbi()).toBe(0);
+    game.submit('record_scoring_judgment', { playEventId: play.event!.eventId, runnerId: leadRunnerId, rbi: true });
+    expect(rbi()).toBe(1);
+    game.submit('record_scoring_judgment', { playEventId: play.event!.eventId, runnerId: batterId, rbi: true });
+    expect(rbi()).toBe(2);
+    expect(verifyDiamondLedger(game.ledger)).toBe(true);
+    expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
+  });
+
+  it('rejects aggregate RBI totals outside the explicit and unattributed runner range', () => {
+    const cases = [
+      { name: 'below explicit credit', aggregate: 0, rbis: [true, undefined] },
+      { name: 'above possible credit', aggregate: 2, rbis: [false, undefined] },
+      { name: 'different from complete attribution', aggregate: 1, rbis: [true, true] }
+    ] as const;
+
+    cases.forEach(({ name, aggregate, rbis }) => {
+      const game = createHarness('baseball-nfhs', 'quick');
+      configureGame(game);
+      const leadRunnerId = placeRunnerOnBase(game, 'third');
+      const trailRunnerId = placeRunnerOnBase(game, 'second');
+      const { batterId, pitcherId } = currentMatchup(game);
+      const baselineCheckpoint = createDiamondCheckpoint(game.ledger);
+      const rejected = game.submit(
+        'record_plate_appearance',
+        {
+          batterId,
+          pitcherId,
+          result: 'double',
+          batterAdvance: { to: 'second' },
+          runnerAdvances: [
+            {
+              runnerId: leadRunnerId,
+              from: 'third',
+              to: 'home',
+              cause: 'batted_ball',
+              countsRun: true,
+              earned: true,
+              ...(rbis[0] === undefined ? {} : { rbi: rbis[0] })
+            },
+            {
+              runnerId: trailRunnerId,
+              from: 'second',
+              to: 'home',
+              cause: 'batted_ball',
+              countsRun: true,
+              earned: true,
+              ...(rbis[1] === undefined ? {} : { rbi: rbis[1] })
+            }
+          ],
+          outsOnPlay: 0,
+          runsBattedIn: aggregate
+        },
+        { accept: false }
+      );
+
+      expect(rejected.result, name).toMatchObject({
+        outcome: 'rejected',
+        revision: baselineCheckpoint.sequence,
+        rejection: { code: 'invalid-rbi' }
+      });
+      expect(createDiamondCheckpoint(game.ledger), name).toEqual(baselineCheckpoint);
+      expect(replayDiamondLedger(game.ledger).state, name).toEqual(game.ledger.state);
+    });
   });
 
   it('merges inline and detached fielding evidence without duplicate per-play credit', () => {

@@ -7,6 +7,7 @@ exports.getDiamondFinalizationReason = getDiamondFinalizationReason;
 exports.createInitialDiamondState = createInitialDiamondState;
 exports.validateDiamondMergedFieldingOutCredit = validateDiamondMergedFieldingOutCredit;
 exports.deriveDiamondPutoutCredits = deriveDiamondPutoutCredits;
+exports.deriveDiamondAggregateRbiInference = deriveDiamondAggregateRbiInference;
 exports.deriveDiamondCoverageFromEventStates = deriveDiamondCoverageFromEventStates;
 exports.deriveDiamondCoverageFromEvents = deriveDiamondCoverageFromEvents;
 exports.validateDiamondFieldingOutCredit = validateDiamondFieldingOutCredit;
@@ -546,6 +547,13 @@ function latestRunnerJudgmentBoolean(judgments, runnerId, field) {
         }
     }
     return undefined;
+}
+function deriveDiamondAggregateRbiInference(scoringAdvances, runsBattedIn) {
+    const explicitTrueCount = scoringAdvances.filter((advance) => advance.rbi === true).length;
+    const unattributedCount = scoringAdvances.filter((advance) => advance.rbi === undefined).length;
+    const residual = runsBattedIn - explicitTrueCount;
+    const unattributedValue = unattributedCount > 0 && residual === 0 ? false : unattributedCount > 0 && residual === unattributedCount ? true : undefined;
+    return { explicitTrueCount, unattributedCount, unattributedValue };
 }
 function deriveDiamondCoverageFromEventStates(initialState, eventStates) {
     let coverage = { ...initialState.coverage };
@@ -1519,8 +1527,11 @@ function reduceDiamondEvent(state, action) {
                 next = markFieldingObserved(next);
             next = markPartial(next, action.payload.omissions);
             const scoringAdvances = [action.payload.batterAdvance, ...action.payload.runnerAdvances].filter((advance) => advance.to === 'home' && advance.countsRun !== false);
-            if (action.payload.runsBattedIn !== undefined && action.payload.runsBattedIn > scoringAdvances.length) {
-                throw new contracts_1.DiamondDomainError('invalid-rbi', 'runsBattedIn cannot exceed the runners whose runs count on the play.');
+            if (action.payload.runsBattedIn !== undefined) {
+                const { explicitTrueCount, unattributedCount } = deriveDiamondAggregateRbiInference(scoringAdvances, action.payload.runsBattedIn);
+                if (action.payload.runsBattedIn < explicitTrueCount || action.payload.runsBattedIn > explicitTrueCount + unattributedCount) {
+                    throw new contracts_1.DiamondDomainError('invalid-rbi', 'runsBattedIn must agree with every explicit runner RBI value and cannot exceed the unattributed scoring runners.');
+                }
             }
             if (scoringAdvances.some((advance) => advance.earned === undefined)) {
                 next = markPartial(next, ['pitching']);

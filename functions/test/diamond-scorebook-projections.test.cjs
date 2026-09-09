@@ -1901,6 +1901,97 @@ test("compiled scoring judgments follow ledger order across original and correct
   );
 });
 
+test("compiled aggregate RBI constraints preserve feasible parent history across correction and void", () => {
+  const game = harness("quick", "baseball-nfhs");
+  setLineupsAndStart(game, 3);
+  const leadRunnerId = placeRunnerOnBase(game, "third");
+  const trailRunnerId = placeRunnerOnBase(game, "second");
+  const { batterId, pitcherId } = currentMatchup(game);
+  const scoringPayload = {
+    batterId,
+    pitcherId,
+    result: "double",
+    batterAdvance: { to: "second" },
+    runnerAdvances: [
+      {
+        runnerId: leadRunnerId,
+        from: "third",
+        to: "home",
+        cause: "batted_ball",
+        countsRun: true,
+        earned: true,
+      },
+      {
+        runnerId: trailRunnerId,
+        from: "second",
+        to: "home",
+        cause: "batted_ball",
+        countsRun: true,
+        earned: true,
+      },
+    ],
+    outsOnPlay: 0,
+    runsBattedIn: 1,
+  };
+  const play = game.submit("record_plate_appearance", scoringPayload);
+  const assertStableRbi = (expected) => {
+    const projected = projectDiamondStats(game.ledger);
+    assert.equal(projected.players[batterId].raw.batting.RBI, expected);
+    assert.equal(
+      projected.checkpointHash,
+      createDiamondCheckpoint(game.ledger).previousHash,
+    );
+    assert.equal(verifyDiamondLedger(game.ledger), true);
+    assert.deepEqual(replayDiamondLedger(game.ledger).state, game.ledger.state);
+    assert.deepEqual(projectDiamondStats(game.ledger), projected);
+  };
+  assertStableRbi(1);
+
+  game.submit("record_scoring_judgment", {
+    playEventId: play.eventId,
+    runnerId: leadRunnerId,
+    rbi: false,
+  });
+  assertStableRbi(1);
+
+  const correction = game.submit("supersede_event", {
+    targetEventId: play.eventId,
+    reason: "Preserve the official play under its corrected event identity.",
+    replacement: { type: "record_plate_appearance", payload: scoringPayload },
+  });
+  const trailFalse = game.submit("record_scoring_judgment", {
+    playEventId: correction.eventId,
+    runnerId: trailRunnerId,
+    rbi: false,
+  });
+  assertStableRbi(0);
+
+  game.submit("record_scoring_judgment", {
+    playEventId: play.eventId,
+    runnerId: leadRunnerId,
+    rbi: true,
+  });
+  assertStableRbi(1);
+
+  const trailTrue = game.submit("record_scoring_judgment", {
+    playEventId: correction.eventId,
+    runnerId: trailRunnerId,
+    rbi: true,
+  });
+  assertStableRbi(2);
+
+  game.submit("void_event", {
+    targetEventId: trailTrue.eventId,
+    reason: "Restore the earlier false judgment for the trailing runner.",
+  });
+  assertStableRbi(1);
+  game.submit("void_event", {
+    targetEventId: trailFalse.eventId,
+    reason: "Restore the original one-of-two aggregate attribution.",
+  });
+  assertStableRbi(1);
+});
+
 test("compiled fielding projection unions inline and detached evidence per physical play", () => {
   const game = harness("quick", "baseball-nfhs");
   setLineupsAndStart(game, 3);

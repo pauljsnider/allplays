@@ -633,6 +633,24 @@ function latestRunnerJudgmentBoolean(
   return undefined;
 }
 
+export type DiamondAggregateRbiInference = Readonly<{
+  explicitTrueCount: number;
+  unattributedCount: number;
+  unattributedValue: boolean | undefined;
+}>;
+
+export function deriveDiamondAggregateRbiInference(
+  scoringAdvances: readonly Readonly<{ rbi?: boolean }>[],
+  runsBattedIn: number
+): DiamondAggregateRbiInference {
+  const explicitTrueCount = scoringAdvances.filter((advance) => advance.rbi === true).length;
+  const unattributedCount = scoringAdvances.filter((advance) => advance.rbi === undefined).length;
+  const residual = runsBattedIn - explicitTrueCount;
+  const unattributedValue =
+    unattributedCount > 0 && residual === 0 ? false : unattributedCount > 0 && residual === unattributedCount ? true : undefined;
+  return { explicitTrueCount, unattributedCount, unattributedValue };
+}
+
 /**
  * Coverage is evidence-derived from the effective ledger, so a later attachment
  * can resolve one omitted judgment and voiding that attachment revokes it again.
@@ -1753,8 +1771,14 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
       const scoringAdvances = [action.payload.batterAdvance, ...action.payload.runnerAdvances].filter(
         (advance) => advance.to === 'home' && advance.countsRun !== false
       );
-      if (action.payload.runsBattedIn !== undefined && action.payload.runsBattedIn > scoringAdvances.length) {
-        throw new DiamondDomainError('invalid-rbi', 'runsBattedIn cannot exceed the runners whose runs count on the play.');
+      if (action.payload.runsBattedIn !== undefined) {
+        const { explicitTrueCount, unattributedCount } = deriveDiamondAggregateRbiInference(scoringAdvances, action.payload.runsBattedIn);
+        if (action.payload.runsBattedIn < explicitTrueCount || action.payload.runsBattedIn > explicitTrueCount + unattributedCount) {
+          throw new DiamondDomainError(
+            'invalid-rbi',
+            'runsBattedIn must agree with every explicit runner RBI value and cannot exceed the unattributed scoring runners.'
+          );
+        }
       }
       if (scoringAdvances.some((advance) => advance.earned === undefined)) {
         next = markPartial(next, ['pitching']);
