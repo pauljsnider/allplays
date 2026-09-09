@@ -37,17 +37,18 @@ const COMMAND_HISTORY_CONTROL_QUARANTINE_MS =
   COMMAND_HISTORY_SUSTAINED_WINDOW_MS;
 const MAX_COMMAND_HISTORY_CONTROL_BYTES = 16 * 1024;
 // Full-history verification retains its original 16/64 request and 80k/120k
-// weighted bounds. Every accepted canonical command also charges its eventual
-// post-command projector head through the same hash-only UID/team/game control.
+// weighted bounds. Every accepted canonical command charges its eventual
+// projector head to both a hash-only UID/team/game control and a caller-wide
+// hash-only control shared across every team and game. Fresh activation charges
+// one global projection unit; a new manager regeneration reservation globally
+// charges both its synchronous history and its queued projection head.
+// FULL_REPLAY commands likewise charge the captured history and eventual head.
 // The larger 256/512 projection counts preserve ordinary pitch entry and the
-// bounded offline queue at shallow heads; the unchanged weighted budgets
-// dominate first (from an empty ledger, roughly 489 sequential projections fit
-// in 120k units). At the 20k boundary, weighted work admits only a few commands.
-// FULL_REPLAY commands charge both the captured synchronous history and the
-// eventual projected head. Aligned fixed-window boundaries may double each
-// stated bound. Atomic command/root/control commits serialize fresh commands,
-// and the projector's existing durable lease serializes downstream game-wide
-// replay.
+// bounded offline queue at shallow heads; weighted budgets dominate first
+// (roughly 489 sequential projections from empty fit in 120k units across all
+// games). Aligned fixed-window boundaries may double each stated bound. Atomic
+// paired-control commits prevent partial admission, while existing per-game
+// command transactions and projector leases serialize downstream game work.
 const MAX_COMMAND_HISTORY_REQUESTS_PER_WINDOW = 16;
 const MAX_COMMAND_HISTORY_READ_UNITS_PER_WINDOW = 80_000;
 const MAX_COMMAND_HISTORY_SUSTAINED_REQUESTS_PER_WINDOW = 64;
@@ -3788,6 +3789,9 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     const appBuild = normalizeAppBuild(data.appBuild, makeError);
     const caller = await loadEnabledAuthUser(context);
     const resourcePaths = paths(teamId, gameId);
+    const globalAdmissionIdentity = commandHistoryGlobalAdmissionIdentity(
+      caller.uid,
+    );
     let activationNowMs = null;
     const getActivationNowMs = () => {
       if (activationNowMs === null)
@@ -3933,6 +3937,12 @@ function createDiamondScorebookHandlers(dependencies = {}) {
         }),
         "Diamond activation is disabled.",
       );
+      const nowMs = getActivationNowMs();
+      const activationAdmission = await planCommandHistoryWork(
+        transaction,
+        [globalAdmissionIdentity],
+        { requestedProjectionReadUnits: 1, nowMs },
+      );
       const configuredOptIn = core.parseDiamondTeamOptIn(
         loaded.team.diamondScorebook,
       );
@@ -4017,7 +4027,6 @@ function createDiamondScorebookHandlers(dependencies = {}) {
         );
       }
       const { eventId, instanceId } = getActivationIds();
-      const nowMs = getActivationNowMs();
       const ledger = domainEngine.createDiamondLedger({
         teamId,
         gameId,
@@ -4107,6 +4116,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
         core,
       });
       const publicEvent = buildPublicEvent(execution.event, core);
+      writeCommandHistoryWork(transaction, activationAdmission);
       transaction.create(firestore.doc(resourcePaths.scorebook), root);
       transaction.create(firestore.doc(resourcePaths.event(eventId)), {
         ...execution.event,
@@ -4243,7 +4253,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     const requestHash = core.hashDiamondValue(request);
     const resourcePaths = paths(teamId, gameId);
     const nowMs = normalizeNow(clock, makeError);
-    const admissionIdentity = commandHistoryAdmissionIdentity(
+    const admissionIdentities = commandHistoryAdmissionIdentities(
       request,
       caller.uid,
     );
@@ -4416,15 +4426,14 @@ function createDiamondScorebookHandlers(dependencies = {}) {
             "The scorer lease change was rejected.",
         );
       }
-      const admissionSnapshot = await transaction.get(
-        admissionIdentity.reference,
+      const admissionWrites = await planCommandHistoryWork(
+        transaction,
+        admissionIdentities,
+        {
+          requestedProjectionReadUnits: execution.result.revision,
+          nowMs,
+        },
       );
-      const nextAdmission = planCommandHistoryAdmission({
-        snapshot: admissionSnapshot,
-        identity: admissionIdentity,
-        requestedProjectionReadUnits: execution.result.revision,
-        nowMs,
-      });
       const nextLease = {
         ...leaseDecision.nextLease,
         expiresAtMillis: nowMs + SCORER_LEASE_DURATION_MS,
@@ -4458,7 +4467,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       const publicStateRef = firestore.doc(resourcePaths.publicState);
       const publicStateSnapshot = await transaction.get(publicStateRef);
       const existingPublicState = snapshotData(publicStateSnapshot) || {};
-      transaction.set(admissionIdentity.reference, nextAdmission);
+      writeCommandHistoryWork(transaction, admissionWrites);
       transaction.create(
         firestore.doc(resourcePaths.event(execution.event.eventId)),
         { ...execution.event, instanceId: root.instanceId },
@@ -4803,6 +4812,28 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     });
   }
 
+  function commandHistoryGlobalAdmissionIdentity(callerUid) {
+    const scopeHash = core.hashDiamondValue({
+      schemaVersion: 1,
+      type: "diamond-command-history-global-admission-scope",
+      callerUid,
+    });
+    return Object.freeze({
+      type: "diamond-command-history-global-admission",
+      scopeHash,
+      reference: firestore.doc(
+        `${MANAGER_STAT_CONTROL_COLLECTION}/command-global-admission-${scopeHash.slice(7)}`,
+      ),
+    });
+  }
+
+  function commandHistoryAdmissionIdentities(command, callerUid) {
+    return Object.freeze([
+      commandHistoryAdmissionIdentity(command, callerUid),
+      commandHistoryGlobalAdmissionIdentity(callerUid),
+    ]);
+  }
+
   function invalidCommandHistoryAdmission(snapshot, nowMs) {
     const updatedAtMs = controlSnapshotUpdatedAtMs(snapshot);
     if (
@@ -5128,6 +5159,32 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     return value;
   }
 
+  async function planCommandHistoryWork(
+    transaction,
+    identities,
+    { requestedHistoryReadUnits = 0, requestedProjectionReadUnits = 0, nowMs },
+  ) {
+    const snapshots = await Promise.all(
+      identities.map((identity) => transaction.get(identity.reference)),
+    );
+    return identities.map((identity, index) => ({
+      identity,
+      value: planCommandHistoryAdmission({
+        snapshot: snapshots[index],
+        identity,
+        requestedHistoryReadUnits,
+        requestedProjectionReadUnits,
+        nowMs,
+      }),
+    }));
+  }
+
+  function writeCommandHistoryWork(transaction, admissions) {
+    admissions.forEach(({ identity, value }) =>
+      transaction.set(identity.reference, value),
+    );
+  }
+
   function earlyRejectedCommandResponse(
     command,
     checkpoint,
@@ -5305,7 +5362,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       return newEventId;
     };
     const fullReplayCommand = FULL_REPLAY_COMMANDS.has(command.type);
-    const admissionIdentity = commandHistoryAdmissionIdentity(
+    const admissionIdentities = commandHistoryAdmissionIdentities(
       command,
       caller.uid,
     );
@@ -5398,19 +5455,16 @@ function createDiamondScorebookHandlers(dependencies = {}) {
               });
             }
             requireCanonicalEventCapacity(checkpoint);
-            const admissionSnapshot = await transaction.get(
-              admissionIdentity.reference,
-            );
             const requestedReadUnits = Math.max(1, checkpoint.sequence);
-            transaction.set(
-              admissionIdentity.reference,
-              planCommandHistoryAdmission({
-                snapshot: admissionSnapshot,
-                identity: admissionIdentity,
+            const admissionWrites = await planCommandHistoryWork(
+              transaction,
+              admissionIdentities,
+              {
                 requestedHistoryReadUnits: requestedReadUnits,
                 nowMs,
-              }),
+              },
             );
+            writeCommandHistoryWork(transaction, admissionWrites);
             return Object.freeze({
               kind: "admitted",
               callerUid: caller.uid,
@@ -5742,15 +5796,14 @@ function createDiamondScorebookHandlers(dependencies = {}) {
         event: execution.event,
         result: execution.result,
       };
-      const admissionSnapshot = await transaction.get(
-        admissionIdentity.reference,
+      const admissionWrites = await planCommandHistoryWork(
+        transaction,
+        admissionIdentities,
+        {
+          requestedProjectionReadUnits: resolvedCheckpoint.sequence,
+          nowMs,
+        },
       );
-      const nextAdmission = planCommandHistoryAdmission({
-        snapshot: admissionSnapshot,
-        identity: admissionIdentity,
-        requestedProjectionReadUnits: resolvedCheckpoint.sequence,
-        nowMs,
-      });
       const recentPublicEvents = updateRecentPlays(
         root.recentPublicEvents,
         execution.event,
@@ -5777,7 +5830,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       const publicStateRef = firestore.doc(resourcePaths.publicState);
       const publicStateSnapshot = await transaction.get(publicStateRef);
       const existingPublicState = snapshotData(publicStateSnapshot) || {};
-      transaction.set(admissionIdentity.reference, nextAdmission);
+      writeCommandHistoryWork(transaction, admissionWrites);
       transaction.create(
         firestore.doc(resourcePaths.event(execution.event.eventId)),
         {
@@ -8751,6 +8804,9 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       }),
     };
     const refs = projectionRegenerationRefs(resourcePaths, request);
+    const globalAdmissionIdentity = commandHistoryGlobalAdmissionIdentity(
+      caller.uid,
+    );
 
     const readControlSnapshots = (reader) =>
       Promise.all([
@@ -8868,8 +8924,25 @@ function createDiamondScorebookHandlers(dependencies = {}) {
         attemptId: getAttemptId(),
         nowMs,
       });
+      const requestedReadUnits = Math.max(1, head.sourceRevision);
+      const globalAdmission = await planCommandHistoryWork(
+        transaction,
+        [globalAdmissionIdentity],
+        {
+          requestedHistoryReadUnits: requestedReadUnits,
+          requestedProjectionReadUnits: requestedReadUnits,
+          nowMs,
+        },
+      );
       writeRegenerationControls(transaction, refs, newControls);
-      return { kind: "reserved", root, head, coordinationHash, controls: newControls };
+      writeCommandHistoryWork(transaction, globalAdmission);
+      return {
+        kind: "reserved",
+        root,
+        head,
+        coordinationHash,
+        controls: newControls,
+      };
     };
 
     let reserved;
