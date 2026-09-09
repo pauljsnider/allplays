@@ -818,6 +818,7 @@ describe('interpretDiamondTranscript', () => {
     { result: 'walk', invalidDestination: 'second', requiredDestination: 'first' },
     { result: 'intentional_walk', invalidDestination: 'second', requiredDestination: 'first' },
     { result: 'hit_by_pitch', invalidDestination: 'second', requiredDestination: 'first' },
+    { result: 'interference', invalidDestination: 'home', requiredDestination: 'first' },
     { result: 'ground_out', invalidDestination: 'first', requiredDestination: 'out' },
     { result: 'fly_out', invalidDestination: 'first', requiredDestination: 'out' },
     { result: 'line_out', invalidDestination: 'first', requiredDestination: 'out' },
@@ -858,6 +859,100 @@ describe('interpretDiamondTranscript', () => {
 
     expect(result).toMatchObject({ status: 'invalid-response', proposal: null, authoritative: false });
     expect(result.message).toMatch(/strikeout batter.*out or reach first/i);
+  });
+
+  it.each(['caught_stealing', 'pickoff', 'force_out', 'tag_out', 'appeal_out'])('rejects a safe %s runner proposal', async (cause) => {
+    const model = jsonModel(
+      commandResponse({
+        type: 'advance_runner',
+        payloadJson: JSON.stringify({ runnerId: 'runner-1', from: 'first', to: 'second', cause })
+      })
+    );
+
+    const result = await interpretDiamondTranscript('Review the runner event.', commandContext(), model.dependencies);
+
+    expect(result).toMatchObject({ status: 'invalid-response', proposal: null, authoritative: false });
+    expect(result.message).toMatch(/requires the runner to be recorded out/i);
+  });
+
+  it('rejects a stolen-base out while preserving compatible runner-event proposals', async () => {
+    const validModel = jsonModel(
+      commandResponse({
+        type: 'advance_runner',
+        payloadJson: JSON.stringify({ runnerId: 'runner-1', from: 'first', to: 'second', cause: 'stolen_base' })
+      })
+    );
+
+    for (const destination of ['stay', 'out'] as const) {
+      const invalidModel = jsonModel(
+        commandResponse({
+          type: 'advance_runner',
+          payloadJson: JSON.stringify({
+            runnerId: 'runner-1',
+            from: 'first',
+            to: destination,
+            cause: 'stolen_base',
+            ...(destination === 'out' ? { outKind: 'tag' } : {})
+          })
+        })
+      );
+      const invalid = await interpretDiamondTranscript('Review the stolen-base attempt.', commandContext(), invalidModel.dependencies);
+      expect(invalid).toMatchObject({ status: 'invalid-response', proposal: null, authoritative: false });
+      expect(invalid.message).toMatch(/safe advance to a later base or home/i);
+    }
+    const valid = await interpretDiamondTranscript('Review the stolen base.', commandContext(), validModel.dependencies);
+
+    expect(valid).toMatchObject({ status: 'proposal', proposal: { type: 'advance_runner' }, authoritative: false });
+  });
+
+  it('rejects an incompatible nested runner cause in a plate-appearance proposal', async () => {
+    const model = jsonModel(
+      plateAppearanceResponse({
+        result: 'ground_out',
+        batterAdvance: { to: 'out', outKind: 'batter_runner' },
+        runnerAdvances: [{ runnerId: 'runner-1', from: 'first', to: 'second', cause: 'caught_stealing' }],
+        outsOnPlay: 1
+      })
+    );
+
+    const result = await interpretDiamondTranscript('Review the complete play.', commandContext(), model.dependencies);
+
+    expect(result).toMatchObject({ status: 'invalid-response', proposal: null, authoritative: false });
+    expect(result.message).toMatch(/requires the runner to be recorded out/i);
+  });
+
+  it('rejects an incompatible batter advance cause in a plate-appearance proposal', async () => {
+    const model = jsonModel(
+      plateAppearanceResponse({
+        result: 'single',
+        batterAdvance: { to: 'first', cause: 'caught_stealing' },
+        runnerAdvances: [],
+        outsOnPlay: 0
+      })
+    );
+
+    const result = await interpretDiamondTranscript('Review the batter reaching first.', commandContext(), model.dependencies);
+
+    expect(result).toMatchObject({ status: 'invalid-response', proposal: null, authoritative: false });
+    expect(result.message).toMatch(/requires the runner to be recorded out/i);
+  });
+
+  it.each([
+    ['force_out', 'tag', 'force'],
+    ['tag_out', 'force', 'tag'],
+    ['appeal_out', 'tag', 'appeal']
+  ] as const)('rejects %s paired with out kind %s instead of %s', async (cause, outKind, expectedOutKind) => {
+    const model = jsonModel(
+      commandResponse({
+        type: 'advance_runner',
+        payloadJson: JSON.stringify({ runnerId: 'runner-1', from: 'first', to: 'out', cause, outKind })
+      })
+    );
+
+    const result = await interpretDiamondTranscript('Review the runner out.', commandContext(), model.dependencies);
+
+    expect(result).toMatchObject({ status: 'invalid-response', proposal: null, authoritative: false });
+    expect(result.message).toContain(`requires out kind ${expectedOutKind}`);
   });
 
   it.each([

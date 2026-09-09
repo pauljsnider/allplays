@@ -1336,7 +1336,7 @@ describe('DiamondScorebook', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Double play' }));
     const dialog = screen.getByRole('dialog', { name: 'Review Double play' });
     fireEvent.change(within(dialog).getByLabelText(/Third .* destination/), { target: { value: 'home' } });
-    fireEvent.change(within(dialog).getByLabelText(/First .* out kind/), { target: { value: 'tag' } });
+    fireEvent.change(within(dialog).getByLabelText(/First .* cause/), { target: { value: 'tag_out' } });
 
     expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument();
     expect(within(dialog).getByRole('button', { name: 'Confirm play' })).toBeEnabled();
@@ -1350,7 +1350,7 @@ describe('DiamondScorebook', () => {
           outsOnPlay: 2,
           runnerAdvances: expect.arrayContaining([
             expect.objectContaining({ runnerId: 'runner-3', from: 'third', to: 'home', countsRun: true }),
-            expect.objectContaining({ runnerId: 'runner-1', from: 'first', to: 'out', outKind: 'tag' })
+            expect.objectContaining({ runnerId: 'runner-1', from: 'first', to: 'out', cause: 'tag_out', outKind: 'tag' })
           ])
         })
       })
@@ -1405,6 +1405,19 @@ describe('DiamondScorebook', () => {
     const batterDestination = within(dialog).getByLabelText(/Batter .* destination/) as HTMLSelectElement;
 
     expect(Array.from(batterDestination.options).map((option) => option.value)).toEqual(['first']);
+    expect(within(dialog).getByRole('button', { name: 'Confirm play' })).toBeEnabled();
+    expect(fixture.createCommand).not.toHaveBeenCalled();
+  });
+
+  it('offers first base as the only interference batter destination', () => {
+    const fixture = createClient();
+    renderScorebook(buildSnapshot(), fixture);
+    fireEvent.click(screen.getByRole('button', { name: 'Interference' }));
+    const dialog = screen.getByRole('dialog', { name: 'Review Interference' });
+    const batterDestination = within(dialog).getByLabelText(/Batter .* destination/) as HTMLSelectElement;
+
+    expect(Array.from(batterDestination.options).map((option) => option.value)).toEqual(['first']);
+    expect(batterDestination).toHaveValue('first');
     expect(within(dialog).getByRole('button', { name: 'Confirm play' })).toBeEnabled();
     expect(fixture.createCommand).not.toHaveBeenCalled();
   });
@@ -1613,6 +1626,97 @@ describe('DiamondScorebook', () => {
         mutatesState: false
       },
       dialogName: 'Review Walk',
+      message: /batter destination.*selected play result/i
+    },
+    {
+      label: 'a caught-stealing runner who remains safe',
+      snapshot: buildSnapshot(),
+      proposal: {
+        schemaVersion: 1,
+        type: 'advance_runner',
+        payload: { runnerId: 'runner-1', from: 'first', to: 'second', cause: 'caught_stealing' },
+        confidence: 0.9,
+        unresolvedFields: [],
+        requiresConfirmation: true,
+        mutatesState: false
+      },
+      dialogName: 'Review advance runner',
+      message: /runner event does not match its destination/i
+    },
+    {
+      label: 'a stolen-base runner recorded out',
+      snapshot: buildSnapshot(),
+      proposal: {
+        schemaVersion: 1,
+        type: 'advance_runner',
+        payload: { runnerId: 'runner-1', from: 'first', to: 'out', cause: 'stolen_base', outKind: 'tag' },
+        confidence: 0.9,
+        unresolvedFields: [],
+        requiresConfirmation: true,
+        mutatesState: false
+      },
+      dialogName: 'Review advance runner',
+      message: /runner event does not match its destination/i
+    },
+    {
+      label: 'a batter advance cause that contradicts a safe destination',
+      snapshot: buildSnapshot(),
+      proposal: {
+        schemaVersion: 1,
+        type: 'record_plate_appearance',
+        payload: {
+          batterId: 'batter-1',
+          pitcherId: 'pitcher-1',
+          result: 'single',
+          batterAdvance: { to: 'first', cause: 'caught_stealing' },
+          runnerAdvances: [],
+          outsOnPlay: 0,
+          runsBattedIn: 0
+        },
+        confidence: 0.9,
+        unresolvedFields: [],
+        requiresConfirmation: true,
+        mutatesState: false
+      },
+      dialogName: 'Review Single',
+      message: /runner event does not match its destination/i
+    },
+    {
+      label: 'a force-out runner paired with a tag out kind',
+      snapshot: buildSnapshot(),
+      proposal: {
+        schemaVersion: 1,
+        type: 'advance_runner',
+        payload: { runnerId: 'runner-1', from: 'first', to: 'out', cause: 'force_out', outKind: 'tag' },
+        confidence: 0.9,
+        unresolvedFields: [],
+        requiresConfirmation: true,
+        mutatesState: false
+      },
+      dialogName: 'Review advance runner',
+      message: /runner event does not match its out kind/i
+    },
+    {
+      label: 'an interference batter sent beyond first',
+      snapshot: buildSnapshot({ bases: { first: null, second: null, third: null } }),
+      proposal: {
+        schemaVersion: 1,
+        type: 'record_plate_appearance',
+        payload: {
+          batterId: 'batter-1',
+          pitcherId: 'pitcher-1',
+          result: 'interference',
+          batterAdvance: { to: 'home' },
+          runnerAdvances: [],
+          outsOnPlay: 0,
+          runsBattedIn: 0
+        },
+        confidence: 0.9,
+        unresolvedFields: [],
+        requiresConfirmation: true,
+        mutatesState: false
+      },
+      dialogName: 'Review Interference',
       message: /batter destination.*selected play result/i
     }
   ])('blocks a server voice draft with $label', async ({ snapshot, proposal, dialogName, message }) => {
@@ -3301,6 +3405,50 @@ describe('DiamondScorebook', () => {
         }
       })
     );
+  });
+
+  it('offers and submits only destinations compatible with the selected runner-only event', async () => {
+    const fixture = createClient();
+    renderScorebook(buildSnapshot(), fixture);
+    fireEvent.click(screen.getByText('Full-mode advanced plays'));
+    const runnerTools = screen.getByRole('group', { name: 'Runner-only play' });
+    const event = within(runnerTools).getByLabelText('Event');
+    const destination = within(runnerTools).getByLabelText('Destination') as HTMLSelectElement;
+
+    expect(Array.from(destination.options).map((option) => option.value)).toEqual(['second', 'third', 'home']);
+    expect(destination).toHaveValue('second');
+
+    for (const cause of ['caught_stealing', 'pickoff', 'force_out', 'tag_out', 'appeal_out']) {
+      fireEvent.change(event, { target: { value: cause } });
+      expect(Array.from(destination.options).map((option) => option.value)).toEqual(['out']);
+      expect(destination).toHaveValue('out');
+    }
+
+    fireEvent.change(event, { target: { value: 'force_out' } });
+    const outKind = within(runnerTools).getByLabelText('Out kind') as HTMLSelectElement;
+    expect(Array.from(outKind.options).map((option) => option.value)).toEqual(['force']);
+    expect(outKind).toHaveValue('force');
+    fireEvent.click(within(runnerTools).getByRole('button', { name: 'Review runner event' }));
+    const review = screen.getByRole('dialog', { name: 'Review force out' });
+    fireEvent.click(within(review).getByRole('button', { name: 'Confirm action' }));
+    await waitFor(() => expect(fixture.submitCommand).toHaveBeenCalledTimes(1));
+    expect(fixture.createCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'advance_runner',
+        payload: {
+          runnerId: 'runner-1',
+          from: 'first',
+          to: 'out',
+          cause: 'force_out',
+          outKind: 'force',
+          omissions: ['fielding', 'situational']
+        }
+      })
+    );
+
+    fireEvent.change(event, { target: { value: 'stolen_base' } });
+    expect(Array.from(destination.options).map((option) => option.value)).toEqual(['second', 'third', 'home']);
+    expect(destination).toHaveValue('second');
   });
 
   it('exposes every reducer-supported pitch and plate-appearance result in Full mode', () => {

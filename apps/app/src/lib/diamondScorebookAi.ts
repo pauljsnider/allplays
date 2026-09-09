@@ -210,6 +210,7 @@ const exactPlateAppearanceBatterDestinations = new Map<string, string>([
   ['walk', 'first'],
   ['intentional_walk', 'first'],
   ['hit_by_pitch', 'first'],
+  ['interference', 'first'],
   ['ground_out', 'out'],
   ['fly_out', 'out'],
   ['line_out', 'out'],
@@ -238,6 +239,14 @@ const advanceCauses = new Set([
   'courtesy_runner',
   'tiebreaker',
   'other'
+]);
+const outOnlyAdvanceCauses = new Set(['caught_stealing', 'pickoff', 'force_out', 'tag_out', 'appeal_out']);
+const requiredAdvanceOutKinds = new Map([
+  ['caught_stealing', 'tag'],
+  ['pickoff', 'tag'],
+  ['force_out', 'force'],
+  ['tag_out', 'tag'],
+  ['appeal_out', 'appeal']
 ]);
 const outKinds = new Set(['force', 'tag', 'appeal', 'batter_runner', 'strikeout', 'catch']);
 const defensivePositions = new Set(['P', 'C', '1B', '2B', '3B', 'SS', 'LF', 'LCF', 'CF', 'RCF', 'RF']);
@@ -1005,7 +1014,8 @@ SECURITY AND AUTHORITY RULES:
 - Existing runners must use their exact occupied source base and runner ID. They may stay put or move forward to a later base, reach home, or be recorded out; use to=stay rather than repeating the source base.
 - No two safe runners may finish on the same base. A batter reaching an occupied first base requires that exact pre-play runner to vacate first in the same proposal.
 - A trailing safe runner must not pass a preceding runner. Preserve the pre-play order of every runner who is not recorded out; multiple runners may reach home on the same play.
-- Batter destinations are result-pinned: single=first, double=second, triple=third, home_run=home, walk/intentional_walk/hit_by_pitch=first, and ground_out/fly_out/line_out/sacrifice_bunt/sacrifice_fly/double_play/triple_play=out. strikeout is out or an eligible first-base reach; reached_on_error, fielders_choice, and interference remain scorer-defined but cannot use to=stay.
+- Batter destinations are result-pinned: single=first, double=second, triple=third, home_run=home, walk/intentional_walk/hit_by_pitch/interference=first, and ground_out/fly_out/line_out/sacrifice_bunt/sacrifice_fly/double_play/triple_play=out. strikeout is out or an eligible first-base reach; reached_on_error and fielders_choice remain scorer-defined but cannot use to=stay.
+- caught_stealing, pickoff, force_out, tag_out, and appeal_out require to=out. Pair caught_stealing, pickoff, and tag_out with outKind=tag; force_out with outKind=force; and appeal_out with outKind=appeal. stolen_base requires a safe forward destination, never stay or out.
 - For dropped-third-strike advancement, use the pre-play context: an ordinary strikeout may reach first, and a named dropped_third_strike may advance to first, second, third, or home, only when droppedThirdStrike.enabled=true and the pinned rule does not disallow advancement with first base occupied and fewer than two outs. Missing or disabled capability means the batter must be out. A batter can never use to=stay.
 - A sacrifice requires known pre-play outs fewer than two: sacrifice_fly requires a runner whose run scores, and sacrifice_bunt requires an existing runner to advance safely.
 - When substituting or re-entering the current pitcher, the current pitcher must retain defensive position P: omit defensivePosition to inherit P or set defensivePosition=P.
@@ -1284,8 +1294,10 @@ function validateCommandPayload(type: DiamondAiCommandType, payload: Record<stri
       requireEnum(payload.from, bases, 'Runner origin');
       requireEnum(payload.to, destinations, 'Runner destination');
       requireEnum(payload.cause, advanceCauses, 'Runner advance cause');
+      validateAdvanceCauseDestination(payload.cause as string, payload.to as string);
       validateScoringCredit(payload);
       if (payload.outKind !== undefined) requireEnum(payload.outKind, outKinds, 'Out kind');
+      validateAdvanceCauseOutKind(payload.cause as string, payload.to as string, payload.outKind);
       if (payload.fielding !== undefined) validateFielding(payload.fielding);
       if (payload.omissions !== undefined) validateOmissions(payload.omissions);
       return;
@@ -1354,7 +1366,10 @@ function validateBatterAdvance(value: unknown) {
   const source = asRecord(value);
   requireExactKeys(source, ['to', 'cause', 'outKind', 'countsRun', 'earned', 'rbi', 'responsiblePitcherId'], 'Batter advance', true);
   requireEnum(source.to, destinations, 'Batter destination');
-  if (source.cause !== undefined) requireEnum(source.cause, advanceCauses, 'Batter advance cause');
+  if (source.cause !== undefined) {
+    requireEnum(source.cause, advanceCauses, 'Batter advance cause');
+    validateAdvanceCauseDestination(source.cause as string, source.to as string);
+  }
   if (source.outKind !== undefined) requireEnum(source.outKind, outKinds, 'Batter out kind');
   validateScoringCredit(source);
 }
@@ -1371,7 +1386,9 @@ function validateRunnerAdvance(value: unknown) {
   requireEnum(source.from, bases, 'Runner origin');
   requireEnum(source.to, destinations, 'Runner destination');
   requireEnum(source.cause, advanceCauses, 'Runner advance cause');
+  validateAdvanceCauseDestination(source.cause as string, source.to as string);
   if (source.outKind !== undefined) requireEnum(source.outKind, outKinds, 'Runner out kind');
+  validateAdvanceCauseOutKind(source.cause as string, source.to as string, source.outKind);
   validateScoringCredit(source);
 }
 
@@ -1380,6 +1397,22 @@ function validateScoringCredit(source: Record<string, unknown>) {
     if (source[key] !== undefined) requireBoolean(source[key], key);
   });
   if (source.responsiblePitcherId !== undefined) requireResourceId(source.responsiblePitcherId, 'Responsible pitcher ID');
+}
+
+function validateAdvanceCauseDestination(cause: string, destination: string) {
+  if (outOnlyAdvanceCauses.has(cause) && destination !== 'out') {
+    throw new DiamondAiBoundaryError(`${cause} requires the runner to be recorded out.`);
+  }
+  if (cause === 'stolen_base' && (destination === 'stay' || destination === 'out')) {
+    throw new DiamondAiBoundaryError('A stolen base requires a safe advance to a later base or home.');
+  }
+}
+
+function validateAdvanceCauseOutKind(cause: string, destination: string, outKind: unknown) {
+  const expected = requiredAdvanceOutKinds.get(cause);
+  if (destination === 'out' && expected && outKind !== expected) {
+    throw new DiamondAiBoundaryError(`${cause} requires out kind ${expected}.`);
+  }
 }
 
 function validateFielding(value: unknown) {

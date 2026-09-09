@@ -354,6 +354,14 @@ const runnerCauseOptions: Array<{ value: DiamondRunnerAdvanceCause; label: strin
   { value: 'tiebreaker', label: 'Tiebreaker' },
   { value: 'other', label: 'Other' }
 ];
+const outOnlyRunnerCauses = new Set<DiamondRunnerAdvanceCause>(['caught_stealing', 'pickoff', 'force_out', 'tag_out', 'appeal_out']);
+const requiredRunnerOutKinds = new Map<DiamondRunnerAdvanceCause, DiamondOutKind>([
+  ['caught_stealing', 'tag'],
+  ['pickoff', 'tag'],
+  ['force_out', 'force'],
+  ['tag_out', 'tag'],
+  ['appeal_out', 'appeal']
+]);
 
 const outKindOptions: Array<{ value: DiamondOutKind; label: string }> = [
   { value: 'force', label: 'Force' },
@@ -1380,11 +1388,21 @@ function validateRunnerReview(pending: PendingPlay, snapshot: DiamondScorebookSn
         const from = readString(payload.from);
         const to = readString(payload.to);
         const runnerId = readString(payload.runnerId);
+        const cause = readString(payload.cause) as DiamondRunnerAdvanceCause;
         if (!diamondBases.includes(from as DiamondBase) || !destinationOptions.some((option) => option.value === to)) {
           return 'The proposed runner origin or destination is invalid.';
         }
         if (!canChooseDestination(from as DiamondBase, to as RunnerDestination)) {
           return 'A runner must stay put or move forward to a later base, reach home, or be recorded out.';
+        }
+        if (!runnerCauseOptions.some((option) => option.value === cause)) {
+          return 'The proposed runner event is invalid.';
+        }
+        if (!canChooseRunnerCauseDestination(cause, to as RunnerDestination)) {
+          return 'The selected runner event does not match its destination.';
+        }
+        if (!canChooseRunnerCauseOutKind(cause, to as RunnerDestination, readString(payload.outKind) as DiamondOutKind)) {
+          return 'The selected runner event does not match its out kind.';
         }
         if (!pending.correction && snapshot.bases[from as DiamondBase]?.playerId !== runnerId) {
           return 'The proposed runner must match the exact current base before this play.';
@@ -1416,6 +1434,12 @@ function validateRunnerReview(pending: PendingPlay, snapshot: DiamondScorebookSn
   }
   if (pending.runnerMoves.some((move) => !canChooseDestination(move.from, move.to))) {
     return 'A runner must stay put or move forward to a later base, reach home, or be recorded out.';
+  }
+  if (pending.runnerMoves.some((move) => !canChooseRunnerCauseDestination(move.cause, move.to))) {
+    return 'The selected runner event does not match its destination.';
+  }
+  if (pending.runnerMoves.some((move) => move.from !== 'batter' && !canChooseRunnerCauseOutKind(move.cause, move.to, move.outKind))) {
+    return 'The selected runner event does not match its out kind.';
   }
   const batterMove = batterMoves[0]!;
   if (!canChooseBatterDestination(pending.result, batterMove.to)) {
@@ -1542,6 +1566,21 @@ function canChooseDestination(from: RunnerMoveDraft['from'], destination: Runner
   return false;
 }
 
+function canChooseRunnerCauseDestination(cause: DiamondRunnerAdvanceCause, destination: RunnerDestination) {
+  if (outOnlyRunnerCauses.has(cause)) return destination === 'out';
+  if (cause === 'stolen_base') return destination !== 'stay' && destination !== 'out';
+  return true;
+}
+
+function canChooseRunnerCauseOutKind(
+  cause: DiamondRunnerAdvanceCause,
+  destination: RunnerDestination,
+  outKind: DiamondOutKind | undefined
+) {
+  const expected = requiredRunnerOutKinds.get(cause);
+  return destination !== 'out' || !expected || outKind === expected;
+}
+
 function hasRunnerOrderViolation(moves: ReadonlyArray<Pick<RunnerMoveDraft, 'from' | 'to'>>) {
   const survivingRunners = moves
     .filter((move) => move.to !== 'out')
@@ -1567,6 +1606,7 @@ function canChooseBatterDestination(result: string, destination: RunnerDestinati
     walk: 'first',
     intentional_walk: 'first',
     hit_by_pitch: 'first',
+    interference: 'first',
     ground_out: 'out',
     fly_out: 'out',
     line_out: 'out',
@@ -5318,23 +5358,29 @@ function AdvancedScoringPanel({
   const structuredFieldingSide = structuredBattingSide ? oppositeDiamondSide(structuredBattingSide) : null;
   const structuredBattingPlayers = structuredBattingSide ? snapshotSidePlayers(snapshot, structuredBattingSide) : [];
   const structuredFieldingPlayers = structuredFieldingSide ? snapshotSidePlayers(snapshot, structuredFieldingSide) : [];
+  const runnerDestinationOptions = activeRunner
+    ? destinationOptions.filter(
+        (option) => canChooseDestination(activeRunner.base, option.value) && canChooseRunnerCauseDestination(runnerAction, option.value)
+      )
+    : [];
+  const resolvedRunnerDestination = runnerDestinationOptions.some((option) => option.value === runnerDestination)
+    ? runnerDestination
+    : runnerDestinationOptions[0]?.value;
+  const requiredRunnerOutKind = requiredRunnerOutKinds.get(runnerAction);
+  const runnerOutKindOptions = requiredRunnerOutKind
+    ? outKindOptions.filter((option) => option.value === requiredRunnerOutKind)
+    : outKindOptions;
+  const resolvedRunnerOutKind = requiredRunnerOutKind || runnerOutKind;
 
   const reviewRunnerEvent = () => {
-    if (!activeRunner) return;
-    const allowedDestinations = destinationOptions.filter((option) => canChooseDestination(activeRunner.base, option.value));
-    const to = allowedDestinations.some((option) => option.value === runnerDestination)
-      ? runnerDestination
-      : activeRunner.base === 'first'
-        ? 'second'
-        : activeRunner.base === 'second'
-          ? 'third'
-          : 'home';
+    if (!activeRunner || !resolvedRunnerDestination) return;
+    const to = resolvedRunnerDestination;
     onReview('advance_runner', runnerAction.replace(/_/g, ' '), {
       runnerId: activeRunner.runner.playerId,
       from: activeRunner.base,
       to,
       cause: runnerAction,
-      ...(to === 'out' ? { outKind: runnerOutKind } : {}),
+      ...(to === 'out' ? { outKind: resolvedRunnerOutKind } : {}),
       ...(to === 'home'
         ? {
             countsRun: runnerCountsRun,
@@ -5451,39 +5497,27 @@ function AdvancedScoringPanel({
             Destination
             <select
               className="mt-1 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-bold"
-              value={
-                activeRunner && canChooseDestination(activeRunner.base, runnerDestination)
-                  ? runnerDestination
-                  : activeRunner?.base === 'first'
-                    ? 'second'
-                    : activeRunner?.base === 'second'
-                      ? 'third'
-                      : 'home'
-              }
+              value={resolvedRunnerDestination || ''}
               disabled={disabled || !activeRunner || snapshot.lifecycle !== 'active'}
               onChange={(event) => setRunnerDestination(event.target.value as RunnerDestination)}
             >
-              {activeRunner
-                ? destinationOptions
-                    .filter((option) => canChooseDestination(activeRunner.base, option.value))
-                    .map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))
-                : null}
+              {runnerDestinationOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
             </select>
           </label>
-          {(activeRunner && canChooseDestination(activeRunner.base, runnerDestination) ? runnerDestination : '') === 'out' ? (
+          {resolvedRunnerDestination === 'out' ? (
             <label className="text-[11px] font-black text-gray-600">
               Out kind
               <select
                 className="mt-1 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-bold"
-                value={runnerOutKind}
+                value={resolvedRunnerOutKind}
                 disabled={disabled || snapshot.lifecycle !== 'active'}
                 onChange={(event) => setRunnerOutKind(event.target.value as DiamondOutKind)}
               >
-                {outKindOptions.map((option) => (
+                {runnerOutKindOptions.map((option) => (
                   <option key={option.value} value={option.value}>
                     {option.label}
                   </option>
@@ -5492,7 +5526,7 @@ function AdvancedScoringPanel({
             </label>
           ) : null}
         </div>
-        {(activeRunner && canChooseDestination(activeRunner.base, runnerDestination) ? runnerDestination : '') === 'home' ? (
+        {resolvedRunnerDestination === 'home' ? (
           <div className="mt-2 grid gap-2 sm:grid-cols-3">
             <label className="flex min-h-11 items-center gap-2 rounded-xl border border-gray-200 px-3 text-xs font-black text-gray-700">
               <input
@@ -6413,7 +6447,14 @@ function PlayReviewModal({
                           aria-label={`${move.label} cause`}
                           className="mt-1 min-h-11 w-full rounded-lg border border-gray-300 bg-white px-2 text-sm font-bold"
                           value={move.cause}
-                          onChange={(event) => updateRunnerMove(move.key, { cause: event.target.value as DiamondRunnerAdvanceCause })}
+                          onChange={(event) => {
+                            const cause = event.target.value as DiamondRunnerAdvanceCause;
+                            const requiredOutKind = move.from === 'batter' ? undefined : requiredRunnerOutKinds.get(cause);
+                            updateRunnerMove(move.key, {
+                              cause,
+                              ...(move.to === 'out' && requiredOutKind ? { outKind: requiredOutKind } : {})
+                            });
+                          }}
                         >
                           {runnerCauseOptions.map((option) => (
                             <option key={option.value} value={option.value}>
@@ -6432,11 +6473,18 @@ function PlayReviewModal({
                             onChange={(event) => updateRunnerMove(move.key, { outKind: event.target.value as DiamondOutKind })}
                           >
                             <option value="">Choose out kind</option>
-                            {outKindOptions.map((option) => (
-                              <option key={option.value} value={option.value}>
-                                {option.label}
-                              </option>
-                            ))}
+                            {outKindOptions
+                              .filter(
+                                (option) =>
+                                  move.from === 'batter' ||
+                                  !requiredRunnerOutKinds.has(move.cause) ||
+                                  option.value === requiredRunnerOutKinds.get(move.cause)
+                              )
+                              .map((option) => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
                           </select>
                         </label>
                       ) : null}

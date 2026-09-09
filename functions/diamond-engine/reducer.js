@@ -108,6 +108,20 @@ const ADVANCE_CAUSES = [
     'tiebreaker',
     'other'
 ];
+const OUT_ONLY_ADVANCE_CAUSES = [
+    'caught_stealing',
+    'pickoff',
+    'force_out',
+    'tag_out',
+    'appeal_out'
+];
+const REQUIRED_ADVANCE_OUT_KINDS = {
+    caught_stealing: 'tag',
+    pickoff: 'tag',
+    force_out: 'force',
+    tag_out: 'tag',
+    appeal_out: 'appeal'
+};
 const OUT_KINDS = [
     'force',
     'tag',
@@ -293,9 +307,11 @@ function validateBattingRoleCounts(entries) {
 function validateBatterAdvanceShape(value) {
     const advance = requireRecord(value, 'batterAdvance');
     requireOnlyFields(advance, BATTER_ADVANCE_FIELDS, 'batterAdvance');
-    requireMember(advance.to, DESTINATIONS, 'batter destination');
-    if (advance.cause !== undefined)
-        requireMember(advance.cause, ADVANCE_CAUSES, 'batter advance cause');
+    const to = requireMember(advance.to, DESTINATIONS, 'batter destination');
+    if (advance.cause !== undefined) {
+        const cause = requireMember(advance.cause, ADVANCE_CAUSES, 'batter advance cause');
+        validateAdvanceCauseDestination(cause, to);
+    }
     if (advance.outKind !== undefined)
         requireMember(advance.outKind, OUT_KINDS, 'batter out kind');
     validateScoringCredit(advance, 'batterAdvance');
@@ -307,6 +323,20 @@ function validateRunnerDestination(from, to) {
         throw new contracts_1.DiamondDomainError('invalid-runner-destination', `A runner on ${from} must stay, advance to a later base, reach home, or be recorded out.`);
     }
 }
+function validateAdvanceCauseDestination(cause, destination) {
+    if (OUT_ONLY_ADVANCE_CAUSES.includes(cause) && destination !== 'out') {
+        throw new contracts_1.DiamondDomainError('advance-cause-destination-mismatch', `${cause} requires the runner to be recorded out.`);
+    }
+    if (cause === 'stolen_base' && (destination === 'stay' || destination === 'out')) {
+        throw new contracts_1.DiamondDomainError('advance-cause-destination-mismatch', 'A stolen base requires a safe advance to a later base or home.');
+    }
+}
+function validateAdvanceCauseOutKind(cause, destination, outKind) {
+    const expected = REQUIRED_ADVANCE_OUT_KINDS[cause];
+    if (destination === 'out' && expected && outKind !== expected) {
+        throw new contracts_1.DiamondDomainError('advance-cause-out-kind-mismatch', `${cause} requires out kind ${expected}.`);
+    }
+}
 function validateAdvanceShape(value, options = {}) {
     const advance = requireRecord(value, 'runner advance');
     requireOnlyFields(advance, options.standalone ? STANDALONE_RUNNER_ADVANCE_FIELDS : RUNNER_ADVANCE_FIELDS, 'runner advance');
@@ -314,9 +344,9 @@ function validateAdvanceShape(value, options = {}) {
     const from = requireMember(advance.from, BASES, 'runner source');
     const to = requireMember(advance.to, DESTINATIONS, 'runner destination');
     validateRunnerDestination(from, to);
-    requireMember(advance.cause, ADVANCE_CAUSES, 'runner advance cause');
-    if (advance.outKind !== undefined)
-        requireMember(advance.outKind, OUT_KINDS, 'out kind');
+    const cause = requireMember(advance.cause, ADVANCE_CAUSES, 'runner advance cause');
+    validateAdvanceCauseDestination(cause, to);
+    const outKind = advance.outKind === undefined ? undefined : requireMember(advance.outKind, OUT_KINDS, 'out kind');
     validateScoringCredit(advance, 'runner advance');
     if (advance.to === 'out' && !advance.outKind) {
         throw new contracts_1.DiamondDomainError('missing-out-kind', 'A runner recorded out must include an out kind.');
@@ -324,6 +354,7 @@ function validateAdvanceShape(value, options = {}) {
     if (advance.to !== 'out' && advance.outKind) {
         throw new contracts_1.DiamondDomainError('invalid-out-kind', 'Only an out destination may include an out kind.');
     }
+    validateAdvanceCauseOutKind(cause, to, outKind);
 }
 function oppositeSide(side) {
     return side === 'home' ? 'away' : 'home';
@@ -796,6 +827,7 @@ function validateOutcomeDestination(state, result, destination) {
         walk: 'first',
         intentional_walk: 'first',
         hit_by_pitch: 'first',
+        interference: 'first',
         ground_out: 'out',
         fly_out: 'out',
         line_out: 'out',

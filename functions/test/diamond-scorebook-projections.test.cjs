@@ -995,6 +995,165 @@ test("compiled runner moves reject same-base and backward destinations across co
   );
 });
 
+test("compiled runner causes and interference outcomes require compatible destinations", () => {
+  for (const cause of [
+    "caught_stealing",
+    "pickoff",
+    "force_out",
+    "tag_out",
+    "appeal_out",
+  ]) {
+    const game = harness("quick", "baseball-nfhs");
+    setLineupsAndStart(game, 6);
+    const runnerId = placeRunnerOnBase(game, "first");
+    const before = game.ledger;
+    const attempt = game.attempt("advance_runner", {
+      runnerId,
+      from: "first",
+      to: "second",
+      cause,
+    });
+    assert.equal(attempt.result.outcome, "rejected");
+    assert.equal(
+      attempt.result.rejection?.code,
+      "advance-cause-destination-mismatch",
+    );
+    assert.strictEqual(game.ledger, before);
+  }
+
+  const stolenBaseOut = harness("quick", "baseball-nfhs");
+  setLineupsAndStart(stolenBaseOut, 6);
+  const stolenBaseRunnerId = placeRunnerOnBase(stolenBaseOut, "first");
+  for (const destination of ["stay", "out"]) {
+    const stolenBaseAttempt = stolenBaseOut.attempt("advance_runner", {
+      runnerId: stolenBaseRunnerId,
+      from: "first",
+      to: destination,
+      cause: "stolen_base",
+      ...(destination === "out" ? { outKind: "tag" } : {}),
+    });
+    assert.equal(stolenBaseAttempt.result.outcome, "rejected");
+    assert.equal(
+      stolenBaseAttempt.result.rejection?.code,
+      "advance-cause-destination-mismatch",
+    );
+  }
+
+  const validOut = harness("quick", "baseball-nfhs");
+  setLineupsAndStart(validOut, 6);
+  const validOutRunnerId = placeRunnerOnBase(validOut, "first");
+  validOut.submit("advance_runner", {
+    runnerId: validOutRunnerId,
+    from: "first",
+    to: "out",
+    cause: "caught_stealing",
+    outKind: "tag",
+  });
+  assert.equal(
+    projectDiamondStats(validOut.ledger).players[validOutRunnerId].raw
+      .baserunning.CS,
+    1,
+  );
+  assert.deepEqual(
+    replayDiamondLedger(validOut.ledger).state,
+    validOut.ledger.state,
+  );
+
+  const validSteal = harness("quick", "baseball-nfhs");
+  setLineupsAndStart(validSteal, 6);
+  const validStealRunnerId = placeRunnerOnBase(validSteal, "first");
+  validSteal.submit("advance_runner", {
+    runnerId: validStealRunnerId,
+    from: "first",
+    to: "second",
+    cause: "stolen_base",
+  });
+  assert.equal(
+    projectDiamondStats(validSteal.ledger).players[validStealRunnerId].raw
+      .baserunning.SB,
+    1,
+  );
+  assert.deepEqual(
+    replayDiamondLedger(validSteal.ledger).state,
+    validSteal.ledger.state,
+  );
+
+  const batterCause = harness("quick", "baseball-nfhs");
+  setLineupsAndStart(batterCause, 6);
+  const beforeBatterCause = batterCause.ledger;
+  const batterCauseAttempt = batterCause.attempt("record_plate_appearance", {
+    ...currentMatchup(batterCause),
+    result: "single",
+    batterAdvance: { to: "first", cause: "caught_stealing" },
+    runnerAdvances: [],
+    outsOnPlay: 0,
+  });
+  assert.equal(batterCauseAttempt.result.outcome, "rejected");
+  assert.equal(
+    batterCauseAttempt.result.rejection?.code,
+    "advance-cause-destination-mismatch",
+  );
+  assert.strictEqual(batterCause.ledger, beforeBatterCause);
+
+  for (const [cause, outKind] of [
+    ["force_out", "tag"],
+    ["tag_out", "force"],
+    ["appeal_out", "tag"],
+  ]) {
+    const game = harness("quick", "baseball-nfhs");
+    setLineupsAndStart(game, 6);
+    const runnerId = placeRunnerOnBase(game, "first");
+    const before = game.ledger;
+    const attempt = game.attempt("advance_runner", {
+      runnerId,
+      from: "first",
+      to: "out",
+      cause,
+      outKind,
+    });
+    assert.equal(attempt.result.outcome, "rejected");
+    assert.equal(
+      attempt.result.rejection?.code,
+      "advance-cause-out-kind-mismatch",
+    );
+    assert.strictEqual(game.ledger, before);
+  }
+
+  const validInterference = harness("quick", "baseball-nfhs");
+  setLineupsAndStart(validInterference, 6);
+  validInterference.submit("record_plate_appearance", {
+    ...currentMatchup(validInterference),
+    result: "interference",
+    batterAdvance: { to: "first" },
+    runnerAdvances: [],
+    outsOnPlay: 0,
+  });
+  assert.equal(validInterference.ledger.state.bases.first?.runnerId, "away-1");
+  assert.deepEqual(
+    replayDiamondLedger(validInterference.ledger).state,
+    validInterference.ledger.state,
+  );
+
+  for (const destination of ["second", "third", "home", "out", "stay"]) {
+    const game = harness("quick", "baseball-nfhs");
+    setLineupsAndStart(game, 6);
+    const before = game.ledger;
+    const attempt = game.attempt("record_plate_appearance", {
+      ...currentMatchup(game),
+      result: "interference",
+      batterAdvance: {
+        to: destination,
+        ...(destination === "out" ? { outKind: "tag" } : {}),
+      },
+      runnerAdvances: [],
+      outsOnPlay: destination === "out" ? 1 : 0,
+    });
+    assert.equal(attempt.result.outcome, "rejected");
+    assert.equal(attempt.result.rejection?.code, "invalid-batter-destination");
+    assert.strictEqual(game.ledger, before);
+  }
+});
+
 test("compiled runner moves reject order reversals and preserve simultaneous advances and replay", () => {
   const standalone = harness("quick", "baseball-nfhs");
   setLineupsAndStart(standalone, 6);

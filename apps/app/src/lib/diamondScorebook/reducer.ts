@@ -127,6 +127,22 @@ const ADVANCE_CAUSES: readonly DiamondCommandPayloadMap['advance_runner']['cause
   'tiebreaker',
   'other'
 ];
+const OUT_ONLY_ADVANCE_CAUSES: readonly DiamondCommandPayloadMap['advance_runner']['cause'][] = [
+  'caught_stealing',
+  'pickoff',
+  'force_out',
+  'tag_out',
+  'appeal_out'
+];
+const REQUIRED_ADVANCE_OUT_KINDS: Partial<
+  Record<DiamondCommandPayloadMap['advance_runner']['cause'], NonNullable<DiamondCommandPayloadMap['advance_runner']['outKind']>>
+> = {
+  caught_stealing: 'tag',
+  pickoff: 'tag',
+  force_out: 'force',
+  tag_out: 'tag',
+  appeal_out: 'appeal'
+};
 const OUT_KINDS: readonly NonNullable<DiamondCommandPayloadMap['advance_runner']['outKind']>[] = [
   'force',
   'tag',
@@ -332,8 +348,11 @@ function validateBattingRoleCounts(entries: readonly Readonly<{ battingRole: Dia
 function validateBatterAdvanceShape(value: unknown) {
   const advance = requireRecord(value, 'batterAdvance');
   requireOnlyFields(advance, BATTER_ADVANCE_FIELDS, 'batterAdvance');
-  requireMember(advance.to, DESTINATIONS, 'batter destination');
-  if (advance.cause !== undefined) requireMember(advance.cause, ADVANCE_CAUSES, 'batter advance cause');
+  const to = requireMember(advance.to, DESTINATIONS, 'batter destination');
+  if (advance.cause !== undefined) {
+    const cause = requireMember(advance.cause, ADVANCE_CAUSES, 'batter advance cause');
+    validateAdvanceCauseDestination(cause, to);
+  }
   if (advance.outKind !== undefined) requireMember(advance.outKind, OUT_KINDS, 'batter out kind');
   validateScoringCredit(advance, 'batterAdvance');
 }
@@ -348,6 +367,26 @@ function validateRunnerDestination(from: DiamondBase, to: DiamondDestination) {
   }
 }
 
+function validateAdvanceCauseDestination(cause: DiamondCommandPayloadMap['advance_runner']['cause'], destination: DiamondDestination) {
+  if (OUT_ONLY_ADVANCE_CAUSES.includes(cause) && destination !== 'out') {
+    throw new DiamondDomainError('advance-cause-destination-mismatch', `${cause} requires the runner to be recorded out.`);
+  }
+  if (cause === 'stolen_base' && (destination === 'stay' || destination === 'out')) {
+    throw new DiamondDomainError('advance-cause-destination-mismatch', 'A stolen base requires a safe advance to a later base or home.');
+  }
+}
+
+function validateAdvanceCauseOutKind(
+  cause: DiamondCommandPayloadMap['advance_runner']['cause'],
+  destination: DiamondDestination,
+  outKind: DiamondCommandPayloadMap['advance_runner']['outKind']
+) {
+  const expected = REQUIRED_ADVANCE_OUT_KINDS[cause];
+  if (destination === 'out' && expected && outKind !== expected) {
+    throw new DiamondDomainError('advance-cause-out-kind-mismatch', `${cause} requires out kind ${expected}.`);
+  }
+}
+
 function validateAdvanceShape(value: unknown, options: Readonly<{ standalone?: boolean }> = {}) {
   const advance = requireRecord(value, 'runner advance');
   requireOnlyFields(advance, options.standalone ? STANDALONE_RUNNER_ADVANCE_FIELDS : RUNNER_ADVANCE_FIELDS, 'runner advance');
@@ -355,8 +394,9 @@ function validateAdvanceShape(value: unknown, options: Readonly<{ standalone?: b
   const from = requireMember(advance.from, BASES, 'runner source');
   const to = requireMember(advance.to, DESTINATIONS, 'runner destination');
   validateRunnerDestination(from, to);
-  requireMember(advance.cause, ADVANCE_CAUSES, 'runner advance cause');
-  if (advance.outKind !== undefined) requireMember(advance.outKind, OUT_KINDS, 'out kind');
+  const cause = requireMember(advance.cause, ADVANCE_CAUSES, 'runner advance cause');
+  validateAdvanceCauseDestination(cause, to);
+  const outKind = advance.outKind === undefined ? undefined : requireMember(advance.outKind, OUT_KINDS, 'out kind');
   validateScoringCredit(advance, 'runner advance');
   if (advance.to === 'out' && !advance.outKind) {
     throw new DiamondDomainError('missing-out-kind', 'A runner recorded out must include an out kind.');
@@ -364,6 +404,7 @@ function validateAdvanceShape(value: unknown, options: Readonly<{ standalone?: b
   if (advance.to !== 'out' && advance.outKind) {
     throw new DiamondDomainError('invalid-out-kind', 'Only an out destination may include an out kind.');
   }
+  validateAdvanceCauseOutKind(cause, to, outKind);
 }
 
 function oppositeSide(side: DiamondSide): DiamondSide {
@@ -945,6 +986,7 @@ function validateOutcomeDestination(
     walk: 'first',
     intentional_walk: 'first',
     hit_by_pitch: 'first',
+    interference: 'first',
     ground_out: 'out',
     fly_out: 'out',
     line_out: 'out',

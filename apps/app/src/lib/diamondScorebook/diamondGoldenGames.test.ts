@@ -886,6 +886,281 @@ describe('Baseball golden games', () => {
     expect(replayDiamondLedger(correction.ledger).state).toEqual(correction.ledger.state);
   });
 
+  it('binds runner causes and interference outcomes to compatible destinations across replay and corrections', () => {
+    const outOnlyCauses = ['caught_stealing', 'pickoff', 'force_out', 'tag_out', 'appeal_out'] as const;
+
+    for (const cause of outOnlyCauses) {
+      const game = createHarness('baseball-nfhs', 'quick');
+      configureGame(game);
+      const runnerId = placeRunnerOnBase(game, 'first');
+      const before = game.ledger;
+      expectRejected(
+        game.submit('advance_runner', { runnerId, from: 'first', to: 'second', cause }, { accept: false }),
+        'advance-cause-destination-mismatch',
+        before.state.revision
+      );
+      expect(game.ledger).toBe(before);
+      expect(verifyDiamondLedger(game.ledger)).toBe(true);
+    }
+
+    const stolenBaseOut = createHarness('baseball-nfhs', 'quick');
+    configureGame(stolenBaseOut);
+    const stolenBaseRunnerId = placeRunnerOnBase(stolenBaseOut, 'first');
+    const beforeStolenBaseOut = stolenBaseOut.ledger;
+    for (const destination of ['stay', 'out'] as const) {
+      expectRejected(
+        stolenBaseOut.submit(
+          'advance_runner',
+          {
+            runnerId: stolenBaseRunnerId,
+            from: 'first',
+            to: destination,
+            cause: 'stolen_base',
+            ...(destination === 'out' ? { outKind: 'tag' as const } : {})
+          },
+          { accept: false }
+        ),
+        'advance-cause-destination-mismatch',
+        beforeStolenBaseOut.state.revision
+      );
+      expect(stolenBaseOut.ledger).toBe(beforeStolenBaseOut);
+    }
+    const stolenBaseCheckpoint = createDiamondCheckpoint(beforeStolenBaseOut);
+    const boundedStolenBaseOut = executeDiamondCommandFromCheckpoint(
+      stolenBaseCheckpoint,
+      stolenBaseOut.command('advance_runner', {
+        runnerId: stolenBaseRunnerId,
+        from: 'first',
+        to: 'out',
+        cause: 'stolen_base',
+        outKind: 'tag'
+      }),
+      {
+        actorUid: INITIAL_SCORER,
+        eventId: 'checkpoint-stolen-base-out',
+        serverTimestampMs: 1_900_000_000_500
+      }
+    );
+    expect(boundedStolenBaseOut.result.rejection).toMatchObject({ code: 'advance-cause-destination-mismatch' });
+    expect(boundedStolenBaseOut.checkpoint).toBe(stolenBaseCheckpoint);
+    expect(boundedStolenBaseOut.checkpoint.sequence).toBe(beforeStolenBaseOut.state.revision);
+
+    const validOut = createHarness('baseball-nfhs', 'quick');
+    configureGame(validOut);
+    const validOutRunnerId = placeRunnerOnBase(validOut, 'first');
+    validOut.submit('advance_runner', {
+      runnerId: validOutRunnerId,
+      from: 'first',
+      to: 'out',
+      cause: 'caught_stealing',
+      outKind: 'tag'
+    });
+    expect(projectDiamondStats(validOut.ledger).players[validOutRunnerId].raw.baserunning.CS).toBe(1);
+    expect(replayDiamondLedger(validOut.ledger).state).toEqual(validOut.ledger.state);
+
+    const validSteal = createHarness('baseball-nfhs', 'quick');
+    configureGame(validSteal);
+    const validStealRunnerId = placeRunnerOnBase(validSteal, 'first');
+    validSteal.submit('advance_runner', {
+      runnerId: validStealRunnerId,
+      from: 'first',
+      to: 'second',
+      cause: 'stolen_base'
+    });
+    expect(projectDiamondStats(validSteal.ledger).players[validStealRunnerId].raw.baserunning.SB).toBe(1);
+    expect(replayDiamondLedger(validSteal.ledger).state).toEqual(validSteal.ledger.state);
+
+    const plateAppearance = createHarness('baseball-nfhs', 'quick');
+    configureGame(plateAppearance);
+    const plateAppearanceRunnerId = placeRunnerOnBase(plateAppearance, 'first');
+    const plateAppearanceMatchup = currentMatchup(plateAppearance);
+    const beforePlateAppearance = plateAppearance.ledger;
+    expectRejected(
+      plateAppearance.submit(
+        'record_plate_appearance',
+        {
+          ...plateAppearanceMatchup,
+          result: 'ground_out',
+          batterAdvance: { to: 'out', outKind: 'batter_runner' },
+          runnerAdvances: [{ runnerId: plateAppearanceRunnerId, from: 'first', to: 'second', cause: 'caught_stealing' }],
+          outsOnPlay: 1
+        },
+        { accept: false }
+      ),
+      'advance-cause-destination-mismatch',
+      beforePlateAppearance.state.revision
+    );
+    expect(plateAppearance.ledger).toBe(beforePlateAppearance);
+
+    const correction = createHarness('baseball-nfhs', 'quick');
+    configureGame(correction);
+    const correctionRunnerId = placeRunnerOnBase(correction, 'first');
+    const originalAdvance = correction.submit('advance_runner', {
+      runnerId: correctionRunnerId,
+      from: 'first',
+      to: 'second',
+      cause: 'wild_pitch'
+    });
+    const beforeCorrection = correction.ledger;
+    expectRejected(
+      correction.submit(
+        'supersede_event',
+        {
+          targetEventId: originalAdvance.event!.eventId,
+          reason: 'Do not turn a safe advance into a stolen-base out.',
+          replacement: {
+            type: 'advance_runner',
+            payload: { runnerId: correctionRunnerId, from: 'first', to: 'out', cause: 'stolen_base', outKind: 'tag' }
+          }
+        },
+        { accept: false }
+      ),
+      'advance-cause-destination-mismatch',
+      beforeCorrection.state.revision
+    );
+    expect(correction.ledger).toBe(beforeCorrection);
+    expect(verifyDiamondLedger(correction.ledger)).toBe(true);
+    expect(replayDiamondLedger(correction.ledger).state).toEqual(correction.ledger.state);
+
+    const batterCause = createHarness('baseball-nfhs', 'quick');
+    configureGame(batterCause);
+    const beforeBatterCause = batterCause.ledger;
+    expectRejected(
+      batterCause.submit(
+        'record_plate_appearance',
+        {
+          ...currentMatchup(batterCause),
+          result: 'single',
+          batterAdvance: { to: 'first', cause: 'caught_stealing' },
+          runnerAdvances: [],
+          outsOnPlay: 0
+        },
+        { accept: false }
+      ),
+      'advance-cause-destination-mismatch',
+      beforeBatterCause.state.revision
+    );
+    expect(batterCause.ledger).toBe(beforeBatterCause);
+
+    const batterCorrection = createHarness('baseball-nfhs', 'quick');
+    configureGame(batterCorrection);
+    const originalBatterPayload = {
+      ...currentMatchup(batterCorrection),
+      result: 'single' as const,
+      batterAdvance: { to: 'first' as const, cause: 'batted_ball' as const },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    };
+    const originalBatterAdvance = batterCorrection.submit('record_plate_appearance', originalBatterPayload);
+    const beforeBatterCorrection = batterCorrection.ledger;
+    expectRejected(
+      batterCorrection.submit(
+        'supersede_event',
+        {
+          targetEventId: originalBatterAdvance.event!.eventId,
+          reason: 'Do not attach a caught-stealing cause to the batter reaching safely.',
+          replacement: {
+            type: 'record_plate_appearance',
+            payload: {
+              ...originalBatterPayload,
+              batterAdvance: { to: 'first', cause: 'caught_stealing' }
+            }
+          }
+        },
+        { accept: false }
+      ),
+      'advance-cause-destination-mismatch',
+      beforeBatterCorrection.state.revision
+    );
+    expect(batterCorrection.ledger).toBe(beforeBatterCorrection);
+    expect(verifyDiamondLedger(batterCorrection.ledger)).toBe(true);
+
+    const forceIntegrity = createHarness('baseball-nfhs', 'quick');
+    configureGame(forceIntegrity);
+    const forceRunnerOnThird = placeRunnerOnBase(forceIntegrity, 'third');
+    const forceRunnerOnFirst = placeRunnerOnBase(forceIntegrity, 'first');
+    recordOut(forceIntegrity);
+    recordOut(forceIntegrity);
+    const beforeForceMismatch = forceIntegrity.ledger;
+    expectRejected(
+      forceIntegrity.submit(
+        'record_plate_appearance',
+        {
+          ...currentMatchup(forceIntegrity),
+          result: 'fielders_choice',
+          batterAdvance: { to: 'first' },
+          runnerAdvances: [
+            {
+              runnerId: forceRunnerOnThird,
+              from: 'third',
+              to: 'home',
+              cause: 'batted_ball',
+              countsRun: true,
+              rbi: false
+            },
+            { runnerId: forceRunnerOnFirst, from: 'first', to: 'out', cause: 'force_out', outKind: 'tag' }
+          ],
+          outsOnPlay: 1,
+          runsBattedIn: 0
+        },
+        { accept: false }
+      ),
+      'advance-cause-out-kind-mismatch',
+      beforeForceMismatch.state.revision
+    );
+    expect(forceIntegrity.ledger).toBe(beforeForceMismatch);
+    expect(forceIntegrity.ledger.state.score.away).toBe(0);
+
+    const tagMismatch = createHarness('baseball-nfhs', 'quick');
+    configureGame(tagMismatch);
+    const tagMismatchRunner = placeRunnerOnBase(tagMismatch, 'first');
+    const beforeTagMismatch = tagMismatch.ledger;
+    expectRejected(
+      tagMismatch.submit(
+        'advance_runner',
+        { runnerId: tagMismatchRunner, from: 'first', to: 'out', cause: 'tag_out', outKind: 'force' },
+        { accept: false }
+      ),
+      'advance-cause-out-kind-mismatch',
+      beforeTagMismatch.state.revision
+    );
+    expect(tagMismatch.ledger).toBe(beforeTagMismatch);
+
+    const validInterference = createHarness('baseball-nfhs', 'quick');
+    configureGame(validInterference);
+    validInterference.submit('record_plate_appearance', {
+      ...currentMatchup(validInterference),
+      result: 'interference',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    expect(validInterference.ledger.state.bases.first?.runnerId).toBe('away-1');
+    expect(replayDiamondLedger(validInterference.ledger).state).toEqual(validInterference.ledger.state);
+
+    for (const destination of ['second', 'third', 'home', 'out', 'stay'] as const) {
+      const invalidInterference = createHarness('baseball-nfhs', 'quick');
+      configureGame(invalidInterference);
+      const before = invalidInterference.ledger;
+      expectRejected(
+        invalidInterference.submit(
+          'record_plate_appearance',
+          {
+            ...currentMatchup(invalidInterference),
+            result: 'interference',
+            batterAdvance: { to: destination, ...(destination === 'out' ? { outKind: 'tag' as const } : {}) },
+            runnerAdvances: [],
+            outsOnPlay: destination === 'out' ? 1 : 0
+          },
+          { accept: false }
+        ),
+        'invalid-batter-destination',
+        before.state.revision
+      );
+      expect(invalidInterference.ledger).toBe(before);
+    }
+  });
+
   it('rejects runner-order reversals while preserving simultaneous advances, stays, and replay', () => {
     const standalone = createHarness('baseball-nfhs', 'quick');
     configureGame(standalone);
