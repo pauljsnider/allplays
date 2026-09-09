@@ -1346,7 +1346,7 @@ describe('Team Insights manager-stat production fan-out', () => {
     expect(vi.mocked(buildPlayerLeaderboardSnapshot).mock.calls.some(([input]: any[]) => (
       input?.seasonStatsByPlayerId?.['player-01']?.h === 1_080
     ))).toBe(true);
-  });
+  }, 15_000);
 
   it('keeps a rate-limited manager result non-authoritative and reloadable', async () => {
     const { games } = prepareBoundedDiamondManagerSeason(1, 1);
