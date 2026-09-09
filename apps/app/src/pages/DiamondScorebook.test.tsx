@@ -1519,6 +1519,47 @@ describe('DiamondScorebook', () => {
     expect(reduced.inning.outs).toBe(3);
   });
 
+  it('requires a batter-origin appeal third-out run to be marked non-counting when the appealed base is unknown', async () => {
+    const baseSnapshot = buildSnapshot();
+    const snapshot = buildSnapshot({
+      inning: { ...baseSnapshot.inning, outs: 2 },
+      bases: { first: null, second: null, third: baseSnapshot.bases.third }
+    });
+    const fixture = createClient(snapshot);
+    renderScorebook(snapshot, fixture);
+
+    fireEvent.click(screen.getByRole('button', { name: "Fielder's choice" }));
+    const dialog = screen.getByRole('dialog', { name: "Review Fielder's choice" });
+    fireEvent.change(within(dialog).getByLabelText(/Batter .* destination/), { target: { value: 'out' } });
+    fireEvent.change(within(dialog).getByLabelText(/Batter .* cause/), { target: { value: 'appeal_out' } });
+    expect(within(dialog).getByLabelText(/Batter .* out kind/)).toHaveValue('appeal');
+    const scoringRunner = within(dialog)
+      .getByLabelText(/Third .* destination/)
+      .closest('fieldset')!;
+    fireEvent.change(within(scoringRunner).getByLabelText(/Third .* destination/), { target: { value: 'home' } });
+
+    expect(within(dialog).getByRole('alert')).toHaveTextContent(/run cannot count/i);
+    expect(within(dialog).getByRole('button', { name: 'Confirm play' })).toBeDisabled();
+    fireEvent.click(within(scoringRunner).getByRole('checkbox', { name: 'Run counts' }));
+    expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Confirm play' })).toBeEnabled();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm play' }));
+    await waitFor(() => expect(fixture.submitCommand).toHaveBeenCalledTimes(1));
+
+    expect(fixture.createCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'record_plate_appearance',
+        payload: expect.objectContaining({
+          result: 'fielders_choice',
+          outsOnPlay: 1,
+          runsBattedIn: 0,
+          batterAdvance: expect.objectContaining({ to: 'out', cause: 'appeal_out', outKind: 'appeal' }),
+          runnerAdvances: [expect.objectContaining({ runnerId: 'runner-3', from: 'third', to: 'home', countsRun: false, rbi: false })]
+        })
+      })
+    );
+  });
+
   it('allows an explicit counted run when a mixed multi-out play has a possible tag third out', async () => {
     const snapshot = buildSnapshot();
     const fixture = createClient(snapshot);
@@ -3004,6 +3045,64 @@ describe('DiamondScorebook', () => {
     const scoringAdvance = submittedPayload.runnerAdvances.find((advance) => advance.runnerId === 'runner-3');
     expect(scoringAdvance).toMatchObject({ countsRun: true, rbi: false });
     expect(scoringAdvance).not.toHaveProperty('outKind');
+  });
+
+  it('blocks a voice-proposed counted run on an unqualified batter-origin appeal third out', async () => {
+    const baseSnapshot = buildSnapshot();
+    const snapshot = buildSnapshot({
+      inning: { ...baseSnapshot.inning, outs: 2 },
+      bases: { first: null, second: null, third: baseSnapshot.bases.third }
+    });
+    const fixture = createClient(snapshot);
+    const generateContent = vi.fn(async () =>
+      JSON.stringify({
+        schemaVersion: 1,
+        sourceRevision: 7,
+        type: 'record_plate_appearance',
+        payloadJson: JSON.stringify({
+          batterId: 'batter-1',
+          pitcherId: 'pitcher-1',
+          result: 'fielders_choice',
+          batterAdvance: { to: 'out', cause: 'appeal_out', outKind: 'appeal' },
+          runnerAdvances: [{ runnerId: 'runner-3', from: 'third', to: 'home', cause: 'batted_ball', countsRun: true, rbi: false }],
+          outsOnPlay: 1,
+          runsBattedIn: 0
+        }),
+        confidence: 0.96,
+        unresolvedQuestions: [],
+        requiresConfirmation: true,
+        mutatesState: false
+      })
+    );
+    renderScorebook(snapshot, fixture, { generateContent });
+
+    fireEvent.click(screen.getByRole('button', { name: /Dictate play/ }));
+    fireEvent.change(screen.getByLabelText('Editable transcript'), {
+      target: { value: 'Casey crossed home and Avery was called out on appeal.' }
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Interpret play/ }));
+
+    const review = await screen.findByRole('dialog', { name: "Review Fielder's choice" });
+    expect(within(review).getByRole('alert')).toHaveTextContent(/run cannot count/i);
+    expect(within(review).getByRole('button', { name: 'Confirm play' })).toBeDisabled();
+    const scoringRunner = within(review)
+      .getByLabelText(/Third .* destination/)
+      .closest('fieldset')!;
+    fireEvent.click(within(scoringRunner).getByRole('checkbox', { name: 'Run counts' }));
+    expect(within(review).queryByRole('alert')).not.toBeInTheDocument();
+    fireEvent.click(within(review).getByRole('button', { name: 'Confirm play' }));
+    await waitFor(() => expect(fixture.submitCommand).toHaveBeenCalledTimes(1));
+    expect(fixture.createCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'record_plate_appearance',
+        payload: expect.objectContaining({
+          batterAdvance: expect.objectContaining({ to: 'out', cause: 'appeal_out', outKind: 'appeal' }),
+          runnerAdvances: expect.arrayContaining([
+            expect.objectContaining({ runnerId: 'runner-3', to: 'home', countsRun: false, rbi: false })
+          ])
+        })
+      })
+    );
   });
 
   it('clears the default batter out kind when a voice proposal safely advances the batter', async () => {

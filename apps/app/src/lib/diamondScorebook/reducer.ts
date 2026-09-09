@@ -1128,9 +1128,10 @@ type Move = Readonly<{
 
 export function diamondOutNecessarilyCancelsRun(move: Readonly<{ from: DiamondBase | 'batter'; outKind?: DiamondOutKind }>) {
   if (move.outKind === 'force' || move.outKind === 'batter_runner') return true;
-  // A batter-origin tag or appeal can happen after first base was reached. Only
-  // the explicit catch and strikeout kinds prove the batter was retired before first.
-  return move.from === 'batter' && (move.outKind === 'catch' || move.outKind === 'strikeout');
+  // A batter-origin tag can happen after first base was reached. The current
+  // payload cannot identify an appealed base or prove a prior safe reach, so a
+  // batter appeal must fail closed as a before-first retirement.
+  return move.from === 'batter' && (move.outKind === 'appeal' || move.outKind === 'catch' || move.outKind === 'strikeout');
 }
 
 function validateFinalRunnerOrder(state: DiamondGameState, moves: readonly Move[]) {

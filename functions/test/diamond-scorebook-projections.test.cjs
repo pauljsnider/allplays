@@ -1612,6 +1612,22 @@ test("compiled third-out run timing is explicit and independent of move array or
   });
   assert.equal(noRun.score.away, 0);
 
+  const mixedBatterAppeal = reduceDiamondEvent(beforePlay, {
+    type: "record_plate_appearance",
+    eventId: "compiled-mixed-batter-appeal-and-runner-tag",
+    payload: {
+      ...mixedPayload(true),
+      result: "double_play",
+      batterAdvance: {
+        to: "out",
+        cause: "appeal_out",
+        outKind: "appeal",
+      },
+    },
+  });
+  assert.deepEqual(mixedBatterAppeal.score, { home: 0, away: 1 });
+  assert.equal(mixedBatterAppeal.inning.outs, 3);
+
   const allCancelling = mixedPayload(true);
   allCancelling.runnerAdvances = allCancelling.runnerAdvances.map((advance) =>
     advance.to === "out"
@@ -1775,6 +1791,60 @@ test("compiled third-out run timing is explicit and independent of move array or
   assert.deepEqual(
     replayDiamondLedger(batterTagGame.ledger).state,
     batterTagGame.ledger.state,
+  );
+
+  const batterAppealGame = harness("quick", "baseball-nfhs");
+  setLineupsAndStart(batterAppealGame, 5);
+  const batterAppealRunner = placeRunnerOnBase(batterAppealGame, "third");
+  recordOut(batterAppealGame);
+  recordOut(batterAppealGame);
+  const batterAppealMatchup = currentMatchup(batterAppealGame);
+  const batterAppealPayload = (countsRun) => ({
+    batterId: batterAppealMatchup.batterId,
+    pitcherId: batterAppealMatchup.pitcherId,
+    result: "fielders_choice",
+    batterAdvance: {
+      to: "out",
+      cause: "appeal_out",
+      outKind: "appeal",
+    },
+    runnerAdvances: [
+      {
+        runnerId: batterAppealRunner,
+        from: "third",
+        to: "home",
+        cause: "batted_ball",
+        countsRun,
+        earned: true,
+        rbi: false,
+      },
+    ],
+    outsOnPlay: 1,
+    runsBattedIn: 0,
+  });
+  const countedBatterAppeal = batterAppealGame.attempt(
+    "record_plate_appearance",
+    batterAppealPayload(true),
+  );
+  assert.equal(countedBatterAppeal.result.outcome, "rejected");
+  assert.equal(countedBatterAppeal.result.rejection?.code, "run-cannot-count");
+  assert.deepEqual(batterAppealGame.ledger.state.score, { home: 0, away: 0 });
+
+  batterAppealGame.submit(
+    "record_plate_appearance",
+    batterAppealPayload(false),
+  );
+  assert.deepEqual(batterAppealGame.ledger.state.score, { home: 0, away: 0 });
+  assert.equal(batterAppealGame.ledger.state.inning.outs, 3);
+  assert.equal(
+    projectDiamondStats(batterAppealGame.ledger).players[batterAppealRunner].raw
+      .batting.R,
+    0,
+  );
+  assert.equal(verifyDiamondLedger(batterAppealGame.ledger), true);
+  assert.deepEqual(
+    replayDiamondLedger(batterAppealGame.ledger).state,
+    batterAppealGame.ledger.state,
   );
 
   const allTagAppealState = {

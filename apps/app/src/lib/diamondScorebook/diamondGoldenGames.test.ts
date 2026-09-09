@@ -1468,6 +1468,85 @@ describe('Baseball golden games', () => {
     expect(verifyDiamondLedger(taggedBatterFull.ledger)).toBe(true);
     expect(replayDiamondLedger(taggedBatterFull.ledger).state).toEqual(taggedBatterFull.ledger.state);
 
+    const batterAppealPayload = (countsRun: boolean) => ({
+      ...taggedBatterPayload,
+      batterAdvance: { to: 'out' as const, cause: 'appeal_out' as const, outKind: 'appeal' as const },
+      runnerAdvances: taggedBatterPayload.runnerAdvances.map((advance) => (advance.to === 'home' ? { ...advance, countsRun } : advance))
+    });
+    const countedBatterAppeal = createHarness('baseball-nfhs', 'quick', seed.ledger);
+    const countedBatterAppealCommand = countedBatterAppeal.command('record_plate_appearance', batterAppealPayload(true));
+    const countedBatterAppealContext = {
+      actorUid: INITIAL_SCORER,
+      eventId: 'golden-batter-appeal-third-out',
+      serverTimestampMs: 1_900_000_151_000
+    } as const;
+    const countedBatterAppealCheckpoint = createDiamondCheckpoint(countedBatterAppeal.ledger);
+    const countedBatterAppealFull = executeDiamondCommand(
+      countedBatterAppeal.ledger,
+      countedBatterAppealCommand,
+      countedBatterAppealContext
+    );
+    const countedBatterAppealBounded = executeDiamondCommandFromCheckpoint(
+      countedBatterAppealCheckpoint,
+      countedBatterAppealCommand,
+      countedBatterAppealContext
+    );
+
+    expectRejected(countedBatterAppealFull, 'run-cannot-count', countedBatterAppeal.ledger.state.revision);
+    expect(countedBatterAppealBounded.result).toMatchObject({
+      outcome: 'rejected',
+      revision: countedBatterAppealCheckpoint.sequence,
+      rejection: { code: 'run-cannot-count' }
+    });
+    expect(countedBatterAppealBounded.checkpoint).toBe(countedBatterAppealCheckpoint);
+
+    const nullifiedBatterAppeal = createHarness('baseball-nfhs', 'quick', seed.ledger);
+    const nullifiedBatterAppealCommand = nullifiedBatterAppeal.command('record_plate_appearance', batterAppealPayload(false));
+    const nullifiedBatterAppealContext = {
+      ...countedBatterAppealContext,
+      eventId: 'golden-nullified-batter-appeal-third-out'
+    } as const;
+    const nullifiedBatterAppealCheckpoint = createDiamondCheckpoint(nullifiedBatterAppeal.ledger);
+    const nullifiedBatterAppealFull = executeDiamondCommand(
+      nullifiedBatterAppeal.ledger,
+      nullifiedBatterAppealCommand,
+      nullifiedBatterAppealContext
+    );
+    const nullifiedBatterAppealBounded = executeDiamondCommandFromCheckpoint(
+      nullifiedBatterAppealCheckpoint,
+      nullifiedBatterAppealCommand,
+      nullifiedBatterAppealContext
+    );
+
+    expect(nullifiedBatterAppealFull.result, nullifiedBatterAppealFull.result.rejection?.message).toMatchObject({ outcome: 'accepted' });
+    expect(nullifiedBatterAppealBounded.result, nullifiedBatterAppealBounded.result.rejection?.message).toMatchObject({
+      outcome: 'accepted'
+    });
+    expect(nullifiedBatterAppealBounded.checkpoint.state).toEqual(nullifiedBatterAppealFull.ledger.state);
+    expect(nullifiedBatterAppealFull.ledger.state).toMatchObject({ inning: { outs: 3 }, score: { away: 0, home: 0 } });
+    expect(projectDiamondStats(nullifiedBatterAppealFull.ledger).players['away-1'].raw.batting.R).toBe(0);
+    expect(verifyDiamondLedger(nullifiedBatterAppealFull.ledger)).toBe(true);
+    expect(replayDiamondLedger(nullifiedBatterAppealFull.ledger).state).toEqual(nullifiedBatterAppealFull.ledger.state);
+
+    const appealCorrection = createHarness('baseball-nfhs', 'quick', taggedBatterFull.ledger);
+    const appealCorrectionRevision = appealCorrection.ledger.state.revision;
+    expectRejected(
+      appealCorrection.submit(
+        'supersede_event',
+        {
+          targetEventId: taggedBatterFull.event!.eventId,
+          reason: 'Do not convert a valid later-base tag timing play into an unqualified batter appeal with a counted run.',
+          replacement: { type: 'record_plate_appearance', payload: batterAppealPayload(true) }
+        },
+        { accept: false }
+      ),
+      'run-cannot-count',
+      appealCorrectionRevision
+    );
+    expect(appealCorrection.ledger.state.score.away).toBe(1);
+    expect(verifyDiamondLedger(appealCorrection.ledger)).toBe(true);
+    expect(replayDiamondLedger(appealCorrection.ledger).state).toEqual(appealCorrection.ledger.state);
+
     const force = createHarness('baseball-nfhs', 'quick', seed.ledger);
     force.submit('record_plate_appearance', thirdOutPayload('force', false));
     expect(force.ledger.state).toMatchObject({ inning: { outs: 3 }, score: { away: 0, home: 0 } });
@@ -1562,6 +1641,17 @@ describe('Baseball golden games', () => {
       expect(verifyDiamondLedger(mixedTag.ledger)).toBe(true);
       expect(replayDiamondLedger(mixedTag.ledger).state).toEqual(mixedTag.ledger.state);
     }
+
+    const mixedBatterAppeal = createHarness('baseball-nfhs', 'quick', multiOutSeed.ledger);
+    mixedBatterAppeal.submit('record_plate_appearance', {
+      ...mixedOutPayload(true),
+      result: 'double_play',
+      batterAdvance: { to: 'out', cause: 'appeal_out', outKind: 'appeal' }
+    });
+    expect(mixedBatterAppeal.ledger.state).toMatchObject({ inning: { outs: 3 }, score: { away: 1, home: 0 } });
+    expect(projectDiamondStats(mixedBatterAppeal.ledger).players['away-1'].raw.batting.R).toBe(1);
+    expect(verifyDiamondLedger(mixedBatterAppeal.ledger)).toBe(true);
+    expect(replayDiamondLedger(mixedBatterAppeal.ledger).state).toEqual(mixedBatterAppeal.ledger.state);
 
     const mixedNoRun = createHarness('baseball-nfhs', 'quick', multiOutSeed.ledger);
     mixedNoRun.submit('record_plate_appearance', mixedOutPayload(false));

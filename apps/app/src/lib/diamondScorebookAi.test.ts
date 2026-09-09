@@ -184,6 +184,12 @@ describe('interpretDiamondTranscript', () => {
     expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/fly_out.*line_out.*sacrifice_fly.*outKind=catch/i);
     expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/ground_out.*sacrifice_bunt.*outKind=batter_runner/i);
     expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/fielders_choice.*tagged after first.*outKind=tag.*timing third out/i);
+    expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(
+      /batter-origin appeal.*cannot identify the appealed base.*only possible third out.*countsRun=false/i
+    );
+    expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(
+      /mixed multi-out play.*possible timing tag.*countsRun explicit.*scorer review/i
+    );
     expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/dropped.third.strike.*pre-play.*first base.*two outs/i);
     expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/sacrifice.*pre-play.*outs.*scor.*advance/i);
     expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/current pitcher.*defensive position.*P/i);
