@@ -217,24 +217,26 @@ function scoringParticipants(event) {
     }
     return { participants, scoringRunners, requiresHomeRunRbi };
 }
-function actualOutCount(event) {
+function actualOutRunnerIds(event) {
     if (event.type === 'record_plate_appearance') {
         const payload = event.payload;
-        return new Set([
+        return [
             { runnerId: payload.batterId, to: payload.batterAdvance.to },
             ...payload.runnerAdvances.map((advance) => ({ runnerId: advance.runnerId, to: advance.to }))
         ]
             .filter((move) => move.to === 'out')
-            .map((move) => move.runnerId)).size;
+            .map((move) => move.runnerId);
     }
     if (event.type === 'advance_runner') {
-        return event.payload.to === 'out' ? 1 : 0;
+        const payload = event.payload;
+        return payload.to === 'out' ? [payload.runnerId] : [];
     }
-    return 0;
+    return [];
 }
 function fieldingParticipantIds(fielding) {
     return [
         ...(fielding.putoutBy ? [fielding.putoutBy] : []),
+        ...(fielding.putouts ?? []).map((putout) => putout.putoutBy),
         ...(fielding.assists ?? []),
         ...(fielding.errors ?? []).map((error) => error.playerId),
         ...(fielding.passedBallBy ? [fielding.passedBallBy] : [])
@@ -304,6 +306,7 @@ function validateAttachmentAgainstHistoricalPlay(event, context) {
     if (event.type === 'record_fielding') {
         const fielding = event.payload.fielding;
         (0, reducer_1.validateDiamondFieldingOutCredit)(fielding, context.actualOutCount);
+        (0, reducer_1.validateDiamondMergedFieldingOutCredit)([fielding], context.actualOutRunnerIds);
         const invalidFielder = fieldingParticipantIds(fielding).find((playerId) => !context.activeDefenders.has(playerId) || !playerRoleIsUnambiguous(context, context.defensiveSide, playerId));
         if (invalidFielder) {
             throw new contracts_1.DiamondDomainError('invalid-fielding-participant', `${invalidFielder} was not an active ${context.defensiveSide} defender when the cited play occurred.`);
@@ -366,6 +369,7 @@ function observeEffectiveEventParticipants(state, event, tracker) {
             away: knownPlayerIds(state, 'away')
         };
         participants.forEach((playerId) => knownPlayers[battingSide].add(playerId));
+        const outRunnerIds = actualOutRunnerIds(event);
         const context = {
             battingSide,
             defensiveSide,
@@ -374,7 +378,8 @@ function observeEffectiveEventParticipants(state, event, tracker) {
             participants,
             scoringRunners,
             requiresHomeRunRbi,
-            actualOutCount: actualOutCount(event),
+            actualOutCount: outRunnerIds.length,
+            actualOutRunnerIds: outRunnerIds,
             knownPlayers,
             pitcherAppearances: {
                 home: new Set(tracker.pitcherAppearances.home),

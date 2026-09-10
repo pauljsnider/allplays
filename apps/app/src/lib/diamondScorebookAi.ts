@@ -1038,6 +1038,7 @@ SECURITY AND AUTHORITY RULES:
 - On home_run, every advance to home whose run is not explicitly nullified with countsRun=false must use rbi=true, and runsBattedIn must equal the number of counted runs. Never propose a later rbi=false judgment for a counted home-run score.
 - Derive RBI for each scoring advance from its cause: credit a batted-ball fielder's choice by default; do not credit a wild pitch, passed ball, balk, illegal pitch, error, stolen base, or defensive indifference. If the RBI judgment remains ambiguous, ask the scorer instead of guessing.
 - For double_play record exactly 2 distinct actual outs, and for triple_play record exactly 3, including the batter and matching outsOnPlay. Do not infer timing from array order; leave countsRun explicit for scorer review.
+- Fielding may use legacy putoutBy for one unbound putout. For multi-out attribution, use putouts:[{runnerId,putoutBy}] with one entry per known retired runner; the same fielder may appear for multiple distinct runners. Never list a safe runner, repeat one runner, or guess an ambiguous putout.
 
 ALLOWLISTED COMMANDS:
 - record_pitch {pitcherId,batterId,result}
@@ -1460,11 +1461,26 @@ function validateFielding(value: unknown) {
   const source = value;
   requireExactKeys(
     source,
-    ['putoutBy', 'assists', 'errors', 'passedBallBy', 'doublePlay', 'triplePlay', 'battedBall', 'location'],
+    ['putoutBy', 'putouts', 'assists', 'errors', 'passedBallBy', 'doublePlay', 'triplePlay', 'battedBall', 'location'],
     'Fielding chain',
     true
   );
   if (source.putoutBy !== undefined) requireResourceId(source.putoutBy, 'Putout player ID');
+  if (source.putouts !== undefined) {
+    if (!Array.isArray(source.putouts) || source.putouts.length > 3) {
+      throw new DiamondAiBoundaryError('Per-out putouts must be an array with at most three entries.');
+    }
+    const runnerIds = source.putouts.map((putoutValue) => {
+      const putout = asRecord(putoutValue);
+      requireExactKeys(putout, ['runnerId', 'putoutBy'], 'Per-out putout');
+      const runnerId = requireResourceId(putout.runnerId, 'Putout runner ID');
+      requireResourceId(putout.putoutBy, 'Putout player ID');
+      return runnerId;
+    });
+    if (new Set(runnerIds).size !== runnerIds.length) {
+      throw new DiamondAiBoundaryError('Per-out putouts may identify each retired runner only once.');
+    }
+  }
   if (source.passedBallBy !== undefined) requireResourceId(source.passedBallBy, 'Passed-ball catcher ID');
   if (source.assists !== undefined) normalizeResourceIdArray(source.assists, 'Assist player IDs', 12);
   if (source.errors !== undefined) {
@@ -1550,6 +1566,11 @@ function validatePlateAppearanceAgainstContext(payload: Record<string, unknown>,
     ...(batterAdvance.to === 'out' ? [`batter:${payload.batterId as string}`] : []),
     ...runnerAdvances.flatMap((advance) => (advance.to === 'out' ? [`${advance.from as string}:${advance.runnerId as string}`] : []))
   ];
+  const actualOutRunnerIds = [
+    ...(batterAdvance.to === 'out' ? [payload.batterId as string] : []),
+    ...runnerAdvances.flatMap((advance) => (advance.to === 'out' ? [advance.runnerId as string] : []))
+  ];
+  validateFieldingPutoutTargets(payload.fielding, actualOutRunnerIds);
   if (
     requiredOuts !== null &&
     (batterAdvance.to !== 'out' ||
@@ -1691,11 +1712,20 @@ function validateStandaloneRunnerAdvanceAgainstContext(payload: Record<string, u
     throw new DiamondAiBoundaryError('Runner advance must match the exact current base context.');
   }
   const to = payload.to as string;
+  validateFieldingPutoutTargets(payload.fielding, to === 'out' ? [runnerId] : []);
   validateExistingRunnerDestination(from, to);
   if ((to === 'first' || to === 'second' || to === 'third') && context.bases[to]) {
     throw new DiamondAiBoundaryError('Runner destination conflicts with the exact pre-play occupied-base context.');
   }
   validateRunnerOrderAgainstContext(context, [{ from, to }]);
+}
+
+function validateFieldingPutoutTargets(fieldingValue: unknown, actualOutRunnerIds: readonly string[]) {
+  if (!isPlainRecord(fieldingValue) || !Array.isArray(fieldingValue.putouts)) return;
+  const actualOuts = new Set(actualOutRunnerIds);
+  if (fieldingValue.putouts.some((putout) => !actualOuts.has(asRecord(putout).runnerId as string))) {
+    throw new DiamondAiBoundaryError('Per-out putout evidence must identify a runner recorded out on this play.');
+  }
 }
 
 function validateExistingRunnerDestination(from: keyof NormalizedCommandContext['bases'], to: string) {

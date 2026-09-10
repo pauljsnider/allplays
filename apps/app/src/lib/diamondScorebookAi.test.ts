@@ -177,6 +177,9 @@ describe('interpretDiamondTranscript', () => {
     expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/home_run.*rbi=true.*runsBattedIn.*counted runs/i);
     expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/derive.*RBI.*each scoring advance.*fielder.?s choice.*wild pitch/i);
     expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/double_play.*exactly 2.*triple_play.*exactly 3/i);
+    expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(
+      /putouts.*runnerId.*putoutBy.*same fielder.*multiple distinct runners/i
+    );
     expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/stay put or move forward/i);
     expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/must not pass a preceding runner/i);
     expect(model.generateContent.mock.calls[0]?.[0].prompt).toMatch(/existing.runner.*force_out.*outKind=force/i);
@@ -573,6 +576,89 @@ describe('interpretDiamondTranscript', () => {
     const result = await interpretDiamondTranscript('Prepare this complete play for review.', context, model.dependencies);
 
     expect(result).toMatchObject({ status: 'proposal', authoritative: false, proposal: { type: 'record_plate_appearance' } });
+  });
+
+  it('preserves per-out putout multiplicity for a mixed triple play', async () => {
+    const context = commandContext({
+      outs: 0,
+      bases: { first: 'runner-1', second: 'runner-2', third: null },
+      knownPlayerIds: ['batter-1', 'pitcher-1', 'runner-1', 'runner-2', 'fielder-6', 'fielder-2']
+    });
+    const fielding = {
+      putouts: [
+        { runnerId: 'batter-1', putoutBy: 'fielder-6' },
+        { runnerId: 'runner-1', putoutBy: 'fielder-6' },
+        { runnerId: 'runner-2', putoutBy: 'fielder-2' }
+      ],
+      assists: ['fielder-6'],
+      triplePlay: true
+    };
+    const model = jsonModel(
+      plateAppearanceResponse({
+        result: 'triple_play',
+        batterAdvance: { to: 'out', outKind: 'batter_runner' },
+        runnerAdvances: [
+          { runnerId: 'runner-1', from: 'first', to: 'out', cause: 'force_out', outKind: 'force' },
+          { runnerId: 'runner-2', from: 'second', to: 'out', cause: 'tag_out', outKind: 'tag' }
+        ],
+        outsOnPlay: 3,
+        fielding
+      })
+    );
+
+    const result = await interpretDiamondTranscript('The shortstop made two putouts and assisted the third.', context, model.dependencies);
+
+    expect(result).toMatchObject({
+      status: 'proposal',
+      authoritative: false,
+      proposal: { type: 'record_plate_appearance', payload: { fielding } }
+    });
+  });
+
+  it.each([
+    {
+      label: 'repeats one retired runner',
+      fielding: {
+        putouts: [
+          { runnerId: 'batter-1', putoutBy: 'fielder-6' },
+          { runnerId: 'batter-1', putoutBy: 'fielder-6' }
+        ]
+      },
+      message: /each retired runner only once/i
+    },
+    {
+      label: 'credits a runner who stayed safe',
+      fielding: {
+        putouts: [
+          { runnerId: 'batter-1', putoutBy: 'fielder-6' },
+          { runnerId: 'runner-2', putoutBy: 'fielder-2' }
+        ]
+      },
+      message: /runner recorded out/i
+    }
+  ])('rejects per-out putout evidence that $label', async ({ fielding, message }) => {
+    const context = commandContext({
+      outs: 0,
+      bases: { first: 'runner-1', second: 'runner-2', third: null },
+      knownPlayerIds: ['batter-1', 'pitcher-1', 'runner-1', 'runner-2', 'fielder-6', 'fielder-2']
+    });
+    const model = jsonModel(
+      plateAppearanceResponse({
+        result: 'double_play',
+        batterAdvance: { to: 'out', outKind: 'batter_runner' },
+        runnerAdvances: [
+          { runnerId: 'runner-1', from: 'first', to: 'out', cause: 'force_out', outKind: 'force' },
+          { runnerId: 'runner-2', from: 'second', to: 'stay', cause: 'batted_ball' }
+        ],
+        outsOnPlay: 2,
+        fielding
+      })
+    );
+
+    const result = await interpretDiamondTranscript('Review the complete multi-out fielding.', context, model.dependencies);
+
+    expect(result).toMatchObject({ status: 'invalid-response', proposal: null, authoritative: false });
+    expect(result.message).toMatch(message);
   });
 
   it.each([

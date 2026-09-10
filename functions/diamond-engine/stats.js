@@ -124,8 +124,8 @@ function isOpenDefensiveEntry(state, side) {
         !runLimitReached &&
         (0, reducer_1.getDiamondFinalizationReason)(state) === null);
 }
-function addMergedFielding(fieldings, actualOutCount, side, eventId, ensure, credit, options = {}) {
-    const putouts = (0, reducer_1.deriveDiamondPutoutCredits)(fieldings, actualOutCount);
+function addMergedFielding(fieldings, actualOutRunnerIds, side, eventId, ensure, credit, options = {}) {
+    const putouts = (0, reducer_1.deriveDiamondPutoutCredits)(fieldings, actualOutRunnerIds);
     const assists = new Set();
     const passedBalls = new Set();
     const errorMultiplicity = new Map();
@@ -578,7 +578,11 @@ function projectDiamondStats(ledger) {
                     teams[battingSide].twoOutRuns += runsOnPlay;
                 const defenders = new Set(Object.values(before.lineups[pitchingSide].defense).filter(Boolean));
                 defenders.forEach((playerId) => credit(ensure(playerId, pitchingSide), 'fielding', 'defensiveOuts', payload.outsOnPlay, eventId));
-                const fieldingResult = addMergedFielding(fieldingChains, payload.outsOnPlay, pitchingSide, eventId, ensure, credit);
+                const outRunnerIds = [
+                    ...(payload.batterAdvance.to === 'out' ? [payload.batterId] : []),
+                    ...payload.runnerAdvances.flatMap((advance) => (advance.to === 'out' ? [advance.runnerId] : []))
+                ];
+                const fieldingResult = addMergedFielding(fieldingChains, outRunnerIds, pitchingSide, eventId, ensure, credit);
                 teams[pitchingSide].E += fieldingResult.errorCredits;
                 physicalCauseCluster = null;
                 break;
@@ -662,7 +666,7 @@ function projectDiamondStats(ledger) {
                     if (physicalCauseCluster)
                         physicalCauseCluster.pitchingCreditRecorded = true;
                 }
-                const fieldingResult = addMergedFielding([...(payload.fielding ? [payload.fielding] : []), ...attachmentsForPlay(attachments.fielding, event)], payload.to === 'out' ? 1 : 0, pitchingSide, eventId, ensure, credit, { creditPassedBall: !physicalCauseCluster?.passedBallCreditRecorded });
+                const fieldingResult = addMergedFielding([...(payload.fielding ? [payload.fielding] : []), ...attachmentsForPlay(attachments.fielding, event)], payload.to === 'out' ? [payload.runnerId] : [], pitchingSide, eventId, ensure, credit, { creditPassedBall: !physicalCauseCluster?.passedBallCreditRecorded });
                 if (fieldingResult.passedBallObserved && physicalCauseCluster)
                     physicalCauseCluster.passedBallCreditRecorded = true;
                 teams[pitchingSide].E += fieldingResult.errorCredits;

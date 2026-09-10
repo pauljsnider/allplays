@@ -172,9 +172,16 @@ type PendingPlay = {
   outsOnPlay: number;
   runsBattedIn: number;
   putoutBy: string;
+  putouts: Array<{ runnerId: string; putoutBy: string }>;
   assistBy: string;
   errorBy: string;
   battedBall: string;
+  fieldingEdits?: Readonly<{
+    putoutCredits?: boolean;
+    assist?: boolean;
+    error?: boolean;
+    battedBall?: boolean;
+  }>;
   unresolvedFields: string[];
   ambiguityConfirmed: boolean;
   aiConfidence: number | null;
@@ -286,6 +293,54 @@ function privateEventLabel(event: Pick<DiamondEffectivePrivateEvent, 'effectiveT
     return `${readString(event.effectivePayload.cause).replace(/_/g, ' ') || 'Runner play'} · revision ${event.revision}`;
   }
   return `${event.effectiveType.replace(/_/g, ' ')} · revision ${event.revision}`;
+}
+
+function privateEventOutRunnerIds(event: Pick<DiamondEffectivePrivateEvent, 'effectiveType' | 'effectivePayload'>) {
+  const payload = event.effectivePayload;
+  if (event.effectiveType === 'record_plate_appearance') {
+    return plateAppearancePayloadOutRunnerIds(payload);
+  }
+  if (event.effectiveType === 'advance_runner' && readString(payload.to) === 'out') {
+    return [readString(payload.runnerId)].filter(Boolean);
+  }
+  return [];
+}
+
+function plateAppearancePayloadOutRunnerIds(payload: Record<string, unknown>) {
+  const batterAdvance = asJsonObject(payload.batterAdvance);
+  return [
+    ...(readString(batterAdvance.to) === 'out' ? [readString(payload.batterId)] : []),
+    ...(Array.isArray(payload.runnerAdvances)
+      ? payload.runnerAdvances.flatMap((value) => {
+          const advance = asJsonObject(value);
+          return readString(advance.to) === 'out' ? [readString(advance.runnerId)] : [];
+        })
+      : [])
+  ].filter(Boolean);
+}
+
+function sameRunnerIdSet(left: ReadonlySet<string>, right: ReadonlySet<string>) {
+  return left.size === right.size && [...left].every((runnerId) => right.has(runnerId));
+}
+
+function reconcileCorrectionPutoutDraft(pending: PendingPlay, runnerMoves: readonly RunnerMoveDraft[]) {
+  const previousOutRunnerIds = new Set(pending.runnerMoves.flatMap((move) => (move.to === 'out' ? [move.playerId] : [])));
+  const nextOutRunnerIds = new Set(runnerMoves.flatMap((move) => (move.to === 'out' ? [move.playerId] : [])));
+  if (sameRunnerIdSet(previousOutRunnerIds, nextOutRunnerIds)) {
+    return { putoutBy: pending.putoutBy, putouts: pending.putouts };
+  }
+  if (pending.correction && !pending.fieldingEdits?.putoutCredits) {
+    const originalFielding = asJsonObject(asJsonObject(pending.payload).fielding);
+    const originalOutRunnerIds = new Set(plateAppearancePayloadOutRunnerIds(asJsonObject(pending.payload)));
+    return {
+      putoutBy: sameRunnerIdSet(originalOutRunnerIds, nextOutRunnerIds) ? readString(originalFielding.putoutBy) : '',
+      putouts: readPerOutPutouts(originalFielding.putouts).filter((putout) => nextOutRunnerIds.has(putout.runnerId))
+    };
+  }
+  return {
+    putoutBy: '',
+    putouts: pending.putouts.filter((putout) => nextOutRunnerIds.has(putout.runnerId))
+  };
 }
 
 const outcomeOptions: OutcomeOption[] = [
@@ -936,6 +991,7 @@ function buildStructuredPending(type: DiamondCommandType, label: string, payload
     outsOnPlay: 0,
     runsBattedIn: 0,
     putoutBy: '',
+    putouts: [],
     assistBy: '',
     errorBy: '',
     battedBall: 'unknown',
@@ -1177,6 +1233,7 @@ function buildPendingOutcome(snapshot: DiamondScorebookSnapshot, option: Outcome
     outsOnPlay: option.outs,
     runsBattedIn: option.result === 'reached_on_error' ? 0 : homeMoves,
     putoutBy: '',
+    putouts: [],
     assistBy: '',
     errorBy: '',
     battedBall: option.result.includes('ground') ? 'ground' : option.result.includes('fly') ? 'fly' : 'unknown',
@@ -1223,11 +1280,13 @@ function retargetCorrectionOutcome(pending: PendingPlay, option: OutcomeOption):
         move.earned = undefined;
       });
   }
+  const putoutDraft = reconcileCorrectionPutoutDraft(pending, runnerMoves);
   return {
     ...pending,
     label: `${option.label} replacement`,
     result: option.result,
     runnerMoves,
+    ...putoutDraft,
     outsOnPlay: runnerMoves.filter((move) => move.to === 'out').length,
     runsBattedIn: runnerMoves.filter((move) => move.to === 'home' && move.rbi).length
   };
@@ -1292,6 +1351,7 @@ function buildPendingPlateAppearanceCorrection(
   const fielding = asJsonObject(payload.fielding);
   const assists = Array.isArray(fielding.assists) ? fielding.assists.map(readString).filter(Boolean) : [];
   const errors = Array.isArray(fielding.errors) ? fielding.errors.map(asJsonObject) : [];
+  const putouts = readPerOutPutouts(fielding.putouts);
   return {
     source: 'tap',
     label: `${option.label} replacement`,
@@ -1303,6 +1363,7 @@ function buildPendingPlateAppearanceCorrection(
     outsOnPlay: readNumber(payload.outsOnPlay, runnerMoves.filter((move) => move.to === 'out').length),
     runsBattedIn: readNumber(payload.runsBattedIn, runnerMoves.filter((move) => move.to === 'home' && move.rbi).length),
     putoutBy: readString(fielding.putoutBy),
+    putouts,
     assistBy: assists[0] || '',
     errorBy: readString(errors[0]?.playerId),
     battedBall: readString(fielding.battedBall) || 'unknown',
@@ -1322,6 +1383,16 @@ function asJsonObject(value: unknown): Record<string, unknown> {
 
 function readString(value: unknown) {
   return typeof value === 'string' ? value : '';
+}
+
+function readPerOutPutouts(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    const putout = asJsonObject(entry);
+    const runnerId = readString(putout.runnerId);
+    const putoutBy = readString(putout.putoutBy);
+    return runnerId && putoutBy ? [{ runnerId, putoutBy }] : [];
+  });
 }
 
 function readNumber(value: unknown, fallback: number) {
@@ -1424,6 +1495,14 @@ function buildPendingVoicePlay(snapshot: DiamondScorebookSnapshot, proposal: Pen
             payload.runsBattedIn,
             pending.runnerMoves.filter((move) => move.to === 'home' && move.countsRun !== false && move.rbi).length
           );
+    const fielding = asJsonObject(payload.fielding);
+    const assists = Array.isArray(fielding.assists) ? fielding.assists.map(readString).filter(Boolean) : [];
+    const errors = Array.isArray(fielding.errors) ? fielding.errors.map(asJsonObject) : [];
+    pending.putouts = readPerOutPutouts(fielding.putouts);
+    pending.putoutBy = pending.putouts.length ? '' : readString(fielding.putoutBy);
+    pending.assistBy = assists[0] || '';
+    pending.errorBy = readString(errors[0]?.playerId);
+    pending.battedBall = readString(fielding.battedBall) || 'unknown';
     pending.unresolvedFields = proposal.unresolvedQuestions;
     pending.ambiguityConfirmed = proposal.unresolvedQuestions.length === 0;
     pending.payload = proposal.payload;
@@ -1443,6 +1522,7 @@ function buildPendingVoicePlay(snapshot: DiamondScorebookSnapshot, proposal: Pen
     outsOnPlay: 0,
     runsBattedIn: 0,
     putoutBy: '',
+    putouts: [],
     assistBy: '',
     errorBy: '',
     battedBall: 'unknown',
@@ -1609,7 +1689,15 @@ function validateRunnerReview(pending: PendingPlay, snapshot: DiamondScorebookSn
   if (hasRunnerOrderViolation(pending.runnerMoves)) {
     return 'A trailing runner cannot pass a preceding runner. Review every runner destination.';
   }
-  const computedOuts = pending.runnerMoves.filter((move) => move.to === 'out').length;
+  const outMoves = pending.runnerMoves.filter((move) => move.to === 'out');
+  const computedOuts = outMoves.length;
+  const outRunnerIds = new Set(outMoves.map((move) => move.playerId));
+  if (
+    new Set(pending.putouts.map((putout) => putout.runnerId)).size !== pending.putouts.length ||
+    pending.putouts.some((putout) => !outRunnerIds.has(putout.runnerId))
+  ) {
+    return 'Every exact putout must identify one distinct runner recorded out on this play.';
+  }
   const requiredOuts = pending.result === 'double_play' ? 2 : pending.result === 'triple_play' ? 3 : null;
   if (requiredOuts !== null) {
     const uniqueOutSources = new Set(pending.runnerMoves.flatMap((move) => (move.to === 'out' ? [`${move.from}:${move.playerId}`] : [])));
@@ -1630,7 +1718,6 @@ function validateRunnerReview(pending: PendingPlay, snapshot: DiamondScorebookSn
   if (pending.runnerMoves.some((move) => move.to === 'home' && typeof move.countsRun !== 'boolean')) {
     return 'Choose whether every runner crossing home counts.';
   }
-  const outMoves = pending.runnerMoves.filter((move) => move.to === 'out');
   const thirdOutCancellationIsProvable =
     !pending.correction &&
     snapshot.inning.outs + pending.outsOnPlay === 3 &&
@@ -1721,11 +1808,56 @@ function buildPendingPayload(snapshot: DiamondScorebookSnapshot, pending: Pendin
   if (!batterId || !pitcherId) throw new Error('Set the current batter and pitcher before recording a plate appearance.');
   const batterMove = pending.runnerMoves.find((move) => move.from === 'batter');
   if (!batterMove) throw new Error('Review the batter destination before recording this play.');
-  const fielding: DiamondJsonObject = {};
-  if (pending.putoutBy) fielding.putoutBy = pending.putoutBy;
-  if (pending.assistBy) fielding.assists = [pending.assistBy];
-  if (pending.errorBy) fielding.errors = [{ playerId: pending.errorBy, kind: 'fielding' }];
-  if (pending.battedBall !== 'unknown') fielding.battedBall = pending.battedBall;
+  const originalFielding = pending.correction ? (asJsonObject(asJsonObject(pending.payload).fielding) as DiamondJsonObject) : {};
+  const fielding: DiamondJsonObject = { ...originalFielding };
+  const originalOutRunnerIds = new Set(plateAppearancePayloadOutRunnerIds(asJsonObject(pending.payload)));
+  const reviewedOutRunnerIds = new Set(pending.runnerMoves.flatMap((move) => (move.to === 'out' ? [move.playerId] : [])));
+  const outGeometryChanged = Boolean(pending.correction && !sameRunnerIdSet(originalOutRunnerIds, reviewedOutRunnerIds));
+  if (!pending.correction || pending.fieldingEdits?.putoutCredits || outGeometryChanged) {
+    delete fielding.putoutBy;
+    delete fielding.putouts;
+    const reviewedPutouts =
+      pending.correction && outGeometryChanged && !pending.fieldingEdits?.putoutCredits
+        ? readPerOutPutouts(originalFielding.putouts).filter((putout) => reviewedOutRunnerIds.has(putout.runnerId))
+        : pending.putouts;
+    if (pending.putoutBy && !outGeometryChanged) fielding.putoutBy = pending.putoutBy;
+    if (reviewedPutouts.length) fielding.putouts = reviewedPutouts;
+  }
+  if (!pending.correction || pending.fieldingEdits?.assist) {
+    const remainingAssists = Array.isArray(originalFielding.assists)
+      ? originalFielding.assists.map(readString).filter(Boolean).slice(1)
+      : [];
+    const assists = pending.assistBy
+      ? [pending.assistBy, ...remainingAssists.filter((playerId) => playerId !== pending.assistBy)]
+      : remainingAssists;
+    if (assists.length) fielding.assists = assists;
+    else delete fielding.assists;
+  }
+  if (!pending.correction || pending.fieldingEdits?.error) {
+    const originalErrors = Array.isArray(originalFielding.errors)
+      ? originalFielding.errors.map((error) => asJsonObject(error) as DiamondJsonObject)
+      : [];
+    const errors = pending.errorBy
+      ? [
+          {
+            ...originalErrors[0],
+            playerId: pending.errorBy,
+            kind: readString(originalErrors[0]?.kind) || 'fielding'
+          },
+          ...originalErrors.slice(1)
+        ]
+      : originalErrors.slice(1);
+    if (errors.length) fielding.errors = errors;
+    else delete fielding.errors;
+  }
+  if (!pending.correction || pending.fieldingEdits?.battedBall) {
+    if (pending.battedBall !== 'unknown') fielding.battedBall = pending.battedBall;
+    else delete fielding.battedBall;
+  }
+  if (outGeometryChanged) {
+    delete fielding.doublePlay;
+    delete fielding.triplePlay;
+  }
   const hasFielding = Object.keys(fielding).length > 0;
   const scoredMoves = pending.runnerMoves.filter((move) => move.to === 'home' && move.countsRun !== false);
   return {
@@ -5373,6 +5505,7 @@ function AdvancedScoringPanel({
   const [structuredType, setStructuredType] = useState<'record_fielding' | 'record_scoring_judgment'>('record_fielding');
   const [structuredPlayId, setStructuredPlayId] = useState('');
   const [fieldingPutout, setFieldingPutout] = useState('');
+  const [fieldingPutoutRunnerId, setFieldingPutoutRunnerId] = useState('');
   const [fieldingAssistOne, setFieldingAssistOne] = useState('');
   const [fieldingAssistTwo, setFieldingAssistTwo] = useState('');
   const [fieldingErrorPlayer, setFieldingErrorPlayer] = useState('');
@@ -5463,6 +5596,8 @@ function AdvancedScoringPanel({
   const structuredFieldingSide = structuredBattingSide ? oppositeDiamondSide(structuredBattingSide) : null;
   const structuredBattingPlayers = structuredBattingSide ? snapshotSidePlayers(snapshot, structuredBattingSide) : [];
   const structuredFieldingPlayers = structuredFieldingSide ? snapshotSidePlayers(snapshot, structuredFieldingSide) : [];
+  const structuredOutRunnerIds = structuredEvent ? privateEventOutRunnerIds(structuredEvent) : [];
+  const resolvedFieldingPutoutRunnerId = structuredOutRunnerIds.includes(fieldingPutoutRunnerId) ? fieldingPutoutRunnerId : '';
   const runnerDestinationOptions = activeRunner
     ? destinationOptions.filter(
         (option) => canChooseDestination(activeRunner.base, option.value) && canChooseRunnerCauseDestination(runnerAction, option.value)
@@ -5513,7 +5648,11 @@ function AdvancedScoringPanel({
           throw new Error('Choose fielders from the selected play’s fielding side.');
         }
         const fielding: DiamondJsonObject = {
-          ...(fieldingPutout ? { putoutBy: fieldingPutout } : {}),
+          ...(fieldingPutout
+            ? resolvedFieldingPutoutRunnerId
+              ? { putouts: [{ runnerId: resolvedFieldingPutoutRunnerId, putoutBy: fieldingPutout }] }
+              : { putoutBy: fieldingPutout }
+            : {}),
           ...(assists.length ? { assists } : {}),
           ...(fieldingErrorPlayer ? { errors: [{ playerId: fieldingErrorPlayer, kind: fieldingErrorKind }] } : {}),
           ...(fieldingPassedBall ? { passedBallBy: fieldingPassedBall } : {}),
@@ -6061,6 +6200,26 @@ function AdvancedScoringPanel({
               disabled={disabled}
               onChange={setFieldingPutout}
             />
+            {structuredOutRunnerIds.length ? (
+              <label className="text-xs font-black text-gray-700">
+                Putout for retired runner
+                <select
+                  className="mt-1 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-bold"
+                  value={resolvedFieldingPutoutRunnerId}
+                  disabled={disabled || !fieldingPutout}
+                  onChange={(event) => setFieldingPutoutRunnerId(event.target.value)}
+                >
+                  <option value="">Unspecified legacy credit</option>
+                  {structuredOutRunnerIds.map((runnerId) => (
+                    <option key={runnerId} value={runnerId}>
+                      {structuredBattingPlayers.find((player) => player.playerId === runnerId)
+                        ? playerLabel(structuredBattingPlayers.find((player) => player.playerId === runnerId) || null)
+                        : runnerId}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
             <FielderSelect
               label="First assist"
               value={fieldingAssistOne}
@@ -6446,13 +6605,16 @@ function PlayReviewModal({
       pending.result,
       pending.runnerMoves.map((move) => (move.key === key ? { ...move, ...updates } : move))
     );
+    const putoutDraft = reconcileCorrectionPutoutDraft(pending, runnerMoves);
     onChange({
       ...pending,
       runnerMoves,
+      ...putoutDraft,
       outsOnPlay: runnerMoves.filter((move) => move.to === 'out').length,
       runsBattedIn: runnerMoves.filter((move) => move.to === 'home' && move.countsRun !== false && move.rbi).length
     });
   };
+  const outMoves = pending.runnerMoves.filter((move) => move.to === 'out');
   return (
     <Modal
       onClose={onClose}
@@ -6707,30 +6869,69 @@ function PlayReviewModal({
               <fieldset className="mt-4 rounded-2xl border border-gray-200 bg-gray-50 p-3">
                 <legend className="px-1 text-xs font-black text-gray-700">Fielding detail</legend>
                 <div className="grid gap-3 sm:grid-cols-2">
-                  <FielderSelect
-                    label="Putout"
-                    value={pending.putoutBy}
-                    players={reviewFieldingPlayers}
-                    onChange={(value) => onChange({ ...pending, putoutBy: value })}
-                  />
+                  {outMoves.length > 1 || pending.putouts.length ? (
+                    outMoves.map((move) => (
+                      <FielderSelect
+                        key={`putout:${move.key}`}
+                        label={`Putout for ${move.label}`}
+                        value={pending.putouts.find((putout) => putout.runnerId === move.playerId)?.putoutBy || ''}
+                        players={reviewFieldingPlayers}
+                        onChange={(value) =>
+                          onChange({
+                            ...pending,
+                            putoutBy: '',
+                            putouts: pending.runnerMoves.flatMap((candidate) => {
+                              const putoutBy =
+                                candidate.playerId === move.playerId
+                                  ? value
+                                  : pending.putouts.find((putout) => putout.runnerId === candidate.playerId)?.putoutBy;
+                              return candidate.to === 'out' && putoutBy ? [{ runnerId: candidate.playerId, putoutBy }] : [];
+                            }),
+                            fieldingEdits: { ...pending.fieldingEdits, putoutCredits: true }
+                          })
+                        }
+                      />
+                    ))
+                  ) : (
+                    <FielderSelect
+                      label="Putout"
+                      value={pending.putoutBy}
+                      players={reviewFieldingPlayers}
+                      onChange={(value) =>
+                        onChange({
+                          ...pending,
+                          putoutBy: value,
+                          fieldingEdits: { ...pending.fieldingEdits, putoutCredits: true }
+                        })
+                      }
+                    />
+                  )}
                   <FielderSelect
                     label="Assist"
                     value={pending.assistBy}
                     players={reviewFieldingPlayers}
-                    onChange={(value) => onChange({ ...pending, assistBy: value })}
+                    onChange={(value) =>
+                      onChange({ ...pending, assistBy: value, fieldingEdits: { ...pending.fieldingEdits, assist: true } })
+                    }
                   />
                   <FielderSelect
                     label="Error"
                     value={pending.errorBy}
                     players={reviewFieldingPlayers}
-                    onChange={(value) => onChange({ ...pending, errorBy: value })}
+                    onChange={(value) => onChange({ ...pending, errorBy: value, fieldingEdits: { ...pending.fieldingEdits, error: true } })}
                   />
                   <label className="text-xs font-black text-gray-700">
                     Batted ball
                     <select
                       className="mt-1 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-bold"
                       value={pending.battedBall}
-                      onChange={(event) => onChange({ ...pending, battedBall: event.target.value })}
+                      onChange={(event) =>
+                        onChange({
+                          ...pending,
+                          battedBall: event.target.value,
+                          fieldingEdits: { ...pending.fieldingEdits, battedBall: true }
+                        })
+                      }
                     >
                       <option value="unknown">Not entered</option>
                       <option value="ground">Ground</option>

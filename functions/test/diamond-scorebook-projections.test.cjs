@@ -3311,6 +3311,133 @@ test("compiled fielding projection preserves one-fielder putout multiplicity wit
   assert.equal(noOutStats.players["home-1"].raw.fielding.A, 1);
 });
 
+test("compiled projection preserves mixed per-out putout multiplicity across overlap and correction", () => {
+  const game = harness("full", "baseball-nfhs");
+  setLineupsAndStart(game, 3);
+  placeRunnerOnBase(game, "first");
+  game.submit("record_plate_appearance", {
+    batterId: "away-2",
+    pitcherId: "home-1",
+    result: "single",
+    batterAdvance: { to: "first" },
+    runnerAdvances: [
+      {
+        runnerId: "away-1",
+        from: "first",
+        to: "second",
+        cause: "batted_ball",
+      },
+    ],
+    outsOnPlay: 0,
+  });
+  const payload = {
+    batterId: "away-3",
+    pitcherId: "home-1",
+    result: "triple_play",
+    batterAdvance: { to: "out", outKind: "batter_runner" },
+    runnerAdvances: [
+      {
+        runnerId: "away-1",
+        from: "second",
+        to: "out",
+        cause: "appeal_out",
+        outKind: "appeal",
+      },
+      {
+        runnerId: "away-2",
+        from: "first",
+        to: "out",
+        cause: "force_out",
+        outKind: "force",
+      },
+    ],
+    outsOnPlay: 3,
+    fielding: {
+      putouts: [
+        { runnerId: "away-3", putoutBy: "home-2" },
+        { runnerId: "away-1", putoutBy: "home-2" },
+      ],
+      triplePlay: true,
+    },
+  };
+  const play = game.submit("record_plate_appearance", payload);
+  const overlap = {
+    putouts: [
+      { runnerId: "away-1", putoutBy: "home-2" },
+      { runnerId: "away-2", putoutBy: "home-1" },
+    ],
+    assists: ["home-2"],
+    triplePlay: true,
+  };
+  game.submit("record_fielding", {
+    playEventId: play.eventId,
+    fielding: overlap,
+  });
+  const duplicate = game.submit("record_fielding", {
+    playEventId: play.eventId,
+    fielding: overlap,
+  });
+
+  const assertMixedCredits = () => {
+    const projected = projectDiamondStats(game.ledger);
+    assert.deepEqual(
+      {
+        PO: projected.players["home-2"].raw.fielding.PO,
+        A: projected.players["home-2"].raw.fielding.A,
+        TP: projected.players["home-2"].raw.fielding.TP,
+      },
+      { PO: 2, A: 1, TP: 1 },
+    );
+    assert.deepEqual(
+      {
+        PO: projected.players["home-1"].raw.fielding.PO,
+        TP: projected.players["home-1"].raw.fielding.TP,
+      },
+      { PO: 1, TP: 1 },
+    );
+    assert.equal(
+      projected.players["home-2"].raw.fielding.PO +
+        projected.players["home-1"].raw.fielding.PO,
+      3,
+    );
+    assert.equal(projected.coverage.fielding, "complete");
+    assert.equal(verifyDiamondLedger(game.ledger), true);
+    assert.deepEqual(replayDiamondLedger(game.ledger).state, game.ledger.state);
+  };
+  assertMixedCredits();
+
+  const conflicting = game.attempt("record_fielding", {
+    playEventId: play.eventId,
+    fielding: {
+      putouts: [{ runnerId: "away-3", putoutBy: "home-1" }],
+    },
+  });
+  assert.equal(conflicting.result.outcome, "rejected");
+  assert.equal(conflicting.result.rejection?.code, "fielding-outs-mismatch");
+
+  game.submit("void_event", {
+    targetEventId: duplicate.eventId,
+    reason: "Remove duplicate per-out fielding evidence.",
+  });
+  assertMixedCredits();
+
+  game.submit("supersede_event", {
+    targetEventId: play.eventId,
+    reason: "Preserve per-out fielding evidence under corrected identity.",
+    replacement: { type: "record_plate_appearance", payload },
+  });
+  assertMixedCredits();
+
+  const publicPlay = buildDiamondPublicPlays({
+    ledger: game.ledger,
+    playerDirectory: DIRECTORY,
+  }).find((candidate) => candidate.sourceEventId === play.eventId);
+  assert.ok(publicPlay);
+  assert.ok(
+    publicPlay.fielders.some((fielder) => fielder.playerId === "home-2"),
+  );
+});
+
 test("compiled bounded checkpoint fielding completeness stays byte-identical to full replay", () => {
   const matrix = [
     {

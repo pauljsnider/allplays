@@ -31,6 +31,7 @@ import {
   reduceDiamondEvent,
   setDiamondStateRevision,
   validateDiamondFieldingOutCredit,
+  validateDiamondMergedFieldingOutCredit,
   validateDiamondState,
   type DiamondReducerAction
 } from './reducer';
@@ -242,6 +243,7 @@ type HistoricalPlayContext = Readonly<{
   scoringRunners: ReadonlySet<string>;
   requiresHomeRunRbi: boolean;
   actualOutCount: number;
+  actualOutRunnerIds: readonly string[];
   knownPlayers: Readonly<Record<DiamondSide, ReadonlySet<string>>>;
   pitcherAppearances: Readonly<Record<DiamondSide, ReadonlySet<string>>>;
 }>;
@@ -287,27 +289,27 @@ function scoringParticipants(event: DiamondEffectiveEvent) {
   return { participants, scoringRunners, requiresHomeRunRbi };
 }
 
-function actualOutCount(event: DiamondEffectiveEvent) {
+function actualOutRunnerIds(event: DiamondEffectiveEvent) {
   if (event.type === 'record_plate_appearance') {
     const payload = event.payload as DiamondCommandPayloadMap['record_plate_appearance'];
-    return new Set(
-      [
-        { runnerId: payload.batterId, to: payload.batterAdvance.to },
-        ...payload.runnerAdvances.map((advance) => ({ runnerId: advance.runnerId, to: advance.to }))
-      ]
-        .filter((move) => move.to === 'out')
-        .map((move) => move.runnerId)
-    ).size;
+    return [
+      { runnerId: payload.batterId, to: payload.batterAdvance.to },
+      ...payload.runnerAdvances.map((advance) => ({ runnerId: advance.runnerId, to: advance.to }))
+    ]
+      .filter((move) => move.to === 'out')
+      .map((move) => move.runnerId);
   }
   if (event.type === 'advance_runner') {
-    return (event.payload as DiamondCommandPayloadMap['advance_runner']).to === 'out' ? 1 : 0;
+    const payload = event.payload as DiamondCommandPayloadMap['advance_runner'];
+    return payload.to === 'out' ? [payload.runnerId] : [];
   }
-  return 0;
+  return [];
 }
 
 function fieldingParticipantIds(fielding: DiamondFieldingChain) {
   return [
     ...(fielding.putoutBy ? [fielding.putoutBy] : []),
+    ...(fielding.putouts ?? []).map((putout) => putout.putoutBy),
     ...(fielding.assists ?? []),
     ...(fielding.errors ?? []).map((error) => error.playerId),
     ...(fielding.passedBallBy ? [fielding.passedBallBy] : [])
@@ -398,6 +400,7 @@ function validateAttachmentAgainstHistoricalPlay(event: Pick<DiamondEffectiveEve
   if (event.type === 'record_fielding') {
     const fielding = (event.payload as DiamondCommandPayloadMap['record_fielding']).fielding;
     validateDiamondFieldingOutCredit(fielding, context.actualOutCount);
+    validateDiamondMergedFieldingOutCredit([fielding], context.actualOutRunnerIds);
     const invalidFielder = fieldingParticipantIds(fielding).find(
       (playerId) => !context.activeDefenders.has(playerId) || !playerRoleIsUnambiguous(context, context.defensiveSide, playerId)
     );
@@ -484,6 +487,7 @@ function observeEffectiveEventParticipants(state: DiamondGameState, event: Diamo
       away: knownPlayerIds(state, 'away')
     };
     participants.forEach((playerId) => knownPlayers[battingSide].add(playerId));
+    const outRunnerIds = actualOutRunnerIds(event);
     const context: HistoricalPlayContext = {
       battingSide,
       defensiveSide,
@@ -494,7 +498,8 @@ function observeEffectiveEventParticipants(state: DiamondGameState, event: Diamo
       participants,
       scoringRunners,
       requiresHomeRunRbi,
-      actualOutCount: actualOutCount(event),
+      actualOutCount: outRunnerIds.length,
+      actualOutRunnerIds: outRunnerIds,
       knownPlayers,
       pitcherAppearances: {
         home: new Set(tracker.pitcherAppearances.home),

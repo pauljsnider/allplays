@@ -149,7 +149,17 @@ const SCORING_CREDIT_FIELDS = ['countsRun', 'earned', 'rbi', 'responsiblePitcher
 const BATTER_ADVANCE_FIELDS = new Set(['to', 'cause', 'outKind', ...SCORING_CREDIT_FIELDS]);
 const RUNNER_ADVANCE_FIELDS = new Set(['runnerId', 'from', 'to', 'cause', 'outKind', ...SCORING_CREDIT_FIELDS]);
 const STANDALONE_RUNNER_ADVANCE_FIELDS = new Set([...RUNNER_ADVANCE_FIELDS, 'fielding', 'omissions']);
-const FIELDING_FIELDS = new Set(['putoutBy', 'assists', 'errors', 'passedBallBy', 'doublePlay', 'triplePlay', 'battedBall', 'location']);
+const FIELDING_FIELDS = new Set([
+    'putoutBy',
+    'putouts',
+    'assists',
+    'errors',
+    'passedBallBy',
+    'doublePlay',
+    'triplePlay',
+    'battedBall',
+    'location'
+]);
 const FIELDING_ATTACHMENT_FIELDS = new Set(['playEventId', 'fielding']);
 const SCORING_JUDGMENT_FIELDS = new Set(['playEventId', 'runnerId', 'earned', 'rbi', 'responsiblePitcherId', 'pitcherOfRecord']);
 const PITCHER_DECISION_FIELDS = new Set(['side', 'playerId', 'decision']);
@@ -580,25 +590,55 @@ function fieldingChainsForPlay(event, attached, inline) {
         ...(event.eventId === event.sourceEventId ? [] : (attached.get(event.eventId) ?? []))
     ];
 }
-function validateDiamondMergedFieldingOutCredit(fieldings, actualOutCount) {
-    const putoutPlayers = new Set(fieldings.flatMap((fielding) => (fielding.putoutBy ? [fielding.putoutBy] : [])));
-    if (putoutPlayers.size > actualOutCount) {
-        throw new contracts_1.DiamondDomainError('fielding-outs-mismatch', `Putout fielding evidence names ${String(putoutPlayers.size)} fielders for ${String(actualOutCount)} actual outs.`);
-    }
+function plateAppearanceOutRunnerIds(payload) {
+    return [
+        ...(payload.batterAdvance.to === 'out' ? [payload.batterId] : []),
+        ...payload.runnerAdvances.flatMap((advance) => (advance.to === 'out' ? [advance.runnerId] : []))
+    ];
 }
-function deriveDiamondPutoutCredits(fieldings, actualOutCount) {
-    validateDiamondMergedFieldingOutCredit(fieldings, actualOutCount);
-    const putoutPlayers = new Set(fieldings.flatMap((fielding) => (fielding.putoutBy ? [fielding.putoutBy] : [])));
+function resolveDiamondPutoutCredits(fieldings, actualOutRunnerIds) {
+    const actualOuts = new Set(actualOutRunnerIds);
+    const exactPutouts = new Map();
+    fieldings.forEach((fielding) => {
+        fielding.putouts?.forEach(({ runnerId, putoutBy }) => {
+            if (!actualOuts.has(runnerId)) {
+                throw new contracts_1.DiamondDomainError('fielding-outs-mismatch', `Putout fielding evidence cites ${runnerId}, who was not retired on this play.`);
+            }
+            const existing = exactPutouts.get(runnerId);
+            if (existing && existing !== putoutBy) {
+                throw new contracts_1.DiamondDomainError('fielding-outs-mismatch', `Putout fielding evidence assigns two fielders to the out recorded for ${runnerId}.`);
+            }
+            exactPutouts.set(runnerId, putoutBy);
+        });
+    });
+    const credits = new Map();
+    exactPutouts.forEach((putoutBy) => credits.set(putoutBy, (credits.get(putoutBy) ?? 0) + 1));
+    // Legacy credits have no out identity, so deduplicate them by fielder. Exact
+    // credits preserve multiplicity because distinct retired runners identify distinct outs.
+    const legacyPutoutPlayers = new Set(fieldings.flatMap((fielding) => (fielding.putoutBy ? [fielding.putoutBy] : [])));
+    legacyPutoutPlayers.forEach((playerId) => {
+        if (!credits.has(playerId))
+            credits.set(playerId, 1);
+    });
+    const creditedOuts = Array.from(credits.values()).reduce((total, count) => total + count, 0);
+    if (creditedOuts > actualOuts.size) {
+        throw new contracts_1.DiamondDomainError('fielding-outs-mismatch', `Putout fielding evidence credits ${String(creditedOuts)} putouts for ${String(actualOuts.size)} actual outs.`);
+    }
     const assistPlayers = new Set(fieldings.flatMap((fielding) => fielding.assists ?? []));
-    const credits = new Map(Array.from(putoutPlayers, (playerId) => [playerId, 1]));
-    if (actualOutCount > 1 && putoutPlayers.size === 1 && assistPlayers.size === 0) {
-        credits.set(putoutPlayers.values().next().value, actualOutCount);
+    if (exactPutouts.size === 0 && actualOuts.size > 1 && legacyPutoutPlayers.size === 1 && assistPlayers.size === 0) {
+        credits.set(legacyPutoutPlayers.values().next().value, actualOuts.size);
     }
     return credits;
 }
-function hasCompletePutoutEvidence(fieldings, actualOutCount) {
-    const creditedOuts = Array.from(deriveDiamondPutoutCredits(fieldings, actualOutCount).values()).reduce((total, count) => total + count, 0);
-    return creditedOuts === actualOutCount;
+function validateDiamondMergedFieldingOutCredit(fieldings, actualOutRunnerIds) {
+    resolveDiamondPutoutCredits(fieldings, actualOutRunnerIds);
+}
+function deriveDiamondPutoutCredits(fieldings, actualOutRunnerIds) {
+    return resolveDiamondPutoutCredits(fieldings, actualOutRunnerIds);
+}
+function hasCompletePutoutEvidence(fieldings, actualOutRunnerIds) {
+    const creditedOuts = Array.from(deriveDiamondPutoutCredits(fieldings, actualOutRunnerIds).values()).reduce((total, count) => total + count, 0);
+    return creditedOuts === new Set(actualOutRunnerIds).size;
 }
 function hasCompleteSemanticFieldingEvidence(advances, fieldings, result) {
     const requiresError = result === 'reached_on_error' ||
@@ -672,7 +712,8 @@ function deriveDiamondCoverageFromEventStates(initialState, eventStates) {
             if (payload.fielding && coverage.fielding === 'not_collected')
                 coverage = { ...coverage, fielding: 'partial' };
             const fieldingChains = fieldingChainsForPlay(event, fieldingByPlay, payload.fielding);
-            validateDiamondMergedFieldingOutCredit(fieldingChains, payload.outsOnPlay);
+            const outRunnerIds = plateAppearanceOutRunnerIds(payload);
+            validateDiamondMergedFieldingOutCredit(fieldingChains, outRunnerIds);
             const judgments = judgmentsForPlay(event, judgmentsByPlay);
             const scoringAdvances = [{ runnerId: payload.batterId, ...payload.batterAdvance }, ...payload.runnerAdvances].filter((advance) => advance.to === 'home' && advance.countsRun !== false);
             if (scoringAdvances.some((advance) => {
@@ -695,7 +736,7 @@ function deriveDiamondCoverageFromEventStates(initialState, eventStates) {
                 const hasKnownDroppedThirdStrikeCause = hasCompleteDiamondDroppedThirdStrikeCause(payload.result, payload.batterAdvance.to, payload.batterAdvance.cause);
                 if (!hasKnownDroppedThirdStrikeCause)
                     coverage = { ...coverage, pitching: 'partial' };
-                if (payload.outsOnPlay > 0 && !hasCompletePutoutEvidence(fieldingChains, payload.outsOnPlay)) {
+                if (payload.outsOnPlay > 0 && !hasCompletePutoutEvidence(fieldingChains, outRunnerIds)) {
                     coverage = { ...coverage, fielding: 'partial' };
                 }
                 if (!hasKnownDroppedThirdStrikeCause ||
@@ -710,14 +751,15 @@ function deriveDiamondCoverageFromEventStates(initialState, eventStates) {
             if (payload.fielding && coverage.fielding === 'not_collected')
                 coverage = { ...coverage, fielding: 'partial' };
             const fieldingChains = fieldingChainsForPlay(event, fieldingByPlay, payload.fielding);
-            validateDiamondMergedFieldingOutCredit(fieldingChains, payload.to === 'out' ? 1 : 0);
+            const outRunnerIds = payload.to === 'out' ? [payload.runnerId] : [];
+            validateDiamondMergedFieldingOutCredit(fieldingChains, outRunnerIds);
             if (payload.to === 'home' && payload.countsRun !== false) {
                 const judgment = latestRunnerJudgmentBoolean(judgmentsForPlay(event, judgmentsByPlay), payload.runnerId, 'earned');
                 if (typeof (judgment ?? payload.earned) !== 'boolean')
                     coverage = { ...coverage, pitching: 'partial' };
             }
             if (initialState.captureMode === 'full' && payload.to === 'out') {
-                if (!hasCompletePutoutEvidence(fieldingChains, 1))
+                if (!hasCompletePutoutEvidence(fieldingChains, outRunnerIds))
                     coverage = { ...coverage, fielding: 'partial' };
             }
             if (initialState.captureMode === 'full' && !hasCompleteSemanticFieldingEvidence([payload], fieldingChains)) {
@@ -764,6 +806,23 @@ function validateFieldingIds(value) {
     requireOnlyFields(fielding, FIELDING_FIELDS, 'fielding');
     if (fielding.putoutBy !== undefined)
         requireId(fielding.putoutBy, 'putoutBy');
+    if (fielding.putouts !== undefined && !Array.isArray(fielding.putouts)) {
+        throw new contracts_1.DiamondDomainError('invalid-fielding-chain', 'Per-out putout evidence must be an array.');
+    }
+    const putouts = fielding.putouts ?? [];
+    if (putouts.length > 3)
+        throw new contracts_1.DiamondDomainError('invalid-fielding-chain', 'At most three per-out putouts may be recorded.');
+    const putoutRunnerIds = putouts.map((value, index) => {
+        const putout = requireRecord(value, `fielding.putouts[${String(index)}]`);
+        requireOnlyFields(putout, new Set(['runnerId', 'putoutBy']), `fielding.putouts[${String(index)}]`);
+        return {
+            runnerId: requireId(putout.runnerId, 'putout runnerId'),
+            putoutBy: requireId(putout.putoutBy, 'putout fielder')
+        };
+    });
+    if (new Set(putoutRunnerIds.map(({ runnerId }) => runnerId)).size !== putoutRunnerIds.length) {
+        throw new contracts_1.DiamondDomainError('invalid-fielding-chain', 'A fielding chain may identify only one putout fielder for each retired runner.');
+    }
     if (fielding.passedBallBy !== undefined)
         requireId(fielding.passedBallBy, 'passedBallBy');
     requireOptionalBoolean(fielding.doublePlay, 'fielding.doublePlay');
@@ -845,6 +904,7 @@ function validateInlineFieldingParticipants(state, value) {
     const battingParticipants = currentBattingParticipantIds(state);
     const creditedIds = [
         value.putoutBy,
+        ...(value.putouts ?? []).map((putout) => putout.putoutBy),
         ...(value.assists ?? []),
         ...(value.errors ?? []).map((error) => error.playerId),
         value.passedBallBy
@@ -1670,9 +1730,10 @@ function reduceDiamondEvent(state, action) {
             validateCompleteExtraBaseHitRunnerResolution(state, action.payload.result, runnerMoves);
             validateSacrificeEvidence(state, action.payload.result, runnerMoves);
             validateNamedMultiOutResult(state, action.payload.result, moves, action.payload.outsOnPlay);
-            const actualOutCount = moves.filter((move) => move.to === 'out').length;
+            const actualOutRunnerIds = moves.flatMap((move) => (move.to === 'out' ? [move.runnerId] : []));
+            const actualOutCount = actualOutRunnerIds.length;
             validateDiamondFieldingOutCredit(action.payload.fielding, actualOutCount);
-            validateDiamondMergedFieldingOutCredit(action.payload.fielding ? [action.payload.fielding] : [], actualOutCount);
+            validateDiamondMergedFieldingOutCredit(action.payload.fielding ? [action.payload.fielding] : [], actualOutRunnerIds);
             next = applyMoves(state, side, moves, action.payload.outsOnPlay, action.eventId ?? null);
             const orderLength = state.lineups[side].battingOrder.length;
             next = {
@@ -1703,7 +1764,7 @@ function reduceDiamondEvent(state, action) {
                 next = markPartial(next, ['pitching']);
             }
             const missingFullFielding = action.payload.outsOnPlay > 0 &&
-                !hasCompletePutoutEvidence(action.payload.fielding ? [action.payload.fielding] : [], action.payload.outsOnPlay);
+                !hasCompletePutoutEvidence(action.payload.fielding ? [action.payload.fielding] : [], actualOutRunnerIds);
             const missingSemanticFielding = !hasCompleteSemanticFieldingEvidence([action.payload.batterAdvance, ...action.payload.runnerAdvances], action.payload.fielding ? [action.payload.fielding] : [], action.payload.result);
             if (state.captureMode === 'full' && (!hasKnownDroppedThirdStrikeCause || missingFullFielding || missingSemanticFielding)) {
                 next = markPartial(next, ['fielding']);
@@ -1723,7 +1784,7 @@ function reduceDiamondEvent(state, action) {
                 validateFieldingIds(action.payload.fielding);
                 validateInlineFieldingParticipants(state, action.payload.fielding);
                 validateDiamondFieldingOutCredit(action.payload.fielding, action.payload.to === 'out' ? 1 : 0);
-                validateDiamondMergedFieldingOutCredit([action.payload.fielding], action.payload.to === 'out' ? 1 : 0);
+                validateDiamondMergedFieldingOutCredit([action.payload.fielding], action.payload.to === 'out' ? [runnerId] : []);
             }
             validateOmissions(action.payload.omissions);
             validateInlineResponsiblePitcher(state, action.payload.responsiblePitcherId, placement.chargedToPitcherId, `The advance for ${runnerId}`);
@@ -1746,7 +1807,7 @@ function reduceDiamondEvent(state, action) {
             }
             const inlineFielding = action.payload.fielding ? [action.payload.fielding] : [];
             if (state.captureMode === 'full' &&
-                ((action.payload.to === 'out' && !hasCompletePutoutEvidence(inlineFielding, 1)) ||
+                ((action.payload.to === 'out' && !hasCompletePutoutEvidence(inlineFielding, [runnerId])) ||
                     !hasCompleteSemanticFieldingEvidence([action.payload], inlineFielding))) {
                 next = markPartial(next, ['fielding']);
             }

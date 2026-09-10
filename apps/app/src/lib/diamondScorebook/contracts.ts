@@ -219,6 +219,7 @@ export type DiamondRunnerAdvance = DiamondScoringCredit &
 
 export type DiamondFieldingChain = Readonly<{
   putoutBy?: string;
+  putouts?: readonly Readonly<{ runnerId: string; putoutBy: string }>[];
   assists?: readonly string[];
   errors?: readonly Readonly<{ playerId: string; kind?: 'fielding' | 'throwing' }>[];
   passedBallBy?: string;

@@ -3452,6 +3452,206 @@ describe('Scoring decisions and correction reconciliation', () => {
     expect(noOutStats.players['home-1'].raw.fielding.A).toBe(1);
   });
 
+  it('preserves mixed per-out putout multiplicity while deduplicating overlapping evidence', () => {
+    const game = createHarness('baseball-nfhs', 'full');
+    configureGame(game);
+    placeRunnerOnBase(game, 'first');
+    game.submit('record_plate_appearance', {
+      batterId: 'away-2',
+      pitcherId: 'home-1',
+      result: 'single',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [{ runnerId: 'away-1', from: 'first', to: 'second', cause: 'batted_ball' }],
+      outsOnPlay: 0
+    });
+    recordPitch(game, 'in_play');
+    const matchup = currentMatchup(game);
+    const inlineFielding = {
+      putouts: [
+        { runnerId: matchup.batterId, putoutBy: 'home-3' },
+        { runnerId: 'away-1', putoutBy: 'home-3' }
+      ],
+      assists: ['home-3'],
+      triplePlay: true
+    };
+    const payload = {
+      ...matchup,
+      result: 'triple_play' as const,
+      batterAdvance: { to: 'out' as const, outKind: 'batter_runner' as const },
+      runnerAdvances: [
+        { runnerId: 'away-1', from: 'second' as const, to: 'out' as const, cause: 'appeal_out' as const, outKind: 'appeal' as const },
+        { runnerId: 'away-2', from: 'first' as const, to: 'out' as const, cause: 'force_out' as const, outKind: 'force' as const }
+      ],
+      outsOnPlay: 3,
+      fielding: inlineFielding
+    };
+    const command = game.command('record_plate_appearance', payload);
+    const context = {
+      actorUid: INITIAL_SCORER,
+      eventId: 'mixed-putout-checkpoint-event',
+      serverTimestampMs: 1_900_000_200_000
+    } as const;
+    const checkpoint = createDiamondCheckpoint(game.ledger);
+    const full = executeDiamondCommand(game.ledger, command, context);
+    const bounded = executeDiamondCommandFromCheckpoint(checkpoint, command, context);
+    expect(full.result, full.result.rejection?.message).toMatchObject({ outcome: 'accepted' });
+    expect(bounded.result, bounded.result.rejection?.message).toMatchObject({ outcome: 'accepted' });
+    expect(full.ledger.state.coverage.fielding).toBe('partial');
+    expect(bounded.checkpoint.state.coverage.fielding).toBe('partial');
+    expect(bounded.event).toEqual(full.event);
+
+    const completePayload = {
+      ...payload,
+      fielding: {
+        ...inlineFielding,
+        putouts: [...inlineFielding.putouts, { runnerId: 'away-2', putoutBy: 'home-2' }]
+      }
+    };
+    const completeCommand = game.command('record_plate_appearance', completePayload);
+    const completeContext = {
+      ...context,
+      eventId: 'complete-mixed-putout-checkpoint-event',
+      serverTimestampMs: context.serverTimestampMs + 1
+    };
+    const completeFull = executeDiamondCommand(game.ledger, completeCommand, completeContext);
+    const completeBounded = executeDiamondCommandFromCheckpoint(checkpoint, completeCommand, completeContext);
+    expect(completeFull.result, completeFull.result.rejection?.message).toMatchObject({ outcome: 'accepted' });
+    expect(completeBounded.result, completeBounded.result.rejection?.message).toMatchObject({ outcome: 'accepted' });
+    expect(completeFull.ledger.state.coverage.fielding).toBe('complete');
+    expect(completeBounded.checkpoint.state.coverage.fielding).toBe('complete');
+    expect(completeBounded.event).toEqual(completeFull.event);
+
+    const play = game.submit('record_plate_appearance', payload);
+    const overlapping = game.submit('record_fielding', {
+      playEventId: play.event!.eventId,
+      fielding: {
+        putouts: [
+          { runnerId: 'away-1', putoutBy: 'home-3' },
+          { runnerId: 'away-2', putoutBy: 'home-2' }
+        ],
+        assists: ['home-3'],
+        triplePlay: true
+      }
+    });
+    const duplicate = game.submit('record_fielding', {
+      playEventId: play.event!.eventId,
+      fielding: {
+        putouts: [
+          { runnerId: 'away-1', putoutBy: 'home-3' },
+          { runnerId: 'away-2', putoutBy: 'home-2' }
+        ],
+        assists: ['home-3'],
+        triplePlay: true
+      }
+    });
+
+    let projected = projectDiamondStats(game.ledger);
+    expect(projected.players['home-3'].raw.fielding).toMatchObject({ PO: 2, A: 1, TP: 1 });
+    expect(projected.players['home-2'].raw.fielding).toMatchObject({ PO: 1, TP: 1 });
+    expect(projected.players['home-3'].raw.fielding.PO + projected.players['home-2'].raw.fielding.PO).toBe(3);
+    expect(projected.coverage.fielding).toBe('complete');
+
+    expectRejected(
+      game.submit(
+        'record_fielding',
+        {
+          playEventId: play.event!.eventId,
+          fielding: { putouts: [{ runnerId: matchup.batterId, putoutBy: 'home-2' }] }
+        },
+        { accept: false }
+      ),
+      'fielding-outs-mismatch',
+      game.ledger.state.revision
+    );
+    expectRejected(
+      game.submit(
+        'record_fielding',
+        {
+          playEventId: play.event!.eventId,
+          fielding: { putouts: [{ runnerId: 'away-4', putoutBy: 'home-2' }] }
+        },
+        { accept: false }
+      ),
+      'fielding-outs-mismatch',
+      game.ledger.state.revision
+    );
+    expectRejected(
+      game.submit(
+        'record_fielding',
+        {
+          playEventId: play.event!.eventId,
+          fielding: {
+            putouts: [
+              { runnerId: 'away-1', putoutBy: 'home-3' },
+              { runnerId: 'away-1', putoutBy: 'home-3' }
+            ]
+          }
+        },
+        { accept: false }
+      ),
+      'invalid-fielding-chain',
+      game.ledger.state.revision
+    );
+
+    game.submit('void_event', {
+      targetEventId: duplicate.event!.eventId,
+      reason: 'Remove genuinely overlapping per-out fielding evidence.'
+    });
+    projected = projectDiamondStats(game.ledger);
+    expect(projected.players['home-3'].raw.fielding).toMatchObject({ PO: 2, A: 1, TP: 1 });
+    expect(projected.players['home-2'].raw.fielding).toMatchObject({ PO: 1, TP: 1 });
+
+    game.submit('supersede_event', {
+      targetEventId: play.event!.eventId,
+      reason: 'Preserve exact per-out fielding evidence through a corrected canonical event identity.',
+      replacement: { type: 'record_plate_appearance', payload }
+    });
+    projected = projectDiamondStats(game.ledger);
+    expect(projected.players['home-3'].raw.fielding).toMatchObject({ PO: 2, A: 1, TP: 1 });
+    expect(projected.players['home-2'].raw.fielding).toMatchObject({ PO: 1, TP: 1 });
+    expect(projected.coverage.fielding).toBe('complete');
+    expect(game.ledger.events.some((event) => event.eventId === overlapping.event!.eventId)).toBe(true);
+    expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
+  });
+
+  it('deduplicates overlapping inline and attached putouts on a mixed double play', () => {
+    const game = createHarness('baseball-nfhs', 'full');
+    configureGame(game);
+    const runnerId = placeRunnerOnBase(game, 'first');
+    recordPitch(game, 'in_play');
+    const matchup = currentMatchup(game);
+    const play = game.submit('record_plate_appearance', {
+      ...matchup,
+      result: 'double_play',
+      batterAdvance: { to: 'out', outKind: 'batter_runner' },
+      runnerAdvances: [{ runnerId, from: 'first', to: 'out', cause: 'force_out', outKind: 'force' }],
+      outsOnPlay: 2,
+      fielding: {
+        putouts: [{ runnerId: matchup.batterId, putoutBy: 'home-3' }],
+        assists: ['home-3'],
+        doublePlay: true
+      }
+    });
+    game.submit('record_fielding', {
+      playEventId: play.event!.eventId,
+      fielding: {
+        putouts: [
+          { runnerId: matchup.batterId, putoutBy: 'home-3' },
+          { runnerId, putoutBy: 'home-2' }
+        ],
+        assists: ['home-3'],
+        doublePlay: true
+      }
+    });
+
+    const projected = projectDiamondStats(game.ledger);
+    expect(projected.players['home-3'].raw.fielding).toMatchObject({ PO: 1, A: 1, DP: 1 });
+    expect(projected.players['home-2'].raw.fielding).toMatchObject({ PO: 1, DP: 1 });
+    expect(projected.players['home-3'].raw.fielding.PO + projected.players['home-2'].raw.fielding.PO).toBe(2);
+    expect(projected.coverage.fielding).toBe('complete');
+    expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
+  });
+
   it('keeps bounded checkpoint fielding completeness byte-identical to full replay', () => {
     const matrix = [
       { captureMode: 'full', assists: [] as string[], expectedCoverage: 'complete' },

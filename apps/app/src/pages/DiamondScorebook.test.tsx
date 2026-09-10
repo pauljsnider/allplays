@@ -1095,6 +1095,43 @@ describe('DiamondScorebook', () => {
     expect(fixture.submitCommand).not.toHaveBeenCalled();
   });
 
+  it("records mixed triple-play putouts once per retired runner without collapsing one fielder's two credits", async () => {
+    const base = buildSnapshot();
+    const snapshot = buildSnapshot({ inning: { ...base.inning, outs: 0 } });
+    const fixture = createClient(snapshot);
+    renderScorebook(snapshot, fixture);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Triple play' }));
+    const dialog = screen.getByRole('dialog', { name: 'Review Triple play' });
+    const batterPutout = within(dialog).getByLabelText('Putout for Batter · #12 Avery Carter');
+    const firstPutout = within(dialog).getByLabelText('Putout for First · #8 Jordan Lee');
+    const thirdPutout = within(dialog).getByLabelText('Putout for Third · #4 Casey Kim');
+    fireEvent.change(batterPutout, { target: { value: 'fielder-2' } });
+    fireEvent.change(thirdPutout, { target: { value: 'fielder-2' } });
+    fireEvent.change(firstPutout, { target: { value: 'pitcher-1' } });
+    fireEvent.change(within(dialog).getByLabelText('Assist'), { target: { value: 'fielder-2' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm play' }));
+
+    await waitFor(() => expect(fixture.submitCommand).toHaveBeenCalledTimes(1));
+    const payload = fixture.createCommand.mock.calls[0]![0].payload as unknown as DiamondCommandPayloadMap['record_plate_appearance'];
+    expect(payload.fielding).toEqual({
+      putouts: [
+        { runnerId: 'batter-1', putoutBy: 'fielder-2' },
+        { runnerId: 'runner-3', putoutBy: 'fielder-2' },
+        { runnerId: 'runner-1', putoutBy: 'pitcher-1' }
+      ],
+      assists: ['fielder-2']
+    });
+
+    const state = buildReducerStateForUiSnapshot();
+    expect(() =>
+      reduceDiamondEvent(
+        { ...state, inning: { ...state.inning, outs: 0 } },
+        { type: 'record_plate_appearance', eventId: 'ui-mixed-triple-play', payload }
+      )
+    ).not.toThrow();
+  });
+
   it("defaults a fielder's-choice scoring advance to RBI credit from its batted-ball cause", async () => {
     const fixture = createClient();
     renderScorebook(buildSnapshot(), fixture);
@@ -3057,6 +3094,82 @@ describe('DiamondScorebook', () => {
     expect(JSON.stringify(fixture.submitCommand.mock.calls[0]?.[0])).not.toMatch(/audio|transcript/i);
   });
 
+  it('hydrates and confirms voice-proposed per-out putouts without losing multiplicity', async () => {
+    const base = buildSnapshot();
+    const thirdDefender = { playerId: 'bench-away', name: 'Sam Ortiz', number: '10' };
+    const snapshot = buildSnapshot({
+      inning: { ...base.inning, outs: 0 },
+      defense: { ...base.defense, away: { ...base.defense.away, SS: thirdDefender } },
+      defensiveLineup: [...base.defensiveLineup, thirdDefender]
+    });
+    const fixture = createClient(snapshot);
+    const generateContent = vi.fn(async () =>
+      JSON.stringify({
+        schemaVersion: 1,
+        sourceRevision: 7,
+        type: 'record_plate_appearance',
+        payloadJson: JSON.stringify({
+          batterId: 'batter-1',
+          pitcherId: 'pitcher-1',
+          result: 'triple_play',
+          batterAdvance: { to: 'out', outKind: 'batter_runner' },
+          runnerAdvances: [
+            { runnerId: 'runner-1', from: 'first', to: 'out', cause: 'force_out', outKind: 'force' },
+            { runnerId: 'runner-3', from: 'third', to: 'out', cause: 'tag_out', outKind: 'tag' }
+          ],
+          outsOnPlay: 3,
+          runsBattedIn: 0,
+          fielding: {
+            putoutBy: 'bench-away',
+            putouts: [
+              { runnerId: 'batter-1', putoutBy: 'fielder-2' },
+              { runnerId: 'runner-1', putoutBy: 'pitcher-1' },
+              { runnerId: 'runner-3', putoutBy: 'fielder-2' }
+            ],
+            assists: ['fielder-2']
+          }
+        }),
+        confidence: 0.96,
+        unresolvedQuestions: [],
+        requiresConfirmation: true,
+        mutatesState: false
+      })
+    );
+    renderScorebook(snapshot, fixture, { generateContent });
+
+    fireEvent.click(screen.getByRole('button', { name: /Dictate play/ }));
+    fireEvent.change(screen.getByLabelText('Editable transcript'), {
+      target: { value: 'Riley made two putouts and assisted Morgan for the third.' }
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Interpret play/ }));
+
+    const review = await screen.findByRole('dialog', { name: 'Review Triple play' });
+    expect(within(review).getByLabelText('Putout for Batter · #12 Avery Carter')).toHaveValue('fielder-2');
+    expect(within(review).getByLabelText('Putout for First · #8 Jordan Lee')).toHaveValue('pitcher-1');
+    expect(within(review).getByLabelText('Putout for Third · #4 Casey Kim')).toHaveValue('fielder-2');
+    expect(within(review).getByLabelText('Assist')).toHaveValue('fielder-2');
+    fireEvent.click(within(review).getByRole('button', { name: 'Confirm play' }));
+
+    await waitFor(() => expect(fixture.submitCommand).toHaveBeenCalledTimes(1));
+    const submitted = fixture.createCommand.mock.calls[0]![0];
+    expect(submitted).toEqual(
+      expect.objectContaining({
+        type: 'record_plate_appearance',
+        payload: expect.objectContaining({
+          fielding: {
+            putouts: [
+              { runnerId: 'batter-1', putoutBy: 'fielder-2' },
+              { runnerId: 'runner-1', putoutBy: 'pitcher-1' },
+              { runnerId: 'runner-3', putoutBy: 'fielder-2' }
+            ],
+            assists: ['fielder-2']
+          }
+        })
+      })
+    );
+    expect((submitted.payload as unknown as DiamondCommandPayloadMap['record_plate_appearance']).fielding).not.toHaveProperty('putoutBy');
+  });
+
   it('allows a voice-proposed timing run when the batter reaches first before a tag third out', async () => {
     const baseSnapshot = buildSnapshot();
     const snapshot = buildSnapshot({
@@ -4680,6 +4793,48 @@ describe('DiamondScorebook', () => {
     );
   });
 
+  it('attaches structured putout evidence to the exact retired runner', async () => {
+    const snapshot = buildSnapshot();
+    const history = buildPrivateHistoryItems();
+    history[6] = buildPrivateEvent('event-7', 7, {
+      payload: {
+        batterId: 'batter-1',
+        pitcherId: 'pitcher-1',
+        result: 'ground_out',
+        batterAdvance: { to: 'out', cause: 'batted_ball', outKind: 'batter_runner' },
+        runnerAdvances: [],
+        outsOnPlay: 1,
+        runsBattedIn: 0
+      }
+    });
+    const fixture = createClient(snapshot);
+    fixture.loadPrivateHistory.mockResolvedValue(buildPrivateHistoryWindow(history, 7));
+    renderScorebook(snapshot, fixture);
+    fireEvent.click(screen.getByText('Full-mode advanced plays'));
+
+    const structured = screen.getByRole('group', { name: 'Structured fielding or scoring judgment' });
+    fireEvent.click(within(structured).getByRole('button', { name: 'Load exact play targets' }));
+    await waitFor(() => expect(within(structured).getByLabelText('Effective play')).toHaveValue('event-7'));
+    const putout = within(structured).getByLabelText('Putout');
+    await waitFor(() => expect(within(putout).getByRole('option', { name: '#2 Riley Chen' })).toHaveValue('fielder-2'));
+    fireEvent.change(putout, { target: { value: 'fielder-2' } });
+    fireEvent.change(within(structured).getByLabelText('Putout for retired runner'), { target: { value: 'batter-1' } });
+    fireEvent.click(within(structured).getByRole('button', { name: 'Review fielding detail' }));
+    expect(within(structured).queryByRole('alert')).not.toBeInTheDocument();
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Review fielding detail' })).getByRole('button', { name: 'Confirm action' }));
+
+    await waitFor(() => expect(fixture.submitCommand).toHaveBeenCalledTimes(1));
+    expect(fixture.createCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'record_fielding',
+        payload: {
+          playEventId: 'event-7',
+          fielding: { putouts: [{ runnerId: 'batter-1', putoutBy: 'fielder-2' }] }
+        }
+      })
+    );
+  });
+
   it('side-scopes structured play controls when an unused opponent candidate reuses a managed player ID', async () => {
     const base = buildSnapshot();
     const snapshot = buildSnapshot({
@@ -5492,6 +5647,388 @@ describe('DiamondScorebook', () => {
     );
   });
 
+  it.each([
+    { label: 'preserves untouched legacy credit', convertToExact: false },
+    { label: 'drops hidden legacy credit after exact per-out edits', convertToExact: true }
+  ])('$label in a historical multi-out correction', async ({ convertToExact }) => {
+    const current = buildSnapshot();
+    const snapshot = buildSnapshot({ inning: { ...current.inning, outs: 2 } });
+    const history = buildPrivateHistoryItems();
+    history[6] = buildPrivateEvent('event-7', 7, {
+      payload: {
+        batterId: 'historical-batter',
+        pitcherId: 'pitcher-1',
+        result: 'double_play',
+        batterAdvance: { to: 'out', cause: 'batted_ball', outKind: 'batter_runner' },
+        runnerAdvances: [
+          {
+            runnerId: 'historical-runner',
+            from: 'first',
+            to: 'out',
+            cause: 'force_out',
+            outKind: 'force'
+          }
+        ],
+        outsOnPlay: 2,
+        runsBattedIn: 0,
+        fielding: {
+          putoutBy: 'pitcher-1',
+          putouts: [{ runnerId: 'historical-batter', putoutBy: 'fielder-2' }],
+          assists: ['fielder-2', 'pitcher-1'],
+          errors: [
+            { playerId: 'fielder-2', kind: 'throwing' },
+            { playerId: 'pitcher-1', kind: 'fielding' }
+          ],
+          passedBallBy: 'fielder-2',
+          doublePlay: true,
+          battedBall: 'ground',
+          location: 'left-side alley'
+        }
+      }
+    });
+    const fixture = createClient(snapshot);
+    fixture.loadPrivateHistory.mockResolvedValue(buildPrivateHistoryWindow(history, 7));
+    renderScorebook(snapshot, fixture);
+    fireEvent.click(screen.getByRole('button', { name: 'Load recent private history' }));
+    await screen.findByText(/Complete private history: 7 canonical events/);
+    fireEvent.change(screen.getByLabelText('Correction reason'), { target: { value: 'Review the earlier fielding credit.' } });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Replace PA' })[0]!);
+
+    const review = screen.getByRole('dialog', { name: 'Review Double play replacement' });
+    if (convertToExact) {
+      fireEvent.change(within(review).getByLabelText(/Putout for First .* historical-runner/i), {
+        target: { value: 'pitcher-1' }
+      });
+    }
+    fireEvent.click(within(review).getByRole('button', { name: 'Confirm correction' }));
+
+    await waitFor(() => expect(fixture.submitCommand).toHaveBeenCalledTimes(1));
+    const correction = fixture.createCommand.mock.calls[0]![0].payload as unknown as DiamondCommandPayloadMap['supersede_event'];
+    const replacement = correction.replacement.payload as DiamondCommandPayloadMap['record_plate_appearance'];
+    expect(replacement.fielding).toEqual(
+      convertToExact
+        ? {
+            putouts: [
+              { runnerId: 'historical-batter', putoutBy: 'fielder-2' },
+              { runnerId: 'historical-runner', putoutBy: 'pitcher-1' }
+            ],
+            assists: ['fielder-2', 'pitcher-1'],
+            errors: [
+              { playerId: 'fielder-2', kind: 'throwing' },
+              { playerId: 'pitcher-1', kind: 'fielding' }
+            ],
+            passedBallBy: 'fielder-2',
+            doublePlay: true,
+            battedBall: 'ground',
+            location: 'left-side alley'
+          }
+        : {
+            putoutBy: 'pitcher-1',
+            putouts: [{ runnerId: 'historical-batter', putoutBy: 'fielder-2' }],
+            assists: ['fielder-2', 'pitcher-1'],
+            errors: [
+              { playerId: 'fielder-2', kind: 'throwing' },
+              { playerId: 'pitcher-1', kind: 'fielding' }
+            ],
+            passedBallBy: 'fielder-2',
+            doublePlay: true,
+            battedBall: 'ground',
+            location: 'left-side alley'
+          }
+    );
+  });
+
+  it('removes only out-bound fielding evidence when a correction changes the play result out geometry', async () => {
+    const current = buildSnapshot();
+    const snapshot = buildSnapshot({
+      inning: { ...current.inning, outs: 0 },
+      bases: { first: current.bases.first, second: null, third: null }
+    });
+    const history = buildPrivateHistoryItems();
+    history[6] = buildPrivateEvent('event-7', 7, {
+      payload: {
+        batterId: 'batter-1',
+        pitcherId: 'pitcher-1',
+        result: 'double_play',
+        batterAdvance: { to: 'out', cause: 'batted_ball', outKind: 'batter_runner' },
+        runnerAdvances: [{ runnerId: 'runner-1', from: 'first', to: 'out', cause: 'force_out', outKind: 'force' }],
+        outsOnPlay: 2,
+        runsBattedIn: 0,
+        fielding: {
+          putoutBy: 'pitcher-1',
+          putouts: [{ runnerId: 'batter-1', putoutBy: 'fielder-2' }],
+          assists: ['fielder-2'],
+          doublePlay: true,
+          battedBall: 'ground',
+          location: 'left-side alley'
+        }
+      }
+    });
+    const fixture = createClient(snapshot);
+    fixture.loadPrivateHistory.mockResolvedValue(buildPrivateHistoryWindow(history, 7));
+    renderScorebook(snapshot, fixture);
+    fireEvent.click(screen.getByRole('button', { name: 'Load recent private history' }));
+    await screen.findByText(/Complete private history: 7 canonical events/);
+    fireEvent.change(screen.getByLabelText('Correction reason'), { target: { value: 'Change the recorded outcome.' } });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Replace PA' })[0]!);
+
+    const review = screen.getByRole('dialog', { name: 'Review Double play replacement' });
+    fireEvent.change(within(review).getByLabelText('Play result'), { target: { value: 'single' } });
+    fireEvent.click(within(review).getByRole('button', { name: 'Confirm correction' }));
+
+    await waitFor(() => expect(fixture.submitCommand).toHaveBeenCalledTimes(1));
+    const correction = fixture.createCommand.mock.calls[0]![0].payload as unknown as DiamondCommandPayloadMap['supersede_event'];
+    const replacement = correction.replacement.payload as DiamondCommandPayloadMap['record_plate_appearance'];
+    expect(replacement.fielding).toEqual({ assists: ['fielder-2'], battedBall: 'ground', location: 'left-side alley' });
+    const reducerState = buildReducerStateForUiSnapshot();
+    expect(() =>
+      reduceDiamondEvent(
+        {
+          ...reducerState,
+          inning: { ...reducerState.inning, outs: 0 },
+          bases: { first: reducerState.bases.first, second: null, third: null }
+        },
+        { type: 'record_plate_appearance', eventId: 'ui-result-geometry-correction', payload: replacement }
+      )
+    ).not.toThrow();
+  });
+
+  it('drops stale legacy credit when a correction changes one retired runner to safe', async () => {
+    const current = buildSnapshot();
+    const snapshot = buildSnapshot({
+      inning: { ...current.inning, outs: 0 },
+      bases: { first: current.bases.first, second: null, third: null }
+    });
+    const history = buildPrivateHistoryItems();
+    history[6] = buildPrivateEvent('event-7', 7, {
+      payload: {
+        batterId: 'batter-1',
+        pitcherId: 'pitcher-1',
+        result: 'fielders_choice',
+        batterAdvance: { to: 'out', cause: 'tag_out', outKind: 'tag' },
+        runnerAdvances: [{ runnerId: 'runner-1', from: 'first', to: 'out', cause: 'force_out', outKind: 'force' }],
+        outsOnPlay: 2,
+        runsBattedIn: 0,
+        fielding: {
+          putoutBy: 'pitcher-1',
+          putouts: [{ runnerId: 'batter-1', putoutBy: 'fielder-2' }],
+          assists: ['fielder-2'],
+          location: 'first-base line'
+        }
+      }
+    });
+    const fixture = createClient(snapshot);
+    fixture.loadPrivateHistory.mockResolvedValue(buildPrivateHistoryWindow(history, 7));
+    renderScorebook(snapshot, fixture);
+    fireEvent.click(screen.getByRole('button', { name: 'Load recent private history' }));
+    await screen.findByText(/Complete private history: 7 canonical events/);
+    fireEvent.change(screen.getByLabelText('Correction reason'), { target: { value: 'The lead runner was safe.' } });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Replace PA' })[0]!);
+
+    const review = screen.getByRole('dialog', { name: "Review Fielder's choice replacement" });
+    fireEvent.change(within(review).getByLabelText(/First .* Jordan Lee destination/i), { target: { value: 'second' } });
+    fireEvent.click(within(review).getByRole('button', { name: 'Confirm correction' }));
+
+    await waitFor(() => expect(fixture.submitCommand).toHaveBeenCalledTimes(1));
+    const correction = fixture.createCommand.mock.calls[0]![0].payload as unknown as DiamondCommandPayloadMap['supersede_event'];
+    const replacement = correction.replacement.payload as DiamondCommandPayloadMap['record_plate_appearance'];
+    expect(replacement.fielding).toEqual({
+      putouts: [{ runnerId: 'batter-1', putoutBy: 'fielder-2' }],
+      assists: ['fielder-2'],
+      location: 'first-base line'
+    });
+    const reducerState = buildReducerStateForUiSnapshot();
+    expect(() =>
+      reduceDiamondEvent(
+        {
+          ...reducerState,
+          inning: { ...reducerState.inning, outs: 0 },
+          bases: { first: reducerState.bases.first, second: null, third: null }
+        },
+        { type: 'record_plate_appearance', eventId: 'ui-runner-geometry-correction', payload: replacement }
+      )
+    ).not.toThrow();
+  });
+
+  it('restores untouched fielding evidence when a correction result returns to its original out geometry', async () => {
+    const current = buildSnapshot();
+    const snapshot = buildSnapshot({
+      inning: { ...current.inning, outs: 0 },
+      bases: { first: current.bases.first, second: null, third: null }
+    });
+    const originalFielding = {
+      putoutBy: 'pitcher-1',
+      putouts: [{ runnerId: 'batter-1', putoutBy: 'fielder-2' }],
+      assists: ['fielder-2'],
+      doublePlay: true,
+      location: 'left-side alley'
+    };
+    const history = buildPrivateHistoryItems();
+    history[6] = buildPrivateEvent('event-7', 7, {
+      payload: {
+        batterId: 'batter-1',
+        pitcherId: 'pitcher-1',
+        result: 'double_play',
+        batterAdvance: { to: 'out', cause: 'batted_ball', outKind: 'batter_runner' },
+        runnerAdvances: [{ runnerId: 'runner-1', from: 'first', to: 'out', cause: 'force_out', outKind: 'force' }],
+        outsOnPlay: 2,
+        runsBattedIn: 0,
+        fielding: originalFielding
+      }
+    });
+    const fixture = createClient(snapshot);
+    fixture.loadPrivateHistory.mockResolvedValue(buildPrivateHistoryWindow(history, 7));
+    renderScorebook(snapshot, fixture);
+    fireEvent.click(screen.getByRole('button', { name: 'Load recent private history' }));
+    await screen.findByText(/Complete private history: 7 canonical events/);
+    fireEvent.change(screen.getByLabelText('Correction reason'), { target: { value: 'Verify the recorded result.' } });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Replace PA' })[0]!);
+
+    const review = screen.getByRole('dialog', { name: 'Review Double play replacement' });
+    const result = within(review).getByLabelText('Play result');
+    fireEvent.change(result, { target: { value: 'single' } });
+    fireEvent.change(result, { target: { value: 'double_play' } });
+    expect(within(review).getByLabelText(/Putout for Batter .* Avery Carter/i)).toHaveValue('fielder-2');
+    fireEvent.click(within(review).getByRole('button', { name: 'Confirm correction' }));
+
+    await waitFor(() => expect(fixture.submitCommand).toHaveBeenCalledTimes(1));
+    const correction = fixture.createCommand.mock.calls[0]![0].payload as unknown as DiamondCommandPayloadMap['supersede_event'];
+    const replacement = correction.replacement.payload as DiamondCommandPayloadMap['record_plate_appearance'];
+    expect(replacement.fielding).toEqual(originalFielding);
+    const reducerState = buildReducerStateForUiSnapshot();
+    expect(() =>
+      reduceDiamondEvent(
+        {
+          ...reducerState,
+          inning: { ...reducerState.inning, outs: 0 },
+          bases: { first: reducerState.bases.first, second: null, third: null }
+        },
+        { type: 'record_plate_appearance', eventId: 'ui-result-toggle-correction', payload: replacement }
+      )
+    ).not.toThrow();
+  });
+
+  it('restores untouched fielding evidence when a runner returns to the original out geometry', async () => {
+    const current = buildSnapshot();
+    const snapshot = buildSnapshot({
+      inning: { ...current.inning, outs: 0 },
+      bases: { first: current.bases.first, second: null, third: null }
+    });
+    const originalFielding = {
+      putoutBy: 'pitcher-1',
+      putouts: [{ runnerId: 'batter-1', putoutBy: 'fielder-2' }],
+      assists: ['fielder-2'],
+      location: 'first-base line'
+    };
+    const history = buildPrivateHistoryItems();
+    history[6] = buildPrivateEvent('event-7', 7, {
+      payload: {
+        batterId: 'batter-1',
+        pitcherId: 'pitcher-1',
+        result: 'fielders_choice',
+        batterAdvance: { to: 'out', cause: 'tag_out', outKind: 'tag' },
+        runnerAdvances: [{ runnerId: 'runner-1', from: 'first', to: 'out', cause: 'force_out', outKind: 'force' }],
+        outsOnPlay: 2,
+        runsBattedIn: 0,
+        fielding: originalFielding
+      }
+    });
+    const fixture = createClient(snapshot);
+    fixture.loadPrivateHistory.mockResolvedValue(buildPrivateHistoryWindow(history, 7));
+    renderScorebook(snapshot, fixture);
+    fireEvent.click(screen.getByRole('button', { name: 'Load recent private history' }));
+    await screen.findByText(/Complete private history: 7 canonical events/);
+    fireEvent.change(screen.getByLabelText('Correction reason'), { target: { value: 'Verify the lead-runner call.' } });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Replace PA' })[0]!);
+
+    const review = screen.getByRole('dialog', { name: "Review Fielder's choice replacement" });
+    const destination = within(review).getByLabelText(/First .* Jordan Lee destination/i);
+    fireEvent.change(destination, { target: { value: 'second' } });
+    fireEvent.change(destination, { target: { value: 'out' } });
+    expect(within(review).getByLabelText(/Putout for Batter .* Avery Carter/i)).toHaveValue('fielder-2');
+    fireEvent.click(within(review).getByRole('button', { name: 'Confirm correction' }));
+
+    await waitFor(() => expect(fixture.submitCommand).toHaveBeenCalledTimes(1));
+    const correction = fixture.createCommand.mock.calls[0]![0].payload as unknown as DiamondCommandPayloadMap['supersede_event'];
+    const replacement = correction.replacement.payload as DiamondCommandPayloadMap['record_plate_appearance'];
+    expect(replacement.fielding).toEqual(originalFielding);
+    const reducerState = buildReducerStateForUiSnapshot();
+    expect(() =>
+      reduceDiamondEvent(
+        {
+          ...reducerState,
+          inning: { ...reducerState.inning, outs: 0 },
+          bases: { first: reducerState.bases.first, second: null, third: null }
+        },
+        { type: 'record_plate_appearance', eventId: 'ui-runner-toggle-correction', payload: replacement }
+      )
+    ).not.toThrow();
+  });
+
+  it('re-derives surviving exact putouts from immutable history across a multi-step geometry correction', async () => {
+    const current = buildSnapshot();
+    const snapshot = buildSnapshot({ inning: { ...current.inning, outs: 0 } });
+    const history = buildPrivateHistoryItems();
+    history[6] = buildPrivateEvent('event-7', 7, {
+      payload: {
+        batterId: 'batter-1',
+        pitcherId: 'pitcher-1',
+        result: 'triple_play',
+        batterAdvance: { to: 'out', cause: 'batted_ball', outKind: 'batter_runner' },
+        runnerAdvances: [
+          { runnerId: 'runner-1', from: 'first', to: 'out', cause: 'force_out', outKind: 'force' },
+          { runnerId: 'runner-3', from: 'third', to: 'out', cause: 'tag_out', outKind: 'tag' }
+        ],
+        outsOnPlay: 3,
+        runsBattedIn: 0,
+        fielding: {
+          putouts: [
+            { runnerId: 'batter-1', putoutBy: 'fielder-2' },
+            { runnerId: 'runner-1', putoutBy: 'pitcher-1' },
+            { runnerId: 'runner-3', putoutBy: 'fielder-2' }
+          ],
+          assists: ['fielder-2'],
+          triplePlay: true,
+          location: 'left side'
+        }
+      }
+    });
+    const fixture = createClient(snapshot);
+    fixture.loadPrivateHistory.mockResolvedValue(buildPrivateHistoryWindow(history, 7));
+    renderScorebook(snapshot, fixture);
+    fireEvent.click(screen.getByRole('button', { name: 'Load recent private history' }));
+    await screen.findByText(/Complete private history: 7 canonical events/);
+    fireEvent.change(screen.getByLabelText('Correction reason'), { target: { value: 'Only two runners were retired.' } });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Replace PA' })[0]!);
+
+    const review = screen.getByRole('dialog', { name: 'Review Triple play replacement' });
+    fireEvent.change(within(review).getByLabelText('Play result'), { target: { value: 'double_play' } });
+    fireEvent.change(within(review).getByLabelText(/First .* Jordan Lee destination/i), { target: { value: 'second' } });
+    fireEvent.change(within(review).getByLabelText(/Third .* runner-3 destination/i), { target: { value: 'out' } });
+    expect(within(review).getByLabelText(/Putout for Batter .* Avery Carter/i)).toHaveValue('fielder-2');
+    expect(within(review).getByLabelText(/Putout for Third .* runner-3/i)).toHaveValue('fielder-2');
+    fireEvent.click(within(review).getByRole('button', { name: 'Confirm correction' }));
+
+    await waitFor(() => expect(fixture.submitCommand).toHaveBeenCalledTimes(1));
+    const correction = fixture.createCommand.mock.calls[0]![0].payload as unknown as DiamondCommandPayloadMap['supersede_event'];
+    const replacement = correction.replacement.payload as DiamondCommandPayloadMap['record_plate_appearance'];
+    expect(replacement.fielding).toEqual({
+      putouts: [
+        { runnerId: 'batter-1', putoutBy: 'fielder-2' },
+        { runnerId: 'runner-3', putoutBy: 'fielder-2' }
+      ],
+      assists: ['fielder-2'],
+      location: 'left side'
+    });
+    const reducerState = buildReducerStateForUiSnapshot();
+    expect(() =>
+      reduceDiamondEvent(
+        { ...reducerState, inning: { ...reducerState.inning, outs: 0 } },
+        { type: 'record_plate_appearance', eventId: 'ui-multi-step-geometry-correction', payload: replacement }
+      )
+    ).not.toThrow();
+  });
+
   it('reviews a historical double-play correction without borrowing the current half inning out count', async () => {
     const current = buildSnapshot();
     const snapshot = buildSnapshot({ inning: { ...current.inning, outs: 2 } });
@@ -5513,7 +6050,15 @@ describe('DiamondScorebook', () => {
           }
         ],
         outsOnPlay: 2,
-        runsBattedIn: 0
+        runsBattedIn: 0,
+        fielding: {
+          putouts: [
+            { runnerId: 'historical-batter', putoutBy: 'fielder-2' },
+            { runnerId: 'historical-runner', putoutBy: 'pitcher-1' }
+          ],
+          assists: ['fielder-2'],
+          doublePlay: true
+        }
       }
     });
     fixture.loadPrivateHistory.mockResolvedValue(buildPrivateHistoryWindow(history, 7));
@@ -5525,6 +6070,9 @@ describe('DiamondScorebook', () => {
 
     const review = screen.getByRole('dialog', { name: 'Review Double play replacement' });
     expect(within(review).queryByRole('alert')).not.toBeInTheDocument();
+    expect(within(review).getByLabelText(/Putout for Batter .* historical-batter/i)).toHaveValue('fielder-2');
+    expect(within(review).getByLabelText(/Putout for First .* historical-runner/i)).toHaveValue('pitcher-1');
+    expect(within(review).getByLabelText('Assist')).toHaveValue('fielder-2');
     expect(within(review).getByRole('button', { name: 'Confirm correction' })).toBeEnabled();
     fireEvent.click(within(review).getByRole('button', { name: 'Confirm correction' }));
 
@@ -5534,7 +6082,18 @@ describe('DiamondScorebook', () => {
         type: 'supersede_event',
         payload: expect.objectContaining({
           replacement: expect.objectContaining({
-            payload: expect.objectContaining({ result: 'double_play', outsOnPlay: 2 })
+            payload: expect.objectContaining({
+              result: 'double_play',
+              outsOnPlay: 2,
+              fielding: {
+                putouts: [
+                  { runnerId: 'historical-batter', putoutBy: 'fielder-2' },
+                  { runnerId: 'historical-runner', putoutBy: 'pitcher-1' }
+                ],
+                assists: ['fielder-2'],
+                doublePlay: true
+              }
+            })
           })
         })
       })

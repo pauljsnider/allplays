@@ -735,6 +735,7 @@ function buildPublicPlay(event, before, after, directory, canonicalEvent) {
     fielding && typeof fielding === "object"
       ? [
           fielding.putoutBy,
+          ...(fielding.putouts || []).map((entry) => entry?.putoutBy),
           ...(fielding.assists || []),
           ...(fielding.errors || []).map((entry) => entry?.playerId),
           fielding.passedBallBy,

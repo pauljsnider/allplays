@@ -702,6 +702,7 @@ describe("Diamond command validation, hashing, idempotency, and revisions", () =
         runsBattedIn: 2,
         fielding: {
           putoutBy: "fielder-1",
+          putouts: [{ runnerId: "runner-1", putoutBy: "fielder-1" }],
           assists: ["fielder-2"],
           errors: [{ playerId: "fielder-3", kind: "throwing" }],
           doublePlay: false,
@@ -746,6 +747,30 @@ describe("Diamond command validation, hashing, idempotency, and revisions", () =
       [
         "unknown error field",
         (payload) => (payload.fielding.errors[0].charged = true),
+      ],
+      [
+        "unknown per-out putout field",
+        (payload) => (payload.fielding.putouts[0].outNumber = 1),
+      ],
+      [
+        "missing per-out putout fielder",
+        (payload) => delete payload.fielding.putouts[0].putoutBy,
+      ],
+      [
+        "duplicate per-out putout runner",
+        (payload) =>
+          (payload.fielding.putouts = [
+            { runnerId: "runner-1", putoutBy: "fielder-1" },
+            { runnerId: "runner-1", putoutBy: "fielder-2" },
+          ]),
+      ],
+      [
+        "too many per-out putouts",
+        (payload) =>
+          (payload.fielding.putouts = Array.from({ length: 4 }, (_, index) => ({
+            runnerId: `runner-${String(index)}`,
+            putoutBy: "fielder-1",
+          }))),
       ],
       [
         "string double-play flag",

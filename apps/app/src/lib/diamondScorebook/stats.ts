@@ -289,14 +289,14 @@ function isOpenDefensiveEntry(state: DiamondGameState, side: DiamondSide) {
 
 function addMergedFielding(
   fieldings: readonly DiamondFieldingChain[],
-  actualOutCount: number,
+  actualOutRunnerIds: readonly string[],
   side: DiamondSide,
   eventId: string,
   ensure: (playerId: string, side: DiamondSide) => MutablePlayerLine,
   credit: (line: MutablePlayerLine, family: keyof DiamondPlayerRawStats, stat: string, value: number, eventId: string) => void,
   options: Readonly<{ creditPassedBall?: boolean }> = {}
 ) {
-  const putouts = deriveDiamondPutoutCredits(fieldings, actualOutCount);
+  const putouts = deriveDiamondPutoutCredits(fieldings, actualOutRunnerIds);
   const assists = new Set<string>();
   const passedBalls = new Set<string>();
   const errorMultiplicity = new Map<string, { maxChainTotal: number; maxFielding: number; maxThrowing: number }>();
@@ -753,7 +753,11 @@ export function projectDiamondStats(ledger: DiamondLedger): DiamondStatProjectio
 
         const defenders = new Set(Object.values(before.lineups[pitchingSide].defense).filter(Boolean));
         defenders.forEach((playerId) => credit(ensure(playerId, pitchingSide), 'fielding', 'defensiveOuts', payload.outsOnPlay, eventId));
-        const fieldingResult = addMergedFielding(fieldingChains, payload.outsOnPlay, pitchingSide, eventId, ensure, credit);
+        const outRunnerIds = [
+          ...(payload.batterAdvance.to === 'out' ? [payload.batterId] : []),
+          ...payload.runnerAdvances.flatMap((advance) => (advance.to === 'out' ? [advance.runnerId] : []))
+        ];
+        const fieldingResult = addMergedFielding(fieldingChains, outRunnerIds, pitchingSide, eventId, ensure, credit);
         teams[pitchingSide].E += fieldingResult.errorCredits;
         physicalCauseCluster = null;
         break;
@@ -834,7 +838,7 @@ export function projectDiamondStats(ledger: DiamondLedger): DiamondStatProjectio
         }
         const fieldingResult = addMergedFielding(
           [...(payload.fielding ? [payload.fielding] : []), ...attachmentsForPlay(attachments.fielding, event)],
-          payload.to === 'out' ? 1 : 0,
+          payload.to === 'out' ? [payload.runnerId] : [],
           pitchingSide,
           eventId,
           ensure,

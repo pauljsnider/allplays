@@ -845,6 +845,7 @@ function assertScoringCreditBoundary(value, label) {
 function assertFieldingBoundary(value, label) {
   const fields = new Set([
     "putoutBy",
+    "putouts",
     "assists",
     "errors",
     "passedBallBy",
@@ -855,6 +856,31 @@ function assertFieldingBoundary(value, label) {
   ]);
   requirePayloadFields(value, fields, label, []);
   requireOptionalPayloadId(value, "putoutBy", label);
+  if (own(value, "putouts")) {
+    const putouts = requirePayloadArray(value.putouts, 3, `${label}.putouts`);
+    const putoutRunnerIds = new Set();
+    putouts.forEach((putout, index) => {
+      const putoutLabel = `${label}.putouts[${String(index)}]`;
+      requirePayloadFields(
+        putout,
+        new Set(["runnerId", "putoutBy"]),
+        putoutLabel,
+        ["runnerId", "putoutBy"],
+      );
+      const runnerId = normalizeDiamondId(
+        putout.runnerId,
+        `${putoutLabel}.runnerId`,
+      );
+      normalizeDiamondId(putout.putoutBy, `${putoutLabel}.putoutBy`);
+      if (putoutRunnerIds.has(runnerId)) {
+        throw new DiamondScorebookCoreError(
+          "invalid-argument",
+          `${label}.putouts repeats a retired runner.`,
+        );
+      }
+      putoutRunnerIds.add(runnerId);
+    });
+  }
   requireOptionalPayloadId(value, "passedBallBy", label);
   requireOptionalPayloadBoolean(value, "doublePlay", label);
   requireOptionalPayloadBoolean(value, "triplePlay", label);
