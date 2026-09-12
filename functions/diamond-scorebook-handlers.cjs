@@ -1478,10 +1478,22 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     if (snapshots.some((snapshot) => snapshotExists(snapshot))) {
       throw makeError(
         "failed-precondition",
-        "Private notes cannot be stored after account deletion begins.",
+        "Diamond changes cannot be stored after account deletion begins.",
         { reason: "account-deletion-pending" },
       );
     }
+  }
+
+  function loadAccountDeletionSnapshots(transaction, resourcePaths, uid) {
+    return Promise.all([
+      transaction.get(
+        firestore.doc(resourcePaths.accountDeletionRequest(uid)),
+      ),
+      transaction.get(
+        firestore.doc(resourcePaths.accountPrivateNoteAuthDeleteBarrier(uid)),
+      ),
+      transaction.get(firestore.doc(resourcePaths.accountDeletionAudit(uid))),
+    ]);
   }
 
   function requirePrivateNoteReceipt({
@@ -3992,6 +4004,13 @@ function createDiamondScorebookHandlers(dependencies = {}) {
         loaded.access,
         "Only a current team manager can activate a Diamond game.",
       );
+      requireNoAccountDeletion(
+        ...(await loadAccountDeletionSnapshots(
+          transaction,
+          resourcePaths,
+          caller.uid,
+        )),
+      );
       const cleanupLock = snapshotData(
         await transaction.get(firestore.doc(resourcePaths.cleanupLock)),
       );
@@ -4447,6 +4466,13 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       } else {
         requireScorekeeper(loaded.access);
       }
+      requireNoAccountDeletion(
+        ...(await loadAccountDeletionSnapshots(
+          transaction,
+          resourcePaths,
+          caller.uid,
+        )),
+      );
       const rootRef = firestore.doc(resourcePaths.scorebook);
       const receiptRef = firestore.doc(resourcePaths.command(requestId));
       const auditRef = firestore.doc(resourcePaths.audit(requestId));
@@ -4555,6 +4581,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
         gameId,
         targetUid,
         loaded,
+        deletionAlreadyCheckedUid: caller.uid,
       });
       const leaseDecision = core.decideDiamondScorerLease({
         operation,
@@ -4876,7 +4903,14 @@ function createDiamondScorebookHandlers(dependencies = {}) {
 
   async function validateScorerTarget(
     transaction,
-    { teamId, gameId, targetUid, loaded, disallowUid = null },
+    {
+      teamId,
+      gameId,
+      targetUid,
+      loaded,
+      disallowUid = null,
+      deletionAlreadyCheckedUid = null,
+    },
   ) {
     const normalizedTargetUid = normalizeId(targetUid, "targetUid");
     let targetAuth;
@@ -4899,10 +4933,23 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       );
     }
     const resourcePaths = paths(teamId, gameId);
-    const [userSnapshot, rsvpSnapshot] = await Promise.all([
-      transaction.get(firestore.doc(resourcePaths.user(normalizedTargetUid))),
-      transaction.get(firestore.doc(resourcePaths.rsvp(normalizedTargetUid))),
-    ]);
+    const [userSnapshot, rsvpSnapshot, accountDeletionSnapshots] =
+      await Promise.all([
+        transaction.get(
+          firestore.doc(resourcePaths.user(normalizedTargetUid)),
+        ),
+        transaction.get(
+          firestore.doc(resourcePaths.rsvp(normalizedTargetUid)),
+        ),
+        normalizedTargetUid === deletionAlreadyCheckedUid
+          ? Promise.resolve([])
+          : loadAccountDeletionSnapshots(
+              transaction,
+              resourcePaths,
+              normalizedTargetUid,
+            ),
+      ]);
+    requireNoAccountDeletion(...accountDeletionSnapshots);
     const targetCaller = {
       uid: normalizedTargetUid,
       authUser: targetAuth,
@@ -4939,6 +4986,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       targetUid: command.payload.toUid,
       loaded,
       disallowUid: caller.uid,
+      deletionAlreadyCheckedUid: caller.uid,
     });
   }
 
@@ -5645,10 +5693,6 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       return newEventId;
     };
     const fullReplayCommand = FULL_REPLAY_COMMANDS.has(command.type);
-    const mayStorePrivateNoteMaterial =
-      domainEngine.getDiamondPrivateNoteText(command) !== null ||
-      command.type === "void_event" ||
-      command.type === "supersede_event";
     const ordinaryAdmissionIdentities = commandHistoryAdmissionIdentities(
       command,
       caller.uid,
@@ -5698,9 +5742,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
               loaded,
               rootSnapshot,
               receiptSnapshot,
-              deletionRequestSnapshot,
-              authDeletionBarrierSnapshot,
-              deletionAuditSnapshot,
+              accountDeletionSnapshots,
               targetEventSnapshot,
             ] = await Promise.all([
               loadAccessDocuments(
@@ -5711,41 +5753,17 @@ function createDiamondScorebookHandlers(dependencies = {}) {
               ),
               transaction.get(rootRef),
               transaction.get(receiptRef),
-              mayStorePrivateNoteMaterial
-                ? transaction.get(
-                    firestore.doc(
-                      resourcePaths.accountDeletionRequest(caller.uid),
-                    ),
-                  )
-                : Promise.resolve(null),
-              mayStorePrivateNoteMaterial
-                ? transaction.get(
-                    firestore.doc(
-                      resourcePaths.accountPrivateNoteAuthDeleteBarrier(
-                        caller.uid,
-                      ),
-                    ),
-                  )
-                : Promise.resolve(null),
-              mayStorePrivateNoteMaterial
-                ? transaction.get(
-                    firestore.doc(
-                      resourcePaths.accountDeletionAudit(caller.uid),
-                    ),
-                  )
-                : Promise.resolve(null),
+              loadAccountDeletionSnapshots(
+                transaction,
+                resourcePaths,
+                caller.uid,
+              ),
               targetEventRef
                 ? transaction.get(targetEventRef)
                 : Promise.resolve(null),
             ]);
             requireScorekeeper(loaded.access);
-            if (mayStorePrivateNoteMaterial) {
-              requireNoAccountDeletion(
-                deletionRequestSnapshot,
-                authDeletionBarrierSnapshot,
-                deletionAuditSnapshot,
-              );
-            }
+            requireNoAccountDeletion(...accountDeletionSnapshots);
             const root = snapshotData(rootSnapshot);
             if (!root)
               throw makeError("not-found", "Diamond scorebook not found.");
@@ -5930,42 +5948,19 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       const [
         rootSnapshot,
         receiptSnapshot,
-        deletionRequestSnapshot,
-        authDeletionBarrierSnapshot,
-        deletionAuditSnapshot,
+        accountDeletionSnapshots,
       ] = await Promise.all([
         transaction.get(rootRef),
         transaction.get(receiptRef),
-          mayStorePrivateNoteMaterial
-            ? transaction.get(
-                firestore.doc(
-                  resourcePaths.accountDeletionRequest(caller.uid),
-                ),
-              )
-            : Promise.resolve(null),
-          mayStorePrivateNoteMaterial
-            ? transaction.get(
-                firestore.doc(
-                  resourcePaths.accountPrivateNoteAuthDeleteBarrier(caller.uid),
-                ),
-              )
-            : Promise.resolve(null),
-          mayStorePrivateNoteMaterial
-            ? transaction.get(
-                firestore.doc(
-                  resourcePaths.accountDeletionAudit(caller.uid),
-                ),
-              )
-            : Promise.resolve(null),
-        ]);
+        loadAccountDeletionSnapshots(
+          transaction,
+          resourcePaths,
+          caller.uid,
+        ),
+      ]);
       const root = snapshotData(rootSnapshot);
       const existingReceipt = snapshotData(receiptSnapshot);
-      if (mayStorePrivateNoteMaterial)
-        requireNoAccountDeletion(
-          deletionRequestSnapshot,
-          authDeletionBarrierSnapshot,
-          deletionAuditSnapshot,
-        );
+      requireNoAccountDeletion(...accountDeletionSnapshots);
       if (!root) throw makeError("not-found", "Diamond scorebook not found.");
       requirePrivateNoteStorageVersion(root);
       if (root.instanceId !== loaded.game.diamondScorebookInstanceId) {
@@ -9431,11 +9426,22 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     const parseControls = (snapshots, atMs, receipt = null) =>
       parseRegenerationControls(snapshots, teamId, gameId, atMs, receipt);
     const readState = async (reader, activeCaller, atMs) => {
-      const [loaded, rootSnapshot, controlSnapshots] = await Promise.all([
+      const [
+        loaded,
+        rootSnapshot,
+        controlSnapshots,
+        accountDeletionSnapshots,
+      ] = await Promise.all([
         loadRegenerationAccess(reader, teamId, gameId, activeCaller),
         reader.get(firestore.doc(resourcePaths.scorebook)),
         readControlSnapshots(reader),
+        loadAccountDeletionSnapshots(
+          reader,
+          resourcePaths,
+          activeCaller.uid,
+        ),
       ]);
+      requireNoAccountDeletion(...accountDeletionSnapshots);
       const root = snapshotData(rootSnapshot);
       return {
         loaded,
@@ -9731,10 +9737,16 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       try {
         const reconciled = await firestore.runTransaction(async (transaction) => {
           const reconcileNowMs = normalizeNow(clock, makeError);
-          const [, snapshots] = await Promise.all([
+          const [, snapshots, accountDeletionSnapshots] = await Promise.all([
             loadRegenerationAccess(transaction, teamId, gameId, caller),
             readControlSnapshots(transaction),
+            loadAccountDeletionSnapshots(
+              transaction,
+              resourcePaths,
+              caller.uid,
+            ),
           ]);
+          requireNoAccountDeletion(...accountDeletionSnapshots);
           const receipt = parseReceipt(snapshots[0], reconcileNowMs);
           const plan = regeneration.planProjectionRegeneration({
             nowMs: reconcileNowMs,

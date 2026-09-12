@@ -6355,6 +6355,356 @@ describe("Diamond scorebook handler factory", () => {
     }
   });
 
+  it("fences an ordinary gameplay command when Auth deletion wins its missing-document read", async () => {
+    const harness = createHarness();
+    await activate(harness);
+    await startGame(harness);
+    const resourcePaths = paths("team-1", "game-1");
+    const barrierPath =
+      resourcePaths.accountPrivateNoteAuthDeleteBarrier("manager-1");
+    const requestPath = resourcePaths.accountDeletionRequest("manager-1");
+    const auditPath = resourcePaths.accountDeletionAudit("manager-1");
+    const rootBefore = clone(
+      harness.firestore.read(resourcePaths.scorebook),
+    );
+    const eventCountBefore = harness.firestore.countDirectChildren(
+      resourcePaths.events,
+    );
+    const authReadsBefore = harness.authGetUserCalls.length;
+    let injected = false;
+    harness.firestore.transactionHook = async (stage, transaction) => {
+      if (
+        stage === "beforeCommit" &&
+        !injected &&
+        transaction.readPaths.includes(barrierPath)
+      ) {
+        injected = true;
+        harness.authUsers.delete("manager-1");
+        harness.firestore.seed(barrierPath, {
+          schemaVersion: 1,
+          type: "diamond-private-note-auth-delete-barrier",
+          status: "auth-deleted",
+          startedAt: "2026-09-12T11:38:00.000Z",
+        });
+        return "retry";
+      }
+      return undefined;
+    };
+
+    await assert.rejects(
+      submit(harness, {
+        commandId: makeUuid(32_104),
+        expectedRevision: 6,
+        type: "record_pitch",
+        payload: {
+          batterId: "away-1",
+          pitcherId: "home-1",
+          result: "ball",
+        },
+      }),
+      (error) =>
+        error.code === "failed-precondition" &&
+        error.details?.reason === "account-deletion-pending",
+    );
+
+    assert.equal(injected, true);
+    assert.deepEqual(
+      harness.firestore.read(resourcePaths.scorebook),
+      rootBefore,
+    );
+    assert.equal(
+      harness.firestore.countDirectChildren(resourcePaths.events),
+      eventCountBefore,
+    );
+    assert.equal(
+      harness.firestore.read(resourcePaths.command(makeUuid(32_104))),
+      undefined,
+    );
+    assert.ok(
+      harness.firestore.transactionReadBatches.some(
+        (readPaths) =>
+          readPaths.includes(requestPath) &&
+          readPaths.includes(barrierPath) &&
+          readPaths.includes(auditPath),
+      ),
+    );
+    assert.equal(
+      harness.authGetUserCalls.length,
+      authReadsBefore + 1,
+      "the durable deletion fence must stop a command that already passed Auth",
+    );
+    assert.doesNotMatch(
+      JSON.stringify({
+        barrierPath,
+        value: harness.firestore.read(barrierPath),
+      }),
+      /manager-1/,
+    );
+  });
+
+  it("fences full-history commands at admission and again before final commit", async (t) => {
+    for (const phase of ["admission", "final-commit"]) {
+      await t.test(phase, async () => {
+        const harness = createHarness();
+        await activate(harness);
+        await startGame(harness);
+        const play = await submit(harness, {
+          commandId: makeUuid(32_110),
+          expectedRevision: 6,
+          type: "record_plate_appearance",
+          payload: {
+            batterId: "away-1",
+            pitcherId: "home-1",
+            result: "ground_out",
+            batterAdvance: { to: "out", outKind: "batter_runner" },
+            runnerAdvances: [],
+            outsOnPlay: 1,
+          },
+        });
+        const resourcePaths = paths("team-1", "game-1");
+        const requestPath =
+          resourcePaths.accountDeletionRequest("manager-1");
+        const barrierPath =
+          resourcePaths.accountPrivateNoteAuthDeleteBarrier("manager-1");
+        const auditPath = resourcePaths.accountDeletionAudit("manager-1");
+        const rootBefore = clone(
+          harness.firestore.read(resourcePaths.scorebook),
+        );
+        const eventCountBefore = harness.firestore.countDirectChildren(
+          resourcePaths.events,
+        );
+        let historyReads = 0;
+
+        if (phase === "admission") {
+          harness.firestore.seed(auditPath, {
+            version: 1,
+            outcome: "deleted",
+          });
+        } else {
+          harness.firestore.queryHook = (query) => {
+            if (query.path !== resourcePaths.events) return;
+            historyReads += 1;
+            harness.firestore.seed(requestPath, {
+              uid: "manager-1",
+              status: "queued",
+            });
+          };
+        }
+
+        const commandId = makeUuid(
+          phase === "admission" ? 32_111 : 32_112,
+        );
+        await assert.rejects(
+          submit(harness, {
+            commandId,
+            expectedRevision: 7,
+            type: "record_fielding",
+            payload: {
+              playEventId: play.eventId,
+              fielding: { putoutBy: "home-1", battedBall: "ground" },
+            },
+          }),
+          (error) =>
+            error.code === "failed-precondition" &&
+            error.details?.reason === "account-deletion-pending",
+        );
+
+        assert.equal(historyReads, phase === "admission" ? 0 : 1);
+        assert.deepEqual(
+          harness.firestore.read(resourcePaths.scorebook),
+          rootBefore,
+        );
+        assert.equal(
+          harness.firestore.countDirectChildren(resourcePaths.events),
+          eventCountBefore,
+        );
+        assert.equal(
+          harness.firestore.read(resourcePaths.command(commandId)),
+          undefined,
+        );
+        assert.ok(
+          harness.firestore.transactionReadBatches.some(
+            (readPaths) =>
+              readPaths.includes(requestPath) &&
+              readPaths.includes(barrierPath) &&
+              readPaths.includes(auditPath),
+          ),
+        );
+      });
+    }
+  });
+
+  it("fences activation and scorer-lease ledger commands against in-flight Auth deletion", async (t) => {
+    await t.test("activation", async () => {
+      const harness = createHarness();
+      const resourcePaths = paths("team-1", "game-1");
+      const barrierPath =
+        resourcePaths.accountPrivateNoteAuthDeleteBarrier("manager-1");
+      const gameBefore = clone(harness.firestore.read(resourcePaths.game));
+      let injected = false;
+      harness.firestore.transactionHook = async (stage, transaction) => {
+        if (
+          stage === "beforeCommit" &&
+          !injected &&
+          transaction.readPaths.includes(barrierPath)
+        ) {
+          injected = true;
+          harness.authUsers.delete("manager-1");
+          harness.firestore.seed(barrierPath, {
+            schemaVersion: 1,
+            type: "diamond-private-note-auth-delete-barrier",
+            status: "auth-deleted",
+            startedAt: "2026-09-12T11:38:00.000Z",
+          });
+          return "retry";
+        }
+        return undefined;
+      };
+
+      await assert.rejects(
+        activate(harness, makeUuid(32_105)),
+        (error) =>
+          error.code === "failed-precondition" &&
+          error.details?.reason === "account-deletion-pending",
+      );
+
+      assert.equal(injected, true);
+      assert.equal(harness.firestore.read(resourcePaths.scorebook), undefined);
+      assert.equal(
+        harness.firestore.countDirectChildren(resourcePaths.events),
+        0,
+      );
+      assert.deepEqual(harness.firestore.read(resourcePaths.game), gameBefore);
+    });
+
+    await t.test("scorer lease", async () => {
+      let nowMs = 1_750_000_000_000;
+      const harness = createHarness({ clock: () => nowMs });
+      await activate(harness);
+      nowMs += 16 * 60 * 1000;
+      const resourcePaths = paths("team-1", "game-1");
+      const barrierPath =
+        resourcePaths.accountPrivateNoteAuthDeleteBarrier("manager-1");
+      const rootBefore = clone(
+        harness.firestore.read(resourcePaths.scorebook),
+      );
+      const eventCountBefore = harness.firestore.countDirectChildren(
+        resourcePaths.events,
+      );
+      let injected = false;
+      harness.firestore.transactionHook = async (stage, transaction) => {
+        if (
+          stage === "beforeCommit" &&
+          !injected &&
+          transaction.readPaths.includes(barrierPath)
+        ) {
+          injected = true;
+          harness.authUsers.delete("manager-1");
+          harness.firestore.seed(barrierPath, {
+            schemaVersion: 1,
+            type: "diamond-private-note-auth-delete-barrier",
+            status: "auth-deleted",
+            startedAt: "2026-09-12T11:38:00.000Z",
+          });
+          return "retry";
+        }
+        return undefined;
+      };
+
+      await assert.rejects(
+        changeScorerLease(harness, {
+          requestId: makeUuid(32_106),
+          operation: "recover",
+          targetUid: "scorer-1",
+        }),
+        (error) =>
+          error.code === "failed-precondition" &&
+          error.details?.reason === "account-deletion-pending",
+      );
+
+      assert.equal(injected, true);
+      assert.deepEqual(
+        harness.firestore.read(resourcePaths.scorebook),
+        rootBefore,
+      );
+      assert.equal(
+        harness.firestore.countDirectChildren(resourcePaths.events),
+        eventCountBefore,
+      );
+      assert.equal(
+        harness.firestore.read(resourcePaths.command(makeUuid(32_106))),
+        undefined,
+      );
+      assert.equal(
+        harness.firestore.read(resourcePaths.audit(makeUuid(32_106))),
+        undefined,
+      );
+    });
+
+    await t.test("scorer lease target", async () => {
+      let nowMs = 1_750_000_000_000;
+      const harness = createHarness({ clock: () => nowMs });
+      await activate(harness);
+      nowMs += 16 * 60 * 1000;
+      const resourcePaths = paths("team-1", "game-1");
+      const targetBarrierPath =
+        resourcePaths.accountPrivateNoteAuthDeleteBarrier("scorer-1");
+      const rootBefore = clone(
+        harness.firestore.read(resourcePaths.scorebook),
+      );
+      const eventCountBefore = harness.firestore.countDirectChildren(
+        resourcePaths.events,
+      );
+      let injected = false;
+      harness.firestore.transactionHook = async (stage, transaction) => {
+        if (
+          stage === "beforeCommit" &&
+          !injected &&
+          transaction.readPaths.includes(targetBarrierPath)
+        ) {
+          injected = true;
+          harness.firestore.seed(targetBarrierPath, {
+            schemaVersion: 1,
+            type: "diamond-private-note-auth-delete-barrier",
+            status: "auth-deleted",
+            startedAt: "2026-09-12T11:38:00.000Z",
+          });
+          return "retry";
+        }
+        return undefined;
+      };
+
+      await assert.rejects(
+        changeScorerLease(harness, {
+          requestId: makeUuid(32_107),
+          operation: "recover",
+          targetUid: "scorer-1",
+        }),
+        (error) =>
+          error.code === "failed-precondition" &&
+          error.details?.reason === "account-deletion-pending",
+      );
+
+      assert.equal(injected, true);
+      assert.deepEqual(
+        harness.firestore.read(resourcePaths.scorebook),
+        rootBefore,
+      );
+      assert.equal(
+        harness.firestore.countDirectChildren(resourcePaths.events),
+        eventCountBefore,
+      );
+      assert.equal(
+        harness.firestore.read(resourcePaths.command(makeUuid(32_107))),
+        undefined,
+      );
+      assert.equal(
+        harness.firestore.read(resourcePaths.audit(makeUuid(32_107))),
+        undefined,
+      );
+    });
+  });
+
   it("publishes a safe pending tombstone for public-to-private replacement and suppresses private-only transitions", async () => {
     const authorizedTeam = {
       ...baseDocuments()["teams/team-1"],
@@ -11844,6 +12194,139 @@ describe("Diamond scorebook handler factory", () => {
     assert.equal(gameAdmission.readUnits, 1);
     assert.equal(gameAdmission.projectionRequestCount, 2);
     assert.equal(gameAdmission.projectionReadUnits, 2);
+  });
+
+  it("fences projection regeneration before reservation and final commit", async (t) => {
+    for (const phase of ["reservation", "final-commit"]) {
+      await t.test(phase, async () => {
+        const harness = createHarness();
+        await activate(harness);
+        const resourcePaths = paths("team-1", "game-1");
+        const barrierPath =
+          resourcePaths.accountPrivateNoteAuthDeleteBarrier("manager-1");
+        const requestPath =
+          resourcePaths.accountDeletionRequest("manager-1");
+        const auditPath = resourcePaths.accountDeletionAudit("manager-1");
+        const rootBefore = clone(
+          harness.firestore.read(resourcePaths.scorebook),
+        );
+        const gameBefore = clone(harness.firestore.read(resourcePaths.game));
+        const statsBefore = clone(
+          harness.firestore.read(resourcePaths.projection("stats")),
+        );
+        let historyReads = 0;
+
+        if (phase === "reservation") {
+          harness.firestore.seed(barrierPath, {
+            schemaVersion: 1,
+            type: "diamond-private-note-auth-delete-barrier",
+            status: "auth-deleted",
+            startedAt: "2026-09-12T11:38:00.000Z",
+          });
+        } else {
+          harness.firestore.queryHook = (query) => {
+            if (query.path !== resourcePaths.events) return;
+            historyReads += 1;
+            harness.firestore.seed(requestPath, {
+              uid: "manager-1",
+              status: "queued",
+            });
+          };
+        }
+
+        await assert.rejects(
+          regenerate(harness, {
+            requestId: makeUuid(
+              phase === "reservation" ? 32_108 : 32_109,
+            ),
+            expectedRevision: 1,
+          }),
+          (error) =>
+            error.code === "failed-precondition" &&
+            error.details?.reason === "account-deletion-pending",
+        );
+
+        assert.equal(historyReads, phase === "reservation" ? 0 : 1);
+        assert.deepEqual(
+          harness.firestore.read(resourcePaths.scorebook),
+          rootBefore,
+        );
+        assert.deepEqual(harness.firestore.read(resourcePaths.game), gameBefore);
+        assert.deepEqual(
+          harness.firestore.read(resourcePaths.projection("stats")),
+          statsBefore,
+        );
+        assert.equal(
+          regenerationAuditDocuments(
+            harness,
+            "projection-regeneration-requested",
+          ).length,
+          0,
+        );
+        assert.ok(
+          harness.firestore.transactionReadBatches.some(
+            (readPaths) =>
+              readPaths.includes(requestPath) &&
+              readPaths.includes(barrierPath) &&
+              readPaths.includes(auditPath),
+          ),
+        );
+      });
+    }
+  });
+
+  it("does not reconcile an accepted projection response after deletion begins", async () => {
+    const harness = createHarness();
+    await activate(harness);
+    const resourcePaths = paths("team-1", "game-1");
+    const requestPath = resourcePaths.accountDeletionRequest("manager-1");
+    const barrierPath =
+      resourcePaths.accountPrivateNoteAuthDeleteBarrier("manager-1");
+    const auditPath = resourcePaths.accountDeletionAudit("manager-1");
+    let completedTransactions = 0;
+    let deletionStarted = false;
+    harness.firestore.transactionHook = (phase) => {
+      if (phase !== "after") return undefined;
+      completedTransactions += 1;
+      if (completedTransactions !== 2) return undefined;
+      deletionStarted = true;
+      harness.firestore.seed(requestPath, {
+        uid: "manager-1",
+        status: "queued",
+      });
+      throw new Error("final response lost as account deletion began");
+    };
+
+    await assert.rejects(
+      regenerate(harness, {
+        requestId: makeUuid(32_113),
+        expectedRevision: 1,
+      }),
+      (error) =>
+        error.code === "failed-precondition" &&
+        error.details?.reason === "account-deletion-pending",
+    );
+
+    assert.equal(deletionStarted, true);
+    assert.ok(
+      harness.firestore.read(resourcePaths.scorebook).projectionRequest,
+      "the final write committed before account deletion began",
+    );
+    assert.equal(
+      regenerationAuditDocuments(
+        harness,
+        "projection-regeneration-requested",
+      ).length,
+      1,
+    );
+    assert.ok(
+      harness.firestore.transactionReadBatches.some(
+        (readPaths) =>
+          readPaths.includes(requestPath) &&
+          readPaths.includes(barrierPath) &&
+          readPaths.includes(auditPath),
+      ),
+    );
   });
 
   it("deduplicates repeated same-revision regeneration before replay or queue writes", async () => {
