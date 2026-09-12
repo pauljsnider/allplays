@@ -1186,6 +1186,27 @@
       ]
     },
     {
+      "collectionGroup": "events",
+      "fieldPath": "payload.toUid",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
+    },
+    {
+      "collectionGroup": "audit",
+      "fieldPath": "actorUid",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
+    },
+    {
+      "collectionGroup": "diamondConfigurationRequests",
+      "fieldPath": "requestedBy",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
+    },
+    {
       "collectionGroup": "diamondManagerStatReadControls",
       "fieldPath": "*",
       "indexes": []

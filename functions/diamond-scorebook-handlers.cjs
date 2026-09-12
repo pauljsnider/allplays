@@ -230,6 +230,44 @@ const SCOREBOOK_CHILD_COLLECTIONS = Object.freeze([
   "aiPublicationAudit",
 ]);
 const DIAMOND_INTERACTION_COLLECTIONS = Object.freeze(["chat", "reactions"]);
+const MAX_DIAMOND_ACTIVATION_ROLLBACK_BYTES = 200_000;
+const DIAMOND_ACTIVATION_GAME_ROLLBACK_FIELDS = Object.freeze([
+  "trackingEngine",
+  "trackingEngineRevision",
+  "diamondProjectionRevision",
+  "diamondProjectionCheckpointHash",
+  "diamondProjectionHash",
+  "diamondProjectionStatus",
+  "diamondProjectionComplete",
+  "diamondScorebookInstanceId",
+  "diamondStatConfigSnapshotHash",
+  "diamondLifecycle",
+  "diamondPublicTeamStats",
+  "diamondAiState",
+  "diamondHighlightClipsRevision",
+  "diamondHighlightClipsEffectKey",
+  "trackingEngineActivatedAt",
+  "trackingEngineActivatedBy",
+  "homeScore",
+  "awayScore",
+  "score",
+  "status",
+  "liveStatus",
+  "liveHasData",
+  "currentInning",
+  "inningHalf",
+  "balls",
+  "strikes",
+  "outs",
+  "opponentStats",
+  "highlightClips",
+  "aiRecap",
+  "gameRecap",
+  "recap",
+  "aiInsights",
+  "gameInsights",
+  "insights",
+]);
 const DIAMOND_SHARED_PROJECTION_FIELDS = Object.freeze([
   "homeScore",
   "awayScore",
@@ -717,6 +755,7 @@ function clearOwnedDiamondSharedProjection(value) {
 }
 
 function buildCheckpointFromRoot(root) {
+  if (root?.authDeleteReconciliation) return null;
   const checkpoint = root?.checkpoint;
   if (!isPlainObject(checkpoint)) return null;
   return checkpoint;
@@ -1200,6 +1239,75 @@ function gameProjectionPatch(state, projectionStatus = "pending") {
     balls: state.inning.balls,
     strikes: state.inning.strikes,
     outs: state.inning.outs,
+  };
+}
+
+function activationGameRollback(game) {
+  return {
+    schemaVersion: 1,
+    fields: Object.fromEntries(
+      DIAMOND_ACTIVATION_GAME_ROLLBACK_FIELDS.map((field) => [
+        field,
+        own(game, field)
+          ? { present: true, value: game[field] }
+          : { present: false },
+      ]),
+    ),
+  };
+}
+
+function activationSharedGameRollback(game, snapshot) {
+  const resolution = getCleanupSharedGamePath(game);
+  if (!resolution.valid) {
+    throw new TypeError(
+      "The shared-game binding is malformed and cannot be activated safely.",
+    );
+  }
+  if (!resolution.path) return null;
+  const value = snapshotData(snapshot);
+  return {
+    schemaVersion: 1,
+    path: resolution.path,
+    existed: snapshot?.exists === true,
+    fields: Object.fromEntries(
+      DIAMOND_SHARED_PROJECTION_FIELDS.map((field) => [
+        field,
+        own(value, field)
+          ? { present: true, value: value[field] }
+          : { present: false },
+      ]),
+    ),
+  };
+}
+
+function buildActivationRollbackProvenance({
+  core,
+  teamId,
+  gameId,
+  instanceId,
+  game,
+  sharedSnapshot,
+  createdAt,
+}) {
+  const provenance = {
+    schemaVersion: 1,
+    type: "diamond-activation-rollback-provenance",
+    trackingEngine: DIAMOND_ENGINE,
+    teamId,
+    gameId,
+    instanceId,
+    game: activationGameRollback(game),
+    sharedGame: activationSharedGameRollback(game, sharedSnapshot),
+    createdAt,
+  };
+  if (Buffer.byteLength(JSON.stringify(provenance), "utf8") > MAX_DIAMOND_ACTIVATION_ROLLBACK_BYTES) {
+    throw new TypeError(
+      "The exact Diamond activation rollback before-image exceeds its safe bound.",
+    );
+  }
+  return {
+    provenance,
+    provenanceHash: core.hashDiamondValue(provenance),
   };
 }
 
@@ -2222,6 +2330,13 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       requireManager(
         loaded.access,
         "Only a current team manager can configure Diamond scorekeeping.",
+      );
+      requireNoAccountDeletion(
+        ...(await loadAccountDeletionSnapshots(
+          transaction,
+          resourcePaths,
+          caller.uid,
+        )),
       );
       const requestRef = firestore.doc(
         resourcePaths.configurationRequest(requestId),
@@ -4026,6 +4141,18 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       const existingReceipt = snapshotData(
         await transaction.get(firestore.doc(resourcePaths.command(requestId))),
       );
+      const activationSharedResolution = getCleanupSharedGamePath(loaded.game);
+      if (!activationSharedResolution.valid) {
+        throw makeError(
+          "failed-precondition",
+          "The shared-game binding is malformed and cannot be activated safely.",
+        );
+      }
+      const activationSharedSnapshot = activationSharedResolution.path
+        ? await transaction.get(
+            firestore.doc(activationSharedResolution.path),
+          )
+        : null;
       if (loaded.game.trackingEngine === DIAMOND_ENGINE) {
         if (
           !existingRoot ||
@@ -4251,6 +4378,23 @@ function createDiamondScorebookHandlers(dependencies = {}) {
         );
       }
       const checkpoint = domainEngine.createDiamondCheckpoint(execution.ledger);
+      let activationRollback;
+      try {
+        activationRollback = buildActivationRollbackProvenance({
+          core,
+          teamId,
+          gameId,
+          instanceId,
+          game: loaded.game,
+          sharedSnapshot: activationSharedSnapshot,
+          createdAt: timestampIso(nowMs),
+        });
+      } catch (error) {
+        throw makeError(
+          "failed-precondition",
+          error?.message || "Exact Diamond activation rollback evidence is unavailable.",
+        );
+      }
       const recentPublicEvents = updateRecentPlays([], execution.event, core);
       const root = {
         schemaVersion: 2,
@@ -4268,6 +4412,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
         rolloutAllowlistedAtActivation: eligibility.explicitlyAllowlisted,
         statConfigSnapshot,
         orientationSnapshot,
+        activationRollbackHash: activationRollback.provenanceHash,
         initialState: ledger.initialState,
         checkpoint,
         scorerLease: {
@@ -4310,6 +4455,10 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       const publicEvent = buildPublicEvent(execution.event, core);
       writeCommandHistoryWork(transaction, activationAdmission);
       transaction.create(firestore.doc(resourcePaths.scorebook), root);
+      transaction.create(
+        firestore.doc(resourcePaths.audit("activation-provenance")),
+        activationRollback.provenance,
+      );
       transaction.create(firestore.doc(resourcePaths.event(eventId)), {
         ...execution.event,
         instanceId,
@@ -9171,6 +9320,8 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       receipt: firestore.doc(key("receipt", [request.actorUid, request.requestId])),
       rate: firestore.doc(key("rate", request.actorUid)),
       claim: firestore.doc(`${resourcePaths.scorebook}/audit/projection-regeneration-claim`),
+      reservationAudit: (attemptId) =>
+        firestore.doc(key("reserved", [request.requestHash, attemptId])),
       audit: (attemptId) =>
         firestore.doc(key("requested", [request.requestHash, attemptId])),
     };
@@ -9273,6 +9424,62 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     for (const key of ["receipt", "rate", "claim"]) {
       if (controls[key]) transaction.set(refs[key], controls[key]);
     }
+  }
+
+  async function ensureRegenerationReservationAudit(
+    transaction,
+    refs,
+    request,
+    root,
+    coordinationHash,
+    attemptId,
+    branch,
+    nowMs,
+  ) {
+    const auditRef = refs.reservationAudit(attemptId);
+    const controlPaths = {
+      receipt: refs.receipt.path,
+      rate: refs.rate.path,
+      claim: refs.claim.path,
+    };
+    const existing = snapshotData(await transaction.get(auditRef));
+    if (existing) {
+      if (
+        existing.type !== "projection-regeneration-reserved" ||
+        existing.trackingEngine !== DIAMOND_ENGINE ||
+        existing.teamId !== root.teamId ||
+        existing.gameId !== root.gameId ||
+        existing.instanceId !== root.instanceId ||
+        existing.requestId !== request.requestId ||
+        existing.requestHash !== request.requestHash ||
+        existing.attemptId !== attemptId ||
+        existing.actorUid !== request.actorUid ||
+        core.hashDiamondValue(existing.controlPaths) !==
+          core.hashDiamondValue(controlPaths)
+      ) {
+        throw makeError(
+          "failed-precondition",
+          "Projection regeneration reservation evidence is inconsistent.",
+        );
+      }
+      return;
+    }
+    transaction.create(auditRef, {
+      schemaVersion: 1,
+      trackingEngine: DIAMOND_ENGINE,
+      teamId: root.teamId,
+      gameId: root.gameId,
+      instanceId: root.instanceId,
+      type: "projection-regeneration-reserved",
+      requestId: request.requestId,
+      requestHash: request.requestHash,
+      attemptId,
+      actorUid: request.actorUid,
+      branch,
+      coordinationHash,
+      controlPaths,
+      createdAt: timestampIso(nowMs),
+    });
   }
 
   function projectionClaimProven(root, head, claim) {
@@ -9522,18 +9729,29 @@ function createDiamondScorebookHandlers(dependencies = {}) {
           reason: plan.reason,
           retryAtMs: plan.retryAtMs,
         });
+        await ensureRegenerationReservationAudit(
+          transaction,
+          refs,
+          request,
+          root,
+          coordinationHash,
+          followerAttemptId,
+          plan.action,
+          nowMs,
+        );
         writeRegenerationControls(transaction, refs, follower);
         return plan.action === "follow-accepted"
           ? { kind: "accepted", receipt: follower.receipt }
           : { kind: "blocked", plan };
       }
+      const reservedAttemptId = getAttemptId();
       const newControls = regeneration.buildProjectionRegenerationControls({
         teamId,
         gameId,
         request,
         head,
         coordinationHash,
-        attemptId: getAttemptId(),
+        attemptId: reservedAttemptId,
         nowMs,
       });
       const requestedReadUnits = Math.max(1, head.sourceRevision);
@@ -9545,6 +9763,16 @@ function createDiamondScorebookHandlers(dependencies = {}) {
           requestedProjectionReadUnits: requestedReadUnits,
           nowMs,
         },
+      );
+      await ensureRegenerationReservationAudit(
+        transaction,
+        refs,
+        request,
+        root,
+        coordinationHash,
+        reservedAttemptId,
+        "reserved",
+        nowMs,
       );
       writeRegenerationControls(transaction, refs, newControls);
       writeCommandHistoryWork(transaction, sharedAdmission);
@@ -9708,6 +9936,9 @@ function createDiamondScorebookHandlers(dependencies = {}) {
           gameId,
           instanceId: root.instanceId,
           type: "projection-regeneration-requested",
+          requestId,
+          requestHash: request.requestHash,
+          attemptId,
           sourceRevision: replay.state.revision,
           actorUid: caller.uid,
           createdAt: timestampIso(commitNowMs),

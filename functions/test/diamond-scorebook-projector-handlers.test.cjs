@@ -162,6 +162,7 @@ class FakeFirestore {
     this.transactionQueue = Promise.resolve();
     this.batchCommitCount = 0;
     this.failNextBatch = null;
+    this.failNextTransaction = null;
     this.queryLog = [];
   }
 
@@ -274,6 +275,19 @@ class FakeFirestore {
     const execute = async () => {
       const transaction = new FakeTransaction(this);
       const result = await callback(transaction);
+      const failure = this.failNextTransaction;
+      if (
+        failure &&
+        transaction.operations.some((operation) =>
+          operation.reference.path.startsWith(failure.pathPrefix),
+        )
+      ) {
+        this.failNextTransaction = null;
+        if (failure.afterApply) this.applyOperations(transaction.operations);
+        throw Object.assign(new Error("Injected transaction ambiguity"), {
+          code: "unavailable",
+        });
+      }
       this.applyOperations(transaction.operations);
       return result;
     };
@@ -1819,7 +1833,10 @@ describe("Diamond scorebook authoritative projector", () => {
     });
     game.submit("finalize", { confirmed: true });
     syncLedger(harness.firestore, game);
-    harness.firestore.failNextBatch = { afterApply: false };
+    harness.firestore.failNextTransaction = {
+      afterApply: false,
+      pathPrefix: `${paths.effects}/`,
+    };
     await assert.rejects(
       harness.handlers.projectDiamondGame({
         teamId: "team-1",
@@ -1856,6 +1873,60 @@ describe("Diamond scorebook authoritative projector", () => {
     assert.equal(
       harness.firestore.read(effect.activationRunPath).status,
       "complete",
+    );
+  });
+
+  it("does not stage an effect when Auth deletion fences the root after run initialization", async () => {
+    const game = createGame();
+    setLineupsAndStart(game);
+    const firestore = new FakeFirestore();
+    const initialHarness = createHarness({ firestore });
+    const { paths } = seedGame(firestore, game);
+    await initialHarness.handlers.projectDiamondGame({
+      teamId: "team-1",
+      gameId: "game-1",
+    });
+
+    game.submit("rules_decision", {
+      code: "end_game_weather",
+      description: "The umpire declared the game official.",
+    });
+    game.submit("finalize", { confirmed: true });
+    syncLedger(firestore, game);
+    let hookCalls = 0;
+    const fencedHarness = createHarness({
+      firestore,
+      handlers: {
+        batchWriteLimit: 1,
+        hooks: {
+          async beforeStageOutbox() {
+            hookCalls += 1;
+            const root = firestore.read(paths.scorebook);
+            firestore.seed(paths.scorebook, {
+              ...root,
+              authDeleteReconciliation: {
+                taskId: "auth-delete-task",
+              },
+            });
+          },
+        },
+      },
+    });
+
+    await assert.rejects(
+      fencedHarness.handlers.projectDiamondGame({
+        teamId: "team-1",
+        gameId: "game-1",
+      }),
+      (error) => error.code === "projection-lease-lost" && error.retryable,
+    );
+    assert.equal(hookCalls, 1);
+    assert.equal(firestore.directChildren(paths.effects).length, 0);
+    const runs = firestore.directChildren(`${paths.scorebook}/projectionRuns`);
+    assert.equal(runs.length, 2);
+    assert.equal(
+      runs.some((run) => run.data.status === "preparing"),
+      true,
     );
   });
 
@@ -1911,7 +1982,10 @@ describe("Diamond scorebook authoritative projector", () => {
     });
     game.submit("finalize", { confirmed: true });
     syncLedger(harness.firestore, game);
-    harness.firestore.failNextBatch = { afterApply: true };
+    harness.firestore.failNextTransaction = {
+      afterApply: true,
+      pathPrefix: `${paths.effects}/`,
+    };
 
     const result = await harness.handlers.projectDiamondGame({
       teamId: "team-1",

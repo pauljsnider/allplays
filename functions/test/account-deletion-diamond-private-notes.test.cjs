@@ -1,7 +1,7 @@
 "use strict";
 
 const assert = require("node:assert/strict");
-const { readFileSync } = require("node:fs");
+const { readFileSync, readdirSync } = require("node:fs");
 const { join } = require("node:path");
 const test = require("node:test");
 
@@ -19,6 +19,26 @@ const DOCUMENT_ID = Object.freeze({ kind: "document-id" });
 const REDACTED_AT = "2026-09-09T12:00:00.000Z";
 const AUTH_DELETE_BARRIER_PATH =
   `accountDiamondPrivateNoteAuthDeleteBarriers/${privateNoteCore.buildDiamondPrivateNoteAuthDeleteBarrierId(UID)}`;
+const DELETE_FIELD = Symbol("delete-field");
+const ACTIVATION_GAME_ROLLBACK_FIELDS = Object.freeze([
+  "trackingEngine", "trackingEngineRevision", "diamondProjectionRevision",
+  "diamondProjectionCheckpointHash", "diamondProjectionHash",
+  "diamondProjectionStatus", "diamondProjectionComplete",
+  "diamondScorebookInstanceId", "diamondStatConfigSnapshotHash",
+  "diamondLifecycle", "diamondPublicTeamStats", "diamondAiState",
+  "diamondHighlightClipsRevision", "diamondHighlightClipsEffectKey",
+  "trackingEngineActivatedAt", "trackingEngineActivatedBy", "homeScore",
+  "awayScore", "score", "status", "liveStatus", "liveHasData",
+  "currentInning", "inningHalf", "balls", "strikes", "outs",
+  "opponentStats", "highlightClips", "aiRecap", "gameRecap", "recap",
+  "aiInsights", "gameInsights", "insights",
+]);
+const SHARED_PROJECTION_FIELDS = Object.freeze([
+  "homeScore", "awayScore", "status", "liveStatus", "trackingEngine",
+  "diamondProjectionRevision", "diamondProjectionCheckpointHash",
+  "diamondProjectionStatus", "diamondSourceTeamId", "diamondSourceGameId",
+  "diamondScorebookInstanceId", "diamondProjectionHash",
+]);
 
 function clone(value) {
   if (Array.isArray(value)) return value.map(clone);
@@ -30,6 +50,19 @@ function clone(value) {
 
 function uuid(index) {
   return `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
+}
+
+function fakeTimestamp(milliseconds, nanosecondOffset = 0) {
+  const seconds = Math.floor(milliseconds / 1000);
+  const nanoseconds = (milliseconds - seconds * 1000) * 1_000_000
+    + nanosecondOffset;
+  return {
+    seconds,
+    nanoseconds,
+    toMillis: () => seconds * 1000 + Math.floor(nanoseconds / 1_000_000),
+    isEqual: (other) =>
+      other?.seconds === seconds && other?.nanoseconds === nanoseconds,
+  };
 }
 
 function buildPrivateNoteDocuments({
@@ -160,6 +193,309 @@ function seedBundle(bundle) {
   };
 }
 
+function exactBeforeImage(fields, value, extras = {}) {
+  return {
+    schemaVersion: 1,
+    ...extras,
+    fields: Object.fromEntries(
+      fields.map((field) => [
+        field,
+        Object.prototype.hasOwnProperty.call(value, field)
+          ? { present: true, value: clone(value[field]) }
+          : { present: false },
+      ]),
+    ),
+  };
+}
+
+function buildRetiringActivationGeneration({
+  teamId = "team-retire",
+  gameId = "game-retire",
+  instanceId = uuid(950),
+  sharedExisted = true,
+  sourceCommitMs = Date.parse(REDACTED_AT),
+  sourceCreateNanosecondOffset = 0,
+  sourceUpdateNanosecondOffset = sourceCreateNanosecondOffset,
+  seedShared = true,
+} = {}) {
+  const scorebookPath = `teams/${teamId}/games/${gameId}/diamondScorebooks/v2`;
+  const gamePath = `teams/${teamId}/games/${gameId}`;
+  const eventId = "event-activate-retiring";
+  const commandId = uuid(951);
+  let ledger = domainEngine.createDiamondLedger({
+    teamId,
+    gameId,
+    rulesProfileId: "baseball-youth",
+    rulesProfileVersion: 1,
+    captureMode: "full",
+  });
+  const command = {
+    schemaVersion: domainEngine.DIAMOND_SCHEMA_VERSION,
+    commandId,
+    teamId,
+    gameId,
+    expectedRevision: 0,
+    rulesProfileId: ledger.rulesProfileId,
+    rulesProfileVersion: ledger.rulesProfileVersion,
+    type: "activate",
+    payload: { initialScorerUid: UID, captureMode: "full" },
+  };
+  const execution = domainEngine.executeDiamondCommand(ledger, command, {
+    actorUid: UID,
+    eventId,
+    serverTimestampMs: sourceCommitMs,
+    managerAuthorized: true,
+  });
+  assert.equal(execution.result.outcome, "accepted");
+  ledger = execution.ledger;
+  const checkpoint = domainEngine.createDiamondCheckpoint(ledger);
+
+  const gameBefore = {
+    status: "scheduled",
+    liveStatus: "scheduled",
+    homeScore: 7,
+    awayScore: 6,
+    aiRecap: "pre-Diamond recap",
+  };
+  const sharedPath = "organizations/org-retire/sharedGames/shared-retire";
+  const sharedBefore = sharedExisted
+    ? {
+        status: "scheduled",
+        liveStatus: "scheduled",
+        homeScore: 7,
+        awayScore: 6,
+      }
+    : {};
+  const provenance = {
+    schemaVersion: 1,
+    type: "diamond-activation-rollback-provenance",
+    trackingEngine: "diamond-v2",
+    teamId,
+    gameId,
+    instanceId,
+    game: exactBeforeImage(ACTIVATION_GAME_ROLLBACK_FIELDS, gameBefore),
+    sharedGame: exactBeforeImage(SHARED_PROJECTION_FIELDS, sharedBefore, {
+      path: sharedPath,
+      existed: sharedExisted,
+    }),
+    createdAt: "2026-09-09T11:59:59.000Z",
+  };
+  const activationRollbackHash = domainEngine.hashDiamondValue(provenance);
+  const owned = (overrides = {}) => ({
+    schemaVersion: 1,
+    trackingEngine: "diamond-v2",
+    teamId,
+    gameId,
+    instanceId,
+    diamondScorebookInstanceId: instanceId,
+    projectionGeneration: instanceId,
+    ...overrides,
+  });
+  const eventPath = `${scorebookPath}/events/${eventId}`;
+  const provenancePath = `${scorebookPath}/audit/activation-provenance`;
+  const notificationPath = `${scorebookPath}/notificationReceipts/receipt-retained`;
+  const siblingPath = `${gamePath}/aggregatedStats/player-old`;
+  const statRootPath = `${gamePath}/diamondStatGenerations/${instanceId}`;
+  const liveRootPath = `${gamePath}/diamondLiveGenerations/${instanceId}`;
+  const documents = {
+    [gamePath]: {
+      id: gameId,
+      opaqueGameField: "keep-game",
+      trackingEngine: "diamond-v2",
+      diamondScorebookInstanceId: instanceId,
+      diamondProjectionRevision: 1,
+      diamondProjectionStatus: "current",
+      diamondPublicTeamStats: { hits: 2 },
+      diamondAiState: { status: "published" },
+      status: "live",
+      liveStatus: "live",
+      liveHasData: true,
+      homeScore: 0,
+      awayScore: 0,
+      aiRecap: "unsafe Diamond recap",
+      insights: ["unsafe Diamond insight"],
+    },
+    [scorebookPath]: {
+      schemaVersion: 2,
+      trackingEngine: "diamond-v2",
+      teamId,
+      gameId,
+      instanceId,
+      initialState: ledger.initialState,
+      checkpoint,
+      activationRollbackHash,
+      projectionStatus: "complete",
+      projectionLease: null,
+      projectionFailure: null,
+      projectionRequest: null,
+      diamondProjectionMarker: { status: "current" },
+      scorerLease: { holderUid: UID },
+      recentPublicEvents: [{ eventId }],
+    },
+    [eventPath]: { ...execution.event, instanceId },
+    [provenancePath]: provenance,
+    [`${scorebookPath}/projections/current`]: owned(),
+    [`${gamePath}/diamondPublic/state`]: owned(),
+    [`${gamePath}/diamondPublic/replay`]: owned(),
+    [statRootPath]: owned(),
+    [`${statRootPath}/publicPlayerStats/player-old`]: owned({ playerId: "player-old" }),
+    [liveRootPath]: owned(),
+    [`${liveRootPath}/chat/chat-old`]: owned({ senderId: UID }),
+    [siblingPath]: owned({ playerId: "player-old" }),
+    [notificationPath]: {
+      schemaVersion: 3,
+      trackingEngine: "diamond-v2",
+      receiptId: "receipt-retained",
+      teamId,
+      gameId,
+      instanceId,
+      sourceRevision: 1,
+      sourceEventId: eventId,
+      idempotencyKey: "retained-provider-evidence",
+      requestHash: `sha256:${"a".repeat(64)}`,
+      status: "completed",
+      attemptCount: 1,
+      dispatchLease: null,
+      providerDispatch: null,
+      providerOutcome: "sent",
+      providerReceiptId: "provider-retained",
+      createdAt: "2026-09-09T12:00:00.000Z",
+      updatedAt: "2026-09-09T12:00:00.000Z",
+      completedAt: "2026-09-09T12:00:00.000Z",
+    },
+    [sharedPath]: {
+      opaqueSharedField: "keep-shared",
+      trackingEngine: "diamond-v2",
+      diamondSourceTeamId: teamId,
+      diamondSourceGameId: gameId,
+      diamondScorebookInstanceId: instanceId,
+      diamondProjectionRevision: 1,
+      diamondProjectionStatus: "current",
+      homeScore: 0,
+      awayScore: 0,
+      status: "live",
+      liveStatus: "live",
+    },
+  };
+  const commitMetadata = {
+    [eventPath]: {
+      createMs: sourceCommitMs,
+      updateMs: sourceCommitMs,
+      createNanosecondOffset: sourceCreateNanosecondOffset,
+      updateNanosecondOffset: sourceUpdateNanosecondOffset,
+    },
+    [provenancePath]: {
+      createMs: sourceCommitMs - 1,
+      updateMs: sourceCommitMs - 1,
+    },
+  };
+  if (!seedShared) delete documents[sharedPath];
+  return {
+    teamId,
+    gameId,
+    instanceId,
+    scorebookPath,
+    gamePath,
+    eventPath,
+    provenancePath,
+    notificationPath,
+    siblingPath,
+    statRootPath,
+    liveRootPath,
+    sharedPath,
+    gameBefore,
+    sharedBefore,
+    documents,
+    commitMetadata,
+  };
+}
+
+function buildIndirectRetiringGeneration(kind) {
+  assert.ok(["private-note", "handoff-target"].includes(kind));
+  const fixture = buildRetiringActivationGeneration();
+  let ledger = domainEngine.createDiamondLedger({
+    teamId: fixture.teamId,
+    gameId: fixture.gameId,
+    rulesProfileId: "baseball-youth",
+    rulesProfileVersion: 1,
+    captureMode: "full",
+  });
+  const activationCommand = {
+    schemaVersion: domainEngine.DIAMOND_SCHEMA_VERSION,
+    commandId: uuid(960),
+    teamId: fixture.teamId,
+    gameId: fixture.gameId,
+    expectedRevision: 0,
+    rulesProfileId: ledger.rulesProfileId,
+    rulesProfileVersion: ledger.rulesProfileVersion,
+    type: "activate",
+    payload: { initialScorerUid: "active-manager", captureMode: "full" },
+  };
+  const activation = domainEngine.executeDiamondCommand(ledger, activationCommand, {
+    actorUid: "active-manager",
+    eventId: "event-activate-retiring",
+    serverTimestampMs: Date.parse(REDACTED_AT) - 10,
+    managerAuthorized: true,
+  });
+  assert.equal(activation.result.outcome, "accepted");
+  ledger = activation.ledger;
+  const sourceCommand = {
+    schemaVersion: domainEngine.DIAMOND_SCHEMA_VERSION,
+    commandId: uuid(kind === "private-note" ? 961 : 962),
+    teamId: fixture.teamId,
+    gameId: fixture.gameId,
+    expectedRevision: 1,
+    rulesProfileId: ledger.rulesProfileId,
+    rulesProfileVersion: ledger.rulesProfileVersion,
+    type: kind === "private-note" ? "private_note" : "scorer_handoff",
+    payload: kind === "private-note"
+      ? { text: "post-delete private material" }
+      : { toUid: UID },
+  };
+  const source = domainEngine.executeDiamondCommand(ledger, sourceCommand, {
+    actorUid: kind === "private-note" ? UID : "active-manager",
+    eventId: kind === "private-note" ? "event-private-retiring" : "event-handoff-retiring",
+    serverTimestampMs: Date.parse(REDACTED_AT),
+    managerAuthorized: true,
+  });
+  assert.equal(source.result.outcome, "accepted");
+  ledger = source.ledger;
+  const activationPath = `${fixture.scorebookPath}/events/${activation.event.eventId}`;
+  const sourceEventPath = `${fixture.scorebookPath}/events/${source.event.eventId}`;
+  fixture.documents[activationPath] = { ...activation.event, instanceId: fixture.instanceId };
+  fixture.documents[sourceEventPath] = { ...source.event, instanceId: fixture.instanceId };
+  fixture.documents[fixture.scorebookPath] = {
+    ...fixture.documents[fixture.scorebookPath],
+    initialState: ledger.initialState,
+    checkpoint: domainEngine.createDiamondCheckpoint(ledger),
+  };
+  fixture.commitMetadata[activationPath] = {
+    createMs: Date.parse(REDACTED_AT) - 10,
+    updateMs: Date.parse(REDACTED_AT) - 10,
+  };
+  fixture.commitMetadata[sourceEventPath] = {
+    createMs: Date.parse(REDACTED_AT),
+    updateMs: Date.parse(REDACTED_AT),
+  };
+  let notePath = null;
+  if (kind === "private-note") {
+    notePath = `${fixture.scorebookPath}/notes/${source.event.eventId}`;
+    fixture.documents[notePath] = privateNoteCore.buildDiamondPrivateNoteRecord({
+      command: sourceCommand,
+      event: source.event,
+      instanceId: fixture.instanceId,
+      authorUid: UID,
+      createdAt: REDACTED_AT,
+      domainEngine,
+    });
+    fixture.commitMetadata[notePath] = {
+      createMs: Date.parse(REDACTED_AT),
+      updateMs: Date.parse(REDACTED_AT),
+    };
+  }
+  return { ...fixture, sourceEventPath, notePath };
+}
+
 function makeFirestore(seed = {}, options = {}) {
   const state = new Map(
     Object.entries(seed).map(([documentPath, value]) => [
@@ -167,6 +503,24 @@ function makeFirestore(seed = {}, options = {}) {
       clone(value),
     ]),
   );
+  const defaultCommitMs = options.defaultCommitMs
+    || Date.parse("2026-09-08T12:00:00.000Z");
+  const metadata = new Map();
+  for (const documentPath of state.keys()) {
+    const configured = options.commitMetadata?.[documentPath] || {};
+    metadata.set(documentPath, {
+      createTime: fakeTimestamp(
+        configured.createMs ?? defaultCommitMs,
+        configured.createNanosecondOffset || 0,
+      ),
+      updateTime: fakeTimestamp(
+        configured.updateMs ?? configured.createMs ?? defaultCommitMs,
+        configured.updateNanosecondOffset
+          ?? configured.createNanosecondOffset
+          ?? 0,
+      ),
+    });
+  }
   const queryLog = [];
   const transactionLog = [];
   let preCommitFailures = options.preCommitFailures || 0;
@@ -177,11 +531,14 @@ function makeFirestore(seed = {}, options = {}) {
 
   function snapshot(ref) {
     const value = state.get(ref.path);
+    const commit = metadata.get(ref.path) || {};
     return {
       id: ref.id,
       ref,
       exists: value !== undefined,
       data: () => clone(value),
+      createTime: commit.createTime,
+      updateTime: commit.updateTime,
     };
   }
 
@@ -189,50 +546,126 @@ function makeFirestore(seed = {}, options = {}) {
     const ref = {
       id: documentPath.split("/").at(-1),
       path: documentPath,
+      kind: "document",
       get: async () => snapshot(ref),
     };
     return ref;
   }
 
   class Query {
-    constructor(collectionId, field = "", value = undefined, limitValue = Infinity, cursorPath = "") {
-      this.collectionId = collectionId;
-      this.field = field;
-      this.value = value;
+    constructor(scope, source, filters = [], limitValue = Infinity, cursor = null, order = DOCUMENT_ID) {
+      this.scope = scope;
+      this.source = source;
+      this.filters = filters;
       this.limitValue = limitValue;
-      this.cursorPath = cursorPath;
+      this.cursor = cursor;
+      this.order = order;
+      this.path = scope === "collection" ? source : undefined;
+      this.kind = scope === "collection" ? "collection" : "query";
     }
 
     where(field, operator, value) {
-      assert.equal(operator, "==");
-      return new Query(this.collectionId, field, value, this.limitValue, this.cursorPath);
+      assert.ok(["==", ">", ">=", "<="].includes(operator));
+      return new Query(
+        this.scope,
+        this.source,
+        [...this.filters, { field, operator, value }],
+        this.limitValue,
+        this.cursor,
+        this.order,
+      );
     }
 
     orderBy(field) {
-      assert.equal(field, DOCUMENT_ID);
-      return new Query(this.collectionId, this.field, this.value, this.limitValue, this.cursorPath);
+      return new Query(
+        this.scope,
+        this.source,
+        this.filters,
+        this.limitValue,
+        this.cursor,
+        field,
+      );
     }
 
     limit(limitValue) {
-      return new Query(this.collectionId, this.field, this.value, limitValue, this.cursorPath);
+      return new Query(
+        this.scope,
+        this.source,
+        this.filters,
+        limitValue,
+        this.cursor,
+        this.order,
+      );
     }
 
     startAfter(cursor) {
-      return new Query(this.collectionId, this.field, this.value, this.limitValue, cursor.ref.path);
+      const cursorValue = this.order === DOCUMENT_ID
+        ? cursor?.ref?.path || cursor?.path || cursor
+        : cursor?.data?.()?.[this.order] ?? cursor;
+      return new Query(
+        this.scope,
+        this.source,
+        this.filters,
+        this.limitValue,
+        cursorValue,
+        this.order,
+      );
     }
 
     async get() {
-      const paths = [...state.entries()]
-        .filter(([documentPath]) => documentPath.split("/").at(-2) === this.collectionId)
-        .filter(([, value]) => value?.[this.field] === this.value)
+      await options.queryHook?.({
+        scope: this.scope,
+        source: this.source,
+        filters: clone(this.filters),
+        cursor: this.cursor,
+      });
+      const fieldValue = (value, field) => String(field)
+        .split(".")
+        .reduce((current, part) => current?.[part], value);
+      const matchesFilter = (value, filter) => {
+        const current = fieldValue(value, filter.field);
+        if (filter.operator === "==") return current === filter.value;
+        if (filter.operator === ">") return current > filter.value;
+        if (filter.operator === ">=") return current >= filter.value;
+        return current <= filter.value;
+      };
+      const isInSource = (documentPath) => {
+        if (this.scope === "group") {
+          return documentPath.split("/").at(-2) === this.source;
+        }
+        const prefix = `${this.source}/`;
+        return documentPath.startsWith(prefix)
+          && !documentPath.slice(prefix.length).includes("/");
+      };
+      const orderValue = ([documentPath, value]) => this.order === DOCUMENT_ID
+        ? documentPath
+        : fieldValue(value, this.order);
+      const entries = [...state.entries()]
+        .filter(([documentPath]) => isInSource(documentPath))
+        .filter(([, value]) => this.filters.every((filter) => matchesFilter(value, filter)))
+        .filter((entry) => this.cursor === null || orderValue(entry) > this.cursor)
+        .sort((left, right) => {
+          const comparison = orderValue(left) < orderValue(right)
+            ? -1
+            : orderValue(left) > orderValue(right)
+              ? 1
+              : 0;
+          return comparison || left[0].localeCompare(right[0]);
+        });
+      const paths = entries
         .map(([documentPath]) => documentPath)
-        .filter((documentPath) => !this.cursorPath || documentPath.localeCompare(this.cursorPath) > 0)
-        .sort((left, right) => left.localeCompare(right))
         .slice(0, this.limitValue);
+      await options.afterQueryHook?.({
+        scope: this.scope,
+        source: this.source,
+        filters: clone(this.filters),
+        cursor: this.cursor,
+        paths: [...paths],
+      });
       queryLog.push({
-        collectionId: this.collectionId,
-        field: this.field,
-        cursorPath: this.cursorPath,
+        collectionId: this.source,
+        field: this.filters.at(-1)?.field || "",
+        cursorPath: this.cursor || "",
         paths,
       });
       return { docs: paths.map((documentPath) => snapshot(doc(documentPath))), empty: paths.length === 0 };
@@ -247,8 +680,13 @@ function makeFirestore(seed = {}, options = {}) {
     const transaction = {
       async get(ref) {
         assert.equal(writeStarted, false, "every transaction read must precede every write");
-        operations.push({ kind: "get", path: ref.path });
-        return snapshot(ref);
+        operations.push({ kind: "get", path: ref.path || `query:${ref.source}` });
+        return ref instanceof Query ? ref.get() : snapshot(ref);
+      },
+      create(ref, value) {
+        writeStarted = true;
+        operations.push({ kind: "create", path: ref.path });
+        writes.push({ kind: "create", ref, value: clone(value) });
       },
       set(ref, value, setOptions) {
         writeStarted = true;
@@ -277,12 +715,28 @@ function makeFirestore(seed = {}, options = {}) {
     for (const write of writes) {
       if (write.kind === "delete") {
         state.delete(write.ref.path);
+        metadata.delete(write.ref.path);
+      } else if (write.kind === "create") {
+        if (state.has(write.ref.path)) throw new Error(`Already exists: ${write.ref.path}`);
+        state.set(write.ref.path, clone(write.value));
+        metadata.set(write.ref.path, {
+          createTime: fakeTimestamp(defaultCommitMs),
+          updateTime: fakeTimestamp(defaultCommitMs),
+        });
       } else if (write.kind === "set" && !write.options?.merge) {
         state.set(write.ref.path, clone(write.value));
       } else {
-        state.set(write.ref.path, {
-          ...(state.get(write.ref.path) || {}),
-          ...clone(write.value),
+        const next = { ...(state.get(write.ref.path) || {}) };
+        for (const [field, value] of Object.entries(clone(write.value))) {
+          if (value === DELETE_FIELD) delete next[field];
+          else next[field] = value;
+        }
+        state.set(write.ref.path, next);
+      }
+      if (!metadata.has(write.ref.path)) {
+        metadata.set(write.ref.path, {
+          createTime: fakeTimestamp(defaultCommitMs),
+          updateTime: fakeTimestamp(defaultCommitMs),
         });
       }
     }
@@ -295,18 +749,49 @@ function makeFirestore(seed = {}, options = {}) {
     return result;
   }
 
+  async function recursiveDelete(reference) {
+    const prefix = reference.kind === "collection"
+      ? `${reference.path}/`
+      : `${reference.path}/`;
+    for (const documentPath of [...state.keys()]) {
+      if (
+        documentPath === reference.path
+        || documentPath.startsWith(prefix)
+      ) {
+        state.delete(documentPath);
+        metadata.delete(documentPath);
+      }
+    }
+  }
+
   return {
     firestore: {
-      collectionGroup: (collectionId) => new Query(collectionId),
+      collectionGroup: (collectionId) => new Query("group", collectionId),
+      collection: (collectionPath) => new Query("collection", collectionPath),
       doc,
       runTransaction,
     },
     has: (path) => state.has(path),
     read: (path) => clone(state.get(path)),
-    write: (path, value) => state.set(path, clone(value)),
+    write: (path, value, commit = {}) => {
+      state.set(path, clone(value));
+      metadata.set(path, {
+        createTime: fakeTimestamp(commit.createMs ?? defaultCommitMs, commit.createNanosecondOffset || 0),
+        updateTime: fakeTimestamp(
+          commit.updateMs ?? commit.createMs ?? defaultCommitMs,
+          commit.updateNanosecondOffset ?? commit.createNanosecondOffset ?? 0,
+        ),
+      });
+    },
+    remove: (path) => {
+      state.delete(path);
+      metadata.delete(path);
+    },
+    removeMetadata: (path) => metadata.delete(path),
     entries: () => clone(Object.fromEntries(state)),
     queryLog,
     transactionLog,
+    recursiveDelete,
     get transactionCalls() {
       return transactionCalls;
     },
@@ -329,12 +814,25 @@ function runDirectAuthDelete(fake, overrides = {}) {
   const handler = createAccountDiamondPrivateNoteAuthDeleteHandler({
     firestore: fake.firestore,
     getDocumentIdField: () => DOCUMENT_ID,
-    now: () => REDACTED_AT,
+    deleteFieldValue: () => DELETE_FIELD,
+    ...(overrides.handlerOptions || {}),
   });
   return handler(
     overrides.user || { uid: UID },
     { timestamp: REDACTED_AT, ...overrides.context },
   );
+}
+
+async function runDirectAuthDeleteUntilComplete(fake, overrides = {}, maximumAttempts = 100) {
+  for (let attempt = 0; attempt < maximumAttempts; attempt += 1) {
+    try {
+      await runDirectAuthDelete(fake, overrides);
+      return attempt + 1;
+    } catch (error) {
+      if (error?.code !== "unavailable") throw error;
+    }
+  }
+  throw new Error("Direct Auth-deletion reconciliation did not finish within its test bound.");
 }
 
 test("exposes bounded Diamond private-note account-deletion limits", () => {
@@ -627,12 +1125,12 @@ test("direct Auth deletion reconciles barrier write ambiguity without exposing i
     {
       name: "definitive barrier pre-commit failure",
       options: { preCommitFailureCalls: [1] },
-      expectedTransactions: 3,
+      expectedBarrierTransactions: 2,
     },
     {
       name: "committed barrier-create response loss",
       options: { postCommitFailureCalls: [1] },
-      expectedTransactions: 2,
+      expectedBarrierTransactions: 1,
     },
   ];
   for (const testCase of cases) {
@@ -642,7 +1140,14 @@ test("direct Auth deletion reconciles barrier write ambiguity without exposing i
 
       await runDirectAuthDelete(fake);
 
-      assert.equal(fake.transactionCalls, testCase.expectedTransactions);
+      assert.equal(
+        fake.transactionLog.filter((operations) =>
+          operations.some(
+            ({ kind, path }) => kind === "set" && path === AUTH_DELETE_BARRIER_PATH,
+          ),
+        ).length,
+        testCase.expectedBarrierTransactions,
+      );
       assert.equal(fake.has(AUTH_DELETE_BARRIER_PATH), true);
       assert.equal(fake.read(bundle.paths.notePath).status, "deleted");
       assert.equal(fake.read(bundle.paths.rootPath).privateNotePrivacyRevision, 5);
@@ -684,6 +1189,795 @@ test("direct Auth deletion retains its barrier across a failed cleanup and resum
   assert.equal(fake.has(AUTH_DELETE_BARRIER_PATH), true);
   assert.equal(fake.read(bundle.paths.notePath).status, "deleted");
   assert.equal(fake.read(bundle.paths.notePath).redactedAt, REDACTED_AT);
+});
+
+test("direct Auth deletion retires a same-boundary Diamond generation and restores exact activation before-images", async () => {
+  const fixture = buildRetiringActivationGeneration();
+  const fake = makeFirestore(fixture.documents, {
+    commitMetadata: fixture.commitMetadata,
+  });
+
+  await runDirectAuthDelete(fake);
+
+  assert.equal(fake.has(fixture.scorebookPath), false);
+  assert.equal(fake.has(fixture.eventPath), false);
+  assert.equal(fake.has(fixture.provenancePath), false);
+  assert.equal(fake.has(`${fixture.scorebookPath}/projections/current`), false);
+  assert.equal(fake.has(`${fixture.gamePath}/diamondPublic/state`), false);
+  assert.equal(fake.has(`${fixture.gamePath}/diamondPublic/replay`), false);
+  assert.equal(fake.has(fixture.statRootPath), false);
+  assert.equal(fake.has(`${fixture.statRootPath}/publicPlayerStats/player-old`), false);
+  assert.equal(fake.has(fixture.liveRootPath), false);
+  assert.equal(fake.has(`${fixture.liveRootPath}/chat/chat-old`), false);
+  assert.equal(fake.has(fixture.siblingPath), false);
+  assert.equal(fake.has(fixture.notificationPath), true);
+  assert.deepEqual(fake.read(fixture.gamePath), {
+    id: fixture.gameId,
+    opaqueGameField: "keep-game",
+    ...fixture.gameBefore,
+  });
+  assert.deepEqual(fake.read(fixture.sharedPath), {
+    opaqueSharedField: "keep-shared",
+    ...fixture.sharedBefore,
+  });
+  const terminalTasks = Object.entries(fake.entries()).filter(([path]) =>
+    path.startsWith(`${AUTH_DELETE_BARRIER_PATH}/diamondReconciliations/`),
+  );
+  assert.equal(terminalTasks.length, 1);
+  assert.deepEqual(Object.keys(terminalTasks[0][1]).sort(), [
+    "completedAt",
+    "outcome",
+    "receiptHash",
+    "schemaVersion",
+    "status",
+    "taskId",
+    "type",
+  ]);
+  assert.equal(terminalTasks[0][1].status, "complete");
+  assert.equal(terminalTasks[0][1].outcome, "generation-retired");
+  assert.equal(JSON.stringify(fake.entries()).includes(UID), false);
+});
+
+test("direct Auth deletion discovers private sidecars and scorer-handoff targets without event actor identity", async (t) => {
+  for (const kind of ["private-note", "handoff-target"]) {
+    await t.test(kind, async () => {
+      const fixture = buildIndirectRetiringGeneration(kind);
+      const fake = makeFirestore(fixture.documents, {
+        commitMetadata: fixture.commitMetadata,
+      });
+
+      await runDirectAuthDelete(fake);
+
+      assert.equal(fake.has(fixture.scorebookPath), false);
+      assert.equal(fake.has(fixture.sourceEventPath), false);
+      if (fixture.notePath) assert.equal(fake.has(fixture.notePath), false);
+      const sourceQuery = kind === "private-note"
+        ? { collectionId: "notes", field: "authorUid" }
+        : { collectionId: "events", field: "payload.toUid" };
+      assert.ok(
+        fake.queryLog.some(
+          (entry) =>
+            entry.collectionId === sourceQuery.collectionId &&
+            entry.field === sourceQuery.field &&
+            entry.paths.includes(kind === "private-note" ? fixture.notePath : fixture.sourceEventPath),
+        ),
+      );
+    });
+  }
+});
+
+test("Diamond generation retirement resumes bounded inventory and deletion without early restoration", async () => {
+  const fixture = buildRetiringActivationGeneration();
+  const fake = makeFirestore(fixture.documents, {
+    commitMetadata: fixture.commitMetadata,
+  });
+  const bounded = {
+    handlerOptions: {
+      reconciliationInventoryPageBudget: 1,
+      reconciliationInventoryPageSize: 1,
+    },
+  };
+
+  await assert.rejects(
+    runDirectAuthDelete(fake, bounded),
+    (error) => error?.code === "unavailable",
+  );
+  const fencedRoot = fake.read(fixture.scorebookPath);
+  assert.equal(fencedRoot.authDeleteReconciliation.status, "retiring");
+  assert.match(
+    fake.read(fixture.gamePath).diamondScorebookInstanceId,
+    /^auth-delete-[a-f0-9]{64}$/,
+  );
+  assert.equal(fake.has(fixture.eventPath), true);
+  assert.equal(fake.read(fixture.gamePath).status, undefined);
+  const activeTask = Object.values(fake.entries()).find(
+    (value) => value?.type === "diamond-auth-delete-reconciliation" && value.status === "retiring",
+  );
+  assert.equal(activeTask.artifactInventory.status, "scanning");
+
+  const attempts = await runDirectAuthDeleteUntilComplete(fake, bounded);
+  assert.ok(attempts > 2);
+  assert.equal(fake.has(fixture.scorebookPath), false);
+  assert.equal(fake.has(fixture.eventPath), false);
+  assert.equal(fake.has(fixture.notificationPath), true);
+  assert.deepEqual(fake.read(fixture.gamePath), {
+    id: fixture.gameId,
+    opaqueGameField: "keep-game",
+    ...fixture.gameBefore,
+  });
+});
+
+test("Diamond retirement preserves later shared-game winners and tolerates later absence", async (t) => {
+  const cases = [
+    {
+      name: "activation-created shared projection remains sentinel-owned",
+      fixture: buildRetiringActivationGeneration({ sharedExisted: false }),
+      mutate() {},
+      expected: null,
+    },
+    {
+      name: "absent then later valid create",
+      fixture: buildRetiringActivationGeneration({
+        sharedExisted: false,
+        seedShared: false,
+      }),
+      mutate(fake, fixture) {
+        fake.write(fixture.sharedPath, {
+          trackingEngine: "diamond-v2",
+          diamondSourceTeamId: "team-later",
+          diamondSourceGameId: "game-later",
+          diamondScorebookInstanceId: uuid(990),
+          homeScore: 4,
+          laterWinner: true,
+        });
+      },
+      expected: { laterWinner: true },
+    },
+    {
+      name: "sentinel then later valid replacement",
+      fixture: buildRetiringActivationGeneration(),
+      mutate(fake, fixture) {
+        fake.write(fixture.sharedPath, {
+          trackingEngine: "diamond-v2",
+          diamondSourceTeamId: "team-later",
+          diamondSourceGameId: "game-later",
+          diamondScorebookInstanceId: uuid(991),
+          homeScore: 5,
+          laterWinner: true,
+        });
+      },
+      expected: { laterWinner: true },
+    },
+    {
+      name: "sentinel then later deletion",
+      fixture: buildRetiringActivationGeneration(),
+      mutate(fake, fixture) {
+        fake.remove(fixture.sharedPath);
+      },
+      expected: null,
+    },
+  ];
+  for (const testCase of cases) {
+    await t.test(testCase.name, async () => {
+      const fake = makeFirestore(testCase.fixture.documents, {
+        commitMetadata: testCase.fixture.commitMetadata,
+      });
+      const bounded = {
+        handlerOptions: {
+          reconciliationInventoryPageBudget: 1,
+          reconciliationInventoryPageSize: 1,
+        },
+      };
+      await assert.rejects(
+        runDirectAuthDelete(fake, bounded),
+        (error) => error?.code === "unavailable",
+      );
+      testCase.mutate(fake, testCase.fixture);
+
+      await runDirectAuthDeleteUntilComplete(fake, bounded);
+
+      if (testCase.expected === null) {
+        assert.equal(fake.has(testCase.fixture.sharedPath), false);
+      } else {
+        assert.equal(fake.read(testCase.fixture.sharedPath).laterWinner, true);
+      }
+      assert.equal(fake.has(testCase.fixture.scorebookPath), false);
+    });
+  }
+});
+
+test("Diamond retirement preserves a deleted or replaced game after sentinel withdrawal", async (t) => {
+  const cases = [
+    {
+      name: "sentinel then manager deletion",
+      mutate(fake, fixture) {
+        fake.remove(fixture.gamePath);
+      },
+      expected: null,
+    },
+    {
+      name: "sentinel then later legacy game replacement",
+      mutate(fake, fixture) {
+        fake.write(fixture.gamePath, {
+          id: fixture.gameId,
+          trackingEngine: "legacy-v1",
+          laterWinner: true,
+        });
+      },
+      expected: { laterWinner: true },
+    },
+    {
+      name: "sentinel then later Diamond activation replacement",
+      mutate(fake, fixture) {
+        fake.write(fixture.gamePath, {
+          id: fixture.gameId,
+          trackingEngine: "diamond-v2",
+          diamondScorebookInstanceId: uuid(992),
+          laterWinner: true,
+        });
+      },
+      expected: { laterWinner: true },
+    },
+    {
+      name: "sentinel then exact old-generation rewrite",
+      mutate(fake, fixture) {
+        fake.write(fixture.gamePath, {
+          id: fixture.gameId,
+          trackingEngine: "diamond-v2",
+          diamondScorebookInstanceId: fixture.instanceId,
+          unsafeOldGenerationRewrite: true,
+        });
+      },
+      rejects: true,
+    },
+  ];
+  for (const testCase of cases) {
+    await t.test(testCase.name, async () => {
+      const fixture = buildRetiringActivationGeneration();
+      const fake = makeFirestore(fixture.documents, {
+        commitMetadata: fixture.commitMetadata,
+      });
+      const bounded = {
+        handlerOptions: {
+          reconciliationInventoryPageBudget: 1,
+          reconciliationInventoryPageSize: 1,
+        },
+      };
+      await assert.rejects(
+        runDirectAuthDelete(fake, bounded),
+        (error) => error?.code === "unavailable",
+      );
+      testCase.mutate(fake, fixture);
+
+      if (testCase.rejects) {
+        await assert.rejects(
+          runDirectAuthDeleteUntilComplete(fake, bounded),
+          (error) => error?.code === "diamond-private-note-integrity-failed",
+        );
+        assert.equal(fake.has(fixture.scorebookPath), true);
+        assert.equal(fake.read(fixture.gamePath).unsafeOldGenerationRewrite, true);
+        return;
+      }
+
+      await runDirectAuthDeleteUntilComplete(fake, bounded);
+
+      if (testCase.expected === null) {
+        assert.equal(fake.has(fixture.gamePath), false);
+      } else {
+        assert.equal(fake.read(fixture.gamePath).laterWinner, true);
+      }
+      assert.equal(fake.has(fixture.scorebookPath), false);
+      assert.equal(fake.has(fixture.eventPath), false);
+    });
+  }
+});
+
+test("direct Auth deletion fails closed on same-millisecond mutation and missing commit evidence", async (t) => {
+  for (const testCase of [
+    {
+      name: "different timestamp nanoseconds",
+      fixture: buildRetiringActivationGeneration({
+        sourceCreateNanosecondOffset: 1,
+        sourceUpdateNanosecondOffset: 2,
+      }),
+      prepare() {},
+    },
+    {
+      name: "missing commit metadata",
+      fixture: buildRetiringActivationGeneration(),
+      prepare(fake, fixture) {
+        fake.removeMetadata(fixture.eventPath);
+      },
+    },
+  ]) {
+    await t.test(testCase.name, async () => {
+      const fake = makeFirestore(testCase.fixture.documents, {
+        commitMetadata: testCase.fixture.commitMetadata,
+      });
+      testCase.prepare(fake, testCase.fixture);
+
+      await assert.rejects(
+        runDirectAuthDelete(fake),
+        (error) => error?.code === "diamond-private-note-integrity-failed",
+      );
+
+      assert.equal(fake.has(testCase.fixture.scorebookPath), true);
+      assert.equal(
+        fake.read(testCase.fixture.scorebookPath).authDeleteReconciliation,
+        undefined,
+      );
+      assert.equal(fake.has(testCase.fixture.eventPath), true);
+    });
+  }
+});
+
+test("direct Auth deletion surgically removes stale Diamond configuration receipts", async (t) => {
+  const settings = {
+    configuredBy: UID,
+    mode: "dark",
+    rulesProfileId: "baseball-youth",
+  };
+  const requestPath = "teams/team-config/diamondConfigurationRequests/request-config";
+  const request = {
+    requestedBy: UID,
+    requestHash: `sha256:${"b".repeat(64)}`,
+    result: { settings },
+  };
+  for (const testCase of [
+    {
+      name: "matching current config",
+      team: { diamondScorebook: settings, updatedAt: "later-authoritative-time" },
+      expectConfig: false,
+    },
+    {
+      name: "later manager config",
+      team: {
+        diamondScorebook: { configuredBy: "active-manager", mode: "dark" },
+        updatedAt: "later-authoritative-time",
+      },
+      expectConfig: true,
+    },
+    { name: "missing team", team: null, expectConfig: false },
+  ]) {
+    await t.test(testCase.name, async () => {
+      const fake = makeFirestore(
+        {
+          [requestPath]: request,
+          ...(testCase.team ? { "teams/team-config": testCase.team } : {}),
+        },
+        {
+          commitMetadata: {
+            [requestPath]: {
+              createMs: Date.parse(REDACTED_AT),
+              updateMs: Date.parse(REDACTED_AT),
+            },
+          },
+        },
+      );
+
+      await runDirectAuthDelete(fake);
+
+      assert.equal(fake.has(requestPath), false);
+      if (!testCase.team) {
+        assert.equal(fake.has("teams/team-config"), false);
+      } else {
+        assert.equal(
+          Object.prototype.hasOwnProperty.call(
+            fake.read("teams/team-config"),
+            "diamondScorebook",
+          ),
+          testCase.expectConfig,
+        );
+        assert.equal(
+          fake.read("teams/team-config").updatedAt,
+          "later-authoritative-time",
+        );
+      }
+    });
+  }
+});
+
+test("direct Auth discovery persists a bounded collection-group cursor and resumes strictly after it", async () => {
+  const seed = {
+    [AUTH_DELETE_BARRIER_PATH]: {
+      schemaVersion: 1,
+      type: "diamond-private-note-auth-delete-barrier",
+      status: "auth-deleted",
+      startedAt: REDACTED_AT,
+    },
+  };
+  for (const [source, collectionGroup, field] of [
+    ["events-actor", "events", "actorUid"],
+    ["events-handoff", "events", "payload.toUid"],
+    ["notes-author", "notes", "authorUid"],
+    ["regeneration-audit", "audit", "actorUid"],
+  ]) {
+    seed[`${AUTH_DELETE_BARRIER_PATH}/diamondReconciliationScans/${source}`] = {
+      schemaVersion: 1,
+      type: "diamond-auth-delete-scan",
+      source,
+      collectionGroup,
+      field,
+      status: "complete",
+      cursorPath: null,
+      epoch: 0,
+      startedAt: REDACTED_AT,
+    };
+  }
+  const commitMetadata = {};
+  const requestPaths = [];
+  for (let index = 0; index < 251; index += 1) {
+    const path = `teams/team-config-${String(index).padStart(3, "0")}/diamondConfigurationRequests/request-${String(index).padStart(3, "0")}`;
+    requestPaths.push(path);
+    seed[path] = {
+      requestedBy: UID,
+      requestHash: `sha256:${index.toString(16).padStart(64, "0")}`,
+      result: {
+        settings: { configuredBy: UID, mode: "dark", requestIndex: index },
+      },
+    };
+    commitMetadata[path] = {
+      createMs: Date.parse(REDACTED_AT),
+      updateMs: Date.parse(REDACTED_AT),
+    };
+  }
+  const fake = makeFirestore(seed, { commitMetadata });
+  const bounded = {
+    handlerOptions: { reconciliationInventoryPageBudget: 1 },
+  };
+
+  await assert.rejects(
+    runDirectAuthDelete(fake, bounded),
+    (error) => error?.code === "unavailable",
+  );
+
+  const scanPath = `${AUTH_DELETE_BARRIER_PATH}/diamondReconciliationScans/configuration-request`;
+  const firstCursor = fake.read(scanPath);
+  assert.equal(firstCursor.status, "scanning");
+  assert.equal(firstCursor.cursorPath, requestPaths[249]);
+  assert.equal(fake.has(requestPaths[0]), false);
+  assert.equal(fake.has(requestPaths[249]), false);
+  assert.equal(fake.has(requestPaths[250]), true);
+
+  await runDirectAuthDelete(fake, bounded);
+
+  assert.equal(fake.read(scanPath).status, "complete");
+  assert.equal(fake.has(requestPaths[250]), false);
+  assert.ok(
+    fake.queryLog.some(
+      (entry) =>
+        entry.collectionId === "diamondConfigurationRequests" &&
+        entry.cursorPath === requestPaths[249] &&
+        entry.paths.length === 1 &&
+        entry.paths[0] === requestPaths[250],
+    ),
+  );
+});
+
+test("direct Auth task recovery persists a bounded cursor across terminal task history", async () => {
+  const seed = {
+    [AUTH_DELETE_BARRIER_PATH]: {
+      schemaVersion: 1,
+      type: "diamond-private-note-auth-delete-barrier",
+      status: "auth-deleted",
+      startedAt: REDACTED_AT,
+    },
+  };
+  for (const [source, collectionGroup, field] of [
+    ["events-actor", "events", "actorUid"],
+    ["events-handoff", "events", "payload.toUid"],
+    ["notes-author", "notes", "authorUid"],
+    ["regeneration-audit", "audit", "actorUid"],
+    ["configuration-request", "diamondConfigurationRequests", "requestedBy"],
+  ]) {
+    seed[`${AUTH_DELETE_BARRIER_PATH}/diamondReconciliationScans/${source}`] = {
+      schemaVersion: 1,
+      type: "diamond-auth-delete-scan",
+      source,
+      collectionGroup,
+      field,
+      status: "complete",
+      cursorPath: null,
+      epoch: 0,
+      startedAt: REDACTED_AT,
+    };
+  }
+  const taskPaths = [];
+  for (let index = 0; index < 251; index += 1) {
+    const taskId = index.toString(16).padStart(64, "0");
+    const taskPath = `${AUTH_DELETE_BARRIER_PATH}/diamondReconciliations/${taskId}`;
+    taskPaths.push(taskPath);
+    seed[taskPath] = {
+      schemaVersion: 1,
+      type: "diamond-auth-delete-reconciliation",
+      status: "complete",
+      taskId,
+      outcome: "generation-retired",
+      receiptHash: `sha256:${index.toString(16).padStart(64, "0")}`,
+      completedAt: REDACTED_AT,
+    };
+  }
+  const fake = makeFirestore(seed);
+  const bounded = {
+    handlerOptions: { reconciliationInventoryPageBudget: 1 },
+  };
+
+  await assert.rejects(
+    runDirectAuthDelete(fake, bounded),
+    (error) => error?.code === "unavailable",
+  );
+
+  const scanPath = `${AUTH_DELETE_BARRIER_PATH}/diamondReconciliationScans/existing-tasks`;
+  assert.equal(fake.read(scanPath).status, "scanning");
+  assert.equal(fake.read(scanPath).cursorPath, taskPaths[249]);
+
+  await runDirectAuthDelete(fake, bounded);
+
+  assert.equal(fake.read(scanPath).status, "complete");
+  assert.equal(fake.read(scanPath).cursorPath, taskPaths[250]);
+  assert.ok(
+    fake.queryLog.some(
+      (entry) =>
+        entry.collectionId.endsWith("diamondReconciliations") &&
+        entry.cursorPath === taskPaths[249] &&
+        entry.paths.length === 1 &&
+        entry.paths[0] === taskPaths[250],
+    ),
+  );
+});
+
+test("task scan epochs prevent stale completion across stage/reset interleavings", async (t) => {
+  for (const mode of ["after-query", "transaction-callback-retry"]) {
+    await t.test(mode, async () => {
+      const seed = {
+        [AUTH_DELETE_BARRIER_PATH]: {
+          schemaVersion: 1,
+          type: "diamond-private-note-auth-delete-barrier",
+          status: "auth-deleted",
+          startedAt: REDACTED_AT,
+        },
+      };
+      for (const [source, collectionGroup, field] of [
+        ["events-actor", "events", "actorUid"],
+        ["events-handoff", "events", "payload.toUid"],
+        ["notes-author", "notes", "authorUid"],
+        ["regeneration-audit", "audit", "actorUid"],
+        ["configuration-request", "diamondConfigurationRequests", "requestedBy"],
+      ]) {
+        seed[`${AUTH_DELETE_BARRIER_PATH}/diamondReconciliationScans/${source}`] = {
+          schemaVersion: 1,
+          type: "diamond-auth-delete-scan",
+          source,
+          collectionGroup,
+          field,
+          status: "complete",
+          cursorPath: null,
+          epoch: 0,
+          startedAt: REDACTED_AT,
+        };
+      }
+      const taskId = "f".repeat(64);
+      const taskPath = `${AUTH_DELETE_BARRIER_PATH}/diamondReconciliations/${taskId}`;
+      const scanPath = `${AUTH_DELETE_BARRIER_PATH}/diamondReconciliationScans/existing-tasks`;
+      let injected = false;
+      let fake;
+      const injectTaskReset = () => {
+        if (injected) return;
+        injected = true;
+        fake.write(taskPath, {
+          schemaVersion: 1,
+          type: "diamond-auth-delete-reconciliation",
+          status: "complete",
+          taskId,
+          outcome: "generation-retired",
+          receiptHash: `sha256:${"e".repeat(64)}`,
+          completedAt: REDACTED_AT,
+        });
+        fake.write(scanPath, {
+          schemaVersion: 1,
+          type: "diamond-auth-delete-scan",
+          source: "existing-tasks",
+          collectionGroup: "diamondReconciliations",
+          field: "document-id",
+          status: "scanning",
+          cursorPath: null,
+          epoch: 1,
+          startedAt: REDACTED_AT,
+        });
+      };
+      fake = makeFirestore(seed, {
+        async afterQueryHook({ scope, source, paths }) {
+          if (
+            mode === "after-query" &&
+            !injected &&
+            scope === "collection" &&
+            source.endsWith("/diamondReconciliations") &&
+            paths.length === 0
+          ) injectTaskReset();
+        },
+      });
+      if (mode === "transaction-callback-retry") {
+        const originalRunTransaction = fake.firestore.runTransaction;
+        const retrySignal = new Error("simulated Firestore callback retry");
+        fake.firestore.runTransaction = async (operation) => {
+          if (injected) return originalRunTransaction(operation);
+          try {
+            return await originalRunTransaction(async (transaction) => {
+              let advancesEmptyTaskScan = false;
+              const proxy = {
+                get: (...args) => transaction.get(...args),
+                create: (...args) => transaction.create(...args),
+                update: (...args) => transaction.update(...args),
+                delete: (...args) => transaction.delete(...args),
+                set(reference, value, options) {
+                  if (
+                    reference.path === scanPath &&
+                    value?.status === "complete" &&
+                    value?.epoch === 0
+                  ) advancesEmptyTaskScan = true;
+                  return transaction.set(reference, value, options);
+                },
+              };
+              const result = await operation(proxy);
+              if (advancesEmptyTaskScan) {
+                injectTaskReset();
+                throw retrySignal;
+              }
+              return result;
+            });
+          } catch (error) {
+            if (error !== retrySignal) throw error;
+            return originalRunTransaction(operation);
+          }
+        };
+      }
+
+      await runDirectAuthDelete(fake);
+
+      assert.equal(injected, true);
+      assert.deepEqual(fake.read(scanPath), {
+        schemaVersion: 1,
+        type: "diamond-auth-delete-scan",
+        source: "existing-tasks",
+        collectionGroup: "diamondReconciliations",
+        field: "document-id",
+        status: "complete",
+        cursorPath: taskPath,
+        epoch: 1,
+        startedAt: REDACTED_AT,
+      });
+      const taskQueries = fake.queryLog.filter((entry) =>
+        entry.collectionId.endsWith("/diamondReconciliations"),
+      );
+      assert.ok(taskQueries.length >= 2);
+      assert.equal(taskQueries.at(-1).paths[0], taskPath);
+    });
+  }
+});
+
+test("a final task scan catches a concurrently staged retirement after its source disappears", async () => {
+  const fixture = buildRetiringActivationGeneration();
+  const stagedFake = makeFirestore(fixture.documents, {
+    commitMetadata: fixture.commitMetadata,
+  });
+  const onePage = {
+    handlerOptions: {
+      reconciliationInventoryPageBudget: 1,
+      reconciliationInventoryPageSize: 1,
+    },
+  };
+  let captured = null;
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    await assert.rejects(
+      runDirectAuthDelete(stagedFake, onePage),
+      (error) => error?.code === "unavailable",
+    );
+    const state = stagedFake.entries();
+    const activeTask = Object.entries(state).find(
+      ([path, value]) =>
+        path.includes("/diamondReconciliations/") && value?.status === "retiring",
+    );
+    if (!stagedFake.has(fixture.eventPath) && activeTask) {
+      captured = state;
+      break;
+    }
+  }
+  assert.ok(captured, "the concurrent worker must durably remove its source then yield");
+
+  const taskEntry = Object.entries(captured).find(
+    ([path, value]) =>
+      path.includes("/diamondReconciliations/") && value?.status === "retiring",
+  );
+  assert.ok(taskEntry);
+  const taskScanPath = `${AUTH_DELETE_BARRIER_PATH}/diamondReconciliationScans/existing-tasks`;
+  let injected = false;
+  let fake;
+  fake = makeFirestore(
+    { [AUTH_DELETE_BARRIER_PATH]: captured[AUTH_DELETE_BARRIER_PATH] },
+    {
+      async queryHook({ scope, source, filters }) {
+        if (
+          injected ||
+          scope !== "group" ||
+          source !== "events" ||
+          filters[0]?.field !== "actorUid"
+        ) return;
+        injected = true;
+        for (const [path, value] of Object.entries(captured)) {
+          if (
+            path === AUTH_DELETE_BARRIER_PATH ||
+            path.includes("/diamondReconciliationScans/") ||
+            path === fixture.eventPath
+          ) continue;
+          fake.write(path, value);
+        }
+        fake.write(taskScanPath, {
+          schemaVersion: 1,
+          type: "diamond-auth-delete-scan",
+          source: "existing-tasks",
+          collectionGroup: "diamondReconciliations",
+          field: "document-id",
+          status: "scanning",
+          cursorPath: null,
+          epoch: 1,
+          startedAt: REDACTED_AT,
+        });
+      },
+    },
+  );
+
+  await runDirectAuthDelete(fake, {
+    handlerOptions: {
+      reconciliationInventoryPageBudget: 100,
+      reconciliationInventoryPageSize: 1,
+    },
+  });
+
+  assert.equal(injected, true);
+  assert.equal(fake.has(fixture.scorebookPath), false);
+  assert.equal(fake.has(fixture.eventPath), false);
+  assert.equal(fake.read(taskEntry[0]).status, "complete");
+  assert.equal(fake.read(taskScanPath).status, "complete");
+});
+
+test("a completed old retirement cannot erase a fresh same-path Diamond activation", async () => {
+  const fixture = buildRetiringActivationGeneration();
+  const fake = makeFirestore(fixture.documents, {
+    commitMetadata: fixture.commitMetadata,
+  });
+  await runDirectAuthDelete(fake);
+  const freshInstance = uuid(999);
+  const freshRoot = {
+    schemaVersion: 2,
+    trackingEngine: "diamond-v2",
+    teamId: fixture.teamId,
+    gameId: fixture.gameId,
+    instanceId: freshInstance,
+  };
+  const freshEventPath = `${fixture.scorebookPath}/events/fresh-event`;
+  const freshEvent = {
+    trackingEngine: "diamond-v2",
+    teamId: fixture.teamId,
+    gameId: fixture.gameId,
+    instanceId: freshInstance,
+    eventId: "fresh-event",
+    actorUid: "active-manager",
+  };
+  const freshGame = {
+    id: fixture.gameId,
+    trackingEngine: "diamond-v2",
+    diamondScorebookInstanceId: freshInstance,
+    freshActivation: true,
+  };
+  fake.write(fixture.gamePath, freshGame);
+  fake.write(fixture.scorebookPath, freshRoot);
+  fake.write(freshEventPath, freshEvent);
+
+  await runDirectAuthDelete(fake);
+
+  assert.deepEqual(fake.read(fixture.gamePath), freshGame);
+  assert.deepEqual(fake.read(fixture.scorebookPath), freshRoot);
+  assert.deepEqual(fake.read(freshEventPath), freshEvent);
 });
 
 test("direct Auth deletion fails closed on a forged terminal barrier", async () => {
@@ -764,4 +2058,25 @@ test("wires the privacy cleanup before every destructive account cleanup and dec
   assert.ok(indexed.has("notes.authorUid"));
   assert.ok(indexed.has("notes.createdBy"));
   assert.ok(indexed.has("events.actorUid"));
+  assert.ok(indexed.has("events.payload.toUid"));
+  assert.ok(indexed.has("audit.actorUid"));
+  assert.ok(indexed.has("diamondConfigurationRequests.requestedBy"));
+
+  const productionSources = [];
+  const visit = (directory) => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      if (["node_modules", "test"].includes(entry.name)) continue;
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) visit(path);
+      else if (/\.(?:cjs|mjs|js)$/.test(entry.name)) productionSources.push(path);
+    }
+  };
+  visit(join(root, "functions"));
+  for (const path of productionSources) {
+    assert.doesNotMatch(
+      readFileSync(path, "utf8"),
+      /\bdeleteUsers\s*\(/,
+      `bulk Auth deletion would bypass onDelete reconciliation: ${path}`,
+    );
+  }
 });

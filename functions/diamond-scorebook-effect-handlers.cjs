@@ -753,6 +753,9 @@ function markerForRoot(root) {
 }
 
 function validateProjectionFence({ root, game, run, effect, teamId, gameId }) {
+  if (isPlainObject(root?.authDeleteReconciliation)) {
+    return { state: "discarded", reason: "auth-delete-reconciliation" };
+  }
   if (
     !isPlainObject(root) ||
     !isPlainObject(game) ||

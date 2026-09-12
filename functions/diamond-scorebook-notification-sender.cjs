@@ -235,6 +235,17 @@ function receiptId(path) {
   return path.slice(path.lastIndexOf("/") + 1);
 }
 
+function scorebookPath(teamId, gameId) {
+  return `teams/${teamId}/games/${gameId}/diamondScorebooks/v2`;
+}
+
+function sourceScorebookIdentity(request) {
+  return {
+    teamId: request.viewerTeamId || request.teamId,
+    gameId: request.viewerGameId || request.gameId,
+  };
+}
+
 function nowMilliseconds(clock) {
   let value;
   try {
@@ -538,17 +549,42 @@ function createDiamondScorebookNotificationSender(dependencies = {}) {
     return null;
   }
 
+  function requireActiveScorebook(root, request) {
+    const source = sourceScorebookIdentity(request);
+    if (
+      !isPlainObject(root) ||
+      root.trackingEngine !== DIAMOND_ENGINE ||
+      root.teamId !== source.teamId ||
+      root.gameId !== source.gameId ||
+      root.instanceId !== request.instanceId ||
+      root.authDeleteReconciliation
+    ) {
+      throw new DiamondNotificationSenderError(
+        "notification-generation-retired",
+        "The Diamond generation is no longer eligible for notification delivery.",
+        { retryable: false },
+      );
+    }
+  }
+
   async function reserve(request, reference, expected, nowMs, getLeaseId) {
     let attemptedLeaseId = null;
     try {
       return await firestore.runTransaction(async (transaction) => {
-        const snapshot = await transaction.get(reference);
+        const source = sourceScorebookIdentity(request);
+        const [snapshot, rootSnapshot] = await Promise.all([
+          transaction.get(reference),
+          transaction.get(
+            firestore.doc(scorebookPath(source.teamId, source.gameId)),
+          ),
+        ]);
         const existing = snapshotData(snapshot);
         if (existing) {
           const receipt = validateExistingReceipt(existing, expected);
           const waiting = waitResult(receipt, nowMs);
           if (waiting) return waiting;
         }
+        requireActiveScorebook(snapshotData(rootSnapshot), request);
         attemptedLeaseId = getLeaseId();
         const attemptCount = existing ? existing.attemptCount + 1 : 1;
         const lease = {
@@ -669,6 +705,7 @@ function createDiamondScorebookNotificationSender(dependencies = {}) {
   }
 
   async function markProviderDispatchStarting(
+    request,
     reference,
     expected,
     lease,
@@ -682,7 +719,13 @@ function createDiamondScorebookNotificationSender(dependencies = {}) {
     };
     try {
       return await firestore.runTransaction(async (transaction) => {
-        const snapshot = await transaction.get(reference);
+        const source = sourceScorebookIdentity(request);
+        const [snapshot, rootSnapshot] = await Promise.all([
+          transaction.get(reference),
+          transaction.get(
+            firestore.doc(scorebookPath(source.teamId, source.gameId)),
+          ),
+        ]);
         const existing = validateExistingReceipt(
           snapshotData(snapshot),
           expected,
@@ -709,6 +752,7 @@ function createDiamondScorebookNotificationSender(dependencies = {}) {
             "Another provider dispatch is already bound to this notification.",
           );
         }
+        requireActiveScorebook(snapshotData(rootSnapshot), request);
         transaction.update(reference, {
           providerDispatch,
           updatedAt: timestampIso(startedAtMs),
@@ -850,6 +894,7 @@ function createDiamondScorebookNotificationSender(dependencies = {}) {
       beforeProviderDispatch: async () => {
         const startedAtMs = nowMilliseconds(clock);
         await markProviderDispatchStarting(
+          request,
           reference,
           expected,
           lease,

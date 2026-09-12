@@ -840,6 +840,9 @@ function createDiamondScorebookProjectorHandlers(dependencies = {}) {
       const game = snapshotData(gameSnapshot);
       if (!root || !game)
         return { acquired: false, reason: "missing-scorebook" };
+      if (root.authDeleteReconciliation) {
+        return { acquired: false, reason: "auth-delete-reconciliation" };
+      }
       const instanceId = normalizeId(root.instanceId, "instanceId");
       if (!isRootOwned(root, game, { teamId, gameId, instanceId })) {
         return { acquired: false, reason: "not-diamond-owned" };
@@ -1480,16 +1483,59 @@ function createDiamondScorebookProjectorHandlers(dependencies = {}) {
     }
     for (let index = 0; index < pending.length; index += batchWriteLimit) {
       const chunk = pending.slice(index, index + batchWriteLimit);
-      const batch = firestore.batch();
-      for (const record of chunk) {
-        batch.create(
-          firestore.doc(resourcePaths.effect(record.id)),
-          record.data,
-        );
-      }
       try {
-        await batch.commit();
+        await firestore.runTransaction(async (transaction) => {
+          const effectRefs = chunk.map((record) =>
+            firestore.doc(resourcePaths.effect(record.id)),
+          );
+          const [rootSnapshot, ...effectSnapshots] =
+            await transactionGetAll(transaction, [
+              firestore.doc(resourcePaths.scorebook),
+              ...effectRefs,
+            ]);
+          const root = snapshotData(rootSnapshot);
+          if (
+            !root ||
+            root.authDeleteReconciliation ||
+            root.instanceId !== acquired.instanceId ||
+            root.checkpoint?.sequence !== acquired.checkpoint.sequence ||
+            root.checkpoint?.previousHash !== acquired.checkpoint.previousHash ||
+            root.projectionLease?.leaseId !== acquired.lease.leaseId ||
+            !stillHasPrivateNotePrivacyState(root, acquired) ||
+            !stillHasPinnedStatConfig(root, acquired) ||
+            !stillHasPinnedOrientation(root, acquired)
+          ) {
+            throw new DiamondProjectorError(
+              "projection-lease-lost",
+              "The projection lease was replaced before outbox staging.",
+              { retryable: true },
+            );
+          }
+          chunk.forEach((record, recordIndex) => {
+            const current = snapshotData(effectSnapshots[recordIndex]);
+            if (current) {
+              if (
+                !isOwnedDocument(current, {
+                  teamId: acquired.root.teamId,
+                  gameId: acquired.root.gameId,
+                  instanceId: acquired.instanceId,
+                }) ||
+                current.payloadHash !== record.data.payloadHash ||
+                current.projectionKey !== acquired.projectionKey
+              ) {
+                throw new DiamondProjectorError(
+                  "effect-idempotency-conflict",
+                  "A Diamond effect ID already contains different projection content.",
+                  { retryable: false },
+                );
+              }
+              return;
+            }
+            transaction.create(effectRefs[recordIndex], record.data);
+          });
+        });
       } catch (error) {
+        if (error instanceof DiamondProjectorError) throw error;
         let reconciled = true;
         for (const record of chunk) {
           let current;
@@ -2036,6 +2082,14 @@ function createDiamondScorebookProjectorHandlers(dependencies = {}) {
         effects.length,
         effectEvidence,
       );
+      if (typeof hooks.beforeStageOutbox === "function") {
+        await hooks.beforeStageOutbox({
+          acquired,
+          bundle,
+          projectionHash,
+          firestore,
+        });
+      }
       await stageOutbox(acquired, effects, inputs.documents.effects);
       await markRunPrepared(acquired, projectionHash);
       if (typeof hooks.beforeFinalize === "function") {
@@ -2101,6 +2155,9 @@ function createDiamondScorebookProjectorHandlers(dependencies = {}) {
     const root = snapshotData(snapshot);
     if (!root || root.trackingEngine !== DIAMOND_ENGINE) {
       return { projected: false, reason: "not-diamond-v2" };
+    }
+    if (root.authDeleteReconciliation) {
+      return { projected: false, reason: "auth-delete-reconciliation" };
     }
     const teamId = normalizeId(rawTeamId || root.teamId, "teamId");
     const gameId = normalizeId(rawGameId || root.gameId, "gameId");

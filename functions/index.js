@@ -4277,7 +4277,7 @@ exports.cleanupInviteSignupOnAuthDelete = functions.auth.user().onDelete(async (
 const cleanupAccountDiamondPrivateNotesOnAuthDelete = createAccountDiamondPrivateNoteAuthDeleteHandler({
   firestore,
   getDocumentIdField: () => admin.firestore.FieldPath.documentId(),
-  now: () => admin.firestore.Timestamp.now().toDate().toISOString()
+  deleteFieldValue: () => admin.firestore.FieldValue.delete()
 });
 
 exports.cleanupAccountDiamondPrivateNotesOnAuthDelete = functions

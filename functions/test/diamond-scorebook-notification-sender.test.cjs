@@ -169,8 +169,31 @@ function deliveryResult(overrides = {}) {
   };
 }
 
+function scorebookPath(teamId, gameId) {
+  return `teams/${teamId}/games/${gameId}/diamondScorebooks/v2`;
+}
+
+function activeRoot(teamId, gameId, instanceId = DEFAULT_INSTANCE_ID) {
+  return {
+    schemaVersion: 2,
+    trackingEngine: "diamond-v2",
+    teamId,
+    gameId,
+    instanceId,
+  };
+}
+
 function harness(options = {}) {
   const firestore = options.firestore || new FakeFirestore();
+  if (options.seedRoots !== false) {
+    const path = scorebookPath("team-1", "game-1");
+    if (!firestore.documents.has(path)) {
+      firestore.documents.set(
+        path,
+        activeRoot("team-1", "game-1"),
+      );
+    }
+  }
   const calls = [];
   let now = options.now || 1_760_000_000_000;
   let randomIndex = options.randomIndex || 700;
@@ -193,6 +216,11 @@ function harness(options = {}) {
     firestore,
     calls,
     sender,
+    setRoot(teamId, gameId, value) {
+      const path = scorebookPath(teamId, gameId);
+      if (value === undefined) firestore.documents.delete(path);
+      else firestore.documents.set(path, clone(value));
+    },
     setNow(value) {
       now = value;
     },
@@ -297,6 +325,39 @@ describe("Diamond scorebook notification sender", () => {
           link: expectedViewerLink("team-1", "game-1"),
         },
       ],
+    );
+  });
+
+  it("uses the source viewer root to fence shared-game audience delivery", async () => {
+    const setup = harness();
+    const sharedAudience = request({
+      teamId: "team-2",
+      viewerTeamId: "team-1",
+      viewerGameId: "game-1",
+      sharedGamePath: "organizations/org-1/sharedGames/shared-1",
+      liveViewerLink: expectedViewerLink("team-1", "game-1"),
+      link: expectedViewerLink("team-1", "game-1"),
+    });
+    setup.setRoot("team-1", "game-1", {
+      ...activeRoot("team-1", "game-1", sharedAudience.instanceId),
+      authDeleteReconciliation: { status: "retiring" },
+    });
+
+    await assert.rejects(
+      setup.sender.sendDiamondNotification(sharedAudience),
+      (error) => error.code === "notification-generation-retired",
+    );
+    assert.equal(setup.calls.length, 0);
+    assert.equal(
+      setup.firestore.read(
+        receiptPath(
+          sharedAudience.teamId,
+          sharedAudience.gameId,
+          sharedAudience.instanceId,
+          sharedAudience.idempotencyKey,
+        ),
+      ),
+      undefined,
     );
   });
 
@@ -424,6 +485,15 @@ describe("Diamond scorebook notification sender", () => {
     const first = await setup.sender.sendDiamondNotification(firstRequest);
     const sameGenerationRetry =
       await setup.sender.sendDiamondNotification(firstRequest);
+    setup.setRoot(
+      replacementRequest.teamId,
+      replacementRequest.gameId,
+      activeRoot(
+        replacementRequest.teamId,
+        replacementRequest.gameId,
+        replacementRequest.instanceId,
+      ),
+    );
     const replacement =
       await setup.sender.sendDiamondNotification(replacementRequest);
 
@@ -718,6 +788,95 @@ describe("Diamond scorebook notification sender", () => {
     );
     assert.equal(setup.firestore.read(path).status, "completed");
     assert.equal(setup.firestore.read(path).attemptCount, 1);
+  });
+
+  it("does not create a receipt or call the provider for a fenced generation", async () => {
+    const setup = harness();
+    const value = request();
+    setup.setRoot(value.teamId, value.gameId, {
+      ...activeRoot(value.teamId, value.gameId, value.instanceId),
+      authDeleteReconciliation: { status: "retiring" },
+    });
+
+    await assert.rejects(
+      setup.sender.sendDiamondNotification(value),
+      (error) => error.code === "notification-generation-retired",
+    );
+    assert.equal(setup.calls.length, 0);
+    assert.equal(
+      setup.firestore.read(
+        receiptPath(
+          value.teamId,
+          value.gameId,
+          value.instanceId,
+          value.idempotencyKey,
+        ),
+      ),
+      undefined,
+    );
+  });
+
+  it("stops before the provider when retirement wins after reservation", async () => {
+    let providerCalls = 0;
+    const setup = harness({
+      deliverNotification: async (value, _metadata, hooks) => {
+        setup.setRoot(value.teamId, value.gameId, {
+          ...activeRoot(value.teamId, value.gameId, value.instanceId),
+          authDeleteReconciliation: { status: "retiring" },
+        });
+        await hooks.beforeProviderDispatch();
+        providerCalls += 1;
+        return deliveryResult();
+      },
+    });
+    const value = request();
+
+    await assert.rejects(
+      setup.sender.sendDiamondNotification(value),
+      (error) =>
+        error.code === "notification-delivery-failed-before-provider" &&
+        error.retryable,
+    );
+    assert.equal(providerCalls, 0);
+    const receipt = setup.firestore.read(
+      receiptPath(
+        value.teamId,
+        value.gameId,
+        value.instanceId,
+        value.idempotencyKey,
+      ),
+    );
+    assert.equal(receipt.status, "retryable-failure");
+    assert.equal(receipt.providerDispatch, null);
+  });
+
+  it("retains terminal evidence when retirement follows provider dispatch start", async () => {
+    let providerCalls = 0;
+    const setup = harness({
+      deliverNotification: async (value, _metadata, hooks) => {
+        await hooks.beforeProviderDispatch();
+        providerCalls += 1;
+        setup.setRoot(value.teamId, value.gameId, undefined);
+        return deliveryResult();
+      },
+    });
+    const value = request();
+
+    assert.equal(
+      (await setup.sender.sendDiamondNotification(value)).outcome,
+      "sent",
+    );
+    assert.equal(providerCalls, 1);
+    const receipt = setup.firestore.read(
+      receiptPath(
+        value.teamId,
+        value.gameId,
+        value.instanceId,
+        value.idempotencyKey,
+      ),
+    );
+    assert.equal(receipt.status, "completed");
+    assert.equal(receipt.providerOutcome, "sent");
   });
 
   it("rejects noncanonical links, keys, hidden fields, and unverifiable claims", async () => {

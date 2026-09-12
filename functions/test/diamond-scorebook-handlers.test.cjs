@@ -3137,6 +3137,133 @@ describe("Diamond scorebook handler factory", () => {
     );
   });
 
+  it("fences team configuration when every deletion barrier wins its missing-document read", async (t) => {
+    for (const variant of [
+      "direct-auth-delete",
+      "completed-self-service-delete",
+      "pending-self-service-delete",
+    ]) {
+      await t.test(variant, async () => {
+        const harness = createHarness({
+          documents: {
+            "teams/team-1": {
+              id: "team-1",
+              ownerId: "manager-1",
+              name: "Comets",
+              sport: "baseball",
+              active: true,
+              isPublic: true,
+            },
+          },
+        });
+        const request = {
+          requestId: makeUuid(
+            variant === "direct-auth-delete"
+              ? 32_200
+              : variant === "completed-self-service-delete"
+                ? 32_201
+                : 32_202,
+          ),
+          teamId: "team-1",
+          appBuild: DIAMOND_APP_BUILD,
+          sport: "baseball",
+          rulesProfileId: null,
+          captureMode: "full",
+          enabled: true,
+        };
+        const resourcePaths = paths("team-1", "__configuration__");
+        const barrierPath =
+          resourcePaths.accountPrivateNoteAuthDeleteBarrier("manager-1");
+        const auditPath = resourcePaths.accountDeletionAudit("manager-1");
+        const requestPath =
+          resourcePaths.accountDeletionRequest("manager-1");
+        const teamBefore = clone(harness.firestore.read(resourcePaths.team));
+        const authReadsBefore = harness.authGetUserCalls.length;
+        let injected = false;
+        harness.firestore.transactionHook = async (stage, transaction) => {
+          const winningPath =
+            variant === "direct-auth-delete"
+              ? barrierPath
+              : variant === "completed-self-service-delete"
+                ? auditPath
+                : requestPath;
+          if (
+            stage === "beforeCommit" &&
+            !injected &&
+            transaction.readPaths.includes(winningPath)
+          ) {
+            injected = true;
+            if (variant === "direct-auth-delete") {
+              harness.authUsers.delete("manager-1");
+              harness.firestore.seed(barrierPath, {
+                schemaVersion: 1,
+                type: "diamond-private-note-auth-delete-barrier",
+                status: "auth-deleted",
+                startedAt: "2026-09-12T12:06:00.000Z",
+              });
+            } else if (variant === "completed-self-service-delete") {
+              harness.firestore.seed(auditPath, {
+                version: 1,
+                outcome: "deleted",
+              });
+            } else {
+              harness.firestore.seed(requestPath, {
+                uid: "manager-1",
+                status: "queued",
+              });
+            }
+            return "retry";
+          }
+          return undefined;
+        };
+
+        await assert.rejects(
+          harness.handlers.configureDiamondTeam(
+            request,
+            harness.managerContext,
+          ),
+          (error) =>
+            error.code === "failed-precondition" &&
+            error.details?.reason === "account-deletion-pending",
+        );
+
+        assert.equal(injected, true);
+        assert.deepEqual(
+          harness.firestore.read(resourcePaths.team),
+          teamBefore,
+        );
+        assert.equal(
+          harness.firestore.read(
+            resourcePaths.configurationRequest(request.requestId),
+          ),
+          undefined,
+        );
+        assert.ok(
+          harness.firestore.transactionReadBatches.some(
+            (readPaths) =>
+              readPaths.includes(requestPath) &&
+              readPaths.includes(barrierPath) &&
+              readPaths.includes(auditPath),
+          ),
+        );
+        assert.equal(
+          harness.authGetUserCalls.length,
+          authReadsBefore + 1,
+          "the deletion fence must stop configuration that already passed Auth",
+        );
+        if (variant === "direct-auth-delete") {
+          assert.doesNotMatch(
+            JSON.stringify({
+              barrierPath,
+              value: harness.firestore.read(barrierPath),
+            }),
+            /manager-1/,
+          );
+        }
+      });
+    }
+  });
+
   it("returns indistinguishable not-found errors for missing and unauthorized Diamond access targets", async () => {
     const outsiderContext = { auth: { uid: "outsider-1" } };
     const createOutsiderHarness = ({
@@ -3599,6 +3726,17 @@ describe("Diamond scorebook handler factory", () => {
     assert.equal(root.rolloutPercentAtActivation, 100);
     assert.equal(root.rolloutBucketAtActivation, 98);
     assert.equal(root.rolloutAllowlistedAtActivation, false);
+    const activationProvenance = harness.firestore.read(
+      `${paths("team-1", "game-1").scorebook}/audit/activation-provenance`,
+    );
+    assert.equal(
+      domainEngine.hashDiamondValue(activationProvenance),
+      root.activationRollbackHash,
+    );
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(root, "activationGameRollback"),
+      false,
+    );
     assert.equal(root.statConfigSnapshot.configId, "baseball-standard");
     assert.deepEqual(root.statConfigSnapshot.privatePlayerStatIds, []);
     assert.match(root.statConfigSnapshot.snapshotHash, /^sha256:[0-9a-f]{64}$/);
@@ -3612,6 +3750,36 @@ describe("Diamond scorebook handler factory", () => {
     assert.doesNotMatch(
       JSON.stringify(publicState),
       /availablePlayers|medicalInfo|guardianEmail|currentScorerUid/,
+    );
+  });
+
+  it("fails closed before activation when exact rollback provenance exceeds its bound", async () => {
+    const documents = baseDocuments();
+    documents["teams/team-1/games/game-1"].aiRecap = "x".repeat(200_001);
+    const harness = createHarness({
+      firestore: new FakeFirestore(documents),
+    });
+
+    await assert.rejects(
+      activate(harness),
+      (error) =>
+        error.code === "failed-precondition" &&
+        /rollback before-image exceeds its safe bound/.test(error.message),
+    );
+
+    assert.equal(
+      harness.firestore.read("teams/team-1/games/game-1").trackingEngine,
+      undefined,
+    );
+    assert.equal(
+      harness.firestore.read(paths("team-1", "game-1").scorebook),
+      undefined,
+    );
+    assert.equal(
+      harness.firestore.read(
+        `${paths("team-1", "game-1").scorebook}/audit/activation-provenance`,
+      ),
+      undefined,
     );
   });
 
@@ -12474,7 +12642,9 @@ describe("Diamond scorebook handler factory", () => {
       statsBefore,
     );
     assert.equal(
-      regenerationAuditDocuments(harness, null, "team-1", "game-2").length,
+      regenerationAuditDocuments(harness, null, "team-1", "game-2").filter(
+        ({ value }) => String(value?.type || "").startsWith("projection-regeneration-"),
+      ).length,
       0,
     );
   });
