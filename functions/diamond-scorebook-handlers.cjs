@@ -33,6 +33,8 @@ const MAX_MANAGER_STAT_GAMES = 40;
 const MAX_MANAGER_STAT_PLAYERS = 25;
 const MAX_MANAGER_STAT_RESPONSE_BYTES = 7_000_000;
 const MANAGER_STAT_CONTROL_COLLECTION = "diamondManagerStatReadControls";
+const ACCOUNT_DIAMOND_AUTH_DELETE_BARRIER_COLLECTION =
+  "accountDiamondPrivateNoteAuthDeleteBarriers";
 const COMMAND_HISTORY_RATE_WINDOW_MS = 60 * 1000;
 const COMMAND_HISTORY_SUSTAINED_WINDOW_MS = 10 * 60 * 1000;
 const COMMAND_HISTORY_CONTROL_QUARANTINE_MS =
@@ -600,6 +602,15 @@ function paths(teamId, gameId) {
       `teams/${teamId}/diamondConfigurationRequests/${requestId}`,
     cleanupLock: `teams/${teamId}/diamondCleanupLocks/${gameId}`,
     accountDeletionRequest: (uid) => `accountDeletionRequests/${uid}`,
+    accountDeletionAudit: (uid) =>
+      `accountDeletionAudit/${nodeCrypto
+        .createHash("sha256")
+        .update(uid)
+        .digest("hex")}`,
+    accountPrivateNoteAuthDeleteBarrier: (uid) =>
+      `${ACCOUNT_DIAMOND_AUTH_DELETE_BARRIER_COLLECTION}/${privateNoteCore.buildDiamondPrivateNoteAuthDeleteBarrierId(
+        uid,
+      )}`,
   };
 }
 
@@ -1463,11 +1474,11 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     }
   }
 
-  function requireNoAccountDeletion(snapshot) {
-    if (snapshotExists(snapshot)) {
+  function requireNoAccountDeletion(...snapshots) {
+    if (snapshots.some((snapshot) => snapshotExists(snapshot))) {
       throw makeError(
         "failed-precondition",
-        "Private notes cannot be stored while account deletion is pending.",
+        "Private notes cannot be stored after account deletion begins.",
         { reason: "account-deletion-pending" },
       );
     }
@@ -3656,6 +3667,27 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     return buildCandidate(1);
   }
 
+  function privateHistoryRedactionSummary(event) {
+    const publicReplacement =
+      event.type === "supersede_event" &&
+      isPlainObject(event.payload?.replacement) &&
+      event.payload.replacement.type !== "private_note"
+        ? { replacement: event.payload.replacement }
+        : {};
+    return {
+      eventId: event.eventId,
+      sequence: event.sequence,
+      revision: event.revision,
+      type: event.type,
+      payload: publicReplacement,
+      ...(event.voidsEventId ? { voidsEventId: event.voidsEventId } : {}),
+      ...(event.supersedesEventId
+        ? { supersedesEventId: event.supersedesEventId }
+        : {}),
+      privateMaterialStatus: "deleted",
+    };
+  }
+
   async function getDiamondManagerStats(data = {}, context = {}) {
     const normalized = normalizeManagerStatsRequest(data);
     let caller = await loadEnabledAuthUser(context);
@@ -4847,12 +4879,6 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     { teamId, gameId, targetUid, loaded, disallowUid = null },
   ) {
     const normalizedTargetUid = normalizeId(targetUid, "targetUid");
-    if (normalizedTargetUid === domainEngine.DIAMOND_PRIVATE_NOTE_ACTOR_UID) {
-      throw makeError(
-        "invalid-argument",
-        "This scorer identity is reserved by the Diamond ledger.",
-      );
-    }
     let targetAuth;
     try {
       targetAuth = await auth.getUser(normalizedTargetUid);
@@ -5542,7 +5568,8 @@ function createDiamondScorebookHandlers(dependencies = {}) {
           privateNote && state?.currentScorerUid
             ? {
                 ...state,
-                currentScorerUid: domainEngine.DIAMOND_PRIVATE_NOTE_ACTOR_UID,
+                currentScorerUid:
+                  domainEngine.DIAMOND_PRIVATE_NOTE_ACTOR_REDACTION,
               }
             : state,
         );
@@ -5672,6 +5699,8 @@ function createDiamondScorebookHandlers(dependencies = {}) {
               rootSnapshot,
               receiptSnapshot,
               deletionRequestSnapshot,
+              authDeletionBarrierSnapshot,
+              deletionAuditSnapshot,
               targetEventSnapshot,
             ] = await Promise.all([
               loadAccessDocuments(
@@ -5689,13 +5718,33 @@ function createDiamondScorebookHandlers(dependencies = {}) {
                     ),
                   )
                 : Promise.resolve(null),
+              mayStorePrivateNoteMaterial
+                ? transaction.get(
+                    firestore.doc(
+                      resourcePaths.accountPrivateNoteAuthDeleteBarrier(
+                        caller.uid,
+                      ),
+                    ),
+                  )
+                : Promise.resolve(null),
+              mayStorePrivateNoteMaterial
+                ? transaction.get(
+                    firestore.doc(
+                      resourcePaths.accountDeletionAudit(caller.uid),
+                    ),
+                  )
+                : Promise.resolve(null),
               targetEventRef
                 ? transaction.get(targetEventRef)
                 : Promise.resolve(null),
             ]);
             requireScorekeeper(loaded.access);
             if (mayStorePrivateNoteMaterial) {
-              requireNoAccountDeletion(deletionRequestSnapshot);
+              requireNoAccountDeletion(
+                deletionRequestSnapshot,
+                authDeletionBarrierSnapshot,
+                deletionAuditSnapshot,
+              );
             }
             const root = snapshotData(rootSnapshot);
             if (!root)
@@ -5878,8 +5927,13 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       const receiptRef = firestore.doc(
         resourcePaths.command(command.commandId),
       );
-      const [rootSnapshot, receiptSnapshot, deletionRequestSnapshot] =
-        await Promise.all([
+      const [
+        rootSnapshot,
+        receiptSnapshot,
+        deletionRequestSnapshot,
+        authDeletionBarrierSnapshot,
+        deletionAuditSnapshot,
+      ] = await Promise.all([
         transaction.get(rootRef),
         transaction.get(receiptRef),
           mayStorePrivateNoteMaterial
@@ -5889,11 +5943,29 @@ function createDiamondScorebookHandlers(dependencies = {}) {
                 ),
               )
             : Promise.resolve(null),
+          mayStorePrivateNoteMaterial
+            ? transaction.get(
+                firestore.doc(
+                  resourcePaths.accountPrivateNoteAuthDeleteBarrier(caller.uid),
+                ),
+              )
+            : Promise.resolve(null),
+          mayStorePrivateNoteMaterial
+            ? transaction.get(
+                firestore.doc(
+                  resourcePaths.accountDeletionAudit(caller.uid),
+                ),
+              )
+            : Promise.resolve(null),
         ]);
       const root = snapshotData(rootSnapshot);
       const existingReceipt = snapshotData(receiptSnapshot);
       if (mayStorePrivateNoteMaterial)
-        requireNoAccountDeletion(deletionRequestSnapshot);
+        requireNoAccountDeletion(
+          deletionRequestSnapshot,
+          authDeletionBarrierSnapshot,
+          deletionAuditSnapshot,
+        );
       if (!root) throw makeError("not-found", "Diamond scorebook not found.");
       requirePrivateNoteStorageVersion(root);
       if (root.instanceId !== loaded.game.diamondScorebookInstanceId) {
@@ -8702,7 +8774,10 @@ function createDiamondScorebookHandlers(dependencies = {}) {
               state.root.instanceId,
               domainEngine,
             );
-            resolved.set(event.eventId, event);
+            resolved.set(
+              event.eventId,
+              privateHistoryRedactionSummary(event),
+            );
           } else {
             resolved.set(
               event.eventId,

@@ -1510,6 +1510,36 @@ describe('Diamond command ledger', () => {
     expect(newScorer.result.outcome).toBe('accepted');
   });
 
+  it('accepts the former private-note marker literal as an ordinary scorer UID while storing private authorship as null', () => {
+    const scorerUid = 'private-note-author';
+    const game = harness();
+
+    game.submit('activate', { initialScorerUid: scorerUid, captureMode: 'full' }, { actorUid: scorerUid });
+    game.submit(
+      'set_lineup',
+      { side: 'home', entries: [{ slot: 1, playerId: 'home-1' }] },
+      { actorUid: scorerUid }
+    );
+    game.submit('scorer_handoff', { toUid: SCORER }, { actorUid: scorerUid });
+    game.submit('scorer_handoff', { toUid: scorerUid });
+    const privateNote = game.submit(
+      'private_note',
+      { text: 'The author remains only in the sidecar.' },
+      { actorUid: scorerUid }
+    );
+
+    expect(privateNote.result).toMatchObject({
+      outcome: 'accepted',
+      state: { currentScorerUid: scorerUid }
+    });
+    expect(privateNote.event).toMatchObject({
+      actorUid: null,
+      before: { currentScorerUid: null },
+      after: { currentScorerUid: null }
+    });
+    expect(verifyDiamondLedger(game.ledger)).toBe(true);
+  });
+
   it('does not bind private material to the scorer identity and restores the authoritative scorer on duplicate responses', () => {
     const game = harness();
     const privateAuthor = 'authorized-note-writer';
@@ -1532,9 +1562,9 @@ describe('Diamond command ledger', () => {
       state: { currentScorerUid: 'scorer-2' }
     });
     expect(checkpointAccepted.event).toMatchObject({
-      actorUid: 'private-note-author',
-      before: { currentScorerUid: 'private-note-author' },
-      after: { currentScorerUid: 'private-note-author' }
+      actorUid: null,
+      before: { currentScorerUid: null },
+      after: { currentScorerUid: null }
     });
     const checkpointDuplicate = executeDiamondCommandFromCheckpoint(
       checkpointAccepted.checkpoint,
@@ -1588,7 +1618,7 @@ describe('Diamond command ledger', () => {
         outcome: 'accepted',
         state: { currentScorerUid: 'scorer-2' }
       });
-      expect(accepted.event?.actorUid).toBe('private-note-author');
+      expect(accepted.event?.actorUid).toBeNull();
     }
     const rejectedPublic = game.submit(
       'set_lineup',
@@ -1689,7 +1719,7 @@ describe('Diamond command ledger', () => {
       text: '[private note stored separately]',
       visibility: 'staff-private'
     });
-    expect(submitted.event?.actorUid).toBe('private-note-author');
+    expect(submitted.event?.actorUid).toBeNull();
     expect(JSON.stringify(submitted.event)).not.toContain('Delete this sensitive staff note');
     expect(JSON.stringify(submitted.event)).not.toContain(SCORER);
     const receipt = createDiamondCommandReceipt(

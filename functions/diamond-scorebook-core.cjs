@@ -442,6 +442,7 @@ const PRIVATE_EVENT_SUMMARY_FIELDS = new Set([
   "supersedesEventId",
   "createdAt",
   "serverTimestampMs",
+  "privateMaterialStatus",
 ]);
 const NORMALIZED_POLICY = Symbol("normalizedDiamondPolicy");
 

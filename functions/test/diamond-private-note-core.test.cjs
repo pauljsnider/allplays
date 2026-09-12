@@ -1,6 +1,7 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const crypto = require("node:crypto");
 const test = require("node:test");
 
 const domainEngine = require("../diamond-engine");
@@ -8,12 +9,32 @@ const privateNoteCore = require("../diamond-private-note-core.cjs");
 
 const TEAM_ID = "team-private-note";
 const GAME_ID = "game-private-note";
-const AUTHOR_UID = "coach.private:1";
+const AUTHOR_UID = "private-note-author";
 const INSTANCE_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
 function uuid(index) {
   return `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
 }
+
+test("Auth-deletion barrier IDs are domain-separated hashes of exact valid UIDs", () => {
+  const uid = "deleted.user:1";
+  const barrierId =
+    privateNoteCore.buildDiamondPrivateNoteAuthDeleteBarrierId(uid);
+  const bareUidHash = crypto.createHash("sha256").update(uid).digest("hex");
+
+  assert.match(barrierId, /^[a-f0-9]{64}$/);
+  assert.notEqual(barrierId, bareUidHash);
+  assert.equal(
+    barrierId,
+    privateNoteCore.buildDiamondPrivateNoteAuthDeleteBarrierId(uid),
+  );
+  for (const invalid of [null, "", " padded", "bad/uid", "x".repeat(129)]) {
+    assert.throws(
+      () => privateNoteCore.buildDiamondPrivateNoteAuthDeleteBarrierId(invalid),
+      TypeError,
+    );
+  }
+});
 
 function buildPrivateNoteFixture({ active = false } = {}) {
   let ledger = domainEngine.createDiamondLedger({
@@ -180,11 +201,11 @@ test("private-note records are the only source of plaintext and author identity"
   );
   assert.equal(
     hydrated.before.currentScorerUid,
-    domainEngine.DIAMOND_PRIVATE_NOTE_ACTOR_UID,
+    domainEngine.DIAMOND_PRIVATE_NOTE_ACTOR_REDACTION,
   );
   assert.equal(
     hydrated.after.currentScorerUid,
-    domainEngine.DIAMOND_PRIVATE_NOTE_ACTOR_UID,
+    domainEngine.DIAMOND_PRIVATE_NOTE_ACTOR_REDACTION,
   );
   assert.equal(hydrated.payload.text, command.payload.text);
   assert.equal(hydrated.payload.attachedEventId, "event-public-1");

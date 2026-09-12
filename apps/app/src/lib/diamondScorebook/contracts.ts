@@ -378,7 +378,7 @@ export type DiamondEventEnvelope<TType extends DiamondCommandType = DiamondComma
   commandHash: string;
   type: TType;
   payload: DiamondCommandPayloadMap[TType];
-  actorUid: string;
+  actorUid: string | null;
   serverTimestampMs: number;
   rulesProfileId: string;
   rulesProfileVersion: number;

@@ -132,7 +132,9 @@ function canonicalStoredEvent(value, expectedInstanceId) {
 }
 
 function directAuthDeletionBarrierPath(uid) {
-  return `${ACCOUNT_DIAMOND_AUTH_DELETE_BARRIER_COLLECTION}/${uid}`;
+  return `${ACCOUNT_DIAMOND_AUTH_DELETE_BARRIER_COLLECTION}/${diamondPrivateNoteCore.buildDiamondPrivateNoteAuthDeleteBarrierId(
+    uid
+  )}`;
 }
 
 function parseDirectAuthDeletionBarrier(snapshot, uid) {
@@ -568,35 +570,6 @@ async function establishDirectAuthDeletionBarrier({ firestore, uid, startedAt })
   );
 }
 
-async function retireDirectAuthDeletionBarrier({ firestore, uid }) {
-  const barrierRef = firestore.doc(directAuthDeletionBarrierPath(uid));
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      await firestore.runTransaction(async (transaction) => {
-        const snapshot = await transaction.get(barrierRef);
-        if (!snapshot?.exists) return;
-        parseDirectAuthDeletionBarrier(snapshot, uid);
-        transaction.delete(barrierRef);
-      });
-      return;
-    } catch (error) {
-      try {
-        const snapshot = await barrierRef.get();
-        if (!snapshot?.exists) return;
-        parseDirectAuthDeletionBarrier(snapshot, uid);
-      } catch (reconciliationError) {
-        if (reconciliationError?.code === 'diamond-private-note-integrity-failed') {
-          throw reconciliationError;
-        }
-      }
-      if (attempt === 1) throw error;
-    }
-  }
-  throwDiamondPrivateNoteIntegrityFailure(
-    'The direct Auth-deletion barrier could not be retired.'
-  );
-}
-
 function createAccountDiamondPrivateNoteAuthDeleteHandler({
   firestore,
   getDocumentIdField,
@@ -649,7 +622,11 @@ function createAccountDiamondPrivateNoteAuthDeleteHandler({
       redactedAt: barrier.startedAt,
       barrierKind: ACCOUNT_DIAMOND_DELETION_BARRIER_AUTH_DELETE
     });
-    await retireDirectAuthDeletionBarrier({ firestore, uid });
+    // Keep the hash-addressed barrier permanently. A submit transaction that
+    // read its absence before Auth deletion either commits before this barrier
+    // (and is found by the cleanup scan) or conflicts and retries against the
+    // barrier. Retaining it closes the later gap for requests that authenticated
+    // before deletion without preserving the raw UID.
     return null;
   };
 }

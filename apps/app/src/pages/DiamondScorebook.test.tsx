@@ -2422,6 +2422,74 @@ describe('DiamondScorebook', () => {
     );
   });
 
+  it('hides deleted private material without undoing its canonical correction relationships', async () => {
+    const base = buildSnapshot();
+    const snapshot = buildSnapshot({
+      revision: 11,
+      checkpointHash: checkpointForRevision(11),
+      completeness: { ...base.completeness, authoritativeRevision: 11 }
+    });
+    const privateItems = buildPrivateHistoryItems(11);
+    privateItems[7] = buildPrivateEvent('event-8', 8, {
+      type: 'supersede_event',
+      payload: {},
+      supersedesEventId: 'event-7',
+      privateMaterialStatus: 'deleted',
+      createdAt: null
+    });
+    privateItems[8] = buildPrivateEvent('event-9', 9, {
+      type: 'private_note',
+      payload: { text: 'Private source replaced with a public play.' }
+    });
+    privateItems[9] = buildPrivateEvent('event-10', 10, {
+      type: 'supersede_event',
+      payload: {
+        replacement: {
+          type: 'record_plate_appearance',
+          payload: {
+            batterId: 'batter-1',
+            pitcherId: 'pitcher-1',
+            result: 'single',
+            batterAdvance: { to: 'first', cause: 'batted_ball' },
+            runnerAdvances: [],
+            outsOnPlay: 0,
+            runsBattedIn: 0
+          }
+        }
+      },
+      supersedesEventId: 'event-9',
+      privateMaterialStatus: 'deleted',
+      createdAt: null
+    });
+    privateItems[10] = buildPrivateEvent('event-11', 11, {
+      type: 'private_note',
+      payload: {},
+      privateMaterialStatus: 'deleted',
+      createdAt: null
+    });
+    const fixture = createClient(snapshot);
+    fixture.loadPrivateHistory.mockResolvedValue(
+      buildPrivateHistoryWindow(privateItems, 11)
+    );
+    renderScorebook(snapshot, fixture);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Load recent private history' }));
+    await screen.findByText(/Complete private history: 11 canonical events/);
+    expect(screen.getByText('No effective staff-private notes.')).toBeInTheDocument();
+    expect(screen.queryByText(/Private source replaced with a public play/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/private note stored separately/i)).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Search loaded correction candidates'), {
+      target: { value: 'event-11' }
+    });
+    expect(screen.getByText(/No loaded correction candidate matches “event-11”/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('Full-mode advanced plays'));
+    const structured = screen.getByRole('group', { name: 'Structured fielding or scoring judgment' });
+    await waitFor(() => expect(within(structured).getByLabelText('Effective play')).toHaveValue('event-9'));
+    expect(within(structured).getByLabelText('Effective play')).not.toHaveValue('event-7');
+  });
+
   it('submits a private-note correction without the scorer lease for an authorized non-current scorekeeper', async () => {
     const privateItems = buildPrivateHistoryItems();
     privateItems[privateItems.length - 1] = buildPrivateEvent('event-7', 7, {

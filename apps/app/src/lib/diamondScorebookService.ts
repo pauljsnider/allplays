@@ -125,6 +125,7 @@ export type DiamondPrivateEvent = {
   createdAt: string | null;
   voidsEventId: string | null;
   supersedesEventId: string | null;
+  privateMaterialStatus?: 'deleted';
 };
 
 /**
@@ -1728,7 +1729,8 @@ const privateEventSummaryFields = new Set([
   'serverTimestampMs',
   'createdAt',
   'voidsEventId',
-  'supersedesEventId'
+  'supersedesEventId',
+  'privateMaterialStatus'
 ]);
 
 function normalizePrivateEventLink(value: unknown, label: string) {
@@ -1795,6 +1797,56 @@ function normalizePrivateEventPage(value: unknown): DiamondPrivateEventPage {
     } catch {
       throw new DiamondScorebookError('invalid-response', 'The private scorebook history contained an invalid event payload.');
     }
+    const privateMaterialStatus =
+      event.privateMaterialStatus === undefined
+        ? undefined
+        : event.privateMaterialStatus === 'deleted'
+          ? 'deleted'
+          : null;
+    if (privateMaterialStatus === null) {
+      throw new DiamondScorebookError('invalid-response', 'The private scorebook history contained an invalid private-material status.');
+    }
+    if (
+      privateMaterialStatus === 'deleted' &&
+      !['private_note', 'void_event', 'supersede_event'].includes(type)
+    ) {
+      throw new DiamondScorebookError('invalid-response', 'The private scorebook history marked a public event as deleted private material.');
+    }
+    const voidsEventId = normalizePrivateEventLink(event.voidsEventId, 'void target');
+    const supersedesEventId = normalizePrivateEventLink(event.supersedesEventId, 'superseded target');
+    if (privateMaterialStatus === 'deleted') {
+      const payloadKeys = Object.keys(payload);
+      const linksAreValid =
+        (type === 'private_note' && voidsEventId === null && supersedesEventId === null) ||
+        (type === 'void_event' && voidsEventId !== null && supersedesEventId === null) ||
+        (type === 'supersede_event' && voidsEventId === null && supersedesEventId !== null);
+      const replacement = payload.replacement;
+      const replacementRecord =
+        replacement && typeof replacement === 'object' && !Array.isArray(replacement)
+          ? (replacement as Record<string, unknown>)
+          : null;
+      const replacementKeys = replacementRecord ? Object.keys(replacementRecord).sort() : [];
+      const publicReplacementIsValid = Boolean(
+        type === 'supersede_event' &&
+          payloadKeys.length === 1 &&
+          payloadKeys[0] === 'replacement' &&
+          replacementRecord &&
+          replacementKeys.length === 2 &&
+          replacementKeys[0] === 'payload' &&
+          replacementKeys[1] === 'type' &&
+          diamondCommandTypes.has(compactText(replacementRecord.type) as DiamondCommandType) &&
+          compactText(replacementRecord.type) !== 'private_note' &&
+          replacementRecord.payload &&
+          typeof replacementRecord.payload === 'object' &&
+          !Array.isArray(replacementRecord.payload)
+      );
+      if (!linksAreValid || (payloadKeys.length > 0 && !publicReplacementIsValid)) {
+        throw new DiamondScorebookError(
+          'invalid-response',
+          'The private scorebook history contained malformed deleted private material.'
+        );
+      }
+    }
     return {
       eventId: normalizeDecisionEventId(event.eventId, 'private scorebook'),
       sequence,
@@ -1802,8 +1854,9 @@ function normalizePrivateEventPage(value: unknown): DiamondPrivateEventPage {
       type,
       payload,
       createdAt: normalizePrivateEventTimestamp(event),
-      voidsEventId: normalizePrivateEventLink(event.voidsEventId, 'void target'),
-      supersedesEventId: normalizePrivateEventLink(event.supersedesEventId, 'superseded target')
+      voidsEventId,
+      supersedesEventId,
+      ...(privateMaterialStatus ? { privateMaterialStatus } : {})
     };
   });
   for (let index = 1; index < items.length; index += 1) {

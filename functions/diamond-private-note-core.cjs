@@ -1,10 +1,14 @@
 "use strict";
 
+const crypto = require("node:crypto");
+
 const DIAMOND_ENGINE = "diamond-v2";
 const PRIVATE_NOTE_SCHEMA_VERSION = 1;
 const PRIVATE_NOTE_REDACTION_SCHEMA_VERSION = 1;
 const MAX_PRIVATE_NOTE_TEXT_LENGTH = 2_000;
 const MAX_PRIVATE_NOTE_DOCUMENT_BYTES = 16 * 1024;
+const AUTH_DELETE_BARRIER_HASH_DOMAIN =
+  "diamond-private-note-auth-delete-barrier:v1\0";
 const SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const SCOREBOOK_EVENT_PATH_PATTERN =
   /^teams\/([^/]+)\/games\/([^/]+)\/diamondScorebooks\/v2\/events\/([^/]+)$/;
@@ -32,6 +36,17 @@ function isCanonicalId(value) {
     value.length <= 128 &&
     !value.includes("/")
   );
+}
+
+function buildDiamondPrivateNoteAuthDeleteBarrierId(uid) {
+  if (!isCanonicalId(uid)) {
+    throw new TypeError("The Diamond private-note deletion principal is invalid.");
+  }
+  return crypto
+    .createHash("sha256")
+    .update(AUTH_DELETE_BARRIER_HASH_DOMAIN)
+    .update(uid)
+    .digest("hex");
 }
 
 function isIsoTimestamp(value) {
@@ -77,11 +92,11 @@ function isCanonicalPrivateNoteMaterialEvent(event, domainEngine) {
     (payload || correction) &&
       (!payload ||
         payload.text === domainEngine.DIAMOND_PRIVATE_NOTE_TOMBSTONE) &&
-      event.actorUid === domainEngine.DIAMOND_PRIVATE_NOTE_ACTOR_UID &&
+      event.actorUid === domainEngine.DIAMOND_PRIVATE_NOTE_ACTOR_REDACTION &&
       event.before?.currentScorerUid ===
-        domainEngine.DIAMOND_PRIVATE_NOTE_ACTOR_UID &&
+        domainEngine.DIAMOND_PRIVATE_NOTE_ACTOR_REDACTION &&
       event.after?.currentScorerUid ===
-        domainEngine.DIAMOND_PRIVATE_NOTE_ACTOR_UID &&
+        domainEngine.DIAMOND_PRIVATE_NOTE_ACTOR_REDACTION &&
       (!correction ||
         event.payload.reason ===
           domainEngine.DIAMOND_PRIVATE_NOTE_REASON_TOMBSTONE),
@@ -357,6 +372,7 @@ module.exports = {
   MAX_PRIVATE_NOTE_TEXT_LENGTH,
   PRIVATE_NOTE_REDACTION_SCHEMA_VERSION,
   PRIVATE_NOTE_SCHEMA_VERSION,
+  buildDiamondPrivateNoteAuthDeleteBarrierId,
   buildDiamondPrivateNoteRecord,
   buildDiamondPrivateNoteRedaction,
   diamondPrivateNotePathsFromEventPath,

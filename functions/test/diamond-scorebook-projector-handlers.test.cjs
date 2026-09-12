@@ -354,7 +354,8 @@ function createGame({
     );
     ledger = execution.ledger;
     if (
-      execution.event.actorUid === domainEngine.DIAMOND_PRIVATE_NOTE_ACTOR_UID
+      execution.event.actorUid ===
+      domainEngine.DIAMOND_PRIVATE_NOTE_ACTOR_REDACTION
     ) {
       privateNoteSources.push({
         command,
@@ -2551,7 +2552,7 @@ describe("Diamond scorebook authoritative projector", () => {
     );
     assert.equal(
       firstNote.actorUid,
-      domainEngine.DIAMOND_PRIVATE_NOTE_ACTOR_UID,
+      domainEngine.DIAMOND_PRIVATE_NOTE_ACTOR_REDACTION,
     );
 
     const firstHarness = createHarness();

@@ -236,9 +236,10 @@ function privateSummary(
     eventId: string;
     type: DiamondCommandEnvelope['type'];
     payload: DiamondPrivateEvent['payload'];
-    createdAt: string;
+    createdAt: string | null;
     voidsEventId: string | null;
     supersedesEventId: string | null;
+    privateMaterialStatus: 'deleted';
   }> = {}
 ): DiamondPrivateEvent {
   return {
@@ -1293,6 +1294,108 @@ describe('diamondScorebookService', () => {
     ]);
   });
 
+  it('accepts an exact private-material deletion marker without breaking contiguous range evidence', async () => {
+    const deleted = privateSummary(2, {
+      type: 'private_note',
+      payload: {},
+      createdAt: null,
+      privateMaterialStatus: 'deleted'
+    });
+    const page = withPrivatePageByteEvidence({
+      sourceRevision: 2,
+      items: [privateSummary(1, { type: 'activate', payload: {} }), deleted],
+      nextCursor: null,
+      complete: true,
+      accessComplete: true,
+      collectionComplete: true
+    });
+
+    await expect(
+      getDiamondPrivateHistoryWindow(
+        { teamId: 'team-1', gameId: 'game-1', expectedRevision: 2 },
+        { transport: { call: vi.fn().mockResolvedValue(page) } }
+      )
+    ).resolves.toMatchObject({
+      sourceRevision: 2,
+      oldestSequence: 1,
+      newestSequence: 2,
+      contiguous: true,
+      rangeComplete: true,
+      headComplete: true,
+      items: [
+        { sequence: 1 },
+        {
+          sequence: 2,
+          type: 'private_note',
+          payload: {},
+          createdAt: null,
+          privateMaterialStatus: 'deleted'
+        }
+      ]
+    });
+  });
+
+  it('accepts only redaction-safe private correction marker payloads and preserves their target links', async () => {
+    const items = [
+      privateSummary(1, { type: 'activate', payload: {} }),
+      privateSummary(2, {
+        type: 'void_event',
+        payload: {},
+        createdAt: null,
+        voidsEventId: 'event-1',
+        privateMaterialStatus: 'deleted'
+      }),
+      privateSummary(3, {
+        type: 'supersede_event',
+        payload: {},
+        createdAt: null,
+        supersedesEventId: 'event-1',
+        privateMaterialStatus: 'deleted'
+      }),
+      privateSummary(4, {
+        type: 'supersede_event',
+        payload: {
+          replacement: {
+            type: 'record_pitch',
+            payload: { batterId: 'batter-1', pitcherId: 'pitcher-1', result: 'ball' }
+          }
+        },
+        createdAt: null,
+        supersedesEventId: 'event-1',
+        privateMaterialStatus: 'deleted'
+      })
+    ];
+    const page = withPrivatePageByteEvidence({
+      sourceRevision: 4,
+      items,
+      nextCursor: null,
+      complete: true,
+      accessComplete: true,
+      collectionComplete: true
+    });
+
+    const result = await getDiamondPrivateHistoryWindow(
+      { teamId: 'team-1', gameId: 'game-1', expectedRevision: 4 },
+      { transport: { call: vi.fn().mockResolvedValue(page) } }
+    );
+
+    expect(result.items.slice(1)).toEqual([
+      expect.objectContaining({ type: 'void_event', payload: {}, voidsEventId: 'event-1', privateMaterialStatus: 'deleted' }),
+      expect.objectContaining({
+        type: 'supersede_event',
+        payload: {},
+        supersedesEventId: 'event-1',
+        privateMaterialStatus: 'deleted'
+      }),
+      expect.objectContaining({
+        type: 'supersede_event',
+        payload: { replacement: { type: 'record_pitch', payload: expect.any(Object) } },
+        supersedesEventId: 'event-1',
+        privateMaterialStatus: 'deleted'
+      })
+    ]);
+  });
+
   it('loads and combines bounded newest-first windows across a ledger with more than 2,000 summaries', async () => {
     const sourceRevision = 2_405;
     const summaries = Array.from({ length: sourceRevision }, (_, index) => privateSummary(index + 1));
@@ -1418,6 +1521,30 @@ describe('diamondScorebookService', () => {
         { transport: { call: vi.fn().mockResolvedValue(unsafe) } }
       )
     ).rejects.toMatchObject({ code: 'invalid-response' });
+
+    for (const invalidItem of [
+      { ...privateSummary(1, { type: 'private_note', payload: {} }), privateMaterialStatus: 'removed' },
+      { ...privateSummary(1), privateMaterialStatus: 'deleted' },
+      {
+        ...privateSummary(1, { type: 'private_note', payload: { text: 'must not survive deletion' } }),
+        privateMaterialStatus: 'deleted'
+      },
+      {
+        ...privateSummary(1, {
+          type: 'supersede_event',
+          payload: { replacement: { type: 'private_note', payload: { text: 'must not survive deletion' } } },
+          supersedesEventId: 'event-target'
+        }),
+        privateMaterialStatus: 'deleted'
+      }
+    ]) {
+      await expect(
+        getDiamondPrivateHistoryWindow(
+          { teamId: 'team-1', gameId: 'game-1', expectedRevision: 1 },
+          { transport: { call: vi.fn().mockResolvedValue(page({ items: [invalidItem] })) } }
+        )
+      ).rejects.toMatchObject({ code: 'invalid-response' });
+    }
 
     const forgedBytes = page();
     forgedBytes.responseByteCount -= 1;

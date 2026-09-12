@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DIAMOND_PRIVATE_NOTE_REASON_TOMBSTONE = exports.DIAMOND_PRIVATE_NOTE_ACTOR_UID = exports.DIAMOND_PRIVATE_NOTE_TOMBSTONE = void 0;
+exports.DIAMOND_PRIVATE_NOTE_REASON_TOMBSTONE = exports.DIAMOND_PRIVATE_NOTE_ACTOR_REDACTION = exports.DIAMOND_PRIVATE_NOTE_TOMBSTONE = void 0;
 exports.getDiamondPrivateNoteText = getDiamondPrivateNoteText;
 exports.canonicalizeDiamondPrivateNoteCommand = canonicalizeDiamondPrivateNoteCommand;
 exports.getDiamondPrivateNoteRequestHash = getDiamondPrivateNoteRequestHash;
@@ -34,23 +34,26 @@ const PITCHER_APPEARANCE_TYPES = new Set(['record_pitch', 'record_plate_appearan
 const FINAL_REOPEN_INTERVENING_TYPES = new Set(['private_note', 'scorer_handoff']);
 // Private-note plaintext and author identity live only in the server-private,
 // deletion-indexed note record. The canonical ledger keeps a replay-valid
-// fixed value so its hash chain contains neither the note nor a note-author
-// identifier.
+// redacted nulls so its hash chain contains neither the note nor a note-author
+// identifier and cannot collide with any valid scorer UID.
 exports.DIAMOND_PRIVATE_NOTE_TOMBSTONE = '[private note stored separately]';
-exports.DIAMOND_PRIVATE_NOTE_ACTOR_UID = 'private-note-author';
+exports.DIAMOND_PRIVATE_NOTE_ACTOR_REDACTION = null;
 exports.DIAMOND_PRIVATE_NOTE_REASON_TOMBSTONE = 'Private note correction stored separately.';
 function privateNoteStateForStorage(state) {
+    // Canonical private-material before/after snapshots deliberately redact the
+    // scorer as null. They are hash-chain evidence, not standalone reducer input;
+    // replay always advances from the authoritative running/checkpoint state.
     return state.currentScorerUid === null
         ? state
-        : { ...state, currentScorerUid: exports.DIAMOND_PRIVATE_NOTE_ACTOR_UID };
+        : { ...state, currentScorerUid: exports.DIAMOND_PRIVATE_NOTE_ACTOR_REDACTION };
 }
 function resultForPrivateNoteStorage(result, event) {
-    return event.actorUid !== exports.DIAMOND_PRIVATE_NOTE_ACTOR_UID
+    return event.actorUid !== exports.DIAMOND_PRIVATE_NOTE_ACTOR_REDACTION
         ? result
         : { ...result, state: event.after };
 }
 function resultForPrivateNoteResponse(result, event, currentScorerUid) {
-    return event.actorUid !== exports.DIAMOND_PRIVATE_NOTE_ACTOR_UID
+    return event.actorUid !== exports.DIAMOND_PRIVATE_NOTE_ACTOR_REDACTION
         ? result
         : { ...result, state: { ...result.state, currentScorerUid } };
 }
@@ -82,10 +85,10 @@ function isCorrectionCommand(command) {
     return command.type === 'void_event' || command.type === 'supersede_event';
 }
 function isCanonicalPrivateNoteMaterialEvent(event) {
-    if (!event || event.actorUid !== exports.DIAMOND_PRIVATE_NOTE_ACTOR_UID)
+    if (!event || event.actorUid !== exports.DIAMOND_PRIVATE_NOTE_ACTOR_REDACTION)
         return false;
-    if (event.before.currentScorerUid !== exports.DIAMOND_PRIVATE_NOTE_ACTOR_UID ||
-        event.after.currentScorerUid !== exports.DIAMOND_PRIVATE_NOTE_ACTOR_UID) {
+    if (event.before.currentScorerUid !== exports.DIAMOND_PRIVATE_NOTE_ACTOR_REDACTION ||
+        event.after.currentScorerUid !== exports.DIAMOND_PRIVATE_NOTE_ACTOR_REDACTION) {
         return false;
     }
     if (event.type === 'private_note') {
@@ -168,11 +171,6 @@ function commandHash(command, privateMaterial = getDiamondPrivateNoteText(comman
 function validateTrustedCommandAuthorization(command, context) {
     if (command.type === 'cancel' && context.managerAuthorized !== true) {
         throw new contracts_1.DiamondDomainError('manager-authorization-required', 'Only a server-verified current team manager may cancel a Diamond game.');
-    }
-}
-function validatePrivateNoteActorReservation(context) {
-    if (requireId(context.actorUid, 'actorUid') === exports.DIAMOND_PRIVATE_NOTE_ACTOR_UID) {
-        throw new contracts_1.DiamondDomainError('reserved-actor-id', 'This scorer identity is reserved by the Diamond ledger.');
     }
 }
 function stateForHash(state) {
@@ -697,7 +695,6 @@ function validateEnvelope(ledger, command, context, privateMaterialTargetVerifie
     }
     requireId(context.eventId, 'eventId');
     const actorUid = requireId(context.actorUid, 'actorUid');
-    validatePrivateNoteActorReservation(context);
     if (!Number.isSafeInteger(context.serverTimestampMs) || context.serverTimestampMs < 0) {
         throw new contracts_1.DiamondDomainError('invalid-server-time', 'serverTimestampMs must be a nonnegative safe integer.');
     }
@@ -714,10 +711,6 @@ function validateEnvelope(ledger, command, context, privateMaterialTargetVerifie
         if (command.payload.initialScorerUid !== actorUid) {
             throw new contracts_1.DiamondDomainError('scorer-mismatch', 'The activating actor must become the initial scorer.');
         }
-    }
-    else if (command.type === 'scorer_handoff' &&
-        command.payload.toUid === exports.DIAMOND_PRIVATE_NOTE_ACTOR_UID) {
-        throw new contracts_1.DiamondDomainError('reserved-actor-id', 'This scorer identity is reserved by the Diamond ledger.');
     }
     else if (command.type !== 'cancel' &&
         !(command.type === 'scorer_handoff' && context.scorerLeaseRecoveryAuthorized === true) &&
@@ -851,7 +844,7 @@ function verifyDiamondCommandReceipt(receipt) {
     return true;
 }
 function createDiamondCommandReceipt(command, event, result) {
-    const expectedCommandHash = commandHash(command, event.actorUid === exports.DIAMOND_PRIVATE_NOTE_ACTOR_UID);
+    const expectedCommandHash = commandHash(command, event.actorUid === exports.DIAMOND_PRIVATE_NOTE_ACTOR_REDACTION);
     if (event.commandHash !== expectedCommandHash) {
         throw new contracts_1.DiamondDomainError('invalid-command-receipt', 'Command receipt command does not match its event.');
     }
@@ -873,10 +866,9 @@ function executeDiamondCommandFromCheckpoint(checkpoint, command, context, exist
     try {
         validateCheckpoint(checkpoint);
         validateTrustedCommandAuthorization(command, context);
-        validatePrivateNoteActorReservation(context);
         const privateMaterial = getDiamondPrivateNoteText(command) !== null ||
             privateMaterialTargetVerified ||
-            existingReceipt?.event.actorUid === exports.DIAMOND_PRIVATE_NOTE_ACTOR_UID;
+            existingReceipt?.event.actorUid === exports.DIAMOND_PRIVATE_NOTE_ACTOR_REDACTION;
         const incomingHash = commandHash(command, privateMaterial);
         if (existingReceipt) {
             validateReceipt(existingReceipt);
@@ -928,7 +920,7 @@ function executeDiamondCommandFromCheckpoint(checkpoint, command, context, exist
             commandHash: incomingHash,
             type: command.type,
             payload: canonicalCommand.payload,
-            actorUid: privateNote ? exports.DIAMOND_PRIVATE_NOTE_ACTOR_UID : context.actorUid,
+            actorUid: privateNote ? exports.DIAMOND_PRIVATE_NOTE_ACTOR_REDACTION : context.actorUid,
             serverTimestampMs: context.serverTimestampMs,
             rulesProfileId: command.rulesProfileId,
             rulesProfileVersion: command.rulesProfileVersion,
@@ -972,11 +964,10 @@ function executeDiamondCommandFromCheckpoint(checkpoint, command, context, exist
 function executeDiamondCommand(ledger, command, context) {
     try {
         validateTrustedCommandAuthorization(command, context);
-        validatePrivateNoteActorReservation(context);
         const existing = ledger.events.find((event) => event.commandId === command.commandId);
         const privateMaterial = getDiamondPrivateNoteText(command) !== null ||
             targetsPrivateNote(ledger, command) ||
-            existing?.actorUid === exports.DIAMOND_PRIVATE_NOTE_ACTOR_UID;
+            existing?.actorUid === exports.DIAMOND_PRIVATE_NOTE_ACTOR_REDACTION;
         const incomingHash = commandHash(command, privateMaterial);
         if (existing) {
             if (existing.commandHash !== incomingHash) {
@@ -1018,7 +1009,7 @@ function executeDiamondCommand(ledger, command, context) {
             commandHash: incomingHash,
             type: command.type,
             payload: canonicalCommand.payload,
-            actorUid: privateNote ? exports.DIAMOND_PRIVATE_NOTE_ACTOR_UID : context.actorUid,
+            actorUid: privateNote ? exports.DIAMOND_PRIVATE_NOTE_ACTOR_REDACTION : context.actorUid,
             serverTimestampMs: context.serverTimestampMs,
             rulesProfileId: command.rulesProfileId,
             rulesProfileVersion: command.rulesProfileVersion,

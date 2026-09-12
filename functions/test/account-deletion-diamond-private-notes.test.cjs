@@ -17,7 +17,8 @@ const {
 const UID = "deleted.user:1";
 const DOCUMENT_ID = Object.freeze({ kind: "document-id" });
 const REDACTED_AT = "2026-09-09T12:00:00.000Z";
-const AUTH_DELETE_BARRIER_PATH = `accountDiamondPrivateNoteAuthDeleteBarriers/${UID}`;
+const AUTH_DELETE_BARRIER_PATH =
+  `accountDiamondPrivateNoteAuthDeleteBarriers/${privateNoteCore.buildDiamondPrivateNoteAuthDeleteBarrierId(UID)}`;
 
 function clone(value) {
   if (Array.isArray(value)) return value.map(clone);
@@ -529,13 +530,13 @@ test("reconciles committed response loss and retries a definitive pre-commit fai
   }
 });
 
-test("direct Auth deletion durably redacts private material before retiring its barrier", async () => {
+test("direct Auth deletion durably redacts private material behind a retained hash-only barrier", async () => {
   const bundle = buildPrivateNoteDocuments();
   const fake = makeFirestore(seedBundle(bundle));
 
   await runDirectAuthDelete(fake);
 
-  assert.equal(fake.has(AUTH_DELETE_BARRIER_PATH), false);
+  assert.equal(fake.has(AUTH_DELETE_BARRIER_PATH), true);
   assert.equal(fake.has(bundle.paths.projectionPath), false);
   assert.equal(fake.read(bundle.paths.notePath).status, "deleted");
   assert.equal(fake.read(bundle.paths.notePath).redactedAt, REDACTED_AT);
@@ -547,18 +548,22 @@ test("direct Auth deletion durably redacts private material before retiring its 
   const noteRedacted = operations.findIndex(
     ({ kind, path }) => kind === "set" && path === bundle.paths.notePath,
   );
-  const barrierRetired = operations.findIndex(
-    ({ kind, path }) => kind === "delete" && path === AUTH_DELETE_BARRIER_PATH,
-  );
   assert.ok(barrierCreated >= 0);
   assert.ok(noteRedacted > barrierCreated);
-  assert.ok(barrierRetired > noteRedacted);
+  assert.equal(
+    operations.some(
+      ({ kind, path }) =>
+        kind === "delete" && path === AUTH_DELETE_BARRIER_PATH,
+    ),
+    false,
+  );
+  assert.equal(AUTH_DELETE_BARRIER_PATH.includes(UID), false);
   const retainedState = JSON.stringify(fake.entries());
   assert.equal(retainedState.includes(UID), false);
   assert.equal(retainedState.includes("private account deletion fixture"), false);
 
   await runDirectAuthDelete(fake);
-  assert.equal(fake.has(AUTH_DELETE_BARRIER_PATH), false);
+  assert.equal(fake.has(AUTH_DELETE_BARRIER_PATH), true);
   assert.equal(fake.read(bundle.paths.rootPath).privateNotePrivacyRevision, 5);
   assert.equal(JSON.stringify(fake.entries()).includes(UID), false);
 });
@@ -579,7 +584,7 @@ test("direct Auth deletion preserves unrelated account-deletion request states",
       await runDirectAuthDelete(fake);
 
       assert.equal(fake.read(bundle.paths.notePath).status, "deleted");
-      assert.equal(fake.has(AUTH_DELETE_BARRIER_PATH), false);
+      assert.equal(fake.has(AUTH_DELETE_BARRIER_PATH), true);
       if (request) {
         assert.deepEqual(fake.read(requestPath), request);
       } else {
@@ -611,7 +616,7 @@ test("direct Auth deletion and the normal request worker are idempotent in eithe
       assert.equal(fake.read(bundle.paths.notePath).status, "deleted");
       assert.equal(fake.read(bundle.paths.rootPath).privateNotePrivacyRevision, 5);
       assert.equal(fake.has(bundle.paths.projectionPath), false);
-      assert.equal(fake.has(AUTH_DELETE_BARRIER_PATH), false);
+      assert.equal(fake.has(AUTH_DELETE_BARRIER_PATH), true);
       assert.deepEqual(fake.read(requestPath), request);
     });
   }
@@ -622,12 +627,12 @@ test("direct Auth deletion reconciles barrier write ambiguity without exposing i
     {
       name: "definitive barrier pre-commit failure",
       options: { preCommitFailureCalls: [1] },
-      expectedTransactions: 4,
+      expectedTransactions: 3,
     },
     {
-      name: "committed create and retire response loss",
-      options: { postCommitFailureCalls: [1, 3] },
-      expectedTransactions: 3,
+      name: "committed barrier-create response loss",
+      options: { postCommitFailureCalls: [1] },
+      expectedTransactions: 2,
     },
   ];
   for (const testCase of cases) {
@@ -638,7 +643,7 @@ test("direct Auth deletion reconciles barrier write ambiguity without exposing i
       await runDirectAuthDelete(fake);
 
       assert.equal(fake.transactionCalls, testCase.expectedTransactions);
-      assert.equal(fake.has(AUTH_DELETE_BARRIER_PATH), false);
+      assert.equal(fake.has(AUTH_DELETE_BARRIER_PATH), true);
       assert.equal(fake.read(bundle.paths.notePath).status, "deleted");
       assert.equal(fake.read(bundle.paths.rootPath).privateNotePrivacyRevision, 5);
       assert.equal(JSON.stringify(fake.entries()).includes(UID), false);
@@ -676,7 +681,7 @@ test("direct Auth deletion retains its barrier across a failed cleanup and resum
     context: { timestamp: "2026-09-10T12:00:00.000Z" },
   });
 
-  assert.equal(fake.has(AUTH_DELETE_BARRIER_PATH), false);
+  assert.equal(fake.has(AUTH_DELETE_BARRIER_PATH), true);
   assert.equal(fake.read(bundle.paths.notePath).status, "deleted");
   assert.equal(fake.read(bundle.paths.notePath).redactedAt, REDACTED_AT);
 });

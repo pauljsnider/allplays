@@ -444,6 +444,7 @@ function buildPrivateMaterialCorrectionSource(
   const target = history.items.find((event) => event.eventId === targetEventId);
   if (
     !target ||
+    target.privateMaterialStatus === 'deleted' ||
     target.type !== 'private_note' ||
     history.items.some((event) => event.voidsEventId === target.eventId || event.supersedesEventId === target.eventId)
   ) {
@@ -495,6 +496,7 @@ function effectivePrivateEvents(events: DiamondPrivateEvent[]): DiamondEffective
         { ...event, sourceEventId: event.eventId, effectiveType, effectivePayload: effectivePayload as DiamondJsonObject, corrected: true }
       ];
     }
+    if (event.privateMaterialStatus === 'deleted') return [];
     return [{ ...event, sourceEventId: event.eventId, effectiveType: event.type, effectivePayload: event.payload, corrected: false }];
   });
 }
@@ -4070,7 +4072,12 @@ export function DiamondScorebook({
   );
   const correctionCandidates = useMemo(
     () =>
-      (privateHistory?.items || []).filter((event) => !uncorrectableEventTypes.has(event.type) && !correctedEventIds.has(event.eventId)),
+      (privateHistory?.items || []).filter(
+        (event) =>
+          event.privateMaterialStatus !== 'deleted' &&
+          !uncorrectableEventTypes.has(event.type) &&
+          !correctedEventIds.has(event.eventId)
+      ),
     [correctedEventIds, privateHistory]
   );
   const visibleCorrectionCandidates = useMemo(() => {

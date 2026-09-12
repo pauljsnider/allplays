@@ -3,6 +3,9 @@
 const assert = require("node:assert/strict");
 const { describe, it } = require("node:test");
 
+const domainEngine = require("../diamond-engine");
+const privateNoteCore = require("../diamond-private-note-core.cjs");
+
 const {
   COMMAND_HISTORY_CONTROL_QUARANTINE_MS,
   COMMAND_HISTORY_RATE_WINDOW_MS,
@@ -4621,6 +4624,72 @@ describe("Diamond scorebook handler factory", () => {
     );
   });
 
+  it("accepts the former private-note marker literal as a scorer and handoff target", async () => {
+    const scorerUid = "private-note-author";
+    const scorerContext = { auth: { uid: scorerUid } };
+    const harness = createHarness({
+      authUsers: {
+        [scorerUid]: {
+          uid: scorerUid,
+          disabled: false,
+          email: "legacy-literal@example.com",
+          emailVerified: true,
+        },
+      },
+      documents: {
+        "teams/team-1": {
+          ...baseDocuments()["teams/team-1"],
+          scorekeeperIds: [scorerUid],
+        },
+      },
+    });
+    await activate(harness);
+    const handoff = await submit(harness, {
+      commandId: makeUuid(32_090),
+      expectedRevision: 1,
+      type: "scorer_handoff",
+      payload: { toUid: scorerUid },
+    });
+    assert.equal(handoff.outcome, "accepted");
+
+    const lineup = await submit(harness, {
+      commandId: makeUuid(32_091),
+      expectedRevision: 2,
+      type: "set_lineup",
+      context: scorerContext,
+      payload: {
+        side: "home",
+        entries: [{ slot: 1, playerId: "home-1" }],
+      },
+    });
+    assert.equal(lineup.outcome, "accepted");
+    const privateNoteCommand = {
+      commandId: makeUuid(32_092),
+      expectedRevision: 3,
+      type: "private_note",
+      context: scorerContext,
+      payload: { text: "Literal UID remains only in the note sidecar." },
+    };
+    const privateNote = await submit(harness, privateNoteCommand);
+    const duplicate = await submit(harness, privateNoteCommand);
+    const resourcePaths = paths("team-1", "game-1");
+    const canonicalEvent = harness.firestore.read(
+      resourcePaths.event(privateNote.eventId),
+    );
+
+    assert.equal(privateNote.outcome, "accepted");
+    assert.equal(privateNote.state.state.currentScorerUid, scorerUid);
+    assert.equal(duplicate.outcome, "duplicate");
+    assert.equal(duplicate.state.state.currentScorerUid, scorerUid);
+    assert.equal(canonicalEvent.actorUid, null);
+    assert.equal(canonicalEvent.before.currentScorerUid, null);
+    assert.equal(canonicalEvent.after.currentScorerUid, null);
+    assert.equal(
+      harness.firestore.read(resourcePaths.note(privateNote.eventId)).authorUid,
+      scorerUid,
+    );
+  });
+
   it("lists an exact confirmed RSVP scorekeeper only through the bounded handoff lookup", async () => {
     const harness = createHarness({
       authUsers: {
@@ -6099,9 +6168,9 @@ describe("Diamond scorebook handler factory", () => {
     const canonicalEvent = harness.firestore.read(
       resourcePaths.event(accepted.eventId),
     );
-    assert.equal(canonicalEvent.actorUid, "private-note-author");
-    assert.equal(canonicalEvent.before.currentScorerUid, "private-note-author");
-    assert.equal(canonicalEvent.after.currentScorerUid, "private-note-author");
+    assert.equal(canonicalEvent.actorUid, null);
+    assert.equal(canonicalEvent.before.currentScorerUid, null);
+    assert.equal(canonicalEvent.after.currentScorerUid, null);
     assert.doesNotMatch(JSON.stringify(canonicalEvent), /scorer-1/);
     assert.equal(
       harness.firestore.read(resourcePaths.note(accepted.eventId)).authorUid,
@@ -6163,6 +6232,127 @@ describe("Diamond scorebook handler factory", () => {
       Object.hasOwn(publicSnapshot, "canSubmitPrivateMaterial"),
       false,
     );
+  });
+
+  it("fences an authenticated private-note write when every deletion barrier wins its missing-document read", async (t) => {
+    for (const variant of [
+      "direct-auth-delete",
+      "completed-self-service-delete",
+      "pending-self-service-delete",
+    ]) {
+      await t.test(variant, async () => {
+        const harness = createHarness({
+          documents: {
+            "teams/team-1": {
+              ...baseDocuments()["teams/team-1"],
+              scorekeeperIds: ["scorer-1"],
+            },
+          },
+        });
+        await activate(harness);
+        const resourcePaths = paths("team-1", "game-1");
+        const barrierPath =
+          resourcePaths.accountPrivateNoteAuthDeleteBarrier("scorer-1");
+        const auditPath = resourcePaths.accountDeletionAudit("scorer-1");
+        const requestPath =
+          resourcePaths.accountDeletionRequest("scorer-1");
+        const rootBefore = clone(
+          harness.firestore.read(resourcePaths.scorebook),
+        );
+        const authReadsBefore = harness.authGetUserCalls.length;
+
+        assert.equal(
+          barrierPath,
+          `accountDiamondPrivateNoteAuthDeleteBarriers/${privateNoteCore.buildDiamondPrivateNoteAuthDeleteBarrierId("scorer-1")}`,
+        );
+        assert.notEqual(barrierPath.split("/").at(-1), auditPath.split("/").at(-1));
+        let injected = false;
+        harness.firestore.transactionHook = async (stage, transaction) => {
+          const winningPath =
+            variant === "direct-auth-delete"
+              ? barrierPath
+              : variant === "completed-self-service-delete"
+                ? auditPath
+                : requestPath;
+          if (
+            stage === "beforeCommit" &&
+            !injected &&
+            transaction.readPaths.includes(winningPath)
+          ) {
+            injected = true;
+            if (variant === "direct-auth-delete") {
+              harness.authUsers.delete("scorer-1");
+              harness.firestore.seed(barrierPath, {
+                schemaVersion: 1,
+                type: "diamond-private-note-auth-delete-barrier",
+                status: "auth-deleted",
+                startedAt: "2026-09-12T10:33:00.000Z",
+              });
+            } else if (variant === "completed-self-service-delete") {
+              harness.firestore.seed(auditPath, {
+                version: 1,
+                outcome: "deleted",
+              });
+            } else {
+              harness.firestore.seed(requestPath, {
+                uid: "scorer-1",
+                status: "queued",
+              });
+            }
+            return "retry";
+          }
+          return undefined;
+        };
+
+        await assert.rejects(
+          submit(harness, {
+            commandId: makeUuid(
+              variant === "direct-auth-delete" ? 32_102 : 32_103,
+            ),
+            expectedRevision: 1,
+            type: "private_note",
+            context: harness.scorerContext,
+            payload: { text: "Must never survive account deletion" },
+          }),
+          (error) =>
+            error.code === "failed-precondition" &&
+            error.details?.reason === "account-deletion-pending",
+        );
+
+        assert.deepEqual(
+          harness.firestore.read(resourcePaths.scorebook),
+          rootBefore,
+        );
+        assert.equal(
+          harness.firestore.countDirectChildren(resourcePaths.events),
+          1,
+        );
+        assert.equal(
+          harness.firestore.countDirectChildren(
+            `${resourcePaths.scorebook}/notes`,
+          ),
+          0,
+        );
+        assert.ok(
+          harness.firestore.transactionReadBatches.some(
+            (readPaths) =>
+              readPaths.includes(barrierPath) && readPaths.includes(auditPath),
+          ),
+        );
+        assert.equal(
+          harness.authGetUserCalls.length,
+          authReadsBefore + 1,
+          "the deletion fence must stop a request that already passed Auth",
+        );
+        assert.equal(injected, true);
+        if (variant === "direct-auth-delete") {
+          assert.doesNotMatch(
+            JSON.stringify({ barrierPath, value: harness.firestore.read(barrierPath) }),
+            /scorer-1/,
+          );
+        }
+      });
+    }
   });
 
   it("publishes a safe pending tombstone for public-to-private replacement and suppresses private-only transitions", async () => {
@@ -6674,6 +6864,108 @@ describe("Diamond scorebook handler factory", () => {
     assert.equal(
       second.responseByteCount,
       Buffer.byteLength(JSON.stringify(second), "utf8"),
+    );
+  });
+
+  it("keeps redacted private material contiguous while returning only a deletion marker", async () => {
+    const harness = createHarness();
+    await activate(harness);
+    const noteText = "Deleted medical detail must never be restored";
+    const accepted = await submit(harness, {
+      commandId: makeUuid(342),
+      expectedRevision: 1,
+      type: "private_note",
+      payload: { text: noteText },
+    });
+    const resourcePaths = paths("team-1", "game-1");
+    const root = harness.firestore.read(resourcePaths.scorebook);
+    const canonicalEvent = harness.firestore.read(
+      resourcePaths.event(accepted.eventId),
+    );
+    harness.firestore.seed(
+      resourcePaths.note(accepted.eventId),
+      privateNoteCore.buildDiamondPrivateNoteRedaction({
+        event: canonicalEvent,
+        instanceId: root.instanceId,
+        redactedAt: "2026-09-12T10:45:00.000Z",
+        domainEngine,
+      }),
+    );
+
+    const page = await harness.handlers.listDiamondEvents(
+      {
+        teamId: "team-1",
+        gameId: "game-1",
+        visibility: "private",
+        limit: 2,
+      },
+      harness.managerContext,
+    );
+
+    assert.equal(page.sourceRevision, 2);
+    assert.equal(page.collectionComplete, true);
+    assert.equal(page.nextCursor, null);
+    assert.deepEqual(
+      page.items.map(({ sequence }) => sequence),
+      [1, 2],
+    );
+    assert.deepEqual(page.items[1], {
+      eventId: accepted.eventId,
+      sequence: 2,
+      revision: 2,
+      type: "private_note",
+      payload: {},
+      privateMaterialStatus: "deleted",
+    });
+    assert.equal(
+      page.responseByteCount,
+      Buffer.byteLength(JSON.stringify(page), "utf8"),
+    );
+    const serialized = JSON.stringify(page.items[1]);
+    assert.doesNotMatch(
+      serialized,
+      /manager-1|actorUid|currentScorerUid|commandId|redactedAt|serverTimestamp|createdAt|private note stored separately/i,
+    );
+    assert.equal(serialized.includes(noteText), false);
+  });
+
+  it("fails redacted private-history reads closed when deletion evidence is malformed", async () => {
+    const harness = createHarness();
+    await activate(harness);
+    const accepted = await submit(harness, {
+      commandId: makeUuid(343),
+      expectedRevision: 1,
+      type: "private_note",
+      payload: { text: "Malformed redaction fixture" },
+    });
+    const resourcePaths = paths("team-1", "game-1");
+    const root = harness.firestore.read(resourcePaths.scorebook);
+    const canonicalEvent = harness.firestore.read(
+      resourcePaths.event(accepted.eventId),
+    );
+    harness.firestore.seed(resourcePaths.note(accepted.eventId), {
+      ...privateNoteCore.buildDiamondPrivateNoteRedaction({
+        event: canonicalEvent,
+        instanceId: root.instanceId,
+        redactedAt: "2026-09-12T10:45:00.000Z",
+        domainEngine,
+      }),
+      leakedAuthorUid: "manager-1",
+    });
+
+    await assert.rejects(
+      harness.handlers.listDiamondEvents(
+        {
+          teamId: "team-1",
+          gameId: "game-1",
+          visibility: "private",
+          limit: 2,
+        },
+        harness.managerContext,
+      ),
+      (error) =>
+        error.code === "unavailable" &&
+        /integrity validation/i.test(error.message),
     );
   });
 
