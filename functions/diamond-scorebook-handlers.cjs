@@ -228,6 +228,7 @@ const SCOREBOOK_CHILD_COLLECTIONS = Object.freeze([
   "commands",
   "notes",
   "audit",
+  "moderationBeforeImages",
   "projections",
   "projectionRuns",
   "effects",

@@ -28,6 +28,17 @@ const indexes = JSON.parse(
 );
 
 describe("Diamond Scorebook v2 Firestore boundary", () => {
+  it("indexes deletion-owned moderation receipts and private before-images", () => {
+    for (const [collectionGroup, fieldPath] of [
+      ["audit", "moderatorUid"],
+      ["moderationBeforeImages", "senderId"],
+    ]) {
+      expect(indexes.fieldOverrides).toContainEqual({
+        collectionGroup, fieldPath,
+        indexes: [{ order: "ASCENDING", queryScope: "COLLECTION_GROUP" }],
+      });
+    }
+  });
   it("defines a server-authoritative game boundary and fail-closed policy schema", () => {
     expect(rules).toContain(
       "function isDiamondScorebookPolicyPayloadValid(data)",
@@ -677,6 +688,12 @@ describe("Diamond Scorebook v2 Firestore boundary", () => {
         const projection =
           "teams/team-a/games/diamond-game/diamondPublic/state";
         await assertFails(getDoc(doc(ownerDb, canonical)));
+        for (const db of [ownerDb, publicDb]) {
+          const image = doc(db, `${canonical}/moderationBeforeImages/image-1`);
+          await assertFails(getDoc(image));
+          await assertFails(setDoc(image, { senderId: "sender", beforeImage: { text: "private" } }));
+          await assertFails(deleteDoc(image));
+        }
         await assertFails(getDoc(doc(publicDb, projection)));
         await assertFails(
           setDoc(doc(ownerDb, `${canonical}/notes/n1`), {

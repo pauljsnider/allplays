@@ -1,6 +1,7 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const crypto = require("node:crypto");
 const { readFileSync, readdirSync } = require("node:fs");
 const { join } = require("node:path");
 const test = require("node:test");
@@ -266,6 +267,146 @@ function configurationReceipt({
       nextRequestId,
       beforeImage,
       beforeImageHash: domainEngine.hashDiamondValue(beforeImage),
+    },
+  };
+}
+
+function buildModerationProof({
+  teamId = "team-moderation",
+  gameId = "game-moderation",
+  instanceId = uuid(720),
+  moderatorUid = UID,
+  senderId = "active.sender:2",
+  requestId = uuid(721),
+  messageId = `diamond-chat-${"a".repeat(64)}`,
+  lifecycle = "active",
+  commitMs = Date.parse(REDACTED_AT),
+  receiptCreateNanosecondOffset = 0,
+  receiptUpdateNanosecondOffset = receiptCreateNanosecondOffset,
+  imageCreateNanosecondOffset = receiptCreateNanosecondOffset,
+  imageUpdateNanosecondOffset = imageCreateNanosecondOffset,
+} = {}) {
+  const scorebookPath = `teams/${teamId}/games/${gameId}/diamondScorebooks/v2`;
+  const gamePath = `teams/${teamId}/games/${gameId}`;
+  const receiptKey = crypto.createHash("sha256")
+    .update(`moderate-chat\n${teamId}\n${gameId}\n${moderatorUid}\n${requestId}`)
+    .digest("hex");
+  const targetKey = crypto.createHash("sha256")
+    .update(`${instanceId}\n${messageId}`)
+    .digest("hex");
+  const receiptId = `engagement-moderation-receipt-${receiptKey}`;
+  const requestHash = `sha256:${crypto.createHash("sha256").update(JSON.stringify({
+    schemaVersion: 1,
+    kind: "moderate-chat",
+    requestId,
+    teamId,
+    gameId,
+    expectedInstanceId: instanceId,
+    viewerMode: "moderation",
+    payload: { messageId },
+  })).digest("hex")}`;
+  const beforeImage = {
+    schemaVersion: 1,
+    trackingEngine: "diamond-v2",
+    teamId,
+    gameId,
+    instanceId,
+    text: "Restore the exact moderated message",
+    senderId,
+    senderName: "Active Sender",
+    senderPhotoUrl: null,
+    isAnonymous: false,
+    createdAt: "2026-09-09T11:59:00.000Z",
+  };
+  const paths = {
+    gamePath,
+    scorebookPath,
+    receiptPath: `${scorebookPath}/audit/${receiptId}`,
+    beforeImagePath: `${scorebookPath}/moderationBeforeImages/${receiptKey}`,
+    targetPath: `${scorebookPath}/audit/engagement-moderation-target-${targetKey}`,
+    outputPath: `teams/${teamId}/games/${gameId}/diamondLiveGenerations/${instanceId}/chat/${messageId}`,
+  };
+  return {
+    teamId,
+    gameId,
+    instanceId,
+    moderatorUid,
+    senderId,
+    requestId,
+    messageId,
+    receiptId,
+    requestHash,
+    beforeImage,
+    paths,
+    documents: {
+      [gamePath]: {
+        trackingEngine: "diamond-v2",
+        diamondScorebookInstanceId: instanceId,
+      },
+      [scorebookPath]: {
+        schemaVersion: 2,
+        trackingEngine: "diamond-v2",
+        teamId,
+        gameId,
+        instanceId,
+        checkpoint: {
+          teamId,
+          gameId,
+          sequence: 1,
+          state: { teamId, gameId, revision: 1, lifecycle },
+        },
+      },
+      [paths.receiptPath]: {
+        schemaVersion: 1,
+        trackingEngine: "diamond-v2",
+        teamId,
+        gameId,
+        instanceId,
+        kind: "moderate-chat",
+        requestId,
+        requestHash,
+        messageId,
+        moderatorUid,
+        moderationProofVersion: 1,
+        beforeImageId: receiptKey,
+        acceptedAt: REDACTED_AT,
+      },
+      [paths.beforeImagePath]: {
+        schemaVersion: 1,
+        trackingEngine: "diamond-v2",
+        teamId,
+        gameId,
+        instanceId,
+        receiptId,
+        moderatorUid,
+        senderId,
+        beforeImage,
+        createdAt: REDACTED_AT,
+      },
+      [paths.targetPath]: {
+        schemaVersion: 1,
+        trackingEngine: "diamond-v2",
+        teamId,
+        gameId,
+        instanceId,
+        messageId,
+        receiptId,
+        requestHash,
+      },
+    },
+    commitMetadata: {
+      [paths.receiptPath]: {
+        createMs: commitMs,
+        updateMs: commitMs,
+        createNanosecondOffset: receiptCreateNanosecondOffset,
+        updateNanosecondOffset: receiptUpdateNanosecondOffset,
+      },
+      [paths.beforeImagePath]: {
+        createMs: commitMs,
+        updateMs: commitMs,
+        createNanosecondOffset: imageCreateNanosecondOffset,
+        updateNanosecondOffset: imageUpdateNanosecondOffset,
+      },
     },
   };
 }
@@ -1909,6 +2050,8 @@ test("direct Auth configuration cleanup is order-independent and resumes a delet
       ["notes-author", "notes", "authorUid"],
       ["live-chat-sender", "chat", "senderId"],
       ["live-reactions-sender", "reactions", "senderId"],
+      ["moderation-before-image-sender", "moderationBeforeImages", "senderId"],
+      ["moderation-receipt-moderator", "audit", "moderatorUid"],
       ["regeneration-audit", "audit", "actorUid"],
     ]) {
       seed[`${AUTH_DELETE_BARRIER_PATH}/diamondReconciliationScans/${source}`] = {
@@ -2035,6 +2178,353 @@ test("direct Auth deletion removes exact Diamond live interactions and preserves
   });
 });
 
+test("direct Auth deletion restores an exact post-delete moderation before-image", async () => {
+  const fixture = buildModerationProof({ lifecycle: "final" });
+  const fake = makeFirestore(fixture.documents, {
+    commitMetadata: fixture.commitMetadata,
+  });
+
+  await runDirectAuthDelete(fake);
+
+  assert.deepEqual(fake.read(fixture.paths.outputPath), fixture.beforeImage);
+  assert.equal(fake.has(fixture.paths.receiptPath), false);
+  assert.equal(fake.has(fixture.paths.beforeImagePath), false);
+  assert.equal(fake.has(fixture.paths.targetPath), false);
+  assert.ok(fake.queryLog.some(
+    (entry) => entry.collectionId === "audit" && entry.field === "moderatorUid",
+  ));
+});
+
+test("moderation rollback preserves replacement, later moderation, and generation winners", async (t) => {
+  await t.test("replacement chat", async () => {
+    const fixture = buildModerationProof();
+    const replacement = {
+      ...fixture.beforeImage,
+      senderId: "replacement.sender:3",
+      senderName: "Replacement Sender",
+      text: "Later replacement wins",
+    };
+    let fake;
+    let replaced = false;
+    fake = makeFirestore(fixture.documents, {
+      commitMetadata: fixture.commitMetadata,
+      async afterQuerySnapshotHook({ source, filters, paths }) {
+        if (
+          !replaced
+          && source === "audit"
+          && filters.some((filter) =>
+            filter.field === "moderatorUid" && filter.value === UID)
+          && paths.includes(fixture.paths.receiptPath)
+        ) {
+          replaced = true;
+          fake.write(fixture.paths.outputPath, replacement);
+        }
+      },
+    });
+
+    await runDirectAuthDelete(fake);
+
+    assert.deepEqual(fake.read(fixture.paths.outputPath), replacement);
+    assert.equal(fake.has(fixture.paths.receiptPath), false);
+    assert.equal(fake.has(fixture.paths.beforeImagePath), false);
+    assert.equal(fake.has(fixture.paths.targetPath), false);
+  });
+
+  await t.test("later moderation marker", async () => {
+    const fixture = buildModerationProof();
+    const laterTarget = {
+      ...fixture.documents[fixture.paths.targetPath],
+      receiptId: `engagement-moderation-receipt-${"f".repeat(64)}`,
+      requestHash: `sha256:${"e".repeat(64)}`,
+    };
+    const fake = makeFirestore({
+      ...fixture.documents,
+      [fixture.paths.targetPath]: laterTarget,
+    }, { commitMetadata: fixture.commitMetadata });
+
+    await runDirectAuthDelete(fake);
+
+    assert.equal(fake.has(fixture.paths.outputPath), false);
+    assert.deepEqual(fake.read(fixture.paths.targetPath), laterTarget);
+    assert.equal(fake.has(fixture.paths.receiptPath), false);
+    assert.equal(fake.has(fixture.paths.beforeImagePath), false);
+  });
+
+  await t.test("later generation", async () => {
+    const fixture = buildModerationProof();
+    const laterInstanceId = uuid(729);
+    const laterGame = {
+      trackingEngine: "diamond-v2",
+      diamondScorebookInstanceId: laterInstanceId,
+    };
+    const laterRoot = {
+      schemaVersion: 2,
+      trackingEngine: "diamond-v2",
+      teamId: fixture.teamId,
+      gameId: fixture.gameId,
+      instanceId: laterInstanceId,
+    };
+    const fake = makeFirestore({
+      ...fixture.documents,
+      [fixture.paths.gamePath]: laterGame,
+      [fixture.paths.scorebookPath]: laterRoot,
+    }, { commitMetadata: fixture.commitMetadata });
+
+    await runDirectAuthDelete(fake);
+
+    assert.equal(fake.has(fixture.paths.outputPath), false);
+    assert.deepEqual(fake.read(fixture.paths.gamePath), laterGame);
+    assert.deepEqual(fake.read(fixture.paths.scorebookPath), laterRoot);
+    assert.equal(fake.has(fixture.paths.receiptPath), false);
+    assert.equal(fake.has(fixture.paths.beforeImagePath), false);
+    assert.equal(fake.has(fixture.paths.targetPath), false);
+  });
+});
+
+test("moderation rollback never restores content owned by a deleting sender", async (t) => {
+  for (const marker of ["request", "auth", "audit"]) {
+    await t.test(marker, async () => {
+      const fixture = buildModerationProof();
+      const senderMarkerPath = marker === "request"
+        ? `accountDeletionRequests/${fixture.senderId}`
+        : marker === "auth"
+          ? `accountDiamondPrivateNoteAuthDeleteBarriers/${privateNoteCore.buildDiamondPrivateNoteAuthDeleteBarrierId(fixture.senderId)}`
+          : `accountDeletionAudit/${crypto.createHash("sha256").update(fixture.senderId).digest("hex")}`;
+      const fake = makeFirestore({
+        ...fixture.documents,
+        [senderMarkerPath]: { status: "deleting" },
+      }, { commitMetadata: fixture.commitMetadata });
+
+      await runDirectAuthDelete(fake);
+
+      assert.equal(fake.has(fixture.paths.outputPath), false);
+      assert.equal(fake.has(fixture.paths.receiptPath), false);
+      assert.equal(fake.has(fixture.paths.beforeImagePath), false);
+      assert.equal(fake.has(fixture.paths.targetPath), false);
+    });
+  }
+});
+
+test("moderation cleanup rejects missing or mutable rollback evidence", async (t) => {
+  await t.test("missing late before-image", async () => {
+    const fixture = buildModerationProof();
+    delete fixture.documents[fixture.paths.beforeImagePath];
+    delete fixture.commitMetadata[fixture.paths.beforeImagePath];
+    const fake = makeFirestore(fixture.documents, {
+      commitMetadata: fixture.commitMetadata,
+    });
+
+    await assert.rejects(
+      runDirectAuthDelete(fake),
+      (error) => error?.code === "diamond-private-note-integrity-failed",
+    );
+    assert.equal(fake.has(fixture.paths.outputPath), false);
+    assert.equal(fake.has(fixture.paths.receiptPath), true);
+    assert.equal(fake.has(fixture.paths.targetPath), true);
+  });
+
+  await t.test("same-millisecond receipt mutation", async () => {
+    const fixture = buildModerationProof({
+      receiptCreateNanosecondOffset: 1,
+      receiptUpdateNanosecondOffset: 2,
+    });
+    const fake = makeFirestore(fixture.documents, {
+      commitMetadata: fixture.commitMetadata,
+    });
+
+    await assert.rejects(
+      runDirectAuthDelete(fake),
+      (error) => error?.code === "diamond-private-note-integrity-failed",
+    );
+    assert.equal(fake.has(fixture.paths.receiptPath), true);
+    assert.equal(fake.has(fixture.paths.beforeImagePath), true);
+  });
+
+  await t.test("receipt and image commit mismatch", async () => {
+    const fixture = buildModerationProof({ imageCreateNanosecondOffset: 1 });
+    const fake = makeFirestore(fixture.documents, {
+      commitMetadata: fixture.commitMetadata,
+    });
+
+    await assert.rejects(
+      runDirectAuthDelete(fake),
+      (error) => error?.code === "diamond-private-note-integrity-failed",
+    );
+    assert.equal(fake.has(fixture.paths.receiptPath), true);
+    assert.equal(fake.has(fixture.paths.beforeImagePath), true);
+    assert.equal(fake.has(fixture.paths.outputPath), false);
+  });
+});
+
+test("pre-boundary and account-request moderation cleanup scrub evidence without restoration", async (t) => {
+  await t.test("pre-boundary direct Auth receipt", async () => {
+    const fixture = buildModerationProof({
+      commitMs: Date.parse(REDACTED_AT) - 1,
+    });
+    const fake = makeFirestore(fixture.documents, {
+      commitMetadata: fixture.commitMetadata,
+    });
+
+    await runDirectAuthDelete(fake);
+
+    assert.equal(fake.has(fixture.paths.outputPath), false);
+    assert.equal(fake.has(fixture.paths.receiptPath), false);
+    assert.equal(fake.has(fixture.paths.beforeImagePath), false);
+    assert.equal(fake.has(fixture.paths.targetPath), false);
+  });
+
+  await t.test("normal queued deletion", async () => {
+    const fixture = buildModerationProof();
+    const fake = makeFirestore({
+      ...fixture.documents,
+      [`accountDeletionRequests/${UID}`]: { uid: UID, status: "processing" },
+    }, { commitMetadata: fixture.commitMetadata });
+
+    await runCleanup(fake);
+
+    assert.equal(fake.has(fixture.paths.outputPath), false);
+    assert.equal(fake.has(fixture.paths.receiptPath), false);
+    assert.equal(fake.has(fixture.paths.beforeImagePath), false);
+    assert.equal(fake.has(fixture.paths.targetPath), false);
+  });
+});
+
+test("normal sender cleanup removes copied chat content and preserves a replacement sidecar", async (t) => {
+  await t.test("exact sender copy", async () => {
+    const fixture = buildModerationProof({
+      moderatorUid: "active.moderator:9",
+      senderId: UID,
+    });
+    const fake = makeFirestore({
+      ...fixture.documents,
+      [`accountDeletionRequests/${UID}`]: { uid: UID, status: "processing" },
+    }, { commitMetadata: fixture.commitMetadata });
+
+    await runCleanup(fake);
+
+    assert.equal(fake.has(fixture.paths.beforeImagePath), false);
+    assert.equal(fake.has(fixture.paths.receiptPath), false);
+    assert.equal(fake.has(fixture.paths.targetPath), false);
+  });
+
+  await t.test("replacement winner", async () => {
+    const fixture = buildModerationProof({
+      moderatorUid: "active.moderator:9",
+      senderId: UID,
+    });
+    const replacement = {
+      ...fixture.documents[fixture.paths.beforeImagePath],
+      senderId: "active.sender:10",
+      beforeImage: {
+        ...fixture.beforeImage,
+        senderId: "active.sender:10",
+        senderName: "Active Replacement",
+      },
+    };
+    let fake;
+    let replaced = false;
+    fake = makeFirestore({
+      ...fixture.documents,
+      [`accountDeletionRequests/${UID}`]: { uid: UID, status: "processing" },
+    }, {
+      commitMetadata: fixture.commitMetadata,
+      async afterQuerySnapshotHook({ source, filters, paths }) {
+        if (
+          !replaced
+          && source === "moderationBeforeImages"
+          && filters.some((filter) =>
+            filter.field === "senderId" && filter.value === UID)
+          && paths.includes(fixture.paths.beforeImagePath)
+        ) {
+          replaced = true;
+          fake.write(fixture.paths.beforeImagePath, replacement);
+        }
+      },
+    });
+
+    await runCleanup(fake);
+
+    assert.deepEqual(fake.read(fixture.paths.beforeImagePath), replacement);
+    assert.equal(fake.has(fixture.paths.receiptPath), true);
+    assert.equal(fake.has(fixture.paths.targetPath), true);
+  });
+});
+
+test("direct Auth moderation discovery durably resumes after a bounded receipt page", async () => {
+  const seed = {
+    [AUTH_DELETE_BARRIER_PATH]: {
+      schemaVersion: 1,
+      type: "diamond-private-note-auth-delete-barrier",
+      status: "auth-deleted",
+      startedAt: REDACTED_AT,
+    },
+  };
+  const commitMetadata = {};
+  const receiptPaths = [];
+  for (let index = 0; index < 250; index += 1) {
+    const fixture = buildModerationProof({
+      teamId: `team-moderation-page-${String(index).padStart(3, "0")}`,
+      gameId: `game-moderation-page-${String(index).padStart(3, "0")}`,
+      requestId: uuid(1_000 + index),
+      messageId: `diamond-chat-${index.toString(16).padStart(64, "0")}`,
+      commitMs: Date.parse(REDACTED_AT) - 1,
+    });
+    Object.assign(seed, fixture.documents);
+    Object.assign(commitMetadata, fixture.commitMetadata);
+    receiptPaths.push(fixture.paths.receiptPath);
+  }
+  for (const [source, collectionGroup, field] of [
+    ["existing-tasks", "diamondReconciliations", "document-id"],
+    ["events-actor", "events", "actorUid"],
+    ["events-handoff", "events", "payload.toUid"],
+    ["notes-author", "notes", "authorUid"],
+    ["live-chat-sender", "chat", "senderId"],
+    ["live-reactions-sender", "reactions", "senderId"],
+    ["moderation-before-image-sender", "moderationBeforeImages", "senderId"],
+    ["regeneration-audit", "audit", "actorUid"],
+    ["configuration-request", "diamondConfigurationRequests", "requestedBy"],
+  ]) {
+    seed[`${AUTH_DELETE_BARRIER_PATH}/diamondReconciliationScans/${source}`] = {
+      schemaVersion: 1,
+      type: "diamond-auth-delete-scan",
+      source,
+      collectionGroup,
+      field,
+      status: "complete",
+      cursorPath: null,
+      epoch: 0,
+      startedAt: REDACTED_AT,
+    };
+  }
+  const fake = makeFirestore(seed, { commitMetadata });
+  const bounded = {
+    handlerOptions: {
+      reconciliationInventoryPageBudget: 1,
+    },
+  };
+
+  await assert.rejects(
+    runDirectAuthDelete(fake, bounded),
+    (error) => error?.code === "unavailable",
+  );
+
+  const scanPath = `${AUTH_DELETE_BARRIER_PATH}/diamondReconciliationScans/moderation-receipt-moderator`;
+  const expectedPaths = receiptPaths.sort();
+  assert.equal(fake.read(scanPath).status, "scanning");
+  assert.equal(fake.read(scanPath).cursorPath, expectedPaths.at(-1));
+  assert.equal(fake.has(expectedPaths[0]), false);
+  assert.equal(fake.has(expectedPaths.at(-1)), false);
+
+  await runDirectAuthDelete(fake, bounded);
+
+  assert.equal(fake.read(scanPath).status, "complete");
+  assert.ok(fake.queryLog.some((entry) =>
+    entry.collectionId === "audit"
+      && entry.field === "moderatorUid"
+      && entry.cursorPath === expectedPaths.at(-1)
+      && entry.paths.length === 0));
+});
+
 test("direct Auth discovery persists a bounded collection-group cursor and resumes strictly after it", async () => {
   const seed = {
     [AUTH_DELETE_BARRIER_PATH]: {
@@ -2050,6 +2540,8 @@ test("direct Auth discovery persists a bounded collection-group cursor and resum
     ["notes-author", "notes", "authorUid"],
     ["live-chat-sender", "chat", "senderId"],
     ["live-reactions-sender", "reactions", "senderId"],
+    ["moderation-before-image-sender", "moderationBeforeImages", "senderId"],
+    ["moderation-receipt-moderator", "audit", "moderatorUid"],
     ["regeneration-audit", "audit", "actorUid"],
   ]) {
     seed[`${AUTH_DELETE_BARRIER_PATH}/diamondReconciliationScans/${source}`] = {
@@ -2137,6 +2629,8 @@ test("direct Auth task recovery persists a bounded cursor across terminal task h
     ["notes-author", "notes", "authorUid"],
     ["live-chat-sender", "chat", "senderId"],
     ["live-reactions-sender", "reactions", "senderId"],
+    ["moderation-before-image-sender", "moderationBeforeImages", "senderId"],
+    ["moderation-receipt-moderator", "audit", "moderatorUid"],
     ["regeneration-audit", "audit", "actorUid"],
     ["configuration-request", "diamondConfigurationRequests", "requestedBy"],
   ]) {
@@ -2213,6 +2707,8 @@ test("task scan epochs prevent stale completion across stage/reset interleavings
         ["notes-author", "notes", "authorUid"],
         ["live-chat-sender", "chat", "senderId"],
         ["live-reactions-sender", "reactions", "senderId"],
+        ["moderation-before-image-sender", "moderationBeforeImages", "senderId"],
+        ["moderation-receipt-moderator", "audit", "moderatorUid"],
         ["regeneration-audit", "audit", "actorUid"],
         ["configuration-request", "diamondConfigurationRequests", "requestedBy"],
       ]) {
@@ -2532,6 +3028,8 @@ test("wires the privacy cleanup before every destructive account cleanup and dec
   assert.ok(indexed.has("events.actorUid"));
   assert.ok(indexed.has("events.payload.toUid"));
   assert.ok(indexed.has("audit.actorUid"));
+  assert.ok(indexed.has("audit.moderatorUid"));
+  assert.ok(indexed.has("moderationBeforeImages.senderId"));
   assert.ok(indexed.has("diamondConfigurationRequests.requestedBy"));
   assert.ok(indexed.has("chat.senderId"));
   assert.ok(indexed.has("reactions.senderId"));

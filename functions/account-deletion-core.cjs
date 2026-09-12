@@ -33,6 +33,10 @@ const DIAMOND_EVENT_PATH_PATTERN = /^teams\/([^/]+)\/games\/([^/]+)\/diamondScor
 const DIAMOND_AUDIT_PATH_PATTERN = /^teams\/([^/]+)\/games\/([^/]+)\/diamondScorebooks\/v2\/audit\/([^/]+)$/;
 const DIAMOND_CONFIGURATION_REQUEST_PATH_PATTERN = /^teams\/([^/]+)\/diamondConfigurationRequests\/([^/]+)$/;
 const DIAMOND_LIVE_INTERACTION_PATH_PATTERN = /^teams\/([^/]+)\/games\/([^/]+)\/diamondLiveGenerations\/([^/]+)\/(chat|reactions)\/([^/]+)$/;
+const DIAMOND_MODERATION_BEFORE_IMAGE_PATH_PATTERN = /^teams\/([^/]+)\/games\/([^/]+)\/diamondScorebooks\/v2\/moderationBeforeImages\/([a-f0-9]{64})$/;
+const DIAMOND_CHAT_MESSAGE_ID_PATTERN = /^diamond-chat-[a-f0-9]{64}$/;
+const DIAMOND_MODERATION_RECEIPT_ID_PATTERN = /^engagement-moderation-receipt-([a-f0-9]{64})$/;
+const DIAMOND_MODERATION_TARGET_ID_PATTERN = /^engagement-moderation-target-([a-f0-9]{64})$/;
 const DIAMOND_CONFIGURATION_REQUEST_SCHEMA_VERSION = 2;
 const DIAMOND_CONFIGURATION_REQUEST_TYPE = 'diamond-team-configuration-request';
 const DIAMOND_CONFIGURATION_LINEAGE_SCHEMA_VERSION = 1;
@@ -538,6 +542,20 @@ async function cleanupAccountDiamondPrivateNotes({
     uid,
     documentIdField,
     pageSize
+  });
+  pagesRead += await cleanupAccountDiamondModerationBeforeImages({
+    firestore,
+    uid,
+    documentIdField,
+    pageSize,
+    barrierKind
+  });
+  pagesRead += await cleanupAccountDiamondModerationReceipts({
+    firestore,
+    uid,
+    documentIdField,
+    pageSize,
+    barrierKind
   });
   let notesRedacted = 0;
   let scorebooksFenced = 0;
@@ -1788,6 +1806,7 @@ function reconciliationCollectionInventory(task) {
       ['commands', 'commands'],
       ['notes', 'notes'],
       ['audit', 'audit'],
+      ['moderation-before-images', 'moderationBeforeImages'],
       ['projections', 'projections'],
       ['projection-runs', 'projectionRuns'],
       ['effects', 'effects'],
@@ -3372,6 +3391,537 @@ async function reconcileStaleDiamondConfiguration({
   return outcome;
 }
 
+function diamondModerationHash(value) {
+  return crypto.createHash('sha256').update(value, 'utf8').digest('hex');
+}
+
+function diamondModerationRequestHash(value) {
+  return `sha256:${diamondModerationHash(JSON.stringify({
+    schemaVersion: 1,
+    kind: 'moderate-chat',
+    requestId: value.requestId,
+    teamId: value.teamId,
+    gameId: value.gameId,
+    expectedInstanceId: value.instanceId,
+    viewerMode: 'moderation',
+    payload: { messageId: value.messageId }
+  }))}`;
+}
+
+function diamondModerationPaths(value) {
+  const scorebookPath = `teams/${value.teamId}/games/${value.gameId}/diamondScorebooks/v2`;
+  const targetId = `engagement-moderation-target-${diamondModerationHash(
+    `${value.instanceId}\n${value.messageId}`
+  )}`;
+  return {
+    scorebookPath,
+    gamePath: `teams/${value.teamId}/games/${value.gameId}`,
+    receiptPath: `${scorebookPath}/audit/${value.receiptId}`,
+    beforeImagePath: `${scorebookPath}/moderationBeforeImages/${value.beforeImageId}`,
+    targetPath: `${scorebookPath}/audit/${targetId}`,
+    outputPath: `teams/${value.teamId}/games/${value.gameId}/diamondLiveGenerations/${value.instanceId}/chat/${value.messageId}`
+  };
+}
+
+function parseDiamondModerationReceipt(snapshot, expectedModeratorUid = null) {
+  const identity = scorebookIdentityFromPath(
+    snapshot?.ref?.path,
+    DIAMOND_AUDIT_PATH_PATTERN
+  );
+  const receiptIdMatch = DIAMOND_MODERATION_RECEIPT_ID_PATTERN.exec(
+    identity?.documentId || ''
+  );
+  if (!identity || !receiptIdMatch) return null;
+  const value = snapshot?.exists === true ? snapshot.data() || {} : null;
+  const expectedKeys = new Set([
+    'schemaVersion', 'trackingEngine', 'teamId', 'gameId', 'instanceId',
+    'kind', 'requestId', 'requestHash', 'messageId', 'moderatorUid',
+    'moderationProofVersion', 'beforeImageId', 'acceptedAt'
+  ]);
+  const expectedReceiptId = `engagement-moderation-receipt-${diamondModerationHash(
+    `moderate-chat\n${identity.teamId}\n${identity.gameId}\n${value?.moderatorUid || ''}\n${value?.requestId || ''}`
+  )}`;
+  if (
+    !hasExactRecordKeys(value, expectedKeys)
+    || value.schemaVersion !== 1
+    || value.trackingEngine !== diamondPrivateNoteCore.DIAMOND_ENGINE
+    || value.teamId !== identity.teamId
+    || value.gameId !== identity.gameId
+    || !DIAMOND_UUID_V4_PATTERN.test(value.instanceId || '')
+    || value.kind !== 'moderate-chat'
+    || !DIAMOND_UUID_V4_PATTERN.test(value.requestId || '')
+    || value.requestHash !== diamondModerationRequestHash(value)
+    || !DIAMOND_CHAT_MESSAGE_ID_PATTERN.test(value.messageId || '')
+    || !isValidAccountUid(value.moderatorUid)
+    || (expectedModeratorUid && value.moderatorUid !== expectedModeratorUid)
+    || value.moderationProofVersion !== 1
+    || value.beforeImageId !== receiptIdMatch[1]
+    || identity.documentId !== expectedReceiptId
+    || value.acceptedAt === null
+    || value.acceptedAt === undefined
+  ) {
+    throwDiamondPrivateNoteIntegrityFailure(
+      'A Diamond live-chat moderation receipt is malformed.'
+    );
+  }
+  return {
+    ...identity,
+    receiptId: identity.documentId,
+    value,
+    ...diamondModerationPaths({ ...value, receiptId: identity.documentId })
+  };
+}
+
+function parseDiamondModerationBeforeImage(snapshot, expected = null) {
+  const match = DIAMOND_MODERATION_BEFORE_IMAGE_PATH_PATTERN.exec(
+    snapshot?.ref?.path || ''
+  );
+  if (!match) return null;
+  const value = snapshot?.exists === true ? snapshot.data() || {} : null;
+  const beforeImage = value?.beforeImage;
+  const expectedKeys = new Set([
+    'schemaVersion', 'trackingEngine', 'teamId', 'gameId', 'instanceId',
+    'receiptId', 'moderatorUid', 'senderId', 'beforeImage', 'createdAt'
+  ]);
+  const expectedImageKeys = new Set([
+    'schemaVersion', 'trackingEngine', 'teamId', 'gameId', 'instanceId',
+    'text', 'senderId', 'senderName', 'senderPhotoUrl', 'isAnonymous',
+    'createdAt'
+  ]);
+  const receiptIdMatch = DIAMOND_MODERATION_RECEIPT_ID_PATTERN.exec(
+    value?.receiptId || ''
+  );
+  const chatShapeIsValid = hasExactRecordKeys(beforeImage, expectedImageKeys)
+    && beforeImage.schemaVersion === 1
+    && beforeImage.trackingEngine === diamondPrivateNoteCore.DIAMOND_ENGINE
+    && beforeImage.teamId === match[1]
+    && beforeImage.gameId === match[2]
+    && beforeImage.instanceId === value?.instanceId
+    && typeof beforeImage.text === 'string'
+    && beforeImage.text.length > 0
+    && beforeImage.text.length <= 2_000
+    && beforeImage.text.replace(/\s+/g, ' ').trim() === beforeImage.text
+    && !/[\u0000-\u001f\u007f]/.test(beforeImage.text)
+    && beforeImage.senderId === value?.senderId
+    && typeof beforeImage.senderName === 'string'
+    && beforeImage.senderName.length > 0
+    && beforeImage.senderName.length <= 80
+    && (beforeImage.senderPhotoUrl === null || (
+      typeof beforeImage.senderPhotoUrl === 'string'
+      && beforeImage.senderPhotoUrl.length <= 2_048
+      && beforeImage.senderPhotoUrl.startsWith('https://')
+    ))
+    && beforeImage.isAnonymous === false
+    && beforeImage.createdAt !== null
+    && beforeImage.createdAt !== undefined;
+  if (
+    !hasExactRecordKeys(value, expectedKeys)
+    || value.schemaVersion !== 1
+    || value.trackingEngine !== diamondPrivateNoteCore.DIAMOND_ENGINE
+    || !isValidAccountUid(match[1])
+    || !isValidAccountUid(match[2])
+    || value.teamId !== match[1]
+    || value.gameId !== match[2]
+    || !DIAMOND_UUID_V4_PATTERN.test(value.instanceId || '')
+    || !receiptIdMatch
+    || receiptIdMatch[1] !== match[3]
+    || !isValidAccountUid(value.moderatorUid)
+    || !isValidAccountUid(value.senderId)
+    || value.createdAt === null
+    || value.createdAt === undefined
+    || !chatShapeIsValid
+    || (expected && (
+      expected.teamId !== value.teamId
+      || expected.gameId !== value.gameId
+      || expected.instanceId !== value.instanceId
+      || expected.receiptId !== value.receiptId
+      || expected.beforeImageId !== match[3]
+      || expected.moderatorUid !== value.moderatorUid
+    ))
+  ) {
+    throwDiamondPrivateNoteIntegrityFailure(
+      'A Diamond live-chat moderation before-image is malformed.'
+    );
+  }
+  return {
+    path: snapshot.ref.path,
+    teamId: value.teamId,
+    gameId: value.gameId,
+    instanceId: value.instanceId,
+    receiptId: value.receiptId,
+    beforeImageId: match[3],
+    moderatorUid: value.moderatorUid,
+    senderId: value.senderId,
+    beforeImage,
+    value
+  };
+}
+
+function parseDiamondModerationTarget(snapshot, expected) {
+  if (snapshot?.exists !== true) return null;
+  const identity = scorebookIdentityFromPath(
+    snapshot.ref?.path,
+    DIAMOND_AUDIT_PATH_PATTERN
+  );
+  const targetIdMatch = DIAMOND_MODERATION_TARGET_ID_PATTERN.exec(
+    identity?.documentId || ''
+  );
+  const value = snapshot.data() || {};
+  const expectedTargetId = `engagement-moderation-target-${diamondModerationHash(
+    `${expected.instanceId}\n${expected.messageId}`
+  )}`;
+  if (
+    !identity
+    || !targetIdMatch
+    || identity.documentId !== expectedTargetId
+    || !hasExactRecordKeys(value, new Set([
+      'schemaVersion', 'trackingEngine', 'teamId', 'gameId', 'instanceId',
+      'messageId', 'receiptId', 'requestHash'
+    ]))
+    || value.schemaVersion !== 1
+    || value.trackingEngine !== diamondPrivateNoteCore.DIAMOND_ENGINE
+    || value.teamId !== expected.teamId
+    || value.gameId !== expected.gameId
+    || value.instanceId !== expected.instanceId
+    || value.messageId !== expected.messageId
+    || !DIAMOND_MODERATION_RECEIPT_ID_PATTERN.test(value.receiptId || '')
+    || !DIAMOND_HASH_PATTERN.test(value.requestHash || '')
+  ) {
+    throwDiamondPrivateNoteIntegrityFailure(
+      'A Diamond live-chat moderation target marker is malformed.'
+    );
+  }
+  return value;
+}
+
+function diamondModerationGenerationIsActive(game, root, expected) {
+  const checkpoint = root?.checkpoint;
+  const state = checkpoint?.state;
+  return Boolean(
+    isPlainRecord(game)
+    && game.trackingEngine === diamondPrivateNoteCore.DIAMOND_ENGINE
+    && game.diamondScorebookInstanceId === expected.instanceId
+    && isPlainRecord(root)
+    && root.schemaVersion === 2
+    && root.trackingEngine === diamondPrivateNoteCore.DIAMOND_ENGINE
+    && root.teamId === expected.teamId
+    && root.gameId === expected.gameId
+    && root.instanceId === expected.instanceId
+    && !root.authDeleteReconciliation
+    && isPlainRecord(checkpoint)
+    && checkpoint.teamId === expected.teamId
+    && checkpoint.gameId === expected.gameId
+    && Number.isSafeInteger(checkpoint.sequence)
+    && checkpoint.sequence >= 1
+    && isPlainRecord(state)
+    && state.teamId === expected.teamId
+    && state.gameId === expected.gameId
+    && state.revision === checkpoint.sequence
+  );
+}
+
+function diamondModerationReceiptCandidate({ uid, snapshot }) {
+  const parsed = parseDiamondModerationReceipt(snapshot, uid);
+  if (!parsed) return null;
+  const commitMs = requireSnapshotCommitMillis(snapshot);
+  return { ...parsed, snapshot, commitMs };
+}
+
+function diamondModerationBeforeImageCandidate({ uid, snapshot }) {
+  const pathMatch = DIAMOND_MODERATION_BEFORE_IMAGE_PATH_PATTERN.exec(
+    snapshot?.ref?.path || ''
+  );
+  if (!pathMatch) return null;
+  const value = snapshot.data() || {};
+  if (value.senderId !== uid) return null;
+  const parsed = parseDiamondModerationBeforeImage(snapshot);
+  requireSnapshotCommitMillis(snapshot);
+  return { ...parsed, snapshot };
+}
+
+async function reconcileDiamondModerationReceipt({
+  firestore,
+  uid,
+  barrierKind,
+  authDeleteEventMs,
+  candidate
+}) {
+  const receiptRef = firestore.doc(candidate.receiptPath);
+  const beforeImageRef = firestore.doc(candidate.beforeImagePath);
+  const targetRef = firestore.doc(candidate.targetPath);
+  const outputRef = firestore.doc(candidate.outputPath);
+  const gameRef = firestore.doc(candidate.gamePath);
+  const rootRef = firestore.doc(candidate.scorebookPath);
+  await firestore.runTransaction(async (transaction) => {
+    const barrierSnapshot = await transaction.get(
+      accountDiamondDeletionBarrierRef(firestore, uid, barrierKind)
+    );
+    requireAccountDiamondDeletionBarrier(barrierSnapshot, uid, barrierKind);
+    const [
+      receiptSnapshot,
+      beforeImageSnapshot,
+      targetSnapshot,
+      outputSnapshot,
+      gameSnapshot,
+      rootSnapshot
+    ] = await Promise.all([
+      transaction.get(receiptRef),
+      transaction.get(beforeImageRef),
+      transaction.get(targetRef),
+      transaction.get(outputRef),
+      transaction.get(gameRef),
+      transaction.get(rootRef)
+    ]);
+    if (!receiptSnapshot?.exists) return;
+    const current = diamondModerationReceiptCandidate({
+      uid,
+      snapshot: receiptSnapshot
+    });
+    if (
+      !current
+      || current.receiptPath !== candidate.receiptPath
+      || current.beforeImagePath !== candidate.beforeImagePath
+      || current.targetPath !== candidate.targetPath
+      || current.outputPath !== candidate.outputPath
+      || !timestampsExactlyEqual(
+        receiptSnapshot.createTime,
+        candidate.snapshot.createTime
+      )
+    ) {
+      throwDiamondPrivateNoteIntegrityFailure(
+        'A Diamond live-chat moderation receipt changed during account cleanup.'
+      );
+    }
+
+    let beforeImage = null;
+    let senderHasDeletionMarker = false;
+    if (beforeImageSnapshot?.exists) {
+      beforeImage = parseDiamondModerationBeforeImage(beforeImageSnapshot, {
+        teamId: current.teamId,
+        gameId: current.gameId,
+        instanceId: current.value.instanceId,
+        receiptId: current.receiptId,
+        beforeImageId: current.value.beforeImageId,
+        moderatorUid: uid
+      });
+      requireSnapshotCommitMillis(beforeImageSnapshot);
+      if (!timestampsExactlyEqual(
+        beforeImageSnapshot.createTime,
+        receiptSnapshot.createTime
+      )) {
+        throwDiamondPrivateNoteIntegrityFailure(
+          'A Diamond live-chat moderation proof has inconsistent commit metadata.'
+        );
+      }
+      senderHasDeletionMarker = await principalHasDeletionMarker(
+        transaction,
+        firestore,
+        beforeImage.senderId
+      );
+    }
+
+    const target = parseDiamondModerationTarget(targetSnapshot, current.value);
+    const targetIsOwned = Boolean(
+      target
+      && target.receiptId === current.receiptId
+      && target.requestHash === current.value.requestHash
+    );
+    if (
+      target?.receiptId === current.receiptId
+      && target.requestHash !== current.value.requestHash
+    ) {
+      throwDiamondPrivateNoteIntegrityFailure(
+        'A Diamond live-chat moderation target changed request identity.'
+      );
+    }
+    const game = gameSnapshot?.exists ? gameSnapshot.data() || {} : null;
+    const root = rootSnapshot?.exists ? rootSnapshot.data() || {} : null;
+    const requiresLateDeleteRepair = barrierKind
+      === ACCOUNT_DIAMOND_DELETION_BARRIER_AUTH_DELETE
+      && Number.isSafeInteger(authDeleteEventMs)
+      && current.commitMs >= authDeleteEventMs
+      && !senderHasDeletionMarker
+      && outputSnapshot?.exists !== true
+      && diamondModerationGenerationIsActive(game, root, current.value);
+    if (requiresLateDeleteRepair) {
+      if (!target) {
+        throwDiamondPrivateNoteIntegrityFailure(
+          'A late Diamond live-chat moderation has no authoritative target marker.'
+        );
+      }
+      if (targetIsOwned) {
+        if (!beforeImage) {
+          throwDiamondPrivateNoteIntegrityFailure(
+            'A late Diamond live-chat moderation has no authoritative before-image.'
+          );
+        }
+        transaction.create(outputRef, beforeImage.beforeImage);
+      }
+    }
+    if (beforeImageSnapshot?.exists) transaction.delete(beforeImageRef);
+    if (targetIsOwned) transaction.delete(targetRef);
+    transaction.delete(receiptRef);
+  });
+}
+
+async function reconcileDiamondModerationBeforeImage({
+  firestore,
+  uid,
+  barrierKind,
+  candidate
+}) {
+  const beforeImageRef = firestore.doc(candidate.path);
+  await firestore.runTransaction(async (transaction) => {
+    const barrierSnapshot = await transaction.get(
+      accountDiamondDeletionBarrierRef(firestore, uid, barrierKind)
+    );
+    requireAccountDiamondDeletionBarrier(barrierSnapshot, uid, barrierKind);
+    const currentSnapshot = await transaction.get(beforeImageRef);
+    if (!currentSnapshot?.exists) return;
+    if (currentSnapshot.data()?.senderId !== uid) return;
+    const current = diamondModerationBeforeImageCandidate({
+      uid,
+      snapshot: currentSnapshot
+    });
+    if (
+      !current
+      || current.path !== candidate.path
+      || current.receiptId !== candidate.receiptId
+      || !timestampsExactlyEqual(
+        currentSnapshot.createTime,
+        candidate.snapshot.createTime
+      )
+    ) {
+      throwDiamondPrivateNoteIntegrityFailure(
+        'A Diamond moderation before-image changed during account cleanup.'
+      );
+    }
+    const receiptRef = firestore.doc(
+      `${current.path.split('/moderationBeforeImages/')[0]}/audit/${current.receiptId}`
+    );
+    const receiptSnapshot = await transaction.get(receiptRef);
+    if (!receiptSnapshot?.exists) {
+      transaction.delete(beforeImageRef);
+      return;
+    }
+    const receipt = parseDiamondModerationReceipt(
+      receiptSnapshot,
+      current.moderatorUid
+    );
+    requireSnapshotCommitMillis(receiptSnapshot);
+    if (
+      !receipt
+      || receipt.beforeImagePath !== current.path
+      || !timestampsExactlyEqual(
+        receiptSnapshot.createTime,
+        currentSnapshot.createTime
+      )
+    ) {
+      throwDiamondPrivateNoteIntegrityFailure(
+        'A Diamond moderation before-image has inconsistent receipt evidence.'
+      );
+    }
+    const targetRef = firestore.doc(receipt.targetPath);
+    const targetSnapshot = await transaction.get(targetRef);
+    const target = parseDiamondModerationTarget(targetSnapshot, receipt.value);
+    const targetIsOwned = Boolean(
+      target
+      && target.receiptId === receipt.receiptId
+      && target.requestHash === receipt.value.requestHash
+    );
+    if (
+      target?.receiptId === receipt.receiptId
+      && target.requestHash !== receipt.value.requestHash
+    ) {
+      throwDiamondPrivateNoteIntegrityFailure(
+        'A Diamond moderation before-image target changed request identity.'
+      );
+    }
+    transaction.delete(beforeImageRef);
+    transaction.delete(receiptRef);
+    if (targetIsOwned) transaction.delete(targetRef);
+  });
+}
+
+async function cleanupAccountDiamondModerationBeforeImages({
+  firestore,
+  uid,
+  documentIdField,
+  pageSize,
+  barrierKind
+}) {
+  let cursor = null;
+  let pagesRead = 0;
+  while (true) {
+    let query = firestore.collectionGroup('moderationBeforeImages')
+      .where('senderId', '==', uid)
+      .orderBy(documentIdField)
+      .limit(pageSize);
+    if (cursor) query = query.startAfter(cursor);
+    const snapshot = await query.get();
+    const documents = Array.isArray(snapshot?.docs) ? snapshot.docs : null;
+    if (!documents || snapshot?.empty !== (documents.length === 0)) {
+      throwDiamondPrivateNoteIntegrityFailure(
+        'Diamond moderation before-image cleanup returned an invalid snapshot.'
+      );
+    }
+    if (!documents.length) return pagesRead;
+    pagesRead += 1;
+    for (const document of documents) {
+      const candidate = diamondModerationBeforeImageCandidate({ uid, snapshot: document });
+      if (!candidate) continue;
+      await reconcileDiamondModerationBeforeImage({
+        firestore,
+        uid,
+        barrierKind,
+        candidate
+      });
+    }
+    if (documents.length < pageSize) return pagesRead;
+    cursor = documents.at(-1);
+  }
+}
+
+async function cleanupAccountDiamondModerationReceipts({
+  firestore,
+  uid,
+  documentIdField,
+  pageSize,
+  barrierKind
+}) {
+  let cursor = null;
+  let pagesRead = 0;
+  while (true) {
+    let query = firestore.collectionGroup('audit')
+      .where('moderatorUid', '==', uid)
+      .orderBy(documentIdField)
+      .limit(pageSize);
+    if (cursor) query = query.startAfter(cursor);
+    const snapshot = await query.get();
+    const documents = Array.isArray(snapshot?.docs) ? snapshot.docs : null;
+    if (!documents || snapshot?.empty !== (documents.length === 0)) {
+      throwDiamondPrivateNoteIntegrityFailure(
+        'Diamond live-chat moderation cleanup returned an invalid snapshot.'
+      );
+    }
+    if (!documents.length) return pagesRead;
+    pagesRead += 1;
+    for (const document of documents) {
+      const candidate = diamondModerationReceiptCandidate({ uid, snapshot: document });
+      if (!candidate) continue;
+      await reconcileDiamondModerationReceipt({
+        firestore,
+        uid,
+        barrierKind,
+        authDeleteEventMs: null,
+        candidate
+      });
+    }
+    if (documents.length < pageSize) return pagesRead;
+    cursor = documents.at(-1);
+  }
+}
+
 function diamondLiveInteractionCandidate({ uid, snapshot, collectionId }) {
   const match = DIAMOND_LIVE_INTERACTION_PATH_PATTERN.exec(snapshot?.ref?.path || '');
   if (!match || match[4] !== collectionId) return null;
@@ -3642,6 +4192,49 @@ function createAccountDiamondPrivateNoteAuthDeleteHandler({
         }
       });
     }
+
+    await runDurableEqualityScan({
+      firestore,
+      uid,
+      barrier,
+      documentIdField,
+      source: 'moderation-before-image-sender',
+      collectionGroup: 'moderationBeforeImages',
+      field: 'senderId',
+      pageBudget: inventoryPageBudget,
+      processDocument: async (snapshot) => {
+        const candidate = diamondModerationBeforeImageCandidate({ uid, snapshot });
+        if (!candidate) return;
+        await reconcileDiamondModerationBeforeImage({
+          firestore,
+          uid,
+          barrierKind: ACCOUNT_DIAMOND_DELETION_BARRIER_AUTH_DELETE,
+          candidate
+        });
+      }
+    });
+
+    await runDurableEqualityScan({
+      firestore,
+      uid,
+      barrier,
+      documentIdField,
+      source: 'moderation-receipt-moderator',
+      collectionGroup: 'audit',
+      field: 'moderatorUid',
+      pageBudget: inventoryPageBudget,
+      processDocument: async (snapshot) => {
+        const candidate = diamondModerationReceiptCandidate({ uid, snapshot });
+        if (!candidate) return;
+        await reconcileDiamondModerationReceipt({
+          firestore,
+          uid,
+          barrierKind: ACCOUNT_DIAMOND_DELETION_BARRIER_AUTH_DELETE,
+          authDeleteEventMs,
+          candidate
+        });
+      }
+    });
 
     await runDurableEqualityScan({
       firestore,

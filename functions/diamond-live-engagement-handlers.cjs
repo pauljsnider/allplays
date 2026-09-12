@@ -435,7 +435,8 @@ function moderationPaths(
     `moderate-chat\n${teamId}\n${gameId}\n${uid}\n${requestId}`,
     cryptoAdapter,
   );
-  if (!receiptKey) return null;
+  const targetKey = hashHex(`${instanceId}\n${messageId}`, cryptoAdapter);
+  if (!receiptKey || !targetKey) return null;
   return {
     team: `teams/${teamId}`,
     user: `users/${uid}`,
@@ -443,6 +444,8 @@ function moderationPaths(
     rsvp: `teams/${teamId}/games/${gameId}/rsvps/${uid}`,
     scorebook,
     receipt: `${scorebook}/audit/engagement-moderation-receipt-${receiptKey}`,
+    beforeImage: `${scorebook}/moderationBeforeImages/${receiptKey}`,
+    target: `${scorebook}/audit/engagement-moderation-target-${targetKey}`,
     output: `teams/${teamId}/games/${gameId}/diamondLiveGenerations/${instanceId}/chat/${messageId}`,
   };
 }
@@ -1219,6 +1222,12 @@ function createDiamondLiveEngagementHandlers(dependencies = {}) {
             "The live chat message does not belong to this game generation.",
           );
         }
+        // The retained rollback image is another copy of the sender's data.
+        // Serialize its creation with sender cleanup as well as moderator deletion.
+        await requireNoAccountDeletion(transaction, output.senderId);
+        const beforeImageRef = firestore.doc(paths.beforeImage);
+        const targetRef = firestore.doc(paths.target);
+        await transaction.get(targetRef);
         const receiptPayload = {
           schemaVersion: ENGAGEMENT_SCHEMA_VERSION,
           trackingEngine: DIAMOND_ENGINE,
@@ -1230,8 +1239,32 @@ function createDiamondLiveEngagementHandlers(dependencies = {}) {
           requestHash: hash,
           messageId: request.payload.messageId,
           moderatorUid: caller.uid,
+          moderationProofVersion: 1,
+          beforeImageId: beforeImageRef.id,
           acceptedAt: FieldValue.serverTimestamp(),
         };
+        transaction.create(beforeImageRef, {
+          schemaVersion: ENGAGEMENT_SCHEMA_VERSION,
+          trackingEngine: DIAMOND_ENGINE,
+          teamId: request.teamId,
+          gameId: request.gameId,
+          instanceId: request.expectedInstanceId,
+          receiptId: receiptRef.id,
+          moderatorUid: caller.uid,
+          senderId: output.senderId,
+          beforeImage: output,
+          createdAt: FieldValue.serverTimestamp(),
+        });
+        transaction.set(targetRef, {
+          schemaVersion: ENGAGEMENT_SCHEMA_VERSION,
+          trackingEngine: DIAMOND_ENGINE,
+          teamId: request.teamId,
+          gameId: request.gameId,
+          instanceId: request.expectedInstanceId,
+          messageId: request.payload.messageId,
+          receiptId: receiptRef.id,
+          requestHash: hash,
+        });
         transaction.delete(outputRef);
         transaction.create(receiptRef, receiptPayload);
         return responseFromModerationReceipt(receiptPayload, false);

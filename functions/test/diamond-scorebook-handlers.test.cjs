@@ -14623,6 +14623,7 @@ describe("Diamond scorebook handler factory", () => {
       "commands",
       "projectionRuns",
       "aiPublicationReceipts",
+      "moderationBeforeImages",
     ]) {
       harness.firestore.seed(
         resourcePaths.scorebookChildCollection(collectionId) + "/owned",
@@ -14649,6 +14650,7 @@ describe("Diamond scorebook handler factory", () => {
       "commands",
       "projectionRuns",
       "aiPublicationReceipts",
+      "moderationBeforeImages",
     ]) {
       assert.equal(
         harness.firestore.read(

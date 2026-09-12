@@ -988,6 +988,63 @@ describe("Diamond live engagement durability", () => {
 });
 
 describe("Diamond live chat moderation", () => {
+  it("atomically preserves the exact private rollback image and target ownership", async () => {
+    const harness = createHarness({ access: { full: true } });
+    const posted = await harness.handlers.postDiamondLiveChat(chatRequest(), context());
+    const paths = moderationPaths(
+      TEAM_ID, GAME_ID, INSTANCE_ID, UID, MODERATION_REQUEST_ID,
+      posted.messageId, crypto,
+    );
+    const original = harness.firestore.read(paths.output);
+    const response = await harness.handlers.moderateDiamondLiveChat(
+      moderationRequest(posted.messageId), context(),
+    );
+    const receipt = harness.firestore.read(paths.receipt);
+    const image = harness.firestore.read(paths.beforeImage);
+    assert.equal(receipt.moderationProofVersion, 1);
+    assert.equal(receipt.beforeImageId, paths.beforeImage.split("/").at(-1));
+    assert.deepEqual(image.beforeImage, original);
+    assert.equal(image.senderId, original.senderId);
+    assert.equal(image.moderatorUid, UID);
+    assert.equal(image.receiptId, paths.receipt.split("/").at(-1));
+    assert.deepEqual(harness.firestore.read(paths.target), {
+      schemaVersion: 1, trackingEngine: DIAMOND_ENGINE,
+      teamId: TEAM_ID, gameId: GAME_ID, instanceId: INSTANCE_ID,
+      messageId: posted.messageId, receiptId: image.receiptId,
+      requestHash: receipt.requestHash,
+    });
+    assert.equal(harness.firestore.read(paths.output), undefined);
+    assert.equal(JSON.stringify(response).includes(original.text), false);
+    assert.equal(Object.hasOwn(response, "beforeImage"), false);
+  });
+
+  for (const marker of ["request", "auth", "audit"]) {
+    it(`does not retain a moderation before-image after sender ${marker} deletion`, async () => {
+      const harness = createHarness({ access: { full: true } });
+      const posted = await harness.handlers.postDiamondLiveChat(chatRequest(), context());
+      const paths = moderationPaths(
+        TEAM_ID, GAME_ID, INSTANCE_ID, UID, MODERATION_REQUEST_ID,
+        posted.messageId, crypto,
+      );
+      const senderId = "another.sender:123";
+      const original = { ...harness.firestore.read(paths.output), senderId };
+      harness.firestore.documents.set(paths.output, original);
+      const markerPath = marker === "request"
+        ? `accountDeletionRequests/${senderId}`
+        : marker === "auth"
+          ? `accountDiamondPrivateNoteAuthDeleteBarriers/${buildDiamondPrivateNoteAuthDeleteBarrierId(senderId)}`
+          : `accountDeletionAudit/${crypto.createHash("sha256").update(senderId).digest("hex")}`;
+      harness.firestore.documents.set(markerPath, { status: "deleting" });
+      await rejectsCode(harness.handlers.moderateDiamondLiveChat(
+        moderationRequest(posted.messageId), context(),
+      ), "failed-precondition");
+      assert.deepEqual(harness.firestore.read(paths.output), original);
+      assert.equal(harness.firestore.read(paths.receipt), undefined);
+      assert.equal(harness.firestore.read(paths.beforeImage), undefined);
+      assert.equal(harness.firestore.read(paths.target), undefined);
+    });
+  }
+
   it("lets only a current team manager promptly remove an owned message", async () => {
     const harness = createHarness({ access: { full: true } });
     const posted = await harness.handlers.postDiamondLiveChat(

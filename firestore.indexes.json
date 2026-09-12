@@ -1200,6 +1200,20 @@
       ]
     },
     {
+      "collectionGroup": "audit",
+      "fieldPath": "moderatorUid",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
+    },
+    {
+      "collectionGroup": "moderationBeforeImages",
+      "fieldPath": "senderId",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
+    },
+    {
       "collectionGroup": "diamondConfigurationRequests",
       "fieldPath": "requestedBy",
       "indexes": [
