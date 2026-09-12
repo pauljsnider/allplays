@@ -3127,6 +3127,22 @@ describe("Diamond scorebook handler factory", () => {
         `teams/team-1/diamondConfigurationRequests/${request.requestId}`,
       ),
     );
+    const firstReceiptPath =
+      `teams/team-1/diamondConfigurationRequests/${request.requestId}`;
+    const firstReceipt = harness.firestore.read(firstReceiptPath);
+    assert.equal(firstReceipt.schemaVersion, 2);
+    assert.deepEqual(firstReceipt.lineage, {
+      schemaVersion: 1,
+      chainId: request.requestId,
+      ordinal: 1,
+      previousRequestId: null,
+      nextRequestId: null,
+      beforeImage: { present: false },
+      beforeImageHash: domainEngine.hashDiamondValue({ present: false }),
+    });
+    assert.equal(first.settings.configurationChainId, request.requestId);
+    assert.equal(first.settings.configurationRequestId, request.requestId);
+    assert.equal(first.settings.configurationOrdinal, 1);
 
     await assert.rejects(
       harness.handlers.configureDiamondTeam(
@@ -3134,6 +3150,46 @@ describe("Diamond scorebook handler factory", () => {
         harness.managerContext,
       ),
       (error) => error.code === "already-exists",
+    );
+
+    const successorRequest = {
+      ...request,
+      requestId: makeUuid(3),
+      captureMode: "quick",
+    };
+    const successor = await harness.handlers.configureDiamondTeam(
+      successorRequest,
+      harness.managerContext,
+    );
+    const linkedFirst = harness.firestore.read(firstReceiptPath);
+    const successorReceipt = harness.firestore.read(
+      `teams/team-1/diamondConfigurationRequests/${successorRequest.requestId}`,
+    );
+    assert.equal(linkedFirst.lineage.nextRequestId, successorRequest.requestId);
+    assert.deepEqual(successorReceipt.lineage.beforeImage, {
+      present: true,
+      value: first.settings,
+    });
+    assert.equal(successorReceipt.lineage.previousRequestId, request.requestId);
+    assert.equal(successorReceipt.lineage.nextRequestId, null);
+    assert.equal(successorReceipt.lineage.chainId, request.requestId);
+    assert.equal(successorReceipt.lineage.ordinal, 2);
+    assert.equal(successor.settings.configurationChainId, request.requestId);
+    assert.equal(successor.settings.configurationOrdinal, 2);
+
+    harness.firestore.seed(
+      paths("team-1", "__configuration__").configurationRepair,
+      { status: "repairing" },
+    );
+    await assert.rejects(
+      harness.handlers.configureDiamondTeam(
+        successorRequest,
+        harness.managerContext,
+      ),
+      (error) =>
+        error.code === "failed-precondition" &&
+        error.details?.reason === "configuration-reconciliation-pending",
+      "the repair fence must block even an idempotent request retry",
     );
   });
 

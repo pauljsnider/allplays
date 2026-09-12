@@ -1,6 +1,7 @@
 "use strict";
 
 const nodeCrypto = require("node:crypto");
+const { buildDiamondPrivateNoteAuthDeleteBarrierId } = require("./diamond-private-note-core.cjs");
 
 const DIAMOND_ENGINE = "diamond-v2";
 const ENGAGEMENT_SCHEMA_VERSION = 1;
@@ -717,6 +718,22 @@ function createDiamondLiveEngagementHandlers(dependencies = {}) {
   const makeError = (code, message, details) =>
     new HttpsError(code, message, details);
 
+  async function requireNoAccountDeletion(transaction, uid) {
+    const auditId = nodeCrypto.createHash("sha256").update(uid).digest("hex");
+    const snapshots = await Promise.all([
+      `accountDeletionRequests/${uid}`,
+      `accountDiamondPrivateNoteAuthDeleteBarriers/${buildDiamondPrivateNoteAuthDeleteBarrierId(uid)}`,
+      `accountDeletionAudit/${auditId}`,
+    ].map((path) => transaction.get(firestore.doc(path))));
+    if (snapshots.some((snapshot) => snapshot?.exists === true)) {
+      throw makeError(
+        "failed-precondition",
+        "Live interactions cannot change after account deletion begins.",
+        { reason: "account-deletion-pending" },
+      );
+    }
+  }
+
   async function loadEnabledCaller(context) {
     if (!context?.auth?.uid) {
       throw makeError("unauthenticated", "Sign in to join this live game.");
@@ -942,6 +959,7 @@ function createDiamondLiveEngagementHandlers(dependencies = {}) {
     let response;
     try {
       response = await firestore.runTransaction(async (transaction) => {
+        await requireNoAccountDeletion(transaction, caller.uid);
         const references = [
           firestore.doc(paths.team),
           firestore.doc(paths.user),
@@ -1130,6 +1148,7 @@ function createDiamondLiveEngagementHandlers(dependencies = {}) {
     let response;
     try {
       response = await firestore.runTransaction(async (transaction) => {
+        await requireNoAccountDeletion(transaction, caller.uid);
         const references = [
           firestore.doc(paths.team),
           firestore.doc(paths.user),

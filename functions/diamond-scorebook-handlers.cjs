@@ -35,6 +35,11 @@ const MAX_MANAGER_STAT_RESPONSE_BYTES = 7_000_000;
 const MANAGER_STAT_CONTROL_COLLECTION = "diamondManagerStatReadControls";
 const ACCOUNT_DIAMOND_AUTH_DELETE_BARRIER_COLLECTION =
   "accountDiamondPrivateNoteAuthDeleteBarriers";
+const DIAMOND_CONFIGURATION_REQUEST_SCHEMA_VERSION = 2;
+const DIAMOND_CONFIGURATION_REQUEST_TYPE =
+  "diamond-team-configuration-request";
+const DIAMOND_CONFIGURATION_LINEAGE_SCHEMA_VERSION = 1;
+const MAX_DIAMOND_CONFIGURATION_BEFORE_IMAGE_BYTES = 32 * 1024;
 const COMMAND_HISTORY_RATE_WINDOW_MS = 60 * 1000;
 const COMMAND_HISTORY_SUSTAINED_WINDOW_MS = 10 * 60 * 1000;
 const COMMAND_HISTORY_CONTROL_QUARANTINE_MS =
@@ -638,6 +643,7 @@ function paths(teamId, gameId) {
     publicStateEvents: `${publicState}/events`,
     configurationRequest: (requestId) =>
       `teams/${teamId}/diamondConfigurationRequests/${requestId}`,
+    configurationRepair: `teams/${teamId}/diamondConfigurationRepairs/current`,
     cleanupLock: `teams/${teamId}/diamondCleanupLocks/${gameId}`,
     accountDeletionRequest: (uid) => `accountDeletionRequests/${uid}`,
     accountDeletionAudit: (uid) =>
@@ -650,6 +656,175 @@ function paths(teamId, gameId) {
         uid,
       )}`,
   };
+}
+
+function hasExactObjectKeys(value, keys) {
+  return (
+    isPlainObject(value) &&
+    Object.keys(value).length === keys.size &&
+    Object.keys(value).every((key) => keys.has(key))
+  );
+}
+
+function configurationBeforeImage(team, core, makeError) {
+  const beforeImage = own(team, "diamondScorebook")
+    ? { present: true, value: team.diamondScorebook }
+    : { present: false };
+  let serialized;
+  try {
+    serialized = JSON.stringify(beforeImage);
+    core.hashDiamondValue(beforeImage);
+  } catch {
+    throw makeError(
+      "failed-precondition",
+      "The existing Diamond configuration cannot be recorded safely.",
+      { reason: "configuration-before-image-invalid" },
+    );
+  }
+  if (
+    typeof serialized !== "string" ||
+    Buffer.byteLength(serialized, "utf8") >
+      MAX_DIAMOND_CONFIGURATION_BEFORE_IMAGE_BYTES
+  ) {
+    throw makeError(
+      "resource-exhausted",
+      "The existing Diamond configuration is too large to replace safely.",
+      { reason: "configuration-before-image-too-large" },
+    );
+  }
+  return beforeImage;
+}
+
+function configurationHeadBinding(settings, makeError) {
+  if (!isPlainObject(settings)) return null;
+  const bindingFields = [
+    "configurationChainId",
+    "configurationRequestId",
+    "configurationOrdinal",
+  ];
+  const present = bindingFields.filter((field) => own(settings, field));
+  if (!present.length) return null;
+  if (
+    present.length !== bindingFields.length ||
+    !UUID_V4_PATTERN.test(settings.configurationChainId || "") ||
+    !UUID_V4_PATTERN.test(settings.configurationRequestId || "") ||
+    !Number.isSafeInteger(settings.configurationOrdinal) ||
+    settings.configurationOrdinal < 1
+  ) {
+    throw makeError(
+      "failed-precondition",
+      "The current Diamond configuration provenance is invalid.",
+      { reason: "configuration-provenance-invalid" },
+    );
+  }
+  return {
+    chainId: settings.configurationChainId,
+    requestId: settings.configurationRequestId,
+    ordinal: settings.configurationOrdinal,
+  };
+}
+
+function parseConfigurationReceipt(value, expected, core, makeError) {
+  const fail = () => {
+    throw makeError(
+      "failed-precondition",
+      "The Diamond configuration provenance is inconsistent.",
+      { reason: "configuration-provenance-invalid" },
+    );
+  };
+  if (
+    !hasExactObjectKeys(
+      value,
+      new Set([
+        "schemaVersion",
+        "type",
+        "teamId",
+        "requestHash",
+        "requestedBy",
+        "createdAt",
+        "result",
+        "immutableHash",
+        "lineage",
+      ]),
+    ) ||
+    value.schemaVersion !== DIAMOND_CONFIGURATION_REQUEST_SCHEMA_VERSION ||
+    value.type !== DIAMOND_CONFIGURATION_REQUEST_TYPE ||
+    value.teamId !== expected.teamId ||
+    !SHA256_PATTERN.test(value.requestHash || "") ||
+    typeof value.requestedBy !== "string" ||
+    !value.requestedBy ||
+    typeof value.createdAt !== "string" ||
+    !isPlainObject(value.result) ||
+    value.result.teamId !== expected.teamId ||
+    !isPlainObject(value.result.settings) ||
+    value.result.settings.configuredBy !== value.requestedBy ||
+    value.result.settings.configurationRequestId !== expected.requestId
+  ) {
+    fail();
+  }
+  const lineage = value.lineage;
+  if (
+    !hasExactObjectKeys(
+      lineage,
+      new Set([
+        "schemaVersion",
+        "chainId",
+        "ordinal",
+        "previousRequestId",
+        "nextRequestId",
+        "beforeImage",
+        "beforeImageHash",
+      ]),
+    ) ||
+    lineage.schemaVersion !== DIAMOND_CONFIGURATION_LINEAGE_SCHEMA_VERSION ||
+    !UUID_V4_PATTERN.test(lineage.chainId || "") ||
+    !Number.isSafeInteger(lineage.ordinal) ||
+    lineage.ordinal < 1 ||
+    (lineage.previousRequestId !== null &&
+      !UUID_V4_PATTERN.test(lineage.previousRequestId || "")) ||
+    (lineage.nextRequestId !== null &&
+      !UUID_V4_PATTERN.test(lineage.nextRequestId || "")) ||
+    lineage.previousRequestId === expected.requestId ||
+    lineage.nextRequestId === expected.requestId ||
+    !SHA256_PATTERN.test(lineage.beforeImageHash || "") ||
+    value.result.settings.configurationChainId !== lineage.chainId ||
+    value.result.settings.configurationOrdinal !== lineage.ordinal
+  ) {
+    fail();
+  }
+  const beforeImage = lineage.beforeImage;
+  if (
+    !isPlainObject(beforeImage) ||
+    typeof beforeImage.present !== "boolean" ||
+    (beforeImage.present
+      ? !hasExactObjectKeys(beforeImage, new Set(["present", "value"]))
+      : !hasExactObjectKeys(beforeImage, new Set(["present"])))
+  ) {
+    fail();
+  }
+  const immutableCore = {
+    schemaVersion: value.schemaVersion,
+    type: value.type,
+    teamId: value.teamId,
+    requestHash: value.requestHash,
+    requestedBy: value.requestedBy,
+    createdAt: value.createdAt,
+    result: value.result,
+    chainId: lineage.chainId,
+    ordinal: lineage.ordinal,
+  };
+  try {
+    if (
+      core.hashDiamondValue(immutableCore) !== value.immutableHash ||
+      core.hashDiamondValue(beforeImage) !== lineage.beforeImageHash
+    ) {
+      fail();
+    }
+  } catch (error) {
+    if (error?.code === "failed-precondition") throw error;
+    fail();
+  }
+  return value;
 }
 
 function normalizeCleanupSharedGamePath(value) {
@@ -2341,7 +2516,19 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       const requestRef = firestore.doc(
         resourcePaths.configurationRequest(requestId),
       );
-      const existing = snapshotData(await transaction.get(requestRef));
+      const repairRef = firestore.doc(resourcePaths.configurationRepair);
+      const [requestSnapshot, repairSnapshot] = await Promise.all([
+        transaction.get(requestRef),
+        transaction.get(repairRef),
+      ]);
+      if (snapshotExists(repairSnapshot)) {
+        throw makeError(
+          "failed-precondition",
+          "Diamond configuration is temporarily unavailable during account cleanup.",
+          { reason: "configuration-reconciliation-pending" },
+        );
+      }
+      const existing = snapshotData(requestSnapshot);
       if (existing) {
         if (
           existing.requestHash !== requestHash ||
@@ -2351,6 +2538,20 @@ function createDiamondScorebookHandlers(dependencies = {}) {
           throw makeError(
             "already-exists",
             "requestId was already used for different team configuration details.",
+          );
+        }
+        if (existing.schemaVersion === DIAMOND_CONFIGURATION_REQUEST_SCHEMA_VERSION) {
+          parseConfigurationReceipt(
+            existing,
+            { teamId, requestId },
+            core,
+            makeError,
+          );
+        } else if (existing.schemaVersion !== 1) {
+          throw makeError(
+            "failed-precondition",
+            "The Diamond configuration receipt is invalid.",
+            { reason: "configuration-provenance-invalid" },
           );
         }
         return existing.result;
@@ -2378,6 +2579,42 @@ function createDiamondScorebookHandlers(dependencies = {}) {
           "The selected sport does not match this team.",
         );
       }
+      const beforeImage = configurationBeforeImage(loaded.team, core, makeError);
+      const currentHead = configurationHeadBinding(
+        beforeImage.present ? beforeImage.value : null,
+        makeError,
+      );
+      let chainId = requestId;
+      let ordinal = 1;
+      let previousRequestRef = null;
+      let previousRequest = null;
+      if (currentHead) {
+        previousRequestRef = firestore.doc(
+          resourcePaths.configurationRequest(currentHead.requestId),
+        );
+        previousRequest = parseConfigurationReceipt(
+          snapshotData(await transaction.get(previousRequestRef)),
+          { teamId, requestId: currentHead.requestId },
+          core,
+          makeError,
+        );
+        if (
+          previousRequest.lineage.chainId !== currentHead.chainId ||
+          previousRequest.lineage.ordinal !== currentHead.ordinal ||
+          previousRequest.lineage.nextRequestId !== null ||
+          core.hashDiamondValue(previousRequest.result.settings) !==
+            core.hashDiamondValue(beforeImage.value) ||
+          currentHead.ordinal >= Number.MAX_SAFE_INTEGER
+        ) {
+          throw makeError(
+            "failed-precondition",
+            "The current Diamond configuration provenance is inconsistent.",
+            { reason: "configuration-provenance-invalid" },
+          );
+        }
+        chainId = currentHead.chainId;
+        ordinal = currentHead.ordinal + 1;
+      }
       const nowMs = getConfigurationNowMs();
       const settings = {
         enabled,
@@ -2388,6 +2625,9 @@ function createDiamondScorebookHandlers(dependencies = {}) {
         configuredAt: timestampIso(nowMs),
         configuredBy: caller.uid,
         configuredByAppBuild: appBuild,
+        configurationChainId: chainId,
+        configurationRequestId: requestId,
+        configurationOrdinal: ordinal,
       };
       const result = {
         available: true,
@@ -2400,16 +2640,48 @@ function createDiamondScorebookHandlers(dependencies = {}) {
         captureMode,
         settings,
       };
+      const immutableCore = {
+        schemaVersion: DIAMOND_CONFIGURATION_REQUEST_SCHEMA_VERSION,
+        type: DIAMOND_CONFIGURATION_REQUEST_TYPE,
+        teamId,
+        requestHash,
+        requestedBy: caller.uid,
+        createdAt: timestampIso(nowMs),
+        result,
+        chainId,
+        ordinal,
+      };
+      const lineage = {
+        schemaVersion: DIAMOND_CONFIGURATION_LINEAGE_SCHEMA_VERSION,
+        chainId,
+        ordinal,
+        previousRequestId: currentHead?.requestId || null,
+        nextRequestId: null,
+        beforeImage,
+        beforeImageHash: core.hashDiamondValue(beforeImage),
+      };
+      if (previousRequestRef) {
+        transaction.update(previousRequestRef, {
+          lineage: {
+            ...previousRequest.lineage,
+            nextRequestId: requestId,
+          },
+        });
+      }
       transaction.update(loaded.teamRef, {
         diamondScorebook: settings,
         updatedAt: timestampIso(nowMs),
       });
       transaction.create(requestRef, {
-        schemaVersion: 1,
-        requestHash,
-        requestedBy: caller.uid,
-        createdAt: timestampIso(nowMs),
-        result,
+        schemaVersion: immutableCore.schemaVersion,
+        type: immutableCore.type,
+        teamId: immutableCore.teamId,
+        requestHash: immutableCore.requestHash,
+        requestedBy: immutableCore.requestedBy,
+        createdAt: immutableCore.createdAt,
+        result: immutableCore.result,
+        immutableHash: core.hashDiamondValue(immutableCore),
+        lineage,
       });
       return result;
     });

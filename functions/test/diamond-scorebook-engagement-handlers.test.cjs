@@ -2,6 +2,8 @@
 
 const assert = require("node:assert/strict");
 const { describe, it } = require("node:test");
+const crypto = require("node:crypto");
+const { buildDiamondPrivateNoteAuthDeleteBarrierId } = require("../diamond-private-note-core.cjs");
 
 const {
   DIAMOND_ENGINE,
@@ -323,6 +325,64 @@ async function rejectsCode(promise, code) {
     return true;
   });
 }
+
+describe("live engagement account-deletion serialization", () => {
+  for (const marker of ["request", "auth", "audit"]) {
+    for (const kind of ["chat", "reaction", "moderation"]) {
+      for (const phase of ["after-auth", "transaction-retry"]) {
+        it(`fences ${kind} when ${marker} wins ${phase}`, async () => {
+          const harness = createHarness({ access: { full: true } });
+          let request = kind === "reaction" ? reactionRequest() : chatRequest();
+          let action = kind === "reaction"
+            ? harness.handlers.postDiamondLiveReaction
+            : harness.handlers.postDiamondLiveChat;
+          if (kind === "moderation") {
+            const posted = await harness.handlers.postDiamondLiveChat(chatRequest(), context());
+            request = moderationRequest(posted.messageId);
+            action = harness.handlers.moderateDiamondLiveChat;
+          }
+          const markerPath = marker === "request"
+            ? `accountDeletionRequests/${UID}`
+            : marker === "auth"
+              ? `accountDiamondPrivateNoteAuthDeleteBarriers/${buildDiamondPrivateNoteAuthDeleteBarrierId(UID)}`
+              : `accountDeletionAudit/${crypto.createHash("sha256").update(UID).digest("hex")}`;
+          const before = new Map(harness.firestore.documents);
+          const original = harness.firestore.runTransaction.bind(harness.firestore);
+          let injected = false;
+          harness.firestore.runTransaction = async (callback) => {
+            if (!injected) {
+              injected = true;
+              if (phase === "transaction-retry") {
+                const abandoned = new FakeTransaction(harness.firestore);
+                const read = abandoned.get.bind(abandoned);
+                let readMissingFence = false;
+                abandoned.get = async (reference) => {
+                  const snapshot = await read(reference);
+                  if (reference.path === markerPath) readMissingFence = !snapshot.exists;
+                  return snapshot;
+                };
+                await callback(abandoned);
+                assert.equal(readMissingFence, true);
+                assert.ok(abandoned.operations.length > 0);
+                // A concurrent marker commit invalidates these reads; Firestore
+                // discards this attempt and reruns the same callback.
+              }
+              harness.firestore.documents.set(markerPath, { status: "deleting" });
+            }
+            return original(callback);
+          };
+          await assert.rejects(action(request, context()), (error) => {
+            assert.equal(error.code, "failed-precondition");
+            assert.equal(error.details?.reason, "account-deletion-pending");
+            return true;
+          });
+          harness.firestore.documents.delete(markerPath);
+          assert.deepEqual(harness.firestore.documents, before);
+        });
+      }
+    }
+  }
+});
 
 describe("Diamond live engagement handler factory", () => {
   it("requires server-authoritative dependencies", () => {

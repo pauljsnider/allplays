@@ -208,6 +208,68 @@ function exactBeforeImage(fields, value, extras = {}) {
   };
 }
 
+function configurationSettings({
+  configuredBy,
+  requestId,
+  chainId = requestId,
+  ordinal = 1,
+  ...values
+}) {
+  return {
+    ...values,
+    configuredBy,
+    configurationChainId: chainId,
+    configurationRequestId: requestId,
+    configurationOrdinal: ordinal,
+  };
+}
+
+function configurationReceipt({
+  teamId,
+  requestId,
+  requestedBy,
+  settings,
+  beforeImage = { present: false },
+  chainId = settings.configurationChainId,
+  ordinal = settings.configurationOrdinal,
+  previousRequestId = null,
+  nextRequestId = null,
+  requestHash = `sha256:${"b".repeat(64)}`,
+  createdAt = REDACTED_AT,
+}) {
+  const result = { teamId, settings };
+  const immutableCore = {
+    schemaVersion: 2,
+    type: "diamond-team-configuration-request",
+    teamId,
+    requestHash,
+    requestedBy,
+    createdAt,
+    result,
+    chainId,
+    ordinal,
+  };
+  return {
+    schemaVersion: 2,
+    type: "diamond-team-configuration-request",
+    teamId,
+    requestHash,
+    requestedBy,
+    createdAt,
+    result,
+    immutableHash: domainEngine.hashDiamondValue(immutableCore),
+    lineage: {
+      schemaVersion: 1,
+      chainId,
+      ordinal,
+      previousRequestId,
+      nextRequestId,
+      beforeImage,
+      beforeImageHash: domainEngine.hashDiamondValue(beforeImage),
+    },
+  };
+}
+
 function buildRetiringActivationGeneration({
   teamId = "team-retire",
   gameId = "game-retire",
@@ -297,6 +359,7 @@ function buildRetiringActivationGeneration({
   const siblingPath = `${gamePath}/aggregatedStats/player-old`;
   const statRootPath = `${gamePath}/diamondStatGenerations/${instanceId}`;
   const liveRootPath = `${gamePath}/diamondLiveGenerations/${instanceId}`;
+  const liveChatPath = `${liveRootPath}/chat/diamond-chat-${"d".repeat(64)}`;
   const documents = {
     [gamePath]: {
       id: gameId,
@@ -340,7 +403,19 @@ function buildRetiringActivationGeneration({
     [statRootPath]: owned(),
     [`${statRootPath}/publicPlayerStats/player-old`]: owned({ playerId: "player-old" }),
     [liveRootPath]: owned(),
-    [`${liveRootPath}/chat/chat-old`]: owned({ senderId: UID }),
+    [liveChatPath]: {
+      schemaVersion: 1,
+      trackingEngine: "diamond-v2",
+      teamId,
+      gameId,
+      instanceId,
+      text: "retiring message",
+      senderId: UID,
+      senderName: "Deleted User",
+      senderPhotoUrl: null,
+      isAnonymous: false,
+      createdAt: REDACTED_AT,
+    },
     [siblingPath]: owned({ playerId: "player-old" }),
     [notificationPath]: {
       schemaVersion: 3,
@@ -402,6 +477,7 @@ function buildRetiringActivationGeneration({
     siblingPath,
     statRootPath,
     liveRootPath,
+    liveChatPath,
     sharedPath,
     gameBefore,
     sharedBefore,
@@ -662,13 +738,21 @@ function makeFirestore(seed = {}, options = {}) {
         cursor: this.cursor,
         paths: [...paths],
       });
+      const documents = paths.map((documentPath) => snapshot(doc(documentPath)));
+      await options.afterQuerySnapshotHook?.({
+        scope: this.scope,
+        source: this.source,
+        filters: clone(this.filters),
+        cursor: this.cursor,
+        paths: [...paths],
+      });
       queryLog.push({
         collectionId: this.source,
         field: this.filters.at(-1)?.field || "",
         cursorPath: this.cursor || "",
         paths,
       });
-      return { docs: paths.map((documentPath) => snapshot(doc(documentPath))), empty: paths.length === 0 };
+      return { docs: documents, empty: paths.length === 0 };
     }
   }
 
@@ -1208,7 +1292,7 @@ test("direct Auth deletion retires a same-boundary Diamond generation and restor
   assert.equal(fake.has(fixture.statRootPath), false);
   assert.equal(fake.has(`${fixture.statRootPath}/publicPlayerStats/player-old`), false);
   assert.equal(fake.has(fixture.liveRootPath), false);
-  assert.equal(fake.has(`${fixture.liveRootPath}/chat/chat-old`), false);
+  assert.equal(fake.has(fixture.liveChatPath), false);
   assert.equal(fake.has(fixture.siblingPath), false);
   assert.equal(fake.has(fixture.notificationPath), true);
   assert.deepEqual(fake.read(fixture.gamePath), {
@@ -1511,39 +1595,88 @@ test("direct Auth deletion fails closed on same-millisecond mutation and missing
   }
 });
 
-test("direct Auth deletion surgically removes stale Diamond configuration receipts", async (t) => {
-  const settings = {
+test("direct Auth deletion restores or splices exact Diamond configuration provenance", async (t) => {
+  const teamId = "team-config";
+  const requestId = uuid(500);
+  const successorId = uuid(501);
+  const priorSettings = {
+    configuredBy: "active-prior-manager",
+    mode: "dark",
+    rulesProfileId: "baseball-nfhs",
+    explicitNull: null,
+  };
+  const settings = configurationSettings({
     configuredBy: UID,
+    requestId,
     mode: "dark",
     rulesProfileId: "baseball-youth",
-  };
-  const requestPath = "teams/team-config/diamondConfigurationRequests/request-config";
-  const request = {
-    requestedBy: UID,
-    requestHash: `sha256:${"b".repeat(64)}`,
-    result: { settings },
-  };
+  });
+  const requestPath = `teams/${teamId}/diamondConfigurationRequests/${requestId}`;
   for (const testCase of [
     {
       name: "matching current config",
       team: { diamondScorebook: settings, updatedAt: "later-authoritative-time" },
-      expectConfig: false,
+      beforeImage: { present: true, value: priorSettings },
+      expectedConfig: priorSettings,
     },
     {
       name: "later manager config",
-      team: {
-        diamondScorebook: { configuredBy: "active-manager", mode: "dark" },
-        updatedAt: "later-authoritative-time",
-      },
-      expectConfig: true,
+      successor: true,
+      expectedConfig: configurationSettings({
+        configuredBy: "active-manager",
+        requestId: successorId,
+        chainId: requestId,
+        ordinal: 2,
+        mode: "dark",
+      }),
     },
-    { name: "missing team", team: null, expectConfig: false },
+    {
+      name: "explicit null prior config",
+      team: { diamondScorebook: settings, updatedAt: "later-authoritative-time" },
+      beforeImage: { present: true, value: null },
+      expectedConfig: null,
+    },
+    { name: "missing team", team: null, expectedConfig: undefined },
   ]) {
     await t.test(testCase.name, async () => {
+      const beforeImage = testCase.beforeImage || {
+        present: true,
+        value: priorSettings,
+      };
+      const request = configurationReceipt({
+        teamId,
+        requestId,
+        requestedBy: UID,
+        settings,
+        beforeImage,
+        nextRequestId: testCase.successor ? successorId : null,
+      });
+      const successorPath =
+        `teams/${teamId}/diamondConfigurationRequests/${successorId}`;
+      const successor = testCase.successor
+        ? configurationReceipt({
+            teamId,
+            requestId: successorId,
+            requestedBy: "active-manager",
+            settings: testCase.expectedConfig,
+            beforeImage: { present: true, value: settings },
+            chainId: requestId,
+            ordinal: 2,
+            previousRequestId: requestId,
+            requestHash: `sha256:${"c".repeat(64)}`,
+          })
+        : null;
+      const team = testCase.successor
+        ? {
+            diamondScorebook: testCase.expectedConfig,
+            updatedAt: "later-authoritative-time",
+          }
+        : testCase.team;
       const fake = makeFirestore(
         {
           [requestPath]: request,
-          ...(testCase.team ? { "teams/team-config": testCase.team } : {}),
+          ...(successor ? { [successorPath]: successor } : {}),
+          ...(team ? { [`teams/${teamId}`]: team } : {}),
         },
         {
           commitMetadata: {
@@ -1558,23 +1691,348 @@ test("direct Auth deletion surgically removes stale Diamond configuration receip
       await runDirectAuthDelete(fake);
 
       assert.equal(fake.has(requestPath), false);
-      if (!testCase.team) {
-        assert.equal(fake.has("teams/team-config"), false);
+      if (!team) {
+        assert.equal(fake.has(`teams/${teamId}`), false);
       } else {
-        assert.equal(
-          Object.prototype.hasOwnProperty.call(
-            fake.read("teams/team-config"),
-            "diamondScorebook",
-          ),
-          testCase.expectConfig,
+        assert.deepEqual(
+          fake.read(`teams/${teamId}`).diamondScorebook,
+          testCase.expectedConfig,
         );
         assert.equal(
-          fake.read("teams/team-config").updatedAt,
+          fake.read(`teams/${teamId}`).updatedAt,
           "later-authoritative-time",
+        );
+      }
+      if (successor) {
+        const rewired = fake.read(successorPath);
+        assert.equal(rewired.lineage.previousRequestId, null);
+        assert.deepEqual(rewired.lineage.beforeImage, beforeImage);
+        assert.equal(
+          rewired.lineage.beforeImageHash,
+          domainEngine.hashDiamondValue(beforeImage),
         );
       }
     });
   }
+});
+
+test("direct Auth configuration cleanup is order-independent and resumes a deleted-principal chain", async (t) => {
+  await t.test("splices the lexical-first stale predecessor before restoring the head", async () => {
+    const teamId = "team-config-chain-order";
+    const chainId = uuid(520);
+    const firstStaleId = uuid(521);
+    const currentStaleId = uuid(522);
+    const baselineSettings = configurationSettings({
+      configuredBy: "active-baseline-manager",
+      requestId: chainId,
+      mode: "baseline-dark",
+    });
+    const firstStaleSettings = configurationSettings({
+      configuredBy: UID,
+      requestId: firstStaleId,
+      chainId,
+      ordinal: 2,
+      mode: "stale-one",
+    });
+    const currentStaleSettings = configurationSettings({
+      configuredBy: UID,
+      requestId: currentStaleId,
+      chainId,
+      ordinal: 3,
+      mode: "stale-two",
+    });
+    const baselinePath = `teams/${teamId}/diamondConfigurationRequests/${chainId}`;
+    const firstStalePath =
+      `teams/${teamId}/diamondConfigurationRequests/${firstStaleId}`;
+    const currentStalePath =
+      `teams/${teamId}/diamondConfigurationRequests/${currentStaleId}`;
+    const fake = makeFirestore(
+      {
+        [`teams/${teamId}`]: {
+          diamondScorebook: currentStaleSettings,
+          opaque: "preserve-team",
+        },
+        [baselinePath]: configurationReceipt({
+          teamId,
+          requestId: chainId,
+          requestedBy: "active-baseline-manager",
+          settings: baselineSettings,
+          nextRequestId: firstStaleId,
+          requestHash: `sha256:${"1".repeat(64)}`,
+        }),
+        [firstStalePath]: configurationReceipt({
+          teamId,
+          requestId: firstStaleId,
+          requestedBy: UID,
+          settings: firstStaleSettings,
+          beforeImage: { present: true, value: baselineSettings },
+          chainId,
+          ordinal: 2,
+          previousRequestId: chainId,
+          nextRequestId: currentStaleId,
+          requestHash: `sha256:${"2".repeat(64)}`,
+        }),
+        [currentStalePath]: configurationReceipt({
+          teamId,
+          requestId: currentStaleId,
+          requestedBy: UID,
+          settings: currentStaleSettings,
+          beforeImage: { present: true, value: firstStaleSettings },
+          chainId,
+          ordinal: 3,
+          previousRequestId: firstStaleId,
+          requestHash: `sha256:${"3".repeat(64)}`,
+        }),
+      },
+      {
+        commitMetadata: {
+          [firstStalePath]: {
+            createMs: Date.parse(REDACTED_AT),
+            updateMs: Date.parse(REDACTED_AT) + 1,
+          },
+          [currentStalePath]: {
+            createMs: Date.parse(REDACTED_AT),
+            updateMs: Date.parse(REDACTED_AT) + 2,
+          },
+        },
+      },
+    );
+
+    await runDirectAuthDelete(fake);
+
+    assert.deepEqual(fake.read(`teams/${teamId}`).diamondScorebook, baselineSettings);
+    assert.equal(fake.read(`teams/${teamId}`).opaque, "preserve-team");
+    assert.equal(fake.has(firstStalePath), false);
+    assert.equal(fake.has(currentStalePath), false);
+    assert.equal(fake.read(baselinePath).lineage.nextRequestId, null);
+    const configurationQuery = fake.queryLog.find(
+      (entry) => entry.collectionId === "diamondConfigurationRequests",
+    );
+    assert.deepEqual(configurationQuery.paths, [firstStalePath, currentStalePath]);
+  });
+
+  await t.test("keeps the team dark while a bounded deleted-predecessor walk resumes", async () => {
+    const teamId = "team-config-chain-resume";
+    const chainId = uuid(630);
+    const firstStaleId = uuid(633);
+    const secondStaleId = uuid(632);
+    const currentStaleId = uuid(631);
+    const baselineSettings = configurationSettings({
+      configuredBy: "active-baseline-manager",
+      requestId: chainId,
+      mode: "baseline-dark",
+    });
+    const firstStaleSettings = configurationSettings({
+      configuredBy: UID,
+      requestId: firstStaleId,
+      chainId,
+      ordinal: 2,
+      mode: "stale-one",
+    });
+    const secondStaleSettings = configurationSettings({
+      configuredBy: UID,
+      requestId: secondStaleId,
+      chainId,
+      ordinal: 3,
+      mode: "stale-two",
+    });
+    const currentStaleSettings = configurationSettings({
+      configuredBy: UID,
+      requestId: currentStaleId,
+      chainId,
+      ordinal: 4,
+      mode: "stale-three",
+    });
+    const baselinePath = `teams/${teamId}/diamondConfigurationRequests/${chainId}`;
+    const firstStalePath =
+      `teams/${teamId}/diamondConfigurationRequests/${firstStaleId}`;
+    const secondStalePath =
+      `teams/${teamId}/diamondConfigurationRequests/${secondStaleId}`;
+    const currentStalePath =
+      `teams/${teamId}/diamondConfigurationRequests/${currentStaleId}`;
+    const repairPath = `teams/${teamId}/diamondConfigurationRepairs/current`;
+    const seed = {
+      [AUTH_DELETE_BARRIER_PATH]: {
+        schemaVersion: 1,
+        type: "diamond-private-note-auth-delete-barrier",
+        status: "auth-deleted",
+        startedAt: REDACTED_AT,
+      },
+      [`teams/${teamId}`]: { diamondScorebook: currentStaleSettings },
+      [baselinePath]: configurationReceipt({
+        teamId,
+        requestId: chainId,
+        requestedBy: "active-baseline-manager",
+        settings: baselineSettings,
+        nextRequestId: firstStaleId,
+        requestHash: `sha256:${"4".repeat(64)}`,
+      }),
+      [firstStalePath]: configurationReceipt({
+        teamId,
+        requestId: firstStaleId,
+        requestedBy: UID,
+        settings: firstStaleSettings,
+        beforeImage: { present: true, value: baselineSettings },
+        chainId,
+        ordinal: 2,
+        previousRequestId: chainId,
+        nextRequestId: secondStaleId,
+        requestHash: `sha256:${"5".repeat(64)}`,
+      }),
+      [secondStalePath]: configurationReceipt({
+        teamId,
+        requestId: secondStaleId,
+        requestedBy: UID,
+        settings: secondStaleSettings,
+        beforeImage: { present: true, value: firstStaleSettings },
+        chainId,
+        ordinal: 3,
+        previousRequestId: firstStaleId,
+        nextRequestId: currentStaleId,
+        requestHash: `sha256:${"6".repeat(64)}`,
+      }),
+      [currentStalePath]: configurationReceipt({
+        teamId,
+        requestId: currentStaleId,
+        requestedBy: UID,
+        settings: currentStaleSettings,
+        beforeImage: { present: true, value: secondStaleSettings },
+        chainId,
+        ordinal: 4,
+        previousRequestId: secondStaleId,
+        requestHash: `sha256:${"7".repeat(64)}`,
+      }),
+    };
+    for (const [source, collectionGroup, field] of [
+      ["events-actor", "events", "actorUid"],
+      ["events-handoff", "events", "payload.toUid"],
+      ["notes-author", "notes", "authorUid"],
+      ["live-chat-sender", "chat", "senderId"],
+      ["live-reactions-sender", "reactions", "senderId"],
+      ["regeneration-audit", "audit", "actorUid"],
+    ]) {
+      seed[`${AUTH_DELETE_BARRIER_PATH}/diamondReconciliationScans/${source}`] = {
+        schemaVersion: 1,
+        type: "diamond-auth-delete-scan",
+        source,
+        collectionGroup,
+        field,
+        status: "complete",
+        cursorPath: null,
+        epoch: 0,
+        startedAt: REDACTED_AT,
+      };
+    }
+    const commitMetadata = Object.fromEntries(
+      [firstStalePath, secondStalePath, currentStalePath].map((path, index) => [
+        path,
+        {
+          createMs: Date.parse(REDACTED_AT),
+          updateMs: Date.parse(REDACTED_AT) + index + 1,
+        },
+      ]),
+    );
+    const fake = makeFirestore(seed, { commitMetadata });
+    const bounded = {
+      handlerOptions: { reconciliationInventoryPageBudget: 1 },
+    };
+
+    await assert.rejects(
+      runDirectAuthDelete(fake, bounded),
+      (error) => error?.code === "unavailable",
+    );
+
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(
+        fake.read(`teams/${teamId}`),
+        "diamondScorebook",
+      ),
+      false,
+      "no deleted principal may be exposed between repair attempts",
+    );
+    assert.equal(fake.read(repairPath).cursorRequestId, firstStaleId);
+    assert.equal(fake.has(currentStalePath), true, "the repair anchor stays durable");
+    assert.equal(fake.has(secondStalePath), false);
+
+    await runDirectAuthDelete(fake, bounded);
+
+    assert.deepEqual(fake.read(`teams/${teamId}`).diamondScorebook, baselineSettings);
+    assert.equal(fake.has(repairPath), false);
+    assert.equal(fake.has(firstStalePath), false);
+    assert.equal(fake.has(secondStalePath), false);
+    assert.equal(fake.has(currentStalePath), false);
+    assert.equal(fake.read(baselinePath).lineage.nextRequestId, null);
+  });
+});
+
+test("direct Auth deletion removes exact Diamond live interactions and preserves a replacement winner", async () => {
+  const teamId = "team-live-cleanup";
+  const gameId = "game-live-cleanup";
+  const instanceId = uuid(710);
+  const chatPath =
+    `teams/${teamId}/games/${gameId}/diamondLiveGenerations/${instanceId}/chat/diamond-chat-${"a".repeat(64)}`;
+  const reactionPath =
+    `teams/${teamId}/games/${gameId}/diamondLiveGenerations/${instanceId}/reactions/diamond-reaction-${"b".repeat(64)}`;
+  const replacementPath =
+    `teams/${teamId}/games/${gameId}/diamondLiveGenerations/${instanceId}/chat/diamond-chat-${"c".repeat(64)}`;
+  const unrelatedPath = "accounts/example/chat/unrelated";
+  const chat = {
+    schemaVersion: 1,
+    trackingEngine: "diamond-v2",
+    teamId,
+    gameId,
+    instanceId,
+    text: "Delete my message",
+    senderId: UID,
+    senderName: "Deleted User",
+    senderPhotoUrl: null,
+    isAnonymous: false,
+    createdAt: "2026-09-08T11:00:00.000Z",
+  };
+  const replacement = {
+    ...chat,
+    text: "Replacement winner",
+    senderId: "active-user",
+    senderName: "Active User",
+  };
+  const fake = makeFirestore(
+    {
+      [chatPath]: chat,
+      [replacementPath]: chat,
+      [reactionPath]: {
+        schemaVersion: 1,
+        trackingEngine: "diamond-v2",
+        teamId,
+        gameId,
+        instanceId,
+        type: "clap",
+        senderId: UID,
+        createdAt: "2026-09-08T11:00:00.000Z",
+      },
+      [unrelatedPath]: { senderId: UID, text: "outside Diamond" },
+    },
+    {
+      async afterQuerySnapshotHook({ scope, source, paths }) {
+        if (
+          scope === "group" &&
+          source === "chat" &&
+          paths.includes(replacementPath)
+        ) {
+          fake.write(replacementPath, replacement);
+        }
+      },
+    },
+  );
+
+  await runDirectAuthDelete(fake);
+
+  assert.equal(fake.has(chatPath), false);
+  assert.equal(fake.has(reactionPath), false);
+  assert.deepEqual(fake.read(replacementPath), replacement);
+  assert.deepEqual(fake.read(unrelatedPath), {
+    senderId: UID,
+    text: "outside Diamond",
+  });
 });
 
 test("direct Auth discovery persists a bounded collection-group cursor and resumes strictly after it", async () => {
@@ -1590,6 +2048,8 @@ test("direct Auth discovery persists a bounded collection-group cursor and resum
     ["events-actor", "events", "actorUid"],
     ["events-handoff", "events", "payload.toUid"],
     ["notes-author", "notes", "authorUid"],
+    ["live-chat-sender", "chat", "senderId"],
+    ["live-reactions-sender", "reactions", "senderId"],
     ["regeneration-audit", "audit", "actorUid"],
   ]) {
     seed[`${AUTH_DELETE_BARRIER_PATH}/diamondReconciliationScans/${source}`] = {
@@ -1607,15 +2067,23 @@ test("direct Auth discovery persists a bounded collection-group cursor and resum
   const commitMetadata = {};
   const requestPaths = [];
   for (let index = 0; index < 251; index += 1) {
-    const path = `teams/team-config-${String(index).padStart(3, "0")}/diamondConfigurationRequests/request-${String(index).padStart(3, "0")}`;
+    const teamId = `team-config-${String(index).padStart(3, "0")}`;
+    const requestId = uuid(1_000 + index);
+    const path = `teams/${teamId}/diamondConfigurationRequests/${requestId}`;
     requestPaths.push(path);
-    seed[path] = {
+    const settings = configurationSettings({
+      configuredBy: UID,
+      requestId,
+      mode: "dark",
+      requestIndex: index,
+    });
+    seed[path] = configurationReceipt({
+      teamId,
+      requestId,
       requestedBy: UID,
+      settings,
       requestHash: `sha256:${index.toString(16).padStart(64, "0")}`,
-      result: {
-        settings: { configuredBy: UID, mode: "dark", requestIndex: index },
-      },
-    };
+    });
     commitMetadata[path] = {
       createMs: Date.parse(REDACTED_AT),
       updateMs: Date.parse(REDACTED_AT),
@@ -1667,6 +2135,8 @@ test("direct Auth task recovery persists a bounded cursor across terminal task h
     ["events-actor", "events", "actorUid"],
     ["events-handoff", "events", "payload.toUid"],
     ["notes-author", "notes", "authorUid"],
+    ["live-chat-sender", "chat", "senderId"],
+    ["live-reactions-sender", "reactions", "senderId"],
     ["regeneration-audit", "audit", "actorUid"],
     ["configuration-request", "diamondConfigurationRequests", "requestedBy"],
   ]) {
@@ -1741,6 +2211,8 @@ test("task scan epochs prevent stale completion across stage/reset interleavings
         ["events-actor", "events", "actorUid"],
         ["events-handoff", "events", "payload.toUid"],
         ["notes-author", "notes", "authorUid"],
+        ["live-chat-sender", "chat", "senderId"],
+        ["live-reactions-sender", "reactions", "senderId"],
         ["regeneration-audit", "audit", "actorUid"],
         ["configuration-request", "diamondConfigurationRequests", "requestedBy"],
       ]) {
@@ -2061,6 +2533,8 @@ test("wires the privacy cleanup before every destructive account cleanup and dec
   assert.ok(indexed.has("events.payload.toUid"));
   assert.ok(indexed.has("audit.actorUid"));
   assert.ok(indexed.has("diamondConfigurationRequests.requestedBy"));
+  assert.ok(indexed.has("chat.senderId"));
+  assert.ok(indexed.has("reactions.senderId"));
 
   const productionSources = [];
   const visit = (directory) => {

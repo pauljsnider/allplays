@@ -32,6 +32,17 @@ const DIAMOND_HASH_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const DIAMOND_EVENT_PATH_PATTERN = /^teams\/([^/]+)\/games\/([^/]+)\/diamondScorebooks\/v2\/events\/([^/]+)$/;
 const DIAMOND_AUDIT_PATH_PATTERN = /^teams\/([^/]+)\/games\/([^/]+)\/diamondScorebooks\/v2\/audit\/([^/]+)$/;
 const DIAMOND_CONFIGURATION_REQUEST_PATH_PATTERN = /^teams\/([^/]+)\/diamondConfigurationRequests\/([^/]+)$/;
+const DIAMOND_LIVE_INTERACTION_PATH_PATTERN = /^teams\/([^/]+)\/games\/([^/]+)\/diamondLiveGenerations\/([^/]+)\/(chat|reactions)\/([^/]+)$/;
+const DIAMOND_CONFIGURATION_REQUEST_SCHEMA_VERSION = 2;
+const DIAMOND_CONFIGURATION_REQUEST_TYPE = 'diamond-team-configuration-request';
+const DIAMOND_CONFIGURATION_LINEAGE_SCHEMA_VERSION = 1;
+const DIAMOND_CONFIGURATION_REPAIR_SCHEMA_VERSION = 1;
+const DIAMOND_CONFIGURATION_REPAIR_TYPE = 'diamond-auth-delete-configuration-repair';
+const DIAMOND_CONFIGURATION_REPAIR_STATUS = 'repairing';
+const DIAMOND_LIVE_REACTION_TYPES = new Set([
+  'fire', 'clap', 'wow', 'heart', 'hundred'
+]);
+const DIAMOND_UUID_V4_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const DIAMOND_ACTIVATION_GAME_ROLLBACK_FIELDS = Object.freeze([
   'trackingEngine', 'trackingEngineRevision', 'diamondProjectionRevision',
   'diamondProjectionCheckpointHash', 'diamondProjectionHash',
@@ -2647,6 +2658,272 @@ async function reconcileStaleDiamondRegenerationAudit({
   });
 }
 
+function isPlainRecord(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function hasExactRecordKeys(value, expected) {
+  return isPlainRecord(value)
+    && Object.keys(value).length === expected.size
+    && Object.keys(value).every((key) => expected.has(key));
+}
+
+function requireSnapshotCreateMillis(snapshot) {
+  const value = snapshot?.createTime?.toMillis?.();
+  const updated = snapshot?.updateTime?.toMillis?.();
+  if (
+    !Number.isSafeInteger(value)
+    || value < 0
+    || !Number.isSafeInteger(updated)
+    || updated < value
+  ) {
+    throwDiamondPrivateNoteIntegrityFailure(
+      'Diamond configuration reconciliation is missing authoritative commit metadata.'
+    );
+  }
+  return value;
+}
+
+function configurationRepairPath(teamId) {
+  return `teams/${teamId}/diamondConfigurationRepairs/current`;
+}
+
+function configurationRequestPath(teamId, requestId) {
+  return `teams/${teamId}/diamondConfigurationRequests/${requestId}`;
+}
+
+function configurationPrincipalHash(uid) {
+  return `sha256:${crypto.createHash('sha256').update(uid).digest('hex')}`;
+}
+
+function parseConfigurationBeforeImage(value) {
+  if (
+    !isPlainRecord(value)
+    || typeof value.present !== 'boolean'
+    || (value.present
+      ? !hasExactRecordKeys(value, new Set(['present', 'value']))
+      : !hasExactRecordKeys(value, new Set(['present'])))
+  ) {
+    throwDiamondPrivateNoteIntegrityFailure(
+      'A Diamond configuration before-image is malformed.'
+    );
+  }
+  try {
+    diamondDomainEngine.hashDiamondValue(value);
+  } catch {
+    throwDiamondPrivateNoteIntegrityFailure(
+      'A Diamond configuration before-image is not canonical.'
+    );
+  }
+  return value;
+}
+
+function configurationImmutableCore(value) {
+  return {
+    schemaVersion: value.schemaVersion,
+    type: value.type,
+    teamId: value.teamId,
+    requestHash: value.requestHash,
+    requestedBy: value.requestedBy,
+    createdAt: value.createdAt,
+    result: value.result,
+    chainId: value.lineage.chainId,
+    ordinal: value.lineage.ordinal
+  };
+}
+
+function parseConfigurationRequest(value, { teamId, requestId }) {
+  if (
+    !hasExactRecordKeys(value, new Set([
+      'schemaVersion', 'type', 'teamId', 'requestHash', 'requestedBy',
+      'createdAt', 'result', 'immutableHash', 'lineage'
+    ]))
+    || value.schemaVersion !== DIAMOND_CONFIGURATION_REQUEST_SCHEMA_VERSION
+    || value.type !== DIAMOND_CONFIGURATION_REQUEST_TYPE
+    || value.teamId !== teamId
+    || !DIAMOND_HASH_PATTERN.test(value.requestHash || '')
+    || !isValidAccountUid(value.requestedBy)
+    || !isExactIsoTimestamp(value.createdAt)
+    || !isPlainRecord(value.result)
+    || value.result.teamId !== teamId
+    || !isPlainRecord(value.result.settings)
+    || value.result.settings.configuredBy !== value.requestedBy
+    || value.result.settings.configurationRequestId !== requestId
+    || !DIAMOND_HASH_PATTERN.test(value.immutableHash || '')
+  ) {
+    throwDiamondPrivateNoteIntegrityFailure(
+      'A Diamond configuration request is malformed.'
+    );
+  }
+  const lineage = value.lineage;
+  if (
+    !hasExactRecordKeys(lineage, new Set([
+      'schemaVersion', 'chainId', 'ordinal', 'previousRequestId',
+      'nextRequestId', 'beforeImage', 'beforeImageHash'
+    ]))
+    || lineage.schemaVersion !== DIAMOND_CONFIGURATION_LINEAGE_SCHEMA_VERSION
+    || !DIAMOND_UUID_V4_PATTERN.test(lineage.chainId || '')
+    || !Number.isSafeInteger(lineage.ordinal)
+    || lineage.ordinal < 1
+    || (lineage.previousRequestId !== null
+      && !DIAMOND_UUID_V4_PATTERN.test(lineage.previousRequestId || ''))
+    || (lineage.nextRequestId !== null
+      && !DIAMOND_UUID_V4_PATTERN.test(lineage.nextRequestId || ''))
+    || lineage.previousRequestId === requestId
+    || lineage.nextRequestId === requestId
+    || !DIAMOND_HASH_PATTERN.test(lineage.beforeImageHash || '')
+    || value.result.settings.configurationChainId !== lineage.chainId
+    || value.result.settings.configurationOrdinal !== lineage.ordinal
+  ) {
+    throwDiamondPrivateNoteIntegrityFailure(
+      'A Diamond configuration request lineage is malformed.'
+    );
+  }
+  const beforeImage = parseConfigurationBeforeImage(lineage.beforeImage);
+  let immutableHash;
+  let beforeImageHash;
+  try {
+    immutableHash = diamondDomainEngine.hashDiamondValue(
+      configurationImmutableCore(value)
+    );
+    beforeImageHash = diamondDomainEngine.hashDiamondValue(beforeImage);
+  } catch {
+    throwDiamondPrivateNoteIntegrityFailure(
+      'A Diamond configuration request cannot be authenticated.'
+    );
+  }
+  if (
+    immutableHash !== value.immutableHash
+    || beforeImageHash !== lineage.beforeImageHash
+  ) {
+    throwDiamondPrivateNoteIntegrityFailure(
+      'A Diamond configuration request hash is inconsistent.'
+    );
+  }
+  return value;
+}
+
+function configurationHeadBinding(settings) {
+  if (!isPlainRecord(settings)) return null;
+  const fields = [
+    'configurationChainId',
+    'configurationRequestId',
+    'configurationOrdinal'
+  ];
+  const present = fields.filter((field) => Object.prototype.hasOwnProperty.call(settings, field));
+  if (!present.length) return null;
+  if (
+    present.length !== fields.length
+    || !DIAMOND_UUID_V4_PATTERN.test(settings.configurationChainId || '')
+    || !DIAMOND_UUID_V4_PATTERN.test(settings.configurationRequestId || '')
+    || !Number.isSafeInteger(settings.configurationOrdinal)
+    || settings.configurationOrdinal < 1
+  ) {
+    throwDiamondPrivateNoteIntegrityFailure(
+      'The current Diamond configuration head is malformed.'
+    );
+  }
+  return {
+    chainId: settings.configurationChainId,
+    requestId: settings.configurationRequestId,
+    ordinal: settings.configurationOrdinal
+  };
+}
+
+function validateConfigurationPredecessor(node, predecessor, nodeRequestId) {
+  const predecessorId = node.lineage.previousRequestId;
+  if (
+    !predecessor
+    || predecessor.lineage.chainId !== node.lineage.chainId
+    || predecessor.lineage.ordinal >= node.lineage.ordinal
+    || predecessor.lineage.nextRequestId !== nodeRequestId
+    || !node.lineage.beforeImage.present
+    || diamondDomainEngine.hashDiamondValue(node.lineage.beforeImage.value)
+      !== diamondDomainEngine.hashDiamondValue(predecessor.result.settings)
+  ) {
+    throwDiamondPrivateNoteIntegrityFailure(
+      `Diamond configuration predecessor ${predecessorId || ''} is inconsistent.`
+    );
+  }
+}
+
+function validateConfigurationSuccessor(node, successor, nodeRequestId) {
+  const successorId = node.lineage.nextRequestId;
+  if (
+    !successor
+    || successor.lineage.chainId !== node.lineage.chainId
+    || successor.lineage.ordinal <= node.lineage.ordinal
+    || successor.lineage.previousRequestId !== nodeRequestId
+    || !successor.lineage.beforeImage.present
+    || diamondDomainEngine.hashDiamondValue(successor.lineage.beforeImage.value)
+      !== diamondDomainEngine.hashDiamondValue(node.result.settings)
+  ) {
+    throwDiamondPrivateNoteIntegrityFailure(
+      `Diamond configuration successor ${successorId || ''} is inconsistent.`
+    );
+  }
+}
+
+function parseConfigurationRepair(value, expected) {
+  if (
+    !hasExactRecordKeys(value, new Set([
+      'schemaVersion', 'type', 'status', 'teamId', 'chainId',
+      'sourceRequestId', 'sourceImmutableHash', 'sourcePrincipalHash',
+      'cursorRequestId', 'cursorOrdinal', 'startedAt'
+    ]))
+    || value.schemaVersion !== DIAMOND_CONFIGURATION_REPAIR_SCHEMA_VERSION
+    || value.type !== DIAMOND_CONFIGURATION_REPAIR_TYPE
+    || value.status !== DIAMOND_CONFIGURATION_REPAIR_STATUS
+    || value.teamId !== expected.teamId
+    || !DIAMOND_UUID_V4_PATTERN.test(value.chainId || '')
+    || !DIAMOND_UUID_V4_PATTERN.test(value.sourceRequestId || '')
+    || !DIAMOND_HASH_PATTERN.test(value.sourceImmutableHash || '')
+    || !DIAMOND_HASH_PATTERN.test(value.sourcePrincipalHash || '')
+    || !DIAMOND_UUID_V4_PATTERN.test(value.cursorRequestId || '')
+    || !Number.isSafeInteger(value.cursorOrdinal)
+    || value.cursorOrdinal < 1
+    || !isExactIsoTimestamp(value.startedAt)
+    || (expected.sourceRequestId && value.sourceRequestId !== expected.sourceRequestId)
+    || (expected.sourceImmutableHash && value.sourceImmutableHash !== expected.sourceImmutableHash)
+    || (expected.sourcePrincipalHash && value.sourcePrincipalHash !== expected.sourcePrincipalHash)
+    || (expected.startedAt && value.startedAt !== expected.startedAt)
+  ) {
+    throwDiamondPrivateNoteIntegrityFailure(
+      'The Diamond configuration repair fence is malformed.'
+    );
+  }
+  return value;
+}
+
+function configurationImagePrincipal(beforeImage) {
+  if (!beforeImage.present || !isPlainRecord(beforeImage.value)) return null;
+  if (!Object.prototype.hasOwnProperty.call(beforeImage.value, 'configuredBy')) return null;
+  if (!isValidAccountUid(beforeImage.value.configuredBy)) {
+    throwDiamondPrivateNoteIntegrityFailure(
+      'A Diamond configuration before-image principal is malformed.'
+    );
+  }
+  return beforeImage.value.configuredBy;
+}
+
+async function principalHasDeletionMarker(transaction, firestore, uid) {
+  if (!uid) return false;
+  const snapshots = await Promise.all([
+    transaction.get(firestore.doc(`accountDeletionRequests/${uid}`)),
+    transaction.get(firestore.doc(directAuthDeletionBarrierPath(uid))),
+    transaction.get(firestore.doc(`accountDeletionAudit/${buildDeletionAuditId(uid)}`))
+  ]);
+  return snapshots.some((snapshot) => snapshot?.exists === true);
+}
+
+function applyConfigurationBeforeImage(transaction, teamRef, beforeImage, deleteFieldValue) {
+  transaction.update(teamRef, {
+    diamondScorebook: beforeImage.present ? beforeImage.value : deleteFieldValue()
+  });
+}
+
 function staleDiamondConfigurationCandidate({
   uid,
   authDeleteEventMs,
@@ -2654,20 +2931,15 @@ function staleDiamondConfigurationCandidate({
 }) {
   const match = DIAMOND_CONFIGURATION_REQUEST_PATH_PATTERN.exec(snapshot?.ref?.path || '');
   if (!match) return null;
-  const commitMs = requireSnapshotCommitMillis(snapshot);
+  const commitMs = requireSnapshotCreateMillis(snapshot);
   if (commitMs < authDeleteEventMs) return null;
-  const value = snapshot.data() || {};
-  if (
-    value.requestedBy !== uid
-    || !DIAMOND_HASH_PATTERN.test(value.requestHash || '')
-    || !value.result
-    || typeof value.result !== 'object'
-    || !value.result.settings
-    || typeof value.result.settings !== 'object'
-    || value.result.settings.configuredBy !== uid
-  ) {
+  const value = parseConfigurationRequest(snapshot.data() || {}, {
+    teamId: match[1],
+    requestId: match[2]
+  });
+  if (value.requestedBy !== uid) {
     throwDiamondPrivateNoteIntegrityFailure(
-      'A stale Diamond configuration request is malformed.'
+      'A stale Diamond configuration request principal is inconsistent.'
     );
   }
   return {
@@ -2675,9 +2947,183 @@ function staleDiamondConfigurationCandidate({
     teamId: match[1],
     requestId: match[2],
     commitMs,
-    value,
+    immutableHash: value.immutableHash,
     resultSettingsHash: diamondDomainEngine.hashDiamondValue(value.result.settings)
   };
+}
+
+async function continueDiamondConfigurationRepair({
+  firestore,
+  uid,
+  barrier,
+  authDeleteEventMs,
+  deleteFieldValue,
+  repairAnchor,
+  pageBudget
+}) {
+  const sourceRef = firestore.doc(
+    configurationRequestPath(repairAnchor.teamId, repairAnchor.requestId)
+  );
+  const teamRef = firestore.doc(`teams/${repairAnchor.teamId}`);
+  const repairRef = firestore.doc(configurationRepairPath(repairAnchor.teamId));
+  while (true) {
+    if (!pageBudget || pageBudget.remaining <= 0) {
+      throw accountDiamondPrivateNoteError(
+        'unavailable',
+        'Diamond configuration repair made bounded durable progress; retry is required.'
+      );
+    }
+    const outcome = await firestore.runTransaction(async (transaction) => {
+      const [barrierSnapshot, repairSnapshot, sourceSnapshot, teamSnapshot] =
+        await Promise.all([
+          transaction.get(firestore.doc(directAuthDeletionBarrierPath(uid))),
+          transaction.get(repairRef),
+          transaction.get(sourceRef),
+          transaction.get(teamRef)
+        ]);
+      requireAccountDiamondDeletionBarrier(
+        barrierSnapshot,
+        uid,
+        ACCOUNT_DIAMOND_DELETION_BARRIER_AUTH_DELETE
+      );
+      const repair = parseConfigurationRepair(repairSnapshot?.data?.() || {}, {
+        teamId: repairAnchor.teamId,
+        sourceRequestId: repairAnchor.requestId,
+        sourceImmutableHash: repairAnchor.immutableHash,
+        sourcePrincipalHash: configurationPrincipalHash(uid),
+        startedAt: barrier.startedAt
+      });
+      if (!sourceSnapshot?.exists) {
+        throwDiamondPrivateNoteIntegrityFailure(
+          'The Diamond configuration repair anchor is missing.'
+        );
+      }
+      const source = parseConfigurationRequest(sourceSnapshot.data() || {}, {
+        teamId: repairAnchor.teamId,
+        requestId: repairAnchor.requestId
+      });
+      if (
+        source.immutableHash !== repairAnchor.immutableHash
+        || source.requestedBy !== uid
+        || requireSnapshotCreateMillis(sourceSnapshot) < authDeleteEventMs
+        || repair.chainId !== source.lineage.chainId
+        || repair.cursorOrdinal >= source.lineage.ordinal
+      ) {
+        throwDiamondPrivateNoteIntegrityFailure(
+          'The Diamond configuration repair anchor changed during cleanup.'
+        );
+      }
+      const team = teamSnapshot?.exists ? teamSnapshot.data() || {} : null;
+      if (!team) {
+        transaction.delete(sourceRef);
+        transaction.delete(repairRef);
+        return { complete: true };
+      }
+      if (Object.prototype.hasOwnProperty.call(team, 'diamondScorebook')) {
+        throwDiamondPrivateNoteIntegrityFailure(
+          'The fenced Diamond configuration changed during repair.'
+        );
+      }
+
+      const cursorRef = firestore.doc(
+        configurationRequestPath(repairAnchor.teamId, repair.cursorRequestId)
+      );
+      const cursorSnapshot = await transaction.get(cursorRef);
+      if (!cursorSnapshot?.exists) {
+        throwDiamondPrivateNoteIntegrityFailure(
+          'The Diamond configuration repair cursor is missing.'
+        );
+      }
+      const cursor = parseConfigurationRequest(cursorSnapshot.data() || {}, {
+        teamId: repairAnchor.teamId,
+        requestId: repair.cursorRequestId
+      });
+      if (
+        cursor.lineage.chainId !== repair.chainId
+        || cursor.lineage.ordinal !== repair.cursorOrdinal
+        || cursor.lineage.nextRequestId !== null
+      ) {
+        throwDiamondPrivateNoteIntegrityFailure(
+          'The Diamond configuration repair cursor is inconsistent.'
+        );
+      }
+      const cursorDeleted = await principalHasDeletionMarker(
+        transaction,
+        firestore,
+        cursor.requestedBy
+      );
+      if (!cursorDeleted) {
+        transaction.update(teamRef, { diamondScorebook: cursor.result.settings });
+        transaction.delete(sourceRef);
+        transaction.delete(repairRef);
+        return { complete: true };
+      }
+
+      const predecessorId = cursor.lineage.previousRequestId;
+      if (!predecessorId) {
+        const baselinePrincipal = configurationImagePrincipal(cursor.lineage.beforeImage);
+        const baselineDeleted = await principalHasDeletionMarker(
+          transaction,
+          firestore,
+          baselinePrincipal
+        );
+        if (!baselineDeleted) {
+          applyConfigurationBeforeImage(
+            transaction,
+            teamRef,
+            cursor.lineage.beforeImage,
+            deleteFieldValue
+          );
+        }
+        transaction.delete(cursorRef);
+        transaction.delete(sourceRef);
+        transaction.delete(repairRef);
+        return { complete: true };
+      }
+
+      const predecessorRef = firestore.doc(
+        configurationRequestPath(repairAnchor.teamId, predecessorId)
+      );
+      const predecessorSnapshot = await transaction.get(predecessorRef);
+      if (!predecessorSnapshot?.exists) {
+        throwDiamondPrivateNoteIntegrityFailure(
+          'A Diamond configuration repair predecessor is missing.'
+        );
+      }
+      const predecessor = parseConfigurationRequest(predecessorSnapshot.data() || {}, {
+        teamId: repairAnchor.teamId,
+        requestId: predecessorId
+      });
+      validateConfigurationPredecessor(cursor, predecessor, repair.cursorRequestId);
+      const predecessorDeleted = await principalHasDeletionMarker(
+        transaction,
+        firestore,
+        predecessor.requestedBy
+      );
+      transaction.update(predecessorRef, {
+        lineage: { ...predecessor.lineage, nextRequestId: null }
+      });
+      transaction.delete(cursorRef);
+      if (!predecessorDeleted) {
+        applyConfigurationBeforeImage(
+          transaction,
+          teamRef,
+          cursor.lineage.beforeImage,
+          deleteFieldValue
+        );
+        transaction.delete(sourceRef);
+        transaction.delete(repairRef);
+        return { complete: true };
+      }
+      transaction.update(repairRef, {
+        cursorRequestId: predecessorId,
+        cursorOrdinal: predecessor.lineage.ordinal
+      });
+      return { complete: false };
+    });
+    pageBudget.remaining = Math.max(0, pageBudget.remaining - 1);
+    if (outcome.complete) return outcome;
+  }
 }
 
 async function reconcileStaleDiamondConfiguration({
@@ -2686,44 +3132,347 @@ async function reconcileStaleDiamondConfiguration({
   barrier,
   authDeleteEventMs,
   deleteFieldValue,
-  candidate
+  candidate,
+  pageBudget
 }) {
   const requestRef = firestore.doc(candidate.snapshot.ref.path);
   const teamRef = firestore.doc(`teams/${candidate.teamId}`);
-  return firestore.runTransaction(async (transaction) => {
-    const [barrierSnapshot, requestSnapshot, teamSnapshot] = await Promise.all([
-      transaction.get(firestore.doc(directAuthDeletionBarrierPath(uid))),
-      transaction.get(requestRef),
-      transaction.get(teamRef)
-    ]);
+  const repairRef = firestore.doc(configurationRepairPath(candidate.teamId));
+  const outcome = await firestore.runTransaction(async (transaction) => {
+    const [barrierSnapshot, requestSnapshot, teamSnapshot, repairSnapshot] =
+      await Promise.all([
+        transaction.get(firestore.doc(directAuthDeletionBarrierPath(uid))),
+        transaction.get(requestRef),
+        transaction.get(teamRef),
+        transaction.get(repairRef)
+      ]);
     requireAccountDiamondDeletionBarrier(
       barrierSnapshot,
       uid,
       ACCOUNT_DIAMOND_DELETION_BARRIER_AUTH_DELETE
     );
-    if (!requestSnapshot?.exists) return { reconciled: true, missing: true };
-    const currentRequest = requestSnapshot.data() || {};
+    if (repairSnapshot?.exists) {
+      const repair = parseConfigurationRepair(repairSnapshot.data() || {}, {
+        teamId: candidate.teamId
+      });
+      if (repair.sourcePrincipalHash !== configurationPrincipalHash(uid)) {
+        throw accountDiamondPrivateNoteError(
+          'unavailable',
+          'Another deleted principal is already repairing this Diamond configuration.'
+        );
+      }
+      if (repair.startedAt !== barrier.startedAt) {
+        throwDiamondPrivateNoteIntegrityFailure(
+          'The Diamond configuration repair does not match its deletion barrier.'
+        );
+      }
+      return {
+        complete: false,
+        repairAnchor: {
+          teamId: candidate.teamId,
+          requestId: repair.sourceRequestId,
+          immutableHash: repair.sourceImmutableHash
+        }
+      };
+    }
+    if (!requestSnapshot?.exists) return { complete: true, missing: true };
+    const currentRequest = parseConfigurationRequest(requestSnapshot.data() || {}, {
+      teamId: candidate.teamId,
+      requestId: candidate.requestId
+    });
     if (
-      requireSnapshotCommitMillis(requestSnapshot) < authDeleteEventMs
-      || diamondDomainEngine.hashDiamondValue(currentRequest)
-        !== diamondDomainEngine.hashDiamondValue(candidate.value)
+      requireSnapshotCreateMillis(requestSnapshot) < authDeleteEventMs
+      || currentRequest.immutableHash !== candidate.immutableHash
+      || currentRequest.requestedBy !== uid
     ) {
       throwDiamondPrivateNoteIntegrityFailure(
         'The stale Diamond configuration request changed during cleanup.'
       );
     }
     const team = teamSnapshot?.exists ? teamSnapshot.data() || {} : null;
-    if (
-      team?.diamondScorebook?.configuredBy === uid
-      && diamondDomainEngine.hashDiamondValue(team.diamondScorebook)
+    const teamSettings = team && Object.prototype.hasOwnProperty.call(team, 'diamondScorebook')
+      ? team.diamondScorebook
+      : undefined;
+    const head = configurationHeadBinding(teamSettings);
+    const requestIsCurrent = Boolean(
+      team
+      && head
+      && head.chainId === currentRequest.lineage.chainId
+      && head.requestId === candidate.requestId
+      && head.ordinal === currentRequest.lineage.ordinal
+      && diamondDomainEngine.hashDiamondValue(teamSettings)
         === candidate.resultSettingsHash
+    );
+
+    const predecessorId = currentRequest.lineage.previousRequestId;
+    const successorId = currentRequest.lineage.nextRequestId;
+    const [predecessorSnapshot, successorSnapshot] = await Promise.all([
+      predecessorId
+        ? transaction.get(firestore.doc(configurationRequestPath(candidate.teamId, predecessorId)))
+        : Promise.resolve(null),
+      successorId
+        ? transaction.get(firestore.doc(configurationRequestPath(candidate.teamId, successorId)))
+        : Promise.resolve(null)
+    ]);
+    const predecessor = predecessorId
+      ? parseConfigurationRequest(predecessorSnapshot?.data?.() || {}, {
+          teamId: candidate.teamId,
+          requestId: predecessorId
+        })
+      : null;
+    const successor = successorId
+      ? parseConfigurationRequest(successorSnapshot?.data?.() || {}, {
+          teamId: candidate.teamId,
+          requestId: successorId
+        })
+      : null;
+    if (predecessorId) {
+      if (!predecessorSnapshot?.exists) {
+        throwDiamondPrivateNoteIntegrityFailure(
+          'A stale Diamond configuration predecessor is missing.'
+        );
+      }
+      validateConfigurationPredecessor(
+        currentRequest,
+        predecessor,
+        candidate.requestId
+      );
+    }
+    if (successorId) {
+      if (!successorSnapshot?.exists) {
+        throwDiamondPrivateNoteIntegrityFailure(
+          'A stale Diamond configuration successor is missing.'
+        );
+      }
+      validateConfigurationSuccessor(currentRequest, successor, candidate.requestId);
+    }
+
+    if (requestIsCurrent) {
+      if (successorId) {
+        throwDiamondPrivateNoteIntegrityFailure(
+          'The current Diamond configuration has an unexpected successor.'
+        );
+      }
+      const restorationPrincipal = configurationImagePrincipal(
+        currentRequest.lineage.beforeImage
+      );
+      const restorationDeleted = await principalHasDeletionMarker(
+        transaction,
+        firestore,
+        restorationPrincipal
+      );
+      if (!restorationDeleted) {
+        applyConfigurationBeforeImage(
+          transaction,
+          teamRef,
+          currentRequest.lineage.beforeImage,
+          deleteFieldValue
+        );
+        if (predecessor) {
+          transaction.update(
+            firestore.doc(configurationRequestPath(candidate.teamId, predecessorId)),
+            { lineage: { ...predecessor.lineage, nextRequestId: null } }
+          );
+        }
+        transaction.delete(requestRef);
+        return { complete: true, restored: true };
+      }
+      if (!predecessor) {
+        transaction.update(teamRef, { diamondScorebook: deleteFieldValue() });
+        transaction.delete(requestRef);
+        return { complete: true, restored: false };
+      }
+      transaction.update(teamRef, { diamondScorebook: deleteFieldValue() });
+      transaction.update(
+        firestore.doc(configurationRequestPath(candidate.teamId, predecessorId)),
+        { lineage: { ...predecessor.lineage, nextRequestId: null } }
+      );
+      const repair = {
+        schemaVersion: DIAMOND_CONFIGURATION_REPAIR_SCHEMA_VERSION,
+        type: DIAMOND_CONFIGURATION_REPAIR_TYPE,
+        status: DIAMOND_CONFIGURATION_REPAIR_STATUS,
+        teamId: candidate.teamId,
+        chainId: currentRequest.lineage.chainId,
+        sourceRequestId: candidate.requestId,
+        sourceImmutableHash: candidate.immutableHash,
+        sourcePrincipalHash: configurationPrincipalHash(uid),
+        cursorRequestId: predecessorId,
+        cursorOrdinal: predecessor.lineage.ordinal,
+        startedAt: barrier.startedAt
+      };
+      transaction.create(repairRef, repair);
+      return {
+        complete: false,
+        repairAnchor: {
+          teamId: candidate.teamId,
+          requestId: candidate.requestId,
+          immutableHash: candidate.immutableHash
+        }
+      };
+    }
+
+    if (
+      head
+      && head.chainId === currentRequest.lineage.chainId
+      && (
+        head.ordinal <= currentRequest.lineage.ordinal
+        || (!successor && head.requestId !== candidate.requestId)
+      )
     ) {
-      transaction.update(teamRef, {
-        diamondScorebook: deleteFieldValue()
-      });
+      throwDiamondPrivateNoteIntegrityFailure(
+        'A non-current Diamond configuration is still referenced by its live chain.'
+      );
+    }
+    if (successor) {
+      transaction.update(
+        firestore.doc(configurationRequestPath(candidate.teamId, successorId)),
+        {
+          lineage: {
+            ...successor.lineage,
+            previousRequestId: predecessorId,
+            beforeImage: currentRequest.lineage.beforeImage,
+            beforeImageHash: currentRequest.lineage.beforeImageHash
+          }
+        }
+      );
+    }
+    if (predecessor) {
+      transaction.update(
+        firestore.doc(configurationRequestPath(candidate.teamId, predecessorId)),
+        { lineage: { ...predecessor.lineage, nextRequestId: successorId } }
+      );
     }
     transaction.delete(requestRef);
-    return { reconciled: true };
+    return { complete: true, restored: false };
+  });
+  if (outcome.repairAnchor) {
+    await continueDiamondConfigurationRepair({
+      firestore,
+      uid,
+      barrier,
+      authDeleteEventMs,
+      deleteFieldValue,
+      repairAnchor: outcome.repairAnchor,
+      pageBudget
+    });
+    // The page may have surfaced a different stale node while a prior repair
+    // was already active. Finish the fixed team repair first, then reconcile
+    // this exact candidate so advancing the durable source cursor cannot skip
+    // it merely because it shared a page with the repair anchor.
+    return reconcileStaleDiamondConfiguration({
+      firestore,
+      uid,
+      barrier,
+      authDeleteEventMs,
+      deleteFieldValue,
+      candidate,
+      pageBudget
+    });
+  }
+  return outcome;
+}
+
+function diamondLiveInteractionCandidate({ uid, snapshot, collectionId }) {
+  const match = DIAMOND_LIVE_INTERACTION_PATH_PATTERN.exec(snapshot?.ref?.path || '');
+  if (!match || match[4] !== collectionId) return null;
+  const value = snapshot.data() || {};
+  if (value.senderId !== uid) return null;
+  const expectedFields = collectionId === 'chat'
+    ? new Set([
+        'schemaVersion', 'trackingEngine', 'teamId', 'gameId', 'instanceId',
+        'text', 'senderId', 'senderName', 'senderPhotoUrl', 'isAnonymous',
+        'createdAt'
+      ])
+    : new Set([
+        'schemaVersion', 'trackingEngine', 'teamId', 'gameId', 'instanceId',
+        'type', 'senderId', 'createdAt'
+      ]);
+  const chatShapeIsValid = collectionId !== 'chat' || (
+    typeof value.text === 'string'
+    && value.text.length > 0
+    && value.text.length <= 2_000
+    && value.text.replace(/\s+/g, ' ').trim() === value.text
+    && !/[\u0000-\u001f\u007f]/.test(value.text)
+    && typeof value.senderName === 'string'
+    && value.senderName.length > 0
+    && value.senderName.length <= 80
+    && (value.senderPhotoUrl === null || (
+      typeof value.senderPhotoUrl === 'string'
+      && value.senderPhotoUrl.length <= 2_048
+      && value.senderPhotoUrl.startsWith('https://')
+    ))
+    && value.isAnonymous === false
+  );
+  const reactionShapeIsValid = collectionId !== 'reactions'
+    || DIAMOND_LIVE_REACTION_TYPES.has(value.type);
+  if (
+    !hasExactRecordKeys(value, expectedFields)
+    || value.schemaVersion !== 1
+    || value.trackingEngine !== diamondPrivateNoteCore.DIAMOND_ENGINE
+    || !isValidAccountUid(match[1])
+    || !isValidAccountUid(match[2])
+    || value.teamId !== match[1]
+    || value.gameId !== match[2]
+    || value.instanceId !== match[3]
+    || !isValidAccountUid(value.senderId)
+    || value.createdAt === null
+    || value.createdAt === undefined
+    || !chatShapeIsValid
+    || !reactionShapeIsValid
+    || !DIAMOND_UUID_V4_PATTERN.test(match[3] || '')
+    || !(collectionId === 'chat'
+      ? /^diamond-chat-[a-f0-9]{64}$/.test(match[5] || '')
+      : /^diamond-reaction-[a-f0-9]{64}$/.test(match[5] || ''))
+  ) {
+    throwDiamondPrivateNoteIntegrityFailure(
+      'A Diamond live interaction owned by the deleted account is malformed.'
+    );
+  }
+  return {
+    path: snapshot.ref.path,
+    teamId: match[1],
+    gameId: match[2],
+    instanceId: match[3],
+    collectionId,
+    documentId: match[5]
+  };
+}
+
+async function reconcileDiamondLiveInteraction({
+  firestore,
+  uid,
+  candidate
+}) {
+  const interactionRef = firestore.doc(candidate.path);
+  await firestore.runTransaction(async (transaction) => {
+    const [barrierSnapshot, interactionSnapshot] = await Promise.all([
+      transaction.get(firestore.doc(directAuthDeletionBarrierPath(uid))),
+      transaction.get(interactionRef)
+    ]);
+    requireAccountDiamondDeletionBarrier(
+      barrierSnapshot,
+      uid,
+      ACCOUNT_DIAMOND_DELETION_BARRIER_AUTH_DELETE
+    );
+    if (!interactionSnapshot?.exists) return;
+    const current = diamondLiveInteractionCandidate({
+      uid,
+      snapshot: interactionSnapshot,
+      collectionId: candidate.collectionId
+    });
+    if (!current) return;
+    if (
+      current.path !== candidate.path
+      || current.teamId !== candidate.teamId
+      || current.gameId !== candidate.gameId
+      || current.instanceId !== candidate.instanceId
+      || current.documentId !== candidate.documentId
+    ) {
+      throwDiamondPrivateNoteIntegrityFailure(
+        'A Diamond live interaction changed identity during account cleanup.'
+      );
+    }
+    transaction.delete(interactionRef);
   });
 }
 
@@ -2869,6 +3618,31 @@ function createAccountDiamondPrivateNoteAuthDeleteHandler({
       });
     }
 
+    for (const source of [
+      { source: 'live-chat-sender', collectionGroup: 'chat' },
+      { source: 'live-reactions-sender', collectionGroup: 'reactions' }
+    ]) {
+      await runDurableEqualityScan({
+        firestore,
+        uid,
+        barrier,
+        documentIdField,
+        source: source.source,
+        collectionGroup: source.collectionGroup,
+        field: 'senderId',
+        pageBudget: inventoryPageBudget,
+        processDocument: async (snapshot) => {
+          const candidate = diamondLiveInteractionCandidate({
+            uid,
+            snapshot,
+            collectionId: source.collectionGroup
+          });
+          if (!candidate) return;
+          await reconcileDiamondLiveInteraction({ firestore, uid, candidate });
+        }
+      });
+    }
+
     await runDurableEqualityScan({
       firestore,
       uid,
@@ -2917,7 +3691,8 @@ function createAccountDiamondPrivateNoteAuthDeleteHandler({
           barrier,
           authDeleteEventMs,
           deleteFieldValue,
-          candidate
+          candidate,
+          pageBudget: inventoryPageBudget
         });
       }
     });
