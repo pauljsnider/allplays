@@ -274,17 +274,19 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getGameDayTeamContext, getGame, getPlayers, getConfigs, logStatEvent, updatePlayerStats, updateGame, getMyRsvp, collection, getDocs, deleteDoc, query } from './js/db.js?v=4433195';
+        import { getGameDayTeamContext, getGame, getPlayers, getConfigs, logStatEvent, updatePlayerStats, updateGame, getMyRsvp, collection, getDocs, deleteDoc, query } from './js/db.js?v=4433199';
         import { db } from './js/firebase.js?v=33';
         import { writeBatch, doc, setDoc, addDoc } from './js/firebase.js?v=33';
-        import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=443371';
-        import { checkAuth } from './js/auth.js?v=4433199';
+        import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=443375';
+        import { checkAuth } from './js/auth.js?v=4433203';
         import { isAISummaryEnabled, applyAISummaryAvailability } from './js/track-ai-summary.js';
         import { resolveSummaryRecipient } from './js/live-tracker-email.js?v=1';
         import { hasScorekeepingTeamAccess } from './js/team-access.js?v=44338';
         import { commitStandardTrackerFinishData } from './js/track-finish.js?v=3';
         import { getApp } from './js/vendor/firebase-app.js';
         import { getDefaultLivePeriod, getSportPeriodLabels } from './js/live-sport-config.js?v=1';
+        import { DIAMOND_ENGINE, buildDiamondTrackerUrl } from './js/diamond-scorebook-routing.js?v=2';
+        import { isLegacyTrackingEngine } from './js/tracking-engine.js?v=1';
         // Note: firebase-ai will be lazy-loaded when AI summary is requested
 
         renderFooter(document.getElementById('footer-container'));
@@ -358,6 +360,16 @@
                     console.error('Game not found for teamId:', teamId, 'gameId:', gameId);
                     alert("Game not found");
                     window.location.href = 'dashboard.html';
+                    return;
+                }
+
+                if (game.trackingEngine === DIAMOND_ENGINE) {
+                    window.location.replace(buildDiamondTrackerUrl(teamId, gameId));
+                    return;
+                }
+                if (!isLegacyTrackingEngine(game.trackingEngine)) {
+                    alert('This game uses a newer scoring engine that this tracker cannot edit.');
+                    window.location.href = `edit-schedule.html#teamId=${encodeURIComponent(teamId)}`;
                     return;
                 }
 

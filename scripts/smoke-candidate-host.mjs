@@ -5,7 +5,8 @@ import { pathToFileURL } from 'node:url';
 import { getPublicSmokePages } from '../tests/smoke/page-registry.js';
 import {
     createAppCheckRuntimeConfig,
-    isAppCheckEnforcementReady
+    isAppCheckEnforcementReady,
+    isDiamondScorebookUiRolloutEnabled
 } from './stage-pages-bundle.mjs';
 
 const runtimeConfigPath = '/.well-known/allplays-runtime-config.json';
@@ -26,9 +27,15 @@ export function getExpectedRuntimeConfig({
     siteKey = process.env.ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY,
     enforcementReady = isAppCheckEnforcementReady(
         process.env.ALLPLAYS_APP_CHECK_ENFORCEMENT_READY
+    ),
+    diamondScorebookUiEnabled = isDiamondScorebookUiRolloutEnabled(
+        process.env.ALLPLAYS_DIAMOND_SCOREBOOK_UI_ENABLED
     )
 } = {}) {
-    return createAppCheckRuntimeConfig(siteKey, { enforcementReady });
+    return createAppCheckRuntimeConfig(siteKey, {
+        enforcementReady,
+        diamondScorebookUiEnabled
+    });
 }
 
 export function configuredHeadersFor(path, config = firebaseConfig) {
@@ -162,6 +169,11 @@ function htmlContainsSelector(html, selector) {
     if (/^#[A-Za-z][\w:-]*$/.test(selector)) {
         const id = escapeRegExp(selector.slice(1));
         return new RegExp(`\\bid\\s*=\\s*["']${id}["']`, 'i').test(html);
+    }
+    const attributePresence = selector.match(/^\[([A-Za-z_:][\w:.-]*)\]$/);
+    if (attributePresence) {
+        const attribute = escapeRegExp(attributePresence[1]);
+        return new RegExp(`<[^>]*\\s${attribute}(?:\\s|=|/?>)`, 'i').test(html);
     }
     if (/^[A-Za-z][\w-]*$/.test(selector)) {
         return new RegExp(`<${escapeRegExp(selector)}\\b`, 'i').test(html);

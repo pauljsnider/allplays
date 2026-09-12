@@ -93,7 +93,7 @@ describe('post-game stat editor helpers', () => {
             { fieldName: 'coacheffort', label: 'Coach Effort' },
             { fieldName: 'fouls', label: 'FOULS' }
         ]));
-        expect(gameHtml).toContain("import { resolveLiveStatConfig } from './js/live-game-state.js?v=43';");
+        expect(gameHtml).toContain("import { resolveLiveStatConfig } from './js/live-game-state.js?v=46';");
     });
 
     it('builds an absolute stat payload and zeroes the row when a player did not play', () => {
@@ -255,7 +255,7 @@ describe('post-game stat editor helpers', () => {
         expect(pageSource).toContain('id="stats-save-next-btn"');
         expect(pageSource).toContain('resolvePostGameEditorDidNotPlay');
         expect(pageSource).toContain('setCompletedGamePlayerStats');
-        expect(pageSource).toContain("from './js/db.js?v=4433195'");
+        expect(pageSource).toContain("from './js/db.js?v=4433199'");
         expect(dbSource).toContain('participated: !didNotPlay');
         expect(dbSource).toContain("participationStatus: didNotPlay ? 'did-not-appear' : (statsPayload.participationStatus || 'appeared')");
         expect(dbSource).toContain('await deleteDoc(privateDocRef);');
@@ -281,8 +281,9 @@ describe('post-game stat editor helpers', () => {
         const pageSource = readFileSync(new URL('../../game.html', import.meta.url), 'utf8');
 
         expect(pageSource).toContain("function hasRecordedStatValue(stats, key)");
-        expect(pageSource).toContain("hasRecordedStatValue(pStats, key) ? pStats[key] : '&mdash;'");
-        expect(pageSource).toContain("hasRecordedStatValue(p.stats, key) ? p.stats[key] : '&mdash;'");
+        expect(pageSource).toContain("return hasRecordedStatValue(stats, key) ? escapeHtml(String(stats[key])) : (legacyMissingAsZero ? '0' : '&mdash;');");
+        expect(pageSource).toContain('renderCoverageAwareStat({ presentation: statPresentationMap[p.id], stats: pStats, key');
+        expect(pageSource).toContain('renderCoverageAwareStat({ presentation: p.statPresentation, stats: p.stats, key');
     });
 
     it('uses normalizeStatKey for form input keys so custom stat names round-trip correctly', () => {

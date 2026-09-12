@@ -92,7 +92,7 @@ function normalizeShareClipMs(value) {
   return normalized <= MAX_SHARE_CLIP_MS ? normalized : null;
 }
 
-function buildLiveGameShareParams({ teamId, gameId, replay, clipStart, clipEnd } = {}) {
+function buildLiveGameShareParams({ teamId, gameId, replay, clipStart, clipEnd, overlay, classic } = {}) {
   const params = new URLSearchParams({ teamId, gameId });
   const clipStartMs = normalizeShareClipMs(clipStart);
   const clipEndMs = normalizeShareClipMs(clipEnd);
@@ -103,6 +103,8 @@ function buildLiveGameShareParams({ teamId, gameId, replay, clipStart, clipEnd }
     params.set('clipStart', String(clipStartMs));
     params.set('clipEnd', String(clipEndMs));
   }
+  if (overlay === true || overlay === 'true' || overlay === '1') params.set('overlay', 'true');
+  if (classic === true || classic === 'true' || classic === '1') params.set('classic', '1');
   return params;
 }
 

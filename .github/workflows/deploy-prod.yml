@@ -216,6 +216,9 @@ jobs:
       - name: Install app dependencies
         run: npm ci --prefix apps/app
 
+      - name: Run Diamond scorebook acceptance gate
+        run: npm run test:diamond:ci
+
       - name: Run unit tests
         run: npm run test:unit:ci
 
@@ -512,12 +515,15 @@ jobs:
         run: npm ci --prefix apps/app
 
       - name: Build React app
+        env:
+          VITE_DIAMOND_SCOREBOOK_UI_ENABLED: ${{ vars.DIAMOND_SCOREBOOK_UI_ENABLED }}
         run: npm run app:build
 
       - name: Stage Firebase production bundle
         env:
           ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY: ${{ vars.APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY }}
           ALLPLAYS_APP_CHECK_ENFORCEMENT_READY: ${{ vars.APP_CHECK_ENFORCEMENT_READY }}
+          ALLPLAYS_DIAMOND_SCOREBOOK_UI_ENABLED: ${{ vars.DIAMOND_SCOREBOOK_UI_ENABLED }}
           ALLPLAYS_PUBLISH_MOBILE_ASSOCIATIONS: 'true'
         run: |
           set -euo pipefail
@@ -1324,7 +1330,7 @@ jobs:
           transient_pattern='(^|[^[:alnum:]])(429|500|502|503|504)([^[:alnum:]]|$)|HTTP Error:[[:space:]]*409,[[:space:]]*Requested entity already exists|service[[:space:]_-]+unavailable|econnreset|connection[[:space:]_-]+reset|network[[:space:]_-]+reset|etimedout|timed[[:space:]_-]+out|timeout'
           retry_enabled_inventory_producer_target="functions:indexCertificateLegacySignaturesOnDefaultsWrite"
           retry_enabled_cleanup_compatibility_target="functions:cleanupCertificateSignature"
-          retry_enabled_function_targets="functions:cleanupPrivateReplayArchiveOnGameDelete,functions:cleanupPrivateReplayArchiveOnSharedGameDelete,functions:indexCertificateLegacySignaturesOnDefaultsWrite,functions:processAccountDeletionRequest,functions:queueParentInviteEmail,functions:reconcileLegacyTeamOwnership,functions:syncLegacyTeamOwnershipOnAuthCreate,functions:syncPublicUserProfileOnUserWrite,functions:syncPublicUserProfilesOnTeamWrite,functions:syncTeamOwnerAccessOnCreate,functions:notifyConversationChatMessageCreated,functions:notifyFeeAssigned,functions:notifyFeeMarkedPaid,functions:notifyGameCreated,functions:notifyGameUpdated,functions:notifyInviteRedeemed,functions:notifyLiveEventCreated,functions:notifyOfficiatingNotificationCreated,functions:notifyOpenOfficiatingSlots,functions:notifyParentMembershipRequestCreated,functions:notifyParentMembershipRequestUpdated,functions:notifyPracticePacketAssigned,functions:notifyPracticePacketCompleted,functions:notifyPublishedCertificateAward,functions:notifyRegistrationStatusChanged,functions:notifyRegistrationSubmitted,functions:notifyRideClaimCreated,functions:notifyRideClaimUpdated,functions:notifyRideOfferCancelled,functions:notifyRideOfferCreated,functions:notifyScheduleImportBatchCompleted,functions:notifyTeamChatMessageCreated,functions:syncTeamNotificationTargetsOnDeviceWrite,functions:syncTeamNotificationTargetsOnPreferenceWrite,functions:processPasswordResetEmailRequest,functions:sweepIneligiblePublicUserProfiles,functions:dispatchDueTeamMediaNotificationBatches,functions:dispatchDuePreEventReminders,functions:queueDueRegistrationFailedPaymentReminders,functions:sendPracticePacketDueTomorrowReminders,functions:sendFeeUnpaidDueReminders"
+          retry_enabled_function_targets="functions:cleanupPrivateReplayArchiveOnGameDelete,functions:cleanupPrivateReplayArchiveOnSharedGameDelete,functions:indexCertificateLegacySignaturesOnDefaultsWrite,functions:cleanupAccountDiamondPrivateNotesOnAuthDelete,functions:processAccountDeletionRequest,functions:queueParentInviteEmail,functions:reconcileLegacyTeamOwnership,functions:syncLegacyTeamOwnershipOnAuthCreate,functions:syncPublicUserProfileOnUserWrite,functions:syncPublicUserProfilesOnTeamWrite,functions:syncTeamOwnerAccessOnCreate,functions:notifyConversationChatMessageCreated,functions:notifyFeeAssigned,functions:notifyFeeMarkedPaid,functions:notifyGameCreated,functions:notifyGameUpdated,functions:notifyInviteRedeemed,functions:notifyLiveEventCreated,functions:notifyOfficiatingNotificationCreated,functions:notifyOpenOfficiatingSlots,functions:notifyParentMembershipRequestCreated,functions:notifyParentMembershipRequestUpdated,functions:notifyPracticePacketAssigned,functions:notifyPracticePacketCompleted,functions:notifyPublishedCertificateAward,functions:notifyRegistrationStatusChanged,functions:notifyRegistrationSubmitted,functions:notifyRideClaimCreated,functions:notifyRideClaimUpdated,functions:notifyRideOfferCancelled,functions:notifyRideOfferCreated,functions:notifyScheduleImportBatchCompleted,functions:notifyTeamChatMessageCreated,functions:syncTeamNotificationTargetsOnDeviceWrite,functions:syncTeamNotificationTargetsOnPreferenceWrite,functions:processPasswordResetEmailRequest,functions:sweepIneligiblePublicUserProfiles,functions:dispatchDueTeamMediaNotificationBatches,functions:dispatchDuePreEventReminders,functions:queueDueRegistrationFailedPaymentReminders,functions:sendPracticePacketDueTomorrowReminders,functions:sendFeeUnpaidDueReminders,functions:cleanupDeletedDiamondGame,functions:projectDiamondScorebook,functions:processDiamondScorebookEffect"
           native_web_auth_runtime_service_account="game-flow-c6311@appspot.gserviceaccount.com"
           native_web_auth_runtime_policy="$RUNNER_TEMP/native-web-auth-runtime-policy.json"
           gcloud iam service-accounts get-iam-policy \
@@ -2303,6 +2309,7 @@ jobs:
         env:
           EXPECTED_APP_CHECK_ENFORCEMENT_READY: ${{ vars.APP_CHECK_ENFORCEMENT_READY }}
           EXPECTED_APP_CHECK_SITE_KEY: ${{ vars.APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY }}
+          EXPECTED_DIAMOND_SCOREBOOK_UI_ENABLED: ${{ vars.DIAMOND_SCOREBOOK_UI_ENABLED }}
           PREPARED_HEAD_SHA: ${{ needs.prepare-deploy.outputs.head_sha }}
         run: |
           set -euo pipefail
@@ -2313,6 +2320,14 @@ jobs:
           test -f "$bundle/site/index.html"
           test -f "$bundle/site/app/index.html"
           test -f "$bundle/site/.nojekyll"
+          expected_diamond_scorebook_ui_enabled=false
+          if [ "$EXPECTED_DIAMOND_SCOREBOOK_UI_ENABLED" = "true" ]; then
+            expected_diamond_scorebook_ui_enabled=true
+          fi
+          jq -e \
+            --argjson expected "$expected_diamond_scorebook_ui_enabled" \
+            '.diamondScorebookUiEnabled == $expected' \
+            "$runtime_config" >/dev/null
           case "${EXPECTED_APP_CHECK_ENFORCEMENT_READY,,}" in
             true|1)
               [[ "$EXPECTED_APP_CHECK_SITE_KEY" =~ ^[A-Za-z0-9_-]{10,200}$ ]]

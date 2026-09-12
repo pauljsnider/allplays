@@ -85,6 +85,7 @@ const premiumAccessMocks = vi.hoisted(() => ({
 
 const publicActionsMocks = vi.hoisted(() => ({
   copyPublicText: vi.fn(),
+  exportCsvFile: vi.fn(),
   openPublicUrl: vi.fn(),
   sharePublicUrl: vi.fn()
 }));
@@ -134,6 +135,7 @@ vi.mock('lucide-react', () => {
     Code2: Icon,
     Copy: Icon,
     DollarSign: Icon,
+    Download: Icon,
     Dumbbell: Icon,
     ExternalLink: Icon,
     FileSpreadsheet: Icon,
@@ -1720,12 +1722,12 @@ describe('TeamDetail', () => {
     expect(screen.getByLabelText('W against Bears, 4 to 1')).toBeTruthy();
     expect(screen.getByLabelText('Mar 2 against Cats: 1 point for and 3 points against')).toBeTruthy();
     expect(screen.getByText('Roster statistics')).toBeTruthy();
-    expect(screen.getByText('12')).toBeTruthy();
+    expect(await screen.findByText('12')).toBeTruthy();
     expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual(['2026', '2025']);
     fireEvent.change(screen.getByLabelText('Season'), { target: { value: '2025' } });
     expect(await screen.findByText('Positive margin: +5 points per game')).toBeTruthy();
     expect(screen.getByLabelText('W against Foxes, 5 to 0')).toBeTruthy();
-    expect(screen.getByText('4')).toBeTruthy();
+    expect(await screen.findByText('4')).toBeTruthy();
   });
 
   it('renders an unavailable state instead of zero totals when season aggregation fails', async () => {
@@ -1741,12 +1743,21 @@ describe('TeamDetail', () => {
       teamAnalytics,
       rosterStatistics: {
         seasonLabel: '2026',
-        availableSeasons: ['2026'],
+        availableSeasons: ['2026', '2025'],
         unavailableSeasons: ['2026'],
         seasons: [{
-          seasonLabel: '2026',
+          seasonLabel: '2025',
           columns: [{ id: 'pts', label: 'PTS' }],
-          rows: [{ playerId: 'player-1', playerName: 'Pat Star', playerNumber: '9', values: { pts: { value: 0, formattedValue: '0' } } }]
+          rows: [{ playerId: 'player-1', playerName: 'Pat Star', playerNumber: '9', values: { pts: { value: 99, formattedValue: '99' } } }],
+          diamond: {
+            hasDiamond: true,
+            pending: false,
+            sourceRevisions: [10],
+            requestedStatVisibility: 'manager-internal',
+            statVisibility: 'manager-internal',
+            privateStatsStatus: 'complete',
+            publicStatsStatus: 'complete'
+          }
         }]
       }
     });
@@ -1760,7 +1771,144 @@ describe('TeamDetail', () => {
     );
 
     expect(await screen.findByText('Statistics for the 2026 season could not be loaded.')).toBeTruthy();
-    expect(screen.queryByRole('cell', { name: '0' })).toBeNull();
+    expect(screen.queryByRole('cell', { name: '99' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Export internal CSV' })).toBeNull();
+  });
+
+  it('renders Diamond partial roster values as observed and not-collected values as em dashes', async () => {
+    const teamAnalytics = {
+      ...model.teamAnalytics,
+      seasonLabel: '2026',
+      availableSeasons: ['2026'],
+      seasons: []
+    };
+    teamDetailServiceMocks.loadTeamDetailInsights.mockResolvedValue({
+      leaderboards: [],
+      trackingSummaries: [],
+      teamAnalytics,
+      rosterStatistics: {
+        seasonLabel: '2026',
+        availableSeasons: ['2026'],
+        unavailableSeasons: [],
+        seasons: [{
+          seasonLabel: '2026',
+          columns: [{ id: 'h', label: 'H' }, { id: 'sb', label: 'SB' }, { id: 'era', label: 'ERA' }],
+          rows: [{
+            playerId: 'player-1',
+            playerName: 'Pat Star',
+            playerNumber: '9',
+            values: {
+              h: { value: 0, formattedValue: '0', available: true, observed: false, status: 'complete' },
+              sb: { value: 2, formattedValue: '2', available: true, observed: true, status: 'partial' },
+              era: { value: null, formattedValue: '—', available: false, observed: false, status: 'not_collected' }
+            }
+          }],
+          diamond: {
+            hasDiamond: true,
+            pending: true,
+            sourceRevisions: [14],
+            requestedStatVisibility: 'manager-internal',
+            statVisibility: 'public',
+            privateStatsStatus: 'unavailable',
+            publicStatsStatus: 'unavailable'
+          }
+        }]
+      }
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1?tab=insights']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('Diamond scorebook stats · Public · Read only')).toBeTruthy();
+    expect(screen.getByText('Internal stats are unavailable. Public projection status: Unavailable. Refresh to retry.')).toBeTruthy();
+    expect(screen.queryByText(/showing the complete public projection/i)).toBeNull();
+    expect(screen.getByText('Observed')).toBeTruthy();
+    expect(screen.getByRole('cell', { name: 'Not collected' })).toHaveTextContent('—');
+    expect(screen.getByText('Source revisions: 14')).toBeTruthy();
+  });
+
+  it('links canonical Insights participants but never links or exposes projected-only IDs', async () => {
+    const teamAnalytics = {
+      ...model.teamAnalytics,
+      seasonLabel: '2026',
+      availableSeasons: ['2026'],
+      seasons: []
+    };
+    teamDetailServiceMocks.loadTeamDetailInsights.mockResolvedValue({
+      leaderboards: [{
+        id: 'h',
+        label: 'Hits',
+        leaders: [{
+          playerId: 'player-1',
+          playerName: 'Canonical Player',
+          playerNumber: '7',
+          photoUrl: null,
+          rank: 1,
+          formattedValue: '2'
+        }, {
+          playerId: 'manual:private-source-id',
+          playerName: 'Manual Guest',
+          playerNumber: '44',
+          photoUrl: null,
+          canOpenProfile: false,
+          rank: 2,
+          formattedValue: '1'
+        }]
+      }],
+      trackingSummaries: [],
+      teamAnalytics,
+      rosterStatistics: {
+        seasonLabel: '2026',
+        availableSeasons: ['2026'],
+        unavailableSeasons: [],
+        seasons: [{
+          seasonLabel: '2026',
+          columns: [{ id: 'h', label: 'H' }],
+          rows: [{
+            playerId: 'player-1',
+            playerName: 'Canonical Player',
+            playerNumber: '7',
+            values: { h: { value: 2, formattedValue: '2' } }
+          }, {
+            playerId: 'manual:private-source-id',
+            playerName: 'Manual Guest',
+            playerNumber: '44',
+            canOpenProfile: false,
+            values: { h: { value: 1, formattedValue: '1' } }
+          }],
+          diamond: {
+            hasDiamond: true,
+            pending: false,
+            sourceRevisions: [8],
+            requestedStatVisibility: 'public',
+            statVisibility: 'public',
+            privateStatsStatus: 'not-requested',
+            publicStatsStatus: 'complete'
+          }
+        }]
+      }
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1?tab=insights']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(screen.getAllByRole('link', { name: 'Open Canonical Player profile' })).toHaveLength(2));
+    const canonicalLinks = screen.getAllByRole('link', { name: 'Open Canonical Player profile' });
+    canonicalLinks.forEach((link) => expect(link).toHaveAttribute('href', '/players/team-1/player-1'));
+    expect(screen.queryByRole('link', { name: 'Open Manual Guest profile' })).toBeNull();
+    expect(document.querySelector('a[href*="manual"]')).toBeNull();
+    expect(document.body).not.toHaveTextContent('manual:private-source-id');
+    expect(screen.getAllByText('#44 Manual Guest')).toHaveLength(2);
   });
 
   it('renders an explicit team performance empty state in Insights', async () => {

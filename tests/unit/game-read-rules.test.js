@@ -33,8 +33,7 @@ const officiatingNotificationRules = rules.match(
 
 describe('game Firestore read rules', () => {
     it('keeps staff assignment-array updates on the team-admin game write path', () => {
-        expect(teamGamesRules).toContain('allow update: if !isBroadcastSessionOnlyUpdate() &&');
-        expect(teamGamesRules).toContain('!isReplayArchiveMutation() &&');
+        expect(teamGamesRules).toMatch(/allow update: if !isDiamondProtectedGameMutation\(\) &&\s+!isBroadcastSessionOnlyUpdate\(\) &&\s+!isReplayArchiveMutation\(\) &&/);
         expect(teamGamesRules).toContain('(isTeamOwnerOrAdmin(teamId) ||');
         expect(teamGamesRules).toContain('allow update: if isReplayArchiveOnlyUpdate() &&');
         expect(teamGamesRules).toContain('isGameReplayVideoMutationValid(true)');
@@ -48,8 +47,8 @@ describe('game Firestore read rules', () => {
         expect(rules).toContain('function canReadManagedTeamDocument(data)');
         expect(rules).toContain('function canReadPublicGameDocument(teamData, data)');
         expect(teamGamesRules).toContain('allow read: if canReadGameDocument(teamId, gameId, resource.data);');
-        expect(eventsRules).toContain('allow read: if canReadGameSubcollectionDocument(teamId, gameId);');
-        expect(aggregatedStatsRules).toContain('allow read: if canReadGameSubcollectionDocument(teamId, gameId);');
+        expect(eventsRules).toMatch(/allow read: if !gameUsesDiamondScorebook\(teamId, gameId\) &&\s+canReadGameSubcollectionDocument\(teamId, gameId\);/);
+        expect(aggregatedStatsRules).toMatch(/allow read: if !gameUsesDiamondScorebook\(teamId, gameId\) &&\s+canReadGameSubcollectionDocument\(teamId, gameId\);/);
         expect(collectionGroupGamesRules).toContain('allow read: if canReadCollectionGroupGameDocument(path, resource.data);');
         expect(teamGamesRules).not.toContain('allow read: if true;');
         expect(collectionGroupGamesRules).not.toContain('allow read: if true;');

@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { CheckCircle2, KeyRound, MailWarning, XCircle } from 'lucide-react';
-import { AuthFrame } from '../components/AuthFrame';
-import { getSafeAuthNextRoute } from '../lib/authNextRoute';
+import { AuthFrame, DocumentAuthLink } from '../components/AuthFrame';
+import { getDocumentAuthNextRoute, getSafeAuthNextRoute } from '../lib/authNextRoute';
 import { applyEmailActionCode, confirmReset, verifyResetCode } from '../lib/authService';
 
 export function ResetPassword() {
@@ -11,7 +11,14 @@ export function ResetPassword() {
   const mode = searchParams.get('mode') || '';
   const oobCode = searchParams.get('oobCode') || '';
   const requestedNext = getSafeAuthNextRoute(searchParams.get('next'));
-  const successRoute = mode === 'verifyEmail' ? '/verify-pending' : '/auth';
+  const documentRequestedNext = getDocumentAuthNextRoute(requestedNext);
+  const authBackRoute = requestedNext ? `/auth?next=${encodeURIComponent(requestedNext)}` : '/auth';
+  const verificationSuccessRoute = requestedNext
+    ? `/verify-pending?next=${encodeURIComponent(requestedNext)}`
+    : '/verify-pending';
+  const successRoute = mode === 'verifyEmail'
+    ? verificationSuccessRoute
+    : requestedNext || '/auth';
   const successLabel = mode === 'verifyEmail' ? 'Continue after verification' : 'Continue to login';
   const [state, setState] = useState<'loading' | 'reset' | 'success' | 'invalid'>('loading');
   const [message, setMessage] = useState('Verifying account action...');
@@ -99,7 +106,7 @@ export function ResetPassword() {
   };
 
   return (
-    <AuthFrame eyebrow="Account action" backTo="/auth" backLabel="Back to sign in">
+    <AuthFrame eyebrow="Account action" brandTo={authBackRoute} backTo={authBackRoute} backLabel="Back to sign in">
       <div className="flex items-start gap-3">
         <div className="flex h-11 w-11 flex-none items-center justify-center rounded-xl bg-primary-50 text-primary-700">
           <KeyRound className="h-6 w-6" aria-hidden="true" />
@@ -115,7 +122,11 @@ export function ResetPassword() {
       {state === 'success' ? (
         <>
           <Message icon={CheckCircle2} text={message} tone="success" />
-          <Link to={requestedNext || successRoute} className="primary-button mt-4 w-full justify-center">{successLabel}</Link>
+          {documentRequestedNext ? (
+            <DocumentAuthLink route={documentRequestedNext} className="primary-button mt-4 w-full justify-center">{successLabel}</DocumentAuthLink>
+          ) : (
+            <Link to={successRoute} className="primary-button mt-4 w-full justify-center">{successLabel}</Link>
+          )}
         </>
       ) : null}
 

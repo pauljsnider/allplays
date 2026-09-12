@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const adapterMocks = vi.hoisted(() => ({
     postLiveChatMessage: vi.fn(),
@@ -11,10 +11,22 @@ const adapterMocks = vi.hoisted(() => ({
 
 vi.mock('./adapters/legacyLiveGameChat', () => adapterMocks);
 
+const diamondMocks = vi.hoisted(() => ({
+    createDiamondLiveEngagementRequestId: vi.fn(() => '00000000-0000-4000-8000-000000000123'),
+    moderateDiamondLiveChat: vi.fn(),
+    postDiamondLiveChat: vi.fn(),
+    subscribeDiamondLiveChat: vi.fn(() => vi.fn())
+}));
+
+vi.mock('./diamondLiveEngagementService', () => diamondMocks);
+
 import { postLiveChatMessage, subscribeLiveChat } from './adapters/legacyLiveGameChat';
-import { buildLiveGameChatPayload, canUseLiveGameChat, sendLiveGameChatMessage, subscribeToLiveGameChat } from './liveGameChatService';
+import { buildLiveGameChatPayload, canUseLiveGameChat, moderateLiveGameChatMessage, sendLiveGameChatMessage, subscribeToLiveGameChat } from './liveGameChatService';
 
 describe('liveGameChatService', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
     it('uses the legacy viewer chat gate for live, same-day, and replay decisions', () => {
         vi.mocked(adapterMocks.isViewerChatEnabled)
             .mockReturnValueOnce(true)
@@ -102,5 +114,62 @@ describe('liveGameChatService', () => {
 
         expect(payload).toMatchObject({ senderName: 'Pat', isAnonymous: true, text: 'Defense!' });
         expect(postLiveChatMessage).toHaveBeenCalledWith('team-1', 'game-1', payload);
+        expect(diamondMocks.postDiamondLiveChat).not.toHaveBeenCalled();
+    });
+
+    it('pins Diamond subscriptions and reuses one secure request ID after an ambiguous failure', async () => {
+        const callback = vi.fn();
+        const unsubscribe = vi.fn();
+        diamondMocks.subscribeDiamondLiveChat.mockReturnValue(unsubscribe);
+        expect(subscribeToLiveGameChat(
+            'team-1',
+            'game-1',
+            callback,
+            undefined,
+            { diamond: { trackingEngine: 'diamond-v2', instanceId: '00000000-0000-4000-8000-000000000001' } }
+        )).toBe(unsubscribe);
+        expect(diamondMocks.subscribeDiamondLiveChat).toHaveBeenCalledWith(
+            'team-1',
+            'game-1',
+            '00000000-0000-4000-8000-000000000001',
+            callback,
+            undefined
+        );
+        expect(subscribeLiveChat).not.toHaveBeenCalled();
+
+        diamondMocks.postDiamondLiveChat
+            .mockRejectedValueOnce(Object.assign(new Error('response lost'), { code: 'functions/unavailable' }))
+            .mockResolvedValueOnce({ outcome: 'accepted' });
+        const input = {
+            text: 'Safe retry',
+            user: { uid: 'user-1', displayName: 'Coach Kim', email: 'coach@example.com', roles: [] },
+            diamond: { trackingEngine: 'diamond-v2' as const, instanceId: '00000000-0000-4000-8000-000000000001' }
+        };
+        await expect(sendLiveGameChatMessage('team-1', 'game-1', input)).rejects.toThrow('response lost');
+        await expect(sendLiveGameChatMessage('team-1', 'game-1', input)).resolves.toMatchObject({ text: 'Safe retry' });
+
+        expect(diamondMocks.createDiamondLiveEngagementRequestId).toHaveBeenCalledTimes(1);
+        expect(diamondMocks.postDiamondLiveChat).toHaveBeenCalledTimes(2);
+        expect(diamondMocks.postDiamondLiveChat.mock.calls[0]?.[0].requestId).toBe(
+            diamondMocks.postDiamondLiveChat.mock.calls[1]?.[0].requestId
+        );
+        expect(postLiveChatMessage).not.toHaveBeenCalled();
+    });
+
+    it('reuses the exact moderation request after an ambiguous delete response', async () => {
+        const messageId = `diamond-chat-${'a'.repeat(64)}`;
+        diamondMocks.moderateDiamondLiveChat
+            .mockRejectedValueOnce(Object.assign(new Error('response lost'), { code: 'functions/unavailable' }))
+            .mockResolvedValueOnce({ outcome: 'accepted', removed: true });
+        const input = {
+            user: { uid: 'manager-1', displayName: 'Coach Kim', email: 'coach@example.com', roles: [] },
+            diamond: { trackingEngine: 'diamond-v2' as const, instanceId: '00000000-0000-4000-8000-000000000001' }
+        };
+        await expect(moderateLiveGameChatMessage('team-1', 'game-1', messageId, input)).rejects.toThrow('response lost');
+        await expect(moderateLiveGameChatMessage('team-1', 'game-1', messageId, input)).resolves.toBeUndefined();
+        expect(diamondMocks.moderateDiamondLiveChat).toHaveBeenCalledTimes(2);
+        expect(diamondMocks.moderateDiamondLiveChat.mock.calls[0]?.[0].requestId).toBe(
+            diamondMocks.moderateDiamondLiveChat.mock.calls[1]?.[0].requestId
+        );
     });
 });

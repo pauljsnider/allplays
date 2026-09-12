@@ -631,6 +631,35 @@ describe('resendVerificationEmail', () => {
     expect(reload).toHaveBeenCalled();
     expect(legacyAuthEmailMocks.queueCurrentUserVerificationEmail).toHaveBeenCalledWith();
   });
+
+  it.each([
+    ['static Diamond viewer', '/live-game-diamond-v2.html?teamId=team%2Fone&gameId=game+one&replay=true'],
+    ['family fee', '/parent-tools/fees?teamId=team-1&batchId=batch-1&recipientId=recipient-1'],
+    ['schedule', '/schedule?teamId=team-1&eventId=event-1']
+  ])('preserves a validated %s next when resending verification', async (_label, nextRoute) => {
+    const reload = vi.fn().mockResolvedValue(undefined);
+    authState.currentUser = { reload, email: 'coach@allplays.ai' } as any;
+    legacyAuthEmailMocks.queueCurrentUserVerificationEmail.mockResolvedValue({ queued: true });
+
+    await resendVerificationEmail(nextRoute);
+
+    expect(legacyAuthEmailMocks.queueCurrentUserVerificationEmail).toHaveBeenCalledWith('', nextRoute);
+  });
+
+  it.each([
+    'https://evil.example/viewer',
+    '//evil.example/viewer',
+    '/\\evil.example/viewer',
+    `/${'a'.repeat(600)}`
+  ])('drops an unsafe verification next route before queueing: %s', async (unsafeRoute) => {
+    const reload = vi.fn().mockResolvedValue(undefined);
+    authState.currentUser = { reload, email: 'coach@allplays.ai' } as any;
+    legacyAuthEmailMocks.queueCurrentUserVerificationEmail.mockResolvedValue({ queued: true });
+
+    await resendVerificationEmail(unsafeRoute);
+
+    expect(legacyAuthEmailMocks.queueCurrentUserVerificationEmail).toHaveBeenCalledWith();
+  });
 });
 
 describe('sendResetEmail', () => {
@@ -1034,6 +1063,7 @@ describe('signOut', () => {
 
 describe('signUpWithEmail', () => {
   beforeEach(() => {
+    vi.mocked(Capacitor.isNativePlatform).mockReturnValue(true);
     legacySignupFlowMocks.executeEmailPasswordSignup.mockReset();
     legacySignupFlowMocks.executeEmailPasswordSignup.mockResolvedValue({
       user: { uid: 'new-user', email: 'player@example.com' }
@@ -1085,6 +1115,71 @@ describe('signUpWithEmail', () => {
     expect(nativeAuthenticationMocks.reload).toHaveBeenCalledTimes(1);
     expect(legacyAuthEmailMocks.queueCurrentUserVerificationEmail).toHaveBeenCalledWith('native-signup-id-token');
     expect(nativeAuthenticationMocks.sendEmailVerification).not.toHaveBeenCalled();
+  });
+
+  it('passes a validated schedule route through the native verification-email handoff', async () => {
+    const scheduleRoute = '/schedule?teamId=team-1&eventId=event-1';
+    nativeAuthenticationMocks.getIdToken.mockResolvedValue({ token: 'native-signup-id-token' });
+    nativeAuthenticationMocks.getCurrentUser.mockResolvedValue({
+      user: { uid: 'new-user', email: 'player@example.com' }
+    });
+    legacySignupFlowMocks.executeEmailPasswordSignup.mockImplementation(async (options: any) => {
+      window.localStorage.setItem(
+        'allplays-native-auth-session',
+        JSON.stringify({
+          uid: 'new-user',
+          email: 'player@example.com',
+          emailVerified: false,
+          provider: 'native-plugin'
+        })
+      );
+      await options.dependencies.sendVerificationEmail();
+      return { user: options.auth.currentUser };
+    });
+
+    await signUpWithEmail('player@example.com', 'secret1', '85NSBZ7K', scheduleRoute);
+
+    expect(legacyAuthEmailMocks.queueCurrentUserVerificationEmail).toHaveBeenCalledWith(
+      'native-signup-id-token',
+      scheduleRoute
+    );
+  });
+
+  it('passes a validated family-fee route through the web verification-email handoff', async () => {
+    const familyFeeRoute = '/parent-tools/fees?teamId=team-1&batchId=batch-1&recipientId=recipient-1';
+    vi.mocked(Capacitor.isNativePlatform).mockReturnValue(false);
+    legacySignupFlowMocks.executeEmailPasswordSignup.mockImplementation(async (options: any) => {
+      await options.dependencies.sendVerificationEmail();
+      return { user: { uid: 'new-user', email: 'player@example.com' } };
+    });
+
+    await signUpWithEmail('player@example.com', 'secret1', '85NSBZ7K', familyFeeRoute);
+
+    expect(legacyAuthEmailMocks.queueCurrentUserVerificationEmail).toHaveBeenCalledWith('', familyFeeRoute);
+  });
+
+  it('drops an unsafe next route from native signup verification email delivery', async () => {
+    nativeAuthenticationMocks.getIdToken.mockResolvedValue({ token: 'native-signup-id-token' });
+    nativeAuthenticationMocks.getCurrentUser.mockResolvedValue({
+      user: { uid: 'new-user', email: 'player@example.com' }
+    });
+    legacySignupFlowMocks.executeEmailPasswordSignup.mockImplementation(async (options: any) => {
+      window.localStorage.setItem(
+        'allplays-native-auth-session',
+        JSON.stringify({
+          uid: 'new-user',
+          email: 'player@example.com',
+          emailVerified: false,
+          provider: 'native-plugin'
+        })
+      );
+      await options.dependencies.sendVerificationEmail();
+      return { user: options.auth.currentUser };
+    });
+
+    await signUpWithEmail('player@example.com', 'secret1', '85NSBZ7K', 'https://evil.example/steal');
+
+    expect(legacyAuthEmailMocks.queueCurrentUserVerificationEmail).toHaveBeenCalledWith('native-signup-id-token');
   });
 
   it('stops invalid signup emails before loading Firebase signup work', async () => {

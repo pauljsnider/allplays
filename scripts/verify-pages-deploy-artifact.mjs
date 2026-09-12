@@ -4,12 +4,15 @@ import { pathToFileURL } from 'node:url';
 
 import { assertNoUnpublishableRootDevelopmentArtifacts } from './public-site-artifact-policy.mjs';
 import {
+    DIAMOND_SCOREBOOK_UI_META_NAME,
     isAppCheckEnforcementReady,
+    isDiamondScorebookUiRolloutEnabled,
     isMobileAssociationPublishingEnabled,
     validateMobileAssociationFiles
 } from './stage-pages-bundle.mjs';
 
 const runtimeConfigRelativePath = path.join('.well-known', 'allplays-runtime-config.json');
+const diamondScorebookUiConsumerPaths = ['edit-team.html', 'edit-schedule.html'];
 const mobileAssociationRelativePaths = [
     path.join('.well-known', 'apple-app-site-association'),
     path.join('.well-known', 'assetlinks.json')
@@ -19,12 +22,48 @@ function isValidPublicSiteKey(value) {
     return typeof value === 'string' && /^[A-Za-z0-9_-]{10,200}$/.test(value.trim());
 }
 
+function readMetaContent(html, name) {
+    const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const tags = [...html.matchAll(
+        new RegExp(`<meta\\b(?=[^>]*\\bname\\s*=\\s*["']?${escapedName}["']?)[^>]*>`, 'gi')
+    )];
+    if (tags.length !== 1) return { count: tags.length, content: '' };
+    const contentMatch = tags[0][0].match(
+        /\bcontent\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i
+    );
+    return {
+        count: 1,
+        content: String(contentMatch?.[1] ?? contentMatch?.[2] ?? contentMatch?.[3] ?? '')
+    };
+}
+
+function verifyDiamondScorebookUiMeta(artifactDir, expectedEnabled) {
+    const expectedContent = expectedEnabled ? 'true' : 'false';
+    for (const relativePath of diamondScorebookUiConsumerPaths) {
+        let html;
+        try {
+            html = fs.readFileSync(path.join(artifactDir, relativePath), 'utf8');
+        } catch {
+            throw new Error(`Pages deployment artifact is missing ${relativePath}.`);
+        }
+        const meta = readMetaContent(html, DIAMOND_SCOREBOOK_UI_META_NAME);
+        if (meta.count !== 1 || meta.content !== expectedContent) {
+            throw new Error(
+                `Pages deployment artifact ${relativePath} Diamond launch meta must appear exactly once with content="${expectedContent}".`
+            );
+        }
+    }
+}
+
 export function verifyPagesDeployArtifact(
     artifactDir,
     {
         expectedSiteKey = process.env.ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY,
         expectedEnforcementReady = isAppCheckEnforcementReady(
             process.env.ALLPLAYS_APP_CHECK_ENFORCEMENT_READY
+        ),
+        expectedDiamondScorebookUiEnabled = isDiamondScorebookUiRolloutEnabled(
+            process.env.ALLPLAYS_DIAMOND_SCOREBOOK_UI_ENABLED
         ),
         expectedMobileAssociations = isMobileAssociationPublishingEnabled(
             process.env.ALLPLAYS_PUBLISH_MOBILE_ASSOCIATIONS
@@ -66,6 +105,15 @@ export function verifyPagesDeployArtifact(
     }
 
     const appCheck = runtimeConfig?.appCheck;
+    const expectedDiamondEnabled = isDiamondScorebookUiRolloutEnabled(
+        expectedDiamondScorebookUiEnabled
+    );
+    if (runtimeConfig?.diamondScorebookUiEnabled !== expectedDiamondEnabled) {
+        throw new Error(
+            'Pages deployment artifact Diamond scorebook UI flag does not match the exact staged rollout value.'
+        );
+    }
+    verifyDiamondScorebookUiMeta(resolvedArtifactDir, expectedDiamondEnabled);
     const hasSiteKey = Object.prototype.hasOwnProperty.call(
         appCheck ?? {},
         'recaptchaEnterpriseSiteKey'

@@ -19,6 +19,7 @@ import {
 } from './adapters/legacyCertificateNarratives';
 import type { CertificateDraftPlayer, CertificateDraftSharedState } from './certificateDraftService';
 import type { AuthUser } from './types';
+import { loadCompleteCertificateNarrativeStats } from './adapters/legacyDiamondGameContext';
 
 export type CertificateAwardDraft = {
   id: string;
@@ -120,11 +121,20 @@ export async function generateCertificateAwardNarrativesForApp({
 
   let games: any[] = [];
   let totalsByPlayer: Record<string, any> = {};
+  let statsEvidenceByPlayer: Record<string, any> = {};
+  let statsPromptEvidence: Record<string, any> | null = null;
   let setupError: any = null;
   try {
-    games = await getGames(teamId);
+    games = await getGames(teamId, { requireCompleteSharedGames: true });
     const recentGames = selectRecentCompletedGames(games, shared.statsWindow);
-    totalsByPlayer = await getAggregatedStatsForGames(teamId, recentGames.map((game: any) => game.id));
+    const narrativeStats = await loadCompleteCertificateNarrativeStats({
+      teamId,
+      games: recentGames,
+      loadClassicAggregatedStats: getAggregatedStatsForGames
+    });
+    totalsByPlayer = narrativeStats.totalsByPlayer;
+    statsEvidenceByPlayer = narrativeStats.statsEvidenceByPlayer;
+    statsPromptEvidence = narrativeStats.promptEvidence;
   } catch (error: any) {
     setupError = error;
   }
@@ -148,6 +158,8 @@ export async function generateCertificateAwardNarrativesForApp({
     shared,
     games,
     totalsByPlayer,
+    statsEvidenceByPlayer,
+    statsPromptEvidence,
     generator,
     concurrency: 2
   });

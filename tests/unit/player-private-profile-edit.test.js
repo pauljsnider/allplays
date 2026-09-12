@@ -345,8 +345,86 @@ describe('player profile private doc writes', () => {
 
         expect(source).toContain('updatePlayerPrivateProfile');
         expect(source).toContain('const { emergencyContact, medicalInfo, ...publicData } = data;');
-        expect(source).toContain('await updatePlayerProfile(currentTeamId, currentPlayer.id, publicData);');
-        expect(source).toContain('await updatePlayerPrivateProfile(currentTeamId, currentPlayer.id, privateData);');
+        expect(source).toContain('await updatePlayerProfile(context.teamId, context.playerId, publicData);');
+        expect(source).toContain('await updatePlayerPrivateProfile(context.teamId, context.playerId, privateData);');
+    });
+
+    it('revokes and clears player-private state synchronously before an auth replacement loads', () => {
+        const source = readPlayerPage();
+        const clearSource = extractFunction(source, 'function clearPlayerAuthScopedState(');
+        const authCallbackStart = source.indexOf('checkAuth((user) => {');
+        const clearCall = source.indexOf('clearPlayerAuthScopedState();', authCallbackStart);
+        const userAssignment = source.indexOf('currentUser = user;', authCallbackStart);
+
+        expect(clearCall).toBeGreaterThan(authCallbackStart);
+        expect(clearCall).toBeLessThan(userAssignment);
+        for (const reset of [
+            'currentPlayer = null;',
+            'currentPrivateProfile = null;',
+            'currentTeamId = null;',
+            'currentTeam = null;',
+            'rosterFieldDefinitions = [];',
+            'currentCanEditRosterProfile = false;',
+            'currentCanEditPlayerProfile = false;'
+        ]) expect(clearSource).toContain(reset);
+        for (const id of [
+            'team-nav-banner',
+            'player-header',
+            'season-overview',
+            'advanced-stats',
+            'game-stats',
+            'season-stats',
+            'player-events',
+            'content-clips',
+            'player-game-insights-body'
+        ]) expect(clearSource).toContain(`'${id}'`);
+        expect(clearSource).toContain("exportButton.onclick = null;");
+        expect(clearSource).toContain("editButton.onclick = null;");
+        expect(clearSource).toContain("closePlayerEditModal({ invalidateRequest: false });");
+    });
+
+    it('rejects stale profile and unread failures before rendering the team banner', () => {
+        const source = readPlayerPage();
+
+        expect(source).toContain("} catch (e) {\n                        if (!isCurrentLoad()) return;\n                        console.error('Error loading user profile for banner:', e);");
+        expect(source).toContain("} catch (e) {\n                            if (!isCurrentLoad()) return;\n                            console.error('Error fetching unread counts:', e);");
+        expect(source).toContain("if (!isCurrentLoad()) return;\n                        renderTeamAdminBanner(");
+    });
+
+    it('guards delayed private reads, previews, and profile mutations by immutable auth context', () => {
+        const source = readPlayerPage();
+        const openSource = extractFunction(source, 'async function openEditModal(');
+        const persistenceSource = extractFunction(source, 'async function getPlayerPhotoPersistenceState(');
+
+        expect(source).toContain('let playerEditModalGeneration = 0;');
+        expect(openSource).toContain('const context = capturePlayerAuthContext({ modalGeneration });');
+        expect(openSource).toContain('await getPlayerPrivateProfile(context.teamId, context.playerId);');
+        expect(openSource.match(/isPlayerAuthContextCurrent\(context/g)).toHaveLength(4);
+        expect(persistenceSource).toContain("return 'stale';");
+        expect(source).toContain('reader.onload = (event) => {\n                if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) return;');
+        expect(source).toContain('await uploadPlayerPhoto(photoFile, {');
+        expect(source).toContain('teamId: context.teamId');
+        expect(source).toContain('playerId: context.playerId');
+        expect(source).toContain("newlyUploadedPlayerPhotoPath = String(uploadedPhoto?.path || '').trim();");
+        expect(source).toContain('if (newlyUploadedPlayerPhotoPath) {\n                            await deleteLegacyImageUpload(newlyUploadedPlayerPhotoPath).catch(() => undefined);');
+        expect(source).toContain('await updatePlayerProfile(context.teamId, context.playerId, publicData);');
+        expect(source).toContain('if (newlyUploadedPlayerPhotoPath && isDefinitiveFirestoreWriteFailure(error)) {\n                            await deleteLegacyImageUpload(newlyUploadedPlayerPhotoPath).catch(() => undefined);');
+        expect(source).toContain('await updatePlayerPrivateProfile(context.teamId, context.playerId, privateData);');
+    });
+
+    it('keeps each Diamond game row on its validated public recorded identity', () => {
+        const source = readPlayerPage();
+
+        expect(source).toContain('buildDiamondReportPlayers({\n                                    documents: [{ id, data: statData }]');
+        expect(source).toContain('recordedIdentity: result.publicRecordedIdentity');
+        expect(source).toContain("playerId: entry.recordedIdentity?.canOpenProfile ? entry.recordedIdentity.playerId : ''");
+        expect(source).toContain("playerName: entry.recordedIdentity?.playerName || 'Recorded player'");
+        expect(source).toContain("playerNumber: entry.recordedIdentity?.playerNumber || '-'");
+        const gameRowsStart = source.indexOf("recordType: 'game_player'");
+        const seasonRowsStart = source.indexOf("recordType: 'season_player'", gameRowsStart);
+        const gameRowsSource = source.slice(gameRowsStart, seasonRowsStart);
+        expect(gameRowsSource).not.toContain('playerName: player.name');
+        expect(gameRowsSource).not.toContain('playerNumber: player.number');
     });
 
     it('keeps validated parent invite contact writes in server-authoritative transactions', () => {

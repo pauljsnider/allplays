@@ -1,4 +1,6 @@
 import { test, expect } from '@playwright/test';
+import { readFileSync } from 'node:fs';
+import { buildDiamondStatConfigSnapshotHash } from '../../js/diamond-stat-presentation.js';
 
 const STORE_KEY = '__playerGameContextStore';
 
@@ -132,9 +134,192 @@ function createScenario({ requestedGameHasStats = true, playerHasParticipatedGam
     };
 }
 
-async function installMocks(page, scenario, { playerShareStatus = 200 } = {}) {
+function createDiamondMixedScenario() {
+    const scenario = createScenario();
+    const instanceId = '00000000-0000-4000-8000-000000000001';
+    const checkpointHash = `sha256:${'a'.repeat(64)}`;
+    const projectionHash = `sha256:${'c'.repeat(64)}`;
+    scenario.team.sport = 'Baseball';
+    scenario.configs[0] = {
+        id: 'cfg-1',
+        baseType: 'Baseball',
+        columns: ['H'],
+        statDefinitions: [{ id: 'h', label: 'H', scope: 'player', visibility: 'public', type: 'base' }]
+    };
+    const configHash = buildDiamondStatConfigSnapshotHash({
+        teamId: scenario.team.id,
+        configId: scenario.configs[0].id,
+        config: scenario.configs[0]
+    });
+    scenario.games[0] = {
+        ...scenario.games[0],
+        teamId: 'team-1',
+        trackingEngine: 'diamond-v2',
+        diamondProjectionStatus: 'current',
+        diamondProjectionRevision: 8,
+        diamondProjectionComplete: true,
+        diamondScorebookInstanceId: instanceId,
+        diamondProjectionCheckpointHash: checkpointHash,
+        diamondStatConfigSnapshotHash: configHash,
+        diamondProjectionHash: projectionHash
+    };
+    scenario.aggregatedStatsByGame['older-game'].p1 = {
+        schemaVersion: 1,
+        trackingEngine: 'diamond-v2',
+        projectionSchemaVersion: 1,
+        playerId: 'p1',
+        sourceRevision: 8,
+        checkpointHash,
+        complete: true,
+        participated: true,
+        participationStatus: 'appeared',
+        participationSource: 'diamond-v2',
+        playerName: 'Ava Cole',
+        playerNumber: '3',
+        publicStatIds: ['h'],
+        stats: { h: 1 },
+        observedStats: {},
+        derivedStats: {},
+        observedDerivedStats: {},
+        statCoverage: { h: 'complete' },
+        statSources: { h: ['event-8'] },
+        sourcePlayIds: ['event-8'],
+        unavailableDerivedStats: [],
+        missingStatFamilies: [],
+        coverage: { batting: 'complete' },
+        teamId: 'team-1',
+        diamondGameId: 'older-game',
+        instanceId,
+        diamondScorebookInstanceId: instanceId,
+        projectionGeneration: instanceId,
+        statConfigSnapshotHash: configHash,
+        projectionHash
+    };
+    delete scenario.aggregatedStatsByGame['older-game'].p2;
+    scenario.diamondReplays = {
+        'older-game': {
+            instanceId,
+            game: { trackingEngine: 'diamond-v2' },
+            events: [{
+                id: 'event-8',
+                revision: 8,
+                inning: 6,
+                half: 'bottom',
+                description: 'Plate appearance: walk off single',
+                createdAt: '2026-03-01T21:08:00.000Z',
+                isCorrection: false,
+                isScoringPlay: true,
+                score: { home: 3, away: 2 }
+            }],
+            nextCursor: null,
+            complete: true,
+            truncated: false,
+            sourceRevision: 8,
+            projectionToken: `current:8:${projectionHash}`,
+            diamondStats: { status: 'complete' }
+        }
+    };
+    return scenario;
+}
+
+function createMixedDiamondConfigScenario() {
+    const scenario = createDiamondMixedScenario();
+    const instanceId = '00000000-0000-4000-8000-000000000002';
+    const checkpointHash = `sha256:${'d'.repeat(64)}`;
+    const projectionHash = `sha256:${'e'.repeat(64)}`;
+    const config = {
+        id: 'cfg-2',
+        baseType: 'Baseball',
+        columns: ['HR'],
+        statDefinitions: [
+            { id: 'h', label: 'H', scope: 'player', visibility: 'private', type: 'base' },
+            { id: 'hr', label: 'HR', scope: 'player', visibility: 'public', type: 'base' }
+        ]
+    };
+    const configHash = buildDiamondStatConfigSnapshotHash({
+        teamId: scenario.team.id,
+        configId: config.id,
+        config
+    });
+    scenario.configs.push(config);
+    scenario.games[1] = {
+        ...scenario.games[1],
+        teamId: 'team-1',
+        statTrackerConfigId: config.id,
+        trackingEngine: 'diamond-v2',
+        diamondProjectionStatus: 'current',
+        diamondProjectionRevision: 9,
+        diamondProjectionComplete: true,
+        diamondScorebookInstanceId: instanceId,
+        diamondProjectionCheckpointHash: checkpointHash,
+        diamondStatConfigSnapshotHash: configHash,
+        diamondProjectionHash: projectionHash
+    };
+    scenario.aggregatedStatsByGame['newer-game'] = {
+        p1: {
+            schemaVersion: 1,
+            trackingEngine: 'diamond-v2',
+            projectionSchemaVersion: 1,
+            playerId: 'p1',
+            sourceRevision: 9,
+            checkpointHash,
+            complete: true,
+            participated: true,
+            participationStatus: 'appeared',
+            participationSource: 'diamond-v2',
+            playerName: 'Ava Cole',
+            playerNumber: '3',
+            publicStatIds: ['hr'],
+            stats: { hr: 1 },
+            observedStats: {},
+            derivedStats: {},
+            observedDerivedStats: {},
+            statCoverage: { hr: 'complete' },
+            statSources: {},
+            sourcePlayIds: [],
+            unavailableDerivedStats: [],
+            missingStatFamilies: [],
+            coverage: { batting: 'complete' },
+            teamId: 'team-1',
+            diamondGameId: 'newer-game',
+            instanceId,
+            diamondScorebookInstanceId: instanceId,
+            projectionGeneration: instanceId,
+            statConfigSnapshotHash: configHash,
+            projectionHash
+        }
+    };
+    scenario.diamondReplays['newer-game'] = {
+        instanceId,
+        game: { trackingEngine: 'diamond-v2' },
+        events: [],
+        nextCursor: null,
+        complete: true,
+        truncated: false,
+        sourceRevision: 9,
+        projectionToken: `current:9:${projectionHash}`,
+        diamondStats: { status: 'complete' }
+    };
+    return scenario;
+}
+
+async function installMocks(page, scenario, {
+    playerShareStatus = 200,
+    fullAccess = true,
+    accessLevel = 'full',
+    deferPrivateProfile = false,
+    deferPlayerPhotoUpload = false,
+    deferPlayerProfileUpdate = false,
+    deferUnreadChatCounts = false
+} = {}) {
+    scenario.deferPrivateProfile = deferPrivateProfile;
+    scenario.deferPlayerPhotoUpload = deferPlayerPhotoUpload;
+    scenario.deferPlayerProfileUpdate = deferPlayerProfileUpdate;
+    scenario.deferUnreadChatCounts = deferUnreadChatCounts;
     await page.addInitScript(({ storeKey, value }) => {
         localStorage.setItem(storeKey, JSON.stringify(value));
+        window.__playerAlerts = [];
+        window.alert = (message) => window.__playerAlerts.push(String(message));
     }, { storeKey: STORE_KEY, value: scenario });
 
     await page.route('https://www.googletagmanager.com/**', (route) => route.fulfill({
@@ -148,6 +333,10 @@ async function installMocks(page, scenario, { playerShareStatus = 200 } = {}) {
 
         function loadStore() {
             return JSON.parse(localStorage.getItem(STORE_KEY) || '{}');
+        }
+
+        function saveStore(store) {
+            localStorage.setItem(STORE_KEY, JSON.stringify(store));
         }
 
         function clone(value) {
@@ -167,14 +356,27 @@ async function installMocks(page, scenario, { playerShareStatus = 200 } = {}) {
         }
 
         export async function getConfigs() {
-            return clone(loadStore().configs || []);
+            const store = loadStore();
+            store.configReadCount = (store.configReadCount || 0) + 1;
+            saveStore(store);
+            return clone(store.normalizedConfigs || store.configs || []);
         }
 
         export async function getRosterFieldDefinitions() {
             return [];
         }
 
-        export async function getUnreadChatCounts() {
+        export async function getUnreadChatCounts(uid) {
+            const store = loadStore();
+            store.unreadChatReadCount = (store.unreadChatReadCount || 0) + 1;
+            saveStore(store);
+            if (store.deferUnreadChatCounts && uid === 'coach-1' && store.unreadChatReadCount === 1) {
+                return new Promise((resolve, reject) => {
+                    window.__resolvePlayerUnreadChatCounts = (value) => resolve(clone(value));
+                    window.__rejectPlayerUnreadChatCounts = () => reject(new Error('Held unread count read failed.'));
+                    window.__playerUnreadChatCountsPending = true;
+                });
+            }
             return {};
         }
 
@@ -187,22 +389,60 @@ async function installMocks(page, scenario, { playerShareStatus = 200 } = {}) {
         }
 
         export async function getPlayerPrivateProfile() {
-            return null;
+            const store = loadStore();
+            store.privateProfileReadCount = (store.privateProfileReadCount || 0) + 1;
+            saveStore(store);
+            if (!store.deferPrivateProfile) return clone(store.privateProfile || null);
+            return new Promise((resolve) => {
+                window.__resolvePlayerPrivateProfile = (value) => resolve(clone(value));
+                window.__playerPrivateProfilePending = true;
+            });
         }
 
         export async function updatePlayerProfile() {
+            const store = loadStore();
+            store.publicProfileUpdateCount = (store.publicProfileUpdateCount || 0) + 1;
+            saveStore(store);
+            if (store.deferPlayerProfileUpdate) {
+                return new Promise((resolve, reject) => {
+                    window.__resolvePlayerProfileUpdate = () => resolve({});
+                    window.__rejectPlayerProfileUpdate = (code = 'permission-denied') => {
+                        const error = new Error('Held player profile update failed.');
+                        error.code = code;
+                        reject(error);
+                    };
+                    window.__playerProfileUpdatePending = true;
+                });
+            }
             return {};
         }
 
         export async function updatePlayerPrivateProfile() {
+            const store = loadStore();
+            store.privateProfileUpdateCount = (store.privateProfileUpdateCount || 0) + 1;
+            saveStore(store);
             return {};
         }
 
         export async function uploadPlayerPhoto() {
+            const store = loadStore();
+            store.playerPhotoUploadCount = (store.playerPhotoUploadCount || 0) + 1;
+            saveStore(store);
+            if (store.deferPlayerPhotoUpload) {
+                return new Promise((resolve) => {
+                    window.__resolvePlayerPhotoUpload = (value) => resolve(clone(value));
+                    window.__playerPhotoUploadPending = true;
+                });
+            }
             return { url: '', path: '' };
         }
 
-        export async function deleteLegacyImageUpload() {}
+        export async function deleteLegacyImageUpload(path) {
+            const store = loadStore();
+            store.playerPhotoDeleteCount = (store.playerPhotoDeleteCount || 0) + 1;
+            store.playerPhotoDeletePaths = [...(store.playerPhotoDeletePaths || []), String(path || '')];
+            saveStore(store);
+        }
     `;
 
     const firebaseModule = `
@@ -214,6 +454,10 @@ async function installMocks(page, scenario, { playerShareStatus = 200 } = {}) {
 
         function clone(value) {
             return JSON.parse(JSON.stringify(value));
+        }
+
+        function saveStore(store) {
+            localStorage.setItem(STORE_KEY, JSON.stringify(store));
         }
 
         function createSnapshot(entries) {
@@ -241,15 +485,37 @@ async function installMocks(page, scenario, { playerShareStatus = 200 } = {}) {
             const store = loadStore();
             const gameId = extractGameId(path);
 
-            if (path.endsWith('/aggregatedStats')) {
+            if (path.endsWith('/statTrackerConfigs')) {
+                store.configReadCount = (store.configReadCount || 0) + 1;
+                saveStore(store);
+                return createSnapshot((store.rawConfigs || store.configs || []).map((config) => [
+                    config.id,
+                    config,
+                    path + '/' + config.id
+                ]));
+            }
+
+            if (path.endsWith('/publicPlayerStats') && store.denyDiamondStatRead === true) {
+                store.diamondStatReadPaths = [...(store.diamondStatReadPaths || []), path];
+                saveStore(store);
+                throw Object.assign(new Error('Diamond stat generation is not readable.'), { code: 'permission-denied' });
+            }
+
+            if (path.endsWith('/aggregatedStats') || path.endsWith('/publicPlayerStats')) {
                 return createSnapshot(Object.entries(store.aggregatedStatsByGame?.[gameId] || {}).map(([id, data]) => [
                     id,
                     data,
-                    'teams/team-1/games/' + gameId + '/aggregatedStats/' + id
+                    path + '/' + id
                 ]));
             }
 
             if (path.endsWith('/events')) {
+                store.eventReadPaths = [...(store.eventReadPaths || []), path];
+                saveStore(store);
+                const game = (store.games || []).find((entry) => entry.id === gameId);
+                if (game?.trackingEngine === 'diamond-v2') {
+                    throw new Error('Diamond player reports must not read the legacy event collection.');
+                }
                 return createSnapshot((store.eventsByGame?.[gameId] || []).map((event, index) => [
                     'event-' + index,
                     event,
@@ -261,6 +527,19 @@ async function installMocks(page, scenario, { playerShareStatus = 200 } = {}) {
         }
 
         export const db = {};
+        export const functions = {};
+
+        export function httpsCallable(_functions, name) {
+            return async (payload) => {
+                const store = loadStore();
+                store.callableCalls = [...(store.callableCalls || []), { name, payload: clone(payload) }];
+                saveStore(store);
+                if (name === 'getPublicDiamondGame') {
+                    return { data: clone(store.diamondReplays?.[payload.gameId] || {}) };
+                }
+                return { data: { status: 'unavailable' } };
+            };
+        }
 
         export function collection(_db, path) {
             return { path };
@@ -317,24 +596,37 @@ async function installMocks(page, scenario, { playerShareStatus = 200 } = {}) {
     `;
 
     const authModule = `
+        let currentCallback = null;
+
         export function checkAuth(callback) {
+            currentCallback = callback;
+            window.__emitPlayerAuth = (user) => currentCallback(user);
             callback({ uid: 'coach-1', email: 'coach@example.com' });
         }
     `;
 
     const bannerModule = `
         export function renderTeamAdminBanner(container) {
+            const storeKey = ${JSON.stringify(STORE_KEY)};
+            const store = JSON.parse(localStorage.getItem(storeKey) || '{}');
+            store.teamBannerRenderCount = (store.teamBannerRenderCount || 0) + 1;
+            localStorage.setItem(storeKey, JSON.stringify(store));
             if (container) container.innerHTML = '<div data-testid="team-banner"></div>';
         }
 
-        export function getTeamAccessInfo() {
-            return { hasAccess: true, accessLevel: 'full', exitUrl: 'team.html#teamId=team-1' };
+        export function getTeamAccessInfo(user) {
+            const hasAccess = user?.uid === 'coach-1';
+            return {
+                hasAccess,
+                accessLevel: hasAccess ? ${JSON.stringify(accessLevel)} : 'none',
+                exitUrl: 'team.html#teamId=team-1'
+            };
         }
     `;
 
     const teamAccessModule = `
         export function hasFullTeamAccess() {
-            return true;
+            return ${JSON.stringify(fullAccess)};
         }
     `;
 
@@ -371,6 +663,127 @@ async function openRequestedPlayerGame(page, baseURL, scenario) {
     await expect(page.locator('#player-header')).toContainText('Ava Cole');
     await expect(page.locator('body')).not.toContainText(/Player not found|Error loading player details/i);
 }
+
+test('mixed Diamond player report uses sanitized replay while legacy games keep their event collection', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    const scenario = createDiamondMixedScenario();
+    await installMocks(page, scenario, { fullAccess: false, accessLevel: 'member' });
+
+    await page.goto(`${baseURL}/player.html#teamId=team-1&gameId=older-game&playerId=p1`, { waitUntil: 'domcontentloaded' });
+
+    await expect(page.locator('#player-header')).toContainText('Ava Cole');
+    await expect(page.locator('#player-events')).toContainText('Plate appearance: walk off single');
+    await expect(page.locator('#player-events')).toContainText('Bottom 6');
+    const store = await page.evaluate((storeKey) => JSON.parse(localStorage.getItem(storeKey) || '{}'), STORE_KEY);
+    expect(store.eventReadPaths).toEqual(['teams/team-1/games/newer-game/events']);
+    expect(store.callableCalls).toContainEqual({
+        name: 'getPublicDiamondGame',
+        payload: { teamId: 'team-1', gameId: 'older-game', cursor: null, limit: 200 }
+    });
+    expect(pageErrors).toEqual([]);
+});
+
+test('mixed Diamond configs keep each game bound to its own public stat IDs', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    const scenario = createMixedDiamondConfigScenario();
+    await installMocks(page, scenario, { fullAccess: false, accessLevel: 'member' });
+
+    await page.goto(`${baseURL}/player.html#teamId=team-1&gameId=older-game&playerId=p1`, { waitUntil: 'domcontentloaded' });
+
+    const olderGameCard = page.locator('#game-stats .group', { hasText: 'vs. Owls' });
+    const newerGameCard = page.locator('#game-stats .group', { hasText: 'vs. Rockets' });
+    await expect(olderGameCard.getByText('H', { exact: true }).locator('..')).toContainText('1');
+    await expect(olderGameCard.getByText('HR', { exact: true }).locator('..')).toContainText('—');
+    await expect(newerGameCard.getByText('H', { exact: true }).locator('..')).toContainText('—');
+    await expect(newerGameCard.getByText('HR', { exact: true }).locator('..')).toContainText('1');
+    await expect(page.locator('#season-stats')).toContainText('Observed');
+    const store = await page.evaluate((storeKey) => JSON.parse(localStorage.getItem(storeKey) || '{}'), STORE_KEY);
+    expect(store.eventReadPaths || []).toEqual([]);
+    expect(pageErrors).toEqual([]);
+});
+
+test('Diamond player season validates the exact raw config instead of a normalized view', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    const scenario = createDiamondMixedScenario();
+    scenario.rawConfigs = structuredClone(scenario.configs);
+    scenario.normalizedConfigs = scenario.configs.map((config) => ({
+        ...config,
+        statDefinitions: [
+            ...config.statDefinitions,
+            { id: 'ghost', label: 'Ghost', scope: 'player', visibility: 'public', type: 'base' }
+        ]
+    }));
+    await installMocks(page, scenario, { fullAccess: false, accessLevel: 'member' });
+
+    await page.goto(`${baseURL}/player.html#teamId=team-1&gameId=older-game&playerId=p1`, { waitUntil: 'domcontentloaded' });
+
+    await expect(page.locator('#player-header')).toContainText('Ava Cole');
+    await expect(page.locator('main')).not.toContainText('Diamond statistic definitions could not be verified.');
+    await expect.poll(async () => {
+        const store = await page.evaluate((storeKey) => JSON.parse(localStorage.getItem(storeKey) || '{}'), STORE_KEY);
+        return store.configReadCount;
+    }).toBe(1);
+    expect(pageErrors).toEqual([]);
+});
+
+test('Diamond player season retries an unresolved config and offers a working accessible retry', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    let pageLoads = 0;
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    page.on('request', (request) => {
+        if (new URL(request.url()).pathname.endsWith('/player.html')) pageLoads += 1;
+    });
+    const scenario = createDiamondMixedScenario();
+    scenario.configs = [];
+    await installMocks(page, scenario, { fullAccess: false, accessLevel: 'member' });
+
+    await page.goto(`${baseURL}/player.html#teamId=team-1&gameId=older-game&playerId=p1`, { waitUntil: 'domcontentloaded' });
+
+    const retry = page.getByRole('button', {
+        name: 'Retry loading Diamond statistic definitions'
+    });
+    await expect(retry).toBeVisible();
+    await expect(page.getByText('Diamond statistic definitions could not be verified.')).toBeVisible();
+    await expect.poll(async () => {
+        const store = await page.evaluate((storeKey) => JSON.parse(localStorage.getItem(storeKey) || '{}'), STORE_KEY);
+        return store.configReadCount;
+    }).toBe(2);
+    const box = await retry.boundingBox();
+    expect(box?.height).toBeGreaterThanOrEqual(44);
+
+    await retry.click();
+    await expect.poll(() => pageLoads).toBeGreaterThanOrEqual(2);
+    await expect(retry).toBeVisible();
+    expect(pageErrors).toEqual([]);
+});
+
+test('denied Diamond stat head stays retryable and never becomes an authoritative empty event history', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    const scenario = createDiamondMixedScenario();
+    scenario.denyDiamondStatRead = true;
+    scenario.eventsByGame['newer-game'] = [];
+    await installMocks(page, scenario, { fullAccess: false, accessLevel: 'member' });
+
+    await page.goto(`${baseURL}/player.html#teamId=team-1&gameId=older-game&playerId=p1`, { waitUntil: 'domcontentloaded' });
+
+    await expect(page.locator('#player-header')).toContainText('Ava Cole');
+    await expect(page.locator('#player-events')).toContainText('Diamond play-by-play could not be refreshed completely.');
+    await expect(page.locator('#player-events')).toContainText('Refresh this page to retry.');
+    await expect(page.locator('#player-events')).not.toContainText('No events recorded for this player');
+    const store = await page.evaluate((storeKey) => JSON.parse(localStorage.getItem(storeKey) || '{}'), STORE_KEY);
+    expect(store.diamondStatReadPaths).toEqual([
+        `teams/team-1/games/older-game/diamondStatGenerations/${scenario.games[0].diamondScorebookInstanceId}/publicPlayerStats`
+    ]);
+    expect(store.eventReadPaths).toEqual(['teams/team-1/games/newer-game/events']);
+    expect(store.callableCalls || []).not.toEqual(expect.arrayContaining([
+        expect.objectContaining({ name: 'getPublicDiamondGame' })
+    ]));
+    expect(pageErrors).toEqual([]);
+});
 
 test('game-context player page renders insights for the requested older game', async ({ page, baseURL }) => {
     await openRequestedPlayerGame(page, baseURL, createScenario({ requestedGameHasStats: true }));
@@ -440,4 +853,285 @@ test('public player page keeps sharing hidden when the server rejects the previe
     expect(pageErrors).toEqual([]);
     await expect(page.locator('#player-header')).toContainText('Ava Cole');
     await expect(page.locator('#player-share-action')).toBeHidden();
+});
+
+for (const authTransition of [
+    { label: 'UID replacement', user: { uid: 'coach-2', email: 'other@example.com' } },
+    { label: 'sign-out', user: null }
+]) {
+    test(`player ${authTransition.label} clears a pending private modal synchronously and rejects its delayed read`, async ({ page, baseURL }) => {
+        const pageErrors = [];
+        page.on('pageerror', (error) => pageErrors.push(error.message));
+        const scenario = createScenario();
+        await installMocks(page, scenario, { deferPrivateProfile: true });
+        await page.goto(`${baseURL}/player.html#teamId=team-1&playerId=p1`, { waitUntil: 'domcontentloaded' });
+
+        await expect(page.locator('#open-edit-modal')).toBeVisible();
+        await page.locator('#open-edit-modal').click();
+        await expect.poll(() => page.evaluate(() => window.__playerPrivateProfilePending === true)).toBe(true);
+        await page.locator('#edit-ec-name').fill('Old Emergency');
+        await page.locator('#edit-ec-phone').fill('555-0199');
+        await page.locator('#edit-medical-info').fill('Old Medical Secret');
+        await page.locator('#edit-photo-input').setInputFiles({
+            name: 'old-player.png',
+            mimeType: 'image/png',
+            buffer: Buffer.from('old-player-photo')
+        });
+        await expect(page.locator('#edit-photo-preview img')).toHaveCount(1);
+
+        const immediateState = await page.evaluate((nextUser) => {
+            for (const id of [
+                'team-nav-banner',
+                'player-header',
+                'season-overview',
+                'advanced-stats',
+                'game-stats',
+                'season-stats',
+                'player-events',
+                'content-clips',
+                'player-game-insights-body'
+            ]) {
+                const element = document.getElementById(id);
+                if (element) element.innerHTML = `old-private-${id}`;
+            }
+            document.getElementById('player-game-insights-section')?.classList.remove('hidden');
+            const exportButton = document.getElementById('diamond-player-stats-export-btn');
+            if (exportButton) {
+                exportButton.classList.remove('hidden');
+                exportButton.onclick = () => undefined;
+            }
+
+            window.__emitPlayerAuth(nextUser);
+            const ids = [
+                'team-nav-banner',
+                'player-header',
+                'season-overview',
+                'advanced-stats',
+                'game-stats',
+                'season-stats',
+                'player-events',
+                'content-clips',
+                'player-game-insights-body'
+            ];
+            return {
+                modalHidden: document.getElementById('edit-player-modal').classList.contains('hidden'),
+                emergencyName: document.getElementById('edit-ec-name').value,
+                emergencyPhone: document.getElementById('edit-ec-phone').value,
+                medicalInfo: document.getElementById('edit-medical-info').value,
+                fileCount: document.getElementById('edit-photo-input').files.length,
+                preview: document.getElementById('edit-photo-preview').innerHTML,
+                rosterFields: document.getElementById('edit-roster-profile-fields').innerHTML,
+                saveDisabled: document.getElementById('save-player-btn').disabled,
+                insightsHidden: document.getElementById('player-game-insights-section').classList.contains('hidden'),
+                exportHidden: exportButton.classList.contains('hidden'),
+                exportUnbound: exportButton.onclick === null,
+                editControlPresent: Boolean(document.getElementById('open-edit-modal')),
+                unclearedContainers: ids.filter((id) => document.getElementById(id)?.innerHTML)
+            };
+        }, authTransition.user);
+
+        expect(immediateState).toEqual({
+            modalHidden: true,
+            emergencyName: '',
+            emergencyPhone: '',
+            medicalInfo: '',
+            fileCount: 0,
+            preview: '',
+            rosterFields: '',
+            saveDisabled: true,
+            insightsHidden: true,
+            exportHidden: true,
+            exportUnbound: true,
+            editControlPresent: false,
+            unclearedContainers: []
+        });
+
+        await page.evaluate(() => window.__resolvePlayerPrivateProfile({
+            emergencyContact: { name: 'Delayed Old Emergency', phone: '555-0101' },
+            medicalInfo: 'Delayed Old Medical Secret'
+        }));
+        await page.waitForTimeout(50);
+        await expect(page.locator('#edit-player-modal')).toBeHidden();
+        await expect(page.locator('#edit-ec-name')).toHaveValue('');
+        await expect(page.locator('#edit-ec-phone')).toHaveValue('');
+        await expect(page.locator('#edit-medical-info')).toHaveValue('');
+        await expect(page.locator('#edit-photo-preview')).toBeEmpty();
+        await expect(page.locator('body')).not.toContainText('Delayed Old Medical Secret');
+        expect(pageErrors).toEqual([]);
+    });
+}
+
+for (const authTransition of [
+    { label: 'UID replacement', user: { uid: 'coach-2', email: 'other@example.com' } },
+    { label: 'sign-out', user: null }
+]) {
+    test(`player ${authTransition.label} keeps the cleared team banner empty after an old unread read rejects`, async ({ page, baseURL }) => {
+        const pageErrors = [];
+        page.on('pageerror', (error) => pageErrors.push(error.message));
+        const scenario = createScenario();
+        await installMocks(page, scenario, { deferUnreadChatCounts: true });
+        await page.goto(`${baseURL}/player.html#teamId=team-1&playerId=p1`, { waitUntil: 'domcontentloaded' });
+        await expect.poll(() => page.evaluate(() => window.__playerUnreadChatCountsPending === true)).toBe(true);
+
+        const bannerImmediatelyAfterAuth = await page.evaluate((nextUser) => {
+            document.getElementById('team-nav-banner').innerHTML = '<div>Old account banner</div>';
+            window.__emitPlayerAuth(nextUser);
+            return document.getElementById('team-nav-banner').innerHTML;
+        }, authTransition.user);
+        expect(bannerImmediatelyAfterAuth).toBe('');
+
+        await page.evaluate(() => window.__rejectPlayerUnreadChatCounts());
+        await page.waitForTimeout(50);
+        await expect(page.locator('#team-nav-banner')).toBeEmpty();
+        const store = await page.evaluate((storeKey) => JSON.parse(localStorage.getItem(storeKey) || '{}'), STORE_KEY);
+        expect(store.teamBannerRenderCount || 0).toBe(0);
+        expect(pageErrors).toEqual([]);
+    });
+}
+
+for (const authTransition of [
+    { label: 'UID replacement', user: { uid: 'coach-2', email: 'other@example.com' } },
+    { label: 'sign-out', user: null }
+]) {
+    test(`player ${authTransition.label} deletes an upload completed after its modal became stale`, async ({ page, baseURL }) => {
+        const pageErrors = [];
+        page.on('pageerror', (error) => pageErrors.push(error.message));
+        const scenario = createScenario();
+        await installMocks(page, scenario, { deferPlayerPhotoUpload: true });
+        await page.goto(`${baseURL}/player.html#teamId=team-1&playerId=p1`, { waitUntil: 'domcontentloaded' });
+
+        await expect(page.locator('#open-edit-modal')).toBeVisible();
+        await page.locator('#open-edit-modal').click();
+        await expect(page.locator('#save-player-btn')).toBeEnabled();
+        await page.locator('#edit-photo-input').setInputFiles({
+            name: 'held-player.png',
+            mimeType: 'image/png',
+            buffer: Buffer.from('held-player-photo')
+        });
+        await page.locator('#save-player-btn').click();
+        await expect.poll(() => page.evaluate(() => window.__playerPhotoUploadPending === true)).toBe(true);
+
+        await page.evaluate((nextUser) => window.__emitPlayerAuth(nextUser), authTransition.user);
+        await expect(page.locator('#edit-player-modal')).toBeHidden();
+        await page.evaluate(() => window.__resolvePlayerPhotoUpload({
+            url: 'https://images.example.test/held-player.png',
+            path: 'team-player-photos/team-1/p1/exact-held-upload.png'
+        }));
+
+        await expect.poll(async () => {
+            const store = await page.evaluate((storeKey) => JSON.parse(localStorage.getItem(storeKey) || '{}'), STORE_KEY);
+            return store.playerPhotoDeletePaths || [];
+        }).toEqual(['team-player-photos/team-1/p1/exact-held-upload.png']);
+        const store = await page.evaluate((storeKey) => JSON.parse(localStorage.getItem(storeKey) || '{}'), STORE_KEY);
+        expect(store.playerPhotoUploadCount).toBe(1);
+        expect(store.publicProfileUpdateCount || 0).toBe(0);
+        expect(store.privateProfileUpdateCount || 0).toBe(0);
+        expect(await page.evaluate(() => window.__playerAlerts)).toEqual([]);
+        expect(pageErrors).toEqual([]);
+    });
+
+    test(`player ${authTransition.label} deletes an uploaded candidate after a stale profile write definitively fails`, async ({ page, baseURL }) => {
+        const pageErrors = [];
+        page.on('pageerror', (error) => pageErrors.push(error.message));
+        const scenario = createScenario();
+        await installMocks(page, scenario, {
+            deferPlayerPhotoUpload: true,
+            deferPlayerProfileUpdate: true
+        });
+        await page.goto(`${baseURL}/player.html#teamId=team-1&playerId=p1`, { waitUntil: 'domcontentloaded' });
+
+        await expect(page.locator('#open-edit-modal')).toBeVisible();
+        await page.locator('#open-edit-modal').click();
+        await expect(page.locator('#save-player-btn')).toBeEnabled();
+        await page.locator('#edit-photo-input').setInputFiles({
+            name: 'held-profile-write.png',
+            mimeType: 'image/png',
+            buffer: Buffer.from('held-profile-write-photo')
+        });
+        await page.locator('#save-player-btn').click();
+        await expect.poll(() => page.evaluate(() => window.__playerPhotoUploadPending === true)).toBe(true);
+        await page.evaluate(() => window.__resolvePlayerPhotoUpload({
+            url: 'https://images.example.test/held-profile-write.png',
+            path: 'team-player-photos/team-1/p1/exact-held-profile-write.png'
+        }));
+        await expect.poll(() => page.evaluate(() => window.__playerProfileUpdatePending === true)).toBe(true);
+
+        await page.evaluate((nextUser) => window.__emitPlayerAuth(nextUser), authTransition.user);
+        await expect(page.locator('#edit-player-modal')).toBeHidden();
+        await page.evaluate(() => window.__rejectPlayerProfileUpdate('permission-denied'));
+
+        await expect.poll(async () => {
+            const store = await page.evaluate((storeKey) => JSON.parse(localStorage.getItem(storeKey) || '{}'), STORE_KEY);
+            return store.playerPhotoDeletePaths || [];
+        }).toEqual(['team-player-photos/team-1/p1/exact-held-profile-write.png']);
+        const store = await page.evaluate((storeKey) => JSON.parse(localStorage.getItem(storeKey) || '{}'), STORE_KEY);
+        expect(store.playerPhotoUploadCount).toBe(1);
+        expect(store.publicProfileUpdateCount).toBe(1);
+        expect(store.privateProfileUpdateCount || 0).toBe(0);
+        expect(await page.evaluate(() => window.__playerAlerts)).toEqual([]);
+        expect(pageErrors).toEqual([]);
+    });
+}
+
+test('player retains an uploaded candidate when a stale profile write has an ambiguous outcome', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    const scenario = createScenario();
+    await installMocks(page, scenario, {
+        deferPlayerPhotoUpload: true,
+        deferPlayerProfileUpdate: true
+    });
+    await page.goto(`${baseURL}/player.html#teamId=team-1&playerId=p1`, { waitUntil: 'domcontentloaded' });
+
+    await page.locator('#open-edit-modal').click();
+    await expect(page.locator('#save-player-btn')).toBeEnabled();
+    await page.locator('#edit-photo-input').setInputFiles({
+        name: 'ambiguous-profile-write.png',
+        mimeType: 'image/png',
+        buffer: Buffer.from('ambiguous-profile-write-photo')
+    });
+    await page.locator('#save-player-btn').click();
+    await expect.poll(() => page.evaluate(() => window.__playerPhotoUploadPending === true)).toBe(true);
+    await page.evaluate(() => window.__resolvePlayerPhotoUpload({
+        url: 'https://images.example.test/ambiguous-profile-write.png',
+        path: 'team-player-photos/team-1/p1/ambiguous-profile-write.png'
+    }));
+    await expect.poll(() => page.evaluate(() => window.__playerProfileUpdatePending === true)).toBe(true);
+
+    await page.evaluate(() => window.__emitPlayerAuth({ uid: 'coach-2', email: 'other@example.com' }));
+    await page.evaluate(() => window.__rejectPlayerProfileUpdate('unavailable'));
+    await page.waitForTimeout(50);
+
+    const store = await page.evaluate((storeKey) => JSON.parse(localStorage.getItem(storeKey) || '{}'), STORE_KEY);
+    expect(store.playerPhotoDeletePaths || []).toEqual([]);
+    expect(store.publicProfileUpdateCount).toBe(1);
+    expect(store.privateProfileUpdateCount || 0).toBe(0);
+    expect(await page.evaluate(() => window.__playerAlerts)).toEqual([]);
+    expect(pageErrors).toEqual([]);
+});
+
+test('Diamond player cards and CSV preserve each game-time public identity', async ({ page, baseURL }) => {
+    const scenario = createDiamondMixedScenario();
+    scenario.players[0].name = 'Current Ava';
+    scenario.players[0].number = '99';
+    scenario.aggregatedStatsByGame['older-game'].p1.playerName = 'Recorded Ava';
+    scenario.aggregatedStatsByGame['older-game'].p1.playerNumber = '7';
+    await installMocks(page, scenario, { fullAccess: false, accessLevel: 'member' });
+    await page.goto(`${baseURL}/player.html#teamId=team-1&playerId=p1`, { waitUntil: 'domcontentloaded' });
+
+    const recordedIdentity = page.locator('[data-recorded-player-identity]');
+    await expect(recordedIdentity).toHaveText('#7 Recorded Ava');
+    await expect(recordedIdentity.locator('a')).toHaveCount(0);
+
+    const downloadPromise = page.waitForEvent('download');
+    await page.locator('#diamond-player-stats-export-btn').click();
+    const download = await downloadPromise;
+    const downloadPath = await download.path();
+    expect(downloadPath).toBeTruthy();
+    const csv = readFileSync(downloadPath, 'utf8');
+    const gameRow = csv.split(/\r?\n/).find((line) => line.includes('game_player')) || '';
+    expect(gameRow).toContain('Recorded Ava');
+    expect(gameRow).toContain('"7"');
+    expect(gameRow).not.toContain('Current Ava');
+    expect(gameRow).not.toContain('"99"');
 });

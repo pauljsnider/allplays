@@ -19,6 +19,8 @@ export type ExportCalendarIcsResult = 'shared' | 'downloaded';
 
 export type ExportCertificatePngResult = 'shared' | 'downloaded';
 
+export type ExportCsvResult = 'shared' | 'downloaded';
+
 function isNativePluginAvailable(pluginName: string) {
   return Capacitor.isNativePlatform() && Boolean((Capacitor as any).isPluginAvailable?.(pluginName));
 }
@@ -212,6 +214,39 @@ export async function exportCertificatePngFile(filename: string, pngBlob: Blob):
   return 'downloaded';
 }
 
+export async function exportCsvFile(filename: string, csvText: string): Promise<ExportCsvResult> {
+  const safeFilename = sanitizeFileName(filename || 'all-plays-stats.csv', 'csv', 'all-plays-stats');
+  const contents = String(csvText || '');
+  if (!contents.trim()) throw new Error('CSV export is empty.');
+
+  if (isNativePluginAvailable('Filesystem') && isNativePluginAvailable('Share')) {
+    const canShare = await Share.canShare?.();
+    if (canShare && canShare.value === false) {
+      throw new Error('Sharing is not available on this device. Try exporting from the website instead.');
+    }
+
+    const writeResult = await Filesystem.writeFile({
+      path: `stats-exports/${Date.now()}-${safeFilename}`,
+      data: contents,
+      directory: Directory.Cache,
+      encoding: Encoding.UTF8,
+      recursive: true
+    });
+
+    await Share.share({
+      title: 'ALL PLAYS stats export',
+      text: 'Share this coverage-aware stats CSV with Files, Numbers, Excel, or another app.',
+      files: [writeResult.uri],
+      dialogTitle: 'Export stats'
+    });
+
+    return 'shared';
+  }
+
+  downloadBlobFile(safeFilename, contents, 'text/csv;charset=utf-8');
+  return 'downloaded';
+}
+
 function downloadBlobFile(filename: string, fileBody: Blob | string, contentType: string) {
   const blob = fileBody instanceof Blob ? fileBody : new Blob([fileBody], { type: contentType });
   const url = URL.createObjectURL(blob);
@@ -235,7 +270,10 @@ async function blobToBase64(blob: Blob): Promise<string> {
 }
 
 function sanitizeFileName(value: string, extension: string, fallbackBase: string) {
-  const clean = String(value || `${fallbackBase}.${extension}`).trim().replace(/[^a-z0-9._-]+/gi, '-').replace(/^-+|-+$/g, '');
+  const clean = String(value || `${fallbackBase}.${extension}`)
+    .trim()
+    .replace(/[^a-z0-9._-]+/gi, '-')
+    .replace(/^-+|-+$/g, '');
   const suffix = `.${extension.toLowerCase()}`;
   return clean.toLowerCase().endsWith(suffix) ? clean : `${clean || fallbackBase}.${extension}`;
 }

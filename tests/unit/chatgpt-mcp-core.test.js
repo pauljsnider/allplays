@@ -970,6 +970,70 @@ describe('chatgpt-mcp public calendar projection transport', () => {
 });
 
 describe('chatgpt-mcp core: getGameSummary', () => {
+    const instanceId = '00000000-0000-4000-8000-000000000001';
+    const checkpointHash = `sha256:${'a'.repeat(64)}`;
+    const statConfigSnapshotHash = `sha256:${'b'.repeat(64)}`;
+    const projectionHash = `sha256:${'c'.repeat(64)}`;
+    const diamondProjectionPath = `teams/team-a/games/game-1/diamondStatGenerations/${instanceId}/publicPlayerStats`;
+
+    function diamondGame(overrides = {}) {
+        return {
+            type: 'game',
+            date: new Date('2026-07-12T17:00:00Z'),
+            opponent: 'Hawks',
+            homeScore: 7,
+            awayScore: 4,
+            trackingEngine: 'diamond-v2',
+            diamondProjectionStatus: 'current',
+            diamondProjectionComplete: true,
+            diamondScorebookInstanceId: instanceId,
+            diamondProjectionRevision: 12,
+            diamondProjectionCheckpointHash: checkpointHash,
+            diamondStatConfigSnapshotHash: statConfigSnapshotHash,
+            diamondProjectionHash: projectionHash,
+            ...overrides
+        };
+    }
+
+    function diamondPlayerDocument(overrides = {}) {
+        return {
+            id: 'player-1',
+            data: {
+                schemaVersion: 1,
+                trackingEngine: 'diamond-v2',
+                projectionSchemaVersion: 1,
+                playerId: 'player-1',
+                playerName: 'Sam',
+                playerNumber: '12',
+                participated: true,
+                participationStatus: 'appeared',
+                participationSource: 'diamond-v2',
+                complete: true,
+                publicStatIds: ['ab', 'h'],
+                stats: { ab: 4 },
+                observedStats: { h: 2 },
+                derivedStats: {},
+                observedDerivedStats: {},
+                statCoverage: { ab: 'complete', h: 'partial' },
+                statSources: { ab: ['play-1'], h: ['play-2'] },
+                sourcePlayIds: ['play-1', 'play-2'],
+                unavailableDerivedStats: [],
+                missingStatFamilies: ['batting'],
+                coverage: { batting: 'partial' },
+                teamId: 'team-a',
+                diamondGameId: 'game-1',
+                instanceId,
+                diamondScorebookInstanceId: instanceId,
+                projectionGeneration: instanceId,
+                sourceRevision: 12,
+                checkpointHash,
+                statConfigSnapshotHash,
+                projectionHash,
+                ...overrides
+            }
+        };
+    }
+
     function summaryDb(extra = {}) {
         return parentDb({
             docs: {
@@ -1017,11 +1081,193 @@ describe('chatgpt-mcp core: getGameSummary', () => {
             .rejects.toMatchObject({ code: 'permission_denied' });
     });
 
-    it('degrades to empty stats when rules deny the aggregatedStats query', async () => {
+    it('preserves classic empty-stat degradation when rules deny the legacy aggregate query', async () => {
         const db = summaryDb({ queries: { 'teams/team-a/games/game-1/aggregatedStats': DENIED } });
         const context = await resolveUserContext(db, parentIdentity);
         const result = await getGameSummary(db, context, { teamId: 'team-a', gameId: 'game-1' });
         expect(result.playerStats).toEqual([]);
+    });
+
+    it('dispatches Diamond summaries to the exact bounded public generation and labels incomplete counters unknown', async () => {
+        const db = summaryDb({
+            docs: { 'teams/team-a/games/game-1': diamondGame() },
+            queries: {
+                'teams/team-a/games/game-1/aggregatedStats': () => {
+                    throw new Error('Diamond summaries must not query legacy aggregate stats.');
+                },
+                [diamondProjectionPath]: () => [diamondPlayerDocument()]
+            }
+        });
+        const context = await resolveUserContext(db, parentIdentity);
+
+        const result = await getGameSummary(db, context, { teamId: 'team-a', gameId: 'game-1' });
+
+        expect(result.playerStats).toEqual([{
+            playerId: 'player-1',
+            playerName: 'Sam',
+            playerNumber: '12',
+            participated: true,
+            stats: { ab: 4 },
+            completeStatKeys: ['ab'],
+            omittedOrIncompleteStatKeys: ['h']
+        }]);
+        expect(result.playerStatsEvidence).toMatchObject({
+            complete: true,
+            visibility: 'public',
+            source: 'diamond-public-projection',
+            absenceConfirmed: false,
+            truncated: false,
+            generationBound: true
+        });
+        expect(result.playerStatsEvidence).not.toHaveProperty('instanceId');
+        expect(result.playerStatsEvidence).not.toHaveProperty('checkpointHash');
+        expect(result.playerStatsEvidence).not.toHaveProperty('projectionHash');
+        expect(result.playerStatsEvidence.instructions).toMatch(/unknown, never zero/i);
+    });
+
+    it('accepts the projector canonical string innings-pitched value without widening other stat strings', async () => {
+        const productionPitcher = diamondPlayerDocument({
+            publicStatIds: ['innings_pitched', 'ip_outs'],
+            stats: { ip_outs: 5 },
+            observedStats: {},
+            derivedStats: { innings_pitched: '1.2' },
+            observedDerivedStats: {},
+            statCoverage: { innings_pitched: 'complete', ip_outs: 'complete' },
+            statSources: { innings_pitched: ['play-1'], ip_outs: ['play-1'] },
+            sourcePlayIds: ['play-1'],
+            missingStatFamilies: [],
+            coverage: { pitching: 'complete' }
+        });
+        const db = summaryDb({
+            docs: { 'teams/team-a/games/game-1': diamondGame() },
+            queries: { [diamondProjectionPath]: () => [productionPitcher] }
+        });
+        const context = await resolveUserContext(db, parentIdentity);
+
+        const result = await getGameSummary(db, context, { teamId: 'team-a', gameId: 'game-1' });
+
+        expect(result.playerStats[0]).toMatchObject({
+            stats: { innings_pitched: '1.2', ip_outs: 5 },
+            completeStatKeys: ['innings_pitched', 'ip_outs']
+        });
+    });
+
+    it.each([
+        ['an impossible innings remainder', { innings_pitched: '1.3' }],
+        ['a numeric string for a non-innings derived stat', { era: '3.50' }]
+    ])('rejects %s in a Diamond public stat document', async (_label, invalidDerivedStats) => {
+        const key = Object.keys(invalidDerivedStats)[0];
+        const invalidPlayer = diamondPlayerDocument({
+            publicStatIds: [key],
+            stats: {},
+            observedStats: {},
+            derivedStats: invalidDerivedStats,
+            observedDerivedStats: {},
+            statCoverage: { [key]: 'complete' },
+            statSources: { [key]: ['play-1'] },
+            sourcePlayIds: ['play-1'],
+            missingStatFamilies: [],
+            coverage: { pitching: 'complete' }
+        });
+        const db = summaryDb({
+            docs: { 'teams/team-a/games/game-1': diamondGame() },
+            queries: { [diamondProjectionPath]: () => [invalidPlayer] }
+        });
+        const context = await resolveUserContext(db, parentIdentity);
+
+        await expect(getGameSummary(db, context, { teamId: 'team-a', gameId: 'game-1' }))
+            .rejects.toMatchObject({ code: 'unavailable' });
+    });
+
+    it('retries and fails closed when the Diamond public generation query is denied', async () => {
+        let attempts = 0;
+        const db = summaryDb({
+            docs: { 'teams/team-a/games/game-1': diamondGame() },
+            queries: {
+                [diamondProjectionPath]: () => {
+                    attempts += 1;
+                    throw new DomainError('permission_denied', 'Denied.');
+                }
+            }
+        });
+        const context = await resolveUserContext(db, parentIdentity);
+
+        await expect(getGameSummary(db, context, { teamId: 'team-a', gameId: 'game-1' }))
+            .rejects.toMatchObject({
+                code: 'unavailable',
+                message: 'Complete public Diamond player stats are temporarily unavailable.'
+            });
+        expect(attempts).toBe(2);
+    });
+
+    it('confirms Diamond stat absence only after a complete exact-generation empty read', async () => {
+        const db = summaryDb({
+            docs: { 'teams/team-a/games/game-1': diamondGame() },
+            queries: { [diamondProjectionPath]: () => [] }
+        });
+        const context = await resolveUserContext(db, parentIdentity);
+
+        const result = await getGameSummary(db, context, { teamId: 'team-a', gameId: 'game-1' });
+
+        expect(result.playerStats).toEqual([]);
+        expect(result.playerStatsEvidence).toMatchObject({
+            complete: true,
+            absenceConfirmed: true,
+            truncated: false,
+            visibility: 'public'
+        });
+    });
+
+    it('rejects a stale Diamond player document instead of treating mismatched provenance as evidence', async () => {
+        const db = summaryDb({
+            docs: { 'teams/team-a/games/game-1': diamondGame() },
+            queries: {
+                [diamondProjectionPath]: () => [diamondPlayerDocument({ sourceRevision: 11 })]
+            }
+        });
+        const context = await resolveUserContext(db, parentIdentity);
+
+        await expect(getGameSummary(db, context, { teamId: 'team-a', gameId: 'game-1' }))
+            .rejects.toMatchObject({ code: 'unavailable' });
+    });
+
+    it('rejects malformed Diamond source evidence even when the generation fields match', async () => {
+        const db = summaryDb({
+            docs: { 'teams/team-a/games/game-1': diamondGame() },
+            queries: {
+                [diamondProjectionPath]: () => [diamondPlayerDocument({ sourcePlayIds: ['unbound-play'] })]
+            }
+        });
+        const context = await resolveUserContext(db, parentIdentity);
+
+        await expect(getGameSummary(db, context, { teamId: 'team-a', gameId: 'game-1' }))
+            .rejects.toMatchObject({ code: 'unavailable' });
+    });
+
+    it('rejects MAX+1 Diamond documents so a bounded query cannot hide an omitted player', async () => {
+        let attempts = 0;
+        const overflowingDocuments = Array.from({ length: 51 }, (_, index) => {
+            const playerId = `player-${String(index + 1).padStart(2, '0')}`;
+            const document = diamondPlayerDocument({ playerId });
+            return { ...document, id: playerId };
+        });
+        const db = summaryDb({
+            docs: { 'teams/team-a/games/game-1': diamondGame() },
+            queries: {
+                [diamondProjectionPath]: () => {
+                    attempts += 1;
+                    return overflowingDocuments;
+                }
+            }
+        });
+        const context = await resolveUserContext(db, parentIdentity);
+
+        await expect(getGameSummary(db, context, { teamId: 'team-a', gameId: 'game-1' }))
+            .rejects.toMatchObject({
+                code: 'unavailable',
+                message: 'Complete public Diamond player stats are temporarily unavailable.'
+            });
+        expect(attempts).toBe(2);
     });
 
     it('returns not_found for a missing game on an authorized team', async () => {

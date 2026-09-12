@@ -12,10 +12,10 @@
     "minimatch": "10.2.5"
   },
   "scripts": {
-    "dev": "vite --host 0.0.0.0",
-    "build": "tsc --noEmit && vite build",
-    "build:native": "tsc --noEmit && ALLPLAYS_CAPACITOR_BUILD=1 vite build",
-    "build:native-debug": "tsc --noEmit && ALLPLAYS_CAPACITOR_BUILD=1 ALLPLAYS_APP_CHECK_NATIVE_DEBUG=1 vite build --mode native-debug",
+    "dev": "VITE_ALLPLAYS_APP_BUILD=2 vite --host 0.0.0.0",
+    "build": "tsc --noEmit && VITE_ALLPLAYS_APP_BUILD=2 vite build",
+    "build:native": "tsc --noEmit && VITE_ALLPLAYS_APP_BUILD=2 ALLPLAYS_CAPACITOR_BUILD=1 vite build",
+    "build:native-debug": "tsc --noEmit && VITE_ALLPLAYS_APP_BUILD=2 ALLPLAYS_CAPACITOR_BUILD=1 ALLPLAYS_APP_CHECK_NATIVE_DEBUG=1 vite build --mode native-debug",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",

@@ -132,6 +132,19 @@ vi.mock('../lib/scheduleGameDayService', () => ({
   getLineupPublishStatus: vi.fn((gamePlan: any) => gamePlan?.isPublished ? 'Published lineup is current.' : 'Lineup draft is not published.'),
   hasLineupDraft: vi.fn((gamePlan: any) => Boolean(gamePlan?.lineups && Object.keys(gamePlan.lineups).length))
 }));
+const diamondScorebookMocks = vi.hoisted(() => ({
+  activateDiamondGame: vi.fn(),
+  getDiamondAccess: vi.fn()
+}));
+vi.mock('../lib/diamondScorebookService', () => diamondScorebookMocks);
+const diamondLiveEngagementMocks = vi.hoisted(() => ({
+  loadDiamondLiveInteractionWindow: vi.fn<(identity: {
+    teamId: string;
+    gameId: string;
+    instanceId: string;
+  }) => Promise<boolean>>(() => Promise.resolve(true)),
+}));
+vi.mock('../lib/diamondLiveEngagementService', () => diamondLiveEngagementMocks);
 const publicActionMocks = vi.hoisted(() => ({
   exportCalendarIcsFile: vi.fn(),
   openPublicUrl: vi.fn(),
@@ -171,6 +184,7 @@ vi.mock('../lib/liveGameAnnouncer', () => liveGameAnnouncerMocks);
 const liveGameChatServiceMocks = vi.hoisted(() => ({
   canUseLiveGameChat: vi.fn<(game: unknown, options?: unknown) => boolean>(() => true),
   getLiveGameChatNotice: vi.fn<(game: unknown, options?: unknown) => string | null>(() => null),
+  moderateLiveGameChatMessage: vi.fn<(teamId: string, gameId: string, messageId: string, input: unknown) => Promise<unknown>>(),
   sendLiveGameChatMessage: vi.fn<(teamId: string, gameId: string, input: unknown) => Promise<unknown>>(),
   subscribeToLiveGameChat: vi.fn<(
     teamId: string,
@@ -253,6 +267,7 @@ import {
   setScheduleGameDayServiceImporterForTest,
   shouldAutosaveGeneratedLineupDraft,
   shouldAutosaveLineupDraft,
+  shouldCheckDiamondActivation,
   shouldShowLiveScoreControls,
   shouldPersistLineupDraft
 } from './schedule/ScheduleGameHubSection';
@@ -1653,6 +1668,17 @@ describe('ScheduleEventDetail nav visibility', () => {
 });
 
 describe('ScheduleEventDetail live score control visibility', () => {
+  beforeEach(() => {
+    delete window.__ALLPLAYS_CONFIG__;
+    diamondScorebookMocks.activateDiamondGame.mockReset();
+    diamondScorebookMocks.getDiamondAccess.mockReset();
+  });
+
+  afterEach(() => {
+    cleanup();
+    delete window.__ALLPLAYS_CONFIG__;
+  });
+
   it('only enables score controls for authenticated non-cancelled DB games with score permission', () => {
     const scoreCapableGame = buildEvent({ canUpdateScore: true });
 
@@ -1662,6 +1688,161 @@ describe('ScheduleEventDetail live score control visibility', () => {
     expect(shouldShowLiveScoreControls({ ...scoreCapableGame, isCancelled: true }, auth.user)).toBe(false);
     expect(shouldShowLiveScoreControls({ ...scoreCapableGame, type: 'practice' }, auth.user)).toBe(false);
     expect(shouldShowLiveScoreControls(scoreCapableGame, null)).toBe(false);
+  });
+
+  it('checks Diamond activation only when its UI launch signal is explicitly enabled', () => {
+    const baseball = buildEvent({ sport: 'Baseball', canUpdateScore: true, trackingEngine: null, statTrackerConfigId: 'baseball-default' });
+    const fastpitch = buildEvent({ sport: 'Fastpitch', canUpdateScore: true, trackingEngine: null, statTrackerConfigId: 'fastpitch-default' });
+
+    expect(shouldCheckDiamondActivation(baseball, true)).toBe(false);
+    expect(shouldCheckDiamondActivation(baseball, true, false)).toBe(false);
+    expect(shouldCheckDiamondActivation(baseball, true, true)).toBe(true);
+    expect(shouldCheckDiamondActivation(fastpitch, true, true)).toBe(true);
+    expect(shouldCheckDiamondActivation({ ...baseball, sport: 'Softball' }, true, true)).toBe(true);
+    expect(shouldCheckDiamondActivation({ ...baseball, trackingEngine: 'diamond-v2' }, true, true)).toBe(false);
+    expect(shouldCheckDiamondActivation({ ...baseball, trackingEngine: 'future-engine' }, true, true)).toBe(false);
+    expect(shouldCheckDiamondActivation({ ...baseball, isDbGame: false }, true, true)).toBe(false);
+    expect(shouldCheckDiamondActivation({ ...baseball, sport: 'Soccer' }, true, true)).toBe(false);
+    expect(shouldCheckDiamondActivation({ ...baseball, statTrackerConfigId: null }, true, true)).toBe(false);
+    expect(shouldCheckDiamondActivation(baseball, false, true)).toBe(false);
+  });
+
+  it('keeps the Diamond activation card absent with missing or false runtime config', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        sport: 'Baseball',
+        canUpdateScore: true,
+        trackingEngine: null,
+        statTrackerConfigId: 'baseball-default'
+      })],
+      children: []
+    });
+    scheduleHubMocks.buildGameHubDestinations.mockReturnValue([]);
+
+    renderScheduleEventDetailWithLocation('/schedule/team-1/game-1?childId=player-1&section=game');
+    await screen.findByRole('heading', { name: 'Game hub' });
+
+    expect(screen.queryByTestId('diamond-activation-card')).toBeNull();
+    expect(screen.queryByText(/Diamond/i)).toBeNull();
+    expect(diamondScorebookMocks.getDiamondAccess).not.toHaveBeenCalled();
+
+    cleanup();
+    window.__ALLPLAYS_CONFIG__ = { diamondScorebookUiEnabled: false } as any;
+    renderScheduleEventDetailWithLocation('/schedule/team-1/game-1?childId=player-1&section=game');
+    await screen.findByRole('heading', { name: 'Game hub' });
+
+    expect(screen.queryByTestId('diamond-activation-card')).toBeNull();
+    expect(screen.queryByText(/Diamond/i)).toBeNull();
+    expect(diamondScorebookMocks.getDiamondAccess).not.toHaveBeenCalled();
+  });
+
+  it('shows Diamond activation only after both the UI key and server eligibility allow it', async () => {
+    window.__ALLPLAYS_CONFIG__ = { diamondScorebookUiEnabled: true } as any;
+    diamondScorebookMocks.getDiamondAccess.mockResolvedValue({
+      eligible: true,
+      canManage: true,
+      teamOptIn: true,
+      policyMode: 'pilot'
+    });
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        sport: 'Baseball',
+        canUpdateScore: true,
+        trackingEngine: null,
+        statTrackerConfigId: 'baseball-default'
+      })],
+      children: []
+    });
+    scheduleHubMocks.buildGameHubDestinations.mockReturnValue([]);
+
+    renderScheduleEventDetailWithLocation('/schedule/team-1/game-1?childId=player-1&section=game');
+
+    expect(await screen.findByTestId('diamond-activation-card')).toBeTruthy();
+    expect(diamondScorebookMocks.getDiamondAccess).toHaveBeenCalledWith('team-1', { gameId: 'game-1' });
+  });
+
+  it('keeps Diamond activation absent when the UI key is true but server eligibility denies it', async () => {
+    window.__ALLPLAYS_CONFIG__ = { diamondScorebookUiEnabled: true } as any;
+    diamondScorebookMocks.getDiamondAccess.mockResolvedValue({
+      eligible: false,
+      canManage: true,
+      teamOptIn: true,
+      policyMode: 'disabled'
+    });
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        sport: 'Baseball',
+        canUpdateScore: true,
+        trackingEngine: null,
+        statTrackerConfigId: 'baseball-default'
+      })],
+      children: []
+    });
+    scheduleHubMocks.buildGameHubDestinations.mockReturnValue([]);
+
+    renderScheduleEventDetailWithLocation('/schedule/team-1/game-1?childId=player-1&section=game');
+
+    await waitFor(() => {
+      expect(diamondScorebookMocks.getDiamondAccess).toHaveBeenCalledWith('team-1', { gameId: 'game-1' });
+    });
+    expect(screen.queryByTestId('diamond-activation-card')).toBeNull();
+    expect(screen.getByTestId('standard-tracker-launch')).toBeTruthy();
+  });
+
+  it('routes a completed Diamond-owned game away from activation and legacy scoring controls', async () => {
+    window.__ALLPLAYS_CONFIG__ = { diamondScorebookUiEnabled: true } as any;
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        sport: 'Baseball',
+        canUpdateScore: true,
+        status: 'completed',
+        liveStatus: 'completed',
+        trackingEngine: 'diamond-v2',
+        diamondScorebookInstanceId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        diamondRevision: 7,
+        statTrackerConfigId: 'baseball-default'
+      })],
+      children: []
+    });
+    scheduleHubMocks.buildGameHubDestinations.mockReturnValue([]);
+
+    renderScheduleEventDetailWithLocation('/schedule/team-1/game-1?childId=player-1&section=game');
+
+    expect(await screen.findByTestId('diamond-scorebook-launch')).toHaveAttribute(
+      'href',
+      '/schedule/team-1/game-1/diamond-v2'
+    );
+    expect(screen.queryByTestId('diamond-activation-card')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Start Diamond scorebook' })).toBeNull();
+    expect(screen.queryByTestId('standard-tracker-launch')).toBeNull();
+    expect(screen.queryByTestId('live-score-editor')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Home score up' })).toBeNull();
+    expect(diamondScorebookMocks.getDiamondAccess).not.toHaveBeenCalled();
+  });
+
+  it('keeps recovery entry visible for a game already owned by Diamond while the UI key is off', async () => {
+    window.__ALLPLAYS_CONFIG__ = { diamondScorebookUiEnabled: false } as any;
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        sport: 'Baseball',
+        canUpdateScore: true,
+        trackingEngine: 'diamond-v2',
+        diamondScorebookInstanceId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        diamondRevision: 7,
+        statTrackerConfigId: 'baseball-default'
+      })],
+      children: []
+    });
+    scheduleHubMocks.buildGameHubDestinations.mockReturnValue([]);
+
+    renderScheduleEventDetailWithLocation('/schedule/team-1/game-1?childId=player-1&section=game');
+
+    expect(await screen.findByTestId('diamond-scorebook-launch')).toHaveAttribute(
+      'href',
+      '/schedule/team-1/game-1/diamond-v2'
+    );
+    expect(screen.queryByTestId('diamond-activation-card')).toBeNull();
+    expect(diamondScorebookMocks.getDiamondAccess).not.toHaveBeenCalled();
   });
 });
 
@@ -1888,6 +2069,7 @@ describe('ScheduleEventDetail assignments', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    diamondLiveEngagementMocks.loadDiamondLiveInteractionWindow.mockResolvedValue(true);
     liveGameReactionsServiceMocks.canUseLiveGameReactions.mockReturnValue(true);
     liveGameReactionsServiceMocks.getLiveGameReactionNotice.mockReturnValue(null);
     liveGameReactionsServiceMocks.subscribeToLiveGameReactions.mockReturnValue(vi.fn());
@@ -2156,6 +2338,381 @@ describe('ScheduleEventDetail assignments', () => {
 
     await waitFor(() => {
       expect(liveGameReactionsServiceMocks.sendLiveGameReaction).toHaveBeenCalledWith('team-1', 'game-1', expect.objectContaining({ type: 'heart', user: auth.user }));
+    });
+  });
+
+  it('uses one server-authoritative Diamond window for chat and reactions despite a device-day mismatch', async () => {
+    const instanceId = '00000000-0000-4000-8000-000000000001';
+    liveGameChatServiceMocks.canUseLiveGameChat.mockReturnValue(false);
+    liveGameChatServiceMocks.getLiveGameChatNotice.mockReturnValue('Device-local chat gate is closed.');
+    liveGameReactionsServiceMocks.canUseLiveGameReactions.mockReturnValue(false);
+    liveGameReactionsServiceMocks.getLiveGameReactionNotice.mockReturnValue('Device-local reaction gate is closed.');
+    liveGameChatServiceMocks.sendLiveGameChatMessage.mockResolvedValue({ id: 'diamond-chat' });
+    liveGameReactionsServiceMocks.sendLiveGameReaction.mockResolvedValue({ id: 'diamond-reaction' });
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        date: new Date('2026-11-01T07:30:00.000Z'),
+        liveStatus: 'live',
+        status: 'live',
+        trackingEngine: 'diamond-v2',
+        diamondScorebookInstanceId: instanceId,
+      })],
+      children: [],
+    });
+
+    renderScheduleEventDetail();
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+    fireEvent.click(await screen.findByRole('button', { name: 'Live chat' }));
+
+    const chatInput = await screen.findByLabelText('Live chat message') as HTMLTextAreaElement;
+    await waitFor(() => expect(chatInput.disabled).toBe(false));
+    expect(diamondLiveEngagementMocks.loadDiamondLiveInteractionWindow).toHaveBeenCalledWith({
+      teamId: 'team-1',
+      gameId: 'game-1',
+      instanceId,
+    });
+    expect(liveGameChatServiceMocks.canUseLiveGameChat).not.toHaveBeenCalled();
+    expect(liveGameReactionsServiceMocks.canUseLiveGameReactions).not.toHaveBeenCalled();
+
+    diamondLiveEngagementMocks.loadDiamondLiveInteractionWindow.mockClear();
+    fireEvent.change(chatInput, { target: { value: 'Server-window hello' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(diamondLiveEngagementMocks.loadDiamondLiveInteractionWindow).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(liveGameChatServiceMocks.sendLiveGameChatMessage).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Live reactions' }));
+    const heartButton = await screen.findByRole('button', { name: 'Heart' }) as HTMLButtonElement;
+    await waitFor(() => expect(heartButton.disabled).toBe(false));
+    diamondLiveEngagementMocks.loadDiamondLiveInteractionWindow.mockClear();
+    fireEvent.click(heartButton);
+    await waitFor(() => expect(diamondLiveEngagementMocks.loadDiamondLiveInteractionWindow).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(liveGameReactionsServiceMocks.sendLiveGameReaction).toHaveBeenCalledTimes(1));
+  });
+
+  it('keeps both Diamond composers closed when the server window is false even if local gates are open', async () => {
+    const instanceId = '00000000-0000-4000-8000-000000000001';
+    diamondLiveEngagementMocks.loadDiamondLiveInteractionWindow.mockResolvedValue(false);
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        liveStatus: 'live',
+        status: 'live',
+        trackingEngine: 'diamond-v2',
+        diamondScorebookInstanceId: instanceId,
+      })],
+      children: [],
+    });
+
+    renderScheduleEventDetail();
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+    fireEvent.click(await screen.findByRole('button', { name: 'Live chat' }));
+    const chatInput = await screen.findByLabelText('Live chat message') as HTMLTextAreaElement;
+    await screen.findByText('Live chat is closed outside the server-verified game window.');
+    expect(chatInput.disabled).toBe(true);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Live reactions' }));
+    const heartButton = await screen.findByRole('button', { name: 'Heart' }) as HTMLButtonElement;
+    expect(heartButton.disabled).toBe(true);
+    expect(liveGameChatServiceMocks.canUseLiveGameChat).not.toHaveBeenCalled();
+    expect(liveGameReactionsServiceMocks.canUseLiveGameReactions).not.toHaveBeenCalled();
+  });
+
+  it('revalidates immediately before each Diamond send and closes both tools on a stale true', async () => {
+    const instanceId = '00000000-0000-4000-8000-000000000001';
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        liveStatus: 'live',
+        status: 'live',
+        trackingEngine: 'diamond-v2',
+        diamondScorebookInstanceId: instanceId,
+      })],
+      children: [],
+    });
+
+    renderScheduleEventDetail();
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+    fireEvent.click(await screen.findByRole('button', { name: 'Live chat' }));
+    const chatInput = await screen.findByLabelText('Live chat message') as HTMLTextAreaElement;
+    await waitFor(() => expect(chatInput.disabled).toBe(false));
+
+    diamondLiveEngagementMocks.loadDiamondLiveInteractionWindow.mockResolvedValueOnce(false);
+    fireEvent.change(chatInput, { target: { value: 'Do not send' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Live chat is locked until the server confirms the game window.');
+    expect(liveGameChatServiceMocks.sendLiveGameChatMessage).not.toHaveBeenCalled();
+    expect(chatInput.disabled).toBe(true);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Live chat' }));
+    diamondLiveEngagementMocks.loadDiamondLiveInteractionWindow.mockResolvedValueOnce(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Live reactions' }));
+    const heartButton = await screen.findByRole('button', { name: 'Heart' }) as HTMLButtonElement;
+    await waitFor(() => expect(heartButton.disabled).toBe(false));
+    diamondLiveEngagementMocks.loadDiamondLiveInteractionWindow.mockResolvedValueOnce(false);
+    fireEvent.click(heartButton);
+    await screen.findByText('Live reactions are locked until the server confirms the game window.');
+    expect(liveGameReactionsServiceMocks.sendLiveGameReaction).not.toHaveBeenCalled();
+    expect(heartButton.disabled).toBe(true);
+  });
+
+  it('ignores an older in-flight Diamond window result after a newer closed result', async () => {
+    const instanceId = '00000000-0000-4000-8000-000000000001';
+    let resolveOlderWindow!: (isOpen: boolean) => void;
+    diamondLiveEngagementMocks.loadDiamondLiveInteractionWindow
+      .mockReturnValueOnce(new Promise<boolean>((resolve) => {
+        resolveOlderWindow = resolve;
+      }))
+      .mockResolvedValueOnce(false);
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        liveStatus: 'live',
+        status: 'live',
+        trackingEngine: 'diamond-v2',
+        diamondScorebookInstanceId: instanceId,
+      })],
+      children: [],
+    });
+
+    renderScheduleEventDetail();
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+    const chatPanelButton = await screen.findByRole('button', { name: 'Live chat' });
+    fireEvent.click(chatPanelButton);
+    await waitFor(() => expect(diamondLiveEngagementMocks.loadDiamondLiveInteractionWindow).toHaveBeenCalledTimes(1));
+    fireEvent.click(chatPanelButton);
+    fireEvent.click(chatPanelButton);
+    await waitFor(() => expect(diamondLiveEngagementMocks.loadDiamondLiveInteractionWindow).toHaveBeenCalledTimes(2));
+    const chatInput = await screen.findByLabelText('Live chat message') as HTMLTextAreaElement;
+    await screen.findByText('Live chat is closed outside the server-verified game window.');
+    expect(chatInput.disabled).toBe(true);
+
+    await act(async () => {
+      resolveOlderWindow(true);
+      await Promise.resolve();
+    });
+    expect(chatInput.disabled).toBe(true);
+  });
+
+  it('invalidates a stale-open gate and pending Diamond send when the signed-in user changes', async () => {
+    const instanceId = '00000000-0000-4000-8000-000000000001';
+    const event = buildEvent({
+      liveStatus: 'live',
+      status: 'live',
+      trackingEngine: 'diamond-v2',
+      diamondScorebookInstanceId: instanceId,
+    });
+    const secondAuth = {
+      ...auth,
+      user: { ...auth.user, uid: 'coach-2', email: 'coach-2@example.com' },
+    } as AuthState;
+    const renderHub = (nextAuth: AuthState) => (
+      <MemoryRouter>
+        <scheduleGameHubSectionModule.ScheduleGameHubSection
+          auth={nextAuth}
+          event={event}
+          childEvents={[event]}
+          requestedPanel="chat"
+          onPanelChange={vi.fn()}
+          onScoreUpdated={vi.fn()}
+          onLiveClockUpdated={vi.fn()}
+          onWrapupCompleted={vi.fn()}
+          onStatsheetImported={vi.fn()}
+          onGameCancelled={vi.fn()}
+          onPracticeOccurrenceCancelled={vi.fn()}
+          onGamePlanPublished={vi.fn()}
+          onReplayVideoUpdated={vi.fn()}
+          onEventRefresh={vi.fn()}
+        />
+      </MemoryRouter>
+    );
+
+    const rendered = render(renderHub(auth));
+    const chatInput = await screen.findByLabelText('Live chat message') as HTMLTextAreaElement;
+    await waitFor(() => expect(chatInput.disabled).toBe(false));
+    let resolveFirstUser!: (isOpen: boolean) => void;
+    let resolveSecondUser!: (isOpen: boolean) => void;
+    diamondLiveEngagementMocks.loadDiamondLiveInteractionWindow.mockClear();
+    diamondLiveEngagementMocks.loadDiamondLiveInteractionWindow
+      .mockReturnValueOnce(new Promise<boolean>((resolve) => {
+        resolveFirstUser = resolve;
+      }))
+      .mockReturnValueOnce(new Promise<boolean>((resolve) => {
+        resolveSecondUser = resolve;
+      }));
+
+    fireEvent.change(chatInput, { target: { value: 'Do not cross accounts' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(diamondLiveEngagementMocks.loadDiamondLiveInteractionWindow).toHaveBeenCalledTimes(1));
+    rendered.rerender(renderHub(secondAuth));
+    await waitFor(() => expect(diamondLiveEngagementMocks.loadDiamondLiveInteractionWindow).toHaveBeenCalledTimes(2));
+    expect(chatInput.disabled).toBe(true);
+
+    await act(async () => {
+      resolveFirstUser(true);
+      await Promise.resolve();
+    });
+    expect(liveGameChatServiceMocks.sendLiveGameChatMessage).not.toHaveBeenCalled();
+    expect(chatInput.disabled).toBe(true);
+
+    await act(async () => {
+      resolveSecondUser(true);
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(chatInput.disabled).toBe(false));
+    expect(liveGameChatServiceMocks.sendLiveGameChatMessage).not.toHaveBeenCalled();
+  });
+
+  it('fails Diamond chat and reactions closed on an unreadable window and exposes a shared retry', async () => {
+    const instanceId = '00000000-0000-4000-8000-000000000001';
+    diamondLiveEngagementMocks.loadDiamondLiveInteractionWindow
+      .mockRejectedValueOnce(new Error('unavailable'))
+      .mockResolvedValue(true);
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        liveStatus: 'live',
+        status: 'live',
+        trackingEngine: 'diamond-v2',
+        diamondScorebookInstanceId: instanceId,
+      })],
+      children: [],
+    });
+
+    renderScheduleEventDetail();
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+    fireEvent.click(await screen.findByRole('button', { name: 'Live chat' }));
+
+    await screen.findByText('Unable to verify the server game window. Live chat stays locked until you retry.');
+    const chatInput = screen.getByLabelText('Live chat message') as HTMLTextAreaElement;
+    expect(chatInput.disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Retry live interaction check' }));
+    await waitFor(() => expect(chatInput.disabled).toBe(false));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Live reactions' }));
+    const heartButton = await screen.findByRole('button', { name: 'Heart' }) as HTMLButtonElement;
+    await waitFor(() => expect(heartButton.disabled).toBe(false));
+  });
+
+  it('locally vetoes a stale open Diamond window after cancellation', async () => {
+    const instanceId = '00000000-0000-4000-8000-000000000001';
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        isCancelled: true,
+        liveStatus: 'live',
+        status: 'cancelled',
+        trackingEngine: 'diamond-v2',
+        diamondScorebookInstanceId: instanceId,
+      })],
+      children: [],
+    });
+
+    renderScheduleEventDetail();
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+    fireEvent.click(await screen.findByRole('button', { name: 'Live chat' }));
+    expect((await screen.findByLabelText('Live chat message') as HTMLTextAreaElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Live reactions' }));
+    expect((await screen.findByRole('button', { name: 'Heart' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(diamondLiveEngagementMocks.loadDiamondLiveInteractionWindow).not.toHaveBeenCalled();
+  });
+
+  it('routes Diamond game-hub chat and reactions through exact-generation service contexts', async () => {
+    const instanceId = '00000000-0000-4000-8000-000000000001';
+    const messageId = `diamond-chat-${'a'.repeat(64)}`;
+    let diamondChatCallback: ((messages: Array<{ id: string; text?: string | null; senderName?: string | null }>) => void) | null = null;
+    liveGameChatServiceMocks.subscribeToLiveGameChat.mockImplementation((_teamId, _gameId, callback) => {
+      diamondChatCallback = callback;
+      return vi.fn();
+    });
+    liveGameChatServiceMocks.sendLiveGameChatMessage.mockResolvedValue({ id: 'diamond-chat' });
+    liveGameChatServiceMocks.moderateLiveGameChatMessage.mockResolvedValue({ removed: true });
+    liveGameReactionsServiceMocks.sendLiveGameReaction.mockResolvedValue({ id: 'diamond-reaction' });
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        liveStatus: 'live',
+        status: 'live',
+        trackingEngine: 'diamond-v2',
+        diamondScorebookInstanceId: instanceId,
+        isTeamAdmin: true
+      })],
+      children: []
+    });
+
+    renderScheduleEventDetail();
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0);
+    });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Live chat' })).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Live chat' }));
+
+    await waitFor(() => {
+      expect(liveGameChatServiceMocks.subscribeToLiveGameChat).toHaveBeenCalledWith(
+        'team-1',
+        'game-1',
+        expect.any(Function),
+        expect.any(Function),
+        { diamond: { trackingEngine: 'diamond-v2', instanceId } }
+      );
+    });
+    fireEvent.change(screen.getByLabelText('Live chat message'), {
+      target: { value: 'Diamond hello' }
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => {
+      expect(liveGameChatServiceMocks.sendLiveGameChatMessage).toHaveBeenCalledWith(
+        'team-1',
+        'game-1',
+        expect.objectContaining({
+          text: 'Diamond hello',
+          user: auth.user,
+          diamond: { trackingEngine: 'diamond-v2', instanceId }
+        })
+      );
+    });
+    act(() => {
+      diamondChatCallback?.([{ id: messageId, text: 'Remove me', senderName: 'Fan' }]);
+    });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove live chat message from Fan' }));
+    await waitFor(() => {
+      expect(liveGameChatServiceMocks.moderateLiveGameChatMessage).toHaveBeenCalledWith(
+        'team-1',
+        'game-1',
+        messageId,
+        {
+          user: auth.user,
+          diamond: { trackingEngine: 'diamond-v2', instanceId }
+        }
+      );
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Live reactions' })).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Live reactions' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Heart' })).toBeTruthy());
+    expect(liveGameReactionsServiceMocks.subscribeToLiveGameReactions).toHaveBeenCalledWith(
+      'team-1',
+      'game-1',
+      expect.any(Function),
+      expect.any(Function),
+      { diamond: { trackingEngine: 'diamond-v2', instanceId } }
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Heart' }));
+    await waitFor(() => {
+      expect(liveGameReactionsServiceMocks.sendLiveGameReaction).toHaveBeenCalledWith(
+        'team-1',
+        'game-1',
+        expect.objectContaining({
+          type: 'heart',
+          user: auth.user,
+          diamond: { trackingEngine: 'diamond-v2', instanceId }
+        })
+      );
     });
   });
 
@@ -2460,6 +3017,8 @@ describe('ScheduleEventDetail assignments', () => {
     renderScheduleEventDetailWithRouteControls();
 
     fireEvent.click(await screen.findByRole('button', { name: 'Edit game' }));
+    expect(screen.getByLabelText('Home / away')).not.toBeDisabled();
+    expect(screen.getByLabelText('Tracker config')).not.toBeDisabled();
     fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Aux Gym' } });
 
     const liveScoreEditor = await screen.findByTestId('live-score-editor');
@@ -2479,6 +3038,40 @@ describe('ScheduleEventDetail assignments', () => {
         'game-1',
         expect.objectContaining({ location: 'Aux Gym' }),
         auth.user
+      );
+    });
+  });
+
+  it('locks Diamond schedule identity fields while saving unrelated edits', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        isTeamAdmin: true,
+        trackingEngine: 'diamond-v2',
+        isHome: true,
+        statTrackerConfigId: 'cfg-basketball'
+      })],
+      children: []
+    });
+    scheduleHubMocks.buildGameHubDestinations.mockReturnValue([]);
+
+    renderScheduleEventDetailWithRouteControls();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit game' }));
+
+    expect(screen.getByLabelText('Home / away')).toBeDisabled();
+    expect(screen.getByLabelText('Tracker config')).toBeDisabled();
+    expect(screen.getByText('Home/away and tracker config are locked after Diamond activation.')).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Diamond Field' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save game' }));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.updateScheduledGameForApp).toHaveBeenCalledWith(
+        'team-1',
+        'game-1',
+        expect.objectContaining({ location: 'Diamond Field' }),
+        auth.user,
+        { preservePinnedDiamondFields: true }
       );
     });
   });
@@ -2521,7 +3114,8 @@ describe('ScheduleEventDetail assignments', () => {
 
     renderScheduleEventDetailWithRouteControls();
 
-    expect(await screen.findByText('Assign a tracker config in Edit game before opening the standard tracker.')).toBeTruthy();
+    expect(await screen.findByText('Assign a tracker config in Edit game before opening Standard scoring.')).toBeTruthy();
+    expect(screen.queryByText(/Diamond/i)).toBeNull();
     expect(screen.queryByTestId('standard-tracker-launch')).toBeNull();
   });
 
@@ -3140,7 +3734,7 @@ describe('ScheduleEventDetail assignments', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Report sections' }));
     await waitFor(() => {
       expect(gameReportServiceMocks.loadGameReportSections).toHaveBeenCalledTimes(1);
-      expect(gameReportServiceMocks.loadGameReportSections).toHaveBeenCalledWith('team-1', 'game-1');
+      expect(gameReportServiceMocks.loadGameReportSections).toHaveBeenCalledWith('team-1', 'game-1', { statVisibility: 'manager-internal' });
       expect(screen.getByText('Loaded on demand.')).toBeTruthy();
     });
   });
@@ -3523,6 +4117,29 @@ describe('ScheduleEventDetail assignments', () => {
     await waitFor(() => {
       expect(screen.getByText('Game cancelled and team chat notified.')).toBeTruthy();
     });
+  });
+
+  it('does not offer Diamond cancellation to a delegated scorekeeper without manager access', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [
+        buildEvent({
+          trackingEngine: 'diamond-v2',
+          diamondScorebookInstanceId: '11111111-1111-4111-8111-111111111111',
+          canUpdateScore: true,
+          isTeamStaff: true,
+          isTeamAdmin: false
+        })
+      ],
+      children: []
+    });
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0);
+    });
+    expect(screen.queryByRole('button', { name: 'Cancel game' })).toBeNull();
+    expect(scheduleServiceMocks.cancelScheduledGameForApp).not.toHaveBeenCalled();
   });
 
   it('passes the recurring practice occurrence through cancellation without falling back to the series', async () => {

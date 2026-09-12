@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { DIAMOND_ENGINE, buildDiamondViewerUrl } from '../../js/diamond-scorebook-routing.js';
 import { isViewerChatEnabled } from '../../js/live-game-chat.js';
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
@@ -224,11 +225,11 @@ function createEnvironment() {
 function buildModuleSource() {
     return readFileSync(new URL('../../js/live-game.js', import.meta.url), 'utf8')
         .replace(
-            "import {\n  getGameDayTeamContext,\n  getGame,\n  getPlayers,\n  subscribeLiveEvents,\n  subscribeLiveChat,\n  postLiveChatMessage,\n  subscribeReactions,\n  sendReaction,\n  trackViewerPresence,\n  getLiveEvents,\n  getLiveChatHistory,\n  getLiveReactions,\n  getConfigs,\n  getMyRsvp,\n  subscribeGame,\n  updateGame,\n  uploadGameClip,\n  deleteUploadedMediaObjects\n} from './db.js?v=4433195';",
+            /import\s+\{[\s\S]*?deleteUploadedMediaObjects\s*\}\s+from\s+'\.\/db\.js\?v=\d+';/,
             'const { getGameDayTeamContext, getGame, getPlayers, subscribeLiveEvents, subscribeLiveChat, postLiveChatMessage, subscribeReactions, sendReaction, trackViewerPresence, getLiveEvents, getLiveChatHistory, getLiveReactions, getConfigs, getMyRsvp, subscribeGame, updateGame, uploadGameClip, deleteUploadedMediaObjects } = deps.db;'
         )
         .replace(
-            "import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=443371';",
+            /import \{ getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy \} from '\.\/utils\.js\?v=\d+';/,
             'const { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } = deps.utils;'
         )
         .replace(
@@ -254,6 +255,14 @@ function buildModuleSource() {
         .replace(
             /import \{ createSafeImageElement, resolveSafeProfilePhotoUrl, resolveSafeProfilePhotoWriteUrl \} from '\.\/safe-image-url\.js\?v=\d+';/,
             'const { createSafeImageElement, resolveSafeProfilePhotoUrl, resolveSafeProfilePhotoWriteUrl } = deps.safeImage;'
+        )
+        .replace(
+            /import \{ DIAMOND_ENGINE, buildDiamondViewerUrl \} from '\.\/diamond-scorebook-routing\.js\?v=\d+';/,
+            'const { DIAMOND_ENGINE, buildDiamondViewerUrl } = deps.diamondScorebookRouting;'
+        )
+        .replace(
+            /import\s+\{\s*getLiveChatHistory as getDiamondLiveChatHistory,[\s\S]*?\}\s+from\s+'\.\/diamond-live-engagement-subscriptions\.js\?v=\d+';/,
+            'const { getLiveChatHistory: getDiamondLiveChatHistory, getLiveReactions: getDiamondLiveReactions, postDiamondLiveChat, postDiamondLiveReaction, subscribeLiveChat: subscribeDiamondLiveChat, subscribeReactions: subscribeDiamondReactions } = deps.diamondLiveEngagement;'
         )
         .replace(
             "import { createPlayAnnouncer } from './live-game-announcer.js?v=1';",
@@ -622,6 +631,18 @@ async function bootReplayPage({
                 ...existingSession,
                 localStreamStatus: status
             })
+        },
+        diamondScorebookRouting: {
+            DIAMOND_ENGINE,
+            buildDiamondViewerUrl
+        },
+        diamondLiveEngagement: {
+            getLiveChatHistory: async () => [],
+            getLiveReactions: async () => [],
+            postDiamondLiveChat: async () => {},
+            postDiamondLiveReaction: async () => {},
+            subscribeLiveChat,
+            subscribeReactions
         }
     };
 

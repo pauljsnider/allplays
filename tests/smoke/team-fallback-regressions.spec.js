@@ -20,6 +20,14 @@ export function checkAuth(callback) {
 export async function sendInviteEmail() {}
 `;
 
+const ANONYMOUS_AUTH_STUB = `
+export function checkAuth(callback) {
+    callback(null);
+    return () => {};
+}
+export async function sendInviteEmail() {}
+`;
+
 const UTILS_STUB = `
 export function renderHeader() {}
 export function renderFooter() {}
@@ -110,6 +118,24 @@ export function getAI() {
 export function getGenerativeModel() {
     return {};
 }
+`;
+
+const DIAMOND_LEGACY_GAME_CONTEXT_STUB = `
+export async function loadCompleteDiamondPublicPlayerStats() { return { players: [], absenceConfirmed: true, complete: true, visibility: 'public' }; }
+export async function loadCompleteGameStatsForAi() { return { classicTotalsByPlayer: {}, diamondPlayersByGame: {}, evidence: { complete: true } }; }
+export async function loadCompleteGameEventsForAi() { return { eventsByGame: {}, evidenceByGame: {}, evidence: { complete: true } }; }
+export async function loadCompleteAiGameContext() {
+    return {
+        stats: { classicTotalsByPlayer: {}, diamondPlayersByGame: {}, evidence: { complete: true } },
+        events: { eventsByGame: {}, evidenceByGame: {}, evidence: { complete: true } },
+        recentGameIds: [], aggregatedStatsByPlayer: {}, diamondPlayerStatsByGame: {}, recentEventsByGame: {},
+        evidence: { complete: true }
+    };
+}
+export async function loadCompletePlayerStatsForGames({ games = [], playerId, loadClassicPlayerStats }) {
+    return Promise.all(games.map(async (game) => ({ game, stats: await loadClassicPlayerStats('team-1', game.id, playerId), evidence: { complete: true, source: 'legacy-classic' } })));
+}
+export function assertCompletePlayerStatEvidence() { return true; }
 `;
 
 const ROSTER_PROFILE_FIELDS_STUB = `
@@ -1031,17 +1057,33 @@ export function getDefaultLivePeriod() {
 }
 `;
 
+const LIVE_GAME_DIAMOND_ENGAGEMENT_STUB = `
+export async function getLiveChatHistory() { return []; }
+export async function getLiveReactions() { return []; }
+export async function postDiamondLiveChat() { return { outcome: 'accepted' }; }
+export async function postDiamondLiveReaction() { return { outcome: 'accepted' }; }
+export function subscribeLiveChat(_teamId, _gameId, _options, onMessages) {
+    if (typeof onMessages === 'function') onMessages([]);
+    return () => {};
+}
+export function subscribeReactions(_teamId, _gameId, _options, onReactions) {
+    if (typeof onReactions === 'function') onReactions([]);
+    return () => {};
+}
+`;
+
 async function routeCommonPageStubs(page) {
     await page.route(/\/js\/telemetry\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: '' }));
     await page.route(/\/js\/auth\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: AUTH_STUB }));
     await page.route(/\/js\/utils\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: UTILS_STUB }));
     await page.route(/\/js\/team-admin-banner\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: TEAM_ADMIN_BANNER_STUB }));
     await page.route(/\/js\/firebase\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_STUB }));
+    await page.route(/\/js\/diamond-legacy-game-context\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: DIAMOND_LEGACY_GAME_CONTEXT_STUB }));
     await page.route(/\/js\/vendor\/firebase-app\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_APP_STUB }));
     await page.route(/\/js\/vendor\/firebase-ai\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_AI_STUB }));
 }
 
-async function routeLiveGameStubs(page) {
+async function routeLiveGameStubs(page, { authStub = AUTH_STUB } = {}) {
     let telemetryStubRequestCount = 0;
     await page.route(/\/js\/telemetry\.js(?:\?v=\d+)?$/, (route) => {
         telemetryStubRequestCount += 1;
@@ -1052,7 +1094,7 @@ async function routeLiveGameStubs(page) {
     await page.route(/\/js\/team-access\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: LIVE_GAME_ACCESS_STUB }));
     await page.route(/\/js\/game-clips\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: LIVE_GAME_CLIPS_STUB }));
     await page.route(/\/js\/live-stream-utils\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: LIVE_GAME_STREAM_UTILS_STUB }));
-    await page.route(/\/js\/auth\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: AUTH_STUB }));
+    await page.route(/\/js\/auth\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: authStub }));
     await page.route(/\/js\/live-game-chat\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: LIVE_GAME_CHAT_STUB }));
     await page.route(/\/js\/live-game-announcer\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: LIVE_GAME_ANNOUNCER_STUB }));
     await page.route(/\/js\/live-game-replay\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: LIVE_GAME_REPLAY_STUB }));
@@ -1060,6 +1102,7 @@ async function routeLiveGameStubs(page) {
     await page.route(/\/js\/team-entitlements\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: LIVE_GAME_ENTITLEMENTS_STUB }));
     await page.route(/\/js\/live-game-state\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: LIVE_GAME_STATE_STUB }));
     await page.route(/\/js\/live-sport-config\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: LIVE_GAME_SPORT_CONFIG_STUB }));
+    await page.route(/\/js\/diamond-live-engagement-subscriptions\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: LIVE_GAME_DIAMOND_ENGAGEMENT_STUB }));
     await page.route('**/js/vendor/firebase-app.js', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_APP_STUB }));
     await page.route('**/js/vendor/firebase-ai.js', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_AI_STUB }));
     await page.route('https://cdn.example.test/replay.mp4', (route) => route.fulfill({ status: 200, contentType: 'video/mp4', body: '' }));
@@ -1104,6 +1147,30 @@ test('team chat falls back to the team-wide channel when conversation listing is
     await expect(page.locator('#messages-container')).toContainText('Hello team');
     await expect(page.locator('#messages-container')).not.toContainText('Loading messages');
     await expect(page.locator('#send-error')).toBeHidden();
+    expect(pageErrors).toEqual([]);
+});
+
+test('team chat does not generate an answer from incomplete Diamond AI evidence', async ({ page, baseURL }) => {
+    const pageErrors = await collectPageErrors(page);
+    await routeCommonPageStubs(page);
+    await page.unroute(/\/js\/diamond-legacy-game-context\.js(?:\?v=\d+)?$/);
+    await page.route(/\/js\/diamond-legacy-game-context\.js(?:\?v=\d+)?$/, (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: DIAMOND_LEGACY_GAME_CONTEXT_STUB.replace(
+            'export async function loadCompleteAiGameContext() {',
+            "export async function loadCompleteAiGameContext() { throw new Error('Complete public Diamond evidence is unavailable.'); }\nexport async function unusedCompleteAiGameContext() {"
+        )
+    }));
+    await page.route(/\/js\/db\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: CHAT_DB_STUB }));
+
+    await page.goto(`${baseURL}/team-chat.html?teamId=team-1`, { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('#messages-container')).toContainText('Hello team');
+    await page.locator('#message-input').fill('@ALL PLAYS show me the stats');
+    await page.locator('#send-btn').click();
+
+    await expect(page.locator('#send-error')).toHaveText('ALL PLAYS could not answer. Please try again.');
+    await expect(page.locator('#messages-container')).not.toContainText('ALL PLAYS\n\n');
     expect(pageErrors).toEqual([]);
 });
 
@@ -1335,6 +1402,30 @@ test('team media staff file upload reports unsupported files while uploading val
     await expect.poll(() => page.evaluate(() => window.__TEAM_MEDIA_CALLS__)).toEqual([
         { type: 'file', teamId: 'team-1', folderId: 'folder-1', fileName: 'packet.pdf' }
     ]);
+    expect(pageErrors).toEqual([]);
+});
+
+test('signed-out live game redirects a sanitized Diamond projection to the Diamond viewer', async ({ page, baseURL }) => {
+    const pageErrors = await collectPageErrors(page);
+    await page.addInitScript(() => {
+        window.__LIVE_GAME_TEAM__ = {};
+        window.__LIVE_GAME_GAME__ = {
+            status: 'scheduled',
+            liveStatus: 'live',
+            trackingEngine: 'diamond-v2',
+            isPublicProjection: true
+        };
+    });
+    await page.route('**/live-game-diamond-v2.html?*', (route) => route.fulfill({
+        status: 200,
+        contentType: 'text/html',
+        body: '<!doctype html><title>Diamond viewer fixture</title>'
+    }));
+    await routeLiveGameStubs(page, { authStub: ANONYMOUS_AUTH_STUB });
+
+    await page.goto(`${baseURL}/live-game.html?teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+
+    await expect(page).toHaveURL(`${baseURL}/live-game-diamond-v2.html?teamId=team-1&gameId=game-1`);
     expect(pageErrors).toEqual([]);
 });
 

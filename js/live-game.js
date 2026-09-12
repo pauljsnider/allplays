@@ -17,12 +17,12 @@ import {
   updateGame,
   uploadGameClip,
   deleteUploadedMediaObjects
-} from './db.js?v=4433195';
-import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=443371';
+} from './db.js?v=4433199';
+import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=443375';
 import { hasFullTeamAccess } from './team-access.js?v=44338';
 import { buildScoreLinkedClipRecord, isScoredPlayEvent, validateGameClipFile } from './game-clips.js?v=1';
 import { computePanelVisibility } from './live-stream-utils.js?v=2';
-import { checkAuth } from './auth.js?v=4433199';
+import { checkAuth } from './auth.js?v=4433203';
 import { isViewerChatEnabled } from './live-game-chat.js?v=4';
 import { createPlayAnnouncer } from './live-game-announcer.js?v=1';
 import {
@@ -40,10 +40,21 @@ import { buildGameReportShareUrl, buildGameWatchShareUrl } from './game-share-li
 import { TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, isRecordedReplayTeamPassGateEnabled, resolveTeamEntitlementSeasonId } from './team-entitlements.js?v=9';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
-import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, renderViewerLineupSections, renderOpponentStatsCards, applyResetEventState, applyViewerEventToState, shouldResetViewerFromGameDoc, collectVisibleLiveEventsSequentially } from './live-game-state.js?v=43';
+import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, renderViewerLineupSections, renderOpponentStatsCards, applyResetEventState, applyViewerEventToState, shouldResetViewerFromGameDoc, collectVisibleLiveEventsSequentially } from './live-game-state.js?v=46';
 import { getDefaultLivePeriod } from './live-sport-config.js?v=2';
 import { BROADCAST_STREAM_HEARTBEAT_MS, buildBroadcastRuntimeSession } from './game-day-broadcast.js?v=5';
 import { createSafeImageElement, resolveSafeProfilePhotoUrl, resolveSafeProfilePhotoWriteUrl } from './safe-image-url.js?v=1';
+import { DIAMOND_ENGINE, buildDiamondViewerUrl } from './diamond-scorebook-routing.js?v=2';
+import {
+  getLiveChatHistory as getDiamondLiveChatHistory,
+  getLiveReactions as getDiamondLiveReactions,
+  postDiamondLiveChat,
+  postDiamondLiveReaction,
+  subscribeLiveChat as subscribeDiamondLiveChat,
+  subscribeReactions as subscribeDiamondReactions
+} from './diamond-live-engagement-subscriptions.js?v=2';
+
+const DIAMOND_INSTANCE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const state = {
   teamId: null,
@@ -1932,7 +1943,7 @@ function initChat() {
 
     const hasAiMention = /@all\s*plays/i.test(text);
     try {
-      await postLiveChatMessage(state.teamId, state.gameId, {
+      await postCurrentLiveChatMessage(text, {
         text,
         senderId: state.user?.uid || null,
         senderName: state.user?.displayName || state.anonName,
@@ -1946,10 +1957,45 @@ function initChat() {
       return;
     }
 
-    if (hasAiMention) {
+    if (hasAiMention && state.game?.trackingEngine !== DIAMOND_ENGINE) {
       await generateAiResponse(text);
+    } else if (hasAiMention) {
+      showFloatingText('AI replies are available in the Diamond viewer', 'text-sand/70 text-sm');
     }
   });
+}
+
+function getDiamondInteractionInstanceId() {
+  if (state.game?.trackingEngine !== DIAMOND_ENGINE) return null;
+  const instanceId = String(state.game?.diamondScorebookInstanceId || '')
+    .trim()
+    .toLowerCase();
+  return DIAMOND_INSTANCE_ID_PATTERN.test(instanceId) ? instanceId : '';
+}
+
+async function postCurrentLiveChatMessage(text, legacyPayload) {
+  const instanceId = getDiamondInteractionInstanceId();
+  if (instanceId === null) {
+    return postLiveChatMessage(state.teamId, state.gameId, legacyPayload);
+  }
+  if (!instanceId || !state.user?.uid) {
+    throw new Error('The Diamond live-chat identity is unavailable.');
+  }
+  return postDiamondLiveChat(state.teamId, state.gameId, instanceId, text);
+}
+
+async function postCurrentLiveReaction(type) {
+  const instanceId = getDiamondInteractionInstanceId();
+  if (instanceId === null) {
+    return sendReaction(state.teamId, state.gameId, {
+      type,
+      senderId: state.user.uid
+    });
+  }
+  if (!instanceId || !state.user?.uid) {
+    throw new Error('The Diamond live-reaction identity is unavailable.');
+  }
+  return postDiamondLiveReaction(state.teamId, state.gameId, instanceId, type);
 }
 
 function openAnonNameEditor() {
@@ -2049,14 +2095,11 @@ function initReactions() {
     setTimeout(() => { btn.disabled = false; }, 1000);
 
     const type = btn.dataset.reaction;
-    sendReaction(state.teamId, state.gameId, {
-      type,
-      senderId: state.user.uid
-    }).catch(err => console.warn('Reaction failed:', err));
+    postCurrentLiveReaction(type).catch(err => console.warn('Reaction failed:', err));
 
     if (state.chatEnabled) {
       const emoji = getReactionEmoji(type);
-      postLiveChatMessage(state.teamId, state.gameId, {
+      postCurrentLiveChatMessage(emoji, {
         text: emoji,
         senderId: state.user?.uid || null,
         senderName: state.user?.displayName || state.anonName,
@@ -2266,7 +2309,42 @@ function startEngagements() {
   if (state.engagementsActive) return;
   state.engagementsActive = true;
 
-  const unsubChat = subscribeLiveChat(state.teamId, state.gameId, { limit: 100 }, (messages) => {
+  const instanceId = getDiamondInteractionInstanceId();
+  if (instanceId === '') {
+    setConnectionBanner(true, 'Diamond live interactions require a fresh game link.');
+    return;
+  }
+  const subscribeChat = instanceId === null
+    ? (callback, onError) => subscribeLiveChat(
+        state.teamId,
+        state.gameId,
+        { limit: 100 },
+        callback,
+        onError
+      )
+    : (callback, onError) => subscribeDiamondLiveChat(
+        state.teamId,
+        state.gameId,
+        { limit: 100, instanceId },
+        callback,
+        onError
+      );
+  const subscribeReactionStream = instanceId === null
+    ? (callback, onError) => subscribeReactions(
+        state.teamId,
+        state.gameId,
+        callback,
+        onError
+      )
+    : (callback, onError) => subscribeDiamondReactions(
+        state.teamId,
+        state.gameId,
+        { instanceId },
+        callback,
+        onError
+      );
+
+  const unsubChat = subscribeChat((messages) => {
     setConnectionBanner(false);
     state.chatMessages = messages;
     renderChat();
@@ -2276,7 +2354,7 @@ function startEngagements() {
   });
   state.unsubscribers.push(unsubChat);
 
-  const unsubReactions = subscribeReactions(state.teamId, state.gameId, (reaction) => {
+  const unsubReactions = subscribeReactionStream((reaction) => {
     setConnectionBanner(false);
     showFloatingReaction(reaction);
   }, (error) => {
@@ -2298,6 +2376,10 @@ function startEngagements() {
 }
 
 function startLiveEvents() {
+  // Diamond plays come from the sanitized revisioned projection. Never attach
+  // the classic flat listener, where a same-path recreation could expose an
+  // earlier legacy game's events.
+  if (state.game?.trackingEngine === DIAMOND_ENGINE) return;
   if (state.liveEventsActive) return;
   state.liveEventsActive = true;
   state.liveEventsFirstLoad = true;
@@ -2400,10 +2482,18 @@ async function startReplay() {
 
   let replayEvents, replayChat, replayReactions;
   try {
+    const instanceId = getDiamondInteractionInstanceId();
+    if (instanceId === '') {
+      throw new Error('Diamond replay interaction identity is unavailable.');
+    }
     [replayEvents, replayChat, replayReactions] = await Promise.all([
       getLiveEvents(state.teamId, state.gameId),
-      getLiveChatHistory(state.teamId, state.gameId),
-      getLiveReactions(state.teamId, state.gameId)
+      instanceId === null
+        ? getLiveChatHistory(state.teamId, state.gameId)
+        : getDiamondLiveChatHistory(state.teamId, state.gameId, instanceId),
+      instanceId === null
+        ? getLiveReactions(state.teamId, state.gameId)
+        : getDiamondLiveReactions(state.teamId, state.gameId, instanceId)
     ]);
   } catch (error) {
     console.warn('Failed to load replay data:', error);
@@ -2627,7 +2717,7 @@ function initReplayControls() {
 }
 
 async function generateAiResponse(question) {
-  if (!state.user) return;
+  if (!state.user || state.game?.trackingEngine === DIAMOND_ENGINE) return;
   showAiThinking();
   try {
     const app = getApp();
@@ -2638,7 +2728,7 @@ async function generateAiResponse(question) {
     const result = await model.generateContent(prompt);
     const text = result.response.text();
 
-    await postLiveChatMessage(state.teamId, state.gameId, {
+    await postCurrentLiveChatMessage(text, {
       text,
       senderId: state.user?.uid || null,
       senderName: 'ALL PLAYS',
@@ -2647,7 +2737,7 @@ async function generateAiResponse(question) {
     });
   } catch (error) {
     console.warn('AI response failed:', error);
-    await postLiveChatMessage(state.teamId, state.gameId, {
+    await postCurrentLiveChatMessage('ALL PLAYS is unavailable right now.', {
       text: 'ALL PLAYS is unavailable right now.',
       senderId: state.user?.uid || null,
       senderName: 'ALL PLAYS',
@@ -2831,7 +2921,8 @@ function handleGameUpdate(gameDoc) {
 
 function updateChatAvailability() {
   state.chatEnabled = isViewerChatEnabled(state.game, { isReplay: state.isReplay });
-  const canWriteToChat = state.chatEnabled && !!state.user;
+  const diamondInstanceId = getDiamondInteractionInstanceId();
+  const canWriteToChat = state.chatEnabled && !!state.user && diamondInstanceId !== '';
 
   if (els.chatInput) {
     if (canWriteToChat) {
@@ -2901,6 +2992,16 @@ async function init() {
         return [];
       })
     ]);
+    if (game?.trackingEngine === DIAMOND_ENGINE && params.classic !== '1') {
+      window.location.replace(buildDiamondViewerUrl({
+        teamId: state.teamId,
+        gameId: state.gameId,
+        replay: state.isReplay,
+        clipStart: state.clipStartMs,
+        clipEnd: state.clipEndMs
+      }));
+      return;
+    }
     if (game && game.isPublicProjection !== true && (teamContextError || configsError || playersError)) {
       throw teamContextError || configsError || playersError;
     }

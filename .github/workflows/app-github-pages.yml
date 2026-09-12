@@ -32,6 +32,8 @@ jobs:
         run: npm ci --prefix apps/app
 
       - name: Build React app
+        env:
+          VITE_DIAMOND_SCOREBOOK_UI_ENABLED: ${{ vars.DIAMOND_SCOREBOOK_UI_ENABLED }}
         run: npm run app:build
 
       - name: Check React app bundle size
@@ -41,6 +43,7 @@ jobs:
         env:
           ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY: ${{ vars.APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY }}
           ALLPLAYS_APP_CHECK_ENFORCEMENT_READY: ${{ vars.APP_CHECK_ENFORCEMENT_READY }}
+          ALLPLAYS_DIAMOND_SCOREBOOK_UI_ENABLED: ${{ vars.DIAMOND_SCOREBOOK_UI_ENABLED }}
         run: node scripts/stage-pages-bundle.mjs "$RUNNER_TEMP/allplays-pages"
 
       - name: Upload app Pages bundle artifact

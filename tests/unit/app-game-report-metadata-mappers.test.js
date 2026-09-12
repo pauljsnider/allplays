@@ -11,8 +11,10 @@ const dbMocks = vi.hoisted(() => ({
 
 const firebaseMocks = vi.hoisted(() => ({
     db: {},
+    functions: {},
     collection: vi.fn((db, path) => ({ db, path })),
-    getDocs: vi.fn()
+    getDocs: vi.fn(),
+    httpsCallable: vi.fn()
 }));
 
 vi.mock('../../js/db.js', () => dbMocks);

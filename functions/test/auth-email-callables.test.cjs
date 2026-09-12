@@ -3,6 +3,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const { createAuthEmailCallableHandlers } = require('../auth-email-callables.cjs');
+const { normalizeVerificationNextRoute } = require('../auth-email-core.cjs');
 
 class TestHttpsError extends Error {
   constructor(code, message) {
@@ -24,7 +25,8 @@ function createHarness(overrides = {}) {
     released: [],
     reserved: [],
     passwordResetRequests: [],
-    findOwned: []
+    findOwned: [],
+    actionSettings: []
   };
   const auth = {
     async getUserByEmail(email) {
@@ -72,7 +74,10 @@ function createHarness(overrides = {}) {
       calls.order.push(`enqueue:${email}`);
       calls.passwordResetRequests.push(email);
     },
-    getActionSettings: (type, url) => ({ type, url: url || null }),
+    getActionSettings: (type, url) => {
+      calls.actionSettings.push([type, url || '']);
+      return { type, url: url || null };
+    },
     canonicalizeActionUrl: (url, type) => `${url}&canonical=${type}`,
     getInviteContinueUrl: (code, inviteType) => `https://allplays.ai/accept-invite.html?code=${code}&type=${inviteType}`,
     async findOwnedInviteCode(...args) {
@@ -166,6 +171,27 @@ test('verification accepts a server-verified native token and queues for that ui
   assert.deepEqual(calls.reserved, [[types.VERIFICATION, 'coach@example.com', 'native-user']]);
   assert.equal(calls.queued[0].uid, 'native-user');
   assert.equal(calls.queued[0].type, types.VERIFICATION);
+});
+
+test('verification forwards validated app continuations and drops unsafe routes', async () => {
+  const routes = [
+    '/live-game-diamond-v2.html?teamId=team%2Fone&gameId=game+one&replay=true',
+    '/parent-tools/fees?teamId=team-1&batchId=batch-1&recipientId=recipient-1',
+    '/schedule?teamId=team-1&eventId=event-1'
+  ];
+
+  for (const route of routes) {
+    const { handlers, calls } = createHarness({ normalizeVerificationNextRoute });
+    assert.deepEqual(
+      await handlers.queueEmailVerification({ next: route }, { auth: { uid: 'user-1' } }),
+      { queued: true }
+    );
+    assert.deepEqual(calls.actionSettings, [[types.VERIFICATION, route]]);
+  }
+
+  const unsafe = createHarness({ normalizeVerificationNextRoute });
+  await unsafe.handlers.queueEmailVerification({ next: 'https://evil.example/viewer' }, { auth: { uid: 'user-1' } });
+  assert.deepEqual(unsafe.calls.actionSettings, [[types.VERIFICATION, '']]);
 });
 
 test('verification returns alreadyVerified and releases a failed reservation', async () => {

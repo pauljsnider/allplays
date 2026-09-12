@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { ExternalLink } from 'lucide-react';
+import { getCoverageAwareStatValue, type CoverageAwareStatPresentation } from '../../lib/adapters/legacyDiamondStatPresentation';
 import { useLiveGameAnnouncer } from '../../lib/liveGameAnnouncer';
 import { getPublicPlayerHref } from '../../lib/scheduleHub';
 import type { GameReportData, GameReportInsight, GameReportPlay, GameReportPlayerRow } from '../../lib/gameReportService';
@@ -9,12 +10,61 @@ import { ReportMarkdownText } from './ReportMarkdownText';
 export type GameReportSectionId = 'summary' | 'players' | 'plays' | 'opponent' | 'insights' | 'media';
 
 export function GameReportSectionContent({ report, activeSection }: { report: GameReportData; activeSection: GameReportSectionId }) {
-  if (activeSection === 'players') return <PlayerPerformanceSection report={report} />;
-  if (activeSection === 'plays') return <PlayByPlaySection plays={report.plays} />;
-  if (activeSection === 'opponent') return <OpponentStatsSection report={report} />;
-  if (activeSection === 'insights') return <ReportInsightsSection report={report} />;
-  if (activeSection === 'media') return <ReportMediaSection report={report} />;
-  return <MatchSummarySection report={report} />;
+  const content = activeSection === 'players'
+    ? <PlayerPerformanceSection report={report} />
+    : activeSection === 'plays'
+      ? <PlayByPlaySection plays={report.plays} />
+      : activeSection === 'opponent'
+        ? <OpponentStatsSection report={report} />
+        : activeSection === 'insights'
+          ? <ReportInsightsSection report={report} />
+          : activeSection === 'media'
+            ? <ReportMediaSection report={report} />
+            : <MatchSummarySection report={report} />;
+
+  if (!report.diamond?.isDiamond) return content;
+
+  return (
+    <div className="space-y-3">
+      <DiamondProjectionNotice report={report} />
+      {content}
+    </div>
+  );
+}
+
+function DiamondProjectionNotice({ report }: { report: GameReportData }) {
+  const projection = report.diamond;
+  if (!projection?.isDiamond) return null;
+  const revisions = projection.sourceRevisions.length
+    ? `Stats rev ${projection.sourceRevisions.join(', ')}`
+    : 'Stats revision unavailable';
+  const ledgerRevision = projection.authoritativeRevision === null
+    ? 'Ledger revision unavailable'
+    : `Ledger rev ${projection.authoritativeRevision}`;
+  const visibilityLabel = projection.statVisibility === 'manager-internal'
+    ? 'Manager internal stats'
+    : 'Public stats';
+
+  return (
+    <div
+      className={`rounded-xl border px-3 py-2.5 ${projection.pending ? 'border-amber-200 bg-amber-50 text-amber-950' : 'border-sky-200 bg-sky-50 text-sky-950'}`}
+      role="status"
+      aria-label="Diamond scorebook report status"
+    >
+      <div className="text-xs font-black uppercase tracking-[0.04em]">Diamond scorebook · {visibilityLabel} · Read only</div>
+      <div className="mt-0.5 text-xs font-semibold">
+        {projection.pending
+          ? 'Stats projection is pending. Unavailable values remain an em dash instead of being counted as zero.'
+          : 'Stats are derived from the authoritative play ledger. Corrections must be made in the scorebook.'}
+      </div>
+      <div className="mt-1 text-[11px] font-bold opacity-75">{ledgerRevision} · {revisions}</div>
+      {projection.requestedStatVisibility === 'manager-internal' && projection.statVisibility !== 'manager-internal' ? (
+        <div className="mt-1 text-[11px] font-bold">
+          Internal projection unavailable; showing the last complete public projection. Refresh to retry.
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function MatchSummarySection({ report }: { report: GameReportData }) {
@@ -63,6 +113,7 @@ function PlayerPerformanceSection({ report }: { report: GameReportData }) {
           player={player}
           statKeys={statKeys}
           statLabels={report.statLabels}
+          statDefinitions={report.statDefinitions}
           hasPlayingTime={report.hasPlayingTime}
           teamId={report.team.id || ''}
           gameId={report.game.id || ''}
@@ -93,6 +144,7 @@ function PlayerPerformanceSection({ report }: { report: GameReportData }) {
                   player={player}
                   statKeys={statKeys}
                   statLabels={report.statLabels}
+                  statDefinitions={report.statDefinitions}
                   hasPlayingTime={report.hasPlayingTime}
                   teamId={report.team.id || ''}
                   gameId={report.game.id || ''}
@@ -106,38 +158,52 @@ function PlayerPerformanceSection({ report }: { report: GameReportData }) {
   );
 }
 
-function PlayerPerformanceRow({ player, statKeys, statLabels, hasPlayingTime, teamId, gameId }: {
+function PlayerPerformanceRow({ player, statKeys, statLabels, statDefinitions, hasPlayingTime, teamId, gameId }: {
   player: GameReportPlayerRow;
   statKeys: string[];
   statLabels: Record<string, string>;
+  statDefinitions?: Record<string, Record<string, unknown>>;
   hasPlayingTime: boolean;
   teamId: string;
   gameId: string;
 }) {
-  return (
-    <a href={getPublicPlayerHref(teamId, gameId, player.playerId)} className="block rounded-xl border border-gray-200 bg-white p-3 transition hover:border-primary-200 hover:bg-primary-50">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-3">
-          <div className="flex h-10 w-10 flex-none items-center justify-center overflow-hidden rounded-full bg-gray-100 text-sm font-black text-gray-500">
-            {player.photoUrl ? <AvatarImage src={player.photoUrl} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" fallback={player.playerName.slice(0, 1)} /> : player.playerName.slice(0, 1)}
-          </div>
-          <div className="min-w-0">
-            <div className="truncate text-sm font-black text-gray-950">#{player.number} {player.playerName}</div>
-            <div className="mt-0.5 flex items-center gap-2 text-xs font-semibold text-gray-500">
-              {player.didNotPlay ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black uppercase text-amber-800">DNP</span> : null}
-              {hasPlayingTime && !player.didNotPlay ? <span>{formatDuration(player.timeMs)} min</span> : null}
-            </div>
-          </div>
+  const content = (
+    <div className="flex items-center justify-between gap-3">
+      <div className="flex min-w-0 items-center gap-3">
+        <div className="flex h-10 w-10 flex-none items-center justify-center overflow-hidden rounded-full bg-gray-100 text-sm font-black text-gray-500">
+          {player.photoUrl ? <AvatarImage src={player.photoUrl} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" fallback={player.playerName.slice(0, 1)} /> : player.playerName.slice(0, 1)}
         </div>
-        <div className="flex flex-none flex-wrap justify-end gap-1.5">
-          {statKeys.map((key) => (
-            <span key={key} className="min-w-11 rounded-lg bg-gray-50 px-2 py-1 text-center">
-              <span className="block text-[10px] font-black uppercase text-gray-400">{statLabels[key] || key.toUpperCase()}</span>
-              <span className="block text-sm font-black tabular-nums text-gray-900">{player.didNotPlay ? '-' : String(player.stats[key] || 0)}</span>
-            </span>
-          ))}
+        <div className="min-w-0">
+          <div className="truncate text-sm font-black text-gray-950">#{player.number} {player.playerName}</div>
+          <div className="mt-0.5 flex items-center gap-2 text-xs font-semibold text-gray-500">
+            {player.didNotPlay ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black uppercase text-amber-800">DNP</span> : null}
+            {hasPlayingTime && !player.didNotPlay ? <span>{formatDuration(player.timeMs)} min</span> : null}
+          </div>
         </div>
       </div>
+      <div className="flex flex-none flex-wrap justify-end gap-1.5">
+        {statKeys.map((key) => (
+          <span key={key} className="min-w-11 rounded-lg bg-gray-50 px-2 py-1 text-center">
+            <span className="block text-[10px] font-black uppercase text-gray-400">{statLabels[key] || key.toUpperCase()}</span>
+            <CoverageAwareStatValue
+              presentation={player.statPresentation}
+              stats={player.stats}
+              statKey={key}
+              definition={statDefinitions?.[key]}
+              didNotPlay={player.didNotPlay}
+            />
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+
+  const rowClassName = 'block rounded-xl border border-gray-200 bg-white p-3';
+  if (player.canOpenProfile === false) return <div className={rowClassName}>{content}</div>;
+
+  return (
+    <a href={getPublicPlayerHref(teamId, gameId, player.playerId)} className={`${rowClassName} transition hover:border-primary-200 hover:bg-primary-50`}>
+      {content}
     </a>
   );
 }
@@ -219,7 +285,15 @@ function OpponentStatsSection({ report }: { report: GameReportData }) {
               <td className="px-3 py-3 font-mono font-bold text-gray-500">{row.number}</td>
               <td className="px-3 py-3 font-bold text-gray-900">{row.name}</td>
               {report.opponentStatKeys.map((key) => (
-                <td key={key} className="px-3 py-3 text-center font-mono font-bold text-gray-700">{String(row.stats[key] || 0)}</td>
+                <td key={key} className="px-3 py-3 text-center font-mono font-bold text-gray-700">
+                  <CoverageAwareStatValue
+                    presentation={row.statPresentation}
+                    stats={row.stats}
+                    statKey={key}
+                    definition={report.opponentStatDefinitions?.[key]}
+                    inline
+                  />
+                </td>
               ))}
             </tr>
           ))}
@@ -276,7 +350,15 @@ function ReportMediaSection({ report }: { report: GameReportData }) {
             {teamStatKeys.slice(0, 8).map((key) => (
               <div key={key} className="rounded-lg bg-gray-50 p-2 text-center">
                 <div className="text-[10px] font-black uppercase text-gray-500">{report.teamStatLabels[key] || key.toUpperCase()}</div>
-                <div className="mt-1 text-lg font-black tabular-nums text-gray-950">{String(report.teamStats[key] || 0)}</div>
+                <div className="mt-1 text-lg font-black tabular-nums text-gray-950">
+                  <CoverageAwareStatValue
+                    presentation={report.teamStatPresentation}
+                    stats={report.teamStats}
+                    statKey={key}
+                    definition={report.teamStatDefinitions?.[key]}
+                    inline
+                  />
+                </div>
               </div>
             ))}
           </div>
@@ -287,13 +369,14 @@ function ReportMediaSection({ report }: { report: GameReportData }) {
 }
 
 function ReportInsightsSection({ report }: { report: GameReportData }) {
-  const hasInsights = report.teamInsights.length || report.playerInsightRows.length;
+  const hasInsights = report.publishedAiRecap || report.teamInsights.length || report.playerInsightRows.length;
   if (!hasInsights) {
     return <EmptyReportState title="No insights yet" detail={report.emptyInsightsMessage || 'Insights populate after the game is finalized.'} />;
   }
 
   return (
     <div className="space-y-3">
+      {report.publishedAiRecap ? <PublishedDiamondAiRecap recap={report.publishedAiRecap} /> : null}
       {report.teamInsights.length ? (
         <div className="space-y-2">
           <div className="text-[11px] font-extrabold uppercase tracking-[0.04em] text-gray-500">Team insights</div>
@@ -317,6 +400,60 @@ function ReportInsightsSection({ report }: { report: GameReportData }) {
   );
 }
 
+function PublishedDiamondAiRecap({ recap }: { recap: NonNullable<GameReportData['publishedAiRecap']> }) {
+  if (!recap.current) {
+    return (
+      <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-amber-950" role="status">
+        <div className="text-xs font-black uppercase tracking-[0.04em]">AI recap needs regeneration</div>
+        <p className="mt-1 text-xs font-semibold leading-5">A scorebook correction changed revision {recap.sourceRevision}. The old recap is hidden until a manager publishes a new cited draft.</p>
+      </div>
+    );
+  }
+
+  const coverage = Object.entries(recap.coverage)
+    .map(([family, status]) => `${family}: ${status.replace('_', ' ')}`)
+    .join(' · ');
+  return (
+    <section className="rounded-xl border border-violet-200 bg-violet-50 p-3" aria-labelledby="published-diamond-ai-recap">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h4 id="published-diamond-ai-recap" className="text-sm font-black text-violet-950">Published AI recap</h4>
+        <span className="rounded-full bg-white px-2 py-1 text-[10px] font-black uppercase tracking-wide text-violet-700">Source rev {recap.sourceRevision}</span>
+      </div>
+      <ReportMarkdownText text={recap.recap.text} />
+      <AiEvidence citations={recap.recap.citations} />
+      {recap.insights.length ? (
+        <div className="mt-3 space-y-2">
+          {recap.insights.map((insight, index) => (
+            <div key={`${index}:${insight.text}`} className="rounded-lg border border-violet-100 bg-white p-3">
+              <div className="text-xs font-black uppercase tracking-wide text-violet-700">AI insight {index + 1}</div>
+              <ReportMarkdownText text={insight.text} compact />
+              <AiEvidence citations={insight.citations} />
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {coverage ? <p className="mt-3 text-[11px] font-semibold text-violet-800">Coverage · {coverage}</p> : null}
+      {recap.dataQualityNotes.length ? (
+        <ul className="mt-2 list-disc space-y-1 pl-5 text-[11px] font-semibold text-violet-800">
+          {recap.dataQualityNotes.map((note) => <li key={note}>{note}</li>)}
+        </ul>
+      ) : null}
+    </section>
+  );
+}
+
+function AiEvidence({ citations }: { citations: Array<{ eventId: string; revision: number }> }) {
+  return (
+    <div className="mt-2 flex flex-wrap gap-1" aria-label="AI recap play evidence">
+      {citations.map((citation) => (
+        <span key={`${citation.eventId}:${citation.revision}`} className="rounded-full border border-violet-200 bg-violet-100 px-2 py-0.5 text-[10px] font-black text-violet-800">
+          Play rev {citation.revision}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function InsightCard({ insight, compact = false }: { insight: GameReportInsight; compact?: boolean }) {
   const toneClass = insight.tone === 'positive'
     ? 'border-emerald-200 bg-emerald-50'
@@ -332,7 +469,34 @@ function InsightCard({ insight, compact = false }: { insight: GameReportInsight;
 }
 
 export function getRecordedTeamStatKeys(report: GameReportData) {
+  if (report.diamond?.isDiamond) return report.teamStatKeys || [];
   return (report.teamStatKeys || []).filter((key) => hasRecordedTeamStatValue(report, key));
+}
+
+function CoverageAwareStatValue({ presentation, stats, statKey, definition, didNotPlay = false, inline = false }: {
+  presentation?: CoverageAwareStatPresentation;
+  stats: Record<string, unknown>;
+  statKey: string;
+  definition?: Record<string, unknown>;
+  didNotPlay?: boolean;
+  inline?: boolean;
+}) {
+  if (didNotPlay) return <span className={inline ? '' : 'block text-sm font-black tabular-nums text-gray-900'}>-</span>;
+  if (!presentation?.isDiamond) {
+    const legacyValue = stats?.[statKey];
+    return <span className={inline ? '' : 'block text-sm font-black tabular-nums text-gray-900'}>{String(legacyValue || 0)}</span>;
+  }
+
+  const displayed = getCoverageAwareStatValue(presentation, stats, statKey, definition || {});
+  return (
+    <span
+      className={inline ? 'inline-flex flex-col items-center' : 'flex flex-col items-center text-sm font-black tabular-nums text-gray-900'}
+      aria-label={displayed.observed ? `${displayed.text}, observed from partial tracking` : displayed.available ? displayed.text : 'Not collected'}
+    >
+      <span>{displayed.text}</span>
+      {displayed.observed ? <span className="text-[8px] font-black uppercase tracking-wide text-amber-700">Observed</span> : null}
+    </span>
+  );
 }
 
 function hasRecordedTeamStatValue(report: GameReportData, key: string) {

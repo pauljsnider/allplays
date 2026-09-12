@@ -3212,6 +3212,7 @@ describe('private AI service', () => {
                     unpaidCents: 200
                 }),
                 seasonStatTotals: {
+                    loadStatus: 'complete',
                     gameCount: 8,
                     totals: {
                         goals: 7,
@@ -3232,12 +3233,23 @@ describe('private AI service', () => {
         expect(playerMocks.loadParentPlayerStatTotals).toHaveBeenCalledWith(authUser, 'team-1', 'player-1');
     });
 
-    it('keeps player development answers available when optional video clips fail to load', async () => {
+    it('keeps player development available but does not infer season totals when an older Diamond game may be outside recent rows', async () => {
+        playerMocks.loadParentPlayerDetailWithAthleteProfile.mockResolvedValueOnce({
+            child: { playerId: 'player-1', playerName: 'Avery', teamId: 'team-1', teamName: 'Bears' },
+            player: { id: 'player-1', name: 'Avery' },
+            team: { id: 'team-1', name: 'Bears', sport: 'Baseball' },
+            statRows: [{
+                event: futureEvent({ id: 'recent-legacy-game' }),
+                stats: { hits: 2 }
+            }]
+        });
         playerMocks.loadParentPlayerVideoClips.mockRejectedValueOnce(new Error('Games unavailable'));
         playerMocks.loadParentPlayerStatTotals.mockRejectedValueOnce(new Error('Totals unavailable'));
         const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
 
-        await expect(runPrivateAiTool(authUser, { name: 'get_player_development', args: { playerName: 'ave' } })).resolves.toMatchObject({
+        const result = await runPrivateAiTool(authUser, { name: 'get_player_development', args: { playerName: 'ave' } });
+
+        expect(result).toMatchObject({
             ok: true,
             data: expect.objectContaining({
                 player: expect.objectContaining({
@@ -3246,16 +3258,534 @@ describe('private AI service', () => {
                 }),
                 clips: [],
                 seasonStatTotals: {
-                    gameCount: 1,
-                    totals: {
-                        points: 8,
-                        rebounds: 4
-                    }
+                    available: false,
+                    loadStatus: 'unavailable',
+                    gameCount: null,
+                    totals: null,
+                    absenceConfirmed: false
                 }
             })
         });
+        expect(result.data.recentGames[0]).toMatchObject({ stats: { hits: 2 } });
+        expect(result.data.recentGames[0]).not.toHaveProperty('diamondEvidence');
+        expect(result.data.coachingPrompt).toContain('do not infer season totals from recentGames');
         expect(playerMocks.loadParentPlayerDetailWithAthleteProfile).toHaveBeenCalledWith(authUser, 'team-1', 'player-1');
         expect(playerMocks.loadParentPlayerVideoClips).toHaveBeenCalledWith(authUser, 'team-1', 'player-1');
+    });
+
+    it('fails closed when a season-total load reports success without a result', async () => {
+        playerMocks.loadParentPlayerDetailWithAthleteProfile.mockResolvedValueOnce({
+            child: { playerId: 'player-1', playerName: 'Avery', teamId: 'team-1', teamName: 'Bears' },
+            player: { id: 'player-1', name: 'Avery' },
+            team: { id: 'team-1', name: 'Bears', sport: 'Basketball' },
+            statRows: [{
+                event: futureEvent({ id: 'recent-game' }),
+                stats: { points: 9 }
+            }]
+        });
+        playerMocks.loadParentPlayerStatTotals.mockResolvedValueOnce(null);
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await runPrivateAiTool(authUser, { name: 'get_player_development', args: { playerName: 'ave' } });
+
+        expect(result).toMatchObject({
+            ok: true,
+            data: {
+                recentGames: [{ stats: { points: 9 } }],
+                seasonStatTotals: {
+                    available: false,
+                    loadStatus: 'unavailable',
+                    gameCount: null,
+                    totals: null,
+                    absenceConfirmed: false
+                }
+            }
+        });
+    });
+
+    it('preserves a completed empty season-total load as authoritative empty data', async () => {
+        playerMocks.loadParentPlayerDetailWithAthleteProfile.mockResolvedValueOnce({
+            child: { playerId: 'player-1', playerName: 'Avery', teamId: 'team-1', teamName: 'Bears' },
+            player: { id: 'player-1', name: 'Avery' },
+            team: { id: 'team-1', name: 'Bears', sport: 'Basketball' },
+            statRows: []
+        });
+        playerMocks.loadParentPlayerStatTotals.mockResolvedValueOnce({
+            teamId: 'team-1',
+            playerId: 'player-1',
+            gameCount: 0,
+            gameIds: [],
+            totals: {}
+        });
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await runPrivateAiTool(authUser, { name: 'get_player_development', args: { playerName: 'ave' } });
+
+        expect(result).toMatchObject({
+            ok: true,
+            data: {
+                seasonStatTotals: {
+                    loadStatus: 'complete',
+                    gameCount: 0,
+                    totals: {}
+                }
+            }
+        });
+        expect(result.data.seasonStatTotals).not.toHaveProperty('available', false);
+    });
+
+    it('does not infer no recent games when the overview schedule load failed but season totals are nonzero', async () => {
+        playerMocks.loadParentPlayerDetailWithAthleteProfile.mockResolvedValueOnce({
+            child: { playerId: 'player-1', playerName: 'Avery', teamId: 'team-1', teamName: 'Bears' },
+            player: { id: 'player-1', name: 'Avery' },
+            team: { id: 'team-1', name: 'Bears', sport: 'Basketball' },
+            scheduleLoadError: 'Schedule is temporarily unavailable. Refresh the player to try again.',
+            statRows: []
+        });
+        playerMocks.loadParentPlayerStatTotals.mockResolvedValueOnce({
+            teamId: 'team-1',
+            playerId: 'player-1',
+            gameCount: 3,
+            gameIds: ['game-1', 'game-2', 'game-3'],
+            totals: { points: 18 }
+        });
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await runPrivateAiTool(authUser, { name: 'get_player_development', args: { playerName: 'ave' } });
+
+        expect(result).toMatchObject({
+            ok: true,
+            data: {
+                recentGames: [],
+                recentGamesEvidence: {
+                    loadStatus: 'unavailable',
+                    complete: false,
+                    absenceConfirmed: false
+                },
+                seasonStatTotals: {
+                    loadStatus: 'complete',
+                    gameCount: 3,
+                    totals: { points: 18 }
+                }
+            }
+        });
+        expect(result.data.coachingPrompt).toContain('do not claim there are no recent games');
+    });
+
+    it('does not infer no recent games from a partial empty overview schedule', async () => {
+        playerMocks.loadParentPlayerDetailWithAthleteProfile.mockResolvedValueOnce({
+            child: { playerId: 'player-1', playerName: 'Avery', teamId: 'team-1', teamName: 'Bears' },
+            player: { id: 'player-1', name: 'Avery' },
+            team: { id: 'team-1', name: 'Bears', sport: 'Basketball' },
+            scheduleLoadStatus: 'partial',
+            scheduleLoadError: 'Some schedule sources are temporarily unavailable. Recent games may be incomplete.',
+            statRows: []
+        });
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await runPrivateAiTool(authUser, { name: 'get_player_development', args: { playerName: 'ave' } });
+
+        expect(result).toMatchObject({
+            ok: true,
+            data: {
+                recentGames: [],
+                recentGamesEvidence: {
+                    loadStatus: 'partial',
+                    complete: false,
+                    absenceConfirmed: false
+                }
+            }
+        });
+        expect(result.data.coachingPrompt).toContain('partial or unavailable');
+    });
+
+    it('serializes partial Diamond totals with explicit lower-bound, coverage, and absence evidence', async () => {
+        playerMocks.loadParentPlayerStatTotals.mockResolvedValueOnce({
+            teamId: 'team-1',
+            playerId: 'player-1',
+            gameCount: 2,
+            gameIds: ['diamond-1', 'diamond-2'],
+            totals: { h: 1 },
+            statPresentation: {
+                isDiamond: true,
+                statCoverage: { h: 'partial' },
+                observedStatKeys: ['h'],
+                unavailableStatKeys: ['rbi'],
+                projectionPending: true
+            },
+            diamond: {
+                hasDiamond: true,
+                pending: true,
+                sourceRevisions: [8],
+                requestedStatVisibility: 'public',
+                statVisibility: 'public',
+                privateStatsStatus: 'not-requested',
+                publicStatsStatus: 'partial',
+                absenceConfirmed: false
+            }
+        });
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await runPrivateAiTool(authUser, { name: 'get_player_development', args: { playerName: 'ave' } });
+
+        expect(result).toMatchObject({
+            ok: true,
+            data: {
+                seasonStatTotals: {
+                    available: true,
+                    gameCount: 2,
+                    totals: { h: 1 },
+                    diamondEvidence: {
+                        complete: false,
+                        pending: true,
+                        publicStatsStatus: 'partial',
+                        absenceConfirmed: false,
+                        coverage: {
+                            statCoverage: { h: 'partial' },
+                            observedStatKeys: ['h'],
+                            unavailableStatKeys: ['rbi'],
+                            projectionPending: true
+                        }
+                    }
+                }
+            }
+        });
+        expect(result.data.coachingPrompt).toContain('Partial values are lower bounds');
+        expect(result.data.coachingPrompt).toContain('Never describe partial, pending, or unavailable Diamond totals as complete or as zero');
+    });
+
+    it('does not inherit public absence when manager-internal Diamond access is incomplete', async () => {
+        playerMocks.loadParentPlayerStatTotals.mockResolvedValueOnce({
+            teamId: 'team-1',
+            playerId: 'player-1',
+            gameCount: 1,
+            gameIds: ['diamond-1'],
+            totals: {},
+            statPresentation: {
+                isDiamond: true,
+                projectionPending: false,
+                statCoverage: { h: 'complete' },
+                observedStatKeys: [],
+                unavailableStatKeys: []
+            },
+            diamond: {
+                hasDiamond: true,
+                pending: false,
+                sourceRevisions: [8],
+                requestedStatVisibility: 'manager-internal',
+                statVisibility: 'public',
+                privateStatsStatus: 'partial',
+                publicStatsStatus: 'complete',
+                absenceConfirmed: true
+            }
+        });
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await runPrivateAiTool(authUser, { name: 'get_player_development', args: { playerName: 'ave' } });
+
+        expect(result).toMatchObject({
+            ok: true,
+            data: {
+                seasonStatTotals: {
+                    available: true,
+                    totals: {},
+                    diamondEvidence: {
+                        status: 'partial',
+                        complete: false,
+                        requestedStatVisibility: 'manager-internal',
+                        privateStatsStatus: 'partial',
+                        publicStatsStatus: 'complete',
+                        absenceConfirmed: false
+                    }
+                }
+            }
+        });
+    });
+
+    it('serializes per-game Diamond freshness and coverage as pending, partial, or complete evidence', async () => {
+        playerMocks.loadParentPlayerDetailWithAthleteProfile.mockResolvedValueOnce({
+            child: { playerId: 'player-1', playerName: 'Avery', teamId: 'team-1', teamName: 'Bears' },
+            player: { id: 'player-1', name: 'Avery' },
+            team: { id: 'team-1', name: 'Bears', sport: 'Baseball' },
+            statRows: [
+                {
+                    event: futureEvent({ id: 'diamond-pending', trackingEngine: 'diamond-v2' }),
+                    stats: { h: 0 },
+                    statPresentation: {
+                        isDiamond: true,
+                        projection: { pending: true },
+                        statCoverage: { h: 'complete' },
+                        observedStatKeys: [],
+                        unavailableStatKeys: []
+                    }
+                },
+                {
+                    event: futureEvent({ id: 'diamond-partial', trackingEngine: 'diamond-v2' }),
+                    stats: { h: 0 },
+                    statPresentation: {
+                        isDiamond: true,
+                        projection: { pending: false },
+                        statCoverage: { h: 'partial' },
+                        observedStatKeys: ['h'],
+                        unavailableStatKeys: ['rbi']
+                    }
+                },
+                {
+                    event: futureEvent({ id: 'diamond-complete', trackingEngine: 'diamond-v2' }),
+                    stats: { h: 0 },
+                    statPresentation: {
+                        isDiamond: true,
+                        projection: { pending: false },
+                        statCoverage: { h: 'complete' },
+                        observedStatKeys: [],
+                        unavailableStatKeys: []
+                    }
+                },
+                {
+                    event: futureEvent({ id: 'diamond-unknown', trackingEngine: 'diamond-v2' }),
+                    stats: { h: 0 },
+                    statPresentation: {
+                        isDiamond: true,
+                        statCoverage: { h: 'complete' },
+                        observedStatKeys: [],
+                        unavailableStatKeys: []
+                    }
+                }
+            ]
+        });
+        playerMocks.loadParentPlayerStatTotals.mockResolvedValueOnce({
+            teamId: 'team-1',
+            playerId: 'player-1',
+            gameCount: 4,
+            gameIds: ['diamond-pending', 'diamond-partial', 'diamond-complete', 'diamond-unknown'],
+            totals: { h: 0 },
+            statPresentation: {
+                isDiamond: true,
+                projectionPending: true,
+                statCoverage: { h: 'partial' },
+                observedStatKeys: ['h'],
+                unavailableStatKeys: []
+            },
+            diamond: {
+                hasDiamond: true,
+                pending: true,
+                sourceRevisions: [8],
+                publicStatsStatus: 'partial',
+                privateStatsStatus: 'not-requested',
+                absenceConfirmed: false
+            }
+        });
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await runPrivateAiTool(authUser, { name: 'get_player_development', args: { playerName: 'ave' } });
+
+        expect(result.data.recentGames.map((row) => row.diamondEvidence)).toEqual([
+            expect.objectContaining({
+                status: 'pending',
+                complete: false,
+                pending: true,
+                statCoverage: { h: 'complete' }
+            }),
+            expect.objectContaining({
+                status: 'partial',
+                complete: false,
+                pending: false,
+                statCoverage: { h: 'partial' },
+                observedStatKeys: ['h'],
+                unavailableStatKeys: ['rbi']
+            }),
+            expect.objectContaining({
+                status: 'complete',
+                complete: true,
+                pending: false,
+                statCoverage: { h: 'complete' }
+            }),
+            expect.objectContaining({
+                status: 'pending',
+                complete: false,
+                pending: true,
+                statCoverage: { h: 'complete' }
+            })
+        ]);
+    });
+
+    it.each([
+        ['missing', undefined],
+        ['malformed', 'not-an-envelope'],
+        ['contradictory', {
+            isDiamond: false,
+            projectionPending: false,
+            statCoverage: { h: 'complete' },
+            observedStatKeys: [],
+            unavailableStatKeys: []
+        }]
+    ])('guards Diamond-engine per-game stats when stat presentation is %s', async (_label, statPresentation) => {
+        playerMocks.loadParentPlayerDetailWithAthleteProfile.mockResolvedValueOnce({
+            child: { playerId: 'player-1', playerName: 'Avery', teamId: 'team-1', teamName: 'Bears' },
+            player: { id: 'player-1', name: 'Avery' },
+            team: { id: 'team-1', name: 'Bears', sport: 'Baseball' },
+            statRows: [{
+                event: futureEvent({ id: 'diamond-1', trackingEngine: 'diamond-v2' }),
+                stats: { h: 0 },
+                ...(statPresentation === undefined ? {} : { statPresentation })
+            }]
+        });
+        playerMocks.loadParentPlayerStatTotals.mockRejectedValueOnce(new Error('Totals unavailable'));
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await runPrivateAiTool(authUser, { name: 'get_player_development', args: { playerName: 'ave' } });
+
+        expect(result.data.recentGames[0]).toMatchObject({
+            stats: { h: 0 },
+            diamondEvidence: {
+                status: 'pending',
+                complete: false,
+                pending: true,
+                statCoverage: {},
+                observedStatKeys: [],
+                unavailableStatKeys: [],
+                projectionPending: true
+            }
+        });
+    });
+
+    it('suppresses legacy recent-row totals when a Diamond season total load is unavailable', async () => {
+        playerMocks.loadParentPlayerDetailWithAthleteProfile.mockResolvedValueOnce({
+            child: { playerId: 'player-1', playerName: 'Avery', teamId: 'team-1', teamName: 'Bears' },
+            player: { id: 'player-1', name: 'Avery' },
+            team: { id: 'team-1', name: 'Bears', sport: 'Baseball' },
+            statRows: [{
+                event: futureEvent({ id: 'diamond-1', trackingEngine: 'diamond-v2' }),
+                stats: { h: 1 },
+                statPresentation: {
+                    isDiamond: true,
+                    projectionPending: true,
+                    statCoverage: { h: 'partial' },
+                    observedStatKeys: ['h'],
+                    unavailableStatKeys: []
+                }
+            }]
+        });
+        playerMocks.loadParentPlayerStatTotals.mockRejectedValueOnce(new Error('Diamond statistics are temporarily unavailable. Refresh to retry.'));
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await runPrivateAiTool(authUser, { name: 'get_player_development', args: { playerName: 'ave' } });
+
+        expect(result).toMatchObject({
+            ok: true,
+            data: {
+                seasonStatTotals: {
+                    available: false,
+                    gameCount: null,
+                    totals: null,
+                    diamondEvidence: {
+                        complete: false,
+                        pending: true,
+                        publicStatsStatus: 'unavailable',
+                        absenceConfirmed: false
+                    }
+                }
+            }
+        });
+        expect(result.data.seasonStatTotals.totals).not.toEqual({ h: 1 });
+    });
+
+    it.each([
+        ['missing', undefined],
+        ['contradictory', { hasDiamond: false }]
+    ])('suppresses unguarded season totals when Diamond rows have a %s Diamond envelope', async (_label, diamond) => {
+        playerMocks.loadParentPlayerDetailWithAthleteProfile.mockResolvedValueOnce({
+            child: { playerId: 'player-1', playerName: 'Avery', teamId: 'team-1', teamName: 'Bears' },
+            player: { id: 'player-1', name: 'Avery' },
+            team: { id: 'team-1', name: 'Bears', sport: 'Baseball' },
+            statRows: [{
+                event: futureEvent({ id: 'diamond-1', trackingEngine: 'diamond-v2' }),
+                stats: { h: 1 },
+                statPresentation: {
+                    isDiamond: true,
+                    projection: { pending: false },
+                    statCoverage: { h: 'complete' },
+                    observedStatKeys: [],
+                    unavailableStatKeys: []
+                }
+            }]
+        });
+        playerMocks.loadParentPlayerStatTotals.mockResolvedValueOnce({
+            teamId: 'team-1',
+            playerId: 'player-1',
+            gameCount: 0,
+            gameIds: [],
+            totals: {},
+            ...(diamond === undefined ? {} : { diamond })
+        });
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await runPrivateAiTool(authUser, { name: 'get_player_development', args: { playerName: 'ave' } });
+
+        expect(result).toMatchObject({
+            ok: true,
+            data: {
+                seasonStatTotals: {
+                    available: false,
+                    gameCount: null,
+                    totals: null,
+                    diamondEvidence: {
+                        status: 'pending',
+                        complete: false,
+                        pending: true,
+                        publicStatsStatus: 'unavailable',
+                        absenceConfirmed: false,
+                        coverage: {
+                            projectionPending: true
+                        }
+                    }
+                }
+            }
+        });
+    });
+
+    it('instructs the answer model not to turn incomplete Diamond evidence into complete or zero claims', async () => {
+        playerMocks.loadParentPlayerDetailWithAthleteProfile.mockResolvedValueOnce({
+            child: { playerId: 'player-1', playerName: 'Avery', teamId: 'team-1', teamName: 'Bears' },
+            player: { id: 'player-1', name: 'Avery' },
+            team: { id: 'team-1', name: 'Bears', sport: 'Baseball' },
+            statRows: [{
+                event: futureEvent({ id: 'diamond-pending', trackingEngine: 'diamond-v2' }),
+                stats: { h: 0 },
+                statPresentation: {
+                    isDiamond: true,
+                    projection: { pending: true },
+                    statCoverage: { h: 'complete' },
+                    observedStatKeys: [],
+                    unavailableStatKeys: []
+                }
+            }]
+        });
+        playerMocks.loadParentPlayerStatTotals.mockResolvedValueOnce({
+            teamId: 'team-1', playerId: 'player-1', gameCount: 2, gameIds: ['diamond-1', 'diamond-2'],
+            totals: { h: 1 },
+            statPresentation: { isDiamond: true, statCoverage: { h: 'partial' }, observedStatKeys: ['h'], unavailableStatKeys: [], projectionPending: true },
+            diamond: { hasDiamond: true, pending: true, sourceRevisions: [8], publicStatsStatus: 'partial', privateStatsStatus: 'not-requested', absenceConfirmed: false }
+        });
+        aiMocks.model.generateContent
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                toolCalls: [{ name: 'get_player_development', args: { playerName: 'ave' } }]
+            })))
+            .mockResolvedValueOnce(modelText(JSON.stringify({ answer: 'The known totals are incomplete.' })));
+        const { generatePrivateAiAnswer } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        await generatePrivateAiAnswer(authUser, 'How is Avery developing?');
+
+        const answerPrompt = String(aiMocks.model.generateContent.mock.calls[1][0]);
+        expect(answerPrompt).toContain('partial or pending totals are lower bounds');
+        expect(answerPrompt).toContain('seasonStatTotals.loadStatus unavailable');
+        expect(answerPrompt).toContain('never derive season totals from recentGames');
+        expect(answerPrompt).toContain('Never turn a missing seasonStatTotals result into totals from recent partial rows');
+        expect(answerPrompt).toContain('the requested stat key is explicitly present');
+        expect(answerPrompt).toContain('a missing stat key never means zero');
+        expect(answerPrompt).toContain('"stats":{"h":0},"diamondEvidence":{"status":"pending","complete":false,"pending":true');
+        expect(answerPrompt).toContain('"publicStatsStatus":"partial"');
+        expect(answerPrompt).toContain('"absenceConfirmed":false');
     });
 
     it('opts all-range AI schedule lookups into full history loads', async () => {
@@ -6860,6 +7390,90 @@ describe('private AI service', () => {
             }),
             coachUser
         );
+    });
+
+    it('preserves pinned Diamond fields during a confirmed location-only schedule update', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            children: [{ playerId: 'player-1', name: 'Avery', teamId: 'team-1', teamName: 'Bears' }],
+            events: [futureEvent({
+                trackingEngine: 'diamond-v2',
+                location: 'Old Diamond',
+                isHome: null,
+                statTrackerConfigId: 'diamond-config',
+                opponentTeamId: null
+            })]
+        });
+
+        const result = await executeConfirmedToolForTest(coachUser, {
+            name: 'update_schedule_event',
+            args: {
+                teamId: 'team-1',
+                eventId: 'game-1',
+                eventType: 'game',
+                input: { location: 'New Diamond' }
+            }
+        }, { conversationId: 'diamond-location-only-update' });
+
+        expect(result).toMatchObject({ name: 'update_schedule_event', ok: true });
+        expect(scheduleMocks.updateScheduledGameForApp).toHaveBeenCalledWith(
+            'team-1',
+            'game-1',
+            expect.objectContaining({
+                location: 'New Diamond',
+                isHome: null,
+                statTrackerConfigId: 'diamond-config',
+                opponentTeamId: ''
+            }),
+            coachUser,
+            { preservePinnedDiamondFields: true }
+        );
+    });
+
+    it.each([
+        ['isHome', false],
+        ['statTrackerConfigId', 'other-config'],
+        ['opponentTeamId', 'team-3']
+    ])('rejects Diamond schedule mutations to pinned %s', async (field, value) => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            children: [{ playerId: 'player-1', name: 'Avery', teamId: 'team-1', teamName: 'Bears' }],
+            events: [futureEvent({
+                trackingEngine: 'diamond-v2',
+                isHome: true,
+                statTrackerConfigId: 'diamond-config',
+                opponentTeamId: 'team-2'
+            })]
+        });
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        await expect(runPrivateAiTool(coachUser, {
+            name: 'update_schedule_event',
+            args: {
+                teamId: 'team-1',
+                eventId: 'game-1',
+                eventType: 'game',
+                input: {
+                    location: 'New Diamond',
+                    [field]: value
+                }
+            }
+        })).resolves.toMatchObject({
+            name: 'update_schedule_event',
+            ok: false,
+            error: expect.stringContaining('locked after Diamond activation')
+        });
+        expect(scheduleMocks.updateScheduledGameForApp).not.toHaveBeenCalled();
     });
 
     it('preserves top-level event fields when preparing a partial schedule update', async () => {

@@ -628,6 +628,7 @@
                 "game.html",
                 "live-game-overlay-poc.html",
                 "live-game-overlay.html",
+                "live-game-diamond-v2.html",
                 "live-game.html",
                 "live-tracker.html",
                 "track-basketball.html",
@@ -638,25 +639,58 @@
                 "widget-scoreboard.html"
             ],
             "appPages": [
+                "apps/app/src/pages/DiamondScorebook.tsx",
                 "apps/app/src/pages/GameDetail.tsx",
                 "apps/app/src/pages/StandardTracker.tsx"
             ],
             "cloudFunctions": [
+                "acquireDiamondScorerLease",
+                "activateDiamondGame",
+                "cleanupAccountDiamondPrivateNotesOnAuthDelete",
+                "cleanupDeletedDiamondGame",
                 "cleanupPrivateReplayArchiveOnGameDelete",
                 "cleanupPrivateReplayArchiveOnSharedGameDelete",
+                "configureDiamondTeam",
                 "deleteStatConfig",
                 "gameReportSharePreview",
+                "getDiamondAccess",
+                "getDiamondManagerStats",
+                "getDiamondRecapSource",
+                "getDiamondState",
                 "getGameReplayPlayback",
+                "getPublicDiamondGame",
                 "getReplayPrivacyMigrationStatus",
+                "listDiamondScorerCandidates",
+                "listDiamondEvents",
                 "liveGameSharePreview",
                 "manageGameReplayArchive",
-                "resetTeamStatConfigs",
+                "moderateDiamondLiveChat",
                 "notifyLiveEventCreated",
+                "parseDiamondVoice",
+                "postDiamondLiveChat",
+                "postDiamondLiveReaction",
+                "processDiamondScorebookEffect",
+                "projectDiamondScorebook",
+                "publishDiamondAiDraft",
+                "regenerateDiamondProjection",
+                "resetTeamStatConfigs",
                 "saveAthleteProfileProjection",
-                "saveGameHighlightClips"
+                "saveGameHighlightClips",
+                "submitDiamondCommand"
             ],
             "unitTests": [
+                "functions/test/account-deletion-diamond-private-notes.test.cjs",
                 "functions/test/athlete-profile-projection-core.test.cjs",
+                "functions/test/diamond-private-note-core.test.cjs",
+                "functions/test/diamond-scorebook-ai-handlers.test.cjs",
+                "functions/test/diamond-scorebook-effect-handlers.test.cjs",
+                "functions/test/diamond-scorebook-engagement-handlers.test.cjs",
+                "functions/test/diamond-scorebook-handlers.test.cjs",
+                "functions/test/diamond-scorebook-notification-sender.test.cjs",
+                "functions/test/diamond-scorebook-projections.test.cjs",
+                "functions/test/diamond-scorebook-projector-handlers.test.cjs",
+                "functions/test/diamond-scorebook-runtime.test.cjs",
+                "functions/test/diamond-stat-config.test.cjs",
                 "functions/test/live-game-share-preview-core.test.cjs",
                 "functions/test/replay-private-archive-callables.test.cjs",
                 "functions/test/replay-private-archive-core.test.cjs",
@@ -665,6 +699,16 @@
                 "tests/unit/app-game-report-service.test.js",
                 "tests/unit/app-live-game-announcer.test.js",
                 "tests/unit/db-tracking-items.test.js",
+                "tests/unit/diamond-ai-presentation.test.js",
+                "tests/unit/diamond-functions-wiring.test.js",
+                "tests/unit/diamond-live-view-model.test.js",
+                "tests/unit/diamond-scorebook-client.test.js",
+                "tests/unit/diamond-scorebook-core.test.js",
+                "tests/unit/diamond-scorebook-routing.test.js",
+                "tests/unit/diamond-scorebook-rules.test.js",
+                "tests/unit/diamond-stat-export.test.js",
+                "tests/unit/diamond-stat-scale.test.js",
+                "tests/unit/diamond-stat-surfaces.test.js",
                 "tests/unit/game-day-entry.test.js",
                 "tests/unit/live-game-share-preview.test.js",
                 "functions/test/live-event-notification-core.test.cjs",
@@ -677,6 +721,7 @@
                 "tests/unit/track-basketball-opponent-hydration.test.js"
             ],
             "integrationTests": [
+                "apps/app/src/pages/DiamondScorebook.test.tsx",
                 "apps/app/src/pages/GameDetail.test.tsx",
                 "apps/app/src/pages/StandardTracker.test.tsx",
                 "tests/unit/app-game-detail-baseball-walk.test.jsx"
@@ -687,14 +732,9 @@
                 "tests/smoke/live-tracker-foul-workflow.spec.js",
                 "tests/smoke/game-day-live-substitution.spec.js",
                 "tests/smoke/game-day-delegated-scorekeeper.spec.js",
+                "tests/smoke/diamond-live-viewer.spec.js",
                 "tests/smoke/live-game-overlay.spec.js",
                 "tests/smoke/widget-scoreboard.spec.js"
-            ],
-            "knownGaps": [
-                {
-                    "tier": "workflow",
-                    "description": "Replay still needs end-to-end workflow coverage."
-                }
             ]
         },
         {

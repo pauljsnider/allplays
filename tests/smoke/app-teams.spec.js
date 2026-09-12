@@ -104,6 +104,9 @@ async function mockTeamsModules(page, { scenario = '', managedTeam = false, rost
                     window.__sharedPublicUrls.push(String(payload?.url || ''));
                     return 'shared';
                 }
+                export async function exportCsvFile() {
+                    return 'downloaded';
+                }
             `
         });
     });
@@ -761,6 +764,14 @@ async function mockTeamCreationModule(page) {
             body: `
                 export function getCreateTeamSportOptions() {
                     return ['Basketball', 'Soccer', 'Baseball', 'Softball'];
+                }
+
+                export function getCreateTeamDiamondProfileOptions() {
+                    return [];
+                }
+
+                export async function configureCreatedTeamDiamondForApp() {
+                    return { configured: true };
                 }
 
                 export async function createTeamForApp(user, input) {

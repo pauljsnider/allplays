@@ -37,4 +37,3 @@ export function getSportStatTemplate(sport) {
 export function getSportTemplateOptions() {
     return Object.values(SPORT_STAT_TEMPLATES);
 }
-

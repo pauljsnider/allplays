@@ -93,6 +93,54 @@ describe('game report stat helpers', () => {
     });
   });
 
+  it('exposes configured public Diamond columns without restoring private catalog metrics', () => {
+    const result = resolveReportStatColumns({
+      trackingEngine: 'diamond-v2',
+      statsMap: { p1: { ab: 3, h: 1 } },
+      resolvedConfig: {
+        columns: ['AB', 'H', 'R', 'RBI'],
+        statDefinitions: [
+          { id: 'avg', label: 'Batting average', precision: 3, scope: 'player', visibility: 'public' }
+        ]
+      }
+    });
+
+    expect(result.statKeys.slice(0, 4)).toEqual(['ab', 'h', 'r', 'rbi']);
+    expect(result.statKeys).toEqual(expect.arrayContaining(['avg']));
+    expect(result.statKeys).not.toEqual(expect.arrayContaining(['era', 'whip', 'fpct']));
+    expect(result.statLabels.avg).toBe('Batting average');
+    expect(result.statDefinitions.era).toBeUndefined();
+  });
+
+  it('does not re-add a configured private Diamond metric through the default catalog', () => {
+    const result = resolveReportStatColumns({
+      trackingEngine: 'diamond-v2',
+      statsMap: { p1: { h: 2, pitches: 81 } },
+      resolvedConfig: {
+        columns: ['H'],
+        statDefinitions: [
+          { id: 'h', label: 'Hits', scope: 'player', visibility: 'public' },
+          { id: 'pitches', label: 'Pitch count', scope: 'player', visibility: 'private' }
+        ]
+      }
+    });
+
+    expect(result.statKeys).toContain('h');
+    expect(result.statKeys).not.toContain('pitches');
+    expect(result.statDefinitions).not.toHaveProperty('pitches');
+  });
+
+  it('does not expose Diamond metadata as opponent stat columns for legacy games', () => {
+    const result = resolveOpponentReportStatColumns({
+      opponentStats: {
+        p1: { name: 'Player', h: 2, diamondCoverage: { batting: 'partial' }, diamondSourceRevision: 4 }
+      },
+      resolvedConfig: null
+    });
+
+    expect(result).toEqual({ oppKeys: ['h'], oppLabels: { h: 'H' } });
+  });
+
   it('maps goal label to legacy pts field when needed', () => {
     expect(buildConfiguredStatFields(['GOALS'], [{ pts: 1 }])).toEqual([
       { fieldName: 'pts', label: 'GOALS' }

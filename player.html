@@ -158,6 +158,10 @@
                             class="tab-btn px-4 py-2 rounded-lg font-medium transition whitespace-nowrap">
                             Video Clips
                         </button>
+                        <button id="diamond-player-stats-export-btn" type="button"
+                            class="hidden ml-auto px-4 py-2 rounded-lg border border-primary-200 bg-primary-50 text-primary-700 hover:bg-primary-100 font-semibold whitespace-nowrap">
+                            Export stats CSV
+                        </button>
                     </div>
                 </div>
 
@@ -249,19 +253,23 @@
     </div>
 
     <script type="module">
-        import { getTeam, getGame, getPlayers, getGames, getConfigs, updatePlayerProfile, updatePlayerPrivateProfile, getPlayerPrivateProfile, uploadPlayerPhoto, deleteLegacyImageUpload, getUnreadChatCounts, getUserProfile, getRosterFieldDefinitions } from './js/db.js?v=4433195';
+        import { getTeam, getGame, getPlayers, getGames, getConfigs, updatePlayerProfile, updatePlayerPrivateProfile, getPlayerPrivateProfile, uploadPlayerPhoto, deleteLegacyImageUpload, getUnreadChatCounts, getUserProfile, getRosterFieldDefinitions } from './js/db.js?v=4433199';
         import { collectRosterProfileValues, getRosterProfileValues, normalizeRosterFieldDefinitions, renderRosterProfileFields, validateRosterProfileValues } from './js/roster-profile-fields.js?v=2';
         import { generatePlayerGameInsights } from './js/post-game-insights.js?v=1';
         import { hasPlayerProfileParticipation, collectPlayerVideoClips } from './js/player-profile-stats.js?v=3';
         import { buildPlayerLeaderboardSnapshot, selectAnalyticsConfig, summarizePlayerTopStats } from './js/stat-leaderboards.js?v=4';
-        import { renderHeader, renderFooter, getUrlParams, escapeHtml, shareOrCopy } from './js/utils.js?v=443371';
-        import { checkAuth } from './js/auth.js?v=4433199';
-        import { collection, getDocs, doc, getDoc, query, orderBy } from "./js/firebase.js?v=33";
+        import { renderHeader, renderFooter, getUrlParams, escapeHtml, shareOrCopy } from './js/utils.js?v=443375';
+        import { checkAuth } from './js/auth.js?v=4433203';
+        import { collection, functions, getDocs, doc, getDoc, httpsCallable, query, orderBy } from "./js/firebase.js?v=33";
         import { db } from './js/firebase.js?v=33';
-        import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=443347';
+        import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=443350';
         import { hasFullTeamAccess } from './js/team-access.js?v=44338';
         import { getVisibleRosterFieldValues } from './js/roster-field-privacy.js';
         import { readAccountPremiumEntitlement, renderPremiumGateState } from './js/premium-entitlements.js?v=8';
+        import { DIAMOND_PLAYER_STAT_CATALOG, aggregateCoverageAwareSeasonStats, getActivationPinnedDiamondStatCatalog, getCoverageAwareStatValue, getDiamondPublicPlayerStatsCollectionPath, hasMixedActivationPinnedDiamondStatIds, isDiamondV2Game, prepareDiamondStatDocumentForSeason, readCoverageAwareStatDocument, resolveDiamondManagerStatDocuments, resolveDiamondPublicStatDocuments, resolveDiamondStatConfigsForGames } from './js/diamond-stat-presentation.js?v=7';
+        import { buildDiamondReportPlayers, loadCompleteDiamondManagerStats } from './js/diamond-manager-stats.js?v=5';
+        import { buildDiamondStatsCsv, downloadDiamondStatsCsv, getDiamondStatsExportFilename } from './js/diamond-stat-export.js?v=7';
+        import { loadCompleteDiamondReportEvents } from './js/diamond-report-events.js?v=1';
 
         let currentUser = null;
         let currentPlayer = null; // Store for modal access
@@ -271,15 +279,120 @@
         let privateProfileLoadFailed = false;
         let rosterFieldDefinitions = [];
         let currentCanEditRosterProfile = false;
+        let currentCanEditPlayerProfile = false;
+        let currentDiamondPlayerStatCatalog = DIAMOND_PLAYER_STAT_CATALOG;
+        let playerLoadGeneration = 0;
+        let playerEditModalGeneration = 0;
         let privateFieldsDirty = {
             emergencyContact: false,
             medicalInfo: false
         };
 
+        function clearPlayerEditForm() {
+            const form = document.getElementById('edit-player-form');
+            if (form) form.reset();
+            ['edit-ec-name', 'edit-ec-phone', 'edit-medical-info', 'edit-photo-input'].forEach((id) => {
+                const field = document.getElementById(id);
+                if (field) field.value = '';
+            });
+            const preview = document.getElementById('edit-photo-preview');
+            if (preview) preview.innerHTML = '';
+            const rosterFields = document.getElementById('edit-roster-profile-fields');
+            if (rosterFields) {
+                rosterFields.innerHTML = '';
+                rosterFields.classList.add('hidden');
+            }
+            const saveButton = document.getElementById('save-player-btn');
+            if (saveButton) {
+                saveButton.disabled = true;
+                saveButton.textContent = 'Save Changes';
+            }
+            privateFieldsDirty = {
+                emergencyContact: false,
+                medicalInfo: false
+            };
+        }
+
+        function closePlayerEditModal({ invalidateRequest = true } = {}) {
+            if (invalidateRequest) playerEditModalGeneration += 1;
+            document.getElementById('edit-player-modal')?.classList.add('hidden');
+            clearPlayerEditForm();
+        }
+
+        function clearPlayerAuthScopedState() {
+            playerEditModalGeneration += 1;
+            currentPlayer = null;
+            currentPrivateProfile = null;
+            currentTeamId = null;
+            currentTeam = null;
+            privateProfileLoadFailed = false;
+            rosterFieldDefinitions = [];
+            currentCanEditRosterProfile = false;
+            currentCanEditPlayerProfile = false;
+            currentDiamondPlayerStatCatalog = DIAMOND_PLAYER_STAT_CATALOG;
+
+            const editButton = document.getElementById('open-edit-modal');
+            if (editButton) editButton.onclick = null;
+            document.getElementById('edit-btn-container')?.classList.add('hidden');
+
+            const exportButton = document.getElementById('diamond-player-stats-export-btn');
+            if (exportButton) {
+                exportButton.classList.add('hidden');
+                exportButton.onclick = null;
+            }
+
+            document.getElementById('diamond-player-stats-status')?.remove();
+            [
+                'team-nav-banner',
+                'player-header',
+                'season-overview',
+                'advanced-stats',
+                'game-stats',
+                'season-stats',
+                'player-events',
+                'content-clips',
+                'player-game-insights-body'
+            ].forEach((id) => {
+                const container = document.getElementById(id);
+                if (container) container.innerHTML = '';
+            });
+            document.getElementById('player-game-insights-section')?.classList.add('hidden');
+            const backLinkContainer = document.getElementById('back-link-container');
+            if (backLinkContainer) backLinkContainer.classList.remove('hidden');
+            const backLink = document.getElementById('back-link');
+            if (backLink) backLink.href = '#';
+            closePlayerEditModal({ invalidateRequest: false });
+        }
+
+        function capturePlayerAuthContext({ modalGeneration = playerEditModalGeneration } = {}) {
+            return Object.freeze({
+                uid: currentUser?.uid || '',
+                loadGeneration: playerLoadGeneration,
+                modalGeneration,
+                teamId: currentTeamId || '',
+                playerId: currentPlayer?.id || ''
+            });
+        }
+
+        function isPlayerAuthContextCurrent(context, { requireModal = false, requireEdit = false } = {}) {
+            return Boolean(
+                context
+                && context.uid
+                && context.uid === (currentUser?.uid || '')
+                && context.loadGeneration === playerLoadGeneration
+                && context.teamId === (currentTeamId || '')
+                && context.playerId === (currentPlayer?.id || '')
+                && (!requireModal || context.modalGeneration === playerEditModalGeneration)
+                && (!requireEdit || currentCanEditPlayerProfile)
+            );
+        }
+
         checkAuth((user) => {
+            const generation = ++playerLoadGeneration;
+            clearPlayerAuthScopedState();
             currentUser = user;
             renderHeader(document.getElementById('header-container'), user);
-            loadPlayerDetails();
+            loadPlayerDetails({ generation, expectedUid: user?.uid || '' });
         });
 
         renderFooter(document.getElementById('footer-container'));
@@ -312,6 +425,97 @@
             const minutes = Math.floor(totalSeconds / 60);
             const seconds = totalSeconds % 60;
             return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+        }
+
+        function renderCoverageAwarePlayerStat(presentation, stats, definition) {
+            const key = definition?.id || definition;
+            if (presentation?.isDiamond !== true) {
+                return Object.prototype.hasOwnProperty.call(stats || {}, key)
+                    ? escapeHtml(String(stats[key]))
+                    : '&mdash;';
+            }
+            const displayed = getCoverageAwareStatValue(presentation, stats, key, definition || {});
+            const value = displayed.available ? escapeHtml(displayed.text) : '&mdash;';
+            return displayed.observed
+                ? `<span class="inline-flex flex-col items-center" title="Observed from partial tracking"><span>${value}</span><span class="text-[9px] font-bold uppercase tracking-wide text-amber-700">Observed</span></span>`
+                : value;
+        }
+
+        function renderPlayerStatCards(stats = {}, presentation = null) {
+            const definitions = presentation?.isDiamond === true
+                ? currentDiamondPlayerStatCatalog
+                : Object.keys(stats || {}).map((id) => ({ id, label: id }));
+            return definitions.map((definition) => `
+                <div class="text-center p-4 bg-white rounded-lg border border-gray-200 hover:border-primary-300 transition">
+                    <div class="text-2xl md:text-3xl font-bold text-primary-600">${renderCoverageAwarePlayerStat(presentation, stats, definition)}</div>
+                    <div class="text-xs text-gray-600 uppercase mt-1 font-medium">${escapeHtml(definition.label || definition.id)}</div>
+                </div>
+            `).join('');
+        }
+
+        function renderDiamondPlayerProjectionNotice(projection, statVisibility = 'public', privateStatsStatus = 'not-requested') {
+            document.getElementById('diamond-player-stats-status')?.remove();
+            if (!projection?.hasDiamond) return;
+            const notice = document.createElement('div');
+            notice.id = 'diamond-player-stats-status';
+            notice.className = `mb-8 rounded-2xl border px-5 py-4 ${projection.pending ? 'border-amber-200 bg-amber-50 text-amber-950' : 'border-sky-200 bg-sky-50 text-sky-950'}`;
+            notice.setAttribute('role', 'status');
+            notice.innerHTML = `
+                <div class="text-xs font-bold uppercase tracking-wider">Diamond scorebook stats &middot; ${statVisibility === 'manager-internal' ? 'Manager-internal' : 'Public'} &middot; Read only</div>
+                <div class="mt-1 text-sm font-semibold">${projection.pending
+                    ? 'One or more stat projections are pending. Unavailable values remain an em dash and are never counted as zero.'
+                    : statVisibility === 'manager-internal'
+                        ? 'Complete internal values match every authoritative game head. Partial capture is labeled as observed.'
+                        : privateStatsStatus === 'partial' || privateStatsStatus === 'unavailable'
+                            ? 'Internal stats could not be verified completely, so this page is using public stats only. Retry to load the internal view.'
+                            : 'Public season values trace to the authoritative play ledger. Partial capture is labeled as observed.'}</div>
+                <div class="mt-1 text-xs font-semibold opacity-75">Source revisions: ${projection.sourceRevisions.length ? projection.sourceRevisions.join(', ') : 'unavailable'}</div>
+            `;
+            document.getElementById('player-header')?.insertAdjacentElement('afterend', notice);
+        }
+
+        function buildCompleteDiamondLeaderboardSnapshot({ config, players, completeStatsByPlayerId }) {
+            const publicTopDefinitions = (config?.statDefinitions || []).filter((definition) => (
+                definition?.topStat === true
+                && definition?.scope !== 'team'
+                && definition?.visibility !== 'private'
+            ));
+            const topStats = publicTopDefinitions.flatMap((definition) => {
+                const statId = String(definition?.id || '').trim().toLowerCase();
+                const eligiblePlayers = (players || []).filter((candidate) => (
+                    statId && Object.prototype.hasOwnProperty.call(completeStatsByPlayerId?.[candidate.id] || {}, statId)
+                ));
+                if (!eligiblePlayers.length) return [];
+                return buildPlayerLeaderboardSnapshot({
+                    config: { ...config, statDefinitions: [definition] },
+                    players: eligiblePlayers,
+                    seasonStatsByPlayerId: completeStatsByPlayerId
+                }).topStats;
+            });
+            const groupsById = new Map();
+            topStats.forEach((stat) => {
+                const groupId = String(stat.group || 'general').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'general';
+                if (!groupsById.has(groupId)) groupsById.set(groupId, { id: groupId, label: stat.group || 'General', stats: [] });
+                groupsById.get(groupId).stats.push(stat);
+            });
+            return { config, topStats, groups: [...groupsById.values()] };
+        }
+
+        function buildDiamondConfigUnavailableError() {
+            const error = new Error('Diamond statistic definitions are temporarily unavailable.');
+            error.code = 'allplays/diamond-stat-config-unavailable';
+            return error;
+        }
+
+        async function loadRawDiamondStatConfigs(teamId) {
+            const snapshot = await getDocs(query(
+                collection(db, `teams/${teamId}/statTrackerConfigs`),
+                orderBy('name')
+            ));
+            return {
+                configs: snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() })),
+                fromCache: snapshot?.metadata?.fromCache === true
+            };
         }
 
         function insightToneClasses(tone) {
@@ -476,74 +680,218 @@
         }
 
 
-        async function loadPlayerGameData(teamId, games, playerId, playerName) {
-            return Promise.all(games.map(async (game) => {
+        async function loadPlayerGameData(teamId, games, playerId, playerName, {
+            requestManagerStats = false,
+            profilePlayerId = ''
+        } = {}) {
+            const results = await Promise.all(games.map(async (game) => {
                 const gameId = game.id;
+                const diamondGame = isDiamondV2Game(game);
                 const teamStatsByPlayerId = {};
+                const completeStatsByPlayerId = {};
+                const statPresentationByPlayerId = {};
+                const statDocuments = [];
                 let selectedPlayerStats = null;
+                let selectedPublicIdentity = null;
+                let statsLoadStatus = 'complete';
 
                 try {
-                    const statsSnapshot = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`));
-                    statsSnapshot.forEach((docSnap) => {
-                        const statData = docSnap.data() || {};
-                        const playerStats = statData.stats || {};
-                        teamStatsByPlayerId[docSnap.id] = playerStats;
+                    const collectionPath = diamondGame
+                        ? getDiamondPublicPlayerStatsCollectionPath({ teamId, gameId, game })
+                        : `teams/${teamId}/games/${gameId}/aggregatedStats`;
+                    if (!collectionPath) throw new Error('The Diamond public stat head is unavailable.');
+                    const statsSnapshot = await getDocs(collection(db, collectionPath));
+                    const loadedDocuments = statsSnapshot.docs.map((docSnap) => ({
+                        id: docSnap.id,
+                        data: docSnap.data() || {}
+                    }));
+                    const publicResolution = diamondGame
+                        ? resolveDiamondPublicStatDocuments({ teamId, gameId, game, documents: loadedDocuments })
+                        : { status: 'complete', documents: loadedDocuments };
+                    if (publicResolution.status !== 'complete') {
+                        throw new Error('The Diamond public stat projection is incomplete.');
+                    }
+                    publicResolution.documents.forEach(({ id, data: statData }) => {
+                        const presentation = readCoverageAwareStatDocument(statData, game);
+                        const playerStats = presentation.isDiamond ? presentation.values : (statData.stats || {});
+                        teamStatsByPlayerId[id] = playerStats;
+                        completeStatsByPlayerId[id] = presentation.isDiamond ? presentation.completeValues : playerStats;
+                        if (presentation.isDiamond) {
+                            statPresentationByPlayerId[id] = presentation;
+                            statDocuments.push({ id, data: statData });
+                        }
 
-                        if (docSnap.id === playerId && hasPlayerProfileParticipation(statData)) {
+                        if (id === playerId && diamondGame) {
+                            const recordedPlayer = buildDiamondReportPlayers({
+                                    documents: [{ id, data: statData }]
+                                }).find((candidate) => candidate.id === id);
+                            selectedPublicIdentity = {
+                                playerId: profilePlayerId === id ? id : '',
+                                playerName: recordedPlayer?.name || 'Recorded player',
+                                playerNumber: recordedPlayer?.number || '-',
+                                canOpenProfile: profilePlayerId === id
+                            };
+                        }
+
+                        if (id === playerId && hasPlayerProfileParticipation(statData)) {
                             selectedPlayerStats = {
                                 stats: playerStats,
-                                timeMs: typeof statData.timeMs === 'number' ? statData.timeMs : 0
+                                completeStats: completeStatsByPlayerId[id],
+                                statPresentation: statPresentationByPlayerId[id] || null,
+                                timeMs: typeof statData.timeMs === 'number' ? statData.timeMs : 0,
+                                sourcePlayIds: diamondGame ? [...statData.sourcePlayIds] : null,
+                                recordedIdentity: selectedPublicIdentity
                             };
                         }
                     });
                 } catch (error) {
                     console.warn('Player stats unavailable for game:', gameId, error);
+                    statsLoadStatus = 'unavailable';
                 }
 
                 if (!selectedPlayerStats) {
                     return {
                         gameId,
+                        game,
+                        diamondGame,
+                        statDocuments,
                         statsByPlayerId: teamStatsByPlayerId,
+                        completeStatsByPlayerId,
+                        statPresentationByPlayerId,
+                        statsLoadStatus,
+                        publicRecordedIdentity: selectedPublicIdentity,
                         playerGameStats: null,
-                        events: []
+                        events: [],
+                        eventsLoadStatus: diamondGame && statsLoadStatus !== 'complete' ? 'unavailable' : 'complete'
                     };
                 }
 
-                const eventsQuery = query(
-                    collection(db, `teams/${teamId}/games/${gameId}/events`),
-                    orderBy('timestamp', 'asc')
-                );
                 let events = [];
+                let eventsLoadStatus = 'complete';
                 try {
-                    const eventsSnapshot = await getDocs(eventsQuery);
-                    events = eventsSnapshot.docs
-                        .map((docSnap) => docSnap.data())
-                        .filter((event) => event.playerId === playerId || (event.text && event.text.includes(playerName)))
-                        .map((event) => ({
+                    if (diamondGame) {
+                        const diamondReplay = await loadCompleteDiamondReportEvents({
+                            teamId,
+                            gameId,
+                            game,
+                            requestedVisibility: requestManagerStats ? 'manager-internal' : 'public',
+                            sourcePlayIds: selectedPlayerStats.sourcePlayIds,
+                            invoke: async (name, payload) => {
+                                const response = await httpsCallable(functions, name)(payload);
+                                return response?.data;
+                            }
+                        });
+                        events = diamondReplay.events.map((event) => ({
                             ...event,
                             gameId,
                             opponent: game.opponent || 'Opponent'
                         }));
+                    } else {
+                        const eventsQuery = query(
+                            collection(db, `teams/${teamId}/games/${gameId}/events`),
+                            orderBy('timestamp', 'asc')
+                        );
+                        const eventsSnapshot = await getDocs(eventsQuery);
+                        events = eventsSnapshot.docs
+                            .map((docSnap) => docSnap.data())
+                            .filter((event) => event.playerId === playerId || (event.text && event.text.includes(playerName)))
+                            .map((event) => ({
+                                ...event,
+                                gameId,
+                                opponent: game.opponent || 'Opponent'
+                            }));
+                    }
                 } catch (error) {
                     console.warn('Player events unavailable for game:', gameId, error);
+                    eventsLoadStatus = 'unavailable';
                 }
 
                 return {
                     gameId,
+                    game,
+                    diamondGame,
+                    statDocuments,
                     statsByPlayerId: teamStatsByPlayerId,
+                    completeStatsByPlayerId,
+                    statPresentationByPlayerId,
+                    statsLoadStatus,
+                    publicRecordedIdentity: selectedPublicIdentity,
                     playerGameStats: {
                         gameId,
                         date: game.date.toDate ? game.date.toDate() : new Date(game.date),
                         opponent: game.opponent || 'Opponent',
                         stats: selectedPlayerStats.stats,
-                        timeMs: selectedPlayerStats.timeMs
+                        completeStats: selectedPlayerStats.completeStats,
+                        statPresentation: selectedPlayerStats.statPresentation,
+                        timeMs: selectedPlayerStats.timeMs,
+                        recordedIdentity: selectedPlayerStats.recordedIdentity
                     },
-                    events
+                    events,
+                    eventsLoadStatus
                 };
             }));
+
+            const diamondResults = results.filter(({ diamondGame }) => diamondGame);
+            if (!requestManagerStats || diamondResults.length === 0) {
+                return { results, statVisibility: 'public', privateStatsStatus: 'not-requested' };
+            }
+            if (diamondResults.some(({ statsLoadStatus }) => statsLoadStatus !== 'complete')) {
+                return { results, statVisibility: 'public', privateStatsStatus: 'unavailable' };
+            }
+            const gamesWithPlayerDocument = diamondResults.filter(({ statDocuments }) =>
+                statDocuments.some(({ id }) => id === playerId)
+            );
+            if (gamesWithPlayerDocument.length === 0) {
+                return { results, statVisibility: 'public', privateStatsStatus: 'complete' };
+            }
+            const managerBatch = await loadCompleteDiamondManagerStats({
+                teamId,
+                games: gamesWithPlayerDocument.map(({ game }) => game),
+                playerIds: [playerId],
+                invoke: httpsCallable(functions, 'getDiamondManagerStats')
+            });
+            const resolutions = gamesWithPlayerDocument.map(({ game, gameId }) => resolveDiamondManagerStatDocuments({
+                game,
+                expectedPlayerIds: [playerId],
+                privateDocuments: [...(managerBatch.documentsByGameId.get(gameId) || [])],
+                loadStatus: managerBatch.status
+            }));
+            const complete = managerBatch.status === 'complete'
+                && resolutions.every((resolution) => resolution.status === 'complete');
+            if (!complete) {
+                return {
+                    results,
+                    statVisibility: 'public',
+                    privateStatsStatus: managerBatch.status === 'unavailable' ? 'unavailable' : 'partial'
+                };
+            }
+            gamesWithPlayerDocument.forEach((result, index) => {
+                const privateDocument = resolutions[index].documents[0];
+                const data = privateDocument.data;
+                const presentation = {
+                    ...readCoverageAwareStatDocument(data, result.game),
+                    statVisibility: 'manager-internal'
+                };
+                result.statDocuments = [privateDocument];
+                result.statsByPlayerId = { [playerId]: presentation.values };
+                result.completeStatsByPlayerId = { [playerId]: presentation.completeValues };
+                result.statPresentationByPlayerId = { [playerId]: presentation };
+                result.playerGameStats = hasPlayerProfileParticipation(data) ? {
+                    gameId: result.gameId,
+                    date: result.game.date.toDate ? result.game.date.toDate() : new Date(result.game.date),
+                    opponent: result.game.opponent || 'Opponent',
+                    stats: presentation.values,
+                    completeStats: presentation.completeValues,
+                    statPresentation: presentation,
+                    timeMs: typeof data.timeMs === 'number' ? data.timeMs : 0,
+                    recordedIdentity: result.publicRecordedIdentity
+                } : null;
+            });
+            return { results, statVisibility: 'manager-internal', privateStatsStatus: 'complete' };
         }
 
-        async function loadPlayerDetails() {
+        async function loadPlayerDetails({ generation = playerLoadGeneration, expectedUid = currentUser?.uid || '' } = {}) {
+            const isCurrentLoad = () => generation === playerLoadGeneration && (currentUser?.uid || '') === expectedUid;
             const { teamId, gameId, playerId } = getUrlParams();
             if (!teamId || !playerId) {
                 window.location.href = 'index.html';
@@ -551,48 +899,104 @@
             }
 
             try {
-                currentTeamId = teamId; // Store global
-                const [team, players, games, configs] = await Promise.all([
+                const [team, players, games] = await Promise.all([
                     getTeam(teamId),
                     getPlayers(teamId, { includeInactive: true }),
-                    getGames(teamId),
-                    getConfigs(teamId)
+                    getGames(teamId)
                 ]);
-                rosterFieldDefinitions = normalizeRosterFieldDefinitions(await getRosterFieldDefinitions(teamId, team));
+                if (!isCurrentLoad()) return;
+                const scheduledDiamondGames = games.filter((game) => (
+                    isDiamondV2Game(game)
+                    && getDiamondPublicPlayerStatsCollectionPath({ teamId, gameId: game.id, game })
+                ));
+                const initialConfigLoad = await (scheduledDiamondGames.length > 0
+                    ? loadRawDiamondStatConfigs(teamId).then(({ configs }) => ({ configs, error: null }))
+                    : getConfigs(teamId).then((configs) => ({ configs, error: null })))
+                    .catch((error) => ({ configs: null, error }));
+                if (!isCurrentLoad()) return;
+                let configs = initialConfigLoad.configs;
+                let diamondConfigResolution = configs
+                    ? resolveDiamondStatConfigsForGames({ teamId, games: scheduledDiamondGames, configs })
+                    : null;
+                if (scheduledDiamondGames.length > 0 && !diamondConfigResolution) {
+                    try {
+                        const rawConfigLoad = await loadRawDiamondStatConfigs(teamId);
+                        configs = rawConfigLoad.configs;
+                        diamondConfigResolution = resolveDiamondStatConfigsForGames({
+                            teamId,
+                            games: scheduledDiamondGames,
+                            configs
+                        });
+                        if (!diamondConfigResolution) {
+                            console.warn('Diamond stat config retry did not match every activation snapshot.', {
+                                fromCache: rawConfigLoad.fromCache
+                            });
+                        }
+                    } catch (error) {
+                        console.warn('Diamond stat config retry failed:', error);
+                    }
+                }
+                if (scheduledDiamondGames.length > 0 && !diamondConfigResolution) {
+                    throw buildDiamondConfigUnavailableError();
+                }
+                if (!configs) throw initialConfigLoad.error;
+                const legacyAnalyticsConfig = selectAnalyticsConfig(configs, team?.sport || team?.baseType || '');
+                let diamondStatCatalog = scheduledDiamondGames.length > 0
+                    ? getActivationPinnedDiamondStatCatalog({
+                        resolution: diamondConfigResolution,
+                        scope: 'player',
+                        visibility: 'public'
+                    })
+                    : [];
+                const loadedRosterFieldDefinitions = normalizeRosterFieldDefinitions(
+                    await getRosterFieldDefinitions(teamId, team)
+                );
+                if (!isCurrentLoad()) return;
+                currentDiamondPlayerStatCatalog = diamondStatCatalog;
+                rosterFieldDefinitions = loadedRosterFieldDefinitions;
 
                 const player = players.find(p => p.id === playerId);
                 if (!player) {
                     document.querySelector('main').innerHTML = '<div class="text-center py-12 text-red-500">Player not found</div>';
                     return;
                 }
+                currentTeamId = teamId;
                 currentTeam = team;
                 currentPlayer = player; // Store global
 
                 // Render team navigation banner if user has access
+                let canViewManagerStats = false;
                 if (currentUser) {
                     // Enrich user profile if needed
                     try {
                         const profile = await getUserProfile(currentUser.uid);
+                        if (!isCurrentLoad()) return;
                         if (profile) {
                             if (profile.isAdmin) currentUser.isAdmin = true;
                             if (profile.parentOf) currentUser.parentOf = profile.parentOf;
                             if (profile.coachOf) currentUser.coachOf = profile.coachOf;
                         }
                     } catch (e) {
+                        if (!isCurrentLoad()) return;
                         console.error('Error loading user profile for banner:', e);
                     }
 
+                    if (!isCurrentLoad()) return;
                     const accessInfo = getTeamAccessInfo(currentUser, { ...team, id: teamId });
+                    canViewManagerStats = accessInfo.accessLevel === 'full';
                     if (accessInfo.hasAccess) {
                         // Fetch unread count for chat badge
                         let unreadCount = 0;
                         try {
                             const counts = await getUnreadChatCounts(currentUser.uid, [teamId]);
+                            if (!isCurrentLoad()) return;
                             unreadCount = counts[teamId] || 0;
                         } catch (e) {
+                            if (!isCurrentLoad()) return;
                             console.error('Error fetching unread counts:', e);
                         }
 
+                        if (!isCurrentLoad()) return;
                         renderTeamAdminBanner(
                             document.getElementById('team-nav-banner'),
                             {
@@ -613,29 +1017,111 @@
                 // Build per-game stats across all games
                 const perGameStats = [];
                 let gamesPlayed = 0;
-                const seasonTotals = {};
-                const seasonStatsByPlayerId = {};
+                let seasonTotals = {};
+                let seasonStatsByPlayerId = {};
+                let seasonCompleteStatsByPlayerId = {};
+                let seasonStatPresentation = null;
+                let diamondSeasonProjection = null;
+                const legacySeasonStatsByPlayerId = {};
+                const diamondGames = [];
                 const allEvents = [];
+                let eventsLoadIncomplete = false;
                 let totalTimeMs = 0;
                 let gamesWithTime = 0;
-                const gameLoadResults = await loadPlayerGameData(teamId, games, playerId, player.name);
+                const managerStatLoad = await loadPlayerGameData(teamId, games, playerId, player.name, {
+                    requestManagerStats: canViewManagerStats,
+                    profilePlayerId: player.id
+                });
+                if (!isCurrentLoad()) return;
+                const gameLoadResults = managerStatLoad.results;
+                const statVisibility = managerStatLoad.statVisibility;
+                const privateStatsStatus = managerStatLoad.privateStatsStatus;
+                if (scheduledDiamondGames.length > 0 && statVisibility === 'manager-internal') {
+                    diamondStatCatalog = getActivationPinnedDiamondStatCatalog({
+                        resolution: diamondConfigResolution,
+                        scope: 'player',
+                        visibility: 'manager-internal'
+                    });
+                    currentDiamondPlayerStatCatalog = diamondStatCatalog;
+                }
 
-                gameLoadResults.forEach(({ playerGameStats, statsByPlayerId, events }) => {
+                const aggregateDiamondStatIds = diamondStatCatalog.map(({ id }) => id);
+                const hasMixedDiamondPlayerVisibility = hasMixedActivationPinnedDiamondStatIds({
+                    resolution: diamondConfigResolution,
+                    games: scheduledDiamondGames,
+                    scope: 'player',
+                    visibility: 'public'
+                });
+                if (hasMixedDiamondPlayerVisibility === null) throw buildDiamondConfigUnavailableError();
+                const preparedGameLoadResults = gameLoadResults.map((result) => {
+                    if (!result.diamondGame) return result;
+                    if (!getDiamondPublicPlayerStatsCollectionPath({ teamId, gameId: result.gameId, game: result.game })) {
+                        return result;
+                    }
+                    const gameCatalog = getActivationPinnedDiamondStatCatalog({
+                        resolution: diamondConfigResolution,
+                        game: result.game,
+                        scope: 'player',
+                        visibility: statVisibility
+                    });
+                    if (!gameCatalog) throw buildDiamondConfigUnavailableError();
+                    const allowedStatIds = gameCatalog.map(({ id }) => id);
+                    const preparedDocuments = result.statDocuments.map(({ id, data }) => ({
+                        id,
+                        data: prepareDiamondStatDocumentForSeason(data, allowedStatIds, {
+                            aggregateStatIds: aggregateDiamondStatIds,
+                            clearFamilyCoverage: statVisibility === 'public' && hasMixedDiamondPlayerVisibility
+                        })
+                    }));
+                    const statsByPlayerId = {};
+                    const completeStatsByPlayerId = {};
+                    const statPresentationByPlayerId = {};
+                    preparedDocuments.forEach(({ id, data }) => {
+                        const presentation = {
+                            ...readCoverageAwareStatDocument(data, result.game),
+                            statVisibility
+                        };
+                        statsByPlayerId[id] = presentation.values;
+                        completeStatsByPlayerId[id] = presentation.completeValues;
+                        statPresentationByPlayerId[id] = presentation;
+                    });
+                    const selectedDocument = preparedDocuments.find(({ id }) => id === playerId)?.data || null;
+                    return {
+                        ...result,
+                        statDocuments: preparedDocuments,
+                        statsByPlayerId,
+                        completeStatsByPlayerId,
+                        statPresentationByPlayerId,
+                        playerGameStats: result.playerGameStats && selectedDocument ? {
+                            ...result.playerGameStats,
+                            stats: statsByPlayerId[playerId] || {},
+                            completeStats: completeStatsByPlayerId[playerId] || {},
+                            statPresentation: statPresentationByPlayerId[playerId] || null
+                        } : null
+                    };
+                });
+
+                preparedGameLoadResults.forEach(({ game, diamondGame, statDocuments, playerGameStats, statsByPlayerId, events, eventsLoadStatus }) => {
+                    if (diamondGame) {
+                        diamondGames.push({ game, documents: statDocuments });
+                    }
                     Object.entries(statsByPlayerId || {}).forEach(([statsPlayerId, playerStats]) => {
-                        if (!seasonStatsByPlayerId[statsPlayerId]) {
-                            seasonStatsByPlayerId[statsPlayerId] = {};
+                        if (!diamondGame) {
+                            legacySeasonStatsByPlayerId[statsPlayerId] ||= {};
+                            Object.entries(playerStats || {}).forEach(([stat, value]) => {
+                                legacySeasonStatsByPlayerId[statsPlayerId][stat] = (legacySeasonStatsByPlayerId[statsPlayerId][stat] || 0) + (Number(value) || 0);
+                            });
                         }
-                        Object.entries(playerStats || {}).forEach(([stat, value]) => {
-                            seasonStatsByPlayerId[statsPlayerId][stat] = (seasonStatsByPlayerId[statsPlayerId][stat] || 0) + (Number(value) || 0);
-                        });
                     });
 
                     if (playerGameStats) {
                         const { stats, timeMs } = playerGameStats;
                         gamesPlayed++;
-                        Object.entries(stats).forEach(([stat, value]) => {
-                            seasonTotals[stat] = (seasonTotals[stat] || 0) + value;
-                        });
+                        if (!diamondGame) {
+                            Object.entries(stats).forEach(([stat, value]) => {
+                                seasonTotals[stat] = (seasonTotals[stat] || 0) + value;
+                            });
+                        }
                         if (timeMs > 0) {
                             totalTimeMs += timeMs;
                             gamesWithTime++;
@@ -644,7 +1130,31 @@
                     }
 
                     allEvents.push(...events);
+                    if (diamondGame && eventsLoadStatus !== 'complete') eventsLoadIncomplete = true;
                 });
+
+                if (diamondGames.length > 0) {
+                    const seasonProjection = aggregateCoverageAwareSeasonStats({
+                        legacyStatsByPlayerId: legacySeasonStatsByPlayerId,
+                        diamondGames
+                    });
+                    diamondSeasonProjection = seasonProjection.projection;
+                    seasonStatsByPlayerId = seasonProjection.statsByPlayerId;
+                    seasonCompleteStatsByPlayerId = seasonProjection.completeStatsByPlayerId;
+                    seasonTotals = seasonStatsByPlayerId[playerId] || {};
+                    seasonStatPresentation = seasonProjection.presentationByPlayerId[playerId] || {
+                        isDiamond: true,
+                        statCoverage: {},
+                        observedStatKeys: [],
+                        unavailableStatKeys: diamondStatCatalog.map((definition) => definition.id),
+                        projectionPending: true
+                    };
+                    seasonStatPresentation = { ...seasonStatPresentation, statVisibility };
+                    renderDiamondPlayerProjectionNotice(seasonProjection.projection, statVisibility, privateStatsStatus);
+                } else {
+                    seasonStatsByPlayerId = legacySeasonStatsByPlayerId;
+                    seasonCompleteStatsByPlayerId = legacySeasonStatsByPlayerId;
+                }
 
                 // Choose a primary game for back link and insights. Honor a requested game
                 // even when the player has a filtered DNP/zero-stat entry for that game.
@@ -706,9 +1216,61 @@
                 configurePublicPlayerShare({ team, player, teamId, playerId, gameId });
 
                 // Calculate key stats for overview
-                const statKeys = Object.keys(seasonTotals);
+                const hasDiamondStats = diamondGames.length > 0;
+                const diamondExportButton = document.getElementById('diamond-player-stats-export-btn');
+                if (diamondExportButton && hasDiamondStats) {
+                    diamondExportButton.classList.remove('hidden');
+                    diamondExportButton.onclick = () => {
+                        try {
+                            const diamondGameRows = perGameStats.flatMap((entry) => entry.statPresentation?.isDiamond ? [{
+                                recordType: 'game_player',
+                                identity: {
+                                    playerId: entry.recordedIdentity?.canOpenProfile ? entry.recordedIdentity.playerId : '',
+                                    playerName: entry.recordedIdentity?.playerName || 'Recorded player',
+                                    playerNumber: entry.recordedIdentity?.playerNumber || '-',
+                                    gameId: entry.gameId,
+                                    gameDate: entry.date instanceof Date && !Number.isNaN(entry.date.getTime()) ? entry.date.toISOString().slice(0, 10) : '',
+                                    opponent: entry.opponent
+                                },
+                                stats: entry.stats || {},
+                                presentation: { ...entry.statPresentation, statVisibility }
+                            }] : []);
+                            const rows = [{
+                                recordType: 'season_player',
+                                identity: {
+                                    playerId,
+                                    playerName: player.name,
+                                    playerNumber: player.number
+                                },
+                                stats: seasonTotals,
+                                presentation: { ...seasonStatPresentation, statVisibility }
+                            }, ...diamondGameRows];
+                            const csv = buildDiamondStatsCsv({
+                                rows,
+                                statDefinitions: diamondStatCatalog,
+                                projection: diamondSeasonProjection || { pending: true, sourceRevisions: [] },
+                                visibility: statVisibility
+                            });
+                            const filename = getDiamondStatsExportFilename(`${team.name}-${player.name}-diamond-stats`, 'allplays-diamond-stats', statVisibility);
+                            downloadDiamondStatsCsv(filename, csv, { visibility: statVisibility });
+                        } catch (error) {
+                            console.error('Diamond player stats export failed:', error);
+                        }
+                    };
+                } else if (diamondExportButton) {
+                    diamondExportButton.classList.add('hidden');
+                    diamondExportButton.onclick = null;
+                }
+                const statKeys = hasDiamondStats
+                    ? diamondStatCatalog
+                        .filter((definition) => !definition.formula
+                            && seasonStatPresentation?.statCoverage?.[definition.id] === 'complete'
+                            && Object.prototype.hasOwnProperty.call(seasonTotals, definition.id))
+                        .map((definition) => definition.id)
+                    : Object.keys(seasonTotals);
                 const averages = {};
-                Object.entries(seasonTotals).forEach(([stat, total]) => {
+                statKeys.forEach((stat) => {
+                    const total = seasonTotals[stat];
                     averages[stat] = (total / gamesPlayed).toFixed(1);
                 });
 
@@ -728,14 +1290,28 @@
                     });
                 }
 
-                statKeys.forEach(stat => {
-                    if (overviewCards.length >= 4) return;
-                    overviewCards.push({
-                        label: stat,
-                        value: averages[stat],
-                        sub: 'per game'
+                if (hasDiamondStats) {
+                    diamondStatCatalog
+                        .filter((definition) => definition.topStat === true)
+                        .forEach((definition) => {
+                            if (overviewCards.length >= 4) return;
+                            const displayed = getCoverageAwareStatValue(seasonStatPresentation, seasonTotals, definition.id, definition);
+                            overviewCards.push({
+                                label: definition.label,
+                                value: displayed.text,
+                                sub: displayed.observed ? 'Observed · partial tracking' : (displayed.available ? 'season' : 'not collected')
+                            });
+                        });
+                } else {
+                    statKeys.forEach(stat => {
+                        if (overviewCards.length >= 4) return;
+                        overviewCards.push({
+                            label: stat,
+                            value: averages[stat],
+                            sub: 'per game'
+                        });
                     });
-                });
+                }
 
                 while (overviewCards.length < 4) {
                     overviewCards.push({ label: '—', value: '—', sub: '' });
@@ -751,7 +1327,10 @@
 
                 if (gameId && selectedGame) {
                     const selectedStats = perGameStats.find((entry) => entry.gameId === selectedGameId) || null;
-                    const gameTeamStats = gameLoadResults.find((entry) => entry.gameId === selectedGameId)?.statsByPlayerId || {};
+                    const selectedGameLoad = preparedGameLoadResults.find((entry) => entry.gameId === selectedGameId);
+                    const gameTeamStats = selectedGameLoad?.diamondGame
+                        ? (selectedGameLoad.completeStatsByPlayerId || {})
+                        : (selectedGameLoad?.statsByPlayerId || {});
                     const selectedEvents = allEvents
                         .filter((event) => event.gameId === selectedGameId)
                         .map((event) => ({
@@ -761,7 +1340,7 @@
                     renderPlayerGameInsights(selectedGame, generatePlayerGameInsights({
                         player,
                         game: selectedGame,
-                        playerStats: selectedStats?.stats || {},
+                        playerStats: selectedStats?.completeStats || selectedStats?.stats || {},
                         playerTimeMs: selectedStats?.timeMs || 0,
                         gameTeamStats,
                         events: selectedEvents
@@ -772,29 +1351,46 @@
 
                 const gameStatsForDisplay = [...perGameStats];
                 if (requestedGame && selectedGame && selectedGameId && !gameStatsForDisplay.some((entry) => entry.gameId === selectedGameId)) {
-                    const selectedStatsByPlayerId = gameLoadResults.find((entry) => entry.gameId === selectedGameId)?.statsByPlayerId || {};
+                    const selectedStatsByPlayerId = preparedGameLoadResults.find((entry) => entry.gameId === selectedGameId)?.statsByPlayerId || {};
+                    const selectedPresentationByPlayerId = preparedGameLoadResults.find((entry) => entry.gameId === selectedGameId)?.statPresentationByPlayerId || {};
                     gameStatsForDisplay.push({
                         gameId: selectedGameId,
                         date: selectedGame.date?.toDate ? selectedGame.date.toDate() : new Date(selectedGame.date),
                         opponent: selectedGame.opponent || 'Opponent',
                         stats: selectedStatsByPlayerId[playerId] || {},
+                        completeStats: preparedGameLoadResults.find((entry) => entry.gameId === selectedGameId)?.completeStatsByPlayerId?.[playerId] || selectedStatsByPlayerId[playerId] || {},
+                        statPresentation: selectedPresentationByPlayerId[playerId] || null,
                         timeMs: 0
                     });
                 }
 
-                const analyticsConfig = selectAnalyticsConfig(configs, team?.sport || team?.baseType || '');
+                const analyticsConfig = hasDiamondStats
+                    ? {
+                        id: `diamond-activation-${diamondConfigResolution.configIds.join('-')}`,
+                        name: 'Diamond scorebook',
+                        columns: diamondStatCatalog.map(({ id }) => id),
+                        statDefinitions: diamondStatCatalog
+                    }
+                    : legacyAnalyticsConfig;
                 const leaderboardSnapshot = analyticsConfig
-                    ? buildPlayerLeaderboardSnapshot({
-                        config: analyticsConfig,
-                        players,
-                        seasonStatsByPlayerId
-                    })
+                    ? (hasDiamondStats
+                        ? buildCompleteDiamondLeaderboardSnapshot({
+                            config: analyticsConfig,
+                            players,
+                            completeStatsByPlayerId: seasonCompleteStatsByPlayerId
+                        })
+                        : buildPlayerLeaderboardSnapshot({
+                            config: analyticsConfig,
+                            players,
+                            seasonStatsByPlayerId
+                        }))
                     : null;
                 const playerTopStats = summarizePlayerTopStats(leaderboardSnapshot, playerId);
 
                 // Render Advanced Stats Visualizations
                 const advancedStatsDiv = document.getElementById('advanced-stats');
                 const accountPremiumEntitlement = await readAccountPremiumEntitlement({ user: currentUser });
+                if (!isCurrentLoad()) return;
                 if (!renderPremiumGateState(advancedStatsDiv, { state: accountPremiumEntitlement.state, scope: 'account' })) {
                 if (perGameStats.length >= 2 && statKeys.length > 0) {
                     // Calculate team averages for comparison
@@ -810,8 +1406,8 @@
                     const trends = {};
 
                     statKeys.forEach(stat => {
-                        const recentAvg = recentGames.reduce((sum, g) => sum + (g.stats[stat] || 0), 0) / recentGames.length;
-                        const earlierAvg = earlierGames.reduce((sum, g) => sum + (g.stats[stat] || 0), 0) / earlierGames.length;
+                        const recentAvg = recentGames.reduce((sum, g) => sum + ((g.completeStats || g.stats)[stat] || 0), 0) / recentGames.length;
+                        const earlierAvg = earlierGames.reduce((sum, g) => sum + ((g.completeStats || g.stats)[stat] || 0), 0) / earlierGames.length;
                         const change = recentAvg - earlierAvg;
                         trends[stat] = {
                             direction: change > 0 ? 'up' : change < 0 ? 'down' : 'neutral',
@@ -822,7 +1418,7 @@
                     // Find max value for each stat to normalize progress bars
                     const maxValues = {};
                     statKeys.forEach(stat => {
-                        maxValues[stat] = Math.max(...perGameStats.map(g => g.stats[stat] || 0), parseFloat(averages[stat]));
+                        maxValues[stat] = Math.max(...perGameStats.map(g => (g.completeStats || g.stats)[stat] || 0), parseFloat(averages[stat]));
                     });
 
                     advancedStatsDiv.innerHTML = `
@@ -905,11 +1501,11 @@
                                 ${(() => {
                             const recent5 = [...perGameStats].sort((a, b) => b.date - a.date).slice(0, 5).reverse();
                             const primaryStat = statKeys[0];
-                            const maxInRecent = Math.max(...recent5.map(g => g.stats[primaryStat] || 0));
+                            const maxInRecent = Math.max(...recent5.map(g => (g.completeStats || g.stats)[primaryStat] || 0));
                             return `
                                         <div class="flex items-end justify-around gap-2 h-48 bg-gradient-to-t from-gray-50 to-transparent rounded-lg p-4">
                                             ${recent5.map((g, idx) => {
-                                const value = g.stats[primaryStat] || 0;
+                                const value = (g.completeStats || g.stats)[primaryStat] || 0;
                                 const height = maxInRecent > 0 ? (value / maxInRecent) * 100 : 0;
                                 return `
                                                     <div class="flex-1 flex flex-col items-center gap-2">
@@ -1030,6 +1626,11 @@
                                 <div>
                                     <div class="text-sm text-gray-500 font-semibold mb-1">${g.date.toLocaleDateString()}</div>
                                     <div class="text-lg font-bold text-gray-900">vs. ${escapeHtml(g.opponent)}</div>
+                                    ${g.recordedIdentity ? `
+                                        <div data-recorded-player-identity class="mt-1 text-xs font-semibold text-gray-500">
+                                            ${g.recordedIdentity.playerNumber && g.recordedIdentity.playerNumber !== '-' ? `#${escapeHtml(g.recordedIdentity.playerNumber)} ` : ''}${escapeHtml(g.recordedIdentity.playerName || 'Recorded player')}
+                                        </div>
+                                    ` : ''}
                                 </div>
                                 <div class="flex items-center gap-2">
                                     ${(g.timeMs || 0) > 0 ? `<span class="text-xs px-3 py-1 rounded-full bg-gray-100 text-gray-700 font-semibold border border-gray-200">⏱ ${formatMMSS(g.timeMs)}</span>` : ''}
@@ -1052,12 +1653,7 @@
                                         <div class="text-xs text-gray-600 uppercase mt-1 font-medium">MIN</div>
                                     </div>
                                 ` : ''}
-                                ${Object.entries(g.stats).map(([stat, value]) => `
-                                    <div class="text-center p-4 bg-white rounded-lg border border-gray-200 hover:border-primary-300 transition">
-                                        <div class="text-2xl md:text-3xl font-bold text-primary-600">${value}</div>
-                                        <div class="text-xs text-gray-600 uppercase mt-1 font-medium">${stat}</div>
-                                    </div>
-                                `).join('')}
+                                ${renderPlayerStatCards(g.stats, g.statPresentation)}
                             </div>
                         </div>
                     `).join('');
@@ -1097,27 +1693,39 @@
                                 ` : ''}
                             </div>
                         </div>
-                        <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-                            ${Object.entries(averages).map(([stat, avg]) => `
-                                <div class="bg-gradient-to-br from-white to-gray-50 rounded-xl p-6 border border-gray-200 hover:border-primary-300 hover:shadow-lg transition text-center">
-                                    <div class="text-3xl md:text-4xl font-bold text-primary-600 mb-2">${avg}</div>
-                                    <div class="text-sm text-gray-600 uppercase font-semibold tracking-wide">${stat}</div>
-                                    <div class="text-xs text-gray-400 mt-1">avg</div>
+                        ${hasDiamondStats ? `
+                            <div class="p-6 bg-gradient-to-r from-gray-50 to-white rounded-xl border border-gray-200">
+                                <div class="mb-4">
+                                    <h3 class="text-lg font-bold text-gray-900">Season Stat Catalog</h3>
+                                    <p class="mt-1 text-sm text-gray-500">Complete values and labeled partial observations from the Diamond ledger.</p>
                                 </div>
-                            `).join('')}
-                        </div>
-
-                        <div class="mt-8 p-6 bg-gradient-to-r from-gray-50 to-white rounded-xl border border-gray-200">
-                            <h3 class="text-lg font-bold text-gray-900 mb-4">Season Totals</h3>
+                                <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                                    ${renderPlayerStatCards(seasonTotals, seasonStatPresentation)}
+                                </div>
+                            </div>
+                        ` : `
                             <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-                                ${Object.entries(seasonTotals).map(([stat, total]) => `
-                                    <div class="text-center">
-                                        <div class="text-2xl font-bold text-gray-900">${total}</div>
-                                        <div class="text-xs text-gray-500 uppercase mt-1">${stat}</div>
+                                ${Object.entries(averages).map(([stat, avg]) => `
+                                    <div class="bg-gradient-to-br from-white to-gray-50 rounded-xl p-6 border border-gray-200 hover:border-primary-300 hover:shadow-lg transition text-center">
+                                        <div class="text-3xl md:text-4xl font-bold text-primary-600 mb-2">${avg}</div>
+                                        <div class="text-sm text-gray-600 uppercase font-semibold tracking-wide">${stat}</div>
+                                        <div class="text-xs text-gray-400 mt-1">avg</div>
                                     </div>
                                 `).join('')}
                             </div>
-                        </div>
+
+                            <div class="mt-8 p-6 bg-gradient-to-r from-gray-50 to-white rounded-xl border border-gray-200">
+                                <h3 class="text-lg font-bold text-gray-900 mb-4">Season Totals</h3>
+                                <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                                    ${Object.entries(seasonTotals).map(([stat, total]) => `
+                                        <div class="text-center">
+                                            <div class="text-2xl font-bold text-gray-900">${total}</div>
+                                            <div class="text-xs text-gray-500 uppercase mt-1">${stat}</div>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+                        `}
                     `;
                 } else {
                     seasonStatsDiv.innerHTML = `
@@ -1150,7 +1758,13 @@
                         eventsByGame[event.gameId].events.push(event);
                     });
 
-                    playerEventsDiv.innerHTML = Object.entries(eventsByGame).map(([gameId, data]) => `
+                    playerEventsDiv.innerHTML = `
+                        ${eventsLoadIncomplete ? `
+                            <div class="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                                Some Diamond play-by-play could not be refreshed completely. Refresh this page to retry.
+                            </div>
+                        ` : ''}
+                        ${Object.entries(eventsByGame).map(([gameId, data]) => `
                         <div class="mb-6 bg-white rounded-xl border border-gray-200 overflow-hidden hover:shadow-md transition">
                             <div class="bg-gradient-to-r from-gray-50 to-white px-6 py-4 border-b border-gray-200">
                                 <div class="flex justify-between items-center">
@@ -1182,7 +1796,17 @@
                     }).join('')}
                             </div>
                         </div>
-                    `).join('');
+                    `).join('')}`;
+                } else if (eventsLoadIncomplete) {
+                    playerEventsDiv.innerHTML = `
+                        <div class="text-center py-12 bg-amber-50 rounded-xl border border-amber-200">
+                            <svg class="w-16 h-16 text-amber-400 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M5.07 19h13.86c1.54 0 2.5-1.67 1.73-3L13.73 4c-.77-1.33-2.69-1.33-3.46 0L3.34 16c-.77 1.33.19 3 1.73 3z"></path>
+                            </svg>
+                            <p class="text-amber-900 font-medium">Diamond play-by-play could not be refreshed completely.</p>
+                            <p class="text-amber-800 text-sm mt-1">Refresh this page to retry.</p>
+                        </div>
+                    `;
                 } else {
                     playerEventsDiv.innerHTML = `
                         <div class="text-center py-12 bg-white rounded-xl border border-gray-200">
@@ -1195,10 +1819,15 @@
                 }
 
             } catch (error) {
+                if (!isCurrentLoad()) return;
                 console.error('Error loading player details:', error);
-                document.querySelector('main').innerHTML = '<div class="text-center py-12 text-red-500">Error loading player details</div>';
+                const needsConfigRetry = error?.code === 'allplays/diamond-stat-config-unavailable';
+                document.querySelector('main').innerHTML = needsConfigRetry
+                    ? '<div class="text-center py-12 text-red-500"><p>Diamond statistic definitions could not be verified.</p><button id="retry-diamond-config" type="button" aria-label="Retry loading Diamond statistic definitions" class="mt-4 min-h-11 rounded-lg bg-primary-600 px-4 py-2 font-semibold text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2">Retry</button></div>'
+                    : '<div class="text-center py-12 text-red-500">Error loading player details</div>';
+                document.getElementById('retry-diamond-config')?.addEventListener('click', () => window.location.reload());
             } finally {
-                updateEditButton();
+                if (isCurrentLoad()) updateEditButton();
             }
         }
 
@@ -1218,6 +1847,12 @@
         }
 
         function updateEditButton() {
+            currentCanEditRosterProfile = false;
+            currentCanEditPlayerProfile = false;
+            const btnContainer = document.getElementById('edit-btn-container');
+            const editButton = document.getElementById('open-edit-modal');
+            if (btnContainer) btnContainer.classList.add('hidden');
+            if (editButton) editButton.onclick = null;
             if (!currentUser || !currentPlayer) return;
 
             // Check if parent via player.parents array (legacy)
@@ -1231,50 +1866,54 @@
             const hasFullAccess = hasFullTeamAccess(currentUser, currentTeam);
             currentCanEditRosterProfile = hasFullAccess;
             const canEdit = hasFullAccess || isParent;
+            currentCanEditPlayerProfile = canEdit;
 
-            if (canEdit) {
-                const btnContainer = document.getElementById('edit-btn-container');
-                if (btnContainer) {
-                    btnContainer.classList.remove('hidden');
-                    document.getElementById('open-edit-modal').onclick = openEditModal;
-                }
+            if (canEdit && btnContainer && editButton) {
+                btnContainer.classList.remove('hidden');
+                editButton.onclick = openEditModal;
             }
         }
 
         async function openEditModal() {
-             if (!currentPlayer) return;
-             document.getElementById('edit-player-modal').classList.remove('hidden');
-             privateProfileLoadFailed = false;
-             privateFieldsDirty = {
-                 emergencyContact: false,
-                 medicalInfo: false
-             };
+            if (!currentUser || !currentPlayer || !currentCanEditPlayerProfile) return;
+            const modalGeneration = ++playerEditModalGeneration;
+            const context = capturePlayerAuthContext({ modalGeneration });
+            if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) return;
 
-             // Load sensitive fields from the private profile doc.
-             // If denied or missing, treat as empty.
-             try {
-                 currentPrivateProfile = await getPlayerPrivateProfile(currentTeamId, currentPlayer.id);
-             } catch (e) {
-                 console.warn('Failed to load private player profile:', e);
-                 currentPrivateProfile = null;
-                 privateProfileLoadFailed = true;
-             }
+            clearPlayerEditForm();
+            document.getElementById('edit-player-modal')?.classList.remove('hidden');
+            privateProfileLoadFailed = false;
+            const player = currentPlayer;
+            const canEditRosterProfile = currentCanEditRosterProfile;
+            const fields = rosterFieldDefinitions;
+            let privateProfile = null;
 
-             renderRosterProfileFields(
-                 document.getElementById('edit-roster-profile-fields'),
-                 currentCanEditRosterProfile ? rosterFieldDefinitions : [],
-                 getRosterProfileValues(currentPlayer)
-             );
-             document.getElementById('edit-ec-name').value = currentPrivateProfile?.emergencyContact?.name || '';
-             document.getElementById('edit-ec-phone').value = currentPrivateProfile?.emergencyContact?.phone || '';
-             document.getElementById('edit-medical-info').value = currentPrivateProfile?.medicalInfo || '';
-             
-             const preview = document.getElementById('edit-photo-preview');
-             if (currentPlayer.photoUrl) {
-                 preview.innerHTML = `<img loading="lazy" decoding="async" src="${escapeHtml(currentPlayer.photoUrl)}" class="w-full h-full object-cover">`;
-             } else {
-                 preview.innerHTML = '';
-             }
+            try {
+                if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) return;
+                privateProfile = await getPlayerPrivateProfile(context.teamId, context.playerId);
+                if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) return;
+            } catch (error) {
+                if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) return;
+                console.warn('Failed to load private player profile:', error);
+                privateProfileLoadFailed = true;
+            }
+
+            currentPrivateProfile = privateProfile;
+            renderRosterProfileFields(
+                document.getElementById('edit-roster-profile-fields'),
+                canEditRosterProfile ? fields : [],
+                getRosterProfileValues(player)
+            );
+            document.getElementById('edit-ec-name').value = privateProfile?.emergencyContact?.name || '';
+            document.getElementById('edit-ec-phone').value = privateProfile?.emergencyContact?.phone || '';
+            document.getElementById('edit-medical-info').value = privateProfile?.medicalInfo || '';
+
+            const preview = document.getElementById('edit-photo-preview');
+            preview.innerHTML = player.photoUrl
+                ? `<img loading="lazy" decoding="async" src="${escapeHtml(player.photoUrl)}" class="w-full h-full object-cover">`
+                : '';
+            const saveButton = document.getElementById('save-player-btn');
+            if (saveButton) saveButton.disabled = false;
         }
 
         function buildPlayerProfileUpdatePayload({
@@ -1332,91 +1971,114 @@
             ]).has(code);
         }
 
-        async function getPlayerPhotoPersistenceState(expectedPhotoPath) {
+        async function getPlayerPhotoPersistenceState(expectedPhotoPath, context) {
+            if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) return 'stale';
             try {
-                const privateProfile = await getPlayerPrivateProfile(currentTeamId, currentPlayer?.id);
+                const privateProfile = await getPlayerPrivateProfile(context.teamId, context.playerId);
+                if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) return 'stale';
                 return String(privateProfile?.photoPath || '').trim() === String(expectedPhotoPath || '').trim()
                     ? 'committed'
                     : 'not-committed';
             } catch (_) {
+                if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) return 'stale';
                 return 'unknown';
             }
         }
 
-        document.getElementById('close-edit-modal').addEventListener('click', () => {
-            document.getElementById('edit-player-modal').classList.add('hidden');
+        document.getElementById('close-edit-modal').addEventListener('click', (event) => {
+            event.preventDefault();
+            closePlayerEditModal();
         });
 
         document.getElementById('edit-ec-name').addEventListener('input', () => {
+            if (!currentCanEditPlayerProfile || document.getElementById('edit-player-modal')?.classList.contains('hidden')) return;
             privateFieldsDirty.emergencyContact = true;
         });
 
         document.getElementById('edit-ec-phone').addEventListener('input', () => {
+            if (!currentCanEditPlayerProfile || document.getElementById('edit-player-modal')?.classList.contains('hidden')) return;
             privateFieldsDirty.emergencyContact = true;
         });
 
         document.getElementById('edit-medical-info').addEventListener('input', () => {
+            if (!currentCanEditPlayerProfile || document.getElementById('edit-player-modal')?.classList.contains('hidden')) return;
             privateFieldsDirty.medicalInfo = true;
         });
 
         document.getElementById('edit-photo-input').addEventListener('change', (e) => {
             const file = e.target.files[0];
-            if (file) {
-                const reader = new FileReader();
-                reader.onload = (e) => {
-                    document.getElementById('edit-photo-preview').innerHTML = `<img loading="lazy" decoding="async" src="${e.target.result}" class="w-full h-full object-cover">`;
-                };
-                reader.readAsDataURL(file);
-            }
+            const context = capturePlayerAuthContext();
+            if (!file || !isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) return;
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) return;
+                document.getElementById('edit-photo-preview').innerHTML = `<img loading="lazy" decoding="async" src="${event.target.result}" class="w-full h-full object-cover">`;
+            };
+            reader.readAsDataURL(file);
         });
 
         document.getElementById('edit-player-form').addEventListener('submit', async (e) => {
             e.preventDefault();
+            const context = capturePlayerAuthContext();
+            if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) return;
             const btn = document.getElementById('save-player-btn');
             btn.disabled = true;
             btn.textContent = 'Saving...';
             let newlyUploadedPlayerPhotoPath = '';
             let playerPhotoPersisted = false;
-            const previousPhotoPath = String(currentPrivateProfile?.photoPath || currentPlayer?.photoPath || '').trim();
+            const player = currentPlayer;
+            const loadedPrivateProfile = currentPrivateProfile;
+            const profileLoadFailed = privateProfileLoadFailed;
+            const dirtyPrivateFields = { ...privateFieldsDirty };
+            const editableRosterFields = currentCanEditRosterProfile ? [...rosterFieldDefinitions] : [];
+            const previousPhotoPath = String(loadedPrivateProfile?.photoPath || player?.photoPath || '').trim();
 
             try {
                 const photoFile = document.getElementById('edit-photo-input').files[0];
-                if (photoFile && privateProfileLoadFailed) {
+                if (photoFile && profileLoadFailed) {
                     throw new Error('The existing player photo state could not be loaded. Refresh before replacing the photo.');
                 }
                 let photoUrl;
                 let photoPath;
-                const editableRosterFields = currentCanEditRosterProfile ? rosterFieldDefinitions : [];
                 const profileValues = collectRosterProfileValues(document.getElementById('edit-roster-profile-fields'), editableRosterFields);
                 const validationErrors = validateRosterProfileValues(editableRosterFields, profileValues);
+                const emergencyContactNameValue = document.getElementById('edit-ec-name').value;
+                const emergencyContactPhoneValue = document.getElementById('edit-ec-phone').value;
+                const medicalInfoValue = document.getElementById('edit-medical-info').value;
 
                 if (validationErrors.length) {
+                    if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) return;
                     alert(validationErrors.join('\n'));
-                    btn.disabled = false;
-                    btn.textContent = 'Save Changes';
                     return;
                 }
 
                 if (photoFile) {
+                    if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) return;
                     const uploadedPhoto = await uploadPlayerPhoto(photoFile, {
                         returnUpload: true,
-                        teamId: currentTeamId,
-                        playerId: currentPlayer.id
+                        teamId: context.teamId,
+                        playerId: context.playerId
                     });
-                    photoUrl = uploadedPhoto.url;
-                    newlyUploadedPlayerPhotoPath = uploadedPhoto.path;
+                    newlyUploadedPlayerPhotoPath = String(uploadedPhoto?.path || '').trim();
+                    if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) {
+                        if (newlyUploadedPlayerPhotoPath) {
+                            await deleteLegacyImageUpload(newlyUploadedPlayerPhotoPath).catch(() => undefined);
+                        }
+                        return;
+                    }
+                    photoUrl = uploadedPhoto?.url;
                     photoPath = newlyUploadedPlayerPhotoPath || null;
                 }
 
                 const data = buildPlayerProfileUpdatePayload({
-                    emergencyContactName: document.getElementById('edit-ec-name').value,
-                    emergencyContactPhone: document.getElementById('edit-ec-phone').value,
-                    medicalInfo: document.getElementById('edit-medical-info').value,
+                    emergencyContactName: emergencyContactNameValue,
+                    emergencyContactPhone: emergencyContactPhoneValue,
+                    medicalInfo: medicalInfoValue,
                     photoUrl,
                     photoPath,
-                    profile: editableRosterFields.length ? { ...(currentPlayer.profile || {}), customFields: profileValues } : null,
-                    privateProfileLoadFailed,
-                    privateFieldsDirty
+                    profile: editableRosterFields.length ? { ...(player.profile || {}), customFields: profileValues } : null,
+                    privateProfileLoadFailed: profileLoadFailed,
+                    privateFieldsDirty: dirtyPrivateFields
                 });
                 const { emergencyContact, medicalInfo, ...publicData } = data;
                 const privateData = {};
@@ -1428,12 +2090,21 @@
                 }
 
                 try {
-                    await updatePlayerProfile(currentTeamId, currentPlayer.id, publicData);
+                    if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) return;
+                    await updatePlayerProfile(context.teamId, context.playerId, publicData);
                     playerPhotoPersisted = Boolean(newlyUploadedPlayerPhotoPath);
+                    if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) return;
                 } catch (error) {
+                    if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) {
+                        if (newlyUploadedPlayerPhotoPath && isDefinitiveFirestoreWriteFailure(error)) {
+                            await deleteLegacyImageUpload(newlyUploadedPlayerPhotoPath).catch(() => undefined);
+                        }
+                        return;
+                    }
                     const persistenceState = newlyUploadedPlayerPhotoPath && !isDefinitiveFirestoreWriteFailure(error)
-                        ? await getPlayerPhotoPersistenceState(newlyUploadedPlayerPhotoPath)
+                        ? await getPlayerPhotoPersistenceState(newlyUploadedPlayerPhotoPath, context)
                         : 'not-committed';
+                    if (persistenceState === 'stale') return;
                     if (persistenceState === 'committed') {
                         playerPhotoPersisted = true;
                     } else {
@@ -1444,25 +2115,37 @@
                     }
                 }
                 if (newlyUploadedPlayerPhotoPath && previousPhotoPath && previousPhotoPath !== newlyUploadedPlayerPhotoPath) {
+                    if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) return;
                     await deleteLegacyImageUpload(previousPhotoPath).catch(() => undefined);
+                    if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) return;
                 }
                 if (playerPhotoPersisted) {
+                    if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) return;
                     document.getElementById('edit-photo-input').value = '';
                 }
                 if (Object.keys(privateData).length > 0) {
-                    await updatePlayerPrivateProfile(currentTeamId, currentPlayer.id, privateData);
+                    if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) return;
+                    await updatePlayerPrivateProfile(context.teamId, context.playerId, privateData);
+                    if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) return;
                 }
-                
+
+                if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) return;
                 alert('Profile updated!');
                 location.reload();
             } catch (err) {
+                if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) return;
                 if (newlyUploadedPlayerPhotoPath && !playerPhotoPersisted) {
+                    if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) return;
                     await deleteLegacyImageUpload(newlyUploadedPlayerPhotoPath).catch(() => undefined);
+                    if (!isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) return;
                 }
                 console.error(err);
                 alert('Error updating profile: ' + err.message);
-                btn.disabled = false;
-                btn.textContent = 'Save Changes';
+            } finally {
+                if (isPlayerAuthContextCurrent(context, { requireModal: true, requireEdit: true })) {
+                    btn.disabled = false;
+                    btn.textContent = 'Save Changes';
+                }
             }
         });
     </script>

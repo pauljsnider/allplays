@@ -1698,7 +1698,7 @@ describe('React app team detail model', () => {
         expect(getPlayers).toHaveBeenCalledTimes(1);
     });
 
-    it('reuses the initial base snapshot for deferred insights and staff permissions', async () => {
+    it('refreshes manager stat heads once before deferred insights and reuses that snapshot for staff permissions', async () => {
         getTeam.mockResolvedValue({
             id: 'team-1',
             name: 'Bears',
@@ -1742,10 +1742,10 @@ describe('React app team detail model', () => {
         const staffPermissions = await loadTeamStaffPermissions('team-1', user);
         const sponsors = await loadTeamDetailSponsors('team-1');
 
-        expect(getTeam).toHaveBeenCalledTimes(1);
-        expect(getPlayers).toHaveBeenCalledTimes(1);
-        expect(getGames).toHaveBeenCalledTimes(1);
-        expect(getConfigs).toHaveBeenCalledTimes(1);
+        expect(getTeam).toHaveBeenCalledTimes(2);
+        expect(getPlayers).toHaveBeenCalledTimes(2);
+        expect(getGames).toHaveBeenCalledTimes(2);
+        expect(getConfigs).toHaveBeenCalledTimes(2);
         expect(getAggregatedStatsForGames).toHaveBeenCalledWith('team-1', ['game-1']);
         expect(getPublicTrackingItems).toHaveBeenCalledWith('team-1');
         expect(getPlayerTrackingStatuses).toHaveBeenCalledWith('team-1', ['player-1']);

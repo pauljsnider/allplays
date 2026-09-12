@@ -207,9 +207,9 @@
                         <div>
                             <label class="block text-sm font-medium text-gray-700">Home / Away</label>
                             <div class="mt-1 flex gap-2">
-                                <button type="button" id="homeAwayHome" class="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-indigo-50 focus:outline-none transition" onclick="setHomeAway('home')">Home</button>
-                                <button type="button" id="homeAwayAway" class="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-indigo-50 focus:outline-none transition" onclick="setHomeAway('away')">Away</button>
-                                <button type="button" id="homeAwayClear" class="px-3 py-2 border border-gray-300 rounded-md text-sm text-gray-400 hover:bg-gray-50 focus:outline-none transition" onclick="setHomeAway(null)">Clear</button>
+                                <button type="button" id="homeAwayHome" aria-describedby="diamond-pinned-game-fields-note" class="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-indigo-50 focus:outline-none transition" onclick="setHomeAway('home')">Home</button>
+                                <button type="button" id="homeAwayAway" aria-describedby="diamond-pinned-game-fields-note" class="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-indigo-50 focus:outline-none transition" onclick="setHomeAway('away')">Away</button>
+                                <button type="button" id="homeAwayClear" aria-describedby="diamond-pinned-game-fields-note" class="px-3 py-2 border border-gray-300 rounded-md text-sm text-gray-400 hover:bg-gray-50 focus:outline-none transition" onclick="setHomeAway(null)">Clear</button>
                             </div>
                             <input type="hidden" id="isHome" value="">
                         </div>
@@ -353,13 +353,14 @@
                         </div>
                         <div>
                             <label class="block text-sm font-medium text-gray-700">Stat Config</label>
-                            <select id="statConfig"
+                            <select id="statConfig" aria-describedby="diamond-pinned-game-fields-note"
                                 class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
                                 <option value="">Default (None)</option>
                                 <!-- Configs loaded here -->
                             </select>
                             <p class="text-xs text-gray-500 mt-1">Create configs in <a href="#" id="config-link"
                                     class="text-indigo-600 hover:underline">Edit Configs</a></p>
+                            <p id="diamond-pinned-game-fields-note" class="hidden text-xs font-medium text-sky-700 mt-2">Home/away and tracker config are locked after Diamond activation.</p>
                         </div>
                         <div class="border-t border-gray-200 pt-4">
                             <div class="bg-emerald-50 border border-emerald-200 rounded-lg p-3">
@@ -847,6 +848,14 @@
                         class="w-full px-4 py-3 bg-gray-100 text-gray-800 rounded-lg hover:bg-gray-200 transition font-semibold">
                         <span data-tracker-label-text>Photo Score Sheet</span>
                     </button>
+                    <button id="diamond-tracker-quick" hidden data-tracker-label="Diamond — Quick capture"
+                        class="hidden w-full px-4 py-3 bg-gray-100 text-gray-800 rounded-lg hover:bg-gray-200 transition font-semibold">
+                        <span data-tracker-label-text>Diamond — Quick capture</span>
+                    </button>
+                    <button id="diamond-tracker-full" hidden data-tracker-label="Diamond — Full capture"
+                        class="hidden w-full px-4 py-3 bg-gray-100 text-gray-800 rounded-lg hover:bg-gray-200 transition font-semibold">
+                        <span data-tracker-label-text>Diamond — Full capture</span>
+                    </button>
                 </div>
             </details>
             <div class="flex justify-end mt-4">
@@ -948,18 +957,18 @@
     </div>
 
     <script type="module">
-        import { getTeam, getTeams, getGames, getEvents, addGame, updateGame, updateTeam, deleteGame, addPractice, updateEvent, deleteEvent, getConfigs, addCalendarToTeam, removeCalendarFromTeam, getTrackedCalendarEventUids, cancelOccurrence, updateOccurrence, restoreOccurrence, clearOccurrenceOverride, updateSeries, deleteSeries, getUnreadChatCount, getPracticeSessions, cancelGame, getLatestGameAssignments, postChatMessage, getRsvpBreakdownByPlayer, getPlayers, getRsvps, applyTournamentAdvancementPatches, saveTournamentPoolOverride, clearTournamentPoolOverride, getOfficials, addOfficial, updateOfficial, deleteOfficial, createOfficiatingAssignmentNotificationRecords } from './js/db.js?v=4433195';
-        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, formatTimeRange, getDefaultEndTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, getCalendarEventStatus, getCalendarEventTrackingId, isTrackedCalendarEvent, generateSeriesId, expandRecurrence, formatRecurrence, shareOrCopy, escapeHtml } from './js/utils.js?v=443371';
+        import { getTeam, getTeams, getGames, getEvents, addGame, updateGame, updateTeam, deleteGame, addPractice, updateEvent, deleteEvent, getConfigs, addCalendarToTeam, removeCalendarFromTeam, getTrackedCalendarEventUids, cancelOccurrence, updateOccurrence, restoreOccurrence, clearOccurrenceOverride, updateSeries, deleteSeries, getUnreadChatCount, getPracticeSessions, cancelGame, getLatestGameAssignments, postChatMessage, getRsvpBreakdownByPlayer, getPlayers, getRsvps, applyTournamentAdvancementPatches, saveTournamentPoolOverride, clearTournamentPoolOverride, getOfficials, addOfficial, updateOfficial, deleteOfficial, createOfficiatingAssignmentNotificationRecords } from './js/db.js?v=4433199';
+        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, formatTimeRange, getDefaultEndTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, getCalendarEventStatus, getCalendarEventTrackingId, isTrackedCalendarEvent, generateSeriesId, expandRecurrence, formatRecurrence, shareOrCopy, escapeHtml } from './js/utils.js?v=443375';
         import { mergeCalendarImportEvents, validateCalendarImportUrl } from './js/edit-schedule-calendar-import.js?v=2';
         import { materializeCalendarGame } from './js/calendar-game-materialization.js?v=4';
-        import { checkAuth } from './js/auth.js?v=4433199';
-        import { renderTeamAdminBanner } from './js/team-admin-banner.js?v=443347';
+        import { checkAuth } from './js/auth.js?v=4433203';
+        import { renderTeamAdminBanner } from './js/team-admin-banner.js?v=443350';
         import { computeOfficiatingCoverageStatus, flagRescheduledOfficiatingSlots, getOfficiatingAssignmentConflictWarnings, normalizeOfficiatingSlots as normalizeAssignmentOfficiatingSlots } from './js/officiating-utils.js?v=4';
         import { buildOfficiatingAssignmentNotificationRecords } from './js/officiating-notifications.js?v=3';
         import { getTeamAccessInfo } from './js/team-access.js?v=44338';
-        import { resolvePreferredStatConfigId } from './js/live-game-state.js?v=43';
+        import { resolvePreferredStatConfigId } from './js/live-game-state.js?v=46';
         import { getGoalSportProfile } from './js/live-sport-config.js?v=3';
-        import { cancelScheduledGame } from './js/edit-schedule-cancel-game.js?v=3';
+        import { cancelScheduledGame } from './js/edit-schedule-cancel-game.js?v=4';
         import { applyPracticeRecurrenceFields } from './js/edit-schedule-practice-payload.js?v=1';
         import { savePracticeForm } from './js/edit-schedule-practice-submit.js?v=3';
         import { buildBulkAiPracticePayload, createBulkAiImageController, normalizeBulkAiAssignments, normalizeBulkAiEventForAdd, normalizeBulkAiIsHome } from './js/edit-schedule-ai-import.js?v=2';
@@ -975,8 +984,14 @@
         import { buildRegistrationScheduleImportPreview, formatRegistrationImportResults, getRegistrationScheduleEvents, isExternallyLinkedRegistrationTeam, planRegistrationScheduleImport } from './js/edit-schedule-registration-import.js?v=4';
         import { getGameReplayLifecycle } from './js/game-replay-video.js?v=3';
         import { hasReplayVideoEvidence } from './js/schedule-watch-cta.js?v=3';
+        import { DIAMOND_ENGINE, buildDiamondTrackerUrl } from './js/diamond-scorebook-routing.js?v=2';
+        import { isLegacyTrackingEngine } from './js/tracking-engine.js?v=1';
+        import { activateDiamondGameForLegacy, cancelDiamondGameForLegacy, getDiamondGameAccess } from './js/diamond-scorebook-client.js?v=4';
+        import { isDiamondScorebookUiEnabled } from './js/launch-features.js?v=3';
 
         renderFooter(document.getElementById('footer-container'));
+
+        const diamondScorebookUiEnabled = isDiamondScorebookUiEnabled();
 
         let currentTeamId = null;
         let currentUser = null;
@@ -2206,6 +2221,7 @@
                         }),
                         arrivalTime: event.arrivalTime || null,
                         statTrackerConfigId: event.statTrackerConfigId || null,
+                        trackingEngine: event.trackingEngine || null,
                         assignments: Array.isArray(event.assignments) ? event.assignments : [],
                         officiatingSlots: Array.isArray(event.officiatingSlots) ? event.officiatingSlots : [],
                         officiatingSelfAssignmentEnabled: event.officiatingSelfAssignmentEnabled === true,
@@ -2380,22 +2396,25 @@
                         user: currentUser,
                         game,
                         cancelGame,
+                        cancelDiamondGame: cancelDiamondGameForLegacy,
                         postChatMessage,
                         counterpartTeamId: game.opponentTeamId || game.sharedScheduleOpponentTeamId || null,
                         counterpartOpponent: currentTeam?.name || null
                     });
                     if (result.cancelled) {
-                        try {
-                            await updateGame(currentTeamId, gameId, {
-                                scheduleNotifications: buildScheduleNotificationMetadata({
-                                    settings: getTeamScheduleNotificationSettings(),
-                                    action: 'cancelled',
-                                    sent: !result.notificationError,
-                                    userId: currentUser.uid
-                                })
-                            });
-                        } catch (error) {
-                            console.error('Game cancelled but notification metadata update failed:', error);
+                        if (!result.canonical) {
+                            try {
+                                await updateGame(currentTeamId, gameId, {
+                                    scheduleNotifications: buildScheduleNotificationMetadata({
+                                        settings: getTeamScheduleNotificationSettings(),
+                                        action: 'cancelled',
+                                        sent: !result.notificationError,
+                                        userId: currentUser.uid
+                                    })
+                                });
+                            } catch (error) {
+                                console.error('Game cancelled but notification metadata update failed:', error);
+                            }
                         }
                         try {
                             await loadSchedule();
@@ -2701,6 +2720,7 @@
         let pendingTrackGameId = null;
         let pendingTrackIsBasketball = false;
         let pendingTrackSupportsSimpleLive = false;
+        let pendingTrackDiamondAvailable = false;
 
         // Helper function to check if a stat config is for basketball
         function isBasketballConfig(configId) {
@@ -2740,9 +2760,11 @@
             pendingTrackGameId = null;
             pendingTrackIsBasketball = false;
             pendingTrackSupportsSimpleLive = false;
+            pendingTrackDiamondAvailable = false;
         }
 
-        function configureTrackerChoiceModal(isBasketball, supportsSimpleLive) {
+        function configureTrackerChoiceModal(isBasketball, supportsSimpleLive, diamondAvailable = false) {
+            diamondAvailable = diamondScorebookUiEnabled === true && diamondAvailable === true;
             const description = document.getElementById('tracker-choice-description');
             const recommendedAction = document.getElementById('tracker-recommended-action');
             const advancedActions = document.getElementById('tracker-advanced-actions');
@@ -2752,8 +2774,12 @@
             const liveBtn = document.getElementById('basketball-tracker-live');
             const simpleBtn = document.getElementById('basketball-tracker-live-simple');
             const photoBtn = document.getElementById('basketball-tracker-photo');
+            const diamondQuickBtn = document.getElementById('diamond-tracker-quick');
+            const diamondFullBtn = document.getElementById('diamond-tracker-full');
             if (description) {
-                if (isBasketball) {
+                if (diamondAvailable) {
+                    description.textContent = 'Diamond Quick capture is recommended. It keeps the scorebook simple while preserving a correction-safe play ledger.';
+                } else if (isBasketball) {
                     description.textContent = 'This game uses a Basketball stat config. Live tracking is recommended.';
                 } else if (supportsSimpleLive) {
                     description.textContent = 'Simple live tracking is recommended for this goal sport.';
@@ -2764,9 +2790,23 @@
             if (betaBtn) betaBtn.classList.toggle('hidden', !isBasketball);
             if (simpleBtn) simpleBtn.classList.toggle('hidden', !supportsSimpleLive);
             if (photoBtn) photoBtn.classList.toggle('hidden', !isBasketball);
+            if (diamondQuickBtn) {
+                diamondQuickBtn.hidden = !diamondAvailable;
+                diamondQuickBtn.classList.toggle('hidden', !diamondAvailable);
+            }
+            if (diamondFullBtn) {
+                diamondFullBtn.hidden = !diamondAvailable;
+                diamondFullBtn.classList.toggle('hidden', !diamondAvailable);
+            }
 
-            const trackerButtons = [standardBtn, betaBtn, liveBtn, simpleBtn, photoBtn].filter(Boolean);
-            const recommendedBtn = isBasketball ? liveBtn : supportsSimpleLive ? simpleBtn : standardBtn;
+            const trackerButtons = [standardBtn, betaBtn, liveBtn, simpleBtn, photoBtn, diamondQuickBtn, diamondFullBtn].filter(Boolean);
+            const recommendedBtn = diamondAvailable
+                ? diamondQuickBtn
+                : isBasketball
+                    ? liveBtn
+                    : supportsSimpleLive
+                        ? simpleBtn
+                        : standardBtn;
             trackerButtons.forEach((button) => {
                 const label = button.dataset.trackerLabel || 'Tracker';
                 button.dataset.recommended = 'false';
@@ -2776,11 +2816,13 @@
                 advancedActions?.appendChild(button);
             });
             if (recommendedBtn) {
-                const label = isBasketball
-                    ? 'Start Live Tracker'
-                    : supportsSimpleLive
-                        ? 'Start Simple Live Tracker'
-                        : 'Start Standard Tracker';
+                const label = diamondAvailable
+                    ? 'Start Diamond — Quick capture'
+                    : isBasketball
+                        ? 'Start Live Tracker'
+                        : supportsSimpleLive
+                            ? 'Start Simple Live Tracker'
+                            : 'Start Standard Tracker';
                 recommendedBtn.dataset.recommended = 'true';
                 recommendedBtn.classList.remove('bg-gray-100', 'text-gray-800', 'hover:bg-gray-200');
                 recommendedBtn.classList.add('bg-indigo-600', 'text-white', 'hover:bg-indigo-700');
@@ -2790,11 +2832,12 @@
             if (advancedOptions) advancedOptions.open = false;
         }
 
-        function openTrackerChoiceModal(gameId, isBasketball, supportsSimpleLive = false) {
+        function openTrackerChoiceModal(gameId, isBasketball, supportsSimpleLive = false, diamondAvailable = false) {
             pendingTrackGameId = gameId;
             pendingTrackIsBasketball = !!isBasketball;
             pendingTrackSupportsSimpleLive = !!supportsSimpleLive;
-            configureTrackerChoiceModal(pendingTrackIsBasketball, pendingTrackSupportsSimpleLive);
+            pendingTrackDiamondAvailable = diamondScorebookUiEnabled === true && diamondAvailable === true;
+            configureTrackerChoiceModal(pendingTrackIsBasketball, pendingTrackSupportsSimpleLive, pendingTrackDiamondAvailable);
             document.getElementById('basketball-tracker-modal')?.classList.remove('hidden');
         }
 
@@ -2810,14 +2853,37 @@
                 || liveStatus === 'canceled';
         }
 
-        function handleTrackClick(gameId) {
+        function isDiamondSport(game) {
+            const sport = String(game?.sport || currentTeam?.sport || '').trim().toLowerCase();
+            return sport === 'baseball' || sport === 'softball' || sport === 'fastpitch' || sport === 'fastpitch softball';
+        }
+
+        async function handleTrackClick(gameId) {
             const game = gamesCache[gameId];
             if (!game) return;
             if (isCancelledGame(game)) {
                 alert('Cancelled games cannot be tracked. Restore or reschedule the game before tracking.');
                 return;
             }
-            openTrackerChoiceModal(gameId, isBasketballForGame(game), isGoalSportForGame(game));
+            if (game.trackingEngine === DIAMOND_ENGINE) {
+                window.location.href = buildDiamondTrackerUrl(currentTeamId, gameId);
+                return;
+            }
+            if (!isLegacyTrackingEngine(game.trackingEngine)) {
+                alert('This game uses a newer scoring engine that this page cannot edit.');
+                return;
+            }
+            let diamondAvailable = false;
+            if (diamondScorebookUiEnabled === true && isDiamondSport(game)) {
+                try {
+                    const access = await getDiamondGameAccess(currentTeamId, gameId);
+                    diamondAvailable = access?.canActivate === true
+                        || (access?.eligible === true && access?.canManage === true && access?.teamOptIn === true);
+                } catch (error) {
+                    console.warn('Diamond access check failed closed; legacy trackers remain available.', error);
+                }
+            }
+            openTrackerChoiceModal(gameId, isBasketballForGame(game), isGoalSportForGame(game), diamondAvailable);
         }
 
         function renderDbGame(game) {
@@ -2907,6 +2973,7 @@
 
             // Populate new fields
             setHomeAway(game.isHome === true ? 'home' : (game.isHome === false ? 'away' : null));
+            setDiamondPinnedGameControls(game.trackingEngine === DIAMOND_ENGINE);
             document.getElementById('kitColor').value = game.kitColor || '';
             const seasonRecordFields = hydrateSeasonRecordFormFields({
                 game,
@@ -2942,6 +3009,21 @@
             document.getElementById('homeAwayHome').className = `flex-1 px-3 py-2 border rounded-md text-sm font-medium focus:outline-none transition ${val === 'home' ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-gray-300 text-gray-700 hover:bg-indigo-50'}`;
             document.getElementById('homeAwayAway').className = `flex-1 px-3 py-2 border rounded-md text-sm font-medium focus:outline-none transition ${val === 'away' ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-gray-300 text-gray-700 hover:bg-indigo-50'}`;
         };
+
+        function setDiamondPinnedGameControls(isPinned) {
+            const pinned = isPinned === true;
+            ['homeAwayHome', 'homeAwayAway', 'homeAwayClear'].forEach((id) => {
+                const button = document.getElementById(id);
+                button.disabled = pinned;
+                button.classList.toggle('cursor-not-allowed', pinned);
+                button.classList.toggle('opacity-60', pinned);
+            });
+            const config = document.getElementById('statConfig');
+            config.disabled = pinned;
+            config.classList.toggle('cursor-not-allowed', pinned);
+            config.classList.toggle('bg-gray-100', pinned);
+            document.getElementById('diamond-pinned-game-fields-note').classList.toggle('hidden', !pinned);
+        }
 
         function inferSeasonLabel(dateLike) {
             const d = dateLike instanceof Date
@@ -3346,6 +3428,7 @@
             document.getElementById('cancel-edit-game-btn').classList.add('hidden');
             clearLinkedOpponent();
             setHomeAway(null);
+            setDiamondPinnedGameControls(false);
             document.getElementById('kitColor').value = '';
             document.getElementById('seasonLabel').value = inferSeasonLabel(new Date());
             document.getElementById('competitionType').value = 'league';
@@ -3427,6 +3510,8 @@
                     competitionType: document.getElementById('competitionType').value,
                     countsTowardSeasonRecord: document.getElementById('countsTowardSeasonRecord').checked
                 });
+                const previousGame = editingGameId ? (gamesCache[editingGameId] || null) : null;
+                const isDiamondEditingGame = previousGame?.trackingEngine === DIAMOND_ENGINE;
                 const gameData = {
                     type: 'game',
                     date: Timestamp.fromDate(parsedGameDate),
@@ -3452,7 +3537,11 @@
                         eventDate: parsedGameDate
                     })
                 };
-                const previousGame = editingGameId ? (gamesCache[editingGameId] || null) : null;
+                if (isDiamondEditingGame) {
+                    delete gameData.isHome;
+                    delete gameData.statTrackerConfigId;
+                    delete gameData.opponentTeamId;
+                }
                 gameData.officiatingSlots = flagRescheduledOfficiatingSlots(previousGame, gameData);
                 Object.assign(gameData, getOfficiatingAuthorizationFields(gameData.officiatingSlots));
                 gameData.officiatingCoverageStatus = computeOfficiatingCoverageStatus(gameData.officiatingSlots);
@@ -5194,6 +5283,40 @@ PARSING RULES:
 
         // Basketball tracker choice modal handlers
         document.getElementById('basketball-tracker-cancel')?.addEventListener('click', closeBasketballTrackerModal);
+        async function startPendingDiamondTracker(captureMode) {
+            if (diamondScorebookUiEnabled !== true || !pendingTrackGameId || !pendingTrackDiamondAvailable) return;
+            const mode = captureMode === 'full' ? 'full' : 'quick';
+            const confirmed = window.confirm(
+                `Start Diamond ${mode === 'full' ? 'Full' : 'Quick'} capture? `
+                + 'This permanently assigns this untracked game to the Diamond ledger. Other games and all existing legacy games are unchanged.'
+            );
+            if (!confirmed) return;
+            const gameId = pendingTrackGameId;
+            const buttons = [
+                document.getElementById('diamond-tracker-quick'),
+                document.getElementById('diamond-tracker-full')
+            ].filter(Boolean);
+            buttons.forEach(button => {
+                button.disabled = true;
+                button.setAttribute('aria-busy', 'true');
+            });
+            try {
+                await activateDiamondGameForLegacy(currentTeamId, gameId, mode);
+                closeBasketballTrackerModal();
+                window.location.href = buildDiamondTrackerUrl(currentTeamId, gameId);
+            } catch (error) {
+                console.error('Diamond activation failed:', error);
+                alert(error?.message || 'Diamond could not claim this game. The legacy tracker is still available.');
+            } finally {
+                buttons.forEach(button => {
+                    if (!button.isConnected) return;
+                    button.disabled = false;
+                    button.removeAttribute('aria-busy');
+                });
+            }
+        }
+        document.getElementById('diamond-tracker-quick')?.addEventListener('click', () => void startPendingDiamondTracker('quick'));
+        document.getElementById('diamond-tracker-full')?.addEventListener('click', () => void startPendingDiamondTracker('full'));
         document.getElementById('basketball-tracker-standard')?.addEventListener('click', () => {
             if (!pendingTrackGameId) return closeBasketballTrackerModal();
             const gameId = pendingTrackGameId;

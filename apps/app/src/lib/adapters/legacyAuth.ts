@@ -58,7 +58,7 @@ export type LegacySignupFlowModule = {
 
 export type LegacyAuthEmailModule = {
   queuePasswordResetEmail: (email: string) => Promise<unknown>;
-  queueCurrentUserVerificationEmail: (idToken?: string) => Promise<unknown>;
+  queueCurrentUserVerificationEmail: (idToken?: string, verificationNextRoute?: string) => Promise<unknown>;
   queueInviteSignInEmail: (inviteCode: string) => Promise<unknown>;
 };
 

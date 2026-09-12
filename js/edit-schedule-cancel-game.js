@@ -20,12 +20,23 @@ export async function cancelScheduledGame({
     user,
     game,
     cancelGame,
+    cancelDiamondGame,
     postChatMessage,
     counterpartTeamId = null,
     counterpartOpponent = null
 }) {
+    const canonicalDiamondCancellation = game?.trackingEngine === 'diamond-v2';
     try {
-        await cancelGame(teamId, gameId, user.uid);
+        if (canonicalDiamondCancellation) {
+            if (typeof cancelDiamondGame !== 'function') {
+                throw new Error('Diamond cancellation is unavailable. Refresh this page before trying again.');
+            }
+            await cancelDiamondGame(teamId, gameId, {
+                reason: 'Cancelled from schedule management.'
+            });
+        } else {
+            await cancelGame(teamId, gameId, user.uid);
+        }
     } catch (error) {
         return {
             cancelled: false,
@@ -36,8 +47,8 @@ export async function cancelScheduledGame({
     const targets = buildScheduleNotificationTargets({
         teamId,
         title: `vs. ${game?.opponent || 'Opponent'}`,
-        counterpartTeamId,
-        counterpartTitle: counterpartOpponent ? `vs. ${counterpartOpponent}` : null
+        counterpartTeamId: canonicalDiamondCancellation ? null : counterpartTeamId,
+        counterpartTitle: !canonicalDiamondCancellation && counterpartOpponent ? `vs. ${counterpartOpponent}` : null
     });
     const notificationResult = await postScheduleNotificationTargets({
         targets,
@@ -50,6 +61,7 @@ export async function cancelScheduledGame({
 
     return {
         cancelled: true,
-        notificationError: notificationResult.failedCount > 0 ? notificationResult.errorMessage : null
+        notificationError: notificationResult.failedCount > 0 ? notificationResult.errorMessage : null,
+        ...(canonicalDiamondCancellation ? { canonical: true } : {})
     };
 }

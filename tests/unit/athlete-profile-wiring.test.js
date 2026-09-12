@@ -28,6 +28,7 @@ describe('athlete profile wiring', () => {
         expect(source).toContain('Share on the web');
         expect(source).toContain('URL.revokeObjectURL');
         expect(source).toContain('releaseProfilePhotoPreview();');
+        expect(source).toContain("summary.playingTimeComplete === false ? 'Unavailable'");
     });
 
     it('prefills new builder profiles from the linked athlete selected in the URL', () => {
@@ -50,6 +51,8 @@ describe('athlete profile wiring', () => {
         expect(source).toContain('handleProfileAuthChange(user);');
         expect(source).toContain('async function loadProfile(_user, isCurrentLoad = () => true)');
         expect(source).toContain('if (!isCurrentLoad()) return;');
+        expect(source).toContain("summary.playingTimeComplete === false ? 'Unavailable'");
+        expect(source).toContain("season.playingTimeComplete === false ? 'Minutes unavailable'");
     });
 
     it('adds dedicated athlete profile security rules', () => {
@@ -73,6 +76,9 @@ describe('athlete profile wiring', () => {
         expect(source).toContain('mediaUploadReservation: true');
         expect(source).toContain('mediaUploadReservation: deleteField()');
         expect(source).toContain('collectAthleteProfileMediaCleanupPaths');
+        expect(source).toContain('loadCompleteAthleteProfileSeasonStats({');
+        expect(source).toContain('playingTimeComplete');
+        expect(source).toContain('statEvidence');
     });
 
     it('uses primary authenticated storage and a create-safe reservation for new profile media', () => {

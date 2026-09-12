@@ -103,6 +103,12 @@ export function getPublicSmokePages() {
             readySelectors: ['#broadcast-stage', '#score-bug', '#overlay-video']
         },
         {
+            name: 'diamond live viewer shell',
+            path: '/live-game-diamond-v2.html',
+            titlePatterns: [/Diamond Live.*ALL PLAYS/i],
+            readySelectors: ['[data-diamond-error]', '[data-diamond-loading]']
+        },
+        {
             name: 'privacy policy',
             path: '/privacy.html',
             titlePatterns: [/Privacy Policy.*ALL PLAYS/i],

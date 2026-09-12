@@ -33,6 +33,7 @@ import { loadAuthProfileViaRest } from './adapters/legacyAuthProfileRest';
 import { raceFirstSuccessfulRead } from './adapters/legacyHedgedRead';
 import { clearAppDataCache } from './appDataCache';
 import { buildFirebaseSdkActionHref } from './appLinks';
+import { getSafeAuthNextRoute } from './authNextRoute';
 import { mergeOwnedTeamIds } from './teamAccess';
 import { callNativeFirebaseFunctionWithAuth } from './nativeCallable';
 import type { AuthUser, ProfileHydrationStatus, UserRole } from './types';
@@ -1437,8 +1438,9 @@ export async function signInWithEmail(email: string, password: string) {
   return credential as UserCredential;
 }
 
-export async function signUpWithEmail(email: string, password: string, activationCode: string) {
+export async function signUpWithEmail(email: string, password: string, activationCode: string, requestedVerificationNextRoute = '') {
   const normalizedEmail = requireValidAuthEmail(email);
+  const verificationNextRoute = getSafeAuthNextRoute(requestedVerificationNextRoute);
   const [dbModule, { redeemAdminInviteAcceptance }, { executeEmailPasswordSignup }, { queueCurrentUserVerificationEmail }] =
     await Promise.all([loadLegacyAuthDb(), loadLegacyAdminInvite(), loadLegacySignupFlow(), loadLegacyAuthEmail()]);
 
@@ -1498,9 +1500,15 @@ export async function signUpWithEmail(email: string, password: string, activatio
             if (!idToken) {
               throw new Error('Native Firebase auth did not return an ID token.');
             }
-            await queueCurrentUserVerificationEmail(idToken);
+            if (verificationNextRoute) {
+              await queueCurrentUserVerificationEmail(idToken, verificationNextRoute);
+            } else {
+              await queueCurrentUserVerificationEmail(idToken);
+            }
           }
-        : queueCurrentUserVerificationEmail,
+        : async () => verificationNextRoute
+          ? queueCurrentUserVerificationEmail('', verificationNextRoute)
+          : queueCurrentUserVerificationEmail(),
       signOut: nativeSignup
         ? async () => {
             clearNativeAuthSession();
@@ -1756,13 +1764,18 @@ export async function sendResetEmail(email: string) {
   await queuePasswordResetEmail(requireValidAuthEmail(email));
 }
 
-export async function resendVerificationEmail() {
+export async function resendVerificationEmail(requestedVerificationNextRoute = '') {
   const { queueCurrentUserVerificationEmail } = await loadLegacyAuthEmail();
+  const verificationNextRoute = getSafeAuthNextRoute(requestedVerificationNextRoute);
   const user = getCurrentFirebaseUser();
   if (!user) {
     const idToken = await getNativeAuthIdToken();
     if (idToken) {
-      await queueCurrentUserVerificationEmail(idToken);
+      if (verificationNextRoute) {
+        await queueCurrentUserVerificationEmail(idToken, verificationNextRoute);
+      } else {
+        await queueCurrentUserVerificationEmail(idToken);
+      }
       return;
     }
     throw new Error('No user is currently signed in.');
@@ -1771,7 +1784,11 @@ export async function resendVerificationEmail() {
   if (typeof user.reload === 'function') {
     await user.reload();
   }
-  await queueCurrentUserVerificationEmail();
+  if (verificationNextRoute) {
+    await queueCurrentUserVerificationEmail('', verificationNextRoute);
+  } else {
+    await queueCurrentUserVerificationEmail();
+  }
 }
 
 async function refreshNativeFallbackVerification() {

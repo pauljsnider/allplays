@@ -9,13 +9,18 @@ import {
 const legacyMocks = vi.hoisted(() => ({
   createTeam: vi.fn(),
   createConfig: vi.fn(),
+  getDefaultDiamondStatConfigForSport: vi.fn(),
   getDefaultStatConfigForSport: vi.fn(),
   getStatConfigPresetOptions: vi.fn()
 }));
+const diamondMocks = vi.hoisted(() => ({
+  configureDiamondTeam: vi.fn()
+}));
 
 vi.mock('./adapters/legacyTeamCreation', () => legacyMocks);
+vi.mock('./diamondScorebookService', () => diamondMocks);
 
-import { createTeamForApp, getCreateTeamSportOptions } from './teamCreationService';
+import { configureCreatedTeamDiamondForApp, createTeamForApp, getCreateTeamSportOptions } from './teamCreationService';
 
 const user = {
   uid: 'coach-1',
@@ -28,6 +33,11 @@ beforeEach(() => {
   clearAppDataCache();
   legacyMocks.createTeam.mockResolvedValue('team-new');
   legacyMocks.createConfig.mockResolvedValue('config-new');
+  legacyMocks.getDefaultDiamondStatConfigForSport.mockReturnValue({
+    name: 'Diamond Standard',
+    baseType: 'Baseball',
+    statDefinitions: [{ id: 'pa' }]
+  });
   legacyMocks.getDefaultStatConfigForSport.mockReturnValue({ name: 'Soccer Standard', baseType: 'Soccer' });
   legacyMocks.getStatConfigPresetOptions.mockReturnValue([
     { baseType: 'Custom' },
@@ -35,6 +45,13 @@ beforeEach(() => {
     { baseType: 'Soccer' },
     { baseType: 'Basketball' }
   ]);
+  diamondMocks.configureDiamondTeam.mockResolvedValue({
+    configured: true,
+    teamId: 'team-new',
+    sport: 'baseball',
+    rulesProfileId: 'baseball-youth',
+    rulesProfileVersion: 1
+  });
 });
 
 describe('createTeamForApp', () => {
@@ -48,8 +65,10 @@ describe('createTeamForApp', () => {
 
     expect(result).toEqual({
       teamId: 'team-new',
-      defaultStatConfigCreated: true,
-      defaultStatConfigError: null
+    defaultStatConfigCreated: true,
+    defaultStatConfigError: null,
+    diamondScorebookConfigured: false,
+    diamondScorebookError: null
     });
     expect(legacyMocks.createTeam).toHaveBeenCalledWith({
       name: 'KC Current U12',
@@ -93,10 +112,63 @@ describe('createTeamForApp', () => {
       isPublic: true
     })).resolves.toEqual({
       teamId: 'team-new',
-      defaultStatConfigCreated: false,
-      defaultStatConfigError: 'permission denied'
+    defaultStatConfigCreated: false,
+    defaultStatConfigError: 'permission denied',
+    diamondScorebookConfigured: false,
+    diamondScorebookError: null
     });
     expect(legacyMocks.createTeam).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['Baseball', 'baseball'],
+    ['Softball', 'fastpitch'],
+    ['Fastpitch', 'fastpitch']
+  ] as const)('explicitly configures %s with the shared Diamond profile contract', async (sport, diamondSport) => {
+    const result = await createTeamForApp(user, {
+      name: 'Diamond team',
+      sport,
+      diamondScorebook: {
+        enabled: true,
+        rulesProfileId: `${diamondSport}-youth`,
+        rulesProfileVersion: 1,
+        captureMode: 'full'
+      }
+    });
+
+    expect(diamondMocks.configureDiamondTeam).toHaveBeenCalledWith('team-new', diamondSport, `${diamondSport}-youth`, {
+      enabled: true,
+      rulesProfileVersion: 1,
+      captureMode: 'full'
+    });
+    expect(legacyMocks.getDefaultDiamondStatConfigForSport).toHaveBeenCalledWith(sport);
+    expect(legacyMocks.createConfig).toHaveBeenCalledWith('team-new', expect.objectContaining({ name: 'Diamond Standard' }));
+    expect(result).toMatchObject({ diamondScorebookConfigured: true, diamondScorebookError: null });
+  });
+
+  it('keeps the new team and legacy stat config usable when optional Diamond setup is unavailable', async () => {
+    diamondMocks.configureDiamondTeam.mockRejectedValueOnce(new Error('policy disabled'));
+
+    await expect(createTeamForApp(user, {
+      name: 'Baseball team',
+      sport: 'Baseball',
+      diamondScorebook: { enabled: true }
+    })).resolves.toEqual({
+      teamId: 'team-new',
+      defaultStatConfigCreated: true,
+      defaultStatConfigError: null,
+      diamondScorebookConfigured: false,
+      diamondScorebookError: 'policy disabled'
+    });
+    expect(legacyMocks.createConfig).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not call Diamond setup unless a supported team explicitly opts in', async () => {
+    await createTeamForApp(user, { name: 'Baseball team', sport: 'Baseball' });
+    await createTeamForApp(user, { name: 'Soccer team', sport: 'Soccer' });
+
+    expect(diamondMocks.configureDiamondTeam).not.toHaveBeenCalled();
+    expect(legacyMocks.getDefaultDiamondStatConfigForSport).not.toHaveBeenCalled();
   });
 
   it('returns the created team id when preset resolution fails after the team write', async () => {
@@ -112,7 +184,9 @@ describe('createTeamForApp', () => {
     })).resolves.toEqual({
       teamId: 'team-new',
       defaultStatConfigCreated: false,
-      defaultStatConfigError: 'preset unavailable'
+      defaultStatConfigError: 'preset unavailable',
+      diamondScorebookConfigured: false,
+      diamondScorebookError: null
     });
     expect(legacyMocks.createTeam).toHaveBeenCalledTimes(1);
     expect(legacyMocks.createConfig).not.toHaveBeenCalled();
@@ -127,7 +201,9 @@ describe('createTeamForApp', () => {
     })).resolves.toEqual({
       teamId: 'team-new',
       defaultStatConfigCreated: false,
-      defaultStatConfigError: null
+      defaultStatConfigError: null,
+      diamondScorebookConfigured: false,
+      diamondScorebookError: null
     });
     expect(legacyMocks.createConfig).not.toHaveBeenCalled();
   });
@@ -158,6 +234,40 @@ describe('createTeamForApp', () => {
   });
 });
 
+describe('configureCreatedTeamDiamondForApp', () => {
+  it('retries the exact Diamond setup against the existing team without creating another team', async () => {
+    await configureCreatedTeamDiamondForApp(' team-existing ', 'Baseball', {
+      enabled: true,
+      rulesProfileId: 'baseball-nfhs',
+      rulesProfileVersion: 1,
+      captureMode: 'full'
+    });
+
+    expect(diamondMocks.configureDiamondTeam).toHaveBeenCalledWith('team-existing', 'baseball', 'baseball-nfhs', {
+      enabled: true,
+      rulesProfileVersion: 1,
+      captureMode: 'full'
+    });
+    expect(legacyMocks.createTeam).not.toHaveBeenCalled();
+    expect(legacyMocks.createConfig).not.toHaveBeenCalled();
+  });
+
+  it('keeps a repeated configuration failure available to the caller', async () => {
+    diamondMocks.configureDiamondTeam.mockRejectedValueOnce(new Error('still unavailable'));
+
+    await expect(
+      configureCreatedTeamDiamondForApp('team-existing', 'Fastpitch', {
+        enabled: true,
+        rulesProfileId: 'fastpitch-youth',
+        rulesProfileVersion: 1,
+        captureMode: 'quick'
+      })
+    ).rejects.toThrow('still unavailable');
+
+    expect(legacyMocks.createTeam).not.toHaveBeenCalled();
+  });
+});
+
 describe('getCreateTeamSportOptions', () => {
   it('derives unique sports from default stat config presets', () => {
     expect(getCreateTeamSportOptions()).toEqual(['Basketball', 'Soccer']);
@@ -174,5 +284,20 @@ describe('getCreateTeamSportOptions', () => {
       'Football',
       'Volleyball'
     ]);
+  });
+
+  it('adds Fastpitch only when the Diamond creation UI is explicitly enabled', () => {
+    legacyMocks.getStatConfigPresetOptions.mockReturnValueOnce([]);
+
+    expect(getCreateTeamSportOptions({ includeDiamondSports: true })).toEqual([
+      'Basketball',
+      'Soccer',
+      'Baseball',
+      'Softball',
+      'Football',
+      'Volleyball',
+      'Fastpitch'
+    ]);
+    expect(getCreateTeamSportOptions()).not.toContain('Fastpitch');
   });
 });

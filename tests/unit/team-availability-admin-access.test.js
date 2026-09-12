@@ -43,6 +43,7 @@ describe('team availability admin access', () => {
 
         expect(source).toContain('const canManage = canManageTeamAvailability();');
         expect(source).toContain('return canManageTeamAvailability();');
-        expect(source).toContain('const isTeamAdmin = canManageTeamAvailability();');
+        expect(source).toContain("typeof hasTeamManagerAccess === 'function'");
+        expect(source).toContain('? hasTeamManagerAccess(user, accessInfo)');
     });
 });

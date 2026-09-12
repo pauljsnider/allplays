@@ -34,8 +34,9 @@ import {
     resolveSafeProfilePhotoWriteUrl
 } from './safe-image-url.js?v=1';
 import { buildGameWatchShareUrl } from './game-share-links.js?v=1';
-import { shareOrCopy } from './utils.js?v=443371';
+import { shareOrCopy } from './utils.js?v=443375';
 import { createPlayAnnouncer } from './live-game-announcer.js?v=1';
+import { DIAMOND_ENGINE, buildDiamondViewerUrl } from './diamond-scorebook-routing.js?v=2';
 
 const elements = {
     body: document.body,
@@ -234,7 +235,7 @@ function usesCompactPanelLayout() {
 }
 
 function loadOverlayDatabase() {
-    return import('./db.js?v=4433195');
+    return import('./db.js?v=4433199');
 }
 
 function getTimestampMs(value) {
@@ -1130,7 +1131,7 @@ async function initializeChatComposer(database, teamId, gameId) {
 
     try {
         const [authTools, chatTools] = await Promise.all([
-            import('./auth.js?v=4433199'),
+            import('./auth.js?v=4433203'),
             import('./live-game-chat.js?v=4')
         ]);
         uiState.chatServices = {
@@ -1959,7 +1960,7 @@ async function startDemoReplayMode(params) {
         { controllableReplay: true }
     );
     uiState.videoDurationMs = 15_000;
-    const stateTools = await import('./live-game-state.js?v=43');
+    const stateTools = await import('./live-game-state.js?v=46');
     await loadReplaySnapshot({
         getLiveEvents: async () => replayEvents,
         getLiveChatHistory: async () => replayChat,
@@ -2114,7 +2115,7 @@ async function startRealMode(params) {
         const [database, videoTools, stateTools] = await Promise.all([
             loadOverlayDatabase(),
             import('./live-game-video.js?v=443319'),
-            import('./live-game-state.js?v=43')
+            import('./live-game-state.js?v=46')
         ]);
         uiState.optionalTeamStatus = 'pending';
         const teamPromise = loadWithBoundedRetry(
@@ -2136,6 +2137,17 @@ async function startRealMode(params) {
         );
         const game = await database.getGame(teamId, gameId);
         if (!game) throw new Error('Game not found.');
+        if (game.trackingEngine === DIAMOND_ENGINE) {
+            window.location.replace(buildDiamondViewerUrl({
+                teamId,
+                gameId,
+                replay: isReplay,
+                overlay: true,
+                clipStart: params.clipStart,
+                clipEnd: params.clipEnd
+            }));
+            return;
+        }
 
         // A public game projection is sufficient to start the broadcast. Team
         // and roster reads are optional enrichment and can be slower for some
