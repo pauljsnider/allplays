@@ -11,6 +11,7 @@ const {
   createDiamondRosterReadAdmission,
 } = require("./diamond-roster-read-admission.cjs");
 const regeneration = require("./diamond-projection-regeneration-core.cjs");
+const privateNoteCore = require("./diamond-private-note-core.cjs");
 
 const DEFAULT_EVENT_PAGE_SIZE = 100;
 const MAX_EVENT_PAGE_SIZE = 200;
@@ -19,6 +20,7 @@ const MAX_CANONICAL_EVENTS = 20_000;
 const MAX_ROSTER_CANDIDATES_PER_SIDE = 100;
 const MAX_DIAMOND_SCORER_CANDIDATES = 100;
 const DIAMOND_SCORER_RSVP_SCAN_LIMIT = MAX_DIAMOND_SCORER_CANDIDATES + 1;
+const DIAMOND_PRIVATE_NOTE_STORAGE_VERSION = 1;
 const SCORER_LEASE_DURATION_MS = 15 * 60 * 1000;
 const MAX_PUBLIC_VIDEO_DURATION_MS = 24 * 60 * 60 * 1000;
 const PUBLIC_REPLAY_PAGE_SIZE = 100;
@@ -37,12 +39,15 @@ const COMMAND_HISTORY_CONTROL_QUARANTINE_MS =
   COMMAND_HISTORY_SUSTAINED_WINDOW_MS;
 const MAX_COMMAND_HISTORY_CONTROL_BYTES = 16 * 1024;
 // Full-history verification retains its original 16/64 request and 80k/120k
-// weighted bounds. Every accepted canonical command charges its eventual
-// projector head to a hash-only UID/team/game control, a caller-wide hash-only
-// control shared across every team and game, and a UID-independent hash-only
-// game control that survives scorer handoff. Fresh activation charges one unit
-// to both shared controls; a new manager regeneration reservation charges both
-// its synchronous history and queued projection head to both shared controls.
+// weighted bounds. Every accepted ordinary canonical command charges its
+// eventual projector head to a hash-only UID/team/game control, a caller-wide
+// hash-only control shared across every team and game, and a UID-independent
+// hash-only game control that survives scorer handoff. Private material instead
+// charges privacy-neutral per-game and per-team controls plus the same shared
+// game control, so retained quota state cannot re-identify its author or reset
+// on handoff. Fresh activation charges one unit to both shared controls; a new
+// manager regeneration reservation charges both its synchronous history and
+// queued projection head to both shared controls.
 // FULL_REPLAY commands likewise charge the captured history and eventual head.
 // The larger 256/512 projection counts preserve ordinary pitch entry and the
 // bounded offline queue at shallow heads; weighted budgets dominate first
@@ -92,7 +97,8 @@ const PRIVATE_HISTORY_SUSTAINED_WINDOW_MS = 10 * 60 * 1000;
 const PRIVATE_HISTORY_CONTROL_QUARANTINE_MS =
   PRIVATE_HISTORY_SUSTAINED_WINDOW_MS;
 // A maximum private-history page reads two admission controls, the initial
-// access/checkpoint envelope, a 201-document event query, and the final
+// access/checkpoint envelope, a 201-document event query, at most one private
+// note/redaction record per event, and the final
 // access/checkpoint/control envelope. Charge 32 fixed logical units plus the
 // requested event limit so quota also covers one ambiguous reservation and
 // completion reconciliation plus fail-closed release bookkeeping. The legacy
@@ -104,27 +110,32 @@ const PRIVATE_HISTORY_CONTROL_QUARANTINE_MS =
 // active-lease bounds prevent parallel amplification and arbitrary game-ID
 // rotation.
 const PRIVATE_HISTORY_FIXED_READ_UNITS = 32;
+const PRIVATE_HISTORY_READ_UNITS_PER_EVENT = 2;
 const MAX_PRIVATE_HISTORY_REPORT_PAGES =
   (MAX_CANONICAL_EVENTS / FULL_HISTORY_PAGE_SIZE) * 16;
 const PRIVATE_HISTORY_REPORT_RETRY_ALLOWANCE = 2;
 const MAX_PRIVATE_HISTORY_REQUESTS_PER_WINDOW = 256;
 const MAX_PRIVATE_HISTORY_READ_UNITS_PER_WINDOW =
   MAX_PRIVATE_HISTORY_REQUESTS_PER_WINDOW *
-  (PRIVATE_HISTORY_FIXED_READ_UNITS + MAX_EVENT_PAGE_SIZE);
+  (PRIVATE_HISTORY_FIXED_READ_UNITS +
+    PRIVATE_HISTORY_READ_UNITS_PER_EVENT * MAX_EVENT_PAGE_SIZE);
 const MAX_PRIVATE_HISTORY_GLOBAL_REQUESTS_PER_WINDOW = 512;
 const MAX_PRIVATE_HISTORY_GLOBAL_READ_UNITS_PER_WINDOW =
   MAX_PRIVATE_HISTORY_GLOBAL_REQUESTS_PER_WINDOW *
-  (PRIVATE_HISTORY_FIXED_READ_UNITS + MAX_EVENT_PAGE_SIZE);
+  (PRIVATE_HISTORY_FIXED_READ_UNITS +
+    PRIVATE_HISTORY_READ_UNITS_PER_EVENT * MAX_EVENT_PAGE_SIZE);
 const MAX_PRIVATE_HISTORY_SUSTAINED_REQUESTS_PER_WINDOW =
   MAX_PRIVATE_HISTORY_REPORT_PAGES + PRIVATE_HISTORY_REPORT_RETRY_ALLOWANCE;
 const MAX_PRIVATE_HISTORY_SUSTAINED_READ_UNITS_PER_WINDOW =
   MAX_PRIVATE_HISTORY_SUSTAINED_REQUESTS_PER_WINDOW *
-  (PRIVATE_HISTORY_FIXED_READ_UNITS + MAX_EVENT_PAGE_SIZE);
+  (PRIVATE_HISTORY_FIXED_READ_UNITS +
+    PRIVATE_HISTORY_READ_UNITS_PER_EVENT * MAX_EVENT_PAGE_SIZE);
 const MAX_PRIVATE_HISTORY_GLOBAL_SUSTAINED_REQUESTS_PER_WINDOW =
   MAX_PRIVATE_HISTORY_SUSTAINED_REQUESTS_PER_WINDOW * 2;
 const MAX_PRIVATE_HISTORY_GLOBAL_SUSTAINED_READ_UNITS_PER_WINDOW =
   MAX_PRIVATE_HISTORY_GLOBAL_SUSTAINED_REQUESTS_PER_WINDOW *
-  (PRIVATE_HISTORY_FIXED_READ_UNITS + MAX_EVENT_PAGE_SIZE);
+  (PRIVATE_HISTORY_FIXED_READ_UNITS +
+    PRIVATE_HISTORY_READ_UNITS_PER_EVENT * MAX_EVENT_PAGE_SIZE);
 const MAX_CONCURRENT_PRIVATE_HISTORY_REQUESTS = 2;
 const MAX_CONCURRENT_PRIVATE_HISTORY_GLOBAL_REQUESTS = 4;
 const PRIVATE_HISTORY_REQUEST_LEASE_MS = 3 * 60 * 1000;
@@ -277,6 +288,10 @@ function snapshotData(snapshot) {
   return snapshot?.exists === true && typeof snapshot.data === "function"
     ? snapshot.data() || {}
     : null;
+}
+
+function snapshotExists(snapshot) {
+  return snapshot?.exists === true;
 }
 
 function snapshotDocuments(snapshot) {
@@ -584,6 +599,7 @@ function paths(teamId, gameId) {
     configurationRequest: (requestId) =>
       `teams/${teamId}/diamondConfigurationRequests/${requestId}`,
     cleanupLock: `teams/${teamId}/diamondCleanupLocks/${gameId}`,
+    accountDeletionRequest: (uid) => `accountDeletionRequests/${uid}`,
   };
 }
 
@@ -936,6 +952,7 @@ function buildPrivateSnapshot({
       ? root.recentPublicEvents.slice(-20)
       : [],
     completeness: completenessForState(state),
+    canSubmitPrivateMaterial: canScore === true,
     lease: {
       status:
         leaseMalformed || !currentTimeValid
@@ -1076,8 +1093,9 @@ function eventDescription(event) {
   return labels[event?.type] || "Scoring update";
 }
 
-function buildPublicEvent(event, core) {
-  if (!event || PRIVATE_EVENT_TYPES.has(event.type)) return null;
+function buildPublicEvent(event, core, explicitlySuppressed = false) {
+  if (!event || explicitlySuppressed || PRIVATE_EVENT_TYPES.has(event.type))
+    return null;
   const after = event.after || {};
   const projected = core.sanitizeDiamondPublicEvent({
     schemaVersion: event.schemaVersion,
@@ -1111,13 +1129,13 @@ function buildPublicEvent(event, core) {
   return projected;
 }
 
-function buildRecentPlay(event, core) {
+function buildRecentPlay(event, core, explicitlySuppressed = false) {
   if (
     !RECENT_PLAY_TYPES.has(event?.type) ||
     PRIVATE_EVENT_TYPES.has(event?.type)
   )
     return null;
-  const publicEvent = buildPublicEvent(event, core);
+  const publicEvent = buildPublicEvent(event, core, explicitlySuppressed);
   return publicEvent
     ? {
         eventId: publicEvent.eventId,
@@ -1126,14 +1144,24 @@ function buildRecentPlay(event, core) {
         inningLabel: publicEvent.inningLabel,
         createdAt: publicEvent.createdAt,
         voided: publicEvent.type === "void_event",
+        ...(publicEvent.voidsEventId
+          ? { voidsEventId: publicEvent.voidsEventId }
+          : {}),
+        ...(publicEvent.supersedesEventId
+          ? { supersedesEventId: publicEvent.supersedesEventId }
+          : {}),
       }
     : null;
 }
 
-function updateRecentPlays(existing, event, core) {
-  const play = buildRecentPlay(event, core);
+function updateRecentPlays(existing, event, core, explicitlySuppressed = false) {
+  const play = buildRecentPlay(event, core, explicitlySuppressed);
   if (!play) return Array.isArray(existing) ? existing.slice(-20) : [];
-  return [...(Array.isArray(existing) ? existing : []), play].slice(-20);
+  const correctedEventId = play.voidsEventId || play.supersedesEventId || null;
+  const retained = (Array.isArray(existing) ? existing : []).filter(
+    (candidate) => !correctedEventId || candidate?.eventId !== correctedEventId,
+  );
+  return [...retained, play].slice(-20);
 }
 
 function legacyStatusForDiamondLifecycle(lifecycle) {
@@ -1410,6 +1438,117 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     } catch (error) {
       throw makeError("invalid-argument", error.message);
     }
+  }
+
+  function privateNotePrivacyRevision(root) {
+    const value = root?.privateNotePrivacyRevision;
+    if (value === undefined) return 0;
+    if (!Number.isSafeInteger(value) || value < 0) {
+      throw makeError(
+        "unavailable",
+        "The Diamond private-note privacy state is malformed.",
+        { reason: "private-note-privacy-state-malformed", retryable: true },
+      );
+    }
+    return value;
+  }
+
+  function requirePrivateNoteStorageVersion(root) {
+    if (root?.privateNoteStorageVersion !== DIAMOND_PRIVATE_NOTE_STORAGE_VERSION) {
+      throw makeError(
+        "failed-precondition",
+        "This pre-release Diamond scorebook requires private-note migration.",
+        { reason: "private-note-storage-migration-required" },
+      );
+    }
+  }
+
+  function requireNoAccountDeletion(snapshot) {
+    if (snapshotExists(snapshot)) {
+      throw makeError(
+        "failed-precondition",
+        "Private notes cannot be stored while account deletion is pending.",
+        { reason: "account-deletion-pending" },
+      );
+    }
+  }
+
+  function requirePrivateNoteReceipt({
+    command,
+    receipt,
+    noteSnapshot,
+    instanceId,
+    callerUid,
+  }) {
+    if (
+      !privateNoteCore.isCanonicalPrivateNoteMaterialEvent(
+        receipt?.event,
+        domainEngine,
+      )
+    ) {
+      throw makeError(
+        "failed-precondition",
+        "A legacy private-note command cannot be replayed until it is migrated.",
+        { reason: "legacy-private-note-material" },
+      );
+    }
+    if (!snapshotExists(noteSnapshot)) {
+      throw makeError(
+        "unavailable",
+        "The private-note receipt is unavailable. Reload before retrying.",
+        { reason: "private-note-record-unavailable", retryable: true },
+      );
+    }
+    const noteValue = snapshotData(noteSnapshot);
+    if (noteValue?.status === "deleted") {
+      try {
+        privateNoteCore.parseDiamondPrivateNoteRedaction(
+          noteValue,
+          receipt.event,
+          instanceId,
+          domainEngine,
+        );
+      } catch {
+        throw makeError(
+          "unavailable",
+          "The private-note redaction failed integrity validation.",
+          { reason: "private-note-redaction-malformed", retryable: true },
+        );
+      }
+      throw makeError(
+        "failed-precondition",
+        "The private-note content was deleted and cannot be replayed.",
+        { reason: "private-note-deleted" },
+      );
+    }
+    let note;
+    try {
+      note = privateNoteCore.parseDiamondPrivateNoteRecord(
+        noteValue,
+        receipt.event,
+        instanceId,
+        domainEngine,
+      );
+    } catch {
+      throw makeError(
+        "unavailable",
+        "The private-note receipt failed integrity validation.",
+        { reason: "private-note-record-malformed", retryable: true },
+      );
+    }
+    if (note.authorUid !== callerUid) {
+      throw makeError(
+        "already-exists",
+        "commandId was already used by another private-note author.",
+      );
+    }
+    if (note.requestHash !== domainEngine.getDiamondPrivateNoteRequestHash(command)) {
+      throw makeError(
+        "already-exists",
+        "commandId was already used with different private-note content.",
+      );
+    }
+    return note;
   }
 
   function normalizeUuid(value, label) {
@@ -4097,6 +4236,8 @@ function createDiamondScorebookHandlers(dependencies = {}) {
           },
         },
         recentPublicEvents,
+        privateNoteStorageVersion: DIAMOND_PRIVATE_NOTE_STORAGE_VERSION,
+        privateNotePrivacyRevision: 0,
         projectionStatus: "pending",
         createdAt: timestampIso(nowMs),
         createdBy: caller.uid,
@@ -4286,6 +4427,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       const existingReceipt = snapshotData(receiptSnapshot);
       const existingAudit = snapshotData(auditSnapshot);
       if (!root) throw makeError("not-found", "Diamond scorebook not found.");
+      requirePrivateNoteStorageVersion(root);
       if (
         loaded.game.trackingEngine !== DIAMOND_ENGINE ||
         root.instanceId !== loaded.game.diamondScorebookInstanceId
@@ -4449,6 +4591,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       const nextRoot = {
         ...root,
         checkpoint: resolvedCheckpoint,
+        privateNotePrivacyRevision: privateNotePrivacyRevision(root),
         scorerLease: nextLease,
         recentPublicEvents,
         projectionStatus: "pending",
@@ -4493,6 +4636,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       });
       transaction.update(rootRef, {
         checkpoint: resolvedCheckpoint,
+        privateNotePrivacyRevision: privateNotePrivacyRevision(root),
         scorerLease: nextLease,
         recentPublicEvents,
         projectionStatus: "pending",
@@ -4703,6 +4847,12 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     { teamId, gameId, targetUid, loaded, disallowUid = null },
   ) {
     const normalizedTargetUid = normalizeId(targetUid, "targetUid");
+    if (normalizedTargetUid === domainEngine.DIAMOND_PRIVATE_NOTE_ACTOR_UID) {
+      throw makeError(
+        "invalid-argument",
+        "This scorer identity is reserved by the Diamond ledger.",
+      );
+    }
     let targetAuth;
     try {
       targetAuth = await auth.getUser(normalizedTargetUid);
@@ -4858,6 +5008,37 @@ function createDiamondScorebookHandlers(dependencies = {}) {
         command.gameId,
         callerUid,
       ),
+    ]);
+  }
+
+  function privateMaterialCommandHistoryAdmissionIdentities(command) {
+    const resourceScopeHash = core.hashDiamondValue({
+      schemaVersion: 1,
+      type: "diamond-private-material-command-history-admission-scope",
+      teamId: command.teamId,
+      gameId: command.gameId,
+    });
+    const teamScopeHash = core.hashDiamondValue({
+      schemaVersion: 1,
+      type: "diamond-private-material-command-history-team-admission-scope",
+      teamId: command.teamId,
+    });
+    return Object.freeze([
+      commandHistoryGameAdmissionIdentity(command.teamId, command.gameId),
+      Object.freeze({
+        type: "diamond-private-material-command-history-admission",
+        scopeHash: resourceScopeHash,
+        reference: firestore.doc(
+          `${MANAGER_STAT_CONTROL_COLLECTION}/private-command-admission-${resourceScopeHash.slice(7)}`,
+        ),
+      }),
+      Object.freeze({
+        type: "diamond-private-material-command-history-team-admission",
+        scopeHash: teamScopeHash,
+        reference: firestore.doc(
+          `${MANAGER_STAT_CONTROL_COLLECTION}/private-command-team-admission-${teamScopeHash.slice(7)}`,
+        ),
+      }),
     ]);
   }
 
@@ -5219,6 +5400,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     root,
     caller,
     nowMs,
+    privateMaterialTargetVerified = false,
   ) {
     const execution = domainEngine.executeDiamondCommandFromCheckpoint(
       checkpoint,
@@ -5230,6 +5412,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
         managerAuthorized: loaded.access.full,
       },
       null,
+      privateMaterialTargetVerified,
     );
     if (
       execution.result.outcome !== "rejected" ||
@@ -5260,6 +5443,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     game,
     root,
     nowMs,
+    privateMaterialCommand = false,
   }) {
     if (!isActiveTeam(team)) {
       throw makeError(
@@ -5277,16 +5461,48 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       }),
       "Diamond scoring is disabled.",
     );
-    requireAllowed(
-      core.decideDiamondScorerLease({
-        operation: "score",
-        lease: root.scorerLease,
-        actorUid: caller.uid,
-        presentedLeaseId: command.leaseId || null,
-        nowMillis: nowMs,
-      }),
-      "Acquire the current scorer lease before submitting this command.",
+    if (!privateMaterialCommand) {
+      requireAllowed(
+        core.decideDiamondScorerLease({
+          operation: "score",
+          lease: root.scorerLease,
+          actorUid: caller.uid,
+          presentedLeaseId: command.leaseId || null,
+          nowMillis: nowMs,
+        }),
+        "Acquire the current scorer lease before submitting this command.",
+      );
+    }
+  }
+
+  function privateMaterialClassification({
+    command,
+    targetEvent,
+    root,
+    checkpoint,
+  }) {
+    const correction =
+      command.type === "void_event" || command.type === "supersede_event";
+    const targetPrivateMaterial = Boolean(
+      correction &&
+        targetEvent &&
+        targetEvent.instanceId === root.instanceId &&
+        targetEvent.eventId === command.payload.targetEventId &&
+        Number.isSafeInteger(targetEvent.sequence) &&
+        targetEvent.sequence >= 1 &&
+        targetEvent.sequence <= checkpoint.sequence &&
+        targetEvent.revision === targetEvent.sequence &&
+        privateNoteCore.isCanonicalPrivateNoteMaterialEvent(
+          targetEvent,
+          domainEngine,
+        ),
     );
+    return Object.freeze({
+      privateMaterialCommand:
+        domainEngine.getDiamondPrivateNoteText(command) !== null ||
+        targetPrivateMaterial,
+      targetPrivateMaterial,
+    });
   }
 
   function requireCurrentCommandHistorySource(
@@ -5317,6 +5533,19 @@ function createDiamondScorebookHandlers(dependencies = {}) {
   }) {
     let exactHead = false;
     try {
+      const privateNote = privateNoteCore.isCanonicalPrivateNoteMaterialEvent(
+        receipt?.event,
+        domainEngine,
+      );
+      const stateHash = (state) =>
+        core.hashDiamondValue(
+          privateNote && state?.currentScorerUid
+            ? {
+                ...state,
+                currentScorerUid: domainEngine.DIAMOND_PRIVATE_NOTE_ACTOR_UID,
+              }
+            : state,
+        );
       exactHead =
         admission.callerUid === callerUid &&
         commandHistorySourceHash(root, admission.checkpoint) ===
@@ -5327,10 +5556,10 @@ function createDiamondScorebookHandlers(dependencies = {}) {
         receipt.event?.revision === receipt.event?.sequence &&
         receipt.event?.previousHash === admission.checkpoint.previousHash &&
         core.hashDiamondValue(receipt.event?.before) ===
-          core.hashDiamondValue(admission.checkpoint.state) &&
+          stateHash(admission.checkpoint.state) &&
         checkpoint.sequence === receipt.result?.revision &&
         checkpoint.previousHash === receipt.event?.hash &&
-        core.hashDiamondValue(checkpoint.state) ===
+        stateHash(checkpoint.state) ===
           core.hashDiamondValue(receipt.result?.state);
     } catch {
       exactHead = false;
@@ -5389,13 +5618,25 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       return newEventId;
     };
     const fullReplayCommand = FULL_REPLAY_COMMANDS.has(command.type);
-    const admissionIdentities = commandHistoryAdmissionIdentities(
+    const mayStorePrivateNoteMaterial =
+      domainEngine.getDiamondPrivateNoteText(command) !== null ||
+      command.type === "void_event" ||
+      command.type === "supersede_event";
+    const ordinaryAdmissionIdentities = commandHistoryAdmissionIdentities(
       command,
       caller.uid,
     );
+    const privateMaterialAdmissionIdentities =
+      privateMaterialCommandHistoryAdmissionIdentities(command);
     let commandHistoryAdmission = null;
     let needsFullHistory = false;
     let preparedHistory = null;
+    let privateMaterialCommand =
+      domainEngine.getDiamondPrivateNoteText(command) !== null;
+    let targetPrivateMaterial = false;
+    let admissionIdentities = privateMaterialCommand
+      ? privateMaterialAdmissionIdentities
+      : ordinaryAdmissionIdentities;
     if (fullReplayCommand) {
       let admissionCallbackCount = 0;
       let admission;
@@ -5419,7 +5660,20 @@ function createDiamondScorebookHandlers(dependencies = {}) {
             const receiptRef = firestore.doc(
               resourcePaths.command(command.commandId),
             );
-            const [loaded, rootSnapshot, receiptSnapshot] = await Promise.all([
+            const targetEventRef =
+              command.type === "void_event" ||
+              command.type === "supersede_event"
+                ? firestore.doc(
+                    resourcePaths.event(command.payload.targetEventId),
+                  )
+                : null;
+            const [
+              loaded,
+              rootSnapshot,
+              receiptSnapshot,
+              deletionRequestSnapshot,
+              targetEventSnapshot,
+            ] = await Promise.all([
               loadAccessDocuments(
                 transaction,
                 command.teamId,
@@ -5428,11 +5682,25 @@ function createDiamondScorebookHandlers(dependencies = {}) {
               ),
               transaction.get(rootRef),
               transaction.get(receiptRef),
+              mayStorePrivateNoteMaterial
+                ? transaction.get(
+                    firestore.doc(
+                      resourcePaths.accountDeletionRequest(caller.uid),
+                    ),
+                  )
+                : Promise.resolve(null),
+              targetEventRef
+                ? transaction.get(targetEventRef)
+                : Promise.resolve(null),
             ]);
             requireScorekeeper(loaded.access);
+            if (mayStorePrivateNoteMaterial) {
+              requireNoAccountDeletion(deletionRequestSnapshot);
+            }
             const root = snapshotData(rootSnapshot);
             if (!root)
               throw makeError("not-found", "Diamond scorebook not found.");
+            requirePrivateNoteStorageVersion(root);
             if (root.instanceId !== loaded.game.diamondScorebookInstanceId) {
               throw makeError(
                 "failed-precondition",
@@ -5457,6 +5725,12 @@ function createDiamondScorebookHandlers(dependencies = {}) {
             if (snapshotData(receiptSnapshot)) {
               return Object.freeze({ kind: "receipt" });
             }
+            const privacy = privateMaterialClassification({
+              command,
+              targetEvent: snapshotData(targetEventSnapshot),
+              root,
+              checkpoint,
+            });
             const policy = await readPolicy(transaction);
             requireCurrentCommandHistoryAuthority({
               command,
@@ -5467,6 +5741,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
               game: loaded.game,
               root,
               nowMs,
+              privateMaterialCommand: privacy.privateMaterialCommand,
             });
             if (checkpoint.sequence !== command.expectedRevision) {
               return Object.freeze({
@@ -5478,14 +5753,18 @@ function createDiamondScorebookHandlers(dependencies = {}) {
                   root,
                   caller,
                   nowMs,
+                  privacy.targetPrivateMaterial,
                 ),
               });
             }
             requireCanonicalEventCapacity(checkpoint);
             const requestedReadUnits = Math.max(1, checkpoint.sequence);
+            const selectedAdmissionIdentities = privacy.privateMaterialCommand
+              ? privateMaterialAdmissionIdentities
+              : ordinaryAdmissionIdentities;
             const admissionWrites = await planCommandHistoryWork(
               transaction,
-              admissionIdentities,
+              selectedAdmissionIdentities,
               {
                 requestedHistoryReadUnits: requestedReadUnits,
                 nowMs,
@@ -5499,6 +5778,8 @@ function createDiamondScorebookHandlers(dependencies = {}) {
               checkpoint,
               sourceHash: commandHistorySourceHash(root, checkpoint),
               requestedReadUnits,
+              privateMaterialCommand: privacy.privateMaterialCommand,
+              targetPrivateMaterial: privacy.targetPrivateMaterial,
             });
           },
           { maxAttempts: 1 },
@@ -5520,6 +5801,11 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       if (admission.kind === "admitted") {
         commandHistoryAdmission = admission;
         needsFullHistory = true;
+        privateMaterialCommand = admission.privateMaterialCommand;
+        targetPrivateMaterial = admission.targetPrivateMaterial;
+        admissionIdentities = privateMaterialCommand
+          ? privateMaterialAdmissionIdentities
+          : ordinaryAdmissionIdentities;
       }
     }
     if (needsFullHistory) {
@@ -5547,6 +5833,28 @@ function createDiamondScorebookHandlers(dependencies = {}) {
         events,
         checkpoint: validated.checkpoint,
       };
+      const verifiedPrivacy = privateMaterialClassification({
+        command,
+        targetEvent:
+          command.type === "void_event" ||
+          command.type === "supersede_event"
+            ? events.find(
+                (event) => event.eventId === command.payload.targetEventId,
+              )
+            : null,
+        root: commandHistoryAdmission.root,
+        checkpoint: validated.checkpoint,
+      });
+      if (
+        verifiedPrivacy.privateMaterialCommand !== privateMaterialCommand ||
+        verifiedPrivacy.targetPrivateMaterial !== targetPrivateMaterial
+      ) {
+        throw makeError(
+          "failed-precondition",
+          "The Diamond correction privacy classification changed while loading history.",
+          { reason: "command-history-private-target-mismatch" },
+        );
+      }
     }
 
     return firestore.runTransaction(async (transaction) => {
@@ -5570,13 +5878,24 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       const receiptRef = firestore.doc(
         resourcePaths.command(command.commandId),
       );
-      const [rootSnapshot, receiptSnapshot] = await Promise.all([
+      const [rootSnapshot, receiptSnapshot, deletionRequestSnapshot] =
+        await Promise.all([
         transaction.get(rootRef),
         transaction.get(receiptRef),
-      ]);
+          mayStorePrivateNoteMaterial
+            ? transaction.get(
+                firestore.doc(
+                  resourcePaths.accountDeletionRequest(caller.uid),
+                ),
+              )
+            : Promise.resolve(null),
+        ]);
       const root = snapshotData(rootSnapshot);
       const existingReceipt = snapshotData(receiptSnapshot);
+      if (mayStorePrivateNoteMaterial)
+        requireNoAccountDeletion(deletionRequestSnapshot);
       if (!root) throw makeError("not-found", "Diamond scorebook not found.");
+      requirePrivateNoteStorageVersion(root);
       if (root.instanceId !== loaded.game.diamondScorebookInstanceId) {
         throw makeError(
           "failed-precondition",
@@ -5605,6 +5924,31 @@ function createDiamondScorebookHandlers(dependencies = {}) {
           "The Diamond checkpoint is unavailable.",
         );
       if (existingReceipt) {
+        if (
+          privateNoteCore.isCanonicalPrivateNoteMaterialEvent(
+            existingReceipt.event,
+            domainEngine,
+          )
+        ) {
+          const eventId = existingReceipt.event?.eventId;
+          if (typeof eventId !== "string") {
+            throw makeError(
+              "unavailable",
+              "The private-note receipt is malformed.",
+              { reason: "private-note-receipt-malformed", retryable: true },
+            );
+          }
+          const noteSnapshot = await transaction.get(
+            firestore.doc(resourcePaths.note(eventId)),
+          );
+          requirePrivateNoteReceipt({
+            command,
+            receipt: existingReceipt,
+            noteSnapshot,
+            instanceId: root.instanceId,
+            callerUid: caller.uid,
+          });
+        }
         const responseNowMs = commandHistoryAdmission
           ? normalizeNow(clock, makeError)
           : getWriteNowMs();
@@ -5618,6 +5962,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
             game: loaded.game,
             root,
             nowMs: responseNowMs,
+            privateMaterialCommand,
           });
           requireCurrentCommandHistoryReceipt({
             root,
@@ -5702,7 +6047,9 @@ function createDiamondScorebookHandlers(dependencies = {}) {
         ? normalizeNow(clock, makeError)
         : getWriteNowMs();
       let nextScorerLease = null;
-      if (command.type !== "cancel") {
+      if (privateMaterialCommand) {
+        nextScorerLease = root.scorerLease;
+      } else if (command.type !== "cancel") {
         const leaseOperation =
           command.type === "scorer_handoff" ? "handoff" : "score";
         const leaseDecision = core.decideDiamondScorerLease({
@@ -5774,12 +6121,11 @@ function createDiamondScorebookHandlers(dependencies = {}) {
           execution = {
             ...execution,
             checkpoint: domainEngine.createDiamondCheckpoint(execution.ledger),
-            receipt: {
-              commandId: command.commandId,
-              commandHash: domainEngine.getDiamondCommandHash(command),
-              event: execution.event,
-              result: execution.result,
-            },
+            receipt: domainEngine.createDiamondCommandReceipt(
+              command,
+              execution.event,
+              execution.result,
+            ),
           };
         }
       } else {
@@ -5817,12 +6163,13 @@ function createDiamondScorebookHandlers(dependencies = {}) {
         previousHash: execution.event.hash,
         state: execution.result.state,
       };
-      const receipt = execution.receipt || {
-        commandId: command.commandId,
-        commandHash: domainEngine.getDiamondCommandHash(command),
-        event: execution.event,
-        result: execution.result,
-      };
+      const receipt =
+        execution.receipt ||
+        domainEngine.createDiamondCommandReceipt(
+          command,
+          execution.event,
+          execution.result,
+        );
       const admissionWrites = await planCommandHistoryWork(
         transaction,
         admissionIdentities,
@@ -5831,9 +6178,44 @@ function createDiamondScorebookHandlers(dependencies = {}) {
           nowMs,
         },
       );
+      const suppressPublicEvent =
+        privateNoteCore.isCanonicalPrivateNoteMaterialEvent(
+          execution.event,
+          domainEngine,
+        );
+      const publicSourceEvent =
+        suppressPublicEvent &&
+        execution.event.type === "supersede_event" &&
+        execution.event.payload?.replacement?.type !== "private_note"
+          ? (() => {
+              return {
+                ...execution.event,
+                type: execution.event.payload.replacement.type,
+                payload: execution.event.payload.replacement.payload,
+                supersedesEventId: undefined,
+              };
+            })()
+          : suppressPublicEvent &&
+              execution.event.type === "supersede_event" &&
+              execution.event.payload?.replacement?.type === "private_note" &&
+              !targetPrivateMaterial
+            ? {
+                ...execution.event,
+                type: "void_event",
+                payload: {
+                  targetEventId: execution.event.payload.targetEventId,
+                  reason:
+                    domainEngine.DIAMOND_PRIVATE_NOTE_REASON_TOMBSTONE,
+                },
+                voidsEventId: execution.event.payload.targetEventId,
+                supersedesEventId: undefined,
+              }
+          : suppressPublicEvent
+            ? null
+            : execution.event;
       const recentPublicEvents = updateRecentPlays(
         root.recentPublicEvents,
-        execution.event,
+        publicSourceEvent,
         core,
       );
       const nextRoot = {
@@ -5853,7 +6235,10 @@ function createDiamondScorebookHandlers(dependencies = {}) {
         nowMs,
         core,
       });
-      const publicEvent = buildPublicEvent(execution.event, core);
+      const publicEvent = buildPublicEvent(
+        publicSourceEvent,
+        core,
+      );
       const publicStateRef = firestore.doc(resourcePaths.publicState);
       const publicStateSnapshot = await transaction.get(publicStateRef);
       const existingPublicState = snapshotData(publicStateSnapshot) || {};
@@ -5870,20 +6255,22 @@ function createDiamondScorebookHandlers(dependencies = {}) {
         instanceId: root.instanceId,
         acceptedAt: timestampIso(nowMs),
       });
-      if (command.type === "private_note") {
+      if (
+        privateNoteCore.isCanonicalPrivateNoteMaterialEvent(
+          execution.event,
+          domainEngine,
+        )
+      ) {
         transaction.create(
           firestore.doc(resourcePaths.note(execution.event.eventId)),
-          {
-            schemaVersion: 1,
+          privateNoteCore.buildDiamondPrivateNoteRecord({
+            command,
+            event: execution.event,
             instanceId: root.instanceId,
-            eventId: execution.event.eventId,
-            revision: execution.event.revision,
-            text: command.payload.text,
-            attachedEventId: command.payload.attachedEventId || null,
-            visibility: "staff-private",
-            createdBy: caller.uid,
+            authorUid: caller.uid,
             createdAt: timestampIso(nowMs),
-          },
+            domainEngine,
+          }),
         );
       }
       transaction.update(rootRef, {
@@ -7107,7 +7494,9 @@ function createDiamondScorebookHandlers(dependencies = {}) {
         ),
       );
     }
-    const requestedReadUnits = PRIVATE_HISTORY_FIXED_READ_UNITS + request.limit;
+    const requestedReadUnits =
+      PRIVATE_HISTORY_FIXED_READ_UNITS +
+      PRIVATE_HISTORY_READ_UNITS_PER_EVENT * request.limit;
     assertPrivateHistoryQuota(admission, nowMs, requestedReadUnits, {
       requests: MAX_PRIVATE_HISTORY_GLOBAL_REQUESTS_PER_WINDOW,
       readUnits: MAX_PRIVATE_HISTORY_GLOBAL_READ_UNITS_PER_WINDOW,
@@ -7244,6 +7633,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       caller,
       expectedInstanceId,
       sourceRevision,
+      expectedPrivacyRevision,
       reservation,
       responseHash,
       nowMs,
@@ -7276,9 +7666,11 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     if (
       !root ||
       !checkpoint ||
+      root.privateNoteStorageVersion !== DIAMOND_PRIVATE_NOTE_STORAGE_VERSION ||
       root.instanceId !== expectedInstanceId ||
       root.instanceId !== loaded.game.diamondScorebookInstanceId ||
-      checkpoint.sequence !== sourceRevision
+      checkpoint.sequence !== sourceRevision ||
+      privateNotePrivacyRevision(root) !== expectedPrivacyRevision
     ) {
       throw makeError(
         "unavailable",
@@ -7357,13 +7749,14 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     context,
     expectedInstanceId,
     sourceRevision,
+    expectedPrivacyRevision,
     reservation,
-    response,
+    responseEvidence,
   }) {
     const responseHash = core.hashDiamondValue({
       schemaVersion: 1,
       type: "diamond-private-history-read-response",
-      response,
+      response: responseEvidence,
     });
     let lastError = null;
     for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -7377,6 +7770,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
               caller,
               expectedInstanceId,
               sourceRevision,
+              expectedPrivacyRevision,
               reservation,
               responseHash,
               nowMs: normalizeNow(clock, makeError),
@@ -8194,6 +8588,7 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     }
     const resourcePaths = paths(teamId, gameId);
     const state = await loadAuthorizedHistoryState(teamId, gameId, caller);
+    requirePrivateNoteStorageVersion(state.root);
     const sourceRevision = state.checkpoint.sequence;
     const collectionPath = resourcePaths.events;
     let querySnapshot;
@@ -8213,10 +8608,10 @@ function createDiamondScorebookHandlers(dependencies = {}) {
     }
     const allDocuments = snapshotDocuments(querySnapshot);
     const pageDocuments = allDocuments.slice(0, limit);
-    const items = pageDocuments.map(snapshotData).filter(Boolean);
+    const canonicalItems = pageDocuments.map(snapshotData).filter(Boolean);
     const hasMore = allDocuments.length > limit;
     let expectedSequence = cursor + 1;
-    for (const item of items) {
+    for (const item of canonicalItems) {
       if (item.sequence !== expectedSequence) {
         throw makeError(
           "unavailable",
@@ -8242,6 +8637,95 @@ function createDiamondScorebookHandlers(dependencies = {}) {
         { reason: "private-history-admission-missing", retryable: true },
       );
     }
+    const noteEvents = canonicalItems.filter(
+      (event) =>
+        privateNoteCore.privateNotePayload(event) ||
+        privateNoteCore.isCanonicalPrivateNoteMaterialEvent(event, domainEngine),
+    );
+    if (
+      noteEvents.some(
+        (event) =>
+          !privateNoteCore.isCanonicalPrivateNoteMaterialEvent(
+            event,
+            domainEngine,
+          ),
+      )
+    ) {
+      throw makeError(
+        "failed-precondition",
+        "Legacy private-note history requires migration before it can be read.",
+        { reason: "legacy-private-note-material" },
+      );
+    }
+    let items = canonicalItems;
+    if (noteEvents.length) {
+      if (typeof firestore.getAll !== "function") {
+        throw makeError(
+          "unavailable",
+          "Private-note records could not be loaded completely. Try again.",
+        );
+      }
+      let noteSnapshots;
+      try {
+        noteSnapshots = await firestore.getAll(
+          ...noteEvents.map((event) =>
+            firestore.doc(resourcePaths.note(event.eventId)),
+          ),
+        );
+      } catch {
+        throw makeError(
+          "unavailable",
+          "Private-note records could not be loaded completely. Try again.",
+        );
+      }
+      if (noteSnapshots.length !== noteEvents.length) {
+        throw makeError(
+          "unavailable",
+          "Private-note records were incomplete. Try again.",
+        );
+      }
+      const resolved = new Map();
+      noteEvents.forEach((event, index) => {
+        const noteSnapshot = noteSnapshots[index];
+        if (!snapshotExists(noteSnapshot)) {
+          throw makeError(
+            "unavailable",
+            "Private-note storage is incomplete. Try again.",
+          );
+        }
+        try {
+          const noteValue = snapshotData(noteSnapshot);
+          if (noteValue?.status === "deleted") {
+            privateNoteCore.parseDiamondPrivateNoteRedaction(
+              noteValue,
+              event,
+              state.root.instanceId,
+              domainEngine,
+            );
+            resolved.set(event.eventId, event);
+          } else {
+            resolved.set(
+              event.eventId,
+              privateNoteCore.hydrateDiamondPrivateNoteEvent(
+                event,
+                noteValue,
+                state.root.instanceId,
+                domainEngine,
+              ),
+            );
+          }
+        } catch (error) {
+          if (error instanceof HttpsError || error instanceof DiamondHandlerError) {
+            throw error;
+          }
+          throw makeError(
+            "unavailable",
+            "Private-note storage failed integrity validation. Try again.",
+          );
+        }
+      });
+      items = canonicalItems.map((event) => resolved.get(event.eventId) || event);
+    }
     const response = buildByteBoundedPrivateEventPage({
       events: items,
       limit,
@@ -8254,8 +8738,19 @@ function createDiamondScorebookHandlers(dependencies = {}) {
       context,
       expectedInstanceId: state.root.instanceId,
       sourceRevision,
+      expectedPrivacyRevision: privateNotePrivacyRevision(state.root),
       reservation: privateReservation,
-      response,
+      responseEvidence: {
+        sourceRevision,
+        complete: response.complete,
+        nextCursor: response.nextCursor,
+        events: canonicalItems.map(({ eventId, sequence, revision, hash }) => ({
+          eventId,
+          sequence,
+          revision,
+          hash,
+        })),
+      },
     });
     return response;
   }
@@ -8345,8 +8840,15 @@ function createDiamondScorebookHandlers(dependencies = {}) {
         revision: event.revision,
         inning,
         half,
+        type: event.type,
         description: event.description,
         createdAt,
+        voidsEventId:
+          typeof event.voidsEventId === "string" ? event.voidsEventId : null,
+        supersedesEventId:
+          typeof event.supersedesEventId === "string"
+            ? event.supersedesEventId
+            : null,
         isCorrection:
           event.corrected === true ||
           ["void_event", "supersede_event"].includes(event.type),
@@ -9844,6 +10346,7 @@ module.exports = {
   PRIVATE_HISTORY_ADMISSION_DEDUPE_MS,
   PRIVATE_HISTORY_CONTROL_QUARANTINE_MS,
   PRIVATE_HISTORY_FIXED_READ_UNITS,
+  PRIVATE_HISTORY_READ_UNITS_PER_EVENT,
   PRIVATE_HISTORY_RATE_WINDOW_MS,
   PRIVATE_HISTORY_RECEIPT_RETENTION_MS,
   PRIVATE_HISTORY_REPORT_RETRY_ALLOWANCE,

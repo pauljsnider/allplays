@@ -1,6 +1,7 @@
 "use strict";
 
 const nodeCrypto = require("node:crypto");
+const privateNoteCore = require("./diamond-private-note-core.cjs");
 
 const DIAMOND_ENGINE = "diamond-v2";
 const EVENT_PAGE_SIZE = 200;
@@ -11,6 +12,7 @@ const MAX_EFFECT_DOCUMENTS = 20_000;
 const DEFAULT_BATCH_WRITE_LIMIT = 400;
 const MAX_FINAL_TRANSACTION_WRITES = 450;
 const DEFAULT_LEASE_MILLIS = 5 * 60 * 1000;
+const DIAMOND_PRIVATE_NOTE_STORAGE_VERSION = 1;
 const UUID_V4_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -116,6 +118,7 @@ function projectorPaths(teamId, gameId) {
     game,
     scorebook,
     events: `${scorebook}/events`,
+    notes: `${scorebook}/notes`,
     run: (projectionKey) => `${scorebook}/projectionRuns/${projectionKey}`,
     effects: `${scorebook}/effects`,
     effect: (effectId) => `${scorebook}/effects/${effectId}`,
@@ -143,6 +146,21 @@ function projectorPaths(teamId, gameId) {
   };
 }
 
+function privateNotePrivacyRevision(root) {
+  if (
+    root?.privateNoteStorageVersion !== DIAMOND_PRIVATE_NOTE_STORAGE_VERSION ||
+    !Number.isSafeInteger(root?.privateNotePrivacyRevision) ||
+    root.privateNotePrivacyRevision < 0
+  ) {
+    throw new DiamondProjectorError(
+      "private-note-storage-invalid",
+      "The Diamond private-note storage state requires migration.",
+      { retryable: false },
+    );
+  }
+  return root.privateNotePrivacyRevision;
+}
+
 function markerForRoot(root) {
   const marker = root?.diamondProjectionMarker;
   if (!isPlainObject(marker) || marker.status !== "current") return null;
@@ -153,6 +171,8 @@ function markerForRoot(root) {
     typeof marker.checkpointHash !== "string" ||
     typeof marker.projectionHash !== "string" ||
     typeof marker.projectionKey !== "string" ||
+    !Number.isSafeInteger(marker.privateNotePrivacyRevision) ||
+    marker.privateNotePrivacyRevision < 0 ||
     typeof marker.statConfigSnapshotHash !== "string" ||
     typeof marker.orientationSnapshotHash !== "string"
   ) {
@@ -168,6 +188,7 @@ function markerMatches(
   checkpointHash,
   statConfigSnapshotHash,
   orientationSnapshotHash,
+  privacyRevision,
 ) {
   return Boolean(
     marker &&
@@ -175,7 +196,8 @@ function markerMatches(
     marker.sourceRevision === sourceRevision &&
     marker.checkpointHash === checkpointHash &&
     marker.statConfigSnapshotHash === statConfigSnapshotHash &&
-    marker.orientationSnapshotHash === orientationSnapshotHash,
+    marker.orientationSnapshotHash === orientationSnapshotHash &&
+    marker.privateNotePrivacyRevision === privacyRevision,
   );
 }
 
@@ -332,20 +354,20 @@ function buildPlayerDirectoryBySide(
 function hasExactDiamondSharedGameClaim(shared, teamId, gameId) {
   return Boolean(
     isPlainObject(shared) &&
-      shared.trackingEngine === DIAMOND_ENGINE &&
-      own(shared, "diamondSourceTeamId") &&
-      shared.diamondSourceTeamId === teamId &&
-      own(shared, "diamondSourceGameId") &&
-      shared.diamondSourceGameId === gameId,
+    shared.trackingEngine === DIAMOND_ENGINE &&
+    own(shared, "diamondSourceTeamId") &&
+    shared.diamondSourceTeamId === teamId &&
+    own(shared, "diamondSourceGameId") &&
+    shared.diamondSourceGameId === gameId,
   );
 }
 
 function hasDiamondSharedGameClaimMarkers(shared) {
   return Boolean(
     isPlainObject(shared) &&
-      (shared.trackingEngine === DIAMOND_ENGINE ||
-        own(shared, "diamondSourceTeamId") ||
-        own(shared, "diamondSourceGameId")),
+    (shared.trackingEngine === DIAMOND_ENGINE ||
+      own(shared, "diamondSourceTeamId") ||
+      own(shared, "diamondSourceGameId")),
   );
 }
 
@@ -366,9 +388,9 @@ function hasTeamScopedSharedGameBinding(shared, teamId, gameId) {
       : null;
   return Boolean(
     mappedGameId === gameId ||
-      (shared.homeTeamId === teamId && shared.homeGameId === gameId) ||
-      (shared.awayTeamId === teamId && shared.awayGameId === gameId) ||
-      (shared.sourceTeamId === teamId && shared.sourceGameId === gameId),
+    (shared.homeTeamId === teamId && shared.homeGameId === gameId) ||
+    (shared.awayTeamId === teamId && shared.awayGameId === gameId) ||
+    (shared.sourceTeamId === teamId && shared.sourceGameId === gameId),
   );
 }
 
@@ -634,6 +656,16 @@ function createDiamondScorebookProjectorHandlers(dependencies = {}) {
     }
   }
 
+  function stillHasPrivateNotePrivacyState(root, acquired) {
+    try {
+      return (
+        privateNotePrivacyRevision(root) === acquired.privateNotePrivacyRevision
+      );
+    } catch {
+      return false;
+    }
+  }
+
   async function transactionGetAll(transaction, references) {
     if (!references.length) return [];
     if (typeof transaction.getAll === "function")
@@ -812,6 +844,7 @@ function createDiamondScorebookProjectorHandlers(dependencies = {}) {
       if (!isRootOwned(root, game, { teamId, gameId, instanceId })) {
         return { acquired: false, reason: "not-diamond-owned" };
       }
+      const privacyRevision = privateNotePrivacyRevision(root);
       const checkpoint = checkpointForRoot(root, teamId, gameId);
       if (
         (expectedInstanceId && expectedInstanceId !== instanceId) ||
@@ -882,6 +915,7 @@ function createDiamondScorebookProjectorHandlers(dependencies = {}) {
           checkpoint.previousHash,
           statConfigSnapshot.snapshotHash,
           orientation.snapshotHash,
+          privacyRevision,
         )
       ) {
         return {
@@ -922,6 +956,7 @@ function createDiamondScorebookProjectorHandlers(dependencies = {}) {
         checkpointHash: checkpoint.previousHash,
         statConfigSnapshotHash: statConfigSnapshot.snapshotHash,
         orientationSnapshotHash: orientation.snapshotHash,
+        privateNotePrivacyRevision: privacyRevision,
       });
       const lease = {
         schemaVersion: 1,
@@ -932,6 +967,7 @@ function createDiamondScorebookProjectorHandlers(dependencies = {}) {
         checkpointHash: checkpoint.previousHash,
         statConfigSnapshotHash: statConfigSnapshot.snapshotHash,
         orientationSnapshotHash: orientation.snapshotHash,
+        privateNotePrivacyRevision: privacyRevision,
         projectionKey,
         acquiredAtMs: nowMs,
         expiresAtMs: nowMs + leaseMillis,
@@ -951,6 +987,7 @@ function createDiamondScorebookProjectorHandlers(dependencies = {}) {
         statConfigSnapshot,
         orientationSnapshot: orientation.snapshot,
         orientationSnapshotHash: orientation.snapshotHash,
+        privateNotePrivacyRevision: privacyRevision,
         instanceId,
         projectionKey,
         lease,
@@ -979,7 +1016,8 @@ function createDiamondScorebookProjectorHandlers(dependencies = {}) {
         if (
           !current ||
           current.instanceId !== instanceId ||
-          current.projectionLease?.leaseId !== lease.leaseId
+          current.projectionLease?.leaseId !== lease.leaseId ||
+          !stillHasPrivateNotePrivacyState(current, acquired)
         ) {
           return;
         }
@@ -1015,6 +1053,7 @@ function createDiamondScorebookProjectorHandlers(dependencies = {}) {
       teamStatDocuments,
       effectDocuments,
       rosterDocuments,
+      privateNoteDocuments,
       clipTimings,
       sharedResult,
     ] = await Promise.all([
@@ -1038,6 +1077,7 @@ function createDiamondScorebookProjectorHandlers(dependencies = {}) {
             .limit(MAX_EFFECT_DOCUMENTS + 1),
       ),
       readBoundedCollection(resourcePaths.players, MAX_PLAYER_DOCUMENTS),
+      readBoundedCollection(resourcePaths.notes, MAX_CANONICAL_EVENTS),
       loadClipTimings({ firestore, teamId, gameId, root, game, ledger }),
       resolveSharedGame({ firestore, teamId, gameId, root, game }),
     ]);
@@ -1078,6 +1118,11 @@ function createDiamondScorebookProjectorHandlers(dependencies = {}) {
       ),
       sharedGame,
       clipTimings,
+      privateNoteDocuments: privateNoteDocuments.map((snapshot) => ({
+        id: snapshot.id,
+        path: snapshot.ref?.path || null,
+        data: snapshotData(snapshot),
+      })),
       publicPlayerStatIds: [...acquired.statConfigSnapshot.publicPlayerStatIds],
       publicTeamStatIds: [...acquired.statConfigSnapshot.publicTeamStatIds],
       existingReplayPageIds: ownedIds(replayPageDocuments),
@@ -1137,6 +1182,37 @@ function createDiamondScorebookProjectorHandlers(dependencies = {}) {
     projectionKey,
     statConfigSnapshotHash,
   ) {
+    const privateCurrent = bundle.writes.privateCurrent;
+    const privacyNeutralPrivateCurrent = {
+      relativePath: privateCurrent.relativePath,
+      data: {
+        schemaVersion: privateCurrent.data.schemaVersion,
+        trackingEngine: privateCurrent.data.trackingEngine,
+        teamId: privateCurrent.data.teamId,
+        gameId: privateCurrent.data.gameId,
+        sourceRevision: privateCurrent.data.sourceRevision,
+        checkpointHash: privateCurrent.data.checkpointHash,
+        canonicalEventCount: privateCurrent.data.canonicalEventCount,
+        publicPlayCount: privateCurrent.data.publicPlayCount,
+        correctionCount: privateCurrent.data.correctionCount,
+        privateNoteCount: privateCurrent.data.privateNoteCount,
+        privateNotesComplete: privateCurrent.data.privateNotesComplete,
+        privateNotesTruncated: privateCurrent.data.privateNotesTruncated,
+        privateNotesWindowStartRevision:
+          privateCurrent.data.privateNotesWindowStartRevision,
+        privateNotes: (privateCurrent.data.privateNotes || []).map((note) => ({
+          eventId: note.eventId,
+          sourceEventId: note.sourceEventId,
+          revision: note.revision,
+          attachedEventId: note.attachedEventId || null,
+          visibility: note.visibility,
+          corrected: note.corrected,
+          serverTimestampMs: note.serverTimestampMs,
+        })),
+        authoritative: privateCurrent.data.authoritative,
+        complete: privateCurrent.data.complete,
+      },
+    };
     return {
       schemaVersion: 1,
       projectionKey,
@@ -1145,7 +1221,7 @@ function createDiamondScorebookProjectorHandlers(dependencies = {}) {
       checkpointHash: bundle.checkpointHash,
       statConfigSnapshotHash,
       writes: {
-        privateCurrent: bundle.writes.privateCurrent,
+        privateCurrent: privacyNeutralPrivateCurrent,
         publicCurrent: bundle.writes.publicCurrent,
         publicReplayManifest: bundle.writes.publicReplayManifest,
         publicReplayPages: bundle.writes.publicReplayPages,
@@ -1310,6 +1386,7 @@ function createDiamondScorebookProjectorHandlers(dependencies = {}) {
         !root ||
         root.instanceId !== acquired.instanceId ||
         root.projectionLease?.leaseId !== acquired.lease.leaseId ||
+        !stillHasPrivateNotePrivacyState(root, acquired) ||
         !stillHasPinnedStatConfig(root, acquired) ||
         !stillHasPinnedOrientation(root, acquired)
       ) {
@@ -1351,6 +1428,7 @@ function createDiamondScorebookProjectorHandlers(dependencies = {}) {
         checkpointHash: acquired.checkpoint.previousHash,
         statConfigSnapshotHash: acquired.statConfigSnapshot.snapshotHash,
         orientationSnapshotHash: acquired.orientationSnapshotHash,
+        privateNotePrivacyRevision: acquired.privateNotePrivacyRevision,
         status: "preparing",
         complete: false,
         effectCount,
@@ -1471,6 +1549,7 @@ function createDiamondScorebookProjectorHandlers(dependencies = {}) {
       if (
         !root ||
         root.projectionLease?.leaseId !== acquired.lease.leaseId ||
+        !stillHasPrivateNotePrivacyState(root, acquired) ||
         !stillHasPinnedStatConfig(root, acquired) ||
         !stillHasPinnedOrientation(root, acquired) ||
         !run ||
@@ -1506,6 +1585,7 @@ function createDiamondScorebookProjectorHandlers(dependencies = {}) {
       sourceRevision: acquired.checkpoint.sequence,
       checkpointHash: acquired.checkpoint.previousHash,
       statConfigSnapshotHash: acquired.statConfigSnapshot.snapshotHash,
+      privateNotePrivacyRevision: acquired.privateNotePrivacyRevision,
       projectionHash,
     };
   }
@@ -1720,6 +1800,7 @@ function createDiamondScorebookProjectorHandlers(dependencies = {}) {
         currentCheckpoint.sequence !== checkpoint.sequence ||
         currentCheckpoint.previousHash !== checkpoint.previousHash ||
         currentRoot.projectionLease?.leaseId !== lease.leaseId ||
+        !stillHasPrivateNotePrivacyState(currentRoot, acquired) ||
         !stillHasPinnedStatConfig(currentRoot, acquired, currentGame) ||
         !stillHasPinnedOrientation(currentRoot, acquired) ||
         currentRun?.status !== "prepared" ||
@@ -1799,6 +1880,7 @@ function createDiamondScorebookProjectorHandlers(dependencies = {}) {
         checkpointHash: checkpoint.previousHash,
         statConfigSnapshotHash: acquired.statConfigSnapshot.snapshotHash,
         orientationSnapshotHash: acquired.orientationSnapshotHash,
+        privateNotePrivacyRevision: acquired.privateNotePrivacyRevision,
         projectionHash,
         projectionKey,
         effectRevision: checkpoint.sequence,
@@ -1935,6 +2017,7 @@ function createDiamondScorebookProjectorHandlers(dependencies = {}) {
         // therefore do not alter adapter output or the projection hash.
         existingEffectKeys: [],
         clipTimingsByEventId: inputs.clipTimings,
+        privateNoteDocuments: inputs.privateNoteDocuments,
       });
       assertBundleContract(bundle, acquired);
       const projectionHash = core.hashDiamondValue(
@@ -2061,6 +2144,7 @@ function createDiamondScorebookProjectorHandlers(dependencies = {}) {
         checkpoint.previousHash,
         statConfigSnapshot.snapshotHash,
         orientation.snapshotHash,
+        privateNotePrivacyRevision(root),
       )
     ) {
       return {

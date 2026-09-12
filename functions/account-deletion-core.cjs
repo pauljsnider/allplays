@@ -1,6 +1,8 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const diamondDomainEngine = require('./diamond-engine');
+const diamondPrivateNoteCore = require('./diamond-private-note-core.cjs');
 
 const ACCOUNT_DELETION_CONFIRMATION = 'DELETE';
 const ACCOUNT_DELETION_MAX_DAYS = 30;
@@ -12,7 +14,645 @@ const ACCOUNT_CALENDAR_CREDENTIAL_TRANSACTION_SIZE = 100;
 const ACCOUNT_REPLAY_ARCHIVE_ATTRIBUTION_FIELDS = Object.freeze(['linkedBy', 'updatedBy']);
 const ACCOUNT_REPLAY_ARCHIVE_PAGE_SIZE = 250;
 const ACCOUNT_REPLAY_ARCHIVE_TRANSACTION_SIZE = 100;
+const ACCOUNT_DIAMOND_PRIVATE_NOTE_PAGE_SIZE = 250;
+const ACCOUNT_DIAMOND_PRIVATE_NOTE_TRANSACTION_SIZE = 50;
+const ACCOUNT_DIAMOND_AUTH_DELETE_BARRIER_COLLECTION = 'accountDiamondPrivateNoteAuthDeleteBarriers';
+const ACCOUNT_DIAMOND_AUTH_DELETE_BARRIER_TYPE = 'diamond-private-note-auth-delete-barrier';
+const ACCOUNT_DIAMOND_DELETION_BARRIER_ACCOUNT_REQUEST = 'account-request';
+const ACCOUNT_DIAMOND_DELETION_BARRIER_AUTH_DELETE = 'auth-delete';
 const CALENDAR_TOKEN_HASH_PATTERN = /^[a-f0-9]{64}$/;
+
+function isValidAccountUid(value) {
+  return typeof value === 'string'
+    && value === value.trim()
+    && Boolean(value)
+    && value.length <= 128
+    && !value.includes('/');
+}
+
+function isExactIsoTimestamp(value) {
+  if (typeof value !== 'string' || value.length < 20 || value.length > 40) return false;
+  try {
+    return new Date(value).toISOString() === value;
+  } catch {
+    return false;
+  }
+}
+
+function accountDiamondPrivateNoteError(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
+
+function throwDiamondPrivateNoteIntegrityFailure(message) {
+  throw accountDiamondPrivateNoteError('diamond-private-note-integrity-failed', message);
+}
+
+function isPotentialLegacyPrivateNoteMaterialEvent(value) {
+  return value?.type === 'private_note'
+    || value?.type === 'void_event'
+    || value?.type === 'supersede_event';
+}
+
+async function scanAccountDiamondLegacyPrivateNotes({
+  firestore,
+  uid,
+  documentIdField,
+  pageSize
+}) {
+  const sources = [
+    {
+      collectionGroup: 'notes',
+      field: 'createdBy',
+      matchesPath: (path) => Boolean(
+        diamondPrivateNoteCore.diamondPrivateNotePathsFromNotePath(path)
+      ),
+      matchesValue: () => true
+    },
+    {
+      collectionGroup: 'events',
+      field: 'actorUid',
+      matchesPath: (path) => Boolean(
+        diamondPrivateNoteCore.diamondPrivateNotePathsFromEventPath(path)
+      ),
+      // Legacy corrections can contain a private reason or target a private
+      // note even when their replacement is public. The collection-group
+      // query cannot prove the target's material class without an unbounded
+      // cross-ledger read, so account deletion fails closed for every legacy
+      // correction authored by the deleting principal until it is migrated.
+      matchesValue: isPotentialLegacyPrivateNoteMaterialEvent
+    }
+  ];
+
+  let pagesRead = 0;
+  for (const source of sources) {
+    let cursor = null;
+    while (true) {
+      let query = firestore.collectionGroup(source.collectionGroup)
+        .where(source.field, '==', uid)
+        .orderBy(documentIdField)
+        .limit(pageSize);
+      if (cursor) query = query.startAfter(cursor);
+      const snapshot = await query.get();
+      const documents = Array.isArray(snapshot?.docs) ? snapshot.docs : null;
+      if (!documents || snapshot?.empty !== (documents.length === 0)) {
+        throwDiamondPrivateNoteIntegrityFailure(
+          'Diamond private-note legacy preflight returned an invalid snapshot.'
+        );
+      }
+      if (!documents.length) break;
+      pagesRead += 1;
+      const legacyDocument = documents.find((document) => (
+        source.matchesPath(document?.ref?.path)
+        && source.matchesValue(document?.data?.() || {})
+      ));
+      if (legacyDocument) {
+        throw accountDiamondPrivateNoteError(
+          'diamond-private-note-migration-required',
+          'Legacy Diamond private-note data must be migrated before account deletion can continue.'
+        );
+      }
+      if (documents.length < pageSize) break;
+      cursor = documents.at(-1);
+    }
+  }
+  return pagesRead;
+}
+
+function canonicalStoredEvent(value, expectedInstanceId) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throwDiamondPrivateNoteIntegrityFailure('The Diamond private-note event is missing.');
+  }
+  const { instanceId, ...event } = value;
+  if (instanceId !== expectedInstanceId) {
+    throwDiamondPrivateNoteIntegrityFailure('The Diamond private-note event instance is inconsistent.');
+  }
+  return event;
+}
+
+function directAuthDeletionBarrierPath(uid) {
+  return `${ACCOUNT_DIAMOND_AUTH_DELETE_BARRIER_COLLECTION}/${uid}`;
+}
+
+function parseDirectAuthDeletionBarrier(snapshot, uid) {
+  const value = snapshot?.exists === true ? snapshot.data() || {} : null;
+  if (
+    !value
+    || typeof value !== 'object'
+    || Array.isArray(value)
+    || Object.keys(value).length !== 4
+    || value.schemaVersion !== 1
+    || value.type !== ACCOUNT_DIAMOND_AUTH_DELETE_BARRIER_TYPE
+    || value.status !== 'auth-deleted'
+    || !isExactIsoTimestamp(value.startedAt)
+    || snapshot.ref?.path !== directAuthDeletionBarrierPath(uid)
+  ) {
+    throwDiamondPrivateNoteIntegrityFailure(
+      'The direct Auth-deletion barrier is not authoritative.'
+    );
+  }
+  return value;
+}
+
+function accountDiamondDeletionBarrierRef(firestore, uid, barrierKind) {
+  if (barrierKind === ACCOUNT_DIAMOND_DELETION_BARRIER_ACCOUNT_REQUEST) {
+    return firestore.doc(`accountDeletionRequests/${uid}`);
+  }
+  if (barrierKind === ACCOUNT_DIAMOND_DELETION_BARRIER_AUTH_DELETE) {
+    return firestore.doc(directAuthDeletionBarrierPath(uid));
+  }
+  throw new TypeError('Account Diamond private-note deletion barrier is invalid.');
+}
+
+function requireAccountDiamondDeletionBarrier(snapshot, uid, barrierKind) {
+  if (barrierKind === ACCOUNT_DIAMOND_DELETION_BARRIER_AUTH_DELETE) {
+    parseDirectAuthDeletionBarrier(snapshot, uid);
+    return;
+  }
+  const value = snapshot?.exists === true ? snapshot.data() || {} : null;
+  if (!value || value.uid !== uid || value.status !== 'processing') {
+    throwDiamondPrivateNoteIntegrityFailure(
+      'The account-deletion request is not in its authoritative processing state.'
+    );
+  }
+}
+
+function requireDiamondPrivateNoteRoot(value, paths) {
+  if (
+    !value
+    || typeof value !== 'object'
+    || Array.isArray(value)
+    || value.schemaVersion !== 2
+    || value.trackingEngine !== diamondPrivateNoteCore.DIAMOND_ENGINE
+    || value.privateNoteStorageVersion !== 1
+    || !Number.isSafeInteger(value.privateNotePrivacyRevision)
+    || value.privateNotePrivacyRevision < 0
+    || value.teamId !== paths.teamId
+    || value.gameId !== paths.gameId
+    || !isValidAccountUid(value.instanceId)
+  ) {
+    throwDiamondPrivateNoteIntegrityFailure(
+      'The Diamond private-note scorebook identity is inconsistent.'
+    );
+  }
+  return value;
+}
+
+function requireDiamondPrivateNoteReceipt({ receipt, event, note, root }) {
+  if (
+    !receipt
+    || typeof receipt !== 'object'
+    || Array.isArray(receipt)
+    || receipt.instanceId !== root.instanceId
+    || receipt.commandId !== note.commandId
+    || !isExactIsoTimestamp(receipt.acceptedAt)
+  ) {
+    throwDiamondPrivateNoteIntegrityFailure(
+      'The Diamond private-note receipt identity is inconsistent.'
+    );
+  }
+  try {
+    diamondDomainEngine.verifyDiamondCommandReceipt(receipt);
+  } catch {
+    throwDiamondPrivateNoteIntegrityFailure(
+      'The Diamond private-note receipt failed canonical verification.'
+    );
+  }
+  const storedEventKeys = Object.keys(event).sort();
+  const receiptEventKeys = Object.keys(receipt.event || {}).sort();
+  if (
+    storedEventKeys.length !== receiptEventKeys.length
+    || !storedEventKeys.every((key, index) => key === receiptEventKeys[index])
+    || diamondDomainEngine.hashDiamondValue(event)
+      !== diamondDomainEngine.hashDiamondValue(receipt.event)
+  ) {
+    throwDiamondPrivateNoteIntegrityFailure(
+      'The Diamond private-note event and receipt do not match.'
+    );
+  }
+}
+
+async function redactAccountDiamondPrivateNoteChunk({
+  firestore,
+  uid,
+  redactedAt,
+  candidates,
+  barrierKind
+}) {
+  let reconciliationPlan = null;
+  const run = async () => firestore.runTransaction(async (transaction) => {
+    const barrierRef = accountDiamondDeletionBarrierRef(
+      firestore,
+      uid,
+      barrierKind
+    );
+    const barrierSnapshot = await transaction.get(barrierRef);
+    const noteSnapshots = await Promise.all(
+      candidates.map((candidate) => transaction.get(candidate.ref))
+    );
+    requireAccountDiamondDeletionBarrier(barrierSnapshot, uid, barrierKind);
+
+    const identities = noteSnapshots.map((snapshot) => {
+      if (!snapshot?.exists) return null;
+      const paths = diamondPrivateNoteCore.diamondPrivateNotePathsFromNotePath(
+        snapshot.ref?.path
+      );
+      if (!paths) return null;
+      const value = snapshot.data() || {};
+      if (value.status === 'deleted') {
+        return { snapshot, paths, value, commandId: value.commandId, alreadyRedacted: true };
+      }
+      if (!isValidAccountUid(value.commandId)) {
+        throwDiamondPrivateNoteIntegrityFailure(
+          'The Diamond private-note command identity is malformed.'
+        );
+      }
+      return { snapshot, paths, value, commandId: value.commandId, alreadyRedacted: false };
+    }).filter(Boolean);
+
+    const references = new Map();
+    const addReference = (path) => {
+      if (!references.has(path)) references.set(path, firestore.doc(path));
+    };
+    identities.forEach(({ paths, commandId }) => {
+      addReference(paths.scorebook);
+      addReference(paths.event);
+      addReference(paths.command(commandId));
+      addReference(paths.privateProjection);
+    });
+    const detailSnapshots = await Promise.all(
+      [...references.values()].map((reference) => transaction.get(reference))
+    );
+    const details = new Map(
+      detailSnapshots.map((snapshot) => [snapshot.ref.path, snapshot])
+    );
+
+    const rootActions = new Map();
+    const noteActions = [];
+    identities.forEach((identity) => {
+      const { snapshot, paths, value, commandId, alreadyRedacted } = identity;
+      const rootSnapshot = details.get(paths.scorebook);
+      const eventSnapshot = details.get(paths.event);
+      const receiptSnapshot = details.get(paths.command(commandId));
+      if (!rootSnapshot?.exists || !eventSnapshot?.exists || !receiptSnapshot?.exists) {
+        throwDiamondPrivateNoteIntegrityFailure(
+          'Diamond private-note authoritative records are incomplete.'
+        );
+      }
+      const root = requireDiamondPrivateNoteRoot(rootSnapshot.data() || {}, paths);
+      const event = canonicalStoredEvent(eventSnapshot.data() || {}, root.instanceId);
+      if (
+        event.eventId !== paths.eventId
+        || event.before?.teamId !== paths.teamId
+        || event.before?.gameId !== paths.gameId
+        || event.after?.teamId !== paths.teamId
+        || event.after?.gameId !== paths.gameId
+      ) {
+        throwDiamondPrivateNoteIntegrityFailure(
+          'The Diamond private-note event path and ledger identity do not match.'
+        );
+      }
+      let parsed;
+      try {
+        parsed = alreadyRedacted
+          ? diamondPrivateNoteCore.parseDiamondPrivateNoteRedaction(
+            value,
+            event,
+            root.instanceId,
+            diamondDomainEngine
+          )
+          : diamondPrivateNoteCore.parseDiamondPrivateNoteRecord(
+            value,
+            event,
+            root.instanceId,
+            diamondDomainEngine
+          );
+      } catch {
+        throwDiamondPrivateNoteIntegrityFailure(
+          'The Diamond private-note record failed canonical verification.'
+        );
+      }
+      requireDiamondPrivateNoteReceipt({
+        receipt: receiptSnapshot.data() || {},
+        event,
+        note: parsed,
+        root
+      });
+      if (alreadyRedacted) return;
+      if (parsed.authorUid !== uid) {
+        throwDiamondPrivateNoteIntegrityFailure(
+          'The Diamond private-note author changed during account deletion.'
+        );
+      }
+      let redaction;
+      try {
+        redaction = diamondPrivateNoteCore.buildDiamondPrivateNoteRedaction({
+          event,
+          instanceId: root.instanceId,
+          redactedAt,
+          domainEngine: diamondDomainEngine
+        });
+      } catch {
+        throwDiamondPrivateNoteIntegrityFailure(
+          'The Diamond private-note redaction could not be built safely.'
+        );
+      }
+      noteActions.push({ ref: snapshot.ref, redaction, event, root });
+      if (!rootActions.has(paths.scorebook)) {
+        rootActions.set(paths.scorebook, {
+          ref: rootSnapshot.ref,
+          projectionRef: references.get(paths.privateProjection),
+          expectedPrivacyRevision: root.privateNotePrivacyRevision + 1
+        });
+      }
+    });
+
+    const plan = {
+      notesRedacted: noteActions.length,
+      scorebooksFenced: rootActions.size,
+      notes: noteActions.map(({ ref, redaction, event, root }) => ({
+        ref,
+        redaction,
+        event,
+        instanceId: root.instanceId
+      })),
+      roots: [...rootActions.values()]
+    };
+    reconciliationPlan = plan;
+    noteActions.forEach(({ ref, redaction }) => transaction.set(ref, redaction));
+    rootActions.forEach(({ ref, projectionRef, expectedPrivacyRevision }) => {
+      transaction.update(ref, {
+        privateNotePrivacyRevision: expectedPrivacyRevision,
+        projectionStatus: 'pending',
+        projectionLease: null,
+        projectionFailure: null,
+        updatedAt: redactedAt
+      });
+      transaction.delete(projectionRef);
+    });
+    return plan;
+  });
+
+  const isReconciled = async (plan) => {
+    if (!plan) return false;
+    const noteSnapshots = await Promise.all(plan.notes.map(({ ref }) => ref.get()));
+    const rootSnapshots = await Promise.all(plan.roots.map(({ ref }) => ref.get()));
+    const projectionSnapshots = await Promise.all(
+      plan.roots.map(({ projectionRef }) => projectionRef.get())
+    );
+    try {
+      plan.notes.forEach(({ redaction, event, instanceId }, index) => {
+        const snapshot = noteSnapshots[index];
+        const current = snapshot?.exists ? snapshot.data() || {} : null;
+        diamondPrivateNoteCore.parseDiamondPrivateNoteRedaction(
+          current,
+          event,
+          instanceId,
+          diamondDomainEngine
+        );
+        if (
+          diamondDomainEngine.hashDiamondValue(current)
+          !== diamondDomainEngine.hashDiamondValue(redaction)
+        ) {
+          throw new Error('mismatched redaction');
+        }
+      });
+      plan.roots.forEach(({ expectedPrivacyRevision }, index) => {
+        const root = rootSnapshots[index]?.exists
+          ? rootSnapshots[index].data() || {}
+          : null;
+        if (
+          !root
+          || root.privateNotePrivacyRevision < expectedPrivacyRevision
+          || projectionSnapshots[index]?.exists
+        ) {
+          throw new Error('unreconciled scorebook fence');
+        }
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    reconciliationPlan = null;
+    try {
+      const result = await run();
+      return {
+        notesRedacted: result.notesRedacted,
+        scorebooksFenced: result.scorebooksFenced
+      };
+    } catch (error) {
+      if (await isReconciled(reconciliationPlan)) {
+        return {
+          notesRedacted: reconciliationPlan.notesRedacted,
+          scorebooksFenced: reconciliationPlan.scorebooksFenced
+        };
+      }
+      if (attempt === 1) throw error;
+    }
+  }
+  throwDiamondPrivateNoteIntegrityFailure(
+    'Diamond private-note cleanup could not be reconciled.'
+  );
+}
+
+async function cleanupAccountDiamondPrivateNotes({
+  firestore,
+  uid,
+  documentIdField,
+  redactedAt,
+  pageSize = ACCOUNT_DIAMOND_PRIVATE_NOTE_PAGE_SIZE,
+  transactionSize = ACCOUNT_DIAMOND_PRIVATE_NOTE_TRANSACTION_SIZE,
+  barrierKind = ACCOUNT_DIAMOND_DELETION_BARRIER_ACCOUNT_REQUEST
+}) {
+  if (
+    !firestore
+    || typeof firestore.collectionGroup !== 'function'
+    || typeof firestore.doc !== 'function'
+    || typeof firestore.runTransaction !== 'function'
+    || !isValidAccountUid(uid)
+    || !documentIdField
+    || !isExactIsoTimestamp(redactedAt)
+    || !Number.isSafeInteger(pageSize)
+    || pageSize < 1
+    || pageSize > ACCOUNT_DIAMOND_PRIVATE_NOTE_PAGE_SIZE
+    || !Number.isSafeInteger(transactionSize)
+    || transactionSize < 1
+    || transactionSize > ACCOUNT_DIAMOND_PRIVATE_NOTE_TRANSACTION_SIZE
+    || ![
+      ACCOUNT_DIAMOND_DELETION_BARRIER_ACCOUNT_REQUEST,
+      ACCOUNT_DIAMOND_DELETION_BARRIER_AUTH_DELETE
+    ].includes(barrierKind)
+  ) {
+    throw new TypeError('Account Diamond private-note cleanup dependencies are invalid.');
+  }
+
+  let pagesRead = await scanAccountDiamondLegacyPrivateNotes({
+    firestore,
+    uid,
+    documentIdField,
+    pageSize
+  });
+  let notesRedacted = 0;
+  let scorebooksFenced = 0;
+  let cursor = null;
+  while (true) {
+    let query = firestore.collectionGroup('notes')
+      .where('authorUid', '==', uid)
+      .orderBy(documentIdField)
+      .limit(pageSize);
+    if (cursor) query = query.startAfter(cursor);
+    const snapshot = await query.get();
+    const documents = Array.isArray(snapshot?.docs) ? snapshot.docs : null;
+    if (!documents || snapshot?.empty !== (documents.length === 0)) {
+      throwDiamondPrivateNoteIntegrityFailure(
+        'Diamond private-note cleanup returned an invalid snapshot.'
+      );
+    }
+    if (!documents.length) break;
+    pagesRead += 1;
+    const candidates = documents.filter((document) => Boolean(
+      diamondPrivateNoteCore.diamondPrivateNotePathsFromNotePath(document?.ref?.path)
+    ));
+    for (let index = 0; index < candidates.length; index += transactionSize) {
+      const counts = await redactAccountDiamondPrivateNoteChunk({
+        firestore,
+        uid,
+        redactedAt,
+        candidates: candidates.slice(index, index + transactionSize),
+        barrierKind
+      });
+      notesRedacted += counts.notesRedacted;
+      scorebooksFenced += counts.scorebooksFenced;
+    }
+    if (documents.length < pageSize) break;
+    cursor = documents.at(-1);
+  }
+  return { notesRedacted, pagesRead, scorebooksFenced };
+}
+
+async function establishDirectAuthDeletionBarrier({ firestore, uid, startedAt }) {
+  const barrierRef = firestore.doc(directAuthDeletionBarrierPath(uid));
+  const value = {
+    schemaVersion: 1,
+    type: ACCOUNT_DIAMOND_AUTH_DELETE_BARRIER_TYPE,
+    status: 'auth-deleted',
+    startedAt
+  };
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      return await firestore.runTransaction(async (transaction) => {
+        const snapshot = await transaction.get(barrierRef);
+        if (snapshot?.exists) return parseDirectAuthDeletionBarrier(snapshot, uid);
+        transaction.set(barrierRef, value);
+        return value;
+      });
+    } catch (error) {
+      try {
+        const snapshot = await barrierRef.get();
+        if (snapshot?.exists) return parseDirectAuthDeletionBarrier(snapshot, uid);
+      } catch (reconciliationError) {
+        if (reconciliationError?.code === 'diamond-private-note-integrity-failed') {
+          throw reconciliationError;
+        }
+      }
+      if (attempt === 1) throw error;
+    }
+  }
+  throwDiamondPrivateNoteIntegrityFailure(
+    'The direct Auth-deletion barrier could not be established.'
+  );
+}
+
+async function retireDirectAuthDeletionBarrier({ firestore, uid }) {
+  const barrierRef = firestore.doc(directAuthDeletionBarrierPath(uid));
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await firestore.runTransaction(async (transaction) => {
+        const snapshot = await transaction.get(barrierRef);
+        if (!snapshot?.exists) return;
+        parseDirectAuthDeletionBarrier(snapshot, uid);
+        transaction.delete(barrierRef);
+      });
+      return;
+    } catch (error) {
+      try {
+        const snapshot = await barrierRef.get();
+        if (!snapshot?.exists) return;
+        parseDirectAuthDeletionBarrier(snapshot, uid);
+      } catch (reconciliationError) {
+        if (reconciliationError?.code === 'diamond-private-note-integrity-failed') {
+          throw reconciliationError;
+        }
+      }
+      if (attempt === 1) throw error;
+    }
+  }
+  throwDiamondPrivateNoteIntegrityFailure(
+    'The direct Auth-deletion barrier could not be retired.'
+  );
+}
+
+function createAccountDiamondPrivateNoteAuthDeleteHandler({
+  firestore,
+  getDocumentIdField,
+  now
+}) {
+  if (
+    !firestore
+    || typeof getDocumentIdField !== 'function'
+    || typeof now !== 'function'
+  ) {
+    throw new TypeError('Direct Auth-deletion cleanup dependencies are invalid.');
+  }
+
+  return async (user, context = {}) => {
+    const documentIdField = getDocumentIdField();
+    if (
+      typeof firestore.collectionGroup !== 'function'
+      || typeof firestore.doc !== 'function'
+      || typeof firestore.runTransaction !== 'function'
+      || !documentIdField
+    ) {
+      throw new TypeError('Direct Auth-deletion cleanup dependencies are invalid.');
+    }
+
+    const uid = user?.uid;
+    if (!isValidAccountUid(uid)) {
+      throwDiamondPrivateNoteIntegrityFailure(
+        'The direct Auth-deletion principal is malformed.'
+      );
+    }
+    const eventTimestamp = context?.timestamp;
+    const requestedAt = eventTimestamp === undefined || eventTimestamp === null
+      ? now()
+      : eventTimestamp;
+    if (!isExactIsoTimestamp(requestedAt)) {
+      throwDiamondPrivateNoteIntegrityFailure(
+        'The direct Auth-deletion timestamp is malformed.'
+      );
+    }
+
+    const barrier = await establishDirectAuthDeletionBarrier({
+      firestore,
+      uid,
+      startedAt: requestedAt
+    });
+    await cleanupAccountDiamondPrivateNotes({
+      firestore,
+      uid,
+      documentIdField,
+      redactedAt: barrier.startedAt,
+      barrierKind: ACCOUNT_DIAMOND_DELETION_BARRIER_AUTH_DELETE
+    });
+    await retireDirectAuthDeletionBarrier({ firestore, uid });
+    return null;
+  };
+}
 
 function normalizeConfirmation(value) {
   return String(value || '').trim().toUpperCase();
@@ -1159,6 +1799,8 @@ function createAccountDeletionRequestHandler({ firestore, auth, Timestamp, Https
 }
 
 module.exports = {
+  ACCOUNT_DIAMOND_PRIVATE_NOTE_PAGE_SIZE,
+  ACCOUNT_DIAMOND_PRIVATE_NOTE_TRANSACTION_SIZE,
   ACCOUNT_CALENDAR_CREDENTIAL_PAGE_SIZE,
   ACCOUNT_CALENDAR_CREDENTIAL_TRANSACTION_SIZE,
   ACCOUNT_DELETION_CONFIRMATION,
@@ -1184,6 +1826,8 @@ module.exports = {
   collectAccountTeamIds,
   collectAccountMediaStoragePaths,
   cleanupAccountCalendarCredentials,
+  cleanupAccountDiamondPrivateNotes,
+  createAccountDiamondPrivateNoteAuthDeleteHandler,
   createAccountDeletionRequestHandler,
   deleteAccountMediaStoragePages,
   deleteAccountQueryPages,

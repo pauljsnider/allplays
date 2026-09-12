@@ -203,8 +203,46 @@ type PendingVoiceProposal = {
   unresolvedQuestions: string[];
 };
 
+type PrivateNoteSubmissionSource = {
+  authenticatedUid: string;
+  teamId: string;
+  gameId: string;
+  instanceId: string;
+  revision: number;
+  lifecycle: DiamondScorebookSnapshot['lifecycle'];
+  rulesProfileId: string;
+  rulesProfileVersion: number;
+};
+
+type PrivateMaterialCorrectionSource = PrivateNoteSubmissionSource & {
+  targetEventId: string;
+  targetSequence: number;
+  targetRevision: number;
+};
+
+type VoiceDraftSource = PrivateNoteSubmissionSource & {
+  authoritative: boolean;
+  canSubmitPrivateMaterial: boolean;
+};
+
+type PrivateHistoryRequestSource = PrivateNoteSubmissionSource & {
+  authoritative: true;
+  canSubmitPrivateMaterial: true;
+};
+
+type BoundPrivateHistory = {
+  source: PrivateHistoryRequestSource;
+  window: DiamondPrivateHistoryWindow;
+};
+
 type Confirmation =
-  | { kind: 'void'; eventId: string; label: string; reason: string }
+  | {
+      kind: 'void';
+      eventId: string;
+      label: string;
+      reason: string;
+      privateMaterialSource: PrivateMaterialCorrectionSource | null;
+    }
   | { kind: 'finalize' }
   | {
       kind: 'rules-decision';
@@ -258,6 +296,182 @@ const uncorrectableEventTypes = new Set<DiamondCommandType>([
   'void_event',
   'supersede_event'
 ]);
+
+const privateNoteLifecycles = new Set<DiamondScorebookSnapshot['lifecycle']>([
+  'ready',
+  'active',
+  'suspended',
+  'final',
+  'correction'
+]);
+
+function buildPrivateNoteSubmissionSource(
+  snapshot: DiamondScorebookSnapshot | null,
+  authenticatedUid: string | null | undefined
+): PrivateNoteSubmissionSource | null {
+  if (
+    !snapshot ||
+    !authenticatedUid ||
+    !snapshot.authoritative ||
+    snapshot.canSubmitPrivateMaterial !== true ||
+    !privateNoteLifecycles.has(snapshot.lifecycle)
+  ) {
+    return null;
+  }
+  return {
+    authenticatedUid,
+    teamId: snapshot.teamId,
+    gameId: snapshot.gameId,
+    instanceId: snapshot.instanceId,
+    revision: snapshot.revision,
+    lifecycle: snapshot.lifecycle,
+    rulesProfileId: snapshot.rulesProfileId,
+    rulesProfileVersion: snapshot.rulesProfileVersion
+  };
+}
+
+function privateNoteSourceMatchesSnapshot(
+  snapshot: DiamondScorebookSnapshot | null,
+  source: PrivateNoteSubmissionSource,
+  authenticatedUid: string | null | undefined
+) {
+  const current = buildPrivateNoteSubmissionSource(snapshot, authenticatedUid);
+  return Boolean(
+    current &&
+      current.authenticatedUid === source.authenticatedUid &&
+      current.teamId === source.teamId &&
+      current.gameId === source.gameId &&
+      current.instanceId === source.instanceId &&
+      current.revision === source.revision &&
+      current.lifecycle === source.lifecycle &&
+      current.rulesProfileId === source.rulesProfileId &&
+      current.rulesProfileVersion === source.rulesProfileVersion
+  );
+}
+
+function buildVoiceDraftSource(
+  snapshot: DiamondScorebookSnapshot | null,
+  authenticatedUid: string | null | undefined,
+  routeTeamId: string,
+  routeGameId: string
+): VoiceDraftSource | null {
+  if (!snapshot || !authenticatedUid || snapshot.teamId !== routeTeamId || snapshot.gameId !== routeGameId) return null;
+  return {
+    authenticatedUid,
+    teamId: snapshot.teamId,
+    gameId: snapshot.gameId,
+    instanceId: snapshot.instanceId,
+    revision: snapshot.revision,
+    lifecycle: snapshot.lifecycle,
+    rulesProfileId: snapshot.rulesProfileId,
+    rulesProfileVersion: snapshot.rulesProfileVersion,
+    authoritative: snapshot.authoritative,
+    canSubmitPrivateMaterial: snapshot.canSubmitPrivateMaterial === true
+  };
+}
+
+function voiceDraftSourcesMatch(current: VoiceDraftSource | null, source: VoiceDraftSource | null) {
+  return Boolean(
+    current &&
+      source &&
+      current.authenticatedUid === source.authenticatedUid &&
+      current.teamId === source.teamId &&
+      current.gameId === source.gameId &&
+      current.instanceId === source.instanceId &&
+      current.revision === source.revision &&
+      current.lifecycle === source.lifecycle &&
+      current.rulesProfileId === source.rulesProfileId &&
+      current.rulesProfileVersion === source.rulesProfileVersion &&
+      current.authoritative === source.authoritative &&
+      current.canSubmitPrivateMaterial === source.canSubmitPrivateMaterial
+  );
+}
+
+function buildPrivateHistoryRequestSource(
+  snapshot: DiamondScorebookSnapshot | null,
+  authenticatedUid: string | null | undefined,
+  routeTeamId: string,
+  routeGameId: string
+): PrivateHistoryRequestSource | null {
+  const source = buildVoiceDraftSource(snapshot, authenticatedUid, routeTeamId, routeGameId);
+  if (!source?.authoritative || source.canSubmitPrivateMaterial !== true) return null;
+  return {
+    ...source,
+    authoritative: true,
+    canSubmitPrivateMaterial: true
+  };
+}
+
+function privateHistoryRequestSourcesMatch(
+  current: PrivateHistoryRequestSource | null,
+  requested: PrivateHistoryRequestSource
+) {
+  return Boolean(
+    current &&
+      current.authenticatedUid === requested.authenticatedUid &&
+      current.teamId === requested.teamId &&
+      current.gameId === requested.gameId &&
+      current.instanceId === requested.instanceId &&
+      current.revision === requested.revision &&
+      current.lifecycle === requested.lifecycle &&
+      current.rulesProfileId === requested.rulesProfileId &&
+      current.rulesProfileVersion === requested.rulesProfileVersion &&
+      current.authoritative === requested.authoritative &&
+      current.canSubmitPrivateMaterial === requested.canSubmitPrivateMaterial
+  );
+}
+
+function buildPrivateMaterialCorrectionSource(
+  snapshot: DiamondScorebookSnapshot | null,
+  history: DiamondPrivateHistoryWindow | null,
+  targetEventId: string,
+  authenticatedUid: string | null | undefined
+): PrivateMaterialCorrectionSource | null {
+  const noteSource = buildPrivateNoteSubmissionSource(snapshot, authenticatedUid);
+  if (
+    !snapshot ||
+    !noteSource ||
+    !['active', 'correction'].includes(snapshot.lifecycle) ||
+    !history ||
+    history.sourceRevision !== snapshot.revision ||
+    history.contiguous !== true ||
+    history.rangeComplete !== true ||
+    history.headComplete !== true ||
+    history.newestSequence !== snapshot.revision
+  ) {
+    return null;
+  }
+  const target = history.items.find((event) => event.eventId === targetEventId);
+  if (
+    !target ||
+    target.type !== 'private_note' ||
+    history.items.some((event) => event.voidsEventId === target.eventId || event.supersedesEventId === target.eventId)
+  ) {
+    return null;
+  }
+  return {
+    ...noteSource,
+    targetEventId: target.eventId,
+    targetSequence: target.sequence,
+    targetRevision: target.revision
+  };
+}
+
+function privateMaterialCorrectionSourceMatches(
+  snapshot: DiamondScorebookSnapshot | null,
+  history: DiamondPrivateHistoryWindow | null,
+  source: PrivateMaterialCorrectionSource,
+  authenticatedUid: string | null | undefined
+) {
+  const current = buildPrivateMaterialCorrectionSource(snapshot, history, source.targetEventId, authenticatedUid);
+  return Boolean(
+    current &&
+      privateNoteSourceMatchesSnapshot(snapshot, source, authenticatedUid) &&
+      current.targetEventId === source.targetEventId &&
+      current.targetSequence === source.targetSequence &&
+      current.targetRevision === source.targetRevision
+  );
+}
 
 function effectivePrivateEvents(events: DiamondPrivateEvent[]): DiamondEffectivePrivateEvent[] {
   const directives = new Map<string, DiamondPrivateEvent>();
@@ -1928,6 +2142,7 @@ export function DiamondScorebook({
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
   const [voiceOpen, setVoiceOpen] = useState(false);
   const [voiceDraft, setVoiceDraft] = useState('');
+  const [voiceDraftSource, setVoiceDraftSource] = useState<VoiceDraftSource | null>(null);
   const [voiceIntent, setVoiceIntent] = useState<'play' | 'private-note'>('play');
   const [dictating, setDictating] = useState(false);
   const [interpreting, setInterpreting] = useState(false);
@@ -1952,26 +2167,74 @@ export function DiamondScorebook({
   const [activeDefenseDrafts, setActiveDefenseDrafts] = useState<ActiveDefenseDrafts>(() =>
     activeDefenseDraftsForSnapshot(initialSnapshot)
   );
-  const [privateHistory, setPrivateHistory] = useState<DiamondPrivateHistoryWindow | null>(null);
+  const [boundPrivateHistory, setBoundPrivateHistory] = useState<BoundPrivateHistory | null>(null);
   const [loadingPrivateHistory, setLoadingPrivateHistory] = useState(false);
   const [loadingOlderPrivateHistory, setLoadingOlderPrivateHistory] = useState(false);
   const [eventCorrectionReason, setEventCorrectionReason] = useState('');
   const [correctionSearch, setCorrectionSearch] = useState('');
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const stopNativeDictationRef = useRef<(() => Promise<void>) | null>(null);
+  const voiceDraftSourceRef = useRef<VoiceDraftSource | null>(null);
+  const currentVoiceDraftSourceRef = useRef<VoiceDraftSource | null>(null);
   const reconcileKeyRef = useRef('');
   const snapshotRef = useRef<DiamondScorebookSnapshot | null>(initialSnapshot);
   const queueCountRef = useRef(queueCount);
+  const networkOnlineRef = useRef(networkOnline);
+  const privateHistoryRef = useRef<DiamondPrivateHistoryWindow | null>(null);
   const authenticatedUidRef = useRef(auth.user?.uid || null);
   const confirmingPendingRef = useRef(false);
   const placingTiebreakerRef = useRef(false);
   const appBuildRef = useRef<number | null>(null);
   const appBuildPromiseRef = useRef<Promise<number> | null>(null);
   const handoffRequestGenerationRef = useRef(0);
+  const privateHistoryRequestGenerationRef = useRef(0);
+  const voiceSessionGenerationRef = useRef(0);
+  const currentVoiceDraftSource = buildVoiceDraftSource(snapshot, auth.user?.uid, teamId, gameId);
+  const voiceDraftIsCurrent = voiceDraftSourcesMatch(currentVoiceDraftSource, voiceDraftSource);
+  const currentPrivateHistorySource = buildPrivateHistoryRequestSource(snapshot, auth.user?.uid, teamId, gameId);
+  const privateHistory =
+    boundPrivateHistory && privateHistoryRequestSourcesMatch(currentPrivateHistorySource, boundPrivateHistory.source)
+      ? boundPrivateHistory.window
+      : null;
+  const renderedConfirmation =
+    confirmation?.kind === 'void' &&
+    confirmation.privateMaterialSource &&
+    !privateMaterialCorrectionSourceMatches(snapshot, privateHistory, confirmation.privateMaterialSource, auth.user?.uid)
+      ? null
+      : confirmation;
+  const privateHistorySourceRef = useRef<PrivateHistoryRequestSource | null>(currentPrivateHistorySource);
 
   snapshotRef.current = snapshot;
   queueCountRef.current = queueCount;
+  networkOnlineRef.current = networkOnline;
+  privateHistoryRef.current = privateHistory;
+  privateHistorySourceRef.current = currentPrivateHistorySource;
+  voiceDraftSourceRef.current = voiceDraftSource;
+  currentVoiceDraftSourceRef.current = currentVoiceDraftSource;
   authenticatedUidRef.current = auth.user?.uid || null;
+
+  const clearVoiceSession = useCallback(() => {
+    voiceSessionGenerationRef.current += 1;
+    const stopNativeDictation = stopNativeDictationRef.current;
+    stopNativeDictationRef.current = null;
+    if (stopNativeDictation) void stopNativeDictation().catch(() => {});
+    const recognition = recognitionRef.current;
+    recognitionRef.current = null;
+    try {
+      recognition?.abort();
+    } catch {
+      // The browser may already have closed this recognition session.
+    }
+    setVoiceDraftSource(null);
+    setVoiceDraft('');
+    setAttachNoteToLastPlay(false);
+    setVoiceQuestions([]);
+    setVoiceConfidence(null);
+    setVoiceIntent('play');
+    setVoiceOpen(false);
+    setDictating(false);
+    setInterpreting(false);
+  }, []);
 
   const expireHandoffCandidates = useCallback((closePanel = true) => {
     handoffRequestGenerationRef.current += 1;
@@ -2042,6 +2305,18 @@ export function DiamondScorebook({
   useEffect(
     () => () => {
       handoffRequestGenerationRef.current += 1;
+      privateHistoryRequestGenerationRef.current += 1;
+      voiceSessionGenerationRef.current += 1;
+      const stopNativeDictation = stopNativeDictationRef.current;
+      stopNativeDictationRef.current = null;
+      if (stopNativeDictation) void stopNativeDictation().catch(() => {});
+      const recognition = recognitionRef.current;
+      recognitionRef.current = null;
+      try {
+        recognition?.abort();
+      } catch {
+        // The browser may already have closed this recognition session.
+      }
     },
     []
   );
@@ -2131,13 +2406,31 @@ export function DiamondScorebook({
   useEffect(() => {
     setRecapState(null);
     setPublishRecapOpen(false);
-    setPrivateHistory(null);
     setCorrectionSearch('');
   }, [gameId, teamId]);
 
   useEffect(() => {
-    if (privateHistory && snapshot && privateHistory.sourceRevision !== snapshot.revision) setPrivateHistory(null);
-  }, [privateHistory, snapshot]);
+    clearVoiceSession();
+    privateHistoryRequestGenerationRef.current += 1;
+    setBoundPrivateHistory(null);
+    setLoadingPrivateHistory(false);
+    setLoadingOlderPrivateHistory(false);
+    setConfirmation((current) => (current?.kind === 'void' && current.privateMaterialSource ? null : current));
+  }, [
+    auth.user?.uid,
+    gameId,
+    snapshot?.authoritative,
+    snapshot?.canSubmitPrivateMaterial,
+    snapshot?.gameId,
+    snapshot?.instanceId,
+    snapshot?.lifecycle,
+    snapshot?.revision,
+    snapshot?.rulesProfileId,
+    snapshot?.rulesProfileVersion,
+    snapshot?.teamId,
+    teamId,
+    clearVoiceSession
+  ]);
 
   useEffect(() => {
     appBuildRef.current = null;
@@ -2371,7 +2664,16 @@ export function DiamondScorebook({
         return false;
       }
 
+      const mayUseDurableOfflineQueue =
+        type !== 'private_note' && type !== 'void_event' && type !== 'supersede_event';
       if (!networkOnline || queueCount > 0) {
+        if (!mayUseDurableOfflineQueue) {
+          setNotice({
+            tone: 'error',
+            message: 'Private notes and corrections cannot be retained offline. Reconnect and refresh before saving.'
+          });
+          return false;
+        }
         try {
           const queue = client.enqueue(command, scoringIdentity);
           setQueueCount(queue.length);
@@ -2394,6 +2696,13 @@ export function DiamondScorebook({
         return authoritative ? 'accepted' : 'reconciling';
       } catch (error) {
         if (error instanceof DiamondScorebookError && error.retryable) {
+          if (!mayUseDurableOfflineQueue) {
+            setNotice({
+              tone: 'error',
+              message: 'Confirmation was interrupted. This private correction was not stored on this device; refresh before retrying.'
+            });
+            return false;
+          }
           try {
             const queue = client.enqueue(command, scoringIdentity);
             setQueueCount(queue.length);
@@ -2430,6 +2739,106 @@ export function DiamondScorebook({
       resolveAppBuildForMutation,
       snapshot
     ]
+  );
+
+  const submitPrivateMaterialCorrection = useCallback(
+    async (
+      type: Extract<DiamondCommandType, 'void_event' | 'supersede_event'>,
+      payload: DiamondJsonObject,
+      successMessage: string,
+      source: PrivateMaterialCorrectionSource
+    ): Promise<CommandSubmissionResult> => {
+      if (busy || reconciling) return false;
+      if (!networkOnlineRef.current || queueCountRef.current > 0) {
+        setNotice({
+          tone: 'error',
+          message: 'Private notes and corrections cannot be retained offline. Reconnect and refresh before saving.'
+        });
+        return false;
+      }
+      if (
+        source.teamId !== teamId ||
+        source.gameId !== gameId ||
+        !privateMaterialCorrectionSourceMatches(
+          snapshotRef.current,
+          privateHistoryRef.current,
+          source,
+          authenticatedUidRef.current
+        )
+      ) {
+        setNotice({
+          tone: 'error',
+          message:
+            'This private correction review expired because its authorization, game instance, revision, lifecycle, or complete private-history evidence changed.'
+        });
+        return false;
+      }
+
+      let command: DiamondCommandEnvelope;
+      try {
+        const appBuild = await resolveAppBuildForMutation();
+        const currentSnapshot = snapshotRef.current;
+        if (!networkOnlineRef.current || queueCountRef.current > 0) {
+          throw new DiamondScorebookError(
+            'conflict',
+            'Private notes and corrections cannot be retained offline. Reconnect and refresh before saving.'
+          );
+        }
+        if (
+          !currentSnapshot ||
+          source.teamId !== teamId ||
+          source.gameId !== gameId ||
+          !privateMaterialCorrectionSourceMatches(
+            currentSnapshot,
+            privateHistoryRef.current,
+            source,
+            authenticatedUidRef.current
+          )
+        ) {
+          throw new DiamondScorebookError(
+            'conflict',
+            'This private correction review expired because its authorization, game instance, revision, lifecycle, or complete private-history evidence changed.'
+          );
+        }
+        command = client.createCommand({
+          teamId,
+          gameId,
+          appBuild,
+          expectedInstanceId: currentSnapshot.instanceId,
+          expectedRevision: currentSnapshot.revision,
+          rulesProfileId: currentSnapshot.rulesProfileId,
+          rulesProfileVersion: currentSnapshot.rulesProfileVersion,
+          type,
+          payload
+        });
+      } catch (error) {
+        setNotice({ tone: 'error', message: describeError(error, 'This private correction could not be prepared safely.') });
+        return false;
+      }
+
+      setBusy(true);
+      setNotice(null);
+      try {
+        const outcome = await client.submitCommand(command);
+        const authoritative = await applyOutcome(outcome, successMessage);
+        return authoritative ? 'accepted' : 'reconciling';
+      } catch (error) {
+        if (error instanceof DiamondScorebookError && error.retryable) {
+          setBoundPrivateHistory(null);
+          setNotice({
+            tone: 'error',
+            message: 'Confirmation was interrupted. This private correction was not stored on this device; refresh before retrying.'
+          });
+          return false;
+        }
+        setNotice({ tone: 'error', message: describeError(error, 'The private correction was not accepted.') });
+        if (error instanceof DiamondScorebookError && error.code === 'stale-revision') await refreshSnapshot(false);
+        return false;
+      } finally {
+        setBusy(false);
+      }
+    },
+    [applyOutcome, busy, client, gameId, reconciling, refreshSnapshot, resolveAppBuildForMutation, teamId]
   );
 
   const changeScorerLease = useCallback(
@@ -2861,14 +3270,18 @@ export function DiamondScorebook({
   const handleConfirmation = async () => {
     if (!confirmation || !snapshot) return;
     if (confirmation.kind === 'void') {
-      const submitted = await submitCommand(
-        'void_event',
-        {
-          targetEventId: confirmation.eventId,
-          reason: confirmation.reason
-        },
-        `Correction appended for ${confirmation.label}.`
-      );
+      const payload = {
+        targetEventId: confirmation.eventId,
+        reason: confirmation.reason
+      };
+      const submitted = confirmation.privateMaterialSource
+        ? await submitPrivateMaterialCorrection(
+            'void_event',
+            payload,
+            `Correction appended for ${confirmation.label}.`,
+            confirmation.privateMaterialSource
+          )
+        : await submitCommand('void_event', payload, `Correction appended for ${confirmation.label}.`);
       if (submitted) {
         setEventCorrectionReason('');
         setConfirmation(null);
@@ -2954,20 +3367,44 @@ export function DiamondScorebook({
     }
   };
 
-  const finishDictation = () => {
+  const openVoiceSession = (intent: 'play' | 'private-note') => {
+    const source = currentVoiceDraftSourceRef.current;
+    if (
+      !source ||
+      (intent === 'private-note' &&
+        (!source.authoritative || source.canSubmitPrivateMaterial !== true || !privateNoteLifecycles.has(source.lifecycle)))
+    ) {
+      setNotice({ tone: 'error', message: 'Refresh the current scorebook authorization before opening this editor.' });
+      return;
+    }
+    clearVoiceSession();
+    setVoiceDraftSource(source);
+    setVoiceIntent(intent);
+    setVoiceOpen(true);
+  };
+
+  const finishDictation = (generation: number) => {
+    if (generation !== voiceSessionGenerationRef.current) return;
     setDictating(false);
     recognitionRef.current = null;
     stopNativeDictationRef.current = null;
   };
 
-  const addTranscript = (transcript: string) => {
+  const addTranscript = (transcript: string, source: VoiceDraftSource, generation: number) => {
+    if (
+      generation !== voiceSessionGenerationRef.current ||
+      !voiceDraftSourcesMatch(voiceDraftSourceRef.current, source) ||
+      !voiceDraftSourcesMatch(currentVoiceDraftSourceRef.current, source)
+    ) {
+      return;
+    }
     setVoiceDraft((current) => appendDictationTranscript(current, transcript));
     setVoiceQuestions([]);
     setVoiceConfidence(null);
     setNotice({ tone: 'success', message: 'Dictation added as editable text. Audio was not saved.' });
   };
 
-  const startWebDictation = () => {
+  const startWebDictation = (source: VoiceDraftSource, generation: number) => {
     const Recognition = getSpeechRecognitionConstructor(typeof window === 'undefined' ? null : window);
     if (!Recognition) {
       setNotice({ tone: 'info', message: 'Speech recognition is unavailable here. Use the keyboard microphone or type the play.' });
@@ -2979,25 +3416,40 @@ export function DiamondScorebook({
     recognition.lang = typeof navigator !== 'undefined' ? navigator.language || 'en-US' : 'en-US';
     recognition.onresult = (event) => {
       const transcript = collectFinalDictationTranscript(event);
-      if (transcript) addTranscript(transcript);
+      if (transcript) addTranscript(transcript, source, generation);
     };
     recognition.onerror = (event) => {
-      setNotice({ tone: 'error', message: getDictationErrorMessage(event) });
-      finishDictation();
+      if (generation === voiceSessionGenerationRef.current) {
+        setNotice({ tone: 'error', message: getDictationErrorMessage(event) });
+      }
+      finishDictation(generation);
     };
-    recognition.onend = finishDictation;
+    recognition.onend = () => finishDictation(generation);
     recognitionRef.current = recognition;
     setDictating(true);
     setNotice({ tone: 'info', message: 'Listening… speak the play, then pause.' });
     try {
       recognition.start();
     } catch (error) {
-      finishDictation();
-      setNotice({ tone: 'error', message: describeError(error, 'Dictation could not start.') });
+      finishDictation(generation);
+      if (generation === voiceSessionGenerationRef.current) {
+        setNotice({ tone: 'error', message: describeError(error, 'Dictation could not start.') });
+      }
     }
   };
 
   const toggleDictation = async () => {
+    const source = voiceDraftSourceRef.current;
+    const generation = voiceSessionGenerationRef.current;
+    if (
+      !source ||
+      !voiceDraftSourcesMatch(currentVoiceDraftSourceRef.current, source) ||
+      !voiceDraftSourcesMatch(voiceDraftSourceRef.current, source)
+    ) {
+      clearVoiceSession();
+      setNotice({ tone: 'error', message: 'This editor expired because the signed-in user or scorebook context changed.' });
+      return;
+    }
     if (dictating) {
       await stopNativeDictationRef.current?.().catch(() => {});
       try {
@@ -3005,7 +3457,7 @@ export function DiamondScorebook({
       } catch {
         recognitionRef.current?.abort();
       }
-      finishDictation();
+      finishDictation(generation);
       return;
     }
     if (isCapacitorNativeRuntime(typeof window === 'undefined' ? null : window)) {
@@ -3014,22 +3466,46 @@ export function DiamondScorebook({
       try {
         const session = await startNativeSpeechDictation({
           language: typeof navigator !== 'undefined' ? navigator.language || 'en-US' : 'en-US',
-          onTranscript: addTranscript,
-          onError: (message) => setNotice({ tone: 'error', message }),
-          onEnd: finishDictation
+          onTranscript: (transcript) => addTranscript(transcript, source, generation),
+          onError: (message) => {
+            if (generation === voiceSessionGenerationRef.current) setNotice({ tone: 'error', message });
+          },
+          onEnd: () => finishDictation(generation)
         });
+        if (
+          generation !== voiceSessionGenerationRef.current ||
+          !voiceDraftSourcesMatch(currentVoiceDraftSourceRef.current, source) ||
+          !voiceDraftSourcesMatch(voiceDraftSourceRef.current, source)
+        ) {
+          await session.stop().catch(() => {});
+          return;
+        }
         stopNativeDictationRef.current = session.stop;
       } catch (error) {
-        finishDictation();
-        setNotice({ tone: 'error', message: describeError(error, 'Dictation could not start.') });
+        finishDictation(generation);
+        if (generation === voiceSessionGenerationRef.current) {
+          setNotice({ tone: 'error', message: describeError(error, 'Dictation could not start.') });
+        }
       }
       return;
     }
-    startWebDictation();
+    startWebDictation(source, generation);
   };
 
   const interpretVoice = async () => {
-    if (!snapshot || !voiceDraft.trim() || interpreting || !networkOnline) return;
+    const draftSource = voiceDraftSourceRef.current;
+    const voiceGeneration = voiceSessionGenerationRef.current;
+    if (
+      !snapshot ||
+      !voiceDraft.trim() ||
+      interpreting ||
+      !networkOnline ||
+      !draftSource ||
+      !voiceDraftSourcesMatch(currentVoiceDraftSourceRef.current, draftSource) ||
+      !voiceDraftSourcesMatch(voiceDraftSourceRef.current, draftSource)
+    ) {
+      return;
+    }
     if (!snapshot.authoritative || !snapshot.lease.canScore || snapshot.lifecycle !== 'active' || queueCount > 0) {
       setNotice({
         tone: 'error',
@@ -3044,6 +3520,9 @@ export function DiamondScorebook({
       const current = snapshotRef.current;
       return Boolean(
         current &&
+        voiceGeneration === voiceSessionGenerationRef.current &&
+        voiceDraftSourcesMatch(currentVoiceDraftSourceRef.current, draftSource) &&
+        voiceDraftSourcesMatch(voiceDraftSourceRef.current, draftSource) &&
         current.authoritative &&
         current.lifecycle === 'active' &&
         current.lease.canScore &&
@@ -3082,10 +3561,7 @@ export function DiamondScorebook({
         return;
       }
       setPendingPlay(pending);
-      setVoiceDraft('');
-      setVoiceQuestions([]);
-      setVoiceConfidence(null);
-      setVoiceOpen(false);
+      clearVoiceSession();
       setNotice({
         tone: 'info',
         message: fallback
@@ -3145,50 +3621,83 @@ export function DiamondScorebook({
       }
       openProposalReview(normalizeServerVoiceProposal(fallbackProposal, sourceRevision), true);
     } catch (error) {
-      setNotice({
-        tone: 'error',
-        message: `${describeError(error, 'The dictated play could not be interpreted.')} Ordinary scoring controls are still available.`
-      });
+      if (voiceGeneration === voiceSessionGenerationRef.current) {
+        setNotice({
+          tone: 'error',
+          message: `${describeError(error, 'The dictated play could not be interpreted.')} Ordinary scoring controls are still available.`
+        });
+      }
     } finally {
-      setInterpreting(false);
+      if (voiceGeneration === voiceSessionGenerationRef.current) setInterpreting(false);
     }
   };
 
   const savePrivateNote = async () => {
-    if (!snapshot || !voiceDraft.trim() || savingNote || !networkOnline) return;
+    const requestedSnapshot = snapshotRef.current;
+    const requestedUid = authenticatedUidRef.current;
+    const requestedDraftSource = voiceDraftSourceRef.current;
+    const voiceGeneration = voiceSessionGenerationRef.current;
+    const source = buildPrivateNoteSubmissionSource(requestedSnapshot, requestedUid);
+    const noteText = voiceDraft;
+    const attachedEventId = attachNoteToLastPlay ? attachableHistory[attachableHistory.length - 1]?.sourceEventId || null : null;
+    if (!noteText.trim() || savingNote || busy || reconciling) return;
+    if (!networkOnlineRef.current || queueCountRef.current > 0) {
+      setNotice({
+        tone: 'error',
+        message: 'Private notes and corrections cannot be retained offline. Reconnect and refresh before saving.'
+      });
+      return;
+    }
+    if (
+      !source ||
+      !requestedDraftSource ||
+      source.teamId !== teamId ||
+      source.gameId !== gameId ||
+      !voiceDraftSourcesMatch(currentVoiceDraftSourceRef.current, requestedDraftSource) ||
+      !voiceDraftSourcesMatch(voiceDraftSourceRef.current, requestedDraftSource)
+    ) {
+      clearVoiceSession();
+      setNotice({
+        tone: 'error',
+        message: 'This private-note draft expired because the signed-in user or scorebook context changed.'
+      });
+      return;
+    }
     setSavingNote(true);
     setNotice(null);
     try {
       const appBuild = await resolveAppBuildForMutation();
-      const currentIdentity = getQueueIdentity(snapshotRef.current, authenticatedUidRef.current);
+      const currentSnapshot = snapshotRef.current;
       if (
-        !currentIdentity ||
-        currentIdentity.authenticatedUid !== auth.user?.uid ||
-        currentIdentity.scorerUid !== snapshot.lease.holderUid ||
-        currentIdentity.instanceId !== snapshot.instanceId ||
-        currentIdentity.leaseId !== snapshot.lease.leaseId ||
-        snapshotRef.current?.revision !== snapshot.revision
+        !networkOnlineRef.current ||
+        queueCountRef.current > 0 ||
+        !currentSnapshot ||
+        voiceGeneration !== voiceSessionGenerationRef.current ||
+        source.teamId !== teamId ||
+        source.gameId !== gameId ||
+        !voiceDraftSourcesMatch(currentVoiceDraftSourceRef.current, requestedDraftSource) ||
+        !voiceDraftSourcesMatch(voiceDraftSourceRef.current, requestedDraftSource) ||
+        !privateNoteSourceMatchesSnapshot(currentSnapshot, source, authenticatedUidRef.current)
       ) {
-        throw new DiamondScorebookError('conflict', 'The scoring lease or Diamond game instance changed before this note was saved.');
+        throw new DiamondScorebookError(
+          'conflict',
+          'The private-material authorization, Diamond game instance, revision, lifecycle, or online state changed before this note was saved.'
+        );
       }
       const outcome = await client.savePrivateNote({
+        authenticatedUid: source.authenticatedUid,
         teamId,
         gameId,
         appBuild,
-        expectedInstanceId: snapshot.instanceId,
-        leaseId: snapshot.lease.leaseId,
-        expectedRevision: snapshot.revision,
-        rulesProfileId: snapshot.rulesProfileId,
-        rulesProfileVersion: snapshot.rulesProfileVersion,
-        text: voiceDraft,
-        attachedEventId: attachNoteToLastPlay ? attachableHistory[attachableHistory.length - 1]?.sourceEventId || null : null
+        expectedInstanceId: currentSnapshot.instanceId,
+        expectedRevision: currentSnapshot.revision,
+        rulesProfileId: currentSnapshot.rulesProfileId,
+        rulesProfileVersion: currentSnapshot.rulesProfileVersion,
+        text: noteText,
+        attachedEventId
       });
       await applyOutcome(outcome, 'Private staff note saved.');
-      setVoiceDraft('');
-      setVoiceQuestions([]);
-      setVoiceConfidence(null);
-      setVoiceOpen(false);
-      setAttachNoteToLastPlay(false);
+      clearVoiceSession();
     } catch (error) {
       setNotice({ tone: 'error', message: describeError(error, 'The private note was not saved.') });
     } finally {
@@ -3197,34 +3706,41 @@ export function DiamondScorebook({
   };
 
   const loadPrivateHistory = async (loadOlder = false) => {
-    const requested = snapshotRef.current;
+    const requestedSource = privateHistorySourceRef.current;
     const currentWindow = privateHistory;
     if (
-      !requested ||
+      !requestedSource ||
       loadingPrivateHistory ||
       loadingOlderPrivateHistory ||
-      !networkOnline ||
-      !requested.authoritative ||
+      !networkOnlineRef.current ||
       queueCountRef.current > 0 ||
       (loadOlder && (!currentWindow?.hasOlder || currentWindow.oldestSequence === null))
     ) {
       setNotice({ tone: 'error', message: 'Refresh online and reconcile queued plays before loading private history.' });
       return;
     }
+    const requestGeneration = privateHistoryRequestGenerationRef.current + 1;
+    privateHistoryRequestGenerationRef.current = requestGeneration;
     if (loadOlder) setLoadingOlderPrivateHistory(true);
     else setLoadingPrivateHistory(true);
     try {
       const history = await client.loadPrivateHistoryWindow({
-        teamId,
-        gameId,
-        expectedRevision: requested.revision,
+        teamId: requestedSource.teamId,
+        gameId: requestedSource.gameId,
+        expectedRevision: requestedSource.revision,
         ...(loadOlder && currentWindow?.oldestSequence ? { beforeSequence: currentWindow.oldestSequence } : {})
       });
-      if (snapshotRef.current?.revision !== history.sourceRevision || !snapshotRef.current.authoritative) {
+      if (
+        requestGeneration !== privateHistoryRequestGenerationRef.current ||
+        !privateHistoryRequestSourcesMatch(privateHistorySourceRef.current, requestedSource)
+      ) {
+        return;
+      }
+      if (history.sourceRevision !== requestedSource.revision) {
         throw new DiamondScorebookError('stale-revision', 'The scorebook changed while private history was loading.');
       }
       const combined = loadOlder && currentWindow ? mergeDiamondPrivateHistoryWindows(currentWindow, history) : history;
-      setPrivateHistory(combined);
+      setBoundPrivateHistory({ source: requestedSource, window: combined });
       setNotice({
         tone: 'success',
         message: combined.historyComplete
@@ -3232,7 +3748,13 @@ export function DiamondScorebook({
           : `Verified events ${combined.oldestSequence}–${combined.newestSequence} through current revision ${combined.sourceRevision}. Older history remains available.`
       });
     } catch (error) {
-      if (!loadOlder) setPrivateHistory(null);
+      if (
+        requestGeneration !== privateHistoryRequestGenerationRef.current ||
+        !privateHistoryRequestSourcesMatch(privateHistorySourceRef.current, requestedSource)
+      ) {
+        return;
+      }
+      if (!loadOlder) setBoundPrivateHistory(null);
       setNotice({
         tone: 'error',
         message: describeError(
@@ -3243,8 +3765,13 @@ export function DiamondScorebook({
         )
       });
     } finally {
-      if (loadOlder) setLoadingOlderPrivateHistory(false);
-      else setLoadingPrivateHistory(false);
+      if (
+        requestGeneration === privateHistoryRequestGenerationRef.current &&
+        privateHistoryRequestSourcesMatch(privateHistorySourceRef.current, requestedSource)
+      ) {
+        if (loadOlder) setLoadingOlderPrivateHistory(false);
+        else setLoadingPrivateHistory(false);
+      }
     }
   };
 
@@ -3621,6 +4148,16 @@ export function DiamondScorebook({
     queueCount > 0 ||
     snapshot.lifecycle === 'cancelled'
   );
+  const privateMaterialMutationDisabled = Boolean(
+    !snapshot ||
+    busy ||
+    reconciling ||
+    !auth.user?.uid ||
+    snapshot.canSubmitPrivateMaterial !== true ||
+    !snapshot.authoritative ||
+    queueCount > 0 ||
+    snapshot.lifecycle === 'cancelled'
+  );
   const battingSide: DiamondSide | null = snapshot ? (snapshot.inning.half === 'top' ? 'away' : 'home') : null;
   const liveDefenseSide: DiamondSide | null = snapshot && isOpenActiveHalf(snapshot) ? activeFieldingSide(snapshot) : null;
   const liveDefenseDraft = liveDefenseSide ? activeDefenseDrafts[liveDefenseSide] : null;
@@ -3658,7 +4195,9 @@ export function DiamondScorebook({
   const playControlsDisabled = mutationDisabled || snapshot?.lifecycle !== 'active' || tiebreakerPending || tiebreakerEvidenceUnknown;
   const pitchControlsDisabled = playControlsDisabled || Boolean(snapshot && plateAppearanceRequiresResolution(snapshot));
   const correctionControlsDisabled = mutationDisabled || !snapshot || !['active', 'correction'].includes(snapshot.lifecycle);
-  const privateNoteDisabled = mutationDisabled || snapshot?.lifecycle === 'configured';
+  const privateMaterialCorrectionControlsDisabled =
+    privateMaterialMutationDisabled || !snapshot || !['active', 'correction'].includes(snapshot.lifecycle);
+  const privateNoteDisabled = privateMaterialMutationDisabled || !snapshot || !privateNoteLifecycles.has(snapshot.lifecycle);
   const lineupsReady = Boolean(snapshot?.lineups.home.length && snapshot.lineups.away.length);
   const defensesReady = Boolean(snapshot?.defense.home.P && snapshot.defense.away.P);
   const finalizationCanBeReviewed = Boolean(
@@ -4045,12 +4584,7 @@ export function DiamondScorebook({
                 type="button"
                 className="ghost-button min-h-12 justify-center text-xs"
                 disabled={playControlsDisabled}
-                onClick={() => {
-                  setVoiceIntent('play');
-                  setVoiceQuestions([]);
-                  setVoiceConfidence(null);
-                  setVoiceOpen(true);
-                }}
+                onClick={() => openVoiceSession('play')}
               >
                 <Mic className="h-4 w-4" aria-hidden="true" />
                 Dictate play
@@ -4059,12 +4593,7 @@ export function DiamondScorebook({
                 type="button"
                 className="ghost-button min-h-12 justify-center text-xs"
                 disabled={privateNoteDisabled}
-                onClick={() => {
-                  setVoiceIntent('private-note');
-                  setVoiceQuestions([]);
-                  setVoiceConfidence(null);
-                  setVoiceOpen(true);
-                }}
+                onClick={() => openVoiceSession('private-note')}
               >
                 <LockKeyhole className="h-4 w-4" aria-hidden="true" />
                 Private note
@@ -4096,7 +4625,7 @@ export function DiamondScorebook({
                 disabled={mutationDisabled}
                 attachableEvents={attachableHistory}
                 historyLoaded={privateHistory?.headComplete === true}
-                historyLoading={loadingPrivateHistory || loadingOlderPrivateHistory}
+                historyLoading={loadingPrivateHistory || loadingOlderPrivateHistory || !currentPrivateHistorySource}
                 onLoadHistory={() => void loadPrivateHistory(false)}
                 onReview={reviewStructuredCommand}
               />
@@ -4115,7 +4644,11 @@ export function DiamondScorebook({
                 type="button"
                 className="ghost-button min-h-11 px-3 text-xs"
                 disabled={
-                  loadingPrivateHistory || loadingOlderPrivateHistory || !networkOnline || !snapshot.authoritative || queueCount > 0
+                  loadingPrivateHistory ||
+                  loadingOlderPrivateHistory ||
+                  !networkOnline ||
+                  !currentPrivateHistorySource ||
+                  queueCount > 0
                 }
                 onClick={() => void loadPrivateHistory(false)}
               >
@@ -4162,7 +4695,13 @@ export function DiamondScorebook({
                   <button
                     type="button"
                     className="ghost-button min-h-11 w-full justify-center text-xs"
-                    disabled={loadingPrivateHistory || loadingOlderPrivateHistory || !networkOnline || queueCount > 0}
+                    disabled={
+                      loadingPrivateHistory ||
+                      loadingOlderPrivateHistory ||
+                      !networkOnline ||
+                      !currentPrivateHistorySource ||
+                      queueCount > 0
+                    }
                     onClick={() => void loadPrivateHistory(true)}
                   >
                     {loadingOlderPrivateHistory ? (
@@ -4234,6 +4773,10 @@ export function DiamondScorebook({
                           effectivePayload: event.payload,
                           corrected: false
                         };
+                        const privateMaterialSource =
+                          event.type === 'private_note'
+                            ? buildPrivateMaterialCorrectionSource(snapshot, privateHistory, event.eventId, auth.user?.uid)
+                            : null;
                         return (
                           <li key={event.eventId} className="rounded-xl border border-gray-200 p-3">
                             <div className="text-sm font-black text-gray-900">{privateEventLabel(view)}</div>
@@ -4241,15 +4784,21 @@ export function DiamondScorebook({
                               <button
                                 type="button"
                                 className="ghost-button min-h-11 justify-center text-xs"
-                                disabled={correctionControlsDisabled || !eventCorrectionReason.trim()}
-                                onClick={() =>
+                                disabled={
+                                  (event.type === 'private_note'
+                                    ? privateMaterialCorrectionControlsDisabled || !privateMaterialSource
+                                    : correctionControlsDisabled) || !eventCorrectionReason.trim()
+                                }
+                                onClick={() => {
+                                  if (event.type === 'private_note' && !privateMaterialSource) return;
                                   setConfirmation({
                                     kind: 'void',
                                     eventId: event.eventId,
                                     label: privateEventLabel(view),
-                                    reason: eventCorrectionReason.replace(/\s+/g, ' ').trim()
-                                  })
-                                }
+                                    reason: eventCorrectionReason.replace(/\s+/g, ' ').trim(),
+                                    privateMaterialSource
+                                  });
+                                }}
                               >
                                 Void effect
                               </button>
@@ -4573,7 +5122,7 @@ export function DiamondScorebook({
         />
       ) : null}
 
-      {voiceOpen ? (
+      {voiceOpen && voiceDraftIsCurrent ? (
         <VoiceModal
           intent={voiceIntent}
           draft={voiceDraft}
@@ -4584,14 +5133,25 @@ export function DiamondScorebook({
           confidence={voiceConfidence}
           online={networkOnline}
           canInterpret={!mutationDisabled && snapshot.lifecycle === 'active'}
+          canSaveNote={!privateNoteDisabled}
           attachToLastPlay={attachNoteToLastPlay}
           hasRecentPlay={Boolean(attachableHistory.length)}
           onDraftChange={(value) => {
+            if (!voiceDraftSourcesMatch(currentVoiceDraftSourceRef.current, voiceDraftSourceRef.current)) return;
             setVoiceDraft(value);
             setVoiceQuestions([]);
             setVoiceConfidence(null);
           }}
           onIntentChange={(value) => {
+            const source = voiceDraftSourceRef.current;
+            if (
+              !source ||
+              !voiceDraftSourcesMatch(currentVoiceDraftSourceRef.current, source) ||
+              (value === 'private-note' &&
+                (!source.authoritative || source.canSubmitPrivateMaterial !== true || !privateNoteLifecycles.has(source.lifecycle)))
+            ) {
+              return;
+            }
             setVoiceIntent(value);
             setVoiceQuestions([]);
             setVoiceConfidence(null);
@@ -4600,19 +5160,13 @@ export function DiamondScorebook({
           onAttachChange={setAttachNoteToLastPlay}
           onInterpret={() => void interpretVoice()}
           onSaveNote={() => void savePrivateNote()}
-          onClose={() => {
-            if (dictating) void toggleDictation();
-            setVoiceDraft('');
-            setVoiceQuestions([]);
-            setVoiceConfidence(null);
-            setVoiceOpen(false);
-          }}
+          onClose={clearVoiceSession}
         />
       ) : null}
 
-      {confirmation ? (
+      {renderedConfirmation ? (
         <ConfirmationModal
-          confirmation={confirmation}
+          confirmation={renderedConfirmation}
           snapshot={snapshot}
           busy={busy}
           onClose={() => setConfirmation(null)}
@@ -7083,6 +7637,7 @@ function VoiceModal({
   confidence,
   online,
   canInterpret,
+  canSaveNote,
   attachToLastPlay,
   hasRecentPlay,
   onDraftChange,
@@ -7102,6 +7657,7 @@ function VoiceModal({
   confidence: number | null;
   online: boolean;
   canInterpret: boolean;
+  canSaveNote: boolean;
   attachToLastPlay: boolean;
   hasRecentPlay: boolean;
   onDraftChange: (value: string) => void;
@@ -7245,7 +7801,7 @@ function VoiceModal({
             <button
               type="button"
               className="primary-button justify-center"
-              disabled={!draft.trim() || !online || savingNote}
+              disabled={!draft.trim() || !online || !canSaveNote || savingNote}
               onClick={onSaveNote}
             >
               {savingNote ? (

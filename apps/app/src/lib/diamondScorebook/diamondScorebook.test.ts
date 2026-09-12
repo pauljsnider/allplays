@@ -3,6 +3,7 @@ import {
   DIAMOND_SCHEMA_VERSION,
   canonicalDiamondJson,
   createDiamondCheckpoint,
+  createDiamondCommandReceipt,
   createDiamondLedger,
   deriveDiamondPlayerStats,
   executeDiamondCommand,
@@ -1489,7 +1490,7 @@ describe('Diamond command ledger', () => {
     expect(stale.result.rejection).toMatchObject({ code: 'stale-revision', retryable: true });
   });
 
-  it('keeps the prior state immutable and enforces scorer handoff', () => {
+  it('keeps the prior state immutable, enforces the scorer lease for public commands, and permits private notes', () => {
     const game = harness();
     const before = game.ledger.state;
     game.submit('activate', { initialScorerUid: SCORER, captureMode: 'full' });
@@ -1497,10 +1498,212 @@ describe('Diamond command ledger', () => {
     expect(game.ledger.state).toMatchObject({ lifecycle: 'ready', revision: 1, currentScorerUid: SCORER });
 
     game.submit('scorer_handoff', { toUid: 'scorer-2' });
-    const oldScorer = game.submit('private_note', { text: 'must not land' }, { accept: false });
+    const oldScorer = game.submit(
+      'set_lineup',
+      { side: 'home', entries: [{ slot: 1, playerId: 'home-1' }] },
+      { accept: false }
+    );
     expect(oldScorer.result.rejection).toMatchObject({ code: 'scorer-lease-lost', retryable: true });
+    const privateNote = game.submit('private_note', { text: 'private former-scorer note' });
+    expect(privateNote.result).toMatchObject({ outcome: 'accepted', state: { currentScorerUid: 'scorer-2' } });
     const newScorer = game.submit('private_note', { text: 'private handoff note' }, { actorUid: 'scorer-2' });
     expect(newScorer.result.outcome).toBe('accepted');
+  });
+
+  it('does not bind private material to the scorer identity and restores the authoritative scorer on duplicate responses', () => {
+    const game = harness();
+    const privateAuthor = 'authorized-note-writer';
+    setBasicLineups(game, { start: true });
+    game.submit('scorer_handoff', { toUid: 'scorer-2' });
+
+    const checkpoint = createDiamondCheckpoint(game.ledger);
+    const checkpointCommand = game.command(
+      'private_note',
+      { text: 'Checkpoint-private note' },
+      { commandId: uuid(900) }
+    );
+    const checkpointAccepted = executeDiamondCommandFromCheckpoint(checkpoint, checkpointCommand, {
+      actorUid: privateAuthor,
+      eventId: 'checkpoint-private-event',
+      serverTimestampMs: 1_700_000_001_000
+    });
+    expect(checkpointAccepted.result).toMatchObject({
+      outcome: 'accepted',
+      state: { currentScorerUid: 'scorer-2' }
+    });
+    expect(checkpointAccepted.event).toMatchObject({
+      actorUid: 'private-note-author',
+      before: { currentScorerUid: 'private-note-author' },
+      after: { currentScorerUid: 'private-note-author' }
+    });
+    const checkpointDuplicate = executeDiamondCommandFromCheckpoint(
+      checkpointAccepted.checkpoint,
+      checkpointCommand,
+      {
+        actorUid: privateAuthor,
+        eventId: 'ignored-private-retry-event',
+        serverTimestampMs: 1_700_000_001_001
+      },
+      checkpointAccepted.receipt
+    );
+    expect(checkpointDuplicate.result).toMatchObject({
+      outcome: 'duplicate',
+      state: { currentScorerUid: 'scorer-2' }
+    });
+
+    const direct = game.submit('private_note', { text: 'Direct private material' }, { actorUid: privateAuthor });
+    const publicTarget = game.submit('record_pitch', {
+      batterId: 'away-1',
+      pitcherId: 'home-1',
+      result: 'ball'
+    }, { actorUid: 'scorer-2' });
+    const publicToPrivate = game.submit(
+      'supersede_event',
+      {
+        targetEventId: publicTarget.event!.eventId,
+        reason: 'Move this entry to the private record.',
+        replacement: { type: 'private_note', payload: { text: 'Private replacement' } }
+      },
+      { actorUid: privateAuthor }
+    );
+    const voidTarget = game.submit('private_note', { text: 'Void target' }, { actorUid: privateAuthor });
+    const privateVoid = game.submit(
+      'void_event',
+      { targetEventId: voidTarget.event!.eventId, reason: 'Remove the private entry.' },
+      { actorUid: privateAuthor }
+    );
+    const supersedeTarget = game.submit('private_note', { text: 'Supersede target' }, { actorUid: privateAuthor });
+    const privateSupersede = game.submit(
+      'supersede_event',
+      {
+        targetEventId: supersedeTarget.event!.eventId,
+        reason: 'Replace the private entry.',
+        replacement: { type: 'private_note', payload: { text: 'Replacement private entry' } }
+      },
+      { actorUid: privateAuthor }
+    );
+
+    for (const accepted of [direct, publicToPrivate, privateVoid, privateSupersede]) {
+      expect(accepted.result).toMatchObject({
+        outcome: 'accepted',
+        state: { currentScorerUid: 'scorer-2' }
+      });
+      expect(accepted.event?.actorUid).toBe('private-note-author');
+    }
+    const rejectedPublic = game.submit(
+      'set_lineup',
+      { side: 'away', entries: [{ slot: 1, playerId: 'away-1' }] },
+      { actorUid: privateAuthor, accept: false }
+    );
+    expect(rejectedPublic.result.rejection).toMatchObject({ code: 'scorer-lease-lost', retryable: true });
+    expect(JSON.stringify(game.ledger)).not.toContain(privateAuthor);
+    expect(game.ledger.events.find((event) => event.type === 'scorer_handoff')).toMatchObject({
+      type: 'scorer_handoff',
+      after: { currentScorerUid: 'scorer-2' }
+    });
+    expect(verifyDiamondLedger(game.ledger)).toBe(true);
+  });
+
+  it('removes presented scorer leases from every private-material command hash while retaining them for public commands', () => {
+    const game = harness();
+    setBasicLineups(game, { start: true });
+    const leaseA = uuid(910);
+    const leaseB = uuid(911);
+    const privateAuthor = 'authorized-note-writer';
+    const hashesForLeases = (command: DiamondCommand, actorUid: string, eventId: string) => {
+      const first = executeDiamondCommand(
+        game.ledger,
+        { ...command, leaseId: leaseA } as unknown as DiamondCommand,
+        { actorUid, eventId, serverTimestampMs: 1_700_000_002_000 }
+      );
+      const second = executeDiamondCommand(
+        game.ledger,
+        { ...command, leaseId: leaseB } as unknown as DiamondCommand,
+        { actorUid, eventId, serverTimestampMs: 1_700_000_002_000 }
+      );
+      expect(first.result, first.result.rejection?.message).toMatchObject({ outcome: 'accepted' });
+      expect(second.result, second.result.rejection?.message).toMatchObject({ outcome: 'accepted' });
+      return [first.event!.commandHash, second.event!.commandHash] as const;
+    };
+
+    const directHashes = hashesForLeases(
+      game.command('private_note', { text: 'Direct private hash material' }, { commandId: uuid(912) }),
+      privateAuthor,
+      'private-hash-direct'
+    );
+    expect(directHashes[0]).toBe(directHashes[1]);
+
+    const publicTarget = game.submit('record_pitch', {
+      batterId: 'away-1',
+      pitcherId: 'home-1',
+      result: 'ball'
+    });
+    const replacementHashes = hashesForLeases(
+      game.command(
+        'supersede_event',
+        {
+          targetEventId: publicTarget.event!.eventId,
+          reason: 'Move to a private note.',
+          replacement: { type: 'private_note', payload: { text: 'Private replacement hash material' } }
+        },
+        { commandId: uuid(913) }
+      ),
+      privateAuthor,
+      'private-hash-replacement'
+    );
+    expect(replacementHashes[0]).toBe(replacementHashes[1]);
+
+    const privateTarget = game.submit('private_note', { text: 'Private correction hash target' }, { actorUid: privateAuthor });
+    const targetHashes = hashesForLeases(
+      game.command(
+        'void_event',
+        { targetEventId: privateTarget.event!.eventId, reason: 'Remove the private note.' },
+        { commandId: uuid(914) }
+      ),
+      privateAuthor,
+      'private-hash-target'
+    );
+    expect(targetHashes[0]).toBe(targetHashes[1]);
+
+    const publicHashes = hashesForLeases(
+      game.command(
+        'record_pitch',
+        { batterId: 'away-1', pitcherId: 'home-1', result: 'called_strike' },
+        { commandId: uuid(915) }
+      ),
+      SCORER,
+      'public-hash-command'
+    );
+    expect(publicHashes[0]).not.toBe(publicHashes[1]);
+  });
+
+  it('keeps private-note plaintext and author identity out of canonical ledger and receipt material', () => {
+    const game = harness();
+    game.submit('activate', { initialScorerUid: SCORER, captureMode: 'full' });
+    const submitted = game.submit('private_note', {
+      text: 'Delete this sensitive staff note',
+      visibility: 'staff-private'
+    });
+
+    expect(submitted.event?.payload).toEqual({
+      text: '[private note stored separately]',
+      visibility: 'staff-private'
+    });
+    expect(submitted.event?.actorUid).toBe('private-note-author');
+    expect(JSON.stringify(submitted.event)).not.toContain('Delete this sensitive staff note');
+    expect(JSON.stringify(submitted.event)).not.toContain(SCORER);
+    const receipt = createDiamondCommandReceipt(
+      game.command('private_note', { text: 'Delete this sensitive staff note', visibility: 'staff-private' }, {
+        commandId: submitted.event!.commandId,
+        expectedRevision: submitted.event!.before.revision
+      }),
+      submitted.event!,
+      submitted.result
+    );
+    expect(JSON.stringify(receipt)).not.toContain('Delete this sensitive staff note');
+    expect(JSON.stringify(receipt)).not.toContain(SCORER);
+    expect(JSON.stringify(submitted.ledger)).not.toContain('Delete this sensitive staff note');
+    expect(() => verifyDiamondLedger(submitted.ledger)).not.toThrow();
   });
 
   it('rejects malformed command IDs before state mutation', () => {

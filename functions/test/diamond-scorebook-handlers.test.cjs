@@ -50,6 +50,7 @@ const {
   PRIVATE_HISTORY_ADMISSION_DEDUPE_MS,
   PRIVATE_HISTORY_CONTROL_QUARANTINE_MS,
   PRIVATE_HISTORY_FIXED_READ_UNITS,
+  PRIVATE_HISTORY_READ_UNITS_PER_EVENT,
   PRIVATE_HISTORY_RATE_WINDOW_MS,
   PRIVATE_HISTORY_RECEIPT_RETENTION_MS,
   PRIVATE_HISTORY_REPORT_RETRY_ALLOWANCE,
@@ -910,6 +911,28 @@ function commandHistoryGameAdmission(harness) {
     1,
     "expected one diamond-command-history-game-admission control",
   );
+  return controls[0];
+}
+
+function privateMaterialCommandHistoryAdmissions(harness, type) {
+  return managerStatReadControls(harness, type);
+}
+
+function privateMaterialCommandHistoryAdmission(harness) {
+  const controls = privateMaterialCommandHistoryAdmissions(
+    harness,
+    "diamond-private-material-command-history-admission",
+  );
+  assert.equal(controls.length, 1, "expected one private-material game control");
+  return controls[0];
+}
+
+function privateMaterialCommandHistoryTeamAdmission(harness) {
+  const controls = privateMaterialCommandHistoryAdmissions(
+    harness,
+    "diamond-private-material-command-history-team-admission",
+  );
+  assert.equal(controls.length, 1, "expected one private-material team control");
   return controls[0];
 }
 
@@ -4547,6 +4570,7 @@ describe("Diamond scorebook handler factory", () => {
     assert.equal(activation.state.lease.status, "owned");
     assert.equal(activation.state.lease.canScore, true);
     assert.equal(activation.state.lease.leaseId, activationRequestId);
+    assert.equal(activation.state.canSubmitPrivateMaterial, true);
 
     nowMs += 60_000;
     const lineup = await submit(harness, {
@@ -4582,6 +4606,7 @@ describe("Diamond scorebook handler factory", () => {
     );
     assert.equal(handoff.state.lease.status, "held-by-other");
     assert.equal(handoff.state.lease.leaseId, null);
+    assert.equal(handoff.state.canSubmitPrivateMaterial, true);
     await assert.rejects(
       submit(harness, {
         commandId: makeUuid(323),
@@ -5979,6 +6004,7 @@ describe("Diamond scorebook handler factory", () => {
     );
     assert.equal(scorerState.lease.status, "owned");
     assert.equal(scorerState.lease.leaseId, requestId);
+    assert.equal(scorerState.canSubmitPrivateMaterial, true);
   });
 
   it("allows delegated scorekeepers but keeps configuration, activation, and recovery manager-only", async () => {
@@ -6025,6 +6051,424 @@ describe("Diamond scorebook handler factory", () => {
       (error) => error.code === "permission-denied",
     );
     assert.equal(canonicalEventReads, 0);
+  });
+
+  it("lets a non-current authorized scorekeeper write private material without changing the scorer lease", async () => {
+    const harness = createHarness({
+      authUsers: {
+        "viewer-1": {
+          uid: "viewer-1",
+          disabled: false,
+          email: "viewer@example.com",
+          emailVerified: true,
+        },
+      },
+      documents: {
+        "teams/team-1": {
+          ...baseDocuments()["teams/team-1"],
+          scorekeeperIds: ["scorer-1"],
+        },
+      },
+    });
+    await activate(harness);
+    const resourcePaths = paths("team-1", "game-1");
+    const callerScopedControlsBefore = managerStatReadControls(harness).filter(
+      ({ value }) =>
+        value?.type === "diamond-command-history-admission" ||
+        value?.type === "diamond-command-history-global-admission",
+    );
+    const leaseBefore = clone(
+      harness.firestore.read(resourcePaths.scorebook).scorerLease,
+    );
+    const command = {
+      commandId: makeUuid(32_100),
+      expectedRevision: 1,
+      type: "private_note",
+      context: harness.scorerContext,
+      payload: { text: "Authorized secondary scorekeeper note" },
+    };
+
+    const accepted = await submit(harness, command);
+    assert.equal(accepted.outcome, "accepted");
+    assert.equal(accepted.state.state.currentScorerUid, "manager-1");
+    assert.equal(accepted.state.canSubmitPrivateMaterial, true);
+    assert.deepEqual(
+      harness.firestore.read(resourcePaths.scorebook).scorerLease,
+      leaseBefore,
+    );
+    const canonicalEvent = harness.firestore.read(
+      resourcePaths.event(accepted.eventId),
+    );
+    assert.equal(canonicalEvent.actorUid, "private-note-author");
+    assert.equal(canonicalEvent.before.currentScorerUid, "private-note-author");
+    assert.equal(canonicalEvent.after.currentScorerUid, "private-note-author");
+    assert.doesNotMatch(JSON.stringify(canonicalEvent), /scorer-1/);
+    assert.equal(
+      harness.firestore.read(resourcePaths.note(accepted.eventId)).authorUid,
+      "scorer-1",
+    );
+    assert.deepEqual(
+      managerStatReadControls(harness).filter(
+        ({ value }) =>
+          value?.type === "diamond-command-history-admission" ||
+          value?.type === "diamond-command-history-global-admission",
+      ),
+      callerScopedControlsBefore,
+    );
+    const privacyNeutralControls = managerStatReadControls(harness).filter(
+      ({ value }) =>
+        value?.type === "diamond-private-material-command-history-admission" ||
+        value?.type ===
+          "diamond-private-material-command-history-team-admission",
+    );
+    assert.equal(privacyNeutralControls.length, 2);
+    assert.doesNotMatch(JSON.stringify(privacyNeutralControls), /scorer-1/);
+
+    const duplicate = await submit(harness, command);
+    assert.equal(duplicate.outcome, "duplicate");
+    assert.equal(duplicate.state.state.currentScorerUid, "manager-1");
+    assert.deepEqual(
+      harness.firestore.read(resourcePaths.scorebook).scorerLease,
+      leaseBefore,
+    );
+
+    await assert.rejects(
+      submit(harness, {
+        commandId: makeUuid(32_101),
+        expectedRevision: 2,
+        type: "set_lineup",
+        context: harness.scorerContext,
+        payload: {
+          side: "home",
+          entries: [{ slot: 1, playerId: "home-1" }],
+        },
+      }),
+      (error) =>
+        error.code === "unavailable" &&
+        error.details?.reason === "lease-held-by-other",
+    );
+    await assert.rejects(
+      harness.handlers.getDiamondState(
+        { teamId: "team-1", gameId: "game-1", visibility: "private" },
+        { auth: { uid: "viewer-1" } },
+      ),
+      (error) => error.code === "permission-denied",
+    );
+    const publicSnapshot = await harness.handlers.getPublicDiamondGame({
+      teamId: "team-1",
+      gameId: "game-1",
+      limit: 20,
+    });
+    assert.equal(
+      Object.hasOwn(publicSnapshot, "canSubmitPrivateMaterial"),
+      false,
+    );
+  });
+
+  it("publishes a safe pending tombstone for public-to-private replacement and suppresses private-only transitions", async () => {
+    const authorizedTeam = {
+      ...baseDocuments()["teams/team-1"],
+      scorekeeperIds: ["scorer-1"],
+    };
+
+    const publicHarness = createHarness({
+      documents: { "teams/team-1": authorizedTeam },
+    });
+    await activate(publicHarness);
+    await startGame(publicHarness);
+    const publicPaths = paths("team-1", "game-1");
+    const publicTarget = await submit(publicHarness, {
+      commandId: makeUuid(32_110),
+      expectedRevision: 6,
+      type: "record_pitch",
+      payload: {
+        batterId: "away-1",
+        pitcherId: "home-1",
+        result: "ball",
+      },
+    });
+    const leaseBefore = clone(
+      publicHarness.firestore.read(publicPaths.scorebook).scorerLease,
+    );
+    const callerScopedControlsBeforePrivateReplacement =
+      managerStatReadControls(publicHarness).filter(
+        ({ value }) =>
+          value?.type === "diamond-command-history-admission" ||
+          value?.type === "diamond-command-history-global-admission",
+      );
+    assert.ok(
+      publicHarness.firestore
+        .read(publicPaths.scorebook)
+        .recentPublicEvents.some(
+          ({ eventId }) => eventId === publicTarget.eventId,
+        ),
+    );
+
+    const publicToPrivate = await submit(publicHarness, {
+      commandId: makeUuid(32_111),
+      expectedRevision: 7,
+      type: "supersede_event",
+      context: publicHarness.scorerContext,
+      payload: {
+        targetEventId: publicTarget.eventId,
+        reason: "This reason must remain private.",
+        replacement: {
+          type: "private_note",
+          payload: { text: "This replacement must remain private." },
+        },
+      },
+    });
+    assert.equal(publicToPrivate.outcome, "accepted");
+    assert.equal(publicToPrivate.state.state.currentScorerUid, "manager-1");
+    assert.deepEqual(
+      publicHarness.firestore.read(publicPaths.scorebook).scorerLease,
+      leaseBefore,
+    );
+    assert.deepEqual(
+      managerStatReadControls(publicHarness).filter(
+        ({ value }) =>
+          value?.type === "diamond-command-history-admission" ||
+          value?.type === "diamond-command-history-global-admission",
+      ),
+      callerScopedControlsBeforePrivateReplacement,
+    );
+    const publicTombstone = publicHarness.firestore.read(
+      publicPaths.publicEvent(publicToPrivate.eventId),
+    );
+    assert.equal(publicTombstone.type, "void_event");
+    assert.equal(publicTombstone.voidsEventId, publicTarget.eventId);
+    assert.equal(publicTombstone.supersedesEventId, undefined);
+    assert.ok(
+      publicHarness.firestore.read(publicPaths.publicEvent(publicTarget.eventId)),
+    );
+    const recent = publicHarness.firestore.read(
+      publicPaths.scorebook,
+    ).recentPublicEvents;
+    assert.equal(
+      recent.some(({ eventId }) => eventId === publicTarget.eventId),
+      false,
+    );
+    assert.deepEqual(recent.at(-1), {
+      eventId: publicToPrivate.eventId,
+      revision: 8,
+      label: "Scoring correction recorded",
+      inningLabel: "Top 1",
+      createdAt: "2025-06-15T15:06:40.000Z",
+      voided: true,
+      voidsEventId: publicTarget.eventId,
+    });
+    assert.doesNotMatch(
+      JSON.stringify({
+        publicTombstone,
+        recent,
+        publicState: publicHarness.firestore.read(publicPaths.publicState),
+      }),
+      /This reason|This replacement|scorer-1/,
+    );
+    const pendingPublic = await publicHarness.handlers.getPublicDiamondGame({
+      teamId: "team-1",
+      gameId: "game-1",
+      limit: 200,
+    });
+    const returnedTombstone = pendingPublic.events.find(
+      ({ id }) => id === publicToPrivate.eventId,
+    );
+    assert.deepEqual(
+      {
+        type: returnedTombstone.type,
+        voidsEventId: returnedTombstone.voidsEventId,
+        supersedesEventId: returnedTombstone.supersedesEventId,
+      },
+      {
+        type: "void_event",
+        voidsEventId: publicTarget.eventId,
+        supersedesEventId: null,
+      },
+    );
+
+    const ordinaryTarget = await submit(publicHarness, {
+      commandId: makeUuid(32_112),
+      expectedRevision: 8,
+      type: "record_pitch",
+      payload: {
+        batterId: "away-1",
+        pitcherId: "home-1",
+        result: "called_strike",
+      },
+    });
+    const ordinaryControlsBeforeCorrection = managerStatReadControls(
+      publicHarness,
+    ).filter(
+      ({ value }) =>
+        value?.type === "diamond-command-history-admission" ||
+        value?.type === "diamond-command-history-global-admission",
+    );
+    const ordinaryCorrection = await submit(publicHarness, {
+      commandId: makeUuid(32_113),
+      expectedRevision: 9,
+      type: "void_event",
+      payload: {
+        targetEventId: ordinaryTarget.eventId,
+        reason: "Ordinary public scoring correction.",
+      },
+    });
+    assert.equal(ordinaryCorrection.outcome, "accepted");
+    const ordinaryControlsAfterCorrection = managerStatReadControls(
+      publicHarness,
+    ).filter(
+      ({ value }) =>
+        value?.type === "diamond-command-history-admission" ||
+        value?.type === "diamond-command-history-global-admission",
+    );
+    assert.deepEqual(
+      ordinaryControlsAfterCorrection.map(({ path }) => path),
+      ordinaryControlsBeforeCorrection.map(({ path }) => path),
+    );
+    ordinaryControlsAfterCorrection.forEach(({ path, value }) => {
+      const before = ordinaryControlsBeforeCorrection.find(
+        (candidate) => candidate.path === path,
+      )?.value;
+      assert.equal(value.requestCount, before.requestCount + 1);
+      assert.equal(
+        value.projectionRequestCount,
+        before.projectionRequestCount + 1,
+      );
+    });
+
+    const privateHarness = createHarness({
+      documents: { "teams/team-1": authorizedTeam },
+    });
+    await activate(privateHarness);
+    await startGame(privateHarness);
+    const privatePaths = paths("team-1", "game-1");
+    const privateLeaseBefore = clone(
+      privateHarness.firestore.read(privatePaths.scorebook).scorerLease,
+    );
+    const callerScopedControlsBeforePrivateOnlyTransitions =
+      managerStatReadControls(privateHarness).filter(
+        ({ value }) =>
+          value?.type === "diamond-command-history-admission" ||
+          value?.type === "diamond-command-history-global-admission",
+      );
+    const firstPrivate = await submit(privateHarness, {
+      commandId: makeUuid(32_120),
+      expectedRevision: 6,
+      type: "private_note",
+      context: privateHarness.scorerContext,
+      payload: { text: "First private version" },
+    });
+    const privateToPrivate = await submit(privateHarness, {
+      commandId: makeUuid(32_121),
+      expectedRevision: 7,
+      type: "supersede_event",
+      context: privateHarness.scorerContext,
+      payload: {
+        targetEventId: firstPrivate.eventId,
+        reason: "Replace privately.",
+        replacement: {
+          type: "private_note",
+          payload: { text: "Second private version" },
+        },
+      },
+    });
+    assert.equal(privateToPrivate.outcome, "accepted");
+    assert.equal(
+      privateHarness.firestore.read(
+        privatePaths.publicEvent(privateToPrivate.eventId),
+      ),
+      undefined,
+    );
+    assert.deepEqual(
+      privateHarness.firestore.read(privatePaths.scorebook).scorerLease,
+      privateLeaseBefore,
+    );
+
+    const voidTarget = await submit(privateHarness, {
+      commandId: makeUuid(32_122),
+      expectedRevision: 8,
+      type: "private_note",
+      context: privateHarness.scorerContext,
+      payload: { text: "Private void target" },
+    });
+    const privateVoid = await submit(privateHarness, {
+      commandId: makeUuid(32_123),
+      expectedRevision: 9,
+      type: "void_event",
+      context: privateHarness.scorerContext,
+      payload: {
+        targetEventId: voidTarget.eventId,
+        reason: "Void privately.",
+      },
+    });
+    assert.equal(privateVoid.outcome, "accepted");
+    assert.equal(
+      privateHarness.firestore.read(privatePaths.publicEvent(privateVoid.eventId)),
+      undefined,
+    );
+    assert.deepEqual(
+      privateHarness.firestore.read(privatePaths.scorebook).scorerLease,
+      privateLeaseBefore,
+    );
+    assert.deepEqual(
+      managerStatReadControls(privateHarness).filter(
+        ({ value }) =>
+          value?.type === "diamond-command-history-admission" ||
+          value?.type === "diamond-command-history-global-admission",
+      ),
+      callerScopedControlsBeforePrivateOnlyTransitions,
+    );
+
+    const publicReplacementHarness = createHarness({
+      documents: { "teams/team-1": authorizedTeam },
+    });
+    await activate(publicReplacementHarness);
+    await startGame(publicReplacementHarness);
+    const replacementPaths = paths("team-1", "game-1");
+    const replacementLeaseBefore = clone(
+      publicReplacementHarness.firestore.read(replacementPaths.scorebook)
+        .scorerLease,
+    );
+    const privateTarget = await submit(publicReplacementHarness, {
+      commandId: makeUuid(32_130),
+      expectedRevision: 6,
+      type: "private_note",
+      context: publicReplacementHarness.scorerContext,
+      payload: { text: "Private source for public correction" },
+    });
+    const privateToPublic = await submit(publicReplacementHarness, {
+      commandId: makeUuid(32_131),
+      expectedRevision: 7,
+      type: "supersede_event",
+      context: publicReplacementHarness.scorerContext,
+      payload: {
+        targetEventId: privateTarget.eventId,
+        reason: "Publish the corrected non-sensitive lineup.",
+        replacement: {
+          type: "record_pitch",
+          payload: {
+            batterId: "away-1",
+            pitcherId: "home-1",
+            result: "ball",
+          },
+        },
+      },
+    });
+    assert.equal(privateToPublic.outcome, "accepted");
+    assert.deepEqual(
+      publicReplacementHarness.firestore.read(replacementPaths.scorebook)
+        .scorerLease,
+      replacementLeaseBefore,
+    );
+    const replacementEvent = publicReplacementHarness.firestore.read(
+      replacementPaths.publicEvent(privateToPublic.eventId),
+    );
+    assert.equal(replacementEvent.type, "record_pitch");
+    assert.equal(replacementEvent.voidsEventId, undefined);
+    assert.equal(replacementEvent.supersedesEventId, undefined);
+    assert.doesNotMatch(
+      JSON.stringify(replacementEvent),
+      /Private source|Publish the corrected|scorer-1/,
+    );
   });
 
   it("lets the verified manager cancel after scorer handoff during rollback without exposing the reason", async () => {
@@ -6394,7 +6838,11 @@ describe("Diamond scorebook handler factory", () => {
     ).value;
     assert.equal(admission.requestCount, 1);
     assert.equal(scope.requestCount, 1);
-    assert.equal(admission.readUnits, PRIVATE_HISTORY_FIXED_READ_UNITS + 200);
+    assert.equal(
+      admission.readUnits,
+      PRIVATE_HISTORY_FIXED_READ_UNITS +
+        PRIVATE_HISTORY_READ_UNITS_PER_EVENT * 200,
+    );
     assert.equal(scope.readUnits, admission.readUnits);
     assert.equal(
       admission.recentAttempts.length,
@@ -6721,12 +7169,14 @@ describe("Diamond scorebook handler factory", () => {
     assert.equal(
       MAX_PRIVATE_HISTORY_READ_UNITS_PER_WINDOW,
       MAX_PRIVATE_HISTORY_REQUESTS_PER_WINDOW *
-        (PRIVATE_HISTORY_FIXED_READ_UNITS + 200),
+        (PRIVATE_HISTORY_FIXED_READ_UNITS +
+          PRIVATE_HISTORY_READ_UNITS_PER_EVENT * 200),
     );
     assert.equal(
       MAX_PRIVATE_HISTORY_SUSTAINED_READ_UNITS_PER_WINDOW,
       MAX_PRIVATE_HISTORY_SUSTAINED_REQUESTS_PER_WINDOW *
-        (PRIVATE_HISTORY_FIXED_READ_UNITS + 200),
+        (PRIVATE_HISTORY_FIXED_READ_UNITS +
+          PRIVATE_HISTORY_READ_UNITS_PER_EVENT * 200),
     );
     assert.equal(
       MAX_PRIVATE_HISTORY_GLOBAL_SUSTAINED_REQUESTS_PER_WINDOW,
@@ -6735,7 +7185,8 @@ describe("Diamond scorebook handler factory", () => {
     assert.equal(
       MAX_PRIVATE_HISTORY_GLOBAL_SUSTAINED_READ_UNITS_PER_WINDOW,
       MAX_PRIVATE_HISTORY_GLOBAL_SUSTAINED_REQUESTS_PER_WINDOW *
-        (PRIVATE_HISTORY_FIXED_READ_UNITS + 200),
+        (PRIVATE_HISTORY_FIXED_READ_UNITS +
+          PRIVATE_HISTORY_READ_UNITS_PER_EVENT * 200),
     );
 
     let cursor = null;
@@ -6764,18 +7215,25 @@ describe("Diamond scorebook handler factory", () => {
     );
     const reportReadUnits =
       MAX_PRIVATE_HISTORY_REPORT_PAGES *
-      (PRIVATE_HISTORY_FIXED_READ_UNITS + 200);
+      (PRIVATE_HISTORY_FIXED_READ_UNITS +
+        PRIVATE_HISTORY_READ_UNITS_PER_EVENT * 200);
     harness.firestore.seed(admissionControl.path, {
       ...admissionControl.value,
       requestCount: 200,
-      readUnits: 200 * (PRIVATE_HISTORY_FIXED_READ_UNITS + 200),
+      readUnits:
+        200 *
+        (PRIVATE_HISTORY_FIXED_READ_UNITS +
+          PRIVATE_HISTORY_READ_UNITS_PER_EVENT * 200),
       sustainedRequestCount: MAX_PRIVATE_HISTORY_REPORT_PAGES,
       sustainedReadUnits: reportReadUnits,
     });
     harness.firestore.seed(scopeControl.path, {
       ...scopeControl.value,
       requestCount: 200,
-      readUnits: 200 * (PRIVATE_HISTORY_FIXED_READ_UNITS + 200),
+      readUnits:
+        200 *
+        (PRIVATE_HISTORY_FIXED_READ_UNITS +
+          PRIVATE_HISTORY_READ_UNITS_PER_EVENT * 200),
       sustainedRequestCount: MAX_PRIVATE_HISTORY_REPORT_PAGES,
       sustainedReadUnits: reportReadUnits,
     });
@@ -6804,16 +7262,20 @@ describe("Diamond scorebook handler factory", () => {
     );
     assert.equal(
       scope.readUnits,
-      200 * (PRIVATE_HISTORY_FIXED_READ_UNITS + 200) +
+      200 *
+        (PRIVATE_HISTORY_FIXED_READ_UNITS +
+          PRIVATE_HISTORY_READ_UNITS_PER_EVENT * 200) +
         PRIVATE_HISTORY_REPORT_RETRY_ALLOWANCE *
-          (PRIVATE_HISTORY_FIXED_READ_UNITS + 200),
+          (PRIVATE_HISTORY_FIXED_READ_UNITS +
+            PRIVATE_HISTORY_READ_UNITS_PER_EVENT * 200),
     );
     assert.ok(scope.readUnits < MAX_PRIVATE_HISTORY_READ_UNITS_PER_WINDOW);
     assert.equal(
       scope.sustainedReadUnits,
       reportReadUnits +
         PRIVATE_HISTORY_REPORT_RETRY_ALLOWANCE *
-          (PRIVATE_HISTORY_FIXED_READ_UNITS + 200),
+          (PRIVATE_HISTORY_FIXED_READ_UNITS +
+            PRIVATE_HISTORY_READ_UNITS_PER_EVENT * 200),
     );
     assert.equal(
       scope.sustainedReadUnits,
@@ -6939,11 +7401,13 @@ describe("Diamond scorebook handler factory", () => {
       requestCount: MAX_PRIVATE_HISTORY_GLOBAL_REQUESTS_PER_WINDOW,
       readUnits:
         MAX_PRIVATE_HISTORY_GLOBAL_REQUESTS_PER_WINDOW *
-        (PRIVATE_HISTORY_FIXED_READ_UNITS + 200),
+        (PRIVATE_HISTORY_FIXED_READ_UNITS +
+          PRIVATE_HISTORY_READ_UNITS_PER_EVENT * 200),
       sustainedRequestCount: MAX_PRIVATE_HISTORY_GLOBAL_REQUESTS_PER_WINDOW,
       sustainedReadUnits:
         MAX_PRIVATE_HISTORY_GLOBAL_REQUESTS_PER_WINDOW *
-        (PRIVATE_HISTORY_FIXED_READ_UNITS + 200),
+        (PRIVATE_HISTORY_FIXED_READ_UNITS +
+          PRIVATE_HISTORY_READ_UNITS_PER_EVENT * 200),
     });
     harness.firestore.setDocumentUpdateTime(
       admissionControl.path,
@@ -8258,7 +8722,7 @@ describe("Diamond scorebook handler factory", () => {
     );
   });
 
-  it("shares the projector budget across a caller's games without partial denial writes", async () => {
+  it("shares privacy-neutral projector budget across a team's games without partial denial writes", async () => {
     let nowMs = 1_750_000_000_000;
     const harness = createHarness({ clock: () => nowMs });
     harness.firestore.commitTimestampMs = nowMs;
@@ -8286,12 +8750,13 @@ describe("Diamond scorebook handler factory", () => {
       ),
       2,
     );
+    const globalBefore = clone(commandHistoryGlobalAdmission(harness).value);
 
-    // Two fresh activations plus these commands exactly fill the shared
-    // caller-wide burst envelope while each individual game remains below it.
+    // Private material shares a team-wide neutral envelope while each
+    // individual game remains below it.
     for (
       let index = 0;
-      index < MAX_COMMAND_PROJECTION_REQUESTS_PER_WINDOW - 2;
+      index < MAX_COMMAND_PROJECTION_REQUESTS_PER_WINDOW;
       index += 1
     ) {
       const gameId = index % 2 === 0 ? "game-1" : "game-2";
@@ -8313,14 +8778,16 @@ describe("Diamond scorebook handler factory", () => {
       );
     }
 
-    const globalBefore = clone(commandHistoryGlobalAdmission(harness).value);
+    const teamBefore = clone(
+      privateMaterialCommandHistoryTeamAdmission(harness).value,
+    );
     assert.equal(
-      globalBefore.projectionRequestCount,
+      teamBefore.projectionRequestCount,
       MAX_COMMAND_PROJECTION_REQUESTS_PER_WINDOW,
     );
-    const perGameBefore = managerStatReadControls(
+    const perGameBefore = privateMaterialCommandHistoryAdmissions(
       harness,
-      "diamond-command-history-admission",
+      "diamond-private-material-command-history-admission",
     );
     const sharedGamesBefore = clone(commandHistoryGameAdmissions(harness));
     assert.equal(perGameBefore.length, 2);
@@ -8331,15 +8798,9 @@ describe("Diamond scorebook handler factory", () => {
         (sum, { value }) => sum + value.projectionRequestCount,
         0,
       ),
-      globalBefore.projectionRequestCount,
+      MAX_COMMAND_PROJECTION_REQUESTS_PER_WINDOW + 2,
     );
-    assert.equal(
-      sharedGamesBefore.reduce(
-        (sum, { value }) => sum + value.projectionReadUnits,
-        0,
-      ),
-      globalBefore.projectionReadUnits,
-    );
+    assert.deepEqual(commandHistoryGlobalAdmission(harness).value, globalBefore);
     const resourcePaths = paths("team-1", "game-1");
     const rootBefore = clone(harness.firestore.read(resourcePaths.scorebook));
     const statsBefore = clone(
@@ -8364,14 +8825,18 @@ describe("Diamond scorebook handler factory", () => {
         error.details?.reason === "command-history-rate-limited",
     );
     assert.deepEqual(
-      managerStatReadControls(harness, "diamond-command-history-admission"),
+      privateMaterialCommandHistoryAdmissions(
+        harness,
+        "diamond-private-material-command-history-admission",
+      ),
       perGameBefore,
     );
     assert.deepEqual(
-      commandHistoryGlobalAdmission(harness).value,
-      globalBefore,
+      privateMaterialCommandHistoryTeamAdmission(harness).value,
+      teamBefore,
     );
     assert.deepEqual(commandHistoryGameAdmissions(harness), sharedGamesBefore);
+    assert.deepEqual(commandHistoryGlobalAdmission(harness).value, globalBefore);
     assert.deepEqual(
       harness.firestore.read(resourcePaths.scorebook),
       rootBefore,
@@ -8392,9 +8857,9 @@ describe("Diamond scorebook handler factory", () => {
     nowMs += COMMAND_HISTORY_RATE_WINDOW_MS + 1;
     harness.firestore.commitTimestampMs = nowMs;
     const nextRevision = rootBefore.checkpoint.sequence + 1;
-    const globalControl = commandHistoryGlobalAdmission(harness);
-    harness.firestore.seed(globalControl.path, {
-      ...globalControl.value,
+    const teamControl = privateMaterialCommandHistoryTeamAdmission(harness);
+    harness.firestore.seed(teamControl.path, {
+      ...teamControl.value,
       sustainedProjectionRequestCount:
         MAX_COMMAND_PROJECTION_SUSTAINED_REQUESTS_PER_WINDOW - 1,
       sustainedProjectionReadUnits:
@@ -8407,14 +8872,16 @@ describe("Diamond scorebook handler factory", () => {
           expectedRevision: rootBefore.checkpoint.sequence,
           type: "private_note",
           payload: {
-            text: "Last caller-global sustained projection",
+            text: "Last team-scoped sustained projection",
             attachedEventId: null,
           },
         })
       ).outcome,
       "accepted",
     );
-    const sustained = clone(commandHistoryGlobalAdmission(harness).value);
+    const sustained = clone(
+      privateMaterialCommandHistoryTeamAdmission(harness).value,
+    );
     const sharedGamesAtSustainedLimit = clone(
       commandHistoryGameAdmissions(harness),
     );
@@ -8444,7 +8911,10 @@ describe("Diamond scorebook handler factory", () => {
         error.code === "resource-exhausted" &&
         error.details?.reason === "command-history-rate-limited",
     );
-    assert.deepEqual(commandHistoryGlobalAdmission(harness).value, sustained);
+    assert.deepEqual(
+      privateMaterialCommandHistoryTeamAdmission(harness).value,
+      sustained,
+    );
     assert.deepEqual(
       commandHistoryGameAdmissions(harness),
       sharedGamesAtSustainedLimit,
@@ -8455,7 +8925,7 @@ describe("Diamond scorebook handler factory", () => {
     );
   });
 
-  it("atomically serializes cross-game commands at the caller-global limit", async () => {
+  it("atomically serializes cross-game private commands at the neutral team limit", async () => {
     const harness = createHarness();
     const firstGame = harness.firestore.read("teams/team-1/games/game-1");
     harness.firestore.seed("teams/team-1/games/game-2", {
@@ -8467,9 +8937,18 @@ describe("Diamond scorebook handler factory", () => {
       requestId: makeUuid(20_601),
       gameId: "game-2",
     });
-    const global = commandHistoryGlobalAdmission(harness);
-    harness.firestore.seed(global.path, {
-      ...global.value,
+    await submit(harness, {
+      commandId: makeUuid(20_602),
+      expectedRevision: 1,
+      type: "private_note",
+      payload: {
+        text: "Seed the privacy-neutral team admission",
+        attachedEventId: null,
+      },
+    });
+    const teamControl = privateMaterialCommandHistoryTeamAdmission(harness);
+    harness.firestore.seed(teamControl.path, {
+      ...teamControl.value,
       projectionRequestCount: MAX_COMMAND_PROJECTION_REQUESTS_PER_WINDOW - 1,
       projectionReadUnits: MAX_COMMAND_PROJECTION_READ_UNITS_PER_WINDOW - 2,
       sustainedProjectionRequestCount:
@@ -8488,8 +8967,8 @@ describe("Diamond scorebook handler factory", () => {
     const outcomes = await Promise.allSettled(
       ["game-1", "game-2"].map((gameId, index) =>
         submit(harness, {
-          commandId: makeUuid(20_602 + index),
-          expectedRevision: 1,
+          commandId: makeUuid(20_603 + index),
+          expectedRevision: rootsBefore.get(gameId).checkpoint.sequence,
           type: "private_note",
           payload: {
             text: `Concurrent cross-game note ${index}`,
@@ -8521,7 +9000,7 @@ describe("Diamond scorebook handler factory", () => {
     assert.equal(
       harness.firestore.read(paths("team-1", acceptedGameId).scorebook)
         .checkpoint.sequence,
-      2,
+      rootsBefore.get(acceptedGameId).checkpoint.sequence + 1,
     );
     assert.deepEqual(
       harness.firestore.read(paths("team-1", rejectedGameId).scorebook),
@@ -8530,17 +9009,17 @@ describe("Diamond scorebook handler factory", () => {
     assert.equal(
       harness.firestore.read(
         paths("team-1", rejectedGameId).command(
-          makeUuid(20_602 + rejectedIndex),
+          makeUuid(20_603 + rejectedIndex),
         ),
       ),
       undefined,
     );
-    const perGame = managerStatReadControls(
+    const perGame = privateMaterialCommandHistoryAdmissions(
       harness,
-      "diamond-command-history-admission",
+      "diamond-private-material-command-history-admission",
     );
-    assert.equal(perGame.length, 1);
-    const charged = commandHistoryGlobalAdmission(harness).value;
+    assert.ok(perGame.length === 1 || perGame.length === 2);
+    const charged = privateMaterialCommandHistoryTeamAdmission(harness).value;
     assert.equal(
       charged.projectionRequestCount,
       MAX_COMMAND_PROJECTION_REQUESTS_PER_WINDOW,
@@ -8555,18 +9034,18 @@ describe("Diamond scorebook handler factory", () => {
       sharedGamesAfter
         .map(({ value }) => value.projectionRequestCount)
         .sort((left, right) => left - right),
-      [1, 2],
+      acceptedGameId === "game-1" ? [1, 3] : [2, 2],
     );
     assert.equal(
       sharedGamesAfter.reduce(
         (sum, { value }) => sum + value.projectionReadUnits,
         0,
       ),
-      4,
+      acceptedGameId === "game-1" ? 7 : 6,
     );
   });
 
-  it("charges every accepted projector-triggering command without replaying ordinary history", async () => {
+  it("charges accepted private projector work to privacy-neutral controls without replaying history", async () => {
     const harness = createHarness();
     await activate(harness);
     const resourcePaths = paths("team-1", "game-1");
@@ -8599,14 +9078,18 @@ describe("Diamond scorebook handler factory", () => {
     const accepted = await submit(harness, command);
     assert.equal(accepted.outcome, "accepted");
     assert.equal(historyReads, 0);
-    const charged = clone(commandHistoryAdmission(harness).value);
+    const charged = clone(
+      privateMaterialCommandHistoryAdmission(harness).value,
+    );
     assert.equal(charged.requestCount, 0);
     assert.equal(charged.readUnits, 0);
-    assert.equal(charged.projectionRequestCount, 6);
-    assert.equal(charged.projectionReadUnits, 27);
-    const globalCharged = clone(commandHistoryGlobalAdmission(harness).value);
-    assert.equal(globalCharged.projectionRequestCount, 7);
-    assert.equal(globalCharged.projectionReadUnits, 28);
+    assert.equal(charged.projectionRequestCount, 1);
+    assert.equal(charged.projectionReadUnits, 7);
+    const teamCharged = clone(
+      privateMaterialCommandHistoryTeamAdmission(harness).value,
+    );
+    assert.equal(teamCharged.projectionRequestCount, 1);
+    assert.equal(teamCharged.projectionReadUnits, 7);
     assert.doesNotMatch(
       JSON.stringify(charged),
       /manager-1|team-1|game-1|Private projector|00000000-/,
@@ -8615,10 +9098,13 @@ describe("Diamond scorebook handler factory", () => {
     const duplicate = await submit(harness, command);
     assert.equal(duplicate.outcome, "duplicate");
     assert.equal(historyReads, 0);
-    assert.deepEqual(commandHistoryAdmission(harness).value, charged);
     assert.deepEqual(
-      commandHistoryGlobalAdmission(harness).value,
-      globalCharged,
+      privateMaterialCommandHistoryAdmission(harness).value,
+      charged,
+    );
+    assert.deepEqual(
+      privateMaterialCommandHistoryTeamAdmission(harness).value,
+      teamCharged,
     );
 
     const rejected = await submit(harness, {
@@ -8632,10 +9118,18 @@ describe("Diamond scorebook handler factory", () => {
       },
     });
     assert.equal(rejected.outcome, "rejected");
-    assert.deepEqual(commandHistoryAdmission(harness).value, charged);
+    assert.deepEqual(commandHistoryAdmission(harness).value, afterStart);
     assert.deepEqual(
       commandHistoryGlobalAdmission(harness).value,
-      globalCharged,
+      globalAfterStart,
+    );
+    assert.deepEqual(
+      privateMaterialCommandHistoryAdmission(harness).value,
+      charged,
+    );
+    assert.deepEqual(
+      privateMaterialCommandHistoryTeamAdmission(harness).value,
+      teamCharged,
     );
   });
 
@@ -8650,7 +9144,9 @@ describe("Diamond scorebook handler factory", () => {
       payload: { text: "Already committed note", attachedEventId: null },
     };
     assert.equal((await submit(harness, acceptedCommand)).outcome, "accepted");
-    const charged = clone(commandHistoryAdmission(harness).value);
+    const charged = clone(
+      privateMaterialCommandHistoryAdmission(harness).value,
+    );
     const root = harness.firestore.read(resourcePaths.scorebook);
     root.checkpoint = {
       ...root.checkpoint,
@@ -8678,11 +9174,17 @@ describe("Diamond scorebook handler factory", () => {
       harness.firestore.countDirectChildren(resourcePaths.events),
       2,
     );
-    assert.deepEqual(commandHistoryAdmission(harness).value, charged);
+    assert.deepEqual(
+      privateMaterialCommandHistoryAdmission(harness).value,
+      charged,
+    );
 
     const duplicate = await submit(harness, acceptedCommand);
     assert.equal(duplicate.outcome, "duplicate");
-    assert.deepEqual(commandHistoryAdmission(harness).value, charged);
+    assert.deepEqual(
+      privateMaterialCommandHistoryAdmission(harness).value,
+      charged,
+    );
   });
 
   it("rate limits fresh private notes atomically before another event or projector write", async () => {
@@ -8692,15 +9194,28 @@ describe("Diamond scorebook handler factory", () => {
     await activate(harness);
     await startGame(harness);
     const resourcePaths = paths("team-1", "game-1");
-    const control = commandHistoryAdmission(harness);
-    harness.firestore.seed(control.path, {
+    await submit(harness, {
+      commandId: makeUuid(4_660),
+      expectedRevision: 6,
+      type: "private_note",
+      payload: { text: "Seed private admission controls", attachedEventId: null },
+    });
+    const control = privateMaterialCommandHistoryAdmission(harness);
+    const teamControl = privateMaterialCommandHistoryTeamAdmission(harness);
+    const saturatedControl = {
       ...control.value,
       projectionRequestCount: MAX_COMMAND_PROJECTION_REQUESTS_PER_WINDOW - 1,
-      projectionReadUnits: MAX_COMMAND_PROJECTION_READ_UNITS_PER_WINDOW - 7,
+      projectionReadUnits: MAX_COMMAND_PROJECTION_READ_UNITS_PER_WINDOW - 8,
       sustainedProjectionRequestCount:
         MAX_COMMAND_PROJECTION_REQUESTS_PER_WINDOW - 1,
       sustainedProjectionReadUnits:
-        MAX_COMMAND_PROJECTION_READ_UNITS_PER_WINDOW - 7,
+        MAX_COMMAND_PROJECTION_READ_UNITS_PER_WINDOW - 8,
+    };
+    harness.firestore.seed(control.path, saturatedControl);
+    harness.firestore.seed(teamControl.path, {
+      ...saturatedControl,
+      type: teamControl.value.type,
+      scopeHash: teamControl.value.scopeHash,
     });
     let historyReads = 0;
     harness.firestore.queryHook = (query) => {
@@ -8709,12 +9224,17 @@ describe("Diamond scorebook handler factory", () => {
 
     const admittedCommand = {
       commandId: makeUuid(466),
-      expectedRevision: 6,
+      expectedRevision: 7,
       type: "private_note",
       payload: { text: "Last admitted note", attachedEventId: null },
     };
     assert.equal((await submit(harness, admittedCommand)).outcome, "accepted");
-    const charged = clone(commandHistoryAdmission(harness).value);
+    const charged = clone(
+      privateMaterialCommandHistoryAdmission(harness).value,
+    );
+    const teamCharged = clone(
+      privateMaterialCommandHistoryTeamAdmission(harness).value,
+    );
     assert.equal(
       charged.projectionRequestCount,
       MAX_COMMAND_PROJECTION_REQUESTS_PER_WINDOW,
@@ -8733,7 +9253,7 @@ describe("Diamond scorebook handler factory", () => {
     await assert.rejects(
       submit(harness, {
         commandId: makeUuid(465),
-        expectedRevision: 7,
+        expectedRevision: 8,
         type: "private_note",
         payload: { text: "Must be rate limited", attachedEventId: null },
       }),
@@ -8751,35 +9271,53 @@ describe("Diamond scorebook handler factory", () => {
     );
     assert.equal(
       harness.firestore.countDirectChildren(resourcePaths.events),
-      7,
+      8,
     );
     assert.equal(historyReads, 0);
-    assert.deepEqual(commandHistoryAdmission(harness).value, charged);
+    assert.deepEqual(
+      privateMaterialCommandHistoryAdmission(harness).value,
+      charged,
+    );
+    assert.deepEqual(
+      privateMaterialCommandHistoryTeamAdmission(harness).value,
+      teamCharged,
+    );
 
     assert.equal((await submit(harness, admittedCommand)).outcome, "duplicate");
-    assert.deepEqual(commandHistoryAdmission(harness).value, charged);
+    assert.deepEqual(
+      privateMaterialCommandHistoryAdmission(harness).value,
+      charged,
+    );
 
     nowMs += COMMAND_HISTORY_RATE_WINDOW_MS + 1;
     harness.firestore.commitTimestampMs = nowMs;
-    harness.firestore.seed(control.path, {
+    const sustainedSeed = {
       ...charged,
       sustainedProjectionRequestCount:
         MAX_COMMAND_PROJECTION_SUSTAINED_REQUESTS_PER_WINDOW - 1,
       sustainedProjectionReadUnits:
-        MAX_COMMAND_PROJECTION_SUSTAINED_READ_UNITS_PER_WINDOW - 8,
+        MAX_COMMAND_PROJECTION_SUSTAINED_READ_UNITS_PER_WINDOW - 9,
+    };
+    harness.firestore.seed(control.path, sustainedSeed);
+    harness.firestore.seed(teamControl.path, {
+      ...sustainedSeed,
+      type: teamControl.value.type,
+      scopeHash: teamControl.value.scopeHash,
     });
     assert.equal(
       (
         await submit(harness, {
           commandId: makeUuid(456),
-          expectedRevision: 7,
+          expectedRevision: 8,
           type: "private_note",
           payload: { text: "Last sustained note", attachedEventId: null },
         })
       ).outcome,
       "accepted",
     );
-    const sustained = clone(commandHistoryAdmission(harness).value);
+    const sustained = clone(
+      privateMaterialCommandHistoryAdmission(harness).value,
+    );
     assert.equal(
       sustained.sustainedProjectionRequestCount,
       MAX_COMMAND_PROJECTION_SUSTAINED_REQUESTS_PER_WINDOW,
@@ -8791,7 +9329,7 @@ describe("Diamond scorebook handler factory", () => {
     await assert.rejects(
       submit(harness, {
         commandId: makeUuid(455),
-        expectedRevision: 8,
+        expectedRevision: 9,
         type: "private_note",
         payload: { text: "Must hit sustained limit", attachedEventId: null },
       }),
@@ -8799,15 +9337,18 @@ describe("Diamond scorebook handler factory", () => {
         error.code === "resource-exhausted" &&
         error.details?.reason === "command-history-rate-limited",
     );
-    assert.deepEqual(commandHistoryAdmission(harness).value, sustained);
+    assert.deepEqual(
+      privateMaterialCommandHistoryAdmission(harness).value,
+      sustained,
+    );
     assert.equal(
       harness.firestore.countDirectChildren(resourcePaths.events),
-      8,
+      9,
     );
     assert.equal(historyReads, 0);
   });
 
-  it("serializes concurrent fresh ordinary IDs into one projected event and one charge", async () => {
+  it("serializes concurrent fresh private IDs into one projected event and one neutral charge", async () => {
     const harness = createHarness();
     await activate(harness);
     await startGame(harness);
@@ -8839,9 +9380,9 @@ describe("Diamond scorebook handler factory", () => {
       ).length,
       1,
     );
-    const charged = commandHistoryAdmission(harness).value;
-    assert.equal(charged.projectionRequestCount, 6);
-    assert.equal(charged.projectionReadUnits, 27);
+    const charged = privateMaterialCommandHistoryAdmission(harness).value;
+    assert.equal(charged.projectionRequestCount, 1);
+    assert.equal(charged.projectionReadUnits, 7);
     assert.equal(
       harness.firestore.countDirectChildren(resourcePaths.events),
       7,
@@ -8849,7 +9390,7 @@ describe("Diamond scorebook handler factory", () => {
     assert.equal(historyReads, 0);
   });
 
-  it("reconciles a committed ordinary response once and leaves precommit failure non-authoritative", async () => {
+  it("reconciles a committed private response once and leaves precommit failure non-authoritative", async () => {
     const harness = createHarness();
     await activate(harness);
     const resourcePaths = paths("team-1", "game-1");
@@ -8877,15 +9418,19 @@ describe("Diamond scorebook handler factory", () => {
     const reconciled = await submit(harness, command);
     assert.equal(injected, true);
     assert.equal(reconciled.outcome, "duplicate");
-    const charged = clone(commandHistoryAdmission(harness).value);
-    const globalCharged = clone(commandHistoryGlobalAdmission(harness).value);
     const gameCharged = clone(commandHistoryGameAdmission(harness).value);
-    assert.equal(charged.projectionRequestCount, 1);
-    assert.equal(charged.projectionReadUnits, 2);
-    assert.equal(globalCharged.projectionRequestCount, 2);
-    assert.equal(globalCharged.projectionReadUnits, 3);
     assert.equal(gameCharged.projectionRequestCount, 2);
     assert.equal(gameCharged.projectionReadUnits, 3);
+    const charged = clone(
+      privateMaterialCommandHistoryAdmission(harness).value,
+    );
+    const teamCharged = clone(
+      privateMaterialCommandHistoryTeamAdmission(harness).value,
+    );
+    assert.equal(charged.projectionRequestCount, 1);
+    assert.equal(charged.projectionReadUnits, 2);
+    assert.equal(teamCharged.projectionRequestCount, 1);
+    assert.equal(teamCharged.projectionReadUnits, 2);
     assert.equal(
       harness.firestore.countDirectChildren(resourcePaths.events),
       2,
@@ -8926,10 +9471,13 @@ describe("Diamond scorebook handler factory", () => {
       harness.firestore.read(resourcePaths.projection("stats")),
       projectionBeforeFailure,
     );
-    assert.deepEqual(commandHistoryAdmission(harness).value, charged);
     assert.deepEqual(
-      commandHistoryGlobalAdmission(harness).value,
-      globalCharged,
+      privateMaterialCommandHistoryAdmission(harness).value,
+      charged,
+    );
+    assert.deepEqual(
+      privateMaterialCommandHistoryTeamAdmission(harness).value,
+      teamCharged,
     );
     assert.deepEqual(commandHistoryGameAdmission(harness).value, gameCharged);
     assert.equal(
@@ -9048,13 +9596,17 @@ describe("Diamond scorebook handler factory", () => {
     const globalBefore = clone(commandHistoryGlobalAdmission(harness).value);
     const gameBefore = clone(commandHistoryGameAdmission(harness).value);
 
-    const note = await submit(harness, {
+    const pitch = await submit(harness, {
       commandId: makeUuid(457),
       expectedRevision: 6,
-      type: "private_note",
-      payload: { text: "Post-deploy migration note", attachedEventId: null },
+      type: "record_pitch",
+      payload: {
+        batterId: "away-1",
+        pitcherId: "home-1",
+        result: "ball",
+      },
     });
-    assert.equal(note.outcome, "accepted");
+    assert.equal(pitch.outcome, "accepted");
     const upgraded = commandHistoryAdmission(harness).value;
     assert.equal(upgraded.schemaVersion, 2);
     assert.equal(upgraded.requestCount, legacy.requestCount);
@@ -9107,8 +9659,11 @@ describe("Diamond scorebook handler factory", () => {
       submit(harness, {
         commandId: makeUuid(20_700),
         expectedRevision: 1,
-        type: "private_note",
-        payload: { text: "Blocked by quarantine", attachedEventId: null },
+        type: "set_lineup",
+        payload: {
+          side: "home",
+          entries: [{ slot: 1, playerId: "home-1" }],
+        },
       }),
       (error) =>
         error.code === "unavailable" &&
@@ -9135,10 +9690,10 @@ describe("Diamond scorebook handler factory", () => {
         await submit(harness, {
           commandId: makeUuid(20_701),
           expectedRevision: 1,
-          type: "private_note",
+          type: "set_lineup",
           payload: {
-            text: "Recovered after quarantine",
-            attachedEventId: null,
+            side: "home",
+            entries: [{ slot: 1, playerId: "home-1" }],
           },
         })
       ).outcome,
@@ -10216,12 +10771,7 @@ describe("Diamond scorebook handler factory", () => {
       harness.firestore.read(resourcePaths.scorebook),
     );
     await assert.rejects(
-      submit(harness, {
-        commandId: makeUuid(1_029),
-        expectedRevision: 6,
-        type: "private_note",
-        payload: { text: "Must fail closed", attachedEventId: null },
-      }),
+      submit(harness, command(1_029)),
       (error) =>
         error.code === "unavailable" &&
         error.details?.reason === "command-history-control-invalid",

@@ -74,6 +74,7 @@ function buildSnapshot(overrides: Partial<DiamondScorebookSnapshot> = {}): Diamo
     revision: 7,
     checkpointHash: checkpointForRevision(7),
     authoritative: true,
+    canSubmitPrivateMaterial: true,
     lifecycle: 'active',
     captureMode: 'full',
     rulesProfileId: 'baseball-youth@1',
@@ -314,6 +315,15 @@ function buildPrivateHistoryWindow(items: DiamondPrivateEvent[], sourceRevision:
     hasOlder: oldestSequence !== null && oldestSequence > 1,
     items
   };
+}
+
+function buildPrivateNoteHistoryWindow(text: string, sourceRevision = 7) {
+  const items = buildPrivateHistoryItems(sourceRevision);
+  items[items.length - 1] = buildPrivateEvent(`event-${sourceRevision}`, sourceRevision, {
+    type: 'private_note',
+    payload: { text }
+  });
+  return buildPrivateHistoryWindow(items, sourceRevision);
 }
 
 function buildReducerStateForUiSnapshot(): DiamondGameState {
@@ -564,7 +574,6 @@ function createClient(initialSnapshot = buildSnapshot()) {
         gameId: input.gameId,
         appBuild: input.appBuild,
         expectedInstanceId: input.expectedInstanceId,
-        ...(input.leaseId ? { leaseId: input.leaseId } : {}),
         expectedRevision: input.expectedRevision,
         rulesProfileId: input.rulesProfileId,
         rulesProfileVersion: input.rulesProfileVersion,
@@ -2407,9 +2416,356 @@ describe('DiamondScorebook', () => {
     expect(createCommand).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'void_event',
+        leaseId: scorerLeaseId,
         payload: { targetEventId: 'event-7', reason: 'Official scorer changed the ruling.' }
       })
     );
+  });
+
+  it('submits a private-note correction without the scorer lease for an authorized non-current scorekeeper', async () => {
+    const privateItems = buildPrivateHistoryItems();
+    privateItems[privateItems.length - 1] = buildPrivateEvent('event-7', 7, {
+      type: 'private_note',
+      payload: { text: 'Private correction candidate.' }
+    });
+    const snapshot = buildSnapshot({
+      lease: {
+        ...buildSnapshot().lease,
+        status: 'held-by-other',
+        canScore: false,
+        holderUid: 'coach-2',
+        holderName: 'Coach Lee',
+        leaseId: null
+      }
+    });
+    const fixture = createClient(snapshot);
+    fixture.loadPrivateHistory.mockResolvedValue(buildPrivateHistoryWindow(privateItems, 7));
+    renderScorebook(snapshot, fixture);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Load recent private history' }));
+    await screen.findByText(/Complete private history: 7 canonical events/);
+    fireEvent.change(screen.getByLabelText('Correction reason'), { target: { value: 'Remove the private note.' } });
+    const privateVoid = screen.getAllByRole('button', { name: 'Void effect' })[0]!;
+    expect(privateVoid).toBeEnabled();
+    fireEvent.click(privateVoid);
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Append this correction?' })).getByRole('button', { name: 'Confirm' }));
+
+    await waitFor(() => expect(fixture.submitCommand).toHaveBeenCalledTimes(1));
+    expect(fixture.createCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'void_event',
+        expectedInstanceId: snapshot.instanceId,
+        expectedRevision: 7,
+        payload: { targetEventId: 'event-7', reason: 'Remove the private note.' }
+      })
+    );
+    expect(fixture.createCommand.mock.calls[0]?.[0]).not.toHaveProperty('leaseId');
+    expect(fixture.client.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('requires complete current private-history evidence before selecting the lease-free correction path', async () => {
+    const privateItems = buildPrivateHistoryItems();
+    privateItems[privateItems.length - 1] = buildPrivateEvent('event-7', 7, {
+      type: 'private_note',
+      payload: { text: 'Private correction candidate.' }
+    });
+    const snapshot = buildSnapshot({
+      lease: {
+        ...buildSnapshot().lease,
+        status: 'held-by-other',
+        canScore: false,
+        holderUid: 'coach-2',
+        holderName: 'Coach Lee',
+        leaseId: null
+      }
+    });
+    const fixture = createClient(snapshot);
+    fixture.loadPrivateHistory.mockResolvedValue({
+      ...buildPrivateHistoryWindow(privateItems, 7),
+      headComplete: false
+    });
+    renderScorebook(snapshot, fixture);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Load recent private history' }));
+    await screen.findByTestId('diamond-private-history');
+    fireEvent.change(screen.getByLabelText('Correction reason'), { target: { value: 'Remove the private note.' } });
+
+    expect(screen.getAllByRole('button', { name: 'Void effect' })[0]).toBeDisabled();
+    expect(fixture.createCommand).not.toHaveBeenCalled();
+    expect(fixture.submitCommand).not.toHaveBeenCalled();
+  });
+
+  it('revalidates private correction capability and history immediately before command creation', async () => {
+    const privateItems = buildPrivateHistoryItems();
+    privateItems[privateItems.length - 1] = buildPrivateEvent('event-7', 7, {
+      type: 'private_note',
+      payload: { text: 'Private correction candidate.' }
+    });
+    const snapshot = buildSnapshot({
+      lease: {
+        ...buildSnapshot().lease,
+        status: 'held-by-other',
+        canScore: false,
+        holderUid: 'coach-2',
+        holderName: 'Coach Lee',
+        leaseId: null
+      }
+    });
+    const fixture = createClient(snapshot);
+    fixture.loadPrivateHistory.mockResolvedValue(buildPrivateHistoryWindow(privateItems, 7));
+    let resolveBuild!: (value: number) => void;
+    (fixture.client.resolveAppBuild as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      () =>
+        new Promise<number>((resolve) => {
+          resolveBuild = resolve;
+        })
+    );
+    const rendered = renderScorebook(snapshot, fixture);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Load recent private history' }));
+    await screen.findByText(/Complete private history: 7 canonical events/);
+    fireEvent.change(screen.getByLabelText('Correction reason'), { target: { value: 'Remove the private note.' } });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Void effect' })[0]!);
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Append this correction?' })).getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(fixture.client.resolveAppBuild).toHaveBeenCalledTimes(1));
+
+    const revoked = buildSnapshot({ ...snapshot, canSubmitPrivateMaterial: false });
+    rendered.rerender(
+      <MemoryRouter>
+        <DiamondScorebook auth={auth} teamId="team-1" gameId="game-1" initialSnapshot={revoked} client={fixture.client} />
+      </MemoryRouter>
+    );
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Private note' })).toBeDisabled());
+    await act(async () => resolveBuild(appBuild));
+
+    expect(await screen.findByText(/private correction review expired/i)).toBeInTheDocument();
+    expect(fixture.createCommand).not.toHaveBeenCalled();
+    expect(fixture.submitCommand).not.toHaveBeenCalled();
+  });
+
+  it('rejects a late private-history response after the signed-in user changes at the same revision', async () => {
+    const snapshot = buildSnapshot();
+    const fixture = createClient(snapshot);
+    let resolveHistory!: (history: ReturnType<typeof buildPrivateHistoryWindow>) => void;
+    fixture.loadPrivateHistory.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveHistory = resolve;
+        })
+    );
+    const rendered = renderScorebook(snapshot, fixture);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Load recent private history' }));
+    await waitFor(() => expect(fixture.loadPrivateHistory).toHaveBeenCalledTimes(1));
+
+    const switchedAuth: AuthState = {
+      ...auth,
+      user: {
+        ...auth.user!,
+        uid: 'coach-2',
+        email: 'coach-2@example.com',
+        displayName: 'Coach Lee'
+      }
+    };
+    rendered.rerender(
+      <MemoryRouter>
+        <DiamondScorebook auth={switchedAuth} teamId="team-1" gameId="game-1" initialSnapshot={snapshot} client={fixture.client} />
+      </MemoryRouter>
+    );
+    await act(async () => resolveHistory(buildPrivateNoteHistoryWindow('Coach one private history.')));
+
+    expect(screen.queryByText('Coach one private history.')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('diamond-private-history')).not.toBeInTheDocument();
+  });
+
+  it('clears loaded private history when capability is revoked without a revision change', async () => {
+    const snapshot = buildSnapshot();
+    const fixture = createClient(snapshot);
+    fixture.loadPrivateHistory.mockResolvedValue(buildPrivateNoteHistoryWindow('Capability-bound private history.'));
+    const rendered = renderScorebook(snapshot, fixture);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Load recent private history' }));
+    expect(await screen.findByText('Capability-bound private history.')).toBeInTheDocument();
+
+    const revoked = buildSnapshot({ ...snapshot, canSubmitPrivateMaterial: false });
+    rendered.rerender(
+      <MemoryRouter>
+        <DiamondScorebook auth={auth} teamId="team-1" gameId="game-1" initialSnapshot={revoked} client={fixture.client} />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Load recent private history' })).toBeDisabled());
+    expect(screen.queryByText('Capability-bound private history.')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('diamond-private-history')).not.toBeInTheDocument();
+  });
+
+  it('rejects a late private-history response after the scorebook route changes', async () => {
+    const snapshot = buildSnapshot();
+    const fixture = createClient(snapshot);
+    let resolveHistory!: (history: ReturnType<typeof buildPrivateHistoryWindow>) => void;
+    fixture.loadPrivateHistory.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveHistory = resolve;
+        })
+    );
+    const rendered = renderScorebook(snapshot, fixture);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Load recent private history' }));
+    await waitFor(() => expect(fixture.loadPrivateHistory).toHaveBeenCalledTimes(1));
+
+    const nextSnapshot = buildSnapshot({ teamId: 'team-2', gameId: 'game-2' });
+    rendered.rerender(
+      <MemoryRouter>
+        <DiamondScorebook auth={auth} teamId="team-2" gameId="game-2" initialSnapshot={nextSnapshot} client={fixture.client} />
+      </MemoryRouter>
+    );
+    await act(async () => resolveHistory(buildPrivateNoteHistoryWindow('Previous route private history.')));
+
+    expect(screen.queryByText('Previous route private history.')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('diamond-private-history')).not.toBeInTheDocument();
+  });
+
+  it('rejects a late private-history response after the game instance changes at the same revision', async () => {
+    const snapshot = buildSnapshot();
+    const fixture = createClient(snapshot);
+    let resolveHistory!: (history: ReturnType<typeof buildPrivateHistoryWindow>) => void;
+    fixture.loadPrivateHistory.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveHistory = resolve;
+        })
+    );
+    const rendered = renderScorebook(snapshot, fixture);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Load recent private history' }));
+    await waitFor(() => expect(fixture.loadPrivateHistory).toHaveBeenCalledTimes(1));
+
+    const replacement = buildSnapshot({
+      ...snapshot,
+      instanceId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+    });
+    rendered.rerender(
+      <MemoryRouter>
+        <DiamondScorebook auth={auth} teamId="team-1" gameId="game-1" initialSnapshot={replacement} client={fixture.client} />
+      </MemoryRouter>
+    );
+    await act(async () => resolveHistory(buildPrivateNoteHistoryWindow('Previous instance private history.')));
+
+    expect(screen.queryByText('Previous instance private history.')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('diamond-private-history')).not.toBeInTheDocument();
+  });
+
+  it('keeps a newer private-history response when an invalidated overlapping request resolves last', async () => {
+    const snapshot = buildSnapshot();
+    const fixture = createClient(snapshot);
+    const resolvers: Array<(history: ReturnType<typeof buildPrivateHistoryWindow>) => void> = [];
+    fixture.loadPrivateHistory.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvers.push(resolve);
+        })
+    );
+    const rendered = renderScorebook(snapshot, fixture);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Load recent private history' }));
+    await waitFor(() => expect(resolvers).toHaveLength(1));
+
+    const revoked = buildSnapshot({ ...snapshot, canSubmitPrivateMaterial: false });
+    rendered.rerender(
+      <MemoryRouter>
+        <DiamondScorebook auth={auth} teamId="team-1" gameId="game-1" initialSnapshot={revoked} client={fixture.client} />
+      </MemoryRouter>
+    );
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Load recent private history' })).toBeDisabled());
+
+    rendered.rerender(
+      <MemoryRouter>
+        <DiamondScorebook auth={auth} teamId="team-1" gameId="game-1" initialSnapshot={snapshot} client={fixture.client} />
+      </MemoryRouter>
+    );
+    const loadButton = await screen.findByRole('button', { name: 'Load recent private history' });
+    await waitFor(() => expect(loadButton).toBeEnabled());
+    fireEvent.click(loadButton);
+    await waitFor(() => expect(resolvers).toHaveLength(2));
+
+    await act(async () => resolvers[1]!(buildPrivateNoteHistoryWindow('Newest private history.')));
+    expect(await screen.findByText('Newest private history.')).toBeInTheDocument();
+
+    await act(async () => resolvers[0]!(buildPrivateNoteHistoryWindow('Late stale private history.')));
+    expect(screen.getByText('Newest private history.')).toBeInTheDocument();
+    expect(screen.queryByText('Late stale private history.')).not.toBeInTheDocument();
+  });
+
+  it('keeps public corrections lease-bound when another scorekeeper holds the lease', async () => {
+    const snapshot = buildSnapshot({
+      lease: {
+        ...buildSnapshot().lease,
+        status: 'held-by-other',
+        canScore: false,
+        holderUid: 'coach-2',
+        holderName: 'Coach Lee',
+        leaseId: null
+      }
+    });
+    const fixture = createClient(snapshot);
+    fixture.loadPrivateHistory.mockResolvedValue(buildPrivateHistoryWindow(buildPrivateHistoryItems(), 7));
+    renderScorebook(snapshot, fixture);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Load recent private history' }));
+    await screen.findByText(/Complete private history: 7 canonical events/);
+    fireEvent.change(screen.getByLabelText('Correction reason'), { target: { value: 'Change the public ruling.' } });
+
+    expect(screen.getAllByRole('button', { name: 'Void effect' }).every((button) => button.hasAttribute('disabled'))).toBe(true);
+    expect(fixture.createCommand).not.toHaveBeenCalled();
+    expect(fixture.submitCommand).not.toHaveBeenCalled();
+  });
+
+  it('does not persist a private-note correction while offline', async () => {
+    const privateItems = buildPrivateHistoryItems();
+    privateItems[privateItems.length - 1] = buildPrivateEvent('event-7', 7, {
+      type: 'private_note',
+      payload: { text: 'Private correction candidate.' }
+    });
+    const fixture = createClient();
+    fixture.loadPrivateHistory.mockResolvedValue(buildPrivateHistoryWindow(privateItems, 7));
+    renderScorebook(buildSnapshot(), fixture);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Load recent private history' }));
+    await screen.findByText(/Complete private history: 7 canonical events/);
+    fireEvent(window, new Event('offline'));
+    await screen.findByText('Offline · 0 queued');
+    fireEvent.change(screen.getByLabelText('Correction reason'), { target: { value: 'Remove the private note.' } });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Void effect' })[0]!);
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Append this correction?' })).getByRole('button', { name: 'Confirm' }));
+
+    expect(await screen.findByText(/cannot be retained offline/i)).toBeInTheDocument();
+    expect(fixture.client.enqueue).not.toHaveBeenCalled();
+    expect(fixture.submitCommand).not.toHaveBeenCalled();
+  });
+
+  it('does not persist a private-note correction after an interrupted response', async () => {
+    const privateItems = buildPrivateHistoryItems();
+    privateItems[privateItems.length - 1] = buildPrivateEvent('event-7', 7, {
+      type: 'private_note',
+      payload: { text: 'Private correction candidate.' }
+    });
+    const fixture = createClient();
+    fixture.loadPrivateHistory.mockResolvedValue(buildPrivateHistoryWindow(privateItems, 7));
+    fixture.submitCommand.mockRejectedValueOnce(
+      new DiamondScorebookError('unavailable', 'The scorebook could not confirm this request.', { retryable: true })
+    );
+    renderScorebook(buildSnapshot(), fixture);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Load recent private history' }));
+    await screen.findByText(/Complete private history: 7 canonical events/);
+    fireEvent.change(screen.getByLabelText('Correction reason'), { target: { value: 'Remove the private note.' } });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Void effect' })[0]!);
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Append this correction?' })).getByRole('button', { name: 'Confirm' }));
+
+    expect(await screen.findByText(/was not stored on this device/i)).toBeInTheDocument();
+    expect(fixture.submitCommand).toHaveBeenCalledTimes(1);
+    expect(fixture.client.enqueue).not.toHaveBeenCalled();
   });
 
   it('renders newest plays first and targets the latest confirmed event', async () => {
@@ -3663,10 +4019,20 @@ describe('DiamondScorebook', () => {
     expect(fixture.submitCommand).not.toHaveBeenCalled();
   });
 
-  it('keeps private notes on a separate confirmed path and out of the public play list', async () => {
-    const fixture = createClient();
+  it('lets an authorized non-current scorekeeper save a lease-free private note on its separate confirmed path', async () => {
+    const snapshot = buildSnapshot({
+      lease: {
+        ...buildSnapshot().lease,
+        status: 'held-by-other',
+        canScore: false,
+        holderUid: 'coach-2',
+        holderName: 'Coach Lee',
+        leaseId: null
+      }
+    });
+    const fixture = createClient(snapshot);
     fixture.loadPrivateHistory.mockResolvedValue(buildPrivateHistoryWindow(buildPrivateHistoryItems(), 7));
-    renderScorebook(buildSnapshot(), fixture);
+    renderScorebook(snapshot, fixture);
 
     fireEvent.click(screen.getByRole('button', { name: 'Load recent private history' }));
     await screen.findByText(/Complete private history: 7 canonical events/);
@@ -3679,15 +4045,264 @@ describe('DiamondScorebook', () => {
       expect(fixture.savePrivateNote).toHaveBeenCalledWith(
         expect.objectContaining({
           text: 'Check Avery’s timing after the game.',
+          authenticatedUid: 'coach-1',
           attachedEventId: 'event-7',
-          leaseId: scorerLeaseId,
           expectedRevision: 7
         })
       )
     );
+    expect(fixture.savePrivateNote.mock.calls[0]?.[0]).not.toHaveProperty('leaseId');
     expect(fixture.client.enqueue).not.toHaveBeenCalled();
     expect(screen.queryByText('Check Avery’s timing after the game.')).not.toBeInTheDocument();
     expect(within(screen.getByRole('list', { name: 'Recent scorebook plays' })).queryByText(/timing after/i)).not.toBeInTheDocument();
+  });
+
+  it('never renders or rebinds a private draft and attachment after an auth switch', async () => {
+    const snapshot = buildSnapshot();
+    const fixture = createClient(snapshot);
+    fixture.loadPrivateHistory.mockResolvedValue(buildPrivateHistoryWindow(buildPrivateHistoryItems(), 7));
+    const rendered = renderScorebook(snapshot, fixture);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Load recent private history' }));
+    await screen.findByText(/Complete private history: 7 canonical events/);
+    fireEvent.click(screen.getByRole('button', { name: 'Private note' }));
+    fireEvent.change(screen.getByLabelText('Editable transcript'), { target: { value: 'Team A private draft.' } });
+    fireEvent.click(screen.getByLabelText('Attach to the latest confirmed play'));
+
+    const switchedAuth: AuthState = {
+      ...auth,
+      user: {
+        ...auth.user!,
+        uid: 'coach-2',
+        email: 'coach-2@example.com',
+        displayName: 'Coach Lee'
+      }
+    };
+    rendered.rerender(
+      <MemoryRouter>
+        <DiamondScorebook auth={switchedAuth} teamId="team-1" gameId="game-1" initialSnapshot={snapshot} client={fixture.client} />
+      </MemoryRouter>
+    );
+
+    expect(screen.queryByText('Team A private draft.')).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: /Speak, edit, then choose/i })).not.toBeInTheDocument();
+    expect(fixture.savePrivateNote).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Private note' }));
+    expect(screen.getByLabelText('Editable transcript')).toHaveValue('');
+    expect(screen.getByLabelText('Attach to the latest confirmed play')).not.toBeChecked();
+    fireEvent.change(screen.getByLabelText('Editable transcript'), { target: { value: 'Coach two private note.' } });
+    fireEvent.click(screen.getByRole('button', { name: /Save privately/ }));
+
+    await waitFor(() =>
+      expect(fixture.savePrivateNote).toHaveBeenCalledWith(
+        expect.objectContaining({
+          authenticatedUid: 'coach-2',
+          teamId: 'team-1',
+          gameId: 'game-1',
+          text: 'Coach two private note.',
+          attachedEventId: null
+        })
+      )
+    );
+    expect(JSON.stringify(fixture.savePrivateNote.mock.calls)).not.toContain('Team A private draft.');
+  });
+
+  it('never renders or rebinds a private draft and attachment after a scorebook route change', async () => {
+    const snapshot = buildSnapshot();
+    const fixture = createClient(snapshot);
+    fixture.loadPrivateHistory.mockResolvedValue(buildPrivateHistoryWindow(buildPrivateHistoryItems(), 7));
+    const rendered = renderScorebook(snapshot, fixture);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Load recent private history' }));
+    await screen.findByText(/Complete private history: 7 canonical events/);
+    fireEvent.click(screen.getByRole('button', { name: 'Private note' }));
+    fireEvent.change(screen.getByLabelText('Editable transcript'), { target: { value: 'Team A route-bound draft.' } });
+    fireEvent.click(screen.getByLabelText('Attach to the latest confirmed play'));
+
+    const nextSnapshot = buildSnapshot({ teamId: 'team-2', gameId: 'game-2' });
+    rendered.rerender(
+      <MemoryRouter>
+        <DiamondScorebook auth={auth} teamId="team-2" gameId="game-2" initialSnapshot={nextSnapshot} client={fixture.client} />
+      </MemoryRouter>
+    );
+
+    expect(screen.queryByText('Team A route-bound draft.')).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: /Speak, edit, then choose/i })).not.toBeInTheDocument();
+    expect(fixture.savePrivateNote).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Private note' }));
+    expect(screen.getByLabelText('Editable transcript')).toHaveValue('');
+    expect(screen.getByLabelText('Attach to the latest confirmed play')).not.toBeChecked();
+    fireEvent.change(screen.getByLabelText('Editable transcript'), { target: { value: 'Team B current draft.' } });
+    fireEvent.click(screen.getByRole('button', { name: /Save privately/ }));
+
+    await waitFor(() =>
+      expect(fixture.savePrivateNote).toHaveBeenCalledWith(
+        expect.objectContaining({
+          teamId: 'team-2',
+          gameId: 'game-2',
+          text: 'Team B current draft.',
+          attachedEventId: null
+        })
+      )
+    );
+    expect(JSON.stringify(fixture.savePrivateNote.mock.calls)).not.toContain('Team A route-bound draft.');
+    expect(JSON.stringify(fixture.savePrivateNote.mock.calls)).not.toContain('event-7');
+  });
+
+  it('never renders or rebinds a private draft and attachment after the game instance changes', async () => {
+    const snapshot = buildSnapshot();
+    const fixture = createClient(snapshot);
+    fixture.loadPrivateHistory.mockResolvedValue(buildPrivateHistoryWindow(buildPrivateHistoryItems(), 7));
+    const rendered = renderScorebook(snapshot, fixture);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Load recent private history' }));
+    await screen.findByText(/Complete private history: 7 canonical events/);
+    fireEvent.click(screen.getByRole('button', { name: 'Private note' }));
+    fireEvent.change(screen.getByLabelText('Editable transcript'), { target: { value: 'Old game-instance draft.' } });
+    fireEvent.click(screen.getByLabelText('Attach to the latest confirmed play'));
+
+    const replacement = buildSnapshot({ ...snapshot, instanceId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' });
+    rendered.rerender(
+      <MemoryRouter>
+        <DiamondScorebook auth={auth} teamId="team-1" gameId="game-1" initialSnapshot={replacement} client={fixture.client} />
+      </MemoryRouter>
+    );
+
+    expect(screen.queryByText('Old game-instance draft.')).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: /Speak, edit, then choose/i })).not.toBeInTheDocument();
+    expect(fixture.savePrivateNote).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Private note' }));
+    expect(screen.getByLabelText('Editable transcript')).toHaveValue('');
+    expect(screen.getByLabelText('Attach to the latest confirmed play')).not.toBeChecked();
+    fireEvent.change(screen.getByLabelText('Editable transcript'), { target: { value: 'Replacement game draft.' } });
+    fireEvent.click(screen.getByRole('button', { name: /Save privately/ }));
+
+    await waitFor(() =>
+      expect(fixture.savePrivateNote).toHaveBeenCalledWith(
+        expect.objectContaining({
+          expectedInstanceId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+          text: 'Replacement game draft.',
+          attachedEventId: null
+        })
+      )
+    );
+    expect(JSON.stringify(fixture.savePrivateNote.mock.calls)).not.toContain('Old game-instance draft.');
+    expect(JSON.stringify(fixture.savePrivateNote.mock.calls)).not.toContain('event-7');
+  });
+
+  it('clears a private draft and attachment across same-revision capability revocation and restoration', async () => {
+    const snapshot = buildSnapshot();
+    const fixture = createClient(snapshot);
+    fixture.loadPrivateHistory.mockResolvedValue(buildPrivateHistoryWindow(buildPrivateHistoryItems(), 7));
+    const rendered = renderScorebook(snapshot, fixture);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Load recent private history' }));
+    await screen.findByText(/Complete private history: 7 canonical events/);
+    fireEvent.click(screen.getByRole('button', { name: 'Private note' }));
+    fireEvent.change(screen.getByLabelText('Editable transcript'), { target: { value: 'Revoked capability draft.' } });
+    fireEvent.click(screen.getByLabelText('Attach to the latest confirmed play'));
+
+    const revoked = buildSnapshot({ ...snapshot, canSubmitPrivateMaterial: false });
+    rendered.rerender(
+      <MemoryRouter>
+        <DiamondScorebook auth={auth} teamId="team-1" gameId="game-1" initialSnapshot={revoked} client={fixture.client} />
+      </MemoryRouter>
+    );
+
+    expect(screen.queryByText('Revoked capability draft.')).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: /Speak, edit, then choose/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Private note' })).toBeDisabled();
+    expect(fixture.savePrivateNote).not.toHaveBeenCalled();
+
+    rendered.rerender(
+      <MemoryRouter>
+        <DiamondScorebook auth={auth} teamId="team-1" gameId="game-1" initialSnapshot={snapshot} client={fixture.client} />
+      </MemoryRouter>
+    );
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Private note' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Private note' }));
+    expect(screen.getByLabelText('Editable transcript')).toHaveValue('');
+    expect(screen.getByLabelText('Attach to the latest confirmed play')).not.toBeChecked();
+    fireEvent.change(screen.getByLabelText('Editable transcript'), { target: { value: 'Fresh authorized draft.' } });
+    fireEvent.click(screen.getByRole('button', { name: /Save privately/ }));
+
+    await waitFor(() =>
+      expect(fixture.savePrivateNote).toHaveBeenCalledWith(
+        expect.objectContaining({ text: 'Fresh authorized draft.', attachedEventId: null })
+      )
+    );
+    expect(JSON.stringify(fixture.savePrivateNote.mock.calls)).not.toContain('Revoked capability draft.');
+  });
+
+  it('hides and clears a private correction confirmation when its authorization context changes', async () => {
+    const privateItems = buildPrivateHistoryItems();
+    privateItems[privateItems.length - 1] = buildPrivateEvent('event-7', 7, {
+      type: 'private_note',
+      payload: { text: 'Private correction candidate.' }
+    });
+    const snapshot = buildSnapshot();
+    const fixture = createClient(snapshot);
+    fixture.loadPrivateHistory.mockResolvedValue(buildPrivateHistoryWindow(privateItems, 7));
+    const rendered = renderScorebook(snapshot, fixture);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Load recent private history' }));
+    await screen.findByText(/Complete private history: 7 canonical events/);
+    fireEvent.change(screen.getByLabelText('Correction reason'), { target: { value: 'Remove Team A private note.' } });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Void effect' })[0]!);
+    expect(screen.getByRole('dialog', { name: 'Append this correction?' })).toBeInTheDocument();
+
+    const revoked = buildSnapshot({ ...snapshot, canSubmitPrivateMaterial: false });
+    rendered.rerender(
+      <MemoryRouter>
+        <DiamondScorebook auth={auth} teamId="team-1" gameId="game-1" initialSnapshot={revoked} client={fixture.client} />
+      </MemoryRouter>
+    );
+
+    expect(screen.queryByRole('dialog', { name: 'Append this correction?' })).not.toBeInTheDocument();
+    expect(fixture.createCommand).not.toHaveBeenCalled();
+    expect(fixture.submitCommand).not.toHaveBeenCalled();
+  });
+
+  it('fails the private-note UI closed when the authoritative capability is absent', () => {
+    const snapshot = buildSnapshot({ canSubmitPrivateMaterial: false });
+    const fixture = createClient(snapshot);
+    renderScorebook(snapshot, fixture);
+
+    expect(screen.getByRole('button', { name: 'Private note' })).toBeDisabled();
+    expect(fixture.savePrivateNote).not.toHaveBeenCalled();
+  });
+
+  it('revalidates private-note authorization, revision, lifecycle, and online state after resolving the app build', async () => {
+    const snapshot = buildSnapshot();
+    const fixture = createClient(snapshot);
+    let resolveBuild!: (value: number) => void;
+    (fixture.client.resolveAppBuild as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      () =>
+        new Promise<number>((resolve) => {
+          resolveBuild = resolve;
+        })
+    );
+    const rendered = renderScorebook(snapshot, fixture);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Private note' }));
+    fireEvent.change(screen.getByLabelText('Editable transcript'), { target: { value: 'Revalidate this private note.' } });
+    fireEvent.click(screen.getByRole('button', { name: /Save privately/ }));
+    await waitFor(() => expect(fixture.client.resolveAppBuild).toHaveBeenCalledTimes(1));
+
+    const revoked = buildSnapshot({ ...snapshot, canSubmitPrivateMaterial: false, lifecycle: 'suspended' });
+    rendered.rerender(
+      <MemoryRouter>
+        <DiamondScorebook auth={auth} teamId="team-1" gameId="game-1" initialSnapshot={revoked} client={fixture.client} />
+      </MemoryRouter>
+    );
+    await act(async () => resolveBuild(appBuild));
+
+    expect(await screen.findByText(/private-material authorization.*changed before this note was saved/i)).toBeInTheDocument();
+    expect(fixture.savePrivateNote).not.toHaveBeenCalled();
+    expect(fixture.client.enqueue).not.toHaveBeenCalled();
   });
 
   it('presents the current scorer lease token when confirming a handoff', async () => {
@@ -3827,7 +4442,7 @@ describe('DiamondScorebook', () => {
     expect(screen.queryByRole('button', { name: 'Confirm handoff' })).not.toBeInTheDocument();
   });
 
-  it('is fail-closed when another scorer owns the lease', () => {
+  it('keeps ordinary scoring fail-closed while private material remains capability-gated when another scorer owns the lease', () => {
     renderScorebook(
       buildSnapshot({
         lease: {
@@ -3849,7 +4464,7 @@ describe('DiamondScorebook', () => {
     expect(screen.getByText('Read only')).toBeInTheDocument();
     expect(screen.getByText('Coach Lee has the active scoring lease.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Single' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Private note' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Private note' })).toBeEnabled();
     const liveDefense = screen.getByRole('group', { name: 'Live Wolves defense' });
     within(liveDefense)
       .getAllByRole('combobox')

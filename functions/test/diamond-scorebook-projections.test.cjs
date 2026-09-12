@@ -3,6 +3,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
+const diamondEngine = require("../diamond-engine");
 const {
   DIAMOND_SCHEMA_VERSION,
   createDiamondCheckpoint,
@@ -13,7 +14,8 @@ const {
   reduceDiamondEvent,
   replayDiamondLedger,
   verifyDiamondLedger,
-} = require("../diamond-engine");
+} = diamondEngine;
+const privateNoteCore = require("../diamond-private-note-core.cjs");
 const {
   DiamondProjectionError,
   buildDiamondEffectsPlan,
@@ -157,9 +159,11 @@ function harness(captureMode = "full", rulesProfileId = "baseball-youth") {
     captureMode,
   });
   let nextId = 1;
+  const privateNoteDocuments = [];
 
   function submit(type, payload, actorUid = SCORER_UID, commandContext = {}) {
     const id = nextId;
+    const serverTimestampMs = 1_700_000_000_000 + id;
     const command = {
       schemaVersion: DIAMOND_SCHEMA_VERSION,
       commandId: uuid(id),
@@ -174,7 +178,7 @@ function harness(captureMode = "full", rulesProfileId = "baseball-youth") {
     const result = executeDiamondCommand(ledger, command, {
       actorUid,
       eventId: `event-${String(id)}`,
-      serverTimestampMs: 1_700_000_000_000 + id,
+      serverTimestampMs,
       ...commandContext,
     });
     assert.equal(
@@ -183,6 +187,25 @@ function harness(captureMode = "full", rulesProfileId = "baseball-youth") {
       result.result.rejection?.message,
     );
     ledger = result.ledger;
+    if (
+      privateNoteCore.isCanonicalPrivateNoteMaterialEvent(
+        result.event,
+        diamondEngine,
+      )
+    ) {
+      privateNoteDocuments.push({
+        id: result.event.eventId,
+        path: `teams/${ledger.teamId}/games/${ledger.gameId}/diamondScorebooks/v2/notes/${result.event.eventId}`,
+        data: privateNoteCore.buildDiamondPrivateNoteRecord({
+          command,
+          event: result.event,
+          instanceId: INSTANCE_ID,
+          authorUid: actorUid,
+          createdAt: new Date(serverTimestampMs).toISOString(),
+          domainEngine: diamondEngine,
+        }),
+      });
+    }
     nextId += 1;
     return result.event;
   }
@@ -211,6 +234,9 @@ function harness(captureMode = "full", rulesProfileId = "baseball-youth") {
   return {
     get ledger() {
       return ledger;
+    },
+    get privateNoteDocuments() {
+      return [...privateNoteDocuments];
     },
     attempt,
     submit,
@@ -4925,8 +4951,9 @@ test("completed public projection preserves the current matchup without exposing
 
 test("full capture creates compatible additive stat documents with source play evidence", () => {
   const { game, homeRun } = buildFullGameWithPrivateData();
-  const bundle = bundleFor(game.ledger);
-  assert.deepEqual(bundle, bundleFor(game.ledger));
+  const noteInput = { privateNoteDocuments: game.privateNoteDocuments };
+  const bundle = bundleFor(game.ledger, noteInput);
+  assert.deepEqual(bundle, bundleFor(game.ledger, noteInput));
   const batter = playerWrite(bundle, "away-1");
 
   assert.equal(bundle.trackingEngine, "diamond-v2");
@@ -4988,6 +5015,7 @@ test("only explicitly public configured stats enter public player or opponent pr
   );
   const bundle = bundleFor(game.ledger, {
     publicPlayerStatIds,
+    privateNoteDocuments: game.privateNoteDocuments,
   });
   const publicBatter = playerWrite(bundle, "away-1");
   const privateBatter = bundle.writes.privatePlayerStats.find(
@@ -5008,6 +5036,7 @@ test("only explicitly public configured stats enter public player or opponent pr
     playerDirectory: DIRECTORY,
     publicPlayerStatIds,
     publicTeamStatIds: ALL_PUBLIC_TEAM_STAT_IDS,
+    privateNoteDocuments: game.privateNoteDocuments,
   }).writes.gameUpdate.opponentStats["away-1"];
   assert.equal(Object.hasOwn(opponent, "hr"), false);
   assert.equal(Object.hasOwn(opponent, "avg"), false);
@@ -5018,6 +5047,7 @@ test("catalog metrics omitted from the pinned config stay manager-private by def
   const bundle = bundleFor(game.ledger, {
     publicPlayerStatIds: ["ab", "h"],
     publicTeamStatIds: ["r"],
+    privateNoteDocuments: game.privateNoteDocuments,
   });
   const publicBatter = playerWrite(bundle, "away-1");
   const privateBatter = bundle.writes.privatePlayerStats.find(
@@ -5065,7 +5095,10 @@ test("catalog metrics omitted from the pinned config stay manager-private by def
 
 test("public team stat serializer requires one exact projection head and never broadens its allowlist", () => {
   const { game } = buildFullGameWithPrivateData();
-  const bundle = bundleFor(game.ledger, { publicTeamStatIds: ["h", "r"] });
+  const bundle = bundleFor(game.ledger, {
+    publicTeamStatIds: ["h", "r"],
+    privateNoteDocuments: game.privateNoteDocuments,
+  });
   const instanceId = uuid(900);
   const configHash = `sha256:${"b".repeat(64)}`;
   const projectionHash = `sha256:${"c".repeat(64)}`;
@@ -5525,7 +5558,10 @@ test("pitcher decision projection uses the official forfeit winner and suppresse
 
 test("public current state and replay never expose private notes, actors, transcripts, or private rule text", () => {
   const { game } = buildFullGameWithPrivateData();
-  const bundle = bundleFor(game.ledger, { pageSize: 2 });
+  const bundle = bundleFor(game.ledger, {
+    pageSize: 2,
+    privateNoteDocuments: game.privateNoteDocuments,
+  });
   const privateJson = JSON.stringify(bundle.writes.privateCurrent.data);
   const publicJson = JSON.stringify({
     current: bundle.writes.publicCurrent.data,
@@ -5550,6 +5586,55 @@ test("public current state and replay never expose private notes, actors, transc
   );
   assert.equal(
     bundle.publicPlays.some((play) => play.type === "private_note"),
+    false,
+  );
+});
+
+test("private-note projection requires an exact complete union and honors deletion redactions", () => {
+  const game = harness("quick");
+  game.submit("activate", {
+    initialScorerUid: SCORER_UID,
+    captureMode: "quick",
+  });
+  const noteText = "Account deletion must remove this note";
+  const note = game.submit("private_note", { text: noteText });
+  const [document] = game.privateNoteDocuments;
+
+  assert.throws(
+    () => bundleFor(game.ledger),
+    (error) =>
+      error instanceof DiamondProjectionError &&
+      error.code === "private-note-input-incomplete",
+  );
+  assert.throws(
+    () =>
+      bundleFor(game.ledger, {
+        privateNoteDocuments: [
+          { ...document, path: `${document.path}-wrong` },
+        ],
+      }),
+    (error) =>
+      error instanceof DiamondProjectionError &&
+      error.code === "private-note-input-invalid",
+  );
+
+  const redacted = bundleFor(game.ledger, {
+    privateNoteDocuments: [
+      {
+        ...document,
+        data: privateNoteCore.buildDiamondPrivateNoteRedaction({
+          event: note,
+          instanceId: INSTANCE_ID,
+          redactedAt: new Date(1_700_000_100_000).toISOString(),
+          domainEngine: diamondEngine,
+        }),
+      },
+    ],
+  });
+  assert.equal(redacted.writes.privateCurrent.data.privateNoteCount, 0);
+  assert.deepEqual(redacted.writes.privateCurrent.data.privateNotes, []);
+  assert.equal(
+    JSON.stringify(redacted.writes.privateCurrent.data).includes(noteText),
     false,
   );
 });
@@ -5593,6 +5678,7 @@ test("live effects use revision keys and suppress rebuilds, duplicates, private 
     clipTimingsByEventId: {
       [homeRun.eventId]: { startMs: 1_000, endMs: 9_000 },
     },
+    privateNoteDocuments: game.privateNoteDocuments,
   });
 
   assert.equal(first.effects.notifications.length, 1);
@@ -5627,6 +5713,7 @@ test("live effects use revision keys and suppress rebuilds, duplicates, private 
     clipTimingsByEventId: {
       [homeRun.eventId]: { startMs: 1_000, endMs: 9_000 },
     },
+    privateNoteDocuments: game.privateNoteDocuments,
   });
   assert.equal(duplicate.effects.notifications.length, 0);
   assert.equal(duplicate.effects.clipLinks.length, 0);
@@ -5637,6 +5724,7 @@ test("live effects use revision keys and suppress rebuilds, duplicates, private 
     clipTimingsByEventId: {
       [homeRun.eventId]: { startMs: 1_000, endMs: 9_000 },
     },
+    privateNoteDocuments: game.privateNoteDocuments,
   });
   assert.equal(rebuild.effects.notifications.length, 0);
   assert.equal(rebuild.effects.clipLinks.length, 0);
@@ -5721,6 +5809,7 @@ test("void corrections rebuild score/stats/replay, stale AI, and emit only a ded
       aiRecap: { sourceRevision: homeRun.revision, text: "Old recap" },
       insights: "Old insight",
     },
+    privateNoteDocuments: game.privateNoteDocuments,
   });
   const batter = playerWrite(bundle, "away-1");
 
@@ -5750,6 +5839,7 @@ test("void corrections rebuild score/stats/replay, stale AI, and emit only a ded
     projectionSource: "live-command",
     previousEffectRevision: correction.revision - 1,
     existingEffectKeys: [bundle.effects.clipInvalidations[0].dedupKey],
+    privateNoteDocuments: game.privateNoteDocuments,
   });
   assert.equal(duplicate.effects.clipInvalidations.length, 0);
 
@@ -5761,6 +5851,7 @@ test("void corrections rebuild score/stats/replay, stale AI, and emit only a ded
     clipTimingsByEventId: {
       [homeRun.eventId]: { startMs: 1_000, endMs: 9_000 },
     },
+    privateNoteDocuments: game.privateNoteDocuments,
   });
   assert.equal(
     coldRecovery.effects.notifications.some(
@@ -5779,6 +5870,7 @@ test("void corrections rebuild score/stats/replay, stale AI, and emit only a ded
     aiArtifacts: {
       aiRecap: { sourceRevision: correction.revision, text: "Current recap" },
     },
+    privateNoteDocuments: game.privateNoteDocuments,
   });
   assert.equal(regenerated.aiStaleness.required, false);
   assert.deepEqual(regenerated.writes.aiArtifactPatches, {});
@@ -5797,6 +5889,12 @@ test("voided private notes leave current private projection while immutable hist
   const bundle = bundleFor(game.ledger, {
     projectionSource: "live-command",
     previousEffectRevision: correction.revision - 1,
+    previousNotificationRevision: correction.revision - 1,
+    previousClipRevision: correction.revision - 1,
+    aiArtifacts: {
+      aiRecap: { sourceRevision: note.revision, text: "Current public recap" },
+    },
+    privateNoteDocuments: game.privateNoteDocuments,
   });
 
   assert.equal(
@@ -5809,6 +5907,13 @@ test("voided private notes leave current private projection while immutable hist
     game.ledger.events.some((event) => event.eventId === note.eventId),
     true,
   );
+  assert.equal(bundle.aiStaleness.required, false);
+  assert.equal(bundle.aiStaleness.latestCorrectionRevision, null);
+  assert.deepEqual(bundle.aiStaleness.affectedSourcePlayIds, []);
+  assert.deepEqual(bundle.writes.aiArtifactPatches, {});
+  assert.equal(bundle.writes.diamondAiState, null);
+  assert.equal(bundle.effects.notifications.length, 0);
+  assert.equal(bundle.effects.clipLinks.length, 0);
   assert.equal(bundle.effects.clipInvalidations.length, 0);
   assert.equal(
     bundle.effects.suppressed.some(
@@ -5816,6 +5921,173 @@ test("voided private notes leave current private projection while immutable hist
     ),
     true,
   );
+});
+
+test("private-note supersedes stay private without staling public AI or emitting effects", () => {
+  const game = harness("quick");
+  setLineupsAndStart(game);
+  const note = game.submit("private_note", {
+    text: "Original scorer-only note",
+  });
+  const correction = game.submit("supersede_event", {
+    targetEventId: note.eventId,
+    reason: "Replace the scorer-only note.",
+    replacement: {
+      type: "private_note",
+      payload: { text: "Replacement scorer-only note" },
+    },
+  });
+  const bundle = bundleFor(game.ledger, {
+    projectionSource: "live-command",
+    previousEffectRevision: correction.revision - 1,
+    previousNotificationRevision: correction.revision - 1,
+    previousClipRevision: correction.revision - 1,
+    aiArtifacts: {
+      aiRecap: { sourceRevision: note.revision, text: "Current public recap" },
+    },
+    privateNoteDocuments: game.privateNoteDocuments,
+  });
+
+  assert.deepEqual(
+    bundle.writes.privateCurrent.data.privateNotes.map((entry) => ({
+      eventId: entry.eventId,
+      sourceEventId: entry.sourceEventId,
+      text: entry.text,
+      actorUid: entry.actorUid,
+    })),
+    [
+      {
+        eventId: correction.eventId,
+        sourceEventId: note.eventId,
+        text: "Replacement scorer-only note",
+        actorUid: SCORER_UID,
+      },
+    ],
+  );
+  assert.equal(bundle.aiStaleness.required, false);
+  assert.equal(bundle.aiStaleness.latestCorrectionRevision, null);
+  assert.deepEqual(bundle.aiStaleness.affectedSourcePlayIds, []);
+  assert.deepEqual(bundle.writes.aiArtifactPatches, {});
+  assert.equal(bundle.writes.diamondAiState, null);
+  assert.equal(bundle.effects.notifications.length, 0);
+  assert.equal(bundle.effects.clipLinks.length, 0);
+  assert.equal(bundle.effects.clipInvalidations.length, 0);
+});
+
+test("a private note made public stales AI under only the new public correction identity", () => {
+  const game = harness("quick");
+  setLineupsAndStart(game);
+  const noteText = "Private source identity must not enter the AI outbox";
+  const note = game.submit("private_note", { text: noteText });
+  const correction = game.submit("supersede_event", {
+    targetEventId: note.eventId,
+    reason: "Replace the note with a public coverage decision.",
+    replacement: {
+      type: "rules_decision",
+      payload: {
+        code: "coverage_adjustment",
+        description: "Situational coverage was not collected.",
+        affectedFamilies: ["situational"],
+      },
+    },
+  });
+  const bundle = bundleFor(game.ledger, {
+    aiArtifacts: {
+      aiRecap: { sourceRevision: note.revision, text: "Old public recap" },
+    },
+    privateNoteDocuments: game.privateNoteDocuments,
+  });
+  const publicCorrection = bundle.publicPlays.find(
+    (play) => play.eventId === correction.eventId,
+  );
+
+  assert.ok(publicCorrection);
+  assert.equal(publicCorrection.type, "rules_decision");
+  assert.equal(publicCorrection.sourceEventId, correction.eventId);
+  assert.equal(publicCorrection.corrected, false);
+  assert.equal(bundle.writes.privateCurrent.data.privateNoteCount, 0);
+  assert.equal(bundle.aiStaleness.required, true);
+  assert.equal(
+    bundle.aiStaleness.latestCorrectionRevision,
+    correction.revision,
+  );
+  assert.deepEqual(bundle.aiStaleness.affectedSourcePlayIds, [
+    correction.eventId,
+  ]);
+  assert.deepEqual(
+    bundle.writes.aiArtifactPatches.aiRecap.affectedSourcePlayIds,
+    [correction.eventId],
+  );
+  const publicAiJson = JSON.stringify({
+    publicPlays: bundle.publicPlays,
+    aiStaleness: bundle.aiStaleness,
+    aiArtifactPatches: bundle.writes.aiArtifactPatches,
+    diamondAiState: bundle.writes.diamondAiState,
+  });
+  assert.equal(publicAiJson.includes(note.eventId), false);
+  assert.equal(publicAiJson.includes(noteText), false);
+});
+
+test("a public event made private stales AI under only the removed public identity", () => {
+  const game = harness("quick");
+  setLineupsAndStart(game);
+  const publicEvent = game.submit("rules_decision", {
+    code: "coverage_adjustment",
+    description: "The original public coverage decision.",
+    affectedFamilies: ["situational"],
+  });
+  const privateText = "Replacement detail is scorer-only";
+  const correction = game.submit("supersede_event", {
+    targetEventId: publicEvent.eventId,
+    reason: "The decision should have been a private note.",
+    replacement: {
+      type: "private_note",
+      payload: { text: privateText },
+    },
+  });
+  const bundle = bundleFor(game.ledger, {
+    aiArtifacts: {
+      aiRecap: {
+        sourceRevision: publicEvent.revision,
+        text: "Old public recap",
+      },
+    },
+    privateNoteDocuments: game.privateNoteDocuments,
+  });
+
+  assert.equal(
+    bundle.publicPlays.some(
+      (play) =>
+        play.eventId === publicEvent.eventId ||
+        play.eventId === correction.eventId,
+    ),
+    false,
+  );
+  assert.equal(bundle.writes.privateCurrent.data.privateNoteCount, 1);
+  assert.equal(
+    bundle.writes.privateCurrent.data.privateNotes[0].text,
+    privateText,
+  );
+  assert.equal(bundle.aiStaleness.required, true);
+  assert.equal(
+    bundle.aiStaleness.latestCorrectionRevision,
+    correction.revision,
+  );
+  assert.deepEqual(bundle.aiStaleness.affectedSourcePlayIds, [
+    publicEvent.eventId,
+  ]);
+  assert.deepEqual(
+    bundle.writes.aiArtifactPatches.aiRecap.affectedSourcePlayIds,
+    [publicEvent.eventId],
+  );
+  const publicAiJson = JSON.stringify({
+    publicPlays: bundle.publicPlays,
+    aiStaleness: bundle.aiStaleness,
+    aiArtifactPatches: bundle.writes.aiArtifactPatches,
+    diamondAiState: bundle.writes.diamondAiState,
+  });
+  assert.equal(publicAiJson.includes(correction.eventId), false);
+  assert.equal(publicAiJson.includes(privateText), false);
 });
 
 test("private current notes are bounded with explicit truncation evidence", () => {
@@ -5829,7 +6101,9 @@ test("private current notes are bounded with explicit truncation evidence", () =
       text: `Bounded private note ${String(index)}`,
     });
   }
-  const bundle = bundleFor(game.ledger);
+  const bundle = bundleFor(game.ledger, {
+    privateNoteDocuments: game.privateNoteDocuments,
+  });
   const current = bundle.writes.privateCurrent.data;
 
   assert.equal(current.privateNoteCount, 102);
@@ -5956,7 +6230,9 @@ test("public plays use correction-aware replay across suspended and ready obsole
     ),
   );
   assert.equal(suspendedPlays.at(-1).type, "finalize");
-  const suspendedBundle = bundleFor(suspended.ledger);
+  const suspendedBundle = bundleFor(suspended.ledger, {
+    privateNoteDocuments: suspended.privateNoteDocuments,
+  });
   assert.equal(suspendedBundle.publicPlays.at(-1).type, "finalize");
   assert.equal(suspendedBundle.writes.publicCurrent.data.lifecycle, "final");
 
@@ -6109,6 +6385,7 @@ test("projection uses the immutable orientation snapshot and ignores mutable gam
     playerDirectory: DIRECTORY,
     publicPlayerStatIds: ALL_PUBLIC_PLAYER_STAT_IDS,
     publicTeamStatIds: ALL_PUBLIC_TEAM_STAT_IDS,
+    privateNoteDocuments: game.privateNoteDocuments,
   });
 
   assert.equal(bundle.writes.teamStats.data.side, "away");

@@ -2,6 +2,7 @@ import { App as CapacitorApp } from '@capacitor/app';
 import { functions, httpsCallable } from './adapters/legacyParentTools';
 import {
   getDiamondRulesProfile,
+  sha256Hex,
   type DiamondDefensivePosition,
   type DiamondFinalizationReason,
   type DiamondGameEndDecision,
@@ -171,6 +172,7 @@ export type DiamondScorebookSnapshot = {
   revision: number;
   checkpointHash: string;
   authoritative: boolean;
+  canSubmitPrivateMaterial: boolean;
   lifecycle: DiamondLifecycle;
   captureMode: DiamondCaptureMode;
   rulesProfileId: string;
@@ -436,6 +438,9 @@ const maxPrivateHistoryWindowBytes = 16_000_000;
 const scorerCandidateNativeTimeoutMs = 125_000;
 const scorerCandidateRetryHandleRetentionMs = 8 * 60 * 1000;
 const maxScorerCandidateRetryHandles = 32;
+const privateNoteRetryHandleRetentionMs = 8 * 60 * 1000;
+const maxPrivateNoteRetryHandles = 32;
+const maxPrivateNoteRetryReceipts = 128;
 const retryableCallableCodes = new Set(['deadline-exceeded', 'internal', 'network-request-failed', 'unavailable', 'unknown']);
 
 type ScorerCandidateRetryHandle = {
@@ -443,8 +448,21 @@ type ScorerCandidateRetryHandle = {
   expiresAtMs: number;
 };
 
+type PrivateNoteRetryHandle = {
+  commandId: string;
+  principalDigest: string;
+  identityDigest: string;
+  appBuild: number;
+  expectedRevision: number;
+  expiresAtMs: number;
+  expiryTimer: ReturnType<typeof globalThis.setTimeout> | null;
+};
+
 const scorerCandidateRetryHandles = new Map<string, ScorerCandidateRetryHandle>();
 let scorerCandidateRetryPrincipal: string | null = null;
+const privateNoteRetryHandles = new Map<string, PrivateNoteRetryHandle>();
+const expiredPrivateNoteRetryReceipts = new Map<string, Omit<PrivateNoteRetryHandle, 'expiryTimer'>>();
+const privateNoteInFlightSubmissions = new Map<string, Promise<DiamondCommandOutcome>>();
 
 function compactText(value: unknown) {
   return typeof value === 'string' ? value.trim() : '';
@@ -837,7 +855,7 @@ function scorerCandidateRetryHandle(key: string, cryptoSource: SecureCrypto | nu
       retryable: true
     });
   }
-  const handle = {
+  const handle: ScorerCandidateRetryHandle = {
     requestId: createSecureDiamondId(cryptoSource),
     expiresAtMs: nowMs + scorerCandidateRetryHandleRetentionMs
   };
@@ -853,6 +871,178 @@ function finishScorerCandidateRetryHandle(key: string, requestId: string, retrya
     return;
   }
   current.expiresAtMs = Date.now() + scorerCandidateRetryHandleRetentionMs;
+}
+
+function privateNoteRetryDigest(commandId: string, label: 'principal' | 'identity', value: string) {
+  return sha256Hex(`${commandId}\u0000${label}\u0000${value}`);
+}
+
+function privateNoteRetryReceiptMatches(handle: Pick<PrivateNoteRetryHandle, 'commandId' | 'identityDigest'>, identity: string) {
+  return handle.identityDigest === privateNoteRetryDigest(handle.commandId, 'identity', identity);
+}
+
+function privateNoteRetryPrincipalMatches(handle: Pick<PrivateNoteRetryHandle, 'commandId' | 'principalDigest'>, authenticatedUid: string) {
+  return handle.principalDigest === privateNoteRetryDigest(handle.commandId, 'principal', authenticatedUid);
+}
+
+function expirePrivateNoteRetryHandle(commandId: string) {
+  const handle = privateNoteRetryHandles.get(commandId);
+  if (!handle) return;
+  privateNoteRetryHandles.delete(commandId);
+  expiredPrivateNoteRetryReceipts.set(commandId, {
+    commandId: handle.commandId,
+    principalDigest: handle.principalDigest,
+    identityDigest: handle.identityDigest,
+    appBuild: handle.appBuild,
+    expectedRevision: handle.expectedRevision,
+    expiresAtMs: handle.expiresAtMs
+  });
+}
+
+function armPrivateNoteRetryExpiry(handle: PrivateNoteRetryHandle) {
+  if (handle.expiryTimer !== null) globalThis.clearTimeout(handle.expiryTimer);
+  const delayMs = Math.max(0, handle.expiresAtMs - Date.now());
+  handle.expiryTimer = globalThis.setTimeout(() => {
+    expirePrivateNoteRetryHandle(handle.commandId);
+  }, delayMs);
+}
+
+function findPrivateNoteRetryReceipt(authenticatedUid: string, identity: string) {
+  for (const handle of privateNoteRetryHandles.values()) {
+    if (privateNoteRetryPrincipalMatches(handle, authenticatedUid) && privateNoteRetryReceiptMatches(handle, identity)) {
+      return handle;
+    }
+  }
+  for (const handle of expiredPrivateNoteRetryReceipts.values()) {
+    if (privateNoteRetryPrincipalMatches(handle, authenticatedUid) && privateNoteRetryReceiptMatches(handle, identity)) {
+      return handle;
+    }
+  }
+  return null;
+}
+
+function countActivePrivateNoteRetryHandlesForPrincipal(authenticatedUid: string) {
+  let count = 0;
+  for (const handle of privateNoteRetryHandles.values()) {
+    if (privateNoteRetryPrincipalMatches(handle, authenticatedUid)) count += 1;
+  }
+  return count;
+}
+
+function privateNoteRetryHandle(
+  authenticatedUid: string,
+  identity: string,
+  appBuild: number,
+  expectedRevision: number,
+  cryptoSource: SecureCrypto | null | undefined
+) {
+  const existing = findPrivateNoteRetryReceipt(authenticatedUid, identity);
+  const activeReceiptCount = countActivePrivateNoteRetryHandlesForPrincipal(authenticatedUid);
+  if (existing) {
+    if (expiredPrivateNoteRetryReceipts.has(existing.commandId)) {
+      if (activeReceiptCount >= maxPrivateNoteRetryHandles) {
+        throw new DiamondScorebookError(
+          'rate-limited',
+          'Too many private-note confirmations are active. Wait for them to retire, then retry.',
+          { retryable: false }
+        );
+      }
+      const activated: PrivateNoteRetryHandle = {
+        ...existing,
+        expiresAtMs: Date.now() + privateNoteRetryHandleRetentionMs,
+        expiryTimer: null
+      };
+      expiredPrivateNoteRetryReceipts.delete(existing.commandId);
+      privateNoteRetryHandles.set(existing.commandId, activated);
+      armPrivateNoteRetryExpiry(activated);
+      return activated;
+    }
+    return existing;
+  }
+  if (activeReceiptCount >= maxPrivateNoteRetryHandles) {
+    throw new DiamondScorebookError(
+      'rate-limited',
+      'Too many private-note confirmations are active. Wait for them to retire, then retry.',
+      { retryable: false }
+    );
+  }
+  if (privateNoteRetryHandles.size + expiredPrivateNoteRetryReceipts.size >= maxPrivateNoteRetryReceipts) {
+    throw new DiamondScorebookError(
+      'unavailable',
+      'This tab reached its safety limit for unconfirmed private notes. Reopen the scorebook and verify private history before creating another note.',
+      { retryable: false }
+    );
+  }
+  const commandId = createSecureDiamondId(cryptoSource);
+  const nowMs = Date.now();
+  const handle: PrivateNoteRetryHandle = {
+    commandId,
+    principalDigest: privateNoteRetryDigest(commandId, 'principal', authenticatedUid),
+    identityDigest: privateNoteRetryDigest(commandId, 'identity', identity),
+    appBuild,
+    expectedRevision,
+    expiresAtMs: nowMs + privateNoteRetryHandleRetentionMs,
+    expiryTimer: null
+  };
+  privateNoteRetryHandles.set(commandId, handle);
+  armPrivateNoteRetryExpiry(handle);
+  return handle;
+}
+
+function finishPrivateNoteRetryHandle(commandId: string, preserveReceipt: boolean) {
+  const current = privateNoteRetryHandles.get(commandId);
+  const expired = expiredPrivateNoteRetryReceipts.get(commandId);
+  if (!preserveReceipt) {
+    if (current?.expiryTimer != null) globalThis.clearTimeout(current.expiryTimer);
+    privateNoteRetryHandles.delete(commandId);
+    expiredPrivateNoteRetryReceipts.delete(commandId);
+    return;
+  }
+  const source = current || expired;
+  if (!source) return;
+  const refreshed: PrivateNoteRetryHandle = {
+    commandId: source.commandId,
+    principalDigest: source.principalDigest,
+    identityDigest: source.identityDigest,
+    appBuild: source.appBuild,
+    expectedRevision: source.expectedRevision,
+    expiresAtMs: Date.now() + privateNoteRetryHandleRetentionMs,
+    expiryTimer: current?.expiryTimer || null
+  };
+  expiredPrivateNoteRetryReceipts.delete(commandId);
+  privateNoteRetryHandles.set(commandId, refreshed);
+  armPrivateNoteRetryExpiry(refreshed);
+}
+
+const definitivePrivateNoteErrorCodes = new Set<DiamondScorebookErrorCode>([
+  'invalid-input',
+  'permission-denied',
+  'not-found',
+  'stale-revision',
+  'conflict',
+  'rejected'
+]);
+
+function privateNoteErrorMayFollowCommit(error: DiamondScorebookError) {
+  return !definitivePrivateNoteErrorCodes.has(error.code);
+}
+
+async function submitPrivateNoteCommand(
+  handle: Pick<PrivateNoteRetryHandle, 'commandId'>,
+  command: DiamondCommandEnvelope,
+  transport?: DiamondCallableTransport
+) {
+  try {
+    const outcome = await submitDiamondCommand(command, { transport });
+    finishPrivateNoteRetryHandle(handle.commandId, false);
+    return outcome;
+  } catch (error) {
+    const normalizedError = toDiamondError(error, 'Unable to confirm the private note.');
+    finishPrivateNoteRetryHandle(handle.commandId, privateNoteErrorMayFollowCommit(normalizedError));
+    throw normalizedError;
+  } finally {
+    privateNoteInFlightSubmissions.delete(handle.commandId);
+  }
 }
 
 async function callWithRetry<T>(
@@ -1293,6 +1483,7 @@ export function normalizeDiamondSnapshot(value: unknown): DiamondScorebookSnapsh
     revision,
     checkpointHash: compactText(state.checkpointHash || root.checkpointHash),
     authoritative: root.authoritative !== false && completeness.authoritativeRevision === revision,
+    canSubmitPrivateMaterial: root.canSubmitPrivateMaterial === true,
     lifecycle,
     captureMode,
     rulesProfileId,
@@ -2169,11 +2360,11 @@ export async function parseDiamondVoice(
 
 export async function saveDiamondPrivateNote(
   input: {
+    authenticatedUid: string;
     teamId: string;
     gameId: string;
     appBuild: number;
     expectedInstanceId: string;
-    leaseId?: string | null;
     expectedRevision: number;
     rulesProfileId: string;
     rulesProfileVersion: number;
@@ -2182,30 +2373,55 @@ export async function saveDiamondPrivateNote(
   },
   options: { transport?: DiamondCallableTransport; crypto?: SecureCrypto | null } = {}
 ) {
+  const authenticatedUid = requireResourceId(input.authenticatedUid, 'Authenticated user ID');
   const text = compactText(input.text).replace(/\s+/g, ' ');
   if (!text || text.length > 2000) {
     throw new DiamondScorebookError('invalid-input', 'Private note text must be between 1 and 2,000 characters.');
   }
   const attachedEventId = input.attachedEventId ? requireResourceId(input.attachedEventId, 'Event ID') : '';
+  const normalized = {
+    teamId: requireResourceId(input.teamId, 'Team ID'),
+    gameId: requireResourceId(input.gameId, 'Game ID'),
+    appBuild: requireAppBuild(input.appBuild),
+    expectedInstanceId: requireDiamondInstanceId(input.expectedInstanceId, 'invalid-input'),
+    expectedRevision: requireRevision(input.expectedRevision),
+    rulesProfileId: requireResourceId(input.rulesProfileId, 'Rules profile ID'),
+    rulesProfileVersion: requirePositiveVersion(input.rulesProfileVersion)
+  };
+  const retryIdentity = JSON.stringify([
+    normalized.teamId,
+    normalized.gameId,
+    normalized.expectedInstanceId,
+    normalized.rulesProfileId,
+    normalized.rulesProfileVersion,
+    text,
+    attachedEventId || null
+  ]);
+  const handle = privateNoteRetryHandle(
+    authenticatedUid,
+    retryIdentity,
+    normalized.appBuild,
+    normalized.expectedRevision,
+    options.crypto === undefined ? globalThis.crypto : options.crypto
+  );
+  const existingSubmission = privateNoteInFlightSubmissions.get(handle.commandId);
+  if (existingSubmission) return existingSubmission;
   const command = createDiamondCommand(
     {
-      teamId: input.teamId,
-      gameId: input.gameId,
-      appBuild: input.appBuild,
-      expectedInstanceId: input.expectedInstanceId,
-      leaseId: input.leaseId,
-      expectedRevision: input.expectedRevision,
-      rulesProfileId: input.rulesProfileId,
-      rulesProfileVersion: input.rulesProfileVersion,
+      ...normalized,
+      appBuild: handle.appBuild,
+      expectedRevision: handle.expectedRevision,
       type: 'private_note',
       payload: {
         text,
         ...(attachedEventId ? { attachedEventId } : {})
       }
     },
-    options.crypto
+    { randomUUID: () => handle.commandId as ReturnType<Crypto['randomUUID']> }
   );
-  return submitDiamondCommand(command, { transport: options.transport });
+  const submission = submitPrivateNoteCommand(handle, command, options.transport);
+  privateNoteInFlightSubmissions.set(handle.commandId, submission);
+  return submission;
 }
 
 export async function requestDiamondScorerHandoff(
@@ -2550,6 +2766,10 @@ function containsSensitiveQueueFields(value: DiamondJsonValue, key = ''): boolea
   return false;
 }
 
+function isDurableQueueProhibitedCommand(command: DiamondCommandEnvelope) {
+  return command.type === 'private_note' || command.type === 'void_event' || command.type === 'supersede_event';
+}
+
 export function readDiamondCommandQueue(
   identityValue: DiamondQueueIdentity,
   storage: StorageLike | null = getDefaultStorage()
@@ -2600,7 +2820,7 @@ export function readDiamondCommandQueue(
           !queueIdentitiesMatch(itemIdentity, identity) ||
           command.expectedInstanceId !== identity.instanceId ||
           command.leaseId !== identity.leaseId ||
-          command.type === 'private_note' ||
+          isDurableQueueProhibitedCommand(command) ||
           containsSensitiveQueueFields(command.payload) ||
           !queuedAt ||
           queuedAt.length > 64 ||
@@ -2676,10 +2896,10 @@ export function enqueueDiamondCommand(
   ) {
     throw new DiamondScorebookError('conflict', 'This command belongs to a different game than the active offline queue.');
   }
-  if (command.type === 'private_note' || containsSensitiveQueueFields(command.payload)) {
+  if (isDurableQueueProhibitedCommand(command) || containsSensitiveQueueFields(command.payload)) {
     throw new DiamondScorebookError(
       'storage-unavailable',
-      'Private notes and raw dictation are never stored in the offline scoring queue. Reconnect to save this note.'
+      'Private notes, corrections, and raw dictation are never stored in the offline scoring queue. Reconnect before saving.'
     );
   }
   const items = readDiamondCommandQueue(identity, storage);

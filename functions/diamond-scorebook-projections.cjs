@@ -1,5 +1,6 @@
 "use strict";
 
+const diamondEngine = require("./diamond-engine");
 const {
   DIAMOND_SCHEMA_VERSION,
   getDiamondPlayerIdentityIdsBySide,
@@ -8,7 +9,7 @@ const {
   replayEffectiveDiamondEventStates,
   validateDiamondPlayerIdentityOwnership,
   verifyDiamondLedger,
-} = require("./diamond-engine");
+} = diamondEngine;
 const {
   DIAMOND_ENGINE,
   decideDiamondNotification,
@@ -17,6 +18,7 @@ const {
   sanitizeDiamondPublicEvent,
   sanitizeDiamondPublicProjection,
 } = require("./diamond-scorebook-core.cjs");
+const privateNoteCore = require("./diamond-private-note-core.cjs");
 
 const DIAMOND_PROJECTION_SCHEMA_VERSION = 1;
 const DIAMOND_PUBLIC_REPLAY_PAGE_SIZE = 100;
@@ -801,14 +803,21 @@ function buildDiamondPublicPlays({
     ledger.initialState,
     ledger.events,
   )) {
+    const canonical = canonicalById.get(event.eventId);
     if (!PRIVATE_EVENT_TYPES.has(event.type)) {
+      const publicEvent = privateNoteCore.isCanonicalPrivateNoteMaterialEvent(
+        canonical,
+        diamondEngine,
+      )
+        ? { ...event, sourceEventId: event.eventId }
+        : event;
       plays.push(
         buildPublicPlay(
-          event,
+          publicEvent,
           before,
           after,
           directory,
-          canonicalById.get(event.eventId),
+          canonical,
         ),
       );
     }
@@ -1550,28 +1559,118 @@ function buildDiamondReplayPages({
   });
 }
 
-function buildPrivateCurrentProjection(ledger, publicPlayCount) {
+function resolvePrivateNoteContent(ledger, instanceId, documents) {
+  const noteEvents = ledger.events.filter(
+    (event) =>
+      privateNoteCore.privateNotePayload(event) ||
+      privateNoteCore.isCanonicalPrivateNoteMaterialEvent(event, diamondEngine),
+  );
+  if (
+    noteEvents.some(
+      (event) =>
+        !privateNoteCore.isCanonicalPrivateNoteMaterialEvent(
+          event,
+          diamondEngine,
+        ),
+    )
+  ) {
+    throw new DiamondProjectionError(
+      "private-note-migration-required",
+      "Legacy private-note ledger material requires migration.",
+    );
+  }
+  if (!noteEvents.length) {
+    if (documents.length) {
+      throw new DiamondProjectionError(
+        "private-note-input-invalid",
+        "Private-note storage contains an unreferenced record.",
+      );
+    }
+    return new Map();
+  }
+  const eventsById = new Map(noteEvents.map((event) => [event.eventId, event]));
+  const resolved = new Map();
+  for (const document of documents) {
+    const value = document?.data;
+    const eventId = value?.eventId;
+    const event = eventsById.get(eventId);
+    const expectedPath = `teams/${ledger.teamId}/games/${ledger.gameId}/diamondScorebooks/v2/notes/${eventId}`;
+    if (
+      !event ||
+      document?.id !== eventId ||
+      document?.path !== expectedPath ||
+      resolved.has(eventId)
+    ) {
+      throw new DiamondProjectionError(
+        "private-note-input-invalid",
+        "Private-note storage is duplicated or does not match the canonical ledger.",
+      );
+    }
+    try {
+      if (value?.status === "deleted") {
+        privateNoteCore.parseDiamondPrivateNoteRedaction(
+          value,
+          event,
+          instanceId,
+          diamondEngine,
+        );
+        resolved.set(eventId, null);
+      } else {
+        resolved.set(
+          eventId,
+          privateNoteCore.parseDiamondPrivateNoteRecord(
+            value,
+            event,
+            instanceId,
+            diamondEngine,
+          ),
+        );
+      }
+    } catch {
+      throw new DiamondProjectionError(
+        "private-note-input-invalid",
+        "Private-note storage failed integrity validation.",
+      );
+    }
+  }
+  if (resolved.size !== noteEvents.length) {
+    throw new DiamondProjectionError(
+      "private-note-input-incomplete",
+      "Private-note storage is incomplete.",
+    );
+  }
+  return resolved;
+}
+
+function buildPrivateCurrentProjection(
+  ledger,
+  publicPlayCount,
+  privateNoteContent,
+) {
   const canonicalById = new Map(
     ledger.events.map((event) => [event.eventId, event]),
   );
   const effectivePrivateNotes = getEffectiveDiamondEvents(ledger.events)
     .filter((event) => event.type === "private_note")
     .map((event) => {
+      const note = privateNoteContent.get(event.eventId);
+      if (!note) return null;
       const canonical = canonicalById.get(event.eventId);
       return {
         eventId: event.eventId,
         sourceEventId: event.sourceEventId,
         revision: event.revision,
-        text: event.payload.text,
+        text: note.text,
         ...(event.payload.attachedEventId
           ? { attachedEventId: event.payload.attachedEventId }
           : {}),
         visibility: "staff-private",
         corrected: event.eventId !== event.sourceEventId,
-        actorUid: canonical?.actorUid || "",
+        actorUid: note.authorUid,
         serverTimestampMs: canonical?.serverTimestampMs ?? null,
       };
-    });
+    })
+    .filter(Boolean);
   const privateNotes = effectivePrivateNotes.slice(
     -DIAMOND_PRIVATE_RECENT_NOTE_LIMIT,
   );
@@ -1828,7 +1927,15 @@ function buildDiamondEffectsPlanFromPublicPlays({
       effectInstanceId,
       event.revision,
     );
-    const publicEvent = !PRIVATE_EVENT_TYPES.has(event.type);
+    const privateMaterial = privateNoteCore.isCanonicalPrivateNoteMaterialEvent(
+      event,
+      diamondEngine,
+    );
+    const publicEvent =
+      !PRIVATE_EVENT_TYPES.has(event.type) &&
+      (!privateMaterial ||
+        (event.type === "supersede_event" &&
+          event.payload?.replacement?.type !== "private_note"));
     const decision = decideDiamondNotification({
       commandOutcome: "accepted",
       eventType: event.type,
@@ -2026,6 +2133,35 @@ function buildDiamondEffectsPlan({
   });
 }
 
+function publicCorrectionImpact(event, canonicalById) {
+  if (!CORRECTION_TYPES.has(event.type)) return null;
+  const targetEvent = canonicalById.get(event.payload.targetEventId);
+  if (!targetEvent) {
+    throw new DiamondProjectionError(
+      "invalid-ledger",
+      "A correction target is missing from the canonical ledger.",
+    );
+  }
+  const targetIsPrivate = PRIVATE_EVENT_TYPES.has(targetEvent.type);
+  const replacementIsPrivate =
+    event.type === "supersede_event" &&
+    PRIVATE_EVENT_TYPES.has(event.payload.replacement?.type);
+  if (
+    targetIsPrivate &&
+    (event.type === "void_event" || replacementIsPrivate)
+  ) {
+    return null;
+  }
+  return {
+    event,
+    // A private source event ID must never enter the public AI audit trail.
+    // When a private note becomes public, the correction is the new public
+    // effective event. When a public play is removed, its already-public source
+    // identity remains the safe invalidation key.
+    affectedSourcePlayId: targetIsPrivate ? event.eventId : targetEvent.eventId,
+  };
+}
+
 function markDiamondAiArtifactsStale({ ledger, artifacts = {} }) {
   assertDiamondLedger(ledger);
   if (!isPlainObject(artifacts))
@@ -2033,10 +2169,13 @@ function markDiamondAiArtifactsStale({ ledger, artifacts = {} }) {
       "invalid-argument",
       "AI artifacts must be an object.",
     );
-  const corrections = ledger.events.filter((event) =>
-    CORRECTION_TYPES.has(event.type),
+  const canonicalById = new Map(
+    ledger.events.map((event) => [event.eventId, event]),
   );
-  if (!corrections.length) {
+  const publicImpacts = ledger.events
+    .map((event) => publicCorrectionImpact(event, canonicalById))
+    .filter(Boolean);
+  if (!publicImpacts.length) {
     return deepFreeze({
       required: false,
       latestCorrectionRevision: null,
@@ -2044,9 +2183,9 @@ function markDiamondAiArtifactsStale({ ledger, artifacts = {} }) {
       artifactPatches: {},
     });
   }
-  const latest = corrections.at(-1);
+  const latest = publicImpacts.at(-1).event;
   const affectedSourcePlayIds = [
-    ...new Set(corrections.map((event) => event.payload.targetEventId)),
+    ...new Set(publicImpacts.map((impact) => impact.affectedSourcePlayId)),
   ].sort();
   const artifactPatches = {};
   for (const field of AI_ARTIFACT_FIELDS) {
@@ -2194,6 +2333,7 @@ function buildDiamondProjectionBundle({
   previousClipRevision = 0,
   existingEffectKeys = [],
   clipTimingsByEventId = {},
+  privateNoteDocuments = [],
 }) {
   assertDiamondLedger(ledger);
   const projectionInstanceId = normalizeEffectInstanceId(instanceId);
@@ -2237,9 +2377,21 @@ function buildDiamondProjectionBundle({
     replayManifest: replay.manifest,
     recentPlayLimit,
   });
+  if (!Array.isArray(privateNoteDocuments)) {
+    throw new DiamondProjectionError(
+      "invalid-argument",
+      "privateNoteDocuments must be an array.",
+    );
+  }
+  const privateNoteContent = resolvePrivateNoteContent(
+    ledger,
+    projectionInstanceId,
+    privateNoteDocuments,
+  );
   const privateCurrent = buildPrivateCurrentProjection(
     ledger,
     publicPlays.length,
+    privateNoteContent,
   );
   const statDocuments = buildDiamondStatDocumentsFromProjection({
     ledger,

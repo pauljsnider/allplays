@@ -1,5 +1,9 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.DIAMOND_PRIVATE_NOTE_REASON_TOMBSTONE = exports.DIAMOND_PRIVATE_NOTE_ACTOR_UID = exports.DIAMOND_PRIVATE_NOTE_TOMBSTONE = void 0;
+exports.getDiamondPrivateNoteText = getDiamondPrivateNoteText;
+exports.canonicalizeDiamondPrivateNoteCommand = canonicalizeDiamondPrivateNoteCommand;
+exports.getDiamondPrivateNoteRequestHash = getDiamondPrivateNoteRequestHash;
 exports.getEffectiveDiamondEvents = getEffectiveDiamondEvents;
 exports.replayEffectiveDiamondEventStates = replayEffectiveDiamondEventStates;
 exports.replayDiamondEvents = replayDiamondEvents;
@@ -8,6 +12,8 @@ exports.createDiamondLedger = createDiamondLedger;
 exports.createDiamondCheckpoint = createDiamondCheckpoint;
 exports.validateDiamondPlayerIdentityOwnership = validateDiamondPlayerIdentityOwnership;
 exports.getDiamondPlayerIdentityIdsBySide = getDiamondPlayerIdentityIdsBySide;
+exports.verifyDiamondCommandReceipt = verifyDiamondCommandReceipt;
+exports.createDiamondCommandReceipt = createDiamondCommandReceipt;
 exports.executeDiamondCommandFromCheckpoint = executeDiamondCommandFromCheckpoint;
 exports.executeDiamondCommand = executeDiamondCommand;
 exports.verifyDiamondLedger = verifyDiamondLedger;
@@ -26,6 +32,28 @@ const HISTORY_REQUIRED_COMMANDS = new Set([
 const ATTACHABLE_PLAY_TYPES = new Set(['record_plate_appearance', 'advance_runner']);
 const PITCHER_APPEARANCE_TYPES = new Set(['record_pitch', 'record_plate_appearance', 'advance_runner']);
 const FINAL_REOPEN_INTERVENING_TYPES = new Set(['private_note', 'scorer_handoff']);
+// Private-note plaintext and author identity live only in the server-private,
+// deletion-indexed note record. The canonical ledger keeps a replay-valid
+// fixed value so its hash chain contains neither the note nor a note-author
+// identifier.
+exports.DIAMOND_PRIVATE_NOTE_TOMBSTONE = '[private note stored separately]';
+exports.DIAMOND_PRIVATE_NOTE_ACTOR_UID = 'private-note-author';
+exports.DIAMOND_PRIVATE_NOTE_REASON_TOMBSTONE = 'Private note correction stored separately.';
+function privateNoteStateForStorage(state) {
+    return state.currentScorerUid === null
+        ? state
+        : { ...state, currentScorerUid: exports.DIAMOND_PRIVATE_NOTE_ACTOR_UID };
+}
+function resultForPrivateNoteStorage(result, event) {
+    return event.actorUid !== exports.DIAMOND_PRIVATE_NOTE_ACTOR_UID
+        ? result
+        : { ...result, state: event.after };
+}
+function resultForPrivateNoteResponse(result, event, currentScorerUid) {
+    return event.actorUid !== exports.DIAMOND_PRIVATE_NOTE_ACTOR_UID
+        ? result
+        : { ...result, state: { ...result.state, currentScorerUid } };
+}
 function deepFreeze(value) {
     if (value && typeof value === 'object' && !Object.isFrozen(value)) {
         Object.freeze(value);
@@ -42,12 +70,109 @@ function requireId(value, label) {
     }
     return normalized;
 }
-function commandHash(command) {
-    return (0, canonical_1.hashDiamondValue)(command);
+function getDiamondPrivateNoteText(command) {
+    if (command.type === 'private_note')
+        return command.payload.text;
+    if (command.type === 'supersede_event' && command.payload.replacement.type === 'private_note') {
+        return command.payload.replacement.payload.text;
+    }
+    return null;
+}
+function isCorrectionCommand(command) {
+    return command.type === 'void_event' || command.type === 'supersede_event';
+}
+function isCanonicalPrivateNoteMaterialEvent(event) {
+    if (!event || event.actorUid !== exports.DIAMOND_PRIVATE_NOTE_ACTOR_UID)
+        return false;
+    if (event.before.currentScorerUid !== exports.DIAMOND_PRIVATE_NOTE_ACTOR_UID ||
+        event.after.currentScorerUid !== exports.DIAMOND_PRIVATE_NOTE_ACTOR_UID) {
+        return false;
+    }
+    if (event.type === 'private_note') {
+        return event.payload.text === exports.DIAMOND_PRIVATE_NOTE_TOMBSTONE;
+    }
+    if (event.type === 'supersede_event' && event.payload.replacement.type === 'private_note') {
+        return (event.payload.reason === exports.DIAMOND_PRIVATE_NOTE_REASON_TOMBSTONE &&
+            event.payload.replacement.payload.text === exports.DIAMOND_PRIVATE_NOTE_TOMBSTONE);
+    }
+    return ((event.type === 'void_event' || event.type === 'supersede_event') &&
+        event.payload.reason === exports.DIAMOND_PRIVATE_NOTE_REASON_TOMBSTONE);
+}
+function targetsPrivateNote(ledger, command) {
+    if (!isCorrectionCommand(command))
+        return false;
+    const target = ledger.events.find((event) => event.eventId === command.payload.targetEventId);
+    return isCanonicalPrivateNoteMaterialEvent(target);
+}
+function isPrivateMaterialCommand(ledger, command) {
+    return getDiamondPrivateNoteText(command) !== null || targetsPrivateNote(ledger, command);
+}
+function canonicalizeDiamondPrivateNoteCommand(command, privateMaterial = getDiamondPrivateNoteText(command) !== null) {
+    const canonicalCommand = privateMaterial
+        ? { ...command, leaseId: null }
+        : command;
+    if (canonicalCommand.type === 'private_note') {
+        return {
+            ...canonicalCommand,
+            payload: { ...canonicalCommand.payload, text: exports.DIAMOND_PRIVATE_NOTE_TOMBSTONE }
+        };
+    }
+    if (canonicalCommand.type === 'supersede_event' &&
+        canonicalCommand.payload.replacement.type === 'private_note') {
+        return {
+            ...canonicalCommand,
+            payload: {
+                ...canonicalCommand.payload,
+                reason: exports.DIAMOND_PRIVATE_NOTE_REASON_TOMBSTONE,
+                replacement: {
+                    ...canonicalCommand.payload.replacement,
+                    payload: {
+                        ...canonicalCommand.payload.replacement.payload,
+                        text: exports.DIAMOND_PRIVATE_NOTE_TOMBSTONE
+                    }
+                }
+            }
+        };
+    }
+    if (privateMaterial && isCorrectionCommand(canonicalCommand)) {
+        return {
+            ...canonicalCommand,
+            payload: {
+                ...canonicalCommand.payload,
+                reason: exports.DIAMOND_PRIVATE_NOTE_REASON_TOMBSTONE
+            }
+        };
+    }
+    return canonicalCommand;
+}
+function getDiamondPrivateNoteRequestHash(command) {
+    return getDiamondPrivateNoteText(command) === null && !isCorrectionCommand(command)
+        ? null
+        : (0, canonical_1.hashDiamondValue)({
+            schemaVersion: 1,
+            kind: 'diamond-private-note-request',
+            command: isCorrectionCommand(command)
+                ? {
+                    ...command,
+                    payload: {
+                        ...command.payload,
+                        reason: exports.DIAMOND_PRIVATE_NOTE_REASON_TOMBSTONE
+                    }
+                }
+                : command
+        });
+}
+function commandHash(command, privateMaterial = getDiamondPrivateNoteText(command) !== null) {
+    return (0, canonical_1.hashDiamondValue)(canonicalizeDiamondPrivateNoteCommand(command, privateMaterial));
 }
 function validateTrustedCommandAuthorization(command, context) {
     if (command.type === 'cancel' && context.managerAuthorized !== true) {
         throw new contracts_1.DiamondDomainError('manager-authorization-required', 'Only a server-verified current team manager may cancel a Diamond game.');
+    }
+}
+function validatePrivateNoteActorReservation(context) {
+    if (requireId(context.actorUid, 'actorUid') === exports.DIAMOND_PRIVATE_NOTE_ACTOR_UID) {
+        throw new contracts_1.DiamondDomainError('reserved-actor-id', 'This scorer identity is reserved by the Diamond ledger.');
     }
 }
 function stateForHash(state) {
@@ -562,7 +687,7 @@ function getDiamondPlayerIdentityIdsBySide(ledger) {
         away: [...knownPlayerIds(ownershipState, 'away')].sort()
     });
 }
-function validateEnvelope(ledger, command, context) {
+function validateEnvelope(ledger, command, context, privateMaterialTargetVerified = false) {
     validateTrustedCommandAuthorization(command, context);
     if (command.schemaVersion !== contracts_1.DIAMOND_SCHEMA_VERSION) {
         throw new contracts_1.DiamondDomainError('unsupported-schema', 'Only Diamond command schema version 2 is supported.');
@@ -572,6 +697,7 @@ function validateEnvelope(ledger, command, context) {
     }
     requireId(context.eventId, 'eventId');
     const actorUid = requireId(context.actorUid, 'actorUid');
+    validatePrivateNoteActorReservation(context);
     if (!Number.isSafeInteger(context.serverTimestampMs) || context.serverTimestampMs < 0) {
         throw new contracts_1.DiamondDomainError('invalid-server-time', 'serverTimestampMs must be a nonnegative safe integer.');
     }
@@ -589,8 +715,14 @@ function validateEnvelope(ledger, command, context) {
             throw new contracts_1.DiamondDomainError('scorer-mismatch', 'The activating actor must become the initial scorer.');
         }
     }
+    else if (command.type === 'scorer_handoff' &&
+        command.payload.toUid === exports.DIAMOND_PRIVATE_NOTE_ACTOR_UID) {
+        throw new contracts_1.DiamondDomainError('reserved-actor-id', 'This scorer identity is reserved by the Diamond ledger.');
+    }
     else if (command.type !== 'cancel' &&
         !(command.type === 'scorer_handoff' && context.scorerLeaseRecoveryAuthorized === true) &&
+        !privateMaterialTargetVerified &&
+        !isPrivateMaterialCommand(ledger, command) &&
         ledger.state.currentScorerUid !== actorUid) {
         throw new contracts_1.DiamondDomainError('scorer-lease-lost', 'Only the current scorer may submit this command.', true);
     }
@@ -714,16 +846,38 @@ function validateReceipt(receipt) {
         throw new contracts_1.DiamondDomainError('invalid-command-receipt', 'Command receipt result does not match its event.');
     }
 }
+function verifyDiamondCommandReceipt(receipt) {
+    validateReceipt(receipt);
+    return true;
+}
+function createDiamondCommandReceipt(command, event, result) {
+    const expectedCommandHash = commandHash(command, event.actorUid === exports.DIAMOND_PRIVATE_NOTE_ACTOR_UID);
+    if (event.commandHash !== expectedCommandHash) {
+        throw new contracts_1.DiamondDomainError('invalid-command-receipt', 'Command receipt command does not match its event.');
+    }
+    const receipt = deepFreeze({
+        commandId: command.commandId,
+        commandHash: expectedCommandHash,
+        event,
+        result: resultForPrivateNoteStorage(result, event)
+    });
+    validateReceipt(receipt);
+    return receipt;
+}
 /**
  * Executes the ordinary hot path from one bounded checkpoint plus, when a retry
  * is possible, the one receipt stored at commands/{commandId}. Corrections need
  * full history because their validity depends on all later canonical plays.
  */
-function executeDiamondCommandFromCheckpoint(checkpoint, command, context, existingReceipt) {
+function executeDiamondCommandFromCheckpoint(checkpoint, command, context, existingReceipt, privateMaterialTargetVerified = false) {
     try {
         validateCheckpoint(checkpoint);
         validateTrustedCommandAuthorization(command, context);
-        const incomingHash = commandHash(command);
+        validatePrivateNoteActorReservation(context);
+        const privateMaterial = getDiamondPrivateNoteText(command) !== null ||
+            privateMaterialTargetVerified ||
+            existingReceipt?.event.actorUid === exports.DIAMOND_PRIVATE_NOTE_ACTOR_UID;
+        const incomingHash = commandHash(command, privateMaterial);
         if (existingReceipt) {
             validateReceipt(existingReceipt);
             if (existingReceipt.commandId !== command.commandId) {
@@ -735,7 +889,7 @@ function executeDiamondCommandFromCheckpoint(checkpoint, command, context, exist
             return deepFreeze({
                 checkpoint,
                 result: {
-                    ...existingReceipt.result,
+                    ...resultForPrivateNoteResponse(existingReceipt.result, existingReceipt.event, checkpoint.state.currentScorerUid),
                     outcome: 'duplicate'
                 },
                 event: existingReceipt.event,
@@ -752,7 +906,7 @@ function executeDiamondCommandFromCheckpoint(checkpoint, command, context, exist
             state: checkpoint.state,
             events: []
         };
-        validateEnvelope(syntheticLedger, command, context);
+        validateEnvelope(syntheticLedger, command, context, privateMaterialTargetVerified);
         if (command.expectedRevision !== checkpoint.sequence) {
             throw new contracts_1.DiamondDomainError('stale-revision', `Expected revision ${String(command.expectedRevision)}, current revision is ${String(checkpoint.sequence)}.`, true);
         }
@@ -763,6 +917,8 @@ function executeDiamondCommandFromCheckpoint(checkpoint, command, context, exist
         const before = checkpoint.state;
         let after = (0, reducer_1.reduceDiamondEvent)(before, asReducerAction(command.type, command.payload, context.eventId));
         after = (0, reducer_1.setDiamondStateRevision)(after, sequence, '');
+        const canonicalCommand = canonicalizeDiamondPrivateNoteCommand(command);
+        const privateNote = getDiamondPrivateNoteText(command) !== null;
         let event = {
             schemaVersion: contracts_1.DIAMOND_SCHEMA_VERSION,
             eventId: context.eventId,
@@ -771,33 +927,32 @@ function executeDiamondCommandFromCheckpoint(checkpoint, command, context, exist
             commandId: command.commandId,
             commandHash: incomingHash,
             type: command.type,
-            payload: command.payload,
-            actorUid: context.actorUid,
+            payload: canonicalCommand.payload,
+            actorUid: privateNote ? exports.DIAMOND_PRIVATE_NOTE_ACTOR_UID : context.actorUid,
             serverTimestampMs: context.serverTimestampMs,
             rulesProfileId: command.rulesProfileId,
             rulesProfileVersion: command.rulesProfileVersion,
             reducerVersion: contracts_1.DIAMOND_REDUCER_VERSION,
             statCatalogVersion: contracts_1.DIAMOND_STAT_CATALOG_VERSION,
-            before,
-            after,
+            before: privateNote ? privateNoteStateForStorage(before) : before,
+            after: privateNote ? privateNoteStateForStorage(after) : after,
             previousHash: checkpoint.previousHash,
             hash: ''
         };
         const hash = hashEvent(event);
         after = (0, reducer_1.setDiamondStateRevision)(after, sequence, hash);
-        event = deepFreeze({ ...event, after, hash });
+        event = deepFreeze({
+            ...event,
+            after: privateNote ? privateNoteStateForStorage(after) : after,
+            hash
+        });
         const result = deepFreeze({
             outcome: 'accepted',
             revision: sequence,
             eventId: event.eventId,
             state: after
         });
-        const receipt = deepFreeze({
-            commandId: command.commandId,
-            commandHash: incomingHash,
-            event,
-            result
-        });
+        const receipt = createDiamondCommandReceipt(command, event, result);
         return deepFreeze({
             checkpoint: {
                 ...checkpoint,
@@ -817,8 +972,12 @@ function executeDiamondCommandFromCheckpoint(checkpoint, command, context, exist
 function executeDiamondCommand(ledger, command, context) {
     try {
         validateTrustedCommandAuthorization(command, context);
-        const incomingHash = commandHash(command);
+        validatePrivateNoteActorReservation(context);
         const existing = ledger.events.find((event) => event.commandId === command.commandId);
+        const privateMaterial = getDiamondPrivateNoteText(command) !== null ||
+            targetsPrivateNote(ledger, command) ||
+            existing?.actorUid === exports.DIAMOND_PRIVATE_NOTE_ACTOR_UID;
+        const incomingHash = commandHash(command, privateMaterial);
         if (existing) {
             if (existing.commandHash !== incomingHash) {
                 throw new contracts_1.DiamondDomainError('idempotency-conflict', 'commandId was already used with a different canonical command.');
@@ -829,7 +988,7 @@ function executeDiamondCommand(ledger, command, context) {
                     outcome: 'duplicate',
                     revision: existing.revision,
                     eventId: existing.eventId,
-                    state: existing.after
+                    state: resultForPrivateNoteResponse({ outcome: 'accepted', revision: existing.revision, eventId: existing.eventId, state: existing.after }, existing, ledger.state.currentScorerUid).state
                 },
                 event: existing
             };
@@ -848,6 +1007,8 @@ function executeDiamondCommand(ledger, command, context) {
         // nested attachment payloads cannot reach history-aware membership checks.
         validateHistoryAwareCommand(ledger, command);
         after = (0, reducer_1.setDiamondStateRevision)(after, sequence, '');
+        const canonicalCommand = canonicalizeDiamondPrivateNoteCommand(command, privateMaterial);
+        const privateNote = privateMaterial;
         const partialEvent = {
             schemaVersion: contracts_1.DIAMOND_SCHEMA_VERSION,
             eventId: context.eventId,
@@ -856,8 +1017,8 @@ function executeDiamondCommand(ledger, command, context) {
             commandId: command.commandId,
             commandHash: incomingHash,
             type: command.type,
-            payload: command.payload,
-            actorUid: context.actorUid,
+            payload: canonicalCommand.payload,
+            actorUid: privateNote ? exports.DIAMOND_PRIVATE_NOTE_ACTOR_UID : context.actorUid,
             serverTimestampMs: context.serverTimestampMs,
             rulesProfileId: command.rulesProfileId,
             rulesProfileVersion: command.rulesProfileVersion,
@@ -865,8 +1026,8 @@ function executeDiamondCommand(ledger, command, context) {
             statCatalogVersion: contracts_1.DIAMOND_STAT_CATALOG_VERSION,
             ...(command.type === 'void_event' ? { voidsEventId: command.payload.targetEventId } : {}),
             ...(command.type === 'supersede_event' ? { supersedesEventId: command.payload.targetEventId } : {}),
-            before,
-            after,
+            before: privateNote ? privateNoteStateForStorage(before) : before,
+            after: privateNote ? privateNoteStateForStorage(after) : after,
             previousHash: ledger.events.length ? ledger.events[ledger.events.length - 1].hash : '',
             hash: ''
         };
@@ -882,10 +1043,17 @@ function executeDiamondCommand(ledger, command, context) {
                 coverage: (0, reducer_1.deriveDiamondCoverageFromEventStates)(ledger.initialState, coverageReplay.effectiveEventStates)
             };
         }
-        let event = { ...partialEvent, after };
+        let event = {
+            ...partialEvent,
+            after: privateNote ? privateNoteStateForStorage(after) : after
+        };
         const hash = hashEvent(event);
         after = (0, reducer_1.setDiamondStateRevision)(after, sequence, hash);
-        event = deepFreeze({ ...event, after, hash });
+        event = deepFreeze({
+            ...event,
+            after: privateNote ? privateNoteStateForStorage(after) : after,
+            hash
+        });
         const events = deepFreeze([...ledger.events, event]);
         const nextLedger = deepFreeze({ ...ledger, state: after, events });
         if (command.type === 'void_event' || command.type === 'supersede_event') {

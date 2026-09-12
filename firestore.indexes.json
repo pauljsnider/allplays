@@ -1165,6 +1165,27 @@
       "indexes": []
     },
     {
+      "collectionGroup": "notes",
+      "fieldPath": "authorUid",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
+    },
+    {
+      "collectionGroup": "notes",
+      "fieldPath": "createdBy",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
+    },
+    {
+      "collectionGroup": "events",
+      "fieldPath": "actorUid",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
+    },
+    {
       "collectionGroup": "diamondManagerStatReadControls",
       "fieldPath": "*",
       "indexes": []

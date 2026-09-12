@@ -646,6 +646,7 @@
             "cloudFunctions": [
                 "acquireDiamondScorerLease",
                 "activateDiamondGame",
+                "cleanupAccountDiamondPrivateNotesOnAuthDelete",
                 "cleanupDeletedDiamondGame",
                 "cleanupPrivateReplayArchiveOnGameDelete",
                 "cleanupPrivateReplayArchiveOnSharedGameDelete",
@@ -678,7 +679,9 @@
                 "submitDiamondCommand"
             ],
             "unitTests": [
+                "functions/test/account-deletion-diamond-private-notes.test.cjs",
                 "functions/test/athlete-profile-projection-core.test.cjs",
+                "functions/test/diamond-private-note-core.test.cjs",
                 "functions/test/diamond-scorebook-ai-handlers.test.cjs",
                 "functions/test/diamond-scorebook-effect-handlers.test.cjs",
                 "functions/test/diamond-scorebook-engagement-handlers.test.cjs",

@@ -480,6 +480,8 @@ const {
   collectAccountRosterScopes,
   collectAccountTeamIds,
   cleanupAccountCalendarCredentials,
+  cleanupAccountDiamondPrivateNotes,
+  createAccountDiamondPrivateNoteAuthDeleteHandler,
   createAccountDeletionRequestHandler,
   deleteAccountMediaStoragePages,
   deleteAccountQueryPages,
@@ -4271,6 +4273,18 @@ exports.cleanupInviteSignupOnAuthDelete = functions.auth.user().onDelete(async (
   await cleanupFailedInviteSignupForUser(userId, { authUserRecord: user });
   return null;
 });
+
+const cleanupAccountDiamondPrivateNotesOnAuthDelete = createAccountDiamondPrivateNoteAuthDeleteHandler({
+  firestore,
+  getDocumentIdField: () => admin.firestore.FieldPath.documentId(),
+  now: () => admin.firestore.Timestamp.now().toDate().toISOString()
+});
+
+exports.cleanupAccountDiamondPrivateNotesOnAuthDelete = functions
+  .runWith({ timeoutSeconds: 540, memory: '1GB', failurePolicy: true })
+  .auth
+  .user()
+  .onDelete(cleanupAccountDiamondPrivateNotesOnAuthDelete);
 
 exports.cleanupPublicUserProfileOnAuthDelete = functions.auth
   .user()
@@ -22393,6 +22407,13 @@ exports.processAccountDeletionRequest = functions
         throw migrationError;
       }
 
+      await cleanupAccountDiamondPrivateNotes({
+        firestore,
+        uid,
+        documentIdField: admin.firestore.FieldPath.documentId(),
+        redactedAt: admin.firestore.Timestamp.now().toDate().toISOString()
+      });
+
       await deleteAccountStorage(uid, [
         firestore.collectionGroup('media').where('uploadedBy', '==', uid),
         firestore.collectionGroup('mediaItems').where('uploadedBy', '==', uid),
@@ -22453,7 +22474,11 @@ exports.processAccountDeletionRequest = functions
       await requestRef.set({
         status: 'failed',
         updatedAt: admin.firestore.Timestamp.now(),
-        failureCode: error?.code === 'legacy-profile-photo-migration-required'
+        failureCode: [
+          'legacy-profile-photo-migration-required',
+          'diamond-private-note-migration-required',
+          'diamond-private-note-integrity-failed'
+        ].includes(error?.code)
           ? error.code
           : 'processing-failed'
       }, { merge: true });

@@ -59,6 +59,7 @@ function buildRawSnapshot(revision = 3) {
   return {
     revision,
     instanceId,
+    canSubmitPrivateMaterial: true,
     state: {
       schemaVersion: 2,
       teamId: 'team-1',
@@ -421,6 +422,7 @@ describe('diamondScorebookService', () => {
       gameId: 'game-1',
       revision: 3,
       authoritative: true,
+      canSubmitPrivateMaterial: true,
       lifecycle: 'active',
       score: { home: 2, away: 1 },
       currentHalfRuns: 0,
@@ -444,6 +446,16 @@ describe('diamondScorebookService', () => {
     expect(snapshot.availablePlayers.home.map((player) => player.name)).toEqual(['Taylor Gray', 'Avery Carter', 'Jordan Lee']);
     expect(snapshot.defensiveLineup.map((player) => player.name)).toEqual(['Morgan Diaz']);
     expect(snapshot.recentPlays[0]?.eventId).toBe('event-3');
+  });
+
+  it('normalizes private-material authority only from a literal true capability', () => {
+    const raw = buildRawSnapshot();
+    const { canSubmitPrivateMaterial: _capability, ...missingCapability } = raw;
+
+    expect(normalizeDiamondSnapshot(raw).canSubmitPrivateMaterial).toBe(true);
+    expect(normalizeDiamondSnapshot(missingCapability).canSubmitPrivateMaterial).toBe(false);
+    expect(normalizeDiamondSnapshot({ ...raw, canSubmitPrivateMaterial: 'true' }).canSubmitPrivateMaterial).toBe(false);
+    expect(normalizeDiamondSnapshot({ ...raw, canSubmitPrivateMaterial: 1 }).canSubmitPrivateMaterial).toBe(false);
   });
 
   describe('side-aware Diamond snapshot metadata', () => {
@@ -1838,6 +1850,7 @@ describe('diamondScorebookService', () => {
     });
     await saveDiamondPrivateNote(
       {
+        authenticatedUid: 'coach-1',
         teamId: 'team-1',
         gameId: 'game-1',
         appBuild,
@@ -1860,10 +1873,12 @@ describe('diamondScorebookService', () => {
         payload: { text: 'Work on first-pitch timing.', attachedEventId: 'event-3' }
       })
     );
+    expect(call.mock.calls[0]?.[1]).not.toHaveProperty('leaseId');
     expect(JSON.stringify(call.mock.calls[0]?.[1])).not.toMatch(/audio|recording|visibility/i);
 
     await expect(
       saveDiamondPrivateNote({
+        authenticatedUid: 'coach-1',
         teamId: 'team-1',
         gameId: 'game-1',
         appBuild,
@@ -1874,6 +1889,482 @@ describe('diamondScorebookService', () => {
         text: 'x'.repeat(2001)
       })
     ).rejects.toMatchObject({ code: 'invalid-input' });
+  });
+
+  it('reuses the exact private-note command after a committed response can be lost', async () => {
+    const call = vi
+      .fn()
+      .mockRejectedValueOnce({ code: 'functions/unavailable' })
+      .mockRejectedValueOnce({ code: 'functions/unavailable' })
+      .mockResolvedValue({
+        ...buildRawSnapshot(4),
+        outcome: 'duplicate',
+        revision: 4,
+        eventId: 'note-replayed'
+      });
+    const crypto = cryptoWithUuid('11111111-1111-4111-8111-111111111111');
+    const transport = { call } as unknown as DiamondCallableTransport;
+    const input = {
+      authenticatedUid: 'coach-private-retry',
+      teamId: 'team-private-retry',
+      gameId: 'game-private-retry',
+      appBuild,
+      expectedInstanceId: instanceId,
+      leaseId: scorerLeaseId,
+      expectedRevision: 3,
+      rulesProfileId: 'baseball-youth',
+      rulesProfileVersion: 1,
+      text: 'Preserve this exact uncertain note command.'
+    };
+
+    await expect(saveDiamondPrivateNote(input, { transport, crypto })).rejects.toMatchObject({ code: 'unavailable', retryable: true });
+    await expect(saveDiamondPrivateNote({ ...input, expectedRevision: 9 }, { transport, crypto })).resolves.toMatchObject({
+      outcome: 'duplicate',
+      eventId: 'note-replayed'
+    });
+
+    const calls = call.mock.calls as unknown as Array<[string, Record<string, unknown>]>;
+    expect(call).toHaveBeenCalledTimes(3);
+    expect(calls.map((entry) => entry[1])).toEqual([calls[0]?.[1], calls[0]?.[1], calls[0]?.[1]]);
+    expect(calls[0]?.[1]).toMatchObject({
+      commandId: '11111111-1111-4111-8111-111111111111',
+      expectedRevision: 3
+    });
+    expect(calls[0]?.[1]).not.toHaveProperty('leaseId');
+    expect(calls[0]?.[1]).not.toHaveProperty('authenticatedUid');
+    expect(crypto.randomUUID).toHaveBeenCalledTimes(1);
+  });
+
+  it('automatically retires private-note retry material without minting a second command after expiry', async () => {
+    vi.useFakeTimers();
+    try {
+      const commandId = '12121212-1212-4212-8212-121212121212';
+      const crypto = cryptoWithUuid(commandId);
+      const call = vi
+        .fn()
+        .mockRejectedValueOnce({ code: 'functions/unavailable' })
+        .mockRejectedValueOnce({ code: 'functions/unavailable' })
+        .mockResolvedValue({
+          ...buildRawSnapshot(4),
+          outcome: 'duplicate',
+          revision: 4,
+          eventId: 'note-after-retry-retirement'
+        });
+      const input = {
+        authenticatedUid: 'coach-private-retirement',
+        teamId: 'team-private-retirement',
+        gameId: 'game-private-retirement',
+        appBuild,
+        expectedInstanceId: instanceId,
+        expectedRevision: 3,
+        rulesProfileId: 'baseball-youth',
+        rulesProfileVersion: 1,
+        text: 'Do not retain this plaintext in an idle retry handle.'
+      };
+
+      await expect(saveDiamondPrivateNote(input, { transport: { call }, crypto })).rejects.toMatchObject({
+        code: 'unavailable',
+        retryable: true
+      });
+      expect(vi.getTimerCount()).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(8 * 60 * 1000 + 1);
+      expect(vi.getTimerCount()).toBe(0);
+
+      await expect(saveDiamondPrivateNote({ ...input, expectedRevision: 9 }, { transport: { call }, crypto })).resolves.toMatchObject({
+        outcome: 'duplicate',
+        eventId: 'note-after-retry-retirement'
+      });
+
+      const calls = call.mock.calls as unknown as Array<[string, Record<string, unknown>]>;
+      expect(calls.map((entry) => entry[1]?.commandId)).toEqual([commandId, commandId, commandId]);
+      expect(calls.map((entry) => entry[1]?.expectedRevision)).toEqual([3, 3, 3]);
+      expect(crypto.randomUUID).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('coalesces concurrent saves of the same private note behind one exact command', async () => {
+    const commandId = '13131313-1313-4313-8313-131313131313';
+    const crypto = cryptoWithUuid(commandId);
+    let resolveCall!: (value: unknown) => void;
+    const call = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          resolveCall = resolve;
+        })
+    );
+    const input = {
+      authenticatedUid: 'coach-private-concurrent',
+      teamId: 'team-private-concurrent',
+      gameId: 'game-private-concurrent',
+      appBuild,
+      expectedInstanceId: instanceId,
+      expectedRevision: 3,
+      rulesProfileId: 'baseball-youth',
+      rulesProfileVersion: 1,
+      text: 'One concurrent private note.'
+    };
+
+    const transport = { call: call as unknown as DiamondCallableTransport['call'] };
+    const first = saveDiamondPrivateNote(input, { transport, crypto });
+    const second = saveDiamondPrivateNote({ ...input, expectedRevision: 9 }, { transport, crypto });
+    expect(call).toHaveBeenCalledTimes(1);
+    resolveCall({
+      ...buildRawSnapshot(4),
+      outcome: 'accepted',
+      revision: 4,
+      eventId: 'note-concurrent'
+    });
+
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      expect.objectContaining({ outcome: 'accepted', eventId: 'note-concurrent' }),
+      expect.objectContaining({ outcome: 'accepted', eventId: 'note-concurrent' })
+    ]);
+    const calls = call.mock.calls as unknown as Array<[string, Record<string, unknown>]>;
+    expect(calls[0]?.[1]).toMatchObject({ commandId, expectedRevision: 3 });
+    expect(crypto.randomUUID).toHaveBeenCalledTimes(1);
+  });
+
+  it('retains the exact command after a malformed response could follow a commit', async () => {
+    const commandId = '14141414-1414-4414-8414-141414141414';
+    const crypto = cryptoWithUuid(commandId);
+    const call = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ...buildRawSnapshot(3),
+        outcome: 'accepted',
+        revision: 3,
+        eventId: 'possibly-committed-note'
+      })
+      .mockResolvedValueOnce({
+        ...buildRawSnapshot(4),
+        outcome: 'duplicate',
+        revision: 4,
+        eventId: 'possibly-committed-note'
+      });
+    const input = {
+      authenticatedUid: 'coach-private-malformed-response',
+      teamId: 'team-private-malformed-response',
+      gameId: 'game-private-malformed-response',
+      appBuild,
+      expectedInstanceId: instanceId,
+      expectedRevision: 3,
+      rulesProfileId: 'baseball-youth',
+      rulesProfileVersion: 1,
+      text: 'Keep the id after malformed confirmation.'
+    };
+
+    await expect(saveDiamondPrivateNote(input, { transport: { call }, crypto })).rejects.toMatchObject({
+      code: 'invalid-response',
+      retryable: false
+    });
+    await expect(saveDiamondPrivateNote({ ...input, expectedRevision: 9 }, { transport: { call }, crypto })).resolves.toMatchObject({
+      outcome: 'duplicate',
+      eventId: 'possibly-committed-note'
+    });
+
+    const calls = call.mock.calls as unknown as Array<[string, Record<string, unknown>]>;
+    expect(calls.map((entry) => entry[1]?.commandId)).toEqual([commandId, commandId]);
+    expect(calls.map((entry) => entry[1]?.expectedRevision)).toEqual([3, 3]);
+    expect(crypto.randomUUID).toHaveBeenCalledTimes(1);
+  });
+
+  it('partitions uncertain private-note commands by the authenticated principal', async () => {
+    vi.useFakeTimers();
+    try {
+      const firstId = '22222222-2222-4222-8222-222222222222';
+      const secondId = '33333333-3333-4333-8333-333333333333';
+      const crypto = {
+        randomUUID: vi.fn().mockReturnValueOnce(firstId).mockReturnValueOnce(secondId)
+      } as unknown as Crypto;
+      let succeed = false;
+      const call = vi.fn(async () => {
+        if (!succeed) throw { code: 'functions/unavailable' };
+        return {
+          ...buildRawSnapshot(4),
+          outcome: 'accepted',
+          revision: 4,
+          eventId: 'note-second-principal'
+        };
+      });
+      const transport = { call } as unknown as DiamondCallableTransport;
+      const input = {
+        teamId: 'team-private-principal',
+        gameId: 'game-private-principal',
+        appBuild,
+        expectedInstanceId: instanceId,
+        expectedRevision: 3,
+        rulesProfileId: 'baseball-youth',
+        rulesProfileVersion: 1,
+        text: 'Same note body on an account switch.'
+      };
+
+      await expect(saveDiamondPrivateNote({ ...input, authenticatedUid: 'coach-private-a' }, { transport, crypto })).rejects.toMatchObject({
+        code: 'unavailable',
+        retryable: true
+      });
+      await vi.advanceTimersByTimeAsync(8 * 60 * 1000 + 1);
+      succeed = true;
+      await expect(saveDiamondPrivateNote({ ...input, authenticatedUid: 'coach-private-b' }, { transport, crypto })).resolves.toMatchObject(
+        { outcome: 'accepted' }
+      );
+      await expect(
+        saveDiamondPrivateNote({ ...input, authenticatedUid: 'coach-private-a', expectedRevision: 9 }, { transport, crypto })
+      ).resolves.toMatchObject({ outcome: 'accepted' });
+
+      const calls = call.mock.calls as unknown as Array<[string, Record<string, unknown>]>;
+      expect(calls.map((entry) => entry[1]?.commandId)).toEqual([firstId, firstId, secondId, firstId]);
+      expect(calls.every((entry) => !('authenticatedUid' in (entry[1] || {})))).toBe(true);
+      expect(crypto.randomUUID).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('bounds uncertain private-note commands per authenticated principal', async () => {
+    vi.useFakeTimers();
+    try {
+      let commandIndex = 1;
+      let succeed = false;
+      const crypto = {
+        randomUUID: vi.fn(() => `44444444-4444-4444-8444-${String(commandIndex++).padStart(12, '0')}`)
+      } as unknown as Crypto;
+      const call = vi.fn(async (_name: string, payload: Record<string, unknown>) => {
+        if (!succeed) throw { code: 'functions/unavailable' };
+        return {
+          ...buildRawSnapshot(Number(payload.expectedRevision) + 1),
+          outcome: 'accepted',
+          revision: Number(payload.expectedRevision) + 1,
+          eventId: 'note-cap-recovered'
+        };
+      });
+      const transport = { call } as unknown as DiamondCallableTransport;
+      const input = (index: number, authenticatedUid = 'coach-private-cap-a') => ({
+        authenticatedUid,
+        teamId: 'team-private-cap',
+        gameId: `game-private-cap-${index}`,
+        appBuild,
+        expectedInstanceId: instanceId,
+        expectedRevision: 3,
+        rulesProfileId: 'baseball-youth',
+        rulesProfileVersion: 1,
+        text: `Uncertain private note ${index}`
+      });
+
+      for (let index = 0; index < 32; index += 1) {
+        await expect(saveDiamondPrivateNote(input(index), { transport, crypto })).rejects.toMatchObject({
+          code: 'unavailable',
+          retryable: true
+        });
+      }
+      await expect(saveDiamondPrivateNote(input(32), { transport, crypto })).rejects.toMatchObject({
+        code: 'rate-limited',
+        retryable: false
+      });
+      expect(call).toHaveBeenCalledTimes(64);
+      expect(crypto.randomUUID).toHaveBeenCalledTimes(32);
+
+      await vi.advanceTimersByTimeAsync(8 * 60 * 1000 + 1);
+      succeed = true;
+      await expect(saveDiamondPrivateNote(input(32), { transport, crypto })).resolves.toMatchObject({ outcome: 'accepted' });
+      for (let index = 0; index < 32; index += 1) {
+        await expect(saveDiamondPrivateNote(input(index), { transport, crypto })).resolves.toMatchObject({ outcome: 'accepted' });
+      }
+      expect(call).toHaveBeenCalledTimes(97);
+      expect(crypto.randomUUID).toHaveBeenCalledTimes(33);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not reactivate an expired private-note receipt above the per-principal cap', async () => {
+    vi.useFakeTimers();
+    try {
+      let commandIndex = 1;
+      let succeed = false;
+      const crypto = {
+        randomUUID: vi.fn(() => `45454545-4545-4545-8545-${String(commandIndex++).padStart(12, '0')}`)
+      } as unknown as Crypto;
+      const call = vi.fn(async (_name: string, payload: Record<string, unknown>) => {
+        if (!succeed) throw { code: 'functions/unavailable' };
+        return {
+          ...buildRawSnapshot(Number(payload.expectedRevision) + 1),
+          outcome: 'accepted',
+          revision: Number(payload.expectedRevision) + 1,
+          eventId: 'note-expired-cap-recovered'
+        };
+      });
+      const transport = { call } as unknown as DiamondCallableTransport;
+      const input = (index: number) => ({
+        authenticatedUid: 'coach-private-expired-cap',
+        teamId: 'team-private-expired-cap',
+        gameId: `game-private-expired-cap-${index}`,
+        appBuild,
+        expectedInstanceId: instanceId,
+        expectedRevision: 3,
+        rulesProfileId: 'baseball-youth',
+        rulesProfileVersion: 1,
+        text: `Expired-cap private note ${index}`
+      });
+
+      await expect(saveDiamondPrivateNote(input(-1), { transport, crypto })).rejects.toMatchObject({ code: 'unavailable' });
+      const callsAfterExpiredAttempt = call.mock.calls as unknown as Array<[string, Record<string, unknown>]>;
+      const expiredCommandId = callsAfterExpiredAttempt[0]?.[1]?.commandId;
+      await vi.advanceTimersByTimeAsync(8 * 60 * 1000 + 1);
+      for (let index = 0; index < 32; index += 1) {
+        await expect(saveDiamondPrivateNote(input(index), { transport, crypto })).rejects.toMatchObject({ code: 'unavailable' });
+      }
+
+      await expect(saveDiamondPrivateNote(input(-1), { transport, crypto })).rejects.toMatchObject({
+        code: 'rate-limited',
+        retryable: false
+      });
+      expect(call).toHaveBeenCalledTimes(66);
+
+      succeed = true;
+      await expect(saveDiamondPrivateNote(input(0), { transport, crypto })).resolves.toMatchObject({ outcome: 'accepted' });
+      await expect(saveDiamondPrivateNote(input(-1), { transport, crypto })).resolves.toMatchObject({ outcome: 'accepted' });
+      const calls = call.mock.calls as unknown as Array<[string, Record<string, unknown>]>;
+      expect(calls[67]?.[1]?.commandId).toBe(expiredCommandId);
+      for (let index = 1; index < 32; index += 1) {
+        await expect(saveDiamondPrivateNote(input(index), { transport, crypto })).resolves.toMatchObject({ outcome: 'accepted' });
+      }
+      expect(crypto.randomUUID).toHaveBeenCalledTimes(33);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('reserves one active slot before concurrent retries of distinct expired private-note receipts', async () => {
+    vi.useFakeTimers();
+    try {
+      let commandIndex = 1;
+      let mode: 'unavailable' | 'deferred' | 'success' = 'unavailable';
+      let resolveDeferred!: (value: unknown) => void;
+      const crypto = {
+        randomUUID: vi.fn(() => `46464646-4646-4646-8646-${String(commandIndex++).padStart(12, '0')}`)
+      } as unknown as Crypto;
+      const accepted = (payload: Record<string, unknown>) => ({
+        ...buildRawSnapshot(Number(payload.expectedRevision) + 1),
+        outcome: 'accepted',
+        revision: Number(payload.expectedRevision) + 1,
+        eventId: 'note-concurrent-expired-cap-recovered'
+      });
+      const call = vi.fn(async (_name: string, payload: Record<string, unknown>) => {
+        if (mode === 'unavailable') throw { code: 'functions/unavailable' };
+        if (mode === 'deferred') {
+          return new Promise((resolve) => {
+            resolveDeferred = resolve;
+          });
+        }
+        return accepted(payload);
+      });
+      const transport = { call } as unknown as DiamondCallableTransport;
+      const input = (index: number) => ({
+        authenticatedUid: 'coach-private-concurrent-expired-cap',
+        teamId: 'team-private-concurrent-expired-cap',
+        gameId: `game-private-concurrent-expired-cap-${index}`,
+        appBuild,
+        expectedInstanceId: instanceId,
+        expectedRevision: 3,
+        rulesProfileId: 'baseball-youth',
+        rulesProfileVersion: 1,
+        text: `Concurrent expired-cap private note ${index}`
+      });
+
+      await expect(saveDiamondPrivateNote(input(-2), { transport, crypto })).rejects.toMatchObject({ code: 'unavailable' });
+      await expect(saveDiamondPrivateNote(input(-1), { transport, crypto })).rejects.toMatchObject({ code: 'unavailable' });
+      const initialCalls = call.mock.calls as unknown as Array<[string, Record<string, unknown>]>;
+      const firstExpiredCommandId = initialCalls[0]?.[1]?.commandId;
+      const secondExpiredCommandId = initialCalls[2]?.[1]?.commandId;
+      await vi.advanceTimersByTimeAsync(8 * 60 * 1000 + 1);
+      for (let index = 0; index < 31; index += 1) {
+        await expect(saveDiamondPrivateNote(input(index), { transport, crypto })).rejects.toMatchObject({ code: 'unavailable' });
+      }
+      expect(call).toHaveBeenCalledTimes(66);
+
+      mode = 'deferred';
+      const firstRetry = saveDiamondPrivateNote(input(-2), { transport, crypto });
+      expect(call).toHaveBeenCalledTimes(67);
+      await expect(saveDiamondPrivateNote(input(-1), { transport, crypto })).rejects.toMatchObject({
+        code: 'rate-limited',
+        retryable: false
+      });
+      expect(call).toHaveBeenCalledTimes(67);
+      const retryCalls = call.mock.calls as unknown as Array<[string, Record<string, unknown>]>;
+      expect(retryCalls[66]?.[1]?.commandId).toBe(firstExpiredCommandId);
+      resolveDeferred(accepted(retryCalls[66]?.[1] || {}));
+      await expect(firstRetry).resolves.toMatchObject({ outcome: 'accepted' });
+
+      mode = 'success';
+      await expect(saveDiamondPrivateNote(input(-1), { transport, crypto })).resolves.toMatchObject({ outcome: 'accepted' });
+      const calls = call.mock.calls as unknown as Array<[string, Record<string, unknown>]>;
+      expect(calls[67]?.[1]?.commandId).toBe(secondExpiredCommandId);
+      for (let index = 0; index < 31; index += 1) {
+        await expect(saveDiamondPrivateNote(input(index), { transport, crypto })).resolves.toMatchObject({ outcome: 'accepted' });
+      }
+      expect(crypto.randomUUID).toHaveBeenCalledTimes(33);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('bounds unconfirmed private-note receipts across switched accounts without forgetting their IDs', async () => {
+    vi.useFakeTimers();
+    try {
+      let commandIndex = 1;
+      let succeed = false;
+      const crypto = {
+        randomUUID: vi.fn(() => `55555555-5555-4555-8555-${String(commandIndex++).padStart(12, '0')}`)
+      } as unknown as Crypto;
+      const call = vi.fn(async (_name: string, payload: Record<string, unknown>) => {
+        if (!succeed) throw { code: 'functions/unavailable' };
+        return {
+          ...buildRawSnapshot(Number(payload.expectedRevision) + 1),
+          outcome: 'accepted',
+          revision: Number(payload.expectedRevision) + 1,
+          eventId: 'bounded-receipt-recovered'
+        };
+      });
+      const transport = { call } as unknown as DiamondCallableTransport;
+      const input = (index: number) => ({
+        authenticatedUid: `coach-private-global-${Math.floor(index / 32)}`,
+        teamId: 'team-private-global-cap',
+        gameId: `game-private-global-cap-${index}`,
+        appBuild,
+        expectedInstanceId: instanceId,
+        expectedRevision: 3,
+        rulesProfileId: 'baseball-youth',
+        rulesProfileVersion: 1,
+        text: `Bounded ambiguous note ${index}`
+      });
+
+      for (let index = 0; index < 128; index += 1) {
+        await expect(saveDiamondPrivateNote(input(index), { transport, crypto })).rejects.toMatchObject({
+          code: 'unavailable',
+          retryable: true
+        });
+      }
+      await expect(
+        saveDiamondPrivateNote({ ...input(128), authenticatedUid: 'coach-private-global-overflow' }, { transport, crypto })
+      ).rejects.toMatchObject({ code: 'unavailable', retryable: false });
+      expect(call).toHaveBeenCalledTimes(256);
+      expect(crypto.randomUUID).toHaveBeenCalledTimes(128);
+
+      succeed = true;
+      for (let index = 0; index < 128; index += 1) {
+        await expect(saveDiamondPrivateNote(input(index), { transport, crypto })).resolves.toMatchObject({ outcome: 'accepted' });
+      }
+      expect(call).toHaveBeenCalledTimes(384);
+      expect(crypto.randomUUID).toHaveBeenCalledTimes(128);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('persists ordinary offline commands, deduplicates IDs, and removes each item only after server confirmation', async () => {
@@ -1976,7 +2467,7 @@ describe('diamondScorebookService', () => {
     expect(readDiamondCommandQueue(identity, storage)).toEqual([]);
   });
 
-  it('never stores private notes or transcripts in the offline command queue', () => {
+  it('never stores private notes, corrections, or transcripts in the offline command queue', () => {
     const storage = createStorage();
     const note = createDiamondCommand(
       {
@@ -2001,6 +2492,48 @@ describe('diamondScorebookService', () => {
     expect(() => enqueueDiamondCommand(unsafePlay, identity, storage)).toThrow('never stored');
     const disguisedTranscript = buildCommand({ payload: { location: 'Transcript from scorer microphone' } });
     expect(() => enqueueDiamondCommand(disguisedTranscript, identity, storage)).toThrow('never stored');
+
+    const privateTargetVoid = buildCommand({
+      type: 'void_event',
+      payload: { targetEventId: 'private-note-event', reason: 'wrong entry' }
+    });
+    expect(() => enqueueDiamondCommand(privateTargetVoid, identity, storage)).toThrow('never stored');
+
+    const privateTargetSupersede = buildCommand({
+      type: 'supersede_event',
+      payload: {
+        targetEventId: 'private-note-event',
+        reason: 'replace private note',
+        replacement: {
+          type: 'rules_decision',
+          payload: { code: 'local_rule', description: 'Public ruling.' }
+        }
+      }
+    });
+    expect(() => enqueueDiamondCommand(privateTargetSupersede, identity, storage)).toThrow('never stored');
+    expect(storage.setItem).not.toHaveBeenCalled();
+  });
+
+  it('quarantines a previously persisted correction instead of replaying it', () => {
+    const storage = createStorage();
+    const identity = buildQueueIdentity();
+    const correction = buildCommand({
+      type: 'void_event',
+      payload: { targetEventId: 'private-note-event', reason: 'legacy queued correction' }
+    });
+    const key = getDiamondQueueKey(identity);
+    storage.values.set(
+      key,
+      JSON.stringify({
+        version: 3,
+        identity,
+        items: [{ command: correction, queuedAt: '2026-09-05T12:00:00.000Z', ...identity }]
+      })
+    );
+
+    expect(readDiamondCommandQueue(identity, storage)).toEqual([]);
+    expect(storage.removeItem).toHaveBeenCalledWith(key);
+    expect(storage.values.has(key)).toBe(false);
   });
 
   it('rejects a command whose expected Diamond instance does not match the queue identity', () => {

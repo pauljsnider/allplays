@@ -5,6 +5,7 @@ const { describe, it } = require("node:test");
 
 const domainEngine = require("../diamond-engine");
 const projectionAdapter = require("../diamond-scorebook-projections.cjs");
+const privateNoteCore = require("../diamond-private-note-core.cjs");
 const core = require("../diamond-scorebook-core.cjs");
 const {
   createDiamondStatConfigSnapshot,
@@ -327,7 +328,9 @@ function createGame({
     captureMode,
   });
   let nextId = 1;
+  const privateNoteSources = [];
   const submit = (type, payload = {}) => {
+    const serverTimestampMs = 1_750_000_000_000 + nextId;
     const command = {
       schemaVersion: 2,
       commandId: uuid(nextId),
@@ -342,7 +345,7 @@ function createGame({
     const execution = domainEngine.executeDiamondCommand(ledger, command, {
       actorUid: "scorer-1",
       eventId: `event-${String(nextId).padStart(6, "0")}`,
-      serverTimestampMs: 1_750_000_000_000 + nextId,
+      serverTimestampMs,
     });
     assert.equal(
       execution.result.outcome,
@@ -350,6 +353,16 @@ function createGame({
       execution.result.rejection?.message,
     );
     ledger = execution.ledger;
+    if (
+      execution.event.actorUid === domainEngine.DIAMOND_PRIVATE_NOTE_ACTOR_UID
+    ) {
+      privateNoteSources.push({
+        command,
+        event: execution.event,
+        authorUid: "scorer-1",
+        createdAt: new Date(serverTimestampMs).toISOString(),
+      });
+    }
     nextId += 1;
     return execution.event;
   };
@@ -357,6 +370,9 @@ function createGame({
   return {
     get ledger() {
       return ledger;
+    },
+    get privateNoteSources() {
+      return [...privateNoteSources];
     },
     submit,
   };
@@ -480,6 +496,8 @@ function seedGame(firestore, game, options = {}) {
   const root = {
     schemaVersion: 2,
     trackingEngine: DIAMOND_ENGINE,
+    privateNoteStorageVersion: 1,
+    privateNotePrivacyRevision: 0,
     instanceId,
     teamId,
     gameId,
@@ -512,6 +530,16 @@ function seedGame(firestore, game, options = {}) {
       ...event,
       instanceId,
     });
+  }
+  for (const source of game.privateNoteSources || []) {
+    firestore.seed(
+      `${paths.notes}/${source.event.eventId}`,
+      privateNoteCore.buildDiamondPrivateNoteRecord({
+        ...source,
+        instanceId,
+        domainEngine,
+      }),
+    );
   }
   firestore.seed(paths.publicCurrent, {
     schemaVersion: 2,
@@ -556,6 +584,19 @@ function syncLedger(firestore, game, instanceId = "instance-1") {
         ...event,
         instanceId,
       });
+    }
+  }
+  for (const source of game.privateNoteSources || []) {
+    const notePath = `${paths.notes}/${source.event.eventId}`;
+    if (!firestore.read(notePath)) {
+      firestore.seed(
+        notePath,
+        privateNoteCore.buildDiamondPrivateNoteRecord({
+          ...source,
+          instanceId,
+          domainEngine,
+        }),
+      );
     }
   }
 }
@@ -620,6 +661,7 @@ describe("Diamond scorebook authoritative projector", () => {
       game.ledger.state.revision,
     );
     assert.equal(root.diamondProjectionMarker.instanceId, instanceId);
+    assert.equal(root.diamondProjectionMarker.privateNotePrivacyRevision, 0);
     assert.equal(
       root.diamondProjectionMarker.statConfigSnapshotHash,
       root.statConfigSnapshot.snapshotHash,
@@ -639,6 +681,12 @@ describe("Diamond scorebook authoritative projector", () => {
         paths.run(root.diamondProjectionMarker.projectionKey),
       ).orientationSnapshotHash,
       core.hashDiamondValue(root.orientationSnapshot),
+    );
+    assert.equal(
+      harness.firestore.read(
+        paths.run(root.diamondProjectionMarker.projectionKey),
+      ).privateNotePrivacyRevision,
+      0,
     );
     assert.equal(root.projectionLease, null);
     const projectedGame = harness.firestore.read(paths.game);
@@ -738,6 +786,77 @@ describe("Diamond scorebook authoritative projector", () => {
       harness.firestore.read(paths.scorebook).projectionRequest,
       null,
     );
+  });
+
+  it("requires exact private-note storage metadata before acquiring a projection lease", async () => {
+    const invalidRoots = [
+      [
+        "missing storage version",
+        (root) => {
+          const next = { ...root };
+          delete next.privateNoteStorageVersion;
+          return next;
+        },
+      ],
+      [
+        "unknown storage version",
+        (root) => ({
+          ...root,
+          privateNoteStorageVersion: 2,
+        }),
+      ],
+      [
+        "missing privacy revision",
+        (root) => {
+          const next = { ...root };
+          delete next.privateNotePrivacyRevision;
+          return next;
+        },
+      ],
+      [
+        "negative privacy revision",
+        (root) => ({
+          ...root,
+          privateNotePrivacyRevision: -1,
+        }),
+      ],
+      [
+        "fractional privacy revision",
+        (root) => ({
+          ...root,
+          privateNotePrivacyRevision: 0.5,
+        }),
+      ],
+    ];
+
+    for (const [label, mutate] of invalidRoots) {
+      const game = createGame();
+      const harness = createHarness();
+      const { paths, root } = seedGame(harness.firestore, game);
+      harness.firestore.seed(paths.scorebook, mutate(root));
+
+      await assert.rejects(
+        harness.handlers.projectDiamondGame({
+          teamId: "team-1",
+          gameId: "game-1",
+        }),
+        (error) =>
+          error instanceof DiamondProjectorError &&
+          error.code === "private-note-storage-invalid" &&
+          error.retryable === false,
+        label,
+      );
+      const rejectedRoot = harness.firestore.read(paths.scorebook);
+      assert.equal(rejectedRoot.projectionStatus, "pending", label);
+      assert.equal(rejectedRoot.projectionLease, undefined, label);
+      assert.equal(rejectedRoot.diamondProjectionMarker, undefined, label);
+      assert.equal(
+        harness.firestore.directChildren(`${paths.scorebook}/projectionRuns`)
+          .length,
+        0,
+        label,
+      );
+    }
   });
 
   it("projects side, stats, and public names only from the immutable orientation snapshot", async () => {
@@ -1377,6 +1496,144 @@ describe("Diamond scorebook authoritative projector", () => {
     );
   });
 
+  it("fences run initialization and preserves a replacement lease when the private-note privacy epoch advances", async () => {
+    const game = createGame();
+    game.submit("private_note", { text: "Server-private note" });
+    const firestore = new FakeFirestore();
+    const { paths } = seedGame(firestore, game);
+    const replacementLeaseId = uuid(850);
+    const epochChangingAdapter = {
+      ...projectionAdapter,
+      buildDiamondProjectionBundle(options) {
+        const bundle = projectionAdapter.buildDiamondProjectionBundle(options);
+        const root = firestore.read(paths.scorebook);
+        firestore.seed(paths.scorebook, {
+          ...root,
+          privateNotePrivacyRevision: root.privateNotePrivacyRevision + 1,
+          projectionLease: {
+            ...root.projectionLease,
+            leaseId: replacementLeaseId,
+            privateNotePrivacyRevision: root.privateNotePrivacyRevision + 1,
+            projectionKey: "replacement-private-note-projection",
+          },
+        });
+        return bundle;
+      },
+    };
+    const harness = createHarness({
+      firestore,
+      handlers: { projectionAdapter: epochChangingAdapter },
+    });
+
+    await assert.rejects(
+      harness.handlers.projectDiamondGame({
+        teamId: "team-1",
+        gameId: "game-1",
+      }),
+      (error) => error.code === "projection-lease-lost" && error.retryable,
+    );
+    const fencedRoot = firestore.read(paths.scorebook);
+    assert.equal(fencedRoot.privateNotePrivacyRevision, 1);
+    assert.equal(fencedRoot.projectionLease.leaseId, replacementLeaseId);
+    assert.equal(fencedRoot.projectionStatus, "pending");
+    assert.equal(fencedRoot.diamondProjectionMarker, undefined);
+    assert.equal(
+      firestore.directChildren(`${paths.scorebook}/projectionRuns`).length,
+      0,
+    );
+  });
+
+  it("fences run preparation when the private-note privacy epoch advances after run initialization", async () => {
+    const game = createGame();
+    game.submit("private_note", { text: "Server-private note" });
+    const firestore = new FakeFirestore();
+    const { paths } = seedGame(firestore, game);
+    const runTransaction = firestore.runTransaction.bind(firestore);
+    let completedTransactions = 0;
+    firestore.runTransaction = async (callback) => {
+      const result = await runTransaction(callback);
+      completedTransactions += 1;
+      if (completedTransactions === 2) {
+        const root = firestore.read(paths.scorebook);
+        firestore.seed(paths.scorebook, {
+          ...root,
+          privateNotePrivacyRevision: root.privateNotePrivacyRevision + 1,
+          projectionLease: null,
+          projectionStatus: "pending",
+        });
+      }
+      return result;
+    };
+    const harness = createHarness({ firestore });
+
+    await assert.rejects(
+      harness.handlers.projectDiamondGame({
+        teamId: "team-1",
+        gameId: "game-1",
+      }),
+      (error) => error.code === "projection-lease-lost" && error.retryable,
+    );
+    const fencedRoot = firestore.read(paths.scorebook);
+    assert.equal(fencedRoot.privateNotePrivacyRevision, 1);
+    assert.equal(fencedRoot.projectionLease, null);
+    assert.equal(fencedRoot.projectionStatus, "pending");
+    assert.equal(fencedRoot.diamondProjectionMarker, undefined);
+    const [staleRun] = firestore.directChildren(
+      `${paths.scorebook}/projectionRuns`,
+    );
+    assert.equal(staleRun.data.privateNotePrivacyRevision, 0);
+    assert.equal(staleRun.data.status, "preparing");
+    assert.equal(
+      firestore.read(paths.publicCurrent).projectionStatus,
+      "pending",
+    );
+  });
+
+  it("fences final publication when the private-note privacy epoch advances", async () => {
+    const game = createGame();
+    game.submit("private_note", { text: "Server-private note" });
+    const firestore = new FakeFirestore();
+    const { paths } = seedGame(firestore, game);
+    const harness = createHarness({
+      firestore,
+      handlers: {
+        hooks: {
+          async beforeFinalize() {
+            const root = firestore.read(paths.scorebook);
+            firestore.seed(paths.scorebook, {
+              ...root,
+              privateNotePrivacyRevision: root.privateNotePrivacyRevision + 1,
+              projectionLease: null,
+              projectionStatus: "pending",
+            });
+          },
+        },
+      },
+    });
+
+    await assert.rejects(
+      harness.handlers.projectDiamondGame({
+        teamId: "team-1",
+        gameId: "game-1",
+      }),
+      (error) => error.code === "projection-cas-failed" && error.retryable,
+    );
+    const fencedRoot = firestore.read(paths.scorebook);
+    assert.equal(fencedRoot.privateNotePrivacyRevision, 1);
+    assert.equal(fencedRoot.projectionLease, null);
+    assert.equal(fencedRoot.projectionStatus, "pending");
+    assert.equal(fencedRoot.diamondProjectionMarker, undefined);
+    const [staleRun] = firestore.directChildren(
+      `${paths.scorebook}/projectionRuns`,
+    );
+    assert.equal(staleRun.data.privateNotePrivacyRevision, 0);
+    assert.equal(staleRun.data.status, "prepared");
+    assert.equal(
+      firestore.read(paths.publicCurrent).projectionStatus,
+      "pending",
+    );
+  });
+
   it("reads and verifies more than 1,500 events in bounded pages and creates revision-pinned replay pages", async () => {
     const game = createGame();
     for (let index = 2; index <= 1_605; index += 1) {
@@ -1986,11 +2243,7 @@ describe("Diamond scorebook authoritative projector", () => {
     });
   }
 
-  for (const {
-    label,
-    isHome = true,
-    sharedFields,
-  } of [
+  for (const { label, isHome = true, sharedFields } of [
     {
       label: "a team game ID map",
       sharedFields: { teamGameIds: { "team-1": "game-1" } },
@@ -2219,8 +2472,7 @@ describe("Diamond scorebook authoritative projector", () => {
           teamId: "team-1",
           gameId: "game-1",
         }),
-        (error) =>
-          error?.code === "shared-game-cas-failed" && error.retryable,
+        (error) => error?.code === "shared-game-cas-failed" && error.retryable,
       );
 
       assert.deepEqual(firestore.read(sharedPath), {
@@ -2281,6 +2533,193 @@ describe("Diamond scorebook authoritative projector", () => {
     assert.equal(shared.sourceGameId, "game-1");
     assert.equal(shared.trackingEngine, undefined);
     assert.equal(shared.diamondSourceTeamId, undefined);
+  });
+
+  it("hydrates active private-note documents while keeping plaintext and author identity out of the projection hash", async () => {
+    const firstGame = createGame();
+    const firstNote = firstGame.submit("private_note", {
+      text: "PRIVATE-NOTE-ALPHA",
+    });
+    const secondGame = createGame();
+    const secondNote = secondGame.submit("private_note", {
+      text: "PRIVATE-NOTE-BRAVO",
+    });
+    assert.deepEqual(firstNote, secondNote);
+    assert.equal(
+      firstNote.payload.text,
+      domainEngine.DIAMOND_PRIVATE_NOTE_TOMBSTONE,
+    );
+    assert.equal(
+      firstNote.actorUid,
+      domainEngine.DIAMOND_PRIVATE_NOTE_ACTOR_UID,
+    );
+
+    const firstHarness = createHarness();
+    const firstSeed = seedGame(firstHarness.firestore, firstGame);
+    const secondHarness = createHarness();
+    const secondSeed = seedGame(secondHarness.firestore, secondGame);
+    const secondNotePath = `${secondSeed.paths.notes}/${secondNote.eventId}`;
+    secondHarness.firestore.seed(secondNotePath, {
+      ...secondHarness.firestore.read(secondNotePath),
+      authorUid: "scorer-2",
+    });
+    const firstResult = await firstHarness.handlers.projectDiamondGame({
+      teamId: "team-1",
+      gameId: "game-1",
+    });
+    const secondResult = await secondHarness.handlers.projectDiamondGame({
+      teamId: "team-1",
+      gameId: "game-1",
+    });
+
+    assert.equal(firstResult.projectionHash, secondResult.projectionHash);
+    const firstPrivate = firstHarness.firestore.read(
+      firstSeed.paths.privateCurrent,
+    );
+    const secondPrivate = secondHarness.firestore.read(
+      secondSeed.paths.privateCurrent,
+    );
+    assert.equal(firstPrivate.privateNotes[0].text, "PRIVATE-NOTE-ALPHA");
+    assert.equal(firstPrivate.privateNotes[0].actorUid, "scorer-1");
+    assert.equal(secondPrivate.privateNotes[0].text, "PRIVATE-NOTE-BRAVO");
+    assert.equal(secondPrivate.privateNotes[0].actorUid, "scorer-2");
+    const firstPublic = JSON.stringify({
+      state: firstHarness.firestore.read(firstSeed.paths.publicCurrent),
+      replay: firstHarness.firestore.read(firstSeed.paths.replayManifest),
+      pages: firstHarness.firestore.directChildren(firstSeed.paths.replayPages),
+    });
+    const secondPublic = JSON.stringify({
+      state: secondHarness.firestore.read(secondSeed.paths.publicCurrent),
+      replay: secondHarness.firestore.read(secondSeed.paths.replayManifest),
+      pages: secondHarness.firestore.directChildren(
+        secondSeed.paths.replayPages,
+      ),
+    });
+    assert.doesNotMatch(firstPublic, /PRIVATE-NOTE-ALPHA/);
+    assert.doesNotMatch(secondPublic, /PRIVATE-NOTE-BRAVO|scorer-2/);
+  });
+
+  it("reprojects the same canonical head after a private-note redaction epoch and removes hydrated content", async () => {
+    const game = createGame();
+    const noteEvent = game.submit("private_note", {
+      text: "DELETE-ME-PRIVATE-NOTE",
+    });
+    const harness = createHarness();
+    const { paths, instanceId } = seedGame(harness.firestore, game);
+    const active = await harness.handlers.projectDiamondGame({
+      teamId: "team-1",
+      gameId: "game-1",
+    });
+    const activeRoot = harness.firestore.read(paths.scorebook);
+    assert.equal(
+      harness.firestore.read(paths.privateCurrent).privateNotes[0].text,
+      "DELETE-ME-PRIVATE-NOTE",
+    );
+
+    harness.firestore.seed(
+      `${paths.notes}/${noteEvent.eventId}`,
+      privateNoteCore.buildDiamondPrivateNoteRedaction({
+        event: noteEvent,
+        instanceId,
+        redactedAt: "2026-09-12T00:00:00.000Z",
+        domainEngine,
+      }),
+    );
+    harness.firestore.seed(paths.scorebook, {
+      ...activeRoot,
+      privateNotePrivacyRevision: 1,
+      projectionStatus: "pending",
+      projectionLease: null,
+      projectionFailure: null,
+    });
+
+    const redacted = await harness.handlers.projectDiamondGame({
+      teamId: "team-1",
+      gameId: "game-1",
+    });
+    const redactedRoot = harness.firestore.read(paths.scorebook);
+    const privateProjection = harness.firestore.read(paths.privateCurrent);
+    assert.equal(redacted.projected, true);
+    assert.equal(redacted.sourceRevision, active.sourceRevision);
+    assert.notEqual(
+      redactedRoot.diamondProjectionMarker.projectionKey,
+      activeRoot.diamondProjectionMarker.projectionKey,
+    );
+    assert.equal(
+      redactedRoot.diamondProjectionMarker.privateNotePrivacyRevision,
+      1,
+    );
+    assert.equal(privateProjection.privateNoteCount, 0);
+    assert.deepEqual(privateProjection.privateNotes, []);
+    assert.doesNotMatch(
+      JSON.stringify(privateProjection),
+      /DELETE-ME-PRIVATE-NOTE/,
+    );
+  });
+
+  it("fails closed when external private-note storage is missing, malformed, or unreferenced", async () => {
+    const corruptions = [
+      [
+        "missing",
+        ({ firestore, paths, noteEvent }) => {
+          firestore.delete(`${paths.notes}/${noteEvent.eventId}`);
+        },
+        "private-note-input-incomplete",
+      ],
+      [
+        "malformed",
+        ({ firestore, paths, noteEvent }) => {
+          const notePath = `${paths.notes}/${noteEvent.eventId}`;
+          firestore.seed(notePath, {
+            ...firestore.read(notePath),
+            authorUid: "invalid/author",
+          });
+        },
+        "private-note-input-invalid",
+      ],
+      [
+        "unreferenced",
+        ({ firestore, paths }) => {
+          firestore.seed(`${paths.notes}/unreferenced-event`, {
+            ...firestore.directChildren(paths.notes)[0].data,
+            eventId: "unreferenced-event",
+          });
+        },
+        "private-note-input-invalid",
+      ],
+    ];
+
+    for (const [label, corrupt, causeCode] of corruptions) {
+      const game = createGame();
+      const noteEvent = game.submit("private_note", {
+        text: `PRIVATE-${label.toUpperCase()}`,
+      });
+      const harness = createHarness();
+      const { paths } = seedGame(harness.firestore, game);
+      corrupt({ firestore: harness.firestore, paths, noteEvent });
+
+      await assert.rejects(
+        harness.handlers.projectDiamondGame({
+          teamId: "team-1",
+          gameId: "game-1",
+        }),
+        (error) =>
+          error.code === "projection-input-invalid" &&
+          error.retryable === false &&
+          error.details?.causeCode === causeCode,
+        label,
+      );
+      const failedRoot = harness.firestore.read(paths.scorebook);
+      assert.equal(failedRoot.projectionStatus, "failed", label);
+      assert.equal(failedRoot.projectionLease, null, label);
+      assert.equal(failedRoot.diamondProjectionMarker, undefined, label);
+      assert.equal(
+        harness.firestore.read(paths.publicCurrent).projectionStatus,
+        "pending",
+        label,
+      );
+      assert.equal(harness.firestore.read(paths.privateCurrent), undefined);
+    }
   });
 
   it("keeps notes, transcripts, actors, audit data, and private roster fields out of every public projection", async () => {

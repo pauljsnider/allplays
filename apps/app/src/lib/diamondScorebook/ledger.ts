@@ -54,6 +54,36 @@ const ATTACHABLE_PLAY_TYPES = new Set<DiamondCommandType>(['record_plate_appeara
 const PITCHER_APPEARANCE_TYPES = new Set<DiamondCommandType>(['record_pitch', 'record_plate_appearance', 'advance_runner']);
 const FINAL_REOPEN_INTERVENING_TYPES = new Set<DiamondCommandType>(['private_note', 'scorer_handoff']);
 
+// Private-note plaintext and author identity live only in the server-private,
+// deletion-indexed note record. The canonical ledger keeps a replay-valid
+// fixed value so its hash chain contains neither the note nor a note-author
+// identifier.
+export const DIAMOND_PRIVATE_NOTE_TOMBSTONE = '[private note stored separately]' as const;
+export const DIAMOND_PRIVATE_NOTE_ACTOR_UID = 'private-note-author' as const;
+export const DIAMOND_PRIVATE_NOTE_REASON_TOMBSTONE = 'Private note correction stored separately.' as const;
+
+function privateNoteStateForStorage(state: DiamondGameState): DiamondGameState {
+  return state.currentScorerUid === null
+    ? state
+    : { ...state, currentScorerUid: DIAMOND_PRIVATE_NOTE_ACTOR_UID };
+}
+
+function resultForPrivateNoteStorage(result: DiamondCommandResult, event: DiamondEvent): DiamondCommandResult {
+  return event.actorUid !== DIAMOND_PRIVATE_NOTE_ACTOR_UID
+    ? result
+    : { ...result, state: event.after };
+}
+
+function resultForPrivateNoteResponse(
+  result: DiamondCommandResult,
+  event: DiamondEvent,
+  currentScorerUid: string | null
+): DiamondCommandResult {
+  return event.actorUid !== DIAMOND_PRIVATE_NOTE_ACTOR_UID
+    ? result
+    : { ...result, state: { ...result.state, currentScorerUid } };
+}
+
 function deepFreeze<T>(value: T): T {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
     Object.freeze(value);
@@ -71,8 +101,116 @@ function requireId(value: unknown, label: string) {
   return normalized;
 }
 
-function commandHash(command: DiamondCommand): string {
-  return hashDiamondValue(command);
+export function getDiamondPrivateNoteText(command: DiamondCommand): string | null {
+  if (command.type === 'private_note') return command.payload.text;
+  if (command.type === 'supersede_event' && command.payload.replacement.type === 'private_note') {
+    return command.payload.replacement.payload.text;
+  }
+  return null;
+}
+
+function isCorrectionCommand(command: DiamondCommand) {
+  return command.type === 'void_event' || command.type === 'supersede_event';
+}
+
+function isCanonicalPrivateNoteMaterialEvent(event: DiamondEvent | undefined) {
+  if (!event || event.actorUid !== DIAMOND_PRIVATE_NOTE_ACTOR_UID) return false;
+  if (
+    event.before.currentScorerUid !== DIAMOND_PRIVATE_NOTE_ACTOR_UID ||
+    event.after.currentScorerUid !== DIAMOND_PRIVATE_NOTE_ACTOR_UID
+  ) {
+    return false;
+  }
+  if (event.type === 'private_note') {
+    return event.payload.text === DIAMOND_PRIVATE_NOTE_TOMBSTONE;
+  }
+  if (event.type === 'supersede_event' && event.payload.replacement.type === 'private_note') {
+    return (
+      event.payload.reason === DIAMOND_PRIVATE_NOTE_REASON_TOMBSTONE &&
+      event.payload.replacement.payload.text === DIAMOND_PRIVATE_NOTE_TOMBSTONE
+    );
+  }
+  return (
+    (event.type === 'void_event' || event.type === 'supersede_event') &&
+    event.payload.reason === DIAMOND_PRIVATE_NOTE_REASON_TOMBSTONE
+  );
+}
+
+function targetsPrivateNote(ledger: DiamondLedger, command: DiamondCommand) {
+  if (!isCorrectionCommand(command)) return false;
+  const target = ledger.events.find((event) => event.eventId === command.payload.targetEventId);
+  return isCanonicalPrivateNoteMaterialEvent(target);
+}
+
+function isPrivateMaterialCommand(ledger: DiamondLedger, command: DiamondCommand) {
+  return getDiamondPrivateNoteText(command) !== null || targetsPrivateNote(ledger, command);
+}
+
+export function canonicalizeDiamondPrivateNoteCommand(
+  command: DiamondCommand,
+  privateMaterial = getDiamondPrivateNoteText(command) !== null
+): DiamondCommand {
+  const canonicalCommand = privateMaterial
+    ? ({ ...command, leaseId: null } as unknown as DiamondCommand)
+    : command;
+  if (canonicalCommand.type === 'private_note') {
+    return {
+      ...canonicalCommand,
+      payload: { ...canonicalCommand.payload, text: DIAMOND_PRIVATE_NOTE_TOMBSTONE }
+    } as DiamondCommand;
+  }
+  if (
+    canonicalCommand.type === 'supersede_event' &&
+    canonicalCommand.payload.replacement.type === 'private_note'
+  ) {
+    return {
+      ...canonicalCommand,
+      payload: {
+        ...canonicalCommand.payload,
+        reason: DIAMOND_PRIVATE_NOTE_REASON_TOMBSTONE,
+        replacement: {
+          ...canonicalCommand.payload.replacement,
+          payload: {
+            ...canonicalCommand.payload.replacement.payload,
+            text: DIAMOND_PRIVATE_NOTE_TOMBSTONE
+          }
+        }
+      }
+    } as DiamondCommand;
+  }
+  if (privateMaterial && isCorrectionCommand(canonicalCommand)) {
+    return {
+      ...canonicalCommand,
+      payload: {
+        ...canonicalCommand.payload,
+        reason: DIAMOND_PRIVATE_NOTE_REASON_TOMBSTONE
+      }
+    } as DiamondCommand;
+  }
+  return canonicalCommand;
+}
+
+export function getDiamondPrivateNoteRequestHash(command: DiamondCommand): string | null {
+  return getDiamondPrivateNoteText(command) === null && !isCorrectionCommand(command)
+    ? null
+    : hashDiamondValue({
+        schemaVersion: 1,
+        kind: 'diamond-private-note-request',
+        command:
+          isCorrectionCommand(command)
+            ? {
+                ...command,
+                payload: {
+                  ...command.payload,
+                  reason: DIAMOND_PRIVATE_NOTE_REASON_TOMBSTONE
+                }
+              }
+            : command
+      });
+}
+
+function commandHash(command: DiamondCommand, privateMaterial = getDiamondPrivateNoteText(command) !== null): string {
+  return hashDiamondValue(canonicalizeDiamondPrivateNoteCommand(command, privateMaterial));
 }
 
 function validateTrustedCommandAuthorization(command: DiamondCommand, context: DiamondCommandContext) {
@@ -81,6 +219,12 @@ function validateTrustedCommandAuthorization(command: DiamondCommand, context: D
       'manager-authorization-required',
       'Only a server-verified current team manager may cancel a Diamond game.'
     );
+  }
+}
+
+function validatePrivateNoteActorReservation(context: DiamondCommandContext) {
+  if (requireId(context.actorUid, 'actorUid') === DIAMOND_PRIVATE_NOTE_ACTOR_UID) {
+    throw new DiamondDomainError('reserved-actor-id', 'This scorer identity is reserved by the Diamond ledger.');
   }
 }
 
@@ -722,7 +866,12 @@ export function getDiamondPlayerIdentityIdsBySide(ledger: DiamondLedger): Readon
   });
 }
 
-function validateEnvelope(ledger: DiamondLedger, command: DiamondCommand, context: DiamondCommandContext) {
+function validateEnvelope(
+  ledger: DiamondLedger,
+  command: DiamondCommand,
+  context: DiamondCommandContext,
+  privateMaterialTargetVerified = false
+) {
   validateTrustedCommandAuthorization(command, context);
   if (command.schemaVersion !== DIAMOND_SCHEMA_VERSION) {
     throw new DiamondDomainError('unsupported-schema', 'Only Diamond command schema version 2 is supported.');
@@ -732,6 +881,7 @@ function validateEnvelope(ledger: DiamondLedger, command: DiamondCommand, contex
   }
   requireId(context.eventId, 'eventId');
   const actorUid = requireId(context.actorUid, 'actorUid');
+  validatePrivateNoteActorReservation(context);
   if (!Number.isSafeInteger(context.serverTimestampMs) || context.serverTimestampMs < 0) {
     throw new DiamondDomainError('invalid-server-time', 'serverTimestampMs must be a nonnegative safe integer.');
   }
@@ -749,8 +899,18 @@ function validateEnvelope(ledger: DiamondLedger, command: DiamondCommand, contex
       throw new DiamondDomainError('scorer-mismatch', 'The activating actor must become the initial scorer.');
     }
   } else if (
+    command.type === 'scorer_handoff' &&
+    command.payload.toUid === DIAMOND_PRIVATE_NOTE_ACTOR_UID
+  ) {
+    throw new DiamondDomainError(
+      'reserved-actor-id',
+      'This scorer identity is reserved by the Diamond ledger.'
+    );
+  } else if (
     command.type !== 'cancel' &&
     !(command.type === 'scorer_handoff' && context.scorerLeaseRecoveryAuthorized === true) &&
+    !privateMaterialTargetVerified &&
+    !isPrivateMaterialCommand(ledger, command) &&
     ledger.state.currentScorerUid !== actorUid
   ) {
     throw new DiamondDomainError('scorer-lease-lost', 'Only the current scorer may submit this command.', true);
@@ -885,6 +1045,33 @@ function validateReceipt(receipt: DiamondCommandReceipt) {
   }
 }
 
+export function verifyDiamondCommandReceipt(receipt: DiamondCommandReceipt): true {
+  validateReceipt(receipt);
+  return true;
+}
+
+export function createDiamondCommandReceipt(
+  command: DiamondCommand,
+  event: DiamondEvent,
+  result: DiamondCommandResult
+): DiamondCommandReceipt {
+  const expectedCommandHash = commandHash(
+    command,
+    event.actorUid === DIAMOND_PRIVATE_NOTE_ACTOR_UID
+  );
+  if (event.commandHash !== expectedCommandHash) {
+    throw new DiamondDomainError('invalid-command-receipt', 'Command receipt command does not match its event.');
+  }
+  const receipt = deepFreeze({
+    commandId: command.commandId,
+    commandHash: expectedCommandHash,
+    event,
+    result: resultForPrivateNoteStorage(result, event)
+  });
+  validateReceipt(receipt);
+  return receipt;
+}
+
 /**
  * Executes the ordinary hot path from one bounded checkpoint plus, when a retry
  * is possible, the one receipt stored at commands/{commandId}. Corrections need
@@ -894,12 +1081,18 @@ export function executeDiamondCommandFromCheckpoint(
   checkpoint: DiamondCheckpoint,
   command: DiamondCommand,
   context: DiamondCommandContext,
-  existingReceipt?: DiamondCommandReceipt | null
+  existingReceipt?: DiamondCommandReceipt | null,
+  privateMaterialTargetVerified = false
 ): DiamondCheckpointExecution {
   try {
     validateCheckpoint(checkpoint);
     validateTrustedCommandAuthorization(command, context);
-    const incomingHash = commandHash(command);
+    validatePrivateNoteActorReservation(context);
+    const privateMaterial =
+      getDiamondPrivateNoteText(command) !== null ||
+      privateMaterialTargetVerified ||
+      existingReceipt?.event.actorUid === DIAMOND_PRIVATE_NOTE_ACTOR_UID;
+    const incomingHash = commandHash(command, privateMaterial);
     if (existingReceipt) {
       validateReceipt(existingReceipt);
       if (existingReceipt.commandId !== command.commandId) {
@@ -911,7 +1104,11 @@ export function executeDiamondCommandFromCheckpoint(
       return deepFreeze({
         checkpoint,
         result: {
-          ...existingReceipt.result,
+          ...resultForPrivateNoteResponse(
+            existingReceipt.result,
+            existingReceipt.event,
+            checkpoint.state.currentScorerUid
+          ),
           outcome: 'duplicate' as const
         },
         event: existingReceipt.event,
@@ -929,7 +1126,12 @@ export function executeDiamondCommandFromCheckpoint(
       state: checkpoint.state,
       events: []
     };
-    validateEnvelope(syntheticLedger, command, context);
+    validateEnvelope(
+      syntheticLedger,
+      command,
+      context,
+      privateMaterialTargetVerified
+    );
     if (command.expectedRevision !== checkpoint.sequence) {
       throw new DiamondDomainError(
         'stale-revision',
@@ -949,6 +1151,8 @@ export function executeDiamondCommandFromCheckpoint(
     const before = checkpoint.state;
     let after = reduceDiamondEvent(before, asReducerAction(command.type, command.payload, context.eventId));
     after = setDiamondStateRevision(after, sequence, '');
+    const canonicalCommand = canonicalizeDiamondPrivateNoteCommand(command);
+    const privateNote = getDiamondPrivateNoteText(command) !== null;
     let event = {
       schemaVersion: DIAMOND_SCHEMA_VERSION,
       eventId: context.eventId,
@@ -957,33 +1161,32 @@ export function executeDiamondCommandFromCheckpoint(
       commandId: command.commandId,
       commandHash: incomingHash,
       type: command.type,
-      payload: command.payload,
-      actorUid: context.actorUid,
+      payload: canonicalCommand.payload,
+      actorUid: privateNote ? DIAMOND_PRIVATE_NOTE_ACTOR_UID : context.actorUid,
       serverTimestampMs: context.serverTimestampMs,
       rulesProfileId: command.rulesProfileId,
       rulesProfileVersion: command.rulesProfileVersion,
       reducerVersion: DIAMOND_REDUCER_VERSION,
       statCatalogVersion: DIAMOND_STAT_CATALOG_VERSION,
-      before,
-      after,
+      before: privateNote ? privateNoteStateForStorage(before) : before,
+      after: privateNote ? privateNoteStateForStorage(after) : after,
       previousHash: checkpoint.previousHash,
       hash: ''
     } as DiamondEvent;
     const hash = hashEvent(event);
     after = setDiamondStateRevision(after, sequence, hash);
-    event = deepFreeze({ ...event, after, hash } as DiamondEvent);
+    event = deepFreeze({
+      ...event,
+      after: privateNote ? privateNoteStateForStorage(after) : after,
+      hash
+    } as DiamondEvent);
     const result: DiamondCommandResult = deepFreeze({
       outcome: 'accepted',
       revision: sequence,
       eventId: event.eventId,
       state: after
     });
-    const receipt: DiamondCommandReceipt = deepFreeze({
-      commandId: command.commandId,
-      commandHash: incomingHash,
-      event,
-      result
-    });
+    const receipt = createDiamondCommandReceipt(command, event, result);
     return deepFreeze({
       checkpoint: {
         ...checkpoint,
@@ -1003,8 +1206,13 @@ export function executeDiamondCommandFromCheckpoint(
 export function executeDiamondCommand(ledger: DiamondLedger, command: DiamondCommand, context: DiamondCommandContext): DiamondExecution {
   try {
     validateTrustedCommandAuthorization(command, context);
-    const incomingHash = commandHash(command);
+    validatePrivateNoteActorReservation(context);
     const existing = ledger.events.find((event) => event.commandId === command.commandId);
+    const privateMaterial =
+      getDiamondPrivateNoteText(command) !== null ||
+      targetsPrivateNote(ledger, command) ||
+      existing?.actorUid === DIAMOND_PRIVATE_NOTE_ACTOR_UID;
+    const incomingHash = commandHash(command, privateMaterial);
     if (existing) {
       if (existing.commandHash !== incomingHash) {
         throw new DiamondDomainError('idempotency-conflict', 'commandId was already used with a different canonical command.');
@@ -1015,7 +1223,11 @@ export function executeDiamondCommand(ledger: DiamondLedger, command: DiamondCom
           outcome: 'duplicate',
           revision: existing.revision,
           eventId: existing.eventId,
-          state: existing.after
+          state: resultForPrivateNoteResponse(
+            { outcome: 'accepted', revision: existing.revision, eventId: existing.eventId, state: existing.after },
+            existing,
+            ledger.state.currentScorerUid
+          ).state
         },
         event: existing
       };
@@ -1040,6 +1252,8 @@ export function executeDiamondCommand(ledger: DiamondLedger, command: DiamondCom
     // nested attachment payloads cannot reach history-aware membership checks.
     validateHistoryAwareCommand(ledger, command);
     after = setDiamondStateRevision(after, sequence, '');
+    const canonicalCommand = canonicalizeDiamondPrivateNoteCommand(command, privateMaterial);
+    const privateNote = privateMaterial;
 
     const partialEvent = {
       schemaVersion: DIAMOND_SCHEMA_VERSION,
@@ -1049,8 +1263,8 @@ export function executeDiamondCommand(ledger: DiamondLedger, command: DiamondCom
       commandId: command.commandId,
       commandHash: incomingHash,
       type: command.type,
-      payload: command.payload,
-      actorUid: context.actorUid,
+      payload: canonicalCommand.payload,
+      actorUid: privateNote ? DIAMOND_PRIVATE_NOTE_ACTOR_UID : context.actorUid,
       serverTimestampMs: context.serverTimestampMs,
       rulesProfileId: command.rulesProfileId,
       rulesProfileVersion: command.rulesProfileVersion,
@@ -1058,8 +1272,8 @@ export function executeDiamondCommand(ledger: DiamondLedger, command: DiamondCom
       statCatalogVersion: DIAMOND_STAT_CATALOG_VERSION,
       ...(command.type === 'void_event' ? { voidsEventId: command.payload.targetEventId } : {}),
       ...(command.type === 'supersede_event' ? { supersedesEventId: command.payload.targetEventId } : {}),
-      before,
-      after,
+      before: privateNote ? privateNoteStateForStorage(before) : before,
+      after: privateNote ? privateNoteStateForStorage(after) : after,
       previousHash: ledger.events.length ? ledger.events[ledger.events.length - 1].hash : '',
       hash: ''
     } as DiamondEvent;
@@ -1076,10 +1290,17 @@ export function executeDiamondCommand(ledger: DiamondLedger, command: DiamondCom
       };
     }
 
-    let event = { ...partialEvent, after } as DiamondEvent;
+    let event = {
+      ...partialEvent,
+      after: privateNote ? privateNoteStateForStorage(after) : after
+    } as DiamondEvent;
     const hash = hashEvent(event);
     after = setDiamondStateRevision(after, sequence, hash);
-    event = deepFreeze({ ...event, after, hash } as DiamondEvent);
+    event = deepFreeze({
+      ...event,
+      after: privateNote ? privateNoteStateForStorage(after) : after,
+      hash
+    } as DiamondEvent);
     const events = deepFreeze([...ledger.events, event]);
     const nextLedger: DiamondLedger = deepFreeze({ ...ledger, state: after, events });
 
