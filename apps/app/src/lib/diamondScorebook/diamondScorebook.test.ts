@@ -36,6 +36,98 @@ import {
 
 const SCORER = 'scorer-1';
 
+describe('Diamond security boundary regressions', () => {
+  const context = { actorUid: SCORER, eventId: 'security-check', serverTimestampMs: 1700000001000 };
+  it('does not let private-target evidence authorize an ordinary command', () => {
+    const game = harness();
+    setBasicLineups(game);
+    const checkpoint = createDiamondCheckpoint(game.ledger);
+    const result = executeDiamondCommandFromCheckpoint(
+      checkpoint,
+      game.command('record_pitch', { pitcherId: 'home-1', batterId: 'away-1', result: 'ball' }),
+      { ...context, actorUid: 'other-scorer' },
+      null,
+      true
+    );
+    expect(result.result.rejection?.code).toBe('scorer-lease-lost');
+    expect(result.checkpoint).toBe(checkpoint);
+  });
+  it('rejects another game receipt even when the duplicate command matches it', () => {
+    const game = harness();
+    setBasicLineups(game);
+    const checkpoint = createDiamondCheckpoint(game.ledger);
+    const command = game.command('record_pitch', { pitcherId: 'home-1', batterId: 'away-1', result: 'ball' });
+    const accepted = executeDiamondCommandFromCheckpoint(checkpoint, command, context);
+    expect(accepted.result.outcome).toBe('accepted');
+    const other = { ...accepted.checkpoint, gameId: 'another-game', state: { ...accepted.checkpoint.state, gameId: 'another-game' } };
+    const result = executeDiamondCommandFromCheckpoint(other, command, context, accepted.receipt);
+    expect(result.result.rejection?.code).toBe('game-mismatch');
+    expect(result.checkpoint).toBe(other);
+  });
+  it.each(['top-level', 'nested', 'oversized'] as const)('rejects %s uncontracted canonical payloads in both paths', (kind) => {
+    const game = harness();
+    setBasicLineups(game);
+    const command =
+      kind === 'nested'
+        ? game.command('record_plate_appearance', {
+            batterId: 'away-1',
+            pitcherId: 'home-1',
+            result: 'single',
+            batterAdvance: { to: 'first', rawText: 'private transcript' },
+            runnerAdvances: [],
+            outsOnPlay: 0
+          } as unknown as DiamondCommandPayloadMap['record_plate_appearance'])
+        : game.command('record_pitch', {
+            pitcherId: 'home-1',
+            batterId: 'away-1',
+            result: 'ball',
+            rawText: kind === 'oversized' ? 'x'.repeat(100000) : 'private transcript'
+          } as DiamondCommandPayloadMap['record_pitch']);
+    const full = executeDiamondCommand(game.ledger, command, context);
+    const checkpoint = createDiamondCheckpoint(game.ledger);
+    const compact = executeDiamondCommandFromCheckpoint(checkpoint, command, context);
+    expect(full.result.outcome).toBe('rejected');
+    expect(compact.result.outcome).toBe('rejected');
+    expect(full.ledger).toBe(game.ledger);
+    expect(compact.checkpoint).toBe(checkpoint);
+  });
+  it('rejects future and same-revision fork receipts while accepting a genuine duplicate', () => {
+    const game = harness();
+    setBasicLineups(game);
+    const checkpoint = createDiamondCheckpoint(game.ledger);
+    const command = game.command('record_pitch', { pitcherId: 'home-1', batterId: 'away-1', result: 'ball' });
+    const accepted = executeDiamondCommandFromCheckpoint(checkpoint, command, context);
+    const fork = executeDiamondCommandFromCheckpoint(checkpoint, command, { ...context, serverTimestampMs: context.serverTimestampMs + 1 });
+    expect(executeDiamondCommandFromCheckpoint(checkpoint, command, context, accepted.receipt).result.rejection?.code).toBe(
+      'invalid-command-receipt'
+    );
+    expect(executeDiamondCommandFromCheckpoint(accepted.checkpoint, command, context, fork.receipt).result.rejection?.code).toBe(
+      'invalid-command-receipt'
+    );
+    expect(executeDiamondCommandFromCheckpoint(accepted.checkpoint, command, context, accepted.receipt).result.outcome).toBe('duplicate');
+  });
+  it('rejects unexpected public replacement fields before canonicalization', () => {
+    const game = harness();
+    setBasicLineups(game);
+    const pitch = game.submit('record_pitch', { pitcherId: 'home-1', batterId: 'away-1', result: 'ball' });
+    const command = game.command('supersede_event', {
+      targetEventId: pitch.event!.eventId,
+      reason: 'Correct pitch',
+      replacement: {
+        type: 'record_pitch',
+        payload: { pitcherId: 'home-1', batterId: 'away-1', result: 'called_strike', rawText: 'private transcript' }
+      }
+    } as unknown as DiamondCommandPayloadMap['supersede_event']);
+    expect(executeDiamondCommand(game.ledger, command, context).result.rejection?.code).toBe('invalid-object');
+    expect(executeDiamondCommandFromCheckpoint(createDiamondCheckpoint(game.ledger), command, context).result.rejection?.code).toBe(
+      'invalid-object'
+    );
+  });
+  it('preserves own prototype-named keys in canonical integrity evidence', () => {
+    expect(canonicalDiamondJson(JSON.parse('{"__proto__":{"x":1}}'))).toBe('{"__proto__":{"x":1}}');
+  });
+});
+
 describe('Diamond substitution and immutable-profile regressions', () => {
   it.each(['substitute', 'set_defensive_alignment', 're_enter'] as const)(
     'rejects mid-PA pitching changes through %s atomically',
