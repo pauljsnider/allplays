@@ -170,6 +170,7 @@ function cloneLineup(lineup) {
             substitutions: [...entry.substitutions]
         })),
         defense: { ...lineup.defense },
+        ...(lineup.dhTerminated !== undefined ? { dhTerminated: lineup.dhTerminated } : {}),
         ...(lineup.dhDefense ? { dhDefense: { ...lineup.dhDefense, substitutions: [...lineup.dhDefense.substitutions] } } : {}),
         ...(lineup.flexDefense ? { flexDefense: { ...lineup.flexDefense, substitutions: [...lineup.flexDefense.substitutions] } } : {}),
         courtesyRunnerIds: [...lineup.courtesyRunnerIds],
@@ -1177,7 +1178,7 @@ function applyMoves(state, side, moves, outsOnPlay, reachedOnEventId) {
             runnerId: move.runnerId,
             chargedToPitcherId: move.chargedToPitcherId,
             courtesyForPlayerId: move.courtesyForPlayerId,
-            reachedOnEventId
+            reachedOnEventId: move.to === 'stay' && move.from !== 'batter' ? state.bases[move.from].reachedOnEventId : reachedOnEventId
         };
     });
     validateFinalRunnerOrder(state, moves);
@@ -1267,16 +1268,27 @@ function reduceSubstitution(state, payload, reentry) {
         Object.values(lineup.defense).includes(outgoingPlayerId) &&
         !order.some((entry) => entry.activePlayerId === outgoingPlayerId);
     const defensiveOnly = dhOnly || flexOnly;
-    const slot = defensiveOnly || replacingFlex
-        ? ((flexOnly || replacingFlex ? lineup.flexDefense : lineup.dhDefense) ?? {
-            ...battingSlot,
-            activePlayerId: outgoingPlayerId,
-            starterPlayerId: outgoingPlayerId,
-            starterReentriesUsed: 0,
-            substitutions: []
-        })
-        : battingSlot;
-    if (!restoringFlex && slot.activePlayerId !== outgoingPlayerId) {
+    const endingDh = profile.allowsDh &&
+        !defensiveOnly &&
+        battingSlot.battingRole === 'dh' &&
+        Object.values(lineup.defense).includes(incomingPlayerId) &&
+        !order.some((entry) => entry.activePlayerId === incomingPlayerId);
+    const returningRetiredDhStarter = reentry &&
+        lineup.dhTerminated === true &&
+        lineup.dhDefense?.slot === battingSlot.slot &&
+        lineup.dhDefense.starterPlayerId === incomingPlayerId;
+    const slot = returningRetiredDhStarter
+        ? lineup.dhDefense
+        : defensiveOnly || replacingFlex
+            ? ((flexOnly || replacingFlex ? lineup.flexDefense : lineup.dhDefense) ?? {
+                ...battingSlot,
+                activePlayerId: outgoingPlayerId,
+                starterPlayerId: outgoingPlayerId,
+                starterReentriesUsed: 0,
+                substitutions: []
+            })
+            : battingSlot;
+    if (returningRetiredDhStarter ? battingSlot.activePlayerId !== outgoingPlayerId : !restoringFlex && slot.activePlayerId !== outgoingPlayerId) {
         throw new contracts_1.DiamondDomainError('substitution-mismatch', 'The outgoing player is not active in that batting slot.');
     }
     const dpTakingFlexDefense = Boolean(flexOnly && !restoringFlex && lineup.dpFlex?.dpPlayerId === incomingPlayerId);
@@ -1323,6 +1335,7 @@ function reduceSubstitution(state, payload, reentry) {
     if (!profile.freeSubstitution &&
         !reentry &&
         !pairExchange &&
+        !endingDh &&
         [...order, ...(lineup.dhDefense ? [lineup.dhDefense] : []), ...(lineup.flexDefense ? [lineup.flexDefense] : [])].some((entry) => entry.starterPlayerId === incomingPlayerId || entry.substitutions.includes(incomingPlayerId))) {
         throw new contracts_1.DiamondDomainError('invalid-reentry', 'A previously used player cannot enter as a new substitute.');
     }
@@ -1337,23 +1350,32 @@ function reduceSubstitution(state, payload, reentry) {
     const replacement = {
         ...slot,
         activePlayerId: incomingPlayerId,
-        battingRole: dpFlex && slot.slot === dpFlex.dpBattingSlot && incomingPlayerId === dpFlex.flexPlayerId
-            ? 'flex'
-            : dpFlex && slot.slot === dpFlex.dpBattingSlot && incomingPlayerId === dpFlex.dpPlayerId
-                ? 'dp'
-                : slot.battingRole,
+        battingRole: endingDh || lineup.dhTerminated
+            ? 'regular'
+            : dpFlex && slot.slot === dpFlex.dpBattingSlot && incomingPlayerId === dpFlex.flexPlayerId
+                ? 'flex'
+                : dpFlex && slot.slot === dpFlex.dpBattingSlot && incomingPlayerId === dpFlex.dpPlayerId
+                    ? 'dp'
+                    : slot.battingRole,
         starterReentriesUsed: slot.starterReentriesUsed + (reentry ? 1 : 0),
         substitutions: [...slot.substitutions, incomingPlayerId]
     };
     if (!defensiveOnly)
-        order[index] = replacingFlex
+        order[index] = returningRetiredDhStarter
             ? {
                 ...battingSlot,
                 activePlayerId: incomingPlayerId,
-                battingRole: 'flex',
+                battingRole: 'regular',
                 substitutions: [...battingSlot.substitutions, incomingPlayerId]
             }
-            : replacement;
+            : replacingFlex
+                ? {
+                    ...battingSlot,
+                    activePlayerId: incomingPlayerId,
+                    battingRole: 'flex',
+                    substitutions: [...battingSlot.substitutions, incomingPlayerId]
+                }
+                : replacement;
     const bases = transferLiveSubstitutedRunner(state, side, outgoingPlayerId, incomingPlayerId);
     const battingOnlyDpReturn = pairExchange &&
         outgoingPlayerId === dpFlex?.flexPlayerId &&
@@ -1374,6 +1396,20 @@ function reduceSubstitution(state, payload, reentry) {
                 ...lineup,
                 battingOrder: order,
                 ...(dhOnly ? { dhDefense: replacement } : {}),
+                ...(endingDh
+                    ? {
+                        dhTerminated: true,
+                        dhDefense: lineup.dhDefense ?? {
+                            ...battingSlot,
+                            activePlayerId: incomingPlayerId,
+                            starterPlayerId: incomingPlayerId,
+                            starterReentriesUsed: 0,
+                            substitutions: []
+                        }
+                    }
+                    : returningRetiredDhStarter
+                        ? { dhDefense: replacement }
+                        : {}),
                 ...(replacingFlex ? { flexDefense: replacement } : dpTakingFlexDefense ? { flexDefense: slot } : {}),
                 dpFlex,
                 defense
@@ -1423,12 +1459,17 @@ function validateDiamondState(state) {
             requireBattingRole(profile, entry.battingRole);
         });
         validateBattingRoleCounts(order);
+        if (lineup.dhTerminated !== undefined &&
+            (lineup.dhTerminated !== true || !profile.allowsDh || !lineup.dhDefense || order.some((entry) => entry.battingRole === 'dh'))) {
+            throw new contracts_1.DiamondDomainError('invalid-lineup', 'A terminated DH must retain history without an active DH role.');
+        }
         if (lineup.dhDefense) {
             const entry = lineup.dhDefense;
             if (!profile.allowsDh ||
-                !order.some((batter) => batter.slot === entry.slot && batter.battingRole === 'dh') ||
-                order.some((batter) => batter.activePlayerId === entry.activePlayerId) ||
-                !Object.values(lineup.defense).includes(entry.activePlayerId)) {
+                !order.some((batter) => batter.slot === entry.slot && (lineup.dhTerminated || batter.battingRole === 'dh')) ||
+                (!lineup.dhTerminated &&
+                    (order.some((batter) => batter.activePlayerId === entry.activePlayerId) ||
+                        !Object.values(lineup.defense).includes(entry.activePlayerId)))) {
                 throw new contracts_1.DiamondDomainError('invalid-lineup', 'Defensive-only history must belong to the active DH defender.');
             }
             requireId(entry.activePlayerId, 'DH defender');
