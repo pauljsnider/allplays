@@ -37,6 +37,23 @@ import {
 const SCORER = 'scorer-1';
 
 describe('Diamond substitution and immutable-profile regressions', () => {
+  it.each(['eventId', 'actorUid'] as const)('rejects noncanonical ledger %s atomically', (field) => {
+    const game = harness();
+    setBasicLineups(game);
+    const before = game.ledger;
+    const checkpoint = createDiamondCheckpoint(before);
+    const command = game.command('record_pitch', { batterId: 'away-1', pitcherId: 'home-1', result: 'ball' });
+    for (const value of [' padded ', 'bad\u0001id', 'bad\u007fid']) {
+      const context = { actorUid: SCORER, eventId: 'canonical-event', serverTimestampMs: 1700000001000, [field]: value };
+      const result = executeDiamondCommand(before, command, context);
+      expect(result.result.rejection?.code).toBe('invalid-id');
+      expect(result.ledger).toBe(before);
+      const compact = executeDiamondCommandFromCheckpoint(checkpoint, command, context);
+      expect(compact.result.rejection?.code).toBe('invalid-id');
+      expect(compact.checkpoint).toBe(checkpoint);
+    }
+  });
+
   it.each(['quick', 'full'] as const)('rejects an activation that changes configured %s capture mode', (captureMode) => {
     const game = harness('baseball-nfhs', captureMode);
     const rejected = game.submit(
@@ -3611,6 +3628,43 @@ describe('Append-only corrections', () => {
 });
 
 describe('Fastpitch-specific rules', () => {
+  it('does not credit a batting-only DP return as a pitching entry', () => {
+    const game = harness('fastpitch-nfhs', 'quick');
+    setBasicLineups(game, { start: false, homeFirstBattingRole: 'dp' });
+    game.submit('set_defensive_alignment', {
+      side: 'home',
+      assignments: [
+        { position: 'RF', playerId: 'home-2' },
+        { position: 'C', playerId: 'home-3' }
+      ]
+    });
+    game.submit('set_dp_flex', {
+      side: 'home',
+      dpPlayerId: 'home-1',
+      flexPlayerId: 'home-flex',
+      dpBattingSlot: 1,
+      flexDefensivePosition: 'P'
+    });
+    game.submit('start', {});
+    game.submit('record_plate_appearance', {
+      batterId: 'away-1',
+      pitcherId: 'home-flex',
+      result: 'single',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    game.submit('substitute', { side: 'home', battingSlot: 1, outgoingPlayerId: 'home-1', incomingPlayerId: 'home-flex' });
+    game.submit('re_enter', { side: 'home', battingSlot: 1, replacedPlayerId: 'home-flex', starterPlayerId: 'home-1' });
+    expect(game.ledger.state.lineups.home.defense.P).toBe('home-flex');
+    const stats = projectDiamondStats(game.ledger);
+    expect(stats.players['home-1'].raw.pitching.APP).toBe(0);
+    expect(stats.players['home-1'].raw.pitching.inheritedRunners).toBe(0);
+    expect(stats.players['home-flex'].raw.pitching.APP).toBe(1);
+    expect(stats.players['home-flex'].raw.pitching.inheritedRunners).toBe(0);
+    expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
+  });
+
   it('restores DP batting while FLEX stays on defense without spending FLEX re-entry', () => {
     const game = harness('fastpitch-nfhs', 'quick');
     setBasicLineups(game, { start: false, homeFirstBattingRole: 'dp' });
