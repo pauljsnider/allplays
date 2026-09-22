@@ -192,6 +192,9 @@ function cloneLineup(lineup: DiamondTeamLineup): DiamondTeamLineup {
     ...(lineup.dhDefense ? { dhDefense: { ...lineup.dhDefense, substitutions: [...lineup.dhDefense.substitutions] } } : {}),
     ...(lineup.flexDefense ? { flexDefense: { ...lineup.flexDefense, substitutions: [...lineup.flexDefense.substitutions] } } : {}),
     courtesyRunnerIds: [...lineup.courtesyRunnerIds],
+    ...(lineup.courtesyRunnerHalfInning
+      ? { courtesyRunnerHalfInning: { ...lineup.courtesyRunnerHalfInning, playerIds: [...lineup.courtesyRunnerHalfInning.playerIds] } }
+      : {}),
     dpFlex: lineup.dpFlex ? { ...lineup.dpFlex } : null
   };
 }
@@ -1587,6 +1590,15 @@ function reduceSubstitution(
     }
   }
   const returningStarter = slot.starterPlayerId === incomingPlayerId;
+  const courtesyHalf = lineup.courtesyRunnerHalfInning;
+  const courtesyThisHalf = courtesyHalf
+    ? courtesyHalf.number === state.inning.number &&
+      courtesyHalf.half === state.inning.half &&
+      courtesyHalf.playerIds.includes(incomingPlayerId)
+    : lineup.courtesyRunnerIds.includes(incomingPlayerId);
+  if (!profile.freeSubstitution && courtesyThisHalf) {
+    throw new DiamondDomainError('courtesy-runner-half-inning', 'A courtesy runner cannot substitute during the same half-inning.');
+  }
   if (!reentry && returningStarter && !profile.freeSubstitution) {
     throw new DiamondDomainError('reentry-required', 'A returning starter must use the re-entry command.');
   }
@@ -1630,7 +1642,14 @@ function reduceSubstitution(
         }
       : replacement;
   const bases = transferLiveSubstitutedRunner(state, side, outgoingPlayerId, incomingPlayerId);
-  const defense = replaceDefensePlayer(lineup.defense, outgoingPlayerId, incomingPlayerId, payload.defensivePosition);
+  const battingOnlyDpReturn =
+    pairExchange &&
+    outgoingPlayerId === dpFlex?.flexPlayerId &&
+    incomingPlayerId === dpFlex?.dpPlayerId &&
+    payload.defensivePosition === undefined;
+  const defense = battingOnlyDpReturn
+    ? lineup.defense
+    : replaceDefensePlayer(lineup.defense, outgoingPlayerId, incomingPlayerId, payload.defensivePosition);
   if (!defense.P) {
     throw new DiamondDomainError('missing-defensive-pitcher', 'An active substitution must leave the defensive pitcher position occupied.');
   }
@@ -1736,6 +1755,23 @@ export function validateDiamondState(state: DiamondGameState): DiamondGameState 
         'courtesy-runner-identity-limit',
         `A side cannot retain more than ${String(DIAMOND_MAX_COURTESY_RUNNER_IDENTITIES_PER_SIDE)} courtesy-runner identities.`
       );
+    }
+    if (lineup.courtesyRunnerHalfInning) {
+      const history = lineup.courtesyRunnerHalfInning;
+      requireInteger(history.number, 'courtesy runner inning', 1, state.inning.number);
+      requireMember(history.half, ['top', 'bottom'], 'courtesy runner half');
+      if (
+        history.half !== (side === 'away' ? 'top' : 'bottom') ||
+        !Array.isArray(history.playerIds) ||
+        history.playerIds.length > DIAMOND_MAX_COURTESY_RUNNER_IDENTITIES_PER_SIDE ||
+        new Set(history.playerIds).size !== history.playerIds.length ||
+        history.playerIds.some((id) => !courtesyRunnerIds.includes(requireId(id, 'courtesy half playerId')))
+      ) {
+        throw new DiamondDomainError(
+          'invalid-lineup',
+          'Courtesy half-inning history must contain unique known identities for the batting side.'
+        );
+      }
     }
     const dpFlex = lineup.dpFlex;
     if (!dpFlex) {
@@ -2461,7 +2497,20 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
           ...next.lineups,
           [side]: {
             ...next.lineups[side],
-            courtesyRunnerIds: courtesyRunnerIds.includes(runnerId) ? courtesyRunnerIds : [...courtesyRunnerIds, runnerId]
+            courtesyRunnerIds: courtesyRunnerIds.includes(runnerId) ? courtesyRunnerIds : [...courtesyRunnerIds, runnerId],
+            courtesyRunnerHalfInning: {
+              number: state.inning.number,
+              half: state.inning.half,
+              playerIds: [
+                ...new Set([
+                  ...(state.lineups[side].courtesyRunnerHalfInning?.number === state.inning.number &&
+                  state.lineups[side].courtesyRunnerHalfInning?.half === state.inning.half
+                    ? state.lineups[side].courtesyRunnerHalfInning!.playerIds
+                    : []),
+                  runnerId
+                ])
+              ]
+            }
           }
         }
       };
