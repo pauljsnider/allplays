@@ -7,7 +7,8 @@ import {
   type DiamondFinalizationReason,
   type DiamondGameEndDecision,
   type DiamondHalfInningEnd,
-  type DiamondPitchResult
+  type DiamondPitchResult,
+  type DiamondTeamLineup
 } from './diamondScorebook';
 import {
   normalizeDiamondAiDraftForPublication,
@@ -198,6 +199,14 @@ export type DiamondScorebookSnapshot = {
   currentPitcher: DiamondPlayerRef | null;
   lineups: Record<DiamondSide, DiamondLineupEntry[]>;
   courtesyRunnerIds?: Record<DiamondSide, string[]>;
+  lineupPersonnel?: Record<
+    DiamondSide,
+    {
+      dhDefense: DiamondLineupEntry | null;
+      flexDefense: DiamondLineupEntry | null;
+      dpFlex: DiamondTeamLineup['dpFlex'];
+    }
+  >;
   defense: Record<DiamondSide, DiamondDefense>;
   nextBatterSlot: Record<DiamondSide, number>;
   battingLineup: DiamondLineupEntry[];
@@ -1423,6 +1432,34 @@ export function normalizeDiamondSnapshot(value: unknown): DiamondScorebookSnapsh
     entries.map((entry) => ({ ...entry, ...(playersBySide[side].get(entry.playerId) || {}) }));
   const homeLineup = enrichLineup(rawHomeLineup, 'home');
   const awayLineup = enrichLineup(rawAwayLineup, 'away');
+  const normalizePersonnel = (side: DiamondSide) => {
+    const source = asRecord(lineupSource[side]);
+    const history = (value: unknown) => (value ? enrichLineup(normalizeLineup([value]), side)[0] || null : null);
+    const pair = asRecord(source.dpFlex);
+    const position = compactText(pair.flexDefensivePosition) as DiamondDefensivePosition;
+    const slot = pair.dpBattingSlot;
+    const validPair =
+      compactText(pair.dpPlayerId) &&
+      compactText(pair.flexPlayerId) &&
+      typeof slot === 'number' &&
+      Number.isInteger(slot) &&
+      slot >= 1 &&
+      slot <= 25 &&
+      diamondDefensivePositions.includes(position);
+    return {
+      dhDefense: history(source.dhDefense),
+      flexDefense: history(source.flexDefense),
+      dpFlex: validPair
+        ? {
+            dpPlayerId: compactText(pair.dpPlayerId),
+            flexPlayerId: compactText(pair.flexPlayerId),
+            dpBattingSlot: slot,
+            flexDefensivePosition: position
+          }
+        : null
+    };
+  };
+  const lineupPersonnel = { home: normalizePersonnel('home'), away: normalizePersonnel('away') };
   const nextBatterSlots = {
     home: normalizeBoundedInteger(asRecord(state.nextBatterSlot).home, 0, 98, 0),
     away: normalizeBoundedInteger(asRecord(state.nextBatterSlot).away, 0, 98, 0)
@@ -1520,6 +1557,7 @@ export function normalizeDiamondSnapshot(value: unknown): DiamondScorebookSnapsh
       })(),
     currentPitcher: derivedPitcherId ? playersBySide[defensiveSide].get(derivedPitcherId) || normalizePlayer(derivedPitcherId) : null,
     lineups: { home: homeLineup, away: awayLineup },
+    lineupPersonnel,
     courtesyRunnerIds,
     defense,
     nextBatterSlot: nextBatterSlots,
