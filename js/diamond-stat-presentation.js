@@ -365,12 +365,13 @@ export const DIAMOND_PLAYER_STAT_CATALOG = Object.freeze([
     rawStat('pitches', 'PITCHES', 'Pitch Detail'),
     rawStat('strikes', 'STRIKES', 'Pitch Detail'),
     rawStat('first_pitch_strikes', 'FPS', 'Pitch Detail'),
+    rawStat('first_pitch_strike_opportunities', 'FPS OPP', 'Pitch Detail'),
     derivedStat('innings_pitched', 'IP', 'Pitching Rates', 'INNINGS_PITCHED', { precision: 1 }),
     derivedStat('era', 'ERA', 'Pitching Rates', 'ERA', { precision: 2, rankingOrder: 'asc', topStat: true }),
     derivedStat('whip', 'WHIP', 'Pitching Rates', '((P_BB+P_IBB+P_H)*3)/IP_OUTS', { precision: 2, rankingOrder: 'asc', topStat: true }),
     derivedStat('strikeout_walk_ratio', 'K/BB', 'Pitching Rates', 'P_SO/(P_BB+P_IBB)', { precision: 2, topStat: true }),
     derivedStat('strike_rate', 'STRIKE RATE', 'Pitching Rates', 'STRIKES/PITCHES'),
-    derivedStat('first_pitch_strike_rate', 'FPS RATE', 'Pitching Rates', 'FIRST_PITCH_STRIKES/BF'),
+    derivedStat('first_pitch_strike_rate', 'FPS RATE', 'Pitching Rates', 'FIRST_PITCH_STRIKES/FIRST_PITCH_STRIKE_OPPORTUNITIES'),
     rawStat('defensive_outs', 'DEF OUTS', 'Fielding'),
     rawStat('po', 'PO', 'Fielding'),
     rawStat('a', 'A', 'Fielding'),
@@ -401,7 +402,7 @@ const PLAYER_STAT_FAMILY = Object.freeze(Object.fromEntries([
     ['g', 'gs', 'pa', 'ab', 'r', 'h', '1b', '2b', '3b', 'hr', 'tb', 'rbi', 'bb', 'ibb', 'hbp', 'so', 'sf', 'sh', 'roe', 'fc', 'gidp', 'avg', 'obp', 'slg', 'ops', 'bb_rate', 'strikeout_rate'].map((key) => [key, 'batting']),
     ['sb', 'cs', 'pickoffs', 'br_advances', 'br_outs', 'stolen_base_rate'].map((key) => [key, 'baserunning']),
     ['p_app', 'p_gs', 'w', 'l', 'sv', 'bf', 'ip_outs', 'p_h', 'p_r', 'er', 'p_bb', 'p_ibb', 'p_hbp', 'p_so', 'p_hr', 'wp', 'balk_illegal_pitch', 'inherited_runners', 'inherited_scored', 'innings_pitched', 'era', 'whip', 'strikeout_walk_ratio'].map((key) => [key, 'pitching']),
-    ['pitches', 'strikes', 'first_pitch_strikes', 'strike_rate', 'first_pitch_strike_rate'].map((key) => [key, 'pitches']),
+    ['pitches', 'strikes', 'first_pitch_strikes', 'first_pitch_strike_opportunities', 'strike_rate', 'first_pitch_strike_rate'].map((key) => [key, 'pitches']),
     ['defensive_outs', 'po', 'a', 'e', 'dp', 'tp', 'pb', 'fp', 'fpct', 'chances'].map((key) => [key, 'fielding'])
 ].flat()));
 
@@ -1431,7 +1432,7 @@ function deriveSeasonStats(stats, familyCoverage, eraBasis) {
     setRatio('whip', 'pitching', (Number(stats.p_bb || 0) + Number(stats.p_ibb || 0) + Number(stats.p_h || 0)) * 3, Number(stats.ip_outs || 0));
     setRatio('strikeout_walk_ratio', 'pitching', Number(stats.p_so || 0), Number(stats.p_bb || 0) + Number(stats.p_ibb || 0));
     setRatio('strike_rate', 'pitches', Number(stats.strikes || 0), Number(stats.pitches || 0));
-    setRatio('first_pitch_strike_rate', 'pitches', Number(stats.first_pitch_strikes || 0), Number(stats.bf || 0));
+    setRatio('first_pitch_strike_rate', 'pitches', Number(stats.first_pitch_strikes || 0), Number(stats.first_pitch_strike_opportunities || 0));
     setRatio('fpct', 'fielding', Number(stats.po || 0) + Number(stats.a || 0), Number(stats.po || 0) + Number(stats.a || 0) + Number(stats.e || 0));
     derivedCoverage.chances = familyCoverage.fielding || 'not_collected';
     if (familyCoverage.fielding === 'complete') derived.chances = Number(stats.po || 0) + Number(stats.a || 0) + Number(stats.e || 0);

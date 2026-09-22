@@ -56,7 +56,8 @@ function emptyRawStats() {
             inheritedScored: 0,
             pitches: 0,
             strikes: 0,
-            firstPitchStrikes: 0
+            firstPitchStrikes: 0,
+            firstPitchStrikeOpportunities: 0
         },
         fielding: { defensiveOuts: 0, PO: 0, A: 0, E: 0, DP: 0, TP: 0, PB: 0 }
     };
@@ -101,7 +102,7 @@ function deriveDiamondPlayerStats(raw, coverage, eraInningsBasis) {
         WHIP: pitchingComplete && raw.pitching.outs > 0 ? ((raw.pitching.BB + raw.pitching.IBB + raw.pitching.H) * 3) / raw.pitching.outs : null,
         strikeoutWalkRatio: pitchingComplete ? safeRatio(raw.pitching.SO, raw.pitching.BB + raw.pitching.IBB) : null,
         strikeRate: pitchComplete ? safeRatio(raw.pitching.strikes, raw.pitching.pitches) : null,
-        firstPitchStrikeRate: pitchComplete ? safeRatio(raw.pitching.firstPitchStrikes, raw.pitching.BF) : null,
+        firstPitchStrikeRate: pitchComplete ? safeRatio(raw.pitching.firstPitchStrikes, raw.pitching.firstPitchStrikeOpportunities) : null,
         fieldingPercentage: fieldingComplete ? safeRatio(raw.fielding.PO + raw.fielding.A, chances) : null,
         chances
     };
@@ -424,6 +425,7 @@ function projectDiamondStats(ledger) {
                     if (isStrikePitch(payload.result))
                         credit(pitcher, 'pitching', 'strikes', 1, eventId);
                     if (before.inning.pitchesInPlateAppearance === 0) {
+                        credit(pitcher, 'pitching', 'firstPitchStrikeOpportunities', 1, eventId);
                         teams[pitchingSide].firstPitchStrikeOpportunities += 1;
                         if (isStrikePitch(payload.result)) {
                             credit(pitcher, 'pitching', 'firstPitchStrikes', 1, eventId);
