@@ -141,6 +141,49 @@ describe('athlete profile helpers', () => {
         });
     });
 
+    it('preserves unavailable Diamond playing time as incomplete instead of authoritative zero', () => {
+        const summary = summarizeAthleteProfileCareer([
+            {
+                gamesPlayed: 2,
+                totalTimeMs: null,
+                playingTimeComplete: false,
+                statTotals: { AB: 5 }
+            }
+        ]);
+
+        expect(summary).toEqual({
+            gamesPlayed: 2,
+            totalMinutes: null,
+            playingTimeComplete: false,
+            statTotals: { AB: 5 },
+            statAverages: { AB: '2.5' }
+        });
+    });
+
+    it('does not recreate an omitted Diamond counter from another season subtotal', () => {
+        const summary = summarizeAthleteProfileCareer([
+            {
+                gamesPlayed: 2,
+                totalTimeMs: null,
+                playingTimeComplete: false,
+                statTotals: { AB: 5 },
+                statEvidence: { complete: false, omittedOrIncompleteStatKeys: ['H'] }
+            },
+            {
+                gamesPlayed: 1,
+                totalTimeMs: 60_000,
+                statTotals: { AB: 2, H: 2 }
+            }
+        ]);
+
+        expect(summary.statTotals).toEqual({ AB: 7 });
+        expect(summary.statAverages).toEqual({ AB: '2.3' });
+        expect(summary.statEvidence).toEqual({
+            complete: false,
+            omittedOrIncompleteStatKeys: ['H']
+        });
+    });
+
 
     it('collects score-linked game clips for a player and hides non-public clips', () => {
         const clips = collectAthleteGameClipsForPlayer([

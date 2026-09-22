@@ -18,6 +18,7 @@ function createAuthEmailCallableHandlers({
   enqueuePasswordResetRequest,
   getActionSettings,
   canonicalizeActionUrl = (url) => url,
+  normalizeVerificationNextRoute = () => '',
   getInviteContinueUrl,
   findOwnedInviteCode,
   allowedInviteTypes,
@@ -99,6 +100,7 @@ function createAuthEmailCallableHandlers({
     if (user.emailVerified) {
       return { alreadyVerified: true };
     }
+    const verificationNextRoute = normalizeVerificationNextRoute(data?.next);
 
     const reserved = await reserveDelivery(types.VERIFICATION, email, user.uid);
     if (!reserved) {
@@ -108,7 +110,7 @@ function createAuthEmailCallableHandlers({
     try {
       const generatedActionUrl = await auth.generateEmailVerificationLink(
         email,
-        getActionSettings(types.VERIFICATION)
+        getActionSettings(types.VERIFICATION, verificationNextRoute)
       );
       const actionUrl = canonicalizeActionUrl(generatedActionUrl, types.VERIFICATION);
       await queueDelivery({

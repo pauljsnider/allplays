@@ -243,15 +243,21 @@ describe('getNativeAuthIdToken', () => {
   });
 
   it('coalesces concurrent native plugin reads and reuses the short-lived in-memory token', async () => {
-    window.localStorage.setItem('allplays-native-auth-session', JSON.stringify({
-      uid: 'native-plugin-user',
-      email: 'native@example.com',
-      provider: 'native-plugin'
-    }));
+    window.localStorage.setItem(
+      'allplays-native-auth-session',
+      JSON.stringify({
+        uid: 'native-plugin-user',
+        email: 'native@example.com',
+        provider: 'native-plugin'
+      })
+    );
     let resolveToken!: (value: { token: string }) => void;
-    nativeAuthenticationMocks.getIdToken.mockImplementationOnce(() => new Promise((resolve) => {
-      resolveToken = resolve;
-    }));
+    nativeAuthenticationMocks.getIdToken.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveToken = resolve;
+        })
+    );
 
     const reads = Array.from({ length: 20 }, () => getNativeAuthIdToken(false));
     await vi.waitFor(() => {
@@ -270,46 +276,56 @@ describe('getNativeAuthIdToken', () => {
     nativeAuthenticationMocks.getIdToken
       .mockResolvedValueOnce({ token: 'first-user-token' })
       .mockResolvedValueOnce({ token: 'second-user-token' });
-    window.localStorage.setItem('allplays-native-auth-session', JSON.stringify({
-      uid: 'first-user',
-      email: 'first@example.com',
-      provider: 'native-plugin'
-    }));
+    window.localStorage.setItem(
+      'allplays-native-auth-session',
+      JSON.stringify({
+        uid: 'first-user',
+        email: 'first@example.com',
+        provider: 'native-plugin'
+      })
+    );
 
     await expect(getNativeAuthIdToken(false)).resolves.toBe('first-user-token');
-    window.localStorage.setItem('allplays-native-auth-session', JSON.stringify({
-      uid: 'second-user',
-      email: 'second@example.com',
-      provider: 'native-plugin'
-    }));
+    window.localStorage.setItem(
+      'allplays-native-auth-session',
+      JSON.stringify({
+        uid: 'second-user',
+        email: 'second@example.com',
+        provider: 'native-plugin'
+      })
+    );
 
     await expect(getNativeAuthIdToken(false)).resolves.toBe('second-user-token');
     expect(nativeAuthenticationMocks.getIdToken).toHaveBeenCalledTimes(2);
   });
 
   it('rejects a token when the persisted uid does not match the native Firebase user', async () => {
-    window.localStorage.setItem('allplays-native-auth-session', JSON.stringify({
-      uid: 'persisted-user',
-      email: 'persisted@example.com',
-      provider: 'native-plugin'
-    }));
+    window.localStorage.setItem(
+      'allplays-native-auth-session',
+      JSON.stringify({
+        uid: 'persisted-user',
+        email: 'persisted@example.com',
+        provider: 'native-plugin'
+      })
+    );
     nativeAuthenticationMocks.getCurrentUser.mockResolvedValue({
       user: { uid: 'different-native-user', email: 'different@example.com' }
     });
     nativeAuthenticationMocks.getIdToken.mockResolvedValue({ token: 'wrong-user-token' });
 
-    await expect(getNativeAuthIdToken(false)).rejects.toThrow(
-      'Native Firebase auth session does not match the saved app session.'
-    );
+    await expect(getNativeAuthIdToken(false)).rejects.toThrow('Native Firebase auth session does not match the saved app session.');
     expect(nativeAuthenticationMocks.getIdToken).not.toHaveBeenCalled();
   });
 
   it('does not return a cached token after the native user diverges without an auth event', async () => {
-    window.localStorage.setItem('allplays-native-auth-session', JSON.stringify({
-      uid: 'persisted-user',
-      email: 'persisted@example.com',
-      provider: 'native-plugin'
-    }));
+    window.localStorage.setItem(
+      'allplays-native-auth-session',
+      JSON.stringify({
+        uid: 'persisted-user',
+        email: 'persisted@example.com',
+        provider: 'native-plugin'
+      })
+    );
     nativeAuthenticationMocks.getIdToken.mockResolvedValue({ token: 'persisted-user-token' });
 
     await expect(getNativeAuthIdToken(false)).resolves.toBe('persisted-user-token');
@@ -317,9 +333,7 @@ describe('getNativeAuthIdToken', () => {
       user: { uid: 'different-native-user', email: 'different@example.com' }
     });
 
-    await expect(getNativeAuthIdToken(false)).rejects.toThrow(
-      'Native Firebase auth session does not match the saved app session.'
-    );
+    await expect(getNativeAuthIdToken(false)).rejects.toThrow('Native Firebase auth session does not match the saved app session.');
     expect(nativeAuthenticationMocks.getIdToken).toHaveBeenCalledTimes(1);
   });
 
@@ -327,22 +341,27 @@ describe('getNativeAuthIdToken', () => {
     nativeAuthenticationMocks.getIdToken
       .mockResolvedValueOnce({ token: 'first-user-token' })
       .mockResolvedValueOnce({ token: 'second-user-token' });
-    window.localStorage.setItem('allplays-native-auth-session', JSON.stringify({
-      uid: 'first-user',
-      email: 'first@example.com',
-      provider: 'native-plugin'
-    }));
+    window.localStorage.setItem(
+      'allplays-native-auth-session',
+      JSON.stringify({
+        uid: 'first-user',
+        email: 'first@example.com',
+        provider: 'native-plugin'
+      })
+    );
 
     await expect(getNativeAuthIdToken(false)).resolves.toBe('first-user-token');
-    const authStateListener = nativeAuthenticationMocks.addListener.mock.calls
-      .find(([eventName]) => eventName === 'authStateChange')?.[1];
+    const authStateListener = nativeAuthenticationMocks.addListener.mock.calls.find(([eventName]) => eventName === 'authStateChange')?.[1];
     expect(authStateListener).toBeTypeOf('function');
 
-    window.localStorage.setItem('allplays-native-auth-session', JSON.stringify({
-      uid: 'second-user',
-      email: 'second@example.com',
-      provider: 'native-plugin'
-    }));
+    window.localStorage.setItem(
+      'allplays-native-auth-session',
+      JSON.stringify({
+        uid: 'second-user',
+        email: 'second@example.com',
+        provider: 'native-plugin'
+      })
+    );
     authStateListener({ user: { uid: 'second-user' } });
 
     await expect(getNativeAuthIdToken(false)).resolves.toBe('second-user-token');
@@ -369,11 +388,14 @@ describe('getNativeAuthIdToken', () => {
   });
 
   it('keeps a newer forced token when an older read resolves afterward', async () => {
-    window.localStorage.setItem('allplays-native-auth-session', JSON.stringify({
-      uid: 'native-plugin-user',
-      email: 'native@example.com',
-      provider: 'native-plugin'
-    }));
+    window.localStorage.setItem(
+      'allplays-native-auth-session',
+      JSON.stringify({
+        uid: 'native-plugin-user',
+        email: 'native@example.com',
+        provider: 'native-plugin'
+      })
+    );
     nativeAuthenticationMocks.getCurrentUser.mockResolvedValue({
       user: {
         uid: 'native-plugin-user',
@@ -382,9 +404,12 @@ describe('getNativeAuthIdToken', () => {
     });
     let resolveOlderToken!: (value: { token: string }) => void;
     nativeAuthenticationMocks.getIdToken
-      .mockImplementationOnce(() => new Promise((resolve) => {
-        resolveOlderToken = resolve;
-      }))
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveOlderToken = resolve;
+          })
+      )
       .mockResolvedValueOnce({ token: 'newer-forced-token' });
 
     const olderRead = getNativeAuthIdToken(false);
@@ -407,11 +432,14 @@ describe('native WebView Firebase auth bridge', () => {
       user: { uid: 'native-user', email: 'native@example.com' }
     });
     nativeAuthenticationMocks.getIdToken.mockResolvedValue({ token: 'verified-native-id-token' });
-    window.localStorage.setItem('allplays-native-auth-session', JSON.stringify({
-      uid: 'native-user',
-      email: 'native@example.com',
-      provider: 'native-plugin'
-    }));
+    window.localStorage.setItem(
+      'allplays-native-auth-session',
+      JSON.stringify({
+        uid: 'native-user',
+        email: 'native@example.com',
+        provider: 'native-plugin'
+      })
+    );
   });
 
   afterEach(async () => {
@@ -421,9 +449,12 @@ describe('native WebView Firebase auth bridge', () => {
 
   it('coalesces startup and signs the WebView SDK into the exact native account', async () => {
     let resolveCallable!: (value: { customToken: string }) => void;
-    nativeCallableMocks.callNativeFirebaseFunctionWithAuth.mockImplementationOnce(() => new Promise((resolve) => {
-      resolveCallable = resolve;
-    }));
+    nativeCallableMocks.callNativeFirebaseFunctionWithAuth.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveCallable = resolve;
+        })
+    );
 
     const first = ensureNativeWebViewAuthSession('native-user');
     const second = ensureNativeWebViewAuthSession('native-user');
@@ -448,27 +479,25 @@ describe('native WebView Firebase auth bridge', () => {
         errorLabel: 'Native WebView authentication'
       }
     );
-    expect(webAuthRuntimeMocks.signInWithCustomToken).toHaveBeenCalledWith(
-      authState,
-      'caller-bound-custom-token'
-    );
+    expect(webAuthRuntimeMocks.signInWithCustomToken).toHaveBeenCalledWith(authState, 'caller-bound-custom-token');
   });
 
   it('never trims or conflates opaque native Firebase uids', async () => {
     const opaqueUid = ' tenant/user ';
-    window.localStorage.setItem('allplays-native-auth-session', JSON.stringify({
-      uid: opaqueUid,
-      email: 'native@example.com',
-      provider: 'native-plugin'
-    }));
+    window.localStorage.setItem(
+      'allplays-native-auth-session',
+      JSON.stringify({
+        uid: opaqueUid,
+        email: 'native@example.com',
+        provider: 'native-plugin'
+      })
+    );
     nativeAuthenticationMocks.getCurrentUser.mockResolvedValue({
       user: { uid: opaqueUid, email: 'native@example.com' }
     });
     authState.currentUser = { uid: opaqueUid.trim() } as never;
 
-    await expect(ensureNativeWebViewAuthSession(opaqueUid)).resolves.toEqual(
-      expect.objectContaining({ uid: opaqueUid })
-    );
+    await expect(ensureNativeWebViewAuthSession(opaqueUid)).resolves.toEqual(expect.objectContaining({ uid: opaqueUid }));
 
     expect(webAuthRuntimeMocks.signOut).toHaveBeenCalledWith(authState);
     expect(nativeCallableMocks.callNativeFirebaseFunctionWithAuth).toHaveBeenCalledTimes(1);
@@ -479,9 +508,12 @@ describe('native WebView Firebase auth bridge', () => {
   it('allows a delayed custom-token response and retries one timed-out attempt', async () => {
     nativeCallableMocks.callNativeFirebaseFunctionWithAuth
       .mockRejectedValueOnce(new Error('Native WebView authentication timed out.'))
-      .mockImplementationOnce(() => new Promise((resolve) => {
-        window.setTimeout(() => resolve({ customToken: 'delayed-custom-token' }), 4000);
-      }));
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            window.setTimeout(() => resolve({ customToken: 'delayed-custom-token' }), 4000);
+          })
+      );
     vi.useFakeTimers();
 
     try {
@@ -508,9 +540,7 @@ describe('native WebView Firebase auth bridge', () => {
       return { user };
     });
 
-    await expect(ensureNativeWebViewAuthSession('native-user')).rejects.toThrow(
-      'did not match the current account'
-    );
+    await expect(ensureNativeWebViewAuthSession('native-user')).rejects.toThrow('did not match the current account');
     expect(webAuthRuntimeMocks.signOut).toHaveBeenCalledWith(authState);
     expect(authState.currentUser).toBeNull();
   });
@@ -631,6 +661,33 @@ describe('resendVerificationEmail', () => {
     expect(reload).toHaveBeenCalled();
     expect(legacyAuthEmailMocks.queueCurrentUserVerificationEmail).toHaveBeenCalledWith();
   });
+
+  it.each([
+    ['static Diamond viewer', '/live-game-diamond-v2.html?teamId=team%2Fone&gameId=game+one&replay=true'],
+    ['family fee', '/parent-tools/fees?teamId=team-1&batchId=batch-1&recipientId=recipient-1'],
+    ['schedule', '/schedule?teamId=team-1&eventId=event-1']
+  ])('preserves a validated %s next when resending verification', async (_label, nextRoute) => {
+    const reload = vi.fn().mockResolvedValue(undefined);
+    authState.currentUser = { reload, email: 'coach@allplays.ai' } as any;
+    legacyAuthEmailMocks.queueCurrentUserVerificationEmail.mockResolvedValue({ queued: true });
+
+    await resendVerificationEmail(nextRoute);
+
+    expect(legacyAuthEmailMocks.queueCurrentUserVerificationEmail).toHaveBeenCalledWith('', nextRoute);
+  });
+
+  it.each(['https://evil.example/viewer', '//evil.example/viewer', '/\\evil.example/viewer', `/${'a'.repeat(600)}`])(
+    'drops an unsafe verification next route before queueing: %s',
+    async (unsafeRoute) => {
+      const reload = vi.fn().mockResolvedValue(undefined);
+      authState.currentUser = { reload, email: 'coach@allplays.ai' } as any;
+      legacyAuthEmailMocks.queueCurrentUserVerificationEmail.mockResolvedValue({ queued: true });
+
+      await resendVerificationEmail(unsafeRoute);
+
+      expect(legacyAuthEmailMocks.queueCurrentUserVerificationEmail).toHaveBeenCalledWith();
+    }
+  );
 });
 
 describe('sendResetEmail', () => {
@@ -747,9 +804,12 @@ describe('hydrateFirebaseUser', () => {
 
   it('includes a delayed approved-membership repair in the current hydration result', async () => {
     let resolveMembershipRequests: ((value: unknown[]) => void) | undefined;
-    legacyAuthMocks.listMyParentMembershipRequests.mockImplementation(() => new Promise((resolve) => {
-      resolveMembershipRequests = resolve;
-    }));
+    legacyAuthMocks.listMyParentMembershipRequests.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveMembershipRequests = resolve;
+        })
+    );
     parentMembershipMocks.mergeApprovedParentMembershipRequests.mockReturnValue({
       changed: true,
       userUpdate: {
@@ -762,27 +822,34 @@ describe('hydrateFirebaseUser', () => {
     await vi.waitFor(() => expect(resolveMembershipRequests).toBeTypeOf('function'));
     resolveMembershipRequests?.([{ status: 'approved', teamId: 'team-2' }]);
 
-    await expect(hydration).resolves.toEqual(expect.objectContaining({
-      user: expect.objectContaining({
-        parentOf: [{ teamId: 'team-2', playerId: 'player-2' }]
+    await expect(hydration).resolves.toEqual(
+      expect.objectContaining({
+        user: expect.objectContaining({
+          parentOf: [{ teamId: 'team-2', playerId: 'player-2' }]
+        })
       })
-    }));
+    );
   });
 
   it('includes delayed ownerId team discovery in the current hydration result', async () => {
     let resolveOwnedTeams: ((value: Array<{ id: string; name: string }>) => void) | undefined;
     legacyAuthMocks.getUserProfile.mockResolvedValue({ email: 'coach@example.com' });
-    legacyAuthMocks.getUserTeams.mockImplementation(() => new Promise((resolve) => {
-      resolveOwnedTeams = resolve;
-    }));
+    legacyAuthMocks.getUserTeams.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveOwnedTeams = resolve;
+        })
+    );
 
     const hydration = hydrateFirebaseUser({ uid: 'coach-1', email: 'coach@example.com' });
     await vi.waitFor(() => expect(resolveOwnedTeams).toBeTypeOf('function'));
     resolveOwnedTeams?.([{ id: 'team-owned', name: 'Vipers' }]);
 
-    await expect(hydration).resolves.toEqual(expect.objectContaining({
-      user: expect.objectContaining({ coachOf: ['team-owned'] })
-    }));
+    await expect(hydration).resolves.toEqual(
+      expect.objectContaining({
+        user: expect.objectContaining({ coachOf: ['team-owned'] })
+      })
+    );
   });
 
   it('publishes an approved-membership repair without waiting for stalled persistence', async () => {
@@ -790,37 +857,44 @@ describe('hydrateFirebaseUser', () => {
     let resolveMembershipRequests: ((value: unknown[]) => void) | undefined;
     const onAccessEnriched = vi.fn();
     legacyAuthMocks.getUserProfile.mockResolvedValue({ email: 'parent@example.com', roles: ['member'] });
-    legacyAuthMocks.listMyParentMembershipRequests.mockImplementation(() => new Promise((resolve) => {
-      resolveMembershipRequests = resolve;
-    }));
+    legacyAuthMocks.listMyParentMembershipRequests.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveMembershipRequests = resolve;
+        })
+    );
     parentMembershipMocks.mergeApprovedParentMembershipRequests.mockReturnValue({
       changed: true,
       userUpdate: { roles: ['member', 'parent'], parentOf: [{ teamId: 'team-late', playerId: 'player-late' }] }
     });
     legacyAuthMocks.updateUserProfile.mockImplementation(() => new Promise(() => {}));
 
-    const hydrationPromise = hydrateFirebaseUser(
-      { uid: 'parent-1', email: 'parent@example.com' },
-      { onAccessEnriched }
-    );
+    const hydrationPromise = hydrateFirebaseUser({ uid: 'parent-1', email: 'parent@example.com' }, { onAccessEnriched });
     await vi.advanceTimersByTimeAsync(1500);
     const hydrated = await hydrationPromise;
     expect(hydrated.user.parentOf).toEqual([]);
     resolveMembershipRequests?.([{ status: 'approved', teamId: 'team-late' }]);
 
-    await vi.waitFor(() => expect(onAccessEnriched).toHaveBeenCalledWith(expect.objectContaining({
-      user: expect.objectContaining({
-        roles: expect.arrayContaining(['parent']),
-        parentOf: [{ teamId: 'team-late', playerId: 'player-late' }]
-      }),
-      profile: expect.objectContaining({
+    await vi.waitFor(() =>
+      expect(onAccessEnriched).toHaveBeenCalledWith(
+        expect.objectContaining({
+          user: expect.objectContaining({
+            roles: expect.arrayContaining(['parent']),
+            parentOf: [{ teamId: 'team-late', playerId: 'player-late' }]
+          }),
+          profile: expect.objectContaining({
+            parentOf: [{ teamId: 'team-late', playerId: 'player-late' }]
+          })
+        })
+      )
+    );
+    expect(hydrated.user.parentOf).toEqual([]);
+    expect(legacyAuthMocks.updateUserProfile).toHaveBeenCalledWith(
+      'parent-1',
+      expect.objectContaining({
         parentOf: [{ teamId: 'team-late', playerId: 'player-late' }]
       })
-    })));
-    expect(hydrated.user.parentOf).toEqual([]);
-    expect(legacyAuthMocks.updateUserProfile).toHaveBeenCalledWith('parent-1', expect.objectContaining({
-      parentOf: [{ teamId: 'team-late', playerId: 'player-late' }]
-    }));
+    );
   });
 
   it('publishes owned-team discovery that settles after the access timeout', async () => {
@@ -828,23 +902,27 @@ describe('hydrateFirebaseUser', () => {
     let resolveOwnedTeams: ((value: Array<{ id: string }>) => void) | undefined;
     const onAccessEnriched = vi.fn();
     legacyAuthMocks.getUserProfile.mockResolvedValue({ email: 'coach@example.com' });
-    legacyAuthMocks.getUserTeams.mockImplementation(() => new Promise((resolve) => {
-      resolveOwnedTeams = resolve;
-    }));
-
-    const hydrationPromise = hydrateFirebaseUser(
-      { uid: 'coach-1', email: 'coach@example.com' },
-      { onAccessEnriched }
+    legacyAuthMocks.getUserTeams.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveOwnedTeams = resolve;
+        })
     );
+
+    const hydrationPromise = hydrateFirebaseUser({ uid: 'coach-1', email: 'coach@example.com' }, { onAccessEnriched });
     await vi.advanceTimersByTimeAsync(1500);
     const hydrated = await hydrationPromise;
     expect(hydrated.user.coachOf).toEqual([]);
     resolveOwnedTeams?.([{ id: 'team-late' }]);
 
-    await vi.waitFor(() => expect(onAccessEnriched).toHaveBeenCalledWith(expect.objectContaining({
-      user: expect.objectContaining({ coachOf: ['team-late'] }),
-      profile: expect.objectContaining({ coachOf: ['team-late'] })
-    })));
+    await vi.waitFor(() =>
+      expect(onAccessEnriched).toHaveBeenCalledWith(
+        expect.objectContaining({
+          user: expect.objectContaining({ coachOf: ['team-late'] }),
+          profile: expect.objectContaining({ coachOf: ['team-late'] })
+        })
+      )
+    );
     expect(hydrated.user.coachOf).toEqual([]);
   });
 
@@ -852,15 +930,24 @@ describe('hydrateFirebaseUser', () => {
     let resolveProfile: ((value: Record<string, unknown>) => void) | undefined;
     let resolveMembershipRequests: ((value: unknown[]) => void) | undefined;
     let resolveOwnedTeams: ((value: Array<{ id: string; name: string }>) => void) | undefined;
-    legacyAuthMocks.getUserProfile.mockImplementation(() => new Promise((resolve) => {
-      resolveProfile = resolve;
-    }));
-    legacyAuthMocks.listMyParentMembershipRequests.mockImplementation(() => new Promise((resolve) => {
-      resolveMembershipRequests = resolve;
-    }));
-    legacyAuthMocks.getUserTeams.mockImplementation(() => new Promise((resolve) => {
-      resolveOwnedTeams = resolve;
-    }));
+    legacyAuthMocks.getUserProfile.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveProfile = resolve;
+        })
+    );
+    legacyAuthMocks.listMyParentMembershipRequests.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveMembershipRequests = resolve;
+        })
+    );
+    legacyAuthMocks.getUserTeams.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveOwnedTeams = resolve;
+        })
+    );
 
     const hydration = hydrateFirebaseUser({
       uid: 'coach-1',
@@ -892,14 +979,18 @@ describe('hydrateFirebaseUser', () => {
     });
     await vi.advanceTimersByTimeAsync(1499);
     let settled = false;
-    void hydration.then(() => { settled = true; });
+    void hydration.then(() => {
+      settled = true;
+    });
     await Promise.resolve();
     expect(settled).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
-    await expect(hydration).resolves.toEqual(expect.objectContaining({
-      user: expect.objectContaining({ uid: 'coach-1', coachOf: ['team-1'] }),
-      profileHydration: 'success'
-    }));
+    await expect(hydration).resolves.toEqual(
+      expect.objectContaining({
+        user: expect.objectContaining({ uid: 'coach-1', coachOf: ['team-1'] }),
+        profileHydration: 'success'
+      })
+    );
   });
 
   it('starts the access deadline beside a slow profile read instead of adding another wait', async () => {
@@ -918,25 +1009,32 @@ describe('hydrateFirebaseUser', () => {
       getIdToken: vi.fn().mockResolvedValue('token')
     });
     let settled = false;
-    void hydration.then(() => { settled = true; });
+    void hydration.then(() => {
+      settled = true;
+    });
 
     await vi.advanceTimersByTimeAsync(1499);
     expect(settled).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
 
-    await expect(hydration).resolves.toEqual(expect.objectContaining({
-      user: expect.objectContaining({ coachOf: ['team-rest'] }),
-      profileHydration: 'success'
-    }));
+    await expect(hydration).resolves.toEqual(
+      expect.objectContaining({
+        user: expect.objectContaining({ coachOf: ['team-rest'] }),
+        profileHydration: 'success'
+      })
+    );
   });
 
   it('publishes an approved membership that succeeds after the access deadline', async () => {
     vi.useFakeTimers();
     let resolveMembershipRequests: ((value: unknown[]) => void) | undefined;
     const onAccessEnrichment = vi.fn();
-    legacyAuthMocks.listMyParentMembershipRequests.mockImplementation(() => new Promise((resolve) => {
-      resolveMembershipRequests = resolve;
-    }));
+    legacyAuthMocks.listMyParentMembershipRequests.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveMembershipRequests = resolve;
+        })
+    );
     parentMembershipMocks.mergeApprovedParentMembershipRequests.mockReturnValue({
       changed: true,
       userUpdate: {
@@ -945,29 +1043,33 @@ describe('hydrateFirebaseUser', () => {
       }
     });
 
-    const hydration = hydrateFirebaseUser(
-      { uid: 'parent-1', email: 'parent@example.com' },
-      { onAccessEnrichment }
-    );
+    const hydration = hydrateFirebaseUser({ uid: 'parent-1', email: 'parent@example.com' }, { onAccessEnrichment });
     await vi.advanceTimersByTimeAsync(1500);
-    await expect(hydration).resolves.toEqual(expect.objectContaining({
-      user: expect.not.objectContaining({
-        parentOf: [{ teamId: 'team-late', playerId: 'player-late' }]
+    await expect(hydration).resolves.toEqual(
+      expect.objectContaining({
+        user: expect.not.objectContaining({
+          parentOf: [{ teamId: 'team-late', playerId: 'player-late' }]
+        })
       })
-    }));
+    );
 
     resolveMembershipRequests?.([{ status: 'approved', teamId: 'team-late' }]);
     await vi.advanceTimersByTimeAsync(0);
 
-    expect(onAccessEnrichment).toHaveBeenCalledWith(expect.objectContaining({
-      user: expect.objectContaining({
-        roles: expect.arrayContaining(['parent']),
+    expect(onAccessEnrichment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        user: expect.objectContaining({
+          roles: expect.arrayContaining(['parent']),
+          parentOf: [{ teamId: 'team-late', playerId: 'player-late' }]
+        })
+      })
+    );
+    expect(legacyAuthMocks.updateUserProfile).toHaveBeenCalledWith(
+      'parent-1',
+      expect.objectContaining({
         parentOf: [{ teamId: 'team-late', playerId: 'player-late' }]
       })
-    }));
-    expect(legacyAuthMocks.updateUserProfile).toHaveBeenCalledWith('parent-1', expect.objectContaining({
-      parentOf: [{ teamId: 'team-late', playerId: 'player-late' }]
-    }));
+    );
   });
 
   it('publishes owned teams that succeed after the access deadline', async () => {
@@ -975,26 +1077,30 @@ describe('hydrateFirebaseUser', () => {
     let resolveOwnedTeams: ((value: Array<{ id: string; name: string }>) => void) | undefined;
     const onAccessEnrichment = vi.fn();
     legacyAuthMocks.getUserProfile.mockResolvedValue({ email: 'coach@example.com' });
-    legacyAuthMocks.getUserTeams.mockImplementation(() => new Promise((resolve) => {
-      resolveOwnedTeams = resolve;
-    }));
-
-    const hydration = hydrateFirebaseUser(
-      { uid: 'coach-1', email: 'coach@example.com' },
-      { onAccessEnrichment }
+    legacyAuthMocks.getUserTeams.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveOwnedTeams = resolve;
+        })
     );
+
+    const hydration = hydrateFirebaseUser({ uid: 'coach-1', email: 'coach@example.com' }, { onAccessEnrichment });
     await vi.advanceTimersByTimeAsync(1500);
-    await expect(hydration).resolves.toEqual(expect.objectContaining({
-      user: expect.not.objectContaining({ coachOf: ['team-late'] })
-    }));
+    await expect(hydration).resolves.toEqual(
+      expect.objectContaining({
+        user: expect.not.objectContaining({ coachOf: ['team-late'] })
+      })
+    );
 
     resolveOwnedTeams?.([{ id: 'team-late', name: 'Vipers' }]);
     await vi.advanceTimersByTimeAsync(0);
 
-    expect(onAccessEnrichment).toHaveBeenCalledWith(expect.objectContaining({
-      user: expect.objectContaining({ coachOf: ['team-late'] }),
-      profile: expect.objectContaining({ coachOf: ['team-late'] })
-    }));
+    expect(onAccessEnrichment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        user: expect.objectContaining({ coachOf: ['team-late'] }),
+        profile: expect.objectContaining({ coachOf: ['team-late'] })
+      })
+    );
   });
 
   it('uses authenticated REST after the SDK profile read exceeds the hedge delay', async () => {
@@ -1014,10 +1120,12 @@ describe('hydrateFirebaseUser', () => {
     expect(profileRestMocks.loadAuthProfileViaRest).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
 
-    await expect(hydration).resolves.toEqual(expect.objectContaining({
-      user: expect.objectContaining({ coachOf: ['team-rest'] }),
-      profileHydration: 'success'
-    }));
+    await expect(hydration).resolves.toEqual(
+      expect.objectContaining({
+        user: expect.objectContaining({ coachOf: ['team-rest'] }),
+        profileHydration: 'success'
+      })
+    );
   });
 });
 
@@ -1034,6 +1142,7 @@ describe('signOut', () => {
 
 describe('signUpWithEmail', () => {
   beforeEach(() => {
+    vi.mocked(Capacitor.isNativePlatform).mockReturnValue(true);
     legacySignupFlowMocks.executeEmailPasswordSignup.mockReset();
     legacySignupFlowMocks.executeEmailPasswordSignup.mockResolvedValue({
       user: { uid: 'new-user', email: 'player@example.com' }
@@ -1085,6 +1194,68 @@ describe('signUpWithEmail', () => {
     expect(nativeAuthenticationMocks.reload).toHaveBeenCalledTimes(1);
     expect(legacyAuthEmailMocks.queueCurrentUserVerificationEmail).toHaveBeenCalledWith('native-signup-id-token');
     expect(nativeAuthenticationMocks.sendEmailVerification).not.toHaveBeenCalled();
+  });
+
+  it('passes a validated schedule route through the native verification-email handoff', async () => {
+    const scheduleRoute = '/schedule?teamId=team-1&eventId=event-1';
+    nativeAuthenticationMocks.getIdToken.mockResolvedValue({ token: 'native-signup-id-token' });
+    nativeAuthenticationMocks.getCurrentUser.mockResolvedValue({
+      user: { uid: 'new-user', email: 'player@example.com' }
+    });
+    legacySignupFlowMocks.executeEmailPasswordSignup.mockImplementation(async (options: any) => {
+      window.localStorage.setItem(
+        'allplays-native-auth-session',
+        JSON.stringify({
+          uid: 'new-user',
+          email: 'player@example.com',
+          emailVerified: false,
+          provider: 'native-plugin'
+        })
+      );
+      await options.dependencies.sendVerificationEmail();
+      return { user: options.auth.currentUser };
+    });
+
+    await signUpWithEmail('player@example.com', 'secret1', '85NSBZ7K', scheduleRoute);
+
+    expect(legacyAuthEmailMocks.queueCurrentUserVerificationEmail).toHaveBeenCalledWith('native-signup-id-token', scheduleRoute);
+  });
+
+  it('passes a validated family-fee route through the web verification-email handoff', async () => {
+    const familyFeeRoute = '/parent-tools/fees?teamId=team-1&batchId=batch-1&recipientId=recipient-1';
+    vi.mocked(Capacitor.isNativePlatform).mockReturnValue(false);
+    legacySignupFlowMocks.executeEmailPasswordSignup.mockImplementation(async (options: any) => {
+      await options.dependencies.sendVerificationEmail();
+      return { user: { uid: 'new-user', email: 'player@example.com' } };
+    });
+
+    await signUpWithEmail('player@example.com', 'secret1', '85NSBZ7K', familyFeeRoute);
+
+    expect(legacyAuthEmailMocks.queueCurrentUserVerificationEmail).toHaveBeenCalledWith('', familyFeeRoute);
+  });
+
+  it('drops an unsafe next route from native signup verification email delivery', async () => {
+    nativeAuthenticationMocks.getIdToken.mockResolvedValue({ token: 'native-signup-id-token' });
+    nativeAuthenticationMocks.getCurrentUser.mockResolvedValue({
+      user: { uid: 'new-user', email: 'player@example.com' }
+    });
+    legacySignupFlowMocks.executeEmailPasswordSignup.mockImplementation(async (options: any) => {
+      window.localStorage.setItem(
+        'allplays-native-auth-session',
+        JSON.stringify({
+          uid: 'new-user',
+          email: 'player@example.com',
+          emailVerified: false,
+          provider: 'native-plugin'
+        })
+      );
+      await options.dependencies.sendVerificationEmail();
+      return { user: options.auth.currentUser };
+    });
+
+    await signUpWithEmail('player@example.com', 'secret1', '85NSBZ7K', 'https://evil.example/steal');
+
+    expect(legacyAuthEmailMocks.queueCurrentUserVerificationEmail).toHaveBeenCalledWith('native-signup-id-token');
   });
 
   it('stops invalid signup emails before loading Firebase signup work', async () => {
@@ -1224,11 +1395,13 @@ describe('signInWithGoogleAccount invite redemption', () => {
 
     await signInWithGoogleAccount('admin001');
 
-    expect(legacyAdminInviteMocks.redeemAdminInviteAcceptance).toHaveBeenCalledWith(expect.objectContaining({
-      userId: 'google-user',
-      userEmail: 'admin@example.com',
-      codeId: 'admin-code-id'
-    }));
+    expect(legacyAdminInviteMocks.redeemAdminInviteAcceptance).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 'google-user',
+        userEmail: 'admin@example.com',
+        codeId: 'admin-code-id'
+      })
+    );
     expect(legacyAuthMocks.markAccessCodeAsUsed).not.toHaveBeenCalled();
   });
 
@@ -1383,8 +1556,9 @@ describe('native REST sign-in', () => {
       expect.objectContaining({ idToken: 'native-plugin-id-token' }),
       expect.any(Object)
     );
-    expect(nativeCallableMocks.callNativeFirebaseFunctionWithAuth.mock.invocationCallOrder[0])
-      .toBeLessThan(legacyAuthMocks.updateUserProfile.mock.invocationCallOrder[0]);
+    expect(nativeCallableMocks.callNativeFirebaseFunctionWithAuth.mock.invocationCallOrder[0]).toBeLessThan(
+      legacyAuthMocks.updateUserProfile.mock.invocationCallOrder[0]
+    );
   });
 
   it('invalidates an in-flight plugin token when native sign-in switches accounts', async () => {
@@ -1401,9 +1575,12 @@ describe('native REST sign-in', () => {
     );
     let resolvePreviousToken!: (value: { token: string }) => void;
     nativeAuthenticationMocks.getIdToken
-      .mockImplementationOnce(() => new Promise((resolve) => {
-        resolvePreviousToken = resolve;
-      }))
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolvePreviousToken = resolve;
+          })
+      )
       .mockResolvedValueOnce({ token: 'new-user-lookup-token' })
       .mockResolvedValueOnce({ token: 'new-user-bridge-token' });
 
@@ -1637,11 +1814,14 @@ describe('observeFirebaseUser', () => {
 
   it('authenticates the WebView SDK before exposing a restored native user', async () => {
     vi.mocked(Capacitor.isNativePlatform).mockReturnValue(true);
-    window.localStorage.setItem('allplays-native-auth-session', JSON.stringify({
-      uid: 'native-user',
-      email: 'native@example.com',
-      provider: 'native-plugin'
-    }));
+    window.localStorage.setItem(
+      'allplays-native-auth-session',
+      JSON.stringify({
+        uid: 'native-user',
+        email: 'native@example.com',
+        provider: 'native-plugin'
+      })
+    );
     nativeAuthenticationMocks.getCurrentUser.mockResolvedValue({
       user: { uid: 'native-user', email: 'native@example.com' }
     });
@@ -1674,18 +1854,24 @@ describe('observeFirebaseUser', () => {
     let unsubscribe = () => {};
     try {
       vi.mocked(Capacitor.isNativePlatform).mockReturnValue(true);
-      window.localStorage.setItem('allplays-native-auth-session', JSON.stringify({
-        uid: 'native-user',
-        email: 'native@example.com',
-        provider: 'native-plugin'
-      }));
+      window.localStorage.setItem(
+        'allplays-native-auth-session',
+        JSON.stringify({
+          uid: 'native-user',
+          email: 'native@example.com',
+          provider: 'native-plugin'
+        })
+      );
       nativeAuthenticationMocks.getCurrentUser.mockResolvedValue({
         user: { uid: 'native-user', email: 'native@example.com' }
       });
       nativeAuthenticationMocks.getIdToken.mockResolvedValue({ token: 'native-id-token' });
-      nativeCallableMocks.callNativeFirebaseFunctionWithAuth.mockImplementationOnce(() => new Promise((resolve) => {
-        window.setTimeout(() => resolve({ customToken: 'delayed-custom-token' }), 4500);
-      }));
+      nativeCallableMocks.callNativeFirebaseFunctionWithAuth.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            window.setTimeout(() => resolve({ customToken: 'delayed-custom-token' }), 4500);
+          })
+      );
       const observer: { current?: (user: unknown) => void } = {};
       authObserverMocks.onAuthStateChanged.mockImplementation((_auth: unknown, cb: (user: unknown) => void) => {
         observer.current = cb;
@@ -1700,9 +1886,11 @@ describe('observeFirebaseUser', () => {
 
       await vi.advanceTimersByTimeAsync(500);
       expect(callback).toHaveBeenCalledTimes(1);
-      expect(callback).toHaveBeenLastCalledWith(expect.objectContaining({
-        uid: 'native-user'
-      }));
+      expect(callback).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          uid: 'native-user'
+        })
+      );
       expect(callback.mock.calls[0][0]).not.toHaveProperty('isNativeRestSession', true);
 
       observer.current?.(authState.currentUser);
@@ -1721,11 +1909,14 @@ describe('observeFirebaseUser', () => {
     let unsubscribe = () => {};
     try {
       Object.defineProperty(navigator, 'onLine', { configurable: true, value: false });
-      window.localStorage.setItem('allplays-native-auth-session', JSON.stringify({
-        uid: 'offline-user',
-        email: 'offline@example.com',
-        provider: 'native-plugin'
-      }));
+      window.localStorage.setItem(
+        'allplays-native-auth-session',
+        JSON.stringify({
+          uid: 'offline-user',
+          email: 'offline@example.com',
+          provider: 'native-plugin'
+        })
+      );
       nativeAuthenticationMocks.getCurrentUser.mockResolvedValue({
         user: { uid: 'offline-user', email: 'offline@example.com' }
       });
@@ -1740,10 +1931,12 @@ describe('observeFirebaseUser', () => {
 
       observer.current?.(null);
 
-      expect(callback).toHaveBeenCalledWith(expect.objectContaining({
-        uid: 'offline-user',
-        isNativeRestSession: true
-      }));
+      expect(callback).toHaveBeenCalledWith(
+        expect.objectContaining({
+          uid: 'offline-user',
+          isNativeRestSession: true
+        })
+      );
       expect(nativeCallableMocks.callNativeFirebaseFunctionWithAuth).not.toHaveBeenCalled();
 
       Object.defineProperty(navigator, 'onLine', { configurable: true, value: true });
@@ -1771,11 +1964,14 @@ describe('observeFirebaseUser', () => {
     let unsubscribe = () => {};
     try {
       vi.mocked(Capacitor.isNativePlatform).mockReturnValue(true);
-      window.localStorage.setItem('allplays-native-auth-session', JSON.stringify({
-        uid: 'native-user',
-        email: 'native@example.com',
-        provider: 'native-plugin'
-      }));
+      window.localStorage.setItem(
+        'allplays-native-auth-session',
+        JSON.stringify({
+          uid: 'native-user',
+          email: 'native@example.com',
+          provider: 'native-plugin'
+        })
+      );
       nativeAuthenticationMocks.getCurrentUser.mockResolvedValue({
         user: { uid: 'native-user', email: 'native@example.com' }
       });
@@ -1796,10 +1992,12 @@ describe('observeFirebaseUser', () => {
       await vi.waitFor(() => {
         expect(callback).toHaveBeenCalledTimes(1);
       });
-      expect(callback.mock.calls[0][0]).toEqual(expect.objectContaining({
-        uid: 'native-user',
-        isNativeRestSession: true
-      }));
+      expect(callback.mock.calls[0][0]).toEqual(
+        expect.objectContaining({
+          uid: 'native-user',
+          isNativeRestSession: true
+        })
+      );
 
       await vi.runOnlyPendingTimersAsync();
       await vi.waitFor(() => {
