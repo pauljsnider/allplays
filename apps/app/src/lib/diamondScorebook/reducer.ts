@@ -1518,14 +1518,22 @@ function reduceSubstitution(
     throw new DiamondDomainError('substitution-no-op', 'The incoming and outgoing players must be different.');
   }
   const lineup = state.lineups[side];
+  const restoringFlex = Boolean(
+    lineup.dpFlex &&
+    outgoingPlayerId === lineup.dpFlex.dpPlayerId &&
+    battingSlot.activePlayerId === outgoingPlayerId &&
+    payload.defensivePosition === lineup.dpFlex.flexDefensivePosition &&
+    lineup.defense[lineup.dpFlex.flexDefensivePosition] === outgoingPlayerId
+  );
   const replacingFlex = Boolean(
-    lineup.dpFlex && lineup.dpFlex.flexPlayerId === outgoingPlayerId && incomingPlayerId !== lineup.dpFlex.dpPlayerId
+    restoringFlex || (lineup.dpFlex && lineup.dpFlex.flexPlayerId === outgoingPlayerId && incomingPlayerId !== lineup.dpFlex.dpPlayerId)
   );
   const flexOnly = Boolean(
-    lineup.dpFlex &&
-    lineup.dpFlex.flexPlayerId === outgoingPlayerId &&
-    battingSlot.slot === lineup.dpFlex.dpBattingSlot &&
-    !order.some((entry) => entry.activePlayerId === outgoingPlayerId)
+    restoringFlex ||
+    (lineup.dpFlex &&
+      lineup.dpFlex.flexPlayerId === outgoingPlayerId &&
+      battingSlot.slot === lineup.dpFlex.dpBattingSlot &&
+      !order.some((entry) => entry.activePlayerId === outgoingPlayerId))
   );
   const dhOnly =
     profile.allowsDh &&
@@ -1535,7 +1543,7 @@ function reduceSubstitution(
   const defensiveOnly = dhOnly || flexOnly;
   const slot =
     defensiveOnly || replacingFlex
-      ? ((replacingFlex ? lineup.flexDefense : lineup.dhDefense) ?? {
+      ? ((flexOnly || replacingFlex ? lineup.flexDefense : lineup.dhDefense) ?? {
           ...battingSlot,
           activePlayerId: outgoingPlayerId,
           starterPlayerId: outgoingPlayerId,
@@ -1543,14 +1551,19 @@ function reduceSubstitution(
           substitutions: []
         })
       : battingSlot;
-  if (slot.activePlayerId !== outgoingPlayerId) {
+  if (!restoringFlex && slot.activePlayerId !== outgoingPlayerId) {
     throw new DiamondDomainError('substitution-mismatch', 'The outgoing player is not active in that batting slot.');
   }
-  if (order.some((entry, entryIndex) => (defensiveOnly || entryIndex !== index) && entry.activePlayerId === incomingPlayerId)) {
+  const dpTakingFlexDefense = Boolean(flexOnly && !restoringFlex && lineup.dpFlex?.dpPlayerId === incomingPlayerId);
+  if (
+    !dpTakingFlexDefense &&
+    order.some((entry, entryIndex) => (defensiveOnly || entryIndex !== index) && entry.activePlayerId === incomingPlayerId)
+  ) {
     throw new DiamondDomainError('duplicate-active-player', 'The incoming player is already active in the batting order.');
   }
   let dpFlex = lineup.dpFlex;
   const pairExchange = Boolean(
+    !restoringFlex &&
     dpFlex &&
     ((outgoingPlayerId === dpFlex.dpPlayerId && incomingPlayerId === dpFlex.flexPlayerId) ||
       (outgoingPlayerId === dpFlex.flexPlayerId && incomingPlayerId === dpFlex.dpPlayerId))
@@ -1630,7 +1643,7 @@ function reduceSubstitution(
         ...lineup,
         battingOrder: order,
         ...(dhOnly ? { dhDefense: replacement } : {}),
-        ...(replacingFlex ? { flexDefense: replacement } : {}),
+        ...(replacingFlex ? { flexDefense: replacement } : dpTakingFlexDefense ? { flexDefense: slot } : {}),
         dpFlex,
         defense
       }
@@ -1928,9 +1941,17 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
         action.payload.assignments.map((assignment) => [assignment.position, assignment.playerId])
       ) as Partial<Record<DiamondDefensivePosition, string>>;
       if (state.lifecycle === 'active') {
+        const profile = requireDiamondRulesProfile(state.rulesProfileId, state.rulesProfileVersion);
+        const eligibleRotation =
+          profile.continuousBatting &&
+          profile.freeSubstitution &&
+          players.every((playerId) => state.lineups[side].battingOrder.some((entry) => entry.activePlayerId === playerId));
         const priorPlayers = Object.values(state.lineups[side].defense).filter(Boolean).sort();
         const nextPlayers = Object.values(defense).filter(Boolean).sort();
-        if (priorPlayers.length !== nextPlayers.length || priorPlayers.some((playerId, index) => playerId !== nextPlayers[index])) {
+        if (
+          !eligibleRotation &&
+          (priorPlayers.length !== nextPlayers.length || priorPlayers.some((playerId, index) => playerId !== nextPlayers[index]))
+        ) {
           throw new DiamondDomainError(
             'defensive-personnel-change-requires-substitution',
             'Active defensive personnel changes require a substitution or re-entry command.'
