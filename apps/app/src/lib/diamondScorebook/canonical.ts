@@ -25,7 +25,7 @@ function canonicalize(value: unknown, seen: Set<object>): unknown {
     if (seen.has(value)) throw new DiamondDomainError('cyclic-value', 'Canonical Diamond values cannot be cyclic.');
     seen.add(value);
     const source = value as Record<string, unknown>;
-    const result: Record<string, unknown> = {};
+    const result: Record<string, unknown> = Object.create(null);
     Object.keys(source)
       .sort()
       .forEach((key) => {
