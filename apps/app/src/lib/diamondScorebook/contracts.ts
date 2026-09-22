@@ -76,6 +76,8 @@ export type DiamondLineupSlot = Readonly<{
 
 export type DiamondTeamLineup = Readonly<{
   battingOrder: readonly DiamondLineupSlot[];
+  /** Personnel history for the defender whose batting turn belongs to the DH. */
+  dhDefense?: DiamondLineupSlot;
   defense: Readonly<Partial<Record<DiamondDefensivePosition, string>>>;
   /** Side binding for courtesy-runner identities in the effective canonical history. */
   courtesyRunnerIds: readonly string[];
