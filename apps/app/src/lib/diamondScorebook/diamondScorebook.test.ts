@@ -38,6 +38,18 @@ const SCORER = 'scorer-1';
 
 describe('Diamond security boundary regressions', () => {
   const context = { actorUid: SCORER, eventId: 'security-check', serverTimestampMs: 1700000001000 };
+  it.each(['sparse', 'named', 'symbol'] as const)('rejects %s array payloads in both execution paths', (kind) => {
+    const game = harness('baseball-nfhs', 'quick');
+    setBasicLineups(game, { start: false });
+    const entries = [{ slot: 1, playerId: 'home-1' }];
+    if (kind === 'sparse') entries.length = 2;
+    else if (kind === 'named') Object.defineProperty(entries, 'rawText', { value: 'private transcript', enumerable: false });
+    else Object.defineProperty(entries, Symbol('rawText'), { value: 'private transcript' });
+    const command = game.command('set_lineup', { side: 'home', entries });
+    const checkpoint = createDiamondCheckpoint(game.ledger);
+    expect(executeDiamondCommand(game.ledger, command, context).result.outcome).toBe('rejected');
+    expect(executeDiamondCommandFromCheckpoint(checkpoint, command, context).result.outcome).toBe('rejected');
+  });
   it('does not let private-target evidence authorize an ordinary command', () => {
     const game = harness();
     setBasicLineups(game);
