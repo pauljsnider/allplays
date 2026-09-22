@@ -19,6 +19,7 @@ exports.executeDiamondCommand = executeDiamondCommand;
 exports.verifyDiamondLedger = verifyDiamondLedger;
 exports.getDiamondCommandHash = getDiamondCommandHash;
 const canonical_1 = require("./canonical");
+const payload_1 = require("./payload");
 const contracts_1 = require("./contracts");
 const reducer_1 = require("./reducer");
 const UUID_V4_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -181,7 +182,9 @@ function getDiamondPrivateNoteRequestHash(command) {
         });
 }
 function commandHash(command, privateMaterial = getDiamondPrivateNoteText(command) !== null) {
-    return (0, canonical_1.hashDiamondValue)(canonicalizeDiamondPrivateNoteCommand(command, privateMaterial));
+    const canonical = canonicalizeDiamondPrivateNoteCommand(command, privateMaterial);
+    (0, payload_1.validateDiamondCommandPayload)(command.type, command.payload);
+    return (0, canonical_1.hashDiamondValue)(canonical);
 }
 function validateTrustedCommandAuthorization(command, context) {
     if (command.type === 'cancel' && context.managerAuthorized !== true) {
@@ -734,7 +737,7 @@ function validateEnvelope(ledger, command, context, privateMaterialTargetVerifie
     }
     else if (command.type !== 'cancel' &&
         !(command.type === 'scorer_handoff' && context.scorerLeaseRecoveryAuthorized === true) &&
-        !privateMaterialTargetVerified &&
+        !(privateMaterialTargetVerified && isCorrectionCommand(command)) &&
         !isPrivateMaterialCommand(ledger, command) &&
         ledger.state.currentScorerUid !== actorUid) {
         throw new contracts_1.DiamondDomainError('scorer-lease-lost', 'Only the current scorer may submit this command.', true);
@@ -886,12 +889,37 @@ function executeDiamondCommandFromCheckpoint(checkpoint, command, context, exist
     try {
         validateCheckpoint(checkpoint);
         validateTrustedCommandAuthorization(command, context);
+        if (command.teamId !== checkpoint.teamId || command.gameId !== checkpoint.gameId) {
+            throw new contracts_1.DiamondDomainError('game-mismatch', 'The command does not belong to this checkpoint.');
+        }
+        if (command.rulesProfileId !== checkpoint.rulesProfileId || command.rulesProfileVersion !== checkpoint.rulesProfileVersion) {
+            throw new contracts_1.DiamondDomainError('rules-profile-mismatch', 'The command does not use the checkpoint rules profile.');
+        }
         const privateMaterial = getDiamondPrivateNoteText(command) !== null ||
-            privateMaterialTargetVerified ||
-            existingReceipt?.event.actorUid === exports.DIAMOND_PRIVATE_NOTE_ACTOR_REDACTION;
+            (isCorrectionCommand(command) && (privateMaterialTargetVerified || isCanonicalPrivateNoteMaterialEvent(existingReceipt?.event)));
         const incomingHash = commandHash(command, privateMaterial);
         if (existingReceipt) {
             validateReceipt(existingReceipt);
+            const event = existingReceipt.event;
+            const sameResource = (state) => state.teamId === checkpoint.teamId &&
+                state.gameId === checkpoint.gameId &&
+                state.rulesProfileId === checkpoint.rulesProfileId &&
+                state.rulesProfileVersion === checkpoint.rulesProfileVersion &&
+                state.captureMode === checkpoint.captureMode;
+            if (!sameResource(event.before) ||
+                !sameResource(event.after) ||
+                event.rulesProfileId !== checkpoint.rulesProfileId ||
+                event.rulesProfileVersion !== checkpoint.rulesProfileVersion ||
+                event.revision !== event.sequence ||
+                event.before.revision !== event.sequence - 1 ||
+                event.after.revision !== event.sequence ||
+                command.expectedRevision !== event.before.revision ||
+                event.before.checkpointHash !== event.previousHash ||
+                event.after.checkpointHash !== event.hash ||
+                event.sequence > checkpoint.sequence ||
+                (event.sequence === checkpoint.sequence && event.hash !== checkpoint.previousHash)) {
+                throw new contracts_1.DiamondDomainError('invalid-command-receipt', 'Receipt resource or chain does not match the checkpoint.');
+            }
             if (existingReceipt.commandId !== command.commandId) {
                 throw new contracts_1.DiamondDomainError('invalid-command-receipt', 'The supplied receipt belongs to another command.');
             }
