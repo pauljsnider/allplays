@@ -206,6 +206,10 @@ function currentMatchup(game: Harness) {
   return { battingSide, fieldingSide, batterId, pitcherId };
 }
 
+function scoringMatchup(matchup: ReturnType<typeof currentMatchup>) {
+  return { batterId: matchup.batterId, pitcherId: matchup.pitcherId };
+}
+
 function previousScheduledBatterId(game: Harness, side: DiamondSide) {
   const order = game.ledger.state.lineups[side].battingOrder;
   const previousIndex = (game.ledger.state.nextBatterSlot[side] - 1 + order.length) % order.length;
@@ -712,12 +716,12 @@ describe('Baseball golden games', () => {
       const game = createHarness('baseball-nfhs', 'full');
       configureGame(game);
       const matchup = currentMatchup(game);
-      game.submit('record_pitch', { ...matchup, result: terminalResult });
+      game.submit('record_pitch', { ...scoringMatchup(matchup), result: terminalResult });
       const terminalRevision = game.ledger.state.revision;
 
       for (const result of followupResults) {
         expectRejected(
-          game.submit('record_pitch', { ...matchup, result }, { accept: false }),
+          game.submit('record_pitch', { ...scoringMatchup(matchup), result }, { accept: false }),
           'plate-appearance-pending',
           terminalRevision
         );
@@ -726,7 +730,7 @@ describe('Baseball golden games', () => {
 
       if (terminalResult === 'in_play') {
         game.submit('record_plate_appearance', {
-          ...matchup,
+          ...scoringMatchup(matchup),
           result: 'single',
           batterAdvance: { to: 'first' },
           runnerAdvances: [],
@@ -734,7 +738,7 @@ describe('Baseball golden games', () => {
         });
       } else if (terminalResult === 'hit_by_pitch') {
         game.submit('record_plate_appearance', {
-          ...matchup,
+          ...scoringMatchup(matchup),
           result: 'hit_by_pitch',
           batterAdvance: { to: 'first', cause: 'hit_by_pitch' },
           runnerAdvances: [],
@@ -742,7 +746,7 @@ describe('Baseball golden games', () => {
         });
       } else {
         game.submit('record_plate_appearance', {
-          ...matchup,
+          ...scoringMatchup(matchup),
           result: 'interference',
           batterAdvance: { to: 'first' },
           runnerAdvances: [],
@@ -752,7 +756,7 @@ describe('Baseball golden games', () => {
 
       expect(game.ledger.state.inning.lastPitchResult).toBeNull();
       const nextMatchup = currentMatchup(game);
-      game.submit('record_pitch', { ...nextMatchup, result: 'ball' });
+      game.submit('record_pitch', { ...scoringMatchup(nextMatchup), result: 'ball' });
       expect(projectDiamondStats(game.ledger).players['home-1'].raw.pitching.pitches).toBe(2);
       expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
     }
@@ -760,13 +764,13 @@ describe('Baseball golden games', () => {
     const corrected = createHarness('baseball-nfhs', 'full');
     configureGame(corrected);
     const matchup = currentMatchup(corrected);
-    const terminal = corrected.submit('record_pitch', { ...matchup, result: 'in_play' });
+    const terminal = corrected.submit('record_pitch', { ...scoringMatchup(matchup), result: 'in_play' });
     corrected.submit('supersede_event', {
       targetEventId: terminal.event!.eventId,
       reason: 'Correct the terminal pitch result before recording the next pitch.',
-      replacement: { type: 'record_pitch', payload: { ...matchup, result: 'ball' } }
+      replacement: { type: 'record_pitch', payload: { ...scoringMatchup(matchup), result: 'ball' } }
     });
-    corrected.submit('record_pitch', { ...matchup, result: 'called_strike' });
+    corrected.submit('record_pitch', { ...scoringMatchup(matchup), result: 'called_strike' });
     expect(corrected.ledger.state.inning).toMatchObject({ balls: 1, strikes: 1, lastPitchResult: 'called_strike' });
     expect(projectDiamondStats(corrected.ledger).players['home-1'].raw.pitching.pitches).toBe(2);
     expect(replayDiamondLedger(corrected.ledger).state).toEqual(corrected.ledger.state);
@@ -775,15 +779,15 @@ describe('Baseball golden games', () => {
       const invalidCorrection = createHarness('baseball-nfhs', 'full');
       configureGame(invalidCorrection);
       const correctionMatchup = currentMatchup(invalidCorrection);
-      const firstPitch = invalidCorrection.submit('record_pitch', { ...correctionMatchup, result: 'ball' });
-      invalidCorrection.submit('record_pitch', { ...correctionMatchup, result: 'called_strike' });
+      const firstPitch = invalidCorrection.submit('record_pitch', { ...scoringMatchup(correctionMatchup), result: 'ball' });
+      invalidCorrection.submit('record_pitch', { ...scoringMatchup(correctionMatchup), result: 'called_strike' });
       const beforeCorrection = invalidCorrection.ledger;
       const rejected = invalidCorrection.submit(
         'supersede_event',
         {
           targetEventId: firstPitch.event!.eventId,
           reason: `Do not introduce ${terminalResult} before an already-recorded later pitch.`,
-          replacement: { type: 'record_pitch', payload: { ...correctionMatchup, result: terminalResult } }
+          replacement: { type: 'record_pitch', payload: { ...scoringMatchup(correctionMatchup), result: terminalResult } }
         },
         { accept: false }
       );
@@ -980,7 +984,7 @@ describe('Baseball golden games', () => {
       plateAppearance.submit(
         'record_plate_appearance',
         {
-          ...plateAppearanceMatchup,
+          ...scoringMatchup(plateAppearanceMatchup),
           result: 'ground_out',
           batterAdvance: { to: 'out', outKind: 'batter_runner' },
           runnerAdvances: [{ runnerId: plateAppearanceRunnerId, from: 'first', to: 'second', cause: 'caught_stealing' }],
@@ -1030,7 +1034,7 @@ describe('Baseball golden games', () => {
       batterCause.submit(
         'record_plate_appearance',
         {
-          ...currentMatchup(batterCause),
+          ...scoringMatchup(currentMatchup(batterCause)),
           result: 'single',
           batterAdvance: { to: 'first', cause: 'caught_stealing' },
           runnerAdvances: [],
@@ -1046,7 +1050,7 @@ describe('Baseball golden games', () => {
     const batterCorrection = createHarness('baseball-nfhs', 'quick');
     configureGame(batterCorrection);
     const originalBatterPayload = {
-      ...currentMatchup(batterCorrection),
+      ...scoringMatchup(currentMatchup(batterCorrection)),
       result: 'single' as const,
       batterAdvance: { to: 'first' as const, cause: 'batted_ball' as const },
       runnerAdvances: [],
@@ -1087,7 +1091,7 @@ describe('Baseball golden games', () => {
       forceIntegrity.submit(
         'record_plate_appearance',
         {
-          ...currentMatchup(forceIntegrity),
+          ...scoringMatchup(currentMatchup(forceIntegrity)),
           result: 'fielders_choice',
           batterAdvance: { to: 'first' },
           runnerAdvances: [
@@ -1130,7 +1134,7 @@ describe('Baseball golden games', () => {
     const validInterference = createHarness('baseball-nfhs', 'quick');
     configureGame(validInterference);
     validInterference.submit('record_plate_appearance', {
-      ...currentMatchup(validInterference),
+      ...scoringMatchup(currentMatchup(validInterference)),
       result: 'interference',
       batterAdvance: { to: 'first' },
       runnerAdvances: [],
@@ -1147,7 +1151,7 @@ describe('Baseball golden games', () => {
         invalidInterference.submit(
           'record_plate_appearance',
           {
-            ...currentMatchup(invalidInterference),
+            ...scoringMatchup(currentMatchup(invalidInterference)),
             result: 'interference',
             batterAdvance: { to: destination, ...(destination === 'out' ? { outKind: 'tag' as const } : {}) },
             runnerAdvances: [],
@@ -1188,7 +1192,7 @@ describe('Baseball golden games', () => {
       plateAppearance.submit(
         'record_plate_appearance',
         {
-          ...matchup,
+          ...scoringMatchup(matchup),
           result: 'double',
           batterAdvance: { to: 'second' },
           runnerAdvances: [{ runnerId: heldRunnerId, from: 'first', to: 'stay', cause: 'batted_ball' }],
@@ -1206,7 +1210,7 @@ describe('Baseball golden games', () => {
     const runnerFromFirst = placeRunnerOnBase(simultaneous, 'first');
     const simultaneousMatchup = currentMatchup(simultaneous);
     simultaneous.submit('record_plate_appearance', {
-      ...simultaneousMatchup,
+      ...scoringMatchup(simultaneousMatchup),
       result: 'single',
       batterAdvance: { to: 'first' },
       runnerAdvances: [
@@ -3165,7 +3169,7 @@ describe('Scoring decisions and correction reconciliation', () => {
       recordPitch(game, 'in_play');
       const matchup = currentMatchup(game);
       const play = game.submit('record_plate_appearance', {
-        ...matchup,
+        ...scoringMatchup(matchup),
         result: outsOnPlay === 2 ? 'double_play' : 'triple_play',
         batterAdvance: { to: 'out', outKind: 'batter_runner' },
         runnerAdvances:
@@ -3279,7 +3283,7 @@ describe('Scoring decisions and correction reconciliation', () => {
     recordPitch(overcreditedOneOut, 'in_play');
     const oneOutMatchup = currentMatchup(overcreditedOneOut);
     const oneOutPlay = overcreditedOneOut.submit('record_plate_appearance', {
-      ...oneOutMatchup,
+      ...scoringMatchup(oneOutMatchup),
       result: 'ground_out',
       batterAdvance: { to: 'out', outKind: 'batter_runner' },
       runnerAdvances: [],
@@ -3302,7 +3306,7 @@ describe('Scoring decisions and correction reconciliation', () => {
     recordPitch(overcreditedCorrection, 'in_play');
     const correctionMatchup = currentMatchup(overcreditedCorrection);
     const correctionSource = overcreditedCorrection.submit('record_plate_appearance', {
-      ...correctionMatchup,
+      ...scoringMatchup(correctionMatchup),
       result: 'ground_out',
       batterAdvance: { to: 'out', outKind: 'batter_runner' },
       runnerAdvances: [],
@@ -3321,7 +3325,7 @@ describe('Scoring decisions and correction reconciliation', () => {
           replacement: {
             type: 'record_plate_appearance',
             payload: {
-              ...correctionMatchup,
+              ...scoringMatchup(correctionMatchup),
               result: 'ground_out',
               batterAdvance: { to: 'out', outKind: 'batter_runner' },
               runnerAdvances: [],
@@ -3343,7 +3347,7 @@ describe('Scoring decisions and correction reconciliation', () => {
     recordPitch(boundedMultiOut, 'in_play');
     const doubleMatchup = currentMatchup(boundedMultiOut);
     const doublePlay = boundedMultiOut.submit('record_plate_appearance', {
-      ...doubleMatchup,
+      ...scoringMatchup(doubleMatchup),
       result: 'double_play',
       batterAdvance: { to: 'out', outKind: 'batter_runner' },
       runnerAdvances: [{ runnerId: 'away-1', from: 'first', to: 'out', cause: 'force_out', outKind: 'force' }],
@@ -3373,7 +3377,7 @@ describe('Scoring decisions and correction reconciliation', () => {
     const inlinePutout = noOut.submit(
       'record_plate_appearance',
       {
-        ...noOutMatchup,
+        ...scoringMatchup(noOutMatchup),
         result: 'single',
         batterAdvance: { to: 'first' },
         runnerAdvances: [],
@@ -3384,7 +3388,7 @@ describe('Scoring decisions and correction reconciliation', () => {
     );
     expectRejected(inlinePutout, 'fielding-outs-mismatch', noOut.ledger.state.revision);
     const noOutPlay = noOut.submit('record_plate_appearance', {
-      ...noOutMatchup,
+      ...scoringMatchup(noOutMatchup),
       result: 'single',
       batterAdvance: { to: 'first' },
       runnerAdvances: [],
@@ -3430,7 +3434,7 @@ describe('Scoring decisions and correction reconciliation', () => {
           replacement: {
             type: 'record_plate_appearance',
             payload: {
-              ...noOutMatchup,
+              ...scoringMatchup(noOutMatchup),
               result: 'single',
               batterAdvance: { to: 'first' },
               runnerAdvances: [],
@@ -3476,7 +3480,7 @@ describe('Scoring decisions and correction reconciliation', () => {
       triplePlay: true
     };
     const payload = {
-      ...matchup,
+      ...scoringMatchup(matchup),
       result: 'triple_play' as const,
       batterAdvance: { to: 'out' as const, outKind: 'batter_runner' as const },
       runnerAdvances: [
@@ -3622,7 +3626,7 @@ describe('Scoring decisions and correction reconciliation', () => {
     recordPitch(game, 'in_play');
     const matchup = currentMatchup(game);
     const play = game.submit('record_plate_appearance', {
-      ...matchup,
+      ...scoringMatchup(matchup),
       result: 'double_play',
       batterAdvance: { to: 'out', outKind: 'batter_runner' },
       runnerAdvances: [{ runnerId, from: 'first', to: 'out', cause: 'force_out', outKind: 'force' }],
@@ -3667,7 +3671,7 @@ describe('Scoring decisions and correction reconciliation', () => {
       recordPitch(game, 'in_play');
       const reachMatchup = currentMatchup(game);
       game.submit('record_plate_appearance', {
-        ...reachMatchup,
+        ...scoringMatchup(reachMatchup),
         result: 'single',
         batterAdvance: { to: 'first' },
         runnerAdvances: [],
@@ -3676,7 +3680,7 @@ describe('Scoring decisions and correction reconciliation', () => {
       recordPitch(game, 'in_play');
       const doubleMatchup = currentMatchup(game);
       const command = game.command('record_plate_appearance', {
-        ...doubleMatchup,
+        ...scoringMatchup(doubleMatchup),
         result: 'double_play',
         batterAdvance: { to: 'out', outKind: 'batter_runner' },
         runnerAdvances: [{ runnerId: reachMatchup.batterId, from: 'first', to: 'out', cause: 'force_out', outKind: 'force' }],
@@ -3701,7 +3705,7 @@ describe('Scoring decisions and correction reconciliation', () => {
       expect(bounded.event).toEqual(full.event);
       expect(replayDiamondLedger(full.ledger).state).toEqual(full.ledger.state);
 
-      const duplicate = executeDiamondCommandFromCheckpoint(checkpoint, command, context, bounded.receipt);
+      const duplicate = executeDiamondCommandFromCheckpoint(bounded.checkpoint, command, context, bounded.receipt);
       expect(duplicate.result).toMatchObject({ outcome: 'duplicate', revision: full.ledger.state.revision });
       expect(duplicate.event).toEqual(full.event);
     });
@@ -3720,7 +3724,7 @@ describe('Scoring decisions and correction reconciliation', () => {
       recordPitch(game, 'in_play');
       const reachMatchup = currentMatchup(game);
       game.submit('record_plate_appearance', {
-        ...reachMatchup,
+        ...scoringMatchup(reachMatchup),
         result: 'single',
         batterAdvance: { to: 'first' },
         runnerAdvances: [],
@@ -3729,7 +3733,7 @@ describe('Scoring decisions and correction reconciliation', () => {
       recordPitch(game, 'in_play');
       const doubleMatchup = currentMatchup(game);
       const command = game.command('record_plate_appearance', {
-        ...doubleMatchup,
+        ...scoringMatchup(doubleMatchup),
         result: 'double_play',
         batterAdvance: { to: 'out', outKind: 'batter_runner' },
         runnerAdvances: [
@@ -3768,7 +3772,7 @@ describe('Scoring decisions and correction reconciliation', () => {
     recordPitch(corrected, 'in_play');
     const reachMatchup = currentMatchup(corrected);
     corrected.submit('record_plate_appearance', {
-      ...reachMatchup,
+      ...scoringMatchup(reachMatchup),
       result: 'single',
       batterAdvance: { to: 'first' },
       runnerAdvances: [],
@@ -3777,7 +3781,7 @@ describe('Scoring decisions and correction reconciliation', () => {
     recordPitch(corrected, 'in_play');
     const doubleMatchup = currentMatchup(corrected);
     const groundPayload = {
-      ...doubleMatchup,
+      ...scoringMatchup(doubleMatchup),
       result: 'double_play' as const,
       batterAdvance: { to: 'out' as const, outKind: 'batter_runner' as const },
       runnerAdvances: [
