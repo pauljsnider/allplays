@@ -93,6 +93,7 @@ const ALL_PUBLIC_PLAYER_STAT_IDS = Object.freeze([
   "pitches",
   "strikes",
   "first_pitch_strikes",
+  "first_pitch_strike_opportunities",
   "innings_pitched",
   "era",
   "whip",
@@ -395,6 +396,21 @@ function playerWrite(bundle, playerId) {
 }
 
 // Side-aware player metadata isolation.
+test("projects actual first-pitch opportunities without counting automatic walks", () => {
+  const game = harness("full");
+  setLineupsAndStart(game);
+  game.submit("record_plate_appearance", {
+    batterId: "away-1", pitcherId: "home-1", result: "intentional_walk",
+    batterAdvance: { to: "first", cause: "walk" }, runnerAdvances: [], outsOnPlay: 0,
+  });
+  const before = playerWrite(bundleFor(game.ledger, { orientationSnapshot: orientationFor("home") }), "home-1");
+  assert.equal(before.stats.first_pitch_strike_opportunities, 0);
+  assert.equal(before.derivedStats.first_pitch_strike_rate, undefined);
+  game.submit("record_pitch", { batterId: "away-2", pitcherId: "home-1", result: "called_strike" });
+  const after = playerWrite(bundleFor(game.ledger, { orientationSnapshot: orientationFor("home") }), "home-1");
+  assert.equal(after.stats.first_pitch_strike_opportunities, 1);
+  assert.equal(after.derivedStats.first_pitch_strike_rate, 1);
+});
 test("projection binds colliding player metadata to the authoritative side", () => {
   const game = harness("full");
   setLineupsAndStart(game);
