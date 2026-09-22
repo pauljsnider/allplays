@@ -3643,7 +3643,7 @@ describe('Fastpitch-specific rules', () => {
     expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
   });
 
-  it('moves DP to FLEX defense and restores FLEX without changing batting personnel', () => {
+  it.each([undefined, 'RF'] as const)('moves DP to FLEX defense and restores FLEX with position %s', (defensivePosition) => {
     const game = harness('fastpitch-nfhs', 'quick');
     setBasicLineups(game, { start: false, homeFirstBattingRole: 'dp' });
     game.submit('set_defensive_alignment', {
@@ -3676,11 +3676,49 @@ describe('Fastpitch-specific rules', () => {
       battingSlot: 1,
       replacedPlayerId: 'home-1',
       starterPlayerId: 'home-flex',
-      defensivePosition: 'RF'
+      ...(defensivePosition ? { defensivePosition } : {})
     });
     expect(game.ledger.state.lineups.home.battingOrder).toEqual(order);
     expect(game.ledger.state.lineups.home.defense.RF).toBe('home-flex');
     expect(game.ledger.state.lineups.home.flexDefense?.starterReentriesUsed).toBe(1);
+    expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
+  });
+
+  it('allows DP to defend for another batter while FLEX stays active', () => {
+    const game = harness('fastpitch-nfhs', 'quick');
+    setBasicLineups(game, { start: false, homeFirstBattingRole: 'dp' });
+    game.submit('set_defensive_alignment', {
+      side: 'home',
+      assignments: [
+        { position: 'P', playerId: 'home-2' },
+        { position: 'C', playerId: 'home-3' }
+      ]
+    });
+    game.submit('set_dp_flex', {
+      side: 'home',
+      dpPlayerId: 'home-1',
+      flexPlayerId: 'home-flex',
+      dpBattingSlot: 1,
+      flexDefensivePosition: 'RF'
+    });
+    game.submit('start', {});
+    const lineup = game.ledger.state.lineups.home;
+    const alignment = (catcher: string) => ({
+      side: 'home' as const,
+      assignments: [
+        { position: 'P' as const, playerId: 'home-2' },
+        { position: 'C' as const, playerId: catcher },
+        { position: 'RF' as const, playerId: 'home-flex' }
+      ]
+    });
+    game.submit('set_defensive_alignment', alignment('home-1'));
+    expect(game.ledger.state.lineups.home.battingOrder).toEqual(lineup.battingOrder);
+    expect(game.ledger.state.lineups.home.flexDefense).toEqual(lineup.flexDefense);
+    expect(game.ledger.state.lineups.home.defense.C).toBe('home-1');
+    const rejected = game.submit('set_defensive_alignment', alignment('bench-catcher'), { accept: false });
+    expect(rejected.result.rejection?.code).toBe('defensive-personnel-change-requires-substitution');
+    game.submit('set_defensive_alignment', alignment('home-3'));
+    expect(game.ledger.state.lineups.home).toEqual(lineup);
     expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
   });
 
