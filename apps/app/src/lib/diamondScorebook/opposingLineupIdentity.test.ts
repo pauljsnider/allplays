@@ -400,6 +400,30 @@ describe('opposing Diamond lineup identities', () => {
     }
   });
 
+  it.each(['batterId', 'pitcherId'] as const)('rejects padded %s on pitches and plate appearances before ledger mutation', (field) => {
+    const game = harness();
+    configureReadyGame(game);
+    game.submit('start', {});
+    const identities = { batterId: 'away-1', pitcherId: 'home-1' };
+    identities[field] = ` ${identities[field]} `;
+    const before = game.ledger;
+    const pitch = { ...identities, result: 'ball' as const };
+    const play = { ...identities, result: 'single' as const, batterAdvance: { to: 'first' as const }, runnerAdvances: [], outsOnPlay: 0 };
+    const rejectedPitch = game.submit('record_pitch', pitch, { accept: false });
+    const rejectedPlay = game.submit('record_plate_appearance', play, { accept: false });
+    for (const result of [rejectedPitch, rejectedPlay]) {
+      expect(result.result.rejection?.code).toBe('invalid-id');
+      expect(result.ledger).toBe(before);
+    }
+    const checkpointPitch = executeAtCheckpoint(before, 'record_pitch', pitch, 80);
+    const checkpointPlay = executeAtCheckpoint(before, 'record_plate_appearance', play, 81);
+    for (const result of [checkpointPitch, checkpointPlay]) {
+      expect(result.execution.result.rejection?.code).toBe('invalid-id');
+      expect(result.execution.checkpoint).toBe(result.checkpoint);
+    }
+    expect(replayDiamondLedger(before).state).toEqual(before.state);
+  });
+
   it('rejects a colliding lineup correction atomically and keeps canonical replay valid', () => {
     const game = harness();
     const { awayLineupEventId } = configureReadyGame(game);

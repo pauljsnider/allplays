@@ -1522,7 +1522,7 @@ function reduceSubstitution(
     lineup.dpFlex &&
     outgoingPlayerId === lineup.dpFlex.dpPlayerId &&
     battingSlot.activePlayerId === outgoingPlayerId &&
-    payload.defensivePosition === lineup.dpFlex.flexDefensivePosition &&
+    (payload.defensivePosition === undefined || payload.defensivePosition === lineup.dpFlex.flexDefensivePosition) &&
     lineup.defense[lineup.dpFlex.flexDefensivePosition] === outgoingPlayerId
   );
   const replacingFlex = Boolean(
@@ -1948,8 +1948,26 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
           players.every((playerId) => state.lineups[side].battingOrder.some((entry) => entry.activePlayerId === playerId));
         const priorPlayers = Object.values(state.lineups[side].defense).filter(Boolean).sort();
         const nextPlayers = Object.values(defense).filter(Boolean).sort();
+        const pair = state.lineups[side].dpFlex;
+        const changedPlayers = [
+          ...priorPlayers.filter((id) => !nextPlayers.includes(id)),
+          ...nextPlayers.filter((id) => !priorPlayers.includes(id))
+        ];
+        // The DP may defend for another batter without replacing that batter.
+        // FLEX withdrawal/restoration still uses the separate personnel history.
+        const eligibleDpRotation = Boolean(
+          profile.dpFlex.enabled &&
+          pair &&
+          state.lineups[side].defense[pair.flexDefensivePosition] === pair.flexPlayerId &&
+          defense[pair.flexDefensivePosition] === pair.flexPlayerId &&
+          priorPlayers.length === nextPlayers.length &&
+          changedPlayers.length === 2 &&
+          changedPlayers.includes(pair.dpPlayerId) &&
+          changedPlayers.every((id) => state.lineups[side].battingOrder.some((entry) => entry.activePlayerId === id))
+        );
         if (
           !eligibleRotation &&
+          !eligibleDpRotation &&
           (priorPlayers.length !== nextPlayers.length || priorPlayers.some((playerId, index) => playerId !== nextPlayers[index]))
         ) {
           throw new DiamondDomainError(
