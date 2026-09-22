@@ -37,6 +37,91 @@ import {
 const SCORER = 'scorer-1';
 
 describe('Diamond substitution and immutable-profile regressions', () => {
+  it.each(['substitute', 'set_defensive_alignment', 're_enter'] as const)(
+    'rejects mid-PA pitching changes through %s atomically',
+    (type) => {
+      const game = harness('baseball-nfhs', 'full');
+      setBasicLineups(game);
+      if (type === 're_enter')
+        game.submit('substitute', {
+          side: 'home',
+          battingSlot: 1,
+          outgoingPlayerId: 'home-1',
+          incomingPlayerId: 'reliever',
+          defensivePosition: 'P'
+        });
+      const pitcherId = game.ledger.state.lineups.home.defense.P!;
+      for (let i = 0; i < 3; i += 1) game.submit('record_pitch', { batterId: 'away-1', pitcherId, result: 'ball' });
+      const before = game.ledger;
+      const payload =
+        type === 'substitute'
+          ? {
+              side: 'home' as const,
+              battingSlot: 1,
+              outgoingPlayerId: pitcherId,
+              incomingPlayerId: 'new-pitcher',
+              defensivePosition: 'P' as const
+            }
+          : type === 're_enter'
+            ? {
+                side: 'home' as const,
+                battingSlot: 1,
+                replacedPlayerId: pitcherId,
+                starterPlayerId: 'home-1',
+                defensivePosition: 'P' as const
+              }
+            : {
+                side: 'home' as const,
+                assignments: [
+                  { playerId: 'home-2', position: 'P' as const },
+                  { playerId: pitcherId, position: 'C' as const },
+                  { playerId: 'home-3', position: 'SS' as const }
+                ]
+              };
+      const rejected = game.submit(type, payload, { accept: false });
+      expect(rejected.result.rejection?.code).toBe('mid-plate-appearance-pitching-change');
+      expect(rejected.ledger).toBe(before);
+      const checkpoint = createDiamondCheckpoint(before);
+      const compact = executeDiamondCommandFromCheckpoint(checkpoint, game.command(type, payload), {
+        actorUid: SCORER,
+        eventId: 'mid-pa-change',
+        serverTimestampMs: 1700000001000
+      });
+      expect(compact.result.rejection?.code).toBe('mid-plate-appearance-pitching-change');
+      expect(compact.checkpoint).toBe(checkpoint);
+      // A completed PA clears the inherited count and permits the same change.
+      game.submit('record_pitch', { batterId: 'away-1', pitcherId, result: 'ball' });
+      game.submit('record_plate_appearance', {
+        batterId: 'away-1',
+        pitcherId,
+        result: 'walk',
+        batterAdvance: { to: 'first' },
+        runnerAdvances: [],
+        outsOnPlay: 0
+      });
+      game.submit(type, payload);
+      expect(game.ledger.state.bases.first?.chargedToPitcherId).toBe(pitcherId);
+      expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
+    }
+  );
+
+  it.each(['baseball-obr', 'baseball-nfhs'])('rejects a defending DH alongside a non-batting pitcher under %s', (profile) => {
+    const game = harness(profile, 'quick');
+    setBasicLineups(game, { start: false, homeFirstBattingRole: 'dh' });
+    game.submit('set_defensive_alignment', {
+      side: 'home',
+      assignments: [
+        { playerId: 'pitcher-only', position: 'P' },
+        { playerId: 'home-1', position: 'C' },
+        { playerId: 'home-3', position: 'SS' }
+      ]
+    });
+    const before = game.ledger;
+    const rejected = game.submit('start', {}, { accept: false });
+    expect(rejected.result.rejection?.code).toBe('invalid-defensive-personnel');
+    expect(rejected.ledger).toBe(before);
+  });
+
   it('preserves reach provenance for explicit stay moves in both command paths', () => {
     const game = harness('baseball-nfhs', 'quick');
     setBasicLineups(game);
@@ -312,6 +397,14 @@ describe('Diamond substitution and immutable-profile regressions', () => {
     game.submit('start', {});
     const battingOrder = game.ledger.state.lineups.home.battingOrder;
     game.submit('record_pitch', { batterId: 'away-1', pitcherId: 'pitcher-only', result: 'ball' });
+    game.submit('record_plate_appearance', {
+      batterId: 'away-1',
+      pitcherId: 'pitcher-only',
+      result: 'ground_out',
+      batterAdvance: { to: 'out', outKind: 'batter_runner' },
+      runnerAdvances: [],
+      outsOnPlay: 1
+    });
     game.submit('substitute', {
       side: 'home',
       battingSlot: 1,
@@ -321,7 +414,15 @@ describe('Diamond substitution and immutable-profile regressions', () => {
     });
     expect(game.ledger.state.lineups.home.battingOrder).toEqual(battingOrder);
     expect(game.ledger.state.lineups.home.defense.P).toBe('reliever-only');
-    game.submit('record_pitch', { batterId: 'away-1', pitcherId: 'reliever-only', result: 'ball' });
+    game.submit('record_pitch', { batterId: 'away-2', pitcherId: 'reliever-only', result: 'ball' });
+    game.submit('record_plate_appearance', {
+      batterId: 'away-2',
+      pitcherId: 'reliever-only',
+      result: 'ground_out',
+      batterAdvance: { to: 'out', outKind: 'batter_runner' },
+      runnerAdvances: [],
+      outsOnPlay: 1
+    });
     game.submit('substitute', {
       side: 'home',
       battingSlot: 1,
@@ -333,7 +434,7 @@ describe('Diamond substitution and immutable-profile regressions', () => {
       expect.arrayContaining(['pitcher-only', 'reliever-only', 'second-reliever-only'])
     );
     const laterPlay = game.submit('record_plate_appearance', {
-      batterId: 'away-1',
+      batterId: 'away-3',
       pitcherId: 'second-reliever-only',
       result: 'strikeout',
       batterAdvance: { to: 'out', outKind: 'strikeout' },
@@ -348,7 +449,6 @@ describe('Diamond substitution and immutable-profile regressions', () => {
       playEventId: laterPlay.event!.eventId,
       pitcherOfRecord: { side: 'home', playerId: 'reliever-only', decision: 'save' }
     });
-    game.submit('record_pitch', { batterId: 'away-2', pitcherId: 'second-reliever-only', result: 'ball' });
     expect(
       game.submit(
         'substitute',

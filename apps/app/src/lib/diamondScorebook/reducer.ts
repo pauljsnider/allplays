@@ -1786,6 +1786,17 @@ export function validateDiamondState(state: DiamondGameState): DiamondGameState 
     if (new Set(defensivePlayers).size !== defensivePlayers.length) {
       throw new DiamondDomainError('invalid-defense', `${side} defense contains a duplicate player.`);
     }
+    if (
+      state.lifecycle !== 'configured' &&
+      state.lifecycle !== 'ready' &&
+      order.some((entry) => entry.battingRole === 'dh' && defensivePlayers.includes(entry.activePlayerId)) &&
+      defensivePlayers.some((playerId) => !players.includes(playerId))
+    ) {
+      throw new DiamondDomainError(
+        'invalid-defensive-personnel',
+        'A traditional DH cannot defend while a separate non-batting defender remains.'
+      );
+    }
     if (!Array.isArray(lineup.courtesyRunnerIds)) {
       throw new DiamondDomainError('history-required', `${side} courtesy-runner identity history is unavailable.`);
     }
@@ -2137,7 +2148,10 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
         const permittedFlex = lineup.dpFlex?.flexPlayerId;
         const remainingDefenders = defensiveOnly.filter((playerId) => playerId !== permittedFlex);
         const hasActiveDh = profile.allowsDh && lineup.battingOrder.some((entry) => entry.battingRole === 'dh');
-        if (remainingDefenders.length > (hasActiveDh ? 1 : 0)) {
+        const defendingDh = lineup.battingOrder.some(
+          (entry) => entry.battingRole === 'dh' && Object.values(lineup.defense).includes(entry.activePlayerId)
+        );
+        if (remainingDefenders.length > (hasActiveDh ? 1 : 0) || (defendingDh && remainingDefenders.length > 0)) {
           throw new DiamondDomainError(
             'invalid-defensive-personnel',
             `${side} has a defender outside its batting order without an authorized DH or FLEX role.`
@@ -2712,6 +2726,24 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
     }
   }
 
+  // Inherited-count attribution is not yet represented in the canonical state.
+  // Reject every pitching-change path instead of charging an unfinished PA to
+  // a new pitcher. Opposite-side personnel and between-PA changes remain legal.
+  if (
+    (action.type === 'substitute' || action.type === 're_enter' || action.type === 'set_defensive_alignment') &&
+    state.lifecycle === 'active' &&
+    state.inning.outs < 3 &&
+    !state.halfInningEnd &&
+    (state.inning.pitchesInPlateAppearance > 0 || state.inning.balls > 0 || state.inning.strikes > 0)
+  ) {
+    const fieldingSide = oppositeSide(getBattingSide(state));
+    if (state.lineups[fieldingSide].defense.P !== next.lineups[fieldingSide].defense.P) {
+      throw new DiamondDomainError(
+        'mid-plate-appearance-pitching-change',
+        'Finish the current plate appearance before changing pitchers; inherited-count attribution is not supported.'
+      );
+    }
+  }
   return deepFreeze(validateDiamondState(next));
 }
 
