@@ -6,6 +6,7 @@ exports.getDiamondRulesProfile = getDiamondRulesProfile;
 exports.requireDiamondRulesProfile = requireDiamondRulesProfile;
 const contracts_1 = require("./contracts");
 function freezeProfile(profile) {
+    profile.runAheadRules.forEach(Object.freeze);
     Object.freeze(profile.runAheadRules);
     Object.freeze(profile.tiebreaker);
     Object.freeze(profile.dpFlex);
