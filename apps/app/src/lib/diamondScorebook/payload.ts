@@ -57,7 +57,10 @@ export function validateDiamondCommandPayload(type: DiamondCommandType, payload:
   const visit = (value: unknown, shape: Shape, depth: number): void => {
     budget -= 8;
     if (budget < 0 || depth > 12) invalid();
-    if (value === undefined) return;
+    if (value === undefined) {
+      if (depth === 0) invalid();
+      return;
+    }
     if (shape === true) {
       if (typeof value === 'string') budget -= value.length * 3;
       else if (value !== null && typeof value !== 'boolean' && !(typeof value === 'number' && Number.isFinite(value))) invalid();
