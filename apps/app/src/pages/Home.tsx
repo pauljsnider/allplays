@@ -227,7 +227,7 @@ export function Home({ auth }: { auth: AuthState }) {
     clearError();
     setHomeLoadError(null);
     setSocialStatus(null);
-    if (!hasExistingHome && !preserveCurrentHome) {
+    if (!hasExistingHome && !preserveCurrentHome && previewHomeUserId !== user.uid) {
       setHome(emptyHome());
       setSocial(emptySocialHome());
     }
@@ -252,7 +252,7 @@ export function Home({ auth }: { auth: AuthState }) {
             // Once the stale summary has returned, background loader partials
             // are incomplete intermediate states. Wait for onRefresh's complete
             // result before replacing downstream work.
-            if (summaryResultReturned) return;
+            if (summaryResultReturned || hasExistingHome) return;
             receivedHomePreview = true;
             setHome(partial.home);
             setPreviewHomeUserId(user.uid);
@@ -278,7 +278,7 @@ export function Home({ auth }: { auth: AuthState }) {
         summaryResultReturned = true;
         if (!isCurrentHomeLoad()) return summary;
         receivedHomePreview = true;
-        setHome(summary.home);
+        if (!hasExistingHome) setHome(summary.home);
         setPreviewHomeUserId(user.uid);
         setHomeLoadError(null);
         let latestSecondaryHome = summary.home;
@@ -322,7 +322,7 @@ export function Home({ auth }: { auth: AuthState }) {
               onPartial: (partial) => {
                 if (!isCurrentHomeLoad()) return;
                 latestSecondaryHome = partial;
-                setHome(partial);
+                if (!hasExistingHome) setHome(partial);
                 const partialTeamScope = getHomeTeamScope(partial);
                 if (secondaryResultReturned && partialTeamScope !== latestRequestedSocialScope) {
                   // Do not retain social records authorized by the stale team
@@ -357,19 +357,21 @@ export function Home({ auth }: { auth: AuthState }) {
             rethrow: false,
             ignoreStale: true,
             getErrorMessage: (secondaryError) => getHomeSecondaryErrorMessage(toAppServiceError(secondaryError, 'Unable to refresh Home details.')),
-            onError: async (secondaryError) => {
+            onError: (secondaryError) => {
               if (!isCurrentHomeLoad()) return;
               secondaryResultReturned = true;
               const appError = toAppServiceError(secondaryError, 'Unable to refresh Home details.');
-              try {
-                const latestTeamScope = getHomeTeamScope(latestSecondaryHome);
-                await loadAndApplySocial(latestSecondaryHome, latestTeamScope === summaryTeamScope);
-              } catch {
+              // Settle the visible failure before waiting on independent social
+              // work, which may still be pending. A preview is not a full load.
+              setFailedHomeDetailsUserId(user.uid);
+              setHomeLoadError(appError);
+              setSocialStatus({ tone: 'error', message: getHomeSecondaryErrorMessage(appError) });
+              const latestTeamScope = getHomeTeamScope(latestSecondaryHome);
+              void loadAndApplySocial(latestSecondaryHome, latestTeamScope === summaryTeamScope).catch(() => {
                 // The Home details error remains the visible retry signal. Social
                 // state is left untouched so a failed independent load cannot
                 // replace the last verified feed with an authoritative empty one.
-              }
-              if (!isCurrentHomeLoad()) return;
+              });
               timer.end({
                 hydrated: false,
                 playerCount: summary.home.players.length,
@@ -379,17 +381,6 @@ export function Home({ auth }: { auth: AuthState }) {
                 feeCount: summary.home.fees.length,
                 error: appError.message
               });
-              setFailedHomeDetailsUserId(user.uid);
-              if (!hasExistingHome) {
-                setHomeLoadError(appError);
-                // The summary bootstrap is still useful even when a secondary
-                // permission or network request fails. Mark the attempt settled
-                // so Home does not present an infinite loading state.
-                setLoadedHomeDetailsUserId(user.uid);
-                setSocialStatus({ tone: 'error', message: getHomeSecondaryErrorMessage(appError) });
-                return;
-              }
-              setSocialStatus({ tone: 'error', message: getHomeSecondaryErrorMessage(appError) });
             }
           }
         );
@@ -397,13 +388,14 @@ export function Home({ auth }: { auth: AuthState }) {
         return summary;
       },
       {
-        getErrorMessage: (loadError) => getHomeLoadErrorMessage(toAppServiceError(loadError, 'Unable to load Home.'), hasExistingHome || receivedHomePreview),
+        getErrorMessage: (loadError) => getHomeLoadErrorMessage(toAppServiceError(loadError, 'Unable to load Home.'), hasExistingHome),
         rethrow: false,
         ignoreStale: true,
         onError: (loadError) => {
           if (!isCurrentHomeLoad()) return;
           const appError = toAppServiceError(loadError, 'Unable to load Home.');
           setHomeLoadError(appError);
+          setFailedHomeDetailsUserId(user.uid);
           timer.end({
             hydrated: false,
             error: appError.message
@@ -503,6 +495,7 @@ export function Home({ auth }: { auth: AuthState }) {
   const canRenderFirstRunHome = !authUserId || hasLoadedHomeDetails;
   const homeDetailsPending = Boolean(authUserId) && !hasLoadedHomeDetails;
   const homeDetailsRefreshFailed = Boolean(authUserId) && authUserId === failedHomeDetailsUserId;
+  const showIncompleteHomeError = !hasLoadedHomeDetails && Boolean(homeLoadError);
   const resolvedOfficialsAccess = authUserId ? officialsAccess : { hasAccess: false, teamCount: 0, isPartial: false };
 
   useViewLoadTimer({
@@ -630,7 +623,7 @@ export function Home({ auth }: { auth: AuthState }) {
           </button>
         </div>
         <div className="hidden gap-1.5 overflow-x-auto border-t border-gray-100 px-3 py-2 sm:flex sm:px-4">
-          {homeDetailsPending ? (
+          {homeDetailsPending && !homeLoadError ? (
             <div className="flex min-h-8 flex-none items-center gap-1.5 rounded-full border border-gray-200 bg-gray-50 px-2.5 text-xs font-black text-gray-600" role="status">
               <Loader2 className="h-3.5 w-3.5 flex-none animate-spin" aria-hidden="true" />
               Checking actions
@@ -676,9 +669,13 @@ export function Home({ auth }: { auth: AuthState }) {
 
       {showInitialHomeSkeleton ? <HomePageSkeleton /> : null}
 
-      {showBlockingErrorState ? <HomeLoadErrorState error={homeLoadError} onRetry={() => refreshHome({ force: true })} retrying={loading} /> : null}
+      {showBlockingErrorState || showIncompleteHomeError ? <HomeLoadErrorState error={homeLoadError} onRetry={() => refreshHome({ force: true })} retrying={loading} /> : null}
 
-      {canRenderHomeSections && !showBlockingErrorState && activeSection === 'today' ? (
+      {showIncompleteHomeError && activeSection === 'today' && social.feedItems.length > 0 ? (
+        <HomeFeedPreview social={social} loading={false} onOpenComposer={openComposer} />
+      ) : null}
+
+      {canRenderHomeSections && !showBlockingErrorState && !showIncompleteHomeError && activeSection === 'today' ? (
         <TodaySection
           home={home}
           social={social}
@@ -2761,13 +2758,13 @@ function getAsyncErrorMessage(error: unknown, fallback: string) {
 
 function getHomeLoadErrorMessage(error: AppServiceError, hasExistingHome: boolean) {
   if (hasExistingHome) {
-    if (error.type === 'network') return 'Unable to refresh Home while offline. Showing the last loaded Home.';
+    if (error.type === 'network') return 'Unable to refresh Home. The request failed or timed out. Showing the last loaded Home. Try again.';
     if (error.type === 'permission') return 'Unable to refresh Home because access was denied. Showing the last loaded Home.';
     if (error.type === 'not_found') return 'Unable to refresh Home because the requested data was not found. Showing the last loaded Home.';
     if (error.type === 'validation') return error.message;
     return 'Unable to refresh Home. Showing the last loaded Home. Try again.';
   }
-  if (error.type === 'network') return 'Unable to load Home while offline. Check your connection and try again.';
+  if (error.type === 'network') return 'Unable to load Home. The request failed or timed out. Try again.';
   if (error.type === 'permission') return 'You do not have permission to load this Home data.';
   if (error.type === 'not_found') return 'Home data was not found. Try again or check the linked team access.';
   if (error.type === 'validation') return error.message;
@@ -2775,7 +2772,7 @@ function getHomeLoadErrorMessage(error: AppServiceError, hasExistingHome: boolea
 }
 
 function getHomeSecondaryErrorMessage(error: AppServiceError) {
-  if (error.type === 'network') return 'Home details could not refresh while offline.';
+  if (error.type === 'network') return 'Home details could not refresh. The request failed or timed out. Try again.';
   if (error.type === 'permission') return 'Home details could not refresh because access was denied.';
   if (error.type === 'not_found') return 'Home details could not refresh because some data was not found.';
   if (error.type === 'validation') return error.message;
@@ -2786,7 +2783,7 @@ function getHomeLoadErrorStateCopy(error: AppServiceError | null) {
   if (error?.type === 'network') {
     return {
       title: 'Home could not connect',
-      detail: 'Check your connection and try loading Home again.'
+      detail: 'The request failed or timed out. Try loading Home again.'
     };
   }
   if (error?.type === 'permission') {
