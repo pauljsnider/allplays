@@ -358,7 +358,7 @@ function projectDiamondStats(ledger) {
             pitchingStartSeen.add(playerId);
         }
     };
-    simulated.forEach(({ event, before }) => {
+    simulated.forEach(({ event, before, after }) => {
         const eventId = event.eventId;
         if (event.type !== 'advance_runner' && event.type !== 'record_plate_appearance')
             physicalCauseCluster = null;
@@ -379,7 +379,8 @@ function projectDiamondStats(ledger) {
             case 'substitute': {
                 const payload = event.payload;
                 creditGame(payload.incomingPlayerId, payload.side, eventId, false);
-                const entersAsPitcher = payload.defensivePosition === 'P' || before.lineups[payload.side].defense.P === payload.outgoingPlayerId;
+                const entersAsPitcher = after.lineups[payload.side].defense.P === payload.incomingPlayerId &&
+                    before.lineups[payload.side].defense.P !== payload.incomingPlayerId;
                 if (entersAsPitcher && isOpenDefensiveEntry(before, payload.side)) {
                     creditPitchingAppearance(payload.incomingPlayerId, payload.side, eventId, false);
                     const inherited = [before.bases.first, before.bases.second, before.bases.third].filter(Boolean).length;
@@ -392,7 +393,8 @@ function projectDiamondStats(ledger) {
             case 're_enter': {
                 const payload = event.payload;
                 creditGame(payload.starterPlayerId, payload.side, eventId, false);
-                const entersAsPitcher = payload.defensivePosition === 'P' || before.lineups[payload.side].defense.P === payload.replacedPlayerId;
+                const entersAsPitcher = after.lineups[payload.side].defense.P === payload.starterPlayerId &&
+                    before.lineups[payload.side].defense.P !== payload.starterPlayerId;
                 if (entersAsPitcher && isOpenDefensiveEntry(before, payload.side)) {
                     creditPitchingAppearance(payload.starterPlayerId, payload.side, eventId, false);
                     const inherited = [before.bases.first, before.bases.second, before.bases.third].filter(Boolean).length;
