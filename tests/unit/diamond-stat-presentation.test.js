@@ -48,6 +48,18 @@ function activateDiamondGame(config, overrides = {}) {
 }
 
 describe('Diamond stat presentation', () => {
+    it('derives pitcher first-strike rates from actual opportunities, not batters faced', () => {
+        const aggregate = (opportunities, strikes) => aggregateCoverageAwareSeasonStats({
+            diamondGames: [{ game, documents: [{ id: 'p1', data: {
+                trackingEngine: 'diamond-v2', sourceRevision: 12, complete: true,
+                stats: { bf: 10, first_pitch_strikes: strikes, first_pitch_strike_opportunities: opportunities },
+                statCoverage: { bf: 'complete', first_pitch_strikes: 'complete', first_pitch_strike_opportunities: 'complete' },
+                coverage: { pitching: 'complete', pitches: 'complete' }
+            } }] }]
+        });
+        expect(aggregate(0, 0).statsByPlayerId.p1).not.toHaveProperty('first_pitch_strike_rate');
+        expect(aggregate(2, 1).statsByPlayerId.p1.first_pitch_strike_rate).toBe(0.5);
+    });
     it('matches the server schema-v2 snapshot hash while ignoring presentation-only fields', () => {
         const config = {
             id: 'diamond-config',
