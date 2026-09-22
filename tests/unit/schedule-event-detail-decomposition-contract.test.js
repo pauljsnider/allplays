@@ -235,8 +235,8 @@ describe('ScheduleEventDetail decomposition contract', () => {
         expect(page).not.toMatch(/loadGameReportSections\(/);
 
         expect(sections).toContain('export function GameReportSections');
-        expect(sections).toContain('const loaded = await loadGameReportSections(event.teamId, event.id);');
-        expect(sections).toContain('<GameReportSectionContent report={report} activeSection={activeReportSection} />');
+        expect(sections).toContain('const loaded = await loadGameReportSections(event.teamId, event.id, {');
+        expect(sections).toContain('<GameReportSectionContent report={displayedReport} activeSection={activeReportSection} />');
         expect(sections).toContain('function getVisibleGameReportSections(report: GameReportData | null)');
         expect(content).toContain('export function GameReportSectionContent');
         expect(content).toContain('function MatchSummarySection({ report }: { report: GameReportData })');
