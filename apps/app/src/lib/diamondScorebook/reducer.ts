@@ -190,6 +190,7 @@ function cloneLineup(lineup: DiamondTeamLineup): DiamondTeamLineup {
     })),
     defense: { ...lineup.defense },
     ...(lineup.dhDefense ? { dhDefense: { ...lineup.dhDefense, substitutions: [...lineup.dhDefense.substitutions] } } : {}),
+    ...(lineup.flexDefense ? { flexDefense: { ...lineup.flexDefense, substitutions: [...lineup.flexDefense.substitutions] } } : {}),
     courtesyRunnerIds: [...lineup.courtesyRunnerIds],
     dpFlex: lineup.dpFlex ? { ...lineup.dpFlex } : null
   };
@@ -1053,6 +1054,9 @@ function knownPlayerIds(lineup: DiamondTeamLineup) {
   return new Set([
     ...lineup.battingOrder.flatMap((entry) => [entry.activePlayerId, entry.starterPlayerId, ...entry.substitutions]),
     ...(lineup.dhDefense ? [lineup.dhDefense.activePlayerId, lineup.dhDefense.starterPlayerId, ...lineup.dhDefense.substitutions] : []),
+    ...(lineup.flexDefense
+      ? [lineup.flexDefense.activePlayerId, lineup.flexDefense.starterPlayerId, ...lineup.flexDefense.substitutions]
+      : []),
     ...Object.values(lineup.defense).filter((playerId): playerId is string => Boolean(playerId)),
     ...lineup.courtesyRunnerIds,
     ...(lineup.dpFlex ? [lineup.dpFlex.dpPlayerId, lineup.dpFlex.flexPlayerId] : [])
@@ -1514,47 +1518,58 @@ function reduceSubstitution(
     throw new DiamondDomainError('substitution-no-op', 'The incoming and outgoing players must be different.');
   }
   const lineup = state.lineups[side];
-  const defensiveOnly =
+  const replacingFlex = Boolean(
+    lineup.dpFlex && lineup.dpFlex.flexPlayerId === outgoingPlayerId && incomingPlayerId !== lineup.dpFlex.dpPlayerId
+  );
+  const flexOnly = Boolean(
+    lineup.dpFlex &&
+    lineup.dpFlex.flexPlayerId === outgoingPlayerId &&
+    battingSlot.slot === lineup.dpFlex.dpBattingSlot &&
+    !order.some((entry) => entry.activePlayerId === outgoingPlayerId)
+  );
+  const dhOnly =
     profile.allowsDh &&
     battingSlot.battingRole === 'dh' &&
     Object.values(lineup.defense).includes(outgoingPlayerId) &&
     !order.some((entry) => entry.activePlayerId === outgoingPlayerId);
-  const slot = defensiveOnly
-    ? (lineup.dhDefense ?? {
-        ...battingSlot,
-        activePlayerId: outgoingPlayerId,
-        starterPlayerId: outgoingPlayerId,
-        starterReentriesUsed: 0,
-        substitutions: []
-      })
-    : battingSlot;
+  const defensiveOnly = dhOnly || flexOnly;
+  const slot =
+    defensiveOnly || replacingFlex
+      ? ((replacingFlex ? lineup.flexDefense : lineup.dhDefense) ?? {
+          ...battingSlot,
+          activePlayerId: outgoingPlayerId,
+          starterPlayerId: outgoingPlayerId,
+          starterReentriesUsed: 0,
+          substitutions: []
+        })
+      : battingSlot;
   if (slot.activePlayerId !== outgoingPlayerId) {
     throw new DiamondDomainError('substitution-mismatch', 'The outgoing player is not active in that batting slot.');
   }
   if (order.some((entry, entryIndex) => (defensiveOnly || entryIndex !== index) && entry.activePlayerId === incomingPlayerId)) {
     throw new DiamondDomainError('duplicate-active-player', 'The incoming player is already active in the batting order.');
   }
-  const dpFlex = lineup.dpFlex;
+  let dpFlex = lineup.dpFlex;
+  const pairExchange = Boolean(
+    dpFlex &&
+    ((outgoingPlayerId === dpFlex.dpPlayerId && incomingPlayerId === dpFlex.flexPlayerId) ||
+      (outgoingPlayerId === dpFlex.flexPlayerId && incomingPlayerId === dpFlex.dpPlayerId))
+  );
   if (dpFlex) {
     const pair = new Set([dpFlex.dpPlayerId, dpFlex.flexPlayerId]);
     const touchesPair = pair.has(outgoingPlayerId) || pair.has(incomingPlayerId);
     if (touchesPair) {
-      if (
-        slot.slot !== dpFlex.dpBattingSlot ||
-        !pair.has(outgoingPlayerId) ||
-        !pair.has(incomingPlayerId) ||
-        outgoingPlayerId === incomingPlayerId
-      ) {
-        throw new DiamondDomainError(
-          'unsupported-dp-flex-substitution',
-          'This reducer supports only a direct DP/FLEX exchange in their linked batting slot.'
-        );
+      if (slot.slot !== dpFlex.dpBattingSlot || !pair.has(outgoingPlayerId) || outgoingPlayerId === incomingPlayerId) {
+        throw new DiamondDomainError('unsupported-dp-flex-substitution', 'DP/FLEX personnel may substitute only in their linked position.');
       }
       if (incomingPlayerId === dpFlex.flexPlayerId && !profile.dpFlex.flexMayBatForDpOnly) {
         throw new DiamondDomainError('rule-not-enabled', 'This rules profile does not allow the FLEX to bat for the DP.');
       }
-      if (payload.defensivePosition && payload.defensivePosition !== dpFlex.flexDefensivePosition) {
+      if ((flexOnly || pairExchange) && payload.defensivePosition && payload.defensivePosition !== dpFlex.flexDefensivePosition) {
         throw new DiamondDomainError('invalid-dp-flex', 'A DP/FLEX exchange may use only the configured FLEX defensive position.');
+      }
+      if (!pairExchange) {
+        dpFlex = replacingFlex ? { ...dpFlex, flexPlayerId: incomingPlayerId } : { ...dpFlex, dpPlayerId: incomingPlayerId };
       }
     }
   }
@@ -1565,7 +1580,8 @@ function reduceSubstitution(
   if (
     !profile.freeSubstitution &&
     !reentry &&
-    [...order, ...(lineup.dhDefense ? [lineup.dhDefense] : [])].some(
+    !pairExchange &&
+    [...order, ...(lineup.dhDefense ? [lineup.dhDefense] : []), ...(lineup.flexDefense ? [lineup.flexDefense] : [])].some(
       (entry) => entry.starterPlayerId === incomingPlayerId || entry.substitutions.includes(incomingPlayerId)
     )
   ) {
@@ -1591,7 +1607,15 @@ function reduceSubstitution(
     starterReentriesUsed: slot.starterReentriesUsed + (reentry ? 1 : 0),
     substitutions: [...slot.substitutions, incomingPlayerId]
   };
-  if (!defensiveOnly) order[index] = replacement;
+  if (!defensiveOnly)
+    order[index] = replacingFlex
+      ? {
+          ...battingSlot,
+          activePlayerId: incomingPlayerId,
+          battingRole: 'flex',
+          substitutions: [...battingSlot.substitutions, incomingPlayerId]
+        }
+      : replacement;
   const bases = transferLiveSubstitutedRunner(state, side, outgoingPlayerId, incomingPlayerId);
   const defense = replaceDefensePlayer(lineup.defense, outgoingPlayerId, incomingPlayerId, payload.defensivePosition);
   if (!defense.P) {
@@ -1605,7 +1629,9 @@ function reduceSubstitution(
       [side]: {
         ...lineup,
         battingOrder: order,
-        ...(defensiveOnly ? { dhDefense: replacement } : {}),
+        ...(dhOnly ? { dhDefense: replacement } : {}),
+        ...(replacingFlex ? { flexDefense: replacement } : {}),
+        dpFlex,
         defense
       }
     }
@@ -1700,6 +1726,9 @@ export function validateDiamondState(state: DiamondGameState): DiamondGameState 
     }
     const dpFlex = lineup.dpFlex;
     if (!dpFlex) {
+      if (lineup.flexDefense) {
+        throw new DiamondDomainError('invalid-dp-flex', 'FLEX history requires an established pairing.');
+      }
       if (order.some((entry) => entry.battingRole === 'flex')) {
         throw new DiamondDomainError('invalid-dp-flex', 'A FLEX batter requires an established DP/FLEX pairing.');
       }
@@ -1717,8 +1746,17 @@ export function validateDiamondState(state: DiamondGameState): DiamondGameState 
     requireInteger(dpFlex.dpBattingSlot, 'DP batting slot', 1, 25);
     const flexPosition = requireMember(dpFlex.flexDefensivePosition, FIELDING_POSITIONS, 'FLEX defensive position');
     const dpSlot = order.find((entry) => entry.slot === dpFlex.dpBattingSlot);
-    if (!dpSlot || dpSlot.starterPlayerId !== dpPlayerId) {
-      throw new DiamondDomainError('invalid-dp-flex', 'The configured DP must be the starter in the linked batting slot.');
+    if (!dpSlot || ![dpSlot.starterPlayerId, dpSlot.activePlayerId, ...dpSlot.substitutions].includes(dpPlayerId)) {
+      throw new DiamondDomainError('invalid-dp-flex', 'The configured DP must belong to the linked batting slot history.');
+    }
+    if (lineup.flexDefense) {
+      const flex = lineup.flexDefense;
+      if (flex.slot !== dpFlex.dpBattingSlot || flex.activePlayerId !== flexPlayerId) {
+        throw new DiamondDomainError('invalid-dp-flex', 'FLEX history must match the linked active FLEX player.');
+      }
+      requireId(flex.starterPlayerId, 'FLEX starter');
+      requireInteger(flex.starterReentriesUsed, 'FLEX re-entries', 0, Number.MAX_SAFE_INTEGER);
+      flex.substitutions.forEach((playerId) => requireId(playerId, 'FLEX substitute'));
     }
     if (dpSlot.activePlayerId !== dpPlayerId && dpSlot.activePlayerId !== flexPlayerId) {
       throw new DiamondDomainError('invalid-dp-flex', 'Only the configured DP or FLEX may occupy the linked batting slot.');
@@ -2361,6 +2399,9 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
         throw new DiamondDomainError('duplicate-base-runner', 'The courtesy runner is already on base.');
       }
       const courtesyRunnerIds = state.lineups[side].courtesyRunnerIds;
+      if (knownPlayerIds({ ...state.lineups[side], courtesyRunnerIds: [] }).has(runnerId)) {
+        throw new DiamondDomainError('ineligible-courtesy-runner', 'A lineup participant cannot serve as a courtesy runner.');
+      }
       if (!courtesyRunnerIds.includes(runnerId) && courtesyRunnerIds.length >= DIAMOND_MAX_COURTESY_RUNNER_IDENTITIES_PER_SIDE) {
         throw new DiamondDomainError(
           'courtesy-runner-identity-limit',
