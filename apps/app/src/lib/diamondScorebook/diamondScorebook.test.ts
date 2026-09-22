@@ -4814,6 +4814,13 @@ describe('Diamond stat-integrity evidence', () => {
     const walkLine = projectDiamondStats(intentionalWalk.ledger).players['away-1'];
     expect(walkLine.raw.batting).toMatchObject({ PA: 1, IBB: 1 });
     expect(walkLine.derived.OBP).toBe(1);
+    const noPitchLine = projectDiamondStats(intentionalWalk.ledger).players['home-1'];
+    expect(noPitchLine.raw.pitching).toMatchObject({ BF: 1, firstPitchStrikes: 0, firstPitchStrikeOpportunities: 0 });
+    expect(noPitchLine.derived.firstPitchStrikeRate).toBeNull();
+    intentionalWalk.submit('record_pitch', { batterId: 'away-2', pitcherId: 'home-1', result: 'called_strike' });
+    const firstPitchLine = projectDiamondStats(intentionalWalk.ledger).players['home-1'];
+    expect(firstPitchLine.raw.pitching.firstPitchStrikeOpportunities).toBe(1);
+    expect(firstPitchLine.derived.firstPitchStrikeRate).toBe(1);
 
     intentionalWalk.submit('advance_runner', {
       runnerId: 'away-1',
@@ -5207,7 +5214,8 @@ describe('Traditional formula helpers', () => {
       inheritedScored: 0,
       pitches: 20,
       strikes: 13,
-      firstPitchStrikes: 8
+      firstPitchStrikes: 8,
+      firstPitchStrikeOpportunities: 12
     },
     fielding: { defensiveOuts: 4, PO: 2, A: 1, E: 1, DP: 0, TP: 0, PB: 0 }
   };
