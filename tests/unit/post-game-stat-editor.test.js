@@ -281,8 +281,9 @@ describe('post-game stat editor helpers', () => {
         const pageSource = readFileSync(new URL('../../game.html', import.meta.url), 'utf8');
 
         expect(pageSource).toContain("function hasRecordedStatValue(stats, key)");
-        expect(pageSource).toContain("hasRecordedStatValue(pStats, key) ? pStats[key] : '&mdash;'");
-        expect(pageSource).toContain("hasRecordedStatValue(p.stats, key) ? p.stats[key] : '&mdash;'");
+        expect(pageSource).toContain("return hasRecordedStatValue(stats, key) ? escapeHtml(String(stats[key])) : (legacyMissingAsZero ? '0' : '&mdash;');");
+        expect(pageSource).toContain('renderCoverageAwareStat({ presentation: statPresentationMap[p.id], stats: pStats, key');
+        expect(pageSource).toContain('renderCoverageAwareStat({ presentation: p.statPresentation, stats: p.stats, key');
     });
 
     it('uses normalizeStatKey for form input keys so custom stat names round-trip correctly', () => {
