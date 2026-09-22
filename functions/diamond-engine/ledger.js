@@ -359,6 +359,7 @@ function knownPlayerIds(state, side) {
     const lineup = state.lineups[side];
     return new Set([
         ...lineup.battingOrder.flatMap((slot) => [slot.starterPlayerId, slot.activePlayerId, ...slot.substitutions]),
+        ...(lineup.dhDefense ? [lineup.dhDefense.starterPlayerId, lineup.dhDefense.activePlayerId, ...lineup.dhDefense.substitutions] : []),
         ...Object.values(lineup.defense).filter((playerId) => Boolean(playerId)),
         ...lineup.courtesyRunnerIds,
         ...(lineup.dpFlex ? [lineup.dpFlex.dpPlayerId, lineup.dpFlex.flexPlayerId] : [])
