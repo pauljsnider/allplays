@@ -170,6 +170,7 @@ function cloneLineup(lineup) {
             substitutions: [...entry.substitutions]
         })),
         defense: { ...lineup.defense },
+        ...(lineup.dhDefense ? { dhDefense: { ...lineup.dhDefense, substitutions: [...lineup.dhDefense.substitutions] } } : {}),
         courtesyRunnerIds: [...lineup.courtesyRunnerIds],
         dpFlex: lineup.dpFlex ? { ...lineup.dpFlex } : null
     };
@@ -873,6 +874,7 @@ function validateDiamondFieldingOutCredit(fielding, actualOutCount) {
 function knownPlayerIds(lineup) {
     return new Set([
         ...lineup.battingOrder.flatMap((entry) => [entry.activePlayerId, entry.starterPlayerId, ...entry.substitutions]),
+        ...(lineup.dhDefense ? [lineup.dhDefense.activePlayerId, lineup.dhDefense.starterPlayerId, ...lineup.dhDefense.substitutions] : []),
         ...Object.values(lineup.defense).filter((playerId) => Boolean(playerId)),
         ...lineup.courtesyRunnerIds,
         ...(lineup.dpFlex ? [lineup.dpFlex.dpPlayerId, lineup.dpFlex.flexPlayerId] : [])
@@ -1226,7 +1228,7 @@ function reduceSubstitution(state, payload, reentry) {
     const index = order.findIndex((entry) => entry.slot === payload.battingSlot);
     if (index < 0)
         throw new contracts_1.DiamondDomainError('unknown-lineup-slot', 'The batting slot does not exist.');
-    const slot = order[index];
+    const battingSlot = order[index];
     const outgoingPlayerId = reentry
         ? payload.replacedPlayerId
         : payload.outgoingPlayerId;
@@ -1238,13 +1240,26 @@ function reduceSubstitution(state, payload, reentry) {
     if (outgoingPlayerId === incomingPlayerId) {
         throw new contracts_1.DiamondDomainError('substitution-no-op', 'The incoming and outgoing players must be different.');
     }
+    const lineup = state.lineups[side];
+    const defensiveOnly = profile.allowsDh &&
+        battingSlot.battingRole === 'dh' &&
+        Object.values(lineup.defense).includes(outgoingPlayerId) &&
+        !order.some((entry) => entry.activePlayerId === outgoingPlayerId);
+    const slot = defensiveOnly
+        ? (lineup.dhDefense ?? {
+            ...battingSlot,
+            activePlayerId: outgoingPlayerId,
+            starterPlayerId: outgoingPlayerId,
+            starterReentriesUsed: 0,
+            substitutions: []
+        })
+        : battingSlot;
     if (slot.activePlayerId !== outgoingPlayerId) {
         throw new contracts_1.DiamondDomainError('substitution-mismatch', 'The outgoing player is not active in that batting slot.');
     }
-    if (order.some((entry, entryIndex) => entryIndex !== index && entry.activePlayerId === incomingPlayerId)) {
+    if (order.some((entry, entryIndex) => (defensiveOnly || entryIndex !== index) && entry.activePlayerId === incomingPlayerId)) {
         throw new contracts_1.DiamondDomainError('duplicate-active-player', 'The incoming player is already active in the batting order.');
     }
-    const lineup = state.lineups[side];
     const dpFlex = lineup.dpFlex;
     if (dpFlex) {
         const pair = new Set([dpFlex.dpPlayerId, dpFlex.flexPlayerId]);
@@ -1264,6 +1279,15 @@ function reduceSubstitution(state, payload, reentry) {
             }
         }
     }
+    const returningStarter = slot.starterPlayerId === incomingPlayerId;
+    if (!reentry && returningStarter && !profile.freeSubstitution) {
+        throw new contracts_1.DiamondDomainError('reentry-required', 'A returning starter must use the re-entry command.');
+    }
+    if (!profile.freeSubstitution &&
+        !reentry &&
+        [...order, ...(lineup.dhDefense ? [lineup.dhDefense] : [])].some((entry) => entry.starterPlayerId === incomingPlayerId || entry.substitutions.includes(incomingPlayerId))) {
+        throw new contracts_1.DiamondDomainError('invalid-reentry', 'A previously used player cannot enter as a new substitute.');
+    }
     if (reentry) {
         if (slot.starterPlayerId !== incomingPlayerId) {
             throw new contracts_1.DiamondDomainError('invalid-reentry', 'Only the starter assigned to this slot may re-enter.');
@@ -1272,7 +1296,7 @@ function reduceSubstitution(state, payload, reentry) {
             throw new contracts_1.DiamondDomainError('reentry-limit', 'The rules profile does not permit another starter re-entry.');
         }
     }
-    order[index] = {
+    const replacement = {
         ...slot,
         activePlayerId: incomingPlayerId,
         battingRole: dpFlex && slot.slot === dpFlex.dpBattingSlot && incomingPlayerId === dpFlex.flexPlayerId
@@ -1283,6 +1307,8 @@ function reduceSubstitution(state, payload, reentry) {
         starterReentriesUsed: slot.starterReentriesUsed + (reentry ? 1 : 0),
         substitutions: [...slot.substitutions, incomingPlayerId]
     };
+    if (!defensiveOnly)
+        order[index] = replacement;
     const bases = transferLiveSubstitutedRunner(state, side, outgoingPlayerId, incomingPlayerId);
     const defense = replaceDefensePlayer(lineup.defense, outgoingPlayerId, incomingPlayerId, payload.defensivePosition);
     if (!defense.P) {
@@ -1296,6 +1322,7 @@ function reduceSubstitution(state, payload, reentry) {
             [side]: {
                 ...lineup,
                 battingOrder: order,
+                ...(defensiveOnly ? { dhDefense: replacement } : {}),
                 defense
             }
         }
@@ -1343,6 +1370,19 @@ function validateDiamondState(state) {
             requireBattingRole(profile, entry.battingRole);
         });
         validateBattingRoleCounts(order);
+        if (lineup.dhDefense) {
+            const entry = lineup.dhDefense;
+            if (!profile.allowsDh ||
+                !order.some((batter) => batter.slot === entry.slot && batter.battingRole === 'dh') ||
+                order.some((batter) => batter.activePlayerId === entry.activePlayerId) ||
+                !Object.values(lineup.defense).includes(entry.activePlayerId)) {
+                throw new contracts_1.DiamondDomainError('invalid-lineup', 'Defensive-only history must belong to the active DH defender.');
+            }
+            requireId(entry.activePlayerId, 'DH defender');
+            requireId(entry.starterPlayerId, 'DH defensive starter');
+            requireInteger(entry.starterReentriesUsed, 'DH defensive re-entries', 0, Number.MAX_SAFE_INTEGER);
+            entry.substitutions.forEach((playerId) => requireId(playerId, 'DH defensive substitute'));
+        }
         const defensiveEntries = Object.entries(state.lineups[side].defense);
         if (defensiveEntries.length > MAX_DEFENSIVE_ASSIGNMENTS) {
             throw new contracts_1.DiamondDomainError('invalid-defense', `${side} defense may contain at most ten assignments.`);

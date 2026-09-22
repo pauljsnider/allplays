@@ -35,6 +35,118 @@ import {
 
 const SCORER = 'scorer-1';
 
+describe('Diamond substitution and immutable-profile regressions', () => {
+  it('freezes every nested run-ahead rule returned by either accessor', () => {
+    for (const profile of listDiamondRulesProfiles()) {
+      for (const rule of profile.runAheadRules) {
+        const before = { ...rule };
+        expect(Object.isFrozen(rule)).toBe(true);
+        expect(Reflect.set(rule, 'runDifferential', 1)).toBe(false);
+        expect(Reflect.set(rule, 'afterInning', 1)).toBe(false);
+        expect(getDiamondRulesProfile(profile.id, profile.version)?.runAheadRules).toContainEqual(before);
+      }
+    }
+  });
+
+  it.each(['baseball-obr', 'baseball-nfhs'])('requires the re-entry path for a returning starter under %s', (profileId) => {
+    const game = harness(profileId, 'quick');
+    setBasicLineups(game);
+    game.submit('substitute', { side: 'home', battingSlot: 1, outgoingPlayerId: 'home-1', incomingPlayerId: 'reliever' });
+    const before = game.ledger;
+    const bypass = game.submit(
+      'substitute',
+      {
+        side: 'home',
+        battingSlot: 1,
+        outgoingPlayerId: 'reliever',
+        incomingPlayerId: 'home-1'
+      },
+      { accept: false }
+    );
+    expect(bypass.result.rejection?.code).toBe('reentry-required');
+    expect(bypass.ledger).toEqual(before);
+    if (profileId === 'baseball-obr') {
+      expect(
+        game.submit(
+          're_enter',
+          {
+            side: 'home',
+            battingSlot: 1,
+            replacedPlayerId: 'reliever',
+            starterPlayerId: 'home-1'
+          },
+          { accept: false }
+        ).result.rejection?.code
+      ).toBe('reentry-limit');
+    } else {
+      game.submit('re_enter', { side: 'home', battingSlot: 1, replacedPlayerId: 'reliever', starterPlayerId: 'home-1' });
+      expect(game.ledger.state.lineups.home.battingOrder[0].starterReentriesUsed).toBe(1);
+      game.submit('substitute', { side: 'home', battingSlot: 1, outgoingPlayerId: 'home-1', incomingPlayerId: 'second-reliever' });
+      expect(
+        game.submit(
+          're_enter',
+          {
+            side: 'home',
+            battingSlot: 1,
+            replacedPlayerId: 'second-reliever',
+            starterPlayerId: 'home-1'
+          },
+          { accept: false }
+        ).result.rejection?.code
+      ).toBe('reentry-limit');
+    }
+  });
+
+  it.each(['baseball-obr', 'baseball-nfhs'])('substitutes a DH-only pitcher while preserving the batting order under %s', (profileId) => {
+    const game = harness(profileId, 'quick');
+    setBasicLineups(game, { start: false, homeFirstBattingRole: 'dh' });
+    game.submit('set_defensive_alignment', {
+      side: 'home',
+      assignments: [
+        { playerId: 'pitcher-only', position: 'P' },
+        { playerId: 'home-2', position: 'C' },
+        { playerId: 'home-3', position: 'SS' }
+      ]
+    });
+    game.submit('start', {});
+    const battingOrder = game.ledger.state.lineups.home.battingOrder;
+    game.submit('substitute', {
+      side: 'home',
+      battingSlot: 1,
+      outgoingPlayerId: 'pitcher-only',
+      incomingPlayerId: 'reliever-only',
+      defensivePosition: 'P'
+    });
+    expect(game.ledger.state.lineups.home.battingOrder).toEqual(battingOrder);
+    expect(game.ledger.state.lineups.home.defense.P).toBe('reliever-only');
+    game.submit('record_pitch', { batterId: 'away-1', pitcherId: 'reliever-only', result: 'ball' });
+    expect(
+      game.submit(
+        'substitute',
+        {
+          side: 'home',
+          battingSlot: 1,
+          outgoingPlayerId: 'reliever-only',
+          incomingPlayerId: 'pitcher-only'
+        },
+        { accept: false }
+      ).result.rejection?.code
+    ).toBe('reentry-required');
+    const command = { side: 'home' as const, battingSlot: 1, replacedPlayerId: 'reliever-only', starterPlayerId: 'pitcher-only' };
+    if (profileId === 'baseball-obr') {
+      expect(game.submit('re_enter', command, { accept: false }).result.rejection?.code).toBe('reentry-limit');
+    } else {
+      game.submit('re_enter', command);
+      expect(game.ledger.state.lineups.home.dhDefense?.starterReentriesUsed).toBe(1);
+      game.submit('substitute', { side: 'home', battingSlot: 1, outgoingPlayerId: 'pitcher-only', incomingPlayerId: 'third-pitcher' });
+      expect(game.submit('re_enter', { ...command, replacedPlayerId: 'third-pitcher' }, { accept: false }).result.rejection?.code).toBe(
+        'reentry-limit'
+      );
+    }
+    expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
+  });
+});
+
 function uuid(index: number) {
   return `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`;
 }
