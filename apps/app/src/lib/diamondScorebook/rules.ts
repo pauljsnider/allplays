@@ -1,6 +1,7 @@
 import { DiamondDomainError, type DiamondRulesProfile } from './contracts';
 
 function freezeProfile(profile: DiamondRulesProfile): DiamondRulesProfile {
+  profile.runAheadRules.forEach(Object.freeze);
   Object.freeze(profile.runAheadRules);
   Object.freeze(profile.tiebreaker);
   Object.freeze(profile.dpFlex);
