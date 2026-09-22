@@ -33,6 +33,7 @@ function buildCancelGameHandler(overrides = {}) {
         },
         confirm: vi.fn(() => true),
         cancelGame: vi.fn(() => Promise.resolve()),
+        cancelDiamondGameForLegacy: vi.fn(() => Promise.resolve()),
         cancelScheduledGame: vi.fn(() => Promise.resolve({ cancelled: true, notificationError: null })),
         postChatMessage: vi.fn(() => Promise.resolve()),
         getTeamScheduleNotificationSettings: vi.fn(() => ({ enabled: true, reminderHours: 24 })),
@@ -45,7 +46,7 @@ function buildCancelGameHandler(overrides = {}) {
     };
 
     const createHandler = new Function('deps', `
-        const { gamesCache, currentTeamId, currentUser, confirm, cancelGame, cancelScheduledGame, postChatMessage, getTeamScheduleNotificationSettings, buildScheduleNotificationMetadata, updateGame, loadSchedule, console, alert, currentTeam } = deps;
+        const { gamesCache, currentTeamId, currentUser, confirm, cancelGame, cancelDiamondGameForLegacy, cancelScheduledGame, postChatMessage, getTeamScheduleNotificationSettings, buildScheduleNotificationMetadata, updateGame, loadSchedule, console, alert, currentTeam } = deps;
         return async function(e) {
 ${body}
         };
@@ -100,6 +101,32 @@ describe('edit schedule cancel-game handler', () => {
         expect(deps.updateGame).toHaveBeenCalledTimes(1);
         expect(deps.loadSchedule).toHaveBeenCalledTimes(1);
         expect(deps.alert).not.toHaveBeenCalled();
+    });
+
+    it('does not perform a follow-up legacy game write after canonical Diamond cancellation', async () => {
+        const { deps, handler } = buildCancelGameHandler({
+            gamesCache: {
+                game123: {
+                    trackingEngine: 'diamond-v2',
+                    opponent: 'Tigers',
+                    date: new Date('2026-03-09T18:00:00Z')
+                }
+            },
+            cancelScheduledGame: vi.fn(() => Promise.resolve({
+                cancelled: true,
+                notificationError: null,
+                canonical: true
+            }))
+        });
+
+        await handler({ target: { dataset: { gameId: 'game123' } } });
+
+        expect(deps.cancelScheduledGame).toHaveBeenCalledWith(expect.objectContaining({
+            cancelDiamondGame: deps.cancelDiamondGameForLegacy,
+            game: expect.objectContaining({ trackingEngine: 'diamond-v2' })
+        }));
+        expect(deps.updateGame).not.toHaveBeenCalled();
+        expect(deps.loadSchedule).toHaveBeenCalledTimes(1);
     });
 
     it('still reports cancellation failure when the cancellation write fails', async () => {
