@@ -238,14 +238,20 @@ test("compiled engine rejects an eleventh defender atomically from a checkpoint"
   assert.equal(
     submit("set_lineup", {
       side: "home",
-      entries: [{ slot: 1, playerId: "home-batting-only" }],
+      entries: [
+        { slot: 1, playerId: "home-batting-only" },
+        ...Array.from({ length: 10 }, (_, index) => ({
+          slot: index + 2,
+          playerId: `home-defense-${String(index + 1)}`,
+        })),
+      ],
     }).result.outcome,
     "accepted",
   );
   assert.equal(
     submit("set_lineup", {
       side: "away",
-      entries: [{ slot: 1, playerId: "away-batter" }],
+      entries: [{ slot: 1, playerId: "away-batter" }, { slot: 2, playerId: "away-pitcher" }],
     }).result.outcome,
     "accepted",
   );
