@@ -67,13 +67,23 @@ export function validateDiamondCommandPayload(type: DiamondCommandType, payload:
     if (!value || typeof value !== 'object') invalid();
     if (Array.isArray(shape)) {
       if (!Array.isArray(value) || value.length > 1000) invalid();
-      for (const item of value as unknown[]) visit(item, shape[0], depth + 1);
+      const items = value as unknown[];
+      if (Reflect.ownKeys(items).length !== items.length + 1) invalid();
+      for (let index = 0; index < items.length; index += 1) {
+        const descriptor = Object.getOwnPropertyDescriptor(items, String(index));
+        if (!descriptor || !owns(descriptor, 'value') || descriptor.value === undefined) invalid();
+        visit(descriptor!.value, shape[0], depth + 1);
+      }
       return;
     }
     if (Array.isArray(value) || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) invalid();
     const object = value as Record<string, unknown>;
     const fields = shape === 'replacement' ? { type: true, payload: true } : shape;
-    for (const key of Object.keys(object)) {
+    for (const ownKey of Reflect.ownKeys(object)) {
+      if (typeof ownKey !== 'string') invalid();
+      const key = ownKey as string;
+      const descriptor = Object.getOwnPropertyDescriptor(object, key);
+      if (!descriptor?.enumerable || !owns(descriptor, 'value')) invalid();
       if (!owns(fields, key)) throw new DiamondDomainError('invalid-object', 'Command payload contains unsupported fields.');
       budget -= key.length * 3;
       if (shape === 'replacement' && key === 'payload') {
