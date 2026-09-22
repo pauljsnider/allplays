@@ -360,7 +360,8 @@ function rawStats(): DiamondPlayerRawStats {
       inheritedScored: 0,
       pitches: 15,
       strikes: 10,
-      firstPitchStrikes: 6
+      firstPitchStrikes: 6,
+      firstPitchStrikeOpportunities: 10
     },
     fielding: { defensiveOuts: 5, PO: 2, A: 1, E: 1, DP: 0, TP: 0, PB: 0 }
   };
@@ -4469,7 +4470,8 @@ describe('Formula and capture-coverage goldens', () => {
           SO: 0,
           pitches: 0,
           strikes: 0,
-          firstPitchStrikes: 0
+          firstPitchStrikes: 0,
+          firstPitchStrikeOpportunities: 0
         },
         fielding: { ...raw.fielding, PO: 0, A: 0, E: 0 }
       },
