@@ -144,7 +144,8 @@ function configureCourtesyRunnerReadyGame(game: ReturnType<typeof harness>) {
     entries: [
       { slot: 1, playerId: 'home-dp', battingRole: 'dp' },
       { slot: 2, playerId: 'home-pitcher' },
-      { slot: 3, playerId: 'home-history' }
+      { slot: 3, playerId: 'home-history' },
+      { slot: 4, playerId: 'home-defense-only' }
     ]
   });
   game.submit('set_lineup', {
