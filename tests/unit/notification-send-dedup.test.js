@@ -107,6 +107,10 @@ function buildSendCategoryNotificationHarness({
         'async function sendCategoryNotification({',
         '\nasync function sendDirectTargetsNotification'
     );
+    const deliveryHelperSource = getSourceSlice(
+        'function mergeNotificationWebpushOptions',
+        '\nasync function sendCategoryNotification'
+    );
     const sendEachForMulticast = vi.fn(sendEachForMulticastImpl);
     const admin = {
         messaging: () => ({
@@ -156,7 +160,7 @@ function buildSendCategoryNotificationHarness({
         'writeNotificationAuditRecord',
         'getUniqueNotificationInboxTargets',
         'functions',
-        `${sendSource}\nreturn sendCategoryNotification;`
+        `${deliveryHelperSource}\n${sendSource}\nreturn sendCategoryNotification;`
     );
 
     const fn = factory(

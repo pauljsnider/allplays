@@ -118,6 +118,8 @@ jobs:
           done
 
       - name: Build React app
+        env:
+          VITE_DIAMOND_SCOREBOOK_UI_ENABLED: ${{ vars.DIAMOND_SCOREBOOK_UI_ENABLED }}
         run: npm run app:build:native
 
       - name: Sync Android project
@@ -205,6 +207,8 @@ jobs:
           done
 
       - name: Build React app
+        env:
+          VITE_DIAMOND_SCOREBOOK_UI_ENABLED: ${{ vars.DIAMOND_SCOREBOOK_UI_ENABLED }}
         run: npm run app:build:native
 
       - name: Sync iOS project

@@ -18,6 +18,7 @@ const {
   ATHLETE_PROFILE_PROJECTION_BOUNDARY_CONTROL_PATH,
   ATHLETE_PROFILE_PROJECTION_BOUNDARY_CONTROL_SCHEMA
 } = require('../athlete-profile-projection-core.cjs');
+const { createDiamondStatConfigSnapshot } = require('../diamond-stat-config.cjs');
 
 const repoIndexPath = require.resolve('../index.js');
 const originalModuleLoad = Module._load;
@@ -30,9 +31,10 @@ function clone(value) {
   return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, clone(entry)]));
 }
 
-function makeFirestore(seed = {}) {
+function makeFirestore(seed = {}, { beforeRead = null } = {}) {
   const state = new Map(Object.entries(seed).map(([path, value]) => [path, clone(value)]));
   const failures = new Map();
+  const readCounts = new Map();
   const isDelete = (value) => value?.__op === 'delete';
 
   function applyWrite(path, value, { merge = false } = {}) {
@@ -49,6 +51,16 @@ function makeFirestore(seed = {}) {
       path,
       id: path.split('/').pop(),
       async get() {
+        const readCount = (readCounts.get(path) || 0) + 1;
+        readCounts.set(path, readCount);
+        if (typeof beforeRead === 'function') {
+          await beforeRead({
+            path,
+            readCount,
+            snapshot: (targetPath) => clone(state.get(targetPath)),
+            write: (targetPath, value, options = {}) => applyWrite(targetPath, value, options)
+          });
+        }
         if (failures.has(path)) throw failures.get(path);
         const value = state.get(path);
         return {
@@ -220,6 +232,69 @@ function compatibilityReceiptForGame(teamId, gameId, game, overrides = {}) {
   };
 }
 
+const PUBLIC_DIAMOND_INSTANCE_ID = '00000000-0000-4000-8000-000000000001';
+const PUBLIC_DIAMOND_CHECKPOINT_HASH = `sha256:${'a'.repeat(64)}`;
+const PUBLIC_DIAMOND_PROJECTION_HASH = `sha256:${'c'.repeat(64)}`;
+const PUBLIC_DIAMOND_CONFIG = Object.freeze({
+  columns: ['r', 'h'],
+  statDefinitions: Object.freeze([
+    Object.freeze({ id: 'r', label: 'Runs', scope: 'team', visibility: 'public' }),
+    Object.freeze({ id: 'h', label: 'Hits', scope: 'player', visibility: 'public' })
+  ])
+});
+const PUBLIC_DIAMOND_CONFIG_HASH = createDiamondStatConfigSnapshot({
+  teamId: 'team-1',
+  configId: 'baseball-public',
+  config: PUBLIC_DIAMOND_CONFIG
+}).snapshotHash;
+
+function publicDiamondTeamStats(teamId, gameId, overrides = {}) {
+  return {
+    trackingEngine: 'diamond-v2',
+    projectionSchemaVersion: 1,
+    sourceRevision: 12,
+    checkpointHash: PUBLIC_DIAMOND_CHECKPOINT_HASH,
+    coverage: { batting: 'complete' },
+    publicStatIds: ['r'],
+    side: 'home',
+    complete: true,
+    stats: { r: 4 },
+    observedStats: {},
+    statCoverage: { r: 'complete' },
+    teamId,
+    diamondGameId: gameId,
+    instanceId: PUBLIC_DIAMOND_INSTANCE_ID,
+    diamondScorebookInstanceId: PUBLIC_DIAMOND_INSTANCE_ID,
+    projectionGeneration: PUBLIC_DIAMOND_INSTANCE_ID,
+    statConfigSnapshotHash: PUBLIC_DIAMOND_CONFIG_HASH,
+    projectionHash: PUBLIC_DIAMOND_PROJECTION_HASH,
+    ...overrides
+  };
+}
+
+function publicDiamondGame(teamId, gameId, overrides = {}) {
+  return {
+    type: 'game',
+    date: '2026-08-01T18:00:00Z',
+    status: 'completed',
+    liveStatus: 'completed',
+    visibility: 'public',
+    opponent: 'Tigers',
+    trackingEngine: 'diamond-v2',
+    statTrackerConfigId: 'baseball-public',
+    diamondProjectionStatus: 'current',
+    diamondProjectionComplete: true,
+    diamondScorebookInstanceId: PUBLIC_DIAMOND_INSTANCE_ID,
+    diamondProjectionRevision: 12,
+    diamondProjectionCheckpointHash: PUBLIC_DIAMOND_CHECKPOINT_HASH,
+    diamondStatConfigSnapshotHash: PUBLIC_DIAMOND_CONFIG_HASH,
+    diamondProjectionHash: PUBLIC_DIAMOND_PROJECTION_HASH,
+    diamondPublicTeamStats: publicDiamondTeamStats(teamId, gameId),
+    opponentStats: {},
+    ...overrides
+  };
+}
+
 function loadCallables(seed = {}, options = {}) {
   const {
     authUsers = {},
@@ -232,7 +307,10 @@ function loadCallables(seed = {}, options = {}) {
     ...(migrationControl === null ? {} : { [REPLAY_ARCHIVE_MIGRATION_CONTROL_PATH]: migrationControl }),
     ...(boundaryControl === null ? {} : { [ATHLETE_PROFILE_PROJECTION_BOUNDARY_CONTROL_PATH]: boundaryControl })
   };
-  const firestore = makeFirestore({ ...controlSeed, ...seed });
+  const firestore = makeFirestore(
+    { ...controlSeed, ...seed },
+    { beforeRead: options.firestoreBeforeRead }
+  );
   adminStub = {
     apps: [true],
     initializeApp() {},
@@ -1282,6 +1360,352 @@ test('public exact projection returns a verified marker while playback remains t
   const playback = await callables.getGameReplayPlayback({ teamId: 'team-1', gameId: 'game-1' }, {});
   assert.equal(playback.available, true);
   assert.equal(playback.replayVideo.videoId, 'abcdefghijk');
+});
+
+test('public exact Diamond projection preserves one sanitized canonical head and team-stat envelope', async () => {
+  const sourceGame = publicDiamondGame('team-1', 'game-1', {
+    isSharedGame: true,
+    diamondSourceTeamId: 'attacker-team',
+    diamondSourceGameId: 'attacker-game',
+    scorerUid: 'private-scorer',
+    privateNotes: 'private notes',
+    opponentStats: {
+      'opponent-1': {
+        name: 'Opponent One',
+        number: '9',
+        playerId: 'opponent-1',
+        h: 2,
+        privateNotes: 'private opponent note',
+        diamondCoverage: { batting: 'complete', pitching: 'not_collected' },
+        diamondSourceRevision: 12
+      }
+    }
+  });
+  const { callables } = loadCallables({
+    'teams/team-1': { isPublic: true, active: true, name: 'Bears' },
+    'teams/team-1/games/game-1': sourceGame,
+    'teams/team-1/statTrackerConfigs/baseball-public': PUBLIC_DIAMOND_CONFIG
+  });
+
+  const projection = await callables.getPublicGameProjection({
+    teamId: 'team-1',
+    gameId: 'game-1'
+  }, {});
+  assert.deepEqual({
+    statTrackerConfigId: projection.item.statTrackerConfigId,
+    diamondProjectionStatus: projection.item.diamondProjectionStatus,
+    diamondProjectionComplete: projection.item.diamondProjectionComplete,
+    diamondScorebookInstanceId: projection.item.diamondScorebookInstanceId,
+    diamondProjectionRevision: projection.item.diamondProjectionRevision,
+    diamondProjectionCheckpointHash: projection.item.diamondProjectionCheckpointHash,
+    diamondStatConfigSnapshotHash: projection.item.diamondStatConfigSnapshotHash,
+    diamondProjectionHash: projection.item.diamondProjectionHash
+  }, {
+    statTrackerConfigId: 'baseball-public',
+    diamondProjectionStatus: 'current',
+    diamondProjectionComplete: true,
+    diamondScorebookInstanceId: PUBLIC_DIAMOND_INSTANCE_ID,
+    diamondProjectionRevision: 12,
+    diamondProjectionCheckpointHash: PUBLIC_DIAMOND_CHECKPOINT_HASH,
+    diamondStatConfigSnapshotHash: PUBLIC_DIAMOND_CONFIG_HASH,
+    diamondProjectionHash: PUBLIC_DIAMOND_PROJECTION_HASH
+  });
+  assert.deepEqual(projection.item.diamondPublicTeamStats.stats, { r: 4 });
+  assert.deepEqual(projection.item.opponentStats, {
+    'opponent-1': {
+      name: 'Opponent One',
+      number: '9',
+      playerId: 'opponent-1',
+      h: 2,
+      diamondCoverage: { batting: 'complete', pitching: 'not_collected' },
+      diamondSourceRevision: 12
+    }
+  });
+  assert.equal(projection.item.diamondPublicTeamStats.privateNotes, undefined);
+  assert.equal(projection.item.isSharedGame, undefined);
+  assert.equal(projection.item.diamondSourceTeamId, undefined);
+  assert.equal(projection.item.diamondSourceGameId, undefined);
+  assert.equal(JSON.stringify(projection).includes('private-scorer'), false);
+  assert.equal(JSON.stringify(projection).includes('private notes'), false);
+  assert.equal(JSON.stringify(projection).includes('private opponent note'), false);
+  assert.equal(JSON.stringify(projection).includes('attacker-team'), false);
+});
+
+test('public source-owned shared Diamond projection binds its synthetic display id to one canonical report target', async () => {
+  const sharedGamePath = 'organizations/org-1/sharedGames/shared-1';
+  const gameId = `shared_${encodeURIComponent(sharedGamePath)}`;
+  const sourceGame = publicDiamondGame('team-1', 'source.game:1', {
+    diamondSharedGamePath: sharedGamePath,
+    scorerUid: 'private-scorer',
+    opponentStats: {
+      'opponent-1': {
+        name: 'Opponent One',
+        playerId: 'opponent-1',
+        h: 2,
+        diamondCoverage: { batting: 'complete' },
+        diamondSourceRevision: 12
+      }
+    }
+  });
+  const { callables } = loadCallables({
+    'teams/team-1': { isPublic: true, active: true, name: 'Bears' },
+    [sharedGamePath]: {
+      type: 'game',
+      date: '2026-08-01T18:00:00Z',
+      status: 'completed',
+      liveStatus: 'completed',
+      visibility: 'public',
+      homeTeamId: 'team-1',
+      awayTeamId: 'team-2',
+      opponent: 'Tigers',
+      trackingEngine: 'diamond-v2',
+      diamondProjectionStatus: 'current',
+      diamondProjectionRevision: 12,
+      diamondProjectionCheckpointHash: PUBLIC_DIAMOND_CHECKPOINT_HASH,
+      diamondScorebookInstanceId: PUBLIC_DIAMOND_INSTANCE_ID,
+      diamondProjectionHash: PUBLIC_DIAMOND_PROJECTION_HASH,
+      diamondSourceTeamId: 'team-1',
+      diamondSourceGameId: 'source.game:1',
+      privateNotes: 'shared private notes'
+    },
+    'teams/team-1/games/source.game:1': sourceGame,
+    'teams/team-1/statTrackerConfigs/baseball-public': PUBLIC_DIAMOND_CONFIG
+  });
+
+  const projection = await callables.getPublicGameProjection({ teamId: 'team-1', gameId }, {});
+  assert.equal(projection.item.id, gameId);
+  assert.equal(projection.item.isSharedGame, true);
+  assert.equal(projection.item.diamondSourceTeamId, 'team-1');
+  assert.equal(projection.item.diamondSourceGameId, 'source.game:1');
+  assert.equal(projection.item.diamondScorebookInstanceId, PUBLIC_DIAMOND_INSTANCE_ID);
+  assert.deepEqual(projection.item.diamondPublicTeamStats.stats, { r: 4 });
+  assert.equal(projection.item.diamondPublicTeamStats.teamId, 'team-1');
+  assert.equal(projection.item.diamondPublicTeamStats.diamondGameId, 'source.game:1');
+  assert.deepEqual(projection.item.opponentStats, {
+    'opponent-1': {
+      name: 'Opponent One',
+      playerId: 'opponent-1',
+      h: 2,
+      diamondCoverage: { batting: 'complete' },
+      diamondSourceRevision: 12
+    }
+  });
+  assert.equal(JSON.stringify(projection).includes('private-scorer'), false);
+  assert.equal(JSON.stringify(projection).includes('shared private notes'), false);
+});
+
+test('public shared Diamond projection rejects inaccessible, unbound, stale, and private canonical sources', async () => {
+  const sharedGamePath = 'organizations/org-1/sharedGames/shared-1';
+  const gameId = `shared_${encodeURIComponent(sharedGamePath)}`;
+  const baseShared = {
+    type: 'game',
+    date: '2026-08-01T18:00:00Z',
+    status: 'completed',
+    liveStatus: 'completed',
+    visibility: 'public',
+    homeTeamId: 'team-1',
+    awayTeamId: 'team-2',
+    trackingEngine: 'diamond-v2',
+    diamondProjectionStatus: 'current',
+    diamondProjectionRevision: 12,
+    diamondProjectionCheckpointHash: PUBLIC_DIAMOND_CHECKPOINT_HASH,
+    diamondScorebookInstanceId: PUBLIC_DIAMOND_INSTANCE_ID,
+    diamondProjectionHash: PUBLIC_DIAMOND_PROJECTION_HASH,
+    diamondSourceTeamId: 'team-1',
+    diamondSourceGameId: 'source.game:1'
+  };
+  const baseSource = publicDiamondGame('team-1', 'source.game:1', {
+    diamondSharedGamePath: sharedGamePath
+  });
+  const cases = [
+    ['foreign source', { shared: { diamondSourceTeamId: 'team-2' } }, 'diamond-shared-source-inaccessible'],
+    ['missing backlink', { source: { diamondSharedGamePath: undefined } }, 'diamond-shared-binding-invalid'],
+    ['stale mirror', { shared: { diamondProjectionHash: `sha256:${'d'.repeat(64)}` } }, 'diamond-shared-head-mismatch'],
+    ['private source', { source: { visibility: 'private' } }, 'diamond-source-not-public'],
+    ['partial team stats', {
+      source: { diamondPublicTeamStats: { ...baseSource.diamondPublicTeamStats, complete: false } }
+    }, 'diamond-public-stats-incomplete'],
+    ['stale opponent evidence', {
+      source: {
+        opponentStats: {
+          'opponent-1': {
+            name: 'Opponent One',
+            playerId: 'opponent-1',
+            h: 2,
+            diamondCoverage: { batting: 'complete' },
+            diamondSourceRevision: 11
+          }
+        }
+      }
+    }, 'diamond-public-opponent-stats-incomplete'],
+    ['missing opponent evidence', {
+      source: { opponentStats: undefined }
+    }, 'diamond-public-opponent-stats-incomplete'],
+    ['null opponent evidence', {
+      source: { opponentStats: null }
+    }, 'diamond-public-opponent-stats-incomplete'],
+    ['missing stat config', {
+      config: null
+    }, 'diamond-stat-config-snapshot-unavailable'],
+    ['stale stat config', {
+      config: {
+        columns: ['r', 'h'],
+        statDefinitions: [
+          { id: 'r', scope: 'team', visibility: 'public' },
+          { id: 'h', scope: 'player', visibility: 'private' }
+        ]
+      }
+    }, 'diamond-stat-config-snapshot-unavailable']
+  ];
+
+  for (const [label, mutation, reason] of cases) {
+    const shared = { ...baseShared, ...(mutation.shared || {}) };
+    const sourceTeamId = shared.diamondSourceTeamId;
+    const sourceGameId = shared.diamondSourceGameId;
+    const source = {
+      ...baseSource,
+      ...(mutation.source || {}),
+      diamondPublicTeamStats: mutation.source?.diamondPublicTeamStats
+        || publicDiamondTeamStats(sourceTeamId, sourceGameId)
+    };
+    const seed = {
+      'teams/team-1': { isPublic: true, active: true, name: 'Bears' },
+      'teams/team-2': { isPublic: true, active: true, name: 'Tigers' },
+      [sharedGamePath]: shared,
+      [`teams/${sourceTeamId}/games/${sourceGameId}`]: source
+    };
+    if (mutation.config !== null) {
+      seed[`teams/${sourceTeamId}/statTrackerConfigs/baseball-public`] = mutation.config || (sourceTeamId === 'team-1'
+        ? PUBLIC_DIAMOND_CONFIG
+        : {
+            columns: ['r', 'h'],
+            statDefinitions: [
+              { id: 'r', scope: 'team', visibility: 'public' },
+              { id: 'h', scope: 'player', visibility: 'public' }
+            ]
+          });
+    }
+    const { callables } = loadCallables(seed);
+    await assert.rejects(
+      callables.getPublicGameProjection({ teamId: 'team-1', gameId }, {}),
+      (error) => error.code === 'unavailable' && error.details?.reason === reason,
+      label
+    );
+  }
+});
+
+test('public shared Diamond projection aborts when its canonical head changes before the final read', async () => {
+  const sharedGamePath = 'organizations/org-1/sharedGames/shared-1';
+  const gameId = `shared_${encodeURIComponent(sharedGamePath)}`;
+  const sourcePath = 'teams/team-1/games/source.game:1';
+  const sourceGame = publicDiamondGame('team-1', 'source.game:1', {
+    diamondSharedGamePath: sharedGamePath
+  });
+  const { callables } = loadCallables({
+    'teams/team-1': { isPublic: true, active: true, name: 'Bears' },
+    [sharedGamePath]: {
+      type: 'game',
+      date: '2026-08-01T18:00:00Z',
+      status: 'completed',
+      liveStatus: 'completed',
+      visibility: 'public',
+      homeTeamId: 'team-1',
+      awayTeamId: 'team-2',
+      trackingEngine: 'diamond-v2',
+      diamondProjectionStatus: 'current',
+      diamondProjectionRevision: 12,
+      diamondProjectionCheckpointHash: PUBLIC_DIAMOND_CHECKPOINT_HASH,
+      diamondScorebookInstanceId: PUBLIC_DIAMOND_INSTANCE_ID,
+      diamondProjectionHash: PUBLIC_DIAMOND_PROJECTION_HASH,
+      diamondSourceTeamId: 'team-1',
+      diamondSourceGameId: 'source.game:1'
+    },
+    [sourcePath]: sourceGame,
+    'teams/team-1/statTrackerConfigs/baseball-public': PUBLIC_DIAMOND_CONFIG
+  }, {
+    firestoreBeforeRead({ path, readCount, write }) {
+      if (path === sourcePath && readCount === 2) {
+        write(sourcePath, { visibility: 'private' }, { merge: true });
+      }
+    }
+  });
+
+  await assert.rejects(
+    callables.getPublicGameProjection({ teamId: 'team-1', gameId }, {}),
+    (error) => error.code === 'unavailable'
+      && ['diamond-source-not-public', 'public-game-projection-changed'].includes(error.details?.reason)
+  );
+});
+
+test('public Diamond projection aborts when public stat visibility changes before final reauthorization', async () => {
+  const gamePath = 'teams/team-1/games/game-1';
+  const configPath = 'teams/team-1/statTrackerConfigs/baseball-public';
+  const { callables } = loadCallables({
+    'teams/team-1': { isPublic: true, active: true, name: 'Bears' },
+    [gamePath]: publicDiamondGame('team-1', 'game-1', {
+      opponentStats: {
+        'opponent-1': {
+          name: 'Opponent One',
+          playerId: 'opponent-1',
+          h: 2,
+          diamondCoverage: { batting: 'complete' },
+          diamondSourceRevision: 12
+        }
+      }
+    }),
+    [configPath]: PUBLIC_DIAMOND_CONFIG
+  }, {
+    firestoreBeforeRead({ path, readCount, write }) {
+      if (path === configPath && readCount === 2) {
+        write(configPath, {
+          columns: ['r', 'h'],
+          statDefinitions: [
+            { id: 'r', scope: 'team', visibility: 'public' },
+            { id: 'h', scope: 'player', visibility: 'private' }
+          ]
+        });
+      }
+    }
+  });
+
+  await assert.rejects(
+    callables.getPublicGameProjection({ teamId: 'team-1', gameId: 'game-1' }, {}),
+    (error) => error.code === 'unavailable'
+      && error.details?.reason === 'diamond-stat-config-snapshot-unavailable'
+  );
+});
+
+test('public Diamond projection rejects team stats that exceed the transaction-local public config', async () => {
+  const privateTeamConfig = {
+    columns: ['r', 'h'],
+    statDefinitions: [
+      { id: 'r', scope: 'team', visibility: 'private' },
+      { id: 'h', scope: 'player', visibility: 'public' }
+    ]
+  };
+  const privateTeamConfigHash = createDiamondStatConfigSnapshot({
+    teamId: 'team-1',
+    configId: 'baseball-public',
+    config: privateTeamConfig
+  }).snapshotHash;
+  const stalePublicTeamStats = publicDiamondTeamStats('team-1', 'game-1', {
+    statConfigSnapshotHash: privateTeamConfigHash
+  });
+  const sourceGame = publicDiamondGame('team-1', 'game-1', {
+    diamondStatConfigSnapshotHash: privateTeamConfigHash,
+    diamondPublicTeamStats: stalePublicTeamStats
+  });
+  const { callables } = loadCallables({
+    'teams/team-1': { isPublic: true, active: true, name: 'Bears' },
+    'teams/team-1/games/game-1': sourceGame,
+    'teams/team-1/statTrackerConfigs/baseball-public': privateTeamConfig
+  });
+
+  await assert.rejects(
+    callables.getPublicGameProjection({ teamId: 'team-1', gameId: 'game-1' }, {}),
+    (error) => error.code === 'unavailable'
+      && error.details?.reason === 'diamond-public-stats-incomplete'
+  );
 });
 
 test('pre-gate public projections derive URL-free replay markers from raw or receipt-backed state', async () => {

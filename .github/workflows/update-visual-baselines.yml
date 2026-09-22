@@ -32,14 +32,18 @@ jobs:
       - name: Build React app bundle
         env:
           ALLPLAYS_FIREBASE_RUNTIME_TARGET: preview-smoke
+          VITE_DIAMOND_SCOREBOOK_UI_ENABLED: ${{ vars.DIAMOND_SCOREBOOK_UI_ENABLED }}
         run: npm run app:build
 
       - name: Stage pages bundle
         env:
+          ALLPLAYS_DIAMOND_SCOREBOOK_UI_ENABLED: ${{ vars.DIAMOND_SCOREBOOK_UI_ENABLED }}
           ALLPLAYS_FIREBASE_RUNTIME_TARGET: preview-smoke
         run: node scripts/stage-pages-bundle.mjs "$RUNNER_TEMP/allplays-pages"
 
       - name: Start visual fixture servers
+        env:
+          VITE_DIAMOND_SCOREBOOK_UI_ENABLED: ${{ vars.DIAMOND_SCOREBOOK_UI_ENABLED }}
         run: |
           # The React dev server needs the staged non-production runtime config to
           # boot, matching how preview-smoke serves the visual fixtures.

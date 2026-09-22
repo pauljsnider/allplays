@@ -21,6 +21,7 @@ import { readAuthBootstrapHint } from './lib/authBootstrapHint';
 import { getRouteForUser } from './lib/authService';
 import { useAuth } from './lib/useAuth';
 import type { AuthState } from './lib/types';
+import { DiamondScorebookRoute } from './pages/DiamondScorebookRoute';
 
 const AuthPage = lazyNamedPage(() => import('./pages/AuthPage'), 'AuthPage');
 const AcceptInvite = lazyNamedPage(() => import('./pages/AcceptInvite'), 'AcceptInvite');
@@ -227,53 +228,373 @@ export default function App() {
         <Route path="/accept-invite" element={<AcceptInvite auth={auth} />} />
         <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/verify-pending" element={<VerifyPending auth={auth} />} />
-        <Route path="/registration" element={<AppShell auth={auth}><RegistrationDetail auth={auth} publicAccess /></AppShell>} />
-        <Route path="/family/:token" element={<PublicPage auth={auth}><FamilyShare /></PublicPage>} />
-        <Route path="/discover" element={<PublicPage auth={auth}><Discover auth={auth} /></PublicPage>} />
-        <Route path="/discover/opportunities/:listingId" element={<PublicPage auth={auth}><OpportunityDetail auth={auth} /></PublicPage>} />
-        <Route path="/discover/new" element={<Protected auth={auth}><OpportunityForm auth={auth} /></Protected>} />
-        <Route path="/discover/opportunities/:listingId/edit" element={<Protected auth={auth}><OpportunityForm auth={auth} /></Protected>} />
-        <Route path="/discover/manage" element={<Protected auth={auth}><OpportunityManage auth={auth} /></Protected>} />
-        <Route path="/discover/inquiries/:inquiryId" element={<Protected auth={auth}><OpportunityInquiry auth={auth} /></Protected>} />
-        <Route path="/" element={auth.user ? <Navigate to={signedInDefaultRoute} replace /> : auth.loading ? <LoadingScreen /> : <AppShell auth={auth}><Home auth={auth} /></AppShell>} />
-        <Route path="/home" element={auth.user || auth.loading ? <Protected auth={auth}><Home auth={auth} /></Protected> : <AppShell auth={auth}><Home auth={auth} /></AppShell>} />
-        <Route path="/officials" element={<Protected auth={auth}><Officials auth={auth} /></Protected>} />
-        <Route path="/schedule" element={<Protected auth={auth}><Schedule auth={auth} /></Protected>} />
-        <Route path="/schedule/:teamId/:eventId/track" element={<Protected auth={auth}><StandardTracker auth={auth} /></Protected>} />
-        <Route path="/schedule/:teamId/:eventId" element={<Protected auth={auth}><ScheduleEventDetail auth={auth} /></Protected>} />
-        <Route path="/messages" element={<Protected auth={auth}><Messages auth={auth} /></Protected>} />
-        <Route path="/messages/:teamId" element={<Protected auth={auth}><Messages auth={auth} /></Protected>} />
-        <Route path="/ai" element={<Protected auth={auth}><PrivateAiChat auth={auth} /></Protected>} />
-        <Route path="/teams" element={<Protected auth={auth}><Teams auth={auth} /></Protected>} />
-        <Route path="/teams/new" element={<Protected auth={auth}><CreateTeam auth={auth} /></Protected>} />
-        <Route path="/teams/browse" element={<PublicPage auth={auth}><PublicTeamsBrowse /></PublicPage>} />
-        <Route path="/teams/:teamId/public" element={<PublicPage auth={auth}><PublicTeamDetail authUser={auth.user} /></PublicPage>} />
-        <Route path="/teams/:teamId" element={auth.user || auth.loading ? <Protected auth={auth}><TeamDetail auth={auth} /></Protected> : <PublicPage auth={auth}><PublicTeamDetail authUser={auth.user} /></PublicPage>} />
-        <Route path="/teams/:teamId/edit" element={<Protected auth={auth}><TeamSettings auth={auth} /></Protected>} />
-        <Route path="/teams/:teamId/certificates" element={<Protected auth={auth}><TeamCertificates auth={auth} /></Protected>} />
-        <Route path="/teams/:teamId/drills" element={<Protected auth={auth}><TeamDrills auth={auth} /></Protected>} />
-        <Route path="/teams/:teamId/fees" element={<Protected auth={auth}><TeamFees auth={auth} /></Protected>} />
-        <Route path="/teams/:teamId/fees/:batchId" element={<Protected auth={auth}><TeamFees auth={auth} /></Protected>} />
-        <Route path="/teams/:teamId/media" element={<Protected auth={auth}><TeamMedia auth={auth} /></Protected>} />
-        <Route path="/teams/:teamId/registration-forms" element={<Protected auth={auth}><TeamRegistrationForms auth={auth} /></Protected>} />
-        <Route path="/teams/:teamId/registrations/:formId" element={<Protected auth={auth}><TeamRegistrationReview auth={auth} /></Protected>} />
-        <Route path="/parent-tools" element={<Protected auth={auth}><ParentTools auth={auth} /></Protected>} />
-        <Route path="/parent-tools/registrations/:teamId/:formId" element={<Protected auth={auth}><RegistrationDetail auth={auth} /></Protected>} />
-        <Route path="/parent-tools/:toolId" element={<Protected auth={auth}><ParentTools auth={auth} /></Protected>} />
-        <Route path="/players/:teamId/:playerId" element={<Protected auth={auth}><PlayerDetail auth={auth} /></Protected>} />
-        <Route path="/players/:playerId" element={<Protected auth={auth}><PlayerDetail auth={auth} /></Protected>} />
-        <Route path="/games/:gameId" element={<Protected auth={auth}><GameDetail auth={auth} /></Protected>} />
-        <Route path="/help" element={<Protected auth={auth}><HelpPortal auth={auth} /></Protected>} />
-        <Route path="/help/:helpId" element={<Protected auth={auth}><HelpArticle /></Protected>} />
-        <Route path="/profile" element={<Protected auth={auth}><ProfileHomeRoute auth={auth} /></Protected>} />
-        <Route path="/profile/settings" element={<Protected auth={auth}><Profile auth={auth} /></Protected>} />
-        <Route path="/people/:userId" element={<Protected auth={auth}><FriendProfile auth={auth} /></Protected>} />
-        <Route path="/capabilities/:capabilityId" element={<Protected auth={auth}><CapabilityPage /></Protected>} />
+        <Route
+          path="/registration"
+          element={
+            <AppShell auth={auth}>
+              <RegistrationDetail auth={auth} publicAccess />
+            </AppShell>
+          }
+        />
+        <Route
+          path="/family/:token"
+          element={
+            <PublicPage auth={auth}>
+              <FamilyShare />
+            </PublicPage>
+          }
+        />
+        <Route
+          path="/discover"
+          element={
+            <PublicPage auth={auth}>
+              <Discover auth={auth} />
+            </PublicPage>
+          }
+        />
+        <Route
+          path="/discover/opportunities/:listingId"
+          element={
+            <PublicPage auth={auth}>
+              <OpportunityDetail auth={auth} />
+            </PublicPage>
+          }
+        />
+        <Route
+          path="/discover/new"
+          element={
+            <Protected auth={auth}>
+              <OpportunityForm auth={auth} />
+            </Protected>
+          }
+        />
+        <Route
+          path="/discover/opportunities/:listingId/edit"
+          element={
+            <Protected auth={auth}>
+              <OpportunityForm auth={auth} />
+            </Protected>
+          }
+        />
+        <Route
+          path="/discover/manage"
+          element={
+            <Protected auth={auth}>
+              <OpportunityManage auth={auth} />
+            </Protected>
+          }
+        />
+        <Route
+          path="/discover/inquiries/:inquiryId"
+          element={
+            <Protected auth={auth}>
+              <OpportunityInquiry auth={auth} />
+            </Protected>
+          }
+        />
+        <Route
+          path="/"
+          element={
+            auth.user ? (
+              <Navigate to={signedInDefaultRoute} replace />
+            ) : auth.loading ? (
+              <LoadingScreen />
+            ) : (
+              <AppShell auth={auth}>
+                <Home auth={auth} />
+              </AppShell>
+            )
+          }
+        />
+        <Route
+          path="/home"
+          element={
+            auth.user || auth.loading ? (
+              <Protected auth={auth}>
+                <Home auth={auth} />
+              </Protected>
+            ) : (
+              <AppShell auth={auth}>
+                <Home auth={auth} />
+              </AppShell>
+            )
+          }
+        />
+        <Route
+          path="/officials"
+          element={
+            <Protected auth={auth}>
+              <Officials auth={auth} />
+            </Protected>
+          }
+        />
+        <Route
+          path="/schedule"
+          element={
+            <Protected auth={auth}>
+              <Schedule auth={auth} />
+            </Protected>
+          }
+        />
+        <Route
+          path="/schedule/:teamId/:eventId/track"
+          element={
+            <Protected auth={auth}>
+              <StandardTracker auth={auth} />
+            </Protected>
+          }
+        />
+        <Route
+          path="/schedule/:teamId/:eventId/diamond-v2"
+          element={
+            <Protected auth={auth}>
+              <DiamondScorebookRoute auth={auth} />
+            </Protected>
+          }
+        />
+        <Route
+          path="/schedule/:teamId/:eventId"
+          element={
+            <Protected auth={auth}>
+              <ScheduleEventDetail auth={auth} />
+            </Protected>
+          }
+        />
+        <Route
+          path="/messages"
+          element={
+            <Protected auth={auth}>
+              <Messages auth={auth} />
+            </Protected>
+          }
+        />
+        <Route
+          path="/messages/:teamId"
+          element={
+            <Protected auth={auth}>
+              <Messages auth={auth} />
+            </Protected>
+          }
+        />
+        <Route
+          path="/ai"
+          element={
+            <Protected auth={auth}>
+              <PrivateAiChat auth={auth} />
+            </Protected>
+          }
+        />
+        <Route
+          path="/teams"
+          element={
+            <Protected auth={auth}>
+              <Teams auth={auth} />
+            </Protected>
+          }
+        />
+        <Route
+          path="/teams/new"
+          element={
+            <Protected auth={auth}>
+              <CreateTeam auth={auth} />
+            </Protected>
+          }
+        />
+        <Route
+          path="/teams/browse"
+          element={
+            <PublicPage auth={auth}>
+              <PublicTeamsBrowse />
+            </PublicPage>
+          }
+        />
+        <Route
+          path="/teams/:teamId/public"
+          element={
+            <PublicPage auth={auth}>
+              <PublicTeamDetail authUser={auth.user} />
+            </PublicPage>
+          }
+        />
+        <Route
+          path="/teams/:teamId"
+          element={
+            auth.user || auth.loading ? (
+              <Protected auth={auth}>
+                <TeamDetail auth={auth} />
+              </Protected>
+            ) : (
+              <PublicPage auth={auth}>
+                <PublicTeamDetail authUser={auth.user} />
+              </PublicPage>
+            )
+          }
+        />
+        <Route
+          path="/teams/:teamId/edit"
+          element={
+            <Protected auth={auth}>
+              <TeamSettings auth={auth} />
+            </Protected>
+          }
+        />
+        <Route
+          path="/teams/:teamId/certificates"
+          element={
+            <Protected auth={auth}>
+              <TeamCertificates auth={auth} />
+            </Protected>
+          }
+        />
+        <Route
+          path="/teams/:teamId/drills"
+          element={
+            <Protected auth={auth}>
+              <TeamDrills auth={auth} />
+            </Protected>
+          }
+        />
+        <Route
+          path="/teams/:teamId/fees"
+          element={
+            <Protected auth={auth}>
+              <TeamFees auth={auth} />
+            </Protected>
+          }
+        />
+        <Route
+          path="/teams/:teamId/fees/:batchId"
+          element={
+            <Protected auth={auth}>
+              <TeamFees auth={auth} />
+            </Protected>
+          }
+        />
+        <Route
+          path="/teams/:teamId/media"
+          element={
+            <Protected auth={auth}>
+              <TeamMedia auth={auth} />
+            </Protected>
+          }
+        />
+        <Route
+          path="/teams/:teamId/registration-forms"
+          element={
+            <Protected auth={auth}>
+              <TeamRegistrationForms auth={auth} />
+            </Protected>
+          }
+        />
+        <Route
+          path="/teams/:teamId/registrations/:formId"
+          element={
+            <Protected auth={auth}>
+              <TeamRegistrationReview auth={auth} />
+            </Protected>
+          }
+        />
+        <Route
+          path="/parent-tools"
+          element={
+            <Protected auth={auth}>
+              <ParentTools auth={auth} />
+            </Protected>
+          }
+        />
+        <Route
+          path="/parent-tools/registrations/:teamId/:formId"
+          element={
+            <Protected auth={auth}>
+              <RegistrationDetail auth={auth} />
+            </Protected>
+          }
+        />
+        <Route
+          path="/parent-tools/:toolId"
+          element={
+            <Protected auth={auth}>
+              <ParentTools auth={auth} />
+            </Protected>
+          }
+        />
+        <Route
+          path="/players/:teamId/:playerId"
+          element={
+            <Protected auth={auth}>
+              <PlayerDetail auth={auth} />
+            </Protected>
+          }
+        />
+        <Route
+          path="/players/:playerId"
+          element={
+            <Protected auth={auth}>
+              <PlayerDetail auth={auth} />
+            </Protected>
+          }
+        />
+        <Route
+          path="/games/:gameId"
+          element={
+            <Protected auth={auth}>
+              <GameDetail auth={auth} />
+            </Protected>
+          }
+        />
+        <Route
+          path="/help"
+          element={
+            <Protected auth={auth}>
+              <HelpPortal auth={auth} />
+            </Protected>
+          }
+        />
+        <Route
+          path="/help/:helpId"
+          element={
+            <Protected auth={auth}>
+              <HelpArticle />
+            </Protected>
+          }
+        />
+        <Route
+          path="/profile"
+          element={
+            <Protected auth={auth}>
+              <ProfileHomeRoute auth={auth} />
+            </Protected>
+          }
+        />
+        <Route
+          path="/profile/settings"
+          element={
+            <Protected auth={auth}>
+              <Profile auth={auth} />
+            </Protected>
+          }
+        />
+        <Route
+          path="/people/:userId"
+          element={
+            <Protected auth={auth}>
+              <FriendProfile auth={auth} />
+            </Protected>
+          }
+        />
+        <Route
+          path="/capabilities/:capabilityId"
+          element={
+            <Protected auth={auth}>
+              <CapabilityPage />
+            </Protected>
+          }
+        />
         <Route path="*" element={<Navigate to={auth.user ? signedInDefaultRoute : '/auth'} replace />} />
       </Routes>
       {nativeExitNoticeVisible ? (
         <div className="fixed inset-x-0 bottom-24 z-[80] flex justify-center px-4" role="status" aria-live="polite">
-          <div className="rounded-full bg-gray-950 px-4 py-2 text-sm font-black text-white shadow-app-lg">Press back again to exit</div>
+          <div className="shadow-app-lg rounded-full bg-gray-950 px-4 py-2 text-sm font-black text-white">Press back again to exit</div>
         </div>
       ) : null}
     </Suspense>
@@ -291,9 +612,7 @@ function PublicPage({ auth, children }: { auth: AuthState; children: ReactNode }
         resetKey={`${location.pathname}${location.search}`}
         onGoHome={() => navigate('/discover', { replace: true })}
       >
-        <Suspense fallback={<ProtectedRouteLoadingState pathname={location.pathname} />}>
-          {children}
-        </Suspense>
+        <Suspense fallback={<ProtectedRouteLoadingState pathname={location.pathname} />}>{children}</Suspense>
       </ErrorBoundary>
     </AppShell>
   );
@@ -349,9 +668,7 @@ function Protected({ auth, children }: { auth: AuthState; children: ReactNode })
         resetKey={`${location.pathname}${location.search}`}
         onGoHome={() => navigate('/home', { replace: true })}
       >
-        <Suspense fallback={<ProtectedRouteLoadingState pathname={location.pathname} />}>
-          {children}
-        </Suspense>
+        <Suspense fallback={<ProtectedRouteLoadingState pathname={location.pathname} />}>{children}</Suspense>
       </ErrorBoundary>
     </AppShell>
   );

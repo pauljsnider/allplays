@@ -168,4 +168,111 @@ return exports.notifyGameUpdated;`
             dedupKeys: ['score:1:0->2:0', 'score-state:2:0']
         }));
     });
+
+    it('routes Diamond score changes away from the legacy notification trigger', async () => {
+        const sendCategoryNotification = vi.fn();
+        const hasRecentBigMomentLiveEventForScoreState = vi.fn();
+        const handler = new Function(
+            'functions',
+            'detectGameNotificationCategory',
+            'sendCategoryNotification',
+            'checkAndSetNotificationDedupKeys',
+            'hasRecentBigMomentLiveEventForScoreState',
+            'buildLiveScoreStateNotificationDedupKey',
+            'toNumericScore',
+            'buildScheduleUpdateNotificationPayload',
+            `const exports = {};
+${functionsSource.slice(functionsSource.indexOf('exports.notifyGameUpdated = retryableNotificationFunctions.firestore'), functionsSource.indexOf('exports.notifyLiveEventCreated = retryableNotificationFunctions.firestore')).replaceAll('retryableNotificationFunctions.', 'functions.')}
+return exports.notifyGameUpdated;`
+        )(
+            {
+                firestore: {
+                    document: () => ({ onUpdate: (onUpdateHandler) => onUpdateHandler })
+                },
+                logger: { info: vi.fn() }
+            },
+            () => 'liveScore',
+            sendCategoryNotification,
+            vi.fn(),
+            hasRecentBigMomentLiveEventForScoreState,
+            vi.fn(),
+            (value) => Number(value || 0),
+            () => ({ title: 'unused', body: 'unused' })
+        );
+
+        await handler({
+            before: { data: () => ({ trackingEngine: 'diamond-v2', homeScore: 1, awayScore: 0 }) },
+            after: { data: () => ({ trackingEngine: 'diamond-v2', homeScore: 2, awayScore: 0 }) }
+        }, {
+            params: { teamId: 'team-1', gameId: 'game-7' }
+        });
+
+        expect(hasRecentBigMomentLiveEventForScoreState).not.toHaveBeenCalled();
+        expect(sendCategoryNotification).not.toHaveBeenCalled();
+    });
+
+    it('suppresses Diamond lifecycle-only schedule pushes but preserves real schedule updates', async () => {
+        const sendCategoryNotification = vi.fn(async () => ({ successCount: 1, failureCount: 0 }));
+        const handler = new Function(
+            'functions',
+            'detectGameNotificationCategory',
+            'sendCategoryNotification',
+            'checkAndSetNotificationDedupKeys',
+            'hasRecentBigMomentLiveEventForScoreState',
+            'buildLiveScoreStateNotificationDedupKey',
+            'toNumericScore',
+            'valuesDiffer',
+            'buildScheduleUpdateNotificationPayload',
+            `const exports = {};
+${functionsSource.slice(functionsSource.indexOf('exports.notifyGameUpdated = retryableNotificationFunctions.firestore'), functionsSource.indexOf('exports.notifyLiveEventCreated = retryableNotificationFunctions.firestore')).replaceAll('retryableNotificationFunctions.', 'functions.')}
+return exports.notifyGameUpdated;`
+        )(
+            {
+                firestore: {
+                    document: () => ({ onUpdate: (onUpdateHandler) => onUpdateHandler })
+                },
+                logger: { info: vi.fn() }
+            },
+            () => 'schedule',
+            sendCategoryNotification,
+            vi.fn(),
+            vi.fn(),
+            vi.fn(),
+            (value) => Number(value || 0),
+            (left, right) => JSON.stringify(left) !== JSON.stringify(right),
+            () => ({ title: 'Schedule update', body: 'Field changed.' })
+        );
+
+        const context = { params: { teamId: 'team-1', gameId: 'game-7' } };
+        await handler({
+            before: {
+                data: () => ({ trackingEngine: 'diamond-v2', status: 'live', location: 'Field 1' })
+            },
+            after: {
+                data: () => ({
+                    trackingEngine: 'diamond-v2',
+                    status: 'completed',
+                    location: 'Field 1',
+                    diamondProjectionRevision: 42
+                })
+            }
+        }, context);
+        expect(sendCategoryNotification).not.toHaveBeenCalled();
+
+        await handler({
+            before: {
+                data: () => ({ trackingEngine: 'diamond-v2', status: 'completed', location: 'Field 1' })
+            },
+            after: {
+                data: () => ({ trackingEngine: 'diamond-v2', status: 'completed', location: 'Field 2' })
+            }
+        }, context);
+        expect(sendCategoryNotification).toHaveBeenCalledTimes(1);
+        expect(sendCategoryNotification).toHaveBeenCalledWith(expect.objectContaining({
+            teamId: 'team-1',
+            gameId: 'game-7',
+            category: 'schedule'
+        }));
+    });
+
 });
