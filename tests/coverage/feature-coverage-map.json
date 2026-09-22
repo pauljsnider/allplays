@@ -639,6 +639,7 @@
             ],
             "appPages": [
                 "apps/app/src/pages/GameDetail.tsx",
+                "apps/app/src/pages/DiamondScorebook.tsx",
                 "apps/app/src/pages/StandardTracker.tsx"
             ],
             "cloudFunctions": [
@@ -680,6 +681,7 @@
             ],
             "integrationTests": [
                 "apps/app/src/pages/GameDetail.test.tsx",
+                "apps/app/src/pages/DiamondScorebook.test.tsx",
                 "apps/app/src/pages/StandardTracker.test.tsx",
                 "tests/unit/app-game-detail-baseball-walk.test.jsx"
             ],
