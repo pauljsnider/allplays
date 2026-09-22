@@ -295,9 +295,9 @@ function getEffectiveDiamondEvents(events) {
             return;
         if (obsoleteFinalizations.finalizeEventIds.has(event.eventId) || obsoleteFinalizations.reopenEventIds.has(event.eventId))
             return;
-        if (attachmentTargetsVoidedPlay(event, voidedEventIds))
-            return;
         const directive = directives.get(event.eventId);
+        if (attachmentTargetsVoidedPlay(directive?.kind === 'supersede' && directive.replacement ? directive.replacement : event, voidedEventIds))
+            return;
         if (directive?.kind === 'void')
             return;
         if (directive?.kind === 'supersede' && directive.replacement) {
@@ -573,7 +573,8 @@ function replayCanonicalDiamondEvents(initialState, events) {
         if (event.type === 'void_event' || event.type === 'supersede_event') {
             state = (0, reducer_1.reduceDiamondEvent)(state, asReducerAction(event.type, event.payload, event.eventId));
         }
-        else if (directive?.kind === 'void' || attachmentTargetsVoidedPlay(event, voidedEventIds)) {
+        else if (directive?.kind === 'void' ||
+            attachmentTargetsVoidedPlay(directive?.kind === 'supersede' && directive.replacement ? directive.replacement : event, voidedEventIds)) {
             // Its canonical record remains immutable, but its state effect is removed.
         }
         else if (obsoleteFinalizations.finalizeEventIds.has(event.eventId)) {

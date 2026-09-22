@@ -78,6 +78,8 @@ export type DiamondTeamLineup = Readonly<{
   battingOrder: readonly DiamondLineupSlot[];
   /** Personnel history for the defender whose batting turn belongs to the DH. */
   dhDefense?: DiamondLineupSlot;
+  /** The DH role has ended; dhDefense remains historical re-entry evidence. */
+  dhTerminated?: true;
   /** Separate personnel and re-entry history for the linked FLEX position. */
   flexDefense?: DiamondLineupSlot;
   defense: Readonly<Partial<Record<DiamondDefensivePosition, string>>>;
