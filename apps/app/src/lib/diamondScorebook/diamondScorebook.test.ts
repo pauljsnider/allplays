@@ -748,7 +748,7 @@ describe('Diamond rules and canonical contracts', () => {
       battingRole: 'dp',
       starterReentriesUsed: 1
     });
-    expect(game.ledger.state.lineups.home.defense).toMatchObject({ RF: 'home-1' });
+    expect(game.ledger.state.lineups.home.defense).toMatchObject({ RF: 'home-flex' });
 
     const latePair = harness('fastpitch-nfhs', 'quick');
     setBasicLineups(latePair);
@@ -975,7 +975,7 @@ describe('Diamond rules and canonical contracts', () => {
       },
       { accept: false }
     );
-    expect(occupied.result.rejection?.code).toBe('incoming-runner-on-base');
+    expect(occupied.result.rejection?.code).toBe('courtesy-runner-half-inning');
     expect(occupiedIncoming.ledger.state.bases.first?.runnerId).toBe('away-courtesy');
   });
 
@@ -3611,6 +3611,68 @@ describe('Append-only corrections', () => {
 });
 
 describe('Fastpitch-specific rules', () => {
+  it('restores DP batting while FLEX stays on defense without spending FLEX re-entry', () => {
+    const game = harness('fastpitch-nfhs', 'quick');
+    setBasicLineups(game, { start: false, homeFirstBattingRole: 'dp' });
+    game.submit('set_defensive_alignment', {
+      side: 'home',
+      assignments: [
+        { position: 'P', playerId: 'home-2' },
+        { position: 'C', playerId: 'home-3' }
+      ]
+    });
+    game.submit('set_dp_flex', {
+      side: 'home',
+      dpPlayerId: 'home-1',
+      flexPlayerId: 'home-flex',
+      dpBattingSlot: 1,
+      flexDefensivePosition: 'RF'
+    });
+    game.submit('start', {});
+    const defense = game.ledger.state.lineups.home.defense;
+    game.submit('substitute', { side: 'home', battingSlot: 1, outgoingPlayerId: 'home-1', incomingPlayerId: 'home-flex' });
+    game.submit('re_enter', { side: 'home', battingSlot: 1, replacedPlayerId: 'home-flex', starterPlayerId: 'home-1' });
+    expect(game.ledger.state.lineups.home.defense).toEqual(defense);
+    expect(game.ledger.state.lineups.home.battingOrder[0]).toMatchObject({ activePlayerId: 'home-1', starterReentriesUsed: 1 });
+    expect(game.ledger.state.lineups.home.flexDefense?.starterReentriesUsed || 0).toBe(0);
+    expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
+  });
+
+  it.each(['home', 'out'] as const)('retains courtesy eligibility restrictions after runner reaches %s until the half changes', (to) => {
+    const game = harness('fastpitch-nfhs', 'quick');
+    setBasicLineups(game);
+    game.submit('record_plate_appearance', {
+      batterId: 'away-1',
+      pitcherId: 'home-1',
+      result: 'single',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    game.submit('add_courtesy_runner', {
+      side: 'away',
+      forPlayerId: 'away-1',
+      runnerId: 'bench-runner',
+      base: 'first',
+      forRole: 'pitcher'
+    });
+    game.submit('advance_runner', {
+      runnerId: 'bench-runner',
+      from: 'first',
+      to,
+      cause: to === 'out' ? 'caught_stealing' : 'wild_pitch',
+      ...(to === 'out' ? { outKind: 'tag' as const } : { countsRun: true, earned: true, rbi: false })
+    });
+    const substitution = { side: 'away' as const, battingSlot: 2, outgoingPlayerId: 'away-2', incomingPlayerId: 'bench-runner' };
+    const rejected = game.submit('substitute', substitution, { accept: false });
+    expect(rejected.result.rejection?.code).toBe('courtesy-runner-half-inning');
+    expect(rejected.ledger).toBe(game.ledger);
+    advanceToHalf(game, 1, 'bottom');
+    game.submit('substitute', substitution);
+    expect(game.ledger.state.lineups.away.battingOrder[1].activePlayerId).toBe('bench-runner');
+    expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
+  });
+
   it('admits DP and defensive FLEX bench replacements with independent re-entry histories', () => {
     const game = harness('fastpitch-nfhs', 'quick');
     setBasicLineups(game, { start: false, homeFirstBattingRole: 'dp' });
