@@ -32,7 +32,7 @@ function canonicalize(value, seen) {
             throw new contracts_1.DiamondDomainError('cyclic-value', 'Canonical Diamond values cannot be cyclic.');
         seen.add(value);
         const source = value;
-        const result = {};
+        const result = Object.create(null);
         Object.keys(source)
             .sort()
             .forEach((key) => {
