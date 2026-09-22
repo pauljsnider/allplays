@@ -3594,7 +3594,7 @@ test("compiled bounded checkpoint fielding completeness stays byte-identical to 
       );
 
       const duplicate = executeDiamondCommandFromCheckpoint(
-        checkpoint,
+        bounded.checkpoint,
         command,
         context,
         bounded.receipt,
