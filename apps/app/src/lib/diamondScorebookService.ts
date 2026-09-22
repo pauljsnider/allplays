@@ -203,6 +203,7 @@ export type DiamondScorebookSnapshot = {
     DiamondSide,
     {
       dhDefense: DiamondLineupEntry | null;
+      dhTerminated?: true;
       flexDefense: DiamondLineupEntry | null;
       dpFlex: DiamondTeamLineup['dpFlex'];
     }
@@ -1448,6 +1449,7 @@ export function normalizeDiamondSnapshot(value: unknown): DiamondScorebookSnapsh
       diamondDefensivePositions.includes(position);
     return {
       dhDefense: history(source.dhDefense),
+      ...(source.dhTerminated === true ? { dhTerminated: true as const } : {}),
       flexDefense: history(source.flexDefense),
       dpFlex: validPair
         ? {

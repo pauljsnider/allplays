@@ -464,6 +464,11 @@ describe('diamondScorebookService', () => {
     expect(snapshot.lineupPersonnel?.away.dhDefense).toBeNull();
     const missing = normalizeDiamondSnapshot(raw);
     expect(missing.lineupPersonnel?.home).toEqual({ dhDefense: null, flexDefense: null, dpFlex: null });
+    for (const value of [true, false, 'true']) {
+      const withTermination = structuredClone(raw);
+      Object.assign(withTermination.state.lineups.home, { dhTerminated: value });
+      expect(normalizeDiamondSnapshot(withTermination).lineupPersonnel?.home.dhTerminated).toBe(value === true ? true : undefined);
+    }
   });
 
   it('normalizes authoritative state, lineup context, lease, recent plays, and completeness evidence', () => {

@@ -21,6 +21,7 @@ import {
   Wifi
 } from 'lucide-react';
 import { Modal } from '../components/Modal';
+import { getDiamondSubstitutionTargets, resolveDiamondSubstitutionTarget } from '../lib/diamondSubstitutionTargets';
 import {
   appendDictationTranscript,
   collectFinalDictationTranscript,
@@ -146,6 +147,8 @@ type RunnerAdvanceReviewSource = {
 type SubstitutionCommandType = 'substitute' | 're_enter';
 type SubstitutionReviewSource = {
   commandType: SubstitutionCommandType;
+  personnelRole: 'batting' | 'dh' | 'flex';
+  requestedDefensivePosition: DiamondDefensivePosition | null;
   side: DiamondSide;
   battingSlot: number;
   outgoingPlayerId: string;
@@ -949,8 +952,22 @@ function buildSubstitutionReviewSource(
   const identity = getQueueIdentity(snapshot, authenticatedUid);
   const participants = readSubstitutionParticipants(type, payload);
   if (!identity || !participants) return null;
-  const entry = snapshot.lineups[participants.side].find((candidate) => candidate.slot === participants.battingSlot);
-  if (!entry || entry.playerId !== participants.outgoingPlayerId) return null;
+  const target = resolveDiamondSubstitutionTarget(
+    snapshot,
+    participants.side,
+    participants.battingSlot,
+    participants.outgoingPlayerId,
+    participants.incomingPlayerId,
+    payload.defensivePosition
+  );
+  if (!target) return null;
+  const entry = target.entry;
+  const pair = snapshot.lineupPersonnel?.[participants.side].dpFlex;
+  const dpTakesFlexDefense =
+    target.role === 'flex' &&
+    pair?.dpPlayerId === participants.incomingPlayerId &&
+    pair.flexPlayerId === participants.outgoingPlayerId &&
+    payload.defensivePosition === pair.flexDefensivePosition;
   const defenseAssignments = copyDefenseDrafts(snapshot)[participants.side];
   const outgoingDefensivePosition =
     (Object.entries(defenseAssignments).find(([, playerId]) => playerId === participants.outgoingPlayerId)?.[0] as
@@ -964,7 +981,8 @@ function buildSubstitutionReviewSource(
   if (livePlacements.filter(({ runner }) => runner.playerId === participants.outgoingPlayerId).length > 1) return null;
   if (type === 'substitute') {
     if (
-      snapshot.lineups[participants.side].some((candidate) => candidate.playerId === participants.incomingPlayerId) ||
+      (!dpTakesFlexDefense &&
+        snapshot.lineups[participants.side].some((candidate) => candidate.playerId === participants.incomingPlayerId)) ||
       !snapshot.availablePlayers[participants.side].some((candidate) => candidate.playerId === participants.incomingPlayerId)
     ) {
       return null;
@@ -983,6 +1001,8 @@ function buildSubstitutionReviewSource(
   }
   return {
     commandType: type,
+    personnelRole: target.role,
+    requestedDefensivePosition: (payload.defensivePosition as DiamondDefensivePosition | undefined) || null,
     ...participants,
     sourceRevision: snapshot.revision,
     sourceInstanceId: snapshot.instanceId,
@@ -1016,9 +1036,12 @@ function substitutionSourceMatchesSnapshot(
           starterPlayerId: source.incomingPlayerId,
           replacedPlayerId: source.outgoingPlayerId
         };
+  if (source.requestedDefensivePosition) payload.defensivePosition = source.requestedDefensivePosition;
   const current = buildSubstitutionReviewSource(snapshot, source.commandType, payload, authenticatedUid);
   return Boolean(
     current &&
+    current.personnelRole === source.personnelRole &&
+    current.requestedDefensivePosition === source.requestedDefensivePosition &&
     current.sourceRevision === source.sourceRevision &&
     current.sourceInstanceId === source.sourceInstanceId &&
     current.sourceLeaseId === source.sourceLeaseId &&
@@ -1038,7 +1061,8 @@ function validateSubstitutionPayload(payload: DiamondJsonObject, source: Substit
     participants.side !== source.side ||
     participants.battingSlot !== source.battingSlot ||
     participants.outgoingPlayerId !== source.outgoingPlayerId ||
-    participants.incomingPlayerId !== source.incomingPlayerId
+    participants.incomingPlayerId !== source.incomingPlayerId ||
+    (payload.defensivePosition || null) !== source.requestedDefensivePosition
   ) {
     return 'The reviewed substitution no longer matches the exact players and batting slot.';
   }
@@ -6078,7 +6102,11 @@ function AdvancedScoringPanel({
 
   const activeRunner = occupiedBases.find((entry) => entry.base === runnerBase) || occupiedBases[0] || null;
   const subLineup = snapshot.lineups[subSide];
-  const subEntry = subLineup.find((entry) => entry.slot === Number(subSlot)) || subLineup[0] || null;
+  const subTargets = getDiamondSubstitutionTargets(snapshot, subSide);
+  const subTarget = subTargets.find((target) => target.key === subSlot) || subTargets[0] || null;
+  const subEntry = subTarget?.entry || null;
+  const subPair = snapshot.lineupPersonnel?.[subSide].dpFlex;
+  const effectiveSubPosition = subDefensivePosition || subTarget?.defensivePosition;
   const currentSubPosition = subEntry
     ? (Object.entries(snapshot.defense[subSide]).find(([, player]) => player?.playerId === subEntry.playerId)?.[0] as
         DiamondDefensivePosition | undefined)
@@ -6094,7 +6122,9 @@ function AdvancedScoringPanel({
   );
   const subCandidates = snapshot.availablePlayers[subSide].filter(
     (player) =>
-      !subLineup.some((entry) => entry.playerId === player.playerId) &&
+      !subTarget?.key.startsWith('dh-retired:') &&
+      (!subLineup.some((entry) => entry.playerId === player.playerId) ||
+        (subTarget?.role === 'flex' && subPair?.dpPlayerId === player.playerId && subPair.flexPlayerId === subEntry?.playerId)) &&
       player.playerId !== subEntry?.playerId &&
       !liveSubstitutionRunnerIds.has(player.playerId)
   );
@@ -6374,16 +6404,22 @@ function AdvancedScoringPanel({
             Batting slot
             <select
               className="mt-1 min-h-11 w-full rounded-xl border border-gray-300 bg-white px-2 text-sm font-bold"
-              value={subEntry?.slot || ''}
+              value={subTarget?.key || ''}
               disabled={disabled || !subLineup.length || snapshot.lifecycle !== 'active'}
               onChange={(event) => {
                 setSubSlot(event.target.value);
                 setSubDefensivePosition('');
               }}
             >
-              {subLineup.map((entry) => (
-                <option key={entry.slot} value={entry.slot}>
-                  {entry.slot} · {playerLabel(entry)}
+              {subTargets.map((target) => (
+                <option key={target.key} value={target.key}>
+                  {target.entry.slot} ·{' '}
+                  {target.key.startsWith('dh-retired:')
+                    ? 'Former DH defender · '
+                    : target.role === 'batting'
+                      ? ''
+                      : `${target.role.toUpperCase()} defense · `}
+                  {playerLabel(target.entry)}
                 </option>
               ))}
             </select>
@@ -6443,7 +6479,7 @@ function AdvancedScoringPanel({
                 battingSlot: subEntry.slot,
                 outgoingPlayerId: subEntry.playerId,
                 incomingPlayerId: incomingSubCandidate.playerId,
-                ...(subDefensivePosition ? { defensivePosition: subDefensivePosition } : {})
+                ...(effectiveSubPosition ? { defensivePosition: effectiveSubPosition } : {})
               })
             }
           >
@@ -6467,7 +6503,7 @@ function AdvancedScoringPanel({
                 battingSlot: subEntry.slot,
                 starterPlayerId: subEntry.starterPlayerId,
                 replacedPlayerId: subEntry.playerId,
-                ...(subDefensivePosition ? { defensivePosition: subDefensivePosition } : {})
+                ...(effectiveSubPosition ? { defensivePosition: effectiveSubPosition } : {})
               })
             }
           >
