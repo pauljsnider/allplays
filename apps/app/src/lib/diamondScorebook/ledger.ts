@@ -92,7 +92,16 @@ function deepFreeze<T>(value: T): T {
 function requireId(value: unknown, label: string) {
   if (typeof value !== 'string') throw new DiamondDomainError('invalid-id', `${label} must be a string.`);
   const normalized = value.trim();
-  if (!normalized || normalized.length > 128 || normalized.includes('/')) {
+  if (
+    !normalized ||
+    value !== normalized ||
+    normalized.length > 128 ||
+    normalized.includes('/') ||
+    [...normalized].some((character) => {
+      const codePoint = character.codePointAt(0) ?? 0;
+      return codePoint <= 0x1f || codePoint === 0x7f;
+    })
+  ) {
     throw new DiamondDomainError('invalid-id', `${label} must be nonempty, slash-free, and at most 128 characters.`);
   }
   return normalized;
