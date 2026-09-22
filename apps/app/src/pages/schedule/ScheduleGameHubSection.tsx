@@ -1,5 +1,5 @@
 import { Suspense, createContext, lazy, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { ChevronDown, ClipboardCheck, ExternalLink, FileText, Radio, RefreshCw, Share2, Users, Video, type LucideIcon } from 'lucide-react';
 import {
   cancelPracticeOccurrenceForApp,
@@ -61,13 +61,27 @@ import type { PracticeTimelineBlock, PracticeTimelineDrillOption } from '../../l
 import type { TrackStatsheetReviewRow } from '../../lib/statsheetImportService';
 import type { AuthState } from '../../lib/types';
 import { isActiveGameForLive, type ReplayArchiveState, type YouTubeReplayVideo } from '../../lib/youtubeReplay';
+import { isDiamondScorebookUiEnabled } from '../../lib/launchFeatures';
 import { createLogger } from '../../lib/logger';
+import { isLegacyTrackingEngine } from '../../lib/trackingEngine';
 import { useScheduleEventDetailContext } from './ScheduleEventDetailContext';
 
 const logger = createLogger('schedule-event-detail');
+const DIAMOND_INSTANCE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function getDiamondLiveEngagementContext(
+  event: Pick<ParentScheduleEvent, 'trackingEngine' | 'diamondScorebookInstanceId'>,
+) {
+  if (event.trackingEngine !== 'diamond-v2') return null;
+  const instanceId = String(event.diamondScorebookInstanceId || '').trim().toLowerCase();
+  return DIAMOND_INSTANCE_ID_PATTERN.test(instanceId)
+    ? { trackingEngine: 'diamond-v2' as const, instanceId }
+    : null;
+}
 
 type LiveGameChatModule = typeof import('../../lib/liveGameChatService');
 type LiveGameReactionsModule = typeof import('../../lib/liveGameReactionsService');
+type DiamondLiveEngagementModule = typeof import('../../lib/diamondLiveEngagementService');
 type GameDayLineupBuilderModule = typeof import('../../lib/gameDayLineupBuilder');
 type GameWrapupServiceModule = typeof import('../../lib/gameWrapupService');
 type PracticeTimelineServiceModule = typeof import('../../lib/practiceTimelineService');
@@ -75,9 +89,11 @@ type StatsheetImportServiceModule = typeof import('../../lib/statsheetImportServ
 type LegacyScheduleHelpersModule = typeof import('../../lib/adapters/legacyScheduleHelpers');
 type GameReportSectionsModule = typeof import('../../components/schedule/GameReportSections');
 type ScheduleGameDayServiceModule = typeof import('../../lib/scheduleGameDayService');
+type DiamondScorebookServiceModule = typeof import('../../lib/diamondScorebookService');
 
 let liveGameChatModulePromise: Promise<LiveGameChatModule> | null = null;
 let liveGameReactionsModulePromise: Promise<LiveGameReactionsModule> | null = null;
+let diamondLiveEngagementModulePromise: Promise<DiamondLiveEngagementModule> | null = null;
 let gameDayLineupBuilderModulePromise: Promise<GameDayLineupBuilderModule> | null = null;
 let gameWrapupServiceModulePromise: Promise<GameWrapupServiceModule> | null = null;
 let practiceTimelineServiceModulePromise: Promise<PracticeTimelineServiceModule> | null = null;
@@ -85,6 +101,7 @@ let statsheetImportServiceModulePromise: Promise<StatsheetImportServiceModule> |
 let legacyScheduleHelpersModulePromise: Promise<LegacyScheduleHelpersModule> | null = null;
 let gameReportSectionsModulePromise: Promise<GameReportSectionsModule> | null = null;
 let scheduleGameDayServiceModulePromise: Promise<ScheduleGameDayServiceModule> | null = null;
+let diamondScorebookServiceModulePromise: Promise<DiamondScorebookServiceModule> | null = null;
 let scheduleGameDayServiceImporter = () => import('../../lib/scheduleGameDayService');
 
 function loadLiveGameChatModule() {
@@ -95,6 +112,11 @@ function loadLiveGameChatModule() {
 function loadLiveGameReactionsModule() {
   if (!liveGameReactionsModulePromise) liveGameReactionsModulePromise = import('../../lib/liveGameReactionsService');
   return liveGameReactionsModulePromise;
+}
+
+function loadDiamondLiveEngagementModule() {
+  if (!diamondLiveEngagementModulePromise) diamondLiveEngagementModulePromise = import('../../lib/diamondLiveEngagementService');
+  return diamondLiveEngagementModulePromise;
 }
 
 export function loadGameDayLineupBuilderModule() {
@@ -132,9 +154,37 @@ export function loadScheduleGameDayService() {
   return scheduleGameDayServiceModulePromise;
 }
 
+export function loadDiamondScorebookService() {
+  if (!diamondScorebookServiceModulePromise) diamondScorebookServiceModulePromise = import('../../lib/diamondScorebookService');
+  return diamondScorebookServiceModulePromise;
+}
+
 export function setScheduleGameDayServiceImporterForTest(importer?: () => Promise<ScheduleGameDayServiceModule>) {
   scheduleGameDayServiceModulePromise = null;
   scheduleGameDayServiceImporter = importer || (() => import('../../lib/scheduleGameDayService'));
+}
+
+export function shouldCheckDiamondActivation(
+  event?: ParentScheduleEvent | null,
+  canUpdateScore = false,
+  diamondScorebookUiEnabled = isDiamondScorebookUiEnabled()
+) {
+  const sport = String(event?.sport || '').trim().toLowerCase();
+  const isDiamondSport = sport === 'baseball'
+    || sport === 'softball'
+    || sport === 'fastpitch'
+    || sport === 'fastpitch softball';
+  return Boolean(
+    event
+    && diamondScorebookUiEnabled === true
+    && canUpdateScore
+    && event.type === 'game'
+    && event.isDbGame
+    && !event.isCancelled
+    && isLegacyTrackingEngine(event.trackingEngine)
+    && Boolean(event.statTrackerConfigId)
+    && isDiamondSport
+  );
 }
 
 const DeferredGameReportSections = lazy(() => (
@@ -144,6 +194,112 @@ const DeferredGameReportSections = lazy(() => (
 export type GameHubPanelId = 'foul' | 'chat' | 'reactions' | 'wrapup' | 'statsheet' | 'lineup' | 'substitutions' | 'report';
 type HomeScoringPlayersUpdater = (players: ScheduleHomeScoringPlayer[]) => ScheduleHomeScoringPlayer[];
 type ActiveLiveReaction = LiveGameReaction & { localId: string; emoji: string };
+type DiamondInteractionWindowGate = {
+  isOpen: boolean;
+  isChecking: boolean;
+  hasError: boolean;
+  revalidate: () => Promise<boolean>;
+};
+
+const DIAMOND_TERMINAL_INTERACTION_STATES = new Set([
+  'completed',
+  'final',
+  'correction',
+  'cancelled',
+  'canceled',
+  'deleted',
+]);
+
+function isLocallyTerminalDiamondEvent(event: ParentScheduleEvent) {
+  const statuses = [event.status, event.liveStatus]
+    .map((value) => String(value || '').trim().toLowerCase());
+  return event.isCancelled === true
+    || statuses.some((status) => DIAMOND_TERMINAL_INTERACTION_STATES.has(status));
+}
+
+function useDiamondInteractionWindowGate(
+  event: ParentScheduleEvent,
+  active: boolean,
+  authUserId: string | null | undefined,
+): DiamondInteractionWindowGate {
+  const trackingEngine = event.trackingEngine;
+  const scorebookInstanceId = event.diamondScorebookInstanceId;
+  const normalizedAuthUserId = typeof authUserId === 'string' ? authUserId.trim() : '';
+  const context = useMemo(
+    () => getDiamondLiveEngagementContext({
+      trackingEngine,
+      diamondScorebookInstanceId: scorebookInstanceId,
+    }),
+    [scorebookInstanceId, trackingEngine],
+  );
+  const localLifecycleKey = JSON.stringify([
+    event.isCancelled === true,
+    event.status || null,
+    event.liveStatus || null,
+  ]);
+  const identityKey = context
+    ? JSON.stringify([event.teamId, event.id, context.instanceId, normalizedAuthUserId, localLifecycleKey])
+    : '';
+  const identityKeyRef = useRef(identityKey);
+  identityKeyRef.current = identityKey;
+  const requestSequenceRef = useRef(0);
+  const locallyTerminal = isLocallyTerminalDiamondEvent(event);
+  const [snapshot, setSnapshot] = useState({
+    identityKey: '',
+    isOpen: false,
+    isChecking: false,
+    hasError: false,
+  });
+
+  const revalidate = useCallback(async () => {
+    if (!context || !identityKey || !normalizedAuthUserId || locallyTerminal) return false;
+    const requestSequence = requestSequenceRef.current + 1;
+    requestSequenceRef.current = requestSequence;
+    setSnapshot({ identityKey, isOpen: false, isChecking: true, hasError: false });
+    try {
+      const service = await loadDiamondLiveEngagementModule();
+      const isOpen = await service.loadDiamondLiveInteractionWindow({
+        teamId: event.teamId,
+        gameId: event.id,
+        instanceId: context.instanceId,
+      });
+      if (identityKeyRef.current !== identityKey || requestSequenceRef.current !== requestSequence) return false;
+      setSnapshot({ identityKey, isOpen: isOpen === true, isChecking: false, hasError: false });
+      return isOpen === true;
+    } catch {
+      if (identityKeyRef.current === identityKey && requestSequenceRef.current === requestSequence) {
+        setSnapshot({ identityKey, isOpen: false, isChecking: false, hasError: true });
+      }
+      return false;
+    }
+  }, [context, event.id, event.teamId, identityKey, locallyTerminal, normalizedAuthUserId]);
+
+  useEffect(() => {
+    if (!active || !context || !normalizedAuthUserId || locallyTerminal) return undefined;
+    void revalidate();
+    return () => {
+      requestSequenceRef.current += 1;
+    };
+  }, [active, context, locallyTerminal, normalizedAuthUserId, revalidate]);
+
+  const isCurrent = snapshot.identityKey === identityKey;
+  return {
+    isOpen: Boolean(isCurrent && snapshot.isOpen && !locallyTerminal),
+    isChecking: Boolean(isCurrent && snapshot.isChecking),
+    hasError: Boolean(isCurrent && snapshot.hasError),
+    revalidate,
+  };
+}
+
+function getDiamondInteractionWindowNotice(
+  gate: DiamondInteractionWindowGate,
+  interactionLabel: 'chat' | 'reactions',
+) {
+  if (gate.isChecking) return `Checking the server game window for live ${interactionLabel}…`;
+  if (gate.hasError) return `Unable to verify the server game window. Live ${interactionLabel} stays locked until you retry.`;
+  if (!gate.isOpen) return `Live ${interactionLabel} is closed outside the server-verified game window.`;
+  return null;
+}
 
 const gameHubPanelDetails: Record<GameHubPanelId, { label: string; elementId: string }> = {
   foul: { label: 'Foul tracker', elementId: 'game-hub-foul-panel' },
@@ -268,6 +424,7 @@ function GameScheduleEditPanel({ auth, event }: { auth: AuthState; event: Parent
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
   const [configError, setConfigError] = useState<string | null>(null);
+  const hasPinnedDiamondFields = event.trackingEngine === 'diamond-v2';
   const formResetKey = buildGameFormResetKey(event);
   const eventRef = useRef(event);
   eventRef.current = event;
@@ -303,7 +460,11 @@ function GameScheduleEditPanel({ auth, event }: { auth: AuthState; event: Parent
     setSaving(true);
     setStatus(null);
     try {
-      await updateScheduledGameForApp(event.teamId, event.id, form, auth.user);
+      if (hasPinnedDiamondFields) {
+        await updateScheduledGameForApp(event.teamId, event.id, form, auth.user, { preservePinnedDiamondFields: true });
+      } else {
+        await updateScheduledGameForApp(event.teamId, event.id, form, auth.user);
+      }
       setStatus({ tone: 'success', message: 'Game schedule was updated.' });
     } catch (error: any) {
       setStatus({ tone: 'error', message: error?.message || 'Unable to update game.' });
@@ -318,7 +479,9 @@ function GameScheduleEditPanel({ auth, event }: { auth: AuthState; event: Parent
         <div>
           <div className="text-xs font-black uppercase tracking-[0.04em] text-primary-700">Schedule management</div>
           <h2 className="mt-1 text-base font-black text-gray-950">Edit game</h2>
-          <p className="mt-1 text-sm font-semibold text-gray-500">Update opponent, timing, location, home/away, and tracker config without touching score data.</p>
+          <p className="mt-1 text-sm font-semibold text-gray-500">{hasPinnedDiamondFields
+            ? 'Update opponent, timing, location, and other schedule details without changing pinned Diamond fields.'
+            : 'Update opponent, timing, location, home/away, and tracker config without touching score data.'}</p>
         </div>
         <button type="button" className="secondary-button" onClick={() => setOpen((current) => !current)}>{open ? 'Hide editor' : 'Edit game'}</button>
       </div>
@@ -330,10 +493,11 @@ function GameScheduleEditPanel({ auth, event }: { auth: AuthState; event: Parent
             <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Starts<input type="datetime-local" className="auth-input mt-1" value={toDatetimeLocalInputValue(form.startDate)} onChange={(e) => updateField('startDate', new Date(e.target.value))} /></label>
             <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Ends<input type="datetime-local" className="auth-input mt-1" value={toDatetimeLocalInputValue(form.endDate)} onChange={(e) => updateField('endDate', e.target.value ? new Date(e.target.value) : null)} /></label>
             <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Arrival<input type="datetime-local" className="auth-input mt-1" value={toDatetimeLocalInputValue(form.arrivalTime)} onChange={(e) => updateField('arrivalTime', e.target.value ? new Date(e.target.value) : null)} /></label>
-            <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Home / away<select className="auth-input mt-1" value={form.isHome === false ? 'away' : form.isHome === true ? 'home' : 'neutral'} onChange={(e) => updateField('isHome', e.target.value === 'neutral' ? null : e.target.value === 'home')}><option value="home">Home</option><option value="away">Away</option><option value="neutral">Neutral</option></select></label>
-            <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Tracker config<select className="auth-input mt-1" value={form.statTrackerConfigId || ''} onChange={(e) => updateField('statTrackerConfigId', e.target.value)}><option value="">No tracker config</option>{configs.map((config) => <option key={config.id} value={config.id}>{config.name}</option>)}</select></label>
+            <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Home / away<select className="auth-input mt-1 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-500" value={form.isHome === false ? 'away' : form.isHome === true ? 'home' : 'neutral'} onChange={(e) => updateField('isHome', e.target.value === 'neutral' ? null : e.target.value === 'home')} disabled={hasPinnedDiamondFields} aria-describedby={hasPinnedDiamondFields ? 'diamond-pinned-game-fields-note' : undefined}><option value="home">Home</option><option value="away">Away</option><option value="neutral">Neutral</option></select></label>
+            <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Tracker config<select className="auth-input mt-1 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-500" value={form.statTrackerConfigId || ''} onChange={(e) => updateField('statTrackerConfigId', e.target.value)} disabled={hasPinnedDiamondFields} aria-describedby={hasPinnedDiamondFields ? 'diamond-pinned-game-fields-note' : undefined}><option value="">No tracker config</option>{configs.map((config) => <option key={config.id} value={config.id}>{config.name}</option>)}</select></label>
             <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Competition<select className="auth-input mt-1" value={form.competitionType || 'league'} onChange={(e) => updateField('competitionType', e.target.value)}><option value="league">League</option><option value="tournament">Tournament</option><option value="scrimmage">Scrimmage</option><option value="friendly">Friendly</option></select></label>
           </div>
+          {hasPinnedDiamondFields ? <p id="diamond-pinned-game-fields-note" className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-sm font-semibold text-sky-800">Home/away and tracker config are locked after Diamond activation.</p> : null}
           <label className="flex items-center gap-2 text-sm font-black text-gray-800"><input type="checkbox" checked={form.countsTowardSeasonRecord !== false} onChange={(e) => updateField('countsTowardSeasonRecord', e.target.checked)} /> Counts toward season record</label>
           <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Notes<textarea className="auth-input mt-1 min-h-20" value={form.notes || ''} onChange={(e) => updateField('notes', e.target.value)} /></label>
           <button type="submit" className="primary-button" disabled={saving}>{saving ? 'Saving' : 'Save game'}</button>
@@ -481,7 +645,11 @@ function PracticeRecurrenceFields({ form, onChange }: { form: SchedulePracticeFo
   );
 }
 
-function LiveGameReactionsPanel({ auth, event }: { auth: AuthState; event: ParentScheduleEvent }) {
+function LiveGameReactionsPanel({ auth, event, diamondInteractionWindow }: {
+  auth: AuthState;
+  event: ParentScheduleEvent;
+  diamondInteractionWindow: DiamondInteractionWindowGate;
+}) {
   const [reactionsModule, setReactionsModule] = useState<LiveGameReactionsModule | null>(null);
   const [activeReactions, setActiveReactions] = useState<ActiveLiveReaction[]>([]);
   const [sendStatus, setSendStatus] = useState<string | null>(null);
@@ -492,16 +660,33 @@ function LiveGameReactionsPanel({ auth, event }: { auth: AuthState; event: Paren
     void loadLiveGameReactionsModule().then(setReactionsModule);
   }, []);
 
-  const canReact = reactionsModule ? reactionsModule.canUseLiveGameReactions(event, { now: new Date() }) : false;
-  const reactionNotice = reactionsModule ? reactionsModule.getLiveGameReactionNotice(event, { now: new Date() }) : null;
+  const isDiamondGame = event.trackingEngine === 'diamond-v2';
+  const diamondContext = useMemo(
+    () => getDiamondLiveEngagementContext(event),
+    [event]
+  );
+  const canReact = reactionsModule
+    ? isDiamondGame
+      ? Boolean(diamondContext && auth.user?.uid && diamondInteractionWindow.isOpen)
+      : reactionsModule.canUseLiveGameReactions(event, { now: new Date() })
+    : false;
+  const reactionNotice = reactionsModule
+    ? isDiamondGame
+      ? getDiamondInteractionWindowNotice(diamondInteractionWindow, 'reactions')
+      : reactionsModule.getLiveGameReactionNotice(event, { now: new Date() })
+    : null;
   const reactionOptions = reactionsModule ? reactionsModule.liveGameReactionOptions : [];
   const reactionsReady = Boolean(reactionsModule && reactionOptions.length);
 
   useEffect(() => {
     if (!reactionsModule || !event.isDbGame || !event.teamId || !event.id) return undefined;
+    if (isDiamondGame && !diamondContext) {
+      setSendStatus('The Diamond game generation is unavailable. Refresh before reacting.');
+      return undefined;
+    }
 
     const { subscribeToLiveGameReactions, liveGameReactionOptions: options } = reactionsModule;
-    const unsubscribe = subscribeToLiveGameReactions(event.teamId, event.id, (reaction) => {
+    const handleReaction = (reaction: LiveGameReaction) => {
       const normalizedType = options.some((option) => option.key === reaction.type)
         ? reaction.type
         : 'fire';
@@ -518,25 +703,52 @@ function LiveGameReactionsPanel({ auth, event }: { auth: AuthState; event: Paren
         timeoutIdsRef.current = timeoutIdsRef.current.filter((item) => item !== timeoutId);
       }, 2400);
       timeoutIdsRef.current.push(timeoutId);
-    }, (error: any) => {
+    };
+    const handleError = (error: any) => {
       setSendStatus(error?.message || 'Live reactions disconnected.');
-    });
+    };
+    const unsubscribe = diamondContext
+      ? subscribeToLiveGameReactions(
+          event.teamId,
+          event.id,
+          handleReaction,
+          handleError,
+          { diamond: diamondContext }
+        )
+      : subscribeToLiveGameReactions(
+          event.teamId,
+          event.id,
+          handleReaction,
+          handleError
+        );
 
     return () => {
       unsubscribe?.();
       timeoutIdsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
       timeoutIdsRef.current = [];
     };
-  }, [reactionsModule, event.id, event.isDbGame, event.teamId]);
+  }, [
+    reactionsModule,
+    event.id,
+    event.isDbGame,
+    event.teamId,
+    isDiamondGame,
+    diamondContext,
+  ]);
 
   const sendReaction = async (type: LiveGameReactionType) => {
     if (!reactionsModule || !canReact || !event.teamId || !event.id || !auth.user?.uid || sendingReactionKey === type) return;
     setSendingReactionKey(type);
     setSendStatus(null);
     try {
+      if (isDiamondGame && !(await diamondInteractionWindow.revalidate())) {
+        setSendStatus('Live reactions are locked until the server confirms the game window.');
+        return;
+      }
       await reactionsModule.sendLiveGameReaction(event.teamId, event.id, {
         type,
-        user: auth.user
+        user: auth.user,
+        ...(diamondContext ? { diamond: diamondContext } : {}),
       });
     } catch (error: any) {
       setSendStatus(error?.message || 'Unable to send reaction.');
@@ -604,18 +816,33 @@ function LiveGameReactionsPanel({ auth, event }: { auth: AuthState; event: Paren
           ? (reactionNotice || 'Shared Firestore stream. App and web viewers see the same reactions in real time.')
           : 'Loading reaction controls…'}
       </div>
+      {isDiamondGame && diamondInteractionWindow.hasError ? (
+        <button
+          type="button"
+          className="mt-2 min-h-10 rounded-full border border-amber-300 bg-white px-3 text-xs font-black text-amber-800"
+          onClick={() => void diamondInteractionWindow.revalidate()}
+          disabled={diamondInteractionWindow.isChecking}
+        >
+          Retry live interaction check
+        </button>
+      ) : null}
       {sendStatus ? <div className="mt-2 text-xs font-bold text-rose-700">{sendStatus}</div> : null}
     </div>
   );
 }
 
-function LiveGameChatPanel({ auth, event }: { auth: AuthState; event: ParentScheduleEvent }) {
+function LiveGameChatPanel({ auth, event, diamondInteractionWindow }: {
+  auth: AuthState;
+  event: ParentScheduleEvent;
+  diamondInteractionWindow: DiamondInteractionWindowGate;
+}) {
   const [chatModule, setChatModule] = useState<LiveGameChatModule | null>(null);
   const [messages, setMessages] = useState<LiveGameChatMessage[]>([]);
   const [messageText, setMessageText] = useState('');
   const [anonymousDisplayName, setAnonymousDisplayName] = useState('');
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [removingMessageId, setRemovingMessageId] = useState('');
   const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
   const messagesScrollRef = useRef<HTMLDivElement | null>(null);
   const stickToLatestRef = useRef(true);
@@ -625,8 +852,21 @@ function LiveGameChatPanel({ auth, event }: { auth: AuthState; event: ParentSche
     void loadLiveGameChatModule().then(setChatModule);
   }, []);
 
-  const canChat = chatModule ? chatModule.canUseLiveGameChat(event, { now: new Date() }) : false;
-  const chatNotice = chatModule ? chatModule.getLiveGameChatNotice(event, { now: new Date() }) : null;
+  const isDiamondGame = event.trackingEngine === 'diamond-v2';
+  const diamondContext = useMemo(
+    () => getDiamondLiveEngagementContext(event),
+    [event]
+  );
+  const canChat = chatModule
+    ? isDiamondGame
+      ? Boolean(diamondContext && auth.user?.uid && diamondInteractionWindow.isOpen)
+      : chatModule.canUseLiveGameChat(event, { now: new Date() })
+    : false;
+  const chatNotice = chatModule
+    ? isDiamondGame
+      ? getDiamondInteractionWindowNotice(diamondInteractionWindow, 'chat')
+      : chatModule.getLiveGameChatNotice(event, { now: new Date() })
+    : null;
   const canSend = canChat && Boolean(messageText.trim()) && !sending;
   const latestMessageId = messages[messages.length - 1]?.id || '';
 
@@ -669,20 +909,48 @@ function LiveGameChatPanel({ auth, event }: { auth: AuthState; event: ParentSche
     setStatus(null);
     stickToLatestRef.current = true;
     shouldFollowLatestRef.current = true;
-    const unsubscribe = chatModule.subscribeToLiveGameChat(event.teamId, event.id, (nextMessages) => {
+    if (isDiamondGame && !diamondContext) {
+      setStatus({ tone: 'error', message: 'The Diamond game generation is unavailable. Refresh before using chat.' });
+      setLoading(false);
+      return undefined;
+    }
+    const handleMessages = (nextMessages: LiveGameChatMessage[]) => {
       shouldFollowLatestRef.current = stickToLatestRef.current || isLiveGameChatNearBottom(messagesScrollRef.current);
       setMessages(sortLiveGameChatMessages(nextMessages));
       setLoading(false);
-    }, (subscribeError: any) => {
+    };
+    const handleError = (subscribeError: any) => {
       setStatus({ tone: 'error', message: subscribeError?.message || 'Unable to load live chat.' });
       setLoading(false);
-    });
+    };
+    const unsubscribe = diamondContext
+      ? chatModule.subscribeToLiveGameChat(
+          event.teamId,
+          event.id,
+          handleMessages,
+          handleError,
+          { diamond: diamondContext }
+        )
+      : chatModule.subscribeToLiveGameChat(
+          event.teamId,
+          event.id,
+          handleMessages,
+          handleError
+        );
 
     return () => {
       scrollScheduler.cancel();
       unsubscribe?.();
     };
-  }, [chatModule, event.id, event.isDbGame, event.teamId, scrollScheduler]);
+  }, [
+    chatModule,
+    event.id,
+    event.isDbGame,
+    event.teamId,
+    isDiamondGame,
+    diamondContext,
+    scrollScheduler,
+  ]);
 
   const sendMessage = async (submitEvent: FormEvent) => {
     submitEvent.preventDefault();
@@ -692,10 +960,15 @@ function LiveGameChatPanel({ auth, event }: { auth: AuthState; event: ParentSche
     setSending(true);
     setStatus(null);
     try {
+      if (isDiamondGame && !(await diamondInteractionWindow.revalidate())) {
+        setStatus({ tone: 'error', message: 'Live chat is locked until the server confirms the game window.' });
+        return;
+      }
       await chatModule.sendLiveGameChatMessage(event.teamId, event.id, {
         text: messageText,
         user: auth.user || undefined,
-        anonymousDisplayName
+        anonymousDisplayName,
+        ...(diamondContext ? { diamond: diamondContext } : {}),
       });
       setMessageText('');
       setStatus({ tone: 'success', message: 'Message sent.' });
@@ -703,6 +976,31 @@ function LiveGameChatPanel({ auth, event }: { auth: AuthState; event: ParentSche
       setStatus({ tone: 'error', message: sendError?.message || 'Unable to send message.' });
     } finally {
       setSending(false);
+    }
+  };
+
+  const removeMessage = async (message: LiveGameChatMessage) => {
+    if (
+      !chatModule
+      || !diamondContext
+      || !event.isTeamAdmin
+      || !auth.user?.uid
+      || !message.id
+      || removingMessageId
+    ) return;
+    if (!window.confirm('Remove this message from the live game chat?')) return;
+    setRemovingMessageId(message.id);
+    setStatus(null);
+    try {
+      await chatModule.moderateLiveGameChatMessage(event.teamId, event.id, message.id, {
+        user: auth.user,
+        diamond: diamondContext,
+      });
+      setStatus({ tone: 'success', message: 'Message removed.' });
+    } catch (removeError: any) {
+      setStatus({ tone: 'error', message: removeError?.message || 'Unable to remove the message.' });
+    } finally {
+      setRemovingMessageId('');
     }
   };
 
@@ -738,6 +1036,17 @@ function LiveGameChatPanel({ auth, event }: { auth: AuthState; event: ParentSche
                   <div className="text-[11px] font-semibold text-gray-500">{formatLiveGameChatTimestamp(message.createdAt)}</div>
                 </div>
                 <div className="mt-1 text-sm font-semibold leading-5 text-gray-700">{String(message.text || '').trim() || ' '}</div>
+                {isDiamondGame && event.isTeamAdmin ? (
+                  <button
+                    type="button"
+                    className="mt-2 min-h-8 rounded-lg px-2 text-xs font-black text-red-700 transition hover:bg-red-50 disabled:opacity-60"
+                    aria-label={`Remove live chat message from ${message.senderName || 'Fan'}`}
+                    disabled={Boolean(removingMessageId)}
+                    onClick={() => void removeMessage(message)}
+                  >
+                    {removingMessageId === message.id ? 'Removing…' : 'Remove'}
+                  </button>
+                ) : null}
               </article>
             )) : (
               <div className="text-sm font-semibold text-gray-500">No messages yet. Start the game-day chat.</div>
@@ -781,6 +1090,16 @@ function LiveGameChatPanel({ auth, event }: { auth: AuthState; event: ParentSche
               {sending ? 'Sending' : 'Send'}
             </button>
           </div>
+          {isDiamondGame && diamondInteractionWindow.hasError ? (
+            <button
+              type="button"
+              className="min-h-10 rounded-full border border-sky-300 bg-white px-3 text-xs font-black text-sky-800"
+              onClick={() => void diamondInteractionWindow.revalidate()}
+              disabled={diamondInteractionWindow.isChecking}
+            >
+              Retry live interaction check
+            </button>
+          ) : null}
         </form>
       </div>
 
@@ -867,7 +1186,91 @@ function GameHubLiveClockBadge({ event }: { event: ParentScheduleEvent }) {
   );
 }
 
-export function ScheduleGameHubSection({ auth, event, childEvents, requestedPanel, onPanelChange, onScoreUpdated, onLiveClockUpdated, onWrapupCompleted, onStatsheetImported, onGameCancelled, onPracticeOccurrenceCancelled, onGamePlanPublished, onReplayVideoUpdated }: {
+function DiamondActivationCard({ event, canUpdateScore, diamondScorebookUiEnabled }: {
+  event: ParentScheduleEvent;
+  canUpdateScore: boolean;
+  diamondScorebookUiEnabled: boolean;
+}) {
+  const navigate = useNavigate();
+  const [access, setAccess] = useState<Awaited<ReturnType<DiamondScorebookServiceModule['getDiamondAccess']>> | null>(null);
+  const [captureMode, setCaptureMode] = useState<'quick' | 'full'>('quick');
+  const [activating, setActivating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const shouldCheck = shouldCheckDiamondActivation(event, canUpdateScore, diamondScorebookUiEnabled);
+
+  useEffect(() => {
+    let cancelled = false;
+    setAccess(null);
+    setError(null);
+    if (!shouldCheck) return undefined;
+    void loadDiamondScorebookService()
+      .then((service) => service.getDiamondAccess(event.teamId, { gameId: event.id }))
+      .then((result) => {
+        if (!cancelled) setAccess(result);
+      })
+      .catch(() => {
+        // Access and rollout reads fail closed. In disabled/unreadable mode this
+        // optional card stays absent and the existing legacy tools remain intact.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [event.eventKey, event.id, event.teamId, shouldCheck]);
+
+  if (!shouldCheck || !access?.eligible || !access.canManage || !access.teamOptIn || access.policyMode === 'disabled') {
+    return null;
+  }
+
+  const activate = async () => {
+    if (activating || !isDiamondScorebookUiEnabled()) return;
+    const confirmed = window.confirm(
+      `Use Diamond ${captureMode === 'full' ? 'Full' : 'Quick'} capture for this game? `
+      + 'This permanently assigns this untracked game to the Diamond ledger; the legacy tracker will remain available for every other game.'
+    );
+    if (!confirmed) return;
+    setActivating(true);
+    setError(null);
+    try {
+      const service = await loadDiamondScorebookService();
+      await service.activateDiamondGame({ teamId: event.teamId, gameId: event.id, captureMode });
+      navigate(`/schedule/${encodeURIComponent(event.teamId)}/${encodeURIComponent(event.id)}/diamond-v2`);
+    } catch (activationError: any) {
+      setError(activationError?.message || 'Diamond could not claim this game. The legacy tracker is still available.');
+    } finally {
+      setActivating(false);
+    }
+  };
+
+  return (
+    <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-3" data-testid="diamond-activation-card">
+      <div className="text-sm font-black text-emerald-950">Diamond scorebook</div>
+      <p className="mt-1 text-xs font-semibold leading-5 text-emerald-900">
+        Quick keeps taps minimal. Full records pitches, fielding chains, and scoring judgments for complete stats.
+      </p>
+      <div className="mt-3 grid grid-cols-2 gap-2" role="group" aria-label="Diamond capture mode">
+        {(['quick', 'full'] as const).map((mode) => (
+          <button
+            key={mode}
+            type="button"
+            className={`min-h-11 rounded-xl border px-3 text-sm font-black ${captureMode === mode ? 'border-emerald-700 bg-emerald-700 text-white' : 'border-emerald-300 bg-white text-emerald-900'}`}
+            aria-pressed={captureMode === mode}
+            onClick={() => setCaptureMode(mode)}
+            disabled={activating}
+          >
+            {mode === 'quick' ? 'Quick capture' : 'Full capture'}
+          </button>
+        ))}
+      </div>
+      <button type="button" className="primary-button mt-3 min-h-11 w-full justify-center px-4 text-sm" onClick={() => void activate()} disabled={activating}>
+        <ClipboardCheck className="h-4 w-4" aria-hidden="true" />
+        {activating ? 'Starting Diamond…' : 'Start Diamond scorebook'}
+      </button>
+      {error ? <div className="mt-2 text-xs font-bold text-red-700" role="alert">{error}</div> : null}
+    </div>
+  );
+}
+
+export function ScheduleGameHubSection({ auth, event, childEvents, requestedPanel, onPanelChange, onScoreUpdated, onLiveClockUpdated, onWrapupCompleted, onStatsheetImported, onGameCancelled, onPracticeOccurrenceCancelled, onGamePlanPublished, onReplayVideoUpdated, onEventRefresh }: {
   auth: AuthState;
   event: ParentScheduleEvent;
   childEvents: ParentScheduleEvent[];
@@ -881,6 +1284,7 @@ export function ScheduleGameHubSection({ auth, event, childEvents, requestedPane
   onPracticeOccurrenceCancelled: () => void;
   onGamePlanPublished: (gamePlan: Record<string, any>) => void;
   onReplayVideoUpdated: (replayVideo: YouTubeReplayVideo | null, replayState: ReplayArchiveState) => void;
+  onEventRefresh: () => Promise<void> | void;
 }) {
   const { isDesktopWeb } = useShellLayout();
   const [shareStatus, setShareStatus] = useState<string | null>(null);
@@ -895,25 +1299,38 @@ export function ScheduleGameHubSection({ auth, event, childEvents, requestedPane
   const showAdminPracticeTimeline = Boolean(isPractice && event.isTeamAdmin);
   const showNonAdminPracticePacketFirst = Boolean(isPractice && !event.isTeamAdmin);
   const canUpdateScore = shouldShowLiveScoreControls(event, auth.user);
-  const canLaunchStandardTracker = canUpdateScore && Boolean(event.statTrackerConfigId);
+  const diamondScorebookUiEnabled = isDiamondScorebookUiEnabled();
+  const isDiamondOwned = event.trackingEngine === 'diamond-v2';
+  const isLegacyOwned = isLegacyTrackingEngine(event.trackingEngine);
+  const hasUnknownTrackingEngine = !isDiamondOwned && !isLegacyOwned;
+  const canUseLegacyScoring = canUpdateScore && isLegacyOwned;
+  const canLaunchStandardTracker = canUseLegacyScoring && Boolean(event.statTrackerConfigId);
   const hasBasketballGameTools = supportsBasketballGameTools(event);
-  const canWrapup = canUpdateScore;
-  const canCancelGame = Boolean(!isPractice && event.isDbGame && !event.isCancelled && event.canUpdateScore && auth.user);
+  const canWrapup = canUseLegacyScoring;
+  const canCancelGame = Boolean(
+    !isPractice && event.isDbGame && !event.isCancelled && event.canUpdateScore && (!isDiamondOwned || event.isTeamAdmin) && auth.user
+  );
   const isRecurringPracticeOccurrence = Boolean(isPractice && event.id.includes('__'));
   const canCancelPracticeOccurrence = Boolean(isRecurringPracticeOccurrence && event.isDbGame && !event.isCancelled && event.isTeamAdmin && auth.user);
-  const canPublishLineup = Boolean(!isPractice && event.isDbGame && event.isTeamStaff);
+  const canPublishLineup = Boolean(!isPractice && event.isDbGame && event.isTeamStaff && isLegacyOwned);
   const notifiesCounterpartTeam = Boolean(event.sharedScheduleOpponentTeamId);
+  const diamondInteractionWindow = useDiamondInteractionWindowGate(
+    event,
+    isDiamondOwned && Boolean(openPanels.chat || openPanels.reactions),
+    auth.user?.uid,
+  );
   const hubDestinations = isPractice ? buildPracticeHubDestinations(event) : buildGameHubDestinations(event);
   const standardTrackerHref = `/schedule/${encodeURIComponent(event.teamId)}/${encodeURIComponent(event.id)}/track`;
+  const diamondScorebookHref = `/schedule/${encodeURIComponent(event.teamId)}/${encodeURIComponent(event.id)}/diamond-v2`;
   const availablePanelIds = useMemo(() => {
     const panels: GameHubPanelId[] = [];
-    if (canUpdateScore && hasBasketballGameTools) panels.push('foul');
+    if (canUseLegacyScoring && hasBasketballGameTools) panels.push('foul');
     if (!isPractice) panels.push('reactions', 'chat');
     if (canWrapup) panels.push('wrapup', 'statsheet');
     if (canPublishLineup) panels.push('lineup', 'substitutions');
     if (!isPractice) panels.push('report');
     return panels;
-  }, [canPublishLineup, canUpdateScore, canWrapup, hasBasketballGameTools, isPractice]);
+  }, [canPublishLineup, canUseLegacyScoring, canWrapup, hasBasketballGameTools, isPractice]);
   const requestedPanelAvailable = requestedPanel && availablePanelIds.includes(requestedPanel)
     ? requestedPanel
     : null;
@@ -945,7 +1362,7 @@ export function ScheduleGameHubSection({ auth, event, childEvents, requestedPane
 
   useEffect(() => {
     let cancelled = false;
-    if (!canUpdateScore || !hasBasketballGameTools) {
+    if (!canUseLegacyScoring || !hasBasketballGameTools) {
       setHomeScoringPlayers([]);
       setLoadingHomeScoringPlayers(false);
       return undefined;
@@ -966,7 +1383,7 @@ export function ScheduleGameHubSection({ auth, event, childEvents, requestedPane
     return () => {
       cancelled = true;
     };
-  }, [canUpdateScore, event.teamId, event.id, event.eventKey, hasBasketballGameTools]);
+  }, [canUseLegacyScoring, event.teamId, event.id, event.eventKey, hasBasketballGameTools]);
 
   const updateHomeScoringPlayers = useCallback((updater: HomeScoringPlayersUpdater) => {
     setHomeScoringPlayers(updater);
@@ -1042,7 +1459,7 @@ export function ScheduleGameHubSection({ auth, event, childEvents, requestedPane
   };
 
   return (
-    <section className={`space-y-3 ${canUpdateScore && !isDesktopWeb ? 'mobile-live-score-tray-offset' : ''}`}>
+    <section className={`space-y-3 ${canUseLegacyScoring && !isDesktopWeb ? 'mobile-live-score-tray-offset' : ''}`}>
       {showNonAdminPracticePacketFirst ? <PracticePacketSection auth={auth} event={event} childEvents={childEvents} /> : null}
       {showAdminPracticeTimeline ? <PracticeTimelineSection auth={auth} event={event} /> : null}
       {!isPractice && event.isTeamAdmin && event.isDbGame && !event.isCancelled ? <GameScheduleEditPanel auth={auth} event={event} /> : null}
@@ -1099,20 +1516,43 @@ export function ScheduleGameHubSection({ auth, event, childEvents, requestedPane
               </div>
             </div>
 
-            {canUpdateScore ? <LiveGameClockPanel auth={auth} event={event} onLiveClockUpdated={onLiveClockUpdated} /> : null}
+            {canUseLegacyScoring ? <LiveGameClockPanel auth={auth} event={event} onLiveClockUpdated={onLiveClockUpdated} /> : null}
           </LiveGameClockTickerProvider>
+          <DiamondActivationCard
+            event={event}
+            canUpdateScore={canUpdateScore}
+            diamondScorebookUiEnabled={diamondScorebookUiEnabled}
+          />
+          {isDiamondOwned && canUpdateScore ? (
+            <Link to={diamondScorebookHref} className="primary-button mt-3 min-h-11 w-full justify-center px-4 text-sm" data-testid="diamond-scorebook-launch">
+              <ClipboardCheck className="h-4 w-4" aria-hidden="true" />
+              Open Diamond scorebook
+            </Link>
+          ) : null}
+          {isDiamondOwned ? (
+            <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-900" role="status">
+              Score, plays, lineups, and corrections are controlled by the Diamond ledger.
+            </div>
+          ) : null}
+          {hasUnknownTrackingEngine ? (
+            <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-bold text-amber-900" role="alert">
+              Update ALL PLAYS before editing this game’s scorebook.
+            </div>
+          ) : null}
           {canLaunchStandardTracker ? (
             <Link to={standardTrackerHref} className="secondary-button mt-3 min-h-11 w-full justify-center px-4 text-sm" data-testid="standard-tracker-launch">
               <ClipboardCheck className="h-4 w-4" aria-hidden="true" />
               Standard tracker
             </Link>
           ) : null}
-          {canUpdateScore && !event.statTrackerConfigId ? (
+          {canUseLegacyScoring && !event.statTrackerConfigId ? (
             <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-bold text-amber-800" role="status">
-              Assign a tracker config in Edit game before opening the standard tracker.
+              {diamondScorebookUiEnabled
+                ? 'Assign a tracker config in Edit game before opening Standard or Diamond scoring.'
+                : 'Assign a tracker config in Edit game before opening Standard scoring.'}
             </div>
           ) : null}
-          {canUpdateScore ? (
+          {canUseLegacyScoring ? (
             <LiveScoreEditor
               auth={auth}
               event={event}
@@ -1124,7 +1564,7 @@ export function ScheduleGameHubSection({ auth, event, childEvents, requestedPane
               onLiveStatusUpdated={() => onLiveClockUpdated({ liveStatus: 'live' })}
             />
           ) : null}
-          {canUpdateScore && hasBasketballGameTools ? (
+          {canUseLegacyScoring && hasBasketballGameTools ? (
             <LazyGameHubPanel
               panelId="game-hub-foul-panel"
               title="Foul tracker"
@@ -1152,7 +1592,11 @@ export function ScheduleGameHubSection({ auth, event, childEvents, requestedPane
               open={Boolean(openPanels.reactions)}
               onToggle={() => togglePanel('reactions')}
             >
-              <LiveGameReactionsPanel auth={auth} event={event} />
+              <LiveGameReactionsPanel
+                auth={auth}
+                event={event}
+                diamondInteractionWindow={diamondInteractionWindow}
+              />
             </LazyGameHubPanel>
           ) : null}
           {!isPractice ? (
@@ -1163,7 +1607,11 @@ export function ScheduleGameHubSection({ auth, event, childEvents, requestedPane
               open={Boolean(openPanels.chat)}
               onToggle={() => togglePanel('chat')}
             >
-              <LiveGameChatPanel auth={auth} event={event} />
+              <LiveGameChatPanel
+                auth={auth}
+                event={event}
+                diamondInteractionWindow={diamondInteractionWindow}
+              />
             </LazyGameHubPanel>
           ) : null}
 
@@ -1281,7 +1729,7 @@ export function ScheduleGameHubSection({ auth, event, childEvents, requestedPane
           onToggle={() => togglePanel('report')}
         >
           <Suspense fallback={<div className="mt-3 rounded-2xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-500">Loading report sections...</div>}>
-            <DeferredGameReportSections event={event} />
+            <DeferredGameReportSections event={event} onRefreshEvent={onEventRefresh} />
           </Suspense>
         </LazyGameHubPanel>
       ) : null}
