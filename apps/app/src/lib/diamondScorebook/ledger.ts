@@ -146,6 +146,22 @@ export function canonicalizeDiamondPrivateNoteCommand(
   command: DiamondCommand,
   privateMaterial = getDiamondPrivateNoteText(command) !== null
 ): DiamondCommand {
+  const requireKeys = (value: object, allowed: readonly string[]) => {
+    if (Object.keys(value).some((key) => !allowed.includes(key))) {
+      throw new DiamondDomainError('invalid-private-payload', 'Private material contains unsupported fields.');
+    }
+  };
+  if (command.type === 'private_note') {
+    requireKeys(command.payload, ['text', 'attachedEventId', 'visibility']);
+  } else if (privateMaterial && command.type === 'supersede_event') {
+    requireKeys(command.payload, ['targetEventId', 'reason', 'replacement']);
+    requireKeys(command.payload.replacement, ['type', 'payload']);
+    if (command.payload.replacement.type === 'private_note') {
+      requireKeys(command.payload.replacement.payload, ['text', 'attachedEventId', 'visibility']);
+    }
+  } else if (privateMaterial && command.type === 'void_event') {
+    requireKeys(command.payload, ['targetEventId', 'reason']);
+  }
   const canonicalCommand = privateMaterial ? ({ ...command, leaseId: null } as unknown as DiamondCommand) : command;
   if (canonicalCommand.type === 'private_note') {
     return {
@@ -449,6 +465,9 @@ function knownPlayerIds(state: DiamondGameState, side: DiamondSide) {
   return new Set([
     ...lineup.battingOrder.flatMap((slot) => [slot.starterPlayerId, slot.activePlayerId, ...slot.substitutions]),
     ...(lineup.dhDefense ? [lineup.dhDefense.starterPlayerId, lineup.dhDefense.activePlayerId, ...lineup.dhDefense.substitutions] : []),
+    ...(lineup.flexDefense
+      ? [lineup.flexDefense.starterPlayerId, lineup.flexDefense.activePlayerId, ...lineup.flexDefense.substitutions]
+      : []),
     ...Object.values(lineup.defense).filter((playerId): playerId is string => Boolean(playerId)),
     ...lineup.courtesyRunnerIds,
     ...(lineup.dpFlex ? [lineup.dpFlex.dpPlayerId, lineup.dpFlex.flexPlayerId] : [])
