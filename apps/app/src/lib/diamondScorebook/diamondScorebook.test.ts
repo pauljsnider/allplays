@@ -11,6 +11,7 @@ import {
   formatDiamondRate,
   formatInningsPitched,
   getEffectiveDiamondEvents,
+  getDiamondPlayerIdentityIdsBySide,
   getDiamondRulesProfile,
   listDiamondRulesProfiles,
   projectDiamondStats,
@@ -110,6 +111,7 @@ describe('Diamond substitution and immutable-profile regressions', () => {
     });
     game.submit('start', {});
     const battingOrder = game.ledger.state.lineups.home.battingOrder;
+    game.submit('record_pitch', { batterId: 'away-1', pitcherId: 'pitcher-only', result: 'ball' });
     game.submit('substitute', {
       side: 'home',
       battingSlot: 1,
@@ -120,19 +122,46 @@ describe('Diamond substitution and immutable-profile regressions', () => {
     expect(game.ledger.state.lineups.home.battingOrder).toEqual(battingOrder);
     expect(game.ledger.state.lineups.home.defense.P).toBe('reliever-only');
     game.submit('record_pitch', { batterId: 'away-1', pitcherId: 'reliever-only', result: 'ball' });
+    game.submit('substitute', {
+      side: 'home',
+      battingSlot: 1,
+      outgoingPlayerId: 'reliever-only',
+      incomingPlayerId: 'second-reliever-only',
+      defensivePosition: 'P'
+    });
+    expect(getDiamondPlayerIdentityIdsBySide(game.ledger).home).toEqual(
+      expect.arrayContaining(['pitcher-only', 'reliever-only', 'second-reliever-only'])
+    );
+    const laterPlay = game.submit('record_plate_appearance', {
+      batterId: 'away-1',
+      pitcherId: 'second-reliever-only',
+      result: 'strikeout',
+      batterAdvance: { to: 'out', outKind: 'strikeout' },
+      runnerAdvances: [],
+      outsOnPlay: 1
+    });
+    game.submit('record_scoring_judgment', {
+      playEventId: laterPlay.event!.eventId,
+      pitcherOfRecord: { side: 'home', playerId: 'pitcher-only', decision: 'win' }
+    });
+    game.submit('record_scoring_judgment', {
+      playEventId: laterPlay.event!.eventId,
+      pitcherOfRecord: { side: 'home', playerId: 'reliever-only', decision: 'save' }
+    });
+    game.submit('record_pitch', { batterId: 'away-2', pitcherId: 'second-reliever-only', result: 'ball' });
     expect(
       game.submit(
         'substitute',
         {
           side: 'home',
           battingSlot: 1,
-          outgoingPlayerId: 'reliever-only',
+          outgoingPlayerId: 'second-reliever-only',
           incomingPlayerId: 'pitcher-only'
         },
         { accept: false }
       ).result.rejection?.code
     ).toBe('reentry-required');
-    const command = { side: 'home' as const, battingSlot: 1, replacedPlayerId: 'reliever-only', starterPlayerId: 'pitcher-only' };
+    const command = { side: 'home' as const, battingSlot: 1, replacedPlayerId: 'second-reliever-only', starterPlayerId: 'pitcher-only' };
     if (profileId === 'baseball-obr') {
       expect(game.submit('re_enter', command, { accept: false }).result.rejection?.code).toBe('reentry-limit');
     } else {
