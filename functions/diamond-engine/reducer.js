@@ -963,6 +963,9 @@ function validateOutcomeDestination(state, result, destination) {
     // an error, but both use the pre-play eligibility snapshot here.
     const advancesOnDroppedThirdStrike = (result === 'strikeout' && destination === 'first') || (result === 'dropped_third_strike' && destination !== 'out');
     if (advancesOnDroppedThirdStrike) {
+        if (state.inning.lastPitchResult === 'foul_bunt' && state.inning.strikes === 3) {
+            throw new contracts_1.DiamondDomainError('dropped-third-strike-ineligible', 'A third-strike foul bunt is a dead-ball out.');
+        }
         const profile = (0, rules_1.requireDiamondRulesProfile)(state.rulesProfileId, state.rulesProfileVersion);
         if (!profile.droppedThirdStrike.enabled) {
             throw new contracts_1.DiamondDomainError('rule-not-enabled', 'Dropped-third-strike advancement is disabled by this profile.');
@@ -1520,6 +1523,9 @@ function reduceDiamondEvent(state, action) {
             if (action.payload.captureMode !== 'quick' && action.payload.captureMode !== 'full') {
                 throw new contracts_1.DiamondDomainError('invalid-capture-mode', 'Capture mode must be quick or full.');
             }
+            if (action.payload.captureMode !== state.captureMode) {
+                throw new contracts_1.DiamondDomainError('capture-mode-mismatch', 'Activation must preserve the configured ledger capture mode.');
+            }
             next = {
                 ...next,
                 lifecycle: 'ready',
@@ -1661,6 +1667,16 @@ function reduceDiamondEvent(state, action) {
                 throw new contracts_1.DiamondDomainError('missing-lineup', 'Both teams need a batting lineup before the game starts.');
             }
             ['home', 'away'].forEach((side) => {
+                const lineup = state.lineups[side];
+                const profile = (0, rules_1.requireDiamondRulesProfile)(state.rulesProfileId, state.rulesProfileVersion);
+                const battingPlayers = new Set(lineup.battingOrder.map((entry) => entry.activePlayerId));
+                const defensiveOnly = Object.values(lineup.defense).filter((playerId) => playerId && !battingPlayers.has(playerId));
+                const permittedFlex = lineup.dpFlex?.flexPlayerId;
+                const remainingDefenders = defensiveOnly.filter((playerId) => playerId !== permittedFlex);
+                const hasActiveDh = profile.allowsDh && lineup.battingOrder.some((entry) => entry.battingRole === 'dh');
+                if (remainingDefenders.length > (hasActiveDh ? 1 : 0)) {
+                    throw new contracts_1.DiamondDomainError('invalid-defensive-personnel', `${side} has a defender outside its batting order without an authorized DH or FLEX role.`);
+                }
                 if (!state.lineups[side].defense.P) {
                     throw new contracts_1.DiamondDomainError('missing-defensive-pitcher', `${side} must set a defensive pitcher before the game starts.`);
                 }
