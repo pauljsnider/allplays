@@ -12,7 +12,7 @@ describe('app Diamond routing compatibility contract', () => {
         expect(route).toContain('isDiamondScorebookUiEnabled()');
         expect(route).toContain('<Navigate to="/schedule" replace />');
         expect(source).toContain('path="/schedule/:teamId/:eventId/diamond-v2"');
-        expect(source).toContain('<Protected auth={auth}><DiamondScorebookRoute auth={auth} /></Protected>');
+        expect(source.replace(/\s/g, '')).toContain('<Protected auth={auth}><DiamondScorebookRoute auth={auth} /></Protected>'.replace(/\s/g, ''));
     });
 
     it('carries the permanent engine discriminator through schedule models', () => {
