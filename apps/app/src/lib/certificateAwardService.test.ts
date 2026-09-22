@@ -21,7 +21,12 @@ const legacyDraftMocks = vi.hoisted(() => ({
   updateCertificateBatch: vi.fn()
 }));
 
+const diamondContextMocks = vi.hoisted(() => ({
+  loadCompleteCertificateNarrativeStats: vi.fn()
+}));
+
 vi.mock('./adapters/legacyCertificateDraft', () => legacyDraftMocks);
+vi.mock('./adapters/legacyDiamondGameContext', () => diamondContextMocks);
 
 describe('certificateAwardService', () => {
   const user = {
@@ -90,6 +95,11 @@ describe('certificateAwardService', () => {
     legacyDraftMocks.getAggregatedStatsForGames.mockResolvedValue({
       'player-1': { goals: 2, assists: 1 }
     });
+    diamondContextMocks.loadCompleteCertificateNarrativeStats.mockImplementation(async ({ teamId, games, loadClassicAggregatedStats }) => ({
+      totalsByPlayer: await loadClassicAggregatedStats(teamId, games.map((game: any) => game.id)),
+      statsEvidenceByPlayer: {},
+      promptEvidence: null
+    }));
     legacyDraftMocks.updateCertificate.mockResolvedValue(undefined);
     legacyDraftMocks.updateCertificateBatch.mockResolvedValue(undefined);
     legacyDraftMocks.setCertificateDefaults.mockResolvedValue(undefined);
@@ -132,6 +142,7 @@ describe('certificateAwardService', () => {
       generator
     });
 
+    expect(legacyDraftMocks.getGames).toHaveBeenCalledWith('team-1', { requireCompleteSharedGames: true });
     expect(legacyDraftMocks.getAggregatedStatsForGames).toHaveBeenCalledWith('team-1', ['game-1']);
     expect(generator).toHaveBeenCalledWith(expect.objectContaining({
       team,
@@ -151,6 +162,81 @@ describe('certificateAwardService', () => {
       errorMessage: null
     });
     expect(legacyDraftMocks.updateCertificate).not.toHaveBeenCalled();
+  });
+
+  it('delegates mixed classic and Diamond narratives to complete public evidence and passes omission boundaries to AI', async () => {
+    legacyDraftMocks.getGames.mockResolvedValue([
+      { id: 'classic-game', status: 'completed', type: 'game', trackingEngine: 'classic', date: new Date('2026-04-10') },
+      {
+        id: 'diamond-game',
+        status: 'completed',
+        type: 'game',
+        trackingEngine: 'diamond-v2',
+        date: new Date('2026-04-11')
+      }
+    ]);
+    diamondContextMocks.loadCompleteCertificateNarrativeStats.mockResolvedValue({
+      totalsByPlayer: { 'player-1': { ab: 5 } },
+      statsEvidenceByPlayer: {
+        'player-1': {
+          complete: false,
+          visibility: 'public',
+          omittedOrIncompleteStatKeys: ['h']
+        }
+      },
+      promptEvidence: {
+        complete: true,
+        visibility: 'public',
+        instructions: 'Omitted or incomplete counters are unknown, never zero.'
+      }
+    });
+    const generator = vi.fn(async () => 'Pat showed strong decision-making and steady growth throughout the season while lifting teammates with positive energy.');
+
+    await generateCertificateAwardNarrativesForApp({
+      teamId: 'team-1',
+      user,
+      shared,
+      drafts: [draft],
+      generator
+    });
+
+    expect(diamondContextMocks.loadCompleteCertificateNarrativeStats).toHaveBeenCalledWith(expect.objectContaining({
+      teamId: 'team-1',
+      games: expect.arrayContaining([
+        expect.objectContaining({ id: 'classic-game' }),
+        expect.objectContaining({ id: 'diamond-game', trackingEngine: 'diamond-v2' })
+      ]),
+      loadClassicAggregatedStats: legacyDraftMocks.getAggregatedStatsForGames
+    }));
+    expect(generator).toHaveBeenCalledWith(expect.objectContaining({
+      stats: { ab: 5 },
+      statsEvidence: expect.objectContaining({
+        player: expect.objectContaining({ omittedOrIncompleteStatKeys: ['h'] }),
+        context: expect.objectContaining({ visibility: 'public' })
+      })
+    }));
+  });
+
+  it('fails closed to an error draft and never invokes AI when complete Diamond evidence cannot load', async () => {
+    diamondContextMocks.loadCompleteCertificateNarrativeStats.mockRejectedValue(
+      new Error('Complete public Diamond stats are unavailable. Please retry.')
+    );
+    const generator = vi.fn();
+
+    const generated = await generateCertificateAwardNarrativesForApp({
+      teamId: 'team-1',
+      user,
+      shared,
+      drafts: [draft],
+      generator
+    });
+
+    expect(generator).not.toHaveBeenCalled();
+    expect(generated[0]).toMatchObject({
+      descriptionStatus: 'error',
+      descriptionSource: 'fallback',
+      errorMessage: 'Complete public Diamond stats are unavailable. Please retry.'
+    });
   });
 
   it('keeps drafts safe when AI fails and does not publish without confirmation', async () => {
