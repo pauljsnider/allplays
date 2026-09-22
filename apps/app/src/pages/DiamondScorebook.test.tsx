@@ -5461,6 +5461,7 @@ describe('DiamondScorebook', () => {
       })
     );
 
+    await screen.findByText('Live · revision 8');
     const structured = screen.getByRole('group', { name: 'Structured fielding or scoring judgment' });
     fireEvent.click(within(structured).getByRole('button', { name: 'Load exact play targets' }));
     await waitFor(() => expect(within(structured).getByLabelText('Effective play')).toHaveValue('event-7'));
