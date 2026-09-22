@@ -5088,8 +5088,8 @@ describe('DiamondScorebook', () => {
     expect(fixture.createCommand).not.toHaveBeenCalled();
   });
 
-  it('reviews and submits a complete same-personnel live defensive swap without changing lineup history', async () => {
-    const snapshot = buildSnapshot();
+  it('reviews and submits a between-PA same-personnel live defensive swap without changing lineup history', async () => {
+    const snapshot = buildSnapshot({ inning: { ...buildSnapshot().inning, balls: 0, strikes: 0, pitchesInPlateAppearance: 0 } });
     const fixture = createClient(snapshot);
     renderScorebook(snapshot, fixture);
 
@@ -5138,7 +5138,11 @@ describe('DiamondScorebook', () => {
 
     const uiPayload = fixture.createCommand.mock.calls[0]![0].payload as unknown as DiamondCommandPayloadMap['set_defensive_alignment'];
     const startingState = buildReducerStateForUiSnapshot();
-    const reduced = reduceDiamondEvent(startingState, {
+    const betweenPlateAppearances = {
+      ...startingState,
+      inning: { ...startingState.inning, balls: 0, strikes: 0, pitchesInPlateAppearance: 0, lastPitchResult: null }
+    };
+    const reduced = reduceDiamondEvent(betweenPlateAppearances, {
       type: 'set_defensive_alignment',
       eventId: 'ui-defense-swap',
       payload: uiPayload
