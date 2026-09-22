@@ -150,6 +150,7 @@ const PLAYER_RAW_FIELDS = Object.freeze({
     ["pitches", "pitches"],
     ["strikes", "strikes"],
     ["firstPitchStrikes", "first_pitch_strikes"],
+    ["firstPitchStrikeOpportunities", "first_pitch_strike_opportunities"],
   ]),
   fielding: Object.freeze([
     ["defensiveOuts", "defensive_outs"],
@@ -189,6 +190,7 @@ const PITCH_RAW_DOMAIN_KEYS = new Set([
   "pitches",
   "strikes",
   "firstPitchStrikes",
+  "firstPitchStrikeOpportunities",
 ]);
 const PITCH_DERIVED_DOMAIN_KEYS = new Set([
   "strikeRate",
