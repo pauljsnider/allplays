@@ -37,6 +37,70 @@ import {
 const SCORER = 'scorer-1';
 
 describe('Diamond substitution and immutable-profile regressions', () => {
+  it.each(['quick', 'full'] as const)('rejects an activation that changes configured %s capture mode', (captureMode) => {
+    const game = harness('baseball-nfhs', captureMode);
+    const rejected = game.submit(
+      'activate',
+      { initialScorerUid: SCORER, captureMode: captureMode === 'quick' ? 'full' : 'quick' },
+      { accept: false }
+    );
+    expect(rejected.result.rejection?.code).toBe('capture-mode-mismatch');
+    expect(rejected.ledger).toEqual(game.ledger);
+    game.submit('activate', { initialScorerUid: SCORER, captureMode });
+    const checkpoint = createDiamondCheckpoint(game.ledger);
+    const next = executeDiamondCommandFromCheckpoint(
+      checkpoint,
+      game.command('set_lineup', { side: 'home', entries: [{ slot: 1, playerId: 'home-1' }] }),
+      { actorUid: SCORER, eventId: 'checkpoint-lineup', serverTimestampMs: 1700000000100 }
+    );
+    expect(next.result.outcome).toBe('accepted');
+  });
+
+  it.each([false, true])('rejects unsupported defensive-only personnel before start (DH=%s)', (dh) => {
+    const game = harness('baseball-nfhs', 'quick');
+    setBasicLineups(game, { start: false, ...(dh ? { homeFirstBattingRole: 'dh' as const } : {}) });
+    game.submit('set_defensive_alignment', {
+      side: 'home',
+      assignments: [
+        { playerId: 'pitcher-only', position: 'P' },
+        { playerId: dh ? 'catcher-only' : 'home-2', position: 'C' }
+      ]
+    });
+    const before = game.ledger;
+    const rejected = game.submit('start', {}, { accept: false });
+    expect(rejected.result.rejection?.code).toBe('invalid-defensive-personnel');
+    expect(rejected.ledger).toEqual(before);
+  });
+
+  it.each(['strikeout', 'dropped_third_strike'] as const)('rejects a safe %s advance after a third-strike foul bunt', (result) => {
+    const game = harness('baseball-nfhs', 'full');
+    setBasicLineups(game);
+    for (const pitch of ['called_strike', 'called_strike', 'foul_bunt'] as const)
+      game.submit('record_pitch', { batterId: 'away-1', pitcherId: 'home-1', result: pitch });
+    const rejected = game.submit(
+      'record_plate_appearance',
+      {
+        batterId: 'away-1',
+        pitcherId: 'home-1',
+        result,
+        batterAdvance: { to: 'first', cause: 'wild_pitch' },
+        runnerAdvances: [],
+        outsOnPlay: 0
+      },
+      { accept: false }
+    );
+    expect(rejected.result.rejection?.code).toBe('dropped-third-strike-ineligible');
+    game.submit('record_plate_appearance', {
+      batterId: 'away-1',
+      pitcherId: 'home-1',
+      result: 'strikeout',
+      batterAdvance: { to: 'out', outKind: 'strikeout' },
+      runnerAdvances: [],
+      outsOnPlay: 1
+    });
+    expect(game.ledger.state.inning.outs).toBe(1);
+  });
+
   it('freezes every nested run-ahead rule returned by either accessor', () => {
     for (const profile of listDiamondRulesProfiles()) {
       for (const rule of profile.runAheadRules) {
@@ -952,10 +1016,17 @@ describe('Diamond rules and canonical contracts', () => {
       side: 'home',
       entries: [
         { slot: 1, playerId: 'home-batting-only', battingRole: 'ep' },
-        { slot: 2, playerId: 'home-defense-2' }
+        { slot: 2, playerId: 'home-defense-2' },
+        ...[1, 3, 4, 5, 6, 7, 8, 9, 10].map((id, index) => ({ slot: index + 3, playerId: `home-defense-${id}` }))
       ]
     });
-    game.submit('set_lineup', { side: 'away', entries: [{ slot: 1, playerId: 'away-batter' }] });
+    game.submit('set_lineup', {
+      side: 'away',
+      entries: [
+        { slot: 1, playerId: 'away-batter' },
+        { slot: 2, playerId: 'away-pitcher' }
+      ]
+    });
     game.submit('set_defensive_alignment', {
       side: 'home',
       assignments: [
