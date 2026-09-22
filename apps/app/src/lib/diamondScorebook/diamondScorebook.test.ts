@@ -38,6 +38,23 @@ const SCORER = 'scorer-1';
 
 describe('Diamond security boundary regressions', () => {
   const context = { actorUid: SCORER, eventId: 'security-check', serverTimestampMs: 1700000001000 };
+  it.each(['start', 'advance_half_inning', 'resume'] as const)('requires a root payload object for %s', (type) => {
+    const game = harness('baseball-nfhs', 'quick');
+    setBasicLineups(game, { start: type !== 'start' });
+    if (type === 'resume') game.submit('suspend', { reason: 'Rain delay' });
+    if (type === 'advance_half_inning') for (let out = 0; out < 3; out += 1) recordQuickOut(game);
+    const valid = game.command(type, {});
+    const checkpoint = createDiamondCheckpoint(game.ledger);
+    expect(executeDiamondCommand(game.ledger, valid, context).result.outcome).toBe('accepted');
+    expect(executeDiamondCommandFromCheckpoint(checkpoint, valid, context).result.outcome).toBe('accepted');
+    const command = { ...valid, payload: undefined } as unknown as DiamondCommand;
+    const full = executeDiamondCommand(game.ledger, command, context);
+    const compact = executeDiamondCommandFromCheckpoint(checkpoint, command, context);
+    expect(full.result.rejection?.code).toBe('invalid-command-payload');
+    expect(compact.result.rejection?.code).toBe('invalid-command-payload');
+    expect(full.ledger).toBe(game.ledger);
+    expect(compact.checkpoint).toBe(checkpoint);
+  });
   it.each(['sparse', 'named', 'symbol'] as const)('rejects %s array payloads in both execution paths', (kind) => {
     const game = harness('baseball-nfhs', 'quick');
     setBasicLineups(game, { start: false });
