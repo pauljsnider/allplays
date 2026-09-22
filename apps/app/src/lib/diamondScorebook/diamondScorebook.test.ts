@@ -37,6 +37,75 @@ import {
 const SCORER = 'scorer-1';
 
 describe('Diamond substitution and immutable-profile regressions', () => {
+  it('preserves reach provenance for explicit stay moves in both command paths', () => {
+    const game = harness('baseball-nfhs', 'quick');
+    setBasicLineups(game);
+    game.submit('record_plate_appearance', {
+      batterId: 'away-1',
+      pitcherId: 'home-1',
+      result: 'single',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    const placement = game.ledger.state.bases.first;
+    game.submit('advance_runner', { runnerId: 'away-1', from: 'first', to: 'stay', cause: 'other' });
+    expect(game.ledger.state.bases.first).toEqual(placement);
+    game.submit('record_plate_appearance', {
+      batterId: 'away-2',
+      pitcherId: 'home-1',
+      result: 'ground_out',
+      batterAdvance: { to: 'out', outKind: 'batter_runner' },
+      runnerAdvances: [{ runnerId: 'away-1', from: 'first', to: 'stay', cause: 'batted_ball' }],
+      outsOnPlay: 1
+    });
+    expect(game.ledger.state.bases.first).toEqual(placement);
+    expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
+  });
+
+  it.each(['record_fielding', 'record_scoring_judgment'] as const)('cascades a void against the effective %s target', (type) => {
+    const game = harness('baseball-nfhs', 'quick');
+    setBasicLineups(game);
+    game.submit('record_plate_appearance', {
+      batterId: 'away-1',
+      pitcherId: 'home-1',
+      result: 'single',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    game.submit('record_plate_appearance', {
+      batterId: 'away-2',
+      pitcherId: 'home-1',
+      result: 'double',
+      batterAdvance: { to: 'second' },
+      runnerAdvances: [{ runnerId: 'away-1', from: 'first', to: 'third', cause: 'batted_ball' }],
+      outsOnPlay: 0
+    });
+    const plays = [
+      game.submit('advance_runner', { runnerId: 'away-1', from: 'third', to: 'out', cause: 'pickoff', outKind: 'tag' }).event!.eventId,
+      game.submit('advance_runner', { runnerId: 'away-2', from: 'second', to: 'out', cause: 'pickoff', outKind: 'tag' }).event!.eventId
+    ];
+    const payload = (playEventId: string) =>
+      type === 'record_fielding'
+        ? { playEventId, fielding: { putoutBy: 'home-2', assists: ['home-3'] } }
+        : { playEventId, pitcherOfRecord: { side: 'home' as const, playerId: 'home-1', decision: 'win' as const } };
+    const attachment = game.submit(type, payload(plays[0]!));
+    const corrected = game.submit('supersede_event', {
+      targetEventId: attachment.event!.eventId,
+      reason: 'Attach evidence to the second play.',
+      replacement: { type, payload: payload(plays[1]!) } as DiamondCommandPayloadMap['supersede_event']['replacement']
+    });
+    game.submit('void_event', { targetEventId: plays[0]!, reason: 'Remove the first play only.' });
+    expect(getEffectiveDiamondEvents(game.ledger.events).find((event) => event.eventId === corrected.event!.eventId)?.payload).toEqual(
+      payload(plays[1]!)
+    );
+    if (type === 'record_fielding') expect(projectDiamondStats(game.ledger).players['home-2'].raw.fielding.PO).toBe(1);
+    expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
+    game.submit('void_event', { targetEventId: plays[1]!, reason: 'Now remove the effective target.' });
+    expect(getEffectiveDiamondEvents(game.ledger.events).some((event) => event.type === type)).toBe(false);
+  });
+
   it.each(['eventId', 'actorUid'] as const)('rejects noncanonical ledger %s atomically', (field) => {
     const game = harness();
     setBasicLineups(game);
@@ -52,6 +121,56 @@ describe('Diamond substitution and immutable-profile regressions', () => {
       expect(compact.result.rejection?.code).toBe('invalid-id');
       expect(compact.checkpoint).toBe(checkpoint);
     }
+  });
+
+  it.each(['baseball-obr', 'baseball-nfhs'])('ends the DH role when its active defender enters batting under %s', (profile) => {
+    const game = harness(profile, 'quick');
+    setBasicLineups(game, { start: false, homeFirstBattingRole: 'dh' });
+    game.submit('set_defensive_alignment', {
+      side: 'home',
+      assignments: [
+        { position: 'P', playerId: 'pitcher-only' },
+        { position: 'C', playerId: 'home-2' },
+        { position: 'SS', playerId: 'home-3' }
+      ]
+    });
+    game.submit('start', {});
+    game.submit('substitute', {
+      side: 'home',
+      battingSlot: 1,
+      outgoingPlayerId: 'pitcher-only',
+      incomingPlayerId: 'reliever-only',
+      defensivePosition: 'P'
+    });
+    game.submit('substitute', { side: 'home', battingSlot: 1, outgoingPlayerId: 'home-1', incomingPlayerId: 'reliever-only' });
+    expect(game.ledger.state.lineups.home).toMatchObject({
+      dhTerminated: true,
+      defense: { P: 'reliever-only' },
+      dhDefense: { starterPlayerId: 'pitcher-only' }
+    });
+    expect(game.ledger.state.lineups.home.battingOrder[0]).toMatchObject({ activePlayerId: 'reliever-only', battingRole: 'regular' });
+    if (profile === 'baseball-nfhs') {
+      game.submit('re_enter', { side: 'home', battingSlot: 1, replacedPlayerId: 'reliever-only', starterPlayerId: 'pitcher-only' });
+      expect(game.ledger.state.lineups.home.dhDefense?.starterReentriesUsed).toBe(1);
+      game.submit('re_enter', { side: 'home', battingSlot: 1, replacedPlayerId: 'pitcher-only', starterPlayerId: 'home-1' });
+      expect(game.ledger.state.lineups.home.battingOrder[0]).toMatchObject({ battingRole: 'regular', starterReentriesUsed: 1 });
+      expect(
+        game.submit(
+          're_enter',
+          { side: 'home', battingSlot: 1, replacedPlayerId: 'home-1', starterPlayerId: 'pitcher-only' },
+          { accept: false }
+        ).result.rejection?.code
+      ).toBe('reentry-limit');
+    } else {
+      expect(
+        game.submit(
+          're_enter',
+          { side: 'home', battingSlot: 1, replacedPlayerId: 'reliever-only', starterPlayerId: 'pitcher-only' },
+          { accept: false }
+        ).result.rejection?.code
+      ).toBe('reentry-limit');
+    }
+    expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
   });
 
   it.each(['quick', 'full'] as const)('rejects an activation that changes configured %s capture mode', (captureMode) => {
