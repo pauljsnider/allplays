@@ -11,6 +11,7 @@ import {
   formatDiamondRate,
   formatInningsPitched,
   getEffectiveDiamondEvents,
+  getDiamondPlayerIdentityIdsBySide,
   getDiamondRulesProfile,
   listDiamondRulesProfiles,
   projectDiamondStats,
@@ -110,6 +111,7 @@ describe('Diamond substitution and immutable-profile regressions', () => {
     });
     game.submit('start', {});
     const battingOrder = game.ledger.state.lineups.home.battingOrder;
+    game.submit('record_pitch', { batterId: 'away-1', pitcherId: 'pitcher-only', result: 'ball' });
     game.submit('substitute', {
       side: 'home',
       battingSlot: 1,
@@ -120,19 +122,46 @@ describe('Diamond substitution and immutable-profile regressions', () => {
     expect(game.ledger.state.lineups.home.battingOrder).toEqual(battingOrder);
     expect(game.ledger.state.lineups.home.defense.P).toBe('reliever-only');
     game.submit('record_pitch', { batterId: 'away-1', pitcherId: 'reliever-only', result: 'ball' });
+    game.submit('substitute', {
+      side: 'home',
+      battingSlot: 1,
+      outgoingPlayerId: 'reliever-only',
+      incomingPlayerId: 'second-reliever-only',
+      defensivePosition: 'P'
+    });
+    expect(getDiamondPlayerIdentityIdsBySide(game.ledger).home).toEqual(
+      expect.arrayContaining(['pitcher-only', 'reliever-only', 'second-reliever-only'])
+    );
+    const laterPlay = game.submit('record_plate_appearance', {
+      batterId: 'away-1',
+      pitcherId: 'second-reliever-only',
+      result: 'strikeout',
+      batterAdvance: { to: 'out', outKind: 'strikeout' },
+      runnerAdvances: [],
+      outsOnPlay: 1
+    });
+    game.submit('record_scoring_judgment', {
+      playEventId: laterPlay.event!.eventId,
+      pitcherOfRecord: { side: 'home', playerId: 'pitcher-only', decision: 'win' }
+    });
+    game.submit('record_scoring_judgment', {
+      playEventId: laterPlay.event!.eventId,
+      pitcherOfRecord: { side: 'home', playerId: 'reliever-only', decision: 'save' }
+    });
+    game.submit('record_pitch', { batterId: 'away-2', pitcherId: 'second-reliever-only', result: 'ball' });
     expect(
       game.submit(
         'substitute',
         {
           side: 'home',
           battingSlot: 1,
-          outgoingPlayerId: 'reliever-only',
+          outgoingPlayerId: 'second-reliever-only',
           incomingPlayerId: 'pitcher-only'
         },
         { accept: false }
       ).result.rejection?.code
     ).toBe('reentry-required');
-    const command = { side: 'home' as const, battingSlot: 1, replacedPlayerId: 'reliever-only', starterPlayerId: 'pitcher-only' };
+    const command = { side: 'home' as const, battingSlot: 1, replacedPlayerId: 'second-reliever-only', starterPlayerId: 'pitcher-only' };
     if (profileId === 'baseball-obr') {
       expect(game.submit('re_enter', command, { accept: false }).result.rejection?.code).toBe('reentry-limit');
     } else {
@@ -4785,6 +4814,13 @@ describe('Diamond stat-integrity evidence', () => {
     const walkLine = projectDiamondStats(intentionalWalk.ledger).players['away-1'];
     expect(walkLine.raw.batting).toMatchObject({ PA: 1, IBB: 1 });
     expect(walkLine.derived.OBP).toBe(1);
+    const noPitchLine = projectDiamondStats(intentionalWalk.ledger).players['home-1'];
+    expect(noPitchLine.raw.pitching).toMatchObject({ BF: 1, firstPitchStrikes: 0, firstPitchStrikeOpportunities: 0 });
+    expect(noPitchLine.derived.firstPitchStrikeRate).toBeNull();
+    intentionalWalk.submit('record_pitch', { batterId: 'away-2', pitcherId: 'home-1', result: 'called_strike' });
+    const firstPitchLine = projectDiamondStats(intentionalWalk.ledger).players['home-1'];
+    expect(firstPitchLine.raw.pitching.firstPitchStrikeOpportunities).toBe(1);
+    expect(firstPitchLine.derived.firstPitchStrikeRate).toBe(1);
 
     intentionalWalk.submit('advance_runner', {
       runnerId: 'away-1',
@@ -5178,7 +5214,8 @@ describe('Traditional formula helpers', () => {
       inheritedScored: 0,
       pitches: 20,
       strikes: 13,
-      firstPitchStrikes: 8
+      firstPitchStrikes: 8,
+      firstPitchStrikeOpportunities: 12
     },
     fielding: { defensiveOuts: 4, PO: 2, A: 1, E: 1, DP: 0, TP: 0, PB: 0 }
   };
