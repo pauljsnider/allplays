@@ -39,6 +39,55 @@ const SCORER = 'scorer-1';
 
 describe('Diamond security boundary regressions', () => {
   const context = { actorUid: SCORER, eventId: 'security-check', serverTimestampMs: 1700000001000 };
+  it.each([false, true])('rejects passed-ball evidence on contact with attachment=%s', (attached) => {
+    const game = harness();
+    setBasicLineups(game);
+    recordPitch(game, 'away-1', 'home-1');
+    const payload: DiamondCommandPayloadMap['record_plate_appearance'] = {
+      ...currentMatchup(game),
+      result: 'single',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    };
+    const fielding = { passedBallBy: 'home-2' };
+    const command = attached
+      ? game.command('record_fielding', { playEventId: game.submit('record_plate_appearance', payload).event!.eventId, fielding })
+      : game.command('record_plate_appearance', { ...payload, fielding });
+    expect(executeDiamondCommand(game.ledger, command, context).result.rejection?.code).toBe('fielding-result-mismatch');
+  });
+  it.each([false, true])('marks unanchored passed-ball fielding partial with attachment=%s', (attached) => {
+    const game = harness();
+    setBasicLineups(game);
+    recordPitch(game, 'away-1', 'home-1');
+    game.submit('record_plate_appearance', {
+      ...currentMatchup(game),
+      result: 'single',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    const payload: DiamondCommandPayloadMap['advance_runner'] = {
+      runnerId: 'away-1',
+      from: 'first',
+      to: 'second',
+      cause: 'other',
+      ...(!attached ? { fielding: { passedBallBy: 'home-2' } } : {})
+    };
+    if (!attached) {
+      const result = executeDiamondCommandFromCheckpoint(
+        createDiamondCheckpoint(game.ledger),
+        game.command('advance_runner', payload),
+        context
+      );
+      expect(result.checkpoint.state.coverage.pitches).toBe('partial');
+    }
+    const move = game.submit('advance_runner', payload);
+    if (attached) game.submit('record_fielding', { playEventId: move.event!.eventId, fielding: { passedBallBy: 'home-2' } });
+    expect(game.ledger.state.coverage.pitches).toBe('partial');
+    expect(game.ledger.state.coverage.situational).toBe('partial');
+    expect(replayDiamondLedger(game.ledger).state.coverage.pitches).toBe('partial');
+  });
   function twoRunnersBeforePitch() {
     const game = harness();
     setBasicLineups(game);
@@ -6826,12 +6875,12 @@ describe('Diamond stat-integrity evidence', () => {
   it('credits one passed ball when inline and attached fielding describe the same plate appearance', () => {
     const game = harness('baseball-nfhs', 'full');
     setBasicLineups(game);
-    recordPitch(game, 'away-1', 'home-1');
+    for (let pitch = 0; pitch < 4; pitch += 1) recordPitch(game, 'away-1', 'home-1', 'ball');
     const play = game.submit('record_plate_appearance', {
       batterId: 'away-1',
       pitcherId: 'home-1',
-      result: 'single',
-      batterAdvance: { to: 'first', cause: 'batted_ball' },
+      result: 'walk',
+      batterAdvance: { to: 'first', cause: 'walk' },
       runnerAdvances: [],
       outsOnPlay: 0,
       fielding: { passedBallBy: 'home-2' }
@@ -6961,8 +7010,7 @@ describe('Diamond stat-integrity evidence', () => {
       outsOnPlay: 0,
       fielding: {
         assists: ['home-3'],
-        errors: [{ playerId: 'home-4', kind: 'throwing' }],
-        passedBallBy: 'home-2'
+        errors: [{ playerId: 'home-4', kind: 'throwing' }]
       }
     });
     expect(inheritedRunner.ledger.state.bases).toMatchObject({
