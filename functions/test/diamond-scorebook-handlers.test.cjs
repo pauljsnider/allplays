@@ -5133,6 +5133,29 @@ describe("Diamond scorebook handler factory: durable operations", () => {
     );
   });
 
+  for (const privateTarget of [true, false]) {
+    it(`requires the current lease token for a ${privateTarget ? "private-to-public" : "public-to-private"} correction`, async () => {
+      const harness = createHarness();
+      await activate(harness);
+      await startGame(harness);
+      const target = await submit(harness, {
+        commandId: makeUuid(32901), expectedRevision: 6,
+        type: privateTarget ? "private_note" : "record_pitch",
+        payload: privateTarget ? { text: "Private target" } : { batterId: "away-1", pitcherId: "home-1", result: "ball" },
+      });
+      const before = clone(harness.firestore.read(paths("team-1", "game-1").scorebook));
+      await assert.rejects(submit(harness, {
+        commandId: makeUuid(32902), expectedRevision: 7, type: "supersede_event", leaseId: makeUuid(32903),
+        payload: { targetEventId: target.eventId, reason: "Cross-type correction",
+          replacement: privateTarget
+            ? { type: "record_pitch", payload: { batterId: "away-1", pitcherId: "home-1", result: "ball" } }
+            : { type: "private_note", payload: { text: "Private replacement" } },
+        },
+      }), (error) => error.code === "unavailable" && Boolean(error.details?.reason?.includes("lease")));
+      assert.deepEqual(harness.firestore.read(paths("team-1", "game-1").scorebook), before);
+    });
+  }
+
 
   it("fences an authenticated private-note write when every deletion barrier wins its missing-document read", async (t) => {
     for (const variant of [
@@ -5652,7 +5675,7 @@ describe("Diamond scorebook handler factory: durable operations", () => {
       commandId: makeUuid(32_111),
       expectedRevision: 7,
       type: "supersede_event",
-      context: publicHarness.scorerContext,
+      context: publicHarness.managerContext,
       payload: {
         targetEventId: publicTarget.eventId,
         reason: "This reason must remain private.",
@@ -5883,7 +5906,7 @@ describe("Diamond scorebook handler factory: durable operations", () => {
       commandId: makeUuid(32_131),
       expectedRevision: 7,
       type: "supersede_event",
-      context: publicReplacementHarness.scorerContext,
+      context: publicReplacementHarness.managerContext,
       payload: {
         targetEventId: privateTarget.eventId,
         reason: "Publish the corrected non-sensitive lineup.",
