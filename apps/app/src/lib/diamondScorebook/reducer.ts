@@ -2730,7 +2730,7 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
         );
       }
       validateAdvanceShape(action.payload, { standalone: true });
-      if (action.payload.cause === 'pickoff') {
+      if (action.payload.cause === 'pickoff' || action.payload.cause === 'balk') {
         next = { ...next, inning: { ...next.inning, lastPitchResult: null, lastPitchAdvanceCause: null } };
       }
       next = retainPitchAdvanceCause(next, [action.payload], action.payload.fielding);
