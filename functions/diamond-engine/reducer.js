@@ -761,6 +761,11 @@ function validateDiamondPitchCauseEvidence(advances, fieldings, result, pitchCon
     if (result === 'hit_by_pitch' && hasFieldingCredit) {
         throw new contracts_1.DiamondDomainError('fielding-result-mismatch', 'A hit-by-pitch award cannot carry fielding or batted-ball credits.');
     }
+    if (result === 'intentional_walk' &&
+        (!pitchContext?.lastPitchResult || !isDiamondDeliveredPitch(pitchContext.lastPitchResult)) &&
+        hasFieldingCredit) {
+        throw new contracts_1.DiamondDomainError('fielding-result-mismatch', 'A pitchless intentional walk cannot carry fielding or batted-ball credits.');
+    }
     if (advances.some((advance) => ['balk', 'illegal_pitch', 'hit_by_pitch'].includes(advance.cause ?? '')) && hasFieldingCredit) {
         throw new contracts_1.DiamondDomainError('pitch-cause-fielding-mismatch', 'A dead-ball runner award cannot carry fielding or batted-ball credits.');
     }
