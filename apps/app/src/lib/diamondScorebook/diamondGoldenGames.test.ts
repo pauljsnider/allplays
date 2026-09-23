@@ -1949,6 +1949,7 @@ describe('Fastpitch golden game', () => {
       inning: { balls: 1 },
       bases: { second: { runnerId: tiebreakerRunnerId } }
     });
+    game.submit('advance_runner', { runnerId: tiebreakerRunnerId, from: 'second', to: 'third', cause: 'illegal_pitch' });
     const { batterId, pitcherId } = currentMatchup(game);
     game.submit('record_plate_appearance', {
       batterId,
@@ -1958,7 +1959,7 @@ describe('Fastpitch golden game', () => {
       runnerAdvances: [
         {
           runnerId: tiebreakerRunnerId,
-          from: 'second',
+          from: 'third',
           to: 'home',
           cause: 'batted_ball',
           countsRun: true,
