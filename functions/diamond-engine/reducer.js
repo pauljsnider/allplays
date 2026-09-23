@@ -607,7 +607,8 @@ function createInitialDiamondState(config) {
             balls: 0,
             strikes: 0,
             pitchesInPlateAppearance: 0,
-            lastPitchResult: null
+            lastPitchResult: null,
+            lastPitchAdvanceCause: null
         },
         score: { home: 0, away: 0 },
         inningRuns: {},
@@ -1196,6 +1197,19 @@ function requiresMissingPitchCoverage(state, cause) {
         (cause === 'wild_pitch' || cause === 'passed_ball') &&
         (state.inning.pitchesInPlateAppearance === 0 || !state.inning.lastPitchResult || !isDiamondDeliveredPitch(state.inning.lastPitchResult)));
 }
+function retainPitchAdvanceCause(state, advances, fielding) {
+    if (!state.inning.lastPitchResult || !isDiamondDeliveredPitch(state.inning.lastPitchResult))
+        return state;
+    const causes = [
+        ...advances.filter((advance) => advance.cause === 'wild_pitch' || advance.cause === 'passed_ball'),
+        ...(fielding?.passedBallBy ? [{ cause: 'passed_ball' }] : [])
+    ];
+    validateDiamondPitchCauseEvidence([...causes, ...(state.inning.lastPitchAdvanceCause ? [{ cause: state.inning.lastPitchAdvanceCause }] : [])], []);
+    const cause = causes[0]?.cause;
+    if (cause !== 'wild_pitch' && cause !== 'passed_ball')
+        return state;
+    return { ...state, inning: { ...state.inning, lastPitchAdvanceCause: cause } };
+}
 function hasCompletePlateAppearancePitchEvidence(state, payload) {
     return (hasCompletePitchOutcomeEvidence(state, payload.result) &&
         ![payload.batterAdvance, ...payload.runnerAdvances].some((advance) => advance.cause !== undefined && requiresMissingPitchCoverage(state, advance.cause)));
@@ -1533,6 +1547,12 @@ function validateDiamondState(state) {
     requireInteger(state.inning.pitchesInPlateAppearance, 'pitches in plate appearance', 0, Number.MAX_SAFE_INTEGER);
     if (state.inning.lastPitchResult !== null) {
         requireMember(state.inning.lastPitchResult, PITCH_RESULTS.filter(isDiamondDeliveredPitch), 'last delivered pitch result');
+    }
+    if (state.inning.lastPitchAdvanceCause !== null) {
+        requireMember(state.inning.lastPitchAdvanceCause, ['wild_pitch', 'passed_ball'], 'last pitch advance cause');
+        if (!state.inning.lastPitchResult || state.inning.pitchesInPlateAppearance === 0) {
+            throw new contracts_1.DiamondDomainError('invalid-pitch-cause-anchor', 'Pitch advance credit requires a delivered pitch anchor.');
+        }
     }
     requireInteger(state.score.home, 'home score', 0, Number.MAX_SAFE_INTEGER);
     requireInteger(state.score.away, 'away score', 0, Number.MAX_SAFE_INTEGER);
@@ -2026,7 +2046,8 @@ function reduceDiamondEvent(state, action) {
                     balls: Math.min(balls, 4),
                     strikes: Math.min(strikes, 3),
                     pitchesInPlateAppearance: state.inning.pitchesInPlateAppearance + (deliveredPitch ? 1 : 0),
-                    lastPitchResult: deliveredPitch ? action.payload.result : state.inning.lastPitchResult
+                    lastPitchResult: deliveredPitch ? action.payload.result : state.inning.lastPitchResult,
+                    lastPitchAdvanceCause: deliveredPitch ? null : state.inning.lastPitchAdvanceCause
                 }
             };
             if (deliveredPitch)
@@ -2116,6 +2137,7 @@ function reduceDiamondEvent(state, action) {
                 };
             });
             const moves = [batterMove, ...runnerMoves];
+            retainPitchAdvanceCause(state, [action.payload.batterAdvance, ...action.payload.runnerAdvances], action.payload.fielding);
             validateDiamondPitchCauseEvidence([action.payload.batterAdvance, ...action.payload.runnerAdvances], action.payload.fielding ? [action.payload.fielding] : []);
             const scoringAdvances = [action.payload.batterAdvance, ...action.payload.runnerAdvances].filter((advance) => advance.to === 'home' && advance.countsRun !== false);
             const profile = (0, rules_1.requireDiamondRulesProfile)(state.rulesProfileId, state.rulesProfileVersion);
@@ -2138,7 +2160,7 @@ function reduceDiamondEvent(state, action) {
             const orderLength = state.lineups[side].battingOrder.length;
             next = {
                 ...next,
-                inning: { ...next.inning, balls: 0, strikes: 0, pitchesInPlateAppearance: 0, lastPitchResult: null },
+                inning: { ...next.inning, balls: 0, strikes: 0, pitchesInPlateAppearance: 0, lastPitchResult: null, lastPitchAdvanceCause: null },
                 nextBatterSlot: { ...next.nextBatterSlot, [side]: (state.nextBatterSlot[side] + 1) % orderLength }
             };
             if (action.payload.fielding)
@@ -2189,6 +2211,7 @@ function reduceDiamondEvent(state, action) {
                 throw new contracts_1.DiamondDomainError('illegal-pitch-award-pending', 'The runner must receive its exact mandatory one-base illegal-pitch award.');
             }
             validateAdvanceShape(action.payload, { standalone: true });
+            next = retainPitchAdvanceCause(next, [action.payload], action.payload.fielding);
             validateDiamondPitchCauseEvidence([action.payload], action.payload.fielding ? [action.payload.fielding] : []);
             const runnerId = requireId(action.payload.runnerId, 'runnerId');
             const placement = state.bases[action.payload.from];
@@ -2203,7 +2226,7 @@ function reduceDiamondEvent(state, action) {
             }
             validateOmissions(action.payload.omissions);
             validateInlineResponsiblePitcher(state, action.payload.responsiblePitcherId, placement.chargedToPitcherId, `The advance for ${runnerId}`);
-            next = applyMoves(state, getBattingSide(state), [
+            next = applyMoves(next, getBattingSide(state), [
                 {
                     runnerId,
                     from: action.payload.from,
@@ -2283,7 +2306,8 @@ function reduceDiamondEvent(state, action) {
                     balls: 0,
                     strikes: 0,
                     pitchesInPlateAppearance: 0,
-                    lastPitchResult: null
+                    lastPitchResult: null,
+                    lastPitchAdvanceCause: null
                 },
                 bases: { ...EMPTY_BASES },
                 halfInningEnd: null

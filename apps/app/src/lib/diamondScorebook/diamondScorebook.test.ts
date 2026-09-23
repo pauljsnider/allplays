@@ -39,6 +39,69 @@ const SCORER = 'scorer-1';
 
 describe('Diamond security boundary regressions', () => {
   const context = { actorUid: SCORER, eventId: 'security-check', serverTimestampMs: 1700000001000 };
+  it.each(['wild_pitch', 'passed_ball'] as const)('preserves anchored %s classification across runner commands', (cause) => {
+    const game = harness();
+    setBasicLineups(game);
+    recordPitch(game, 'away-1', 'home-1');
+    game.submit('record_plate_appearance', {
+      ...currentMatchup(game),
+      result: 'single',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    recordPitch(game, 'away-2', 'home-1');
+    game.submit('record_plate_appearance', {
+      ...currentMatchup(game),
+      result: 'single',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [{ runnerId: 'away-1', from: 'first', to: 'second', cause: 'batted_ball' }],
+      outsOnPlay: 0
+    });
+    recordPitch(game, 'away-3', 'home-1', 'ball');
+    game.submit('advance_runner', {
+      runnerId: 'away-1',
+      from: 'second',
+      to: 'third',
+      cause,
+      ...(cause === 'passed_ball' ? { fielding: { passedBallBy: 'home-2' } } : {})
+    });
+    const opposite: 'wild_pitch' | 'passed_ball' = cause === 'wild_pitch' ? 'passed_ball' : 'wild_pitch';
+    const payload: DiamondCommandPayloadMap['advance_runner'] = {
+      runnerId: 'away-2',
+      from: 'first' as const,
+      to: 'second' as const,
+      cause: opposite,
+      ...(opposite === 'passed_ball' ? { fielding: { passedBallBy: 'home-2' } } : {})
+    };
+    const command = game.command('advance_runner', payload);
+    expect(executeDiamondCommand(game.ledger, command, context).result.rejection?.code).toBe('pitch-cause-fielding-mismatch');
+    expect(executeDiamondCommandFromCheckpoint(createDiamondCheckpoint(game.ledger), command, context).result.rejection?.code).toBe(
+      'pitch-cause-fielding-mismatch'
+    );
+    game.submit('private_note', { text: 'Still the same pitch' });
+    game.submit('advance_runner', {
+      runnerId: 'away-2',
+      from: 'first',
+      to: 'second',
+      cause,
+      ...(cause === 'passed_ball' ? { fielding: { passedBallBy: 'home-2' } } : {})
+    });
+    recordPitch(game, 'away-3', 'home-1', 'ball');
+    game.submit('advance_runner', {
+      runnerId: 'away-1',
+      from: 'third',
+      to: 'home',
+      cause: opposite,
+      earned: false,
+      rbi: false,
+      ...(opposite === 'passed_ball' ? { fielding: { passedBallBy: 'home-2' } } : {})
+    });
+    const stats = projectDiamondStats(game.ledger);
+    expect(stats.players['home-1'].raw.pitching.WP).toBe(1);
+    expect(stats.players['home-2'].raw.fielding.PB).toBe(1);
+    expect(verifyDiamondLedger(game.ledger)).toBe(true);
+  });
   it.each(['wild_pitch', 'passed_ball'] as const)('requires delivered pitch evidence for IBB %s coverage', (cause) => {
     for (const delivered of [false, true]) {
       const game = harness();
