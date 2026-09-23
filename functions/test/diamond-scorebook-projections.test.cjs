@@ -4842,6 +4842,7 @@ test("compiled stats exclude non-entry pitcher changes and every roster mutation
       strikes: 0,
       pitchesInPlateAppearance: 0,
       lastPitchResult: null,
+      lastPitchAdvanceCause: null,
     },
     score: { home: 1, away: 0 },
     halfInningEnd: null,
