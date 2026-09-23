@@ -179,6 +179,7 @@ async function mockScheduleModules(page, options = {}) {
                         id: overrides.id,
                         teamId: 'team-1',
                         teamName: 'Bears',
+                        gamePlan: ${JSON.stringify(options.gamePlan || null)},
                         type: overrides.type || 'game',
                         date: overrides.date,
                         endDate: overrides.endDate || new Date(overrides.date.getTime() + 60 * 60 * 1000),
@@ -751,7 +752,7 @@ async function mockScheduleModules(page, options = {}) {
 
                 export async function loadGameDayLiveEventsForApp(teamId, gameId) {
                     window.__scheduleCalls.liveEvents = (window.__scheduleCalls.liveEvents || []).concat({ action: 'load', teamId, gameId });
-                    return [];
+                    return ${JSON.stringify(options.liveEvents || [])};
                 }
 
                 export async function saveGameDaySubstitutionForApp(teamId, gameId, user, payload) {
@@ -1616,6 +1617,48 @@ test('mobile game-day score tray stays above the bottom nav while deeper panels 
         { teamId: 'team-1', gameId: 'game-1', payload: { homeScore: 5, awayScore: 2, scoreUpdatedBy: 'user-1' } }
     ]);
     expect(await page.evaluate(() => window.__scheduleCalls.liveScoreEvents)).toHaveLength(1);
+});
+
+test('substitution live logs survive delayed helper initialization', async ({ page, baseURL }) => {
+    const errors = captureUnexpectedPageErrors(page);
+    await page.addInitScript(() => {
+        window.__ALLPLAYS_CONFIG__ = {
+            firebase: { apiKey: 'demo-api-key', authDomain: 'demo-allplays.firebaseapp.com', projectId: 'demo-allplays', messagingSenderId: '1234567890', appId: '1:1234567890:web:allplayssmoke' },
+            appCheck: { enabled: false },
+            diamondScorebookUiEnabled: false
+        };
+    });
+    await mockScheduleModules(page, {
+        isCoach: true,
+        staffManageable: true,
+        gamePlan: { formationId: 'basketball-5v5', numPeriods: 4, periodDuration: 8, lineups: { 'Q1-pg': 'player-1' }, isPublished: true },
+        liveEvents: [{ eventId: 'score-1', type: 'score_update', description: 'Bears 2 - Wolves 0', createdAt: '2026-05-20T11:00:00Z' }]
+    });
+    let releaseHelper;
+    const helperGate = new Promise((resolve) => { releaseHelper = resolve; });
+    let helperRequested = false;
+    await page.route(/\/src\/lib\/adapters\/legacyScheduleHelpers\.ts(\?.*)?$/, async (route) => {
+        helperRequested = true;
+        await helperGate;
+        await route.continue();
+    });
+    try {
+        await page.goto(appUrl(baseURL, '/schedule/team-1/game-1?childId=player-1&section=game'), { waitUntil: 'domcontentloaded' });
+        await expect(async () => {
+            expect(errors).toEqual([]);
+            await expect(page.getByRole('button', { name: 'Live substitutions', exact: true })).toBeVisible({ timeout: 1000 });
+        }).toPass({ timeout: 10000 });
+        await page.getByRole('button', { name: 'Live substitutions', exact: true }).click({ timeout: 3000 });
+        await expect.poll(() => helperRequested).toBe(true);
+        expect(errors).toEqual([]);
+        await expect(page.getByText('Bears 2 - Wolves 0', { exact: true })).toBeVisible();
+        releaseHelper();
+        await expect(page.getByRole('combobox', { name: 'Out', exact: true })).toBeEnabled();
+        expect(errors).toEqual([]);
+        await expect(page.getByText('Bears 2 - Wolves 0', { exact: true })).toBeVisible();
+    } finally {
+        releaseHelper();
+    }
 });
 
 test('landscape mobile shell keeps the game-day score tray fixed above navigation', async ({ page, baseURL }) => {
