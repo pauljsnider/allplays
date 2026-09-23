@@ -38,6 +38,48 @@ const SCORER = 'scorer-1';
 
 describe('Diamond security boundary regressions', () => {
   const context = { actorUid: SCORER, eventId: 'security-check', serverTimestampMs: 1700000001000 };
+  it.each(['recorded', 'empty'] as const)('rejects a modified %s initial snapshot', (kind) => {
+    const game = harness();
+    if (kind === 'recorded') setBasicLineups(game);
+    const ledger =
+      kind === 'recorded'
+        ? game.ledger
+        : createDiamondLedger({
+            teamId: 'team-1',
+            gameId: 'game-1',
+            rulesProfileId: 'baseball-nfhs',
+            rulesProfileVersion: 1,
+            captureMode: 'full'
+          });
+    const corrupted = JSON.parse(JSON.stringify(ledger)) as DiamondLedger;
+    (corrupted.initialState as unknown as { currentScorerUid: string }).currentScorerUid = 'injected-scorer';
+    if (kind === 'empty') (corrupted.state as unknown as { currentScorerUid: string }).currentScorerUid = 'injected-scorer';
+    expect(() => verifyDiamondLedger(corrupted)).toThrow();
+    expect(() => projectDiamondStats(corrupted)).toThrow();
+  });
+  it.each([
+    ['teamId', 'different-team'],
+    ['gameId', 'different-game'],
+    ['rulesProfileId', 'fastpitch-nfhs'],
+    ['rulesProfileVersion', 2],
+    ['captureMode', 'quick']
+  ] as const)('rejects conflicting ledger %s metadata', (key, value) => {
+    const game = harness();
+    setBasicLineups(game);
+    const corrupted = { ...game.ledger, [key]: value } as DiamondLedger;
+    expect(() => verifyDiamondLedger(corrupted)).toThrow();
+    expect(() => projectDiamondStats(corrupted)).toThrow();
+    const command = {
+      ...game.command('record_pitch', { ...currentMatchup(game), result: 'ball' }),
+      teamId: corrupted.teamId,
+      gameId: corrupted.gameId,
+      rulesProfileId: corrupted.rulesProfileId,
+      rulesProfileVersion: corrupted.rulesProfileVersion
+    };
+    const result = executeDiamondCommand(corrupted, command, context);
+    expect(result.result.outcome).toBe('rejected');
+    expect(result.ledger).toBe(corrupted);
+  });
   it.each(['attachment', 'checkpoint'] as const)('rejects corrupt %s before projecting stats', (kind) => {
     const game = harness();
     setBasicLineups(game);
