@@ -847,8 +847,30 @@ export function deriveDiamondPutoutCredits(
 
 export function validateDiamondPitchCauseEvidence(
   advances: readonly Readonly<{ cause?: DiamondRunnerAdvanceCause }>[],
-  fieldings: readonly DiamondFieldingChain[]
+  fieldings: readonly DiamondFieldingChain[],
+  result?: DiamondCommandPayloadMap['record_plate_appearance']['result']
 ) {
+  if (
+    result &&
+    [
+      'single',
+      'double',
+      'triple',
+      'home_run',
+      'reached_on_error',
+      'fielders_choice',
+      'ground_out',
+      'fly_out',
+      'line_out',
+      'sacrifice_bunt',
+      'sacrifice_fly',
+      'double_play',
+      'triple_play'
+    ].includes(result) &&
+    fieldings.some((fielding) => Boolean(fielding.passedBallBy))
+  ) {
+    throw new DiamondDomainError('fielding-result-mismatch', 'A batted-ball outcome cannot also carry passed-ball credit.');
+  }
   if (
     advances.some((advance) => advance.cause === 'wild_pitch') &&
     (advances.some((advance) => advance.cause === 'passed_ball') || fieldings.some((fielding) => Boolean(fielding.passedBallBy)))
@@ -1008,7 +1030,7 @@ export function deriveDiamondCoverageFromEventStates(
       ) {
         coverage = { ...coverage, batting: 'partial' };
       }
-      if (initialState.captureMode === 'full' && !hasCompletePlateAppearancePitchEvidence(before, payload)) {
+      if (initialState.captureMode === 'full' && !hasCompletePlateAppearancePitchEvidence(before, payload, fieldingChains)) {
         coverage = { ...coverage, pitches: 'partial', situational: 'partial' };
       }
       if (payload.result === 'double_play' && !hasUnambiguousBattedBallEvidence(fieldingChains)) {
@@ -1035,11 +1057,11 @@ export function deriveDiamondCoverageFromEventStates(
     if (event.type === 'advance_runner') {
       const payload = event.payload as DiamondCommandPayloadMap['advance_runner'];
       coverage = withPartialCoverage(coverage, payload.omissions);
-      if (requiresMissingPitchCoverage(before, payload.cause)) {
+      const fieldingChains = fieldingChainsForPlay(event, fieldingByPlay, payload.fielding);
+      if (requiresMissingPitchCoverage(before, payload.cause, fieldingChains)) {
         coverage = { ...coverage, pitches: 'partial', situational: 'partial' };
       }
       if (payload.fielding && coverage.fielding === 'not_collected') coverage = { ...coverage, fielding: 'partial' };
-      const fieldingChains = fieldingChainsForPlay(event, fieldingByPlay, payload.fielding);
       const outRunnerIds = payload.to === 'out' ? [payload.runnerId] : [];
       validateDiamondMergedFieldingOutCredit(fieldingChains, outRunnerIds);
       if (payload.to === 'home' && payload.countsRun !== false) {
@@ -1460,10 +1482,14 @@ function validateNamedMultiOutResult(
   }
 }
 
-function requiresMissingPitchCoverage(state: DiamondGameState, cause: DiamondRunnerAdvance['cause']): boolean {
+function requiresMissingPitchCoverage(
+  state: DiamondGameState,
+  cause: DiamondRunnerAdvance['cause'],
+  fieldings: readonly DiamondFieldingChain[] = []
+): boolean {
   return (
     state.captureMode === 'full' &&
-    (cause === 'wild_pitch' || cause === 'passed_ball') &&
+    (cause === 'wild_pitch' || cause === 'passed_ball' || fieldings.some((fielding) => Boolean(fielding.passedBallBy))) &&
     (state.inning.pitchesInPlateAppearance === 0 || !state.inning.lastPitchResult || !isDiamondDeliveredPitch(state.inning.lastPitchResult))
   );
 }
@@ -1489,10 +1515,12 @@ function retainPitchAdvanceCause(
 
 function hasCompletePlateAppearancePitchEvidence(
   state: DiamondGameState,
-  payload: DiamondCommandPayloadMap['record_plate_appearance']
+  payload: DiamondCommandPayloadMap['record_plate_appearance'],
+  fieldings: readonly DiamondFieldingChain[] = payload.fielding ? [payload.fielding] : []
 ): boolean {
   return (
     hasCompletePitchOutcomeEvidence(state, payload.result) &&
+    !requiresMissingPitchCoverage(state, 'other', fieldings) &&
     ![payload.batterAdvance, ...payload.runnerAdvances].some(
       (advance) => advance.cause !== undefined && requiresMissingPitchCoverage(state, advance.cause)
     )
@@ -2568,7 +2596,8 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
       retainPitchAdvanceCause(state, [action.payload.batterAdvance, ...action.payload.runnerAdvances], action.payload.fielding);
       validateDiamondPitchCauseEvidence(
         [action.payload.batterAdvance, ...action.payload.runnerAdvances],
-        action.payload.fielding ? [action.payload.fielding] : []
+        action.payload.fielding ? [action.payload.fielding] : [],
+        result
       );
       const scoringAdvances = [action.payload.batterAdvance, ...action.payload.runnerAdvances].filter(
         (advance) => advance.to === 'home' && advance.countsRun !== false
@@ -2704,7 +2733,8 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
         action.eventId ?? placement.reachedOnEventId
       );
       if (pendingAwards.length) next = { ...next, pendingIllegalPitchAwards: pendingAwards.filter((award) => award.runnerId !== runnerId) };
-      if (requiresMissingPitchCoverage(state, action.payload.cause)) next = markPartial(next, ['pitches', 'situational']);
+      if (requiresMissingPitchCoverage(state, action.payload.cause, action.payload.fielding ? [action.payload.fielding] : []))
+        next = markPartial(next, ['pitches', 'situational']);
       if (action.payload.fielding) next = markFieldingObserved(next);
       next = markPartial(next, action.payload.omissions);
       if (action.payload.to === 'home' && action.payload.countsRun !== false && action.payload.earned === undefined) {
