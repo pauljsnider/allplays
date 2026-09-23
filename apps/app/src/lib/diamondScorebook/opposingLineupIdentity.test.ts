@@ -755,7 +755,11 @@ describe('opposing Diamond lineup identities', () => {
       ...game.ledger.state,
       lineups: {
         ...game.ledger.state.lineups,
-        away: { ...game.ledger.state.lineups.away, courtesyRunnerIds: registeredIds }
+        away: {
+          ...game.ledger.state.lineups.away,
+          courtesyRunnerIds: registeredIds,
+          courtesyRunnerRoles: registeredIds.map((playerId) => ({ playerId, forRole: 'pitcher' as const }))
+        }
       }
     };
     expect(
@@ -770,6 +774,37 @@ describe('opposing Diamond lineup identities', () => {
         }
       }).lineups.away.courtesyRunnerIds
     ).toHaveLength(maximum);
+    const missingRole = {
+      ...boundedState,
+      lineups: { ...boundedState.lineups, away: { ...boundedState.lineups.away, courtesyRunnerRoles: undefined } }
+    };
+    expect(() =>
+      reduceDiamondEvent(missingRole, {
+        type: 'add_courtesy_runner',
+        payload: {
+          side: 'away',
+          forPlayerId: 'away-1',
+          runnerId: registeredIds[0],
+          base: 'first',
+          forRole: 'pitcher'
+        }
+      })
+    ).toThrowError(expect.objectContaining({ code: 'courtesy-runner-role-conflict' }));
+    expect(() =>
+      validateDiamondState({
+        ...boundedState,
+        lineups: {
+          ...boundedState.lineups,
+          away: {
+            ...boundedState.lineups.away,
+            courtesyRunnerRoles: [
+              { playerId: registeredIds[0], forRole: 'pitcher' },
+              { playerId: registeredIds[0], forRole: 'catcher' }
+            ]
+          }
+        }
+      })
+    ).toThrowError(expect.objectContaining({ code: 'invalid-lineup' }));
     expect(() =>
       reduceDiamondEvent(boundedState, {
         type: 'add_courtesy_runner',
