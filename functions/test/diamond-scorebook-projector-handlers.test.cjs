@@ -1171,6 +1171,12 @@ describe("Diamond scorebook authoritative projector", () => {
           captureMode: "quick",
         }),
       );
+      const harness = createHarness();
+      const { paths, instanceId } = seedGame(
+        harness.firestore,
+        { ledger: structuredClone(ledger) },
+        { isHome: true },
+      );
       delete ledger.initialState.lineups.home.courtesyRunnerIds;
       delete ledger.initialState.lineups.away.courtesyRunnerIds;
       delete ledger.state.lineups.home.courtesyRunnerIds;
@@ -1179,12 +1185,17 @@ describe("Diamond scorebook authoritative projector", () => {
         () => domainEngine.verifyDiamondLedger(ledger),
         (error) => error?.code === "history-required",
       );
-      const harness = createHarness();
-      const { paths, instanceId } = seedGame(
-        harness.firestore,
-        { ledger },
-        { isHome: true },
+      assert.throws(
+        () => domainEngine.createDiamondCheckpoint(ledger),
+        (error) => error?.code === "history-required",
       );
+      // Model corruption of persisted data, not a new checkpoint minted from it.
+      const root = harness.firestore.read(paths.scorebook);
+      harness.firestore.seed(paths.scorebook, {
+        ...root,
+        initialState: ledger.initialState,
+        checkpoint: { ...root.checkpoint, state: ledger.state },
+      });
       const currentBefore = harness.firestore.read(paths.publicCurrent);
       const gameBefore = harness.firestore.read(paths.game);
 
