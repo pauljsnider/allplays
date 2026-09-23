@@ -161,10 +161,22 @@ describe('Diamond security boundary regressions', () => {
     recordQuickOut(game);
     game.submit(command.type, command.payload);
   });
-  it('finishes the ball-four PA after a mandatory illegal-pitch award scores the walkoff', () => {
+  it.each(['walkoff', 'run-ahead'] as const)('finishes the ball-four PA after a mandatory illegal-pitch award creates %s', (ending) => {
     const game = harness('fastpitch-nfhs', 'quick');
     setBasicLineups(game);
-    advanceToHalf(game, 7, 'bottom');
+    if (ending === 'run-ahead') {
+      advanceToHalf(game, 4, 'bottom');
+      for (let i = 0; i < 9; i += 1) {
+        game.submit('record_plate_appearance', {
+          ...currentMatchup(game),
+          result: 'home_run',
+          batterAdvance: { to: 'home', earned: true },
+          runnerAdvances: [],
+          outsOnPlay: 0
+        });
+      }
+    }
+    advanceToHalf(game, ending === 'walkoff' ? 7 : 5, 'bottom');
     game.submit('record_plate_appearance', {
       ...currentMatchup(game),
       result: 'single',
@@ -6183,60 +6195,74 @@ describe('Diamond stat-integrity evidence', () => {
     expect(strikeoutProjection.players['home-1'].raw.pitching.pitches).toBe(3);
   });
 
-  it('credits WP, balk or illegal pitch, and PB once for each pitch-anchored physical play', () => {
-    const game = harness('baseball-nfhs', 'full');
-    setBasicLineups(game);
-    recordPitch(game, 'away-1', 'home-1');
-    game.submit('record_plate_appearance', {
-      batterId: 'away-1',
-      pitcherId: 'home-1',
-      result: 'single',
-      batterAdvance: { to: 'first', cause: 'batted_ball' },
-      runnerAdvances: [],
-      outsOnPlay: 0
-    });
-    recordPitch(game, 'away-2', 'home-1');
-    game.submit('record_plate_appearance', {
-      batterId: 'away-2',
-      pitcherId: 'home-1',
-      result: 'single',
-      batterAdvance: { to: 'first', cause: 'batted_ball' },
-      runnerAdvances: [{ runnerId: 'away-1', from: 'first', to: 'second', cause: 'batted_ball' }],
-      outsOnPlay: 0
-    });
+  it.each(['none', 'suspend', 'scorer_handoff', 'private_note'] as const)(
+    'credits physical pitches once across %s interruptions',
+    (interruption) => {
+      const game = harness('baseball-nfhs', 'full');
+      setBasicLineups(game);
+      const interrupt = () => {
+        if (interruption === 'suspend') {
+          game.submit('suspend', { reason: 'Weather delay' });
+          game.submit('resume', {});
+        } else if (interruption === 'scorer_handoff') {
+          game.submit('scorer_handoff', { toUid: 'scorer-2' });
+          game.submit('scorer_handoff', { toUid: SCORER }, { actorUid: 'scorer-2' });
+        } else if (interruption === 'private_note') game.submit('private_note', { text: 'Scoring note' });
+      };
+      recordPitch(game, 'away-1', 'home-1');
+      game.submit('record_plate_appearance', {
+        batterId: 'away-1',
+        pitcherId: 'home-1',
+        result: 'single',
+        batterAdvance: { to: 'first', cause: 'batted_ball' },
+        runnerAdvances: [],
+        outsOnPlay: 0
+      });
+      recordPitch(game, 'away-2', 'home-1');
+      game.submit('record_plate_appearance', {
+        batterId: 'away-2',
+        pitcherId: 'home-1',
+        result: 'single',
+        batterAdvance: { to: 'first', cause: 'batted_ball' },
+        runnerAdvances: [{ runnerId: 'away-1', from: 'first', to: 'second', cause: 'batted_ball' }],
+        outsOnPlay: 0
+      });
 
-    game.submit('record_pitch', { batterId: 'away-3', pitcherId: 'home-1', result: 'ball' });
-    game.submit('advance_runner', { runnerId: 'away-1', from: 'second', to: 'third', cause: 'wild_pitch' });
-    game.submit('advance_runner', { runnerId: 'away-2', from: 'first', to: 'second', cause: 'wild_pitch' });
+      game.submit('record_pitch', { batterId: 'away-3', pitcherId: 'home-1', result: 'ball' });
+      game.submit('advance_runner', { runnerId: 'away-1', from: 'second', to: 'third', cause: 'wild_pitch' });
+      game.submit('advance_runner', { runnerId: 'away-2', from: 'first', to: 'second', cause: 'wild_pitch' });
 
-    game.submit('record_pitch', { batterId: 'away-3', pitcherId: 'home-1', result: 'ball' });
-    game.submit('advance_runner', {
-      runnerId: 'away-1',
-      from: 'third',
-      to: 'home',
-      cause: 'passed_ball',
-      earned: true,
-      fielding: { passedBallBy: 'home-2' }
-    });
-    game.submit('advance_runner', {
-      runnerId: 'away-2',
-      from: 'second',
-      to: 'third',
-      cause: 'passed_ball',
-      fielding: { passedBallBy: 'home-2' }
-    });
+      game.submit('record_pitch', { batterId: 'away-3', pitcherId: 'home-1', result: 'ball' });
+      game.submit('advance_runner', {
+        runnerId: 'away-1',
+        from: 'third',
+        to: 'home',
+        cause: 'passed_ball',
+        earned: true,
+        fielding: { passedBallBy: 'home-2' }
+      });
+      game.submit('advance_runner', {
+        runnerId: 'away-2',
+        from: 'second',
+        to: 'third',
+        cause: 'passed_ball',
+        fielding: { passedBallBy: 'home-2' }
+      });
 
-    game.submit('record_pitch', { batterId: 'away-3', pitcherId: 'home-1', result: 'balk' });
-    game.submit('advance_runner', { runnerId: 'away-2', from: 'third', to: 'stay', cause: 'balk' });
-    game.submit('record_pitch', { batterId: 'away-3', pitcherId: 'home-1', result: 'illegal_pitch' });
-    game.submit('advance_runner', { runnerId: 'away-2', from: 'third', to: 'stay', cause: 'illegal_pitch' });
-    game.submit('advance_runner', { runnerId: 'away-2', from: 'third', to: 'stay', cause: 'other' });
+      game.submit('record_pitch', { batterId: 'away-3', pitcherId: 'home-1', result: 'balk' });
+      interrupt();
+      game.submit('advance_runner', { runnerId: 'away-2', from: 'third', to: 'stay', cause: 'balk' });
+      game.submit('record_pitch', { batterId: 'away-3', pitcherId: 'home-1', result: 'illegal_pitch' });
+      interrupt();
+      game.submit('advance_runner', { runnerId: 'away-2', from: 'third', to: 'stay', cause: 'illegal_pitch' });
+      game.submit('advance_runner', { runnerId: 'away-2', from: 'third', to: 'stay', cause: 'other' });
 
-    const projection = projectDiamondStats(game.ledger);
-    expect(game.ledger.state.coverage.fielding).toBe('complete');
-    expect(projection.players['home-1'].raw.pitching).toMatchObject({ WP: 1, balkIllegalPitch: 2, pitches: 5 });
-    expect(projection.players['home-2'].raw.fielding.PB).toBe(1);
-  });
+      const projection = projectDiamondStats(game.ledger);
+      expect(game.ledger.state.coverage.fielding).toBe('complete');
+      expect(projection.players['home-1'].raw.pitching).toMatchObject({ WP: 1, balkIllegalPitch: 2, pitches: 5 });
+      expect(projection.players['home-2'].raw.fielding.PB).toBe(1);
+    }
+  );
 
   it('credits one passed ball when inline and attached fielding describe the same plate appearance', () => {
     const game = harness('baseball-nfhs', 'full');
