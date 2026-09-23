@@ -1709,7 +1709,7 @@ test("compiled third-out run timing is explicit and independent of move array or
                 runnerId: "away-1",
                 from: "third",
                 to: "home",
-                cause: "batted_ball",
+                cause: result === "strikeout" ? "wild_pitch" : "batted_ball",
                 countsRun: true,
                 earned: true,
                 rbi: false,
