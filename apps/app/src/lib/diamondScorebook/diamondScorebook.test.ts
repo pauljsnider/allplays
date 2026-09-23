@@ -39,6 +39,77 @@ const SCORER = 'scorer-1';
 
 describe('Diamond security boundary regressions', () => {
   const context = { actorUid: SCORER, eventId: 'security-check', serverTimestampMs: 1700000001000 };
+  it('does not advance an unforced runner on a hit-by-pitch award', () => {
+    const game = harness('baseball-nfhs', 'quick');
+    setBasicLineups(game);
+    game.submit('record_plate_appearance', {
+      ...currentMatchup(game),
+      result: 'triple',
+      batterAdvance: { to: 'third' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    const payload = {
+      ...currentMatchup(game),
+      result: 'hit_by_pitch' as const,
+      batterAdvance: { to: 'first' as const },
+      runnerAdvances: [
+        { runnerId: 'away-1', from: 'third' as const, to: 'home' as const, cause: 'other' as const, earned: true, rbi: false }
+      ],
+      outsOnPlay: 0
+    };
+    const command = game.command('record_plate_appearance', payload);
+    expect(executeDiamondCommand(game.ledger, command, context).result.rejection?.code).toBe('runner-cause-result-mismatch');
+    expect(executeDiamondCommandFromCheckpoint(createDiamondCheckpoint(game.ledger), command, context).result.rejection?.code).toBe(
+      'runner-cause-result-mismatch'
+    );
+    game.submit('record_plate_appearance', {
+      ...payload,
+      runnerAdvances: [{ runnerId: 'away-1', from: 'third', to: 'stay', cause: 'hit_by_pitch' }]
+    });
+    expect(game.ledger.state.score.away).toBe(0);
+    expect(verifyDiamondLedger(game.ledger)).toBe(true);
+  });
+  it.each(['hit_by_pitch', 'single'] as const)('rejects contradictory existing-runner advances on %s', (result) => {
+    const game = harness();
+    setBasicLineups(game);
+    recordPitch(game, 'away-1', 'home-1');
+    game.submit('record_plate_appearance', {
+      ...currentMatchup(game),
+      result: 'single',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    game.submit('record_pitch', { ...currentMatchup(game), result: result === 'single' ? 'in_play' : 'hit_by_pitch' });
+    const payload = {
+      ...currentMatchup(game),
+      result,
+      batterAdvance: { to: 'first' as const },
+      runnerAdvances: [
+        {
+          runnerId: 'away-1',
+          from: 'first' as const,
+          to: 'home' as const,
+          cause: result === 'single' ? ('wild_pitch' as const) : ('hit_by_pitch' as const),
+          earned: true,
+          rbi: false
+        }
+      ],
+      outsOnPlay: 0
+    };
+    const command = game.command('record_plate_appearance', payload);
+    expect(executeDiamondCommand(game.ledger, command, context).result.rejection?.code).toBe('runner-cause-result-mismatch');
+    expect(executeDiamondCommandFromCheckpoint(createDiamondCheckpoint(game.ledger), command, context).result.rejection?.code).toBe(
+      'runner-cause-result-mismatch'
+    );
+    game.submit('record_plate_appearance', {
+      ...payload,
+      runnerAdvances: [{ ...payload.runnerAdvances[0], to: 'second', cause: result === 'single' ? 'batted_ball' : 'hit_by_pitch' }]
+    });
+    expect(game.ledger.state.score.away).toBe(0);
+    expect(projectDiamondStats(game.ledger).players['home-1'].raw.pitching.WP).toBe(0);
+  });
   it.each([
     ['home_run', 'home', 'wild_pitch'],
     ['home_run', 'home', 'passed_ball'],
@@ -903,7 +974,7 @@ describe('Diamond substitution and immutable-profile regressions', () => {
       ...currentMatchup(game),
       result: terminal === 'walk' ? 'walk' : 'single',
       batterAdvance: { to: 'first' },
-      runnerAdvances: [{ runnerId: 'away-3', from: 'first', to: 'second', cause: 'batted_ball' }],
+      runnerAdvances: [{ runnerId: 'away-3', from: 'first', to: 'second', cause: terminal === 'walk' ? 'walk' : 'batted_ball' }],
       outsOnPlay: 0
     });
     game.submit('advance_runner', { runnerId: 'away-3', from: 'second', to: 'out', cause: 'pickoff', outKind: 'tag' });
@@ -6060,12 +6131,13 @@ describe('Diamond stat-integrity evidence', () => {
       });
       expect(game.ledger.state.coverage.fielding).toBe('complete');
 
-      recordPitch(game, 'away-2', 'home-1');
+      for (let i = 0; i < (cause === 'passed_ball' ? 4 : 1); i += 1)
+        recordPitch(game, 'away-2', 'home-1', cause === 'passed_ball' ? 'ball' : 'in_play');
       const play = game.submit('record_plate_appearance', {
         batterId: 'away-2',
         pitcherId: 'home-1',
-        result: 'single',
-        batterAdvance: { to: 'first', cause: 'batted_ball' },
+        result: cause === 'passed_ball' ? 'walk' : 'single',
+        batterAdvance: { to: 'first', cause: cause === 'passed_ball' ? 'walk' : 'batted_ball' },
         runnerAdvances: [{ runnerId: 'away-1', from: 'first', to: 'third', cause }],
         outsOnPlay: 0
       });
@@ -6235,13 +6307,14 @@ describe('Diamond stat-integrity evidence', () => {
         runnerAdvances: [],
         outsOnPlay: 0
       });
-      recordPitch(game, 'away-2', 'home-1');
+      for (let i = 0; i < (cause === 'passed_ball' ? 4 : 1); i += 1)
+        recordPitch(game, 'away-2', 'home-1', cause === 'passed_ball' ? 'ball' : 'in_play');
       const original = game.submit('record_plate_appearance', {
         batterId: 'away-2',
         pitcherId: 'home-1',
-        result: 'single',
-        batterAdvance: { to: 'first', cause: 'batted_ball' },
-        runnerAdvances: [{ runnerId: 'away-1', from: 'first', to: 'third', cause: 'batted_ball' }],
+        result: cause === 'passed_ball' ? 'walk' : 'single',
+        batterAdvance: { to: 'first', cause: cause === 'passed_ball' ? 'walk' : 'batted_ball' },
+        runnerAdvances: [{ runnerId: 'away-1', from: 'first', to: 'third', cause: cause === 'passed_ball' ? 'other' : 'batted_ball' }],
         outsOnPlay: 0
       });
       expect(game.ledger.state.coverage.fielding).toBe('complete');
@@ -6254,8 +6327,8 @@ describe('Diamond stat-integrity evidence', () => {
           payload: {
             batterId: 'away-2',
             pitcherId: 'home-1',
-            result: 'single',
-            batterAdvance: { to: 'first', cause: 'batted_ball' },
+            result: cause === 'passed_ball' ? 'walk' : 'single',
+            batterAdvance: { to: 'first', cause: cause === 'passed_ball' ? 'walk' : 'batted_ball' },
             runnerAdvances: [{ runnerId: 'away-1', from: 'first', to: 'third', cause }],
             outsOnPlay: 0
           }
