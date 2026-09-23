@@ -442,6 +442,7 @@ function validatePlateAppearanceRunnerAdvance(state, result, advance) {
         (result === 'interference' && (!awardDestination || !['obstruction', 'other'].includes(advance.cause))) ||
         (advance.cause === 'hit_by_pitch' && result !== 'hit_by_pitch') ||
         (advance.cause === 'walk' && (!walk || !awardDestination)) ||
+        (walk && forced && (advance.to === 'out' || advance.to === 'stay' || (advance.to === 'home' && advance.countsRun === false))) ||
         (walk && advance.cause === 'force_out') ||
         (advance.cause === 'batted_ball' && !contact) ||
         (contact && !['batted_ball', 'error', 'obstruction', 'force_out', 'tag_out', 'appeal_out', 'other'].includes(advance.cause));
@@ -2247,6 +2248,9 @@ function reduceDiamondEvent(state, action) {
                 throw new contracts_1.DiamondDomainError('illegal-pitch-award-pending', 'The runner must receive its exact mandatory one-base illegal-pitch award.');
             }
             validateAdvanceShape(action.payload, { standalone: true });
+            if (action.payload.cause === 'pickoff') {
+                next = { ...next, inning: { ...next.inning, lastPitchResult: null, lastPitchAdvanceCause: null } };
+            }
             next = retainPitchAdvanceCause(next, [action.payload], action.payload.fielding);
             validateDiamondPitchCauseEvidence([action.payload], action.payload.fielding ? [action.payload.fielding] : []);
             const runnerId = requireId(action.payload.runnerId, 'runnerId');
