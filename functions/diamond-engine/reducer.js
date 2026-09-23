@@ -476,7 +476,9 @@ function currentHalfReachedRunLimit(state) {
     return profile.inningRunLimit !== null && currentHalfRuns(state) >= profile.inningRunLimit;
 }
 function requireOpenHalfForPlay(state, options = {}) {
-    requireNoGameEndingCondition(state, 'adding another play');
+    if (!(options.completingAwardWalk && !state.gameEndDecision && automaticDiamondFinalizationReason(state)?.kind === 'walkoff')) {
+        requireNoGameEndingCondition(state, 'adding another play');
+    }
     if (state.inning.outs >= 3 || state.halfInningEnd) {
         throw new contracts_1.DiamondDomainError('half-inning-complete', 'Advance the half inning before adding another play.');
     }
@@ -1936,7 +1938,11 @@ function reduceDiamondEvent(state, action) {
         }
         case 'record_plate_appearance': {
             requireLifecycle(state, ['active'], 'record plate appearance');
-            requireOpenHalfForPlay(state);
+            const completingAwardWalk = state.inning.balls === 4 &&
+                state.inning.lastPitchResult === 'illegal_pitch' &&
+                state.pendingIllegalPitchAwards?.length === 0 &&
+                (0, rules_1.requireDiamondRulesProfile)(state.rulesProfileId, state.rulesProfileVersion).illegalPitchPolicy === 'ball_and_advance';
+            requireOpenHalfForPlay(state, { completingAwardWalk });
             if (state.inning.outs >= 3)
                 throw new contracts_1.DiamondDomainError('half-inning-complete', 'Advance the half inning first.');
             const side = validateBatterAndPitcher(state, action.payload.batterId, action.payload.pitcherId);
@@ -2433,6 +2439,14 @@ function reduceDiamondEvent(state, action) {
             const exhaustive = action;
             throw new contracts_1.DiamondDomainError('unsupported-command', `Unsupported command ${String(exhaustive)}.`);
         }
+    }
+    if (pendingPlateAppearance &&
+        (action.type === 'substitute' ||
+            action.type === 're_enter' ||
+            action.type === 'set_defensive_alignment' ||
+            action.type === 'add_courtesy_runner') &&
+        BASES.some((base) => state.bases[base]?.runnerId !== next.bases[base]?.runnerId)) {
+        throw new contracts_1.DiamondDomainError('terminal-pitch-runner-change', 'Resolve the pending plate appearance before replacing its live runners.');
     }
     // Inherited-count attribution is not yet represented in the canonical state.
     // Reject every pitching-change path instead of charging an unfinished PA to
