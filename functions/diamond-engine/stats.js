@@ -370,8 +370,6 @@ function projectDiamondStats(ledger) {
             before.inning.number !== after.inning.number ||
             before.inning.half !== after.inning.half ||
             before.lineups[defensiveSide].defense.P !== after.lineups[defensiveSide].defense.P ||
-            (!before.halfInningEnd && after.halfInningEnd) ||
-            (!before.gameEndDecision && after.gameEndDecision) ||
             after.lifecycle === 'final' ||
             after.lifecycle === 'cancelled') {
             physicalCauseCluster = null;
@@ -581,8 +579,13 @@ function projectDiamondStats(ledger) {
                     credit(batter, 'batting', 'RBI', Math.max(0, Math.min(runsOnPlay, effectiveRunsBattedIn)), eventId);
                 }
                 const physicalCauses = new Set(allAdvances.map((advance) => advance.cause));
-                if (physicalCauses.has('wild_pitch'))
+                if (physicalCauses.has('wild_pitch') &&
+                    !(physicalCauseCluster?.anchoredByPitch &&
+                        physicalCauseCluster.pitcherId === payload.pitcherId &&
+                        physicalCauseCluster.cause === 'wild_pitch' &&
+                        physicalCauseCluster.pitchingCreditRecorded)) {
                     credit(pitcher, 'pitching', 'WP', 1, eventId);
+                }
                 if (physicalCauses.has('balk') || physicalCauses.has('illegal_pitch')) {
                     const matchingPriorCredit = physicalCauseCluster?.pitcherId === payload.pitcherId &&
                         (physicalCauseCluster.cause === 'balk' || physicalCauseCluster.cause === 'illegal_pitch') &&
@@ -600,7 +603,11 @@ function projectDiamondStats(ledger) {
                     ...(payload.batterAdvance.to === 'out' ? [payload.batterId] : []),
                     ...payload.runnerAdvances.flatMap((advance) => (advance.to === 'out' ? [advance.runnerId] : []))
                 ];
-                const fieldingResult = addMergedFielding(fieldingChains, outRunnerIds, pitchingSide, eventId, ensure, credit);
+                const fieldingResult = addMergedFielding(fieldingChains, outRunnerIds, pitchingSide, eventId, ensure, credit, {
+                    creditPassedBall: !(physicalCauseCluster?.anchoredByPitch &&
+                        physicalCauseCluster.pitcherId === payload.pitcherId &&
+                        physicalCauseCluster.passedBallCreditRecorded)
+                });
                 teams[pitchingSide].E += fieldingResult.errorCredits;
                 physicalCauseCluster = null;
                 break;
@@ -636,10 +643,10 @@ function projectDiamondStats(ledger) {
                     physicalCauseCluster?.anchoredByPitch &&
                     physicalCauseCluster.pitcherId === (currentPitcherId ?? null) &&
                     (physicalCauseCluster.cause === null || physicalCauseCluster.cause === physicalCause));
-                if (!physicalCause) {
+                if (!physicalCause && !physicalCauseCluster?.anchoredByPitch) {
                     physicalCauseCluster = null;
                 }
-                else if (!sharesAnchoredPitch) {
+                else if (physicalCause && !sharesAnchoredPitch) {
                     physicalCauseCluster = {
                         cause: physicalCause,
                         pitcherId: currentPitcherId ?? null,
@@ -648,7 +655,7 @@ function projectDiamondStats(ledger) {
                         passedBallCreditRecorded: false
                     };
                 }
-                else if (physicalCauseCluster?.cause === null) {
+                else if (physicalCause && physicalCauseCluster?.cause === null) {
                     physicalCauseCluster.cause = physicalCause;
                 }
                 if (payload.to === 'out' && currentPitcherId) {
