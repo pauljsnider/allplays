@@ -1007,7 +1007,7 @@ export function deriveDiamondCoverageFromEventStates(
       ) {
         coverage = { ...coverage, batting: 'partial' };
       }
-      if (initialState.captureMode === 'full' && !hasCompletePitchOutcomeEvidence(before, payload.result)) {
+      if (initialState.captureMode === 'full' && !hasCompletePlateAppearancePitchEvidence(before, payload)) {
         coverage = { ...coverage, pitches: 'partial', situational: 'partial' };
       }
       if (payload.result === 'double_play' && !hasUnambiguousBattedBallEvidence(fieldingChains)) {
@@ -1464,6 +1464,18 @@ function requiresMissingPitchCoverage(state: DiamondGameState, cause: DiamondRun
     state.captureMode === 'full' &&
     (cause === 'wild_pitch' || cause === 'passed_ball') &&
     (state.inning.pitchesInPlateAppearance === 0 || !state.inning.lastPitchResult || !isDiamondDeliveredPitch(state.inning.lastPitchResult))
+  );
+}
+
+function hasCompletePlateAppearancePitchEvidence(
+  state: DiamondGameState,
+  payload: DiamondCommandPayloadMap['record_plate_appearance']
+): boolean {
+  return (
+    hasCompletePitchOutcomeEvidence(state, payload.result) &&
+    ![payload.batterAdvance, ...payload.runnerAdvances].some(
+      (advance) => advance.cause !== undefined && requiresMissingPitchCoverage(state, advance.cause)
+    )
   );
 }
 
@@ -2575,7 +2587,7 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
       if (action.payload.runsBattedIn === undefined && scoringAdvances.some((advance) => advance.rbi === undefined)) {
         next = markPartial(next, ['batting']);
       }
-      if (state.captureMode === 'full' && !hasCompletePitchOutcomeEvidence(state, action.payload.result)) {
+      if (state.captureMode === 'full' && !hasCompletePlateAppearancePitchEvidence(state, action.payload)) {
         next = markPartial(next, ['pitches', 'situational']);
       }
       if (
