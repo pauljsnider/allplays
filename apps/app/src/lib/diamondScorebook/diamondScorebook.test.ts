@@ -39,6 +39,50 @@ const SCORER = 'scorer-1';
 
 describe('Diamond security boundary regressions', () => {
   const context = { actorUid: SCORER, eventId: 'security-check', serverTimestampMs: 1700000001000 };
+  it.each(['wild_pitch', 'passed_ball'] as const)('rejects %s continuation of an awarded illegal pitch', (cause) => {
+    const game = harness('fastpitch-nfhs');
+    setBasicLineups(game);
+    recordPitch(game, 'away-1', 'home-1');
+    game.submit('record_plate_appearance', {
+      ...currentMatchup(game),
+      result: 'single',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    game.submit('record_pitch', { ...currentMatchup(game), result: 'illegal_pitch' });
+    game.submit('advance_runner', { runnerId: 'away-1', from: 'first', to: 'second', cause: 'illegal_pitch' });
+    const advance = { runnerId: 'away-1', from: 'second' as const, to: 'third' as const, cause };
+    const fielding = cause === 'passed_ball' ? { fielding: { passedBallBy: 'home-2' } } : {};
+    const walk: DiamondCommandPayloadMap['record_plate_appearance'] = {
+      ...currentMatchup(game),
+      result: 'intentional_walk',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    };
+    for (const command of [
+      game.command('advance_runner', { ...advance, ...fielding }),
+      game.command('record_plate_appearance', { ...walk, runnerAdvances: [advance], ...fielding })
+    ]) {
+      expect(executeDiamondCommand(game.ledger, command, context).result.rejection?.code).toBe('pitch-cause-fielding-mismatch');
+      expect(executeDiamondCommandFromCheckpoint(createDiamondCheckpoint(game.ledger), command, context).result.rejection?.code).toBe(
+        'pitch-cause-fielding-mismatch'
+      );
+    }
+    const play = game.submit('record_plate_appearance', walk);
+    if (cause === 'passed_ball')
+      expect(
+        executeDiamondCommand(
+          game.ledger,
+          game.command('record_fielding', { playEventId: play.event!.eventId, fielding: { passedBallBy: 'home-2' } }),
+          context
+        ).result.rejection?.code
+      ).toBe('pitch-cause-fielding-mismatch');
+    game.submit('record_pitch', { ...currentMatchup(game), result: 'ball' });
+    game.submit('advance_runner', { ...advance, ...fielding });
+    expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
+  });
   it.each(['baseball-nfhs', 'fastpitch-nfhs', 'fastpitch-youth'] as const)('requires a pending illegal-pitch award in %s', (profile) => {
     const game = harness(profile);
     setBasicLineups(game);
