@@ -38,6 +38,16 @@ const SCORER = 'scorer-1';
 
 describe('Diamond security boundary regressions', () => {
   const context = { actorUid: SCORER, eventId: 'security-check', serverTimestampMs: 1700000001000 };
+  it.each(['state', 'event', 'metadata'] as const)('rejects corrupt %s before minting a checkpoint', (kind) => {
+    const game = harness();
+    setBasicLineups(game);
+    const corrupted = JSON.parse(JSON.stringify(game.ledger)) as DiamondLedger;
+    if (kind === 'state') (corrupted.state.inning as unknown as { balls: number }).balls = 2;
+    else if (kind === 'event') (corrupted.events[0] as unknown as { serverTimestampMs: number }).serverTimestampMs += 1;
+    else (corrupted as unknown as { teamId: string }).teamId = 'different-team';
+    expect(() => createDiamondCheckpoint(corrupted)).toThrow();
+    expect(createDiamondCheckpoint(game.ledger).state).toEqual(game.ledger.state);
+  });
   it.each(['single', 'strikeout'] as const)('marks situational stats partial for %s without pitch history', (result) => {
     const game = harness();
     setBasicLineups(game);
