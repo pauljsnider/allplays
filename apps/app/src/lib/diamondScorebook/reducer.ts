@@ -509,6 +509,7 @@ function validatePlateAppearanceRunnerAdvance(
   const awardDestination = forced ? advance.to === next : advance.to === 'stay';
   const contradictory =
     (result === 'hit_by_pitch' && (!awardDestination || !['hit_by_pitch', 'other'].includes(advance.cause))) ||
+    (result === 'interference' && (!awardDestination || !['obstruction', 'other'].includes(advance.cause))) ||
     (advance.cause === 'hit_by_pitch' && result !== 'hit_by_pitch') ||
     (advance.cause === 'walk' && (!walk || !awardDestination)) ||
     (advance.cause === 'batted_ball' && !contact) ||
@@ -841,6 +842,21 @@ export function deriveDiamondPutoutCredits(
   actualOutRunnerIds: readonly string[]
 ): ReadonlyMap<string, number> {
   return resolveDiamondPutoutCredits(fieldings, actualOutRunnerIds);
+}
+
+export function validateDiamondPitchCauseEvidence(
+  advances: readonly Readonly<{ cause?: DiamondRunnerAdvanceCause }>[],
+  fieldings: readonly DiamondFieldingChain[]
+) {
+  if (
+    advances.some((advance) => advance.cause === 'wild_pitch') &&
+    (advances.some((advance) => advance.cause === 'passed_ball') || fieldings.some((fielding) => Boolean(fielding.passedBallBy)))
+  ) {
+    throw new DiamondDomainError(
+      'pitch-cause-fielding-mismatch',
+      'One physical pitch cannot be classified as both a wild pitch and a passed ball.'
+    );
+  }
 }
 
 function hasCompletePutoutEvidence(fieldings: readonly DiamondFieldingChain[], actualOutRunnerIds: readonly string[]) {
@@ -2510,6 +2526,10 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
         };
       });
       const moves = [batterMove, ...runnerMoves];
+      validateDiamondPitchCauseEvidence(
+        [action.payload.batterAdvance, ...action.payload.runnerAdvances],
+        action.payload.fielding ? [action.payload.fielding] : []
+      );
       const scoringAdvances = [action.payload.batterAdvance, ...action.payload.runnerAdvances].filter(
         (advance) => advance.to === 'home' && advance.countsRun !== false
       );
@@ -2606,6 +2626,7 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
         );
       }
       validateAdvanceShape(action.payload, { standalone: true });
+      validateDiamondPitchCauseEvidence([action.payload], action.payload.fielding ? [action.payload.fielding] : []);
       const runnerId = requireId(action.payload.runnerId, 'runnerId');
       const placement = state.bases[action.payload.from];
       if (!placement || placement.runnerId !== runnerId) {
