@@ -411,6 +411,7 @@ type HistoricalPlayContext = Readonly<{
   catcherId: string | null;
   advances: readonly Readonly<{ cause?: DiamondRunnerAdvanceCause }>[];
   physicalPitch: PhysicalPitchContext | null;
+  plateAppearanceResult?: DiamondCommandPayloadMap['record_plate_appearance']['result'];
   participants: ReadonlySet<string>;
   scoringRunners: ReadonlySet<string>;
   requiresHomeRunRbi: boolean;
@@ -577,10 +578,6 @@ function validatePitcherDecisionsForFinalization(state: DiamondGameState, tracke
 function validateAttachmentAgainstHistoricalPlay(event: Pick<DiamondEffectiveEvent, 'type' | 'payload'>, context: HistoricalPlayContext) {
   if (event.type === 'record_fielding') {
     const fielding = (event.payload as DiamondCommandPayloadMap['record_fielding']).fielding;
-    validateDiamondPitchCauseEvidence(
-      [...context.advances, ...(context.physicalPitch?.cause ? [{ cause: context.physicalPitch.cause }] : [])],
-      [fielding]
-    );
     validateDiamondFieldingOutCredit(fielding, context.actualOutCount);
     validateDiamondMergedFieldingOutCredit([fielding], context.actualOutRunnerIds);
     const invalidFielder = fieldingParticipantIds(fielding).find(
@@ -598,6 +595,11 @@ function validateAttachmentAgainstHistoricalPlay(event: Pick<DiamondEffectiveEve
         'A passed-ball attachment must name the catcher recorded when the cited play occurred.'
       );
     }
+    validateDiamondPitchCauseEvidence(
+      [...context.advances, ...(context.physicalPitch?.cause ? [{ cause: context.physicalPitch.cause }] : [])],
+      [fielding],
+      context.plateAppearanceResult
+    );
     if (fielding.passedBallBy && context.physicalPitch) context.physicalPitch.cause = 'passed_ball';
     return;
   }
@@ -682,6 +684,10 @@ function observeEffectiveEventParticipants(state: DiamondGameState, event: Diamo
       ),
       catcherId: state.lineups[defensiveSide].defense.C ?? null,
       physicalPitch: tracker.physicalPitch,
+      plateAppearanceResult:
+        event.type === 'record_plate_appearance'
+          ? (event.payload as DiamondCommandPayloadMap['record_plate_appearance']).result
+          : undefined,
       advances:
         event.type === 'advance_runner'
           ? [event.payload as DiamondCommandPayloadMap['advance_runner']]
@@ -710,7 +716,8 @@ function observeEffectiveEventParticipants(state: DiamondGameState, event: Diamo
           : undefined;
     validateDiamondPitchCauseEvidence(
       [...context.advances, ...(context.physicalPitch?.cause ? [{ cause: context.physicalPitch.cause }] : [])],
-      fielding ? [fielding] : []
+      fielding ? [fielding] : [],
+      context.plateAppearanceResult
     );
     const cause = fielding?.passedBallBy
       ? 'passed_ball'
