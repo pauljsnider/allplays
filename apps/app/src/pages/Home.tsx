@@ -685,7 +685,7 @@ export function Home({ auth }: { auth: AuthState }) {
           officialsAccess={resolvedOfficialsAccess}
         />
       ) : null}
-      {canRenderHomeSections && !showBlockingErrorState && activeSection === 'feed' ? (
+      {canRenderHomeSections && !showBlockingErrorState && !showIncompleteHomeError && activeSection === 'feed' ? (
         <FeedSection
           social={social}
           loading={socialLoading}
@@ -696,9 +696,9 @@ export function Home({ auth }: { auth: AuthState }) {
           onStatus={setSocialStatus}
         />
       ) : null}
-      {canRenderHomeSections && !showBlockingErrorState && activeSection === 'players' ? <PlayersSection players={home.players} /> : null}
-      {canRenderHomeSections && !showBlockingErrorState && activeSection === 'teams' ? <TeamsSection teams={home.teams} players={home.players} /> : null}
-      {canRenderHomeSections && !showBlockingErrorState && activeSection === 'friends' ? (
+      {canRenderHomeSections && !showBlockingErrorState && !showIncompleteHomeError && activeSection === 'players' ? <PlayersSection players={home.players} /> : null}
+      {canRenderHomeSections && !showBlockingErrorState && !showIncompleteHomeError && activeSection === 'teams' ? <TeamsSection teams={home.teams} players={home.players} /> : null}
+      {canRenderHomeSections && !showBlockingErrorState && !showIncompleteHomeError && activeSection === 'friends' ? (
         <FriendsSection
           auth={auth}
           home={home}

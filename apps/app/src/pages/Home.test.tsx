@@ -781,6 +781,21 @@ describe('Home', () => {
     }
   });
 
+  it.each(['players', 'teams', 'feed', 'friends'])('does not claim empty %s after an incomplete preview fails', async (section) => {
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockImplementationOnce(async (_user: unknown, options: any) => {
+      options.onPartial({ home: emptyHome, schedule: { children: [], events: [], isPartial: true } });
+      throw new Error('Team schedule timed out.');
+    });
+    renderHome(signedInAuth, `/home?section=${section}`);
+    expect(await screen.findByRole('button', { name: 'Retry loading Home' })).toBeTruthy();
+    for (const emptyClaim of ['No players linked yet', 'No teams available', 'No posts for this filter', 'No friends yet', 'No suggestions yet']) {
+      expect(screen.queryByText(emptyClaim)).toBeNull();
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'Retry loading Home' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Retry loading Home' })).toBeNull());
+    expect(homeServiceMocks.loadParentHomeWithSecondaryData).toHaveBeenCalled();
+  });
+
   it('retains the last complete Home if a refresh emits an empty preview then fails', async () => {
     renderHome(signedInAuth);
     expect(await screen.findByRole('heading', { name: 'All caught up' })).toBeTruthy();
