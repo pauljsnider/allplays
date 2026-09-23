@@ -39,6 +39,32 @@ const SCORER = 'scorer-1';
 
 describe('Diamond security boundary regressions', () => {
   const context = { actorUid: SCORER, eventId: 'security-check', serverTimestampMs: 1700000001000 };
+  it.each([false, true])('rejects fielding credits on pitchless IBB, attached=%s', (attached) => {
+    for (const fielding of [{ errors: [{ playerId: 'home-3' }] }, { assists: ['home-3'] }, { battedBall: 'ground' as const }]) {
+      const game = harness();
+      setBasicLineups(game);
+      const payload: DiamondCommandPayloadMap['record_plate_appearance'] = {
+        ...currentMatchup(game),
+        result: 'intentional_walk',
+        batterAdvance: { to: 'first' },
+        runnerAdvances: [],
+        outsOnPlay: 0
+      };
+      const play = attached ? game.submit('record_plate_appearance', payload) : null;
+      if (attached) game.submit('record_pitch', { ...currentMatchup(game), result: 'ball' });
+      const command = attached
+        ? game.command('record_fielding', { playEventId: play!.event!.eventId, fielding })
+        : game.command('record_plate_appearance', { ...payload, fielding });
+      expect(executeDiamondCommand(game.ledger, command, context).result.rejection?.code).toBe('fielding-result-mismatch');
+      if (!attached) {
+        expect(executeDiamondCommandFromCheckpoint(createDiamondCheckpoint(game.ledger), command, context).result.rejection?.code).toBe(
+          'fielding-result-mismatch'
+        );
+        game.submit('record_plate_appearance', payload);
+      }
+      expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
+    }
+  });
   it.each(['out', 'third', 'home'] as const)('rejects pitchless IBB non-award movement to %s', (to) => {
     const game = harness();
     setBasicLineups(game);
