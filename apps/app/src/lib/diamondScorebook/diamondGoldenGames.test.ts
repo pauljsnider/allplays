@@ -1341,7 +1341,7 @@ describe('Baseball golden games', () => {
                 runnerId: 'away-1',
                 from: 'third',
                 to: 'home',
-                cause: 'batted_ball',
+                cause: result === 'strikeout' ? 'wild_pitch' : 'batted_ball',
                 countsRun: true,
                 earned: true,
                 rbi: false
