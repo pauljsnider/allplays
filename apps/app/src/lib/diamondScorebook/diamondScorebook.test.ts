@@ -38,6 +38,104 @@ const SCORER = 'scorer-1';
 
 describe('Diamond security boundary regressions', () => {
   const context = { actorUid: SCORER, eventId: 'security-check', serverTimestampMs: 1700000001000 };
+  it.each(['hit_by_pitch', 'catcher_interference', 'ball', 'called_strike', 'in_play'] as const)(
+    'rejects PA outcomes contradicting terminal %s evidence',
+    (pitch) => {
+      const game = harness();
+      setBasicLineups(game);
+      for (let i = 0; i < (pitch === 'ball' ? 4 : pitch === 'called_strike' ? 3 : 1); i += 1)
+        game.submit('record_pitch', { ...currentMatchup(game), result: pitch });
+      const command = game.command('record_plate_appearance', {
+        ...currentMatchup(game),
+        result: pitch === 'in_play' ? 'walk' : 'home_run',
+        batterAdvance: { to: pitch === 'in_play' ? 'first' : 'home' },
+        runnerAdvances: [],
+        outsOnPlay: 0
+      });
+      expect(executeDiamondCommand(game.ledger, command, context).result.rejection?.code).toBe('pitch-outcome-mismatch');
+      expect(executeDiamondCommandFromCheckpoint(createDiamondCheckpoint(game.ledger), command, context).result.rejection?.code).toBe(
+        'pitch-outcome-mismatch'
+      );
+    }
+  );
+  it.each(['toString', '__proto__', 'constructor'])('rejects inherited coverage family %s', (family) => {
+    const game = harness();
+    setBasicLineups(game);
+    const command = game.command('rules_decision', {
+      code: 'coverage_adjustment',
+      description: 'Coverage correction',
+      affectedFamilies: [family]
+    } as unknown as DiamondCommandPayloadMap['rules_decision']);
+    expect(executeDiamondCommand(game.ledger, command, context).result.outcome).toBe('rejected');
+    expect(executeDiamondCommandFromCheckpoint(createDiamondCheckpoint(game.ledger), command, context).result.outcome).toBe('rejected');
+    expect(() =>
+      validateDiamondState({ ...game.ledger.state, coverage: { ...game.ledger.state.coverage, [family]: 'partial' } })
+    ).toThrow();
+  });
+  it.each([0, 3])('requires the fastpitch runner award before more play with %i prior balls', (balls) => {
+    const game = harness('fastpitch-nfhs', 'quick');
+    setBasicLineups(game);
+    game.submit('record_plate_appearance', {
+      ...currentMatchup(game),
+      result: 'single',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    for (let i = 0; i < balls; i += 1) game.submit('record_pitch', { ...currentMatchup(game), result: 'ball' });
+    game.submit('record_pitch', { ...currentMatchup(game), result: 'illegal_pitch' });
+    const command = game.command('record_pitch', { ...currentMatchup(game), result: 'ball' });
+    expect(executeDiamondCommand(game.ledger, command, context).result.rejection?.code).toBe('illegal-pitch-award-pending');
+    expect(executeDiamondCommandFromCheckpoint(createDiamondCheckpoint(game.ledger), command, context).result.rejection?.code).toBe(
+      'illegal-pitch-award-pending'
+    );
+    game.submit('advance_runner', { runnerId: 'away-1', from: 'first', to: 'second', cause: 'illegal_pitch' });
+    if (balls === 3)
+      game.submit('record_plate_appearance', {
+        ...currentMatchup(game),
+        result: 'walk',
+        batterAdvance: { to: 'first' },
+        runnerAdvances: [],
+        outsOnPlay: 0
+      });
+    else game.submit('record_pitch', { ...currentMatchup(game), result: 'ball' });
+    expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
+  });
+  it('retains every illegal-pitch award across suspension and a scoring advance', () => {
+    const game = harness('fastpitch-nfhs', 'quick');
+    setBasicLineups(game);
+    game.submit('record_plate_appearance', {
+      ...currentMatchup(game),
+      result: 'single',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    game.submit('record_plate_appearance', {
+      ...currentMatchup(game),
+      result: 'double',
+      batterAdvance: { to: 'second' },
+      runnerAdvances: [{ runnerId: 'away-1', from: 'first', to: 'third', cause: 'batted_ball' }],
+      outsOnPlay: 0
+    });
+    game.submit('record_pitch', { ...currentMatchup(game), result: 'illegal_pitch' });
+    expect(game.ledger.state.pendingIllegalPitchAwards).toHaveLength(2);
+    game.submit('suspend', { reason: 'Weather delay' });
+    game.submit('resume', {});
+    expect(
+      game.submit('advance_runner', { runnerId: 'away-1', from: 'third', to: 'out', cause: 'pickoff', outKind: 'tag' }, { accept: false })
+        .result.rejection?.code
+    ).toBe('illegal-pitch-award-pending');
+    game.submit('advance_runner', { runnerId: 'away-1', from: 'third', to: 'home', cause: 'illegal_pitch', earned: true, rbi: false });
+    expect(game.ledger.state.score.away).toBe(1);
+    expect(game.submit('record_pitch', { ...currentMatchup(game), result: 'ball' }, { accept: false }).result.rejection?.code).toBe(
+      'illegal-pitch-award-pending'
+    );
+    game.submit('advance_runner', { runnerId: 'away-2', from: 'second', to: 'third', cause: 'illegal_pitch' });
+    expect(game.ledger.state.pendingIllegalPitchAwards).toEqual([]);
+    game.submit('record_pitch', { ...currentMatchup(game), result: 'ball' });
+    expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
+  });
   it.each(['private-to-public', 'public-to-private'] as const)('requires the scorer for a %s correction', (direction) => {
     const game = harness();
     setBasicLineups(game);
