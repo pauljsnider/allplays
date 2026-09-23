@@ -865,11 +865,13 @@ export function validateDiamondPitchCauseEvidence(
       'sacrifice_bunt',
       'sacrifice_fly',
       'double_play',
-      'triple_play'
+      'triple_play',
+      'hit_by_pitch',
+      'interference'
     ].includes(result) &&
     fieldings.some((fielding) => Boolean(fielding.passedBallBy))
   ) {
-    throw new DiamondDomainError('fielding-result-mismatch', 'A batted-ball outcome cannot also carry passed-ball credit.');
+    throw new DiamondDomainError('fielding-result-mismatch', 'A contact or dead-ball award outcome cannot also carry passed-ball credit.');
   }
   if (
     advances.some((advance) => advance.cause === 'wild_pitch') &&
