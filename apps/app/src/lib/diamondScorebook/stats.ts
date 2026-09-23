@@ -6,7 +6,7 @@ import {
   type DiamondLedger,
   type DiamondSide
 } from './contracts';
-import { replayEffectiveDiamondEventStates, type DiamondEffectiveEventReplay } from './ledger';
+import { replayEffectiveDiamondEventStates, verifyDiamondLedger, type DiamondEffectiveEventReplay } from './ledger';
 import {
   deriveDiamondAggregateRbiInference,
   deriveDiamondCoverageFromEventStates,
@@ -465,6 +465,7 @@ function exposedPitcherDecisionEventIds(events: readonly SimulatedEvent[], final
 }
 
 export function projectDiamondStats(ledger: DiamondLedger): DiamondStatProjection {
+  verifyDiamondLedger(ledger);
   const simulated = simulate(ledger);
   const coverage = deriveDiamondCoverageFromEventStates(ledger.initialState, simulated);
   const profile = requireDiamondRulesProfile(ledger.rulesProfileId, ledger.rulesProfileVersion);
@@ -553,9 +554,21 @@ export function projectDiamondStats(ledger: DiamondLedger): DiamondStatProjectio
 
   simulated.forEach(({ event, before, after }) => {
     const eventId = event.eventId;
-    // Administrative interruptions do not create another physical play or erase
-    // the infraction credit already recorded by its pitch.
-    if (!['advance_runner', 'record_plate_appearance', 'suspend', 'resume', 'scorer_handoff', 'private_note'].includes(event.type)) {
+    // Reset on physical-play boundaries, not an allowlist of annotations.
+    // Attachments, coverage decisions and administrative events preserve the
+    // pitch's credit. PA completion and unrelated advances reset below.
+    const defensiveSide = getBattingSide(before) === 'home' ? 'away' : 'home';
+    if (
+      event.type === 'record_pitch' ||
+      event.type === 'start' ||
+      before.inning.number !== after.inning.number ||
+      before.inning.half !== after.inning.half ||
+      before.lineups[defensiveSide].defense.P !== after.lineups[defensiveSide].defense.P ||
+      (!before.halfInningEnd && after.halfInningEnd) ||
+      (!before.gameEndDecision && after.gameEndDecision) ||
+      after.lifecycle === 'final' ||
+      after.lifecycle === 'cancelled'
+    ) {
       physicalCauseCluster = null;
     }
     switch (event.type) {
