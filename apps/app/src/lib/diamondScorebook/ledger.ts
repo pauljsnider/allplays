@@ -21,6 +21,7 @@ import {
   type DiamondLedger,
   type DiamondLedgerConfig,
   type DiamondReplacement,
+  type DiamondRunnerAdvanceCause,
   type DiamondSide
 } from './contracts';
 import {
@@ -33,6 +34,7 @@ import {
   setDiamondStateRevision,
   validateDiamondFieldingOutCredit,
   validateDiamondMergedFieldingOutCredit,
+  validateDiamondPitchCauseEvidence,
   validateDiamondState,
   type DiamondReducerAction
 } from './reducer';
@@ -404,6 +406,7 @@ type HistoricalPlayContext = Readonly<{
   defensiveSide: DiamondSide;
   activeDefenders: ReadonlySet<string>;
   catcherId: string | null;
+  advances: readonly Readonly<{ cause?: DiamondRunnerAdvanceCause }>[];
   participants: ReadonlySet<string>;
   scoringRunners: ReadonlySet<string>;
   requiresHomeRunRbi: boolean;
@@ -568,6 +571,7 @@ function validatePitcherDecisionsForFinalization(state: DiamondGameState, tracke
 function validateAttachmentAgainstHistoricalPlay(event: Pick<DiamondEffectiveEvent, 'type' | 'payload'>, context: HistoricalPlayContext) {
   if (event.type === 'record_fielding') {
     const fielding = (event.payload as DiamondCommandPayloadMap['record_fielding']).fielding;
+    validateDiamondPitchCauseEvidence(context.advances, [fielding]);
     validateDiamondFieldingOutCredit(fielding, context.actualOutCount);
     validateDiamondMergedFieldingOutCredit([fielding], context.actualOutRunnerIds);
     const invalidFielder = fieldingParticipantIds(fielding).find(
@@ -664,6 +668,15 @@ function observeEffectiveEventParticipants(state: DiamondGameState, event: Diamo
         Object.values(state.lineups[defensiveSide].defense).filter((playerId): playerId is string => Boolean(playerId))
       ),
       catcherId: state.lineups[defensiveSide].defense.C ?? null,
+      advances:
+        event.type === 'advance_runner'
+          ? [event.payload as DiamondCommandPayloadMap['advance_runner']]
+          : event.type === 'record_plate_appearance'
+            ? [
+                (event.payload as DiamondCommandPayloadMap['record_plate_appearance']).batterAdvance,
+                ...(event.payload as DiamondCommandPayloadMap['record_plate_appearance']).runnerAdvances
+              ]
+            : [],
       participants,
       scoringRunners,
       requiresHomeRunRbi,
