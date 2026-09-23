@@ -482,6 +482,45 @@ function validateBatterCauseResult(
     throw new DiamondDomainError('batter-cause-result-mismatch', 'The batter advance cause contradicts the plate-appearance result.');
 }
 
+function validatePlateAppearanceRunnerAdvance(
+  state: DiamondGameState,
+  result: DiamondCommandPayloadMap['record_plate_appearance']['result'],
+  advance: DiamondRunnerAdvance
+) {
+  const contact = [
+    'single',
+    'double',
+    'triple',
+    'home_run',
+    'reached_on_error',
+    'fielders_choice',
+    'ground_out',
+    'fly_out',
+    'line_out',
+    'sacrifice_bunt',
+    'sacrifice_fly',
+    'double_play',
+    'triple_play'
+  ].includes(result);
+  const walk = result === 'walk' || result === 'intentional_walk';
+  const forced =
+    !!state.bases.first && (advance.from === 'first' || (!!state.bases.second && (advance.from === 'second' || !!state.bases.third)));
+  const next = advance.from === 'first' ? 'second' : advance.from === 'second' ? 'third' : 'home';
+  const awardDestination = forced ? advance.to === next : advance.to === 'stay';
+  const contradictory =
+    (result === 'hit_by_pitch' && (!awardDestination || !['hit_by_pitch', 'other'].includes(advance.cause))) ||
+    (advance.cause === 'hit_by_pitch' && result !== 'hit_by_pitch') ||
+    (advance.cause === 'walk' && (!walk || !awardDestination)) ||
+    (advance.cause === 'batted_ball' && !contact) ||
+    (contact && !['batted_ball', 'error', 'obstruction', 'force_out', 'tag_out', 'appeal_out', 'other'].includes(advance.cause));
+  if (contradictory) {
+    throw new DiamondDomainError(
+      'runner-cause-result-mismatch',
+      'The runner advance contradicts the plate-appearance result or forced award.'
+    );
+  }
+}
+
 function validateAdvanceShape(value: unknown, options: Readonly<{ standalone?: boolean }> = {}) {
   const advance = requireRecord(value, 'runner advance');
   requireOnlyFields(advance, options.standalone ? STANDALONE_RUNNER_ADVANCE_FIELDS : RUNNER_ADVANCE_FIELDS, 'runner advance');
@@ -2452,6 +2491,7 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
       );
       const runnerMoves: Move[] = action.payload.runnerAdvances.map((advance: DiamondRunnerAdvance) => {
         validateAdvanceShape(advance);
+        validatePlateAppearanceRunnerAdvance(state, result, advance);
         const placement = state.bases[requireMember(advance.from, BASES, 'runner source')];
         validateInlineResponsiblePitcher(
           state,
