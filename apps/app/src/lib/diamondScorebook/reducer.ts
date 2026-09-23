@@ -342,6 +342,13 @@ export function hasCompleteDiamondDroppedThirdStrikeCause(
   );
 }
 
+function hasUnambiguousBattedBallEvidence(fieldings: readonly DiamondFieldingChain[]): boolean {
+  const observed = new Set(
+    fieldings.flatMap((fielding) => (fielding.battedBall && fielding.battedBall !== 'unknown' ? [fielding.battedBall] : []))
+  );
+  return observed.size === 1;
+}
+
 function hasCompletePitchOutcomeEvidence(
   state: DiamondGameState,
   result: DiamondCommandPayloadMap['record_plate_appearance']['result']
@@ -912,7 +919,10 @@ export function deriveDiamondCoverageFromEventStates(
         coverage = { ...coverage, batting: 'partial' };
       }
       if (initialState.captureMode === 'full' && !hasCompletePitchOutcomeEvidence(before, payload.result)) {
-        coverage = { ...coverage, pitches: 'partial' };
+        coverage = { ...coverage, pitches: 'partial', situational: 'partial' };
+      }
+      if (payload.result === 'double_play' && !hasUnambiguousBattedBallEvidence(fieldingChains)) {
+        coverage = { ...coverage, batting: 'partial' };
       }
       if (initialState.captureMode === 'full') {
         const hasKnownDroppedThirdStrikeCause = hasCompleteDiamondDroppedThirdStrikeCause(
@@ -2450,7 +2460,13 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
         next = markPartial(next, ['batting']);
       }
       if (state.captureMode === 'full' && !hasCompletePitchOutcomeEvidence(state, action.payload.result)) {
-        next = markPartial(next, ['pitches']);
+        next = markPartial(next, ['pitches', 'situational']);
+      }
+      if (
+        action.payload.result === 'double_play' &&
+        !hasUnambiguousBattedBallEvidence(action.payload.fielding ? [action.payload.fielding] : [])
+      ) {
+        next = markPartial(next, ['batting']);
       }
       const hasKnownDroppedThirdStrikeCause = hasCompleteDiamondDroppedThirdStrikeCause(
         action.payload.result,
