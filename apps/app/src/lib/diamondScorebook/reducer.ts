@@ -2729,6 +2729,8 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
   // Inherited-count attribution is not yet represented in the canonical state.
   // Reject every pitching-change path instead of charging an unfinished PA to
   // a new pitcher. Opposite-side personnel and between-PA changes remain legal.
+  // A terminal pitch also fixes the batter's identity until its PA is recorded;
+  // ordinary nonterminal pinch-hitting remains legal.
   if (
     (action.type === 'substitute' || action.type === 're_enter' || action.type === 'set_defensive_alignment') &&
     state.lifecycle === 'active' &&
@@ -2741,6 +2743,15 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
       throw new DiamondDomainError(
         'mid-plate-appearance-pitching-change',
         'Finish the current plate appearance before changing pitchers; inherited-count attribution is not supported.'
+      );
+    }
+    if (
+      (state.inning.balls >= 4 || state.inning.strikes >= 3 || isDiamondTerminalPitchResult(state.inning.lastPitchResult)) &&
+      expectedBatter(state).activePlayerId !== expectedBatter(next).activePlayerId
+    ) {
+      throw new DiamondDomainError(
+        'terminal-pitch-batter-change',
+        'Record the pending plate appearance before replacing the batter who received its terminal pitch.'
       );
     }
   }
