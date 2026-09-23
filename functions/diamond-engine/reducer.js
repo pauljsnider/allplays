@@ -563,11 +563,12 @@ function requireLifecycle(state, allowed, action) {
     }
 }
 function markPartial(state, families) {
+    validateOmissions(families);
     if (!families?.length)
         return state;
     const coverage = { ...state.coverage };
     families.forEach((family) => {
-        if (!(family in coverage))
+        if (!Object.prototype.hasOwnProperty.call(coverage, family))
             throw new contracts_1.DiamondDomainError('invalid-stat-family', `Unknown stat family ${family}.`);
         coverage[family] = 'partial';
     });
@@ -584,6 +585,7 @@ function markFieldingObserved(state) {
     return { ...state, coverage: { ...state.coverage, fielding: 'partial' } };
 }
 function withPartialCoverage(coverage, families) {
+    validateOmissions(families);
     const next = { ...coverage };
     families?.forEach((family) => {
         next[family] = 'partial';
@@ -1590,6 +1592,23 @@ function validateDiamondState(state) {
         }
     });
     validateOpposingLineupIdentities(state.lineups);
+    const coverageFamilies = Object.keys(initialCoverage('full'));
+    if (Reflect.ownKeys(state.coverage).length !== coverageFamilies.length ||
+        coverageFamilies.some((family) => !Object.prototype.hasOwnProperty.call(state.coverage, family))) {
+        throw new contracts_1.DiamondDomainError('invalid-coverage', 'Coverage must contain exactly the supported stat families.');
+    }
+    if (state.pendingIllegalPitchAwards !== undefined) {
+        const awards = state.pendingIllegalPitchAwards;
+        if (!Array.isArray(awards) ||
+            awards.length > 3 ||
+            (0, rules_1.requireDiamondRulesProfile)(state.rulesProfileId, state.rulesProfileVersion).illegalPitchPolicy !== 'ball_and_advance' ||
+            new Set(awards.map((award) => award.from)).size !== awards.length ||
+            awards.some((award) => !BASES.includes(award.from) ||
+                state.bases[award.from]?.runnerId !== award.runnerId ||
+                award.to !== (award.from === 'first' ? 'second' : award.from === 'second' ? 'third' : 'home'))) {
+            throw new contracts_1.DiamondDomainError('invalid-illegal-pitch-award', 'Pending illegal-pitch awards must bind each original runner to its next base.');
+        }
+    }
     Object.values(state.coverage).forEach((coverage) => {
         if (!COVERAGE_VALUES.includes(coverage)) {
             throw new contracts_1.DiamondDomainError('invalid-coverage', `Invalid coverage value ${String(coverage)}.`);
@@ -1655,9 +1674,14 @@ function validateDiamondState(state) {
 function reduceDiamondEvent(state, action) {
     validateDiamondState(state);
     let next = cloneState(state);
+    const pendingAwards = state.pendingIllegalPitchAwards ?? [];
+    if (pendingAwards.length &&
+        !['advance_runner', 'private_note', 'void_event', 'supersede_event', 'suspend', 'resume', 'cancel', 'scorer_handoff'].includes(action.type)) {
+        throw new contracts_1.DiamondDomainError('illegal-pitch-award-pending', 'Resolve every mandatory illegal-pitch runner award before continuing play.');
+    }
     const pendingPlateAppearance = state.inning.balls >= 4 || state.inning.strikes >= 3 || isDiamondTerminalPitchResult(state.inning.lastPitchResult);
     if (pendingPlateAppearance &&
-        (action.type === 'advance_runner' ||
+        ((action.type === 'advance_runner' && !pendingAwards.length) ||
             action.type === 'advance_half_inning' ||
             action.type === 'finalize' ||
             (action.type === 'rules_decision' && action.payload.code !== 'coverage_adjustment'))) {
@@ -1881,6 +1905,20 @@ function reduceDiamondEvent(state, action) {
                 const profile = (0, rules_1.requireDiamondRulesProfile)(state.rulesProfileId, state.rulesProfileVersion);
                 if (profile.illegalPitchPolicy !== 'configurable')
                     balls += 1;
+                if (profile.illegalPitchPolicy === 'ball_and_advance') {
+                    next = {
+                        ...next,
+                        pendingIllegalPitchAwards: BASES.flatMap((from) => state.bases[from]
+                            ? [
+                                {
+                                    runnerId: state.bases[from].runnerId,
+                                    from,
+                                    to: from === 'first' ? 'second' : from === 'second' ? 'third' : 'home'
+                                }
+                            ]
+                            : [])
+                    };
+                }
             }
             next = {
                 ...next,
@@ -1906,6 +1944,16 @@ function reduceDiamondEvent(state, action) {
                 throw new contracts_1.DiamondDomainError('batter-on-base', 'The current batter is already recorded as a base runner.');
             }
             validateBatterAdvanceShape(action.payload.batterAdvance);
+            const result = action.payload.result;
+            const pitch = state.inning.lastPitchResult;
+            if ((state.inning.balls >= 4 && result !== 'walk' && result !== 'intentional_walk') ||
+                (state.inning.strikes >= 3 && result !== 'strikeout' && result !== 'dropped_third_strike') ||
+                (pitch === 'hit_by_pitch' && result !== 'hit_by_pitch') ||
+                (pitch === 'catcher_interference' && result !== 'interference') ||
+                (pitch === 'in_play' &&
+                    ['walk', 'intentional_walk', 'hit_by_pitch', 'interference', 'strikeout', 'dropped_third_strike'].includes(result))) {
+                throw new contracts_1.DiamondDomainError('pitch-outcome-mismatch', 'The plate appearance must agree with its recorded terminal pitch.');
+            }
             validateOutcomeDestination(state, action.payload.result, action.payload.batterAdvance.to);
             const batterOutKind = resolveBatterOutKind(action.payload.result, action.payload.batterAdvance.to, action.payload.batterAdvance.outKind);
             if (action.payload.batterAdvance.cause !== undefined) {
@@ -1998,7 +2046,17 @@ function reduceDiamondEvent(state, action) {
         }
         case 'advance_runner': {
             requireLifecycle(state, ['active'], 'advance runner');
-            requireOpenHalfForPlay(state);
+            if (!pendingAwards.length)
+                requireOpenHalfForPlay(state);
+            if (pendingAwards.length &&
+                !pendingAwards.some((award) => award.runnerId === action.payload.runnerId &&
+                    award.from === action.payload.from &&
+                    award.to === action.payload.to &&
+                    action.payload.cause === 'illegal_pitch' &&
+                    action.payload.countsRun !== false &&
+                    action.payload.rbi !== true)) {
+                throw new contracts_1.DiamondDomainError('illegal-pitch-award-pending', 'The runner must receive its exact mandatory one-base illegal-pitch award.');
+            }
             validateAdvanceShape(action.payload, { standalone: true });
             const runnerId = requireId(action.payload.runnerId, 'runnerId');
             const placement = state.bases[action.payload.from];
@@ -2024,6 +2082,8 @@ function reduceDiamondEvent(state, action) {
                     outKind: action.payload.outKind
                 }
             ], action.payload.to === 'out' ? 1 : 0, action.eventId ?? placement.reachedOnEventId);
+            if (pendingAwards.length)
+                next = { ...next, pendingIllegalPitchAwards: pendingAwards.filter((award) => award.runnerId !== runnerId) };
             if (action.payload.fielding)
                 next = markFieldingObserved(next);
             next = markPartial(next, action.payload.omissions);
