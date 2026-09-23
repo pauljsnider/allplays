@@ -1776,6 +1776,19 @@ function validateDiamondState(state) {
             throw new contracts_1.DiamondDomainError('invalid-illegal-pitch-award', 'Pending illegal-pitch awards must bind each original runner to its next base.');
         }
     }
+    if (state.pendingBalkAwards !== undefined) {
+        const awards = state.pendingBalkAwards;
+        if (!Array.isArray(awards) ||
+            awards.length > 3 ||
+            (0, rules_1.requireDiamondRulesProfile)(state.rulesProfileId, state.rulesProfileVersion).sport !== 'baseball' ||
+            (awards.length > 0 && Boolean(state.pendingIllegalPitchAwards?.length)) ||
+            new Set(awards.map((award) => award.from)).size !== awards.length ||
+            awards.some((award) => !BASES.includes(award.from) ||
+                state.bases[award.from]?.runnerId !== award.runnerId ||
+                award.to !== (award.from === 'first' ? 'second' : award.from === 'second' ? 'third' : 'home'))) {
+            throw new contracts_1.DiamondDomainError('invalid-balk-award', 'Pending balk awards must bind each original runner to its next base.');
+        }
+    }
     Object.values(state.coverage).forEach((coverage) => {
         if (!COVERAGE_VALUES.includes(coverage)) {
             throw new contracts_1.DiamondDomainError('invalid-coverage', `Invalid coverage value ${String(coverage)}.`);
@@ -1841,10 +1854,12 @@ function validateDiamondState(state) {
 function reduceDiamondEvent(state, action) {
     validateDiamondState(state);
     let next = cloneState(state);
-    const pendingAwards = state.pendingIllegalPitchAwards ?? [];
+    const pendingAwardCause = state.pendingBalkAwards?.length ? 'balk' : 'illegal_pitch';
+    const pendingAwards = (pendingAwardCause === 'balk' ? state.pendingBalkAwards : state.pendingIllegalPitchAwards) ?? [];
+    const pendingAwardCode = pendingAwardCause === 'balk' ? 'balk-award-pending' : 'illegal-pitch-award-pending';
     if (pendingAwards.length &&
         !['advance_runner', 'private_note', 'void_event', 'supersede_event', 'suspend', 'resume', 'cancel', 'scorer_handoff'].includes(action.type)) {
-        throw new contracts_1.DiamondDomainError('illegal-pitch-award-pending', 'Resolve every mandatory illegal-pitch runner award before continuing play.');
+        throw new contracts_1.DiamondDomainError(pendingAwardCode, 'Resolve every mandatory pitch-infraction runner award before continuing play.');
     }
     const pendingPlateAppearance = state.inning.balls >= 4 || state.inning.strikes >= 3 || isDiamondTerminalPitchResult(state.inning.lastPitchResult);
     if (pendingPlateAppearance &&
@@ -2068,6 +2083,21 @@ function reduceDiamondEvent(state, action) {
                 strikes += 1;
             if (action.payload.result === 'foul_bunt')
                 strikes += 1;
+            if (action.payload.result === 'balk' &&
+                (0, rules_1.requireDiamondRulesProfile)(state.rulesProfileId, state.rulesProfileVersion).sport === 'baseball') {
+                next = {
+                    ...next,
+                    pendingBalkAwards: BASES.flatMap((from) => state.bases[from]
+                        ? [
+                            {
+                                runnerId: state.bases[from].runnerId,
+                                from,
+                                to: from === 'first' ? 'second' : from === 'second' ? 'third' : 'home'
+                            }
+                        ]
+                        : [])
+                };
+            }
             if (action.payload.result === 'illegal_pitch') {
                 const profile = (0, rules_1.requireDiamondRulesProfile)(state.rulesProfileId, state.rulesProfileVersion);
                 if (profile.illegalPitchPolicy !== 'configurable')
@@ -2253,10 +2283,10 @@ function reduceDiamondEvent(state, action) {
                 !pendingAwards.some((award) => award.runnerId === action.payload.runnerId &&
                     award.from === action.payload.from &&
                     award.to === action.payload.to &&
-                    action.payload.cause === 'illegal_pitch' &&
+                    action.payload.cause === pendingAwardCause &&
                     action.payload.countsRun !== false &&
                     action.payload.rbi !== true)) {
-                throw new contracts_1.DiamondDomainError('illegal-pitch-award-pending', 'The runner must receive its exact mandatory one-base illegal-pitch award.');
+                throw new contracts_1.DiamondDomainError(pendingAwardCode, 'The runner must receive its exact mandatory one-base pitch-infraction award.');
             }
             validateAdvanceShape(action.payload, { standalone: true });
             if (action.payload.cause === 'pickoff' || action.payload.cause === 'balk') {
@@ -2289,7 +2319,10 @@ function reduceDiamondEvent(state, action) {
                 }
             ], action.payload.to === 'out' ? 1 : 0, action.eventId ?? placement.reachedOnEventId);
             if (pendingAwards.length)
-                next = { ...next, pendingIllegalPitchAwards: pendingAwards.filter((award) => award.runnerId !== runnerId) };
+                next = {
+                    ...next,
+                    [pendingAwardCause === 'balk' ? 'pendingBalkAwards' : 'pendingIllegalPitchAwards']: pendingAwards.filter((award) => award.runnerId !== runnerId)
+                };
             if (requiresMissingPitchCoverage(state, action.payload.cause, action.payload.fielding ? [action.payload.fielding] : []))
                 next = markPartial(next, ['pitches', 'situational']);
             if (action.payload.fielding)
