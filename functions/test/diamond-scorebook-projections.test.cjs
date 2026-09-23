@@ -895,7 +895,7 @@ test("compiled substituted runner scores with original pitcher responsibility an
     runnerId: "away-pinch-runner",
     from: "first",
     to: "home",
-    cause: "batted_ball",
+    cause: "other",
     countsRun: true,
     earned: true,
     rbi: false,
@@ -2420,7 +2420,7 @@ test("compiled scoring judgments follow ledger order across original and correct
     runnerId,
     from: "third",
     to: "home",
-    cause: "batted_ball",
+    cause: "other",
     countsRun: true,
     earned: false,
     rbi: false,
@@ -4443,7 +4443,7 @@ test("compiled LOB retains inning-ending nullified runs but rejects earlier null
     runnerId: earlierRunner,
     from: "third",
     to: "home",
-    cause: "batted_ball",
+    cause: "other",
     countsRun: false,
   });
   assert.equal(rejected.result.outcome, "rejected");
@@ -4534,7 +4534,7 @@ test("compiled replay carries an omitted tiebreaker charge through a relief appe
     runnerId: previousAwayBatter,
     from: "second",
     to: "home",
-    cause: "batted_ball",
+    cause: "other",
     countsRun: true,
     earned: false,
   });
@@ -4586,7 +4586,7 @@ test("compiled stats project active pitcher alignment entries once and preserve 
     runnerId: "away-1",
     from: "first",
     to: "home",
-    cause: "batted_ball",
+    cause: "other",
     countsRun: true,
     earned: false,
   });
