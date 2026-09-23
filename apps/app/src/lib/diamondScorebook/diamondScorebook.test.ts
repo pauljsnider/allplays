@@ -38,6 +38,25 @@ const SCORER = 'scorer-1';
 
 describe('Diamond security boundary regressions', () => {
   const context = { actorUid: SCORER, eventId: 'security-check', serverTimestampMs: 1700000001000 };
+  it.each(['attachment', 'checkpoint'] as const)('rejects corrupt %s before projecting stats', (kind) => {
+    const game = harness();
+    setBasicLineups(game);
+    const play = game.submit('record_plate_appearance', {
+      ...currentMatchup(game),
+      result: 'ground_out',
+      batterAdvance: { to: 'out', outKind: 'batter_runner' },
+      runnerAdvances: [],
+      outsOnPlay: 1
+    });
+    game.submit('record_fielding', { playEventId: play.event!.eventId, fielding: { putoutBy: 'home-2' } });
+    expect(projectDiamondStats(game.ledger).players['home-2'].raw.fielding.PO).toBe(1);
+    const corrupted = JSON.parse(JSON.stringify(game.ledger)) as DiamondLedger;
+    if (kind === 'attachment') {
+      const attachment = corrupted.events.find((event) => event.type === 'record_fielding')!;
+      (attachment.payload as { fielding: { putoutBy: string } }).fielding.putoutBy = 'home-3';
+    } else (corrupted.state.inning as unknown as { balls: number }).balls = 2;
+    expect(() => projectDiamondStats(corrupted)).toThrow();
+  });
   it.each(['event', 'checkpoint'] as const)('rejects corrupt %s before a new command or duplicate', (kind) => {
     const game = harness();
     setBasicLineups(game);
@@ -6195,7 +6214,7 @@ describe('Diamond stat-integrity evidence', () => {
     expect(strikeoutProjection.players['home-1'].raw.pitching.pitches).toBe(3);
   });
 
-  it.each(['none', 'suspend', 'scorer_handoff', 'private_note'] as const)(
+  it.each(['none', 'suspend', 'scorer_handoff', 'private_note', 'coverage', 'fielding', 'judgment'] as const)(
     'credits physical pitches once across %s interruptions',
     (interruption) => {
       const game = harness('baseball-nfhs', 'full');
@@ -6208,6 +6227,31 @@ describe('Diamond stat-integrity evidence', () => {
           game.submit('scorer_handoff', { toUid: 'scorer-2' });
           game.submit('scorer_handoff', { toUid: SCORER }, { actorUid: 'scorer-2' });
         } else if (interruption === 'private_note') game.submit('private_note', { text: 'Scoring note' });
+        else if (interruption === 'coverage')
+          game.submit('rules_decision', {
+            code: 'coverage_adjustment',
+            description: 'Missing baserunning evidence',
+            affectedFamilies: ['baserunning']
+          });
+        else if (interruption === 'fielding')
+          game.submit('record_fielding', {
+            playEventId: game.ledger.events.find((event) => event.type === 'record_plate_appearance')!.eventId,
+            fielding: { battedBall: 'ground' }
+          });
+        else if (interruption === 'judgment') {
+          const scoring = game.ledger.events.find(
+            (event) => event.type === 'advance_runner' && (event.payload as { to: string }).to === 'home'
+          );
+          game.submit(
+            'record_scoring_judgment',
+            scoring
+              ? { playEventId: scoring.eventId, earned: true }
+              : {
+                  playEventId: game.ledger.events.find((event) => event.type === 'record_plate_appearance')!.eventId,
+                  pitcherOfRecord: { side: 'home', playerId: 'home-1', decision: 'win' }
+                }
+          );
+        }
       };
       recordPitch(game, 'away-1', 'home-1');
       game.submit('record_plate_appearance', {
@@ -6230,6 +6274,7 @@ describe('Diamond stat-integrity evidence', () => {
 
       game.submit('record_pitch', { batterId: 'away-3', pitcherId: 'home-1', result: 'ball' });
       game.submit('advance_runner', { runnerId: 'away-1', from: 'second', to: 'third', cause: 'wild_pitch' });
+      interrupt();
       game.submit('advance_runner', { runnerId: 'away-2', from: 'first', to: 'second', cause: 'wild_pitch' });
 
       game.submit('record_pitch', { batterId: 'away-3', pitcherId: 'home-1', result: 'ball' });
