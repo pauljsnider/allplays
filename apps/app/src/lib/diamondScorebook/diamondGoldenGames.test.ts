@@ -901,7 +901,7 @@ describe('Baseball golden games', () => {
       const before = game.ledger;
       expectRejected(
         game.submit('advance_runner', { runnerId, from: 'first', to: 'second', cause }, { accept: false }),
-        'advance-cause-destination-mismatch',
+        cause === 'force_out' ? 'standalone-plate-appearance-cause' : 'advance-cause-destination-mismatch',
         before.state.revision
       );
       expect(game.ledger).toBe(before);
