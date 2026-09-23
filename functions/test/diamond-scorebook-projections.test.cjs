@@ -3644,8 +3644,8 @@ test("compiled runner-cause fielding completeness matches full replay for every 
           type = "record_plate_appearance";
           payload = {
             ...currentMatchup(game),
-            result: "single",
-            batterAdvance: { to: "first", cause: "batted_ball" },
+            result: fixture.cause === "passed_ball" ? "walk" : "single",
+            batterAdvance: { to: "first", cause: fixture.cause === "passed_ball" ? "walk" : "batted_ball" },
             runnerAdvances: [
               {
                 runnerId,
