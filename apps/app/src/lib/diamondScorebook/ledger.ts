@@ -636,6 +636,9 @@ function validateAttachmentAgainstHistoricalPlay(event: Pick<DiamondEffectiveEve
   if (payload.rbi === false && context.requiresHomeRunRbi) {
     throw new DiamondDomainError('invalid-rbi', 'A counted run on a home run cannot have its batter RBI revoked.');
   }
+  if (payload.rbi === true && context.plateAppearanceResult === undefined) {
+    throw new DiamondDomainError('invalid-rbi', 'A standalone runner advance has no batter to receive RBI credit.');
+  }
   if (payload.responsiblePitcherId && !pitcherRoleIsUnambiguous(context, context.defensiveSide, payload.responsiblePitcherId)) {
     throw new DiamondDomainError(
       'responsible-pitcher-role-mismatch',
