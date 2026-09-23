@@ -158,6 +158,52 @@ describe('Diamond security boundary regressions', () => {
 });
 
 describe('Diamond substitution and immutable-profile regressions', () => {
+  it.each(['walk', 'in_play'] as const)('cannot discard a pending %s through a runner third out', (terminal) => {
+    const game = harness('baseball-nfhs', 'quick');
+    setBasicLineups(game);
+    recordQuickOut(game);
+    recordQuickOut(game);
+    game.submit('record_plate_appearance', {
+      ...currentMatchup(game),
+      result: 'single',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    for (let i = 0; i < (terminal === 'walk' ? 4 : 1); i += 1)
+      game.submit('record_pitch', { ...currentMatchup(game), result: terminal === 'walk' ? 'ball' : 'in_play' });
+    const command = game.command('advance_runner', { runnerId: 'away-3', from: 'first', to: 'out', cause: 'pickoff', outKind: 'tag' });
+    const checkpoint = createDiamondCheckpoint(game.ledger);
+    const context = { actorUid: SCORER, eventId: 'pending-pa-runner-out', serverTimestampMs: 1700000001000 };
+    expect(executeDiamondCommand(game.ledger, command, context).result.rejection?.code).toBe('pending-plate-appearance');
+    expect(executeDiamondCommandFromCheckpoint(checkpoint, command, context).result.rejection?.code).toBe('pending-plate-appearance');
+    game.submit('record_plate_appearance', {
+      ...currentMatchup(game),
+      result: terminal === 'walk' ? 'walk' : 'single',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [{ runnerId: 'away-3', from: 'first', to: 'second', cause: 'batted_ball' }],
+      outsOnPlay: 0
+    });
+    game.submit('advance_runner', { runnerId: 'away-3', from: 'second', to: 'out', cause: 'pickoff', outKind: 'tag' });
+    game.submit('advance_half_inning', {});
+    expect(game.ledger.state.nextBatterSlot.away).toBe(1);
+  });
+  it.each(['substitute', 're_enter'] as const)('rejects an inherited two-strike batter change through %s', (type) => {
+    const game = harness();
+    setBasicLineups(game);
+    if (type === 're_enter')
+      game.submit('substitute', { side: 'away', battingSlot: 1, outgoingPlayerId: 'away-1', incomingPlayerId: 'pinch-hitter' });
+    for (let i = 0; i < 2; i += 1) game.submit('record_pitch', { ...currentMatchup(game), result: 'called_strike' });
+    const command =
+      type === 'substitute'
+        ? game.command(type, { side: 'away', battingSlot: 1, outgoingPlayerId: 'away-1', incomingPlayerId: 'pinch-hitter' })
+        : game.command(type, { side: 'away', battingSlot: 1, starterPlayerId: 'away-1', replacedPlayerId: 'pinch-hitter' });
+    const context = { actorUid: SCORER, eventId: 'inherited-count-batter', serverTimestampMs: 1700000001000 };
+    expect(executeDiamondCommand(game.ledger, command, context).result.rejection?.code).toBe('inherited-count-batter-change');
+    expect(executeDiamondCommandFromCheckpoint(createDiamondCheckpoint(game.ledger), command, context).result.rejection?.code).toBe(
+      'inherited-count-batter-change'
+    );
+  });
   it.each(['in_play', 'hit_by_pitch', 'catcher_interference', 'walk', 'strikeout'] as const)(
     'preserves the terminal-pitch batter for %s until the plate appearance is recorded',
     (terminal) => {
@@ -199,10 +245,19 @@ describe('Diamond substitution and immutable-profile regressions', () => {
   it('permits a legal pinch hitter before the pitch count is terminal', () => {
     const game = harness();
     setBasicLineups(game);
-    game.submit('record_pitch', { batterId: 'away-1', pitcherId: 'home-1', result: 'ball' });
+    for (let i = 0; i < 3; i += 1) game.submit('record_pitch', { batterId: 'away-1', pitcherId: 'home-1', result: 'ball' });
     game.submit('substitute', { side: 'away', battingSlot: 1, outgoingPlayerId: 'away-1', incomingPlayerId: 'pinch-hitter' });
     expect(currentMatchup(game).batterId).toBe('pinch-hitter');
-    expect(game.ledger.state.inning.balls).toBe(1);
+    expect(game.ledger.state.inning.balls).toBe(3);
+    game.submit('record_pitch', { ...currentMatchup(game), result: 'ball' });
+    game.submit('record_plate_appearance', {
+      ...currentMatchup(game),
+      result: 'walk',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    expect(game.ledger.state.bases.first?.runnerId).toBe('pinch-hitter');
   });
   it.each(['substitute', 'set_defensive_alignment', 're_enter'] as const)(
     'rejects mid-PA pitching changes through %s atomically',
