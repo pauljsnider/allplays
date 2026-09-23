@@ -39,6 +39,49 @@ const SCORER = 'scorer-1';
 
 describe('Diamond security boundary regressions', () => {
   const context = { actorUid: SCORER, eventId: 'security-check', serverTimestampMs: 1700000001000 };
+  it.each(['out', 'third', 'home'] as const)('rejects pitchless IBB non-award movement to %s', (to) => {
+    const game = harness();
+    setBasicLineups(game);
+    recordPitch(game, 'away-1', 'home-1');
+    game.submit('record_plate_appearance', {
+      ...currentMatchup(game),
+      result: 'double',
+      batterAdvance: { to: 'second' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    const payload: DiamondCommandPayloadMap['record_plate_appearance'] = {
+      ...currentMatchup(game),
+      result: 'intentional_walk',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [
+        {
+          runnerId: 'away-1',
+          from: 'second',
+          to,
+          cause: to === 'out' ? 'tag_out' : 'other',
+          ...(to === 'out' ? { outKind: 'tag' as const } : {}),
+          ...(to === 'home' ? { earned: true, rbi: false } : {})
+        }
+      ],
+      outsOnPlay: to === 'out' ? 1 : 0,
+      ...(to === 'out' ? { fielding: { putoutBy: 'home-3' } } : {})
+    };
+    const command = game.command('record_plate_appearance', payload);
+    expect(executeDiamondCommand(game.ledger, command, context).result.rejection?.code).toBe('runner-cause-result-mismatch');
+    expect(executeDiamondCommandFromCheckpoint(createDiamondCheckpoint(game.ledger), command, context).result.rejection?.code).toBe(
+      'runner-cause-result-mismatch'
+    );
+    game.submit('record_plate_appearance', {
+      ...currentMatchup(game),
+      result: 'intentional_walk',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [{ runnerId: 'away-1', from: 'second', to: 'stay', cause: 'other' }],
+      outsOnPlay: 0
+    });
+    expect(game.ledger.state.bases.second?.runnerId).toBe('away-1');
+    expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
+  });
   it.each(['wild_pitch', 'passed_ball'] as const)('rejects %s continuation of an awarded illegal pitch', (cause) => {
     const game = harness('fastpitch-nfhs');
     setBasicLineups(game);
@@ -807,8 +850,15 @@ describe('Diamond security boundary regressions', () => {
         game.command('record_plate_appearance', payload),
         context
       );
+      if (!delivered) {
+        expect(bounded.result.rejection?.code).toBe('runner-cause-result-mismatch');
+        expect(game.submit('record_plate_appearance', payload, { accept: false }).result.rejection?.code).toBe(
+          'runner-cause-result-mismatch'
+        );
+        continue;
+      }
       game.submit('record_plate_appearance', payload);
-      const expected = delivered ? 'complete' : 'partial';
+      const expected = 'complete';
       expect(bounded.result.outcome).toBe('accepted');
       expect(bounded.checkpoint.state.coverage).toMatchObject({ pitches: expected, situational: expected });
       expect(game.ledger.state.coverage).toMatchObject({ pitches: expected, situational: expected });
