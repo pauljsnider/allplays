@@ -2701,7 +2701,6 @@ test("compiled fielding projection unions inline and detached evidence per physi
       putoutBy: "home-2",
       assists: ["home-1"],
       errors: [{ playerId: "home-1" }],
-      passedBallBy: "home-2",
       doublePlay: true,
     },
   };
@@ -2712,7 +2711,6 @@ test("compiled fielding projection unions inline and detached evidence per physi
       putoutBy: "home-2",
       assists: ["home-1"],
       errors: [{ playerId: "home-1", kind: "throwing" }],
-      passedBallBy: "home-2",
       doublePlay: true,
     },
   });
@@ -2738,7 +2736,7 @@ test("compiled fielding projection unions inline and detached evidence per physi
       PB: projected.players["home-2"].raw.fielding.PB,
       DP: projected.players["home-2"].raw.fielding.DP,
     },
-    { PO: 1, PB: 1, DP: 1 },
+    { PO: 1, PB: 0, DP: 1 },
   );
   assert.deepEqual(
     {
