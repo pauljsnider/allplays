@@ -40,6 +40,65 @@ const SCORER = 'scorer-1';
 describe('Diamond security boundary regressions', () => {
   const context = { actorUid: SCORER, eventId: 'security-check', serverTimestampMs: 1700000001000 };
   it.each([
+    ['illegal_pitch', false],
+    ['illegal_pitch', true],
+    ['balk', false],
+    ['balk', true]
+  ] as const)('rejects passed-ball credit on %s with attachment=%s', (cause, attached) => {
+    const game = harness(cause === 'illegal_pitch' ? 'fastpitch-nfhs' : 'baseball-nfhs');
+    setBasicLineups(game);
+    recordPitch(game, 'away-1', 'home-1');
+    game.submit('record_plate_appearance', {
+      ...currentMatchup(game),
+      result: 'single',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    game.submit('record_pitch', { ...currentMatchup(game), result: cause });
+    const payload: DiamondCommandPayloadMap['advance_runner'] = { runnerId: 'away-1', from: 'first', to: 'second', cause };
+    const fielding = { passedBallBy: 'home-2' };
+    const command = attached
+      ? game.command('record_fielding', { playEventId: game.submit('advance_runner', payload).event!.eventId, fielding })
+      : game.command('advance_runner', { ...payload, fielding });
+    expect(executeDiamondCommand(game.ledger, command, context).result.rejection?.code).toBe('pitch-cause-fielding-mismatch');
+    if (!attached)
+      expect(executeDiamondCommandFromCheckpoint(createDiamondCheckpoint(game.ledger), command, context).result.rejection?.code).toBe(
+        'pitch-cause-fielding-mismatch'
+      );
+  });
+  it.each([false, true])('rejects standalone runner RBI with attached judgment=%s', (attached) => {
+    const game = harness();
+    setBasicLineups(game);
+    recordPitch(game, 'away-1', 'home-1');
+    game.submit('record_plate_appearance', {
+      ...currentMatchup(game),
+      result: 'triple',
+      batterAdvance: { to: 'third' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    const payload: DiamondCommandPayloadMap['advance_runner'] = {
+      runnerId: 'away-1',
+      from: 'third',
+      to: 'home',
+      cause: 'other',
+      earned: true
+    };
+    const command = attached
+      ? game.command('record_scoring_judgment', {
+          playEventId: game.submit('advance_runner', payload).event!.eventId,
+          runnerId: 'away-1',
+          rbi: true
+        })
+      : game.command('advance_runner', { ...payload, rbi: true });
+    expect(executeDiamondCommand(game.ledger, command, context).result.rejection?.code).toBe('invalid-rbi');
+    if (!attached)
+      expect(executeDiamondCommandFromCheckpoint(createDiamondCheckpoint(game.ledger), command, context).result.rejection?.code).toBe(
+        'invalid-rbi'
+      );
+  });
+  it.each([
     ['hit_by_pitch', 'hit_by_pitch', false],
     ['hit_by_pitch', 'hit_by_pitch', true],
     ['catcher_interference', 'interference', false],
