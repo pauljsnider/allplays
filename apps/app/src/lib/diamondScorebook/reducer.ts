@@ -2527,6 +2527,12 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
       if (state.inning.balls >= 4 || state.inning.strikes >= 3 || isDiamondTerminalPitchResult(state.inning.lastPitchResult)) {
         throw new DiamondDomainError('plate-appearance-pending', 'Resolve the plate appearance before recording another pitch.');
       }
+      if (action.payload.result === 'balk' && BASES.every((base) => state.bases[base] === null)) {
+        throw new DiamondDomainError(
+          'balk-without-runner',
+          'A balk requires a runner aboard; record the applicable illegal pitch instead.'
+        );
+      }
       let balls = state.inning.balls;
       let strikes = state.inning.strikes;
       const deliveredPitch = isDiamondDeliveredPitch(action.payload.result);
@@ -2674,6 +2680,11 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
       const runnerMoves: Move[] = action.payload.runnerAdvances.map((advance: DiamondRunnerAdvance) => {
         validateAdvanceShape(advance);
         validateAdvanceProfile(state, advance.cause);
+        if (advance.cause === 'illegal_pitch')
+          throw new DiamondDomainError(
+            'illegal-pitch-award-required',
+            'Record the illegal pitch and complete its runner awards before the plate appearance.'
+          );
         if (advance.cause === 'balk')
           throw new DiamondDomainError(
             'balk-award-required',
@@ -2799,6 +2810,9 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
       }
       validateAdvanceShape(action.payload, { standalone: true });
       validateAdvanceProfile(state, action.payload.cause);
+      if (action.payload.cause === 'illegal_pitch' && !state.pendingIllegalPitchAwards?.length) {
+        throw new DiamondDomainError('illegal-pitch-award-required', 'The runner must have a pending recorded illegal-pitch award.');
+      }
       if (action.payload.cause === 'balk' && !state.pendingBalkAwards?.length) {
         throw new DiamondDomainError('balk-award-required', 'Record the balk before completing its mandatory runner awards.');
       }
