@@ -385,6 +385,35 @@ function validateBatterAdvanceCauseOutKind(cause, destination, outKind) {
         throw new contracts_1.DiamondDomainError('advance-cause-out-kind-mismatch', `${cause} requires batter out kind ${expected}.`);
     }
 }
+function validateBatterCauseResult(result, destination, cause) {
+    if (cause === 'other')
+        return; // Explicit unknown evidence remains partial where required.
+    const contactResults = [
+        'single',
+        'double',
+        'triple',
+        'home_run',
+        'reached_on_error',
+        'fielders_choice',
+        'ground_out',
+        'fly_out',
+        'line_out',
+        'sacrifice_bunt',
+        'sacrifice_fly',
+        'double_play',
+        'triple_play'
+    ];
+    const droppedThird = result === 'dropped_third_strike' || isDiamondDroppedThirdStrikeAdvance(result, destination);
+    const compatible = (cause === 'batted_ball' && contactResults.includes(result)) ||
+        (cause === 'walk' && (result === 'walk' || result === 'intentional_walk')) ||
+        (cause === 'hit_by_pitch' && result === 'hit_by_pitch') ||
+        (cause === 'obstruction' && ['interference', 'fielders_choice', 'reached_on_error'].includes(result)) ||
+        (DROPPED_THIRD_STRIKE_ADVANCE_CAUSES.includes(cause) && droppedThird) ||
+        (cause === 'error' && (result === 'reached_on_error' || result === 'fielders_choice')) ||
+        (['force_out', 'tag_out', 'appeal_out'].includes(cause) && destination === 'out' && contactResults.includes(result));
+    if (!compatible)
+        throw new contracts_1.DiamondDomainError('batter-cause-result-mismatch', 'The batter advance cause contradicts the plate-appearance result.');
+}
 function validateAdvanceShape(value, options = {}) {
     const advance = requireRecord(value, 'runner advance');
     requireOnlyFields(advance, options.standalone ? STANDALONE_RUNNER_ADVANCE_FIELDS : RUNNER_ADVANCE_FIELDS, 'runner advance');
@@ -2003,6 +2032,7 @@ function reduceDiamondEvent(state, action) {
             validateOutcomeDestination(state, action.payload.result, action.payload.batterAdvance.to);
             const batterOutKind = resolveBatterOutKind(action.payload.result, action.payload.batterAdvance.to, action.payload.batterAdvance.outKind);
             if (action.payload.batterAdvance.cause !== undefined) {
+                validateBatterCauseResult(result, action.payload.batterAdvance.to, action.payload.batterAdvance.cause);
                 validateBatterAdvanceCauseOutKind(action.payload.batterAdvance.cause, action.payload.batterAdvance.to, batterOutKind);
             }
             if (action.payload.fielding) {
