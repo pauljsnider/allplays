@@ -547,8 +547,13 @@ function currentHalfReachedRunLimit(state: DiamondGameState) {
   return profile.inningRunLimit !== null && currentHalfRuns(state) >= profile.inningRunLimit;
 }
 
-function requireOpenHalfForPlay(state: DiamondGameState, options: Readonly<{ allowPendingTiebreakerPlacement?: boolean }> = {}) {
-  requireNoGameEndingCondition(state, 'adding another play');
+function requireOpenHalfForPlay(
+  state: DiamondGameState,
+  options: Readonly<{ allowPendingTiebreakerPlacement?: boolean; completingAwardWalk?: boolean }> = {}
+) {
+  if (!(options.completingAwardWalk && !state.gameEndDecision && automaticDiamondFinalizationReason(state)?.kind === 'walkoff')) {
+    requireNoGameEndingCondition(state, 'adding another play');
+  }
   if (state.inning.outs >= 3 || state.halfInningEnd) {
     throw new DiamondDomainError('half-inning-complete', 'Advance the half inning before adding another play.');
   }
@@ -2295,7 +2300,12 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
     }
     case 'record_plate_appearance': {
       requireLifecycle(state, ['active'], 'record plate appearance');
-      requireOpenHalfForPlay(state);
+      const completingAwardWalk =
+        state.inning.balls === 4 &&
+        state.inning.lastPitchResult === 'illegal_pitch' &&
+        state.pendingIllegalPitchAwards?.length === 0 &&
+        requireDiamondRulesProfile(state.rulesProfileId, state.rulesProfileVersion).illegalPitchPolicy === 'ball_and_advance';
+      requireOpenHalfForPlay(state, { completingAwardWalk });
       if (state.inning.outs >= 3) throw new DiamondDomainError('half-inning-complete', 'Advance the half inning first.');
       const side = validateBatterAndPitcher(state, action.payload.batterId, action.payload.pitcherId);
       if (BASES.some((base) => state.bases[base]?.runnerId === action.payload.batterId)) {
@@ -2860,6 +2870,17 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
       const exhaustive: never = action;
       throw new DiamondDomainError('unsupported-command', `Unsupported command ${String(exhaustive)}.`);
     }
+  }
+
+  if (
+    pendingPlateAppearance &&
+    (action.type === 'substitute' ||
+      action.type === 're_enter' ||
+      action.type === 'set_defensive_alignment' ||
+      action.type === 'add_courtesy_runner') &&
+    BASES.some((base) => state.bases[base]?.runnerId !== next.bases[base]?.runnerId)
+  ) {
+    throw new DiamondDomainError('terminal-pitch-runner-change', 'Resolve the pending plate appearance before replacing its live runners.');
   }
 
   // Inherited-count attribution is not yet represented in the canonical state.
