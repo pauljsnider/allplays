@@ -742,6 +742,7 @@ function validateDiamondPlayerIdentityOwnership(ledger) {
     return true;
 }
 function getDiamondPlayerIdentityIdsBySide(ledger) {
+    verifyDiamondLedger(ledger);
     (0, reducer_1.validateDiamondState)(ledger.initialState);
     const ownershipState = (0, reducer_1.validateDiamondState)(ledger.state);
     return deepFreeze({
