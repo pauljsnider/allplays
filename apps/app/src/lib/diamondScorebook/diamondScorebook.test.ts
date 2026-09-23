@@ -39,6 +39,26 @@ const SCORER = 'scorer-1';
 
 describe('Diamond security boundary regressions', () => {
   const context = { actorUid: SCORER, eventId: 'security-check', serverTimestampMs: 1700000001000 };
+  it('rejects unrecorded standalone and bundled baseball balk awards', () => {
+    const game = twoRunnersBeforePitch();
+    const advance = { runnerId: 'away-2', from: 'first' as const, to: 'second' as const, cause: 'balk' as const };
+    for (const command of [
+      game.command('advance_runner', advance),
+      game.command('advance_runner', { ...advance, to: 'home', earned: true, rbi: false }),
+      game.command('record_plate_appearance', {
+        ...currentMatchup(game),
+        result: 'intentional_walk',
+        batterAdvance: { to: 'first' },
+        runnerAdvances: [advance],
+        outsOnPlay: 0
+      })
+    ]) {
+      expect(executeDiamondCommand(game.ledger, command, context).result.rejection?.code).toBe('balk-award-required');
+      expect(executeDiamondCommandFromCheckpoint(createDiamondCheckpoint(game.ledger), command, context).result.rejection?.code).toBe(
+        'balk-award-required'
+      );
+    }
+  });
   it.each(['fastpitch-nfhs', 'fastpitch-youth'] as const)('rejects standalone and bundled balk causes in %s', (profile) => {
     const game = harness(profile);
     setBasicLineups(game);
@@ -68,7 +88,13 @@ describe('Diamond security boundary regressions', () => {
     }
   });
   it.each([false, true])('binds catcher-interference fielding to the original catcher, attached=%s', (attached) => {
-    for (const fielding of [{ errors: [{ playerId: 'home-3' }] }, { assists: ['home-2'] }, { battedBall: 'ground' as const }]) {
+    for (const fielding of [
+      { errors: [{ playerId: 'home-3' }] },
+      { errors: [{ playerId: 'home-2' }, { playerId: 'home-2' }] },
+      { errors: [{ playerId: 'home-2', kind: 'throwing' as const }] },
+      { assists: ['home-2'] },
+      { battedBall: 'ground' as const }
+    ]) {
       const game = harness();
       setBasicLineups(game);
       game.submit('record_pitch', { ...currentMatchup(game), result: 'catcher_interference' });
@@ -165,7 +191,7 @@ describe('Diamond security boundary regressions', () => {
       expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
     }
   );
-  it.each(['wild_pitch', 'passed_ball'] as const)('clears %s pitch context across standalone balk awards', (priorCause) => {
+  it.each(['wild_pitch', 'passed_ball'] as const)('clears %s pitch context across recorded balk awards', (priorCause) => {
     const game = twoRunnersBeforePitch();
     game.submit('advance_runner', {
       runnerId: 'away-1',
@@ -174,12 +200,14 @@ describe('Diamond security boundary regressions', () => {
       cause: priorCause,
       ...(priorCause === 'passed_ball' ? { fielding: { passedBallBy: 'home-2' } } : {})
     });
+    game.submit('record_pitch', { ...currentMatchup(game), result: 'balk' });
     game.submit('advance_runner', { runnerId: 'away-1', from: 'third', to: 'home', cause: 'balk', earned: true, rbi: false });
+    game.submit('advance_runner', { runnerId: 'away-2', from: 'first', to: 'second', cause: 'balk' });
     const cause = priorCause === 'wild_pitch' ? ('passed_ball' as const) : ('wild_pitch' as const);
     const payload: DiamondCommandPayloadMap['advance_runner'] = {
       runnerId: 'away-2',
-      from: 'first',
-      to: 'second',
+      from: 'second',
+      to: 'third',
       cause,
       ...(cause === 'passed_ball' ? { fielding: { passedBallBy: 'home-2' } } : {})
     };
