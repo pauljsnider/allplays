@@ -108,8 +108,16 @@ function targetsPrivateNote(ledger, command) {
     const target = ledger.events.find((event) => event.eventId === command.payload.targetEventId);
     return isCanonicalPrivateNoteMaterialEvent(target);
 }
-function isPrivateMaterialCommand(ledger, command) {
-    return getDiamondPrivateNoteText(command) !== null || targetsPrivateNote(ledger, command);
+function isLeaseExemptPrivateNoteCommand(ledger, command, privateTargetVerified) {
+    if (command.type === 'private_note')
+        return true;
+    if (!isCorrectionCommand(command))
+        return false;
+    const target = ledger.events.find((event) => event.eventId === command.payload.targetEventId);
+    const privateTarget = privateTargetVerified || (target?.type === 'private_note' && isCanonicalPrivateNoteMaterialEvent(target));
+    // Privacy redaction and authorization are separate: either side may carry
+    // private material, but both sides must be state-neutral to waive the lease.
+    return privateTarget && (command.type === 'void_event' || command.payload.replacement.type === 'private_note');
 }
 function canonicalizeDiamondPrivateNoteCommand(command, privateMaterial = getDiamondPrivateNoteText(command) !== null) {
     const requireKeys = (value, allowed) => {
@@ -737,8 +745,7 @@ function validateEnvelope(ledger, command, context, privateMaterialTargetVerifie
     }
     else if (command.type !== 'cancel' &&
         !(command.type === 'scorer_handoff' && context.scorerLeaseRecoveryAuthorized === true) &&
-        !(privateMaterialTargetVerified && isCorrectionCommand(command)) &&
-        !isPrivateMaterialCommand(ledger, command) &&
+        !isLeaseExemptPrivateNoteCommand(ledger, command, privateMaterialTargetVerified) &&
         ledger.state.currentScorerUid !== actorUid) {
         throw new contracts_1.DiamondDomainError('scorer-lease-lost', 'Only the current scorer may submit this command.', true);
     }
