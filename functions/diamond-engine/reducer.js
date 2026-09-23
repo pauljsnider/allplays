@@ -174,6 +174,7 @@ function cloneLineup(lineup) {
         ...(lineup.dhDefense ? { dhDefense: { ...lineup.dhDefense, substitutions: [...lineup.dhDefense.substitutions] } } : {}),
         ...(lineup.flexDefense ? { flexDefense: { ...lineup.flexDefense, substitutions: [...lineup.flexDefense.substitutions] } } : {}),
         courtesyRunnerIds: [...lineup.courtesyRunnerIds],
+        ...(lineup.courtesyRunnerRoles ? { courtesyRunnerRoles: lineup.courtesyRunnerRoles.map((entry) => ({ ...entry })) } : {}),
         ...(lineup.courtesyRunnerHalfInning
             ? { courtesyRunnerHalfInning: { ...lineup.courtesyRunnerHalfInning, playerIds: [...lineup.courtesyRunnerHalfInning.playerIds] } }
             : {}),
@@ -1268,6 +1269,7 @@ function reduceSubstitution(state, payload, reentry) {
         Object.values(lineup.defense).includes(outgoingPlayerId) &&
         !order.some((entry) => entry.activePlayerId === outgoingPlayerId);
     const defensiveOnly = dhOnly || flexOnly;
+    const dhTakingDefense = dhOnly && battingSlot.activePlayerId === incomingPlayerId && !reentry;
     const endingDh = profile.allowsDh &&
         !defensiveOnly &&
         battingSlot.battingRole === 'dh' &&
@@ -1293,6 +1295,7 @@ function reduceSubstitution(state, payload, reentry) {
     }
     const dpTakingFlexDefense = Boolean(flexOnly && !restoringFlex && lineup.dpFlex?.dpPlayerId === incomingPlayerId);
     if (!dpTakingFlexDefense &&
+        !dhTakingDefense &&
         order.some((entry, entryIndex) => (defensiveOnly || entryIndex !== index) && entry.activePlayerId === incomingPlayerId)) {
         throw new contracts_1.DiamondDomainError('duplicate-active-player', 'The incoming player is already active in the batting order.');
     }
@@ -1336,6 +1339,7 @@ function reduceSubstitution(state, payload, reentry) {
         !reentry &&
         !pairExchange &&
         !endingDh &&
+        !dhTakingDefense &&
         [...order, ...(lineup.dhDefense ? [lineup.dhDefense] : []), ...(lineup.flexDefense ? [lineup.flexDefense] : [])].some((entry) => entry.starterPlayerId === incomingPlayerId || entry.substitutions.includes(incomingPlayerId))) {
         throw new contracts_1.DiamondDomainError('invalid-reentry', 'A previously used player cannot enter as a new substitute.');
     }
@@ -1376,6 +1380,8 @@ function reduceSubstitution(state, payload, reentry) {
                     substitutions: [...battingSlot.substitutions, incomingPlayerId]
                 }
                 : replacement;
+    if (dhTakingDefense)
+        order[index] = { ...battingSlot, battingRole: 'regular' };
     const bases = transferLiveSubstitutedRunner(state, side, outgoingPlayerId, incomingPlayerId);
     const battingOnlyDpReturn = pairExchange &&
         outgoingPlayerId === dpFlex?.flexPlayerId &&
@@ -1396,6 +1402,7 @@ function reduceSubstitution(state, payload, reentry) {
                 ...lineup,
                 battingOrder: order,
                 ...(dhOnly ? { dhDefense: replacement } : {}),
+                ...(dhTakingDefense ? { dhTerminated: true, dhDefense: slot } : {}),
                 ...(endingDh
                     ? {
                         dhTerminated: true,
@@ -1506,6 +1513,17 @@ function validateDiamondState(state) {
         }
         if (courtesyRunnerIds.length > contracts_1.DIAMOND_MAX_COURTESY_RUNNER_IDENTITIES_PER_SIDE) {
             throw new contracts_1.DiamondDomainError('courtesy-runner-identity-limit', `A side cannot retain more than ${String(contracts_1.DIAMOND_MAX_COURTESY_RUNNER_IDENTITIES_PER_SIDE)} courtesy-runner identities.`);
+        }
+        if (lineup.courtesyRunnerRoles !== undefined) {
+            const roles = lineup.courtesyRunnerRoles;
+            const nfhs = profile.id === 'baseball-nfhs' || profile.id === 'fastpitch-nfhs';
+            if (!Array.isArray(roles) ||
+                roles.length > 2 * contracts_1.DIAMOND_MAX_COURTESY_RUNNER_IDENTITIES_PER_SIDE ||
+                roles.some((entry) => !entry || !courtesyRunnerIds.includes(entry.playerId) || !['pitcher', 'catcher'].includes(entry.forRole)) ||
+                new Set(roles.map((entry) => JSON.stringify([entry.playerId, entry.forRole]))).size !== roles.length ||
+                (nfhs && new Set(roles.map((entry) => entry.playerId)).size !== roles.length)) {
+                throw new contracts_1.DiamondDomainError('invalid-lineup', 'Courtesy role history must bind known identities to valid, nonconflicting roles.');
+            }
         }
         if (lineup.courtesyRunnerHalfInning) {
             const history = lineup.courtesyRunnerHalfInning;
@@ -2164,6 +2182,13 @@ function reduceDiamondEvent(state, action) {
                 throw new contracts_1.DiamondDomainError('duplicate-base-runner', 'The courtesy runner is already on base.');
             }
             const courtesyRunnerIds = state.lineups[side].courtesyRunnerIds;
+            const courtesyRunnerRoles = state.lineups[side].courtesyRunnerRoles ?? [];
+            if ((profile.id === 'baseball-nfhs' || profile.id === 'fastpitch-nfhs') && courtesyRunnerIds.includes(runnerId)) {
+                const priorRole = courtesyRunnerRoles.find((entry) => entry.playerId === runnerId)?.forRole;
+                if (!priorRole || priorRole !== forRole) {
+                    throw new contracts_1.DiamondDomainError('courtesy-runner-role-conflict', 'A courtesy runner must retain the same proven pitcher or catcher role for the entire game.');
+                }
+            }
             if (knownPlayerIds({ ...state.lineups[side], courtesyRunnerIds: [] }).has(runnerId)) {
                 throw new contracts_1.DiamondDomainError('ineligible-courtesy-runner', 'A lineup participant cannot serve as a courtesy runner.');
             }
@@ -2185,6 +2210,9 @@ function reduceDiamondEvent(state, action) {
                     [side]: {
                         ...next.lineups[side],
                         courtesyRunnerIds: courtesyRunnerIds.includes(runnerId) ? courtesyRunnerIds : [...courtesyRunnerIds, runnerId],
+                        courtesyRunnerRoles: courtesyRunnerRoles.some((entry) => entry.playerId === runnerId && entry.forRole === forRole)
+                            ? courtesyRunnerRoles
+                            : [...courtesyRunnerRoles, { playerId: runnerId, forRole }],
                         courtesyRunnerHalfInning: {
                             number: state.inning.number,
                             half: state.inning.half,
