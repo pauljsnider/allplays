@@ -710,7 +710,8 @@ export function createInitialDiamondState(config: DiamondLedgerConfig): DiamondG
       balls: 0,
       strikes: 0,
       pitchesInPlateAppearance: 0,
-      lastPitchResult: null
+      lastPitchResult: null,
+      lastPitchAdvanceCause: null
     },
     score: { home: 0, away: 0 },
     inningRuns: {},
@@ -1467,6 +1468,25 @@ function requiresMissingPitchCoverage(state: DiamondGameState, cause: DiamondRun
   );
 }
 
+function retainPitchAdvanceCause(
+  state: DiamondGameState,
+  advances: readonly Readonly<{ cause?: DiamondRunnerAdvanceCause }>[],
+  fielding?: DiamondFieldingChain
+): DiamondGameState {
+  if (!state.inning.lastPitchResult || !isDiamondDeliveredPitch(state.inning.lastPitchResult)) return state;
+  const causes = [
+    ...advances.filter((advance) => advance.cause === 'wild_pitch' || advance.cause === 'passed_ball'),
+    ...(fielding?.passedBallBy ? [{ cause: 'passed_ball' as const }] : [])
+  ];
+  validateDiamondPitchCauseEvidence(
+    [...causes, ...(state.inning.lastPitchAdvanceCause ? [{ cause: state.inning.lastPitchAdvanceCause }] : [])],
+    []
+  );
+  const cause = causes[0]?.cause;
+  if (cause !== 'wild_pitch' && cause !== 'passed_ball') return state;
+  return { ...state, inning: { ...state.inning, lastPitchAdvanceCause: cause } };
+}
+
 function hasCompletePlateAppearancePitchEvidence(
   state: DiamondGameState,
   payload: DiamondCommandPayloadMap['record_plate_appearance']
@@ -1867,6 +1887,12 @@ export function validateDiamondState(state: DiamondGameState): DiamondGameState 
   requireInteger(state.inning.pitchesInPlateAppearance, 'pitches in plate appearance', 0, Number.MAX_SAFE_INTEGER);
   if (state.inning.lastPitchResult !== null) {
     requireMember(state.inning.lastPitchResult, PITCH_RESULTS.filter(isDiamondDeliveredPitch), 'last delivered pitch result');
+  }
+  if (state.inning.lastPitchAdvanceCause !== null) {
+    requireMember(state.inning.lastPitchAdvanceCause, ['wild_pitch', 'passed_ball'], 'last pitch advance cause');
+    if (!state.inning.lastPitchResult || state.inning.pitchesInPlateAppearance === 0) {
+      throw new DiamondDomainError('invalid-pitch-cause-anchor', 'Pitch advance credit requires a delivered pitch anchor.');
+    }
   }
   requireInteger(state.score.home, 'home score', 0, Number.MAX_SAFE_INTEGER);
   requireInteger(state.score.away, 'away score', 0, Number.MAX_SAFE_INTEGER);
@@ -2428,7 +2454,8 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
           balls: Math.min(balls, 4),
           strikes: Math.min(strikes, 3),
           pitchesInPlateAppearance: state.inning.pitchesInPlateAppearance + (deliveredPitch ? 1 : 0),
-          lastPitchResult: deliveredPitch ? action.payload.result : state.inning.lastPitchResult
+          lastPitchResult: deliveredPitch ? action.payload.result : state.inning.lastPitchResult,
+          lastPitchAdvanceCause: deliveredPitch ? null : state.inning.lastPitchAdvanceCause
         }
       };
       if (deliveredPitch) next = markPitchObserved(next);
@@ -2538,6 +2565,7 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
         };
       });
       const moves = [batterMove, ...runnerMoves];
+      retainPitchAdvanceCause(state, [action.payload.batterAdvance, ...action.payload.runnerAdvances], action.payload.fielding);
       validateDiamondPitchCauseEvidence(
         [action.payload.batterAdvance, ...action.payload.runnerAdvances],
         action.payload.fielding ? [action.payload.fielding] : []
@@ -2567,7 +2595,7 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
       const orderLength = state.lineups[side].battingOrder.length;
       next = {
         ...next,
-        inning: { ...next.inning, balls: 0, strikes: 0, pitchesInPlateAppearance: 0, lastPitchResult: null },
+        inning: { ...next.inning, balls: 0, strikes: 0, pitchesInPlateAppearance: 0, lastPitchResult: null, lastPitchAdvanceCause: null },
         nextBatterSlot: { ...next.nextBatterSlot, [side]: (state.nextBatterSlot[side] + 1) % orderLength }
       };
       if (action.payload.fielding) next = markFieldingObserved(next);
@@ -2638,6 +2666,7 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
         );
       }
       validateAdvanceShape(action.payload, { standalone: true });
+      next = retainPitchAdvanceCause(next, [action.payload], action.payload.fielding);
       validateDiamondPitchCauseEvidence([action.payload], action.payload.fielding ? [action.payload.fielding] : []);
       const runnerId = requireId(action.payload.runnerId, 'runnerId');
       const placement = state.bases[action.payload.from];
@@ -2658,7 +2687,7 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
         `The advance for ${runnerId}`
       );
       next = applyMoves(
-        state,
+        next,
         getBattingSide(state),
         [
           {
@@ -2740,7 +2769,8 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
           balls: 0,
           strikes: 0,
           pitchesInPlateAppearance: 0,
-          lastPitchResult: null
+          lastPitchResult: null,
+          lastPitchAdvanceCause: null
         },
         bases: { ...EMPTY_BASES },
         halfInningEnd: null
