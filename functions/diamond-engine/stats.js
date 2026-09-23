@@ -454,13 +454,16 @@ function projectDiamondStats(ledger) {
                 // A following set of independent runner moves can cite the same physical
                 // pitch. Without this pitch anchor, consecutive advance commands remain
                 // separate plays because the schema contains no trustworthy group ID.
-                physicalCauseCluster = {
-                    cause: alreadyCreditedPitchingInfraction ? payload.result : null,
-                    pitcherId: payload.pitcherId,
-                    anchoredByPitch: true,
-                    pitchingCreditRecorded: alreadyCreditedPitchingInfraction,
-                    passedBallCreditRecorded: false
-                };
+                physicalCauseCluster =
+                    payload.result === 'pickoff_attempt'
+                        ? null
+                        : {
+                            cause: alreadyCreditedPitchingInfraction ? payload.result : null,
+                            pitcherId: payload.pitcherId,
+                            anchoredByPitch: true,
+                            pitchingCreditRecorded: alreadyCreditedPitchingInfraction,
+                            passedBallCreditRecorded: false
+                        };
                 break;
             }
             case 'record_plate_appearance': {
