@@ -657,6 +657,9 @@ function validateAttachmentAgainstHistoricalPlay(event: Pick<DiamondEffectiveEve
 }
 
 function observeEffectiveEventParticipants(state: DiamondGameState, event: DiamondEffectiveEvent, tracker: ParticipantReplayTracker) {
+  if (event.type === 'advance_runner' && (event.payload as DiamondCommandPayloadMap['advance_runner']).cause === 'pickoff') {
+    tracker.physicalPitch = null;
+  }
   if (event.type === 'record_pitch' && isDiamondDeliveredPitch((event.payload as DiamondCommandPayloadMap['record_pitch']).result)) {
     tracker.physicalPitch = { cause: null };
   }
