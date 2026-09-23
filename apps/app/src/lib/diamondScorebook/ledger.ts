@@ -920,6 +920,7 @@ export function validateDiamondPlayerIdentityOwnership(ledger: DiamondLedger): t
 }
 
 export function getDiamondPlayerIdentityIdsBySide(ledger: DiamondLedger): Readonly<Record<DiamondSide, readonly string[]>> {
+  verifyDiamondLedger(ledger);
   validateDiamondState(ledger.initialState);
   const ownershipState = validateDiamondState(ledger.state);
   return deepFreeze({
