@@ -500,6 +500,9 @@ function validateAttachmentAgainstHistoricalPlay(event, context) {
     if (payload.rbi === false && context.requiresHomeRunRbi) {
         throw new contracts_1.DiamondDomainError('invalid-rbi', 'A counted run on a home run cannot have its batter RBI revoked.');
     }
+    if (payload.rbi === true && context.plateAppearanceResult === undefined) {
+        throw new contracts_1.DiamondDomainError('invalid-rbi', 'A standalone runner advance has no batter to receive RBI credit.');
+    }
     if (payload.responsiblePitcherId && !pitcherRoleIsUnambiguous(context, context.defensiveSide, payload.responsiblePitcherId)) {
         throw new contracts_1.DiamondDomainError('responsible-pitcher-role-mismatch', `${payload.responsiblePitcherId} was not unambiguously recorded as a ${context.defensiveSide} pitcher by the cited play.`);
     }
