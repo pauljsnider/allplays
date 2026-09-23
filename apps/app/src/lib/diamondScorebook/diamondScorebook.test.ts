@@ -158,6 +158,121 @@ describe('Diamond security boundary regressions', () => {
 });
 
 describe('Diamond substitution and immutable-profile regressions', () => {
+  it.each(['baseball-obr', 'baseball-nfhs'])(
+    'lets the active DH replace its defender without changing batting identity under %s',
+    (profile) => {
+      const game = harness(profile, 'quick');
+      setBasicLineups(game, { start: false, homeFirstBattingRole: 'dh' });
+      game.submit('set_defensive_alignment', {
+        side: 'home',
+        assignments: [
+          { position: 'P', playerId: 'pitcher-only' },
+          { position: 'C', playerId: 'home-2' },
+          { position: 'SS', playerId: 'home-3' }
+        ]
+      });
+      game.submit('start', {});
+      const payload = {
+        side: 'home' as const,
+        battingSlot: 1,
+        outgoingPlayerId: 'pitcher-only',
+        incomingPlayerId: 'home-1',
+        defensivePosition: 'P' as const
+      };
+      const command = game.command('substitute', payload);
+      const bounded = executeDiamondCommandFromCheckpoint(createDiamondCheckpoint(game.ledger), command, {
+        actorUid: SCORER,
+        eventId: 'dh-takes-defense',
+        serverTimestampMs: 1700000001000
+      });
+      expect(bounded.result.outcome).toBe('accepted');
+      game.submit('substitute', payload);
+      expect(game.ledger.state.lineups.home).toMatchObject({
+        dhTerminated: true,
+        defense: { P: 'home-1' },
+        dhDefense: { starterPlayerId: 'pitcher-only' }
+      });
+      expect(game.ledger.state.lineups.home.battingOrder[0]).toMatchObject({
+        activePlayerId: 'home-1',
+        battingRole: 'regular',
+        starterReentriesUsed: 0
+      });
+      if (profile === 'baseball-nfhs') {
+        game.submit('re_enter', {
+          side: 'home',
+          battingSlot: 1,
+          replacedPlayerId: 'home-1',
+          starterPlayerId: 'pitcher-only',
+          defensivePosition: 'P'
+        });
+        expect(game.ledger.state.lineups.home.dhDefense?.starterReentriesUsed).toBe(1);
+      }
+      expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
+    }
+  );
+  it.each(['baseball-nfhs', 'fastpitch-nfhs'])('retains courtesy runner role eligibility after leaving the bases under %s', (profile) => {
+    const game = harness(profile, 'quick');
+    setBasicLineups(game);
+    game.submit('record_plate_appearance', {
+      ...currentMatchup(game),
+      result: 'single',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    game.submit('add_courtesy_runner', {
+      side: 'away',
+      forPlayerId: 'away-1',
+      runnerId: 'bench-runner',
+      base: 'first',
+      forRole: 'pitcher'
+    });
+    game.submit('advance_runner', { runnerId: 'bench-runner', from: 'first', to: 'out', cause: 'pickoff', outKind: 'tag' });
+    game.submit('record_plate_appearance', {
+      ...currentMatchup(game),
+      result: 'single',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    const command = game.command('add_courtesy_runner', {
+      side: 'away',
+      forPlayerId: 'away-2',
+      runnerId: 'bench-runner',
+      base: 'first',
+      forRole: 'catcher'
+    });
+    const context = { actorUid: SCORER, eventId: 'courtesy-role-reuse', serverTimestampMs: 1700000001000 };
+    expect(executeDiamondCommand(game.ledger, command, context).result.rejection?.code).toBe('courtesy-runner-role-conflict');
+    expect(executeDiamondCommandFromCheckpoint(createDiamondCheckpoint(game.ledger), command, context).result.rejection?.code).toBe(
+      'courtesy-runner-role-conflict'
+    );
+    game.submit('add_courtesy_runner', {
+      side: 'away',
+      forPlayerId: 'away-2',
+      runnerId: 'catcher-runner',
+      base: 'first',
+      forRole: 'catcher'
+    });
+    game.submit('advance_runner', { runnerId: 'catcher-runner', from: 'first', to: 'out', cause: 'pickoff', outKind: 'tag' });
+    advanceToHalf(game, 2, 'top');
+    expect(currentMatchup(game).batterId).toBe('away-1');
+    game.submit('record_plate_appearance', {
+      ...currentMatchup(game),
+      result: 'single',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    game.submit('add_courtesy_runner', {
+      side: 'away',
+      forPlayerId: 'away-1',
+      runnerId: 'bench-runner',
+      base: 'first',
+      forRole: 'pitcher'
+    });
+    expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
+  });
   it.each(['walk', 'in_play'] as const)('cannot discard a pending %s through a runner third out', (terminal) => {
     const game = harness('baseball-nfhs', 'quick');
     setBasicLineups(game);
