@@ -1,5 +1,5 @@
 import { canonicalDiamondJson, hashDiamondValue } from './canonical';
-import { validateDiamondCommandPayload } from './payload';
+import { validateDiamondCommandEnvelope } from './payload';
 import {
   DIAMOND_REDUCER_VERSION,
   DIAMOND_SCHEMA_VERSION,
@@ -158,10 +158,9 @@ function isLeaseExemptPrivateNoteCommand(ledger: DiamondLedger, command: Diamond
   return privateTarget && (command.type === 'void_event' || command.payload.replacement.type === 'private_note');
 }
 
-export function canonicalizeDiamondPrivateNoteCommand(
-  command: DiamondCommand,
-  privateMaterial = getDiamondPrivateNoteText(command) !== null
-): DiamondCommand {
+export function canonicalizeDiamondPrivateNoteCommand(command: DiamondCommand, privateMaterial?: boolean): DiamondCommand {
+  validateDiamondCommandEnvelope(command);
+  privateMaterial ??= getDiamondPrivateNoteText(command) !== null;
   const requireKeys = (value: object, allowed: readonly string[]) => {
     if (Object.keys(value).some((key) => !allowed.includes(key))) {
       throw new DiamondDomainError('invalid-private-payload', 'Private material contains unsupported fields.');
@@ -214,6 +213,7 @@ export function canonicalizeDiamondPrivateNoteCommand(
 }
 
 export function getDiamondPrivateNoteRequestHash(command: DiamondCommand): string | null {
+  validateDiamondCommandEnvelope(command);
   return getDiamondPrivateNoteText(command) === null && !isCorrectionCommand(command)
     ? null
     : hashDiamondValue({
@@ -231,9 +231,9 @@ export function getDiamondPrivateNoteRequestHash(command: DiamondCommand): strin
       });
 }
 
-function commandHash(command: DiamondCommand, privateMaterial = getDiamondPrivateNoteText(command) !== null): string {
+function commandHash(command: DiamondCommand, privateMaterial?: boolean): string {
+  validateDiamondCommandEnvelope(command);
   const canonical = canonicalizeDiamondPrivateNoteCommand(command, privateMaterial);
-  validateDiamondCommandPayload(command.type, command.payload);
   return hashDiamondValue(canonical);
 }
 
@@ -1100,6 +1100,7 @@ export function executeDiamondCommandFromCheckpoint(
   privateMaterialTargetVerified = false
 ): DiamondCheckpointExecution {
   try {
+    validateDiamondCommandEnvelope(command);
     validateCheckpoint(checkpoint);
     validateTrustedCommandAuthorization(command, context);
     if (command.teamId !== checkpoint.teamId || command.gameId !== checkpoint.gameId) {
@@ -1238,7 +1239,11 @@ export function executeDiamondCommandFromCheckpoint(
 
 export function executeDiamondCommand(ledger: DiamondLedger, command: DiamondCommand, context: DiamondCommandContext): DiamondExecution {
   try {
+    validateDiamondCommandEnvelope(command);
     validateTrustedCommandAuthorization(command, context);
+    validateDiamondState(ledger.initialState);
+    validateDiamondState(ledger.state);
+    verifyDiamondLedger(ledger);
     const existing = ledger.events.find((event) => event.commandId === command.commandId);
     const privateMaterial =
       getDiamondPrivateNoteText(command) !== null ||
