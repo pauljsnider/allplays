@@ -298,6 +298,10 @@ function isDiamondDroppedThirdStrikeAdvance(result, destination) {
 function hasCompleteDiamondDroppedThirdStrikeCause(result, destination, cause) {
     return (!isDiamondDroppedThirdStrikeAdvance(result, destination) || (cause !== undefined && DROPPED_THIRD_STRIKE_ADVANCE_CAUSES.includes(cause)));
 }
+function hasUnambiguousBattedBallEvidence(fieldings) {
+    const observed = new Set(fieldings.flatMap((fielding) => (fielding.battedBall && fielding.battedBall !== 'unknown' ? [fielding.battedBall] : [])));
+    return observed.size === 1;
+}
 function hasCompletePitchOutcomeEvidence(state, result) {
     if (state.captureMode !== 'full')
         return true;
@@ -742,7 +746,10 @@ function deriveDiamondCoverageFromEventStates(initialState, eventStates) {
                 coverage = { ...coverage, batting: 'partial' };
             }
             if (initialState.captureMode === 'full' && !hasCompletePitchOutcomeEvidence(before, payload.result)) {
-                coverage = { ...coverage, pitches: 'partial' };
+                coverage = { ...coverage, pitches: 'partial', situational: 'partial' };
+            }
+            if (payload.result === 'double_play' && !hasUnambiguousBattedBallEvidence(fieldingChains)) {
+                coverage = { ...coverage, batting: 'partial' };
             }
             if (initialState.captureMode === 'full') {
                 const hasKnownDroppedThirdStrikeCause = hasCompleteDiamondDroppedThirdStrikeCause(payload.result, payload.batterAdvance.to, payload.batterAdvance.cause);
@@ -2061,7 +2068,11 @@ function reduceDiamondEvent(state, action) {
                 next = markPartial(next, ['batting']);
             }
             if (state.captureMode === 'full' && !hasCompletePitchOutcomeEvidence(state, action.payload.result)) {
-                next = markPartial(next, ['pitches']);
+                next = markPartial(next, ['pitches', 'situational']);
+            }
+            if (action.payload.result === 'double_play' &&
+                !hasUnambiguousBattedBallEvidence(action.payload.fielding ? [action.payload.fielding] : [])) {
+                next = markPartial(next, ['batting']);
             }
             const hasKnownDroppedThirdStrikeCause = hasCompleteDiamondDroppedThirdStrikeCause(action.payload.result, action.payload.batterAdvance.to, action.payload.batterAdvance.cause);
             if (state.captureMode === 'full' && !hasKnownDroppedThirdStrikeCause) {
