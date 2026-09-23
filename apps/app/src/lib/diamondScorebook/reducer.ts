@@ -862,6 +862,22 @@ export function validateDiamondPitchCauseEvidence(
   result?: DiamondCommandPayloadMap['record_plate_appearance']['result']
 ) {
   if (
+    result === 'hit_by_pitch' &&
+    fieldings.some(
+      (fielding) =>
+        fielding.putoutBy ||
+        fielding.putouts?.length ||
+        fielding.assists?.length ||
+        fielding.errors?.length ||
+        fielding.passedBallBy ||
+        fielding.doublePlay ||
+        fielding.triplePlay ||
+        (fielding.battedBall && fielding.battedBall !== 'unknown')
+    )
+  ) {
+    throw new DiamondDomainError('fielding-result-mismatch', 'A hit-by-pitch award cannot carry fielding or batted-ball credits.');
+  }
+  if (
     advances.some((advance) => ['balk', 'illegal_pitch', 'hit_by_pitch'].includes(advance.cause ?? '')) &&
     fieldings.some((fielding) => Boolean(fielding.passedBallBy))
   ) {
