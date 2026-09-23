@@ -85,6 +85,8 @@ export type DiamondTeamLineup = Readonly<{
   defense: Readonly<Partial<Record<DiamondDefensivePosition, string>>>;
   /** Side binding for courtesy-runner identities in the effective canonical history. */
   courtesyRunnerIds: readonly string[];
+  /** Effective game-long role history; older checkpoints may lack this evidence. */
+  courtesyRunnerRoles?: readonly Readonly<{ playerId: string; forRole: 'pitcher' | 'catcher' }>[];
   /** Most recent courtesy-running half; retained after runners leave the bases. */
   courtesyRunnerHalfInning?: Readonly<{ number: number; half: DiamondHalf; playerIds: readonly string[] }>;
   dpFlex: Readonly<{
