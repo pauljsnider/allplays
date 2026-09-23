@@ -1456,6 +1456,17 @@ function validateDiamondState(state) {
     }
     SIDES.forEach((side) => {
         const lineup = state.lineups[side];
+        // At most 128 retained identities across all offensive and independent
+        // defensive histories per side, well below the checkpoint document budget.
+        const histories = [
+            ...lineup.battingOrder,
+            ...(lineup.dhDefense ? [lineup.dhDefense] : []),
+            ...(lineup.flexDefense ? [lineup.flexDefense] : [])
+        ];
+        if (histories.some((entry) => !Array.isArray(entry.substitutions) || entry.substitutions.length > 128) ||
+            histories.reduce((count, entry) => count + entry.substitutions.length, 0) > 128) {
+            throw new contracts_1.DiamondDomainError('substitution-history-limit', 'A side may retain at most 128 substitution history entries.');
+        }
         const order = lineup.battingOrder;
         const slots = order.map((entry) => entry.slot);
         const players = order.map((entry) => entry.activePlayerId);
