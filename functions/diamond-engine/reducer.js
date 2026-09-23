@@ -2757,6 +2757,14 @@ function reduceDiamondEvent(state, action) {
             throw new contracts_1.DiamondDomainError('terminal-pitch-defense-change', 'Resolve the in-play plate appearance before changing its defense.');
         }
     }
+    if (state.inning.lastPitchResult !== null &&
+        state.lifecycle === 'active' &&
+        (action.type === 'substitute' || action.type === 're_enter' || action.type === 'set_defensive_alignment')) {
+        const fieldingSide = oppositeSide(getBattingSide(state));
+        if (state.lineups[fieldingSide].defense.C !== next.lineups[fieldingSide].defense.C) {
+            throw new contracts_1.DiamondDomainError('pitch-catcher-change', 'Finish the current plate appearance before changing the catcher who received its pitch.');
+        }
+    }
     return deepFreeze(validateDiamondState(next));
 }
 function setDiamondStateRevision(state, revision, checkpointHash = state.checkpointHash) {
