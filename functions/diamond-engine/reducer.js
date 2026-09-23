@@ -1637,6 +1637,14 @@ function validateDiamondState(state) {
 function reduceDiamondEvent(state, action) {
     validateDiamondState(state);
     let next = cloneState(state);
+    const pendingPlateAppearance = state.inning.balls >= 4 || state.inning.strikes >= 3 || isDiamondTerminalPitchResult(state.inning.lastPitchResult);
+    if (pendingPlateAppearance &&
+        (action.type === 'advance_runner' ||
+            action.type === 'advance_half_inning' ||
+            action.type === 'finalize' ||
+            (action.type === 'rules_decision' && action.payload.code !== 'coverage_adjustment'))) {
+        throw new contracts_1.DiamondDomainError('pending-plate-appearance', 'Record the terminal pitch outcome and its runner advances before closing or advancing play.');
+    }
     switch (action.type) {
         case 'activate': {
             requireLifecycle(state, ['configured'], 'activate');
@@ -2342,7 +2350,7 @@ function reduceDiamondEvent(state, action) {
     // Reject every pitching-change path instead of charging an unfinished PA to
     // a new pitcher. Opposite-side personnel and between-PA changes remain legal.
     // A terminal pitch also fixes the batter's identity until its PA is recorded;
-    // ordinary nonterminal pinch-hitting remains legal.
+    // Two-strike substitutions also require inherited strikeout attribution.
     if ((action.type === 'substitute' || action.type === 're_enter' || action.type === 'set_defensive_alignment') &&
         state.lifecycle === 'active' &&
         state.inning.outs < 3 &&
@@ -2355,6 +2363,9 @@ function reduceDiamondEvent(state, action) {
         if ((state.inning.balls >= 4 || state.inning.strikes >= 3 || isDiamondTerminalPitchResult(state.inning.lastPitchResult)) &&
             expectedBatter(state).activePlayerId !== expectedBatter(next).activePlayerId) {
             throw new contracts_1.DiamondDomainError('terminal-pitch-batter-change', 'Record the pending plate appearance before replacing the batter who received its terminal pitch.');
+        }
+        if (state.inning.strikes >= 2 && expectedBatter(state).activePlayerId !== expectedBatter(next).activePlayerId) {
+            throw new contracts_1.DiamondDomainError('inherited-count-batter-change', 'Finish the current plate appearance before replacing a two-strike batter; inherited strikeout attribution is not supported.');
         }
     }
     return deepFreeze(validateDiamondState(next));
