@@ -2115,7 +2115,7 @@ describe('Scoring decisions and correction reconciliation', () => {
       runnerId: 'away-1',
       from: 'second',
       to: 'home',
-      cause: 'batted_ball',
+      cause: 'other',
       countsRun: true,
       earned: false
     });
@@ -2317,7 +2317,7 @@ describe('Scoring decisions and correction reconciliation', () => {
       runnerId: 'away-pinch-runner',
       from: 'first',
       to: 'home',
-      cause: 'batted_ball',
+      cause: 'other',
       countsRun: true,
       earned: true,
       rbi: false
@@ -2492,7 +2492,7 @@ describe('Scoring decisions and correction reconciliation', () => {
       runnerId,
       from: 'third' as const,
       to: 'home' as const,
-      cause: 'batted_ball' as const,
+      cause: 'other' as const,
       countsRun: true,
       earned: false,
       rbi: false
@@ -4257,7 +4257,7 @@ describe('Scoring decisions and correction reconciliation', () => {
       runnerId,
       from: 'third',
       to: 'home',
-      cause: 'batted_ball',
+      cause: 'other',
       countsRun: false
     });
     const context = {
@@ -4285,7 +4285,7 @@ describe('Scoring decisions and correction reconciliation', () => {
       runnerId: correctionRunnerId,
       from: 'third',
       to: 'home',
-      cause: 'batted_ball',
+      cause: 'other',
       countsRun: true,
       earned: true
     });
@@ -4302,7 +4302,7 @@ describe('Scoring decisions and correction reconciliation', () => {
               runnerId: correctionRunnerId,
               from: 'third',
               to: 'home',
-              cause: 'batted_ball',
+              cause: 'other',
               countsRun: false
             }
           }
