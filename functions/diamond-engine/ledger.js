@@ -119,7 +119,9 @@ function isLeaseExemptPrivateNoteCommand(ledger, command, privateTargetVerified)
     // private material, but both sides must be state-neutral to waive the lease.
     return privateTarget && (command.type === 'void_event' || command.payload.replacement.type === 'private_note');
 }
-function canonicalizeDiamondPrivateNoteCommand(command, privateMaterial = getDiamondPrivateNoteText(command) !== null) {
+function canonicalizeDiamondPrivateNoteCommand(command, privateMaterial) {
+    (0, payload_1.validateDiamondCommandEnvelope)(command);
+    privateMaterial ?? (privateMaterial = getDiamondPrivateNoteText(command) !== null);
     const requireKeys = (value, allowed) => {
         if (Object.keys(value).some((key) => !allowed.includes(key))) {
             throw new contracts_1.DiamondDomainError('invalid-private-payload', 'Private material contains unsupported fields.');
@@ -173,6 +175,7 @@ function canonicalizeDiamondPrivateNoteCommand(command, privateMaterial = getDia
     return canonicalCommand;
 }
 function getDiamondPrivateNoteRequestHash(command) {
+    (0, payload_1.validateDiamondCommandEnvelope)(command);
     return getDiamondPrivateNoteText(command) === null && !isCorrectionCommand(command)
         ? null
         : (0, canonical_1.hashDiamondValue)({
@@ -189,9 +192,9 @@ function getDiamondPrivateNoteRequestHash(command) {
                 : command
         });
 }
-function commandHash(command, privateMaterial = getDiamondPrivateNoteText(command) !== null) {
+function commandHash(command, privateMaterial) {
+    (0, payload_1.validateDiamondCommandEnvelope)(command);
     const canonical = canonicalizeDiamondPrivateNoteCommand(command, privateMaterial);
-    (0, payload_1.validateDiamondCommandPayload)(command.type, command.payload);
     return (0, canonical_1.hashDiamondValue)(canonical);
 }
 function validateTrustedCommandAuthorization(command, context) {
@@ -894,6 +897,7 @@ function createDiamondCommandReceipt(command, event, result) {
  */
 function executeDiamondCommandFromCheckpoint(checkpoint, command, context, existingReceipt, privateMaterialTargetVerified = false) {
     try {
+        (0, payload_1.validateDiamondCommandEnvelope)(command);
         validateCheckpoint(checkpoint);
         validateTrustedCommandAuthorization(command, context);
         if (command.teamId !== checkpoint.teamId || command.gameId !== checkpoint.gameId) {
@@ -1018,7 +1022,11 @@ function executeDiamondCommandFromCheckpoint(checkpoint, command, context, exist
 }
 function executeDiamondCommand(ledger, command, context) {
     try {
+        (0, payload_1.validateDiamondCommandEnvelope)(command);
         validateTrustedCommandAuthorization(command, context);
+        (0, reducer_1.validateDiamondState)(ledger.initialState);
+        (0, reducer_1.validateDiamondState)(ledger.state);
+        verifyDiamondLedger(ledger);
         const existing = ledger.events.find((event) => event.commandId === command.commandId);
         const privateMaterial = getDiamondPrivateNoteText(command) !== null ||
             targetsPrivateNote(ledger, command) ||
