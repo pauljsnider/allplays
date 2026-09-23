@@ -514,7 +514,8 @@ function validateAttachmentAgainstHistoricalPlay(event, context) {
     }
 }
 function observeEffectiveEventParticipants(state, event, tracker) {
-    if (event.type === 'advance_runner' && event.payload.cause === 'pickoff') {
+    if (event.type === 'advance_runner' &&
+        ['pickoff', 'balk'].includes(event.payload.cause)) {
         tracker.physicalPitch = null;
     }
     if (event.type === 'record_pitch' && (0, reducer_1.isDiamondDeliveredPitch)(event.payload.result)) {
