@@ -456,6 +456,9 @@ function validateAdvanceShape(value, options = {}) {
     validateAdvanceCauseDestination(cause, to);
     const outKind = advance.outKind === undefined ? undefined : requireMember(advance.outKind, OUT_KINDS, 'out kind');
     validateScoringCredit(advance, 'runner advance');
+    if (options.standalone && advance.rbi === true) {
+        throw new contracts_1.DiamondDomainError('invalid-rbi', 'A standalone runner advance has no batter to receive RBI credit.');
+    }
     if (advance.to === 'out' && !advance.outKind) {
         throw new contracts_1.DiamondDomainError('missing-out-kind', 'A runner recorded out must include an out kind.');
     }
@@ -714,6 +717,10 @@ function deriveDiamondPutoutCredits(fieldings, actualOutRunnerIds) {
     return resolveDiamondPutoutCredits(fieldings, actualOutRunnerIds);
 }
 function validateDiamondPitchCauseEvidence(advances, fieldings, result) {
+    if (advances.some((advance) => ['balk', 'illegal_pitch', 'hit_by_pitch'].includes(advance.cause ?? '')) &&
+        fieldings.some((fielding) => Boolean(fielding.passedBallBy))) {
+        throw new contracts_1.DiamondDomainError('pitch-cause-fielding-mismatch', 'A dead-ball runner award cannot also carry passed-ball credit.');
+    }
     if (result &&
         [
             'single',
