@@ -39,6 +39,40 @@ const SCORER = 'scorer-1';
 
 describe('Diamond security boundary regressions', () => {
   const context = { actorUid: SCORER, eventId: 'security-check', serverTimestampMs: 1700000001000 };
+  it.each(['wild_pitch', 'passed_ball'] as const)('requires delivered pitch evidence for IBB %s coverage', (cause) => {
+    for (const delivered of [false, true]) {
+      const game = harness();
+      setBasicLineups(game);
+      recordPitch(game, 'away-1', 'home-1');
+      game.submit('record_plate_appearance', {
+        ...currentMatchup(game),
+        result: 'single',
+        batterAdvance: { to: 'first' },
+        runnerAdvances: [],
+        outsOnPlay: 0
+      });
+      if (delivered) recordPitch(game, 'away-2', 'home-1', 'ball');
+      const payload = {
+        ...currentMatchup(game),
+        result: 'intentional_walk' as const,
+        batterAdvance: { to: 'first' as const },
+        runnerAdvances: [{ runnerId: 'away-1', from: 'first' as const, to: 'third' as const, cause }],
+        outsOnPlay: 0,
+        ...(cause === 'passed_ball' ? { fielding: { passedBallBy: 'home-2' } } : {})
+      };
+      const bounded = executeDiamondCommandFromCheckpoint(
+        createDiamondCheckpoint(game.ledger),
+        game.command('record_plate_appearance', payload),
+        context
+      );
+      game.submit('record_plate_appearance', payload);
+      const expected = delivered ? 'complete' : 'partial';
+      expect(bounded.result.outcome).toBe('accepted');
+      expect(bounded.checkpoint.state.coverage).toMatchObject({ pitches: expected, situational: expected });
+      expect(game.ledger.state.coverage).toMatchObject({ pitches: expected, situational: expected });
+      expect(replayDiamondLedger(game.ledger).state.coverage).toMatchObject({ pitches: expected, situational: expected });
+    }
+  });
   it('keeps unforced runners in place on accepted catcher interference', () => {
     const game = harness();
     setBasicLineups(game);
