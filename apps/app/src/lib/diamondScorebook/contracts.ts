@@ -117,6 +117,8 @@ export type DiamondInningState = Readonly<{
   pitchesInPlateAppearance: number;
   /** Last pitch that was actually delivered to the batter; balks and pickoff attempts are excluded. */
   lastPitchResult: DiamondPitchResult | null;
+  /** Physical advance classification for the current delivered pitch, shared by all runner commands. */
+  lastPitchAdvanceCause: 'wild_pitch' | 'passed_ball' | null;
 }>;
 
 export type DiamondGameState = Readonly<{
