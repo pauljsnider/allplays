@@ -1,7 +1,52 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.validateDiamondCommandEnvelope = validateDiamondCommandEnvelope;
 exports.validateDiamondCommandPayload = validateDiamondCommandPayload;
 const contracts_1 = require("./contracts");
+/** Reject unknown/accessor envelope fields before any canonical traversal. */
+function validateDiamondCommandEnvelope(command) {
+    const required = [
+        'schemaVersion',
+        'commandId',
+        'teamId',
+        'gameId',
+        'expectedRevision',
+        'rulesProfileId',
+        'rulesProfileVersion',
+        'type',
+        'payload'
+    ];
+    const allowed = [...required, 'leaseId', 'appBuild', 'expectedInstanceId'];
+    const invalid = () => {
+        throw new contracts_1.DiamondDomainError('invalid-command-envelope', 'Command envelope exceeds its closed bounded contract.');
+    };
+    if (!command ||
+        typeof command !== 'object' ||
+        Array.isArray(command) ||
+        ![Object.prototype, null].includes(Object.getPrototypeOf(command)))
+        invalid();
+    const value = command;
+    const keys = Reflect.ownKeys(value);
+    if (keys.length > allowed.length || required.some((key) => !Object.prototype.hasOwnProperty.call(value, key)))
+        invalid();
+    for (const key of keys) {
+        if (typeof key !== 'string' || !allowed.includes(key))
+            invalid();
+        const descriptor = Object.getOwnPropertyDescriptor(value, key);
+        if (!descriptor?.enumerable || !Object.prototype.hasOwnProperty.call(descriptor, 'value'))
+            invalid();
+        if (key === 'payload')
+            continue;
+        const field = descriptor.value;
+        if (typeof field === 'string'
+            ? field.length > 128
+            : typeof field === 'number'
+                ? !Number.isSafeInteger(field) || field < 0
+                : !(key === 'leaseId' && field === null))
+            invalid();
+    }
+    validateDiamondCommandPayload(value.type, value.payload);
+}
 const scalarKeys = (...keys) => Object.fromEntries(keys.map((key) => [key, true]));
 const owns = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
 const credit = scalarKeys('countsRun', 'earned', 'rbi', 'responsiblePitcherId');
