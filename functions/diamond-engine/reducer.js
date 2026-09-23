@@ -443,7 +443,10 @@ function validatePlateAppearanceRunnerAdvance(state, result, advance) {
     const forced = !!state.bases.first && (advance.from === 'first' || (!!state.bases.second && (advance.from === 'second' || !!state.bases.third)));
     const next = advance.from === 'first' ? 'second' : advance.from === 'second' ? 'third' : 'home';
     const awardDestination = forced ? advance.to === next : advance.to === 'stay';
-    const contradictory = (result === 'hit_by_pitch' && (!awardDestination || !['hit_by_pitch', 'other'].includes(advance.cause))) ||
+    const contradictory = (result === 'intentional_walk' &&
+        (!state.inning.lastPitchResult || !isDiamondDeliveredPitch(state.inning.lastPitchResult)) &&
+        (!awardDestination || !['walk', 'other'].includes(advance.cause))) ||
+        (result === 'hit_by_pitch' && (!awardDestination || !['hit_by_pitch', 'other'].includes(advance.cause))) ||
         (result === 'interference' && (!awardDestination || !['obstruction', 'other'].includes(advance.cause))) ||
         (advance.cause === 'hit_by_pitch' && result !== 'hit_by_pitch') ||
         (advance.cause === 'walk' && (!walk || !awardDestination)) ||
