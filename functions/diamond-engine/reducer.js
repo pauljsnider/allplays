@@ -2259,7 +2259,7 @@ function reduceDiamondEvent(state, action) {
                 throw new contracts_1.DiamondDomainError('illegal-pitch-award-pending', 'The runner must receive its exact mandatory one-base illegal-pitch award.');
             }
             validateAdvanceShape(action.payload, { standalone: true });
-            if (action.payload.cause === 'pickoff') {
+            if (action.payload.cause === 'pickoff' || action.payload.cause === 'balk') {
                 next = { ...next, inning: { ...next.inning, lastPitchResult: null, lastPitchAdvanceCause: null } };
             }
             next = retainPitchAdvanceCause(next, [action.payload], action.payload.fielding);
