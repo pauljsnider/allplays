@@ -713,7 +713,26 @@ function validateDiamondMergedFieldingOutCredit(fieldings, actualOutRunnerIds) {
 function deriveDiamondPutoutCredits(fieldings, actualOutRunnerIds) {
     return resolveDiamondPutoutCredits(fieldings, actualOutRunnerIds);
 }
-function validateDiamondPitchCauseEvidence(advances, fieldings) {
+function validateDiamondPitchCauseEvidence(advances, fieldings, result) {
+    if (result &&
+        [
+            'single',
+            'double',
+            'triple',
+            'home_run',
+            'reached_on_error',
+            'fielders_choice',
+            'ground_out',
+            'fly_out',
+            'line_out',
+            'sacrifice_bunt',
+            'sacrifice_fly',
+            'double_play',
+            'triple_play'
+        ].includes(result) &&
+        fieldings.some((fielding) => Boolean(fielding.passedBallBy))) {
+        throw new contracts_1.DiamondDomainError('fielding-result-mismatch', 'A batted-ball outcome cannot also carry passed-ball credit.');
+    }
     if (advances.some((advance) => advance.cause === 'wild_pitch') &&
         (advances.some((advance) => advance.cause === 'passed_ball') || fieldings.some((fielding) => Boolean(fielding.passedBallBy)))) {
         throw new contracts_1.DiamondDomainError('pitch-cause-fielding-mismatch', 'One physical pitch cannot be classified as both a wild pitch and a passed ball.');
@@ -812,7 +831,7 @@ function deriveDiamondCoverageFromEventStates(initialState, eventStates) {
                 })) {
                 coverage = { ...coverage, batting: 'partial' };
             }
-            if (initialState.captureMode === 'full' && !hasCompletePlateAppearancePitchEvidence(before, payload)) {
+            if (initialState.captureMode === 'full' && !hasCompletePlateAppearancePitchEvidence(before, payload, fieldingChains)) {
                 coverage = { ...coverage, pitches: 'partial', situational: 'partial' };
             }
             if (payload.result === 'double_play' && !hasUnambiguousBattedBallEvidence(fieldingChains)) {
@@ -834,12 +853,12 @@ function deriveDiamondCoverageFromEventStates(initialState, eventStates) {
         if (event.type === 'advance_runner') {
             const payload = event.payload;
             coverage = withPartialCoverage(coverage, payload.omissions);
-            if (requiresMissingPitchCoverage(before, payload.cause)) {
+            const fieldingChains = fieldingChainsForPlay(event, fieldingByPlay, payload.fielding);
+            if (requiresMissingPitchCoverage(before, payload.cause, fieldingChains)) {
                 coverage = { ...coverage, pitches: 'partial', situational: 'partial' };
             }
             if (payload.fielding && coverage.fielding === 'not_collected')
                 coverage = { ...coverage, fielding: 'partial' };
-            const fieldingChains = fieldingChainsForPlay(event, fieldingByPlay, payload.fielding);
             const outRunnerIds = payload.to === 'out' ? [payload.runnerId] : [];
             validateDiamondMergedFieldingOutCredit(fieldingChains, outRunnerIds);
             if (payload.to === 'home' && payload.countsRun !== false) {
@@ -1192,9 +1211,9 @@ function validateNamedMultiOutResult(state, result, moves, outsOnPlay) {
         throw new contracts_1.DiamondDomainError('result-outs-exceed-inning', `${result} cannot record more outs than remain in the inning.`);
     }
 }
-function requiresMissingPitchCoverage(state, cause) {
+function requiresMissingPitchCoverage(state, cause, fieldings = []) {
     return (state.captureMode === 'full' &&
-        (cause === 'wild_pitch' || cause === 'passed_ball') &&
+        (cause === 'wild_pitch' || cause === 'passed_ball' || fieldings.some((fielding) => Boolean(fielding.passedBallBy))) &&
         (state.inning.pitchesInPlateAppearance === 0 || !state.inning.lastPitchResult || !isDiamondDeliveredPitch(state.inning.lastPitchResult)));
 }
 function retainPitchAdvanceCause(state, advances, fielding) {
@@ -1210,8 +1229,9 @@ function retainPitchAdvanceCause(state, advances, fielding) {
         return state;
     return { ...state, inning: { ...state.inning, lastPitchAdvanceCause: cause } };
 }
-function hasCompletePlateAppearancePitchEvidence(state, payload) {
+function hasCompletePlateAppearancePitchEvidence(state, payload, fieldings = payload.fielding ? [payload.fielding] : []) {
     return (hasCompletePitchOutcomeEvidence(state, payload.result) &&
+        !requiresMissingPitchCoverage(state, 'other', fieldings) &&
         ![payload.batterAdvance, ...payload.runnerAdvances].some((advance) => advance.cause !== undefined && requiresMissingPitchCoverage(state, advance.cause)));
 }
 function applyMoves(state, side, moves, outsOnPlay, reachedOnEventId) {
@@ -2138,7 +2158,7 @@ function reduceDiamondEvent(state, action) {
             });
             const moves = [batterMove, ...runnerMoves];
             retainPitchAdvanceCause(state, [action.payload.batterAdvance, ...action.payload.runnerAdvances], action.payload.fielding);
-            validateDiamondPitchCauseEvidence([action.payload.batterAdvance, ...action.payload.runnerAdvances], action.payload.fielding ? [action.payload.fielding] : []);
+            validateDiamondPitchCauseEvidence([action.payload.batterAdvance, ...action.payload.runnerAdvances], action.payload.fielding ? [action.payload.fielding] : [], result);
             const scoringAdvances = [action.payload.batterAdvance, ...action.payload.runnerAdvances].filter((advance) => advance.to === 'home' && advance.countsRun !== false);
             const profile = (0, rules_1.requireDiamondRulesProfile)(state.rulesProfileId, state.rulesProfileVersion);
             if (side === 'home' &&
@@ -2239,7 +2259,7 @@ function reduceDiamondEvent(state, action) {
             ], action.payload.to === 'out' ? 1 : 0, action.eventId ?? placement.reachedOnEventId);
             if (pendingAwards.length)
                 next = { ...next, pendingIllegalPitchAwards: pendingAwards.filter((award) => award.runnerId !== runnerId) };
-            if (requiresMissingPitchCoverage(state, action.payload.cause))
+            if (requiresMissingPitchCoverage(state, action.payload.cause, action.payload.fielding ? [action.payload.fielding] : []))
                 next = markPartial(next, ['pitches', 'situational']);
             if (action.payload.fielding)
                 next = markFieldingObserved(next);
