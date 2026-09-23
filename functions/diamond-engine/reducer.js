@@ -442,6 +442,7 @@ function validatePlateAppearanceRunnerAdvance(state, result, advance) {
         (result === 'interference' && (!awardDestination || !['obstruction', 'other'].includes(advance.cause))) ||
         (advance.cause === 'hit_by_pitch' && result !== 'hit_by_pitch') ||
         (advance.cause === 'walk' && (!walk || !awardDestination)) ||
+        (walk && advance.cause === 'force_out') ||
         (advance.cause === 'batted_ball' && !contact) ||
         (contact && !['batted_ball', 'error', 'obstruction', 'force_out', 'tag_out', 'appeal_out', 'other'].includes(advance.cause));
     if (contradictory) {
@@ -2081,8 +2082,8 @@ function reduceDiamondEvent(state, action) {
                     balls: Math.min(balls, 4),
                     strikes: Math.min(strikes, 3),
                     pitchesInPlateAppearance: state.inning.pitchesInPlateAppearance + (deliveredPitch ? 1 : 0),
-                    lastPitchResult: deliveredPitch ? action.payload.result : state.inning.lastPitchResult,
-                    lastPitchAdvanceCause: deliveredPitch ? null : state.inning.lastPitchAdvanceCause
+                    lastPitchResult: deliveredPitch ? action.payload.result : null,
+                    lastPitchAdvanceCause: null
                 }
             };
             if (deliveredPitch)
