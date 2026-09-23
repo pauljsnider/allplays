@@ -2994,7 +2994,6 @@ describe('Scoring decisions and correction reconciliation', () => {
         putoutBy: 'home-2',
         assists: ['home-3'],
         errors: [{ playerId: 'home-3' }],
-        passedBallBy: 'home-2',
         doublePlay: true
       }
     };
@@ -3005,7 +3004,6 @@ describe('Scoring decisions and correction reconciliation', () => {
         putoutBy: 'home-2',
         assists: ['home-3'],
         errors: [{ playerId: 'home-3', kind: 'throwing' }],
-        passedBallBy: 'home-2',
         doublePlay: true
       }
     });
@@ -3025,7 +3023,7 @@ describe('Scoring decisions and correction reconciliation', () => {
     });
 
     let projected = projectDiamondStats(doublePlay.ledger);
-    expect(projected.players['home-2'].raw.fielding).toMatchObject({ PO: 1, PB: 1, DP: 1 });
+    expect(projected.players['home-2'].raw.fielding).toMatchObject({ PO: 1, PB: 0, DP: 1 });
     expect(projected.players['home-3'].raw.fielding).toMatchObject({ A: 1, E: 1, DP: 1 });
     expect(projected.players['home-1'].raw.fielding).toMatchObject({ PO: 1, A: 1, E: 1, DP: 1 });
     expect(projected.teams.home.E).toBe(2);
@@ -3035,7 +3033,7 @@ describe('Scoring decisions and correction reconciliation', () => {
       reason: 'Remove redundant fielding detail without changing the merged result.'
     });
     projected = projectDiamondStats(doublePlay.ledger);
-    expect(projected.players['home-2'].raw.fielding).toMatchObject({ PO: 1, PB: 1, DP: 1 });
+    expect(projected.players['home-2'].raw.fielding).toMatchObject({ PO: 1, PB: 0, DP: 1 });
     expect(projected.players['home-3'].raw.fielding).toMatchObject({ A: 1, E: 1, DP: 1 });
     expect(projected.players['home-1'].raw.fielding).toMatchObject({ PO: 1, A: 1, E: 1, DP: 1 });
     expect(projected.teams.home.E).toBe(2);
