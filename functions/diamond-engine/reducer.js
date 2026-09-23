@@ -811,7 +811,7 @@ function deriveDiamondCoverageFromEventStates(initialState, eventStates) {
                 })) {
                 coverage = { ...coverage, batting: 'partial' };
             }
-            if (initialState.captureMode === 'full' && !hasCompletePitchOutcomeEvidence(before, payload.result)) {
+            if (initialState.captureMode === 'full' && !hasCompletePlateAppearancePitchEvidence(before, payload)) {
                 coverage = { ...coverage, pitches: 'partial', situational: 'partial' };
             }
             if (payload.result === 'double_play' && !hasUnambiguousBattedBallEvidence(fieldingChains)) {
@@ -1195,6 +1195,10 @@ function requiresMissingPitchCoverage(state, cause) {
     return (state.captureMode === 'full' &&
         (cause === 'wild_pitch' || cause === 'passed_ball') &&
         (state.inning.pitchesInPlateAppearance === 0 || !state.inning.lastPitchResult || !isDiamondDeliveredPitch(state.inning.lastPitchResult)));
+}
+function hasCompletePlateAppearancePitchEvidence(state, payload) {
+    return (hasCompletePitchOutcomeEvidence(state, payload.result) &&
+        ![payload.batterAdvance, ...payload.runnerAdvances].some((advance) => advance.cause !== undefined && requiresMissingPitchCoverage(state, advance.cause)));
 }
 function applyMoves(state, side, moves, outsOnPlay, reachedOnEventId) {
     requireInteger(outsOnPlay, 'outsOnPlay', 0, 3);
@@ -2152,7 +2156,7 @@ function reduceDiamondEvent(state, action) {
             if (action.payload.runsBattedIn === undefined && scoringAdvances.some((advance) => advance.rbi === undefined)) {
                 next = markPartial(next, ['batting']);
             }
-            if (state.captureMode === 'full' && !hasCompletePitchOutcomeEvidence(state, action.payload.result)) {
+            if (state.captureMode === 'full' && !hasCompletePlateAppearancePitchEvidence(state, action.payload)) {
                 next = markPartial(next, ['pitches', 'situational']);
             }
             if (action.payload.result === 'double_play' &&
