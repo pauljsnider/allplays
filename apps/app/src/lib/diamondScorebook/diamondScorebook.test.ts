@@ -39,6 +39,46 @@ const SCORER = 'scorer-1';
 
 describe('Diamond security boundary regressions', () => {
   const context = { actorUid: SCORER, eventId: 'security-check', serverTimestampMs: 1700000001000 };
+  it.each(['wild_pitch', 'passed_ball'] as const)('clears %s pitch context across standalone balk awards', (priorCause) => {
+    const game = twoRunnersBeforePitch();
+    game.submit('advance_runner', {
+      runnerId: 'away-1',
+      from: 'second',
+      to: 'third',
+      cause: priorCause,
+      ...(priorCause === 'passed_ball' ? { fielding: { passedBallBy: 'home-2' } } : {})
+    });
+    game.submit('advance_runner', { runnerId: 'away-1', from: 'third', to: 'home', cause: 'balk', earned: true, rbi: false });
+    const cause = priorCause === 'wild_pitch' ? ('passed_ball' as const) : ('wild_pitch' as const);
+    const payload: DiamondCommandPayloadMap['advance_runner'] = {
+      runnerId: 'away-2',
+      from: 'first',
+      to: 'second',
+      cause,
+      ...(cause === 'passed_ball' ? { fielding: { passedBallBy: 'home-2' } } : {})
+    };
+    const bounded = executeDiamondCommandFromCheckpoint(
+      createDiamondCheckpoint(game.ledger),
+      game.command('advance_runner', payload),
+      context
+    );
+    expect(bounded.result.outcome).toBe('accepted');
+    expect(bounded.checkpoint.state.coverage.pitches).toBe('partial');
+    game.submit('advance_runner', payload);
+    expect(game.ledger.state.coverage).toMatchObject({ pitches: 'partial', situational: 'partial' });
+    expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
+    const stats = projectDiamondStats(game.ledger);
+    expect(stats.players['home-1'].raw.pitching).toMatchObject({ WP: 1, balkIllegalPitch: 1 });
+    expect(stats.players['home-2'].raw.fielding.PB).toBe(1);
+  });
+  it('retains one recorded balk credit across multiple runner awards', () => {
+    const game = twoRunnersBeforePitch();
+    game.submit('record_pitch', { ...currentMatchup(game), result: 'balk' });
+    game.submit('advance_runner', { runnerId: 'away-1', from: 'second', to: 'third', cause: 'balk' });
+    game.submit('advance_runner', { runnerId: 'away-2', from: 'first', to: 'second', cause: 'balk' });
+    expect(projectDiamondStats(game.ledger).players['home-1'].raw.pitching.balkIllegalPitch).toBe(1);
+    expect(replayDiamondLedger(game.ledger).state).toEqual(game.ledger.state);
+  });
   it.each([
     ['error', false],
     ['error', true],
