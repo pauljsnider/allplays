@@ -39,6 +39,56 @@ const SCORER = 'scorer-1';
 
 describe('Diamond security boundary regressions', () => {
   const context = { actorUid: SCORER, eventId: 'security-check', serverTimestampMs: 1700000001000 };
+  it.each(['batter', 'runner', 'uncounted'] as const)('rejects non-scoring %s RBI evidence', (target) => {
+    const game = harness();
+    setBasicLineups(game);
+    recordPitch(game, 'away-1', 'home-1');
+    game.submit('record_plate_appearance', {
+      ...currentMatchup(game),
+      result: 'triple',
+      batterAdvance: { to: 'third' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    recordPitch(game, 'away-2', 'home-1');
+    const command = game.command('record_plate_appearance', {
+      ...currentMatchup(game),
+      result: 'single',
+      batterAdvance: { to: 'first', ...(target === 'batter' ? { rbi: true } : {}) },
+      runnerAdvances: [
+        {
+          runnerId: 'away-1',
+          from: 'third',
+          to: target === 'uncounted' ? 'home' : 'stay',
+          cause: 'batted_ball',
+          ...(target === 'uncounted' ? { countsRun: false } : {}),
+          ...(target !== 'batter' ? { rbi: true } : {})
+        }
+      ],
+      outsOnPlay: 0
+    });
+    expect(executeDiamondCommand(game.ledger, command, context).result.rejection?.code).toBe('invalid-rbi');
+    expect(executeDiamondCommandFromCheckpoint(createDiamondCheckpoint(game.ledger), command, context).result.rejection?.code).toBe(
+      'invalid-rbi'
+    );
+  });
+  it.each(['walk', 'hit_by_pitch', 'batted_ball'] as const)('rejects standalone PA cause %s', (cause) => {
+    const game = harness();
+    setBasicLineups(game);
+    recordPitch(game, 'away-1', 'home-1');
+    game.submit('record_plate_appearance', {
+      ...currentMatchup(game),
+      result: 'single',
+      batterAdvance: { to: 'first' },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    const command = game.command('advance_runner', { runnerId: 'away-1', from: 'first', to: 'second', cause });
+    expect(executeDiamondCommand(game.ledger, command, context).result.rejection?.code).toBe('standalone-plate-appearance-cause');
+    expect(executeDiamondCommandFromCheckpoint(createDiamondCheckpoint(game.ledger), command, context).result.rejection?.code).toBe(
+      'standalone-plate-appearance-cause'
+    );
+  });
   it.each([
     ['illegal_pitch', false],
     ['illegal_pitch', true],
