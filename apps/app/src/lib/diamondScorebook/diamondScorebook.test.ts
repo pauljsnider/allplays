@@ -72,7 +72,7 @@ describe('Diamond security boundary regressions', () => {
       'invalid-rbi'
     );
   });
-  it.each(['walk', 'hit_by_pitch', 'batted_ball'] as const)('rejects standalone PA cause %s', (cause) => {
+  it.each(['walk', 'hit_by_pitch', 'batted_ball', 'force_out'] as const)('rejects standalone PA cause %s', (cause) => {
     const game = harness();
     setBasicLineups(game);
     recordPitch(game, 'away-1', 'home-1');
@@ -83,7 +83,13 @@ describe('Diamond security boundary regressions', () => {
       runnerAdvances: [],
       outsOnPlay: 0
     });
-    const command = game.command('advance_runner', { runnerId: 'away-1', from: 'first', to: 'second', cause });
+    const command = game.command('advance_runner', {
+      runnerId: 'away-1',
+      from: 'first',
+      to: cause === 'force_out' ? 'out' : 'second',
+      cause,
+      ...(cause === 'force_out' ? { outKind: 'force' as const } : {})
+    });
     expect(executeDiamondCommand(game.ledger, command, context).result.rejection?.code).toBe('standalone-plate-appearance-cause');
     expect(executeDiamondCommandFromCheckpoint(createDiamondCheckpoint(game.ledger), command, context).result.rejection?.code).toBe(
       'standalone-plate-appearance-cause'
