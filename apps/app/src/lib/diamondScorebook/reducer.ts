@@ -880,7 +880,10 @@ export function validateDiamondPitchCauseEvidence(
         fielding.doublePlay ||
         fielding.triplePlay ||
         (fielding.battedBall && fielding.battedBall !== 'unknown') ||
-        fielding.errors?.some((error) => error.playerId !== pitchContext.catcherId)
+        (fielding.errors?.length ?? 0) > 1 ||
+        fielding.errors?.some(
+          (error) => error.playerId !== pitchContext.catcherId || (error.kind !== undefined && error.kind !== 'fielding')
+        )
     )
   )
     throw new DiamondDomainError('fielding-result-mismatch', 'Catcher interference permits only an error charged to the recorded catcher.');
@@ -2671,6 +2674,11 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
       const runnerMoves: Move[] = action.payload.runnerAdvances.map((advance: DiamondRunnerAdvance) => {
         validateAdvanceShape(advance);
         validateAdvanceProfile(state, advance.cause);
+        if (advance.cause === 'balk')
+          throw new DiamondDomainError(
+            'balk-award-required',
+            'Record the balk and complete its runner awards before the plate appearance.'
+          );
         validatePlateAppearanceRunnerAdvance(state, result, advance);
         const placement = state.bases[requireMember(advance.from, BASES, 'runner source')];
         validateInlineResponsiblePitcher(
@@ -2791,6 +2799,9 @@ export function reduceDiamondEvent(state: DiamondGameState, action: DiamondReduc
       }
       validateAdvanceShape(action.payload, { standalone: true });
       validateAdvanceProfile(state, action.payload.cause);
+      if (action.payload.cause === 'balk' && !state.pendingBalkAwards?.length) {
+        throw new DiamondDomainError('balk-award-required', 'Record the balk before completing its mandatory runner awards.');
+      }
       if (action.payload.cause === 'pickoff' || action.payload.cause === 'balk') {
         next = { ...next, inning: { ...next.inning, lastPitchResult: null, lastPitchAdvanceCause: null } };
       }

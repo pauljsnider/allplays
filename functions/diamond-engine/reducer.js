@@ -739,7 +739,8 @@ function validateDiamondPitchCauseEvidence(advances, fieldings, result, pitchCon
             fielding.doublePlay ||
             fielding.triplePlay ||
             (fielding.battedBall && fielding.battedBall !== 'unknown') ||
-            fielding.errors?.some((error) => error.playerId !== pitchContext.catcherId)))
+            (fielding.errors?.length ?? 0) > 1 ||
+            fielding.errors?.some((error) => error.playerId !== pitchContext.catcherId || (error.kind !== undefined && error.kind !== 'fielding'))))
         throw new contracts_1.DiamondDomainError('fielding-result-mismatch', 'Catcher interference permits only an error charged to the recorded catcher.');
     const hasFieldingCredit = fieldings.some((fielding) => fielding.putoutBy ||
         fielding.putouts?.length ||
@@ -2222,6 +2223,8 @@ function reduceDiamondEvent(state, action) {
             const runnerMoves = action.payload.runnerAdvances.map((advance) => {
                 validateAdvanceShape(advance);
                 validateAdvanceProfile(state, advance.cause);
+                if (advance.cause === 'balk')
+                    throw new contracts_1.DiamondDomainError('balk-award-required', 'Record the balk and complete its runner awards before the plate appearance.');
                 validatePlateAppearanceRunnerAdvance(state, result, advance);
                 const placement = state.bases[requireMember(advance.from, BASES, 'runner source')];
                 validateInlineResponsiblePitcher(state, advance.responsiblePitcherId, placement?.chargedToPitcherId ?? null, `The advance for ${advance.runnerId}`);
@@ -2311,6 +2314,9 @@ function reduceDiamondEvent(state, action) {
             }
             validateAdvanceShape(action.payload, { standalone: true });
             validateAdvanceProfile(state, action.payload.cause);
+            if (action.payload.cause === 'balk' && !state.pendingBalkAwards?.length) {
+                throw new contracts_1.DiamondDomainError('balk-award-required', 'Record the balk before completing its mandatory runner awards.');
+            }
             if (action.payload.cause === 'pickoff' || action.payload.cause === 'balk') {
                 next = { ...next, inning: { ...next.inning, lastPitchResult: null, lastPitchAdvanceCause: null } };
             }
