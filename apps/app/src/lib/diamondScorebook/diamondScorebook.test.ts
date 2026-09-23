@@ -39,6 +39,32 @@ const SCORER = 'scorer-1';
 
 describe('Diamond security boundary regressions', () => {
   const context = { actorUid: SCORER, eventId: 'security-check', serverTimestampMs: 1700000001000 };
+  it.each([
+    ['home_run', 'home', 'wild_pitch'],
+    ['home_run', 'home', 'passed_ball'],
+    ['home_run', 'home', 'balk'],
+    ['home_run', 'home', 'illegal_pitch'],
+    ['single', 'first', 'walk'],
+    ['walk', 'first', 'batted_ball'],
+    ['hit_by_pitch', 'first', 'walk'],
+    ['reached_on_error', 'first', 'wild_pitch'],
+    ['dropped_third_strike', 'first', 'walk'],
+    ['strikeout', 'first', 'batted_ball']
+  ] as const)('rejects contradictory %s batter cause %s/%s', (result, to, cause) => {
+    const game = harness();
+    setBasicLineups(game);
+    const command = game.command('record_plate_appearance', {
+      ...currentMatchup(game),
+      result,
+      batterAdvance: { to, cause },
+      runnerAdvances: [],
+      outsOnPlay: 0
+    });
+    expect(executeDiamondCommand(game.ledger, command, context).result.rejection?.code).toBe('batter-cause-result-mismatch');
+    expect(executeDiamondCommandFromCheckpoint(createDiamondCheckpoint(game.ledger), command, context).result.rejection?.code).toBe(
+      'batter-cause-result-mismatch'
+    );
+  });
   it('rejects extra non-home-run walkoff runs but preserves home-run scoring', () => {
     const game = harness('baseball-nfhs', 'quick');
     setBasicLineups(game);
@@ -5867,7 +5893,7 @@ describe('Diamond stat-integrity evidence', () => {
   });
 
   it.each([
-    { result: 'strikeout' as const, cause: 'batted_ball' as const },
+    { result: 'strikeout' as const, cause: 'other' as const },
     { result: 'dropped_third_strike' as const, cause: 'other' as const },
     { result: 'dropped_third_strike' as const, cause: undefined }
   ])(
