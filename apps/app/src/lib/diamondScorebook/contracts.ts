@@ -139,6 +139,8 @@ export type DiamondGameState = Readonly<{
   bases: DiamondBases;
   /** Mandatory one-base awards from a pinned ball-and-advance illegal pitch. */
   pendingIllegalPitchAwards?: readonly Readonly<{ runnerId: string; from: DiamondBase; to: DiamondBase | 'home' }>[];
+  /** Mandatory one-base runner awards from a recorded baseball balk. */
+  pendingBalkAwards?: readonly Readonly<{ runnerId: string; from: DiamondBase; to: DiamondBase | 'home' }>[];
   lineups: Readonly<Record<DiamondSide, DiamondTeamLineup>>;
   nextBatterSlot: Readonly<Record<DiamondSide, number>>;
   coverage: DiamondCoverageMap;
